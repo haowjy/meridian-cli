@@ -69,6 +69,24 @@ async function writeBashRecords(runtimeRoot: string, spawnId: string, records: B
   await writeFile(path.join(bashDir, "bash-records.json"), JSON.stringify(file));
 }
 
+async function bashRecordWithSpawnOutput(
+  runtimeRoot: string,
+  bashId: string,
+  spawnId: string,
+  overrides: Partial<BashRecord> = {},
+): Promise<BashRecord> {
+  const logPath = path.join(runtimeRoot, "logs", `${bashId}.log`);
+  await mkdir(path.dirname(logPath), { recursive: true });
+  await writeFile(logPath, `Spawn id: ${spawnId}\n`);
+  return bashRecord(bashId, {
+    log_path: logPath,
+    stdout_log_path: logPath,
+    stderr_log_path: logPath,
+    log_bytes: `Spawn id: ${spawnId}\n`.length,
+    ...overrides,
+  });
+}
+
 async function writeSpawnState(
   runtimeRoot: string,
   spawnId: string,
@@ -149,12 +167,13 @@ describe("SpawnWatchRuntime bash-origin spawn tracking", () => {
   it("keeps polling when a spawn directory appears before state.json", async () => {
     const { runtimeRoot, runtime, internals } = await makeRuntime();
     try {
-      await writeBashRecords(runtimeRoot, "p-parent", [bashRecord("b-origin")]);
+      await writeBashRecords(runtimeRoot, "p-parent", [
+        await bashRecordWithSpawnOutput(runtimeRoot, "b-origin", "p-origin"),
+      ]);
       await mkdir(path.join(runtimeRoot, "spawns", "p-origin"), { recursive: true });
       internals.running = true;
 
-      internals.enableDiscoveryPolling();
-      await internals.scanSpawns();
+      await internals.scanBashRecords();
       expect(internals.fallbackScanReasons.has("spawn-discovery")).toBe(true);
       expect(internals.fallbackScanReasons.has("active-origin-spawns")).toBe(false);
 
@@ -175,11 +194,13 @@ describe("SpawnWatchRuntime bash-origin spawn tracking", () => {
   it("keeps slow discovery polling until missing state.json files resolve", async () => {
     const { runtimeRoot, runtime, internals } = await makeRuntime();
     try {
-      await writeBashRecords(runtimeRoot, "p-parent", [bashRecord("b-origin")]);
+      await writeBashRecords(runtimeRoot, "p-parent", [
+        await bashRecordWithSpawnOutput(runtimeRoot, "b-origin", "p-origin"),
+      ]);
       await mkdir(path.join(runtimeRoot, "spawns", "p-origin"), { recursive: true });
       internals.running = true;
 
-      internals.enableDiscoveryPolling();
+      await internals.scanBashRecords();
       internals.slowDiscoveryPolling();
       expect(internals.fallbackScanReasons.has("spawn-discovery")).toBe(true);
       expect(internals.discoveryScanInterval).toBeNull();
@@ -214,10 +235,11 @@ describe("SpawnWatchRuntime bash-origin spawn tracking", () => {
   it("withholds bash completion while discovery polling may still find a spawn", async () => {
     const { runtimeRoot, runtime, internals } = await makeRuntime();
     try {
-      await writeBashRecords(runtimeRoot, "p-parent", [bashRecord("b-origin")]);
+      await writeBashRecords(runtimeRoot, "p-parent", [
+        await bashRecordWithSpawnOutput(runtimeRoot, "b-origin", "p-origin"),
+      ]);
       await mkdir(path.join(runtimeRoot, "spawns", "p-origin"), { recursive: true });
       internals.running = true;
-      internals.enableDiscoveryPolling();
 
       await internals.scanBashRecords();
       expect(internals.pending.has("b-origin")).toBe(false);
@@ -232,37 +254,34 @@ describe("SpawnWatchRuntime bash-origin spawn tracking", () => {
   });
 
 
-  it("manual refresh starts discovery polling for missed empty spawn dirs", async () => {
+  it("manual refresh ignores unowned empty spawn dirs", async () => {
     const { runtimeRoot, runtime, internals } = await makeRuntime();
     try {
       await mkdir(path.join(runtimeRoot, "spawns", "p-late"), { recursive: true });
       internals.running = true;
 
       await runtime.rows(true);
-      expect(internals.fallbackScanReasons.has("spawn-discovery")).toBe(true);
-
-      internals.stopDiscoveryPolling();
       expect(internals.fallbackScanReasons.has("spawn-discovery")).toBe(false);
-
-      await runtime.rows(true);
-      expect(internals.fallbackScanReasons.has("spawn-discovery")).toBe(true);
     } finally {
       runtime.stop();
       await rm(runtimeRoot, { recursive: true, force: true });
     }
   });
 
-  it("starts discovery polling for existing spawn dirs without state.json", async () => {
+  it("starts discovery polling for expected spawn ids without state.json", async () => {
     const runtimeRoot = await mkdtemp(path.join(tmpdir(), "spawn-watch-origin-start-"));
     setEnv("MERIDIAN_PI_STATE_DIR", runtimeRoot);
     setEnv("MERIDIAN_SPAWN_ID", "p-parent");
-    await mkdir(path.join(runtimeRoot, "spawns", "p-late"), { recursive: true });
+    await writeBashRecords(runtimeRoot, "p-parent", [
+      await bashRecordWithSpawnOutput(runtimeRoot, "b-origin", "p-late"),
+    ]);
 
     const runtime = new SpawnWatchRuntime({} as ConstructorParameters<typeof SpawnWatchRuntime>[0]);
     const internals = runtime as SpawnWatchRuntimeInternals;
 
     try {
       runtime.start();
+      await internals.scanBashRecords();
       expect(internals.fallbackScanReasons.has("spawn-discovery")).toBe(true);
     } finally {
       runtime.stop();

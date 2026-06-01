@@ -1,4 +1,5 @@
 import { existsSync, mkdirSync, readdirSync, watch, type FSWatcher } from "node:fs";
+import { readFile } from "node:fs/promises";
 import path from "node:path";
 
 import type { ExtensionAPI, Theme } from "@earendil-works/pi-coding-agent";
@@ -16,7 +17,7 @@ import {
   resolvePiBashDir,
   resolveSpawnsDir,
 } from "../../shared/pi_state_paths";
-import type { BashRecordsFile, ObservedSpawnsFile, SpawnStateFile } from "../../shared/schemas";
+import type { BashRecord, BashRecordsFile, ObservedSpawnsFile, SpawnStateFile } from "../../shared/schemas";
 import { isTerminalBashStatus, isTerminalSpawnStatus } from "../../shared/schemas";
 import { openLogOverlay } from "../../shared/log_overlay";
 import {
@@ -55,6 +56,7 @@ const BASH_SPAWN_CORRELATION_GRACE_MS = 2_500;
 const FALLBACK_SCAN_MS = 5_000;
 const SPAWN_DISCOVERY_SCAN_MS = 500;
 const SPAWN_DISCOVERY_POLL_MS = 15_000;
+const SPAWN_ID_PATTERN = /\bSpawn id:\s*(p[0-9A-Za-z_-]+)/g;
 
 export class SpawnWatchRuntime {
   private readonly currentSpawnId = currentSpawnIdFromEnv();
@@ -68,6 +70,7 @@ export class SpawnWatchRuntime {
   private readonly clearedSpawnIds = new Set<string>();
   private readonly originBashIds = new Set<string>();
   private readonly missingStateSpawnIds = new Set<string>();
+  private readonly expectedSpawnIdsByBashId = new Map<string, Set<string>>();
   private clearedLoaded = false;
   private originsLoaded = false;
   private watchers: Array<FSWatcher | null> = [];
@@ -99,7 +102,6 @@ export class SpawnWatchRuntime {
     });
     this.addWatcher(bashWatcher);
     if (!bashWatcher) this.enableFallbackScan("bash-dir");
-    this.enableDiscoveryPollingForMissingSpawnStates();
     void this.scan();
   }
 
@@ -125,7 +127,7 @@ export class SpawnWatchRuntime {
 
   async rows(discover = false): Promise<SpawnStateFile[]> {
     await this.loadClearedSpawnIds();
-    if (discover) this.discoverMissingSpawnStates({ force: true });
+    if (discover) this.discoverMissingSpawnStates();
     return (await this.readOriginSpawnStates()).filter((state) => !this.isClearedTerminalSpawn(state));
   }
 
@@ -149,11 +151,7 @@ export class SpawnWatchRuntime {
     let watcher: FSWatcher | null = null;
     watcher = this.watchDirectory(
       this.spawnsDir,
-      (_eventType, filename) => {
-        const name = filename ? path.basename(filename.toString()) : "";
-        if (name.startsWith("p")) this.enableDiscoveryPolling();
-        this.requestScan();
-      },
+      () => this.requestScan(),
       {
         onError: () => {
           if (watcher) this.removeWatcher(watcher);
@@ -246,24 +244,26 @@ export class SpawnWatchRuntime {
     this.requestScan();
   }
 
-  private enableDiscoveryPollingForMissingSpawnStates(): void {
-    this.discoverMissingSpawnStates();
-  }
-
-  private discoverMissingSpawnStates(options: { force?: boolean } = {}): void {
-    if (!existsSync(this.spawnsDir)) return;
+  private discoverMissingSpawnStates(): void {
     let foundNewMissingState = false;
-    for (const name of readdirSync(this.spawnsDir)) {
-      if (
-        name.startsWith("p") &&
-        !existsSync(this.spawnStatePath(name)) &&
-        (options.force === true || !this.missingStateSpawnIds.has(name))
-      ) {
-        this.missingStateSpawnIds.add(name);
+    const expectedSpawnIds = new Set([...this.expectedSpawnIdsByBashId.values()].flatMap((ids) => [...ids]));
+    for (const spawnId of expectedSpawnIds) {
+      if (existsSync(this.spawnStatePath(spawnId))) {
+        this.missingStateSpawnIds.delete(spawnId);
+      } else if (!this.missingStateSpawnIds.has(spawnId)) {
+        this.missingStateSpawnIds.add(spawnId);
         foundNewMissingState = true;
       }
     }
+    for (const spawnId of [...this.missingStateSpawnIds]) {
+      if (!expectedSpawnIds.has(spawnId) || existsSync(this.spawnStatePath(spawnId))) {
+        this.missingStateSpawnIds.delete(spawnId);
+      }
+    }
     if (foundNewMissingState) this.enableDiscoveryPolling();
+    if (this.missingStateSpawnIds.size === 0 && this.fallbackScanReasons.has("spawn-discovery")) {
+      this.stopDiscoveryPolling();
+    }
   }
 
   private closeWatcher(watcher: FSWatcher, context: string): void {
@@ -343,12 +343,16 @@ export class SpawnWatchRuntime {
   private async scanBashRecords(): Promise<void> {
     const file = await readJsonFile<BashRecordsFile | null>(this.bashRecordsPath, null);
     await this.rememberOriginBashIds(Object.keys(file?.records ?? {}));
+    const records = Object.values(file?.records ?? {});
+    await this.rememberExpectedSpawnIds(records);
+    const states = await this.readOriginSpawnStates(await this.readOriginBashIds());
     const bashIdsWithSpawns = new Set(
-      (await this.readOriginSpawnStates(await this.readOriginBashIds()))
+      states
         .map((state) => state.originating_bash_id)
         .filter((id): id is string => typeof id === "string"),
     );
-    for (const record of Object.values(file?.records ?? {})) {
+    const bashIdsWithMissingExpectedSpawns = this.bashIdsWithMissingExpectedSpawns();
+    for (const record of records) {
       if (!record.is_tracked || !record.is_background || !isTerminalBashStatus(record.status)) {
         continue;
       }
@@ -361,7 +365,7 @@ export class SpawnWatchRuntime {
         this.scheduleBashGraceScan(record.bash_id);
         continue;
       }
-      if (this.shouldDelayBashForDiscovery(record)) continue;
+      if (this.shouldDelayBashForDiscovery(record, bashIdsWithMissingExpectedSpawns)) continue;
       if (TERMINAL_NOTIFIED.has(record.bash_id) || this.pending.has(record.bash_id)) continue;
       this.pending.set(record.bash_id, {
         id: record.bash_id,
@@ -379,13 +383,13 @@ export class SpawnWatchRuntime {
     return endedAt !== null && Date.now() - endedAt < BASH_SPAWN_CORRELATION_GRACE_MS;
   }
 
-  private shouldDelayBashForDiscovery(record: { command?: string; ended_at_ms?: number | null }): boolean {
-    const endedAt = typeof record.ended_at_ms === "number" ? record.ended_at_ms : null;
+  private shouldDelayBashForDiscovery(
+    record: { bash_id: string; command?: string },
+    bashIdsWithMissingExpectedSpawns: Set<string>,
+  ): boolean {
     return (
-      endedAt !== null &&
       isSpawnLauncherCommand(String(record.command ?? "")) &&
-      this.fallbackScanReasons.has("spawn-discovery") &&
-      Date.now() - endedAt < SPAWN_DISCOVERY_POLL_MS
+      bashIdsWithMissingExpectedSpawns.has(record.bash_id)
     );
   }
 
@@ -519,12 +523,53 @@ export class SpawnWatchRuntime {
     }
   }
 
+  private async rememberExpectedSpawnIds(records: BashRecord[]): Promise<void> {
+    for (const record of records) {
+      const spawnIds = await this.extractSpawnIdsFromRecord(record);
+      if (spawnIds.size === 0) continue;
+      const existing = this.expectedSpawnIdsByBashId.get(record.bash_id) ?? new Set<string>();
+      for (const spawnId of spawnIds) existing.add(spawnId);
+      this.expectedSpawnIdsByBashId.set(record.bash_id, existing);
+    }
+    this.discoverMissingSpawnStates();
+  }
+
+  private async extractSpawnIdsFromRecord(record: BashRecord): Promise<Set<string>> {
+    const spawnIds = new Set<string>();
+    for (const filePath of [record.stdout_log_path, record.log_path]) {
+      const content = await readTextFile(filePath);
+      for (const match of content.matchAll(SPAWN_ID_PATTERN)) {
+        if (match[1]) spawnIds.add(match[1]);
+      }
+    }
+    return spawnIds;
+  }
+
+  private bashIdsWithMissingExpectedSpawns(): Set<string> {
+    const bashIds = new Set<string>();
+    for (const [bashId, spawnIds] of this.expectedSpawnIdsByBashId) {
+      if ([...spawnIds].some((spawnId) => this.missingStateSpawnIds.has(spawnId))) {
+        bashIds.add(bashId);
+      }
+    }
+    return bashIds;
+  }
+
   private async readSpawnState(spawnId: string): Promise<SpawnStateFile | null> {
     return await readJsonFile<SpawnStateFile | null>(this.spawnStatePath(spawnId), null);
   }
 
   private spawnStatePath(spawnId: string): string {
     return path.join(this.spawnsDir, spawnId, "state.json");
+  }
+}
+
+async function readTextFile(filePath: string | null | undefined): Promise<string> {
+  if (!filePath) return "";
+  try {
+    return await readFile(filePath, "utf-8");
+  } catch {
+    return "";
   }
 }
 
