@@ -63,6 +63,8 @@ templates = [
 ]
 
 [build-system]
+# Pinned: hatchling >=1.28 emits Metadata-Version 2.5, rejected by pypa/gh-action-pypi-publish.
+# When the publisher supports 2.5, remove the pin and drop scripts/verify-release-metadata.py.
 requires = ["hatchling==1.27.0"]
 build-backend = "hatchling.build"
 
