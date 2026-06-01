@@ -468,10 +468,7 @@ export class SpawnWatchRuntime {
       if (!name.startsWith("p")) continue;
       const state = await this.readSpawnState(name);
       if (state) this.missingStateSpawnIds.delete(name);
-      if (
-        (originBashIds.size === 0 && state?.parent_id === this.currentSpawnId) ||
-        (typeof state?.originating_bash_id === "string" && originBashIds.has(state.originating_bash_id))
-      ) {
+      if (typeof state?.originating_bash_id === "string" && originBashIds.has(state.originating_bash_id)) {
         states.push(state);
       }
     }

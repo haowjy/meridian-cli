@@ -112,13 +112,12 @@ describe("SpawnWatchRuntime bash-origin spawn tracking", () => {
   });
 
 
-  it("falls back to parent_id tracking when managed-bash origins are absent", async () => {
+  it("ignores parent-only spawns when managed-bash origins are absent", async () => {
     const { runtimeRoot, runtime } = await makeRuntime();
     try {
       await writeSpawnState(runtimeRoot, "p-parent-child", { parentId: "p-parent", status: "running" });
-      await writeSpawnState(runtimeRoot, "p-other-parent", { parentId: "p-other", status: "running" });
 
-      expect((await runtime.rows()).map((state) => state.id)).toEqual(["p-parent-child"]);
+      expect(await runtime.rows()).toEqual([]);
     } finally {
       runtime.stop();
       await rm(runtimeRoot, { recursive: true, force: true });
