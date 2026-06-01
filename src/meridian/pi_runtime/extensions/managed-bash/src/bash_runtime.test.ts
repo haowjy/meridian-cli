@@ -4,6 +4,7 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
+import { readSpawnOriginBashIds } from "../../shared/spawn_origins";
 import { BashRuntime } from "./bash_runtime";
 
 const savedEnv: Record<string, string | undefined> = {};
@@ -53,6 +54,7 @@ describe("BashRuntime task pings", () => {
         undefined,
       );
       const bashId = (result as { bash_id: string }).bash_id;
+      expect(await readSpawnOriginBashIds("p-test-ping")).toContain(bashId);
       await waitFor(() => pings.length === 1);
       expect(pings).toEqual([bashId]);
 

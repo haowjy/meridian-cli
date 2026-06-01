@@ -10,6 +10,7 @@ import {
   resolveBashRecordsPath,
 } from "../../shared/pi_state_paths";
 import type { BashRecord, BashRecordsFile, BashStatus } from "../../shared/schemas";
+import { rememberSpawnOriginBashIds } from "../../shared/spawn_origins";
 import { BashLogStore, type BashLogPaths } from "./bash_log_store";
 
 export type BashParams = {
@@ -347,6 +348,7 @@ export class BashRuntime {
       pingTimer: null,
     };
     this.records.set(bashId, record);
+    await rememberSpawnOriginBashIds([bashId], this.spawnId);
 
     const child = spawn(command, {
       cwd,

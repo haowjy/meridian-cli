@@ -7,8 +7,10 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Added
 - Claude adapter denies built-in subagents (`Agent(Explore)`, `Agent(Plan)`, `Agent(General-purpose)`) by default via `--disallowedTools` injection. Opt out with `[claude] allow_builtin_agents = true` in `meridian.toml`.
 
+### Changed
+- Pi `meridian-spawn-watch` correlates `/spawn` and completion notifications through managed-bash `originating_bash_id`, deleting per-child/per-candidate spawn-directory watchers.
+
 ### Fixed
-- Pi `meridian-spawn-watch` closes unrelated top-level candidate spawn watchers after reading `parent_id: null`, avoiding stale per-spawn inotify watches and ENOSPC warning spam.
 - Codex primary `--from`/`-f`/`-p` now forwards primary user-turn content into the attached TUI; empty launches keep Codex's bootstrap-only idle default.
 - Primary `meridian --from REF` now inherits source work item when no `--work` or ambient work is active.
 - Root primary launches no longer treat spaced `--prompt-file PATH` values as unknown commands during startup classification.
