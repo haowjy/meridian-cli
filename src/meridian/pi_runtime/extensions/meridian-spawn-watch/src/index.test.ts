@@ -30,7 +30,9 @@ type SpawnWatchRuntimeInternals = SpawnWatchRuntime & {
   running: boolean;
   enableDiscoveryPolling(): void;
   stopDiscoveryPolling(): void;
+  slowDiscoveryPolling(): void;
   fallbackScanInterval: NodeJS.Timeout | null;
+  discoveryScanInterval: NodeJS.Timeout | null;
 };
 
 function bashRecord(bashId: string, overrides: Partial<BashRecord> = {}): BashRecord {
@@ -164,6 +166,28 @@ describe("SpawnWatchRuntime bash-origin spawn tracking", () => {
       internals.stopDiscoveryPolling();
       expect(internals.fallbackScanReasons.has("active-origin-spawns")).toBe(true);
       expect(internals.fallbackScanInterval).not.toBeNull();
+    } finally {
+      runtime.stop();
+      await rm(runtimeRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps slow discovery polling until missing state.json files resolve", async () => {
+    const { runtimeRoot, runtime, internals } = await makeRuntime();
+    try {
+      await writeBashRecords(runtimeRoot, "p-parent", [bashRecord("b-origin")]);
+      await mkdir(path.join(runtimeRoot, "spawns", "p-origin"), { recursive: true });
+      internals.running = true;
+
+      internals.enableDiscoveryPolling();
+      internals.slowDiscoveryPolling();
+      expect(internals.fallbackScanReasons.has("spawn-discovery")).toBe(true);
+      expect(internals.discoveryScanInterval).toBeNull();
+      expect(internals.fallbackScanInterval).not.toBeNull();
+
+      await writeSpawnState(runtimeRoot, "p-origin", { originBashId: "b-origin", status: "succeeded" });
+      await internals.scanSpawns();
+      expect(internals.fallbackScanReasons.has("spawn-discovery")).toBe(false);
     } finally {
       runtime.stop();
       await rm(runtimeRoot, { recursive: true, force: true });

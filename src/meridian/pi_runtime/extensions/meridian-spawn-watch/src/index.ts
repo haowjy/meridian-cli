@@ -218,10 +218,23 @@ export class SpawnWatchRuntime {
     }
     if (this.discoveryPollTimer) clearTimeout(this.discoveryPollTimer);
     this.discoveryPollTimer = setTimeout(() => {
-      this.stopDiscoveryPolling();
+      this.slowDiscoveryPolling();
     }, SPAWN_DISCOVERY_POLL_MS);
     this.discoveryPollTimer.unref();
     this.requestScan();
+  }
+
+  private slowDiscoveryPolling(): void {
+    this.discoverMissingSpawnStates();
+    if (this.discoveryScanInterval) clearInterval(this.discoveryScanInterval);
+    if (this.discoveryPollTimer) clearTimeout(this.discoveryPollTimer);
+    this.discoveryScanInterval = null;
+    this.discoveryPollTimer = null;
+    if (this.missingStateSpawnIds.size > 0) {
+      this.enableFallbackScan("spawn-discovery");
+      return;
+    }
+    this.disableFallbackScan("spawn-discovery");
   }
 
   private stopDiscoveryPolling(): void {
@@ -466,11 +479,22 @@ export class SpawnWatchRuntime {
     const states: SpawnStateFile[] = [];
     for (const name of readdirSync(this.spawnsDir)) {
       if (!name.startsWith("p")) continue;
+      if (!existsSync(path.join(this.spawnsDir, name))) {
+        this.missingStateSpawnIds.delete(name);
+        continue;
+      }
       const state = await this.readSpawnState(name);
-      if (state) this.missingStateSpawnIds.delete(name);
+      if (state) {
+        this.missingStateSpawnIds.delete(name);
+      } else {
+        this.missingStateSpawnIds.add(name);
+      }
       if (typeof state?.originating_bash_id === "string" && originBashIds.has(state.originating_bash_id)) {
         states.push(state);
       }
+    }
+    if (this.missingStateSpawnIds.size === 0 && this.fallbackScanReasons.has("spawn-discovery")) {
+      this.stopDiscoveryPolling();
     }
     return states;
   }
