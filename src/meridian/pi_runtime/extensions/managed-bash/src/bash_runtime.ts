@@ -348,7 +348,6 @@ export class BashRuntime {
       pingTimer: null,
     };
     this.records.set(bashId, record);
-    await rememberSpawnOriginBashIds([bashId], this.spawnId);
 
     const child = spawn(command, {
       cwd,
@@ -358,6 +357,7 @@ export class BashRuntime {
     });
     record.child = child;
     record.pid = child.pid ?? null;
+    void rememberSpawnOriginBashIds([bashId], this.spawnId).catch(() => undefined);
     this.attachOutput(record, child, onData);
 
     child.once("error", async (error) => {

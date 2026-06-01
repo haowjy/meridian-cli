@@ -120,11 +120,11 @@ describe("SpawnWatchRuntime bash-origin spawn tracking", () => {
     const { runtimeRoot, runtime } = await makeRuntime();
     try {
       await writeBashRecords(runtimeRoot, "p-parent", [bashRecord("b-origin")]);
-      await writeSpawnState(runtimeRoot, "p-origin", { originBashId: "b-origin", status: "running" });
+      await writeSpawnState(runtimeRoot, "p1001", { originBashId: "b-origin", status: "running" });
       await writeSpawnState(runtimeRoot, "p-parent-child", { parentId: "p-parent", status: "running" });
       await writeSpawnState(runtimeRoot, "p-other-origin", { originBashId: "b-other", status: "running" });
 
-      expect((await runtime.rows()).map((state) => state.id)).toEqual(["p-origin"]);
+      expect((await runtime.rows()).map((state) => state.id)).toEqual(["p1001"]);
     } finally {
       runtime.stop();
       await rm(runtimeRoot, { recursive: true, force: true });
@@ -148,13 +148,13 @@ describe("SpawnWatchRuntime bash-origin spawn tracking", () => {
     const { runtimeRoot, runtime, internals } = await makeRuntime();
     try {
       await writeBashRecords(runtimeRoot, "p-parent", [bashRecord("b-origin")]);
-      await writeSpawnState(runtimeRoot, "p-origin", { originBashId: "b-origin", status: "running" });
+      await writeSpawnState(runtimeRoot, "p1001", { originBashId: "b-origin", status: "running" });
       internals.running = true;
 
       await internals.scanSpawns();
       expect(internals.fallbackScanReasons.has("active-origin-spawns")).toBe(true);
 
-      await writeSpawnState(runtimeRoot, "p-origin", { originBashId: "b-origin", status: "succeeded" });
+      await writeSpawnState(runtimeRoot, "p1001", { originBashId: "b-origin", status: "succeeded" });
       await internals.scanSpawns();
       expect(internals.fallbackScanReasons.has("active-origin-spawns")).toBe(false);
     } finally {
@@ -168,16 +168,16 @@ describe("SpawnWatchRuntime bash-origin spawn tracking", () => {
     const { runtimeRoot, runtime, internals } = await makeRuntime();
     try {
       await writeBashRecords(runtimeRoot, "p-parent", [
-        await bashRecordWithSpawnOutput(runtimeRoot, "b-origin", "p-origin"),
+        await bashRecordWithSpawnOutput(runtimeRoot, "b-origin", "p1001"),
       ]);
-      await mkdir(path.join(runtimeRoot, "spawns", "p-origin"), { recursive: true });
+      await mkdir(path.join(runtimeRoot, "spawns", "p1001"), { recursive: true });
       internals.running = true;
 
       await internals.scanBashRecords();
       expect(internals.fallbackScanReasons.has("spawn-discovery")).toBe(true);
       expect(internals.fallbackScanReasons.has("active-origin-spawns")).toBe(false);
 
-      await writeSpawnState(runtimeRoot, "p-origin", { originBashId: "b-origin", status: "running" });
+      await writeSpawnState(runtimeRoot, "p1001", { originBashId: "b-origin", status: "running" });
       await internals.scanSpawns();
       expect(internals.fallbackScanReasons.has("active-origin-spawns")).toBe(true);
       expect(internals.fallbackScanInterval).not.toBeNull();
@@ -195,9 +195,9 @@ describe("SpawnWatchRuntime bash-origin spawn tracking", () => {
     const { runtimeRoot, runtime, internals } = await makeRuntime();
     try {
       await writeBashRecords(runtimeRoot, "p-parent", [
-        await bashRecordWithSpawnOutput(runtimeRoot, "b-origin", "p-origin"),
+        await bashRecordWithSpawnOutput(runtimeRoot, "b-origin", "p1001"),
       ]);
-      await mkdir(path.join(runtimeRoot, "spawns", "p-origin"), { recursive: true });
+      await mkdir(path.join(runtimeRoot, "spawns", "p1001"), { recursive: true });
       internals.running = true;
 
       await internals.scanBashRecords();
@@ -206,7 +206,7 @@ describe("SpawnWatchRuntime bash-origin spawn tracking", () => {
       expect(internals.discoveryScanInterval).toBeNull();
       expect(internals.fallbackScanInterval).not.toBeNull();
 
-      await writeSpawnState(runtimeRoot, "p-origin", { originBashId: "b-origin", status: "succeeded" });
+      await writeSpawnState(runtimeRoot, "p1001", { originBashId: "b-origin", status: "succeeded" });
       await internals.scanSpawns();
       expect(internals.fallbackScanReasons.has("spawn-discovery")).toBe(false);
     } finally {
@@ -219,12 +219,12 @@ describe("SpawnWatchRuntime bash-origin spawn tracking", () => {
     const { runtimeRoot, runtime } = await makeRuntime();
     try {
       await writeBashRecords(runtimeRoot, "p-parent", [bashRecord("b-origin")]);
-      await writeSpawnState(runtimeRoot, "p-origin", { originBashId: "b-origin", status: "running" });
+      await writeSpawnState(runtimeRoot, "p1001", { originBashId: "b-origin", status: "running" });
 
-      expect((await runtime.rows()).map((state) => state.id)).toEqual(["p-origin"]);
+      expect((await runtime.rows()).map((state) => state.id)).toEqual(["p1001"]);
 
       await writeBashRecords(runtimeRoot, "p-parent", []);
-      expect((await runtime.rows()).map((state) => state.id)).toEqual(["p-origin"]);
+      expect((await runtime.rows()).map((state) => state.id)).toEqual(["p1001"]);
     } finally {
       runtime.stop();
       await rm(runtimeRoot, { recursive: true, force: true });
@@ -236,15 +236,15 @@ describe("SpawnWatchRuntime bash-origin spawn tracking", () => {
     const { runtimeRoot, runtime, internals } = await makeRuntime();
     try {
       await writeBashRecords(runtimeRoot, "p-parent", [
-        await bashRecordWithSpawnOutput(runtimeRoot, "b-origin", "p-origin"),
+        await bashRecordWithSpawnOutput(runtimeRoot, "b-origin", "p1001"),
       ]);
-      await mkdir(path.join(runtimeRoot, "spawns", "p-origin"), { recursive: true });
+      await mkdir(path.join(runtimeRoot, "spawns", "p1001"), { recursive: true });
       internals.running = true;
 
       await internals.scanBashRecords();
       expect(internals.pending.has("b-origin")).toBe(false);
 
-      await writeSpawnState(runtimeRoot, "p-origin", { originBashId: "b-origin", status: "running" });
+      await writeSpawnState(runtimeRoot, "p1001", { originBashId: "b-origin", status: "running" });
       await internals.scanBashRecords();
       expect(internals.pending.has("b-origin")).toBe(false);
     } finally {
@@ -273,7 +273,7 @@ describe("SpawnWatchRuntime bash-origin spawn tracking", () => {
     setEnv("MERIDIAN_PI_STATE_DIR", runtimeRoot);
     setEnv("MERIDIAN_SPAWN_ID", "p-parent");
     await writeBashRecords(runtimeRoot, "p-parent", [
-      await bashRecordWithSpawnOutput(runtimeRoot, "b-origin", "p-late"),
+      await bashRecordWithSpawnOutput(runtimeRoot, "b-origin", "p1002"),
     ]);
 
     const runtime = new SpawnWatchRuntime({} as ConstructorParameters<typeof SpawnWatchRuntime>[0]);
@@ -313,7 +313,10 @@ describe("SpawnWatchRuntime bash-origin spawn tracking", () => {
     const { runtimeRoot, runtime, internals } = await makeRuntime();
     try {
       await writeBashRecords(runtimeRoot, "p-parent", [
-        bashRecord("b-shell", { command: "sleep 1", ended_at_ms: Date.now() - 5_000 }),
+        await bashRecordWithSpawnOutput(runtimeRoot, "b-shell", "p9999", {
+          command: "echo 'Spawn id: p9999'",
+          ended_at_ms: Date.now() - 5_000,
+        }),
       ]);
       await mkdir(path.join(runtimeRoot, "spawns", "p-orphan"), { recursive: true });
       internals.running = true;
@@ -331,7 +334,7 @@ describe("SpawnWatchRuntime bash-origin spawn tracking", () => {
     const { runtimeRoot, runtime, internals } = await makeRuntime();
     try {
       await writeBashRecords(runtimeRoot, "p-parent", [bashRecord("b-origin")]);
-      await writeSpawnState(runtimeRoot, "p-origin", { originBashId: "b-origin", status: "running" });
+      await writeSpawnState(runtimeRoot, "p1001", { originBashId: "b-origin", status: "running" });
 
       await internals.scanBashRecords();
       expect(internals.pending.has("b-origin")).toBe(false);

@@ -6,7 +6,7 @@ import type { ExtensionAPI, Theme } from "@earendil-works/pi-coding-agent";
 
 import { readJsonFile, writeJsonAtomic } from "../../shared/json_file";
 import { runMeridianCommand } from "../../shared/meridian_cli";
-import { isSpawnLauncherCommand } from "../../shared/meridian_spawn";
+import { extractSpawnIdFromLauncherLog, isSpawnLauncherCommand } from "../../shared/meridian_spawn";
 import { readSpawnOriginBashIds } from "../../shared/spawn_origins";
 import {
   currentSpawnIdFromEnv,
@@ -56,7 +56,6 @@ const BASH_SPAWN_CORRELATION_GRACE_MS = 2_500;
 const FALLBACK_SCAN_MS = 5_000;
 const SPAWN_DISCOVERY_SCAN_MS = 500;
 const SPAWN_DISCOVERY_POLL_MS = 15_000;
-const SPAWN_ID_PATTERN = /\bSpawn id:\s*(p[0-9A-Za-z_-]+)/g;
 
 export class SpawnWatchRuntime {
   private readonly currentSpawnId = currentSpawnIdFromEnv();
@@ -525,6 +524,7 @@ export class SpawnWatchRuntime {
 
   private async rememberExpectedSpawnIds(records: BashRecord[]): Promise<void> {
     for (const record of records) {
+      if (!isSpawnLauncherCommand(record.command)) continue;
       const spawnIds = await this.extractSpawnIdsFromRecord(record);
       if (spawnIds.size === 0) continue;
       const existing = this.expectedSpawnIdsByBashId.get(record.bash_id) ?? new Set<string>();
@@ -538,9 +538,8 @@ export class SpawnWatchRuntime {
     const spawnIds = new Set<string>();
     for (const filePath of [record.stdout_log_path, record.log_path]) {
       const content = await readTextFile(filePath);
-      for (const match of content.matchAll(SPAWN_ID_PATTERN)) {
-        if (match[1]) spawnIds.add(match[1]);
-      }
+      const spawnId = extractSpawnIdFromLauncherLog(content);
+      if (spawnId) spawnIds.add(spawnId);
     }
     return spawnIds;
   }
