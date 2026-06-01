@@ -52,7 +52,7 @@ const MAX_WAVE_WAIT_MS = 2_000;
 const BASH_SPAWN_CORRELATION_GRACE_MS = 2_500;
 const FALLBACK_SCAN_MS = 5_000;
 
-class SpawnWatchRuntime {
+export class SpawnWatchRuntime {
   private readonly currentSpawnId = currentSpawnIdFromEnv();
   private readonly spawnsDir = resolveSpawnsDir();
   private readonly ownSpawnDir = path.join(this.spawnsDir, this.currentSpawnId);
@@ -503,15 +503,14 @@ class SpawnWatchRuntime {
 
   private async resolveCandidate(spawnId: string): Promise<void> {
     const state = await this.readSpawnState(spawnId);
-    if (state?.parent_id === this.currentSpawnId) {
+    if (!state) return;
+    if (state.parent_id === this.currentSpawnId) {
       this.adoptChild(spawnId);
       this.closeCandidate(spawnId);
       this.requestScan();
       return;
     }
-    if (typeof state?.parent_id === "string" && state.parent_id.length > 0) {
-      this.closeCandidate(spawnId);
-    }
+    this.closeCandidate(spawnId);
   }
 
   private adoptChild(spawnId: string): void {
