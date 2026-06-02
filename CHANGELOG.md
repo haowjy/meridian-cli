@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.2.24] - 2026-06-02
+
 ### Added
 - Claude launches deny built-in subagents (`Agent(Explore)`, `Agent(Plan)`, `Agent(General-purpose)`) by default.
 
