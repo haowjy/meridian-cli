@@ -39,12 +39,12 @@ Per-harness mapping:
 - Claude subprocess: `claude -p --output-format stream-json --verbose -`
 - Claude connection: `claude -p --input-format stream-json --output-format stream-json --verbose` (stdin/stdout NDJSON, not WebSocket despite `claude_ws.py` name)
 - **Claude built-in agent denial**: Meridian injects `--disallowedTools
-  Agent(Explore),Agent(Plan),Agent(General-purpose),Agent(general-purpose)` unconditionally —
-  built-in Claude subagents are always denied. Generic `Agent` is gated by Mars
-  `[settings.agent_copy]`: allowed only when `harnesses = ["claude"]` and `.claude` is a
-  target. Built-in denials merge into permission-derived `--disallowedTools` via
-  `dedupe_nonempty()`. Parent/passthrough allowed-tool tails are merged into the managed
-  projection; Meridian's Agent denies stay authoritative.
+  Agent(Explore),Agent(Plan),Agent(General-purpose),Agent(general-purpose)`
+  unconditionally. The denials merge into permission-derived `--disallowedTools` via
+  `dedupe_nonempty()`. Generic
+  `Agent` is gated by Mars `[settings.agent_copy]`: allowed only when
+  `harnesses = ["claude"]` and `.claude` is a target. Parent/passthrough allowed-tool
+  tails are merged into the managed projection; Meridian's Agent denies stay authoritative.
 - Codex subprocess: `codex exec --json`; connection: `codex app-server` (real WebSocket, JSON-RPC 2.0)
 - OpenCode subprocess: `opencode run`; connection: `opencode serve` (HTTP+SSE)
 - Cursor subprocess: `cursor agent <prompt>` (stdout NDJSON, no connection path — subprocess-only)
@@ -196,7 +196,7 @@ value. Windows does not support PTY — Claude primary uses a fallback detection
 Claude Code ships with three built-in subagents (Explore, Plan, General-purpose) plus
 a generic `Agent` tool. Meridian's policy distinguishes between these:
 
-- **Built-in agents are always denied.** Meridian unconditionally injects
+- **Built-in agents are always denied.** Meridian injects
   `--disallowedTools Agent(Explore),Agent(Plan),Agent(General-purpose),Agent(general-purpose)`.
   There is no config toggle — built-ins are a Meridian platform policy.
 

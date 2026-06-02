@@ -39,7 +39,7 @@ Per-harness commands:
 - Claude connection: stdin/stdout NDJSON (not WebSocket despite `claude_ws.py` name)
 - **Claude built-in agent denial**: Meridian injects
   `--disallowedTools Agent(Explore),Agent(Plan),Agent(General-purpose),Agent(general-purpose)`
-  by default so sessions use Meridian delegation instead of Claude's built-in
+  unconditionally so sessions use Meridian delegation instead of Claude's built-in
   subagents. Generic `Agent` is allowed only when Mars effective config has
   `[settings.agent_copy] harnesses = ["claude"]` and `.claude` is a target.
   Parent/passthrough allowed-tool tails are merged into the managed projection;

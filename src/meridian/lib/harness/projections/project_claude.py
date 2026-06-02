@@ -41,6 +41,7 @@ _PROJECTED_FIELDS: frozenset[str] = frozenset(
         "prompt_file_path",
         "claude_native_agents_enabled",
         "user_turn_content",
+        "disallowed_tools",
     }
 )
 
@@ -199,6 +200,9 @@ def project_claude_spec_to_cli_args(
 
     permission_flags = resolve_permission_flags(spec.permission_resolver, HarnessId.CLAUDE)
     permission_tail, allowed_tools, disallowed_tools = _extract_claude_tool_flags(permission_flags)
+    spec_disallowed: list[str] = []
+    for entry in spec.disallowed_tools:
+        spec_disallowed.extend(split_csv_entries(entry))
     if not spec.claude_native_agents_enabled:
         allowed_tools = [tool for tool in allowed_tools if not _is_claude_agent_tool(tool)]
         parent_allowed_tools = [
@@ -213,6 +217,7 @@ def project_claude_spec_to_cli_args(
     disallowed_tools = dedupe_nonempty(
         (
             *disallowed_tools,
+            *spec_disallowed,
             *passthrough_disallowed_tools,
             *_CLAUDE_BUILTIN_AGENT_DENY_TOOLS,
         )
