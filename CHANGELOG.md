@@ -4,6 +4,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+- Bump bundled `mars-agents` to 0.7.13 — `mars sync` reports when compatible locked package upgrades are available.
+
 ## [0.2.24] - 2026-06-02
 
 ### Added
