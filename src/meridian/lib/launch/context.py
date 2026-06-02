@@ -81,6 +81,8 @@ from .env import build_env_plan
 from .env import merge_env_overrides as _merge_env_overrides
 from .permissions import (
     CLAUDE_NATIVE_DELEGATION_TOOLS,
+    project_has_claude_agent_copy,
+    resolve_claude_native_agent_permission_request,
     resolve_nested_claude_permission_request,
     resolve_permission_pipeline,
 )
@@ -102,6 +104,7 @@ from .prompt import (
     compose_skill_prompt_documents,
     sanitize_prior_output,
     strip_stale_report_paths,
+    with_agent_inventory_guidance,
 )
 from .reference import (
     ReferenceItem,
@@ -555,6 +558,7 @@ def materialize_launch_artifacts(
     approval: str | None = None,
     unsafe_no_permissions: bool = False,
     pi_harness_profile: PiHarnessProfileConfig | None = None,
+    claude_native_agents_enabled: bool = False,
 ) -> MaterializedLaunchArtifacts:
     """Build shared run/spec/permission launch artifacts."""
 
@@ -603,6 +607,10 @@ def materialize_launch_artifacts(
         unsafe_no_permissions=unsafe_no_permissions,
     )
     spec = resolve_launch_spec_stage(adapter=harness, run_inputs=run_params, perms=perms)
+    if harness.id == HarnessId.CLAUDE:
+        spec = spec.model_copy(
+            update={"claude_native_agents_enabled": claude_native_agents_enabled}
+        )
     return MaterializedLaunchArtifacts(
         run_params=run_params,
         permission_config=permission_config,
@@ -987,7 +995,9 @@ def _resolve_spawn_prepare_projection(
 
     # Prefer the pre-built, pre-filtered inventory prompt from the bundle.
     if policy.bundle_inventory_prompt:
-        agent_inventory_prompt: str | None = policy.bundle_inventory_prompt
+        agent_inventory_prompt: str | None = with_agent_inventory_guidance(
+            policy.bundle_inventory_prompt
+        )
         _, context_prompt = build_launch_context_documents(
             project_root=project_paths.project_root,
             alias_catalog=policy.alias_catalog,
@@ -1063,7 +1073,7 @@ def _resolve_primary_projection(
     if session_mode != "resume":
         # Prefer the pre-built, pre-filtered inventory prompt from the bundle.
         if policy.bundle_inventory_prompt:
-            agent_inventory_prompt = policy.bundle_inventory_prompt
+            agent_inventory_prompt = with_agent_inventory_guidance(policy.bundle_inventory_prompt)
             _, context_prompt = build_launch_context_documents(
                 project_root=project_paths.project_root,
                 alias_catalog=policy.alias_catalog,
@@ -1666,6 +1676,11 @@ def bind_launch_context(
     if model_selection is not None and model_selection.harness_model_id is not None:
         effective_model = model_selection.harness_model_id
 
+    claude_native_agents_enabled = (
+        harness.id == HarnessId.CLAUDE
+        and project_has_claude_agent_copy(project_paths.project_root)
+    )
+
     if (
         runtime.composition_surface == LaunchCompositionSurface.SPAWN_PREPARE
         and harness.id == HarnessId.CLAUDE
@@ -1675,6 +1690,7 @@ def bind_launch_context(
             tools=resolved_request.tools,
             profile_tools=profile_tools_for_nested_deny,
             has_profile=has_profile_for_nested_deny,
+            allow_native_agent_tool=claude_native_agents_enabled,
         )
         if tools != resolved_request.tools:
             resolved_request = resolved_request.model_copy(
@@ -1682,6 +1698,14 @@ def bind_launch_context(
                     "tools": tools,
                 }
             )
+
+    if harness.id == HarnessId.CLAUDE:
+        tools = resolve_claude_native_agent_permission_request(
+            tools=resolved_request.tools,
+            has_claude_agent_copy=claude_native_agents_enabled,
+        )
+        if tools != resolved_request.tools:
+            resolved_request = resolved_request.model_copy(update={"tools": tools})
 
     is_primary_launch = runtime.composition_surface == LaunchCompositionSurface.PRIMARY
     inject_task_cwd_instruction = directory_context.should_inject_task_cwd_instruction(
@@ -1724,6 +1748,7 @@ def bind_launch_context(
         approval=resolved_request.execution_policy.approval,
         unsafe_no_permissions=runtime.unsafe_no_permissions,
         pi_harness_profile=pi_harness_profile,
+        claude_native_agents_enabled=claude_native_agents_enabled,
     )
     run_params = materialized.run_params
 

@@ -4,16 +4,25 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from meridian.lib.core.types import HarnessId
+from meridian.lib.harness.claude_preflight import CLAUDE_PARENT_ALLOWED_TOOLS_FLAG
+from meridian.lib.harness.projections.project_claude import project_claude_spec_to_cli_args
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.launch.context import build_launch_context
-from meridian.lib.launch.permissions import (
-    compute_nested_claude_deny_additions,
-)
+from meridian.lib.launch.launch_types import ResolvedLaunchSpec
+from meridian.lib.launch.permissions import compute_nested_claude_deny_additions
 from meridian.lib.launch.request import LaunchCompositionSurface, LaunchRuntime, SpawnRequest
+from meridian.lib.safety.permissions import PermissionConfig, ToolsPermissionResolver
 from tests.support.launch import stub_bundle_request_and_resolve
 
 if TYPE_CHECKING:
     from pytest import MonkeyPatch
+
+_CLAUDE_BUILTIN_AGENT_DENIES = {
+    "agent(Explore)": "deny",
+    "agent(Plan)": "deny",
+    "agent(General-purpose)": "deny",
+    "agent(general-purpose)": "deny",
+}
 
 
 def _build_launch_runtime(
@@ -100,6 +109,50 @@ def _build_context(
     return context.resolved_request
 
 
+def _tool_flag_entries(argv: tuple[str, ...], flag: str) -> tuple[str, ...]:
+    values: list[str] = []
+    for index, token in enumerate(argv):
+        if token == flag and index + 1 < len(argv):
+            values.extend(item for item in argv[index + 1].split(",") if item)
+        elif token.startswith(f"{flag}="):
+            values.extend(item for item in token.partition("=")[2].split(",") if item)
+    return tuple(values)
+
+
+def _build_spawn_prepare_preview(
+    *,
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+):
+    stub_bundle_request_and_resolve(
+        monkeypatch,
+        model="claude-sonnet-4-6",
+        harness=HarnessId.CLAUDE,
+        tools_allowed=("Bash", "Bash(meridian spawn *)", "Agent"),
+    )
+    request = SpawnRequest(
+        prompt="test",
+        model="claude-sonnet-4-6",
+        harness=HarnessId.CLAUDE.value,
+        tools={
+            "bash": "allow",
+            "bash(meridian spawn *)": "allow",
+            "agent": "allow",
+        },
+    )
+
+    return build_launch_context(
+        spawn_id="p-claude-native-agent-routing",
+        request=request,
+        runtime=_build_launch_runtime(
+            tmp_path=tmp_path,
+            composition_surface=LaunchCompositionSurface.SPAWN_PREPARE,
+        ),
+        harness_registry=get_default_harness_registry(),
+        dry_run=True,
+    )
+
+
 def test_spawn_prepare_claude_adds_full_implicit_deny_set(
     tmp_path: Path,
     monkeypatch: MonkeyPatch,
@@ -111,7 +164,12 @@ def test_spawn_prepare_claude_adds_full_implicit_deny_set(
         harness=HarnessId.CLAUDE,
     )
 
-    assert resolved_request.tools == {"*": "allow", "agent": "deny", "task": "deny"}
+    assert resolved_request.tools == {
+        "*": "allow",
+        "agent": "deny",
+        "task": "deny",
+        **_CLAUDE_BUILTIN_AGENT_DENIES,
+    }
 
 
 def test_compute_nested_deny_excludes_opted_out_agent_tool() -> None:
@@ -123,7 +181,7 @@ def test_compute_nested_deny_excludes_opted_out_agent_tool() -> None:
     assert set(deny_additions) == {"task"}
 
 
-def test_primary_surface_claude_does_not_add_implicit_deny(
+def test_primary_surface_claude_denies_agent_without_agent_copy(
     tmp_path: Path,
     monkeypatch: MonkeyPatch,
 ) -> None:
@@ -135,7 +193,12 @@ def test_primary_surface_claude_does_not_add_implicit_deny(
         tools={"*": "allow", "bash": "deny"},
     )
 
-    assert resolved_request.tools == {"*": "allow", "bash": "deny"}
+    assert resolved_request.tools == {
+        "*": "allow",
+        "bash": "deny",
+        "agent": "deny",
+        **_CLAUDE_BUILTIN_AGENT_DENIES,
+    }
 
 
 def test_spawn_prepare_non_claude_does_not_add_implicit_deny(
@@ -153,7 +216,7 @@ def test_spawn_prepare_non_claude_does_not_add_implicit_deny(
     assert resolved_request.tools == {"*": "allow", "bash": "deny"}
 
 
-def test_spawn_prepare_claude_skips_implicit_deny_when_allowlist_present(
+def test_spawn_prepare_claude_allowlist_still_denies_agent_without_agent_copy(
     tmp_path: Path,
     monkeypatch: MonkeyPatch,
 ) -> None:
@@ -171,7 +234,11 @@ def test_spawn_prepare_claude_skips_implicit_deny_when_allowlist_present(
         bundle_tools_allowed=("agent",),
     )
 
-    assert resolved_request.tools == {"agent": "allow", "task": "deny"}
+    assert resolved_request.tools == {
+        "agent": "deny",
+        "task": "deny",
+        **_CLAUDE_BUILTIN_AGENT_DENIES,
+    }
 
 
 def test_adhoc_allowed_tools_without_profile_still_denies_agent(
@@ -206,7 +273,11 @@ def test_adhoc_allowed_tools_without_profile_still_denies_agent(
         dry_run=True,
     )
 
-    assert context.resolved_request.tools == {"*": "deny", "agent": "deny"}
+    assert context.resolved_request.tools == {
+        "*": "deny",
+        "agent": "deny",
+        **_CLAUDE_BUILTIN_AGENT_DENIES,
+    }
 
 
 def test_adhoc_allowed_tools_respects_existing_explicit_deny_precedence(
@@ -245,6 +316,7 @@ def test_adhoc_allowed_tools_respects_existing_explicit_deny_precedence(
         "agent": "deny",
         "bash": "allow",
         "task": "deny",
+        **_CLAUDE_BUILTIN_AGENT_DENIES,
     }
 
 
@@ -254,3 +326,73 @@ def test_claude_keeps_only_nesting_sentinel_blocked_from_child_env() -> None:
     assert adapter.blocked_child_env_vars() == {"CLAUDECODE"}
 
 
+def test_spawn_prepare_claude_without_agent_copy_denies_generic_agent(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    (tmp_path / "mars.toml").write_text(
+        '[settings]\ntargets = [".claude"]\n',
+        encoding="utf-8",
+    )
+
+    preview = _build_spawn_prepare_preview(tmp_path=tmp_path, monkeypatch=monkeypatch)
+
+    allowed = _tool_flag_entries(preview.binding.argv, "--allowedTools")
+    disallowed = _tool_flag_entries(preview.binding.argv, "--disallowedTools")
+    assert allowed == ("Bash", "Bash(meridian spawn *)")
+    assert "Agent" in disallowed
+    assert "Agent(Explore)" in disallowed
+    assert "Agent(Plan)" in disallowed
+    assert "Agent(General-purpose)" in disallowed
+    assert "Agent(general-purpose)" in disallowed
+
+
+def test_spawn_prepare_claude_with_agent_copy_keeps_generic_agent(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    (tmp_path / "mars.toml").write_text(
+        '[settings]\ntargets = [".claude"]\n\n'
+        "[settings.agent_copy]\n"
+        'harnesses = ["claude"]\n',
+        encoding="utf-8",
+    )
+
+    preview = _build_spawn_prepare_preview(tmp_path=tmp_path, monkeypatch=monkeypatch)
+
+    allowed = _tool_flag_entries(preview.binding.argv, "--allowedTools")
+    disallowed = _tool_flag_entries(preview.binding.argv, "--disallowedTools")
+    assert allowed == ("Bash", "Bash(meridian spawn *)", "Agent")
+    assert "Agent" not in disallowed
+    assert "Agent(Explore)" in disallowed
+    assert "Agent(Plan)" in disallowed
+    assert "Agent(General-purpose)" in disallowed
+    assert "Agent(general-purpose)" in disallowed
+
+
+def test_parent_allowed_tools_cannot_readd_denied_agent() -> None:
+    resolver = ToolsPermissionResolver(
+        tools={
+            "bash": "allow",
+            "agent": "deny",
+            "agent(Explore)": "deny",
+        },
+        fallback_config=PermissionConfig(),
+    )
+    spec = ResolvedLaunchSpec(
+        harness=HarnessId.CLAUDE,
+        model="claude-sonnet-4-6",
+        permission_resolver=resolver,
+        extra_args=(CLAUDE_PARENT_ALLOWED_TOOLS_FLAG, "Agent,Agent(Explore),Write"),
+        claude_native_agents_enabled=False,
+    )
+
+    argv = tuple(project_claude_spec_to_cli_args(spec, base_command=("claude",)))
+
+    allowed = _tool_flag_entries(argv, "--allowedTools")
+    disallowed = _tool_flag_entries(argv, "--disallowedTools")
+    assert "Agent" not in allowed
+    assert "Agent(Explore)" not in allowed
+    assert "Write" in allowed
+    assert "Agent" in disallowed
+    assert "Agent(Explore)" in disallowed

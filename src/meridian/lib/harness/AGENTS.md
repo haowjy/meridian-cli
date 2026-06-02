@@ -38,11 +38,12 @@ Per-harness commands:
 - Claude subprocess: `claude -p --output-format stream-json --verbose -`
 - Claude connection: stdin/stdout NDJSON (not WebSocket despite `claude_ws.py` name)
 - **Claude built-in agent denial**: Meridian injects
-  `--disallowedTools Agent(Explore),Agent(Plan),Agent(General-purpose)` by default
-  so sessions use custom Meridian agents instead of Claude's built-in subagents.
-  Gated by `[harness.claude] allow_builtin_agents` (bool, default `false`).
-  The builtin denials merge into permission-derived `--disallowedTools` via
-  `dedupe_nonempty()` so exactly one flag is emitted.
+  `--disallowedTools Agent(Explore),Agent(Plan),Agent(General-purpose),Agent(general-purpose)`
+  by default so sessions use Meridian delegation instead of Claude's built-in
+  subagents. Generic `Agent` is allowed only when Mars effective config has
+  `[settings.agent_copy] harnesses = ["claude"]` and `.claude` is a target.
+  Parent/passthrough allowed-tool tails are merged into the managed projection;
+  Meridian's Agent denies stay authoritative.
 - Codex subprocess: `codex exec --json`; connection: `codex app-server` (real WebSocket, JSON-RPC 2.0)
 - OpenCode subprocess: `opencode run`; connection: `opencode serve` (HTTP+SSE)
 - Cursor subprocess: `cursor agent <prompt>` (stdout NDJSON, no connection path — subprocess-only)
@@ -83,8 +84,8 @@ unique — always check `event.harness_id`. `turn/completed` is Codex; OpenCode 
   Source of truth for what every adapter must implement.
 - `registry.py` — `HarnessRegistry`, `with_defaults()`. The global singleton.
 - `claude.py` / `codex.py` / `opencode.py` / `cursor.py` — concrete adapter implementations.
-  Claude adapter now threads `claude_allow_builtin_agents` from config → SpawnParams →
-  `ResolvedLaunchSpec.disallowed_tools`, mirroring the `pi.disable_managed_bash` pattern.
+  Claude adapter threads `ResolvedLaunchSpec.claude_native_agents_enabled` into projection so
+  parent inherited `Agent` grants cannot bypass the Mars `agent_copy` boundary.
 - `__init__.py` — `HARNESS_EXTENSION_TOUCHPOINTS` and `ensure_bootstrap()`.
   Read before adding a harness — lists every file that must be touched.
 - `semantics.py` — `terminal_outcome()`, `activity_transition()`, `clears_signal()`.

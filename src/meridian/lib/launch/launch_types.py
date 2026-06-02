@@ -106,6 +106,7 @@ class ResolvedLaunchSpec(BaseModel):
     # Claude only
     agents_payload: str | None = None
     prompt_file_path: str | None = None
+    claude_native_agents_enabled: bool = False
 
     # Claude + Codex
     user_turn_content: str | None = None

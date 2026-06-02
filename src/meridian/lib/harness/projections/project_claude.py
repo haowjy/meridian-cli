@@ -16,6 +16,13 @@ from meridian.lib.launch.text_utils import dedupe_nonempty, split_csv_entries
 
 logger = logging.getLogger(__name__)
 
+_CLAUDE_BUILTIN_AGENT_DENY_TOOLS: tuple[str, ...] = (
+    "Agent(Explore)",
+    "Agent(Plan)",
+    "Agent(General-purpose)",
+    "Agent(general-purpose)",
+)
+
 _PROJECTED_FIELDS: frozenset[str] = frozenset(
     {
         "agent_name",
@@ -32,6 +39,7 @@ _PROJECTED_FIELDS: frozenset[str] = frozenset(
         "permission_resolver",
         "prompt",
         "prompt_file_path",
+        "claude_native_agents_enabled",
         "user_turn_content",
     }
 )
@@ -128,6 +136,14 @@ def _has_flag(args: Sequence[str], flag: str) -> bool:
     return any(token == flag or token.startswith(f"{flag}=") for token in args)
 
 
+def _is_claude_agent_tool(tool: str) -> bool:
+    return tool == "Agent" or tool.startswith("Agent(")
+
+
+def _is_denied_tool(tool: str, denied_tools: set[str]) -> bool:
+    return tool in denied_tools or ("Agent" in denied_tools and _is_claude_agent_tool(tool))
+
+
 def _log_collision_if_needed(
     *,
     managed_flag: str,
@@ -176,10 +192,34 @@ def project_claude_spec_to_cli_args(
         command.extend(("--agent", str(spec.agent_name)))
 
     passthrough_tail, parent_allowed_tools = _split_internal_parent_allowed_tools(spec.extra_args)
+    projected_passthrough_tail, passthrough_allowed_tools, passthrough_disallowed_tools = (
+        _extract_claude_tool_flags(passthrough_tail)
+    )
+    passthrough_tail = tuple(projected_passthrough_tail)
 
     permission_flags = resolve_permission_flags(spec.permission_resolver, HarnessId.CLAUDE)
     permission_tail, allowed_tools, disallowed_tools = _extract_claude_tool_flags(permission_flags)
-    allowed_tools = dedupe_nonempty((*allowed_tools, *parent_allowed_tools))
+    if not spec.claude_native_agents_enabled:
+        allowed_tools = [tool for tool in allowed_tools if not _is_claude_agent_tool(tool)]
+        parent_allowed_tools = [
+            tool for tool in parent_allowed_tools if not _is_claude_agent_tool(tool)
+        ]
+        passthrough_allowed_tools = [
+            tool for tool in passthrough_allowed_tools if not _is_claude_agent_tool(tool)
+        ]
+    allowed_tools = dedupe_nonempty(
+        (*allowed_tools, *parent_allowed_tools, *passthrough_allowed_tools)
+    )
+    disallowed_tools = dedupe_nonempty(
+        (
+            *disallowed_tools,
+            *passthrough_disallowed_tools,
+            *_CLAUDE_BUILTIN_AGENT_DENY_TOOLS,
+        )
+    )
+    if disallowed_tools:
+        denied_tools = set(disallowed_tools)
+        allowed_tools = [tool for tool in allowed_tools if not _is_denied_tool(tool, denied_tools)]
     command.extend(permission_tail)
     if allowed_tools:
         command.extend(("--allowedTools", ",".join(allowed_tools)))

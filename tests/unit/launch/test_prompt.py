@@ -9,6 +9,7 @@ from meridian.lib.catalog.agent import AgentProfile
 from meridian.lib.launch.prompt import (
     build_agent_inventory_prompt,
     build_goal_instruction,
+    with_agent_inventory_guidance,
 )
 
 
@@ -71,8 +72,8 @@ def test_build_agent_inventory_prompt_renders_name_and_description_only(
 
     assert prompt is not None
     lines = prompt.splitlines()
-    assert lines[0] == "# Meridian Agents"
-    assert lines[4] == "## Subagent"
+    assert "# Meridian Agents" in lines
+    assert "## Subagent" in lines
     assert "- alpha: Primary reviewer" in lines
     assert "- zeta: No model metadata" in lines
 
@@ -104,7 +105,10 @@ def test_build_agent_inventory_prompt_groups_by_mode(
 
     assert prompt is not None
     lines = prompt.splitlines()
-    assert lines[4:] == [
+    heading_index = lines.index("# Meridian Agents")
+    section_start = lines.index("## Primary")
+    assert section_start > heading_index
+    assert lines[section_start:] == [
         "## Primary",
         "- orchestrator: Primary",
         "",
@@ -112,6 +116,47 @@ def test_build_agent_inventory_prompt_groups_by_mode(
         "- coder: Worker",
     ]
     assert "Mode:" not in prompt
+
+
+def test_build_agent_inventory_prompt_puts_delegation_guidance_next_to_heading(
+    tmp_path: Path,
+) -> None:
+    prompt = build_agent_inventory_prompt(
+        project_root=tmp_path,
+        agents=[
+            _profile(
+                tmp_path=tmp_path,
+                name="reviewer",
+                description="Review work",
+            )
+        ],
+    )
+
+    assert prompt is not None
+    lines = prompt.splitlines()
+    heading_index = lines.index("# Meridian Agents")
+    lead_in = "\n".join(lines[heading_index + 1 :])
+    assert "Meridian spawn menu" in lead_in
+    assert "system temp directory" in lead_in
+    assert "meridian spawn -a <agent> --prompt-file <handoff-file>" in lead_in
+    assert "meridian spawn wait" in lead_in
+    assert "Claude native `Agent`" in lead_in
+
+
+def test_agent_inventory_guidance_inserts_even_when_example_appears_elsewhere() -> None:
+    rendered = with_agent_inventory_guidance(
+        "Existing note: `meridian spawn -a <agent> --prompt-file /tmp/<file>.md`.\n\n"
+        "# Meridian Agents\n\n"
+        "Installed Meridian agents available at launch time.\n\n"
+        "## Subagent\n"
+        "- reviewer: Review work"
+    )
+
+    lines = rendered.splitlines()
+    heading_index = lines.index("# Meridian Agents")
+    lead_in = "\n".join(lines[heading_index + 1 : lines.index("## Subagent")])
+    assert "Meridian spawn menu" in lead_in
+    assert "meridian spawn -a <agent> --prompt-file <handoff-file>" in lead_in
 
 
 def test_build_agent_inventory_prompt_excludes_non_model_invocable_agents(

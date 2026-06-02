@@ -67,6 +67,18 @@ _PRIOR_OUTPUT_OPEN = "<prior-run-output>"
 _PRIOR_OUTPUT_CLOSE = "</prior-run-output>"
 _ESCAPED_PRIOR_OUTPUT_OPEN = "<\\prior-run-output>"
 _ESCAPED_PRIOR_OUTPUT_CLOSE = "<\\/prior-run-output>"
+_AGENT_INVENTORY_HEADING = "# Meridian Agents"
+_AGENT_DELEGATION_GUIDANCE_MARKER = "Use the Meridian agents list as a Meridian spawn menu"
+_AGENT_DELEGATION_GUIDANCE = (
+    "Use the Meridian agents list as a Meridian spawn menu, not as arbitrary "
+    "harness-native agent choices.\n\n"
+    "Prefer Meridian spawn for most subagent work: write the handoff to a file "
+    "in the system temp directory, then run "
+    "`meridian spawn -a <agent> --prompt-file <handoff-file>`. If launching with "
+    "`--bg`, drain results with `meridian spawn wait`.\n\n"
+    "Use Claude native `Agent` only when the task explicitly calls for a "
+    "Claude-native agent/model or the user asks for Claude-specific delegation."
+)
 
 
 def dedupe_skill_contents(skills: Sequence[SkillContent]) -> tuple[SkillContent, ...]:
@@ -245,6 +257,41 @@ def _render_agent_line(agent: AgentProfile) -> str:
     return f"- {agent.name}: {description}" if description else f"- {agent.name}"
 
 
+def with_agent_inventory_guidance(inventory_prompt: str) -> str:
+    """Ensure delegation guidance leads into the Meridian Agents inventory."""
+
+    prompt = inventory_prompt.strip()
+    if not prompt:
+        return prompt
+
+    lines = prompt.splitlines()
+    for index, line in enumerate(lines):
+        if line.strip() == _AGENT_INVENTORY_HEADING:
+            next_section_index = next(
+                (
+                    offset
+                    for offset, candidate in enumerate(lines[index + 1 :], start=index + 1)
+                    if candidate.startswith("## ")
+                ),
+                len(lines),
+            )
+            heading_lead_in = "\n".join(lines[index + 1 : next_section_index])
+            if _AGENT_DELEGATION_GUIDANCE_MARKER in heading_lead_in:
+                return prompt
+            insert_at = index + 1
+            if insert_at < len(lines) and not lines[insert_at].strip():
+                insert_at += 1
+            return "\n".join(
+                (
+                    *lines[:insert_at],
+                    _AGENT_DELEGATION_GUIDANCE,
+                    "",
+                    *lines[insert_at:],
+                )
+            ).strip()
+    return prompt
+
+
 def build_context_prompt(
     *,
     project_root: Path,
@@ -338,7 +385,7 @@ def build_agent_inventory_prompt(
     _ = alias_catalog
 
     lines = [
-        "# Meridian Agents",
+        _AGENT_INVENTORY_HEADING,
         "",
         "Installed Meridian agents available at launch time.",
     ]
@@ -356,7 +403,7 @@ def build_agent_inventory_prompt(
         for agent in subagent_agents:
             lines.append(_render_agent_line(agent))
 
-    return "\n".join(lines).strip()
+    return with_agent_inventory_guidance("\n".join(lines))
 
 
 def strip_stale_report_paths(input_text: str) -> str:

@@ -5,12 +5,15 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added
-- Claude adapter denies built-in subagents (`Agent(Explore)`, `Agent(Plan)`, `Agent(General-purpose)`) by default via `--disallowedTools` injection. Opt out with `[claude] allow_builtin_agents = true` in `meridian.toml`.
+- Claude launches deny built-in subagents (`Agent(Explore)`, `Agent(Plan)`, `Agent(General-purpose)`) by default.
 
 ### Changed
+- Bump bundled `mars-agents` to 0.7.12 — `[settings.agent_copy]` selective native agent emission under `MERIDIAN_MANAGED` / `agent_emission = "never"`.
+- `# Meridian Agents` prompt block now frames listed agents as `meridian spawn` targets with system-temp prompt-file handoff.
 - Pi `meridian-spawn-watch` correlates `/spawn` and completion notifications through managed-bash `originating_bash_id`, deleting per-child/per-candidate spawn-directory watchers.
 
 ### Fixed
+- Claude generic `Agent` grant now follows Mars `[settings.agent_copy]`: no Claude agent copy means Meridian keeps `meridian spawn` allowed but blocks Claude-native delegation by default.
 - Codex primary `--from`/`-f`/`-p` now forwards primary user-turn content into the attached TUI; empty launches keep Codex's bootstrap-only idle default.
 - Primary `meridian --from REF` now inherits source work item when no `--work` or ambient work is active.
 - Root primary launches no longer treat spaced `--prompt-file PATH` values as unknown commands during startup classification.
