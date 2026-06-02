@@ -99,8 +99,20 @@ Meridian's spawn store persists the value as `originating_bash_id` on the child 
 record. `meridian-spawn-watch` reads disk state and uses that field to scope `/spawn`
 rows and notifications to the current Pi session.
 
-Do not reintroduce argv parsing as the authority. Env propagation plus spawn-record writes
-are the stable bridge.
+**Sidecar origin tracking (`spawn_origins.ts`).** A separate sidecar file
+(`pi-bash/<spawn-id>/spawn-origins.json`) bridges gaps in the env-propagation chain.
+`managed-bash` calls `rememberSpawnOriginBashIds()` at process start to record the
+bash ID in this sidecar. `meridian-spawn-watch` reads `readSpawnOriginBashIds()` at
+startup to discover bash IDs that may not yet appear in `bash-records.json` (due to
+atomic write timing) or that were written by concurrent bash processes. The sidecar
+serializes concurrent writes through a per-file promise chain so no origin is lost.
+
+This two-channel design (env propagation + sidecar) means spawn correlation works even
+when a bash process starts before `bash-records.json` is persisted, or when a spawn
+state.json appears on disk before the bash record that launched it.
+
+Do not reintroduce argv parsing as the authority. Env propagation plus sidecar plus
+spawn-record writes are the stable bridge.
 
 ### Build Invariant
 
