@@ -137,8 +137,7 @@ def test_build_agent_inventory_prompt_puts_delegation_guidance_next_to_heading(
     heading_index = lines.index("# Meridian Agents")
     lead_in = "\n".join(lines[heading_index + 1 :])
     assert "Meridian spawn menu" in lead_in
-    assert "system temp directory" in lead_in
-    assert "meridian spawn -a <agent> --prompt-file <handoff-file>" in lead_in
+    assert "meridian spawn -a <agent> --prompt-file /tmp/<file>.md" in lead_in
     assert "meridian spawn wait" in lead_in
     assert "Claude native `Agent`" in lead_in
 
@@ -156,7 +155,7 @@ def test_agent_inventory_guidance_inserts_even_when_example_appears_elsewhere() 
     heading_index = lines.index("# Meridian Agents")
     lead_in = "\n".join(lines[heading_index + 1 : lines.index("## Subagent")])
     assert "Meridian spawn menu" in lead_in
-    assert "meridian spawn -a <agent> --prompt-file <handoff-file>" in lead_in
+    assert "meridian spawn -a <agent> --prompt-file /tmp/<file>.md" in lead_in
 
 
 def test_build_agent_inventory_prompt_excludes_non_model_invocable_agents(

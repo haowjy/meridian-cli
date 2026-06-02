@@ -68,14 +68,16 @@ _PRIOR_OUTPUT_CLOSE = "</prior-run-output>"
 _ESCAPED_PRIOR_OUTPUT_OPEN = "<\\prior-run-output>"
 _ESCAPED_PRIOR_OUTPUT_CLOSE = "<\\/prior-run-output>"
 _AGENT_INVENTORY_HEADING = "# Meridian Agents"
-_AGENT_DELEGATION_GUIDANCE_MARKER = "Use the Meridian agents list as a Meridian spawn menu"
+_AGENT_DELEGATION_GUIDANCE_MARKER = (
+    "meridian spawn -a <agent> --prompt-file /tmp/<file>.md"
+)
 _AGENT_DELEGATION_GUIDANCE = (
     "Use the Meridian agents list as a Meridian spawn menu, not as arbitrary "
     "harness-native agent choices.\n\n"
-    "Prefer Meridian spawn for most subagent work: write the handoff to a file "
-    "in the system temp directory, then run "
-    "`meridian spawn -a <agent> --prompt-file <handoff-file>`. If launching with "
-    "`--bg`, drain results with `meridian spawn wait`.\n\n"
+    "Prefer Meridian spawn for most subagent work: write the handoff to "
+    "`/tmp/<file>.md`, then run "
+    "`meridian spawn -a <agent> --prompt-file /tmp/<file>.md`. If launching "
+    "with `--bg`, drain results with `meridian spawn wait`.\n\n"
     "Use Claude native `Agent` only when the task explicitly calls for a "
     "Claude-native agent/model or the user asks for Claude-specific delegation."
 )
