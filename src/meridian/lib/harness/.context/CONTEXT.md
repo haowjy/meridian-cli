@@ -39,9 +39,12 @@ Per-harness mapping:
 - Claude subprocess: `claude -p --output-format stream-json --verbose -`
 - Claude connection: `claude -p --input-format stream-json --output-format stream-json --verbose` (stdin/stdout NDJSON, not WebSocket despite `claude_ws.py` name)
 - **Claude built-in agent denial**: Meridian injects `--disallowedTools
-  Agent(Explore),Agent(Plan),Agent(general-purpose)` by default. Gated by
-  `[harness.claude] allow_builtin_agents` (bool, default `false`). The denials
-  merge into permission-derived `--disallowedTools` via `dedupe_nonempty()`.
+  Agent(Explore),Agent(Plan),Agent(General-purpose),Agent(general-purpose)`
+  unconditionally. The denials merge into permission-derived `--disallowedTools` via
+  `dedupe_nonempty()`. Generic
+  `Agent` is gated by Mars `[settings.agent_copy]`: allowed only when
+  `harnesses = ["claude"]` and `.claude` is a target. Parent/passthrough allowed-tool
+  tails are merged into the managed projection; Meridian's Agent denies stay authoritative.
 - Codex subprocess: `codex exec --json`; connection: `codex app-server` (real WebSocket, JSON-RPC 2.0)
 - OpenCode subprocess: `opencode run`; connection: `opencode serve` (HTTP+SSE)
 - Cursor subprocess: `cursor agent <prompt>` (stdout NDJSON, no connection path — subprocess-only)
@@ -188,25 +191,30 @@ it's captured. This is the minimum-intrusive mechanism for an otherwise unobserv
 value. Windows does not support PTY — Claude primary uses a fallback detection path
 (`session_detection.py`) on Windows.
 
-### Claude: Built-in Subagent Denial
+### Claude: Native Agent Routing Boundary
 
-Claude Code ships with three built-in subagents: Explore, Plan, and general-purpose.
-These conflict with Meridian's own agent system. Meridian injects
-`--disallowedTools Agent(Explore),Agent(Plan),Agent(general-purpose)` by default
-so Claude sessions use custom Meridian agents exclusively. The behavior is gated by
-`[harness.claude] allow_builtin_agents` (bool, default `false`).
+Claude Code ships with three built-in subagents (Explore, Plan, General-purpose) plus
+a generic `Agent` tool. Meridian's policy distinguishes between these:
 
-The flag is resolved in `bind_launch_context()` via
-`resolve_claude_allow_builtin_agents_for_launch()`, threaded through
-`SpawnParams.claude_allow_builtin_agents` → `ResolvedLaunchSpec.disallowed_tools`,
-and projected by `project_claude.py`. The builtin denials merge into
-permission-derived `--disallowedTools` so exactly one flag is emitted.
+- **Built-in agents are always denied.** Meridian injects
+  `--disallowedTools Agent(Explore),Agent(Plan),Agent(General-purpose),Agent(general-purpose)`.
+  There is no config toggle — built-ins are a Meridian platform policy.
 
-This is implemented as a Meridian platform policy (harness adapter injection),
-not as a per-agent `disallowed-tools` field. This means individual agent profiles
-no longer need to carry deny entries like
-`disallowed-tools: [Agent(Explore), Agent(Plan), Agent(general-purpose)]` —
-they're inherited from the harness adapter.
+- **Generic `Agent` follows the Mars agent-copy boundary.** Meridian reads
+  `mars.toml` to check whether `[settings.agent_copy] harnesses = ["claude"]` AND
+  `.claude` is in `targets`. If both hold, generic `Agent` is allowed (Claude's
+  native agent surface is Meridian-owned through agent copy). Otherwise, generic
+  `Agent` is denied by default and delegation routes through `meridian spawn`.
+
+The detection runs in `bind_launch_context()` via `project_has_claude_agent_copy()` in
+`permissions.py`, which reads `mars.toml` and `mars.local.toml`. The result flows into
+`ResolvedLaunchSpec.claude_native_agents_enabled` and is projected by
+`project_claude.py`. The projection strips `Agent` and `Agent(...)` from allowed-tools
+when `claude_native_agents_enabled=False`, including parent-inherited allowed-tool tails.
+
+This is implemented as a Meridian platform policy (harness adapter injection), not as
+a per-agent `tools:` field. Agent profiles do not need to carry `agent: deny` entries —
+the denial is inherited from the harness adapter when agent copy is absent.
 
 ### Claude: System-Prompt File Channel
 

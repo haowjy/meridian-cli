@@ -70,9 +70,12 @@ Claude profile includes:
 - `[harness.claude] model` — default model (string, env: `MERIDIAN_HARNESS_MODEL_CLAUDE`)
 - `[harness.claude] wait_yield_seconds` — polling interval (float, env:
   `MERIDIAN_HARNESS_WAIT_YIELD_SECONDS_CLAUDE`)
-- `[harness.claude] allow_builtin_agents` — whether to permit Claude's built-in
-  subagents (Explore, Plan, general-purpose). Default `false` — Meridian denies them
-  so sessions use custom Meridian agents exclusively. Set `true` to opt out.
+- `[harness.claude] allow_builtin_agents` — parsed Claude harness field from
+  config release plumbing; Claude native Agent routing is still enforced by the
+  harness projection.
+- Claude native Agent routing is not a `meridian.toml` harness policy. Built-in
+  Claude agents stay denied; generic `Agent` follows Mars `[settings.agent_copy]`
+  with `.claude` target materialization.
 
 ## Depth
 

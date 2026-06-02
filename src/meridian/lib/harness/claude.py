@@ -377,7 +377,9 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         user_turn_content = getattr(run, "user_turn_content", None)
         disallowed_tools: tuple[str, ...] = ()
         if not run.claude_allow_builtin_agents:
-            disallowed_tools = ("Agent(Explore),Agent(Plan),Agent(general-purpose)",)
+            disallowed_tools = (
+                "Agent(Explore),Agent(Plan),Agent(General-purpose),Agent(general-purpose)",
+            )
         return ResolvedLaunchSpec(
             harness=HarnessId.CLAUDE,
             model=str(run.model).strip() if run.model else None,

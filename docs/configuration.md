@@ -167,6 +167,39 @@ models_cache_ttl_hours = 24
 and `default_harness` provide project routing defaults used when no stronger
 CLI/env/profile setting is present.
 
+### Native agent copies
+
+Meridian normally delegates through `meridian spawn` and reads agents from
+`.mars/agents/`. During `meridian mars sync`, Meridian sets
+`MERIDIAN_MANAGED=1`; Mars therefore suppresses harness-native agent copies by
+default so `.claude/agents/` and similar directories do not compete with
+Meridian routing.
+
+Use `[settings.agent_copy]` when you intentionally want selected harness-native
+copies under managed mode:
+
+```toml
+[settings]
+targets = [".claude", ".codex"]
+agent_emission = "never"  # optional; agent_copy can still emit selected copies
+
+[settings.agent_copy]
+harnesses = ["claude"]
+```
+
+Each listed harness must also have an effective managed target (for Claude,
+`.claude`, from `settings.targets` or legacy `managed_root` when `targets` is
+unset). Mars then materializes only qualifying agents for that harness;
+`.mars/agents/` remains the canonical Meridian spawn source.
+`agent_emission = "always"` is broader and emits all native agent copies.
+
+For Claude launches, Meridian uses the same boundary for native `Agent()`
+delegation. Generic Claude `Agent` is allowed only when Mars has Claude
+`agent_copy` enabled and `.claude` is an effective managed target; otherwise
+the launch denies native `Agent` and guides delegation back to `meridian spawn`.
+Claude built-in
+agents (`Explore`, `Plan`, `General-purpose` / `general-purpose`) stay denied.
+
 ### Model aliases
 
 Project-local aliases live under `[models.<alias>]`:

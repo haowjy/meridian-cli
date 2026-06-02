@@ -45,6 +45,7 @@ _PROJECTED_FIELDS: frozenset[str] = _ACCOUNTED_FIELDS
 _DELEGATED_FIELDS: frozenset[str] = frozenset(
     {
         "agents_payload",
+        "claude_native_agents_enabled",
         "base_instructions",
         "developer_instructions",
         "harness",

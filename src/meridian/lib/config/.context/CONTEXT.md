@@ -111,12 +111,14 @@ time. These follow the same pattern: ambient config snapshot → launch-time env
 
 - `resolve_pi_harness_profile_for_launch()` — resolves `[harness.pi]` (managed bash,
   load_all_extensions, background_tasks, spawn_watch)
-- `resolve_claude_allow_builtin_agents_for_launch()` — resolves
-  `[harness.claude] allow_builtin_agents` from the launch config snapshot, falling
-  back to `load_config()` if the snapshot is absent or invalid
 
-Both are called from `bind_launch_context()` in `lib/launch/context.py` and threaded
+Called from `bind_launch_context()` in `lib/launch/context.py` and threaded
 into the harness adapter's `resolve_launch_spec()`.
+
+Claude native Agent routing does not use a `meridian.toml` harness option.
+Built-in Claude agents stay denied unconditionally; generic `Agent` permission
+follows Mars `[settings.agent_copy]` via `project_has_claude_agent_copy()` in
+`lib/launch/permissions.py`.
 
 ## Schema Metadata (`schema.py`)
 

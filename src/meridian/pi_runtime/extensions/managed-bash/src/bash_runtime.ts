@@ -10,6 +10,7 @@ import {
   resolveBashRecordsPath,
 } from "../../shared/pi_state_paths";
 import type { BashRecord, BashRecordsFile, BashStatus } from "../../shared/schemas";
+import { rememberSpawnOriginBashIds } from "../../shared/spawn_origins";
 import { BashLogStore, type BashLogPaths } from "./bash_log_store";
 
 export type BashParams = {
@@ -356,6 +357,7 @@ export class BashRuntime {
     });
     record.child = child;
     record.pid = child.pid ?? null;
+    void rememberSpawnOriginBashIds([bashId], this.spawnId).catch(() => undefined);
     this.attachOutput(record, child, onData);
 
     child.once("error", async (error) => {

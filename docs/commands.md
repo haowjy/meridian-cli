@@ -369,7 +369,7 @@ only. Those events are not visible through `tail`, `query`, or `status`.
 | ------- | ----------- |
 | `meridian mars init [--link DIR]` | Initialize mars project (`mars.toml`) and optionally create the initial link target in the same command |
 | `meridian mars add SOURCE` | Add an agent/skill package source |
-| `meridian mars sync` | Compile packages into `.mars/`; emit skills to native harness dirs |
+| `meridian mars sync` | Compile packages into `.mars/`; materialize configured harness targets |
 | `meridian mars link DIR` | Link compiled output into a harness tool directory |
 | `meridian mars list` | Show installed agents (grouped by mode) and skills |
 | `meridian mars upgrade` | Fetch latest versions and sync |
@@ -396,7 +396,9 @@ hooks, harness defaults, and primary-session defaults.
 
 `meridian bootstrap --add ... --link ...` runs this same setup flow, then launches a guided bootstrap primary session.
 
-`meridian mars sync` automatically sets `MERIDIAN_MANAGED=1` in the mars subprocess environment. Mars uses this signal to suppress native agent emission to harness directories — agents are read by Meridian from `.mars/agents/`, not duplicated into `.claude/agents/` etc.
+`meridian mars sync` automatically sets `MERIDIAN_MANAGED=1` in the mars subprocess environment. Mars uses this signal to suppress native agent emission to harness directories — agents are read by Meridian from `.mars/agents/`, not duplicated into `.claude/agents/` etc. `[settings.agent_copy] harnesses = ["claude"]` is the selective override when `.claude` is an effective managed target; it materializes qualifying Claude-native copies even under managed mode or `agent_emission = "never"`.
+
+In Claude launches, native `Agent()` follows that same boundary: generic `Agent` is allowed only with Mars Claude `agent_copy` plus an effective `.claude` managed target. Without it, use `meridian spawn`. Claude built-ins (`Explore`, `Plan`, `General-purpose` / `general-purpose`) stay denied.
 
 See [agent-profiles.md](agent-profiles.md) for the agent profile format including `model-policies`, `no-fallback`, and `mode`. Legacy `fanout` and `fallback-order` are rejected; migrate to `model-policies` list order + `no-fallback: true`.
 

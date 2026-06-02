@@ -4,6 +4,7 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
+import { readSpawnOriginBashIds } from "../../shared/spawn_origins";
 import { BashRuntime } from "./bash_runtime";
 
 const savedEnv: Record<string, string | undefined> = {};
@@ -21,10 +22,10 @@ function restoreEnv(): void {
   }
 }
 
-async function waitFor(predicate: () => boolean, timeoutMs = 1000): Promise<void> {
+async function waitFor(predicate: () => boolean | Promise<boolean>, timeoutMs = 1000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    if (predicate()) return;
+    if (await predicate()) return;
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
   throw new Error("timed out waiting for condition");
@@ -53,6 +54,7 @@ describe("BashRuntime task pings", () => {
         undefined,
       );
       const bashId = (result as { bash_id: string }).bash_id;
+      await waitFor(async () => (await readSpawnOriginBashIds("p-test-ping")).has(bashId));
       await waitFor(() => pings.length === 1);
       expect(pings).toEqual([bashId]);
 

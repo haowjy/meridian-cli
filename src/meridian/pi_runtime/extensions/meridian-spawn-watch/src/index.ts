@@ -1,10 +1,13 @@
 import { existsSync, mkdirSync, readdirSync, watch, type FSWatcher } from "node:fs";
+import { readFile } from "node:fs/promises";
 import path from "node:path";
 
 import type { ExtensionAPI, Theme } from "@earendil-works/pi-coding-agent";
 
 import { readJsonFile, writeJsonAtomic } from "../../shared/json_file";
 import { runMeridianCommand } from "../../shared/meridian_cli";
+import { extractSpawnIdFromLauncherLog, isSpawnLauncherCommand } from "../../shared/meridian_spawn";
+import { readSpawnOriginBashIds } from "../../shared/spawn_origins";
 import {
   currentSpawnIdFromEnv,
   resolveBashRecordsPath,
@@ -14,7 +17,7 @@ import {
   resolvePiBashDir,
   resolveSpawnsDir,
 } from "../../shared/pi_state_paths";
-import type { BashRecordsFile, ObservedSpawnsFile, SpawnStateFile } from "../../shared/schemas";
+import type { BashRecord, BashRecordsFile, ObservedSpawnsFile, SpawnStateFile } from "../../shared/schemas";
 import { isTerminalBashStatus, isTerminalSpawnStatus } from "../../shared/schemas";
 import { openLogOverlay } from "../../shared/log_overlay";
 import {
@@ -51,11 +54,12 @@ const DEBOUNCE_MS = 200;
 const MAX_WAVE_WAIT_MS = 2_000;
 const BASH_SPAWN_CORRELATION_GRACE_MS = 2_500;
 const FALLBACK_SCAN_MS = 5_000;
+const SPAWN_DISCOVERY_SCAN_MS = 500;
+const SPAWN_DISCOVERY_POLL_MS = 15_000;
 
-class SpawnWatchRuntime {
+export class SpawnWatchRuntime {
   private readonly currentSpawnId = currentSpawnIdFromEnv();
   private readonly spawnsDir = resolveSpawnsDir();
-  private readonly ownSpawnDir = path.join(this.spawnsDir, this.currentSpawnId);
   private readonly bashDir = resolvePiBashDir(this.currentSpawnId);
   private readonly bashRecordsPath = resolveBashRecordsPath(this.currentSpawnId);
   private readonly clearedPath = resolveClearedSpawnsPath(this.currentSpawnId);
@@ -63,18 +67,21 @@ class SpawnWatchRuntime {
   private readonly markerPath = resolveLastNotificationPath(this.currentSpawnId);
   private readonly pending = new Map<string, NotificationItem>();
   private readonly clearedSpawnIds = new Set<string>();
+  private readonly originBashIds = new Set<string>();
+  private readonly missingStateSpawnIds = new Set<string>();
+  private readonly missingStateFirstSeenMs = new Map<string, number>();
+  private readonly abandonedMissingStateSpawnIds = new Set<string>();
+  private readonly expectedSpawnIdsByBashId = new Map<string, Set<string>>();
   private clearedLoaded = false;
-  private readonly childSpawnIds = new Set<string>();
-  private readonly childWatchers = new Map<string, FSWatcher>();
-  private readonly candidateWatchers = new Map<string, FSWatcher>();
   private watchers: Array<FSWatcher | null> = [];
   private debounce: NodeJS.Timeout | null = null;
   private maxWave: NodeJS.Timeout | null = null;
   private scanScheduled: NodeJS.Timeout | null = null;
   private fallbackScanInterval: NodeJS.Timeout | null = null;
+  private discoveryScanInterval: NodeJS.Timeout | null = null;
+  private discoveryPollTimer: NodeJS.Timeout | null = null;
   private readonly fallbackScanReasons = new Set<string>();
   private readonly bashGraceTimers = new Map<string, NodeJS.Timeout>();
-  private topLevelWatcherAlive = false;
   private running = false;
   private scanRunning = false;
   private scanAgain = false;
@@ -84,25 +91,18 @@ class SpawnWatchRuntime {
   start(): void {
     this.running = true;
     mkdirSync(this.spawnsDir, { recursive: true });
-    mkdirSync(this.ownSpawnDir, { recursive: true });
     mkdirSync(this.bashDir, { recursive: true });
 
     const topLevelWatcher = this.watchTopLevelSpawnsDir();
     this.addWatcher(topLevelWatcher);
-    this.setTopLevelWatcherAlive(topLevelWatcher !== null);
-
-    const ownSpawnWatcher = this.watchDirectory(this.ownSpawnDir, () => this.requestScan(), {
-      onError: () => this.enableFallbackScan("own-spawn-dir"),
-    });
-    this.addWatcher(ownSpawnWatcher);
-    if (!ownSpawnWatcher) this.enableFallbackScan("own-spawn-dir");
+    if (!topLevelWatcher) this.enableFallbackScan("spawns-dir");
 
     const bashWatcher = this.watchDirectory(this.bashDir, () => this.requestScan(), {
       onError: () => this.enableFallbackScan("bash-dir"),
     });
     this.addWatcher(bashWatcher);
     if (!bashWatcher) this.enableFallbackScan("bash-dir");
-    void this.discoverExistingChildren().then(() => this.scan());
+    void this.scan();
   }
 
   stop(): void {
@@ -111,35 +111,30 @@ class SpawnWatchRuntime {
       if (watcher) this.closeWatcher(watcher, "session watcher");
     }
     this.watchers = [];
-    for (const watcher of this.childWatchers.values()) this.closeWatcher(watcher, "child spawn watcher");
-    this.childWatchers.clear();
-    for (const watcher of this.candidateWatchers.values()) this.closeWatcher(watcher, "candidate spawn watcher");
-    this.candidateWatchers.clear();
     if (this.debounce) clearTimeout(this.debounce);
     if (this.maxWave) clearTimeout(this.maxWave);
     if (this.scanScheduled) clearTimeout(this.scanScheduled);
     if (this.fallbackScanInterval) clearInterval(this.fallbackScanInterval);
+    if (this.discoveryScanInterval) clearInterval(this.discoveryScanInterval);
+    if (this.discoveryPollTimer) clearTimeout(this.discoveryPollTimer);
     this.fallbackScanInterval = null;
+    this.discoveryScanInterval = null;
+    this.discoveryPollTimer = null;
     this.fallbackScanReasons.clear();
-    this.topLevelWatcherAlive = false;
     for (const timer of this.bashGraceTimers.values()) clearTimeout(timer);
     this.bashGraceTimers.clear();
   }
 
   async rows(discover = false): Promise<SpawnStateFile[]> {
     await this.loadClearedSpawnIds();
-    if (discover) await this.discoverExistingChildren();
-    return (await this.readChildSpawnStates()).filter(
-      (state) => state.parent_id === this.currentSpawnId && !this.isClearedTerminalSpawn(state),
-    );
+    if (discover) this.discoverMissingSpawnStates();
+    return (await this.readOriginSpawnStates()).filter((state) => !this.isClearedTerminalSpawn(state));
   }
 
   async clearFinished(): Promise<number> {
     await this.loadClearedSpawnIds();
-    await this.discoverExistingChildren();
-    const terminalStates = (await this.readChildSpawnStates()).filter(
+    const terminalStates = (await this.readOriginSpawnStates()).filter(
       (state) =>
-        state.parent_id === this.currentSpawnId &&
         isTerminalSpawnStatus(String(state.status ?? "")) &&
         !this.clearedSpawnIds.has(state.id),
     );
@@ -156,85 +151,15 @@ class SpawnWatchRuntime {
     let watcher: FSWatcher | null = null;
     watcher = this.watchDirectory(
       this.spawnsDir,
-      (_eventType, filename) => {
-        const name = filename ? path.basename(filename.toString()) : "";
-        if (name.startsWith("p")) {
-          void this.discoverChild(name).then((adopted) => {
-            if (!adopted) this.watchCandidateSpawnDir(name);
-            this.requestScan();
-          });
-          return;
-        }
-        this.requestScan();
-      },
+      () => this.requestScan(),
       {
         onError: () => {
           if (watcher) this.removeWatcher(watcher);
-          this.setTopLevelWatcherAlive(false);
+          this.enableFallbackScan("spawns-dir");
         },
       },
     );
     return watcher;
-  }
-
-  private watchChildSpawnDir(spawnId: string): void {
-    const fallbackReason = `child:${spawnId}`;
-    if (this.childWatchers.has(spawnId) || this.fallbackScanReasons.has(fallbackReason)) return;
-    const dir = path.join(this.spawnsDir, spawnId);
-    if (!existsSync(dir)) return;
-    let watcher: FSWatcher | null = null;
-    watcher = this.watchDirectory(
-      dir,
-      (_eventType, filename) => {
-        const name = filename?.toString() ?? "";
-        if (!name || name === "state.json") this.requestScan();
-      },
-      {
-        onError: () => {
-          if (watcher && this.childWatchers.get(spawnId) === watcher) this.childWatchers.delete(spawnId);
-          this.enableFallbackScan(fallbackReason);
-        },
-      },
-    );
-    if (!watcher) {
-      this.enableFallbackScan(fallbackReason);
-      return;
-    }
-    this.childWatchers.set(spawnId, watcher);
-  }
-
-  private watchCandidateSpawnDir(spawnId: string): void {
-    const fallbackReason = `candidate:${spawnId}`;
-    if (
-      this.childSpawnIds.has(spawnId) ||
-      this.candidateWatchers.has(spawnId) ||
-      this.fallbackScanReasons.has(fallbackReason)
-    ) {
-      return;
-    }
-    const dir = path.join(this.spawnsDir, spawnId);
-    if (!existsSync(dir)) return;
-    let watcher: FSWatcher | null = null;
-    watcher = this.watchDirectory(
-      dir,
-      (_eventType, filename) => {
-        const name = filename?.toString() ?? "";
-        if (!name || name === "state.json") void this.resolveCandidate(spawnId);
-      },
-      {
-        onError: () => {
-          if (watcher && this.candidateWatchers.get(spawnId) === watcher) this.candidateWatchers.delete(spawnId);
-          this.enableFallbackScan(fallbackReason);
-        },
-      },
-    );
-    if (!watcher) {
-      this.enableFallbackScan(fallbackReason);
-      void this.resolveCandidate(spawnId);
-      return;
-    }
-    this.candidateWatchers.set(spawnId, watcher);
-    void this.resolveCandidate(spawnId);
   }
 
   private watchDirectory(
@@ -266,20 +191,10 @@ class SpawnWatchRuntime {
     this.watchers = this.watchers.filter((candidate) => candidate !== watcher);
   }
 
-  private setTopLevelWatcherAlive(alive: boolean): void {
-    this.topLevelWatcherAlive = alive;
-    if (alive) {
-      this.disableFallbackScan("top-level-spawns-dir");
-      return;
-    }
-    this.enableFallbackScan("top-level-spawns-dir");
-  }
-
   private enableFallbackScan(reason: string): void {
     if (!this.running) return;
-    const wasEmpty = this.fallbackScanReasons.size === 0;
     this.fallbackScanReasons.add(reason);
-    if (!wasEmpty || this.fallbackScanInterval) return;
+    if (this.fallbackScanInterval) return;
     this.fallbackScanInterval = setInterval(() => this.requestScan(), FALLBACK_SCAN_MS);
     this.fallbackScanInterval.unref();
     this.requestScan();
@@ -290,6 +205,85 @@ class SpawnWatchRuntime {
     if (this.fallbackScanReasons.size > 0 || !this.fallbackScanInterval) return;
     clearInterval(this.fallbackScanInterval);
     this.fallbackScanInterval = null;
+  }
+
+  private enableDiscoveryPolling(): void {
+    if (!this.running) return;
+    this.fallbackScanReasons.add("spawn-discovery");
+    if (!this.discoveryScanInterval) {
+      this.discoveryScanInterval = setInterval(() => this.requestScan(), SPAWN_DISCOVERY_SCAN_MS);
+      this.discoveryScanInterval.unref();
+    }
+    if (this.discoveryPollTimer) clearTimeout(this.discoveryPollTimer);
+    this.discoveryPollTimer = setTimeout(() => {
+      this.slowDiscoveryPolling();
+    }, SPAWN_DISCOVERY_POLL_MS);
+    this.discoveryPollTimer.unref();
+    this.requestScan();
+  }
+
+  private slowDiscoveryPolling(): void {
+    this.discoverMissingSpawnStates();
+    if (this.discoveryScanInterval) clearInterval(this.discoveryScanInterval);
+    if (this.discoveryPollTimer) clearTimeout(this.discoveryPollTimer);
+    this.discoveryScanInterval = null;
+    this.discoveryPollTimer = null;
+    if (this.missingStateSpawnIds.size > 0) {
+      this.enableFallbackScan("spawn-discovery");
+      return;
+    }
+    this.disableFallbackScan("spawn-discovery");
+    this.requestScan();
+  }
+
+  private stopDiscoveryPolling(): void {
+    if (this.discoveryScanInterval) clearInterval(this.discoveryScanInterval);
+    if (this.discoveryPollTimer) clearTimeout(this.discoveryPollTimer);
+    this.discoveryScanInterval = null;
+    this.discoveryPollTimer = null;
+    this.disableFallbackScan("spawn-discovery");
+    this.requestScan();
+  }
+
+  private discoverMissingSpawnStates(): void {
+    let foundNewMissingState = false;
+    const expectedSpawnIds = new Set([...this.expectedSpawnIdsByBashId.values()].flatMap((ids) => [...ids]));
+    for (const spawnId of expectedSpawnIds) {
+      if (this.abandonedMissingStateSpawnIds.has(spawnId) || existsSync(this.spawnStatePath(spawnId))) {
+        this.missingStateSpawnIds.delete(spawnId);
+        this.missingStateFirstSeenMs.delete(spawnId);
+      } else if (!this.missingStateSpawnIds.has(spawnId)) {
+        this.missingStateSpawnIds.add(spawnId);
+        this.missingStateFirstSeenMs.set(spawnId, Date.now());
+        foundNewMissingState = true;
+      }
+    }
+    this.expireMissingStateSpawnIds();
+    for (const spawnId of [...this.missingStateSpawnIds]) {
+      if (
+        !expectedSpawnIds.has(spawnId) ||
+        this.abandonedMissingStateSpawnIds.has(spawnId) ||
+        existsSync(this.spawnStatePath(spawnId))
+      ) {
+        this.missingStateSpawnIds.delete(spawnId);
+        this.missingStateFirstSeenMs.delete(spawnId);
+      }
+    }
+    if (foundNewMissingState) this.enableDiscoveryPolling();
+    if (this.missingStateSpawnIds.size === 0 && this.fallbackScanReasons.has("spawn-discovery")) {
+      this.stopDiscoveryPolling();
+    }
+  }
+
+  private expireMissingStateSpawnIds(): void {
+    const now = Date.now();
+    for (const spawnId of [...this.missingStateSpawnIds]) {
+      const firstSeen = this.missingStateFirstSeenMs.get(spawnId) ?? now;
+      if (now - firstSeen < SPAWN_DISCOVERY_POLL_MS) continue;
+      this.missingStateSpawnIds.delete(spawnId);
+      this.missingStateFirstSeenMs.delete(spawnId);
+      this.abandonedMissingStateSpawnIds.add(spawnId);
+    }
   }
 
   private closeWatcher(watcher: FSWatcher, context: string): void {
@@ -338,9 +332,15 @@ class SpawnWatchRuntime {
   }
 
   private async scanSpawns(): Promise<void> {
-    if (!this.topLevelWatcherAlive || this.fallbackScanInterval) await this.discoverExistingChildren();
+    this.discoverMissingSpawnStates();
     const suppressed = await this.readSuppressedSpawnIds();
-    for (const state of await this.rows()) {
+    const states = await this.rows();
+    if (states.some((state) => !isTerminalSpawnStatus(state.status))) {
+      this.enableFallbackScan("active-origin-spawns");
+    } else {
+      this.disableFallbackScan("active-origin-spawns");
+    }
+    for (const state of states) {
       if (!isTerminalSpawnStatus(state.status)) continue;
       const id = state.id;
       if (suppressed.has(id)) {
@@ -362,11 +362,21 @@ class SpawnWatchRuntime {
 
   private async scanBashRecords(): Promise<void> {
     const file = await readJsonFile<BashRecordsFile | null>(this.bashRecordsPath, null);
-    for (const record of Object.values(file?.records ?? {})) {
+    await this.rememberOriginBashIds(Object.keys(file?.records ?? {}));
+    const records = Object.values(file?.records ?? {});
+    await this.rememberExpectedSpawnIds(records);
+    const states = await this.readOriginSpawnStates(await this.readOriginBashIds());
+    const bashIdsWithSpawns = new Set(
+      states
+        .map((state) => state.originating_bash_id)
+        .filter((id): id is string => typeof id === "string"),
+    );
+    const bashIdsWithMissingExpectedSpawns = this.bashIdsWithMissingExpectedSpawns();
+    for (const record of records) {
       if (!record.is_tracked || !record.is_background || !isTerminalBashStatus(record.status)) {
         continue;
       }
-      if (await this.hasChildSpawnForBash(record.bash_id)) {
+      if (bashIdsWithSpawns.has(record.bash_id)) {
         TERMINAL_NOTIFIED.add(record.bash_id);
         this.pending.delete(record.bash_id);
         continue;
@@ -375,6 +385,7 @@ class SpawnWatchRuntime {
         this.scheduleBashGraceScan(record.bash_id);
         continue;
       }
+      if (this.shouldDelayBashForDiscovery(record, bashIdsWithMissingExpectedSpawns)) continue;
       if (TERMINAL_NOTIFIED.has(record.bash_id) || this.pending.has(record.bash_id)) continue;
       this.pending.set(record.bash_id, {
         id: record.bash_id,
@@ -392,6 +403,16 @@ class SpawnWatchRuntime {
     return endedAt !== null && Date.now() - endedAt < BASH_SPAWN_CORRELATION_GRACE_MS;
   }
 
+  private shouldDelayBashForDiscovery(
+    record: { bash_id: string; command?: string },
+    bashIdsWithMissingExpectedSpawns: Set<string>,
+  ): boolean {
+    return (
+      isSpawnLauncherCommand(String(record.command ?? "")) &&
+      bashIdsWithMissingExpectedSpawns.has(record.bash_id)
+    );
+  }
+
   private scheduleBashGraceScan(bashId: string): void {
     if (this.bashGraceTimers.has(bashId)) return;
     const timer = setTimeout(() => {
@@ -400,13 +421,6 @@ class SpawnWatchRuntime {
     }, BASH_SPAWN_CORRELATION_GRACE_MS);
     timer.unref();
     this.bashGraceTimers.set(bashId, timer);
-  }
-
-  private async hasChildSpawnForBash(bashId: string): Promise<boolean> {
-    for (const state of await this.readChildSpawnStates()) {
-      if (state.originating_bash_id === bashId) return true;
-    }
-    return false;
   }
 
   private scheduleFlush(): void {
@@ -483,62 +497,100 @@ class SpawnWatchRuntime {
     );
   }
 
-  private async discoverExistingChildren(): Promise<void> {
-    if (!existsSync(this.spawnsDir)) return;
-    for (const name of readdirSync(this.spawnsDir)) {
-      if (name.startsWith("p")) await this.discoverChild(name);
-    }
-  }
-
-  private async discoverChild(spawnId: string): Promise<boolean> {
-    if (this.childSpawnIds.has(spawnId)) {
-      this.watchChildSpawnDir(spawnId);
-      return true;
-    }
-    const state = await this.readSpawnState(spawnId);
-    if (state?.parent_id !== this.currentSpawnId) return false;
-    this.adoptChild(spawnId);
-    return true;
-  }
-
-  private async resolveCandidate(spawnId: string): Promise<void> {
-    const state = await this.readSpawnState(spawnId);
-    if (state?.parent_id === this.currentSpawnId) {
-      this.adoptChild(spawnId);
-      this.closeCandidate(spawnId);
-      this.requestScan();
-      return;
-    }
-    if (typeof state?.parent_id === "string" && state.parent_id.length > 0) {
-      this.closeCandidate(spawnId);
-    }
-  }
-
-  private adoptChild(spawnId: string): void {
-    this.childSpawnIds.add(spawnId);
-    this.watchChildSpawnDir(spawnId);
-    this.disableFallbackScan(`candidate:${spawnId}`);
-  }
-
-  private closeCandidate(spawnId: string): void {
-    const watcher = this.candidateWatchers.get(spawnId);
-    if (watcher) this.closeWatcher(watcher, "candidate spawn watcher");
-    this.candidateWatchers.delete(spawnId);
-    this.disableFallbackScan(`candidate:${spawnId}`);
-  }
-
-  private async readChildSpawnStates(): Promise<SpawnStateFile[]> {
+  private async readOriginSpawnStates(bashIds?: Set<string>): Promise<SpawnStateFile[]> {
+    const originBashIds = bashIds ?? await this.readOriginBashIds();
+    if (!existsSync(this.spawnsDir)) return [];
     const states: SpawnStateFile[] = [];
-    for (const spawnId of this.childSpawnIds) {
-      const state = await this.readSpawnState(spawnId);
-      if (state) states.push(state);
+    for (const name of readdirSync(this.spawnsDir)) {
+      if (!name.startsWith("p")) continue;
+      if (!existsSync(path.join(this.spawnsDir, name))) {
+        this.missingStateSpawnIds.delete(name);
+        this.missingStateFirstSeenMs.delete(name);
+        continue;
+      }
+      const state = await this.readSpawnState(name);
+      if (state) {
+        this.missingStateSpawnIds.delete(name);
+        this.missingStateFirstSeenMs.delete(name);
+      } else if (!this.abandonedMissingStateSpawnIds.has(name)) {
+        this.missingStateSpawnIds.add(name);
+        if (!this.missingStateFirstSeenMs.has(name)) this.missingStateFirstSeenMs.set(name, Date.now());
+      }
+      if (typeof state?.originating_bash_id === "string" && originBashIds.has(state.originating_bash_id)) {
+        states.push(state);
+      }
+    }
+    if (this.missingStateSpawnIds.size === 0 && this.fallbackScanReasons.has("spawn-discovery")) {
+      this.stopDiscoveryPolling();
     }
     return states;
   }
 
+  private async readOriginBashIds(): Promise<Set<string>> {
+    await this.refreshOriginBashIds();
+    const file = await readJsonFile<BashRecordsFile | null>(this.bashRecordsPath, null);
+    await this.rememberOriginBashIds(Object.keys(file?.records ?? {}));
+    return new Set(this.originBashIds);
+  }
+
+  private async refreshOriginBashIds(): Promise<void> {
+    for (const id of await readSpawnOriginBashIds(this.currentSpawnId)) this.originBashIds.add(id);
+  }
+
+  private async rememberOriginBashIds(ids: string[]): Promise<void> {
+    await this.refreshOriginBashIds();
+    for (const id of ids) {
+      if (typeof id === "string" && id.length > 0) this.originBashIds.add(id);
+    }
+  }
+
+  private async rememberExpectedSpawnIds(records: BashRecord[]): Promise<void> {
+    for (const record of records) {
+      if (!isSpawnLauncherCommand(record.command)) continue;
+      const spawnIds = await this.extractSpawnIdsFromRecord(record);
+      if (spawnIds.size === 0) continue;
+      const existing = this.expectedSpawnIdsByBashId.get(record.bash_id) ?? new Set<string>();
+      for (const spawnId of spawnIds) existing.add(spawnId);
+      this.expectedSpawnIdsByBashId.set(record.bash_id, existing);
+    }
+    this.discoverMissingSpawnStates();
+  }
+
+  private async extractSpawnIdsFromRecord(record: BashRecord): Promise<Set<string>> {
+    const spawnIds = new Set<string>();
+    for (const filePath of [record.stdout_log_path, record.log_path]) {
+      const content = await readTextFile(filePath);
+      const spawnId = extractSpawnIdFromLauncherLog(content);
+      if (spawnId) spawnIds.add(spawnId);
+    }
+    return spawnIds;
+  }
+
+  private bashIdsWithMissingExpectedSpawns(): Set<string> {
+    const bashIds = new Set<string>();
+    for (const [bashId, spawnIds] of this.expectedSpawnIdsByBashId) {
+      if ([...spawnIds].some((spawnId) => this.missingStateSpawnIds.has(spawnId))) {
+        bashIds.add(bashId);
+      }
+    }
+    return bashIds;
+  }
+
   private async readSpawnState(spawnId: string): Promise<SpawnStateFile | null> {
-    const statePath = path.join(this.spawnsDir, spawnId, "state.json");
-    return await readJsonFile<SpawnStateFile | null>(statePath, null);
+    return await readJsonFile<SpawnStateFile | null>(this.spawnStatePath(spawnId), null);
+  }
+
+  private spawnStatePath(spawnId: string): string {
+    return path.join(this.spawnsDir, spawnId, "state.json");
+  }
+}
+
+async function readTextFile(filePath: string | null | undefined): Promise<string> {
+  if (!filePath) return "";
+  try {
+    return await readFile(filePath, "utf-8");
+  } catch {
+    return "";
   }
 }
 
