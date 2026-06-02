@@ -651,8 +651,11 @@ def _inject_claude_delegation_guidance(
     prompt_payload: PreparedPromptPayload,
     *,
     project_root: Path,
+    claude_native_agents_enabled: bool,
 ) -> PreparedPromptPayload:
     """Append delegation guidance when Claude has native agents available."""
+    if not claude_native_agents_enabled:
+        return prompt_payload
     claude_agents_dir = project_root / ".claude" / "agents"
     try:
         has_claude_agents = claude_agents_dir.is_dir() and any(claude_agents_dir.iterdir())
@@ -1791,7 +1794,9 @@ def bind_launch_context(
         and runtime.composition_surface == LaunchCompositionSurface.PRIMARY
     ):
         prompt_payload = _inject_claude_delegation_guidance(
-            prompt_payload, project_root=project_root
+            prompt_payload,
+            project_root=project_root,
+            claude_native_agents_enabled=claude_native_agents_enabled,
         )
     materialized = materialize_launch_artifacts(
         harness=harness,

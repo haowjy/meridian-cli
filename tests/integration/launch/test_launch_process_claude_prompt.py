@@ -37,9 +37,10 @@ from meridian.lib.state.spawn_store import list_spawns
 from tests.support.launch import stub_bundle_request_and_resolve
 
 
-def _write_minimal_mars_config(project_root: Path) -> None:
+def _write_minimal_mars_config(project_root: Path, *, claude_agent_copy: bool = False) -> None:
+    agent_copy = '\n[settings.agent_copy]\nharnesses = ["claude"]\n' if claude_agent_copy else ""
     (project_root / "mars.toml").write_text(
-        '[settings]\ntargets = [".claude"]\n',
+        f'[settings]\ntargets = [".claude"]\n{agent_copy}',
         encoding="utf-8",
     )
 
@@ -62,8 +63,9 @@ def _build_primary_launch_context(
     extra_args: tuple[str, ...] = (),
     session: SessionRequest | None = None,
     execution_cwd: Path | None = None,
+    claude_agent_copy: bool = False,
 ) -> tuple[Any, Any]:
-    _write_minimal_mars_config(project_root)
+    _write_minimal_mars_config(project_root, claude_agent_copy=claude_agent_copy)
     harness_registry = get_default_harness_registry()
     config = load_config(project_root)
     resolved_execution_cwd = execution_cwd or project_root
@@ -107,7 +109,11 @@ def test_claude_delegation_guidance_ignores_agent_dir_probe_errors(
     monkeypatch.setattr(Path, "iterdir", _raise_on_iterdir)
 
     assert (
-        _inject_claude_delegation_guidance(payload, project_root=tmp_path)
+        _inject_claude_delegation_guidance(
+            payload,
+            project_root=tmp_path,
+            claude_native_agents_enabled=True,
+        )
         is payload
     )
 
@@ -123,6 +129,7 @@ def test_claude_delegation_guidance_is_primary_only(tmp_path: Path) -> None:
         project_root=project_root,
         harness_id=HarnessId.CLAUDE,
         model="claude-sonnet-4-5",
+        claude_agent_copy=True,
     )
     primary_system_prompt = primary_context.binding.run_params.appended_system_prompt or ""
 
@@ -148,6 +155,24 @@ def test_claude_delegation_guidance_is_primary_only(tmp_path: Path) -> None:
 
     assert "# Delegation" in primary_system_prompt
     assert "# Delegation" not in spawn_system_prompt
+
+
+def test_claude_delegation_guidance_requires_agent_copy(tmp_path: Path) -> None:
+    project_root = tmp_path / "claude-guidance-no-agent-copy"
+    project_root.mkdir()
+    agents_dir = project_root / ".claude" / "agents"
+    agents_dir.mkdir(parents=True)
+    (agents_dir / "reviewer.md").write_text("# reviewer\n", encoding="utf-8")
+
+    primary_context, _ = _build_primary_launch_context(
+        project_root=project_root,
+        harness_id=HarnessId.CLAUDE,
+        model="claude-sonnet-4-5",
+    )
+
+    primary_system_prompt = primary_context.binding.run_params.appended_system_prompt or ""
+
+    assert "# Delegation" not in primary_system_prompt
 
 
 @pytest.mark.slow
