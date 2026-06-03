@@ -248,9 +248,15 @@ and app-managed spawns take different paths, but both converge on a terminal sta
 
 `cancel()` routes by `launch_mode`:
 
-- **CLI spawns** → `_cancel_cli_spawn()` — reads scope sidecars, terminates process groups
+- **CLI spawns** → `_cancel_cli_spawn()` — resolves runner PID first, signals it;
+  falls back to scope cleanup only when the runner is absent or dead.
 - **App spawns** → `_cancel_app_spawn()` — delegates to `SpawnManager.stop_spawn()` if a
-  manager is present; falls back to an HTTP cancel against the running app socket otherwise
+  manager is present; falls back to an HTTP cancel against the running app socket otherwise.
+
+`SignalCanceller` does **not** claim terminal lifecycle authority. It delivers cancel
+signals and returns delivery facts (`finalizing: bool`, `already_terminal: bool`).
+The `SpawnApplicationService.cancel()` path owns convergence to terminal — it calls
+`_force_cancel_convergence()` when delivery alone is insufficient.
 
 ### `_cancel_cli_spawn()` — Scope-Aware Path
 
@@ -276,9 +282,10 @@ After signal delivery, `_wait_for_terminal()` polls the spawn record for up to
 ### Dependency Direction
 
 `signal_canceller` depends on `platform/` and `state/` — it does not depend on
-`core.process_cleanup`. The cancel path has a live event loop and manages scope cleanup
-inline. `core.process_cleanup` is the sync-only reclamation path used at startup for
-orphan recovery — the two paths don't share scope management logic.
+`core.spawn_service` or own lifecycle finalization. The cancel path has a live event
+loop and manages scope cleanup inline. `core.process_cleanup` is the sync-only
+reclamation path used at startup for orphan recovery — the two paths don't share
+scope management logic.
 
 ## Anti-Patterns
 
