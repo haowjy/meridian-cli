@@ -289,7 +289,7 @@ async def test_cancel_app_spawn_manager_path_resolves_from_terminal_record(
         outcome = await canceller._cancel_app_spawn(spawn_id, running_record)
 
     assert fake_manager.stop_spawn_calls == [
-        {"spawn_id": "s-test", "status": "cancelled", "exit_code": 143, "error": "cancelled"}
+        {"spawn_id": "s-test", "status": "cancelled", "exit_code": 130, "error": "cancelled"}
     ]
     assert outcome.status == "cancelled"
     assert outcome.exit_code == 130
@@ -320,6 +320,6 @@ async def test_cancel_app_spawn_manager_path_returns_finalizing_when_terminal_ne
 
     assert fake_manager.stop_spawn_calls  # stop_spawn was called
     assert fake_manager.stop_spawn_calls[0]["status"] == "cancelled"
-    assert fake_manager.stop_spawn_calls[0]["exit_code"] == 143
+    assert fake_manager.stop_spawn_calls[0]["exit_code"] == 130
     assert outcome.status == "finalizing"
     assert outcome.finalizing is True

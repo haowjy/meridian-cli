@@ -552,13 +552,14 @@ class SpawnApplicationService:
             latest = self.get_spawn(spawn_id) or record
             if self.is_terminal(latest.status):
                 return _cancel_outcome_from_record(str(spawn_id), latest, already_terminal=True)
-            converged = await self._force_cancel_convergence(spawn_id, latest)
-            if converged is not None:
-                return _cancel_outcome_from_record(
-                    str(spawn_id),
-                    converged,
-                    finalizing=not self.is_terminal(converged.status),
-                )
+            if not _has_live_execution_owner(latest, primary_metadata):
+                converged = await self._force_cancel_convergence(spawn_id, latest)
+                if converged is not None:
+                    return _cancel_outcome_from_record(
+                        str(spawn_id),
+                        converged,
+                        finalizing=not self.is_terminal(converged.status),
+                    )
             latest = self.get_spawn(spawn_id) or latest
             if delivery_finalizing or (signal_outcome is not None and signal_outcome.finalizing):
                 return _cancel_outcome_from_record(str(spawn_id), latest, finalizing=True)
@@ -1026,6 +1027,34 @@ def _durable_report_completed(runtime_root: Path, spawn_id: str) -> bool:
     except OSError:
         return False
     return has_durable_report_completion(report_text)
+
+
+def _has_live_execution_owner(
+    record: SpawnRecord,
+    primary_metadata: PrimaryMetadata | None,
+) -> bool:
+    started_epoch = _started_at_epoch(record.started_at)
+    runner_created_at_epoch = record.runner_created_at_epoch or started_epoch
+    if record.runner_pid is not None and is_process_alive(
+        record.runner_pid,
+        created_after_epoch=runner_created_at_epoch,
+    ):
+        return True
+    if record.worker_pid is not None and is_process_alive(
+        record.worker_pid,
+        created_after_epoch=started_epoch,
+    ):
+        return True
+    if primary_metadata is None:
+        return False
+    for pid in (
+        primary_metadata.launcher_pid,
+        primary_metadata.backend_pid,
+        primary_metadata.tui_pid,
+    ):
+        if pid is not None and is_process_alive(pid, created_after_epoch=started_epoch):
+            return True
+    return False
 
 
 def _started_at_epoch(started_at: str | None) -> float | None:

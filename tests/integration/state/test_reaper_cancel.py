@@ -266,10 +266,9 @@ def test_spawn_cancel_managed_primary_signals_launcher_first(
     assert set(terminated_pids[1:]) == {7002, 7003}
     latest = _get_spawn(runtime_root, spawn_id)
     assert latest.status == "finalizing"
-    assert latest.runner_exit_status == "cancelled"
-    assert latest.runner_exit_code == 130
-    assert latest.runner_exit_error == "cancel_timeout"
-    assert latest.runner_exit_at is not None
+    assert latest.cancel_intent is not None
+    assert latest.cancel_intent.exit_code == 130
+    assert latest.cancel_intent.error == "cancelled"
 def test_spawn_cancel_managed_primary_queued_converges_to_terminal(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -321,10 +320,10 @@ def test_spawn_cancel_managed_primary_queued_converges_to_terminal(
         )
     )
 
-    assert output.status == "failed"
-    assert output.exit_code == 1
+    assert output.status == "cancelled"
+    assert output.exit_code == 130
     assert terminated_pids == []
     latest = _get_spawn(runtime_root, spawn_id)
-    assert latest.status == "failed"
-    assert latest.error == "cancel_timeout"
+    assert latest.status == "cancelled"
+    assert latest.error == "cancelled"
     assert latest.terminal_origin == "cancel"

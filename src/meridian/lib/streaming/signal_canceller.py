@@ -128,36 +128,6 @@ class SignalCanceller:
             return _outcome_from_record(terminal)
 
         latest = spawn_store.get_spawn(self._runtime_root, spawn_id) or record
-        if self._fallback_worker_pid(latest) is None:
-            complete_spawn = self._complete_spawn
-            if complete_spawn is None:
-                raise RuntimeError(
-                    "SignalCanceller requires lifecycle authority when runner_pid is missing."
-                )
-            outcome = await complete_spawn(
-                spawn_id,
-                "cancelled",
-                130,
-                origin="cancel",
-                error="cancelled",
-            )
-            if outcome.snapshot is not None and _is_terminal(outcome.snapshot.status):
-                return _outcome_from_record(
-                    outcome.snapshot,
-                    already_terminal=not outcome.transitioned,
-                )
-
-            logger.warning(
-                "cancel_race_snapshot_missing",
-                spawn_id=str(spawn_id),
-                wrote=outcome.wrote,
-            )
-            latest = spawn_store.get_spawn(self._runtime_root, spawn_id)
-            if latest is not None and _is_terminal(latest.status):
-                return _outcome_from_record(latest, already_terminal=not outcome.transitioned)
-            return CancelOutcome(status="cancelled", origin="cancel", exit_code=130)
-
-        latest = spawn_store.get_spawn(self._runtime_root, spawn_id) or record
         return CancelOutcome(
             status="finalizing",
             origin="cancel",
@@ -207,10 +177,11 @@ class SignalCanceller:
         if self._manager is None:
             return await self._cancel_app_spawn_over_http(spawn_id)
 
+        cancel_exit_code = record.cancel_intent.exit_code if record.cancel_intent else 130
         await self._manager.stop_spawn(
             spawn_id,
             status="cancelled",
-            exit_code=143,
+            exit_code=cancel_exit_code,
             error="cancelled",
         )
         terminal = await self._wait_for_terminal(spawn_id)

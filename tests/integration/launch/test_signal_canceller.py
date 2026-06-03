@@ -5,7 +5,6 @@ import json
 from collections.abc import Callable
 from contextlib import suppress
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
@@ -186,13 +185,13 @@ async def test_signal_canceller_app_lane_uses_manager_stop_spawn(
         manager=cast("Any", _FakeManager()),
     ).cancel(SpawnId(spawn_id))
 
-    assert calls == [(spawn_id, "cancelled", 143, "cancelled")]
+    assert calls == [(spawn_id, "cancelled", 130, "cancelled")]
     assert outcome.status == "cancelled"
     assert outcome.origin == "runner"
 
 
 @pytest.mark.asyncio
-async def test_signal_canceller_cli_lane_finalizes_when_runner_pid_missing(
+async def test_signal_canceller_cli_lane_defers_when_runner_pid_missing(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -212,100 +211,49 @@ async def test_signal_canceller_cli_lane_finalizes_when_runner_pid_missing(
         complete_spawn=_complete_spawn_for_runtime(runtime_root),
     ).cancel(SpawnId(spawn_id))
 
-    assert outcome.status == "cancelled"
+    assert outcome.status == "finalizing"
     assert outcome.origin == "cancel"
-    assert outcome.exit_code == 130
+    assert outcome.finalizing is True
 
 
 @pytest.mark.asyncio
-async def test_signal_canceller_runnerless_cancel_warns_and_falls_back_when_snapshot_missing(
+async def test_signal_canceller_runnerless_cancel_does_not_finalize_directly(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """EARS-CR4.3: cancel warns and falls back to the persisted terminal row."""
+    """Runnerless delivery is not terminal authority; the application service converges."""
 
     runtime_root = resolve_runtime_paths(tmp_path).root_dir
     spawn_id = _start_spawn(runtime_root, spawn_id="p1", launch_mode="foreground", runner_pid=None)
-    warnings: list[tuple[tuple[object, ...], dict[str, object]]] = []
-
-    async def fake_complete_spawn(*args: object, **kwargs: object) -> Any:
-        _ = args, kwargs
-        spawn_store.finalize_spawn(
-            runtime_root,
-            spawn_id,
-            status="failed",
-            exit_code=91,
-            origin="runner",
-            error="runner finished first",
-        )
-        return SimpleNamespace(
-            snapshot=None,
-            transitioned=False,
-            wrote=False,
-        )
-
-    def capture_warning(*args: object, **kwargs: object) -> None:
-        warnings.append((args, kwargs))
-
-    monkeypatch.setattr(
-        "meridian.lib.streaming.signal_canceller.logger.warning",
-        capture_warning,
-    )
     outcome = await SignalCanceller(
         runtime_root=runtime_root,
-        complete_spawn=fake_complete_spawn,
     ).cancel(SpawnId(spawn_id))
 
-    assert outcome.already_terminal is True
-    assert outcome.status == "failed"
-    assert outcome.origin == "runner"
-    assert outcome.exit_code == 91
-    assert len(warnings) == 1
-    assert warnings[0][0] == ("cancel_race_snapshot_missing",)
-    assert warnings[0][1]["spawn_id"] == spawn_id
-    assert warnings[0][1]["wrote"] is False
+    assert outcome.status == "finalizing"
+    assert outcome.finalizing is True
+    row = spawn_store.get_spawn(runtime_root, spawn_id)
+    assert row is not None
+    assert row.status == "running"
 
 
 @pytest.mark.asyncio
-async def test_signal_canceller_runnerless_cancel_returns_authoritative_winner_snapshot(
+async def test_signal_canceller_runnerless_cancel_preserves_running_row(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """EARS-CR4.1 / EARS-CR4.2: cancel returns the winning authoritative snapshot."""
+    """SignalCanceller does not claim terminal authority without a runner."""
 
     runtime_root = resolve_runtime_paths(tmp_path).root_dir
     spawn_id = _start_spawn(runtime_root, spawn_id="p1", launch_mode="foreground", runner_pid=None)
-    original_mark_finalizing = SpawnLifecycleService.mark_finalizing
-
-    def race_mark_finalizing(self: SpawnLifecycleService, target_spawn_id: str) -> bool:
-        transitioned = original_mark_finalizing(self, target_spawn_id)
-        if transitioned:
-            spawn_store.finalize_spawn(
-                runtime_root,
-                target_spawn_id,
-                status="failed",
-                exit_code=42,
-                origin="runner",
-                error="runner won race",
-            )
-        return transitioned
-
-    monkeypatch.setattr(SpawnLifecycleService, "mark_finalizing", race_mark_finalizing)
-
     outcome = await SignalCanceller(
         runtime_root=runtime_root,
-        complete_spawn=_complete_spawn_for_runtime(runtime_root),
     ).cancel(SpawnId(spawn_id))
 
     row = spawn_store.get_spawn(runtime_root, spawn_id)
-    assert outcome.already_terminal is True
-    assert outcome.status == "failed"
-    assert outcome.origin == "runner"
-    assert outcome.exit_code == 42
+    assert outcome.status == "finalizing"
+    assert outcome.finalizing is True
     assert row is not None
-    assert row.status == "failed"
-    assert row.terminal_origin == "runner"
-    assert row.exit_code == 42
+    assert row.status == "running"
 
 
 async def _start_http_socket_server(
