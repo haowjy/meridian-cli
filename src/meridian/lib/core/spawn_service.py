@@ -49,7 +49,7 @@ from meridian.lib.launch.types import PrimarySessionMetadata
 from meridian.lib.state import spawn_store
 from meridian.lib.state.liveness import is_process_alive
 from meridian.lib.state.paths import RuntimePaths
-from meridian.lib.state.spawn.model import LaunchMode, SpawnOrigin
+from meridian.lib.state.spawn.model import APP_LAUNCH_MODE, LaunchMode, SpawnOrigin
 from meridian.lib.streaming.signal_canceller import CancelOutcome as SignalCancelOutcome
 
 if TYPE_CHECKING:
@@ -1033,6 +1033,8 @@ def _has_live_execution_owner(
     record: SpawnRecord,
     primary_metadata: PrimaryMetadata | None,
 ) -> bool:
+    if record.launch_mode == APP_LAUNCH_MODE:
+        return True
     started_epoch = _started_at_epoch(record.started_at)
     runner_created_at_epoch = record.runner_created_at_epoch or started_epoch
     if record.runner_pid is not None and is_process_alive(

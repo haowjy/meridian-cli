@@ -327,6 +327,49 @@ async def test_cancel_public_surface_backfills_cancel_intent_for_managed_primary
 
 
 @pytest.mark.asyncio
+async def test_cancel_app_spawn_records_intent_without_local_force_finalize(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime_root = _runtime_root(tmp_path)
+    spawn_store.start_spawn(
+        runtime_root,
+        spawn_id="p1",
+        chat_id="c1",
+        model="gpt-5.4",
+        agent="coder",
+        harness="codex",
+        prompt="hello",
+        status="running",
+        launch_mode="app",
+    )
+
+    class _FakeManager:
+        async def stop_spawn(self, *_args: object, **_kwargs: object) -> None:
+            return None
+
+    service = SpawnApplicationService(
+        runtime_root,
+        SpawnLifecycleService(runtime_root),
+        spawn_manager=cast("Any", _FakeManager()),
+    )
+
+    async def _never_terminal(*_args: object, **_kwargs: object) -> Any:
+        return None
+
+    monkeypatch.setattr(service, "_wait_for_terminal", _never_terminal)
+
+    outcome = await service.cancel(SpawnId("p1"))
+
+    assert outcome.status == "running"
+    assert outcome.finalizing is True
+    row = spawn_store.get_spawn(runtime_root, "p1")
+    assert row is not None
+    assert row.status == "running"
+    assert row.cancel_intent is not None
+
+
+@pytest.mark.asyncio
 async def test_prepare_sets_pi_notification_timeout_from_wait_timeout_config(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
