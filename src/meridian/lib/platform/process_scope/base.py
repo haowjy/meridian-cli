@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
+from hashlib import sha256
 
 import structlog
 
@@ -43,6 +44,33 @@ class ProcessScopeSnapshot:
 
     degraded_reason: str | None
     """Set when containment fell back from the preferred mechanism."""
+
+    release_id: str = ""
+    """Stable identity for this concrete scope release."""
+
+    def __post_init__(self) -> None:
+        if not self.release_id:
+            object.__setattr__(
+                self,
+                "release_id",
+                process_scope_release_id(
+                    scope_id=self.scope_id,
+                    root_pid=self.root_pid,
+                    root_created_at_epoch=self.root_created_at_epoch,
+                ),
+            )
+
+
+def process_scope_release_id(
+    *,
+    scope_id: str,
+    root_pid: int,
+    root_created_at_epoch: float,
+) -> str:
+    """Build a stable release identity for one concrete process scope."""
+
+    seed = f"{scope_id}:{root_pid}:{root_created_at_epoch:.6f}"
+    return f"{scope_id}:{sha256(seed.encode('utf-8')).hexdigest()[:16]}"
 
 
 @dataclass(frozen=True)
@@ -203,4 +231,5 @@ __all__ = [
     "CleanupResult",
     "ProcessScopeSnapshot",
     "ScopedProcessHandle",
+    "process_scope_release_id",
 ]

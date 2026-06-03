@@ -112,12 +112,12 @@ def test_cancel_managed_primary_terminates_launcher_before_runtime_scopes(
     monkeypatch.setattr(
         process_cleanup,
         "is_scope_released",
-        lambda root, spawn_id, scope_id: scope_id == "tui",
+        lambda root, spawn_id, release_id: release_id == scopes[2].release_id,
     )
     monkeypatch.setattr(
         process_cleanup,
         "mark_scope_released",
-        lambda root, spawn_id, scope_id: released.append(scope_id),
+        lambda root, spawn_id, release_id: released.append(release_id),
     )
     monkeypatch.setattr(time, "sleep", lambda seconds: sleep_calls.append(seconds))
 
@@ -131,7 +131,7 @@ def test_cancel_managed_primary_terminates_launcher_before_runtime_scopes(
 
     assert terminate_calls == ["launcher", "backend"]
     assert sleep_calls == [1.0]
-    assert released == ["launcher", "backend"]
+    assert released == [scopes[1].release_id, scopes[0].release_id]
     assert [(result.scope_id, result.skip_reason) for result in results] == [
         ("launcher", None),
         ("backend", None),

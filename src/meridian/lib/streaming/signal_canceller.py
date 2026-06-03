@@ -93,8 +93,42 @@ class SignalCanceller:
         spawn_id: SpawnId,
         record: SpawnRecord,
     ) -> CancelOutcome:
-        runner_pid = self._resolve_runner_pid(record)
-        if runner_pid is None:
+        runner_pid, runner_created_at_epoch = self._resolve_runner_process(record)
+        if runner_pid is not None:
+            with suppress(ProcessLookupError):
+                await asyncio.to_thread(
+                    terminate_tree_sync,
+                    runner_pid,
+                    created_at_epoch=runner_created_at_epoch or 0.0,
+                    grace_secs=self._grace_seconds,
+                    reason="cancel",
+                    scope_id=f"{spawn_id}:runner",
+                )
+            terminal = await self._wait_for_terminal(spawn_id)
+            if terminal is not None:
+                return _outcome_from_record(terminal)
+
+            latest = spawn_store.get_spawn(self._runtime_root, spawn_id) or record
+            await self._cleanup_spawn_scopes(spawn_id, latest)
+            terminal = await self._wait_for_terminal(spawn_id)
+            if terminal is not None:
+                return _outcome_from_record(terminal)
+            latest = spawn_store.get_spawn(self._runtime_root, spawn_id) or latest
+            return CancelOutcome(
+                status="finalizing",
+                origin="cancel",
+                exit_code=_exit_code_or_default(latest),
+                finalizing=True,
+            )
+
+        await self._cleanup_spawn_scopes(spawn_id, record)
+
+        terminal = await self._wait_for_terminal(spawn_id)
+        if terminal is not None:
+            return _outcome_from_record(terminal)
+
+        latest = spawn_store.get_spawn(self._runtime_root, spawn_id) or record
+        if self._fallback_worker_pid(latest) is None:
             complete_spawn = self._complete_spawn
             if complete_spawn is None:
                 raise RuntimeError(
@@ -123,10 +157,23 @@ class SignalCanceller:
                 return _outcome_from_record(latest, already_terminal=not outcome.transitioned)
             return CancelOutcome(status="cancelled", origin="cancel", exit_code=130)
 
+        latest = spawn_store.get_spawn(self._runtime_root, spawn_id) or record
+        return CancelOutcome(
+            status="finalizing",
+            origin="cancel",
+            exit_code=_exit_code_or_default(latest),
+            finalizing=True,
+        )
+
+    async def _cleanup_spawn_scopes(
+        self,
+        spawn_id: SpawnId,
+        record: SpawnRecord,
+    ) -> None:
         scopes = read_scopes_from_disk(self._runtime_root, spawn_id)
         if scopes:
             for scope in scopes:
-                if is_scope_released(self._runtime_root, spawn_id, scope.scope_id):
+                if is_scope_released(self._runtime_root, spawn_id, scope.release_id):
                     continue
                 with suppress(ProcessLookupError):
                     await asyncio.to_thread(
@@ -135,31 +182,22 @@ class SignalCanceller:
                         grace_seconds=self._grace_seconds,
                         reason="cancel",
                     )
-                mark_scope_released(self._runtime_root, spawn_id, scope.scope_id)
-        else:
-            # Legacy fallback: no scope metadata, use runner PID directly.
-            started_epoch = _started_at_epoch(record.started_at)
-            with suppress(ProcessLookupError):
-                await asyncio.to_thread(
-                    terminate_tree_sync,
-                    runner_pid,
-                    created_at_epoch=started_epoch if started_epoch is not None else 0.0,
-                    grace_secs=self._grace_seconds,
-                    reason="cancel",
-                    scope_id=str(spawn_id),
-                )
+                mark_scope_released(self._runtime_root, spawn_id, scope.release_id)
+            return
 
-        terminal = await self._wait_for_terminal(spawn_id)
-        if terminal is not None:
-            return _outcome_from_record(terminal)
-
-        latest = spawn_store.get_spawn(self._runtime_root, spawn_id) or record
-        return CancelOutcome(
-            status="finalizing",
-            origin="cancel",
-            exit_code=_exit_code_or_default(latest),
-            finalizing=True,
-        )
+        worker_pid = self._fallback_worker_pid(record)
+        if worker_pid is None:
+            return
+        started_epoch = _started_at_epoch(record.started_at)
+        with suppress(ProcessLookupError):
+            await asyncio.to_thread(
+                terminate_tree_sync,
+                worker_pid,
+                created_at_epoch=started_epoch if started_epoch is not None else 0.0,
+                grace_secs=self._grace_seconds,
+                reason="cancel",
+                scope_id=str(spawn_id),
+            )
 
     async def _cancel_app_spawn(
         self,
@@ -271,13 +309,18 @@ class SignalCanceller:
             f"cross-process app cancel request failed ({status_code}): {detail_message}"
         )
 
-    def _resolve_runner_pid(self, record: SpawnRecord) -> int | None:
-        started_epoch = _started_at_epoch(record.started_at)
-
+    def _resolve_runner_process(self, record: SpawnRecord) -> tuple[int | None, float | None]:
         runner_pid = record.runner_pid
-        if runner_pid is not None and _pid_is_alive(runner_pid, started_epoch):
-            return runner_pid
+        runner_created_at_epoch = record.runner_created_at_epoch or _started_at_epoch(
+            record.started_at
+        )
+        if runner_pid is not None and _pid_is_alive(runner_pid, runner_created_at_epoch):
+            return runner_pid, runner_created_at_epoch
 
+        return None, None
+
+    def _fallback_worker_pid(self, record: SpawnRecord) -> int | None:
+        started_epoch = _started_at_epoch(record.started_at)
         worker_pid = record.worker_pid
         if worker_pid is not None and _pid_is_alive(worker_pid, started_epoch):
             return worker_pid

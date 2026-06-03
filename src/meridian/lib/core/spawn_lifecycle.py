@@ -102,7 +102,7 @@ def resolve_execution_terminal_state(
 ) -> tuple[SpawnStatus, int, str | None]:
     """Normalize one execution outcome into the persisted terminal state."""
 
-    if durable_report_completion and terminated_after_completion:
+    if durable_report_completion:
         return "succeeded", 0, None
     if cancelled:
         resolved_exit_code = exit_code if exit_code != 0 else 130

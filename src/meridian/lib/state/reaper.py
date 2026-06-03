@@ -245,16 +245,31 @@ def _finalize_from_runner_exit_decision(record: SpawnRecord) -> FinalizeFromRunn
     )
 
 
+def _finalize_from_cancel_intent_decision(record: SpawnRecord) -> FinalizeFromRunnerExit:
+    intent = record.cancel_intent
+    if intent is None:
+        return FinalizeFromRunnerExit(status="cancelled", exit_code=130, error="cancelled")
+    return FinalizeFromRunnerExit(
+        status="cancelled",
+        exit_code=intent.exit_code,
+        error=intent.error,
+    )
+
+
 def decide_generic_reconciliation(
     record: SpawnRecord,
     snapshot: ArtifactSnapshot,
     now: float,
 ) -> ReconciliationDecision:
     if record.status == "finalizing":
+        if snapshot.durable_report_completion:
+            return FinalizeSucceededFromReport()
         if _has_recent_activity(snapshot):
             return Skip(reason="recent_activity")
         if record.runner_exit_status is not None:
             return _finalize_from_runner_exit_decision(record)
+        if record.cancel_intent is not None:
+            return _finalize_from_cancel_intent_decision(record)
         return FinalizeFailed(error="orphan_finalization")
 
     if record.runner_exit_status is not None:
@@ -269,12 +284,14 @@ def decide_generic_reconciliation(
 
     runner_pid = record.runner_pid
     if runner_pid is None or runner_pid <= 0:
+        if snapshot.durable_report_completion:
+            return FinalizeSucceededFromReport()
         if _has_recent_activity(snapshot):
             return Skip(reason="recent_activity")
         if _in_startup_grace(snapshot.started_epoch, now):
             return Skip(reason="startup_grace")
-        if snapshot.durable_report_completion:
-            return FinalizeSucceededFromReport()
+        if record.cancel_intent is not None:
+            return _finalize_from_cancel_intent_decision(record)
         return FinalizeFailed(error="missing_runner_pid")
 
     if snapshot.runner_pid_alive:
@@ -282,11 +299,16 @@ def decide_generic_reconciliation(
             return Skip(reason="recent_activity")
         return Skip(reason="runner_alive")
 
+    if snapshot.durable_report_completion:
+        return FinalizeSucceededFromReport()
+
     if _has_recent_activity(snapshot):
         return Skip(reason="recent_activity")
 
     if _in_startup_grace(snapshot.started_epoch, now):
         return Skip(reason="startup_grace")
+    if record.cancel_intent is not None:
+        return _finalize_from_cancel_intent_decision(record)
     return FinalizeFailed(
         error="orphan_run",
         exit_code=record.last_attempt_exit_code or 1,

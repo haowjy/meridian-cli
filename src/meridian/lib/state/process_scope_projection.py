@@ -19,6 +19,7 @@ from typing import cast
 
 from meridian.lib.core.types import SpawnId
 from meridian.lib.platform.process_scope import ProcessScopeSnapshot
+from meridian.lib.platform.process_scope.base import process_scope_release_id
 from meridian.lib.state.atomic import atomic_write_text
 from meridian.lib.state.spawn.model import SpawnRecord
 
@@ -64,6 +65,21 @@ def _snapshot_to_dict(snapshot: ProcessScopeSnapshot) -> dict[str, object]:
 def _dict_to_snapshot(data: dict[str, object]) -> ProcessScopeSnapshot | None:
     """Deserialize one scope dict; return None on any error."""
     try:
+        if not isinstance(data.get("release_id"), str) or not str(data.get("release_id")):
+            scope_id = data.get("scope_id")
+            root_pid = data.get("root_pid")
+            root_created_at_epoch = data.get("root_created_at_epoch")
+            if not isinstance(scope_id, str):
+                return None
+            if not isinstance(root_pid, int):
+                return None
+            if not isinstance(root_created_at_epoch, int | float):
+                return None
+            data["release_id"] = process_scope_release_id(
+                scope_id=scope_id,
+                root_pid=root_pid,
+                root_created_at_epoch=float(root_created_at_epoch),
+            )
         return ProcessScopeSnapshot(**data)  # type: ignore[arg-type]
     except Exception:
         logger.debug("process_scope_projection: failed to deserialize scope: %r", data)
@@ -97,18 +113,18 @@ def record_scope(
 def mark_scope_released(
     runtime_root: Path,
     spawn_id: SpawnId,
-    scope_id: str,
+    release_id: str,
 ) -> None:
     """Mark a scope as released (terminated / cleaned up).
 
     Prevents double-cleanup when the reaper runs again after process exit.
-    Idempotent — safe to call multiple times for the same scope_id.
+    Idempotent — safe to call multiple times for the same release_id.
     """
     path = _sidecar_path(runtime_root, spawn_id)
     payload = _read_raw(path)
     released: list[object] = list(payload["released"])  # type: ignore[arg-type]
-    if scope_id not in released:
-        released.append(scope_id)
+    if release_id not in released:
+        released.append(release_id)
     payload["released"] = released
     atomic_write_text(path, json.dumps(payload, separators=(",", ":")))
 
@@ -116,7 +132,7 @@ def mark_scope_released(
 def is_scope_released(
     runtime_root: Path,
     spawn_id: SpawnId,
-    scope_id: str,
+    release_id: str,
 ) -> bool:
     """Check if a scope has been marked as released.
 
@@ -129,7 +145,7 @@ def is_scope_released(
     released = payload.get("released", [])
     if not isinstance(released, list):
         return False
-    return scope_id in released
+    return release_id in released
 
 
 def read_scopes(spawn_record: SpawnRecord) -> list[ProcessScopeSnapshot]:

@@ -133,7 +133,7 @@ async def test_cancel_cli_spawn_legacy_path_uses_tree_termination_with_started_e
 
     assert captured and captured[0][0] == 99
     assert captured[0][1] > 0.0
-    assert captured[0][2] == "s-test"
+    assert captured[0][2] == "s-test:runner"
     assert outcome.status == "cancelled"
     assert outcome.exit_code == 130
 
@@ -191,18 +191,18 @@ async def test_cancel_cli_spawn_scope_aware_path_terminates_unreleased_scopes_on
 
     def _capture_scope(scope: ProcessScopeSnapshot, *, grace_seconds: float, reason: str) -> None:
         terminated_scopes.append(scope.scope_id)
-        assert grace_seconds == 1.0
+        assert grace_seconds == 0.0
         assert reason == "cancel"
 
-    def _record_release(_root: Path, _spawn_id: SpawnId, scope_id: str) -> None:
-        released_ids.append(scope_id)
+    def _record_release(_root: Path, _spawn_id: SpawnId, release_id: str) -> None:
+        released_ids.append(release_id)
 
-    canceller = SignalCanceller(runtime_root=tmp_path, grace_seconds=1.0)
+    canceller = SignalCanceller(runtime_root=tmp_path, grace_seconds=0.0)
 
     with (
         patch(
             "meridian.lib.streaming.signal_canceller.spawn_store.get_spawn",
-            side_effect=[running_record, cancelled_record],
+            side_effect=[running_record, running_record, cancelled_record],
         ),
         patch(
             "meridian.lib.streaming.signal_canceller.is_process_alive",
@@ -214,7 +214,8 @@ async def test_cancel_cli_spawn_scope_aware_path_terminates_unreleased_scopes_on
         ),
         patch(
             "meridian.lib.streaming.signal_canceller.is_scope_released",
-            side_effect=lambda _root, _sid, scope_id: scope_id == "released",
+            side_effect=lambda _root, _sid, release_id: release_id
+            == released_scope.release_id,
         ),
         patch(
             "meridian.lib.streaming.signal_canceller.terminate_scope_sync",
@@ -229,8 +230,8 @@ async def test_cancel_cli_spawn_scope_aware_path_terminates_unreleased_scopes_on
         outcome = await canceller._cancel_cli_spawn(spawn_id, running_record)
 
     assert terminated_scopes == ["backend", "sidecar"]
-    assert released_ids == ["backend", "sidecar"]
-    mock_tree.assert_not_called()
+    assert released_ids == [backend_scope.release_id, sidecar_scope.release_id]
+    mock_tree.assert_called_once()
     assert outcome.status == "cancelled"
 
 

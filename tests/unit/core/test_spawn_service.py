@@ -235,6 +235,61 @@ async def test_complete_execution_does_not_backfill_runner_exit_on_terminal_row(
 
 
 @pytest.mark.asyncio
+async def test_complete_execution_prefers_cancel_intent_until_durable_completion(
+    tmp_path: Path,
+) -> None:
+    runtime_root = _runtime_root(tmp_path)
+    spawn_id = _start_spawn(runtime_root, status="running")
+    spawn_store.record_cancel_intent(
+        runtime_root,
+        spawn_id,
+        exit_code=130,
+        error="cancelled",
+        requested_at="2026-06-03T01:00:00Z",
+    )
+    service = _service(runtime_root)
+
+    outcome = await service.complete_execution(
+        SpawnId(spawn_id),
+        ExecutionTerminalFacts(exit_code=0, durable_report_completion=False),
+        origin="runner",
+    )
+
+    assert outcome.resolved.status == "cancelled"
+    assert outcome.resolved.exit_code == 130
+    row = spawn_store.get_spawn(runtime_root, spawn_id)
+    assert row is not None
+    assert row.status == "cancelled"
+
+
+@pytest.mark.asyncio
+async def test_complete_execution_durable_completion_wins_over_cancel_intent(
+    tmp_path: Path,
+) -> None:
+    runtime_root = _runtime_root(tmp_path)
+    spawn_id = _start_spawn(runtime_root, status="running")
+    spawn_store.record_cancel_intent(
+        runtime_root,
+        spawn_id,
+        exit_code=130,
+        error="cancelled",
+        requested_at="2026-06-03T01:00:00Z",
+    )
+    service = _service(runtime_root)
+
+    outcome = await service.complete_execution(
+        SpawnId(spawn_id),
+        ExecutionTerminalFacts(exit_code=130, durable_report_completion=True),
+        origin="runner",
+    )
+
+    assert outcome.resolved.status == "succeeded"
+    row = spawn_store.get_spawn(runtime_root, spawn_id)
+    assert row is not None
+    assert row.status == "succeeded"
+
+
+@pytest.mark.asyncio
 async def test_cancel_public_surface_backfills_cancel_intent_for_managed_primary_finalizing_row(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -261,15 +316,14 @@ async def test_cancel_public_surface_backfills_cancel_intent_for_managed_primary
 
     outcome = await service.cancel(SpawnId(spawn_id))
 
-    assert outcome.status == "finalizing"
-    assert outcome.finalizing is True
+    assert outcome.status == "cancelled"
+    assert outcome.finalizing is False
     row = spawn_store.get_spawn(runtime_root, spawn_id)
     assert row is not None
-    assert row.status == "finalizing"
-    assert row.runner_exit_status == "cancelled"
-    assert row.runner_exit_code == 130
-    assert row.runner_exit_error == "cancel_timeout"
-    assert row.runner_exit_at is not None
+    assert row.status == "cancelled"
+    assert row.cancel_intent is not None
+    assert row.cancel_intent.exit_code == 130
+    assert row.cancel_intent.error == "cancelled"
 
 
 @pytest.mark.asyncio
