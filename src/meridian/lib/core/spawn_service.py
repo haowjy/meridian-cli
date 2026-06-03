@@ -18,6 +18,7 @@ from meridian.lib.core.spawn_lifecycle import (
     ExecutionTerminalFacts,
     ExecutionTerminalOutcome,
     has_durable_report_completion,
+    resolve_completion_cancel_precedence,
     resolve_execution_terminal_outcome,
 )
 from meridian.lib.core.spawn_start import SpawnStartMetadata
@@ -540,7 +541,6 @@ class SpawnApplicationService:
             signal_outcome = await SignalCanceller(
                 runtime_root=self._runtime_root,
                 manager=self._spawn_manager,
-                complete_spawn=self._complete_spawn_unlocked,
             ).cancel(spawn_id)
 
         terminal = await self._wait_for_terminal(spawn_id, timeout=1.0)
@@ -574,24 +574,21 @@ class SpawnApplicationService:
     ) -> SpawnRecord | None:
         if self.is_terminal(record.status):
             return record
-        if _durable_report_completed(self._runtime_root, str(spawn_id)):
-            outcome = await self._complete_spawn_unlocked(
-                spawn_id,
-                "succeeded",
-                0,
-                origin="reconciler",
-            )
-            return outcome.snapshot
-
         intent = record.cancel_intent
-        exit_code = intent.exit_code if intent is not None else 130
-        error = intent.error if intent is not None else "cancelled"
+        resolved = resolve_completion_cancel_precedence(
+            durable_report_completion=_durable_report_completed(self._runtime_root, str(spawn_id)),
+            cancel_requested=True,
+            cancel_exit_code=intent.exit_code if intent is not None else 130,
+            cancel_error=intent.error if intent is not None else "cancelled",
+        )
+        if resolved is None:
+            return None
         outcome = await self._complete_spawn_unlocked(
             spawn_id,
-            "cancelled",
-            exit_code,
-            origin="cancel",
-            error=error,
+            resolved.status,
+            resolved.exit_code,
+            origin="reconciler" if resolved.status == "succeeded" else "cancel",
+            error=resolved.error,
         )
         return outcome.snapshot
 
@@ -788,15 +785,15 @@ class SpawnApplicationService:
         lock = await self._locks.acquire(str(spawn_id))
         async with lock:
             record = self.get_spawn(spawn_id)
-            if (
-                record is not None
-                and record.cancel_intent is not None
-                and not facts.durable_report_completion
-            ):
-                resolved = ExecutionTerminalOutcome(
-                    status="cancelled",
-                    exit_code=record.cancel_intent.exit_code,
-                    error=record.cancel_intent.error,
+            if record is not None and record.cancel_intent is not None:
+                resolved = (
+                    resolve_completion_cancel_precedence(
+                        durable_report_completion=facts.durable_report_completion,
+                        cancel_requested=True,
+                        cancel_exit_code=record.cancel_intent.exit_code,
+                        cancel_error=record.cancel_intent.error,
+                    )
+                    or resolved
                 )
             completion = await self._complete_spawn_unlocked(
                 spawn_id,

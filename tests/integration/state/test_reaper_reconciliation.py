@@ -457,6 +457,47 @@ def test_reconcile_active_spawn_finalizes_failed_runner_exit_tuple_after_grace(
     assert latest.error == "guardrail_failed"
 
 
+def test_reconcile_active_spawn_durable_report_wins_over_cancelled_runner_exit(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tests.integration.state.conftest import _write_report
+
+    runtime_root, spawn_id = _create_spawn(tmp_path, started_at=_OLD_STARTED_AT)
+    spawn_store.record_cancel_intent(
+        runtime_root,
+        spawn_id,
+        exit_code=130,
+        error="cancelled",
+        requested_at="2026-06-03T01:00:00Z",
+    )
+    spawn_store.record_runner_exit(
+        runtime_root,
+        spawn_id,
+        status="cancelled",
+        exit_code=130,
+        error="cancelled",
+        exited_at="1970-01-01T00:16:30Z",
+    )
+    _write_report(runtime_root, spawn_id)
+    record = _get_spawn(runtime_root, spawn_id)
+    monkeypatch.setattr("meridian.lib.state.reaper.time.time", lambda: 1_000.0)
+    monkeypatch.setattr(
+        "meridian.lib.state.reaper.is_process_alive",
+        lambda *_args, **_kwargs: False,
+    )
+
+    reconciled = _reconcile(tmp_path, runtime_root, record)
+
+    assert reconciled.status == "succeeded"
+    assert reconciled.exit_code == 0
+    assert reconciled.error is None
+    latest = _get_spawn(runtime_root, spawn_id)
+    assert latest.status == "succeeded"
+    assert latest.exit_code == 0
+    assert latest.error is None
+
+
 def test_reconcile_active_spawn_uses_runner_created_epoch_for_liveness_checks(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

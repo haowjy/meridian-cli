@@ -9,8 +9,6 @@ from typing import Any, cast
 
 import pytest
 
-from meridian.lib.core.lifecycle import SpawnLifecycleService
-from meridian.lib.core.spawn_service import SpawnApplicationService
 from meridian.lib.core.types import SpawnId
 from meridian.lib.platform import IS_WINDOWS
 from meridian.lib.state import spawn_store
@@ -41,13 +39,6 @@ def _start_spawn(
     )
 
 
-def _complete_spawn_for_runtime(runtime_root: Path) -> Callable[..., Any]:
-    return SpawnApplicationService(
-        runtime_root,
-        SpawnLifecycleService(runtime_root),
-    ).complete_spawn
-
-
 @pytest.mark.asyncio
 async def test_signal_canceller_returns_idempotent_outcome_for_terminal_spawn(
     tmp_path: Path,
@@ -65,7 +56,6 @@ async def test_signal_canceller_returns_idempotent_outcome_for_terminal_spawn(
 
     outcome = await SignalCanceller(
         runtime_root=runtime_root,
-        complete_spawn=_complete_spawn_for_runtime(runtime_root),
     ).cancel(SpawnId(spawn_id))
 
     assert outcome.already_terminal is True
@@ -93,7 +83,6 @@ async def test_signal_canceller_finalizing_gate_skips_sigterm(
     outcome = await SignalCanceller(
         runtime_root=runtime_root,
         grace_seconds=0.01,
-        complete_spawn=_complete_spawn_for_runtime(runtime_root),
     ).cancel(SpawnId(spawn_id))
 
     assert outcome.status == "finalizing"
@@ -143,7 +132,6 @@ async def test_signal_canceller_cli_lane_sends_sigterm_and_returns_terminal_row(
     )
     outcome = await SignalCanceller(
         runtime_root=runtime_root,
-        complete_spawn=_complete_spawn_for_runtime(runtime_root),
     ).cancel(SpawnId(spawn_id))
 
     assert terminated_pids == [7654]
@@ -208,7 +196,6 @@ async def test_signal_canceller_cli_lane_defers_when_runner_pid_missing(
     )
     outcome = await SignalCanceller(
         runtime_root=runtime_root,
-        complete_spawn=_complete_spawn_for_runtime(runtime_root),
     ).cancel(SpawnId(spawn_id))
 
     assert outcome.status == "finalizing"

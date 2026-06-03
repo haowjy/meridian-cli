@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import json
 import time
-from collections.abc import Awaitable, Callable
 from contextlib import suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -28,11 +27,9 @@ from meridian.lib.state.process_scope_projection import (
     mark_scope_released,
     read_scopes_from_disk,
 )
-from meridian.lib.state.spawn.model import APP_LAUNCH_MODE, SpawnOrigin
+from meridian.lib.state.spawn.model import APP_LAUNCH_MODE, SpawnOrigin, SpawnRecord
 
 if TYPE_CHECKING:
-    from meridian.lib.core.spawn_service import CompleteSpawnOutcome
-    from meridian.lib.state.spawn.model import SpawnRecord
     from meridian.lib.streaming.spawn_manager import SpawnManager
 
 _WAIT_POLL_INTERVAL_SECS = 0.1
@@ -57,12 +54,10 @@ class SignalCanceller:
         runtime_root: Path,
         grace_seconds: float = 5.0,
         manager: SpawnManager | None = None,
-        complete_spawn: Callable[..., Awaitable[CompleteSpawnOutcome]] | None = None,
     ) -> None:
         self._runtime_root = runtime_root
         self._grace_seconds = grace_seconds
         self._manager = manager
-        self._complete_spawn = complete_spawn
 
     async def cancel(self, spawn_id: SpawnId) -> CancelOutcome:
         record = spawn_store.get_spawn(self._runtime_root, spawn_id)

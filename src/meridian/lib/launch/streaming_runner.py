@@ -126,7 +126,6 @@ class StreamingRunConclusion:
     exit_code: int = DEFAULT_INFRA_EXIT_CODE
     failure_reason: str | None = None
     extracted: FinalizeExtraction | None = None
-    terminated_after_completion: bool = False
     final_attempt_terminal_observed: bool = False
     cancellation_observed: bool = False
     retries_attempted: int = 0
@@ -135,9 +134,6 @@ class StreamingRunConclusion:
         """Merge one attempt's terminal fields into the run conclusion."""
 
         self.exit_code = attempt.drain_exit_code
-        self.terminated_after_completion = (
-            self.terminated_after_completion or attempt.terminated_by_report_watchdog
-        )
         self.final_attempt_terminal_observed = attempt.terminal_observed
         self.cancellation_observed = self.cancellation_observed or attempt.cancelled_by_request
 
@@ -161,7 +157,6 @@ class StreamingRunConclusion:
                 self.extracted is not None
                 and has_durable_report_completion(self.extracted.report.content)
             ),
-            terminated_after_completion=self.terminated_after_completion,
         )
 
 
