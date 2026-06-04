@@ -24,7 +24,6 @@ from meridian.lib.core.clock import Clock, RealClock
 from meridian.lib.core.domain import Spawn
 from meridian.lib.core.spawn_lifecycle import (
     ExecutionTerminalFacts,
-    has_durable_report_completion,
 )
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.adapter import StreamEvent
@@ -154,8 +153,7 @@ class StreamingRunConclusion:
             failure_reason=self.failure_reason,
             cancellation_observed=cancellation_observed,
             durable_report_completion=(
-                self.extracted is not None
-                and has_durable_report_completion(self.extracted.report.content)
+                self.extracted is not None and self.extracted.durable_report_completion
             ),
         )
 
@@ -1070,7 +1068,7 @@ async def execute_with_streaming(
 
                 if (
                     _read_cancel_intent(runtime_root, run.spawn_id) is not None
-                    and not has_durable_report_completion(extraction.report.content)
+                    and not extraction.durable_report_completion
                 ):
                     _apply_cancel_intent_to_conclusion(
                         conclusion,
@@ -1151,9 +1149,7 @@ async def execute_with_streaming(
                 # the spawn has already written a durable report. Treat that as terminal
                 # success here so the retry classifier never turns the synthetic exit code
                 # from `stop_spawn()` back into another failed attempt.
-                if attempt.terminated_by_report_watchdog and has_durable_report_completion(
-                    extraction.report.content
-                ):
+                if attempt.terminated_by_report_watchdog and extraction.durable_report_completion:
                     conclusion.exit_code = 0
                     conclusion.failure_reason = None
                     break

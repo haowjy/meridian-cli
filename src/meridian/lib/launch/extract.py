@@ -5,6 +5,7 @@ from pathlib import Path
 from pydantic import BaseModel, ConfigDict
 
 from meridian.lib.core.domain import TokenUsage
+from meridian.lib.core.spawn_lifecycle import has_durable_report_completion
 from meridian.lib.core.types import ArtifactKey, HarnessId, SpawnId
 from meridian.lib.harness.adapter import SpawnExtractor
 from meridian.lib.harness.cost import estimate_usage_cost
@@ -34,6 +35,7 @@ class FinalizeExtraction(BaseModel):
     report_path: Path | None
     report: ExtractedReport
     output_is_empty: bool
+    durable_report_completion: bool = False
 
 
 def reset_finalize_attempt_artifacts(
@@ -83,6 +85,12 @@ def _persist_report(
     atomic_write_text(target, text)
     artifacts.put(report_key, text.encode("utf-8"))
     return target
+
+
+def _is_durable_completion_report(extracted: ExtractedReport) -> bool:
+    if extracted.source in {"failure_reason", "pi_failure"}:
+        return False
+    return has_durable_report_completion(extracted.content)
 
 
 def _is_empty_output(
@@ -145,4 +153,5 @@ def enrich_finalize(
             spawn_id=spawn_id,
             extracted_report=report,
         ),
+        durable_report_completion=_is_durable_completion_report(report),
     )

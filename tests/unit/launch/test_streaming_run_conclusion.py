@@ -3,13 +3,30 @@ import signal
 from pathlib import Path
 
 from meridian.lib.core.domain import TokenUsage
+from meridian.lib.core.spawn_lifecycle import has_durable_report_completion
 from meridian.lib.core.types import SpawnId
-from meridian.lib.launch.extract import FinalizeExtraction
-from meridian.lib.launch.report import ExtractedReport
+from meridian.lib.launch.constants import REPORT_FILENAME
+from meridian.lib.launch.extract import FinalizeExtraction, enrich_finalize
+from meridian.lib.launch.report import ExtractedReport, ReportSource
 from meridian.lib.launch.streaming_runner import (
     StreamingRunConclusion,
     _AttemptRuntime,
 )
+from meridian.lib.state.artifact_store import InMemoryStore, make_artifact_key
+
+
+class _NoReportExtractor:
+    def extract_usage(self, artifacts: InMemoryStore, spawn_id: SpawnId) -> TokenUsage:
+        _ = artifacts, spawn_id
+        return TokenUsage()
+
+    def extract_session_id(self, artifacts: InMemoryStore, spawn_id: SpawnId) -> str | None:
+        _ = artifacts, spawn_id
+        return None
+
+    def extract_report(self, artifacts: InMemoryStore, spawn_id: SpawnId) -> str | None:
+        _ = artifacts, spawn_id
+        return None
 
 
 def _attempt(
@@ -30,13 +47,21 @@ def _attempt(
     )
 
 
-def _extraction_with_report(report_text: str | None) -> FinalizeExtraction:
+def _extraction_with_report(
+    report_text: str | None,
+    *,
+    source: ReportSource | None = "report_md",
+) -> FinalizeExtraction:
     return FinalizeExtraction(
         usage=TokenUsage(total_cost_usd=1.25, input_tokens=10, output_tokens=20),
         harness_session_id=None,
         report_path=None,
-        report=ExtractedReport(content=report_text, source="report_md"),
+        report=ExtractedReport(content=report_text, source=source),
         output_is_empty=False,
+        durable_report_completion=(
+            source not in {"failure_reason", "pi_failure"}
+            and has_durable_report_completion(report_text)
+        ),
     )
 
 
@@ -61,6 +86,47 @@ def test_terminal_facts_treat_durable_report_watchdog_as_success() -> None:
     assert facts.failure_reason == "report_watchdog"
     assert facts.durable_report_completion is True
     assert facts.cancellation_observed is False
+
+
+def test_terminal_facts_do_not_treat_synthetic_failure_report_as_completion() -> None:
+    conclusion = StreamingRunConclusion(
+        exit_code=130,
+        failure_reason="cancelled",
+        extracted=_extraction_with_report(
+            "Cursor subprocess exited with code 130.",
+            source="failure_reason",
+        ),
+        cancellation_observed=True,
+    )
+
+    facts = conclusion.terminal_facts(received_signal=None)
+    assert facts.durable_report_completion is False
+    assert facts.cancellation_observed is True
+
+
+def test_enrich_finalize_marks_synthetic_failure_report_not_durable(tmp_path: Path) -> None:
+    spawn_id = SpawnId("p-cancel-failure-report")
+    artifacts = InMemoryStore()
+
+    extraction = enrich_finalize(
+        artifacts=artifacts,
+        extractor=_NoReportExtractor(),
+        spawn_id=spawn_id,
+        log_dir=tmp_path,
+        failure_reason="Cursor subprocess exited with code 130.",
+    )
+
+    report = artifacts.get(make_artifact_key(spawn_id, REPORT_FILENAME)).decode()
+    conclusion = StreamingRunConclusion(
+        exit_code=130,
+        failure_reason="cancelled",
+        extracted=extraction,
+        cancellation_observed=True,
+    )
+
+    assert report.startswith("# Spawn failed")
+    assert extraction.durable_report_completion is False
+    assert conclusion.terminal_facts(received_signal=None).durable_report_completion is False
 
 
 def test_terminal_facts_treat_signal_without_terminal_as_cancelled() -> None:

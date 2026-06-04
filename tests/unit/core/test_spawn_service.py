@@ -8,7 +8,10 @@ import pytest
 
 from meridian.lib.core.domain import SpawnStatus
 from meridian.lib.core.lifecycle import SpawnLifecycleService
-from meridian.lib.core.spawn_lifecycle import ExecutionTerminalFacts
+from meridian.lib.core.spawn_lifecycle import (
+    ExecutionTerminalFacts,
+    has_durable_report_completion,
+)
 from meridian.lib.core.spawn_service import PrepareSpawnRequest, SpawnApplicationService
 from meridian.lib.core.types import SpawnId
 from meridian.lib.launch.request import LaunchRuntime, SpawnRequest
@@ -260,6 +263,42 @@ async def test_complete_execution_prefers_cancel_intent_until_durable_completion
     row = spawn_store.get_spawn(runtime_root, spawn_id)
     assert row is not None
     assert row.status == "cancelled"
+
+
+@pytest.mark.asyncio
+async def test_complete_execution_keeps_cancel_for_synthetic_failure_report(
+    tmp_path: Path,
+) -> None:
+    runtime_root = _runtime_root(tmp_path)
+    spawn_id = _start_spawn(runtime_root, status="running")
+    spawn_store.record_cancel_intent(
+        runtime_root,
+        spawn_id,
+        exit_code=130,
+        error="cancelled",
+        requested_at="2026-06-03T01:00:00Z",
+    )
+    service = _service(runtime_root)
+    synthetic_report = "# Spawn failed\n\nCursor subprocess exited with code 130.\n"
+
+    outcome = await service.complete_execution(
+        SpawnId(spawn_id),
+        ExecutionTerminalFacts(
+            exit_code=130,
+            failure_reason="cancelled",
+            cancellation_observed=True,
+            durable_report_completion=has_durable_report_completion(synthetic_report),
+        ),
+        origin="runner",
+    )
+
+    assert synthetic_report.startswith("# Spawn failed")
+    assert outcome.resolved.status == "cancelled"
+    assert outcome.resolved.exit_code == 130
+    row = spawn_store.get_spawn(runtime_root, spawn_id)
+    assert row is not None
+    assert row.status == "cancelled"
+    assert row.exit_code == 130
 
 
 @pytest.mark.asyncio

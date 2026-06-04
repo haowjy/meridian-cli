@@ -4,6 +4,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+- Background spawn cancel stays `cancelled` when runner writes synthetic `# Spawn failed` report.
+
 ## [0.2.30] - 2026-06-04
 
 ### Changed
