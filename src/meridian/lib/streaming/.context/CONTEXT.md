@@ -258,22 +258,22 @@ signals and returns delivery facts (`finalizing: bool`, `already_terminal: bool`
 The `SpawnApplicationService.cancel()` path owns convergence to terminal — it calls
 `_force_cancel_convergence()` when delivery alone is insufficient.
 
-### `_cancel_cli_spawn()` — Scope-Aware Path
+### `_cancel_cli_spawn()` — Runner-First, Scope-Fallback Path
 
-The method reads scope sidecars first rather than resolving a PID directly:
+The method resolves `record.runner_pid` first and signals that runner tree. If the
+runner is absent/dead, or if runner termination does not produce terminal state, it
+falls back to `process_cleanup.terminate_spawn_scopes()` via `asyncio.to_thread()`.
+When fallback runs after a guarded runner-tree signal, legacy `worker_pid` fallback is
+disabled; real scope records still clean up. That canonical cleanup path owns scope
+policy:
 
-1. **Read** scope sidecars via `read_scopes_from_disk()` — written at spawn time, describe
-   the process groups/trees the spawn owns
-2. **If scopes exist**: iterate them, skip already-released scopes via `is_scope_released()`,
-   call `terminate_scope_sync()` per scope (POSIX uses pgid group kill; Windows falls back to
-   tree kill), then call `mark_scope_released()` immediately after to prevent double-kill
-3. **If no scopes (legacy)**: resolve runner PID from `record.runner_pid` /
-   `record.worker_pid`, fall back to `terminate_tree_sync()` directly — preserves
-   compatibility with spawns that predate scope sidecar support
-
-`terminate_scope_sync` is synchronous, so each call runs via `asyncio.to_thread()` to
-avoid blocking the event loop. `ProcessLookupError` is suppressed — the process may
-already be gone by the time the cancel arrives.
+1. Reads scope sidecars via `read_scopes_from_disk()`.
+2. Skips already-released scopes by concrete `release_id`.
+3. Preserves live `session_owned` scopes via `should_skip_cleanup()`.
+4. Terminates remaining scopes through `terminate_scope_sync()` and marks each
+   concrete `release_id` released.
+5. Falls back to legacy `worker_pid` termination when no sidecars exist and the caller
+   has not disabled legacy fallback.
 
 After signal delivery, `_wait_for_terminal()` polls the spawn record for up to
 `grace_seconds`. If the record never reaches a terminal status, the outcome carries

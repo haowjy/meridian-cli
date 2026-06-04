@@ -30,6 +30,7 @@ def terminate_spawn_scopes(
     *,
     reason: str,
     grace_seconds: float = 5.0,
+    include_legacy_fallback: bool = True,
 ) -> list[CleanupResult]:
     """Terminate all spawn_owned scopes for a spawn record.
 
@@ -37,12 +38,14 @@ def terminate_spawn_scopes(
     calls the appropriate platform terminator. Logs results.
 
     For legacy spawns with no scope metadata, falls back to worker_pid
-    termination and logs degraded_fallback=True.
+    termination and logs degraded_fallback=True unless include_legacy_fallback=False.
     """
     scopes = read_scopes_from_disk(runtime_root, SpawnId(spawn_record.id))
     results: list[CleanupResult] = []
 
     if not scopes:
+        if not include_legacy_fallback:
+            return results
         # Legacy fallback: no scope metadata, use worker_pid
         if spawn_record.worker_pid is not None and spawn_record.worker_pid > 0:
             result = _terminate_legacy_worker_pid(
@@ -201,7 +204,7 @@ def _terminate_legacy_worker_pid(
         scope_id="legacy_worker",
     )
     logger.debug(
-        "Reaper cleaned up stale spawn via legacy worker fallback.",
+        "Cleaned up spawn via legacy worker fallback.",
         spawn_id=spawn_record.id,
         affected_spawn_id=spawn_record.id,
         cleanup_target="stale_spawn",

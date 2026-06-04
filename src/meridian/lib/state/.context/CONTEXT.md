@@ -145,9 +145,10 @@ Liveness check sequence per active spawn:
    If dead, check completion/cancel precedence, then recent activity, startup grace,
    and finally mark failed (`orphan_run` or `missing_runner_pid`).
 
-`has_durable_report_completion(report_text)` returns True for non-empty report that
-is not a terminal control frame (`cancelled`/`error` JSON) and is not a `# Spawn failed`
-generated markdown wrapper. Used by both reaper and runner.
+`durable_report_completed(runtime_root, spawn_id)` reads `report.md` and returns True
+for non-empty report content that is not a terminal control frame (`cancelled`/`error`
+JSON) and is not a `# Spawn failed` generated markdown wrapper. Used by both reaper
+and cancel convergence paths.
 
 `_completion_or_cancel_decision()` centralizes durable-completion-vs-cancel precedence
 for the reaper: if a durable report exists, the spawn resolves `succeeded` regardless

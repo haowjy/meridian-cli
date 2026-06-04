@@ -7,6 +7,8 @@ spawn from succeeded to failed.
 
 import json
 from dataclasses import dataclass
+from datetime import UTC, datetime
+from pathlib import Path
 from typing import cast
 
 from meridian.lib.core.domain import SpawnStatus
@@ -92,6 +94,34 @@ def has_durable_report_completion(report_text: str | None) -> bool:
         if nested_name in {"cancelled", "error"}:
             return False
     return True
+
+
+def durable_report_completed(runtime_root: Path, spawn_id: str) -> bool:
+    """Return True when a spawn has a durable completion report on disk."""
+
+    report_path = runtime_root / "spawns" / spawn_id / "report.md"
+    try:
+        report_text = report_path.read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        return False
+    return has_durable_report_completion(report_text)
+
+
+def iso_timestamp_to_epoch(timestamp: str | None) -> float | None:
+    """Parse a persisted ISO timestamp to epoch seconds."""
+
+    normalized = (timestamp or "").strip()
+    if not normalized:
+        return None
+    if normalized.endswith("Z"):
+        normalized = f"{normalized[:-1]}+00:00"
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed.timestamp()
 
 
 def resolve_execution_terminal_state(

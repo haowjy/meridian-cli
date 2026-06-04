@@ -206,6 +206,29 @@ def test_terminate_spawn_scopes_falls_back_to_legacy_worker_pid(
     logger.debug.assert_called_once()
 
 
+def test_terminate_spawn_scopes_can_skip_legacy_worker_fallback(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    from meridian.lib.core import process_cleanup
+
+    monkeypatch.setattr(process_cleanup, "read_scopes_from_disk", lambda root, spawn_id: [])
+
+    def _unexpected(**kwargs):
+        raise AssertionError("legacy worker fallback should not run")
+
+    monkeypatch.setattr(process_cleanup, "terminate_tree_sync", _unexpected)
+
+    results = terminate_spawn_scopes(
+        tmp_path,
+        _record(worker_pid=321),
+        reason="cancel",
+        include_legacy_fallback=False,
+    )
+
+    assert results == []
+
+
 @pytest.mark.parametrize(
     ("process_factory", "root_created_at_epoch", "expected"),
     [

@@ -113,7 +113,8 @@ Reads scope metadata from durable storage and terminates all `spawn_owned` scope
 Skips scopes that are already released (`skip_reason="already_released"`) or that
 pass `should_skip_cleanup()` (`skip_reason="active_session_lease"`). For legacy
 spawns without scope metadata, falls back to `worker_pid` termination with
-`degraded_fallback=True`.
+`degraded_fallback=True`. Callers that already signaled a guarded runner tree can
+set `include_legacy_fallback=False` to avoid a second unguarded legacy PID signal.
 
 **`cancel_managed_primary(runtime_root, spawn_record, *, grace_seconds)`**
 
@@ -164,6 +165,14 @@ exists on disk and its content is not a terminal control frame:
   `type` is `"cancelled"` or `"error"`.
 - Returns `True` for all other non-empty content (plain markdown, JSON payloads with
   neutral/completion event types).
+
+`durable_report_completed(runtime_root, spawn_id)` is the shared file-read wrapper for
+`spawns/<id>/report.md`; use it instead of duplicating report-path reads in reaper or
+cancel convergence paths.
+
+`iso_timestamp_to_epoch(timestamp)` is the shared parser for persisted ISO timestamps.
+It normalizes trailing `Z` to UTC, treats naive timestamps as UTC, and returns `None`
+for blank or invalid values.
 
 ### Centralized Completion-vs-Cancel Precedence
 
