@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import json
 import time
-from collections.abc import Awaitable, Callable
 from contextlib import suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -28,11 +27,9 @@ from meridian.lib.state.process_scope_projection import (
     mark_scope_released,
     read_scopes_from_disk,
 )
-from meridian.lib.state.spawn.model import APP_LAUNCH_MODE, SpawnOrigin
+from meridian.lib.state.spawn.model import APP_LAUNCH_MODE, SpawnOrigin, SpawnRecord
 
 if TYPE_CHECKING:
-    from meridian.lib.core.spawn_service import CompleteSpawnOutcome
-    from meridian.lib.state.spawn.model import SpawnRecord
     from meridian.lib.streaming.spawn_manager import SpawnManager
 
 _WAIT_POLL_INTERVAL_SECS = 0.1
@@ -57,12 +54,10 @@ class SignalCanceller:
         runtime_root: Path,
         grace_seconds: float = 5.0,
         manager: SpawnManager | None = None,
-        complete_spawn: Callable[..., Awaitable[CompleteSpawnOutcome]] | None = None,
     ) -> None:
         self._runtime_root = runtime_root
         self._grace_seconds = grace_seconds
         self._manager = manager
-        self._complete_spawn = complete_spawn
 
     async def cancel(self, spawn_id: SpawnId) -> CancelOutcome:
         record = spawn_store.get_spawn(self._runtime_root, spawn_id)
@@ -93,61 +88,35 @@ class SignalCanceller:
         spawn_id: SpawnId,
         record: SpawnRecord,
     ) -> CancelOutcome:
-        runner_pid = self._resolve_runner_pid(record)
-        if runner_pid is None:
-            complete_spawn = self._complete_spawn
-            if complete_spawn is None:
-                raise RuntimeError(
-                    "SignalCanceller requires lifecycle authority when runner_pid is missing."
-                )
-            outcome = await complete_spawn(
-                spawn_id,
-                "cancelled",
-                130,
-                origin="cancel",
-                error="cancelled",
-            )
-            if outcome.snapshot is not None and _is_terminal(outcome.snapshot.status):
-                return _outcome_from_record(
-                    outcome.snapshot,
-                    already_terminal=not outcome.transitioned,
-                )
-
-            logger.warning(
-                "cancel_race_snapshot_missing",
-                spawn_id=str(spawn_id),
-                wrote=outcome.wrote,
-            )
-            latest = spawn_store.get_spawn(self._runtime_root, spawn_id)
-            if latest is not None and _is_terminal(latest.status):
-                return _outcome_from_record(latest, already_terminal=not outcome.transitioned)
-            return CancelOutcome(status="cancelled", origin="cancel", exit_code=130)
-
-        scopes = read_scopes_from_disk(self._runtime_root, spawn_id)
-        if scopes:
-            for scope in scopes:
-                if is_scope_released(self._runtime_root, spawn_id, scope.scope_id):
-                    continue
-                with suppress(ProcessLookupError):
-                    await asyncio.to_thread(
-                        terminate_scope_sync,
-                        scope,
-                        grace_seconds=self._grace_seconds,
-                        reason="cancel",
-                    )
-                mark_scope_released(self._runtime_root, spawn_id, scope.scope_id)
-        else:
-            # Legacy fallback: no scope metadata, use runner PID directly.
-            started_epoch = _started_at_epoch(record.started_at)
+        runner_pid, runner_created_at_epoch = self._resolve_runner_process(record)
+        if runner_pid is not None:
             with suppress(ProcessLookupError):
                 await asyncio.to_thread(
                     terminate_tree_sync,
                     runner_pid,
-                    created_at_epoch=started_epoch if started_epoch is not None else 0.0,
+                    created_at_epoch=runner_created_at_epoch or 0.0,
                     grace_secs=self._grace_seconds,
                     reason="cancel",
-                    scope_id=str(spawn_id),
+                    scope_id=f"{spawn_id}:runner",
                 )
+            terminal = await self._wait_for_terminal(spawn_id)
+            if terminal is not None:
+                return _outcome_from_record(terminal)
+
+            latest = spawn_store.get_spawn(self._runtime_root, spawn_id) or record
+            await self._cleanup_spawn_scopes(spawn_id, latest)
+            terminal = await self._wait_for_terminal(spawn_id)
+            if terminal is not None:
+                return _outcome_from_record(terminal)
+            latest = spawn_store.get_spawn(self._runtime_root, spawn_id) or latest
+            return CancelOutcome(
+                status="finalizing",
+                origin="cancel",
+                exit_code=_exit_code_or_default(latest),
+                finalizing=True,
+            )
+
+        await self._cleanup_spawn_scopes(spawn_id, record)
 
         terminal = await self._wait_for_terminal(spawn_id)
         if terminal is not None:
@@ -161,6 +130,40 @@ class SignalCanceller:
             finalizing=True,
         )
 
+    async def _cleanup_spawn_scopes(
+        self,
+        spawn_id: SpawnId,
+        record: SpawnRecord,
+    ) -> None:
+        scopes = read_scopes_from_disk(self._runtime_root, spawn_id)
+        if scopes:
+            for scope in scopes:
+                if is_scope_released(self._runtime_root, spawn_id, scope.release_id):
+                    continue
+                with suppress(ProcessLookupError):
+                    await asyncio.to_thread(
+                        terminate_scope_sync,
+                        scope,
+                        grace_seconds=self._grace_seconds,
+                        reason="cancel",
+                    )
+                mark_scope_released(self._runtime_root, spawn_id, scope.release_id)
+            return
+
+        worker_pid = self._fallback_worker_pid(record)
+        if worker_pid is None:
+            return
+        started_epoch = _started_at_epoch(record.started_at)
+        with suppress(ProcessLookupError):
+            await asyncio.to_thread(
+                terminate_tree_sync,
+                worker_pid,
+                created_at_epoch=started_epoch if started_epoch is not None else 0.0,
+                grace_secs=self._grace_seconds,
+                reason="cancel",
+                scope_id=str(spawn_id),
+            )
+
     async def _cancel_app_spawn(
         self,
         spawn_id: SpawnId,
@@ -169,10 +172,11 @@ class SignalCanceller:
         if self._manager is None:
             return await self._cancel_app_spawn_over_http(spawn_id)
 
+        cancel_exit_code = record.cancel_intent.exit_code if record.cancel_intent else 130
         await self._manager.stop_spawn(
             spawn_id,
             status="cancelled",
-            exit_code=143,
+            exit_code=cancel_exit_code,
             error="cancelled",
         )
         terminal = await self._wait_for_terminal(spawn_id)
@@ -271,13 +275,18 @@ class SignalCanceller:
             f"cross-process app cancel request failed ({status_code}): {detail_message}"
         )
 
-    def _resolve_runner_pid(self, record: SpawnRecord) -> int | None:
-        started_epoch = _started_at_epoch(record.started_at)
-
+    def _resolve_runner_process(self, record: SpawnRecord) -> tuple[int | None, float | None]:
         runner_pid = record.runner_pid
-        if runner_pid is not None and _pid_is_alive(runner_pid, started_epoch):
-            return runner_pid
+        runner_created_at_epoch = record.runner_created_at_epoch or _started_at_epoch(
+            record.started_at
+        )
+        if runner_pid is not None and _pid_is_alive(runner_pid, runner_created_at_epoch):
+            return runner_pid, runner_created_at_epoch
 
+        return None, None
+
+    def _fallback_worker_pid(self, record: SpawnRecord) -> int | None:
+        started_epoch = _started_at_epoch(record.started_at)
         worker_pid = record.worker_pid
         if worker_pid is not None and _pid_is_alive(worker_pid, started_epoch):
             return worker_pid

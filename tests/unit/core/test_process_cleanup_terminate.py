@@ -135,7 +135,10 @@ def test_terminate_spawn_scopes_uses_persisted_scopes_and_marks_released(
         (101, 10.0, "reaper", "backend"),
         (202, 10.0, "reaper", "worker"),
     ]
-    assert released == [("spawn-1", "backend"), ("spawn-1", "worker")]
+    assert released == [
+        ("spawn-1", scopes[0].release_id),
+        ("spawn-1", scopes[1].release_id),
+    ]
 
 
 def test_terminate_spawn_scopes_skips_released_and_active_session_leases(
@@ -153,7 +156,7 @@ def test_terminate_spawn_scopes_skips_released_and_active_session_leases(
     monkeypatch.setattr(
         process_cleanup,
         "is_scope_released",
-        lambda root, spawn_id, scope_id: scope_id == "released",
+        lambda root, spawn_id, release_id: release_id == scopes[0].release_id,
     )
     monkeypatch.setattr(
         process_cleanup.psutil,

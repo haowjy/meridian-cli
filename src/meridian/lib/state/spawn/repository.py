@@ -17,7 +17,7 @@ from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
 from meridian.lib.core.spawn_lifecycle import TERMINAL_SPAWN_STATUSES
 from meridian.lib.platform.locking import lock_file
 from meridian.lib.state.atomic import atomic_write_text
-from meridian.lib.state.spawn.model import SpawnRecord
+from meridian.lib.state.spawn.model import CancelIntent, SpawnRecord
 
 if TYPE_CHECKING:
     from meridian.lib.core.domain import SpawnStatus
@@ -67,6 +67,7 @@ class StoredSpawnState(BaseModel):
     runner_exit_status: str | None = None
     runner_exit_error: str | None = None
     runner_exit_at: str | None = None
+    cancel_intent: CancelIntent | None = None
     finished_at: str | None = None
     exit_code: int | None = None
     duration_secs: float | None = None
@@ -139,6 +140,7 @@ def record_to_stored_state(
         runner_exit_status=record.runner_exit_status,
         runner_exit_error=record.runner_exit_error,
         runner_exit_at=record.runner_exit_at,
+        cancel_intent=record.cancel_intent,
         finished_at=record.finished_at,
         exit_code=record.exit_code,
         duration_secs=record.duration_secs,
@@ -195,6 +197,7 @@ def stored_state_to_record(
         runner_exit_status=cast('TerminalSpawnStatus | None', stored.runner_exit_status),
         runner_exit_error=stored.runner_exit_error,
         runner_exit_at=stored.runner_exit_at,
+        cancel_intent=stored.cancel_intent,
         finished_at=stored.finished_at,
         exit_code=stored.exit_code,
         duration_secs=stored.duration_secs,
@@ -259,6 +262,9 @@ def write_state(
         and not allow_terminal_overwrite
     ):
         raise ValueError(f"Refusing to overwrite terminal spawn state: {record.id}")
+
+    if current is not None and current.cancel_intent is not None and record.cancel_intent is None:
+        record = record.model_copy(update={"cancel_intent": current.cancel_intent})
 
     next_revision = revision if revision is not None else (current.revision + 1 if current else 1)
     stored = record_to_stored_state(record, revision=next_revision)

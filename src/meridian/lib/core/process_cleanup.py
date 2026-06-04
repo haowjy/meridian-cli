@@ -55,7 +55,7 @@ def terminate_spawn_scopes(
 
     spawn_id = SpawnId(spawn_record.id)
     for scope in scopes:
-        if is_scope_released(runtime_root, spawn_id, scope.scope_id):
+        if is_scope_released(runtime_root, spawn_id, scope.release_id):
             result = CleanupResult(
                 scope_id=scope.scope_id,
                 root_pid=scope.root_pid,
@@ -108,7 +108,7 @@ def terminate_spawn_scopes(
             continue
 
         result = terminate_scope_sync(scope, grace_seconds=grace_seconds, reason=reason)
-        mark_scope_released(runtime_root, spawn_id, scope.scope_id)
+        mark_scope_released(runtime_root, spawn_id, scope.release_id)
         logger.debug(
             "Terminated process scope.",
             spawn_id=spawn_record.id,
@@ -241,10 +241,10 @@ def cancel_managed_primary(
     # 1. Terminate launcher scope first (spawn_owned).
     for scope in scopes:
         if scope.scope_id == "launcher":
-            if is_scope_released(runtime_root, spawn_id, scope.scope_id):
+            if is_scope_released(runtime_root, spawn_id, scope.release_id):
                 continue
             result = terminate_scope_sync(scope, grace_seconds=grace_seconds, reason="cancel")
-            mark_scope_released(runtime_root, spawn_id, scope.scope_id)
+            mark_scope_released(runtime_root, spawn_id, scope.release_id)
             logger.debug(
                 "Terminated managed primary launcher scope.",
                 spawn_id=spawn_record.id,
@@ -267,7 +267,7 @@ def cancel_managed_primary(
     for scope in scopes:
         if scope.scope_id not in {"backend", "tui"}:
             continue
-        if is_scope_released(runtime_root, spawn_id, scope.scope_id):
+        if is_scope_released(runtime_root, spawn_id, scope.release_id):
             result = CleanupResult(
                 scope_id=scope.scope_id,
                 root_pid=scope.root_pid,
@@ -293,7 +293,7 @@ def cancel_managed_primary(
             results.append(result)
             continue
         result = terminate_scope_sync(scope, grace_seconds=grace_seconds, reason="cancel")
-        mark_scope_released(runtime_root, spawn_id, scope.scope_id)
+        mark_scope_released(runtime_root, spawn_id, scope.release_id)
         logger.debug(
             "Terminated managed primary runtime scope.",
             spawn_id=spawn_record.id,
@@ -333,10 +333,10 @@ def reclaim_session_owned_scopes_for_chat(
         for scope in scopes:
             if scope.owner_policy != "session_owned":
                 continue
-            if is_scope_released(runtime_root, spawn_id, scope.scope_id):
+            if is_scope_released(runtime_root, spawn_id, scope.release_id):
                 continue
             result = terminate_scope_sync(scope, grace_seconds=grace_seconds, reason="session_exit")
-            mark_scope_released(runtime_root, spawn_id, scope.scope_id)
+            mark_scope_released(runtime_root, spawn_id, scope.release_id)
             logger.debug(
                 "Reclaimed session-owned scope at session exit.",
                 spawn_id=record.id,

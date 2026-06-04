@@ -4,7 +4,6 @@ from pathlib import Path
 
 from meridian.lib.core.domain import TokenUsage
 from meridian.lib.core.types import SpawnId
-from meridian.lib.launch.env import scope_pi_session_dir_for_spawn
 from meridian.lib.launch.extract import FinalizeExtraction
 from meridian.lib.launch.report import ExtractedReport
 from meridian.lib.launch.streaming_runner import (
@@ -48,18 +47,6 @@ def test_absorb_attempt_updates_exit_code_and_terminal_flags() -> None:
 
     assert conclusion.exit_code == 7
     assert conclusion.final_attempt_terminal_observed is True
-    assert conclusion.terminated_after_completion is False
-
-
-def test_absorb_attempt_preserves_prior_watchdog_completion() -> None:
-    conclusion = StreamingRunConclusion()
-
-    conclusion.absorb_attempt(_attempt(exit_code=1, watchdog=True))
-    conclusion.absorb_attempt(_attempt(exit_code=0, watchdog=False, terminal_observed=True))
-
-    assert conclusion.exit_code == 0
-    assert conclusion.terminated_after_completion is True
-    assert conclusion.final_attempt_terminal_observed is True
 
 
 def test_terminal_facts_treat_durable_report_watchdog_as_success() -> None:
@@ -67,14 +54,12 @@ def test_terminal_facts_treat_durable_report_watchdog_as_success() -> None:
         exit_code=1,
         failure_reason="report_watchdog",
         extracted=_extraction_with_report("done"),
-        terminated_after_completion=True,
     )
 
     facts = conclusion.terminal_facts(received_signal=None)
     assert facts.exit_code == 1
     assert facts.failure_reason == "report_watchdog"
     assert facts.durable_report_completion is True
-    assert facts.terminated_after_completion is True
     assert facts.cancellation_observed is False
 
 
@@ -97,6 +82,8 @@ def test_retry_count_tracks_attempts() -> None:
 
 
 def test_scope_pi_session_dir_for_spawn_updates_env_and_creates_directory(tmp_path: Path) -> None:
+    from meridian.lib.launch.env import scope_pi_session_dir_for_spawn
+
     session_root = tmp_path / "sessions"
     child_env = {"PI_CODING_AGENT_SESSION_DIR": str(session_root)}
 
@@ -111,6 +98,8 @@ def test_scope_pi_session_dir_for_spawn_updates_env_and_creates_directory(tmp_pa
 
 
 def test_scope_pi_session_dir_for_spawn_is_noop_without_session_root() -> None:
+    from meridian.lib.launch.env import scope_pi_session_dir_for_spawn
+
     child_env: dict[str, str] = {}
 
     scope_pi_session_dir_for_spawn(
@@ -124,6 +113,8 @@ def test_scope_pi_session_dir_for_spawn_is_noop_without_session_root() -> None:
 def test_scope_pi_session_dir_for_spawn_is_idempotent_for_already_scoped_path(
     tmp_path: Path,
 ) -> None:
+    from meridian.lib.launch.env import scope_pi_session_dir_for_spawn
+
     scoped_root = tmp_path / "sessions" / "p-pi-scope-idempotent"
     child_env = {"PI_CODING_AGENT_SESSION_DIR": str(scoped_root)}
 

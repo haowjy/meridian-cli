@@ -97,6 +97,7 @@ from meridian.lib.streaming.spawn_manager import DrainOutcome, SpawnManager
 if TYPE_CHECKING:
     from meridian.lib.core.lifecycle import SpawnLifecycleService
     from meridian.lib.harness.connections.base import HarnessEvent
+    from meridian.lib.state.spawn.model import CancelIntent
 
 _DEFAULT_CONFIG = MeridianConfig()
 DEFAULT_GUARDRAIL_TIMEOUT_SECONDS = _DEFAULT_CONFIG.guardrail_timeout_minutes * 60.0
@@ -113,6 +114,7 @@ class _AttemptRuntime:
     received_signal: signal.Signals | None
     budget_breach: BudgetBreach | None
     terminated_by_report_watchdog: bool
+    cancelled_by_request: bool = False
     terminal_observed: bool = False
     start_error: str | None = None
 
@@ -124,18 +126,16 @@ class StreamingRunConclusion:
     exit_code: int = DEFAULT_INFRA_EXIT_CODE
     failure_reason: str | None = None
     extracted: FinalizeExtraction | None = None
-    terminated_after_completion: bool = False
     final_attempt_terminal_observed: bool = False
+    cancellation_observed: bool = False
     retries_attempted: int = 0
 
     def absorb_attempt(self, attempt: _AttemptRuntime) -> None:
         """Merge one attempt's terminal fields into the run conclusion."""
 
         self.exit_code = attempt.drain_exit_code
-        self.terminated_after_completion = (
-            self.terminated_after_completion or attempt.terminated_by_report_watchdog
-        )
         self.final_attempt_terminal_observed = attempt.terminal_observed
+        self.cancellation_observed = self.cancellation_observed or attempt.cancelled_by_request
 
     def terminal_facts(
         self,
@@ -144,8 +144,9 @@ class StreamingRunConclusion:
     ) -> ExecutionTerminalFacts:
         """Project accumulated runner evidence into lifecycle terminal facts."""
 
-        cancellation_observed = not self.final_attempt_terminal_observed and (
-            self.failure_reason in {"cancelled", "terminated"}
+        cancellation_observed = (
+            self.cancellation_observed
+            or self.failure_reason in {"cancelled", "terminated"}
             or received_signal in {signal.SIGINT, signal.SIGTERM}
         )
         return ExecutionTerminalFacts(
@@ -156,7 +157,6 @@ class StreamingRunConclusion:
                 self.extracted is not None
                 and has_durable_report_completion(self.extracted.report.content)
             ),
-            terminated_after_completion=self.terminated_after_completion,
         )
 
 
@@ -279,6 +279,43 @@ def _retry_blocked_after_pi_child_started(
         if state.get("parent_id") == str(current_spawn_id):
             return True
     return False
+
+
+def _read_cancel_intent(runtime_root: Path, spawn_id: SpawnId) -> CancelIntent | None:
+    record = spawn_store.get_spawn(runtime_root, spawn_id)
+    return None if record is None else record.cancel_intent
+
+
+def _apply_cancel_intent_to_conclusion(
+    conclusion: StreamingRunConclusion,
+    *,
+    runtime_root: Path,
+    spawn_id: SpawnId,
+) -> bool:
+    intent = _read_cancel_intent(runtime_root, spawn_id)
+    if intent is None:
+        return False
+    conclusion.exit_code = intent.exit_code
+    conclusion.failure_reason = intent.error or "cancelled"
+    conclusion.cancellation_observed = True
+    return True
+
+
+async def _sleep_retry_backoff_or_cancel(
+    *,
+    delay_seconds: float,
+    shutdown_event: asyncio.Event,
+    runtime_root: Path,
+    spawn_id: SpawnId,
+) -> bool:
+    deadline = asyncio.get_running_loop().time() + max(0.0, delay_seconds)
+    while True:
+        if shutdown_event.is_set() or _read_cancel_intent(runtime_root, spawn_id) is not None:
+            return True
+        remaining = deadline - asyncio.get_running_loop().time()
+        if remaining <= 0:
+            return False
+        await asyncio.sleep(min(0.1, remaining))
 
 
 def _line_from_harness_event(event: HarnessEvent) -> str:
@@ -577,6 +614,7 @@ async def _run_streaming_attempt(
     drain_error: str | None = None
     timed_out = False
     terminated_by_report_watchdog = False
+    cancelled_by_request = False
     terminal_outcome: TerminalEventOutcome | None = None
     try:
         connection = await manager.start_spawn(config, run_spec)
@@ -654,6 +692,7 @@ async def _run_streaming_attempt(
         elif decision.stop_required:
             stop_exit_code = decision.synthetic_exit_code
             if decision.trigger == TriggerKind.SIGNAL:
+                cancelled_by_request = True
                 stop_exit_code = signal_to_exit_code(received_signal[0]) or 130
             if stop_exit_code is None:
                 raise RuntimeError("terminal decision requires an exit code")
@@ -702,6 +741,7 @@ async def _run_streaming_attempt(
             received_signal=received_signal[0],
             budget_breach=budget_breach_holder[0],
             terminated_by_report_watchdog=terminated_by_report_watchdog,
+            cancelled_by_request=cancelled_by_request,
             terminal_observed=False,
             start_error=str(exc),
         )
@@ -726,6 +766,7 @@ async def _run_streaming_attempt(
         received_signal=received_signal[0],
         budget_breach=budget_breach_holder[0],
         terminated_by_report_watchdog=terminated_by_report_watchdog,
+        cancelled_by_request=cancelled_by_request,
         terminal_observed=terminal_outcome is not None or pi_drain_terminal,
     )
 
@@ -927,6 +968,13 @@ async def execute_with_streaming(
 
         try:
             while True:
+                if _apply_cancel_intent_to_conclusion(
+                    conclusion,
+                    runtime_root=runtime_root,
+                    spawn_id=run.spawn_id,
+                ):
+                    break
+
                 reset_finalize_attempt_artifacts(
                     artifacts=artifacts,
                     spawn_id=run.spawn_id,
@@ -1019,6 +1067,17 @@ async def execute_with_streaming(
                     failure_reason=conclusion.failure_reason,
                 )
                 conclusion.extracted = extraction
+
+                if (
+                    _read_cancel_intent(runtime_root, run.spawn_id) is not None
+                    and not has_durable_report_completion(extraction.report.content)
+                ):
+                    _apply_cancel_intent_to_conclusion(
+                        conclusion,
+                        runtime_root=runtime_root,
+                        spawn_id=run.spawn_id,
+                    )
+                    break
 
                 # I-4: observe_session_id() is the sole observation callsite.
                 extracted_harness_session_id = (
@@ -1169,7 +1228,20 @@ async def execute_with_streaming(
                         ],
                     )
                     if retry_backoff_seconds > 0:
-                        await asyncio.sleep(retry_backoff_seconds * conclusion.retries_attempted)
+                        cancelled_during_backoff = await _sleep_retry_backoff_or_cancel(
+                            delay_seconds=retry_backoff_seconds
+                            * conclusion.retries_attempted,
+                            shutdown_event=shutdown_event,
+                            runtime_root=runtime_root,
+                            spawn_id=run.spawn_id,
+                        )
+                        if cancelled_during_backoff:
+                            _apply_cancel_intent_to_conclusion(
+                                conclusion,
+                                runtime_root=runtime_root,
+                                spawn_id=run.spawn_id,
+                            )
+                            break
                     continue
 
                 stderr_key = make_artifact_key(run.spawn_id, STDERR_FILENAME)
@@ -1219,7 +1291,19 @@ async def execute_with_streaming(
                     error_category=str(category),
                 )
                 if retry_backoff_seconds > 0:
-                    await asyncio.sleep(retry_backoff_seconds * conclusion.retries_attempted)
+                    cancelled_during_backoff = await _sleep_retry_backoff_or_cancel(
+                        delay_seconds=retry_backoff_seconds * conclusion.retries_attempted,
+                        shutdown_event=shutdown_event,
+                        runtime_root=runtime_root,
+                        spawn_id=run.spawn_id,
+                    )
+                    if cancelled_during_backoff:
+                        _apply_cancel_intent_to_conclusion(
+                            conclusion,
+                            runtime_root=runtime_root,
+                            spawn_id=run.spawn_id,
+                        )
+                        break
         except asyncio.CancelledError:
             conclusion.exit_code = 130
             conclusion.failure_reason = "cancelled"

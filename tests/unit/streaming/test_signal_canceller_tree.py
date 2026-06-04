@@ -68,23 +68,16 @@ def _make_record(
     )
 
 
-def _make_scope(
-    *,
-    scope_id: str = "worker",
-    root_pid: int = 12345,
-    root_created_at_epoch: float = 1_700_000_000.0,
-    containment: str = "posix_pgid",
-    pgid: int | None = 12345,
-) -> ProcessScopeSnapshot:
+def _make_scope(scope_id: str, *, root_pid: int) -> ProcessScopeSnapshot:
     return ProcessScopeSnapshot(
         scope_id=scope_id,
         owner_policy="spawn_owned",
         owner_id="s-test",
         role="harness_backend",
-        containment=containment,
+        containment="pid_tree_fallback",
         root_pid=root_pid,
-        root_created_at_epoch=root_created_at_epoch,
-        pgid=pgid,
+        root_created_at_epoch=1_700_000_000.0,
+        pgid=None,
         job_name=None,
         degraded_reason=None,
     )
@@ -133,7 +126,7 @@ async def test_cancel_cli_spawn_legacy_path_uses_tree_termination_with_started_e
 
     assert captured and captured[0][0] == 99
     assert captured[0][1] > 0.0
-    assert captured[0][2] == "s-test"
+    assert captured[0][2] == "s-test:runner"
     assert outcome.status == "cancelled"
     assert outcome.exit_code == 130
 
@@ -170,155 +163,43 @@ async def test_cancel_cli_spawn_returns_finalizing_when_terminal_state_never_arr
 
 
 @pytest.mark.asyncio
-async def test_cancel_cli_spawn_scope_aware_path_terminates_unreleased_scopes_only(
+async def test_cleanup_spawn_scopes_uses_release_id_for_duplicate_labels(
     tmp_path: Path,
 ) -> None:
-    """Scope-aware cancel terminates unreleased scopes and skips released."""
     spawn_id = SpawnId("s-test")
-    running_record = _make_record(runner_pid=12345)
-    cancelled_record = _make_record(
-        status="cancelled",
-        runner_pid=12345,
-        exit_code=130,
-        terminal_origin="cancel",
-    )
-    released_scope = _make_scope(scope_id="released", root_pid=12344)
-    backend_scope = _make_scope(scope_id="backend", root_pid=12345)
-    sidecar_scope = _make_scope(scope_id="sidecar", root_pid=12346)
+    first_backend = _make_scope("backend", root_pid=101)
+    second_backend = _make_scope("backend", root_pid=202)
+    terminated_release_ids: list[str] = []
+    marked_release_ids: list[str] = []
 
-    terminated_scopes: list[str] = []
-    released_ids: list[str] = []
+    def _terminate_scope(scope: ProcessScopeSnapshot, **_: object) -> None:
+        terminated_release_ids.append(scope.release_id)
 
-    def _capture_scope(scope: ProcessScopeSnapshot, *, grace_seconds: float, reason: str) -> None:
-        terminated_scopes.append(scope.scope_id)
-        assert grace_seconds == 1.0
-        assert reason == "cancel"
-
-    def _record_release(_root: Path, _spawn_id: SpawnId, scope_id: str) -> None:
-        released_ids.append(scope_id)
-
-    canceller = SignalCanceller(runtime_root=tmp_path, grace_seconds=1.0)
+    canceller = SignalCanceller(runtime_root=tmp_path, grace_seconds=0.0)
 
     with (
         patch(
-            "meridian.lib.streaming.signal_canceller.spawn_store.get_spawn",
-            side_effect=[running_record, cancelled_record],
-        ),
-        patch(
-            "meridian.lib.streaming.signal_canceller.is_process_alive",
-            return_value=True,
-        ),
-        patch(
             "meridian.lib.streaming.signal_canceller.read_scopes_from_disk",
-            return_value=[released_scope, backend_scope, sidecar_scope],
+            return_value=[first_backend, second_backend],
         ),
         patch(
             "meridian.lib.streaming.signal_canceller.is_scope_released",
-            side_effect=lambda _root, _sid, scope_id: scope_id == "released",
+            side_effect=lambda _root, _sid, release_id: release_id
+            == first_backend.release_id,
         ),
         patch(
             "meridian.lib.streaming.signal_canceller.terminate_scope_sync",
-            side_effect=_capture_scope,
+            side_effect=_terminate_scope,
         ),
         patch(
             "meridian.lib.streaming.signal_canceller.mark_scope_released",
-            side_effect=_record_release,
+            side_effect=lambda _root, _sid, release_id: marked_release_ids.append(
+                release_id
+            ),
         ),
-        patch("meridian.lib.streaming.signal_canceller.terminate_tree_sync") as mock_tree,
     ):
-        outcome = await canceller._cancel_cli_spawn(spawn_id, running_record)
+        await canceller._cleanup_spawn_scopes(spawn_id, _make_record())
 
-    assert terminated_scopes == ["backend", "sidecar"]
-    assert released_ids == ["backend", "sidecar"]
-    mock_tree.assert_not_called()
-    assert outcome.status == "cancelled"
-
-
-class _FakeSpawnManager:
-    """Minimal fake for SignalCanceller._manager; records stop_spawn calls."""
-
-    def __init__(self) -> None:
-        self.stop_spawn_calls: list[dict[str, object]] = []
-
-    async def stop_spawn(
-        self,
-        spawn_id: SpawnId,
-        *,
-        status: str = "cancelled",
-        exit_code: int = 1,
-        error: str | None = None,
-        prefer_drain_outcome: bool = False,
-    ) -> None:
-        self.stop_spawn_calls.append(
-            {
-                "spawn_id": str(spawn_id),
-                "status": status,
-                "exit_code": exit_code,
-                "error": error,
-            }
-        )
-
-
-@pytest.mark.asyncio
-async def test_cancel_app_spawn_manager_path_resolves_from_terminal_record(
-    tmp_path: Path,
-) -> None:
-    """_cancel_app_spawn with a manager stops the spawn and resolves from the terminal record."""
-    spawn_id = SpawnId("s-test")
-    running_record = _make_record(launch_mode="app", runner_pid=None)
-    cancelled_record = _make_record(
-        status="cancelled",
-        launch_mode="app",
-        runner_pid=None,
-        exit_code=130,
-        terminal_origin="cancel",
-    )
-
-    fake_manager = _FakeSpawnManager()
-    canceller = SignalCanceller(
-        runtime_root=tmp_path,
-        grace_seconds=2.0,
-        manager=fake_manager,  # type: ignore[arg-type]
-    )
-
-    with patch(
-        "meridian.lib.streaming.signal_canceller.spawn_store.get_spawn",
-        return_value=cancelled_record,
-    ):
-        outcome = await canceller._cancel_app_spawn(spawn_id, running_record)
-
-    assert fake_manager.stop_spawn_calls == [
-        {"spawn_id": "s-test", "status": "cancelled", "exit_code": 143, "error": "cancelled"}
-    ]
-    assert outcome.status == "cancelled"
-    assert outcome.exit_code == 130
-    assert outcome.origin == "cancel"
-    assert outcome.finalizing is False
-
-
-@pytest.mark.asyncio
-async def test_cancel_app_spawn_manager_path_returns_finalizing_when_terminal_never_arrives(
-    tmp_path: Path,
-) -> None:
-    """_cancel_app_spawn returns finalizing when terminal state does not arrive in time."""
-    spawn_id = SpawnId("s-test")
-    running_record = _make_record(launch_mode="app", runner_pid=None)
-
-    fake_manager = _FakeSpawnManager()
-    canceller = SignalCanceller(
-        runtime_root=tmp_path,
-        grace_seconds=0.0,  # deadline expires immediately
-        manager=fake_manager,  # type: ignore[arg-type]
-    )
-
-    with patch(
-        "meridian.lib.streaming.signal_canceller.spawn_store.get_spawn",
-        return_value=running_record,  # still running — terminal never lands
-    ):
-        outcome = await canceller._cancel_app_spawn(spawn_id, running_record)
-
-    assert fake_manager.stop_spawn_calls  # stop_spawn was called
-    assert fake_manager.stop_spawn_calls[0]["status"] == "cancelled"
-    assert fake_manager.stop_spawn_calls[0]["exit_code"] == 143
-    assert outcome.status == "finalizing"
-    assert outcome.finalizing is True
+    assert first_backend.scope_id == second_backend.scope_id
+    assert terminated_release_ids == [second_backend.release_id]
+    assert marked_release_ids == [second_backend.release_id]
