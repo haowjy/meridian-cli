@@ -400,6 +400,16 @@ hooks, harness defaults, and primary-session defaults.
 
 In Claude launches, native `Agent()` follows that same boundary: generic `Agent` is allowed only with Mars Claude `agent_copy` plus an effective `.claude` managed target. Without it, use `meridian spawn`. Claude built-ins (`Explore`, `Plan`, `General-purpose` / `general-purpose`) stay denied.
 
+To prevent `meridian spawn -a <agent>` from launching headless Claude runs, set:
+
+```toml
+[spawn]
+deny_headless_harnesses = ["claude"]
+```
+
+That blocks spawn routes after model/profile resolution selects Claude, while
+leaving primary Claude launches available.
+
 See [agent-profiles.md](agent-profiles.md) for the agent profile format including `model-policies`, `no-fallback`, and `mode`. Legacy `fanout` and `fallback-order` are rejected; migrate to `model-policies` list order + `no-fallback: true`.
 
 ## Spawn Statuses

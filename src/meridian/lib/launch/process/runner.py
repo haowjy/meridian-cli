@@ -563,9 +563,6 @@ def _finalize_lifecycle_and_observe_session(
                 ExecutionTerminalFacts(
                     exit_code=exit_code,
                     durable_report_completion=durable_report_completion,
-                    terminated_after_completion=(
-                        durable_report_completion and exit_code in (143, -15)
-                    ),
                 ),
                 origin="launcher",
                 duration_secs=duration,

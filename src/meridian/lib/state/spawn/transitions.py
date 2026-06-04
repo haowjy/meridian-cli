@@ -13,7 +13,12 @@ from meridian.lib.core.spawn_lifecycle import TERMINAL_SPAWN_STATUSES, validate_
 
 if TYPE_CHECKING:
     from meridian.lib.core.domain import SpawnStatus, TokenUsage
-    from meridian.lib.state.spawn.model import LaunchMode, SpawnOrigin, SpawnRecord
+    from meridian.lib.state.spawn.model import (
+        CancelIntent,
+        LaunchMode,
+        SpawnOrigin,
+        SpawnRecord,
+    )
 
 
 def apply_mark_running(
@@ -81,6 +86,20 @@ def apply_runner_exit(
     if spawn_id is not None:
         updates["id"] = spawn_id
     return record.model_copy(update=updates)
+
+
+def apply_cancel_intent(
+    record: SpawnRecord,
+    *,
+    intent: CancelIntent,
+) -> SpawnRecord:
+    """Return ``record`` with durable spawn-level cancel intent applied."""
+
+    if record.status in TERMINAL_SPAWN_STATUSES:
+        return record
+    if record.cancel_intent is not None:
+        return record
+    return record.model_copy(update={"cancel_intent": intent})
 
 
 def apply_mark_finalizing(record: SpawnRecord) -> SpawnRecord:

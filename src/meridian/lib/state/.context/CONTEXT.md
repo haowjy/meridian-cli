@@ -137,15 +137,24 @@ Liveness check sequence per active spawn:
 1. Skip if status is already terminal.
 2. Skip if not a root-side-effect process (`is_root_side_effect_process()`).
 3. Skip if heartbeat age < 120s (recently alive).
-4. If status = `finalizing`: check for durable report. If present → mark succeeded.
-   If absent → mark failed (`orphan_finalization`).
+4. If status = `finalizing`: check `runner_exit_status`, then `cancel_intent`, then
+   durable report through `_completion_or_cancel_decision()`. If none apply → mark
+   failed (`orphan_finalization`).
 5. If status = `running` or `queued`: check if `runner_pid` is alive (using
    `liveness.py:is_process_alive()` with PID reuse guard via recorded start time).
-   If dead → mark failed (`orphan_run`).
+   If dead, check completion/cancel precedence, then recent activity, startup grace,
+   and finally mark failed (`orphan_run` or `missing_runner_pid`).
 
 `has_durable_report_completion(report_text)` returns True for non-empty report that
-is not a terminal control frame (`cancelled`/`error` JSON). Used by both reaper
-and runner.
+is not a terminal control frame (`cancelled`/`error` JSON) and is not a `# Spawn failed`
+generated markdown wrapper. Used by both reaper and runner.
+
+`_completion_or_cancel_decision()` centralizes durable-completion-vs-cancel precedence
+for the reaper: if a durable report exists, the spawn resolves `succeeded` regardless
+of cancel intent; otherwise pending cancel intent resolves `cancelled` with the intent's
+exit code and error. This replaces the earlier pattern of returning
+`FinalizeSucceededFromReport` or `_finalize_from_cancel_intent_decision()` directly —
+violating the rule can let a late cancel downgrade a completed spawn.
 
 **Managed-primary orphan cleanup:**
 

@@ -148,6 +148,60 @@ root has already died must be reclaimed, not silently preserved forever.
 This function was removed — it had zero callers and was fully superseded by
 `reclaim_session_owned_scopes_for_chat()`. Do not reference it.
 
+## Spawn Lifecycle Decisions (`spawn_lifecycle.py`)
+
+`spawn_lifecycle.py` owns lifecycle resolution rules — pure stateless functions shared by the
+runner, reaper, and spawn application service. It does not own persistence or side effects.
+
+### Has Durable Report Completion
+
+`has_durable_report_completion(report_text)` returns True when a non-empty final report
+exists on disk and its content is not a terminal control frame:
+
+- Returns `False` for empty/whitespace strings, `None`, or `"# Spawn failed"` generated
+  markdown (runner-produced failure wrappers do not constitute durable completion).
+- Returns `False` for JSON payloads whose top-level or nested `event_type` / `event` /
+  `type` is `"cancelled"` or `"error"`.
+- Returns `True` for all other non-empty content (plain markdown, JSON payloads with
+  neutral/completion event types).
+
+### Centralized Completion-vs-Cancel Precedence
+
+`resolve_completion_cancel_precedence(*, durable_report_completion, cancel_requested, ...)`
+is the **single** shared resolution rule for the durable-completion-wins-over-late-cancel
+policy:
+
+- If a durable report exists → `ExecutionTerminalOutcome(status="succeeded", exit_code=0)`.
+- Else if cancellation was requested → `ExecutionTerminalOutcome(status="cancelled", ...)`.
+- Else → `None` (no opinion — caller must fall back to its own outcome).
+
+This helper is consumed by `SpawnApplicationService._force_cancel_convergence()`,
+`SpawnApplicationService.complete_execution()`, and `reaper._completion_or_cancel_decision()`.
+All three converge on the same precedence rule.
+
+### Execution Terminal State Resolution
+
+`resolve_execution_terminal_state()` normalizes raw execution facts into a terminal tuple
+`(status, exit_code, error)`. It takes `exit_code`, `failure_reason`, `cancelled`, and
+`durable_report_completion`:
+
+| durable completion | cancelled | exit_code | Result |
+|---|---|---|---|
+| True | any | any | `succeeded`, 0, None |
+| False | True | 143 | `cancelled`, 143, failure_reason |
+| False | True | 0 | `cancelled`, 130, failure_reason |
+| False | False | 0 | `succeeded`, 0, failure_reason |
+| False | False | non-zero | `failed`, exit_code, failure_reason |
+
+`resolve_execution_terminal_outcome(facts: ExecutionTerminalFacts)` wraps this for the
+runner path.
+
+### Reaper-Specific Resolved State
+
+`resolve_reconciled_terminal_state(*, durable_report_completion, fallback_error)` produces
+the terminal state for read-path reconciliation. Durable completion → `succeeded`; otherwise
+→ `failed` with the supplied fallback error.
+
 ## Related KB
 
 → [KB: codebase/guide.md](/home/jimyao/.meridian/git/meridian-flow-docs/kb/codebase/guide.md) — core module orientation and codebase navigation

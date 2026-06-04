@@ -468,6 +468,48 @@ class SpawnLifecycleService:
             )
             return True
 
+    def request_cancel(
+        self,
+        spawn_id: str,
+        *,
+        exit_code: int = 130,
+        error: str | None = "cancelled",
+        requested_by: Literal["user", "system"] = "user",
+        requested_at: str | None = None,
+        clock: Clock | None = None,
+    ) -> SpawnRecord | None:
+        """Persist pre-terminal spawn-level cancel intent."""
+
+        with bind_lifecycle_correlation(
+            self._correlation(operation="request_cancel", spawn_id=spawn_id)
+        ):
+            record = _spawn_store().record_cancel_intent(
+                self._runtime_root,
+                spawn_id,
+                exit_code=exit_code,
+                error=error,
+                requested_by=requested_by,
+                requested_at=requested_at,
+                clock=clock,
+            )
+            if record is None:
+                return None
+            self._emit_telemetry_event(
+                "spawn.updated",
+                record,
+                payload={
+                    "cancel_intent": {
+                        "requested_at": record.cancel_intent.requested_at,
+                        "exit_code": record.cancel_intent.exit_code,
+                        "error": record.cancel_intent.error,
+                        "requested_by": record.cancel_intent.requested_by,
+                    }
+                    if record.cancel_intent is not None
+                    else None,
+                },
+            )
+            return record
+
     def finalize(
         self,
         spawn_id: str,

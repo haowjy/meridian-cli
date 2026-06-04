@@ -95,7 +95,7 @@ def test_reclaim_session_owned_scopes_for_chat_reclaims_all_matching_spawns(
         status="running",
     )
 
-    for spawn_id, scope in (
+    scope_records = (
         (
             spawn_one,
             _scope(
@@ -136,10 +136,12 @@ def test_reclaim_session_owned_scopes_for_chat_reclaims_all_matching_spawns(
                 root_pid=402,
             ),
         ),
-    ):
+    )
+    for spawn_id, scope in scope_records:
         record_scope(runtime_root, SpawnId(spawn_id), scope)
 
-    mark_scope_released(runtime_root, SpawnId("p2"), "already-released")
+    already_released_scope = scope_records[3][1]
+    mark_scope_released(runtime_root, SpawnId("p2"), already_released_scope.release_id)
 
     terminated_scope_ids: list[str] = []
 
@@ -170,9 +172,39 @@ def test_reclaim_session_owned_scopes_for_chat_reclaims_all_matching_spawns(
 
     assert terminated_scope_ids == ["backend", "tui"]
     assert [result.scope_id for result in results] == ["backend", "tui"]
-    assert is_scope_released(runtime_root, SpawnId(spawn_one), "backend") is True
-    assert is_scope_released(runtime_root, SpawnId("p2"), "tui") is True
-    assert is_scope_released(runtime_root, SpawnId("p2"), "already-released") is True
+    assert (
+        is_scope_released(runtime_root, SpawnId(spawn_one), scope_records[0][1].release_id)
+        is True
+    )
+    assert is_scope_released(runtime_root, SpawnId("p2"), scope_records[2][1].release_id) is True
+    assert is_scope_released(runtime_root, SpawnId("p2"), already_released_scope.release_id) is True
+
+
+def test_duplicate_scope_labels_are_released_by_concrete_identity(tmp_path: Path) -> None:
+    runtime_root, spawn_id = _create_primary_spawn(tmp_path)
+    first = _scope(
+        spawn_id,
+        scope_id="backend",
+        owner_policy="spawn_owned",
+        owner_id=spawn_id,
+        root_pid=501,
+    )
+    second = _scope(
+        spawn_id,
+        scope_id="backend",
+        owner_policy="spawn_owned",
+        owner_id=spawn_id,
+        root_pid=502,
+    )
+
+    record_scope(runtime_root, SpawnId(spawn_id), first)
+    record_scope(runtime_root, SpawnId(spawn_id), second)
+    mark_scope_released(runtime_root, SpawnId(spawn_id), first.release_id)
+
+    assert first.scope_id == second.scope_id
+    assert first.release_id != second.release_id
+    assert is_scope_released(runtime_root, SpawnId(spawn_id), first.release_id) is True
+    assert is_scope_released(runtime_root, SpawnId(spawn_id), second.release_id) is False
 
 
 def test_reaper_preserve_then_reclaim_reuses_same_scope_records(
@@ -181,7 +213,7 @@ def test_reaper_preserve_then_reclaim_reuses_same_scope_records(
 ) -> None:
     runtime_root, spawn_id = _create_primary_spawn(tmp_path)
     session_id = "session-1"
-    for scope in (
+    scope_records = (
         _scope(
             spawn_id,
             scope_id="launcher",
@@ -203,7 +235,8 @@ def test_reaper_preserve_then_reclaim_reuses_same_scope_records(
             owner_id=session_id,
             root_pid=302,
         ),
-    ):
+    )
+    for scope in scope_records:
         record_scope(runtime_root, SpawnId(spawn_id), scope)
 
     monkeypatch.setattr(
@@ -246,14 +279,14 @@ def test_reaper_preserve_then_reclaim_reuses_same_scope_records(
     assert terminated_scope_ids == ["launcher"]
     assert reconciled.status == "failed"
     assert reconciled.error == "orphan_primary"
-    assert is_scope_released(runtime_root, SpawnId(spawn_id), "launcher") is True
-    assert is_scope_released(runtime_root, SpawnId(spawn_id), "backend") is False
-    assert is_scope_released(runtime_root, SpawnId(spawn_id), "tui") is False
+    assert is_scope_released(runtime_root, SpawnId(spawn_id), scope_records[0].release_id) is True
+    assert is_scope_released(runtime_root, SpawnId(spawn_id), scope_records[1].release_id) is False
+    assert is_scope_released(runtime_root, SpawnId(spawn_id), scope_records[2].release_id) is False
 
     terminated_scope_ids.clear()
     results = reclaim_session_owned_scopes_for_chat(runtime_root, "c1", grace_seconds=2.0)
 
     assert terminated_scope_ids == ["backend", "tui"]
     assert [result.scope_id for result in results] == ["backend", "tui"]
-    assert is_scope_released(runtime_root, SpawnId(spawn_id), "backend") is True
-    assert is_scope_released(runtime_root, SpawnId(spawn_id), "tui") is True
+    assert is_scope_released(runtime_root, SpawnId(spawn_id), scope_records[1].release_id) is True
+    assert is_scope_released(runtime_root, SpawnId(spawn_id), scope_records[2].release_id) is True

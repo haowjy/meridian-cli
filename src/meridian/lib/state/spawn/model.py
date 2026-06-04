@@ -34,6 +34,17 @@ _AUTHORITATIVE_ORIGIN_VALUES: tuple[SpawnOrigin, ...] = (
 AUTHORITATIVE_ORIGINS: frozenset[SpawnOrigin] = frozenset(_AUTHORITATIVE_ORIGIN_VALUES)
 
 
+class CancelIntent(BaseModel):
+    """Durable spawn-level cancellation request."""
+
+    model_config = ConfigDict(frozen=True)
+
+    requested_at: str
+    exit_code: int
+    error: str | None
+    requested_by: Literal["user", "system"] = "user"
+
+
 class SpawnRecord(BaseModel):
     """Derived spawn state assembled from persisted spawn state."""
 
@@ -71,6 +82,7 @@ class SpawnRecord(BaseModel):
     runner_exit_status: TerminalSpawnStatus | None
     runner_exit_error: str | None
     runner_exit_at: str | None
+    cancel_intent: CancelIntent | None = None
     finished_at: str | None
     exit_code: int | None
     duration_secs: float | None
@@ -94,6 +106,7 @@ __all__ = [
     "FOREGROUND_LAUNCH_MODE",
     "_AUTHORITATIVE_ORIGIN_VALUES",
     "_LAUNCH_MODE_VALUES",
+    "CancelIntent",
     "LaunchMode",
     "LaunchPolicySnapshot",
     "SpawnOrigin",

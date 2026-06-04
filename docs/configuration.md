@@ -200,6 +200,27 @@ the launch denies native `Agent` and guides delegation back to `meridian spawn`.
 Claude built-in
 agents (`Explore`, `Plan`, `General-purpose` / `general-purpose`) stay denied.
 
+### Deny headless spawn harnesses
+
+Use `[spawn].deny_headless_harnesses` when a project should not launch
+headless subagents through specific harnesses. This applies to
+`meridian spawn`, including `meridian spawn -a <agent>` after the agent/model
+resolves to a harness.
+
+```toml
+[spawn]
+deny_headless_harnesses = ["claude"]
+```
+
+With that setting, a Claude primary session can still run, but headless Claude
+spawns fail before launch. To completely avoid Claude-side delegation, combine
+it with no Claude `agent_copy`:
+
+```toml
+[settings.agent_copy]
+harnesses = []
+```
+
 ### Model aliases
 
 Project-local aliases live under `[models.<alias>]`:
