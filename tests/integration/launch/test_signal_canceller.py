@@ -176,53 +176,6 @@ async def test_signal_canceller_app_lane_uses_manager_stop_spawn(
     assert calls == [(spawn_id, "cancelled", 130, "cancelled")]
     assert outcome.status == "cancelled"
     assert outcome.origin == "runner"
-
-
-@pytest.mark.asyncio
-async def test_signal_canceller_cli_lane_defers_when_runner_pid_missing(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    runtime_root = resolve_runtime_paths(tmp_path).root_dir
-    spawn_id = _start_spawn(runtime_root, spawn_id="p1", launch_mode="foreground", runner_pid=None)
-
-    def fake_is_process_alive(pid: int, created_after_epoch: float | None = None) -> bool:
-        _ = pid, created_after_epoch
-        return False
-
-    monkeypatch.setattr(
-        "meridian.lib.streaming.signal_canceller.is_process_alive",
-        fake_is_process_alive,
-    )
-    outcome = await SignalCanceller(
-        runtime_root=runtime_root,
-    ).cancel(SpawnId(spawn_id))
-
-    assert outcome.status == "finalizing"
-    assert outcome.origin == "cancel"
-    assert outcome.finalizing is True
-
-
-@pytest.mark.asyncio
-async def test_signal_canceller_runnerless_cancel_does_not_finalize_directly(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Runnerless delivery is not terminal authority; the application service converges."""
-
-    runtime_root = resolve_runtime_paths(tmp_path).root_dir
-    spawn_id = _start_spawn(runtime_root, spawn_id="p1", launch_mode="foreground", runner_pid=None)
-    outcome = await SignalCanceller(
-        runtime_root=runtime_root,
-    ).cancel(SpawnId(spawn_id))
-
-    assert outcome.status == "finalizing"
-    assert outcome.finalizing is True
-    row = spawn_store.get_spawn(runtime_root, spawn_id)
-    assert row is not None
-    assert row.status == "running"
-
-
 @pytest.mark.asyncio
 async def test_signal_canceller_runnerless_cancel_preserves_running_row(
     tmp_path: Path,

@@ -40,7 +40,7 @@ def _state_root(tmp_path: Path) -> Path:
     return state_dir
 
 
-def _start_test_spawn(runtime_root: Path) -> str:
+def _start_test_spawn(runtime_root: Path, *, spawn_id: str | None = None) -> str:
     return str(
         start_spawn(
             runtime_root,
@@ -49,6 +49,7 @@ def _start_test_spawn(runtime_root: Path) -> str:
             agent="coder",
             harness="codex",
             prompt="hello",
+            spawn_id=spawn_id,
         )
     )
 
@@ -247,7 +248,9 @@ def test_spawn_state_without_launch_policy_snapshot_remains_readable(tmp_path: P
     assert row.launch_policy_snapshot is None
 
 
-def test_record_cancel_intent_persists_first_spawn_level_request(tmp_path: Path) -> None:
+def test_record_cancel_intent_persists_first_request_and_skips_terminal(
+    tmp_path: Path,
+) -> None:
     runtime_root = _state_root(tmp_path)
     spawn_id = _start_test_spawn(runtime_root)
 
@@ -275,15 +278,12 @@ def test_record_cancel_intent_persists_first_spawn_level_request(tmp_path: Path)
     assert row is not None
     assert row.cancel_intent == first.cancel_intent
 
-
-def test_record_cancel_intent_leaves_terminal_spawn_unchanged(tmp_path: Path) -> None:
-    runtime_root = _state_root(tmp_path)
-    spawn_id = _start_test_spawn(runtime_root)
-    finalize_spawn(runtime_root, spawn_id, "succeeded", 0, origin="runner")
+    terminal_spawn_id = _start_test_spawn(runtime_root, spawn_id="p-terminal")
+    finalize_spawn(runtime_root, terminal_spawn_id, "succeeded", 0, origin="runner")
 
     result = record_cancel_intent(
         runtime_root,
-        spawn_id,
+        terminal_spawn_id,
         exit_code=130,
         error="cancelled",
         requested_at="2026-06-03T01:00:00Z",

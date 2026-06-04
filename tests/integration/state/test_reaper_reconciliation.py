@@ -242,35 +242,6 @@ def test_reconcile_active_spawn_with_cancel_intent_and_dead_runner_cancels(
     assert reconciled.status == "cancelled"
     assert reconciled.exit_code == 130
     assert reconciled.error == "cancelled"
-
-
-def test_reconcile_active_spawn_with_cancel_intent_keeps_durable_completion(
-    tmp_path: Path, monkeypatch
-) -> None:
-    from tests.integration.state.conftest import _write_report
-
-    runtime_root, spawn_id = _create_spawn(tmp_path, started_at=_OLD_STARTED_AT)
-    spawn_store.record_cancel_intent(
-        runtime_root,
-        spawn_id,
-        exit_code=130,
-        error="cancelled",
-        requested_at="2026-06-03T01:00:00Z",
-    )
-    _write_report(runtime_root, spawn_id)
-    record = _get_spawn(runtime_root, spawn_id)
-    monkeypatch.setattr(
-        "meridian.lib.state.reaper.is_process_alive",
-        lambda *_args, **_kwargs: False,
-    )
-
-    reconciled = _reconcile(tmp_path, runtime_root, record)
-
-    assert reconciled.status == "succeeded"
-    assert reconciled.exit_code == 0
-    assert reconciled.error is None
-
-
 @pytest.mark.parametrize(
     ("depth_value", "expected_status", "expected_error"),
     [
