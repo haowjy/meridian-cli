@@ -9,6 +9,7 @@ from unittest.mock import patch
 import pytest
 
 from meridian.lib.core.types import SpawnId
+from meridian.lib.platform.process_scope import ProcessScopeSnapshot
 from meridian.lib.state.spawn.model import SpawnRecord
 from meridian.lib.streaming.signal_canceller import SignalCanceller
 
@@ -64,6 +65,21 @@ def _make_record(
         cost_is_estimate=False,
         error=None,
         terminal_origin=terminal_origin,  # type: ignore[arg-type]
+    )
+
+
+def _make_scope(scope_id: str, *, root_pid: int) -> ProcessScopeSnapshot:
+    return ProcessScopeSnapshot(
+        scope_id=scope_id,
+        owner_policy="spawn_owned",
+        owner_id="s-test",
+        role="harness_backend",
+        containment="pid_tree_fallback",
+        root_pid=root_pid,
+        root_created_at_epoch=1_700_000_000.0,
+        pgid=None,
+        job_name=None,
+        degraded_reason=None,
     )
 
 
@@ -144,3 +160,46 @@ async def test_cancel_cli_spawn_returns_finalizing_when_terminal_state_never_arr
 
     assert outcome.finalizing is True
     assert outcome.status == "finalizing"
+
+
+@pytest.mark.asyncio
+async def test_cleanup_spawn_scopes_uses_release_id_for_duplicate_labels(
+    tmp_path: Path,
+) -> None:
+    spawn_id = SpawnId("s-test")
+    first_backend = _make_scope("backend", root_pid=101)
+    second_backend = _make_scope("backend", root_pid=202)
+    terminated_release_ids: list[str] = []
+    marked_release_ids: list[str] = []
+
+    def _terminate_scope(scope: ProcessScopeSnapshot, **_: object) -> None:
+        terminated_release_ids.append(scope.release_id)
+
+    canceller = SignalCanceller(runtime_root=tmp_path, grace_seconds=0.0)
+
+    with (
+        patch(
+            "meridian.lib.streaming.signal_canceller.read_scopes_from_disk",
+            return_value=[first_backend, second_backend],
+        ),
+        patch(
+            "meridian.lib.streaming.signal_canceller.is_scope_released",
+            side_effect=lambda _root, _sid, release_id: release_id
+            == first_backend.release_id,
+        ),
+        patch(
+            "meridian.lib.streaming.signal_canceller.terminate_scope_sync",
+            side_effect=_terminate_scope,
+        ),
+        patch(
+            "meridian.lib.streaming.signal_canceller.mark_scope_released",
+            side_effect=lambda _root, _sid, release_id: marked_release_ids.append(
+                release_id
+            ),
+        ),
+    ):
+        await canceller._cleanup_spawn_scopes(spawn_id, _make_record())
+
+    assert first_backend.scope_id == second_backend.scope_id
+    assert terminated_release_ids == [second_backend.release_id]
+    assert marked_release_ids == [second_backend.release_id]
