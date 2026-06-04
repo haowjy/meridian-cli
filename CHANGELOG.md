@@ -8,6 +8,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Claude aborted-streaming result during explicit cancel stays `cancelled`, not `succeeded`.
 - Background spawn cancel stays `cancelled` when runner writes synthetic `# Spawn failed` report.
 - Codex websocket close/error report during explicit cancel stays `cancelled`, not `succeeded`.
+- Codex `thread/*`, `turn/*`, `item/*`, `account/*`, `mcpServer/*`, and `remoteControl/*` event envelopes no longer count as durable completion.
 - Codex pre-command progress text during explicit cancel no longer counts as durable completion.
 
 ## [0.2.30] - 2026-06-04

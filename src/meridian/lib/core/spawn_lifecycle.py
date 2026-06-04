@@ -31,6 +31,14 @@ _OPENCODE_CONTROL_EVENT_TYPES = frozenset(
         "sync",
     }
 )
+_CODEX_CONTROL_EVENT_NAMESPACE_PREFIXES: tuple[str, ...] = (
+    "account.",
+    "item.",
+    "mcpserver.",
+    "remotecontrol.",
+    "thread.",
+    "turn.",
+)
 _CLAUDE_PROGRESS_EVENT_NAMES: frozenset[str] = frozenset({"assistant", "user", "system"})
 _CLAUDE_ENVELOPE_MARKER_KEYS: frozenset[str] = frozenset(
     {
@@ -83,14 +91,6 @@ def _event_name(payload: dict[str, object]) -> str:
     )
 
 
-def _item_type(payload: dict[str, object]) -> str:
-    item = payload.get("item")
-    if not isinstance(item, dict):
-        return ""
-    item_payload = cast("dict[str, object]", item)
-    return str(item_payload.get("type", "")).strip().lower().replace("_", "")
-
-
 def _is_opencode_control_payload(payload: dict[str, object]) -> bool:
     event_type = _event_name(payload)
     return event_type in _OPENCODE_CONTROL_EVENT_TYPES or (
@@ -119,15 +119,11 @@ def _is_claude_non_durable_payload(payload: dict[str, object]) -> bool:
     )
 
 
-def _is_codex_command_progress_payload(payload: dict[str, object]) -> bool:
-    if _event_name(payload) != "item.started":
-        return False
-    if _item_type(payload) == "commandexecution":
-        return True
-    nested = payload.get("payload")
-    if isinstance(nested, dict):
-        return _item_type(cast("dict[str, object]", nested)) == "commandexecution"
-    return False
+def _is_codex_control_event_payload(payload: dict[str, object]) -> bool:
+    event_name = _event_name(payload)
+    return any(
+        event_name.startswith(prefix) for prefix in _CODEX_CONTROL_EVENT_NAMESPACE_PREFIXES
+    )
 
 
 def is_control_report_payload(payload: dict[str, object]) -> bool:
@@ -142,7 +138,7 @@ def is_control_report_payload(payload: dict[str, object]) -> bool:
         return True
     if _is_claude_non_durable_payload(payload):
         return True
-    if _is_codex_command_progress_payload(payload):
+    if _is_codex_control_event_payload(payload):
         return True
 
     nested = payload.get("payload")

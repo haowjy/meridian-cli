@@ -44,6 +44,17 @@ def test_has_durable_report_completion_distinguishes_completion_from_cancel_arti
     )
     assert (
         has_durable_report_completion(
+            '# Report\n\n{"threadId":"019e92fc-881c-7533-a6b3-ccaa89c0dd2e",'
+            '"turn":{"completedAt":null,"durationMs":null,"error":null,'
+            '"id":"019e92fc-88d3-7430-9b93-67a2230470c8","items":[],'
+            '"itemsView":"notLoaded","startedAt":1780582484,"status":"inProgress"},'
+            '"type":"turn/started"}'
+        )
+        is False
+    )
+    assert has_durable_report_completion('{"type":"thread/updated","threadId":"t1"}') is False
+    assert (
+        has_durable_report_completion(
             '{"type":"user","message":{"role":"user","content":['
             '{"type":"text","text":"[Request interrupted by user]"}]}}'
         )

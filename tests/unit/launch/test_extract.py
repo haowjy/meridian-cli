@@ -50,6 +50,25 @@ def test_classify_finalize_report_keeps_genuine_json_completion() -> None:
 @pytest.mark.parametrize(
     "content",
     [
+        (
+            '{"threadId":"019e92fc-881c-7533-a6b3-ccaa89c0dd2e",'
+            '"turn":{"completedAt":null,"durationMs":null,"error":null,'
+            '"id":"019e92fc-88d3-7430-9b93-67a2230470c8","items":[],'
+            '"itemsView":"notLoaded","startedAt":1780582484,"status":"inProgress"},'
+            '"type":"turn/started"}'
+        ),
+        '{"type":"mcpServer/statusChanged","server":"docs","status":"connected"}',
+    ],
+)
+def test_classify_finalize_report_rejects_codex_event_envelopes(content: str) -> None:
+    report = ExtractedReport(content=content, source="assistant_message")
+
+    assert classify_finalize_report(report) is FinalizeReportKind.CONTROL_FRAME
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
         '{"type":"result","is_error":true,"terminal_reason":"aborted_streaming","result":""}',
         '{"type":"user","message":{"role":"user","content":['
         '{"type":"text","text":"[Request interrupted by user]"}]}}',
@@ -172,6 +191,52 @@ def test_extract_or_fallback_report_uses_failure_after_codex_command_progress(
         b'{"event_type":"item/started",'
         b'"payload":{"item":{"type":"commandExecution","command":"sleep 600"}},'
         b'"seq":5}\n',
+    )
+
+    report = extract_or_fallback_report(
+        artifacts,
+        spawn_id,
+        failure_reason="terminated",
+    )
+
+    assert report.content == "terminated"
+    assert report.source == "failure_reason"
+
+
+def test_extract_or_fallback_report_uses_failure_after_codex_turn_started(
+    tmp_path: Path,
+) -> None:
+    artifacts = LocalStore(root_dir=tmp_path / "artifacts")
+    spawn_id = SpawnId("p-codex-turn-started")
+    artifacts.put(
+        ArtifactKey(f"{spawn_id}/history.jsonl"),
+        (
+            b'{"threadId":"019e92fc-881c-7533-a6b3-ccaa89c0dd2e",'
+            b'"turn":{"completedAt":null,"durationMs":null,"error":null,'
+            b'"id":"019e92fc-88d3-7430-9b93-67a2230470c8","items":[],'
+            b'"itemsView":"notLoaded","startedAt":1780582484,"status":"inProgress"},'
+            b'"type":"turn/started"}\n'
+        ),
+    )
+
+    report = extract_or_fallback_report(
+        artifacts,
+        spawn_id,
+        failure_reason="terminated",
+    )
+
+    assert report.content == "terminated"
+    assert report.source == "failure_reason"
+
+
+def test_extract_or_fallback_report_uses_failure_after_related_codex_event(
+    tmp_path: Path,
+) -> None:
+    artifacts = LocalStore(root_dir=tmp_path / "artifacts")
+    spawn_id = SpawnId("p-codex-related-event")
+    artifacts.put(
+        ArtifactKey(f"{spawn_id}/history.jsonl"),
+        b'{"event_type":"remoteControl/connected","payload":{"sessionId":"s1"},"seq":5}\n',
     )
 
     report = extract_or_fallback_report(
