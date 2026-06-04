@@ -4,6 +4,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+- Bump `mars-agents` to 0.7.15 — Cursor sandbox/approval classified as Approximate (was Dropped).
+
 ## [0.2.29] - 2026-06-04
 
 ### Added
