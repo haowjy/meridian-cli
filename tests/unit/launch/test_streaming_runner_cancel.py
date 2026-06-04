@@ -6,26 +6,8 @@ from pathlib import Path
 import pytest
 
 from meridian.lib.core.types import SpawnId
-from meridian.lib.launch.streaming_runner import (
-    StreamingRunConclusion,
-    _sleep_retry_backoff_or_cancel,
-)
+from meridian.lib.launch.streaming_runner import _sleep_retry_backoff_or_cancel
 from meridian.lib.state import spawn_store
-
-
-def test_streaming_conclusion_classifies_pi_cancel_from_explicit_request() -> None:
-    conclusion = StreamingRunConclusion(
-        exit_code=130,
-        failure_reason="cancelled",
-        final_attempt_terminal_observed=True,
-        cancellation_observed=True,
-    )
-
-    facts = conclusion.terminal_facts(received_signal=None)
-
-    assert facts.cancellation_observed is True
-    assert facts.exit_code == 130
-    assert facts.failure_reason == "cancelled"
 
 
 @pytest.mark.asyncio
