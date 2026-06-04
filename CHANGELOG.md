@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.2.29] - 2026-06-04
+
 ### Added
 - Cursor harness projection: `--sandbox enabled/disabled` flag from mars sandbox mode. `read-only` → enabled, `workspace-write`/`danger-full-access` → disabled.
 
