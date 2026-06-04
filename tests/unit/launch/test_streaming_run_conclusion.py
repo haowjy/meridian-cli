@@ -3,10 +3,14 @@ import signal
 from pathlib import Path
 
 from meridian.lib.core.domain import TokenUsage
-from meridian.lib.core.spawn_lifecycle import has_durable_report_completion
 from meridian.lib.core.types import SpawnId
 from meridian.lib.launch.constants import REPORT_FILENAME
-from meridian.lib.launch.extract import FinalizeExtraction, enrich_finalize
+from meridian.lib.launch.extract import (
+    FinalizeExtraction,
+    FinalizeReportKind,
+    classify_finalize_report,
+    enrich_finalize,
+)
 from meridian.lib.launch.report import ExtractedReport, ReportSource
 from meridian.lib.launch.streaming_runner import (
     StreamingRunConclusion,
@@ -58,10 +62,7 @@ def _extraction_with_report(
         report_path=None,
         report=ExtractedReport(content=report_text, source=source),
         output_is_empty=False,
-        durable_report_completion=(
-            source not in {"failure_reason", "pi_failure"}
-            and has_durable_report_completion(report_text)
-        ),
+        report_kind=classify_finalize_report(ExtractedReport(content=report_text, source=source)),
     )
 
 
@@ -125,6 +126,7 @@ def test_enrich_finalize_marks_synthetic_failure_report_not_durable(tmp_path: Pa
     )
 
     assert report.startswith("# Spawn failed")
+    assert extraction.report_kind is FinalizeReportKind.SYNTHETIC_FAILURE
     assert extraction.durable_report_completion is False
     assert conclusion.terminal_facts(received_signal=None).durable_report_completion is False
 

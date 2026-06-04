@@ -13,9 +13,7 @@ from meridian.lib.bootstrap.services import build_spawn_application_service_from
 from meridian.lib.core.depth import is_root_side_effect_process
 from meridian.lib.core.domain import SpawnStatus
 from meridian.lib.core.spawn_lifecycle import (
-    durable_report_completed,
     is_active_spawn_status,
-    iso_timestamp_to_epoch,
     resolve_completion_cancel_precedence,
     resolve_reconciled_terminal_state,
 )
@@ -31,6 +29,8 @@ from meridian.lib.state.managed_primary import (
     terminate_managed_primary_processes,
 )
 from meridian.lib.state.spawn.model import SpawnRecord
+from meridian.lib.state.spawn_report import spawn_report_has_durable_completion
+from meridian.lib.state.timestamps import iso_timestamp_to_epoch
 
 logger = structlog.get_logger(__name__)
 
@@ -143,7 +143,7 @@ def _collect_artifact_snapshot(
         started_epoch=started_epoch,
         last_activity_epoch=last_activity_epoch,
         recent_activity_artifact=recent_activity_artifact,
-        durable_report_completion=durable_report_completed(runtime_root, record.id),
+        durable_report_completion=spawn_report_has_durable_completion(runtime_root, record.id),
         runner_pid_alive=runner_pid_alive,
         launch_boundary=launch_boundary,
     )

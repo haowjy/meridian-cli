@@ -14,14 +14,18 @@ from typing import TYPE_CHECKING, cast
 import structlog
 
 from meridian.lib.core.domain import SpawnStatus
-from meridian.lib.core.process_cleanup import terminate_spawn_scopes
-from meridian.lib.core.spawn_lifecycle import TERMINAL_SPAWN_STATUSES, iso_timestamp_to_epoch
+from meridian.lib.core.process_cleanup import (
+    terminate_recorded_spawn_scopes,
+    terminate_spawn_scopes,
+)
+from meridian.lib.core.spawn_lifecycle import TERMINAL_SPAWN_STATUSES
 from meridian.lib.core.types import SpawnId
 from meridian.lib.platform import IS_WINDOWS
 from meridian.lib.platform.terminate import terminate_tree_sync
 from meridian.lib.state import spawn_store
 from meridian.lib.state.liveness import is_process_alive
 from meridian.lib.state.spawn.model import APP_LAUNCH_MODE, SpawnOrigin, SpawnRecord
+from meridian.lib.state.timestamps import iso_timestamp_to_epoch
 
 if TYPE_CHECKING:
     from meridian.lib.streaming.spawn_manager import SpawnManager
@@ -98,7 +102,7 @@ class SignalCanceller:
                 return _outcome_from_record(terminal)
 
             latest = spawn_store.get_spawn(self._runtime_root, spawn_id) or record
-            await self._cleanup_spawn_scopes(latest, include_legacy_fallback=False)
+            await self._cleanup_recorded_spawn_scopes(latest)
             terminal = await self._wait_for_terminal(spawn_id)
             if terminal is not None:
                 return _outcome_from_record(terminal)
@@ -124,19 +128,22 @@ class SignalCanceller:
             finalizing=True,
         )
 
-    async def _cleanup_spawn_scopes(
-        self,
-        record: SpawnRecord,
-        *,
-        include_legacy_fallback: bool = True,
-    ) -> None:
+    async def _cleanup_recorded_spawn_scopes(self, record: SpawnRecord) -> None:
+        await asyncio.to_thread(
+            terminate_recorded_spawn_scopes,
+            self._runtime_root,
+            record,
+            reason="cancel",
+            grace_seconds=self._grace_seconds,
+        )
+
+    async def _cleanup_spawn_scopes(self, record: SpawnRecord) -> None:
         await asyncio.to_thread(
             terminate_spawn_scopes,
             self._runtime_root,
             record,
             reason="cancel",
             grace_seconds=self._grace_seconds,
-            include_legacy_fallback=include_legacy_fallback,
         )
 
     async def _cancel_app_spawn(

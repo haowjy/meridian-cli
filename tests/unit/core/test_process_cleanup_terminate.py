@@ -9,7 +9,11 @@ from unittest.mock import MagicMock
 import psutil as _psutil
 import pytest
 
-from meridian.lib.core.process_cleanup import should_skip_cleanup, terminate_spawn_scopes
+from meridian.lib.core.process_cleanup import (
+    should_skip_cleanup,
+    terminate_recorded_spawn_scopes,
+    terminate_spawn_scopes,
+)
 from meridian.lib.platform.process_scope.base import CleanupResult, ProcessScopeSnapshot
 from meridian.lib.state.spawn.model import SpawnRecord
 
@@ -206,7 +210,7 @@ def test_terminate_spawn_scopes_falls_back_to_legacy_worker_pid(
     logger.debug.assert_called_once()
 
 
-def test_terminate_spawn_scopes_can_skip_legacy_worker_fallback(
+def test_terminate_recorded_spawn_scopes_does_not_run_legacy_worker_fallback(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
@@ -219,11 +223,10 @@ def test_terminate_spawn_scopes_can_skip_legacy_worker_fallback(
 
     monkeypatch.setattr(process_cleanup, "terminate_tree_sync", _unexpected)
 
-    results = terminate_spawn_scopes(
+    results = terminate_recorded_spawn_scopes(
         tmp_path,
         _record(worker_pid=321),
         reason="cancel",
-        include_legacy_fallback=False,
     )
 
     assert results == []

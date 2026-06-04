@@ -17,8 +17,6 @@ from meridian.lib.core.lifecycle import SpawnLifecycleService
 from meridian.lib.core.spawn_lifecycle import (
     ExecutionTerminalFacts,
     ExecutionTerminalOutcome,
-    durable_report_completed,
-    iso_timestamp_to_epoch,
     resolve_completion_cancel_precedence,
     resolve_execution_terminal_outcome,
 )
@@ -52,6 +50,8 @@ from meridian.lib.state import spawn_store
 from meridian.lib.state.liveness import is_process_alive
 from meridian.lib.state.paths import RuntimePaths
 from meridian.lib.state.spawn.model import APP_LAUNCH_MODE, LaunchMode, SpawnOrigin
+from meridian.lib.state.spawn_report import spawn_report_has_durable_completion
+from meridian.lib.state.timestamps import iso_timestamp_to_epoch
 from meridian.lib.streaming.signal_canceller import CancelOutcome as SignalCancelOutcome
 
 if TYPE_CHECKING:
@@ -577,7 +577,10 @@ class SpawnApplicationService:
             return record
         intent = record.cancel_intent
         resolved = resolve_completion_cancel_precedence(
-            durable_report_completion=durable_report_completed(self._runtime_root, str(spawn_id)),
+            durable_report_completion=spawn_report_has_durable_completion(
+                self._runtime_root,
+                str(spawn_id),
+            ),
             cancel_requested=True,
             cancel_exit_code=intent.exit_code if intent is not None else 130,
             cancel_error=intent.error if intent is not None else "cancelled",

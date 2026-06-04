@@ -1,11 +1,15 @@
 """Post-execution extraction pipeline used during run finalization."""
 
+from enum import StrEnum
 from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict
 
 from meridian.lib.core.domain import TokenUsage
-from meridian.lib.core.spawn_lifecycle import has_durable_report_completion
+from meridian.lib.core.spawn_lifecycle import (
+    DurableReportEvidence,
+    classify_durable_report_text,
+)
 from meridian.lib.core.types import ArtifactKey, HarnessId, SpawnId
 from meridian.lib.harness.adapter import SpawnExtractor
 from meridian.lib.harness.cost import estimate_usage_cost
@@ -27,6 +31,16 @@ from meridian.lib.state.atomic import atomic_write_text
 # ---------------------------------------------------------------------------
 
 
+class FinalizeReportKind(StrEnum):
+    """Extraction-boundary classification for the persisted final report."""
+
+    ABSENT = "absent"
+    DURABLE_COMPLETION = "durable_completion"
+    SYNTHETIC_FAILURE = "synthetic_failure"
+    PI_FAILURE = "pi_failure"
+    CONTROL_FRAME = "control_frame"
+
+
 class FinalizeExtraction(BaseModel):
     model_config = ConfigDict(frozen=True)
 
@@ -35,7 +49,11 @@ class FinalizeExtraction(BaseModel):
     report_path: Path | None
     report: ExtractedReport
     output_is_empty: bool
-    durable_report_completion: bool = False
+    report_kind: FinalizeReportKind = FinalizeReportKind.ABSENT
+
+    @property
+    def durable_report_completion(self) -> bool:
+        return self.report_kind is FinalizeReportKind.DURABLE_COMPLETION
 
 
 def reset_finalize_attempt_artifacts(
@@ -87,10 +105,22 @@ def _persist_report(
     return target
 
 
-def _is_durable_completion_report(extracted: ExtractedReport) -> bool:
-    if extracted.source in {"failure_reason", "pi_failure"}:
-        return False
-    return has_durable_report_completion(extracted.content)
+def classify_finalize_report(extracted: ExtractedReport) -> FinalizeReportKind:
+    """Project extracted report source and text into finalization semantics."""
+
+    if extracted.source == "failure_reason":
+        return FinalizeReportKind.SYNTHETIC_FAILURE
+    if extracted.source == "pi_failure":
+        return FinalizeReportKind.PI_FAILURE
+
+    evidence = classify_durable_report_text(extracted.content)
+    if evidence is DurableReportEvidence.COMPLETION:
+        return FinalizeReportKind.DURABLE_COMPLETION
+    if evidence is DurableReportEvidence.SYNTHETIC_FAILURE:
+        return FinalizeReportKind.SYNTHETIC_FAILURE
+    if evidence is DurableReportEvidence.CONTROL_FRAME:
+        return FinalizeReportKind.CONTROL_FRAME
+    return FinalizeReportKind.ABSENT
 
 
 def _is_empty_output(
@@ -153,5 +183,5 @@ def enrich_finalize(
             spawn_id=spawn_id,
             extracted_report=report,
         ),
-        durable_report_completion=_is_durable_completion_report(report),
+        report_kind=classify_finalize_report(report),
     )

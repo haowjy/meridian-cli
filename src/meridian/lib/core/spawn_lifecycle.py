@@ -7,8 +7,7 @@ spawn from succeeded to failed.
 
 import json
 from dataclasses import dataclass
-from datetime import UTC, datetime
-from pathlib import Path
+from enum import StrEnum
 from typing import cast
 
 from meridian.lib.core.domain import SpawnStatus
@@ -21,6 +20,15 @@ _ALLOWED_TRANSITIONS: dict[str, frozenset[str]] = {
     "running": frozenset({"finalizing", "succeeded", "failed", "cancelled"}),
     "finalizing": frozenset({"succeeded", "failed", "cancelled"}),
 }
+
+
+class DurableReportEvidence(StrEnum):
+    """Classification of persisted report text as lifecycle evidence."""
+
+    ABSENT = "absent"
+    COMPLETION = "completion"
+    SYNTHETIC_FAILURE = "synthetic_failure"
+    CONTROL_FRAME = "control_frame"
 
 
 @dataclass(frozen=True)
@@ -52,22 +60,22 @@ def validate_transition(from_status: SpawnStatus, to_status: SpawnStatus) -> Non
         raise ValueError(f"Illegal spawn transition: {from_status} -> {to_status}")
 
 
-def has_durable_report_completion(report_text: str | None) -> bool:
-    """Return True when a non-empty final report is available on disk."""
+def classify_durable_report_text(report_text: str | None) -> DurableReportEvidence:
+    """Classify report text as lifecycle completion evidence."""
 
     if not report_text or not report_text.strip():
-        return False
+        return DurableReportEvidence.ABSENT
 
     stripped = report_text.strip()
     if stripped.lower().startswith("# spawn failed"):
-        return False
+        return DurableReportEvidence.SYNTHETIC_FAILURE
 
     try:
         payload_obj = json.loads(stripped)
     except json.JSONDecodeError:
-        return True
+        return DurableReportEvidence.COMPLETION
     if not isinstance(payload_obj, dict):
-        return True
+        return DurableReportEvidence.COMPLETION
 
     payload = cast("dict[str, object]", payload_obj)
     event_name = (
@@ -76,7 +84,7 @@ def has_durable_report_completion(report_text: str | None) -> bool:
         .lower()
     )
     if event_name in {"cancelled", "error"}:
-        return False
+        return DurableReportEvidence.CONTROL_FRAME
 
     nested = payload.get("payload")
     if isinstance(nested, dict):
@@ -92,36 +100,14 @@ def has_durable_report_completion(report_text: str | None) -> bool:
             .lower()
         )
         if nested_name in {"cancelled", "error"}:
-            return False
-    return True
+            return DurableReportEvidence.CONTROL_FRAME
+    return DurableReportEvidence.COMPLETION
 
 
-def durable_report_completed(runtime_root: Path, spawn_id: str) -> bool:
-    """Return True when a spawn has a durable completion report on disk."""
+def has_durable_report_completion(report_text: str | None) -> bool:
+    """Return True when report text is durable completion evidence."""
 
-    report_path = runtime_root / "spawns" / spawn_id / "report.md"
-    try:
-        report_text = report_path.read_text(encoding="utf-8", errors="ignore")
-    except OSError:
-        return False
-    return has_durable_report_completion(report_text)
-
-
-def iso_timestamp_to_epoch(timestamp: str | None) -> float | None:
-    """Parse a persisted ISO timestamp to epoch seconds."""
-
-    normalized = (timestamp or "").strip()
-    if not normalized:
-        return None
-    if normalized.endswith("Z"):
-        normalized = f"{normalized[:-1]}+00:00"
-    try:
-        parsed = datetime.fromisoformat(normalized)
-    except ValueError:
-        return None
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=UTC)
-    return parsed.timestamp()
+    return classify_durable_report_text(report_text) is DurableReportEvidence.COMPLETION
 
 
 def resolve_execution_terminal_state(

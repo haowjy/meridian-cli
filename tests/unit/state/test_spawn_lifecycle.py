@@ -2,10 +2,8 @@ from meridian.lib.core.spawn_lifecycle import (
     ACTIVE_SPAWN_STATUSES,
     TERMINAL_SPAWN_STATUSES,
     ExecutionTerminalFacts,
-    durable_report_completed,
     has_durable_report_completion,
     is_active_spawn_status,
-    iso_timestamp_to_epoch,
     resolve_completion_cancel_precedence,
     resolve_execution_terminal_outcome,
     resolve_execution_terminal_state,
@@ -92,19 +90,3 @@ def test_finalizing_membership_reflects_active_non_terminal_state() -> None:
     assert "finalizing" in ACTIVE_SPAWN_STATUSES
     assert "finalizing" not in TERMINAL_SPAWN_STATUSES
     assert is_active_spawn_status("finalizing") is True
-
-
-def test_iso_timestamp_to_epoch_normalizes_z_and_naive_utc() -> None:
-    assert iso_timestamp_to_epoch("2024-01-01T00:00:00Z") == 1704067200.0
-    assert iso_timestamp_to_epoch("2024-01-01T00:00:00") == 1704067200.0
-    assert iso_timestamp_to_epoch("not-a-date") is None
-    assert iso_timestamp_to_epoch(None) is None
-
-
-def test_durable_report_completed_reads_report_from_spawn_dir(tmp_path) -> None:
-    spawn_dir = tmp_path / "spawns" / "s-test"
-    spawn_dir.mkdir(parents=True)
-    (spawn_dir / "report.md").write_text("# Report\n\nDone.\n", encoding="utf-8")
-
-    assert durable_report_completed(tmp_path, "s-test") is True
-    assert durable_report_completed(tmp_path, "missing") is False

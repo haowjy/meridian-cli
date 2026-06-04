@@ -262,18 +262,18 @@ The `SpawnApplicationService.cancel()` path owns convergence to terminal — it 
 
 The method resolves `record.runner_pid` first and signals that runner tree. If the
 runner is absent/dead, or if runner termination does not produce terminal state, it
-falls back to `process_cleanup.terminate_spawn_scopes()` via `asyncio.to_thread()`.
-When fallback runs after a guarded runner-tree signal, legacy `worker_pid` fallback is
-disabled; real scope records still clean up. That canonical cleanup path owns scope
-policy:
+falls back to `process_cleanup.terminate_spawn_scopes()` via `asyncio.to_thread()`
+when no live runner is available. After a guarded runner-tree signal, it calls
+`process_cleanup.terminate_recorded_spawn_scopes()` so real scope records still clean
+up without re-running the legacy worker fallback. The cleanup path owns scope policy:
 
 1. Reads scope sidecars via `read_scopes_from_disk()`.
 2. Skips already-released scopes by concrete `release_id`.
 3. Preserves live `session_owned` scopes via `should_skip_cleanup()`.
 4. Terminates remaining scopes through `terminate_scope_sync()` and marks each
    concrete `release_id` released.
-5. Falls back to legacy `worker_pid` termination when no sidecars exist and the caller
-   has not disabled legacy fallback.
+5. Falls back to legacy `worker_pid` termination only through `terminate_spawn_scopes()`
+   when no sidecars exist.
 
 After signal delivery, `_wait_for_terminal()` polls the spawn record for up to
 `grace_seconds`. If the record never reaches a terminal status, the outcome carries
