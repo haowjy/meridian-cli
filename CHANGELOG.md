@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.2.27] - 2026-06-04
+
 ### Fixed
 - Spawn cancel now records durable cancel intent, stops runners before scope cleanup, suppresses retries, and converges stale cancelled runs to `cancelled`.
 - Process scope release tracking now uses concrete release identities, so repeated `backend` attempts clean independently.
