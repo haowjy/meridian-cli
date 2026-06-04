@@ -6,6 +6,11 @@ from typing import Literal, cast
 
 from pydantic import BaseModel, ConfigDict
 
+from meridian.lib.core.spawn_lifecycle import (
+    DurableReportEvidence,
+    classify_durable_report_text,
+    is_control_report_payload,
+)
 from meridian.lib.core.types import SpawnId
 from meridian.lib.harness.adapter import SpawnExtractor
 from meridian.lib.launch.constants import HISTORY_FILENAME, OUTPUT_FILENAME
@@ -16,15 +21,6 @@ from .artifact_io import read_artifact_text
 ReportSource = Literal["report_md", "assistant_message", "failure_reason", "pi_failure"]
 _LOGGER = logging.getLogger(__name__)
 _PI_LIFECYCLE_PHASE_EVENT = "meridian.pi.lifecycle.phase"
-_OPENCODE_CONTROL_EVENT_TYPES = frozenset(
-    {
-        "session.idle",
-        "session.error",
-        "session.status",
-        "sync",
-    }
-)
-_CODEX_CONTROL_EVENT_TYPES = frozenset({"error/connectionclosed", "error.connectionclosed"})
 _PI_LIFECYCLE_NOISE_PHASES = frozenset(
     {
         "cleanup_running",
@@ -62,53 +58,8 @@ def _event_name(payload: dict[str, object]) -> str:
     )
 
 
-def _is_opencode_control_payload(payload: dict[str, object]) -> bool:
-    event_type = _event_name(payload)
-    if event_type in _OPENCODE_CONTROL_EVENT_TYPES:
-        return True
-    if event_type.startswith("session.") and event_type not in {"session.created"}:
-        return True
-
-    nested = payload.get("payload")
-    if isinstance(nested, dict):
-        nested_payload = cast("dict[str, object]", nested)
-        nested_type = _event_name(nested_payload)
-        if nested_type in _OPENCODE_CONTROL_EVENT_TYPES:
-            return True
-        if nested_type.startswith("session.") and nested_type not in {"session.created"}:
-            return True
-    return False
-
-
 def _is_terminal_control_frame(text: str) -> bool:
-    stripped = text.strip()
-    if not stripped:
-        return False
-    try:
-        payload_obj = json.loads(stripped)
-    except json.JSONDecodeError:
-        return False
-    if not isinstance(payload_obj, dict):
-        return False
-
-    payload = cast("dict[str, object]", payload_obj)
-    if _event_name(payload) in {"cancelled", "error"}:
-        return True
-    if _event_name(payload) in _CODEX_CONTROL_EVENT_TYPES:
-        return True
-    if _is_opencode_control_payload(payload):
-        return True
-
-    nested = payload.get("payload")
-    if isinstance(nested, dict):
-        nested_payload = cast("dict[str, object]", nested)
-        if _event_name(nested_payload) in {"cancelled", "error"}:
-            return True
-        if _event_name(nested_payload) in _CODEX_CONTROL_EVENT_TYPES:
-            return True
-        if _is_opencode_control_payload(nested_payload):
-            return True
-    return False
+    return classify_durable_report_text(text) is DurableReportEvidence.CONTROL_FRAME
 
 
 def _text_from_value(value: object) -> str:
@@ -313,10 +264,10 @@ def _extract_last_assistant_message(output_lines: str) -> str | None:
             payload = _unwrap_history_payload(record)
             if _is_pi_lifecycle_noise_payload(payload):
                 continue
-            if _is_opencode_control_payload(payload):
+            if is_control_report_payload(payload):
                 continue
         elif isinstance(payload_obj, dict):
-            if _is_opencode_control_payload(cast("dict[str, object]", payload_obj)):
+            if is_control_report_payload(cast("dict[str, object]", payload_obj)):
                 continue
         assistants = _assistant_texts(cast("object", payload_obj))
         if assistants:

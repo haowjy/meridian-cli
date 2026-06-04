@@ -35,6 +35,41 @@ def test_has_durable_report_completion_distinguishes_completion_from_cancel_arti
         )
         is False
     )
+    assert (
+        has_durable_report_completion(
+            '{"event_type":"item/started",'
+            '"payload":{"item":{"type":"commandExecution","command":"sleep 600"}}}'
+        )
+        is False
+    )
+    assert (
+        has_durable_report_completion(
+            '{"type":"user","message":{"role":"user","content":['
+            '{"type":"text","text":"[Request interrupted by user]"}]}}'
+        )
+        is False
+    )
+    assert (
+        has_durable_report_completion(
+            '{"type":"user","message":{"role":"user","content":['
+            '{"type":"tool_result","is_error":true,"content":"Exit code 144"}]}}'
+        )
+        is False
+    )
+    assert (
+        has_durable_report_completion(
+            '{"type":"assistant","message":{"role":"assistant","content":['
+            '{"type":"tool_use","name":"Bash","input":{"command":"sleep 600"}}]}}'
+        )
+        is False
+    )
+    assert (
+        has_durable_report_completion(
+            '{"type":"assistant","message":{"role":"assistant","content":['
+            '{"type":"thinking","thinking":"I should call Bash."}]}}'
+        )
+        is False
+    )
 
 
 def test_resolve_execution_terminal_state_returns_cancelled_for_cancel_intent() -> None:

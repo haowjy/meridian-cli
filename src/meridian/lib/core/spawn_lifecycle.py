@@ -21,7 +21,28 @@ _ALLOWED_TRANSITIONS: dict[str, frozenset[str]] = {
     "finalizing": frozenset({"succeeded", "failed", "cancelled"}),
 }
 _CONTROL_EVENT_NAMES: frozenset[str] = frozenset(
-    {"cancelled", "error", "error/connectionclosed", "error.connectionclosed"}
+    {"cancelled", "error", "error.connectionclosed"}
+)
+_OPENCODE_CONTROL_EVENT_TYPES = frozenset(
+    {
+        "session.idle",
+        "session.error",
+        "session.status",
+        "sync",
+    }
+)
+_CLAUDE_PROGRESS_EVENT_NAMES: frozenset[str] = frozenset({"assistant", "user", "system"})
+_CLAUDE_ENVELOPE_MARKER_KEYS: frozenset[str] = frozenset(
+    {
+        "message",
+        "model",
+        "parent_tool_use_id",
+        "rate_limit_info",
+        "request_id",
+        "session_id",
+        "usage",
+        "uuid",
+    }
 )
 
 
@@ -51,6 +72,83 @@ class ExecutionTerminalOutcome:
     status: SpawnStatus
     exit_code: int
     error: str | None
+
+
+def _event_name(payload: dict[str, object]) -> str:
+    return (
+        str(payload.get("event_type", payload.get("event", payload.get("type", ""))))
+        .strip()
+        .lower()
+        .replace("/", ".")
+    )
+
+
+def _item_type(payload: dict[str, object]) -> str:
+    item = payload.get("item")
+    if not isinstance(item, dict):
+        return ""
+    item_payload = cast("dict[str, object]", item)
+    return str(item_payload.get("type", "")).strip().lower().replace("_", "")
+
+
+def _is_opencode_control_payload(payload: dict[str, object]) -> bool:
+    event_type = _event_name(payload)
+    return event_type in _OPENCODE_CONTROL_EVENT_TYPES or (
+        event_type.startswith("session.") and event_type not in {"session.created"}
+    )
+
+
+def _is_claude_result_payload(payload: dict[str, object]) -> bool:
+    return _event_name(payload) == "result"
+
+
+def _is_claude_completed_result_payload(payload: dict[str, object]) -> bool:
+    return _is_claude_result_payload(payload) and payload.get("is_error") is False
+
+
+def _is_claude_structured_payload(payload: dict[str, object]) -> bool:
+    event_name = _event_name(payload)
+    if event_name in _CLAUDE_PROGRESS_EVENT_NAMES or event_name == "result":
+        return True
+    return bool(event_name and any(key in payload for key in _CLAUDE_ENVELOPE_MARKER_KEYS))
+
+
+def _is_claude_non_durable_payload(payload: dict[str, object]) -> bool:
+    return _is_claude_structured_payload(payload) and not _is_claude_completed_result_payload(
+        payload
+    )
+
+
+def _is_codex_command_progress_payload(payload: dict[str, object]) -> bool:
+    if _event_name(payload) != "item.started":
+        return False
+    if _item_type(payload) == "commandexecution":
+        return True
+    nested = payload.get("payload")
+    if isinstance(nested, dict):
+        return _item_type(cast("dict[str, object]", nested)) == "commandexecution"
+    return False
+
+
+def is_control_report_payload(payload: dict[str, object]) -> bool:
+    """Return whether a structured payload is non-durable report/control evidence."""
+
+    event_name = _event_name(payload)
+    if event_name in _CONTROL_EVENT_NAMES:
+        return True
+    if event_name == "system":
+        return True
+    if _is_opencode_control_payload(payload):
+        return True
+    if _is_claude_non_durable_payload(payload):
+        return True
+    if _is_codex_command_progress_payload(payload):
+        return True
+
+    nested = payload.get("payload")
+    if isinstance(nested, dict):
+        return is_control_report_payload(cast("dict[str, object]", nested))
+    return False
 
 
 def is_active_spawn_status(status: str) -> bool:
@@ -88,29 +186,8 @@ def classify_durable_report_text(report_text: str | None) -> DurableReportEviden
         return DurableReportEvidence.COMPLETION
 
     payload = cast("dict[str, object]", payload_obj)
-    event_name = (
-        str(payload.get("event_type", payload.get("event", payload.get("type", ""))))
-        .strip()
-        .lower()
-    )
-    if event_name in _CONTROL_EVENT_NAMES:
+    if is_control_report_payload(payload):
         return DurableReportEvidence.CONTROL_FRAME
-
-    nested = payload.get("payload")
-    if isinstance(nested, dict):
-        nested_payload = cast("dict[str, object]", nested)
-        nested_name = (
-            str(
-                nested_payload.get(
-                    "event_type",
-                    nested_payload.get("event", nested_payload.get("type", "")),
-                )
-            )
-            .strip()
-            .lower()
-        )
-        if nested_name in _CONTROL_EVENT_NAMES:
-            return DurableReportEvidence.CONTROL_FRAME
     return DurableReportEvidence.COMPLETION
 
 

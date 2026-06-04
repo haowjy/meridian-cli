@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import pytest
+
 from meridian.lib.core.types import ArtifactKey, SpawnId
 from meridian.lib.launch.extract import (
     FinalizeReportKind,
@@ -45,6 +47,44 @@ def test_classify_finalize_report_keeps_genuine_json_completion() -> None:
     assert classify_finalize_report(report) is FinalizeReportKind.DURABLE_COMPLETION
 
 
+@pytest.mark.parametrize(
+    "content",
+    [
+        '{"type":"result","is_error":true,"terminal_reason":"aborted_streaming","result":""}',
+        '{"type":"user","message":{"role":"user","content":['
+        '{"type":"text","text":"[Request interrupted by user]"}]}}',
+        '{"type":"user","message":{"role":"user","content":['
+        '{"type":"tool_result","is_error":true,"content":"Exit code 144"}]}}',
+        '{"type":"assistant","message":{"role":"assistant","content":['
+        '{"type":"tool_use","name":"Bash","input":{"command":"sleep 600"}}]}}',
+        '{"type":"assistant","message":{"role":"assistant","content":['
+        '{"type":"thinking","thinking":"I should call Bash."}]}}',
+        '{"type":"system","subtype":"thinking_tokens","estimated_tokens":180}',
+        '{"type":"rate_limit_event","rate_limit_info":{"status":"allowed"}}',
+        '{"type":"unknown_telemetry","request_id":"req_1"}',
+        '{"type":"result","result":"OK"}',
+    ],
+)
+def test_classify_finalize_report_rejects_claude_control_and_progress_envelopes(
+    content: str,
+) -> None:
+    report = ExtractedReport(content=content, source="assistant_message")
+
+    assert classify_finalize_report(report) is FinalizeReportKind.CONTROL_FRAME
+
+
+def test_classify_finalize_report_keeps_claude_success_result() -> None:
+    report = ExtractedReport(
+        content=(
+            '{"type":"result","is_error":false,'
+            '"terminal_reason":"end_turn","result":"OK"}'
+        ),
+        source="assistant_message",
+    )
+
+    assert classify_finalize_report(report) is FinalizeReportKind.DURABLE_COMPLETION
+
+
 def test_extract_or_fallback_report_ignores_codex_connection_closed_history(
     tmp_path: Path,
 ) -> None:
@@ -61,3 +101,84 @@ def test_extract_or_fallback_report_ignores_codex_connection_closed_history(
 
     assert report.content is None
     assert report.source is None
+
+
+def test_extract_or_fallback_report_ignores_claude_aborted_streaming_history(
+    tmp_path: Path,
+) -> None:
+    artifacts = LocalStore(root_dir=tmp_path / "artifacts")
+    spawn_id = SpawnId("p-claude-abort")
+    artifacts.put(
+        ArtifactKey(f"{spawn_id}/history.jsonl"),
+        b'{"type":"result","is_error":true,'
+        b'"terminal_reason":"aborted_streaming","result":""}\n',
+    )
+
+    report = extract_or_fallback_report(artifacts, spawn_id)
+
+    assert report.content is None
+    assert report.source is None
+
+
+def test_extract_or_fallback_report_uses_failure_after_claude_user_interrupt(
+    tmp_path: Path,
+) -> None:
+    artifacts = LocalStore(root_dir=tmp_path / "artifacts")
+    spawn_id = SpawnId("p-claude-interrupt")
+    artifacts.put(
+        ArtifactKey(f"{spawn_id}/history.jsonl"),
+        b'{"type":"user","message":{"role":"user","content":['
+        b'{"type":"text","text":"[Request interrupted by user]"}]}}\n',
+    )
+
+    report = extract_or_fallback_report(
+        artifacts,
+        spawn_id,
+        failure_reason="cancelled",
+    )
+
+    assert report.content == "cancelled"
+    assert report.source == "failure_reason"
+
+
+def test_extract_or_fallback_report_uses_failure_after_claude_tool_error(
+    tmp_path: Path,
+) -> None:
+    artifacts = LocalStore(root_dir=tmp_path / "artifacts")
+    spawn_id = SpawnId("p-claude-tool-error")
+    artifacts.put(
+        ArtifactKey(f"{spawn_id}/history.jsonl"),
+        b'{"type":"user","message":{"role":"user","content":['
+        b'{"type":"tool_result","is_error":true,"content":"Exit code 144"}]}}\n',
+    )
+
+    report = extract_or_fallback_report(
+        artifacts,
+        spawn_id,
+        failure_reason="cancelled",
+    )
+
+    assert report.content == "cancelled"
+    assert report.source == "failure_reason"
+
+
+def test_extract_or_fallback_report_uses_failure_after_codex_command_progress(
+    tmp_path: Path,
+) -> None:
+    artifacts = LocalStore(root_dir=tmp_path / "artifacts")
+    spawn_id = SpawnId("p-codex-command-progress")
+    artifacts.put(
+        ArtifactKey(f"{spawn_id}/history.jsonl"),
+        b'{"event_type":"item/started",'
+        b'"payload":{"item":{"type":"commandExecution","command":"sleep 600"}},'
+        b'"seq":5}\n',
+    )
+
+    report = extract_or_fallback_report(
+        artifacts,
+        spawn_id,
+        failure_reason="terminated",
+    )
+
+    assert report.content == "terminated"
+    assert report.source == "failure_reason"

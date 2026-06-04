@@ -337,6 +337,42 @@ async def test_complete_execution_keeps_cancel_for_codex_close_error_report(
 
 
 @pytest.mark.asyncio
+async def test_complete_execution_keeps_cancel_for_claude_aborted_streaming_result(
+    tmp_path: Path,
+) -> None:
+    runtime_root = _runtime_root(tmp_path)
+    spawn_id = _start_spawn(runtime_root, status="running")
+    spawn_store.record_cancel_intent(
+        runtime_root,
+        spawn_id,
+        exit_code=130,
+        error="cancelled",
+        requested_at="2026-06-03T01:00:00Z",
+    )
+    service = _service(runtime_root)
+    aborted_result = (
+        '# Report\n\n{"type":"result","is_error":true,'
+        '"terminal_reason":"aborted_streaming","result":""}\n'
+    )
+
+    outcome = await service.complete_execution(
+        SpawnId(spawn_id),
+        ExecutionTerminalFacts(
+            exit_code=0,
+            durable_report_completion=has_durable_report_completion(aborted_result),
+        ),
+        origin="runner",
+    )
+
+    assert outcome.resolved.status == "cancelled"
+    assert outcome.resolved.exit_code == 130
+    row = spawn_store.get_spawn(runtime_root, spawn_id)
+    assert row is not None
+    assert row.status == "cancelled"
+    assert row.exit_code == 130
+
+
+@pytest.mark.asyncio
 async def test_complete_execution_durable_completion_wins_over_cancel_intent(
     tmp_path: Path,
 ) -> None:
@@ -357,6 +393,40 @@ async def test_complete_execution_durable_completion_wins_over_cancel_intent(
         ExecutionTerminalFacts(
             exit_code=130,
             durable_report_completion=has_durable_report_completion(completion_report),
+        ),
+        origin="runner",
+    )
+
+    assert outcome.resolved.status == "succeeded"
+    row = spawn_store.get_spawn(runtime_root, spawn_id)
+    assert row is not None
+    assert row.status == "succeeded"
+
+
+@pytest.mark.asyncio
+async def test_complete_execution_treats_claude_success_result_as_durable_completion(
+    tmp_path: Path,
+) -> None:
+    runtime_root = _runtime_root(tmp_path)
+    spawn_id = _start_spawn(runtime_root, status="running")
+    spawn_store.record_cancel_intent(
+        runtime_root,
+        spawn_id,
+        exit_code=130,
+        error="cancelled",
+        requested_at="2026-06-03T01:00:00Z",
+    )
+    service = _service(runtime_root)
+    success_result = (
+        '# Report\n\n{"type":"result","is_error":false,'
+        '"terminal_reason":"end_turn","result":"OK"}\n'
+    )
+
+    outcome = await service.complete_execution(
+        SpawnId(spawn_id),
+        ExecutionTerminalFacts(
+            exit_code=130,
+            durable_report_completion=has_durable_report_completion(success_result),
         ),
         origin="runner",
     )

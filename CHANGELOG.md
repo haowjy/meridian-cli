@@ -5,8 +5,10 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Fixed
+- Claude aborted-streaming result during explicit cancel stays `cancelled`, not `succeeded`.
 - Background spawn cancel stays `cancelled` when runner writes synthetic `# Spawn failed` report.
 - Codex websocket close/error report during explicit cancel stays `cancelled`, not `succeeded`.
+- Codex pre-command progress text during explicit cancel no longer counts as durable completion.
 
 ## [0.2.30] - 2026-06-04
 
