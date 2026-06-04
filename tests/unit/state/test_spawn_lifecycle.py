@@ -12,6 +12,13 @@ from meridian.lib.core.spawn_lifecycle import (
 
 def test_has_durable_report_completion_distinguishes_completion_from_cancel_artifacts() -> None:
     assert has_durable_report_completion("# Report\n\nDone.\n") is True
+    assert has_durable_report_completion('{"message":"Done."}') is True
+    assert (
+        has_durable_report_completion(
+            '{"message":"Root cause: missing WebSocket close frame handling."}'
+        )
+        is True
+    )
     assert (
         has_durable_report_completion(
             '{"event_type":"cancelled","payload":{"status":"cancelled","error":"cancelled"}}'
@@ -20,6 +27,12 @@ def test_has_durable_report_completion_distinguishes_completion_from_cancel_arti
     )
     assert (
         has_durable_report_completion("# Spawn failed\n\nClaude subprocess exited with code 130.")
+        is False
+    )
+    assert (
+        has_durable_report_completion(
+            '# Report\n\n{"type":"error","message":"no close frame received or sent"}\n'
+        )
         is False
     )
 

@@ -20,6 +20,9 @@ _ALLOWED_TRANSITIONS: dict[str, frozenset[str]] = {
     "running": frozenset({"finalizing", "succeeded", "failed", "cancelled"}),
     "finalizing": frozenset({"succeeded", "failed", "cancelled"}),
 }
+_CONTROL_EVENT_NAMES: frozenset[str] = frozenset(
+    {"cancelled", "error", "error/connectionclosed", "error.connectionclosed"}
+)
 
 
 class DurableReportEvidence(StrEnum):
@@ -67,6 +70,13 @@ def classify_durable_report_text(report_text: str | None) -> DurableReportEviden
         return DurableReportEvidence.ABSENT
 
     stripped = report_text.strip()
+    if stripped.lower().startswith("# report"):
+        _, _, body = stripped.partition("\n")
+        body = body.strip()
+        if body:
+            body_evidence = classify_durable_report_text(body)
+            if body_evidence is not DurableReportEvidence.COMPLETION:
+                return body_evidence
     if stripped.lower().startswith("# spawn failed"):
         return DurableReportEvidence.SYNTHETIC_FAILURE
 
@@ -83,7 +93,7 @@ def classify_durable_report_text(report_text: str | None) -> DurableReportEviden
         .strip()
         .lower()
     )
-    if event_name in {"cancelled", "error"}:
+    if event_name in _CONTROL_EVENT_NAMES:
         return DurableReportEvidence.CONTROL_FRAME
 
     nested = payload.get("payload")
@@ -99,7 +109,7 @@ def classify_durable_report_text(report_text: str | None) -> DurableReportEviden
             .strip()
             .lower()
         )
-        if nested_name in {"cancelled", "error"}:
+        if nested_name in _CONTROL_EVENT_NAMES:
             return DurableReportEvidence.CONTROL_FRAME
     return DurableReportEvidence.COMPLETION
 

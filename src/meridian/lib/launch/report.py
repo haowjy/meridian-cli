@@ -24,6 +24,7 @@ _OPENCODE_CONTROL_EVENT_TYPES = frozenset(
         "sync",
     }
 )
+_CODEX_CONTROL_EVENT_TYPES = frozenset({"error/connectionclosed", "error.connectionclosed"})
 _PI_LIFECYCLE_NOISE_PHASES = frozenset(
     {
         "cleanup_running",
@@ -93,6 +94,8 @@ def _is_terminal_control_frame(text: str) -> bool:
     payload = cast("dict[str, object]", payload_obj)
     if _event_name(payload) in {"cancelled", "error"}:
         return True
+    if _event_name(payload) in _CODEX_CONTROL_EVENT_TYPES:
+        return True
     if _is_opencode_control_payload(payload):
         return True
 
@@ -100,6 +103,8 @@ def _is_terminal_control_frame(text: str) -> bool:
     if isinstance(nested, dict):
         nested_payload = cast("dict[str, object]", nested)
         if _event_name(nested_payload) in {"cancelled", "error"}:
+            return True
+        if _event_name(nested_payload) in _CODEX_CONTROL_EVENT_TYPES:
             return True
         if _is_opencode_control_payload(nested_payload):
             return True
@@ -256,7 +261,7 @@ def _pi_failure_from_payload(payload: dict[str, object]) -> str | None:
             error = _text_from_value(payload.get("error"))
             if error:
                 return error
-    if event_type in {"error", "error/connectionclosed"}:
+    if event_type == "error":
         message = _text_from_value(payload.get("message"))
         if message:
             return message
@@ -337,6 +342,11 @@ def _normalized_history_lines(raw_lines: str) -> str:
         if isinstance(payload_obj, dict) and "seq" in payload_obj and "payload" in payload_obj:
             payload = cast("dict[str, object]", payload_obj)
             payload_obj = payload["payload"]
+            event_type = str(payload.get("event_type", "")).strip()
+            if event_type and isinstance(payload_obj, dict):
+                normalized_payload = dict(cast("dict[str, object]", payload_obj))
+                normalized_payload.setdefault("type", event_type)
+                payload_obj = normalized_payload
         normalized.append(json.dumps(payload_obj, separators=(",", ":"), sort_keys=True))
     return "\n".join(normalized)
 
