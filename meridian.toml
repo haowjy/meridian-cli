@@ -44,6 +44,9 @@ opencode = "opencode-go/kimi-k2.6"  # default for OpenCode harness
 # Agent profile name for the primary session (str; unset = no profile).
 agent = "product-lead"
 
+[spawn]
+deny_headless_harnesses = ["claude"]
+
 # -- Output streaming -------------------------------------------------------
 [output]
 # Event categories shown while streaming output (array[str]).

@@ -25,6 +25,7 @@ from meridian.lib.state.spawn_store import (
     get_spawn,
     list_spawns,
     next_spawn_id,
+    record_cancel_intent,
     record_runner_exit,
     record_spawn_exited,
     reserve_spawn_id,
@@ -39,7 +40,7 @@ def _state_root(tmp_path: Path) -> Path:
     return state_dir
 
 
-def _start_test_spawn(runtime_root: Path) -> str:
+def _start_test_spawn(runtime_root: Path, *, spawn_id: str | None = None) -> str:
     return str(
         start_spawn(
             runtime_root,
@@ -48,6 +49,7 @@ def _start_test_spawn(runtime_root: Path) -> str:
             agent="coder",
             harness="codex",
             prompt="hello",
+            spawn_id=spawn_id,
         )
     )
 
@@ -244,6 +246,52 @@ def test_spawn_state_without_launch_policy_snapshot_remains_readable(tmp_path: P
     row = read_state(paths.spawns_dir, spawn_id)
     assert row is not None
     assert row.launch_policy_snapshot is None
+
+
+def test_record_cancel_intent_persists_first_request_and_skips_terminal(
+    tmp_path: Path,
+) -> None:
+    runtime_root = _state_root(tmp_path)
+    spawn_id = _start_test_spawn(runtime_root)
+
+    first = record_cancel_intent(
+        runtime_root,
+        spawn_id,
+        exit_code=130,
+        error="cancelled",
+        requested_at="2026-06-03T01:00:00Z",
+    )
+    second = record_cancel_intent(
+        runtime_root,
+        spawn_id,
+        exit_code=143,
+        error="terminated",
+        requested_at="2026-06-03T01:01:00Z",
+    )
+
+    assert first is not None
+    assert first.cancel_intent is not None
+    assert first.cancel_intent.exit_code == 130
+    assert second is not None
+    assert second.cancel_intent == first.cancel_intent
+    row = get_spawn(runtime_root, spawn_id)
+    assert row is not None
+    assert row.cancel_intent == first.cancel_intent
+
+    terminal_spawn_id = _start_test_spawn(runtime_root, spawn_id="p-terminal")
+    finalize_spawn(runtime_root, terminal_spawn_id, "succeeded", 0, origin="runner")
+
+    result = record_cancel_intent(
+        runtime_root,
+        terminal_spawn_id,
+        exit_code=130,
+        error="cancelled",
+        requested_at="2026-06-03T01:00:00Z",
+    )
+
+    assert result is not None
+    assert result.status == "succeeded"
+    assert result.cancel_intent is None
 
 
 def test_start_spawn_rejects_empty_goal(tmp_path: Path) -> None:

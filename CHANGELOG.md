@@ -7,6 +7,14 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Added
 - Document `[spawn].deny_headless_harnesses` for disabling harness-backed `meridian spawn -a` routes.
 
+## [0.2.27] - 2026-06-04
+
+### Fixed
+- Spawn cancel now records durable cancel intent, stops runners before scope cleanup, suppresses retries, and converges stale cancelled runs to `cancelled`.
+- Process scope release tracking now uses concrete release identities, so repeated `backend` attempts clean independently.
+- Pi cancel classification now stays `cancelled` when cancellation has explicit intent.
+- Generated `# Spawn failed` reports no longer count as durable completion during cancel/reaper convergence.
+
 ## [0.2.26] - 2026-06-02
 
 ### Changed

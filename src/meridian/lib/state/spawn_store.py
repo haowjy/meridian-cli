@@ -10,7 +10,7 @@ from collections.abc import Mapping
 from contextlib import suppress
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal, cast
 
 import psutil
 import structlog
@@ -33,6 +33,9 @@ from meridian.lib.state.atomic import atomic_write_text
 from meridian.lib.state.event_store import lock_file
 from meridian.lib.state.paths import RuntimePaths
 from meridian.lib.state.spawn.model import (
+    CancelIntent as CancelIntent,
+)
+from meridian.lib.state.spawn.model import (
     LaunchMode as LaunchMode,
 )
 from meridian.lib.state.spawn.model import (
@@ -46,6 +49,7 @@ from meridian.lib.state.spawn.model import (
 )
 from meridian.lib.state.spawn.terminal_policy import decide_terminal_write
 from meridian.lib.state.spawn.transitions import (
+    apply_cancel_intent,
     apply_finalize,
     apply_mark_finalizing,
     apply_mark_running,
@@ -332,6 +336,7 @@ def start_spawn(
             runner_exit_status=None,
             runner_exit_error=None,
             runner_exit_at=None,
+            cancel_intent=None,
             finished_at=None,
             exit_code=None,
             duration_secs=None,
@@ -542,6 +547,49 @@ def record_runner_exit(
         return None
     except _RunnerExitSkipped:
         return None
+
+
+def record_cancel_intent(
+    runtime_root: Path,
+    spawn_id: SpawnId | str,
+    *,
+    exit_code: int,
+    error: str | None,
+    requested_by: str = "user",
+    requested_at: str | None = None,
+    clock: Clock | None = None,
+) -> SpawnRecord | None:
+    """Record a durable spawn-level cancellation request under the spawn lock."""
+
+    if requested_by not in {"user", "system"}:
+        raise ValueError(f"cancel requested_by must be 'user' or 'system', got {requested_by!r}")
+
+    resolved_clock = clock or RealClock()
+    intent = CancelIntent(
+        requested_at=requested_at or resolved_clock.utc_now_iso(),
+        exit_code=exit_code,
+        error=error,
+        requested_by=cast("Literal['user', 'system']", requested_by),
+    )
+    paths = RuntimePaths.from_root_dir(runtime_root)
+
+    class _CancelIntentSkipped(Exception):
+        def __init__(self, snapshot: SpawnRecord) -> None:
+            self.snapshot = snapshot
+
+    def merge_intent(current: SpawnRecord) -> SpawnRecord:
+        if not is_active_spawn_status(current.status):
+            raise _CancelIntentSkipped(current)
+        return apply_cancel_intent(current, intent=intent)
+
+    if _read_state(paths.spawns_dir, str(spawn_id)) is None:
+        return None
+    try:
+        return _write_state_locked(paths.spawns_dir, str(spawn_id), merge_intent)
+    except FileNotFoundError:
+        return None
+    except _CancelIntentSkipped as exc:
+        return exc.snapshot
 
 
 def finalize_spawn(

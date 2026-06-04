@@ -29,7 +29,6 @@ class ExecutionTerminalFacts:
     failure_reason: str | None = None
     cancellation_observed: bool = False
     durable_report_completion: bool = False
-    terminated_after_completion: bool = False
 
 
 @dataclass(frozen=True)
@@ -58,6 +57,9 @@ def has_durable_report_completion(report_text: str | None) -> bool:
         return False
 
     stripped = report_text.strip()
+    if stripped.lower().startswith("# spawn failed"):
+        return False
+
     try:
         payload_obj = json.loads(stripped)
     except json.JSONDecodeError:
@@ -98,11 +100,10 @@ def resolve_execution_terminal_state(
     failure_reason: str | None,
     cancelled: bool = False,
     durable_report_completion: bool = False,
-    terminated_after_completion: bool = False,
 ) -> tuple[SpawnStatus, int, str | None]:
     """Normalize one execution outcome into the persisted terminal state."""
 
-    if durable_report_completion and terminated_after_completion:
+    if durable_report_completion:
         return "succeeded", 0, None
     if cancelled:
         resolved_exit_code = exit_code if exit_code != 0 else 130
@@ -122,13 +123,32 @@ def resolve_execution_terminal_outcome(
         failure_reason=facts.failure_reason,
         cancelled=facts.cancellation_observed,
         durable_report_completion=facts.durable_report_completion,
-        terminated_after_completion=facts.terminated_after_completion,
     )
     return ExecutionTerminalOutcome(
         status=status,
         exit_code=exit_code,
         error=error,
     )
+
+
+def resolve_completion_cancel_precedence(
+    *,
+    durable_report_completion: bool,
+    cancel_requested: bool,
+    cancel_exit_code: int = 130,
+    cancel_error: str | None = "cancelled",
+) -> ExecutionTerminalOutcome | None:
+    """Resolve the shared durable-completion-vs-late-cancel precedence rule."""
+
+    if durable_report_completion:
+        return ExecutionTerminalOutcome(status="succeeded", exit_code=0, error=None)
+    if cancel_requested:
+        return ExecutionTerminalOutcome(
+            status="cancelled",
+            exit_code=cancel_exit_code,
+            error=cancel_error,
+        )
+    return None
 
 
 def resolve_reconciled_terminal_state(
