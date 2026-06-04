@@ -25,11 +25,13 @@ _CONTROL_EVENT_NAMES: frozenset[str] = frozenset(
 )
 _OPENCODE_CONTROL_EVENT_TYPES = frozenset(
     {
-        "session.idle",
-        "session.error",
-        "session.status",
         "sync",
     }
+)
+_OPENCODE_CONTROL_EVENT_NAMESPACE_PREFIXES: tuple[str, ...] = (
+    "message.",
+    "server.",
+    "session.",
 )
 _CODEX_CONTROL_EVENT_NAMESPACE_PREFIXES: tuple[str, ...] = (
     "account.",
@@ -93,8 +95,9 @@ def _event_name(payload: dict[str, object]) -> str:
 
 def _is_opencode_control_payload(payload: dict[str, object]) -> bool:
     event_type = _event_name(payload)
-    return event_type in _OPENCODE_CONTROL_EVENT_TYPES or (
-        event_type.startswith("session.") and event_type not in {"session.created"}
+    return event_type in _OPENCODE_CONTROL_EVENT_TYPES or any(
+        event_type.startswith(prefix)
+        for prefix in _OPENCODE_CONTROL_EVENT_NAMESPACE_PREFIXES
     )
 
 

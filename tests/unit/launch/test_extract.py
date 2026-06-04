@@ -11,6 +11,27 @@ from meridian.lib.launch.extract import (
 from meridian.lib.launch.report import ExtractedReport, extract_or_fallback_report
 from meridian.lib.state.artifact_store import LocalStore
 
+OPENCODE_LIVE_MESSAGE_PART_UPDATED = (
+    '{"id":"evt_e930bc68d001L4oUTckzuyF1cX","properties":{"part":'
+    '{"callID":"call_00_RgQT21ir86rHpjzaSHOA0775",'
+    '"id":"prt_e930bc3890019mFXX9VDpKyVfj",'
+    '"messageID":"msg_e930bbe400016R3GelVzaGNpp4",'
+    '"sessionID":"ses_16cf44268ffeswweMeU0xmAtPb","state":{"input":'
+    '{"command":"python3 -c \\"from pathlib import Path; '
+    "Path('/tmp/meridian-pr310-live-1780583451-2427651/opencode/project/"
+    "pr310_opencode_49a8582d35.started').write_text('started'); import time; "
+    'time.sleep(600)\\"","description":"Run Python command that sleeps 600s",'
+    '"timeout":620000},"metadata":{"description":"Run Python command that sleeps 600s",'
+    '"output":""},"status":"running","time":{"start":1780583483021}},'
+    '"tool":"bash","type":"tool"},"sessionID":"ses_16cf44268ffeswweMeU0xmAtPb",'
+    '"time":1780583483021},"type":"message.part.updated"}'
+)
+OPENCODE_MESSAGE_PART_DELTA = (
+    '{"id":"evt_delta","properties":{"part":{"messageID":"msg_1",'
+    '"sessionID":"ses_1","text":"O","type":"text"},"sessionID":"ses_1"},'
+    '"type":"message.part.delta"}'
+)
+
 
 def test_persist_report_wraps_assistant_extract_with_report_heading(tmp_path: Path) -> None:
     artifacts = LocalStore(root_dir=tmp_path / "artifacts")
@@ -45,6 +66,23 @@ def test_classify_finalize_report_keeps_genuine_json_completion() -> None:
     report = ExtractedReport(content='{"message":"Done."}', source="assistant_message")
 
     assert classify_finalize_report(report) is FinalizeReportKind.DURABLE_COMPLETION
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        OPENCODE_LIVE_MESSAGE_PART_UPDATED,
+        OPENCODE_MESSAGE_PART_DELTA,
+        '{"type":"message.updated","properties":{"info":{"role":"assistant"}}}',
+        '{"type":"server.connected","properties":{}}',
+    ],
+)
+def test_classify_finalize_report_rejects_opencode_message_event_envelopes(
+    content: str,
+) -> None:
+    report = ExtractedReport(content=content, source="assistant_message")
+
+    assert classify_finalize_report(report) is FinalizeReportKind.CONTROL_FRAME
 
 
 @pytest.mark.parametrize(
@@ -226,6 +264,35 @@ def test_extract_or_fallback_report_uses_failure_after_codex_turn_started(
     )
 
     assert report.content == "terminated"
+    assert report.source == "failure_reason"
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        OPENCODE_LIVE_MESSAGE_PART_UPDATED,
+        OPENCODE_MESSAGE_PART_DELTA,
+        '{"type":"server.connected","properties":{}}',
+    ],
+)
+def test_extract_or_fallback_report_uses_failure_after_opencode_message_envelope(
+    tmp_path: Path,
+    content: str,
+) -> None:
+    artifacts = LocalStore(root_dir=tmp_path / "artifacts")
+    spawn_id = SpawnId("p-opencode-message-envelope")
+    artifacts.put(
+        ArtifactKey(f"{spawn_id}/history.jsonl"),
+        f"{content}\n".encode(),
+    )
+
+    report = extract_or_fallback_report(
+        artifacts,
+        spawn_id,
+        failure_reason="cancelled",
+    )
+
+    assert report.content == "cancelled"
     assert report.source == "failure_reason"
 
 
