@@ -13,12 +13,15 @@ from meridian.lib.harness.projections.project_cursor import (
 )
 from meridian.lib.launch.constants import BASE_COMMAND_CURSOR_SUBPROCESS
 from meridian.lib.launch.launch_types import PermissionResolver, ResolvedLaunchSpec
-from meridian.lib.safety.permissions import ApprovalMode, PermissionConfig
+from meridian.lib.safety.permissions import ApprovalMode, PermissionConfig, SandboxMode
 
 
 class _Resolver(PermissionResolver):
-    def __init__(self, *, approval: str) -> None:
-        self._config = PermissionConfig(approval=cast("ApprovalMode", approval))
+    def __init__(self, *, approval: str = "default", sandbox: str = "default") -> None:
+        self._config = PermissionConfig(
+            approval=cast("ApprovalMode", approval),
+            sandbox=cast("SandboxMode", sandbox),
+        )
 
     @property
     def config(self) -> PermissionConfig:
@@ -111,3 +114,53 @@ def test_cursor_projection_ignores_projected_roots_for_mvp(tmp_path: Path) -> No
     assert command[command.index("--workspace") + 1] == task_cwd
     assert str(root_a) not in command
     assert str(root_b) not in command
+
+
+@pytest.mark.parametrize(
+    ("sandbox", "expected_flags"),
+    [
+        ("default", []),
+        ("read-only", ["--sandbox", "enabled"]),
+        ("workspace-write", ["--sandbox", "disabled"]),
+        ("danger-full-access", ["--sandbox", "disabled"]),
+    ],
+)
+def test_cursor_projection_maps_sandbox_flags(
+    sandbox: str,
+    expected_flags: list[str],
+    tmp_path: Path,
+) -> None:
+    spec = ResolvedLaunchSpec(
+        harness="cursor",
+        model="composer-2.5",
+        prompt="Reply with exactly OK",
+        permission_resolver=_Resolver(sandbox=sandbox),
+        task_cwd=str(tmp_path / "ws"),
+    )
+
+    command = project_cursor_spec_to_cli_args(spec, base_command=BASE_COMMAND_CURSOR_SUBPROCESS)
+
+    if expected_flags:
+        idx = command.index("--sandbox")
+        assert command[idx : idx + 2] == expected_flags
+    else:
+        assert "--sandbox" not in command
+    # Prompt is always last.
+    assert command[-1] == "Reply with exactly OK"
+
+
+def test_cursor_projection_sandbox_and_approval_together(tmp_path: Path) -> None:
+    spec = ResolvedLaunchSpec(
+        harness="cursor",
+        model="composer-2.5",
+        prompt="do stuff",
+        permission_resolver=_Resolver(approval="yolo", sandbox="danger-full-access"),
+        task_cwd=str(tmp_path / "ws"),
+    )
+
+    command = project_cursor_spec_to_cli_args(spec, base_command=BASE_COMMAND_CURSOR_SUBPROCESS)
+
+    assert "--yolo" in command
+    idx = command.index("--sandbox")
+    assert command[idx + 1] == "disabled"
+    assert command[-1] == "do stuff"

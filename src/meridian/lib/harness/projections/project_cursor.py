@@ -62,6 +62,26 @@ def _project_approval_flags(spec: ResolvedLaunchSpec) -> tuple[str, ...]:
     )
 
 
+def _project_sandbox_flags(spec: ResolvedLaunchSpec) -> tuple[str, ...]:
+    """Map mars sandbox mode to Cursor ``--sandbox enabled|disabled``.
+
+    Cursor's sandbox is binary — ``enabled`` restricts file access to the
+    workspace, ``disabled`` removes restrictions.  Mars ``workspace-write``
+    and ``danger-full-access`` both map to ``disabled`` (overshoot for
+    ``workspace-write``, but Cursor has no fine-grained equivalent).
+    """
+    sandbox_mode = spec.permission_resolver.config.sandbox
+    if sandbox_mode == "default":
+        return ()
+    if sandbox_mode == "read-only":
+        return ("--sandbox", "enabled")
+    if sandbox_mode in ("workspace-write", "danger-full-access"):
+        return ("--sandbox", "disabled")
+    raise HarnessCapabilityMismatch(
+        f"Cursor projection does not support sandbox mode '{sandbox_mode}'."
+    )
+
+
 def _assert_supported_for_mvp(spec: ResolvedLaunchSpec) -> None:
     if spec.mcp_tools:
         raise HarnessCapabilityMismatch(
@@ -104,6 +124,7 @@ def project_cursor_spec_to_cli_args(
         command.extend(("--model", spec.model))
 
     command.extend(_project_approval_flags(spec))
+    command.extend(_project_sandbox_flags(spec))
 
     workspace = (spec.task_cwd or "").strip()
     if workspace:
