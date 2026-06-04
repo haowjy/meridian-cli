@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.2.28] - 2026-06-04
+
 ### Added
 - Document `[spawn].deny_headless_harnesses` for disabling harness-backed `meridian spawn -a` routes.
 
