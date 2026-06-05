@@ -7,7 +7,6 @@ import json
 import time
 from contextlib import suppress
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from importlib import import_module
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
@@ -15,19 +14,18 @@ from typing import TYPE_CHECKING, cast
 import structlog
 
 from meridian.lib.core.domain import SpawnStatus
+from meridian.lib.core.process_cleanup import (
+    terminate_recorded_spawn_scopes,
+    terminate_spawn_scopes,
+)
 from meridian.lib.core.spawn_lifecycle import TERMINAL_SPAWN_STATUSES
 from meridian.lib.core.types import SpawnId
 from meridian.lib.platform import IS_WINDOWS
-from meridian.lib.platform.process_scope import terminate_scope_sync
 from meridian.lib.platform.terminate import terminate_tree_sync
 from meridian.lib.state import spawn_store
 from meridian.lib.state.liveness import is_process_alive
-from meridian.lib.state.process_scope_projection import (
-    is_scope_released,
-    mark_scope_released,
-    read_scopes_from_disk,
-)
 from meridian.lib.state.spawn.model import APP_LAUNCH_MODE, SpawnOrigin, SpawnRecord
+from meridian.lib.state.timestamps import iso_timestamp_to_epoch
 
 if TYPE_CHECKING:
     from meridian.lib.streaming.spawn_manager import SpawnManager
@@ -104,7 +102,7 @@ class SignalCanceller:
                 return _outcome_from_record(terminal)
 
             latest = spawn_store.get_spawn(self._runtime_root, spawn_id) or record
-            await self._cleanup_spawn_scopes(spawn_id, latest)
+            await self._cleanup_recorded_spawn_scopes(latest)
             terminal = await self._wait_for_terminal(spawn_id)
             if terminal is not None:
                 return _outcome_from_record(terminal)
@@ -116,7 +114,7 @@ class SignalCanceller:
                 finalizing=True,
             )
 
-        await self._cleanup_spawn_scopes(spawn_id, record)
+        await self._cleanup_spawn_scopes(record)
 
         terminal = await self._wait_for_terminal(spawn_id)
         if terminal is not None:
@@ -130,39 +128,23 @@ class SignalCanceller:
             finalizing=True,
         )
 
-    async def _cleanup_spawn_scopes(
-        self,
-        spawn_id: SpawnId,
-        record: SpawnRecord,
-    ) -> None:
-        scopes = read_scopes_from_disk(self._runtime_root, spawn_id)
-        if scopes:
-            for scope in scopes:
-                if is_scope_released(self._runtime_root, spawn_id, scope.release_id):
-                    continue
-                with suppress(ProcessLookupError):
-                    await asyncio.to_thread(
-                        terminate_scope_sync,
-                        scope,
-                        grace_seconds=self._grace_seconds,
-                        reason="cancel",
-                    )
-                mark_scope_released(self._runtime_root, spawn_id, scope.release_id)
-            return
+    async def _cleanup_recorded_spawn_scopes(self, record: SpawnRecord) -> None:
+        await asyncio.to_thread(
+            terminate_recorded_spawn_scopes,
+            self._runtime_root,
+            record,
+            reason="cancel",
+            grace_seconds=self._grace_seconds,
+        )
 
-        worker_pid = self._fallback_worker_pid(record)
-        if worker_pid is None:
-            return
-        started_epoch = _started_at_epoch(record.started_at)
-        with suppress(ProcessLookupError):
-            await asyncio.to_thread(
-                terminate_tree_sync,
-                worker_pid,
-                created_at_epoch=started_epoch if started_epoch is not None else 0.0,
-                grace_secs=self._grace_seconds,
-                reason="cancel",
-                scope_id=str(spawn_id),
-            )
+    async def _cleanup_spawn_scopes(self, record: SpawnRecord) -> None:
+        await asyncio.to_thread(
+            terminate_spawn_scopes,
+            self._runtime_root,
+            record,
+            reason="cancel",
+            grace_seconds=self._grace_seconds,
+        )
 
     async def _cancel_app_spawn(
         self,
@@ -277,20 +259,13 @@ class SignalCanceller:
 
     def _resolve_runner_process(self, record: SpawnRecord) -> tuple[int | None, float | None]:
         runner_pid = record.runner_pid
-        runner_created_at_epoch = record.runner_created_at_epoch or _started_at_epoch(
+        runner_created_at_epoch = record.runner_created_at_epoch or iso_timestamp_to_epoch(
             record.started_at
         )
         if runner_pid is not None and _pid_is_alive(runner_pid, runner_created_at_epoch):
             return runner_pid, runner_created_at_epoch
 
         return None, None
-
-    def _fallback_worker_pid(self, record: SpawnRecord) -> int | None:
-        started_epoch = _started_at_epoch(record.started_at)
-        worker_pid = record.worker_pid
-        if worker_pid is not None and _pid_is_alive(worker_pid, started_epoch):
-            return worker_pid
-        return None
 
     async def _wait_for_terminal(self, spawn_id: SpawnId) -> SpawnRecord | None:
         deadline = time.monotonic() + max(0.0, self._grace_seconds)
@@ -341,21 +316,6 @@ def _pid_is_alive(pid: int | None, started_epoch: float | None) -> bool:
     if pid is None or pid <= 0:
         return False
     return is_process_alive(pid, created_after_epoch=started_epoch)
-
-
-def _started_at_epoch(started_at: str | None) -> float | None:
-    normalized = (started_at or "").strip()
-    if not normalized:
-        return None
-    if normalized.endswith("Z"):
-        normalized = f"{normalized[:-1]}+00:00"
-    try:
-        parsed = datetime.fromisoformat(normalized)
-    except ValueError:
-        return None
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=UTC)
-    return parsed.timestamp()
 
 
 def _parse_json_object(raw: str) -> dict[str, object]:

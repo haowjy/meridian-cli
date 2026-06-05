@@ -17,7 +17,6 @@ from meridian.lib.core.lifecycle import SpawnLifecycleService
 from meridian.lib.core.spawn_lifecycle import (
     ExecutionTerminalFacts,
     ExecutionTerminalOutcome,
-    has_durable_report_completion,
     resolve_completion_cancel_precedence,
     resolve_execution_terminal_outcome,
 )
@@ -51,6 +50,8 @@ from meridian.lib.state import spawn_store
 from meridian.lib.state.liveness import is_process_alive
 from meridian.lib.state.paths import RuntimePaths
 from meridian.lib.state.spawn.model import APP_LAUNCH_MODE, LaunchMode, SpawnOrigin
+from meridian.lib.state.spawn_report import spawn_report_has_durable_completion
+from meridian.lib.state.timestamps import iso_timestamp_to_epoch
 from meridian.lib.streaming.signal_canceller import CancelOutcome as SignalCancelOutcome
 
 if TYPE_CHECKING:
@@ -576,7 +577,10 @@ class SpawnApplicationService:
             return record
         intent = record.cancel_intent
         resolved = resolve_completion_cancel_precedence(
-            durable_report_completion=_durable_report_completed(self._runtime_root, str(spawn_id)),
+            durable_report_completion=spawn_report_has_durable_completion(
+                self._runtime_root,
+                str(spawn_id),
+            ),
             cancel_requested=True,
             cancel_exit_code=intent.exit_code if intent is not None else 130,
             cancel_error=intent.error if intent is not None else "cancelled",
@@ -610,7 +614,7 @@ class SpawnApplicationService:
                 return
             terminate_managed_primary_processes(
                 metadata,
-                started_epoch=_started_at_epoch(record.started_at),
+                started_epoch=iso_timestamp_to_epoch(record.started_at),
                 include_launcher=False,
             )
             return
@@ -666,7 +670,7 @@ class SpawnApplicationService:
         if self.is_terminal(record.status):
             return _cancel_outcome_from_record(str(spawn_id), record, already_terminal=True)
 
-        started_epoch = _started_at_epoch(record.started_at)
+        started_epoch = iso_timestamp_to_epoch(record.started_at)
         launcher_pid = primary_metadata.launcher_pid
         launcher_alive = launcher_pid is not None and is_process_alive(
             launcher_pid, created_after_epoch=started_epoch
@@ -1017,22 +1021,13 @@ def _is_managed_primary_candidate(record: SpawnRecord) -> bool:
     return record.kind == "primary" and harness in {"codex", "opencode"}
 
 
-def _durable_report_completed(runtime_root: Path, spawn_id: str) -> bool:
-    report_path = runtime_root / "spawns" / spawn_id / "report.md"
-    try:
-        report_text = report_path.read_text(encoding="utf-8", errors="ignore")
-    except OSError:
-        return False
-    return has_durable_report_completion(report_text)
-
-
 def _has_live_execution_owner(
     record: SpawnRecord,
     primary_metadata: PrimaryMetadata | None,
 ) -> bool:
     if record.launch_mode == APP_LAUNCH_MODE:
         return True
-    started_epoch = _started_at_epoch(record.started_at)
+    started_epoch = iso_timestamp_to_epoch(record.started_at)
     runner_created_at_epoch = record.runner_created_at_epoch or started_epoch
     if record.runner_pid is not None and is_process_alive(
         record.runner_pid,
@@ -1054,21 +1049,6 @@ def _has_live_execution_owner(
         if pid is not None and is_process_alive(pid, created_after_epoch=started_epoch):
             return True
     return False
-
-
-def _started_at_epoch(started_at: str | None) -> float | None:
-    normalized = (started_at or "").strip()
-    if not normalized:
-        return None
-    if normalized.endswith("Z"):
-        normalized = f"{normalized[:-1]}+00:00"
-    try:
-        parsed = datetime.fromisoformat(normalized)
-    except ValueError:
-        return None
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=UTC)
-    return parsed.timestamp()
 
 
 __all__ = [

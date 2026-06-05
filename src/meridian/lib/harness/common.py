@@ -340,9 +340,32 @@ def _extract_text(value: object) -> str:
     return ""
 
 
+def _codex_item_type(payload: dict[str, object]) -> str:
+    item = payload.get("item")
+    if not isinstance(item, dict):
+        return ""
+    item_payload = cast("dict[str, object]", item)
+    return str(item_payload.get("type", "")).strip().lower().replace("_", "")
+
+
+def _codex_work_started_after(payloads: list[dict[str, object]], index: int) -> bool:
+    for payload in payloads[index + 1 :]:
+        event_type = (
+            str(payload.get("event_type", payload.get("event", payload.get("type", ""))))
+            .strip()
+            .lower()
+            .replace("/", ".")
+        )
+        if event_type == "item.started" and _codex_item_type(payload) == "commandexecution":
+            return True
+    return False
+
+
 def extract_codex_report(artifacts: ArtifactStore, spawn_id: SpawnId) -> str | None:
     last_message: str | None = None
-    for payload in _iter_json_lines_artifact(artifacts, spawn_id, OUTPUT_FILENAME):
+    last_message_index: int | None = None
+    payloads = _iter_json_lines_artifact(artifacts, spawn_id, OUTPUT_FILENAME)
+    for index, payload in enumerate(payloads):
         event_type = (
             str(payload.get("event_type", payload.get("event", payload.get("type", ""))))
             .strip()
@@ -364,6 +387,9 @@ def extract_codex_report(artifacts: ArtifactStore, spawn_id: SpawnId) -> str | N
         text = _extract_text(item_payload.get("text"))
         if text:
             last_message = text
+            last_message_index = index
+    if last_message_index is not None and _codex_work_started_after(payloads, last_message_index):
+        return None
     return last_message
 
 

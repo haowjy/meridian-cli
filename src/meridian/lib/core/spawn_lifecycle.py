@@ -7,6 +7,7 @@ spawn from succeeded to failed.
 
 import json
 from dataclasses import dataclass
+from enum import StrEnum
 from typing import cast
 
 from meridian.lib.core.domain import SpawnStatus
@@ -19,6 +20,49 @@ _ALLOWED_TRANSITIONS: dict[str, frozenset[str]] = {
     "running": frozenset({"finalizing", "succeeded", "failed", "cancelled"}),
     "finalizing": frozenset({"succeeded", "failed", "cancelled"}),
 }
+_CONTROL_EVENT_NAMES: frozenset[str] = frozenset(
+    {"cancelled", "error", "error.connectionclosed"}
+)
+_OPENCODE_CONTROL_EVENT_TYPES = frozenset(
+    {
+        "sync",
+    }
+)
+_OPENCODE_CONTROL_EVENT_NAMESPACE_PREFIXES: tuple[str, ...] = (
+    "message.",
+    "server.",
+    "session.",
+)
+_CODEX_CONTROL_EVENT_NAMESPACE_PREFIXES: tuple[str, ...] = (
+    "account.",
+    "item.",
+    "mcpserver.",
+    "remotecontrol.",
+    "thread.",
+    "turn.",
+)
+_CLAUDE_PROGRESS_EVENT_NAMES: frozenset[str] = frozenset({"assistant", "user", "system"})
+_CLAUDE_ENVELOPE_MARKER_KEYS: frozenset[str] = frozenset(
+    {
+        "message",
+        "model",
+        "parent_tool_use_id",
+        "rate_limit_info",
+        "request_id",
+        "session_id",
+        "usage",
+        "uuid",
+    }
+)
+
+
+class DurableReportEvidence(StrEnum):
+    """Classification of persisted report text as lifecycle evidence."""
+
+    ABSENT = "absent"
+    COMPLETION = "completion"
+    SYNTHETIC_FAILURE = "synthetic_failure"
+    CONTROL_FRAME = "control_frame"
 
 
 @dataclass(frozen=True)
@@ -40,6 +84,72 @@ class ExecutionTerminalOutcome:
     error: str | None
 
 
+def _event_name(payload: dict[str, object]) -> str:
+    return (
+        str(payload.get("event_type", payload.get("event", payload.get("type", ""))))
+        .strip()
+        .lower()
+        .replace("/", ".")
+    )
+
+
+def _is_opencode_control_payload(payload: dict[str, object]) -> bool:
+    event_type = _event_name(payload)
+    return event_type in _OPENCODE_CONTROL_EVENT_TYPES or any(
+        event_type.startswith(prefix)
+        for prefix in _OPENCODE_CONTROL_EVENT_NAMESPACE_PREFIXES
+    )
+
+
+def _is_claude_result_payload(payload: dict[str, object]) -> bool:
+    return _event_name(payload) == "result"
+
+
+def _is_claude_completed_result_payload(payload: dict[str, object]) -> bool:
+    return _is_claude_result_payload(payload) and payload.get("is_error") is False
+
+
+def _is_claude_structured_payload(payload: dict[str, object]) -> bool:
+    event_name = _event_name(payload)
+    if event_name in _CLAUDE_PROGRESS_EVENT_NAMES or event_name == "result":
+        return True
+    return bool(event_name and any(key in payload for key in _CLAUDE_ENVELOPE_MARKER_KEYS))
+
+
+def _is_claude_non_durable_payload(payload: dict[str, object]) -> bool:
+    return _is_claude_structured_payload(payload) and not _is_claude_completed_result_payload(
+        payload
+    )
+
+
+def _is_codex_control_event_payload(payload: dict[str, object]) -> bool:
+    event_name = _event_name(payload)
+    return any(
+        event_name.startswith(prefix) for prefix in _CODEX_CONTROL_EVENT_NAMESPACE_PREFIXES
+    )
+
+
+def is_control_report_payload(payload: dict[str, object]) -> bool:
+    """Return whether a structured payload is non-durable report/control evidence."""
+
+    event_name = _event_name(payload)
+    if event_name in _CONTROL_EVENT_NAMES:
+        return True
+    if event_name == "system":
+        return True
+    if _is_opencode_control_payload(payload):
+        return True
+    if _is_claude_non_durable_payload(payload):
+        return True
+    if _is_codex_control_event_payload(payload):
+        return True
+
+    nested = payload.get("payload")
+    if isinstance(nested, dict):
+        return is_control_report_payload(cast("dict[str, object]", nested))
+    return False
+
+
 def is_active_spawn_status(status: str) -> bool:
     return status in ACTIVE_SPAWN_STATUSES
 
@@ -50,48 +160,40 @@ def validate_transition(from_status: SpawnStatus, to_status: SpawnStatus) -> Non
         raise ValueError(f"Illegal spawn transition: {from_status} -> {to_status}")
 
 
-def has_durable_report_completion(report_text: str | None) -> bool:
-    """Return True when a non-empty final report is available on disk."""
+def classify_durable_report_text(report_text: str | None) -> DurableReportEvidence:
+    """Classify report text as lifecycle completion evidence."""
 
     if not report_text or not report_text.strip():
-        return False
+        return DurableReportEvidence.ABSENT
 
     stripped = report_text.strip()
+    if stripped.lower().startswith("# report"):
+        _, _, body = stripped.partition("\n")
+        body = body.strip()
+        if body:
+            body_evidence = classify_durable_report_text(body)
+            if body_evidence is not DurableReportEvidence.COMPLETION:
+                return body_evidence
     if stripped.lower().startswith("# spawn failed"):
-        return False
+        return DurableReportEvidence.SYNTHETIC_FAILURE
 
     try:
         payload_obj = json.loads(stripped)
     except json.JSONDecodeError:
-        return True
+        return DurableReportEvidence.COMPLETION
     if not isinstance(payload_obj, dict):
-        return True
+        return DurableReportEvidence.COMPLETION
 
     payload = cast("dict[str, object]", payload_obj)
-    event_name = (
-        str(payload.get("event_type", payload.get("event", payload.get("type", ""))))
-        .strip()
-        .lower()
-    )
-    if event_name in {"cancelled", "error"}:
-        return False
+    if is_control_report_payload(payload):
+        return DurableReportEvidence.CONTROL_FRAME
+    return DurableReportEvidence.COMPLETION
 
-    nested = payload.get("payload")
-    if isinstance(nested, dict):
-        nested_payload = cast("dict[str, object]", nested)
-        nested_name = (
-            str(
-                nested_payload.get(
-                    "event_type",
-                    nested_payload.get("event", nested_payload.get("type", "")),
-                )
-            )
-            .strip()
-            .lower()
-        )
-        if nested_name in {"cancelled", "error"}:
-            return False
-    return True
+
+def has_durable_report_completion(report_text: str | None) -> bool:
+    """Return True when report text is durable completion evidence."""
+
+    return classify_durable_report_text(report_text) is DurableReportEvidence.COMPLETION
 
 
 def resolve_execution_terminal_state(

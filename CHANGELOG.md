@@ -4,6 +4,14 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+- Claude aborted-streaming result during explicit cancel stays `cancelled`, not `succeeded`.
+- Background spawn cancel stays `cancelled` when runner writes synthetic `# Spawn failed` report.
+- Codex websocket close/error report during explicit cancel stays `cancelled`, not `succeeded`.
+- Codex `thread/*`, `turn/*`, `item/*`, `account/*`, `mcpServer/*`, and `remoteControl/*` event envelopes no longer count as durable completion.
+- Codex pre-command progress text during explicit cancel no longer counts as durable completion.
+- OpenCode `message.*`, `server.*`, and `session.*` event envelopes no longer count as durable completion.
+
 ## [0.2.30] - 2026-06-04
 
 ### Changed
@@ -24,6 +32,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Fixed
 - Spawn cancel now records durable cancel intent, stops runners before scope cleanup, suppresses retries, and converges stale cancelled runs to `cancelled`.
 - Process scope release tracking now uses concrete release identities, so repeated `backend` attempts clean independently.
+- Spawn cancel scope fallback now reuses canonical process cleanup, preserving live session-owned scopes during cancel.
 - Pi cancel classification now stays `cancelled` when cancellation has explicit intent.
 - Generated `# Spawn failed` reports no longer count as durable completion during cancel/reaper convergence.
 

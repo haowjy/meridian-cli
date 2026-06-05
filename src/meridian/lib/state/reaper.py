@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import time
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from pathlib import Path
 
 import structlog
@@ -14,7 +13,6 @@ from meridian.lib.bootstrap.services import build_spawn_application_service_from
 from meridian.lib.core.depth import is_root_side_effect_process
 from meridian.lib.core.domain import SpawnStatus
 from meridian.lib.core.spawn_lifecycle import (
-    has_durable_report_completion,
     is_active_spawn_status,
     resolve_completion_cancel_precedence,
     resolve_reconciled_terminal_state,
@@ -31,6 +29,8 @@ from meridian.lib.state.managed_primary import (
     terminate_managed_primary_processes,
 )
 from meridian.lib.state.spawn.model import SpawnRecord
+from meridian.lib.state.spawn_report import spawn_report_has_durable_completion
+from meridian.lib.state.timestamps import iso_timestamp_to_epoch
 
 logger = structlog.get_logger(__name__)
 
@@ -85,37 +85,10 @@ type ReconciliationDecision = (
 )
 
 
-def _started_at_epoch(started_at: str | None) -> float | None:
-    """Parse started_at ISO string to epoch seconds."""
-    normalized = (started_at or "").strip()
-    if not normalized:
-        return None
-    if normalized.endswith("Z"):
-        normalized = f"{normalized[:-1]}+00:00"
-    try:
-        parsed = datetime.fromisoformat(normalized)
-    except ValueError:
-        return None
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=UTC)
-    return parsed.timestamp()
-
-
 def _runner_exit_at_epoch(runner_exit_at: str | None) -> float | None:
     """Parse runner_exit_at ISO string to epoch seconds."""
 
-    return _started_at_epoch(runner_exit_at)
-
-
-def _read_completion_report(runtime_root: Path, spawn_id: str) -> str | None:
-    """Read report.md for durable completion check."""
-    report_path = runtime_root / "spawns" / spawn_id / "report.md"
-    if not report_path.is_file():
-        return None
-    try:
-        return report_path.read_text(encoding="utf-8", errors="ignore").strip() or None
-    except OSError:
-        return None
+    return iso_timestamp_to_epoch(runner_exit_at)
 
 
 def _artifact_mtime_epoch(path: Path) -> float | None:
@@ -148,13 +121,12 @@ def _collect_artifact_snapshot(
     record: SpawnRecord,
     now: float,
 ) -> ArtifactSnapshot:
-    started_epoch = _started_at_epoch(record.started_at)
+    started_epoch = iso_timestamp_to_epoch(record.started_at)
     last_activity_epoch, recent_activity_artifact = _recent_runner_activity(
         runtime_root,
         record.id,
         now,
     )
-    report_text = _read_completion_report(runtime_root, record.id)
     runner_pid_alive = False
     runner_created_at_epoch = (
         record.runner_created_at_epoch
@@ -171,7 +143,7 @@ def _collect_artifact_snapshot(
         started_epoch=started_epoch,
         last_activity_epoch=last_activity_epoch,
         recent_activity_artifact=recent_activity_artifact,
-        durable_report_completion=has_durable_report_completion(report_text),
+        durable_report_completion=spawn_report_has_durable_completion(runtime_root, record.id),
         runner_pid_alive=runner_pid_alive,
         launch_boundary=launch_boundary,
     )

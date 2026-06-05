@@ -107,13 +107,22 @@ It never implements termination directly — every kill routes through
 
 ### Public functions
 
+**`terminate_recorded_spawn_scopes(runtime_root, spawn_record, *, reason, grace_seconds)`**
+
+Reads scope metadata from durable storage and terminates recorded scopes only.
+Skips scopes that are already released (`skip_reason="already_released"`) or that
+pass `should_skip_cleanup()` (`skip_reason="active_session_lease"`). This is the
+explicit second-stage cleanup after a caller already signaled a guarded runner tree.
+
+**`terminate_legacy_worker_fallback(spawn_record, *, reason, grace_seconds)`**
+
+Legacy fallback for spawns without scope metadata. Uses `worker_pid` termination
+and logs `degraded_fallback=True`.
+
 **`terminate_spawn_scopes(runtime_root, spawn_record, *, reason, grace_seconds)`**
 
-Reads scope metadata from durable storage and terminates all `spawn_owned` scopes.
-Skips scopes that are already released (`skip_reason="already_released"`) or that
-pass `should_skip_cleanup()` (`skip_reason="active_session_lease"`). For legacy
-spawns without scope metadata, falls back to `worker_pid` termination with
-`degraded_fallback=True`.
+Composes the two operations above: recorded scope cleanup when sidecars exist,
+legacy worker fallback only when no scope sidecars exist.
 
 **`cancel_managed_primary(runtime_root, spawn_record, *, grace_seconds)`**
 
@@ -164,6 +173,14 @@ exists on disk and its content is not a terminal control frame:
   `type` is `"cancelled"` or `"error"`.
 - Returns `True` for all other non-empty content (plain markdown, JSON payloads with
   neutral/completion event types).
+
+File-backed report reads live in `state/spawn_report.py`;
+`spawn_report_has_durable_completion(runtime_root, spawn_id)` reads
+`spawns/<id>/report.md` and applies the pure lifecycle classifier.
+
+Persisted timestamp parsing lives in `state/timestamps.py`;
+`iso_timestamp_to_epoch(timestamp)` normalizes trailing `Z` to UTC, treats naive
+timestamps as UTC, and returns `None` for blank or invalid values.
 
 ### Centralized Completion-vs-Cancel Precedence
 

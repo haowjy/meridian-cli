@@ -24,6 +24,42 @@ from meridian.lib.state.spawn.model import SpawnRecord
 logger = structlog.get_logger(__name__)
 
 
+def terminate_recorded_spawn_scopes(
+    runtime_root: Path,
+    spawn_record: SpawnRecord,
+    *,
+    reason: str,
+    grace_seconds: float = 5.0,
+) -> list[CleanupResult]:
+    """Terminate scope sidecars recorded for a spawn record."""
+
+    scopes = read_scopes_from_disk(runtime_root, SpawnId(spawn_record.id))
+    return _terminate_recorded_spawn_scopes(
+        runtime_root,
+        spawn_record,
+        scopes,
+        reason=reason,
+        grace_seconds=grace_seconds,
+    )
+
+
+def terminate_legacy_worker_fallback(
+    spawn_record: SpawnRecord,
+    *,
+    reason: str,
+    grace_seconds: float = 5.0,
+) -> CleanupResult | None:
+    """Terminate a legacy spawn worker when no scope sidecars exist."""
+
+    if spawn_record.worker_pid is None or spawn_record.worker_pid <= 0:
+        return None
+    return _terminate_legacy_worker_pid(
+        spawn_record,
+        reason=reason,
+        grace_seconds=grace_seconds,
+    )
+
+
 def terminate_spawn_scopes(
     runtime_root: Path,
     spawn_record: SpawnRecord,
@@ -31,29 +67,39 @@ def terminate_spawn_scopes(
     reason: str,
     grace_seconds: float = 5.0,
 ) -> list[CleanupResult]:
-    """Terminate all spawn_owned scopes for a spawn record.
+    """Terminate recorded scopes, with legacy worker fallback when none exist."""
 
-    Reads scope metadata from durable storage. For each spawn_owned scope,
-    calls the appropriate platform terminator. Logs results.
-
-    For legacy spawns with no scope metadata, falls back to worker_pid
-    termination and logs degraded_fallback=True.
-    """
     scopes = read_scopes_from_disk(runtime_root, SpawnId(spawn_record.id))
+    if scopes:
+        return _terminate_recorded_spawn_scopes(
+            runtime_root,
+            spawn_record,
+            scopes,
+            reason=reason,
+            grace_seconds=grace_seconds,
+        )
+
+    legacy_result = terminate_legacy_worker_fallback(
+        spawn_record,
+        reason=reason,
+        grace_seconds=grace_seconds,
+    )
+    if legacy_result is None:
+        return []
+    return [legacy_result]
+
+
+def _terminate_recorded_spawn_scopes(
+    runtime_root: Path,
+    spawn_record: SpawnRecord,
+    scopes: list[ProcessScopeSnapshot],
+    *,
+    reason: str,
+    grace_seconds: float,
+) -> list[CleanupResult]:
     results: list[CleanupResult] = []
-
-    if not scopes:
-        # Legacy fallback: no scope metadata, use worker_pid
-        if spawn_record.worker_pid is not None and spawn_record.worker_pid > 0:
-            result = _terminate_legacy_worker_pid(
-                spawn_record,
-                reason=reason,
-                grace_seconds=grace_seconds,
-            )
-            results.append(result)
-        return results
-
     spawn_id = SpawnId(spawn_record.id)
+
     for scope in scopes:
         if is_scope_released(runtime_root, spawn_id, scope.release_id):
             result = CleanupResult(
@@ -201,7 +247,7 @@ def _terminate_legacy_worker_pid(
         scope_id="legacy_worker",
     )
     logger.debug(
-        "Reaper cleaned up stale spawn via legacy worker fallback.",
+        "Cleaned up spawn via legacy worker fallback.",
         spawn_id=spawn_record.id,
         affected_spawn_id=spawn_record.id,
         cleanup_target="stale_spawn",
@@ -358,5 +404,7 @@ __all__ = [
     "cancel_managed_primary",
     "reclaim_session_owned_scopes_for_chat",
     "should_skip_cleanup",
+    "terminate_legacy_worker_fallback",
+    "terminate_recorded_spawn_scopes",
     "terminate_spawn_scopes",
 ]

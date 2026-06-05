@@ -145,9 +145,10 @@ Liveness check sequence per active spawn:
    If dead, check completion/cancel precedence, then recent activity, startup grace,
    and finally mark failed (`orphan_run` or `missing_runner_pid`).
 
-`has_durable_report_completion(report_text)` returns True for non-empty report that
-is not a terminal control frame (`cancelled`/`error` JSON) and is not a `# Spawn failed`
-generated markdown wrapper. Used by both reaper and runner.
+`spawn_report_has_durable_completion(runtime_root, spawn_id)` reads `report.md` and returns True
+for non-empty report content that is not a terminal control frame (`cancelled`/`error`
+JSON) and is not a `# Spawn failed` generated markdown wrapper. Used by both reaper
+and cancel convergence paths.
 
 `_completion_or_cancel_decision()` centralizes durable-completion-vs-cancel precedence
 for the reaper: if a durable report exists, the spawn resolves `succeeded` regardless
@@ -173,7 +174,7 @@ readable:
    a fresh metadata read.
 
 3. **Metadata unreadable** (both snapshot and late read fail):
-   `terminate_spawn_scopes` already ran unconditionally before this branch, cleaning
+   recorded scope cleanup already ran before this branch, cleaning
    up what can be cleaned via scope records. A warning is logged; no further action
    is taken because all available cleanup mechanisms have already fired.
 

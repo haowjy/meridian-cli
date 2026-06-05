@@ -9,7 +9,7 @@ from unittest.mock import patch
 import pytest
 
 from meridian.lib.core.types import SpawnId
-from meridian.lib.platform.process_scope import ProcessScopeSnapshot
+from meridian.lib.platform.process_scope import CleanupResult, ProcessScopeSnapshot
 from meridian.lib.state.spawn.model import SpawnRecord
 from meridian.lib.streaming.signal_canceller import SignalCanceller
 
@@ -68,10 +68,15 @@ def _make_record(
     )
 
 
-def _make_scope(scope_id: str, *, root_pid: int) -> ProcessScopeSnapshot:
+def _make_scope(
+    scope_id: str,
+    *,
+    root_pid: int,
+    owner_policy: str = "spawn_owned",
+) -> ProcessScopeSnapshot:
     return ProcessScopeSnapshot(
         scope_id=scope_id,
-        owner_policy="spawn_owned",
+        owner_policy=owner_policy,
         owner_id="s-test",
         role="harness_backend",
         containment="pid_tree_fallback",
@@ -114,10 +119,6 @@ async def test_cancel_cli_spawn_legacy_path_uses_tree_termination_with_started_e
             return_value=True,
         ),
         patch(
-            "meridian.lib.streaming.signal_canceller.read_scopes_from_disk",
-            return_value=[],
-        ),
-        patch(
             "meridian.lib.streaming.signal_canceller.terminate_tree_sync",
             side_effect=_capture_tree,
         ),
@@ -150,11 +151,42 @@ async def test_cancel_cli_spawn_returns_finalizing_when_terminal_state_never_arr
             "meridian.lib.streaming.signal_canceller.is_process_alive",
             return_value=True,
         ),
+        patch("meridian.lib.streaming.signal_canceller.terminate_tree_sync"),
+    ):
+        outcome = await canceller._cancel_cli_spawn(spawn_id, running_record)
+
+    assert outcome.finalizing is True
+    assert outcome.status == "finalizing"
+
+
+@pytest.mark.asyncio
+async def test_cancel_cli_spawn_does_not_run_legacy_worker_fallback_after_runner_signal(
+    tmp_path: Path,
+) -> None:
+    """Post-runner containment cleanup should not unguardedly re-signal legacy worker_pid."""
+    spawn_id = SpawnId("s-test")
+    running_record = _make_record(runner_pid=777, worker_pid=888)
+
+    canceller = SignalCanceller(runtime_root=tmp_path, grace_seconds=0.0)
+
+    with (
         patch(
-            "meridian.lib.streaming.signal_canceller.read_scopes_from_disk",
-            return_value=[],
+            "meridian.lib.streaming.signal_canceller.spawn_store.get_spawn",
+            return_value=running_record,
+        ),
+        patch(
+            "meridian.lib.streaming.signal_canceller.is_process_alive",
+            return_value=True,
         ),
         patch("meridian.lib.streaming.signal_canceller.terminate_tree_sync"),
+        patch(
+            "meridian.lib.core.process_cleanup.read_scopes_from_disk",
+            return_value=[],
+        ),
+        patch(
+            "meridian.lib.core.process_cleanup.terminate_tree_sync",
+            side_effect=AssertionError("legacy worker fallback should not run"),
+        ),
     ):
         outcome = await canceller._cancel_cli_spawn(spawn_id, running_record)
 
@@ -166,39 +198,57 @@ async def test_cancel_cli_spawn_returns_finalizing_when_terminal_state_never_arr
 async def test_cleanup_spawn_scopes_uses_release_id_for_duplicate_labels(
     tmp_path: Path,
 ) -> None:
-    spawn_id = SpawnId("s-test")
     first_backend = _make_scope("backend", root_pid=101)
     second_backend = _make_scope("backend", root_pid=202)
+    session_backend = _make_scope(
+        "backend",
+        root_pid=303,
+        owner_policy="session_owned",
+    )
     terminated_release_ids: list[str] = []
     marked_release_ids: list[str] = []
 
-    def _terminate_scope(scope: ProcessScopeSnapshot, **_: object) -> None:
+    def _terminate_scope(scope: ProcessScopeSnapshot, **kwargs: object) -> CleanupResult:
         terminated_release_ids.append(scope.release_id)
+        return CleanupResult(
+            scope_id=scope.scope_id,
+            root_pid=scope.root_pid,
+            descendant_count=0,
+            reason=str(kwargs["reason"]),
+            grace_seconds=0.0,
+            kill_escalated=False,
+            degraded_fallback=False,
+            skip_reason=None,
+        )
 
     canceller = SignalCanceller(runtime_root=tmp_path, grace_seconds=0.0)
 
     with (
         patch(
-            "meridian.lib.streaming.signal_canceller.read_scopes_from_disk",
-            return_value=[first_backend, second_backend],
+            "meridian.lib.core.process_cleanup.read_scopes_from_disk",
+            return_value=[first_backend, second_backend, session_backend],
         ),
         patch(
-            "meridian.lib.streaming.signal_canceller.is_scope_released",
+            "meridian.lib.core.process_cleanup.is_scope_released",
             side_effect=lambda _root, _sid, release_id: release_id
             == first_backend.release_id,
         ),
         patch(
-            "meridian.lib.streaming.signal_canceller.terminate_scope_sync",
+            "meridian.lib.core.process_cleanup.psutil.Process",
+            return_value=type("LiveProc", (), {"create_time": lambda self: 1_700_000_000.0})(),
+        ),
+        patch(
+            "meridian.lib.core.process_cleanup.terminate_scope_sync",
             side_effect=_terminate_scope,
         ),
         patch(
-            "meridian.lib.streaming.signal_canceller.mark_scope_released",
+            "meridian.lib.core.process_cleanup.mark_scope_released",
             side_effect=lambda _root, _sid, release_id: marked_release_ids.append(
                 release_id
             ),
         ),
     ):
-        await canceller._cleanup_spawn_scopes(spawn_id, _make_record())
+        await canceller._cleanup_spawn_scopes(_make_record())
 
     assert first_backend.scope_id == second_backend.scope_id
     assert terminated_release_ids == [second_backend.release_id]
