@@ -419,5 +419,50 @@ def test_spawn_prepare_headless_deny_error_names_denied_harness(
 
     message = str(exc_info.value)
     assert "Headless spawns on the 'codex' harness are denied" in message
-    assert "native primary session for the codex harness" in message
-    assert "Claude primary session" not in message
+    # Cross-harness path: caller is not on codex, so suggest -m / --harness.
+    assert "-m <model>" in message
+    assert "route to an allowed harness" in message
+
+
+def test_spawn_prepare_headless_deny_same_harness_suggests_native_agent(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Same-harness caller gets pointed to native Agent() tool."""
+    _write_minimal_mars_config(tmp_path)
+    (tmp_path / "meridian.toml").write_text(
+        "[spawn]\n"
+        'deny_headless_harnesses = ["claude"]\n',
+        encoding="utf-8",
+    )
+    stub_bundle_request_and_resolve(
+        monkeypatch,
+        model="claude-opus-4-6",
+        harness=HarnessId.CLAUDE,
+    )
+    monkeypatch.setenv("MERIDIAN_HARNESS", "claude")
+
+    with pytest.raises(ValueError) as exc_info:
+        build_launch_context(
+            spawn_id="dry-run-claude-spawn-denied",
+            request=SpawnRequest(
+                prompt="task",
+                prompt_is_composed=False,
+                model="claude-opus-4-6",
+                harness="claude",
+            ),
+            runtime=LaunchRuntime(
+                argv_intent=LaunchArgvIntent.REQUIRED,
+                composition_surface=LaunchCompositionSurface.SPAWN_PREPARE,
+                runtime_root=(tmp_path / ".meridian").as_posix(),
+                project_paths_project_root=tmp_path.as_posix(),
+                project_paths_execution_cwd=tmp_path.as_posix(),
+            ),
+            harness_registry=get_default_harness_registry(),
+            dry_run=True,
+        )
+
+    message = str(exc_info.value)
+    assert "Headless spawns on the 'claude' harness are denied" in message
+    # Same-harness path: suggest native Agent() tool (no agent name since none specified).
+    assert "Agent() tool" in message
