@@ -1770,11 +1770,25 @@ def bind_launch_context(
         runtime.composition_surface == LaunchCompositionSurface.SPAWN_PREPARE
         and harness.id.value in _resolve_deny_headless_harnesses(runtime, project_paths)
     ):
+        parent_harness = os.getenv("MERIDIAN_HARNESS", "")
+        if parent_harness == harness.id.value:
+            # Caller is on the same harness that's denied — suggest native delegation.
+            agent_hint = (
+                f' Use your native Agent(subagent_type="{resolved_request.agent}") tool'
+                " to delegate instead."
+                if resolved_request.agent
+                else " Use your native Agent() tool to delegate instead."
+            )
+        else:
+            # Caller is on a different harness — suggest switching model/harness.
+            agent_hint = (
+                " Use a different model with '-m <model>' to route to an allowed harness,"
+                " or override with '--harness <harness>'."
+            )
         raise ValueError(
             f"Headless spawns on the '{harness.id.value}' harness are denied by "
-            f"'[spawn] deny_headless_harnesses' in meridian.toml. "
-            f"Use a native primary session for the {harness.id.value} harness, "
-            "or change the setting in meridian.toml."
+            f"'[spawn] deny_headless_harnesses' in meridian.toml."
+            f"{agent_hint}"
         )
 
     is_primary_launch = runtime.composition_surface == LaunchCompositionSurface.PRIMARY
