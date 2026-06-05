@@ -4,6 +4,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+- `deny_headless_harnesses` error now gives context-aware remediation: same-harness callers are directed to their native `Agent()` tool; cross-harness callers are told to use `-m` or `--harness`.
+
 ## [0.2.31] - 2026-06-05
 
 ### Fixed
