@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.2.31] - 2026-06-05
+
 ### Fixed
 - Claude aborted-streaming result during explicit cancel stays `cancelled`, not `succeeded`.
 - Background spawn cancel stays `cancelled` when runner writes synthetic `# Spawn failed` report.
