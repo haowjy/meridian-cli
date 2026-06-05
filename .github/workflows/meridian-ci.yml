@@ -213,4 +213,6 @@ jobs:
         run: cd src/meridian/pi_runtime && pnpm install --frozen-lockfile && pnpm run build:extensions
 
       - name: Run Windows gate
-        run: uv run --extra dev pytest -n auto -m "not slow"
+        # Windows xdist worker startup can hang before pytest emits output; run the same
+        # non-slow platform gate serially so Windows coverage stays authoritative.
+        run: uv run --extra dev pytest -n 0 -m "not slow"
