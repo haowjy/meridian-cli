@@ -82,10 +82,17 @@ No label = no auto-release. Forgetting the label means the work ships without a 
 
 ### Release workflow
 
+**Read `docs/releasing.md` before releasing, pushing to main, or opening a PR.**
+It covers the PR template, release labels, backfill/direct-to-main releases, and
+the `push.followTags` gotcha that causes the pre-push hook to block manual releases.
+
 ```bash
-# Open a PR from a worktree branch and merge to main.
+# Normal path: open a PR from a worktree branch and merge to main.
 # CI bumps the patch version, promotes changelog, commits Release X.Y.Z, and tags vX.Y.Z.
 # Agents write notes under CHANGELOG.md [Unreleased], but must not edit __version__ or create tags.
+
+# Backfill (direct-to-main, no PR): use the manual release helper.
+scripts/manually-release.sh patch --push
 
 # Post-merge cleanup:
 scripts/prune-worktrees.sh

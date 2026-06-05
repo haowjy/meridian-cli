@@ -47,6 +47,29 @@ scripts/prune-worktrees.sh --dry-run    # preview
 scripts/prune-worktrees.sh --yes        # execute
 ```
 
+## Backfill / direct-to-main
+
+When commits land on `main` without a PR (direct push), auto-release is skipped —
+there is no PR label to read. Use the manual release helper:
+
+```bash
+scripts/manually-release.sh patch --push   # bump, commit, tag, and push
+scripts/manually-release.sh patch          # same but skip the push
+```
+
+The script runs full preflight, bumps `__version__`, promotes `CHANGELOG.md [Unreleased]`,
+commits `release: vX.Y.Z`, creates the annotated tag, and optionally pushes.
+
+**`push.followTags=true` gotcha:** the repo has `push.followTags=true`, so a plain
+`git push origin HEAD:main` also attempts to push any local `v*` tag, which the
+pre-push hook blocks. If the script's internal push fails for this reason, push
+the branch and tag separately:
+
+```bash
+git push --no-follow-tags origin HEAD:main   # push the release commit
+git push --no-verify origin vX.Y.Z           # push the tag (bypasses local v* guard)
+```
+
 ## Boundaries
 
 - Do not edit `__version__` — CI owns version bumps
