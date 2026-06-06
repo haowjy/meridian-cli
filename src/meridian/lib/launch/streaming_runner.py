@@ -31,7 +31,11 @@ from meridian.lib.harness.bundle import get_harness_bundle
 from meridian.lib.harness.common import parse_json_stream_event, unwrap_event_payload
 from meridian.lib.harness.connections.base import ConnectionConfig, HarnessConnection
 from meridian.lib.harness.extractor import StreamingExtractor
-from meridian.lib.harness.semantics import TerminalEventOutcome, terminal_outcome
+from meridian.lib.harness.semantics import (
+    CodexDrainThreadTracker,
+    TerminalEventOutcome,
+    terminal_outcome,
+)
 from meridian.lib.launch.constants import (
     DEFAULT_INFRA_EXIT_CODE,
     HISTORY_FILENAME,
@@ -375,6 +379,7 @@ async def _consume_subscriber_events(
     event_observer: Callable[[StreamEvent], None] | None,
     stream_stdout_to_terminal: bool,
     terminal_event_future: asyncio.Future[TerminalEventOutcome] | None = None,
+    codex_thread_tracker: CodexDrainThreadTracker | None = None,
 ) -> None:
     while True:
         event = await subscriber.get()
@@ -391,7 +396,10 @@ async def _consume_subscriber_events(
                 budget_signal.set()
 
         if terminal_event_future is not None and not terminal_event_future.done():
-            event_outcome = terminal_outcome(event)
+            if codex_thread_tracker is not None:
+                event_outcome = codex_thread_tracker.terminal_outcome(event)
+            else:
+                event_outcome = terminal_outcome(event)
             if event_outcome is not None:
                 terminal_event_future.set_result(event_outcome)
 
@@ -508,6 +516,11 @@ async def run_streaming_spawn(
         terminal_event_capture = (
             terminal_event_future if config.harness_id != HarnessId.PI else None
         )
+        codex_thread_tracker = (
+            CodexDrainThreadTracker()
+            if config.harness_id == HarnessId.CODEX and terminal_event_capture is not None
+            else None
+        )
         completion_task = asyncio.create_task(manager.wait_for_completion(spawn_id))
         consume_task = asyncio.create_task(
             _consume_subscriber_events(
@@ -518,6 +531,7 @@ async def run_streaming_spawn(
                 event_observer=None,
                 stream_stdout_to_terminal=stream_to_terminal,
                 terminal_event_future=terminal_event_capture,
+                codex_thread_tracker=codex_thread_tracker,
             )
         )
         signal_task = asyncio.create_task(shutdown_event.wait())
@@ -606,6 +620,11 @@ async def _run_streaming_attempt(
     terminal_event_capture = (
         terminal_event_future if config.harness_id != HarnessId.PI else None
     )
+    codex_thread_tracker = (
+        CodexDrainThreadTracker()
+        if config.harness_id == HarnessId.CODEX and terminal_event_capture is not None
+        else None
+    )
     subscriber: asyncio.Queue[HarnessEvent | None] | None = None
     connection: HarnessConnection[Any] | None = None
     drain_exit_code = DEFAULT_INFRA_EXIT_CODE
@@ -642,6 +661,7 @@ async def _run_streaming_attempt(
                 event_observer=event_observer,
                 stream_stdout_to_terminal=stream_stdout_to_terminal,
                 terminal_event_future=terminal_event_capture,
+                codex_thread_tracker=codex_thread_tracker,
             )
         )
         signal_task = asyncio.create_task(signal_event.wait())

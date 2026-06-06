@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Literal, cast
 
 from meridian.lib.core.domain import SpawnStatus
 from meridian.lib.core.types import HarnessId
+from meridian.lib.harness.common import extract_codex_thread_id
 
 if TYPE_CHECKING:
     from meridian.lib.harness.connections.base import HarnessEvent
@@ -37,10 +38,32 @@ def _stringify_terminal_error(error: object) -> str | None:
     return normalized or None
 
 
-def terminal_outcome(event: HarnessEvent) -> TerminalEventOutcome | None:
+def _codex_turn_completes_session(
+    event: HarnessEvent,
+    *,
+    codex_main_thread_id: str | None,
+) -> bool:
+    if event.harness_id != HarnessId.CODEX.value or event.event_type != "turn/completed":
+        return False
+    if codex_main_thread_id is None:
+        return True
+    event_thread_id = extract_codex_thread_id(event.payload)
+    if event_thread_id is None:
+        return True
+    return event_thread_id == codex_main_thread_id
+
+
+def terminal_outcome(
+    event: HarnessEvent,
+    *,
+    codex_main_thread_id: str | None = None,
+) -> TerminalEventOutcome | None:
     """Classify whether a harness event completes a spawn drain."""
 
-    if event.harness_id == HarnessId.CODEX.value and event.event_type == "turn/completed":
+    if _codex_turn_completes_session(
+        event,
+        codex_main_thread_id=codex_main_thread_id,
+    ):
         return TerminalEventOutcome(status="succeeded", exit_code=0)
 
     if event.event_type == "error/connectionClosed":
@@ -147,7 +170,11 @@ def terminal_outcome(event: HarnessEvent) -> TerminalEventOutcome | None:
     return None
 
 
-def activity_transition(event: HarnessEvent) -> ActivityState | None:
+def activity_transition(
+    event: HarnessEvent,
+    *,
+    codex_main_thread_id: str | None = None,
+) -> ActivityState | None:
     """Return primary UI activity transition caused by a harness event."""
 
     if event.event_type in {
@@ -158,7 +185,14 @@ def activity_transition(event: HarnessEvent) -> ActivityState | None:
         "tool_call_update",  # OpenCode: tool result
     }:
         return "turn_active"
-    if event.event_type in {"turn/completed", "session.idle"}:
+    if event.event_type == "turn/completed":
+        if _codex_turn_completes_session(
+            event,
+            codex_main_thread_id=codex_main_thread_id,
+        ):
+            return "idle"
+        return None
+    if event.event_type == "session.idle":
         return "idle"
     if event.harness_id == HarnessId.PI.value:
         if event.event_type in {
@@ -175,13 +209,20 @@ def activity_transition(event: HarnessEvent) -> ActivityState | None:
     return None
 
 
-def clears_signal(event: HarnessEvent) -> bool:
+def clears_signal(
+    event: HarnessEvent,
+    *,
+    codex_main_thread_id: str | None = None,
+) -> bool:
     """Return whether an event clears a pending user signal for its harness."""
 
     if event.harness_id in {HarnessId.CLAUDE.value, HarnessId.CURSOR.value}:
         return event.event_type == "result"
     if event.harness_id == HarnessId.CODEX.value:
-        return event.event_type == "turn/completed"
+        return _codex_turn_completes_session(
+            event,
+            codex_main_thread_id=codex_main_thread_id,
+        )
     if event.harness_id == HarnessId.OPENCODE.value:
         return event.event_type in {"session.idle", "session.error"}
     if event.harness_id == HarnessId.PI.value:
@@ -189,8 +230,29 @@ def clears_signal(event: HarnessEvent) -> bool:
     return False
 
 
+@dataclass
+class CodexDrainThreadTracker:
+    """Track the main Codex thread for thread-aware drain classification."""
+
+    main_thread_id: str | None = field(default=None)
+
+    def observe(self, event: HarnessEvent) -> None:
+        if event.harness_id != HarnessId.CODEX.value or event.event_type != "turn/started":
+            return
+        if self.main_thread_id is not None:
+            return
+        thread_id = extract_codex_thread_id(event.payload)
+        if thread_id:
+            self.main_thread_id = thread_id
+
+    def terminal_outcome(self, event: HarnessEvent) -> TerminalEventOutcome | None:
+        self.observe(event)
+        return terminal_outcome(event, codex_main_thread_id=self.main_thread_id)
+
+
 __all__ = [
     "ActivityState",
+    "CodexDrainThreadTracker",
     "TerminalEventOutcome",
     "activity_transition",
     "clears_signal",

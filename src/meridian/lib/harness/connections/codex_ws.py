@@ -197,6 +197,7 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
 
         self._current_turn_id: str | None = None
         self._thread_id: str | None = None
+        self._main_turn_thread_id: str | None = None
         self._tracer: DebugTracer | None = None
         self._cancel_requested = False
         self._signal_in_flight = False
@@ -244,6 +245,10 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
     @property
     def current_turn_id(self) -> str | None:
         return self._current_turn_id
+
+    @property
+    def main_turn_thread_id(self) -> str | None:
+        return self._main_turn_thread_id
 
     @property
     def subprocess_pid(self) -> int | None:
@@ -303,6 +308,7 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
         self._event_queue = asyncio.Queue()
         self._current_turn_id = None
         self._thread_id = None
+        self._main_turn_thread_id = None
         self._cancel_requested = False
         self._signal_in_flight = False
 
@@ -779,6 +785,7 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
         await self._clear_stale_hitl_requests(reason="connection_stopped")
         self._current_turn_id = None
         self._thread_id = None
+        self._main_turn_thread_id = None
         self._cancel_requested = False
         self._signal_in_flight = False
         self._launch_spec = None
@@ -1209,7 +1216,11 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
             payload=payload,
             harness_id=HarnessId.CODEX.value,
         )
-        if clears_signal(event):
+        if method == "turn/started" and self._main_turn_thread_id is None:
+            thread_id = _extract_thread_id(payload)
+            if thread_id is not None:
+                self._main_turn_thread_id = thread_id
+        if clears_signal(event, codex_main_thread_id=self._main_turn_thread_id):
             self._current_turn_id = None
             self._signal_in_flight = False
             return
