@@ -42,7 +42,7 @@ Per-harness mapping:
   Agent(Explore),Agent(Plan),Agent(General-purpose),Agent(general-purpose)`
   unconditionally. The denials merge into permission-derived `--disallowedTools` via
   `dedupe_nonempty()`. Generic
-  `Agent` is gated by Mars `[settings.agent_copy]`: allowed only when
+  `Agent` is gated by Mars `[settings.meridian.agent_copy]`: allowed only when
   `harnesses = ["claude"]` and `.claude` is a target. Parent/passthrough allowed-tool
   tails are merged into the managed projection; Meridian's Agent denies stay authoritative.
 - Codex subprocess: `codex exec --json`; connection: `codex app-server` (real WebSocket, JSON-RPC 2.0)
@@ -201,7 +201,7 @@ a generic `Agent` tool. Meridian's policy distinguishes between these:
   There is no config toggle — built-ins are a Meridian platform policy.
 
 - **Generic `Agent` follows the Mars agent-copy boundary.** Meridian reads
-  `mars.toml` to check whether `[settings.agent_copy] harnesses = ["claude"]` AND
+  `mars.toml` to check whether `[settings.meridian.agent_copy] harnesses = ["claude"]` AND
   `.claude` is in `targets`. If both hold, generic `Agent` is allowed (Claude's
   native agent surface is Meridian-owned through agent copy). Otherwise, generic
   `Agent` is denied by default and delegation routes through `meridian spawn`.

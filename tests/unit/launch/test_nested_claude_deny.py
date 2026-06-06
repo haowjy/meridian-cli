@@ -353,7 +353,7 @@ def test_spawn_prepare_claude_with_agent_copy_keeps_generic_agent(
 ) -> None:
     (tmp_path / "mars.toml").write_text(
         '[settings]\ntargets = [".claude"]\n\n'
-        "[settings.agent_copy]\n"
+        "[settings.meridian.agent_copy]\n"
         'harnesses = ["claude"]\n',
         encoding="utf-8",
     )

@@ -34,7 +34,9 @@ from tests.support.launch import stub_bundle_request_and_resolve
 
 
 def _write_minimal_mars_config(project_root: Path, *, claude_agent_copy: bool = False) -> None:
-    agent_copy = '\n[settings.agent_copy]\nharnesses = ["claude"]\n' if claude_agent_copy else ""
+    agent_copy = (
+        '\n[settings.meridian.agent_copy]\nharnesses = ["claude"]\n' if claude_agent_copy else ""
+    )
     (project_root / "mars.toml").write_text(
         f'[settings]\ntargets = [".claude"]\n{agent_copy}',
         encoding="utf-8",

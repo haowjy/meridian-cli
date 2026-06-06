@@ -90,7 +90,10 @@ def project_has_claude_agent_copy(project_root: Path) -> bool:
             normalized_root = raw_managed_root.strip().lower()
             if normalized_root:
                 targets = (normalized_root,)
-        agent_copy = typed_settings.get("agent_copy")
+        meridian_table = typed_settings.get("meridian")
+        if not isinstance(meridian_table, dict):
+            continue
+        agent_copy = cast("dict[str, object]", meridian_table).get("agent_copy")
         if not isinstance(agent_copy, dict) or "harnesses" not in agent_copy:
             continue
         typed_agent_copy = cast("dict[str, object]", agent_copy)
