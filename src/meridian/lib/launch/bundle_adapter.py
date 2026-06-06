@@ -36,7 +36,7 @@ def _resolve_mars_min_version() -> str:
 
 
 _MARS_BUNDLE_MIN_VERSION = _resolve_mars_min_version()
-_SUPPORTED_BUNDLE_SCHEMA_VERSIONS = (2, 3)
+_SUPPORTED_BUNDLE_SCHEMA_VERSIONS = (2, 3, 4)
 
 
 @dataclass(frozen=True)
