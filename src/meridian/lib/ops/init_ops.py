@@ -187,6 +187,40 @@ def maybe_set_primary_agent(
     return PrimaryAgentAction(action="set", agent=declared_primary_agent)
 
 
+def maybe_scaffold_claude_agent_copy(project_root: Path, targets: list[str]) -> bool:
+    """Enable Claude native agent copies in mars.toml when a `.claude` target is linked.
+
+    Writes ``[settings.meridian.agent_copy] harnesses = ["claude"]`` once. Idempotent:
+    a no-op when no claude target is linked or the table already exists. Returns True
+    only when the table was newly added.
+    """
+    import tomllib
+
+    normalized = {target.strip().lower().lstrip(".") for target in targets}
+    if "claude" not in normalized:
+        return False
+    mars_toml = project_root / "mars.toml"
+    if not mars_toml.is_file():
+        return False
+
+    with mars_toml.open("rb") as handle:
+        payload = tomllib.load(handle)
+    settings_raw: Any = payload.get("settings")
+    if isinstance(settings_raw, dict):
+        meridian_raw: Any = cast("dict[str, Any]", settings_raw).get("meridian")
+        if isinstance(meridian_raw, dict) and isinstance(
+            cast("dict[str, Any]", meridian_raw).get("agent_copy"), dict
+        ):
+            return False
+
+    from meridian.lib.state.atomic import atomic_write_text
+
+    block = '[settings.meridian.agent_copy]\nharnesses = ["claude"]\ninclude_fanout = false\n'
+    existing = mars_toml.read_text()
+    atomic_write_text(mars_toml, existing.rstrip("\n") + "\n\n" + block)
+    return True
+
+
 def run_init_flow(
     *,
     project_root: Path,
@@ -237,6 +271,9 @@ def run_init_flow(
     # 5. mars link for each target
     for target in targets:
         _run_mars_json(project_root, "link", [target], executable=executable)
+
+    # 5b. Enable Claude native agent copies when a .claude target is linked.
+    maybe_scaffold_claude_agent_copy(project_root, targets)
 
     # 6. Primary agent
     declared_primary_agent = add_result.declared_primary_agent if add_result else None
