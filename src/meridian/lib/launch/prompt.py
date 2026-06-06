@@ -6,7 +6,6 @@ from pathlib import Path
 from typing import Any
 
 from meridian.lib.catalog.agent import AgentProfile, scan_agent_profiles
-from meridian.lib.catalog.skill import SkillRegistry
 from meridian.lib.config.context_config import ContextConfig
 from meridian.lib.context.resolver import (
     ResolvedContextPaths,
@@ -15,8 +14,6 @@ from meridian.lib.context.resolver import (
 )
 from meridian.lib.core.domain import SkillContent
 from meridian.lib.launch.composition import PromptDocument
-
-from .resolve import dedupe_skill_names
 
 _AGENT_INVENTORY_HEADING = "# Meridian Agents"
 _AGENT_DELEGATION_GUIDANCE_MARKER = (
@@ -33,40 +30,6 @@ _AGENT_DELEGATION_GUIDANCE = (
     "Claude-native agent/model or the user asks for Claude-specific delegation."
 )
 
-
-def dedupe_skill_contents(skills: Sequence[SkillContent]) -> tuple[SkillContent, ...]:
-    """De-duplicate loaded skill payloads by skill name preserving order."""
-
-    seen: set[str] = set()
-    ordered: list[SkillContent] = []
-    for skill in skills:
-        if skill.name in seen:
-            continue
-        seen.add(skill.name)
-        ordered.append(skill)
-    return tuple(ordered)
-
-
-def load_skill_contents(
-    registry: SkillRegistry,
-    names: Sequence[str],
-    *,
-    harness_id: str | None = None,
-    selected_model_token: str | None = None,
-    canonical_model_id: str | None = None,
-) -> tuple[SkillContent, ...]:
-    """Load skill contents in deterministic deduplicated order."""
-
-    deduped_names = dedupe_skill_names(names)
-    if not deduped_names:
-        return ()
-    loaded = registry.load(
-        list(deduped_names),
-        harness_id=harness_id,
-        selected_model_token=selected_model_token,
-        canonical_model_id=canonical_model_id,
-    )
-    return dedupe_skill_contents(loaded)
 
 
 def build_report_instruction() -> str:
@@ -364,7 +327,4 @@ __all__ = [
     "build_work_goal_instruction",
     "compose_skill_injections",
     "compose_skill_prompt_documents",
-    "dedupe_skill_contents",
-    "dedupe_skill_names",
-    "load_skill_contents",
 ]
