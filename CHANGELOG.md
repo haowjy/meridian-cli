@@ -5,6 +5,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Changed
+- Require `mars-agents==0.8.0` (was `0.7.15`): provides the v4 launch-bundle schema, harness-aware inventory, and the `settings.meridian.agent_copy` config key this release consumes.
 - Default `[spawn] deny_headless_harnesses = ["claude"]` (was empty): headless `meridian spawn` of Claude agents is denied out of the box, steering Claude→Claude delegation to the native Agent tool. Override with `deny_headless_harnesses = []`. Anthropic disables headless Claude runs on 2026-06-15.
 - Primary startup warns when `claude` is absent from the effective `deny_headless_harnesses` (i.e. the default was overridden), flagging the 2026-06-15 headless-Claude breakage.
 - Launch prompt helpers split across prompt builders, prompt context producers, text utilities, and skill resolution; legacy prompt composer APIs removed.
