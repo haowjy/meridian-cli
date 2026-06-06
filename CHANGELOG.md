@@ -4,6 +4,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+- Launch prompt assembly tests now exercise live composition projection after deleting legacy prompt composer APIs.
+
 ## [0.2.32] - 2026-06-05
 
 ### Changed
