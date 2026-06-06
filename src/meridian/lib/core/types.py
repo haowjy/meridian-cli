@@ -21,6 +21,17 @@ class TransportId(StrEnum):
     STREAMING = "streaming"
 
 
+def normalize_mars_target_name(name: str) -> str:
+    """Normalize a mars target or ``managed_root`` name to its bare harness id.
+
+    Mars target names may be written dotted (``".claude"``) or bare (``"claude"``),
+    with surrounding whitespace or mixed case. Producers (init scaffolding) and
+    consumers (the Claude agent-copy gate) must agree on one canonical form; this is
+    it. Returns the lowercased, dot-stripped harness id.
+    """
+    return name.strip().lower().lstrip(".")
+
+
 SpawnId = NewType("SpawnId", str)
 ModelId = NewType("ModelId", str)
 ArtifactKey = NewType("ArtifactKey", str)
@@ -33,4 +44,5 @@ __all__ = [
     "SchemaVersion",
     "SpawnId",
     "TransportId",
+    "normalize_mars_target_name",
 ]

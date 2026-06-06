@@ -4,6 +4,24 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+- Require `mars-agents==0.8.1` (was `0.7.15`): provides the v3 launch-bundle schema, harness-aware inventory, and the `settings.meridian.agent_copy` config key this release consumes. The accepted bundle-schema window is **v3 only** — mars 0.8.0's experimental v4 `launch_actions` field was reverted in 0.8.1 and Meridian never consumed it.
+- Default `[spawn] deny_headless_harnesses = ["claude"]` (was empty): headless `meridian spawn` of Claude agents is denied out of the box, steering Claude→Claude delegation to the native Agent tool. Override with `deny_headless_harnesses = []`. Anthropic disables headless Claude runs on 2026-06-15.
+- Primary startup warns when `claude` is absent from the effective `deny_headless_harnesses` (i.e. the default was overridden), flagging the 2026-06-15 headless-Claude breakage.
+- Launch prompt helpers split across prompt builders, prompt context producers, text utilities, and skill resolution; legacy prompt composer APIs removed.
+- Agent inventory: mars `prompt_surface.inventory_prompt` only — harness-aware spawn commands, native sections, model metadata. Meridian consumes verbatim; `LaunchPolicySnapshot.bundle_inventory_prompt` persists inventory for resume replay.
+
+### Removed
+- Python fallback agent inventory renderer (`build_agent_inventory_prompt` and mirror format helpers in `prompt_context.py`).
+- Dead mars 0.7.x launch-bundle compat in the bundle adapter: the `content` skill-body fallback and the unreachable v2 flat-string skills branch (mars is pinned to 0.8.1 / v3 bundles).
+- Dead bundle-adapter prompt-surface system_instruction/supplemental_documents parsing and v2 skills_metadata fallback (only inventory_prompt and v3 skills are consumed).
+
+### Fixed
+- Codex drain loop no longer treats subagent `turn/completed` as session termination; only the main thread's completion ends the spawn, and report extraction ignores other threads (#317).
+- Spawn infers logical `task_cwd` from the caller's working directory when it lies outside the project tree, so cross-repo worktree spawns no longer require explicit `--task-dir` (#318).
+- `meridian config set <key> '[]'` now accepts an explicit empty list for `str_list` options (e.g. `spawn.deny_headless_harnesses`), matching the documented "set to `[]`" escape hatch; lists whose items are all empty strings are still rejected.
+- Distinct-task-dir launch instruction now states explicitly that the shell cwd is the project root (not the task dir) and tells the agent to `cd` into the absolute `MERIDIAN_TASK_DIR` or use absolute paths, so weaker models no longer run cwd-relative against the wrong directory and silently no-op (#318 follow-up).
+
 ## [0.2.32] - 2026-06-05
 
 ### Changed

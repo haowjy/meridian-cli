@@ -25,7 +25,7 @@ from meridian.lib.launch.request import LaunchCompositionSurface
 from meridian.lib.launch.types import LaunchRequest, build_primary_prompt
 from meridian.lib.ops.spawn import context_ref
 from meridian.lib.state import work_store
-from tests.support.fixtures import write_agent, write_skill
+from tests.support.fixtures import write_agent
 from tests.support.launch import stub_bundle_request_and_resolve
 
 pytestmark = pytest.mark.slow
@@ -136,54 +136,28 @@ def test_build_primary_spawn_request_without_harness_skips_synthetic_prompt(mode
     assert spawn_request.prompt == ""
 
 
-@pytest.mark.parametrize(
-    (
-        "model",
-        "expected_harness",
-        "peer_name",
-        "peer_model",
-        "skill_name",
-        "skill_description",
-    ),
-    [
-        (
-            "claude-sonnet-4",
-            HarnessId.CLAUDE,
-            "coder",
-            "gpt-5.4",
-            "review",
-            "Review helper",
-        ),
-        (
-            "gpt-5.4",
-            HarnessId.CODEX,
-            "reviewer",
-            "claude-sonnet-4",
-            "meridian-spawn",
-            "Spawn helper",
-        ),
-    ],
-    ids=["claude", "codex"],
-)
-def test_primary_launch_injects_inventory_by_harness_family(
+def test_primary_launch_injects_bundle_inventory(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-    model: str,
-    expected_harness: HarnessId,
-    peer_name: str,
-    peer_model: str,
-    skill_name: str,
-    skill_description: str,
 ) -> None:
+    model = "claude-sonnet-4"
+    peer_name = "coder"
+    skill_name = "review"
+    skill_description = "Review helper"
+    bundle_inventory = (
+        "# Meridian Agents\n\n"
+        "## Subagent\n"
+        "- `meridian spawn -a dev-orchestrator`: Orchestrate.\n"
+        f"- `meridian spawn -a {peer_name}`: Peer.\n"
+    )
     _write_minimal_mars_config(tmp_path)
     stub_bundle_request_and_resolve(
         monkeypatch,
         model=model,
-        harness=expected_harness,
+        harness=HarnessId.CLAUDE,
+        prompt_surface_inventory_prompt=bundle_inventory,
     )
     write_agent(tmp_path, name="dev-orchestrator", model=model)
-    write_agent(tmp_path, name=peer_name, model=peer_model)
-    write_skill(tmp_path, skill_name, description=skill_description)
     registry = get_default_harness_registry()
 
     preview = build_launch_context(
@@ -203,8 +177,8 @@ def test_primary_launch_injects_inventory_by_harness_family(
     )
     assert "# Meridian Agents" in text
     assert "## Subagent" in text
-    assert "- dev-orchestrator" in text
-    assert f"- {peer_name}" in text
+    assert "`meridian spawn -a dev-orchestrator`" in text
+    assert f"`meridian spawn -a {peer_name}`" in text
     assert "SKILLS" not in text
     assert f"{skill_name}: {skill_description}" not in text
 

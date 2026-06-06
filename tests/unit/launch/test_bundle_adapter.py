@@ -35,7 +35,7 @@ def _completed(
 
 def _valid_bundle_payload() -> dict[str, object]:
     return {
-        "version": 2,
+        "version": 3,
         "routing": {
             "model": "gpt-5.5",
             "model_token": "gpt55",
@@ -255,15 +255,32 @@ def test_request_and_resolve_reports_non_object_json_payload(
         )
 
 
-def test_request_and_resolve_reports_unsupported_schema_version(
+@pytest.mark.parametrize("unsupported_version", [2, 4, 99])
+def test_request_and_resolve_rejects_unsupported_schema_versions(
     monkeypatch: pytest.MonkeyPatch,
+    unsupported_version: int,
 ) -> None:
     payload = _valid_bundle_payload()
-    payload["version"] = 99
+    payload["version"] = unsupported_version
 
-    pat = r"schema version 99 is unsupported.*mars >= 0\.\d+\.\d+"
+    pat = (
+        rf"schema version {unsupported_version} is unsupported"
+        r".*Expected one of \(3,\).*mars >= "
+    )
     with pytest.raises(RuntimeError, match=pat):
         _resolve_with_payload(monkeypatch, payload)
+
+
+@pytest.mark.parametrize("supported_version", [3])
+def test_request_and_resolve_accepts_supported_schema_versions(
+    monkeypatch: pytest.MonkeyPatch,
+    supported_version: int,
+) -> None:
+    payload = _valid_bundle_payload()
+    payload["version"] = supported_version
+
+    bundle = _resolve_with_payload(monkeypatch, payload)
+    assert bundle.harness is HarnessId.OPENCODE
 
 
 def test_request_and_resolve_accepts_empty_model_for_harness_passthrough(

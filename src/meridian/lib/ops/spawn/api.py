@@ -1738,6 +1738,7 @@ def _build_continue_create_input(
         desc=payload.desc,
         work=source_spawn.work_id or "",
         task_dir=None,
+        caller_cwd=payload.caller_cwd,
         launch_policy_snapshot=source_snapshot,
         session=SessionRequest(
             requested_harness_session_id=resolved_reference.harness_session_id,
@@ -1802,6 +1803,7 @@ def _build_fork_create_input(
         desc=payload.desc,
         work=requested_work or (resolved_reference.source_work_id or ""),
         task_dir=requested_task_dir,
+        caller_cwd=payload.caller_cwd,
         goal=requested_goal,
         session=SessionRequest(
             requested_harness_session_id=resolved_reference.harness_session_id,

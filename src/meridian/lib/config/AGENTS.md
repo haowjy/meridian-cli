@@ -74,7 +74,7 @@ Claude profile includes:
   config release plumbing; Claude native Agent routing is still enforced by the
   harness projection.
 - Claude native Agent routing is not a `meridian.toml` harness policy. Built-in
-  Claude agents stay denied; generic `Agent` follows Mars `[settings.agent_copy]`
+  Claude agents stay denied; generic `Agent` follows Mars `[settings.meridian.agent_copy]`
   with `.claude` target materialization.
 
 ## Depth

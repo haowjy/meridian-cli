@@ -117,7 +117,7 @@ into the harness adapter's `resolve_launch_spec()`.
 
 Claude native Agent routing does not use a `meridian.toml` harness option.
 Built-in Claude agents stay denied unconditionally; generic `Agent` permission
-follows Mars `[settings.agent_copy]` via `project_has_claude_agent_copy()` in
+follows Mars `[settings.meridian.agent_copy]` via `project_has_claude_agent_copy()` in
 `lib/launch/permissions.py`.
 
 ## Schema Metadata (`schema.py`)

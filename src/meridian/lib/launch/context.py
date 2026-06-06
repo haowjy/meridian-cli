@@ -96,16 +96,15 @@ from .policies import (
 from .policy_snapshot import build_launch_policy_snapshot
 from .prompt import (
     build_goal_instruction,
-    build_launch_context_documents,
     build_primary_preamble,
     build_report_instruction,
     build_spawn_preamble,
     build_work_goal_instruction,
+)
+from .prompt_context import (
+    build_context_prompt,
     compose_skill_injections,
     compose_skill_prompt_documents,
-    sanitize_prior_output,
-    strip_stale_report_paths,
-    with_agent_inventory_guidance,
 )
 from .reference import (
     ReferenceItem,
@@ -125,6 +124,7 @@ from .resolve import (
     resolve_profile_path,
     resolve_skill_paths,
 )
+from .text_utils import sanitize_prior_output, strip_stale_report_paths
 from .workspace import resolve_workspace_snapshot_for_launch
 
 if TYPE_CHECKING:
@@ -569,8 +569,12 @@ def materialize_launch_artifacts(
         task_cwd_instruction = (
             "\n\n# Source-edit directory\n"
             "Use `MERIDIAN_PROJECT_ROOT` for project coordination files and harness context.\n"
-            f"Use `MERIDIAN_TASK_DIR` ({task_cwd}) for source-code operations "
-            "including git, edits, and builds.\n"
+            f"`MERIDIAN_TASK_DIR` is {task_cwd}. Your shell cwd is the project root, NOT this "
+            "directory — relative paths resolve against the project root and will miss source "
+            "files.\n"
+            f"For all source-code operations (reads, edits, git, builds, commands), `cd` into "
+            f"`{task_cwd}` first or use absolute paths under it. Never assume cwd is the task "
+            "dir.\n"
         )
     effective_appended_system = prompt_payload.appended_system_prompt or ""
     if task_cwd_instruction:
@@ -637,37 +641,6 @@ def _resolve_deny_headless_harnesses(
         except Exception:
             pass
     return tuple(load_config(project_paths.project_root).deny_headless_harnesses)
-
-
-_CLAUDE_DELEGATION_GUIDANCE = (
-    "\n\n# Delegation\n"
-    "Prefer Agent() for agents in your agents menu — in-process, fast, visible.\n"
-    "Use `meridian spawn` for agents not in the menu or when you need session\n"
-    "tracking / cross-harness models. Use `/handoff` when the user takes the baton.\n"
-)
-
-
-def _inject_claude_delegation_guidance(
-    prompt_payload: PreparedPromptPayload,
-    *,
-    project_root: Path,
-    claude_native_agents_enabled: bool,
-) -> PreparedPromptPayload:
-    """Append delegation guidance when Claude has native agents available."""
-    if not claude_native_agents_enabled:
-        return prompt_payload
-    claude_agents_dir = project_root / ".claude" / "agents"
-    try:
-        has_claude_agents = claude_agents_dir.is_dir() and any(claude_agents_dir.iterdir())
-    except OSError:
-        return prompt_payload
-    if not has_claude_agents:
-        return prompt_payload
-    existing = prompt_payload.appended_system_prompt or ""
-    return replace(
-        prompt_payload,
-        appended_system_prompt=(existing + _CLAUDE_DELEGATION_GUIDANCE).lstrip(),
-    )
 
 
 def _missing_continue_session_error(source_ref: str | None) -> str:
@@ -1002,6 +975,22 @@ def compile_prepared_policy_surface(
     )
 
 
+def _resolve_inventory_and_context_prompts(
+    *,
+    project_root: Path,
+    active_work_dir: Path | None,
+    bundle_inventory_prompt: str | None,
+) -> tuple[str | None, str | None]:
+    """Resolve bundle inventory verbatim; always resolve context from the project root."""
+
+    context_prompt = build_context_prompt(
+        project_root=project_root,
+        active_work_dir=active_work_dir,
+    )
+    normalized_inventory = (bundle_inventory_prompt or "").strip()
+    return normalized_inventory or None, context_prompt
+
+
 def _resolve_spawn_prepare_projection(
     *,
     request: SpawnRequest,
@@ -1044,23 +1033,11 @@ def _resolve_spawn_prepare_projection(
         )
         agent_profile_body = f"# Agent Profile\n\n{rendered_agent_body}"
 
-    # Prefer the pre-built, pre-filtered inventory prompt from the bundle.
-    if policy.bundle_inventory_prompt:
-        agent_inventory_prompt: str | None = with_agent_inventory_guidance(
-            policy.bundle_inventory_prompt
-        )
-        _, context_prompt = build_launch_context_documents(
-            project_root=project_paths.project_root,
-            alias_catalog=policy.alias_catalog,
-            active_work_dir=active_work_dir,
-            include_inventory=False,
-        )
-    else:
-        agent_inventory_prompt, context_prompt = build_launch_context_documents(
-            project_root=project_paths.project_root,
-            alias_catalog=policy.alias_catalog,
-            active_work_dir=active_work_dir,
-        )
+    agent_inventory_prompt, context_prompt = _resolve_inventory_and_context_prompts(
+        project_root=project_paths.project_root,
+        active_work_dir=active_work_dir,
+        bundle_inventory_prompt=policy.bundle_inventory_prompt,
+    )
 
     resolved_work_id = (request.work_id_hint or "").strip() or (
         active_work_dir.name if active_work_dir is not None else ""
@@ -1119,24 +1096,11 @@ def _resolve_primary_projection(
     resolved_skills = policy.resolved_skills
     session_mode = ((request.session.primary_session_mode or "fresh").strip().lower()) or "fresh"
 
-    agent_inventory_prompt: str | None = None
-    context_prompt: str | None = None
-    if session_mode != "resume":
-        # Prefer the pre-built, pre-filtered inventory prompt from the bundle.
-        if policy.bundle_inventory_prompt:
-            agent_inventory_prompt = with_agent_inventory_guidance(policy.bundle_inventory_prompt)
-            _, context_prompt = build_launch_context_documents(
-                project_root=project_paths.project_root,
-                alias_catalog=policy.alias_catalog,
-                active_work_dir=active_work_dir,
-                include_inventory=False,
-            )
-        else:
-            agent_inventory_prompt, context_prompt = build_launch_context_documents(
-                project_root=project_paths.project_root,
-                alias_catalog=policy.alias_catalog,
-                active_work_dir=active_work_dir,
-            )
+    agent_inventory_prompt, context_prompt = _resolve_inventory_and_context_prompts(
+        project_root=project_paths.project_root,
+        active_work_dir=active_work_dir,
+        bundle_inventory_prompt=policy.bundle_inventory_prompt,
+    )
 
     seed = harness.seed_session(
         is_resume=session_mode == "resume",
@@ -1488,6 +1452,7 @@ def prepare_launch_surface(
                 resolved_request,
                 model_selection=model_selection,
                 loaded_skills=resolved_skills.loaded_skills,
+                bundle_inventory_prompt=content.agent_inventory_prompt,
             )
         }
     )
@@ -1803,15 +1768,6 @@ def bind_launch_context(
         if harness.id == HarnessId.PI
         else None
     )
-    if (
-        harness.id == HarnessId.CLAUDE
-        and runtime.composition_surface == LaunchCompositionSurface.PRIMARY
-    ):
-        prompt_payload = _inject_claude_delegation_guidance(
-            prompt_payload,
-            project_root=project_root,
-            claude_native_agents_enabled=claude_native_agents_enabled,
-        )
     materialized = materialize_launch_artifacts(
         harness=harness,
         prompt=resolved_request.prompt,

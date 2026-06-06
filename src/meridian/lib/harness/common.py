@@ -340,6 +340,22 @@ def _extract_text(value: object) -> str:
     return ""
 
 
+def extract_codex_thread_id(payload: dict[str, object]) -> str | None:
+    """Read a Codex thread id from a turn/item notification payload."""
+
+    thread_obj = payload.get("thread")
+    if isinstance(thread_obj, dict):
+        thread_id = _extract_text(cast("dict[str, object]", thread_obj).get("id"))
+        if thread_id:
+            return thread_id
+
+    for key in ("threadId", "thread_id"):
+        thread_id = _extract_text(payload.get(key))
+        if thread_id:
+            return thread_id
+    return None
+
+
 def _codex_item_type(payload: dict[str, object]) -> str:
     item = payload.get("item")
     if not isinstance(item, dict):
@@ -361,10 +377,27 @@ def _codex_work_started_after(payloads: list[dict[str, object]], index: int) -> 
     return False
 
 
+def _resolve_codex_main_thread_id(payloads: list[dict[str, object]]) -> str | None:
+    for payload in payloads:
+        event_type = (
+            str(payload.get("event_type", payload.get("event", payload.get("type", ""))))
+            .strip()
+            .lower()
+            .replace("/", ".")
+        )
+        if event_type != "turn.started":
+            continue
+        thread_id = extract_codex_thread_id(payload)
+        if thread_id:
+            return thread_id
+    return None
+
+
 def extract_codex_report(artifacts: ArtifactStore, spawn_id: SpawnId) -> str | None:
     last_message: str | None = None
     last_message_index: int | None = None
     payloads = _iter_json_lines_artifact(artifacts, spawn_id, OUTPUT_FILENAME)
+    main_thread_id = _resolve_codex_main_thread_id(payloads)
     for index, payload in enumerate(payloads):
         event_type = (
             str(payload.get("event_type", payload.get("event", payload.get("type", ""))))
@@ -374,6 +407,11 @@ def extract_codex_report(artifacts: ArtifactStore, spawn_id: SpawnId) -> str | N
         )
         if event_type != "item.completed":
             continue
+
+        if main_thread_id is not None:
+            event_thread_id = extract_codex_thread_id(payload)
+            if event_thread_id is not None and event_thread_id != main_thread_id:
+                continue
 
         item = payload.get("item")
         if not isinstance(item, dict):

@@ -100,6 +100,31 @@ def _validated_explicit_task_dir(task_dir: Path) -> Path:
     raise ValueError(f"task_dir is not a directory: {task_dir}")
 
 
+def _path_is_within(path: Path, root: Path) -> bool:
+    try:
+        path.resolve().relative_to(root.resolve())
+        return True
+    except ValueError:
+        return False
+
+
+def _infer_caller_cwd_outside_project(
+    caller_cwd: Path | None,
+    authority_root: Path,
+) -> Path | None:
+    if caller_cwd is None:
+        return None
+    resolved_caller = caller_cwd.expanduser().resolve()
+    resolved_authority = authority_root.resolve()
+    if resolved_caller == resolved_authority:
+        return None
+    if _path_is_within(resolved_caller, resolved_authority):
+        return None
+    if not resolved_caller.is_dir():
+        return None
+    return resolved_caller
+
+
 def resolve_task_cwd(
     authority_root: Path,
     *,
@@ -107,6 +132,7 @@ def resolve_task_cwd(
     explicit_task_dir: str | Path | None = None,
     explicit_work_id: str | None = None,
     ambient_work_id: str | None = None,
+    caller_cwd: str | Path | None = None,
 ) -> TaskCwdResolution:
     """Resolve task directory used for references and task instructions.
 
@@ -114,6 +140,7 @@ def resolve_task_cwd(
       1. explicit task-dir override
       2. explicit work item task_dir
       3. ambient work item task_dir
+      3.5. caller cwd when outside the project tree
       4. authority root default
     """
 
@@ -173,6 +200,17 @@ def resolve_task_cwd(
             ),
             source="ambient-work-task-dir",
             work_item=ambient_selected_work_id,
+        )
+
+    inferred_caller_cwd = _infer_caller_cwd_outside_project(
+        Path(caller_cwd) if caller_cwd is not None else None,
+        resolved_authority_root,
+    )
+    if inferred_caller_cwd is not None:
+        return TaskCwdResolution(
+            task_cwd=inferred_caller_cwd,
+            source="ambient-cwd",
+            work_item=None,
         )
 
     return TaskCwdResolution(

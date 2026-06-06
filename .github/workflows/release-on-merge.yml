@@ -120,9 +120,8 @@ jobs:
 
           release_labels="$(grep '^release:' <<<"${labels}" || true)"
           if [[ -z "${release_labels}" ]]; then
-            echo "should_release=false" >> "$GITHUB_OUTPUT"
-            echo "::notice::No release:* label present; skipping release."
-            exit 0
+            echo "::notice::No release:* label present; defaulting to prerelease (rc)."
+            release_labels="release:rc"
           fi
 
           unknown_release_labels="$(grep '^release:' <<<"${labels}" | grep -vxE 'release:(skip|patch|stable|minor|major|rc)' || true)"

@@ -6,6 +6,7 @@ import tomllib
 from pathlib import Path
 from typing import cast
 
+from meridian.lib.core.types import normalize_mars_target_name
 from meridian.lib.safety.permissions import (
     PermissionConfig,
     TieredPermissionResolver,
@@ -82,15 +83,18 @@ def project_has_claude_agent_copy(project_root: Path) -> bool:
         raw_targets = typed_settings.get("targets")
         if isinstance(raw_targets, list):
             targets = tuple(
-                str(target).strip().lower()
+                normalize_mars_target_name(str(target))
                 for target in cast("list[object]", raw_targets)
             )
         raw_managed_root = typed_settings.get("managed_root")
         if not targets and isinstance(raw_managed_root, str):
-            normalized_root = raw_managed_root.strip().lower()
+            normalized_root = normalize_mars_target_name(raw_managed_root)
             if normalized_root:
                 targets = (normalized_root,)
-        agent_copy = typed_settings.get("agent_copy")
+        meridian_table = typed_settings.get("meridian")
+        if not isinstance(meridian_table, dict):
+            continue
+        agent_copy = cast("dict[str, object]", meridian_table).get("agent_copy")
         if not isinstance(agent_copy, dict) or "harnesses" not in agent_copy:
             continue
         typed_agent_copy = cast("dict[str, object]", agent_copy)
@@ -100,7 +104,7 @@ def project_has_claude_agent_copy(project_root: Path) -> bool:
                 str(harness).strip().lower()
                 for harness in cast("list[object]", harnesses)
             )
-    return "claude" in agent_copy_harnesses and ".claude" in targets
+    return "claude" in agent_copy_harnesses and "claude" in targets
 
 
 def _normalized_tools_map(tools: ToolsField | None) -> dict[str, ToolAction]:

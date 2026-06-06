@@ -10,6 +10,7 @@ from typing import Any, cast
 
 from pydantic import BaseModel, ConfigDict
 
+from meridian.lib.core.types import normalize_mars_target_name
 from meridian.lib.core.util import FormatContext
 
 
@@ -187,6 +188,64 @@ def maybe_set_primary_agent(
     return PrimaryAgentAction(action="set", agent=declared_primary_agent)
 
 
+def maybe_scaffold_claude_agent_copy(project_root: Path, targets: list[str]) -> bool:
+    """Enable Claude native agent copies in mars.toml when a `.claude` target is linked.
+
+    Writes ``[settings.meridian.agent_copy] harnesses = ["claude"]`` once. Idempotent:
+    a no-op when no claude target is linked or the table already exists. Returns True
+    only when the table was newly added.
+    """
+    import tomlkit
+
+    normalized = {normalize_mars_target_name(target) for target in targets}
+    if "claude" not in normalized:
+        return False
+    mars_toml = project_root / "mars.toml"
+    if not mars_toml.is_file():
+        return False
+
+    # Round-trip edit so we preserve comments/formatting and never corrupt valid TOML.
+    # A raw string append would break documents that already define settings.meridian
+    # (e.g. an inline `meridian = { ... }`), producing a "declared twice" parse error.
+    doc = cast("dict[str, Any]", tomlkit.parse(mars_toml.read_text(encoding="utf-8")))
+
+    from tomlkit.items import InlineTable
+
+    settings_raw: Any = doc.get("settings")
+    settings: dict[str, Any]
+    if isinstance(settings_raw, dict):
+        settings = cast("dict[str, Any]", settings_raw)
+    else:
+        settings = cast("dict[str, Any]", tomlkit.table())
+        doc["settings"] = settings
+
+    meridian_raw: Any = settings.get("meridian")
+    meridian: dict[str, Any]
+    if isinstance(meridian_raw, dict):
+        meridian = cast("dict[str, Any]", meridian_raw)
+        parent_inline = isinstance(meridian_raw, InlineTable)
+    else:
+        meridian = cast("dict[str, Any]", tomlkit.table())
+        settings["meridian"] = meridian
+        parent_inline = False
+
+    if isinstance(meridian.get("agent_copy"), dict):
+        return False
+
+    # A standard table cannot nest inside an inline table; match the parent's shape.
+    agent_copy: dict[str, Any] = cast(
+        "dict[str, Any]", tomlkit.inline_table() if parent_inline else tomlkit.table()
+    )
+    agent_copy["harnesses"] = ["claude"]
+    agent_copy["include_fanout"] = False
+    meridian["agent_copy"] = agent_copy
+
+    from meridian.lib.state.atomic import atomic_write_text
+
+    atomic_write_text(mars_toml, tomlkit.dumps(doc))
+    return True
+
+
 def run_init_flow(
     *,
     project_root: Path,
@@ -237,6 +296,9 @@ def run_init_flow(
     # 5. mars link for each target
     for target in targets:
         _run_mars_json(project_root, "link", [target], executable=executable)
+
+    # 5b. Enable Claude native agent copies when a .claude target is linked.
+    maybe_scaffold_claude_agent_copy(project_root, targets)
 
     # 6. Primary agent
     declared_primary_agent = add_result.declared_primary_agent if add_result else None

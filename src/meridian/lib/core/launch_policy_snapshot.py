@@ -37,6 +37,7 @@ class LaunchPolicySnapshot(BaseModel):
     model_selection_harness_model_id: str | None = None
     field_provenance: dict[str, str] = Field(default_factory=dict)
     fallback_chain: tuple[dict[str, object], ...] = ()
+    bundle_inventory_prompt: str | None = None
 
 
 __all__ = ["LaunchPolicySnapshot"]

@@ -10,12 +10,13 @@ has a `release:*` label.
 3. Open a PR using the PR template
 4. Set one release label:
    - `release:rc` for the default safe prerelease path
-   - `release:patch` or `release:stable` for stable patch release
+   - `release:patch` or `release:stable` for a stable patch release
+   - `release:minor` / `release:major` for a stable minor/major release
    - `release:skip` for no release
 5. Merge the PR to `main`
 
-PR merges without a `release:*` label skip auto-release. Direct pushes to `main`
-also skip auto-release because there is no PR label to inspect.
+A merged PR with no `release:*` label defaults to a prerelease (RC). Direct pushes
+to `main` skip auto-release because there is no associated PR to inspect.
 
 Put `release:skip` in the pushed head commit message to skip auto-release even
 when a release label is present.
@@ -26,8 +27,8 @@ On push to `main`, `.github/workflows/release-on-merge.yml`:
 
 - Reads the selected merged PR label for the pushed commit
 - Defaults unknown `release:*` labels to RC
-- Skips when no `release:*` label is present or when `release:skip` is present
-- Computes the next stable patch or next RC from git tags
+- Skips only when `release:skip` is present or the commit has no associated PR; a merged PR with no `release:*` label defaults to RC
+- Computes the next stable (patch/minor/major) or next RC from git tags
 - Updates `src/meridian/__init__.py`
 - Promotes `CHANGELOG.md` `[Unreleased]` to `## [X.Y.Z] - YYYY-MM-DD` or `## [X.Y.Z-rc.N] - YYYY-MM-DD`
 - Creates commit `release: vX.Y.Z` or `release: vX.Y.Z-rc.N`

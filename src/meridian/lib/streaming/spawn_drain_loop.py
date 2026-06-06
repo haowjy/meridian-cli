@@ -210,7 +210,10 @@ class SpawnDrainLoop:
                             self._fan_out_event(spawn_id, event)
                             break
 
-                event_outcome = terminal_outcome(event)
+                event_outcome = terminal_outcome(
+                    event,
+                    codex_main_thread_id=_codex_main_thread_id(receiver),
+                )
                 self._fan_out_event(spawn_id, event)
                 pi_drain.note_event_persisted(event)
                 if disk_change_ready_after_event:
@@ -329,6 +332,16 @@ class SpawnDrainLoop:
                         with suppress(asyncio.QueueEmpty):
                             session.subscriber.get_nowait()
                         continue
+
+
+def _codex_main_thread_id(connection: object) -> str | None:
+    """Read the tracked main Codex thread id when the connection exposes it."""
+
+    try:
+        thread_id = cast("Any", connection).main_turn_thread_id
+    except Exception:
+        return None
+    return thread_id if isinstance(thread_id, str) and thread_id.strip() else None
 
 
 def _safe_connection_session_id(connection: object) -> str | None:

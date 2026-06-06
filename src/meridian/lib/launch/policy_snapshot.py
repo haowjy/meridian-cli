@@ -69,6 +69,7 @@ def build_launch_policy_snapshot(
     *,
     model_selection: SnapshotModelSelection | None = None,
     loaded_skills: tuple[SkillContent, ...] = (),
+    bundle_inventory_prompt: str | None = None,
 ) -> LaunchPolicySnapshot:
     """Build a durable launch-policy snapshot from a resolved request."""
 
@@ -112,6 +113,7 @@ def build_launch_policy_snapshot(
             if request.terminal_surface_mode is not None
             else None
         ),
+        bundle_inventory_prompt=(bundle_inventory_prompt or "").strip() or None,
     )
 
 

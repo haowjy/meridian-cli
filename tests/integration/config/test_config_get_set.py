@@ -266,6 +266,31 @@ def test_config_set_preserves_dynamic_sections_comments_and_unknown_content(tmp_
     assert load_config(project_root).primary.agent == "coder"
 
 
+def test_config_set_spawn_deny_headless_harnesses_empty_list_round_trip(tmp_path: Path) -> None:
+    project_root = _repo(tmp_path)
+    config_init_sync(ConfigInitInput(project_root=project_root.as_posix()))
+
+    set_result = config_set_sync(
+        ConfigSetInput(
+            project_root=project_root.as_posix(),
+            key="spawn.deny_headless_harnesses",
+            value="[]",
+        )
+    )
+    gotten = config_get_sync(
+        ConfigGetInput(
+            project_root=project_root.as_posix(),
+            key="spawn.deny_headless_harnesses",
+        )
+    )
+
+    assert set_result.key == "spawn.deny_headless_harnesses"
+    assert set_result.value == ()
+    assert gotten.value == ()
+    assert gotten.source == "file"
+    assert load_config(project_root).deny_headless_harnesses == ()
+
+
 def test_config_set_rewrites_nested_harness_alias_to_canonical_spelling(tmp_path: Path) -> None:
     project_root = _repo(tmp_path)
     config_path = project_root / "meridian.toml"

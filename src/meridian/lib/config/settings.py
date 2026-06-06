@@ -1374,7 +1374,7 @@ class MeridianConfig(BaseSettings):
             value_kind="str_list",
             file_aliases=(file_alias("spawn", "deny_headless_harnesses"),),
         ),
-    ] = ()
+    ] = ("claude",)
     harness: HarnessConfig = Field(default_factory=HarnessConfig)
     primary: PrimaryConfig = Field(default_factory=PrimaryConfig)
     output: OutputConfig = Field(default_factory=OutputConfig)

@@ -19,6 +19,30 @@ from meridian.lib.ops.reference import resolve_session_reference
 from meridian.lib.ops.spawn.models import normalize_goal
 
 
+def _headless_claude_startup_warning(project_root: Path) -> str | None:
+    """Warn at primary startup when headless Claude spawns are NOT denied.
+
+    Anthropic disables headless Claude runs on 2026-06-15; with `claude` absent
+    from `[spawn] deny_headless_harnesses` (the default keeps it), `meridian spawn`
+    of Claude agents will break. Native Claude→Claude delegation via the Agent tool
+    is unaffected. Fires only when the user opted out of the default.
+    """
+    from meridian.lib.config.settings import load_config
+
+    try:
+        deny = load_config(project_root, resolve_models=False).deny_headless_harnesses
+    except Exception:
+        return None
+    if "claude" in deny:
+        return None
+    return (
+        "headless 'claude' spawns are allowed by your config. Anthropic disables "
+        "headless Claude runs on 2026-06-15, which will break `meridian spawn` of "
+        "Claude agents. Keep 'claude' in [spawn] deny_headless_harnesses (the "
+        "default) and delegate to Claude subagents via the native Agent tool."
+    )
+
+
 class PrimaryLaunchOutput(BaseModel):
     model_config = ConfigDict(frozen=True)
 
@@ -378,6 +402,10 @@ def run_primary_launch(
                 else None
             )
         ),
-        warning=_merge_warnings(continue_warning, launch_result.warning),
+        warning=_merge_warnings(
+            continue_warning,
+            launch_result.warning,
+            _headless_claude_startup_warning(project_root),
+        ),
         terminal_surface_mode=getattr(launch_result, "terminal_surface_mode", None),
     )

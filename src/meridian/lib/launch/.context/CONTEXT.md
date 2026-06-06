@@ -160,16 +160,19 @@ its own yield interval — it is asking about *its own* harness's prompt-cache T
 not the spawns it is waiting on.
 
 
-### Agent Inventory Prompt Filtering
+### Agent Inventory Prompt
 
-`build_agent_inventory_prompt()` in `prompt.py` filters agents to those with
-`model_invocable=True` before rendering the inventory block injected into the
-system prompt. The filter runs after sort, before primary/subagent grouping.
+Agent inventory is bundle-only. Mars renders harness-aware inventory in the
+launch-bundle `prompt_surface.inventory_prompt` field (Meridian spawn commands,
+native-agent sections, model metadata). Meridian passes that string through
+verbatim into the composed system prompt — no Python fallback renderer.
 
-This is a model-facing concern only. `scan_agent_profiles()` and
-`load_agent_profile()` are unaffected — they return all profiles. CLI listing
-and explicit `-a <name>` resolution use those neutral surfaces and are not
-filtered by `model_invocable`.
+`model_invocable` filtering happens in mars at inventory render time. Catalog
+scanning (`scan_agent_profiles()`, `load_agent_profile()`) stays neutral — CLI
+listing and explicit `-a <name>` resolution are unaffected.
+
+Resume and snapshot replay carry `bundle_inventory_prompt` on
+`LaunchPolicySnapshot` so inventory survives without re-calling mars.
 
 ### Spawn CWD and Directory Contracts
 
@@ -187,9 +190,10 @@ KB references all resolve relative to this. It never changes based on work item
 selection.
 
 **`logical_task_cwd`** (also called `reference_anchor`) is where the spawned agent
-is expected to work. When a work item has a configured worktree path, this is the
-worktree directory. Relative `-f` paths resolve from here. Set by
-`resolve_task_cwd()` based on work/worktree intent flags.
+is expected to work. When a work item has a configured task directory, this is the
+task directory. Relative `-f` paths resolve from here. Set by `resolve_task_cwd()`
+from explicit task-dir/work-item intent, ambient work attachment, or the caller cwd
+when a nested spawn is launched from outside the project tree.
 
 **`actual_process_cwd`** is where the child process actually starts. It defaults
 to `logical_task_cwd` but may differ — Claude harness forces it to `authority_root`
@@ -197,19 +201,21 @@ when `has_distinct_task_cwd` is true, because Claude's `--add-dir` grants access
 without needing the process to start in the task directory.
 
 **Task CWD instruction injection.** For non-primary child spawns with a distinct
-`logical_task_cwd`, launch composition always adds a prompt instruction telling
-the agent to `cd` into the task cwd before filesystem operations. This is a
+`logical_task_cwd`, launch composition adds a prompt instruction that states the
+absolute `MERIDIAN_TASK_DIR`, states that the shell cwd is the project root (not
+the task directory), and tells the agent to `cd` into `MERIDIAN_TASK_DIR` or use
+absolute paths under it for reads, edits, git, builds, and commands. This is a
 conservative child-spawn safety contract: harnesses may bind tools differently
 than Meridian's requested process cwd. Primary sessions stay quiet unless a
 future primary flow explicitly needs task-cwd steering. Controlled by
 `LaunchDirectoryContext.should_inject_task_cwd_instruction(surface)`.
 
 Resolution priority in `resolve_task_cwd()`:
-1. `--no-worktree` → authority root
-2. `--worktree` → worktree path (requires selected work item)
-3. explicit `--work <id>` → worktree path or authority root fallback
-4. ambient work attachment → worktree path or authority root fallback
-5. no work context → authority root default
+1. explicit task-dir override
+2. explicit work item task_dir
+3. ambient work item task_dir
+3.5. caller cwd when outside the project tree (`source="ambient-cwd"`)
+4. authority root default
 
 ### Reference Loading and Anchor Semantics
 
@@ -381,8 +387,8 @@ ResolvedSkills.loaded_skills: tuple[SkillContent, ...]
 
 `_build_resolved_skills_from_bundle` in `policies.py` constructs `SkillContent`
 objects with synthetic paths (`project_root/.mars/skills/{name}/SKILL.md`) for
-downstream heading rendering and snapshot persistence. The parser handles both
-`body` (mars >=0.8) and `content` (mars 0.7.x) field names for backward compat.
+downstream heading rendering and snapshot persistence. The parser reads the
+`body` field from each `skills.loaded[]` entry (mars >= 0.8).
 
 **`resolve_skills_from_profile()` still exists** for the snapshot replay path
 (`policy_snapshot.py`) — when replaying from a persisted snapshot whose

@@ -57,16 +57,19 @@ Hook policy:
 
 ### Pull Requests
 
-When creating or updating a GitHub PR, read `.github/pull_request_template.md` and fill every section. Do not use any other PR body format — the built-in generic format is wrong for this project. Sections: why, goal, summary, resulting behavior, work item, verification, knowledge updates, spawn trace, release label, cleanup. Keep the PR body current as the branch evolves.
+When creating or updating a GitHub PR, read `.github/PULL_REQUEST_TEMPLATE.md` and fill every section. Do not use any other PR body format — the built-in generic format is wrong for this project. Sections: why, goal, summary, resulting behavior, changes, work item, verification, knowledge updates, spawn trace, release label, cleanup. Keep the PR body current as the branch evolves.
 
 Always set a `release:*` label on the PR before merging:
 
 | Label | Effect |
 |---|---|
-| `release:patch` | Stable patch bump (default for most work) |
+| `release:patch` / `release:stable` | Stable patch bump (default for most work) |
+| `release:minor` | Stable minor bump |
+| `release:major` | Stable major bump |
+| `release:rc` | Prerelease (RC) |
 | `release:skip` | No release for this merge |
 
-No label = no auto-release. Forgetting the label means the work ships without a version bump.
+A merged PR with no `release:*` label defaults to a prerelease (RC); unknown labels also default to RC. Use `release:skip` to ship without any release. (A commit with no associated PR — e.g. a direct push — still skips auto-release.)
 
 ### Release workflow
 

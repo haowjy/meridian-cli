@@ -19,9 +19,10 @@ from meridian.lib.launch.request import (
     LaunchArgvIntent,
     LaunchCompositionSurface,
     LaunchRuntime,
+    SessionRequest,
     SpawnRequest,
 )
-from tests.support.fixtures import write_agent
+from tests.support.fixtures import allow_headless_claude, write_agent
 from tests.support.launch import stub_bundle_request_and_resolve
 
 if TYPE_CHECKING:
@@ -77,6 +78,7 @@ def _write_minimal_mars_config(project_root: Path) -> None:
         '[settings]\ntargets = [".claude"]\n',
         encoding="utf-8",
     )
+    allow_headless_claude(project_root)
 
 
 @pytest.mark.parametrize(
@@ -388,3 +390,86 @@ def test_spawn_prepare_reuses_policy_snapshot_over_live_env(
     assert runtime_ctx.resolved_request.execution_policy.approval == "auto"
     assert "--permission-mode" in runtime_ctx.binding.argv
     assert "acceptEdits" in runtime_ctx.binding.argv
+
+
+def test_primary_resume_includes_agent_inventory(
+    monkeypatch: MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _write_minimal_mars_config(tmp_path)
+    stub_bundle_request_and_resolve(
+        monkeypatch,
+        model="claude-sonnet-4-6",
+        harness=HarnessId.CLAUDE,
+        prompt_surface_inventory_prompt=(
+            "# Meridian Agents\n\n"
+            "## Subagent\n"
+            "- `meridian spawn -a reviewer`: Review work."
+        ),
+    )
+
+    runtime_ctx = build_launch_context(
+        spawn_id="p-primary-resume-inventory",
+        request=SpawnRequest(
+            model="claude-sonnet-4-6",
+            harness=HarnessId.CLAUDE.value,
+            prompt="# Meridian Session",
+            session=SessionRequest(primary_session_mode="resume"),
+        ),
+        runtime=_build_launch_runtime(
+            tmp_path=tmp_path,
+            composition_surface=LaunchCompositionSurface.PRIMARY,
+        ),
+        harness_registry=get_default_harness_registry(),
+        dry_run=True,
+    )
+
+    assert runtime_ctx.projected_content is not None
+    system_prompt = runtime_ctx.projected_content.system_prompt
+    assert "# Meridian Agents" in system_prompt
+    assert "`meridian spawn -a reviewer`" in system_prompt
+
+
+def test_spawn_prepare_replays_persisted_inventory_from_snapshot(
+    monkeypatch: MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _write_minimal_mars_config(tmp_path)
+    inventory = (
+        "# Meridian Agents\n\n"
+        "## Subagent\n"
+        "- `meridian spawn -a reviewer`: Review work."
+    )
+    snapshot = LaunchPolicySnapshot(
+        model="claude-sonnet-4-6",
+        harness=HarnessId.CLAUDE.value,
+        execution_policy=ResolvedExecutionPolicy(approval="auto", sandbox="workspace-write"),
+        bundle_inventory_prompt=inventory,
+    )
+
+    def fail_bundle(*_args: object, **_kwargs: object) -> object:
+        raise AssertionError("snapshot replay should not call launch-bundle")
+
+    monkeypatch.setattr("meridian.lib.launch.bundle_adapter.request_and_resolve", fail_bundle)
+    request = SpawnRequest(
+        model="gpt-5.4",
+        harness=HarnessId.CODEX.value,
+        prompt="snapshot replay prompt",
+        prompt_is_composed=False,
+        launch_policy_snapshot=snapshot,
+    )
+    runtime = _build_launch_runtime(
+        tmp_path=tmp_path,
+        composition_surface=LaunchCompositionSurface.SPAWN_PREPARE,
+    )
+
+    runtime_ctx = build_launch_context(
+        spawn_id="p-snapshot-inventory-replay",
+        request=request,
+        runtime=runtime,
+        harness_registry=get_default_harness_registry(),
+        dry_run=True,
+    )
+
+    assert runtime_ctx.projected_content is not None
+    assert inventory in runtime_ctx.projected_content.system_prompt

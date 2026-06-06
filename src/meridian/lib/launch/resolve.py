@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from pathlib import Path
 from typing import cast
 
@@ -30,6 +30,41 @@ def dedupe_skill_names(names: Iterable[str]) -> tuple[str, ...]:
         seen.add(normalized)
         ordered.append(normalized)
     return tuple(ordered)
+
+
+def dedupe_skill_contents(skills: Sequence[SkillContent]) -> tuple[SkillContent, ...]:
+    """De-duplicate loaded skill payloads by skill name preserving order."""
+
+    seen: set[str] = set()
+    ordered: list[SkillContent] = []
+    for skill in skills:
+        if skill.name in seen:
+            continue
+        seen.add(skill.name)
+        ordered.append(skill)
+    return tuple(ordered)
+
+
+def load_skill_contents(
+    registry: SkillRegistry,
+    names: Sequence[str],
+    *,
+    harness_id: str | None = None,
+    selected_model_token: str | None = None,
+    canonical_model_id: str | None = None,
+) -> tuple[SkillContent, ...]:
+    """Load skill contents in deterministic deduplicated order."""
+
+    deduped_names = dedupe_skill_names(names)
+    if not deduped_names:
+        return ()
+    loaded = registry.load(
+        list(deduped_names),
+        harness_id=harness_id,
+        selected_model_token=selected_model_token,
+        canonical_model_id=canonical_model_id,
+    )
+    return dedupe_skill_contents(loaded)
 
 
 def load_agent_profile_with_fallback(
@@ -111,8 +146,6 @@ def resolve_skills_from_profile(
     resolved_skill_names = tuple(
         skill_name for skill_name in profile_skills if skill_name in available_skill_names
     )
-    from .prompt import load_skill_contents
-
     loaded_skills = load_skill_contents(
         registry,
         resolved_skill_names,

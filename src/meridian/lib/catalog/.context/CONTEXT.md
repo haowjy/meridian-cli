@@ -91,8 +91,8 @@ the model-facing inventory prompt. Rules:
   `load_agent_profile()` or `scan_agent_profiles()`. Those remain neutral scanners
   that return all profiles regardless of this field.
 - **Visibility filtering is the caller's responsibility.** The catalog layer does not
-  filter; `build_agent_inventory_prompt()` in `launch/prompt.py` owns the model-facing
-  filter seam.
+  filter. Mars renders harness-aware agent inventory in the launch-bundle
+  `prompt_surface.inventory_prompt`; meridian consumes that string verbatim.
 
 Do not add `model_invocable` checks to catalog scanning or loading functions —
 consumers that need all profiles (CLI listing, explicit `-a <name>` resolution)

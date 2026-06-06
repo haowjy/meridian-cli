@@ -112,6 +112,7 @@ def _resolve_execution_contract(
             explicit_task_dir=payload.task_dir,
             explicit_work_id=explicit_work_id,
             ambient_work_id=None if explicit_work_id else ambient_work_id,
+            caller_cwd=payload.caller_cwd,
         ).task_cwd
 
     work_id = (

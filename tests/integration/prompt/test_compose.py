@@ -6,10 +6,16 @@ from meridian.lib.core.domain import SkillContent
 from meridian.lib.launch.composition import (
     ComposedLaunchContent,
     PromptDocument,
+    project_inline_content,
     render_system_instruction_blocks,
 )
-from meridian.lib.launch.prompt import compose_run_prompt_text
-from meridian.lib.launch.reference import load_reference_items
+from meridian.lib.launch.prompt import build_report_instruction
+from meridian.lib.launch.prompt_context import compose_skill_prompt_documents
+from meridian.lib.launch.reference import (
+    load_reference_items,
+    substitute_template_variables,
+)
+from meridian.lib.launch.text_utils import strip_stale_report_paths
 
 
 def test_compose_prompt_keeps_context_isolated_and_sanitized(tmp_path: Path) -> None:
@@ -37,12 +43,23 @@ def test_compose_prompt_keeps_context_isolated_and_sanitized(tmp_path: Path) -> 
         "`/tmp/stale.md`\n\nImplement the change with {{CTX}}."
     )
 
-    composed = compose_run_prompt_text(
-        skills=[skill],
-        references=loaded_refs,
-        user_prompt=user_prompt,
-        template_variables={"CTX": "context"},
-    )
+    composed = project_inline_content(
+        ComposedLaunchContent(
+            supplemental_documents=compose_skill_prompt_documents((skill,)),
+            agent_profile_body="",
+            report_instruction=build_report_instruction(),
+            inventory_prompt="",
+            context_prompt="",
+            completion_contract="",
+            passthrough_system_fragments=(),
+            user_task_prompt=substitute_template_variables(
+                strip_stale_report_paths(user_prompt),
+                {"CTX": "context"},
+            ),
+            reference_items=loaded_refs,
+            prior_output="",
+        )
+    ).user_turn_content
 
     # Hidden content should never appear (only safe_ref was loaded)
     assert "INJECTION: should never leak" not in composed
@@ -79,11 +96,20 @@ def test_compose_prompt_with_directory_renders_tree(tmp_path: Path) -> None:
         kb_dir=kb_dir,
     )
 
-    composed = compose_run_prompt_text(
-        skills=[],
-        references=loaded_refs,
-        user_prompt="Explore the directory",
-    )
+    composed = project_inline_content(
+        ComposedLaunchContent(
+            supplemental_documents=(),
+            agent_profile_body="",
+            report_instruction="",
+            inventory_prompt="",
+            context_prompt="",
+            completion_contract="",
+            passthrough_system_fragments=(),
+            user_task_prompt="Explore the directory",
+            reference_items=loaded_refs,
+            prior_output="",
+        )
+    ).user_turn_content
 
     # Directory should be rendered as tree
     assert "# Reference:" in composed
@@ -120,11 +146,20 @@ def test_compose_prompt_mixed_files_and_directories(tmp_path: Path) -> None:
         kb_dir=kb_dir,
     )
 
-    composed = compose_run_prompt_text(
-        skills=[],
-        references=loaded_refs,
-        user_prompt="Check both",
-    )
+    composed = project_inline_content(
+        ComposedLaunchContent(
+            supplemental_documents=(),
+            agent_profile_body="",
+            report_instruction="",
+            inventory_prompt="",
+            context_prompt="",
+            completion_contract="",
+            passthrough_system_fragments=(),
+            user_task_prompt="Check both",
+            reference_items=loaded_refs,
+            prior_output="",
+        )
+    ).user_turn_content
 
     # Single file should be inlined
     assert "File content here" in composed

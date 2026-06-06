@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from meridian.lib.core.types import HarnessId
@@ -38,6 +39,7 @@ def stub_bundle_request_and_resolve(
     execution_policy: ResolvedExecutionPolicy | None = None,
     provenance: dict[str, str] | None = None,
     warnings: tuple[str, ...] = (),
+    prompt_surface_inventory_prompt: str = "",
     tools_allowed: tuple[str, ...] = (),
     tools_disallowed: tuple[str, ...] = (),
     tools_mcp: tuple[str, ...] = (),
@@ -66,6 +68,7 @@ def stub_bundle_request_and_resolve(
             execution_policy=resolved_policy,
             provenance=resolved_provenance,
             warnings=warnings,
+            prompt_surface_inventory_prompt=prompt_surface_inventory_prompt,
             tools_allowed=tools_allowed,
             tools_disallowed=tools_disallowed,
             tools_mcp=tools_mcp,
@@ -74,3 +77,17 @@ def stub_bundle_request_and_resolve(
 
     monkeypatch.setattr(bundle_adapter, "request_and_resolve", _fake_request_and_resolve)
     return captured_requests
+
+
+def assert_task_cwd_instruction(system_prompt: str, task_dir: Path | str) -> None:
+    """Assert the harness-aware task-dir guidance is present and unambiguous."""
+    task_dir_posix = Path(task_dir).as_posix()
+    assert "# Source-edit directory" in system_prompt
+    assert "Use `MERIDIAN_PROJECT_ROOT` for project coordination files" in system_prompt
+    assert task_dir_posix in system_prompt
+    assert "MERIDIAN_TASK_DIR" in system_prompt
+    assert "project root, NOT" in system_prompt
+    assert "relative paths resolve against the project root" in system_prompt
+    assert "absolute paths" in system_prompt
+    assert "`cd`" in system_prompt
+    assert "Never assume cwd is the task dir" in system_prompt

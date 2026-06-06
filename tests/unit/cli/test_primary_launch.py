@@ -587,3 +587,78 @@ def test_run_primary_launch_carries_source_pi_session_dir_to_session_request(
 
     request = cast("LaunchRequest", captured["request"])
     assert request.session.source_pi_session_dir == "/tmp/pi-sessions/custom"
+
+
+def _launch_ok(monkeypatch: pytest.MonkeyPatch) -> None:
+    def _fake_launch_primary(**_kwargs: object) -> LaunchResult:
+        return LaunchResult(command=("meridian",), exit_code=0)
+
+    monkeypatch.setattr(primary_launch, "launch_primary", _fake_launch_primary)
+
+
+def test_primary_warns_when_headless_claude_allowed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("MERIDIAN_SPAWN_ID", raising=False)
+    (tmp_path / "meridian.toml").write_text(
+        "[spawn]\ndeny_headless_harnesses = []\n", encoding="utf-8"
+    )
+    _launch_ok(monkeypatch)
+
+    out = primary_launch.run_primary_launch(
+        project_root=tmp_path,
+        continue_ref=None,
+        fork_ref=None,
+        fork_fresh_ref=None,
+        model="",
+        harness=None,
+        agent=None,
+        work="",
+        yolo=False,
+        approval=None,
+        autocompact=None,
+        effort=None,
+        sandbox=None,
+        timeout=None,
+        dry_run=True,
+        passthrough=(),
+    )
+    assert out.warning is not None
+    assert "2026-06-15" in out.warning
+    assert "deny_headless_harnesses" in out.warning
+
+
+def test_primary_no_headless_warning_when_claude_denied(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("MERIDIAN_SPAWN_ID", raising=False)
+    (tmp_path / "meridian.toml").write_text(
+        '[spawn]\ndeny_headless_harnesses = ["claude"]\n', encoding="utf-8"
+    )
+    _launch_ok(monkeypatch)
+
+    out = primary_launch.run_primary_launch(
+        project_root=tmp_path,
+        continue_ref=None,
+        fork_ref=None,
+        fork_fresh_ref=None,
+        model="",
+        harness=None,
+        agent=None,
+        work="",
+        yolo=False,
+        approval=None,
+        autocompact=None,
+        effort=None,
+        sandbox=None,
+        timeout=None,
+        dry_run=True,
+        passthrough=(),
+    )
+    assert out.warning is None or "2026-06-15" not in out.warning
+
+
+def test_deny_headless_harnesses_field_defaults_to_claude() -> None:
+    from meridian.lib.config.settings import MeridianConfig
+
+    assert MeridianConfig().deny_headless_harnesses == ("claude",)

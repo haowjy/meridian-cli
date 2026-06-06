@@ -3,6 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+import pytest
+
 from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.claude_preflight import CLAUDE_PARENT_ALLOWED_TOOLS_FLAG
 from meridian.lib.harness.projections.project_claude import project_claude_spec_to_cli_args
@@ -12,7 +14,13 @@ from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.launch.permissions import compute_nested_claude_deny_additions
 from meridian.lib.launch.request import LaunchCompositionSurface, LaunchRuntime, SpawnRequest
 from meridian.lib.safety.permissions import PermissionConfig, ToolsPermissionResolver
+from tests.support.fixtures import allow_headless_claude
 from tests.support.launch import stub_bundle_request_and_resolve
+
+
+@pytest.fixture(autouse=True)
+def _allow_headless_claude(tmp_path: Path) -> None:
+    allow_headless_claude(tmp_path)
 
 if TYPE_CHECKING:
     from pytest import MonkeyPatch
@@ -353,7 +361,7 @@ def test_spawn_prepare_claude_with_agent_copy_keeps_generic_agent(
 ) -> None:
     (tmp_path / "mars.toml").write_text(
         '[settings]\ntargets = [".claude"]\n\n'
-        "[settings.agent_copy]\n"
+        "[settings.meridian.agent_copy]\n"
         'harnesses = ["claude"]\n',
         encoding="utf-8",
     )

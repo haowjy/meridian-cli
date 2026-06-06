@@ -36,7 +36,7 @@ def _resolve_mars_min_version() -> str:
 
 
 _MARS_BUNDLE_MIN_VERSION = _resolve_mars_min_version()
-_SUPPORTED_BUNDLE_SCHEMA_VERSIONS = (2, 3)
+_SUPPORTED_BUNDLE_SCHEMA_VERSIONS = (3,)
 
 
 @dataclass(frozen=True)
@@ -63,15 +63,6 @@ class LoadedSkillEntry:
 
 
 @dataclass(frozen=True)
-class _BundlePromptDocument:
-    kind: str
-    name: str
-    content: str
-    skill_type: str
-    detail: str
-
-
-@dataclass(frozen=True)
 class _BundleResult:
     model: str
     model_token: str
@@ -80,8 +71,6 @@ class _BundleResult:
     execution_policy: ResolvedExecutionPolicy
     provenance: dict[str, str]
     warnings: tuple[str, ...]
-    prompt_surface_system_instruction: str
-    prompt_surface_supplemental_documents: tuple[_BundlePromptDocument, ...]
     prompt_surface_inventory_prompt: str
     tools_allowed: tuple[str, ...]
     tools_disallowed: tuple[str, ...]
@@ -129,54 +118,18 @@ def _as_str_tuple(raw: object) -> tuple[str, ...]:
     return tuple(values)
 
 
-def _parse_prompt_documents(raw: object) -> tuple[_BundlePromptDocument, ...]:
-    if not isinstance(raw, list):
-        return ()
-    documents: list[_BundlePromptDocument] = []
-    for item in cast("list[object]", raw):
-        if not isinstance(item, dict):
-            continue
-        typed_item = cast("dict[str, object]", item)
-        kind = _normalize_str(typed_item.get("kind"))
-        name = _normalize_str(typed_item.get("name"))
-        content = _normalize_str(typed_item.get("content"))
-        skill_type = _normalize_str(typed_item.get("skill_type"))
-        detail = _normalize_str(typed_item.get("detail"))
-        if not kind or not name or not content:
-            continue
-        documents.append(
-            _BundlePromptDocument(
-                kind=kind,
-                name=name,
-                content=content,
-                skill_type=skill_type,
-                detail=detail,
-            )
-        )
-    return tuple(documents)
-
-
 def _parse_skills_loaded(raw: object) -> tuple[LoadedSkillEntry, ...]:
-    """Parse skills loaded field — handles both v2 flat strings and v3 structured objects."""
+    """Parse skills.loaded — list of {name, skill_type, body} objects."""
     if not isinstance(raw, list):
         return ()
     entries: list[LoadedSkillEntry] = []
     for item in cast("list[object]", raw):
-        if isinstance(item, str):
-            # v2: flat list of skill name strings (no body available)
-            normalized = item.strip()
-            if normalized:
-                entries.append(LoadedSkillEntry(name=normalized, skill_type="reference", body=""))
-        elif isinstance(item, dict):
-            # v3: list of {name, skill_type, body/content} objects
+        if isinstance(item, dict):
             item_dict = cast("dict[str, object]", item)
             name = _normalize_str(item_dict.get("name"))
             if name:
                 skill_type = _normalize_str(item_dict.get("skill_type")) or "reference"
-                # "body" is canonical (mars >= 0.8); "content" is compat (mars 0.7.x)
-                body = _normalize_str(item_dict.get("body")) or _normalize_str(
-                    item_dict.get("content")
-                )
+                body = _normalize_str(item_dict.get("body"))
                 entries.append(LoadedSkillEntry(name=name, skill_type=skill_type, body=body))
     return tuple(entries)
 
@@ -362,10 +315,7 @@ def _parse_bundle_payload(
     prompt_surface = _optional_object_field(payload, "prompt_surface")
     tools = _optional_object_field(payload, "tools")
 
-    # v3: "skills" with structured loaded[]/available[]; v2: "skills_metadata" with flat strings
-    skills_obj = _optional_object_field(payload, "skills") or _optional_object_field(
-        payload, "skills_metadata"
-    )
+    skills_obj = _optional_object_field(payload, "skills")
     skills_loaded = _parse_skills_loaded(skills_obj.get("loaded"))
     skills_available = _parse_skills_available(skills_obj.get("available"))
 
@@ -377,10 +327,6 @@ def _parse_bundle_payload(
         execution_policy=execution_policy,
         provenance=_as_str_dict(payload.get("provenance")),
         warnings=_as_str_tuple(payload.get("warnings")),
-        prompt_surface_system_instruction=_normalize_str(prompt_surface.get("system_instruction")),
-        prompt_surface_supplemental_documents=_parse_prompt_documents(
-            prompt_surface.get("supplemental_documents")
-        ),
         prompt_surface_inventory_prompt=_normalize_str(prompt_surface.get("inventory_prompt")),
         tools_allowed=_as_str_tuple(tools.get("allowed")),
         tools_disallowed=_as_str_tuple(tools.get("disallowed")),

@@ -42,7 +42,7 @@ Per-harness mapping:
   Agent(Explore),Agent(Plan),Agent(General-purpose),Agent(general-purpose)`
   unconditionally. The denials merge into permission-derived `--disallowedTools` via
   `dedupe_nonempty()`. Generic
-  `Agent` is gated by Mars `[settings.agent_copy]`: allowed only when
+  `Agent` is gated by Mars `[settings.meridian.agent_copy]`: allowed only when
   `harnesses = ["claude"]` and `.claude` is a target. Parent/passthrough allowed-tool
   tails are merged into the managed projection; Meridian's Agent denies stay authoritative.
 - Codex subprocess: `codex exec --json`; connection: `codex app-server` (real WebSocket, JSON-RPC 2.0)
@@ -173,13 +173,20 @@ Returns `TerminalEventOutcome(status, exit_code, error)` or `None`.
 
 Key mappings:
 - Claude: `result` event with `is_error=True` → failed; `subtype in ("", "success")` and `terminal_reason in ("", "completed")` → succeeded
-- Codex: `turn/completed` → succeeded; `error/connectionClosed` → failed
+- Codex: main-thread `turn/completed` → succeeded; `error/connectionClosed` → failed
 - OpenCode: `session.idle` → succeeded; `session.error` → failed
 - Cursor: `error/connectionClosed` → failed; no explicit success event — stdout EOF
   + process exit code 0 is the success boundary (see `CursorSubprocessConnection.events()`).
 - Pi: `agent_end` → succeeded candidate; `cancelled`/`error` → failed.
   The succeeded candidate is finalized only when `PiDrainCoordinator` confirms
   quiescence (parent idle, no pending children/bash, no pending notifications).
+
+Codex connection sessions are thread-aware. `CodexConnection` captures
+`main_turn_thread_id` from the first main `turn/started` event. The drain loop passes
+that ID into `terminal_outcome()` and activity classification, so a subagent-thread
+`turn/completed` does not end the parent session or supply the extracted final report.
+If Codex omits a thread ID, Meridian falls back to the old conservative behavior and
+treats `turn/completed` as terminal.
 
 ## Rationale
 
@@ -201,7 +208,7 @@ a generic `Agent` tool. Meridian's policy distinguishes between these:
   There is no config toggle — built-ins are a Meridian platform policy.
 
 - **Generic `Agent` follows the Mars agent-copy boundary.** Meridian reads
-  `mars.toml` to check whether `[settings.agent_copy] harnesses = ["claude"]` AND
+  `mars.toml` to check whether `[settings.meridian.agent_copy] harnesses = ["claude"]` AND
   `.claude` is in `targets`. If both hold, generic `Agent` is allowed (Claude's
   native agent surface is Meridian-owned through agent copy). Otherwise, generic
   `Agent` is denied by default and delegation routes through `meridian spawn`.

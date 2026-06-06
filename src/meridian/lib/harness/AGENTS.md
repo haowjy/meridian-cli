@@ -41,7 +41,7 @@ Per-harness commands:
   `--disallowedTools Agent(Explore),Agent(Plan),Agent(General-purpose),Agent(general-purpose)`
   unconditionally so sessions use Meridian delegation instead of Claude's built-in
   subagents. Generic `Agent` is allowed only when Mars effective config has
-  `[settings.agent_copy] harnesses = ["claude"]` and `.claude` is a target.
+  `[settings.meridian.agent_copy] harnesses = ["claude"]` and `.claude` is a target.
   Parent/passthrough allowed-tool tails are merged into the managed projection;
   Meridian's Agent denies stay authoritative.
 - Codex subprocess: `codex exec --json`; connection: `codex app-server` (real WebSocket, JSON-RPC 2.0)
@@ -76,7 +76,9 @@ Must not mutate adapter-instance state.
 
 **Terminal event classification is harness-scoped.** `event_type` is NOT globally
 unique — always check `event.harness_id`. `turn/completed` is Codex; OpenCode uses
-`session.idle` for the same semantic.
+`session.idle` for the same semantic. For Codex connection sessions, termination is
+thread-aware: `CodexConnection` tracks the main turn thread, and the drain loop ignores
+subagent-thread `turn/completed` events for session completion/report extraction.
 
 ## Entry Points
 
