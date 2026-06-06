@@ -5,7 +5,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Changed
-- Require `mars-agents==0.8.0` (was `0.7.15`): provides the v4 launch-bundle schema, harness-aware inventory, and the `settings.meridian.agent_copy` config key this release consumes.
+- Require `mars-agents==0.8.1` (was `0.7.15`): provides the v3 launch-bundle schema, harness-aware inventory, and the `settings.meridian.agent_copy` config key this release consumes. The accepted bundle-schema window is **v3 only** — mars 0.8.0's experimental v4 `launch_actions` field was reverted in 0.8.1 and Meridian never consumed it.
 - Default `[spawn] deny_headless_harnesses = ["claude"]` (was empty): headless `meridian spawn` of Claude agents is denied out of the box, steering Claude→Claude delegation to the native Agent tool. Override with `deny_headless_harnesses = []`. Anthropic disables headless Claude runs on 2026-06-15.
 - Primary startup warns when `claude` is absent from the effective `deny_headless_harnesses` (i.e. the default was overridden), flagging the 2026-06-15 headless-Claude breakage.
 - Launch prompt helpers split across prompt builders, prompt context producers, text utilities, and skill resolution; legacy prompt composer APIs removed.
@@ -13,8 +13,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Removed
 - Python fallback agent inventory renderer (`build_agent_inventory_prompt` and mirror format helpers in `prompt_context.py`).
-- Dead mars 0.7.x launch-bundle compat in the bundle adapter: the `content` skill-body fallback and the unreachable v2 flat-string skills branch (mars is pinned to 0.8.0 / v4 bundles).
-- Dead bundle-adapter prompt-surface system_instruction/supplemental_documents parsing and v2 skills_metadata fallback (only inventory_prompt and v3/v4 skills are consumed).
+- Dead mars 0.7.x launch-bundle compat in the bundle adapter: the `content` skill-body fallback and the unreachable v2 flat-string skills branch (mars is pinned to 0.8.1 / v3 bundles).
+- Dead bundle-adapter prompt-surface system_instruction/supplemental_documents parsing and v2 skills_metadata fallback (only inventory_prompt and v3 skills are consumed).
 
 ### Fixed
 - Codex drain loop no longer treats subagent `turn/completed` as session termination; only the main thread's completion ends the spawn, and report extraction ignores other threads (#317).

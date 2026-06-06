@@ -35,7 +35,7 @@ def _completed(
 
 def _valid_bundle_payload() -> dict[str, object]:
     return {
-        "version": 4,
+        "version": 3,
         "routing": {
             "model": "gpt-5.5",
             "model_token": "gpt55",
@@ -255,7 +255,7 @@ def test_request_and_resolve_reports_non_object_json_payload(
         )
 
 
-@pytest.mark.parametrize("unsupported_version", [2, 99])
+@pytest.mark.parametrize("unsupported_version", [2, 4, 99])
 def test_request_and_resolve_rejects_unsupported_schema_versions(
     monkeypatch: pytest.MonkeyPatch,
     unsupported_version: int,
@@ -265,13 +265,13 @@ def test_request_and_resolve_rejects_unsupported_schema_versions(
 
     pat = (
         rf"schema version {unsupported_version} is unsupported"
-        r".*Expected one of \(3, 4\).*mars >= "
+        r".*Expected one of \(3,\).*mars >= "
     )
     with pytest.raises(RuntimeError, match=pat):
         _resolve_with_payload(monkeypatch, payload)
 
 
-@pytest.mark.parametrize("supported_version", [3, 4])
+@pytest.mark.parametrize("supported_version", [3])
 def test_request_and_resolve_accepts_supported_schema_versions(
     monkeypatch: pytest.MonkeyPatch,
     supported_version: int,
