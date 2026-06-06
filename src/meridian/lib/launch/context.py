@@ -102,7 +102,7 @@ from .prompt import (
     build_work_goal_instruction,
 )
 from .prompt_context import (
-    build_launch_context_documents,
+    build_context_prompt,
     compose_skill_injections,
     compose_skill_prompt_documents,
 )
@@ -976,23 +976,15 @@ def _resolve_inventory_and_context_prompts(
     project_root: Path,
     active_work_dir: Path | None,
     bundle_inventory_prompt: str | None,
-    harness_id: str,
 ) -> tuple[str | None, str | None]:
-    """Prefer bundle inventory; always resolve context from the project root."""
+    """Resolve bundle inventory verbatim; always resolve context from the project root."""
 
-    if bundle_inventory_prompt:
-        _, context_prompt = build_launch_context_documents(
-            project_root=project_root,
-            active_work_dir=active_work_dir,
-            include_inventory=False,
-            harness_id=harness_id,
-        )
-        return bundle_inventory_prompt, context_prompt
-    return build_launch_context_documents(
+    context_prompt = build_context_prompt(
         project_root=project_root,
         active_work_dir=active_work_dir,
-        harness_id=harness_id,
     )
+    normalized_inventory = (bundle_inventory_prompt or "").strip()
+    return normalized_inventory or None, context_prompt
 
 
 def _resolve_spawn_prepare_projection(
@@ -1037,12 +1029,10 @@ def _resolve_spawn_prepare_projection(
         )
         agent_profile_body = f"# Agent Profile\n\n{rendered_agent_body}"
 
-    harness_id = policy.harness.value
     agent_inventory_prompt, context_prompt = _resolve_inventory_and_context_prompts(
         project_root=project_paths.project_root,
         active_work_dir=active_work_dir,
         bundle_inventory_prompt=policy.bundle_inventory_prompt,
-        harness_id=harness_id,
     )
 
     resolved_work_id = (request.work_id_hint or "").strip() or (
@@ -1102,12 +1092,10 @@ def _resolve_primary_projection(
     resolved_skills = policy.resolved_skills
     session_mode = ((request.session.primary_session_mode or "fresh").strip().lower()) or "fresh"
 
-    harness_id = policy.harness.value
     agent_inventory_prompt, context_prompt = _resolve_inventory_and_context_prompts(
         project_root=project_paths.project_root,
         active_work_dir=active_work_dir,
         bundle_inventory_prompt=policy.bundle_inventory_prompt,
-        harness_id=harness_id,
     )
 
     seed = harness.seed_session(
@@ -1460,6 +1448,7 @@ def prepare_launch_surface(
                 resolved_request,
                 model_selection=model_selection,
                 loaded_skills=resolved_skills.loaded_skills,
+                bundle_inventory_prompt=content.agent_inventory_prompt,
             )
         }
     )

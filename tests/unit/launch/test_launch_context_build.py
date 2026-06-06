@@ -400,8 +400,12 @@ def test_primary_resume_includes_agent_inventory(
         monkeypatch,
         model="claude-sonnet-4-6",
         harness=HarnessId.CLAUDE,
+        prompt_surface_inventory_prompt=(
+            "# Meridian Agents\n\n"
+            "## Subagent\n"
+            "- `meridian spawn -a reviewer`: Review work."
+        ),
     )
-    write_agent(tmp_path, name="reviewer", model="gpt-5.4", body="Review work.")
 
     runtime_ctx = build_launch_context(
         spawn_id="p-primary-resume-inventory",
@@ -423,3 +427,48 @@ def test_primary_resume_includes_agent_inventory(
     system_prompt = runtime_ctx.projected_content.system_prompt
     assert "# Meridian Agents" in system_prompt
     assert "`meridian spawn -a reviewer`" in system_prompt
+
+
+def test_spawn_prepare_replays_persisted_inventory_from_snapshot(
+    monkeypatch: MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _write_minimal_mars_config(tmp_path)
+    inventory = (
+        "# Meridian Agents\n\n"
+        "## Subagent\n"
+        "- `meridian spawn -a reviewer`: Review work."
+    )
+    snapshot = LaunchPolicySnapshot(
+        model="claude-sonnet-4-6",
+        harness=HarnessId.CLAUDE.value,
+        execution_policy=ResolvedExecutionPolicy(approval="auto", sandbox="workspace-write"),
+        bundle_inventory_prompt=inventory,
+    )
+
+    def fail_bundle(*_args: object, **_kwargs: object) -> object:
+        raise AssertionError("snapshot replay should not call launch-bundle")
+
+    monkeypatch.setattr("meridian.lib.launch.bundle_adapter.request_and_resolve", fail_bundle)
+    request = SpawnRequest(
+        model="gpt-5.4",
+        harness=HarnessId.CODEX.value,
+        prompt="snapshot replay prompt",
+        prompt_is_composed=False,
+        launch_policy_snapshot=snapshot,
+    )
+    runtime = _build_launch_runtime(
+        tmp_path=tmp_path,
+        composition_surface=LaunchCompositionSurface.SPAWN_PREPARE,
+    )
+
+    runtime_ctx = build_launch_context(
+        spawn_id="p-snapshot-inventory-replay",
+        request=request,
+        runtime=runtime,
+        harness_registry=get_default_harness_registry(),
+        dry_run=True,
+    )
+
+    assert runtime_ctx.projected_content is not None
+    assert inventory in runtime_ctx.projected_content.system_prompt

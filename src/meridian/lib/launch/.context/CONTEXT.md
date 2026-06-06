@@ -160,16 +160,19 @@ its own yield interval — it is asking about *its own* harness's prompt-cache T
 not the spawns it is waiting on.
 
 
-### Agent Inventory Prompt Filtering
+### Agent Inventory Prompt
 
-`build_agent_inventory_prompt()` in `prompt.py` filters agents to those with
-`model_invocable=True` before rendering the inventory block injected into the
-system prompt. The filter runs after sort, before primary/subagent grouping.
+Agent inventory is bundle-only. Mars renders harness-aware inventory in the
+launch-bundle `prompt_surface.inventory_prompt` field (Meridian spawn commands,
+native-agent sections, model metadata). Meridian passes that string through
+verbatim into the composed system prompt — no Python fallback renderer.
 
-This is a model-facing concern only. `scan_agent_profiles()` and
-`load_agent_profile()` are unaffected — they return all profiles. CLI listing
-and explicit `-a <name>` resolution use those neutral surfaces and are not
-filtered by `model_invocable`.
+`model_invocable` filtering happens in mars at inventory render time. Catalog
+scanning (`scan_agent_profiles()`, `load_agent_profile()`) stays neutral — CLI
+listing and explicit `-a <name>` resolution are unaffected.
+
+Resume and snapshot replay carry `bundle_inventory_prompt` on
+`LaunchPolicySnapshot` so inventory survives without re-calling mars.
 
 ### Spawn CWD and Directory Contracts
 

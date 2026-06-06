@@ -597,6 +597,7 @@ def _resolve_policy_from_snapshot(
         fallback_chain=replayed.fallback_chain,
         warnings=(),
         alias_catalog=replayed.alias_catalog,
+        bundle_inventory_prompt=snapshot.bundle_inventory_prompt,
     )
 
 

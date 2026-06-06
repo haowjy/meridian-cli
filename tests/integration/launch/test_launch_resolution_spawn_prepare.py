@@ -24,6 +24,13 @@ from tests.support.launch import stub_bundle_request_and_resolve
 
 pytestmark = pytest.mark.slow
 
+_BUNDLE_INVENTORY = (
+    "# Meridian Agents\n\n"
+    "## Subagent\n"
+    "- `meridian spawn -a dev-orchestrator`: Orchestrate.\n"
+    "- `meridian spawn -a reviewer`: Review.\n"
+)
+
 
 def _write_minimal_mars_config(project_root: Path) -> None:
     (project_root / "mars.toml").write_text(
@@ -41,9 +48,12 @@ def test_spawn_prepare_opencode_keeps_all_references_inline(
         monkeypatch,
         model="gemini-2.5-pro",
         harness=HarnessId.OPENCODE,
+        prompt_surface_inventory_prompt=(
+            "# Meridian Agents\n\n"
+            "## Subagent\n"
+            "- `meridian spawn -a dev-orchestrator`: Orchestrate.\n"
+        ),
     )
-    write_agent(tmp_path, name="dev-orchestrator", model="claude-sonnet-4-5")
-    write_agent(tmp_path, name="reviewer", model="gpt-5.4")
     file_ref = tmp_path / "README.md"
     file_ref.write_text("# hello\n", encoding="utf-8")
     dir_ref = tmp_path / "src"
@@ -157,9 +167,8 @@ def test_spawn_prepare_system_field_harnesses_route_agent_inventory_to_system_pr
         monkeypatch,
         model=model,
         harness=expected_harness,
+        prompt_surface_inventory_prompt=_BUNDLE_INVENTORY,
     )
-    write_agent(tmp_path, name="dev-orchestrator", model="claude-sonnet-4-5")
-    write_agent(tmp_path, name="reviewer", model="gpt-5.4")
 
     preview = build_launch_context(
         spawn_id=f"dry-run-{harness}-spawn-prepare-no-inventory",
@@ -206,6 +215,7 @@ def test_spawn_prepare_claude_projects_skills_inventory_and_report_to_system_pro
                 body="Use verification checklist.",
             ),
         ),
+        prompt_surface_inventory_prompt=_BUNDLE_INVENTORY,
     )
     write_agent(
         tmp_path,
@@ -213,7 +223,6 @@ def test_spawn_prepare_claude_projects_skills_inventory_and_report_to_system_pro
         model="claude-sonnet-4-5",
         skills=("verification",),
     )
-    write_agent(tmp_path, name="reviewer", model="gpt-5.4")
     file_ref = tmp_path / "README.md"
     file_ref.write_text("# project\n", encoding="utf-8")
 
@@ -289,6 +298,7 @@ def test_spawn_prepare_claude_continue_session_keeps_skills_in_system_prompt(
                 body="Use verification checklist.",
             ),
         ),
+        prompt_surface_inventory_prompt=_BUNDLE_INVENTORY,
     )
     write_agent(
         tmp_path,
@@ -296,7 +306,6 @@ def test_spawn_prepare_claude_continue_session_keeps_skills_in_system_prompt(
         model="claude-sonnet-4-5",
         skills=("verification",),
     )
-    write_agent(tmp_path, name="reviewer", model="gpt-5.4")
 
     harness_session_id = "claude-session-123"
     preview = build_launch_context(

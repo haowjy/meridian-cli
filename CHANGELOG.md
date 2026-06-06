@@ -6,7 +6,10 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 - Launch prompt helpers split across prompt builders, prompt context producers, text utilities, and skill resolution; legacy prompt composer APIs removed.
-- Agent inventory: spawn commands + model/fanout metadata in Meridian sections; native agents under harness-specific heading from `.mars/native-agents.json`. Bundle inventory consumed as-is; resume sessions include inventory.
+- Agent inventory: mars `prompt_surface.inventory_prompt` only — harness-aware spawn commands, native sections, model metadata. Meridian consumes verbatim; `LaunchPolicySnapshot.bundle_inventory_prompt` persists inventory for resume replay.
+
+### Removed
+- Python fallback agent inventory renderer (`build_agent_inventory_prompt` and mirror format helpers in `prompt_context.py`).
 
 ## [0.2.32] - 2026-06-05
 
