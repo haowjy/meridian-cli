@@ -3,6 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+import pytest
+
 from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.claude_preflight import CLAUDE_PARENT_ALLOWED_TOOLS_FLAG
 from meridian.lib.harness.projections.project_claude import project_claude_spec_to_cli_args
@@ -13,6 +15,16 @@ from meridian.lib.launch.permissions import compute_nested_claude_deny_additions
 from meridian.lib.launch.request import LaunchCompositionSurface, LaunchRuntime, SpawnRequest
 from meridian.lib.safety.permissions import PermissionConfig, ToolsPermissionResolver
 from tests.support.launch import stub_bundle_request_and_resolve
+
+
+@pytest.fixture(autouse=True)
+def _allow_headless_claude(tmp_path: Path) -> None:
+    """This module tests nested agent_copy/adhoc tool gating, not the headless
+    harness policy. Opt out of the built-in deny_headless_harnesses=["claude"]
+    default so claude spawn-prepare reaches tool resolution."""
+    (tmp_path / "meridian.toml").write_text(
+        "[spawn]\ndeny_headless_harnesses = []\n", encoding="utf-8"
+    )
 
 if TYPE_CHECKING:
     from pytest import MonkeyPatch

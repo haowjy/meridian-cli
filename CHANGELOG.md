@@ -5,6 +5,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Changed
+- Default `[spawn] deny_headless_harnesses = ["claude"]` (was empty): headless `meridian spawn` of Claude agents is denied out of the box, steering Claude→Claude delegation to the native Agent tool. Override with `deny_headless_harnesses = []`. Anthropic disables headless Claude runs on 2026-06-15.
+- Primary startup warns when `claude` is absent from the effective `deny_headless_harnesses` (i.e. the default was overridden), flagging the 2026-06-15 headless-Claude breakage.
 - Launch prompt helpers split across prompt builders, prompt context producers, text utilities, and skill resolution; legacy prompt composer APIs removed.
 - Agent inventory: mars `prompt_surface.inventory_prompt` only — harness-aware spawn commands, native sections, model metadata. Meridian consumes verbatim; `LaunchPolicySnapshot.bundle_inventory_prompt` persists inventory for resume replay.
 

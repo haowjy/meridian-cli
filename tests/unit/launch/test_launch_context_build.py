@@ -78,6 +78,13 @@ def _write_minimal_mars_config(project_root: Path) -> None:
         '[settings]\ntargets = [".claude"]\n',
         encoding="utf-8",
     )
+    meridian_toml = project_root / "meridian.toml"
+    if not meridian_toml.exists():
+        # Built-in default denies headless claude; opt out so claude spawn-prepare
+        # mechanics (not the headless policy) are what these tests exercise.
+        meridian_toml.write_text(
+            "[spawn]\ndeny_headless_harnesses = []\n", encoding="utf-8"
+        )
 
 
 @pytest.mark.parametrize(

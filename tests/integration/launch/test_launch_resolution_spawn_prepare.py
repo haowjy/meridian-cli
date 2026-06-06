@@ -37,6 +37,12 @@ def _write_minimal_mars_config(project_root: Path) -> None:
         '[settings]\ntargets = [".claude"]\n',
         encoding="utf-8",
     )
+    # Prepare-mechanics tests exercise Claude headless spawn-prepare; opt out of the
+    # built-in deny_headless_harnesses=["claude"] default. Deny tests overwrite this.
+    (project_root / "meridian.toml").write_text(
+        "[spawn]\ndeny_headless_harnesses = []\n",
+        encoding="utf-8",
+    )
 
 
 def test_spawn_prepare_opencode_keeps_all_references_inline(
