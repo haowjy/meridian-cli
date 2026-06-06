@@ -173,7 +173,7 @@ def parse_cli_scalar(*, canonical_key: str, value_kind: ValueKind, raw_value: st
             items = [part.strip() for part in normalized.split(",")]
 
         filtered = [item for item in items if item]
-        if not filtered:
+        if items and not filtered:
             raise ValueError(f"Invalid value for '{canonical_key}': expected non-empty items.")
         return tuple(filtered)
 
