@@ -96,11 +96,13 @@ from .policies import (
 from .policy_snapshot import build_launch_policy_snapshot
 from .prompt import (
     build_goal_instruction,
-    build_launch_context_documents,
     build_primary_preamble,
     build_report_instruction,
     build_spawn_preamble,
     build_work_goal_instruction,
+)
+from .prompt_context import (
+    build_launch_context_documents,
     compose_skill_injections,
     compose_skill_prompt_documents,
     with_agent_inventory_guidance,

@@ -9,10 +9,8 @@ from meridian.lib.launch.composition import (
     project_inline_content,
     render_system_instruction_blocks,
 )
-from meridian.lib.launch.prompt import (
-    build_report_instruction,
-    compose_skill_prompt_documents,
-)
+from meridian.lib.launch.prompt import build_report_instruction
+from meridian.lib.launch.prompt_context import compose_skill_prompt_documents
 from meridian.lib.launch.reference import (
     load_reference_items,
     substitute_template_variables,

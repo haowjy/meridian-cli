@@ -5,7 +5,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Changed
-- Launch prompt assembly tests now exercise live composition projection after deleting legacy prompt composer APIs.
+- Launch prompt helpers split across prompt builders, prompt context producers, text utilities, and skill resolution; legacy prompt composer APIs removed.
 
 ## [0.2.32] - 2026-06-05
 

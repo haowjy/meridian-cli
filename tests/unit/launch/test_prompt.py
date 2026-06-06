@@ -6,9 +6,9 @@ from typing import Literal
 import pytest
 
 from meridian.lib.catalog.agent import AgentProfile
-from meridian.lib.launch.prompt import (
+from meridian.lib.launch.prompt import build_goal_instruction
+from meridian.lib.launch.prompt_context import (
     build_agent_inventory_prompt,
-    build_goal_instruction,
     with_agent_inventory_guidance,
 )
 
@@ -38,7 +38,7 @@ def test_build_agent_inventory_prompt_returns_none_without_agents(
     tmp_path: Path,
 ) -> None:
     monkeypatch.setattr(
-        "meridian.lib.launch.prompt.scan_agent_profiles",
+        "meridian.lib.launch.prompt_context.scan_agent_profiles",
         lambda project_root: [],
     )
 
@@ -66,7 +66,7 @@ def test_build_agent_inventory_prompt_renders_name_and_description_only(
         assert project_root == tmp_path
         return profiles
 
-    monkeypatch.setattr("meridian.lib.launch.prompt.scan_agent_profiles", fake_scan)
+    monkeypatch.setattr("meridian.lib.launch.prompt_context.scan_agent_profiles", fake_scan)
 
     prompt = build_agent_inventory_prompt(project_root=tmp_path)
 
@@ -97,7 +97,7 @@ def test_build_agent_inventory_prompt_groups_by_mode(
     ]
 
     monkeypatch.setattr(
-        "meridian.lib.launch.prompt.scan_agent_profiles",
+        "meridian.lib.launch.prompt_context.scan_agent_profiles",
         lambda *, project_root: profiles,
     )
 
@@ -178,7 +178,7 @@ def test_build_agent_inventory_prompt_excludes_non_model_invocable_agents(
     ]
 
     monkeypatch.setattr(
-        "meridian.lib.launch.prompt.scan_agent_profiles",
+        "meridian.lib.launch.prompt_context.scan_agent_profiles",
         lambda *, project_root: profiles,
     )
 
@@ -209,7 +209,7 @@ def test_build_agent_inventory_prompt_returns_none_when_all_hidden(
     ]
 
     monkeypatch.setattr(
-        "meridian.lib.launch.prompt.scan_agent_profiles",
+        "meridian.lib.launch.prompt_context.scan_agent_profiles",
         lambda *, project_root: profiles,
     )
 

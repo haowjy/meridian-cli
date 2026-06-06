@@ -28,7 +28,7 @@ from meridian.lib.launch.launch_types import (
     TerminalSurfaceMode,
 )
 from meridian.lib.launch.policies import ResolvedLaunchPolicy
-from meridian.lib.launch.prompt import compose_skill_prompt_documents
+from meridian.lib.launch.prompt_context import compose_skill_prompt_documents
 from meridian.lib.launch.resolve import format_missing_skills_warning, resolve_profile_path
 from meridian.lib.state.atomic import atomic_write_text
 from meridian.lib.tools import ToolsField

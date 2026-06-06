@@ -1,0 +1,245 @@
+"""Prompt context block producers for launch composition."""
+
+from __future__ import annotations
+
+from collections.abc import Mapping, Sequence
+from pathlib import Path
+from typing import Any
+
+from meridian.lib.catalog.agent import AgentProfile, scan_agent_profiles
+from meridian.lib.config.context_config import ContextConfig
+from meridian.lib.context.resolver import (
+    ResolvedContextPaths,
+    render_context_lines,
+    resolve_context_paths,
+)
+from meridian.lib.core.domain import SkillContent
+from meridian.lib.launch.composition import PromptDocument
+
+_AGENT_INVENTORY_HEADING = "# Meridian Agents"
+_AGENT_DELEGATION_GUIDANCE_MARKER = (
+    "meridian spawn -a <agent> --prompt-file /tmp/<file>.md"
+)
+_AGENT_DELEGATION_GUIDANCE = (
+    "Use the Meridian agents list as a Meridian spawn menu, not as arbitrary "
+    "harness-native agent choices.\n\n"
+    "Prefer Meridian spawn for most subagent work: write the handoff to "
+    "`/tmp/<file>.md`, then run "
+    "`meridian spawn -a <agent> --prompt-file /tmp/<file>.md`. If launching "
+    "with `--bg`, drain results with `meridian spawn wait`.\n\n"
+    "Use Claude native `Agent` only when the task explicitly calls for a "
+    "Claude-native agent/model or the user asks for Claude-specific delegation."
+)
+
+
+def _render_skill_blocks(skills: Sequence[SkillContent]) -> tuple[str, ...]:
+    blocks: list[str] = []
+    for skill in skills:
+        content = skill.content.strip()
+        if not content:
+            continue
+        blocks.append(f"# Skill: {Path(skill.path).as_posix()}\n\n{content}")
+    return tuple(blocks)
+
+
+def _join_sections(sections: Sequence[str]) -> str:
+    non_empty = [section.strip() for section in sections if section.strip()]
+    return "\n\n".join(non_empty)
+
+
+def compose_skill_prompt_documents(skills: Sequence[SkillContent]) -> tuple[PromptDocument, ...]:
+    """Format loaded skills as typed supplemental prompt documents."""
+
+    documents: list[PromptDocument] = []
+    for skill in skills:
+        content = skill.content.strip()
+        if not content:
+            continue
+        path = Path(skill.path).as_posix()
+        documents.append(
+            PromptDocument(
+                kind="skill",
+                logical_name=skill.name,
+                path=path,
+                content=f"# Skill: {path}\n\n{content}",
+                skill_type=skill.skill_type,
+            )
+        )
+    return tuple(documents)
+
+
+def compose_skill_injections(skills: Sequence[SkillContent]) -> str | None:
+    """Format skill content for --append-system-prompt injection.
+
+    Includes full skill filepath and content (not frontmatter).
+    Returns None when there are no skills (caller omits the flag entirely).
+    """
+
+    blocks = _render_skill_blocks(skills)
+    if not blocks:
+        return None
+    return _join_sections(blocks)
+
+
+def _render_agent_line(agent: AgentProfile) -> str:
+    description = agent.description.strip()
+    return f"- {agent.name}: {description}" if description else f"- {agent.name}"
+
+
+def with_agent_inventory_guidance(inventory_prompt: str) -> str:
+    """Ensure delegation guidance leads into the Meridian Agents inventory."""
+
+    prompt = inventory_prompt.strip()
+    if not prompt:
+        return prompt
+
+    lines = prompt.splitlines()
+    for index, line in enumerate(lines):
+        if line.strip() == _AGENT_INVENTORY_HEADING:
+            next_section_index = next(
+                (
+                    offset
+                    for offset, candidate in enumerate(lines[index + 1 :], start=index + 1)
+                    if candidate.startswith("## ")
+                ),
+                len(lines),
+            )
+            heading_lead_in = "\n".join(lines[index + 1 : next_section_index])
+            if _AGENT_DELEGATION_GUIDANCE_MARKER in heading_lead_in:
+                return prompt
+            insert_at = index + 1
+            if insert_at < len(lines) and not lines[insert_at].strip():
+                insert_at += 1
+            return "\n".join(
+                (
+                    *lines[:insert_at],
+                    _AGENT_DELEGATION_GUIDANCE,
+                    "",
+                    *lines[insert_at:],
+                )
+            ).strip()
+    return prompt
+
+
+def build_context_prompt(
+    *,
+    project_root: Path,
+    active_work_dir: Path | None = None,
+    context_config: ContextConfig | None = None,
+    resolved_context: ResolvedContextPaths | None = None,
+) -> str | None:
+    """Render resolved context paths for launch system context.
+
+    Produces a block showing available context directories and their
+    env var names so agents can reference them directly.
+    Returns None when no context is resolvable.
+    """
+
+    if resolved_context is None:
+        if context_config is None:
+            from meridian.lib.state.paths import load_context_config
+
+            context_config = load_context_config(project_root) or ContextConfig()
+        resolved_context = resolve_context_paths(project_root, context_config)
+
+    header = [
+        "# Meridian Context",
+        "",
+        "Resolved context directories available via environment variables.",
+        "",
+    ]
+    context_lines = render_context_lines(
+        resolved_context,
+        check_env=False,
+        active_work_dir=active_work_dir,
+    )
+
+    return "\n".join([*header, *context_lines]).strip()
+
+
+def build_launch_context_documents(
+    *,
+    project_root: Path,
+    alias_catalog: Mapping[str, Any] | None = None,
+    active_work_dir: Path | None = None,
+    include_inventory: bool = True,
+    include_context: bool = True,
+) -> tuple[str | None, str | None]:
+    """Resolve inventory/context prompt documents for launch composition."""
+
+    agent_inventory_prompt: str | None = None
+    context_prompt: str | None = None
+
+    if include_inventory:
+        agent_profiles = sorted(
+            scan_agent_profiles(project_root=project_root),
+            key=lambda profile: profile.name,
+        )
+        agent_inventory_prompt = build_agent_inventory_prompt(
+            project_root=project_root,
+            alias_catalog=dict(alias_catalog) if alias_catalog is not None else None,
+            agents=agent_profiles,
+        )
+
+    if include_context:
+        context_prompt = build_context_prompt(
+            project_root=project_root,
+            active_work_dir=active_work_dir,
+        )
+
+    return agent_inventory_prompt, context_prompt
+
+
+def build_agent_inventory_prompt(
+    *,
+    project_root: Path,
+    alias_catalog: dict[str, Any] | None = None,
+    agents: list[AgentProfile] | None = None,
+) -> str | None:
+    """Render installed agent inventory grouped by mode."""
+
+    if agents is None:
+        agents = sorted(
+            scan_agent_profiles(project_root=project_root),
+            key=lambda profile: profile.name,
+        )
+
+    if not agents:
+        return None
+
+    visible_agents = [agent for agent in agents if agent.model_invocable]
+    if not visible_agents:
+        return None
+
+    _ = alias_catalog
+
+    lines = [
+        _AGENT_INVENTORY_HEADING,
+        "",
+        "Installed Meridian agents available at launch time.",
+    ]
+
+    primary_agents = [agent for agent in visible_agents if agent.mode == "primary"]
+    subagent_agents = [agent for agent in visible_agents if agent.mode != "primary"]
+
+    if primary_agents:
+        lines.extend(["", "## Primary"])
+        for agent in primary_agents:
+            lines.append(_render_agent_line(agent))
+
+    if subagent_agents:
+        lines.extend(["", "## Subagent"])
+        for agent in subagent_agents:
+            lines.append(_render_agent_line(agent))
+
+    return with_agent_inventory_guidance("\n".join(lines))
+
+
+__all__ = [
+    "build_agent_inventory_prompt",
+    "build_context_prompt",
+    "build_launch_context_documents",
+    "compose_skill_injections",
+    "compose_skill_prompt_documents",
+    "with_agent_inventory_guidance",
+]

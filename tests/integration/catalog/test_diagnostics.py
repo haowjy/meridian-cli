@@ -10,7 +10,7 @@ profile to disk).
 from pathlib import Path
 
 from meridian.lib.diagnostics import capture_library_diagnostics
-from meridian.lib.launch.prompt import build_agent_inventory_prompt
+from meridian.lib.launch.prompt_context import build_agent_inventory_prompt
 
 
 def _write_profile(project_root: Path) -> None:
