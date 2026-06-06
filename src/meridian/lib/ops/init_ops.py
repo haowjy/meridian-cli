@@ -194,7 +194,7 @@ def maybe_scaffold_claude_agent_copy(project_root: Path, targets: list[str]) -> 
     a no-op when no claude target is linked or the table already exists. Returns True
     only when the table was newly added.
     """
-    import tomllib
+    import tomlkit
 
     normalized = {target.strip().lower().lstrip(".") for target in targets}
     if "claude" not in normalized:
@@ -203,21 +203,45 @@ def maybe_scaffold_claude_agent_copy(project_root: Path, targets: list[str]) -> 
     if not mars_toml.is_file():
         return False
 
-    with mars_toml.open("rb") as handle:
-        payload = tomllib.load(handle)
-    settings_raw: Any = payload.get("settings")
+    # Round-trip edit so we preserve comments/formatting and never corrupt valid TOML.
+    # A raw string append would break documents that already define settings.meridian
+    # (e.g. an inline `meridian = { ... }`), producing a "declared twice" parse error.
+    doc = cast("dict[str, Any]", tomlkit.parse(mars_toml.read_text(encoding="utf-8")))
+
+    from tomlkit.items import InlineTable
+
+    settings_raw: Any = doc.get("settings")
+    settings: dict[str, Any]
     if isinstance(settings_raw, dict):
-        meridian_raw: Any = cast("dict[str, Any]", settings_raw).get("meridian")
-        if isinstance(meridian_raw, dict) and isinstance(
-            cast("dict[str, Any]", meridian_raw).get("agent_copy"), dict
-        ):
-            return False
+        settings = cast("dict[str, Any]", settings_raw)
+    else:
+        settings = cast("dict[str, Any]", tomlkit.table())
+        doc["settings"] = settings
+
+    meridian_raw: Any = settings.get("meridian")
+    meridian: dict[str, Any]
+    if isinstance(meridian_raw, dict):
+        meridian = cast("dict[str, Any]", meridian_raw)
+        parent_inline = isinstance(meridian_raw, InlineTable)
+    else:
+        meridian = cast("dict[str, Any]", tomlkit.table())
+        settings["meridian"] = meridian
+        parent_inline = False
+
+    if isinstance(meridian.get("agent_copy"), dict):
+        return False
+
+    # A standard table cannot nest inside an inline table; match the parent's shape.
+    agent_copy: dict[str, Any] = cast(
+        "dict[str, Any]", tomlkit.inline_table() if parent_inline else tomlkit.table()
+    )
+    agent_copy["harnesses"] = ["claude"]
+    agent_copy["include_fanout"] = False
+    meridian["agent_copy"] = agent_copy
 
     from meridian.lib.state.atomic import atomic_write_text
 
-    block = '[settings.meridian.agent_copy]\nharnesses = ["claude"]\ninclude_fanout = false\n'
-    existing = mars_toml.read_text()
-    atomic_write_text(mars_toml, existing.rstrip("\n") + "\n\n" + block)
+    atomic_write_text(mars_toml, tomlkit.dumps(doc))
     return True
 
 

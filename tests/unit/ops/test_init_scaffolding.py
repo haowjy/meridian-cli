@@ -71,3 +71,26 @@ def test_scaffolded_config_is_recognized_by_consumer(tmp_path: Path) -> None:
     assert project_has_claude_agent_copy(tmp_path) is False
     assert maybe_scaffold_claude_agent_copy(tmp_path, [".claude"]) is True
     assert project_has_claude_agent_copy(tmp_path) is True
+
+
+def test_inline_meridian_table_is_not_corrupted(tmp_path: Path) -> None:
+    """Reviewer repro: an inline settings.meridian must survive scaffolding.
+
+    The previous raw string-append produced a "declared twice" parse error here.
+    """
+    from meridian.lib.launch.permissions import project_has_claude_agent_copy
+
+    mars_toml = _write(
+        tmp_path,
+        '[settings]\ntargets = [".claude"]\nmeridian = { foo = 1 }\n',
+    )
+    assert maybe_scaffold_claude_agent_copy(tmp_path, [".claude"]) is True
+    # Must still parse and preserve the existing inline key.
+    with mars_toml.open("rb") as handle:
+        payload = tomllib.load(handle)
+    assert payload["settings"]["meridian"]["foo"] == 1
+    assert payload["settings"]["meridian"]["agent_copy"] == {
+        "harnesses": ["claude"],
+        "include_fanout": False,
+    }
+    assert project_has_claude_agent_copy(tmp_path) is True
