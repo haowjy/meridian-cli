@@ -26,8 +26,6 @@ def test_agent_profile_fields_are_identity_and_content_only() -> None:
         "description",
         "mode",
         "skills",
-        "model",
-        "fanout",
         "model_invocable",
         "body",
         "path",
@@ -90,7 +88,7 @@ def test_parse_agent_profile_ignores_legacy_models(tmp_path: Path) -> None:
     assert profile.name == "Bad"
 
 
-def test_parse_agent_profile_extracts_model_and_fanout_but_ignores_routing_fields(
+def test_parse_agent_profile_ignores_routing_and_inventory_display_fields(
     tmp_path: Path,
 ) -> None:
     profile_path = _write_profile(
@@ -119,8 +117,8 @@ def test_parse_agent_profile_extracts_model_and_fanout_but_ignores_routing_field
 
     assert profile.name == "Bad"
     assert profile.mode == "subagent"
-    assert profile.model == "gpt55"
-    assert profile.fanout == ("gpt55", "gpt-5.4-mini")
+    assert "model" not in AgentProfile.model_fields
+    assert "fanout" not in AgentProfile.model_fields
 
 
 def test_parse_agent_profile_mode_defaults_to_subagent_for_invalid_value(tmp_path: Path) -> None:

@@ -1,0 +1,12 @@
+# Meridian Agents
+
+Write prompts to `/tmp/<name>.md`.
+Use `--bg` + `meridian spawn wait` for parallel work.
+Use `/handoff` when passing control back to the user.
+
+## Primary
+- `meridian spawn -a product-lead`: Intent capture
+
+## Claude Agents (use `Agent({subagent_type: "..."})` tool)
+- coder: Features and refactors
+- explorer: Codebase structure

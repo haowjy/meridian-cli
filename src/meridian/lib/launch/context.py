@@ -971,6 +971,30 @@ def compile_prepared_policy_surface(
     )
 
 
+def _resolve_inventory_and_context_prompts(
+    *,
+    project_root: Path,
+    active_work_dir: Path | None,
+    bundle_inventory_prompt: str | None,
+    harness_id: str,
+) -> tuple[str | None, str | None]:
+    """Prefer bundle inventory; always resolve context from the project root."""
+
+    if bundle_inventory_prompt:
+        _, context_prompt = build_launch_context_documents(
+            project_root=project_root,
+            active_work_dir=active_work_dir,
+            include_inventory=False,
+            harness_id=harness_id,
+        )
+        return bundle_inventory_prompt, context_prompt
+    return build_launch_context_documents(
+        project_root=project_root,
+        active_work_dir=active_work_dir,
+        harness_id=harness_id,
+    )
+
+
 def _resolve_spawn_prepare_projection(
     *,
     request: SpawnRequest,
@@ -1014,23 +1038,12 @@ def _resolve_spawn_prepare_projection(
         agent_profile_body = f"# Agent Profile\n\n{rendered_agent_body}"
 
     harness_id = policy.harness.value
-    # Prefer the pre-built, pre-filtered inventory prompt from the bundle.
-    if policy.bundle_inventory_prompt:
-        agent_inventory_prompt: str | None = policy.bundle_inventory_prompt
-        _, context_prompt = build_launch_context_documents(
-            project_root=project_paths.project_root,
-            alias_catalog=policy.alias_catalog,
-            active_work_dir=active_work_dir,
-            include_inventory=False,
-            harness_id=harness_id,
-        )
-    else:
-        agent_inventory_prompt, context_prompt = build_launch_context_documents(
-            project_root=project_paths.project_root,
-            alias_catalog=policy.alias_catalog,
-            active_work_dir=active_work_dir,
-            harness_id=harness_id,
-        )
+    agent_inventory_prompt, context_prompt = _resolve_inventory_and_context_prompts(
+        project_root=project_paths.project_root,
+        active_work_dir=active_work_dir,
+        bundle_inventory_prompt=policy.bundle_inventory_prompt,
+        harness_id=harness_id,
+    )
 
     resolved_work_id = (request.work_id_hint or "").strip() or (
         active_work_dir.name if active_work_dir is not None else ""
@@ -1090,25 +1103,12 @@ def _resolve_primary_projection(
     session_mode = ((request.session.primary_session_mode or "fresh").strip().lower()) or "fresh"
 
     harness_id = policy.harness.value
-    agent_inventory_prompt: str | None = None
-    context_prompt: str | None = None
-    # Prefer the pre-built, pre-filtered inventory prompt from the bundle.
-    if policy.bundle_inventory_prompt:
-        agent_inventory_prompt = policy.bundle_inventory_prompt
-        _, context_prompt = build_launch_context_documents(
-            project_root=project_paths.project_root,
-            alias_catalog=policy.alias_catalog,
-            active_work_dir=active_work_dir,
-            include_inventory=False,
-            harness_id=harness_id,
-        )
-    else:
-        agent_inventory_prompt, context_prompt = build_launch_context_documents(
-            project_root=project_paths.project_root,
-            alias_catalog=policy.alias_catalog,
-            active_work_dir=active_work_dir,
-            harness_id=harness_id,
-        )
+    agent_inventory_prompt, context_prompt = _resolve_inventory_and_context_prompts(
+        project_root=project_paths.project_root,
+        active_work_dir=active_work_dir,
+        bundle_inventory_prompt=policy.bundle_inventory_prompt,
+        harness_id=harness_id,
+    )
 
     seed = harness.seed_session(
         is_resume=session_mode == "resume",

@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "agents": {
+    "coder": ["claude", "codex"],
+    "explorer": ["claude"]
+  }
+}

@@ -9,8 +9,9 @@ import pytest
 from meridian.lib.catalog.agent import AgentProfile, parse_agent_profile
 from meridian.lib.launch.prompt import build_goal_instruction
 from meridian.lib.launch.prompt_context import (
+    _inventory_display_from_profile,
+    _read_native_agent_manifest,
     build_agent_inventory_prompt,
-    read_native_agent_manifest,
 )
 
 
@@ -22,19 +23,32 @@ def _profile(
     mode: Literal["primary", "subagent"] = "subagent",
     model_invocable: bool = True,
     model: str | None = None,
-    fanout: tuple[str, ...] = (),
+    extra_frontmatter: list[str] | None = None,
 ) -> AgentProfile:
+    lines = [
+        "---",
+        f"name: {name}",
+        f"description: {description}",
+    ]
+    if mode != "subagent":
+        lines.append(f"mode: {mode}")
+    if model is not None:
+        lines.append(f"model: {model}")
+    if model_invocable is False:
+        lines.append("model-invocable: false")
+    if extra_frontmatter:
+        lines.extend(extra_frontmatter)
+    lines.extend(["---", "", ""])
+    raw_content = "\n".join(lines)
     return AgentProfile(
         name=name,
         description=description,
         mode=mode,
         skills=(),
-        model=model,
-        fanout=fanout,
         model_invocable=model_invocable,
         body="",
         path=tmp_path / f"{name}.md",
-        raw_content="",
+        raw_content=raw_content,
     )
 
 
@@ -73,7 +87,13 @@ def test_build_agent_inventory_prompt_renders_spawn_commands_and_metadata(
             name="alpha",
             description="Primary reviewer",
             model="gpt-5.4",
-            fanout=("deepseek", "gpt-5.4-mini"),
+            extra_frontmatter=[
+                "model-policies:",
+                "  - match: {alias: deepseek}",
+                "    override: {model: deepseek-chat}",
+                "  - match: {alias: gpt-5.4-mini}",
+                "    override: {model: gpt-5.4-mini}",
+            ],
         ),
         _profile(
             tmp_path=tmp_path,
@@ -299,7 +319,7 @@ def test_build_agent_inventory_prompt_returns_none_when_all_hidden(
     assert build_agent_inventory_prompt(project_root=tmp_path) is None
 
 
-def test_parse_agent_profile_extracts_fanout_from_model_policies(tmp_path: Path) -> None:
+def test_inventory_display_extracts_fanout_from_model_policies(tmp_path: Path) -> None:
     profile_path = tmp_path / "reviewer.md"
     profile_path.write_text(
         "\n".join(
@@ -327,13 +347,14 @@ def test_parse_agent_profile_extracts_fanout_from_model_policies(tmp_path: Path)
     )
 
     profile = parse_agent_profile(profile_path)
+    display = _inventory_display_from_profile(profile)
 
-    assert profile.model == "gpt-5.4"
-    assert profile.fanout == ("deepseek", "sonnet")
+    assert display.model == "gpt-5.4"
+    assert display.fanout == ("deepseek", "sonnet")
 
 
 def test_read_native_agent_manifest_returns_empty_when_missing(tmp_path: Path) -> None:
-    assert read_native_agent_manifest(tmp_path) == {}
+    assert _read_native_agent_manifest(tmp_path) == {}
 
 
 def test_read_native_agent_manifest_returns_empty_for_invalid_json(tmp_path: Path) -> None:
@@ -341,7 +362,7 @@ def test_read_native_agent_manifest_returns_empty_for_invalid_json(tmp_path: Pat
     mars_dir.mkdir(parents=True)
     (mars_dir / "native-agents.json").write_text("{not-json", encoding="utf-8")
 
-    assert read_native_agent_manifest(tmp_path) == {}
+    assert _read_native_agent_manifest(tmp_path) == {}
 
 
 def test_build_goal_instruction_renders_spawn_completion_contract() -> None:
