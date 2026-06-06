@@ -384,8 +384,8 @@ ResolvedSkills.loaded_skills: tuple[SkillContent, ...]
 
 `_build_resolved_skills_from_bundle` in `policies.py` constructs `SkillContent`
 objects with synthetic paths (`project_root/.mars/skills/{name}/SKILL.md`) for
-downstream heading rendering and snapshot persistence. The parser handles both
-`body` (mars >=0.8) and `content` (mars 0.7.x) field names for backward compat.
+downstream heading rendering and snapshot persistence. The parser reads the
+`body` field from each `skills.loaded[]` entry (mars >= 0.8).
 
 **`resolve_skills_from_profile()` still exists** for the snapshot replay path
 (`policy_snapshot.py`) — when replaying from a persisted snapshot whose

@@ -13,6 +13,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Removed
 - Python fallback agent inventory renderer (`build_agent_inventory_prompt` and mirror format helpers in `prompt_context.py`).
+- Dead mars 0.7.x launch-bundle compat in the bundle adapter: the `content` skill-body fallback and the unreachable v2 flat-string skills branch (mars is pinned to 0.8.0 / v4 bundles).
 
 ## [0.2.32] - 2026-06-05
 

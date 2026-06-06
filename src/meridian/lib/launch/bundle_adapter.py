@@ -157,26 +157,17 @@ def _parse_prompt_documents(raw: object) -> tuple[_BundlePromptDocument, ...]:
 
 
 def _parse_skills_loaded(raw: object) -> tuple[LoadedSkillEntry, ...]:
-    """Parse skills loaded field — handles both v2 flat strings and v3 structured objects."""
+    """Parse skills.loaded — list of {name, skill_type, body} objects."""
     if not isinstance(raw, list):
         return ()
     entries: list[LoadedSkillEntry] = []
     for item in cast("list[object]", raw):
-        if isinstance(item, str):
-            # v2: flat list of skill name strings (no body available)
-            normalized = item.strip()
-            if normalized:
-                entries.append(LoadedSkillEntry(name=normalized, skill_type="reference", body=""))
-        elif isinstance(item, dict):
-            # v3: list of {name, skill_type, body/content} objects
+        if isinstance(item, dict):
             item_dict = cast("dict[str, object]", item)
             name = _normalize_str(item_dict.get("name"))
             if name:
                 skill_type = _normalize_str(item_dict.get("skill_type")) or "reference"
-                # "body" is canonical (mars >= 0.8); "content" is compat (mars 0.7.x)
-                body = _normalize_str(item_dict.get("body")) or _normalize_str(
-                    item_dict.get("content")
-                )
+                body = _normalize_str(item_dict.get("body"))
                 entries.append(LoadedSkillEntry(name=name, skill_type=skill_type, body=body))
     return tuple(entries)
 
