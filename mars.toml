@@ -9,12 +9,10 @@ targets = [
     ".claude",
     ".cursor",
     ".codex",
-    ".opencode",
     ".pi",
 ]
 models_cache_ttl_hours = 24
 
-[settings.agent_copy]
+[settings.meridian.agent_copy]
 harnesses = ["claude"]
-
-
+include_fanout = false
