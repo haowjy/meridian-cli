@@ -12,12 +12,12 @@ from meridian.lib.launch.composition import (
 from meridian.lib.launch.prompt import (
     build_report_instruction,
     compose_skill_prompt_documents,
-    strip_stale_report_paths,
 )
 from meridian.lib.launch.reference import (
     load_reference_items,
     substitute_template_variables,
 )
+from meridian.lib.launch.text_utils import strip_stale_report_paths
 
 
 def test_compose_prompt_keeps_context_isolated_and_sanitized(tmp_path: Path) -> None:

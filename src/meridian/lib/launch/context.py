@@ -103,8 +103,6 @@ from .prompt import (
     build_work_goal_instruction,
     compose_skill_injections,
     compose_skill_prompt_documents,
-    sanitize_prior_output,
-    strip_stale_report_paths,
     with_agent_inventory_guidance,
 )
 from .reference import (
@@ -125,6 +123,7 @@ from .resolve import (
     resolve_profile_path,
     resolve_skill_paths,
 )
+from .text_utils import sanitize_prior_output, strip_stale_report_paths
 from .workspace import resolve_workspace_snapshot_for_launch
 
 if TYPE_CHECKING:
