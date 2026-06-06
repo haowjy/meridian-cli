@@ -94,3 +94,15 @@ def test_inline_meridian_table_is_not_corrupted(tmp_path: Path) -> None:
         "include_fanout": False,
     }
     assert project_has_claude_agent_copy(tmp_path) is True
+
+
+def test_consumer_recognizes_bare_claude_target(tmp_path: Path) -> None:
+    """Consumer accepts a bare 'claude' target, matching the producer's normalization."""
+    from meridian.lib.launch.permissions import project_has_claude_agent_copy
+
+    _write(
+        tmp_path,
+        '[settings]\ntargets = ["claude"]\n\n'
+        '[settings.meridian.agent_copy]\nharnesses = ["claude"]\n',
+    )
+    assert project_has_claude_agent_copy(tmp_path) is True

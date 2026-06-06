@@ -10,6 +10,7 @@ from typing import Any, cast
 
 from pydantic import BaseModel, ConfigDict
 
+from meridian.lib.core.types import normalize_mars_target_name
 from meridian.lib.core.util import FormatContext
 
 
@@ -196,7 +197,7 @@ def maybe_scaffold_claude_agent_copy(project_root: Path, targets: list[str]) -> 
     """
     import tomlkit
 
-    normalized = {target.strip().lower().lstrip(".") for target in targets}
+    normalized = {normalize_mars_target_name(target) for target in targets}
     if "claude" not in normalized:
         return False
     mars_toml = project_root / "mars.toml"
