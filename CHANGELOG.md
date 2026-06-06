@@ -16,6 +16,10 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Dead mars 0.7.x launch-bundle compat in the bundle adapter: the `content` skill-body fallback and the unreachable v2 flat-string skills branch (mars is pinned to 0.8.0 / v4 bundles).
 - Dead bundle-adapter prompt-surface system_instruction/supplemental_documents parsing and v2 skills_metadata fallback (only inventory_prompt and v3/v4 skills are consumed).
 
+### Fixed
+- Codex drain loop no longer treats subagent `turn/completed` as session termination; only the main thread's completion ends the spawn, and report extraction ignores other threads (#317).
+- Spawn infers logical `task_cwd` from the caller's working directory when it lies outside the project tree, so cross-repo worktree spawns no longer require explicit `--task-dir` (#318).
+
 ## [0.2.32] - 2026-06-05
 
 ### Changed

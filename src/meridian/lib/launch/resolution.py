@@ -57,6 +57,7 @@ def resolve_launch_inputs(
     explicit_task_dir: str | Path | None = None,
     explicit_work_id: str | None = None,
     ambient_work_id: str | None = None,
+    caller_cwd: str | Path | None = None,
     inherit_context_work: bool = True,
 ) -> LaunchInputResolution:
     """Resolve the shared launch surface before prompt composition.
@@ -92,6 +93,7 @@ def resolve_launch_inputs(
         explicit_task_dir=explicit_task_dir,
         explicit_work_id=task_explicit_work_id,
         ambient_work_id=task_ambient_work_id,
+        caller_cwd=caller_cwd,
     )
     directory_context = LaunchDirectoryContext.from_task_cwd_resolution(
         authority_root=resolved_authority_root,

@@ -109,6 +109,7 @@ def build_create_payload(
             explicit_task_dir=payload.task_dir,
             explicit_work_id=explicit_work_id,
             ambient_work_id=ambient_work_id,
+            caller_cwd=payload.caller_cwd,
         )
         parsed_template_vars = parse_template_assignments(payload.template_vars)
         timeout_secs = minutes_to_seconds(payload.timeout)

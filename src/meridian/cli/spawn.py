@@ -442,6 +442,7 @@ def _spawn_create(
     # _split_passthrough_args() for why cyclopts can't handle ``--`` correctly.
     passthrough = _get_global_options().passthrough_args
     global_harness = _get_global_options().harness
+    caller_cwd = Path.cwd().as_posix()
     resolved_continue_from = (continue_from or "").strip() or None
     raw_fork_from = (fork_from or "").strip() or None
     raw_fork_fresh_from = (fork_fresh_from or "").strip() or None
@@ -512,6 +513,7 @@ def _spawn_create(
                 desc=desc,
                 work=work,
                 task_dir=normalized_task_dir,
+                caller_cwd=caller_cwd,
                 **shared_launch_kwargs,
             ),
             sink=_current_output_sink(),
@@ -531,6 +533,7 @@ def _spawn_create(
                 desc=desc,
                 work=work,
                 task_dir=normalized_task_dir,
+                caller_cwd=caller_cwd,
                 **shared_launch_kwargs,
             ),
             sink=_current_output_sink(),
@@ -550,6 +553,7 @@ def _spawn_create(
                 goal=resolved_goal,
                 work=work,
                 task_dir=normalized_task_dir,
+                caller_cwd=caller_cwd,
                 **shared_launch_kwargs,
             ),
             sink=_current_output_sink(),
