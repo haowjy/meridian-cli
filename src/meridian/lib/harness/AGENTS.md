@@ -76,7 +76,9 @@ Must not mutate adapter-instance state.
 
 **Terminal event classification is harness-scoped.** `event_type` is NOT globally
 unique — always check `event.harness_id`. `turn/completed` is Codex; OpenCode uses
-`session.idle` for the same semantic.
+`session.idle` for the same semantic. For Codex connection sessions, termination is
+thread-aware: `CodexConnection` tracks the main turn thread, and the drain loop ignores
+subagent-thread `turn/completed` events for session completion/report extraction.
 
 ## Entry Points
 

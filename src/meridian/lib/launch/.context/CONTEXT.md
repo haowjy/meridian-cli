@@ -190,9 +190,10 @@ KB references all resolve relative to this. It never changes based on work item
 selection.
 
 **`logical_task_cwd`** (also called `reference_anchor`) is where the spawned agent
-is expected to work. When a work item has a configured worktree path, this is the
-worktree directory. Relative `-f` paths resolve from here. Set by
-`resolve_task_cwd()` based on work/worktree intent flags.
+is expected to work. When a work item has a configured task directory, this is the
+task directory. Relative `-f` paths resolve from here. Set by `resolve_task_cwd()`
+from explicit task-dir/work-item intent, ambient work attachment, or the caller cwd
+when a nested spawn is launched from outside the project tree.
 
 **`actual_process_cwd`** is where the child process actually starts. It defaults
 to `logical_task_cwd` but may differ — Claude harness forces it to `authority_root`
@@ -200,19 +201,21 @@ when `has_distinct_task_cwd` is true, because Claude's `--add-dir` grants access
 without needing the process to start in the task directory.
 
 **Task CWD instruction injection.** For non-primary child spawns with a distinct
-`logical_task_cwd`, launch composition always adds a prompt instruction telling
-the agent to `cd` into the task cwd before filesystem operations. This is a
+`logical_task_cwd`, launch composition adds a prompt instruction that states the
+absolute `MERIDIAN_TASK_DIR`, states that the shell cwd is the project root (not
+the task directory), and tells the agent to `cd` into `MERIDIAN_TASK_DIR` or use
+absolute paths under it for reads, edits, git, builds, and commands. This is a
 conservative child-spawn safety contract: harnesses may bind tools differently
 than Meridian's requested process cwd. Primary sessions stay quiet unless a
 future primary flow explicitly needs task-cwd steering. Controlled by
 `LaunchDirectoryContext.should_inject_task_cwd_instruction(surface)`.
 
 Resolution priority in `resolve_task_cwd()`:
-1. `--no-worktree` → authority root
-2. `--worktree` → worktree path (requires selected work item)
-3. explicit `--work <id>` → worktree path or authority root fallback
-4. ambient work attachment → worktree path or authority root fallback
-5. no work context → authority root default
+1. explicit task-dir override
+2. explicit work item task_dir
+3. ambient work item task_dir
+3.5. caller cwd when outside the project tree (`source="ambient-cwd"`)
+4. authority root default
 
 ### Reference Loading and Anchor Semantics
 
