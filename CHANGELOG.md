@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-06-06
+
 ### Changed
 - Require `mars-agents==0.8.1` (was `0.7.15`): provides the v3 launch-bundle schema, harness-aware inventory, and the `settings.meridian.agent_copy` config key this release consumes. The accepted bundle-schema window is **v3 only** — mars 0.8.0's experimental v4 `launch_actions` field was reverted in 0.8.1 and Meridian never consumed it.
 - Default `[spawn] deny_headless_harnesses = ["claude"]` (was empty): headless `meridian spawn` of Claude agents is denied out of the box, steering Claude→Claude delegation to the native Agent tool. Override with `deny_headless_harnesses = []`. Anthropic disables headless Claude runs on 2026-06-15.
