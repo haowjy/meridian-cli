@@ -14,17 +14,13 @@ from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.launch.permissions import compute_nested_claude_deny_additions
 from meridian.lib.launch.request import LaunchCompositionSurface, LaunchRuntime, SpawnRequest
 from meridian.lib.safety.permissions import PermissionConfig, ToolsPermissionResolver
+from tests.support.fixtures import allow_headless_claude
 from tests.support.launch import stub_bundle_request_and_resolve
 
 
 @pytest.fixture(autouse=True)
 def _allow_headless_claude(tmp_path: Path) -> None:
-    """This module tests nested agent_copy/adhoc tool gating, not the headless
-    harness policy. Opt out of the built-in deny_headless_harnesses=["claude"]
-    default so claude spawn-prepare reaches tool resolution."""
-    (tmp_path / "meridian.toml").write_text(
-        "[spawn]\ndeny_headless_harnesses = []\n", encoding="utf-8"
-    )
+    allow_headless_claude(tmp_path)
 
 if TYPE_CHECKING:
     from pytest import MonkeyPatch

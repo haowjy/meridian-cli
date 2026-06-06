@@ -20,7 +20,7 @@ from meridian.lib.launch.plan import (
     build_primary_spawn_request,
 )
 from meridian.lib.launch.types import LaunchRequest
-from tests.support.fixtures import write_agent
+from tests.support.fixtures import allow_headless_claude, write_agent
 
 pytestmark = pytest.mark.slow
 
@@ -30,12 +30,7 @@ def _write_minimal_mars_config(project_root: Path) -> None:
         '[settings]\ntargets = [".claude"]\n',
         encoding="utf-8",
     )
-    # Prepare-mechanics tests exercise Claude headless spawn-prepare; opt out of the
-    # built-in deny_headless_harnesses=["claude"] default. Deny tests overwrite this.
-    (project_root / "meridian.toml").write_text(
-        "[spawn]\ndeny_headless_harnesses = []\n",
-        encoding="utf-8",
-    )
+    allow_headless_claude(project_root)
 
 
 @dataclass(frozen=True)

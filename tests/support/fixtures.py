@@ -59,6 +59,15 @@ def write_agent(
     return _write(project_root / ".mars" / "agents" / f"{name}.md", "\n".join(lines) + "\n")
 
 
+def allow_headless_claude(project_root: Path) -> None:
+    """Opt a test project out of the built-in deny_headless_harnesses=["claude"]
+    default so Claude spawn-prepare reaches tool resolution. Use in tests that
+    exercise spawn-prepare *mechanics*, not the headless-deny policy itself."""
+    (project_root / "meridian.toml").write_text(
+        "[spawn]\ndeny_headless_harnesses = []\n", encoding="utf-8"
+    )
+
+
 def write_minimal_mars_config(project_root: Path) -> Path:
     """Write a minimal mars.toml config for tests that need project setup.
 
