@@ -6,6 +6,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 - Launch prompt helpers split across prompt builders, prompt context producers, text utilities, and skill resolution; legacy prompt composer APIs removed.
+- Agent inventory: spawn commands + model/fanout metadata in Meridian sections; native agents under harness-specific heading from `.mars/native-agents.json`. Bundle inventory consumed as-is; resume sessions include inventory.
 
 ## [0.2.32] - 2026-06-05
 

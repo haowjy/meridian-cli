@@ -26,6 +26,8 @@ def test_agent_profile_fields_are_identity_and_content_only() -> None:
         "description",
         "mode",
         "skills",
+        "model",
+        "fanout",
         "model_invocable",
         "body",
         "path",
@@ -88,7 +90,9 @@ def test_parse_agent_profile_ignores_legacy_models(tmp_path: Path) -> None:
     assert profile.name == "Bad"
 
 
-def test_parse_agent_profile_ignores_removed_frontmatter_fields(tmp_path: Path) -> None:
+def test_parse_agent_profile_extracts_model_and_fanout_but_ignores_routing_fields(
+    tmp_path: Path,
+) -> None:
     profile_path = _write_profile(
         tmp_path,
         "bad.md",
@@ -106,6 +110,8 @@ def test_parse_agent_profile_ignores_removed_frontmatter_fields(tmp_path: Path) 
             "model-policies:",
             "  - match: {alias: gpt55}",
             "    override: {effort: low}",
+            "  - match: {model: gpt-5.4-mini}",
+            "    override: {model: gpt-5.4-mini}",
         ],
     )
 
@@ -113,6 +119,8 @@ def test_parse_agent_profile_ignores_removed_frontmatter_fields(tmp_path: Path) 
 
     assert profile.name == "Bad"
     assert profile.mode == "subagent"
+    assert profile.model == "gpt55"
+    assert profile.fanout == ("gpt55", "gpt-5.4-mini")
 
 
 def test_parse_agent_profile_mode_defaults_to_subagent_for_invalid_value(tmp_path: Path) -> None:

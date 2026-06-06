@@ -19,6 +19,7 @@ from meridian.lib.launch.request import (
     LaunchArgvIntent,
     LaunchCompositionSurface,
     LaunchRuntime,
+    SessionRequest,
     SpawnRequest,
 )
 from tests.support.fixtures import write_agent
@@ -388,3 +389,37 @@ def test_spawn_prepare_reuses_policy_snapshot_over_live_env(
     assert runtime_ctx.resolved_request.execution_policy.approval == "auto"
     assert "--permission-mode" in runtime_ctx.binding.argv
     assert "acceptEdits" in runtime_ctx.binding.argv
+
+
+def test_primary_resume_includes_agent_inventory(
+    monkeypatch: MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _write_minimal_mars_config(tmp_path)
+    stub_bundle_request_and_resolve(
+        monkeypatch,
+        model="claude-sonnet-4-6",
+        harness=HarnessId.CLAUDE,
+    )
+    write_agent(tmp_path, name="reviewer", model="gpt-5.4", body="Review work.")
+
+    runtime_ctx = build_launch_context(
+        spawn_id="p-primary-resume-inventory",
+        request=SpawnRequest(
+            model="claude-sonnet-4-6",
+            harness=HarnessId.CLAUDE.value,
+            prompt="# Meridian Session",
+            session=SessionRequest(primary_session_mode="resume"),
+        ),
+        runtime=_build_launch_runtime(
+            tmp_path=tmp_path,
+            composition_surface=LaunchCompositionSurface.PRIMARY,
+        ),
+        harness_registry=get_default_harness_registry(),
+        dry_run=True,
+    )
+
+    assert runtime_ctx.projected_content is not None
+    system_prompt = runtime_ctx.projected_content.system_prompt
+    assert "# Meridian Agents" in system_prompt
+    assert "`meridian spawn -a reviewer`" in system_prompt

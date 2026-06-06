@@ -184,8 +184,8 @@ def test_spawn_prepare_system_field_harnesses_route_agent_inventory_to_system_pr
     inventory_channel = preview.projected_content.system_prompt
     assert "# Meridian Agents" in inventory_channel
     assert "## Subagent" in inventory_channel
-    assert "- dev-orchestrator" in inventory_channel
-    assert "- reviewer" in inventory_channel
+    assert "`meridian spawn -a dev-orchestrator`" in inventory_channel
+    assert "`meridian spawn -a reviewer`" in inventory_channel
     assert "# Meridian Agents" not in preview.projected_content.user_turn_content
     assert "# Meridian Agents" not in preview.resolved_request.prompt
 
@@ -250,8 +250,8 @@ def test_spawn_prepare_claude_projects_skills_inventory_and_report_to_system_pro
     assert "# Skill:" not in projected.system_prompt
     assert "# Meridian Agents" in projected.system_prompt
     assert "## Subagent" in projected.system_prompt
-    assert "- dev-orchestrator" in projected.system_prompt
-    assert "- reviewer" in projected.system_prompt
+    assert "`meridian spawn -a dev-orchestrator`" in projected.system_prompt
+    assert "`meridian spawn -a reviewer`" in projected.system_prompt
     assert "# Report" in projected.system_prompt
     assert "final assistant message must be the run report" in projected.system_prompt
 

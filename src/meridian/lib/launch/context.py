@@ -105,7 +105,6 @@ from .prompt_context import (
     build_launch_context_documents,
     compose_skill_injections,
     compose_skill_prompt_documents,
-    with_agent_inventory_guidance,
 )
 from .reference import (
     ReferenceItem,
@@ -640,37 +639,6 @@ def _resolve_deny_headless_harnesses(
     return tuple(load_config(project_paths.project_root).deny_headless_harnesses)
 
 
-_CLAUDE_DELEGATION_GUIDANCE = (
-    "\n\n# Delegation\n"
-    "Prefer Agent() for agents in your agents menu — in-process, fast, visible.\n"
-    "Use `meridian spawn` for agents not in the menu or when you need session\n"
-    "tracking / cross-harness models. Use `/handoff` when the user takes the baton.\n"
-)
-
-
-def _inject_claude_delegation_guidance(
-    prompt_payload: PreparedPromptPayload,
-    *,
-    project_root: Path,
-    claude_native_agents_enabled: bool,
-) -> PreparedPromptPayload:
-    """Append delegation guidance when Claude has native agents available."""
-    if not claude_native_agents_enabled:
-        return prompt_payload
-    claude_agents_dir = project_root / ".claude" / "agents"
-    try:
-        has_claude_agents = claude_agents_dir.is_dir() and any(claude_agents_dir.iterdir())
-    except OSError:
-        return prompt_payload
-    if not has_claude_agents:
-        return prompt_payload
-    existing = prompt_payload.appended_system_prompt or ""
-    return replace(
-        prompt_payload,
-        appended_system_prompt=(existing + _CLAUDE_DELEGATION_GUIDANCE).lstrip(),
-    )
-
-
 def _missing_continue_session_error(source_ref: str | None) -> str:
     normalized_source = (source_ref or "").strip()
     if normalized_source:
@@ -1045,22 +1013,23 @@ def _resolve_spawn_prepare_projection(
         )
         agent_profile_body = f"# Agent Profile\n\n{rendered_agent_body}"
 
+    harness_id = policy.harness.value
     # Prefer the pre-built, pre-filtered inventory prompt from the bundle.
     if policy.bundle_inventory_prompt:
-        agent_inventory_prompt: str | None = with_agent_inventory_guidance(
-            policy.bundle_inventory_prompt
-        )
+        agent_inventory_prompt: str | None = policy.bundle_inventory_prompt
         _, context_prompt = build_launch_context_documents(
             project_root=project_paths.project_root,
             alias_catalog=policy.alias_catalog,
             active_work_dir=active_work_dir,
             include_inventory=False,
+            harness_id=harness_id,
         )
     else:
         agent_inventory_prompt, context_prompt = build_launch_context_documents(
             project_root=project_paths.project_root,
             alias_catalog=policy.alias_catalog,
             active_work_dir=active_work_dir,
+            harness_id=harness_id,
         )
 
     resolved_work_id = (request.work_id_hint or "").strip() or (
@@ -1120,24 +1089,26 @@ def _resolve_primary_projection(
     resolved_skills = policy.resolved_skills
     session_mode = ((request.session.primary_session_mode or "fresh").strip().lower()) or "fresh"
 
+    harness_id = policy.harness.value
     agent_inventory_prompt: str | None = None
     context_prompt: str | None = None
-    if session_mode != "resume":
-        # Prefer the pre-built, pre-filtered inventory prompt from the bundle.
-        if policy.bundle_inventory_prompt:
-            agent_inventory_prompt = with_agent_inventory_guidance(policy.bundle_inventory_prompt)
-            _, context_prompt = build_launch_context_documents(
-                project_root=project_paths.project_root,
-                alias_catalog=policy.alias_catalog,
-                active_work_dir=active_work_dir,
-                include_inventory=False,
-            )
-        else:
-            agent_inventory_prompt, context_prompt = build_launch_context_documents(
-                project_root=project_paths.project_root,
-                alias_catalog=policy.alias_catalog,
-                active_work_dir=active_work_dir,
-            )
+    # Prefer the pre-built, pre-filtered inventory prompt from the bundle.
+    if policy.bundle_inventory_prompt:
+        agent_inventory_prompt = policy.bundle_inventory_prompt
+        _, context_prompt = build_launch_context_documents(
+            project_root=project_paths.project_root,
+            alias_catalog=policy.alias_catalog,
+            active_work_dir=active_work_dir,
+            include_inventory=False,
+            harness_id=harness_id,
+        )
+    else:
+        agent_inventory_prompt, context_prompt = build_launch_context_documents(
+            project_root=project_paths.project_root,
+            alias_catalog=policy.alias_catalog,
+            active_work_dir=active_work_dir,
+            harness_id=harness_id,
+        )
 
     seed = harness.seed_session(
         is_resume=session_mode == "resume",
@@ -1804,15 +1775,6 @@ def bind_launch_context(
         if harness.id == HarnessId.PI
         else None
     )
-    if (
-        harness.id == HarnessId.CLAUDE
-        and runtime.composition_surface == LaunchCompositionSurface.PRIMARY
-    ):
-        prompt_payload = _inject_claude_delegation_guidance(
-            prompt_payload,
-            project_root=project_root,
-            claude_native_agents_enabled=claude_native_agents_enabled,
-        )
     materialized = materialize_launch_artifacts(
         harness=harness,
         prompt=resolved_request.prompt,

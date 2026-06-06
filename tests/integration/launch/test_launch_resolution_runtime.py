@@ -203,8 +203,8 @@ def test_primary_launch_injects_inventory_by_harness_family(
     )
     assert "# Meridian Agents" in text
     assert "## Subagent" in text
-    assert "- dev-orchestrator" in text
-    assert f"- {peer_name}" in text
+    assert "`meridian spawn -a dev-orchestrator`" in text
+    assert f"`meridian spawn -a {peer_name}`" in text
     assert "SKILLS" not in text
     assert f"{skill_name}: {skill_description}" not in text
 

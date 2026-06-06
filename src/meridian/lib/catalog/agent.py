@@ -17,10 +17,40 @@ class AgentProfile(BaseModel):
     description: str
     mode: Literal["primary", "subagent"] = "subagent"
     skills: tuple[str, ...]
+    model: str | None = None
+    fanout: tuple[str, ...] = ()
     model_invocable: bool = True
     body: str
     path: Path
     raw_content: str
+
+
+def _fanout_from_model_policies(value: object) -> tuple[str, ...]:
+    if not isinstance(value, list):
+        return ()
+
+    fanout: list[str] = []
+    seen: set[str] = set()
+    for entry in value:
+        if not isinstance(entry, dict):
+            continue
+        if entry.get("no-fallback") is True or entry.get("no_fallback") is True:
+            continue
+        match = entry.get("match")
+        if not isinstance(match, dict):
+            continue
+        match_value: str | None = None
+        if "alias" in match:
+            match_value = str(match["alias"]).strip()
+        elif "model" in match:
+            match_value = str(match["model"]).strip()
+        else:
+            continue
+        if not match_value or match_value in seen:
+            continue
+        seen.add(match_value)
+        fanout.append(match_value)
+    return tuple(fanout)
 
 
 def _normalize_string_list(value: object) -> tuple[str, ...]:
@@ -54,11 +84,18 @@ def parse_agent_profile(path: Path) -> AgentProfile:
     if mode not in {"primary", "subagent"}:
         mode = "subagent"
 
+    model_value = frontmatter.get("model")
+    model = str(model_value).strip() if model_value is not None else None
+    if model == "":
+        model = None
+
     return AgentProfile(
         name=profile_name,
         description=str(description_value).strip() if description_value is not None else "",
         mode=cast("Literal['primary', 'subagent']", mode),
         skills=_normalize_string_list(frontmatter.get("skills")),
+        model=model,
+        fanout=_fanout_from_model_policies(frontmatter.get("model-policies")),
         model_invocable=model_invocable,
         body=body,
         path=path.resolve(),

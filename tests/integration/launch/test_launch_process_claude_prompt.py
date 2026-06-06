@@ -19,11 +19,7 @@ from meridian.lib.config.settings import load_config
 from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.launch.constants import OUTPUT_FILENAME
-from meridian.lib.launch.context import (
-    PreparedPromptPayload,
-    _inject_claude_delegation_guidance,
-    build_launch_context,
-)
+from meridian.lib.launch.context import build_launch_context
 from meridian.lib.launch.process.primary_attach import PrimaryAttachOutcome
 from meridian.lib.launch.process.runner import run_harness_process
 from meridian.lib.launch.request import (
@@ -91,88 +87,6 @@ def _build_primary_launch_context(
         dry_run=True,
     )
     return launch_context, harness_registry
-
-
-def test_claude_delegation_guidance_ignores_agent_dir_probe_errors(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    agents_dir = tmp_path / ".claude" / "agents"
-    agents_dir.mkdir(parents=True)
-    payload = PreparedPromptPayload(appended_system_prompt="existing")
-
-    def _raise_on_iterdir(self: Path) -> Any:
-        if self == agents_dir:
-            raise PermissionError("sandbox denied")
-        return iter(())
-
-    monkeypatch.setattr(Path, "iterdir", _raise_on_iterdir)
-
-    assert (
-        _inject_claude_delegation_guidance(
-            payload,
-            project_root=tmp_path,
-            claude_native_agents_enabled=True,
-        )
-        is payload
-    )
-
-
-def test_claude_delegation_guidance_is_primary_only(tmp_path: Path) -> None:
-    project_root = tmp_path / "claude-guidance"
-    project_root.mkdir()
-    agents_dir = project_root / ".claude" / "agents"
-    agents_dir.mkdir(parents=True)
-    (agents_dir / "reviewer.md").write_text("# reviewer\n", encoding="utf-8")
-
-    primary_context, _ = _build_primary_launch_context(
-        project_root=project_root,
-        harness_id=HarnessId.CLAUDE,
-        model="claude-sonnet-4-5",
-        claude_agent_copy=True,
-    )
-    primary_system_prompt = primary_context.binding.run_params.appended_system_prompt or ""
-
-    spawn_context = build_launch_context(
-        spawn_id="dry-run-claude-spawn-guidance",
-        request=SpawnRequest(
-            prompt="spawn prompt",
-            prompt_is_composed=False,
-            model="claude-sonnet-4-5",
-            harness=HarnessId.CLAUDE.value,
-        ),
-        runtime=LaunchRuntime(
-            argv_intent=LaunchArgvIntent.REQUIRED,
-            composition_surface=LaunchCompositionSurface.SPAWN_PREPARE,
-            runtime_root=(project_root / ".meridian").as_posix(),
-            project_paths_project_root=project_root.as_posix(),
-            project_paths_execution_cwd=project_root.as_posix(),
-        ),
-        harness_registry=get_default_harness_registry(),
-        dry_run=True,
-    )
-    spawn_system_prompt = spawn_context.binding.run_params.appended_system_prompt or ""
-
-    assert "# Delegation" in primary_system_prompt
-    assert "# Delegation" not in spawn_system_prompt
-
-
-def test_claude_delegation_guidance_requires_agent_copy(tmp_path: Path) -> None:
-    project_root = tmp_path / "claude-guidance-no-agent-copy"
-    project_root.mkdir()
-    agents_dir = project_root / ".claude" / "agents"
-    agents_dir.mkdir(parents=True)
-    (agents_dir / "reviewer.md").write_text("# reviewer\n", encoding="utf-8")
-
-    primary_context, _ = _build_primary_launch_context(
-        project_root=project_root,
-        harness_id=HarnessId.CLAUDE,
-        model="claude-sonnet-4-5",
-    )
-
-    primary_system_prompt = primary_context.binding.run_params.appended_system_prompt or ""
-
-    assert "# Delegation" not in primary_system_prompt
 
 
 @pytest.mark.slow

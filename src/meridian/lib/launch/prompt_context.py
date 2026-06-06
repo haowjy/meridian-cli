@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
@@ -17,19 +18,37 @@ from meridian.lib.core.domain import SkillContent
 from meridian.lib.launch.composition import PromptDocument
 
 _AGENT_INVENTORY_HEADING = "# Meridian Agents"
-_AGENT_DELEGATION_GUIDANCE_MARKER = (
-    "meridian spawn -a <agent> --prompt-file /tmp/<file>.md"
-)
-_AGENT_DELEGATION_GUIDANCE = (
-    "Use the Meridian agents list as a Meridian spawn menu, not as arbitrary "
-    "harness-native agent choices.\n\n"
-    "Prefer Meridian spawn for most subagent work: write the handoff to "
-    "`/tmp/<file>.md`, then run "
-    "`meridian spawn -a <agent> --prompt-file /tmp/<file>.md`. If launching "
-    "with `--bg`, drain results with `meridian spawn wait`.\n\n"
-    "Use Claude native `Agent` only when the task explicitly calls for a "
-    "Claude-native agent/model or the user asks for Claude-specific delegation."
-)
+
+
+def read_native_agent_manifest(project_root: Path) -> dict[str, set[str]]:
+    """Read `.mars/native-agents.json` for harness-aware inventory partitioning."""
+
+    manifest_path = project_root / ".mars" / "native-agents.json"
+    try:
+        content = manifest_path.read_text(encoding="utf-8")
+    except OSError:
+        return {}
+
+    try:
+        parsed = json.loads(content)
+    except json.JSONDecodeError:
+        return {}
+
+    if not isinstance(parsed, dict) or parsed.get("version") != 1:
+        return {}
+
+    agents_raw = parsed.get("agents")
+    if not isinstance(agents_raw, dict):
+        return {}
+
+    manifest: dict[str, set[str]] = {}
+    for name, harnesses in agents_raw.items():
+        if not isinstance(name, str) or not isinstance(harnesses, list):
+            continue
+        harness_set = {str(harness).strip() for harness in harnesses if str(harness).strip()}
+        if harness_set:
+            manifest[name] = harness_set
+    return manifest
 
 
 def _render_skill_blocks(skills: Sequence[SkillContent]) -> tuple[str, ...]:
@@ -81,44 +100,55 @@ def compose_skill_injections(skills: Sequence[SkillContent]) -> str | None:
     return _join_sections(blocks)
 
 
-def _render_agent_line(agent: AgentProfile) -> str:
+def _render_spawn_guidance_header() -> tuple[str, ...]:
+    return (
+        "Write prompts to `/tmp/<name>.md`.",
+        "Use `--bg` + `meridian spawn wait` for parallel work.",
+        "Use `/handoff` when passing control back to the user.",
+    )
+
+
+def _render_native_section_heading(harness_id: str) -> tuple[str, ...]:
+    if harness_id == "claude":
+        return ("", "## Claude Agents (use `Agent({subagent_type: \"...\"})` tool)")
+    return (
+        "",
+        "## Native Agents",
+        "Use your native subagent tool for agents listed here.",
+    )
+
+
+def _render_meridian_agent_line(agent: AgentProfile) -> str:
     description = agent.description.strip()
-    return f"- {agent.name}: {description}" if description else f"- {agent.name}"
+    if description:
+        line = f"- `meridian spawn -a {agent.name}`: {description}"
+    else:
+        line = f"- `meridian spawn -a {agent.name}`"
+    if agent.model:
+        line += f" | Model: {agent.model}"
+    if agent.fanout:
+        line += f" | Fan-out: {', '.join(agent.fanout)}"
+    return line
 
 
-def with_agent_inventory_guidance(inventory_prompt: str) -> str:
-    """Ensure delegation guidance leads into the Meridian Agents inventory."""
+def _render_native_agent_line(agent: AgentProfile) -> str:
+    description = agent.description.strip()
+    if description:
+        return f"- {agent.name}: {description}"
+    return f"- {agent.name}"
 
-    prompt = inventory_prompt.strip()
-    if not prompt:
-        return prompt
 
-    lines = prompt.splitlines()
-    for index, line in enumerate(lines):
-        if line.strip() == _AGENT_INVENTORY_HEADING:
-            next_section_index = next(
-                (
-                    offset
-                    for offset, candidate in enumerate(lines[index + 1 :], start=index + 1)
-                    if candidate.startswith("## ")
-                ),
-                len(lines),
-            )
-            heading_lead_in = "\n".join(lines[index + 1 : next_section_index])
-            if _AGENT_DELEGATION_GUIDANCE_MARKER in heading_lead_in:
-                return prompt
-            insert_at = index + 1
-            if insert_at < len(lines) and not lines[insert_at].strip():
-                insert_at += 1
-            return "\n".join(
-                (
-                    *lines[:insert_at],
-                    _AGENT_DELEGATION_GUIDANCE,
-                    "",
-                    *lines[insert_at:],
-                )
-            ).strip()
-    return prompt
+def _is_native_for_harness(
+    agent_name: str,
+    manifest: dict[str, set[str]],
+    harness_id: str | None,
+) -> bool:
+    if not harness_id:
+        return False
+    harnesses = manifest.get(agent_name)
+    if not harnesses:
+        return False
+    return harness_id in harnesses
 
 
 def build_context_prompt(
@@ -164,6 +194,7 @@ def build_launch_context_documents(
     active_work_dir: Path | None = None,
     include_inventory: bool = True,
     include_context: bool = True,
+    harness_id: str | None = None,
 ) -> tuple[str | None, str | None]:
     """Resolve inventory/context prompt documents for launch composition."""
 
@@ -179,6 +210,7 @@ def build_launch_context_documents(
             project_root=project_root,
             alias_catalog=dict(alias_catalog) if alias_catalog is not None else None,
             agents=agent_profiles,
+            harness_id=harness_id,
         )
 
     if include_context:
@@ -195,6 +227,7 @@ def build_agent_inventory_prompt(
     project_root: Path,
     alias_catalog: dict[str, Any] | None = None,
     agents: list[AgentProfile] | None = None,
+    harness_id: str | None = None,
 ) -> str | None:
     """Render installed agent inventory grouped by mode."""
 
@@ -213,26 +246,39 @@ def build_agent_inventory_prompt(
 
     _ = alias_catalog
 
-    lines = [
-        _AGENT_INVENTORY_HEADING,
-        "",
-        "Installed Meridian agents available at launch time.",
-    ]
+    manifest = read_native_agent_manifest(project_root)
+    use_native_partition = bool(harness_id and manifest)
 
-    primary_agents = [agent for agent in visible_agents if agent.mode == "primary"]
-    subagent_agents = [agent for agent in visible_agents if agent.mode != "primary"]
+    meridian_primary: list[AgentProfile] = []
+    meridian_subagent: list[AgentProfile] = []
+    native_agents: list[AgentProfile] = []
 
-    if primary_agents:
-        lines.extend(["", "## Primary"])
-        for agent in primary_agents:
-            lines.append(_render_agent_line(agent))
+    for agent in visible_agents:
+        if use_native_partition and _is_native_for_harness(agent.name, manifest, harness_id):
+            native_agents.append(agent)
+        elif agent.mode == "primary":
+            meridian_primary.append(agent)
+        else:
+            meridian_subagent.append(agent)
 
-    if subagent_agents:
+    lines = [_AGENT_INVENTORY_HEADING, "", *_render_spawn_guidance_header()]
+
+    if meridian_subagent:
         lines.extend(["", "## Subagent"])
-        for agent in subagent_agents:
-            lines.append(_render_agent_line(agent))
+        for agent in meridian_subagent:
+            lines.append(_render_meridian_agent_line(agent))
 
-    return with_agent_inventory_guidance("\n".join(lines))
+    if meridian_primary:
+        lines.extend(["", "## Primary"])
+        for agent in meridian_primary:
+            lines.append(_render_meridian_agent_line(agent))
+
+    if native_agents:
+        lines.extend(_render_native_section_heading(harness_id or ""))
+        for agent in native_agents:
+            lines.append(_render_native_agent_line(agent))
+
+    return "\n".join(lines).strip()
 
 
 __all__ = [
@@ -241,5 +287,5 @@ __all__ = [
     "build_launch_context_documents",
     "compose_skill_injections",
     "compose_skill_prompt_documents",
-    "with_agent_inventory_guidance",
+    "read_native_agent_manifest",
 ]
