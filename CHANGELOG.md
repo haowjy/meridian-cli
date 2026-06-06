@@ -19,6 +19,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Fixed
 - Codex drain loop no longer treats subagent `turn/completed` as session termination; only the main thread's completion ends the spawn, and report extraction ignores other threads (#317).
 - Spawn infers logical `task_cwd` from the caller's working directory when it lies outside the project tree, so cross-repo worktree spawns no longer require explicit `--task-dir` (#318).
+- `meridian config set <key> '[]'` now accepts an explicit empty list for `str_list` options (e.g. `spawn.deny_headless_harnesses`), matching the documented "set to `[]`" escape hatch; lists whose items are all empty strings are still rejected.
+- Distinct-task-dir launch instruction now states explicitly that the shell cwd is the project root (not the task dir) and tells the agent to `cd` into the absolute `MERIDIAN_TASK_DIR` or use absolute paths, so weaker models no longer run cwd-relative against the wrong directory and silently no-op (#318 follow-up).
 
 ## [0.2.32] - 2026-06-05
 

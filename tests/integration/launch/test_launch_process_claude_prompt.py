@@ -30,7 +30,7 @@ from meridian.lib.launch.request import (
     SpawnRequest,
 )
 from meridian.lib.state.spawn_store import list_spawns
-from tests.support.launch import stub_bundle_request_and_resolve
+from tests.support.launch import assert_task_cwd_instruction, stub_bundle_request_and_resolve
 
 
 def _write_minimal_mars_config(project_root: Path, *, claude_agent_copy: bool = False) -> None:
@@ -230,7 +230,10 @@ def test_run_harness_process_black_box_primary_uses_control_root_with_distinct_t
 
     assert captured["cwd"] == project_root
     assert captured["task_env"] == task_cwd.as_posix()
-    assert "MERIDIAN_TASK_DIR" in (launch_context.binding.run_params.appended_system_prompt or "")
+    assert_task_cwd_instruction(
+        launch_context.binding.run_params.appended_system_prompt or "",
+        task_cwd,
+    )
     projected_roots = {path.resolve() for path in launch_context.binding.spec.projected_roots}
     assert task_cwd.resolve() not in projected_roots
     assert outcome.exit_code == 0

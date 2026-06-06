@@ -569,8 +569,12 @@ def materialize_launch_artifacts(
         task_cwd_instruction = (
             "\n\n# Source-edit directory\n"
             "Use `MERIDIAN_PROJECT_ROOT` for project coordination files and harness context.\n"
-            f"Use `MERIDIAN_TASK_DIR` ({task_cwd}) for source-code operations "
-            "including git, edits, and builds.\n"
+            f"`MERIDIAN_TASK_DIR` is {task_cwd}. Your shell cwd is the project root, NOT this "
+            "directory — relative paths resolve against the project root and will miss source "
+            "files.\n"
+            f"For all source-code operations (reads, edits, git, builds, commands), `cd` into "
+            f"`{task_cwd}` first or use absolute paths under it. Never assume cwd is the task "
+            "dir.\n"
         )
     effective_appended_system = prompt_payload.appended_system_prompt or ""
     if task_cwd_instruction:
