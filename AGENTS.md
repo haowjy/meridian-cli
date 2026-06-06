@@ -142,7 +142,7 @@ Update CHANGELOG.md entries under `[Unreleased]` as you work — `meridian mars 
 - `meridian-cli`: stable releases are main-push auto-release (`release-on-merge.yml`).
 - `mars-agents`: stable releases are main-push auto-release (`release-on-main.yml`).
 
-**Direct push ≠ release.** A plain `git push` to `main` with no associated merged PR runs CI/CD only — both workflows resolve release intent from the trigger commit's PR (`/repos/.../commits/{sha}/pulls`); no PR found → `should_release=false`, so no version bump or tag. Auto-release fires **only** for a merged PR carrying a `release:*` label. Direct-to-main backfill must use the manual release helper (`scripts/manually-release.sh`).
+**Direct push ≠ release.** A push to `main` triggers a release only when the pushed commit is the merge of a PR labeled `release:*`. Both workflows look up the trigger commit's PR (`/commits/{sha}/pulls`); finding none, they set `should_release=false` and run CI only — no bump, no tag. Docs and other no-ceremony work can go straight to `main`; cutting a release needs a labeled PR merge (or `scripts/manually-release.sh` for backfill).
 
 Do not use `meridian mars version` for these repos — that's for prompt packages only.
 
