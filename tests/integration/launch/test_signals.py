@@ -16,12 +16,28 @@ from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.launch.signals import (
     SignalCoordinator,
     SignalForwarder,
+    force_kill_process,
     map_process_exit_code,
+    signal_process_group,
     signal_to_exit_code,
 )
 from meridian.lib.safety.permissions import PermissionConfig, TieredPermissionResolver
 from meridian.lib.state.paths import resolve_runtime_paths
 from meridian.lib.streaming import spawn_manager as spawn_manager_module
+
+
+class _FakeSignalProcess:
+    def __init__(self, pid: int = 12345) -> None:
+        self.pid = pid
+        self.returncode: int | None = None
+        self.sent: list[signal.Signals] = []
+        self.killed = False
+
+    def send_signal(self, signum: signal.Signals) -> None:
+        self.sent.append(signum)
+
+    def kill(self) -> None:
+        self.killed = True
 
 
 @pytest.mark.asyncio
@@ -183,6 +199,136 @@ def test_signal_forwarder_forwards_sigint_and_sigterm(monkeypatch: pytest.Monkey
     assert signal_to_exit_code(signal.SIGINT) == 130
     assert signal_to_exit_code(signal.SIGTERM) == 143
     assert map_process_exit_code(raw_return_code=0, received_signal=signal.SIGTERM) == 143
+
+
+def test_signal_process_group_degrades_to_process_signal_for_shared_pgid(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import meridian.lib.launch.signals as signals_module
+
+    killpg_calls: list[tuple[int, signal.Signals]] = []
+    monkeypatch.setattr(signals_module.sys, "platform", "linux")
+    monkeypatch.setattr(signals_module.os, "getpgid", lambda _pid: 999)
+    monkeypatch.setattr(
+        signals_module.os,
+        "killpg",
+        lambda pgid, signum: killpg_calls.append((pgid, signum)),
+    )
+
+    process = _FakeSignalProcess()
+    signal_process_group(cast("asyncio.subprocess.Process", process), signal.SIGTERM)
+
+    assert process.sent == [signal.SIGTERM]
+    assert killpg_calls == []
+
+
+def test_signal_process_group_uses_killpg_for_group_leader(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import meridian.lib.launch.signals as signals_module
+
+    killpg_calls: list[tuple[int, signal.Signals]] = []
+    monkeypatch.setattr(signals_module.sys, "platform", "linux")
+    monkeypatch.setattr(signals_module.os, "getpgid", lambda _pid: 12345)
+    monkeypatch.setattr(
+        signals_module.os,
+        "killpg",
+        lambda pgid, signum: killpg_calls.append((pgid, signum)),
+    )
+
+    process = _FakeSignalProcess()
+    signal_process_group(cast("asyncio.subprocess.Process", process), signal.SIGTERM)
+
+    assert process.sent == []
+    assert killpg_calls == [(12345, signal.SIGTERM)]
+
+
+def test_signal_process_group_on_windows_signals_process_only(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import meridian.lib.launch.signals as signals_module
+
+    monkeypatch.setattr(signals_module.sys, "platform", "win32")
+    monkeypatch.setattr(
+        signals_module.os,
+        "getpgid",
+        lambda _pid: pytest.fail("os.getpgid should not be called on Windows"),
+    )
+    monkeypatch.setattr(
+        signals_module.os,
+        "killpg",
+        lambda _pgid, _signum: pytest.fail("os.killpg should not be called on Windows"),
+    )
+
+    process = _FakeSignalProcess()
+    signal_process_group(cast("asyncio.subprocess.Process", process), signal.SIGTERM)
+
+    assert process.sent == [signal.SIGTERM]
+
+
+def test_force_kill_process_degrades_to_process_kill_for_shared_pgid(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import meridian.lib.launch.signals as signals_module
+
+    killpg_calls: list[tuple[int, signal.Signals]] = []
+    monkeypatch.setattr(signals_module.sys, "platform", "linux")
+    monkeypatch.setattr(signals_module.os, "getpgid", lambda _pid: 999)
+    monkeypatch.setattr(
+        signals_module.os,
+        "killpg",
+        lambda pgid, signum: killpg_calls.append((pgid, signum)),
+    )
+
+    process = _FakeSignalProcess()
+    force_kill_process(cast("asyncio.subprocess.Process", process))
+
+    assert process.killed is True
+    assert killpg_calls == []
+
+
+def test_force_kill_process_uses_killpg_for_group_leader(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import meridian.lib.launch.signals as signals_module
+
+    killpg_calls: list[tuple[int, signal.Signals]] = []
+    monkeypatch.setattr(signals_module.sys, "platform", "linux")
+    monkeypatch.setattr(signals_module.os, "getpgid", lambda _pid: 12345)
+    monkeypatch.setattr(
+        signals_module.os,
+        "killpg",
+        lambda pgid, signum: killpg_calls.append((pgid, signum)),
+    )
+
+    process = _FakeSignalProcess()
+    force_kill_process(cast("asyncio.subprocess.Process", process))
+
+    assert process.killed is False
+    assert killpg_calls == [(12345, signal.SIGKILL)]
+
+
+def test_force_kill_process_on_windows_kills_process_only(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import meridian.lib.launch.signals as signals_module
+
+    monkeypatch.setattr(signals_module.sys, "platform", "win32")
+    monkeypatch.setattr(
+        signals_module.os,
+        "getpgid",
+        lambda _pid: pytest.fail("os.getpgid should not be called on Windows"),
+    )
+    monkeypatch.setattr(
+        signals_module.os,
+        "killpg",
+        lambda _pgid, _signum: pytest.fail("os.killpg should not be called on Windows"),
+    )
+
+    process = _FakeSignalProcess()
+    force_kill_process(cast("asyncio.subprocess.Process", process))
+
+    assert process.killed is True
 
 
 def test_signal_coordinator_dispatches_signal_to_all_active_forwarders(

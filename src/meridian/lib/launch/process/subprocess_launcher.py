@@ -10,6 +10,8 @@ from contextlib import suppress
 from pathlib import Path
 from typing import BinaryIO
 
+from meridian.lib.platform import IS_WINDOWS
+
 from .ports import (
     PRIMARY_STDERR_LOG_PATH_ENV,
     ChildStartedHook,
@@ -109,6 +111,7 @@ class SubprocessProcessLauncher(ProcessLauncher):
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=False,
+                start_new_session=not IS_WINDOWS,
             )
         if on_child_started is not None:
             try:

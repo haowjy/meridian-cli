@@ -10,6 +10,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 - Detached OpenCode/Codex backends now link to the worker lifetime and dead-worker reaping finalizes child spawns while cleaning recorded backend scopes.
+- POSIX process-scope cleanup no longer sends signals to a recorded process group unless the scope root is the group leader; non-isolated children degrade to PID-tree cleanup instead of risking termination of the parent agent/test-runner session.
+- POSIX signal forwarding now falls back to signalling only the child process when a launch inherited the parent process group, avoiding parent-session termination for native-inherit OpenCode/Codex TUI paths.
+- Pipe-captured subprocess launches plus Claude/Pi observer backends now start in isolated POSIX sessions so later scope cleanup targets their own process group, not the launching Meridian process group.
 - Managed primary attach now fails and tears down the TUI/backend when the observed event stream dies, and OpenCode keepalive chunks no longer reset progress liveness.
 - Child spawn session logs no longer bind to the parent chat when the child harness session id is not recorded; child rows now point at their own chat and OpenCode records its fresh session id at connect time.
 - OpenCode and Codex streaming now share event-stream liveness detection, so frozen managed backends fail within the liveness window instead of wedging with no events.
