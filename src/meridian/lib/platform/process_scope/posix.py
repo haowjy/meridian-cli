@@ -54,6 +54,18 @@ def terminate_pgid(
     if IS_WINDOWS:
         raise RuntimeError("terminate_pgid() is not available on Windows.")
 
+    if pgid != root_pid:
+        from meridian.lib.platform.process_scope.fallback import terminate_tree_sync
+
+        return terminate_tree_sync(
+            pid=root_pid,
+            created_at_epoch=created_at_epoch,
+            grace_secs=grace_seconds,
+            reason=reason,
+            scope_id=scope_id,
+            degraded_fallback=True,
+        )
+
     import os
     import signal
 
