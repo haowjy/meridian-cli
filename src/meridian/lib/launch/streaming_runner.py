@@ -81,7 +81,6 @@ from meridian.lib.launch.runner_helpers import (
 from meridian.lib.launch.signals import signal_coordinator, signal_to_exit_code
 from meridian.lib.launch.streaming.heartbeat import FileHeartbeat, HeartbeatTouch
 from meridian.lib.launch.streaming.terminal_arbitrator import TriggerKind, arbitrate_terminal
-from meridian.lib.platform.process_scope import ProcessScopeSnapshot, terminate_scope_sync
 from meridian.lib.safety.budget import Budget, BudgetBreach, LiveBudgetTracker
 from meridian.lib.safety.guardrails import run_guardrails
 from meridian.lib.safety.redaction import SecretSpec, redact_secret_bytes
@@ -107,7 +106,6 @@ _DEFAULT_CONFIG = MeridianConfig()
 DEFAULT_GUARDRAIL_TIMEOUT_SECONDS = _DEFAULT_CONFIG.guardrail_timeout_minutes * 60.0
 logger = structlog.get_logger(__name__)
 _HEARTBEAT_INTERVAL_SECS = 30.0
-_BACKEND_SCOPE_CLEANUP_GRACE_SECONDS = 2.0
 
 
 @dataclass(frozen=True)
@@ -122,7 +120,6 @@ class _AttemptRuntime:
     cancelled_by_request: bool = False
     terminal_observed: bool = False
     start_error: str | None = None
-    scope_snapshot: ProcessScopeSnapshot | None = None
 
 
 @dataclass
@@ -304,37 +301,6 @@ def _apply_cancel_intent_to_conclusion(
     conclusion.failure_reason = intent.error or "cancelled"
     conclusion.cancellation_observed = True
     return True
-
-
-async def _cleanup_backend_scope_after_attempt(
-    *,
-    scope_snapshot: ProcessScopeSnapshot | None,
-    spawn_id: SpawnId,
-) -> None:
-    """Terminate the managed backend process after a streaming attempt.
-
-    Applies to any harness that records a ProcessScopeSnapshot (currently
-    OpenCode and Codex). Harnesses without a scope snapshot are skipped
-    automatically. This is belt-and-suspenders cleanup: the connection's
-    own stop() should have killed the backend already, but if the runner
-    crashed or the connection's cleanup failed, this catches the orphan.
-    """
-    if scope_snapshot is None:
-        return
-    try:
-        await asyncio.to_thread(
-            terminate_scope_sync,
-            scope_snapshot,
-            grace_seconds=_BACKEND_SCOPE_CLEANUP_GRACE_SECONDS,
-            reason="streaming_finalize",
-        )
-    except Exception:
-        logger.warning(
-            "Backend scope cleanup failed after streaming attempt.",
-            spawn_id=str(spawn_id),
-            root_pid=scope_snapshot.root_pid,
-            exc_info=True,
-        )
 
 
 async def _sleep_retry_backoff_or_cancel(
@@ -667,7 +633,6 @@ async def _run_streaming_attempt(
     terminated_by_report_watchdog = False
     cancelled_by_request = False
     terminal_outcome: TerminalEventOutcome | None = None
-    scope_snap: ProcessScopeSnapshot | None = None
     try:
         connection = await manager.start_spawn(config, run_spec)
         await manager.start_heartbeat(run.spawn_id)
@@ -788,7 +753,6 @@ async def _run_streaming_attempt(
     except Exception as exc:
         return _AttemptRuntime(
             connection=connection,
-            scope_snapshot=scope_snap,
             drain_exit_code=DEFAULT_INFRA_EXIT_CODE,
             drain_error=None,
             timed_out=False,
@@ -814,7 +778,6 @@ async def _run_streaming_attempt(
     pi_drain_terminal = config.harness_id == HarnessId.PI and drain_error is not None
     return _AttemptRuntime(
         connection=connection,
-        scope_snapshot=scope_snap,
         drain_exit_code=drain_exit_code,
         drain_error=drain_error,
         timed_out=timed_out,
@@ -871,7 +834,6 @@ async def execute_with_streaming(
     signal_cleanup: Callable[[], None] | None = None
     loop: asyncio.AbstractEventLoop | None = None
     received_signal: list[signal.Signals | None] = [None]
-    last_attempt_scope_snapshot: ProcessScopeSnapshot | None = None
 
     try:
         log_dir = resolve_spawn_log_dir(project_root, run.spawn_id)
@@ -1061,7 +1023,6 @@ async def execute_with_streaming(
                     lifecycle_service=lifecycle_service,
                 )
                 conclusion.absorb_attempt(attempt)
-                last_attempt_scope_snapshot = attempt.scope_snapshot
                 if attempt.start_error is not None:
                     logger.info(
                         "Failed to execute streaming spawn attempt.",
@@ -1173,12 +1134,6 @@ async def execute_with_streaming(
                             harness_id=str(harness.id),
                             exc_info=True,
                         )
-
-                await _cleanup_backend_scope_after_attempt(
-                    scope_snapshot=attempt.scope_snapshot,
-                    spawn_id=run.spawn_id,
-                )
-                last_attempt_scope_snapshot = None
 
                 if attempt_cancelled:
                     if attempt.received_signal is not None:
@@ -1387,12 +1342,6 @@ async def execute_with_streaming(
     finally:
         if signal_cleanup is not None:
             signal_cleanup()
-        if last_attempt_scope_snapshot is not None:
-            with suppress(Exception):
-                await _cleanup_backend_scope_after_attempt(
-                    scope_snapshot=last_attempt_scope_snapshot,
-                    spawn_id=run.spawn_id,
-                )
         if manager is not None:
             with suppress(Exception):
                 await manager.shutdown(status="cancelled", exit_code=1, error="shutdown")

@@ -17,7 +17,7 @@ from meridian.lib.core.domain import SpawnStatus
 from meridian.lib.core.spawn_lifecycle import TERMINAL_SPAWN_STATUSES
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness import pi_lifecycle_events as pi_lifecycle
-from meridian.lib.harness.connections.base import HarnessEvent
+from meridian.lib.harness.connections.base import HarnessEvent, StopResult
 from meridian.lib.harness.control_action import (
     ControlActionCoordinator,
     ControlActionType,
@@ -627,40 +627,12 @@ class SpawnManager:
         if session.debug_tracer is not None:
             session.debug_tracer.close()
 
-        # Capture scope state BEFORE connection.stop() — both connections clear
-        # subprocess_pid and scope_snapshot inside stop(), so reading them after
-        # would always yield None and make the safety pass a no-op.
-        _pre_stop_pid = session.connection.subprocess_pid
-        _pre_stop_scope = getattr(session.connection, "scope_snapshot", None)
-
         with suppress(Exception):
-            await session.connection.stop()
-
-        # Safety pass: if the process survived connection.stop() (e.g. the connection
-        # was already dead before stop was called), force-terminate via the scope handle.
-        with suppress(Exception):
-            if _pre_stop_pid is not None and _pre_stop_scope is not None:
-                try:
-                    proc = psutil.Process(_pre_stop_pid)
-                except (psutil.NoSuchProcess, psutil.AccessDenied):
-                    proc = None
-                if proc is not None and proc.is_running():
-                    logger.warning(
-                        "Process %d still alive after connection.stop(); "
-                        "scope safety cleanup for spawn %s",
-                        _pre_stop_pid,
-                        spawn_id,
-                    )
-                    from meridian.lib.platform.process_scope.fallback import terminate_tree_sync
-
-                    await asyncio.to_thread(
-                        terminate_tree_sync,
-                        pid=_pre_stop_pid,
-                        created_at_epoch=_pre_stop_scope.root_created_at_epoch,
-                        grace_secs=5.0,
-                        reason="stop_safety_pass",
-                        scope_id=_pre_stop_scope.scope_id,
-                    )
+            await self._stop_connection_with_scope_safety(
+                spawn_id,
+                session,
+                reason="stop_spawn",
+            )
 
         # Give drain loop time to persist remaining events after connection closes.
         # The drain loop exits naturally once events() terminates, but enforce a
@@ -907,7 +879,11 @@ class SpawnManager:
                 cleanup_status="running",
             )
             try:
-                stop_result = await session.connection.stop(reason="quiescent")
+                stop_result = await self._stop_connection_with_scope_safety(
+                    spawn_id,
+                    session,
+                    reason="quiescent",
+                )
                 cleanup_status = "escalated" if stop_result.escalated else "completed"
                 if stop_result.escalated:
                     self._emit_pi_phase_event(
@@ -933,11 +909,58 @@ class SpawnManager:
                 )
         else:
             with suppress(Exception):
-                await session.connection.stop()
+                await self._stop_connection_with_scope_safety(
+                    spawn_id,
+                    session,
+                    reason="quiescent",
+                )
         with suppress(Exception):
             await session.control_server.stop()
         await self._observers.shutdown(spawn_id)
         self._history_writers.pop(spawn_id, None)
+
+    async def _stop_connection_with_scope_safety(
+        self,
+        spawn_id: SpawnId,
+        session: SpawnSession,
+        *,
+        reason: str,
+    ) -> StopResult:
+        """Stop a connection and force-clean its captured backend scope if needed."""
+
+        # Capture scope state BEFORE connection.stop() — both connections clear
+        # subprocess_pid and scope_snapshot inside stop(), so reading them after
+        # would always yield None and make the safety pass a no-op.
+        pre_stop_pid = session.connection.subprocess_pid
+        pre_stop_scope = getattr(session.connection, "scope_snapshot", None)
+        try:
+            return await session.connection.stop(reason=reason)
+        finally:
+            with suppress(Exception):
+                if pre_stop_pid is not None and pre_stop_scope is not None:
+                    try:
+                        proc = psutil.Process(pre_stop_pid)
+                    except (psutil.NoSuchProcess, psutil.AccessDenied):
+                        proc = None
+                    if proc is not None and proc.is_running():
+                        logger.warning(
+                            "Process %d still alive after connection.stop(); "
+                            "scope safety cleanup for spawn %s",
+                            pre_stop_pid,
+                            spawn_id,
+                        )
+                        from meridian.lib.platform.process_scope.fallback import (
+                            terminate_tree_sync,
+                        )
+
+                        await asyncio.to_thread(
+                            terminate_tree_sync,
+                            pid=pre_stop_pid,
+                            created_at_epoch=pre_stop_scope.root_created_at_epoch,
+                            grace_secs=5.0,
+                            reason="stop_safety_pass",
+                            scope_id=pre_stop_scope.scope_id,
+                        )
 
     def _resolve_completion_future(
         self,

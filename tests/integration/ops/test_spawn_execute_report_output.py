@@ -107,6 +107,9 @@ def test_execute_spawn_blocking_pre_init_failure_returns_failed_output(
             model="gpt-5.4",
             harness="opencode",
             agent="browser-prober",
+            task_cwd="/tmp/browser-work",
+            task_cwd_source="explicit-task-dir",
+            task_cwd_work_item="browser-investigation",
         ),
         runtime=runtime,
     )
@@ -122,6 +125,8 @@ def test_execute_spawn_blocking_pre_init_failure_returns_failed_output(
     assert result.to_wire()["message"] == result.message
     assert result.to_wire()["model"] == "gpt-5.4"
     assert result.to_wire()["harness_id"] == "opencode"
+    assert result.to_wire()["task_cwd_source"] == "explicit-task-dir"
+    assert result.to_wire()["task_cwd_work_item"] == "browser-investigation"
 
 
 def test_execute_spawn_background_pre_init_failure_returns_failed_output(
@@ -146,6 +151,9 @@ def test_execute_spawn_background_pre_init_failure_returns_failed_output(
             model="gpt-5.4",
             harness="opencode",
             agent="browser-prober",
+            task_cwd="/tmp/browser-work",
+            task_cwd_source="explicit-task-dir",
+            task_cwd_work_item="browser-investigation",
         ),
         runtime=runtime,
     )
@@ -161,3 +169,5 @@ def test_execute_spawn_background_pre_init_failure_returns_failed_output(
     assert result.to_wire()["message"] == result.message
     assert result.to_wire()["model"] == "gpt-5.4"
     assert result.to_wire()["harness_id"] == "opencode"
+    assert result.to_wire()["task_cwd_source"] == "explicit-task-dir"
+    assert result.to_wire()["task_cwd_work_item"] == "browser-investigation"

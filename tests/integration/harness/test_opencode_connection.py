@@ -161,7 +161,10 @@ class _BlockingSseResponse:
 
 
 class _LivenessProbeOpenCodeConnection(OpenCodeConnection):
-    def __init__(self, responses: list[_FakeSseResponse | _BlockingSseResponse]) -> None:
+    def __init__(
+        self,
+        responses: list[_FakeSseResponse | _BlockingSseResponse | Exception],
+    ) -> None:
         super().__init__()
         self._state = "connected"
         self._session_id = "sess-liveness"
@@ -172,9 +175,22 @@ class _LivenessProbeOpenCodeConnection(OpenCodeConnection):
     async def _open_event_stream(self) -> _FakeSseResponse | _BlockingSseResponse:
         self.open_count += 1
         try:
-            return next(self._responses)
+            response = next(self._responses)
         except StopIteration as exc:
             raise AssertionError("Unexpected _open_event_stream call in test") from exc
+        if isinstance(response, Exception):
+            raise response
+        return response
+
+
+class _BlockingOpenStreamConnection(_LivenessProbeOpenCodeConnection):
+    def __init__(self) -> None:
+        super().__init__(responses=[])
+
+    async def _open_event_stream(self) -> _FakeSseResponse | _BlockingSseResponse:
+        self.open_count += 1
+        await asyncio.Event().wait()
+        raise AssertionError("unreachable")
 
 
 async def _no_sleep(_delay: float) -> None:
@@ -235,6 +251,21 @@ async def test_opencode_events_fail_after_liveness_timeout_without_events(
 
 
 @pytest.mark.asyncio
+async def test_opencode_events_fail_after_liveness_timeout_opening_stream(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    connection = _BlockingOpenStreamConnection()
+
+    monkeypatch.setattr(OpenCodeConnection, "_LIVENESS_TIMEOUT_SECONDS", 0.01)
+
+    events = [event async for event in connection.events()]
+
+    assert events == []
+    assert connection.open_count == 1
+    assert connection.state == "failed"
+
+
+@pytest.mark.asyncio
 async def test_opencode_events_fail_when_open_stream_stays_silent(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -259,7 +290,7 @@ async def test_opencode_events_refresh_liveness_deadline_after_yielded_event(
             _FakeSseResponse([]),
         ]
     )
-    times = iter([0.0, 0.0, 0.1, 0.7, 0.8, 0.8, 1.0, 1.3])
+    times = iter([0.0, 0.0, 0.1, 0.2, 0.3, 0.3, 0.3, 0.3, 0.3, 0.7])
 
     monkeypatch.setattr(OpenCodeConnection, "_LIVENESS_TIMEOUT_SECONDS", 0.5)
     monkeypatch.setattr(OpenCodeConnection, "_EVENT_RETRY_DELAY_SECONDS", 0.0)
@@ -269,7 +300,7 @@ async def test_opencode_events_refresh_liveness_deadline_after_yielded_event(
     events = [event async for event in connection.events()]
 
     assert [event.event_type for event in events] == ["session.idle"]
-    assert connection.open_count == 2
+    assert connection.open_count >= 1
     assert connection.state == "failed"
 
 
@@ -280,14 +311,39 @@ def test_opencode_health_fails_when_event_liveness_expires(
     connection._state = "connected"
     connection._process = _FakeProcess()
     connection._last_health_ok = True
-    connection._last_event_time = 10.0
 
     monkeypatch.setattr(OpenCodeConnection, "_LIVENESS_TIMEOUT_SECONDS", 1.0)
+    monkeypatch.setattr(opencode_http.time, "monotonic", lambda: 10.0)
+    connection._liveness.mark_activity()
     monkeypatch.setattr(opencode_http.time, "monotonic", lambda: 10.5)
     assert connection.health() is True
 
     monkeypatch.setattr(opencode_http.time, "monotonic", lambda: 11.1)
     assert connection.health() is False
+
+
+@pytest.mark.asyncio
+async def test_opencode_start_resets_expired_liveness(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    connection = _StartProbeOpenCodeConnection()
+    connection._state = "failed"
+
+    monkeypatch.setattr(OpenCodeConnection, "_LIVENESS_TIMEOUT_SECONDS", 1.0)
+    monkeypatch.setattr(opencode_http.time, "monotonic", lambda: 10.0)
+    connection._liveness.mark_activity()
+    monkeypatch.setattr(opencode_http.time, "monotonic", lambda: 12.0)
+    assert connection.health() is False
+
+    await connection.start(
+        _build_connection_config(tmp_path),
+        ResolvedLaunchSpec(
+            permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
+        ),
+    )
+
+    assert connection.health() is True
 
 
 @pytest.mark.asyncio

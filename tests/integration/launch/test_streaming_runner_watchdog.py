@@ -31,6 +31,7 @@ from meridian.lib.launch.request import (
     SpawnRequest,
 )
 from meridian.lib.platform.process_scope import ProcessScopeSnapshot
+from meridian.lib.platform.process_scope import fallback as process_scope_fallback
 from meridian.lib.state import spawn_store
 from meridian.lib.state.artifact_store import LocalStore
 from meridian.lib.state.paths import (
@@ -297,6 +298,10 @@ class _PiTimeoutWithoutTerminalConnection:
 
 
 class _OpenCodeTerminalWithScopeConnection:
+    harness = HarnessId.OPENCODE
+    terminal_event_type = "session.idle"
+    terminal_payload_session_key = "sessionID"
+
     def __init__(self) -> None:
         self.state = "created"
         self._spawn_id = SpawnId("")
@@ -324,7 +329,7 @@ class _OpenCodeTerminalWithScopeConnection:
 
     @property
     def harness_id(self) -> HarnessId:
-        return HarnessId.OPENCODE
+        return self.harness
 
     @property
     def spawn_id(self) -> SpawnId:
@@ -389,10 +394,30 @@ class _OpenCodeTerminalWithScopeConnection:
         spawn_dir.mkdir(parents=True, exist_ok=True)
         (spawn_dir / "report.md").write_text("# Done\n\nOpenCode completed.\n", encoding="utf-8")
         yield HarnessEvent(
-            event_type="session.idle",
-            harness_id="opencode",
-            payload={"type": "session.idle", "sessionID": self._session_id},
+            event_type=self.terminal_event_type,
+            harness_id=self.harness.value,
+            payload={
+                "type": self.terminal_event_type,
+                self.terminal_payload_session_key: self._session_id,
+            },
         )
+
+
+class _CodexTerminalWithScopeConnection(_OpenCodeTerminalWithScopeConnection):
+    harness = HarnessId.CODEX
+    terminal_event_type = "turn/completed"
+    terminal_payload_session_key = "threadId"
+
+
+class _AlwaysRunningProcess:
+    def __init__(self, pid: int) -> None:
+        self.pid = pid
+
+    def is_running(self) -> bool:
+        return True
+
+    def create_time(self) -> float:
+        return 12_345.0
 
 
 class _EndMonotonicFailsClock(FakeClock):
@@ -570,9 +595,19 @@ async def test_execute_with_streaming_succeeds_after_report_watchdog_cleanup(
 
 
 @pytest.mark.asyncio
-async def test_execute_with_streaming_cleans_up_opencode_scope_before_finalize(
+@pytest.mark.parametrize(
+    ("harness_id", "connection_cls", "spawn_request"),
+    (
+        (HarnessId.OPENCODE, _OpenCodeTerminalWithScopeConnection, _build_opencode_request()),
+        (HarnessId.CODEX, _CodexTerminalWithScopeConnection, _build_request()),
+    ),
+)
+async def test_execute_with_streaming_routes_backend_cleanup_through_stop_spawn(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    harness_id: HarnessId,
+    connection_cls: type[_OpenCodeTerminalWithScopeConnection],
+    spawn_request: SpawnRequest,
 ) -> None:
     runtime_root = resolve_project_runtime_root(tmp_path)
     artifacts = LocalStore(root_dir=tmp_path / ".artifacts")
@@ -582,31 +617,122 @@ async def test_execute_with_streaming_cleans_up_opencode_scope_before_finalize(
     fake_heartbeat.set_clock(fake_clock)
     cleanup_calls: list[tuple[int, float, float, str, str | None]] = []
 
-    def _fake_terminate_scope_sync(
-        scope: ProcessScopeSnapshot,
+    def _fake_terminate_tree_sync(
         *,
-        grace_seconds: float,
+        pid: int,
+        created_at_epoch: float,
+        grace_secs: float,
         reason: str,
+        scope_id: str,
     ) -> object:
-        row = spawn_store.get_spawn(runtime_root, SpawnId(scope.owner_id))
+        _ = scope_id
+        row = spawn_store.get_spawn(runtime_root, run.spawn_id)
         cleanup_calls.append(
             (
-                scope.root_pid,
-                scope.root_created_at_epoch,
-                grace_seconds,
+                pid,
+                created_at_epoch,
+                grace_secs,
                 reason,
                 row.status if row is not None else None,
             )
         )
         return object()
 
+    monkeypatch.setattr(spawn_manager_module.psutil, "Process", _AlwaysRunningProcess)
+    monkeypatch.setattr(process_scope_fallback, "terminate_tree_sync", _fake_terminate_tree_sync)
     monkeypatch.setattr(spawn_manager_module, "ControlSocketServer", _FakeControlSocketServer)
+
+    def _get_connection_class(
+        _harness_id: HarnessId,
+        _transport_id: TransportId = TransportId.STREAMING,
+    ) -> type[_OpenCodeTerminalWithScopeConnection]:
+        return connection_cls
+
     monkeypatch.setattr(
         "meridian.lib.harness.connections.get_connection_class",
-        lambda _harness_id,
-        _transport_id=TransportId.STREAMING: _OpenCodeTerminalWithScopeConnection,
+        _get_connection_class,
     )
-    monkeypatch.setattr(streaming_runner_module, "terminate_scope_sync", _fake_terminate_scope_sync)
+
+    run = Spawn(
+        spawn_id=SpawnId(f"r-{harness_id.value}-cleanup"),
+        prompt="hello",
+        model=ModelId("gpt-5.3-codex" if harness_id is HarnessId.CODEX else "gpt-5.4"),
+        status="queued",
+    )
+    spawn_store.start_spawn(
+        runtime_root,
+        chat_id=f"test-chat-{harness_id.value}-cleanup",
+        model=str(run.model),
+        agent="",
+        harness=harness_id.value,
+        kind="streaming",
+        prompt=run.prompt,
+        spawn_id=run.spawn_id,
+        launch_mode="foreground",
+        status="queued",
+    )
+
+    exit_code = await asyncio.wait_for(
+        _execute_with_context(
+            run,
+            request=spawn_request,
+            project_root=tmp_path,
+            runtime_root=runtime_root,
+            artifacts=artifacts,
+            registry=registry,
+            clock=fake_clock,
+            heartbeat_touch=fake_heartbeat.touch,
+            heartbeat_interval_secs=0.001,
+        ),
+        timeout=15.0,
+    )
+
+    assert exit_code == 0
+    assert cleanup_calls == [(73737, 12_345.0, 5.0, "stop_safety_pass", "running")]
+    row = spawn_store.get_spawn(runtime_root, run.spawn_id)
+    assert row is not None
+    assert row.status == "succeeded"
+
+
+@pytest.mark.asyncio
+async def test_execute_with_streaming_does_not_run_streaming_runner_scope_cleanup(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime_root = resolve_project_runtime_root(tmp_path)
+    artifacts = LocalStore(root_dir=tmp_path / ".artifacts")
+    registry = HarnessRegistry.with_defaults()
+    fake_clock = FakeClock(start=1_000.0)
+    fake_heartbeat = FakeHeartbeat()
+    fake_heartbeat.set_clock(fake_clock)
+
+    def _fail_if_runner_cleanup_exists(
+        scope: ProcessScopeSnapshot,
+        *,
+        grace_seconds: float,
+        reason: str,
+    ) -> object:
+        _ = scope, grace_seconds, reason
+        raise AssertionError("streaming_runner must not own backend scope cleanup")
+
+    monkeypatch.setattr(spawn_manager_module, "ControlSocketServer", _FakeControlSocketServer)
+
+    def _get_connection_class(
+        _harness_id: HarnessId,
+        _transport_id: TransportId = TransportId.STREAMING,
+    ) -> type[_OpenCodeTerminalWithScopeConnection]:
+        return _OpenCodeTerminalWithScopeConnection
+
+    monkeypatch.setattr(
+        "meridian.lib.harness.connections.get_connection_class",
+        _get_connection_class,
+    )
+    monkeypatch.setattr(
+        streaming_runner_module,
+        "terminate_scope_sync",
+        _fail_if_runner_cleanup_exists,
+        raising=False,
+    )
 
     run = Spawn(
         spawn_id=SpawnId("r-opencode-cleanup"),
@@ -643,7 +769,6 @@ async def test_execute_with_streaming_cleans_up_opencode_scope_before_finalize(
     )
 
     assert exit_code == 0
-    assert cleanup_calls == [(73737, 12_345.0, 2.0, "streaming_finalize", "running")]
     row = spawn_store.get_spawn(runtime_root, run.spawn_id)
     assert row is not None
     assert row.status == "succeeded"

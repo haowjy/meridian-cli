@@ -219,20 +219,24 @@ class SpawnActionOutput(BaseModel):
             wire["report"] = self.report
         if self.error is not None:
             wire["error"] = self.error
-            if self.error == "pre_init_failed":
-                if self.message is not None:
-                    wire["message"] = self.message
-                if self.model is not None:
-                    wire["model"] = self.model
-                if self.harness_id is not None:
-                    wire["harness_id"] = self.harness_id
+        if self.status == "failed" and self.spawn_id is None:
+            if self.message is not None:
+                wire["message"] = self.message
+            if self.model is not None:
+                wire["model"] = self.model
+            if self.harness_id is not None:
+                wire["harness_id"] = self.harness_id
         if self.warning is not None:
             wire["warning"] = self.warning
         if self.exit_code is not None:
             wire["exit_code"] = self.exit_code
         if self.context_from_resolved:
             wire["context_from_resolved"] = list(self.context_from_resolved)
-        include_task_context = self.status == "dry-run" or self._has_distinct_task_cwd()
+        include_task_context = (
+            self.status == "dry-run"
+            or (self.status == "failed" and self.spawn_id is None)
+            or self._has_distinct_task_cwd()
+        )
         if include_task_context:
             if self.task_cwd is not None:
                 wire["task_cwd"] = self.task_cwd

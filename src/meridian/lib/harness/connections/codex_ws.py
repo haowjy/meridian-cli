@@ -15,7 +15,7 @@ from asyncio.subprocess import Process
 from collections.abc import AsyncIterator, Awaitable, Callable
 from io import BufferedWriter
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Final, cast
+from typing import TYPE_CHECKING, Any, ClassVar, Final, cast
 
 import psutil
 from aiohttp import ClientSession, WSMsgType
@@ -53,6 +53,10 @@ from meridian.lib.harness.connections.base import (
     validate_prompt_size,
 )
 from meridian.lib.harness.connections.errors import PortBindError
+from meridian.lib.harness.connections.liveness import (
+    EventStreamLiveness,
+    EventStreamLivenessTimeout,
+)
 from meridian.lib.harness.errors import HarnessBinaryNotFound
 from meridian.lib.harness.semantics import clears_signal
 from meridian.lib.launch.env import inherit_child_env
@@ -164,6 +168,8 @@ async def _aiohttp_connect(ws_url: str) -> _AiohttpWebSocketCompat:
 class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
     """JSON-RPC 2.0 bridge between Meridian and Codex app-server."""
 
+    _LIVENESS_TIMEOUT_SECONDS: ClassVar[float] = 120.0
+
     _ALLOWED_TRANSITIONS: Final[dict[ConnectionState, set[ConnectionState]]] = {
         "created": {"starting", "stopping", "stopped", "failed"},
         "starting": {"connected", "stopping", "stopped", "failed"},
@@ -194,6 +200,10 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
         self._pending_requests: dict[int, asyncio.Future[dict[str, object]]] = {}
         self._hitl_requests: dict[str, object] = {}
         self._event_queue: asyncio.Queue[HarnessEvent | None] = asyncio.Queue()
+        self._liveness = EventStreamLiveness(
+            timeout_seconds=lambda: self._LIVENESS_TIMEOUT_SECONDS,
+            now=lambda: _time.monotonic(),
+        )
 
         self._current_turn_id: str | None = None
         self._thread_id: str | None = None
@@ -309,6 +319,7 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
         self._current_turn_id = None
         self._thread_id = None
         self._main_turn_thread_id = None
+        self._liveness.reset()
         self._cancel_requested = False
         self._signal_in_flight = False
 
@@ -436,6 +447,7 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
                 await self._send_bootstrap_turn_and_wait()
 
             self._transition("connected")
+            self._liveness.mark_activity()
             self._emit_startup_phase(StartupPhase.HARNESS_READY)
         except Exception:
             self._emit_startup_phase(StartupPhase.HARNESS_FAILED)
@@ -499,7 +511,12 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
     def health(self) -> bool:
         process_running = self._process is not None and self._process.returncode is None
         ws_open = self._ws is not None and _ws_is_open(self._ws)
-        return self._state == "connected" and process_running and ws_open
+        return (
+            self._state == "connected"
+            and process_running
+            and ws_open
+            and self._liveness.healthy()
+        )
 
     async def send_user_message(self, text: str) -> None:
         self._require_connected("send_user_message")
@@ -680,7 +697,31 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
             return
 
         try:
-            async for raw_message in ws:
+            ws_iter = ws.__aiter__()
+            while True:
+                try:
+                    raw_message = await self._liveness.wait_for_activity(ws_iter.__anext__())
+                except StopAsyncIteration:
+                    return
+                except EventStreamLivenessTimeout:
+                    message = (
+                        "Codex event stream liveness timeout after "
+                        f"{self._LIVENESS_TIMEOUT_SECONDS:.1f}s without events"
+                    )
+                    logger.warning(message)
+                    if self._state in {"starting", "connected"}:
+                        self._emit_startup_phase(StartupPhase.HARNESS_FAILED)
+                        self._transition("failed")
+                        await self._event_queue.put(
+                            HarnessEvent(
+                                event_type="error/connectionClosed",
+                                payload={"message": message},
+                                harness_id=self.harness_id.value,
+                                raw_text=None,
+                            )
+                        )
+                    return
+                self._liveness.mark_activity()
                 raw_text = _coerce_text(raw_message)
                 if self._tracer is not None:
                     self._tracer.emit(

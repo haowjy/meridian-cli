@@ -40,6 +40,10 @@ from meridian.lib.harness.connections.base import (
     validate_prompt_size,
 )
 from meridian.lib.harness.connections.errors import PortBindError
+from meridian.lib.harness.connections.liveness import (
+    EventStreamLiveness,
+    EventStreamLivenessTimeout,
+)
 from meridian.lib.harness.errors import HarnessBinaryNotFound
 from meridian.lib.harness.projections.project_opencode_streaming import (
     project_opencode_spec_to_session_payload as _project_opencode_spec_to_session_payload,
@@ -169,7 +173,10 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
         self._session_id: str | None = None
         self._event_path: str | None = None
         self._last_health_ok = False
-        self._last_event_time: float | None = None
+        self._liveness = EventStreamLiveness(
+            timeout_seconds=lambda: self._LIVENESS_TIMEOUT_SECONDS,
+            now=lambda: time.monotonic(),
+        )
         self._tracer: DebugTracer | None = None
         self._cancel_requested = False
         self._signal_in_flight = False
@@ -241,6 +248,7 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
         self._config = config
         self._spawn_id = config.spawn_id
         self._tracer = config.debug_tracer
+        self._liveness.reset()
         self._startup_emitter = StartupPhaseEmitter(
             str(config.spawn_id),
             harness_id=config.harness_id.value,
@@ -308,11 +316,7 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
         if self._state not in {"starting", "connected"}:
             return False
         process_running = self._process is not None and self._process.returncode is None
-        last_event_time = self._last_event_time
-        if (
-            last_event_time is not None
-            and time.monotonic() - last_event_time > self._LIVENESS_TIMEOUT_SECONDS
-        ):
+        if not self._liveness.healthy():
             return False
         return process_running and self._last_health_ok
 
@@ -348,12 +352,11 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
         if self._session_id is None:
             return
 
-        self._last_event_time = time.monotonic()
         sse_event_type: str | None = None
         sse_data_lines: list[str] = []
 
         while self._state in ("connected", "stopping"):
-            if time.monotonic() - self._last_event_time > self._LIVENESS_TIMEOUT_SECONDS:
+            if self._liveness.expired():
                 logger.warning(
                     "OpenCode event stream liveness timeout after %.1fs without events",
                     self._LIVENESS_TIMEOUT_SECONDS,
@@ -364,8 +367,16 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
                 self._set_failed()
                 return
 
+            self._liveness.mark_activity_if_idle()
             try:
-                response = await self._open_event_stream()
+                response = await self._liveness.wait_for_activity(self._open_event_stream())
+            except EventStreamLivenessTimeout:
+                logger.warning(
+                    "OpenCode event stream liveness timeout after %.1fs without events",
+                    self._LIVENESS_TIMEOUT_SECONDS,
+                )
+                self._set_failed()
+                return
             except Exception as exc:
                 if self._state in ("stopping", "stopped"):
                     return
@@ -379,22 +390,11 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
             buffer = ""
             try:
                 while self._state not in ("stopping", "stopped", "failed"):
-                    remaining_liveness_seconds = self._LIVENESS_TIMEOUT_SECONDS - (
-                        time.monotonic() - self._last_event_time
-                    )
-                    if remaining_liveness_seconds <= 0:
-                        logger.warning(
-                            "OpenCode event stream liveness timeout after %.1fs without events",
-                            self._LIVENESS_TIMEOUT_SECONDS,
-                        )
-                        self._set_failed()
-                        return
                     try:
-                        chunk = await asyncio.wait_for(
-                            response.content.read(4096),
-                            timeout=remaining_liveness_seconds,
+                        chunk = await self._liveness.wait_for_activity(
+                            response.content.read(4096)
                         )
-                    except TimeoutError:
+                    except EventStreamLivenessTimeout:
                         logger.warning(
                             "OpenCode event stream liveness timeout after %.1fs without events",
                             self._LIVENESS_TIMEOUT_SECONDS,
@@ -403,6 +403,7 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
                         return
                     if not chunk:
                         break
+                    self._liveness.mark_activity()
                     buffer += chunk.decode("utf-8", errors="replace")
                     while True:
                         newline_index = buffer.find("\n")
@@ -423,20 +424,20 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
                                     direction="inbound",
                                     data={"event_type": event.event_type},
                                 )
-                            self._last_event_time = time.monotonic()
+                            self._liveness.mark_activity()
                             yield event
 
                 if buffer.strip():
                     event = self._event_from_json_line(buffer.strip(), raw_text=buffer.strip())
                     if event is not None:
-                        self._last_event_time = time.monotonic()
+                        self._liveness.mark_activity()
                         yield event
                 final_sse_event = self._flush_sse_event(
                     sse_event_type=sse_event_type,
                     sse_data_lines=sse_data_lines,
                 )
                 if final_sse_event is not None:
-                    self._last_event_time = time.monotonic()
+                    self._liveness.mark_activity()
                     yield final_sse_event
                 sse_event_type = None
             finally:
@@ -904,6 +905,7 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
         return self._aiohttp_module
 
     async def _cleanup_runtime(self) -> None:
+        self._liveness.reset()
         client = self._client
         self._client = None
         if client is not None:
