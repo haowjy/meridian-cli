@@ -134,6 +134,28 @@ def _resolve_execution_contract(
     )
 
 
+def _pre_init_failed_output(*, request: SpawnRequest, exc: Exception) -> SpawnActionOutput:
+    return SpawnActionOutput(
+        command="spawn.create",
+        status="failed",
+        message=f"Spawn setup failed before initialization: {exc}",
+        error="pre_init_failed",
+        model=request.model or "",
+        harness_id=request.harness or "",
+        warning=request.warning,
+        agent=request.agent,
+        reference_files=request.reference_files,
+        template_vars=request.template_vars,
+        context_from_resolved=request.context_from,
+        exit_code=1,
+        authority_root=request.authority_root or None,
+        task_cwd=request.task_cwd or None,
+        reference_anchor=request.reference_anchor or request.task_cwd or None,
+        task_cwd_source=request.task_cwd_source,
+        task_cwd_work_item=request.task_cwd_work_item,
+    )
+
+
 def execute_spawn_background(
     *,
     payload: SpawnCreateInput,
@@ -141,17 +163,22 @@ def execute_spawn_background(
     runtime: OperationRuntime,
     ctx: RuntimeContext | None = None,
 ) -> SpawnActionOutput:
-    resolved_context = runtime_context(ctx)
-    project_paths = resolve_project_config_paths(
-        project_root=runtime.project_root,
-        execution_cwd=runtime.authority.execution_cwd,
-    )
-    execution_contract = _resolve_execution_contract(
-        request=request,
-        project_paths=project_paths,
-        payload=payload,
-        ambient_work_id=resolved_context.work_id,
-    )
+    try:
+        resolved_context = runtime_context(ctx)
+        project_paths = resolve_project_config_paths(
+            project_root=runtime.project_root,
+            execution_cwd=runtime.authority.execution_cwd,
+        )
+        execution_contract = _resolve_execution_contract(
+            request=request,
+            project_paths=project_paths,
+            payload=payload,
+            ambient_work_id=resolved_context.work_id,
+        )
+    except Exception as exc:
+        logger.exception("Spawn setup failed before initialization.")
+        return _pre_init_failed_output(request=request, exc=exc)
+
     initial_execution_cwd = execution_contract.execution_cwd.as_posix()
     initial_task_cwd = execution_contract.task_cwd
     if payload.stream:
@@ -395,17 +422,22 @@ def execute_spawn_blocking(
     ctx: RuntimeContext | None = None,
     prepared: PreparedLaunchSurface | None = None,
 ) -> SpawnActionOutput:
-    resolved_context = runtime_context(ctx)
-    project_paths = resolve_project_config_paths(
-        project_root=runtime.project_root,
-        execution_cwd=runtime.authority.execution_cwd,
-    )
-    execution_contract = _resolve_execution_contract(
-        request=request,
-        project_paths=project_paths,
-        payload=payload,
-        ambient_work_id=resolved_context.work_id,
-    )
+    try:
+        resolved_context = runtime_context(ctx)
+        project_paths = resolve_project_config_paths(
+            project_root=runtime.project_root,
+            execution_cwd=runtime.authority.execution_cwd,
+        )
+        execution_contract = _resolve_execution_contract(
+            request=request,
+            project_paths=project_paths,
+            payload=payload,
+            ambient_work_id=resolved_context.work_id,
+        )
+    except Exception as exc:
+        logger.exception("Spawn setup failed before initialization.")
+        return _pre_init_failed_output(request=request, exc=exc)
+
     initial_execution_cwd = execution_contract.execution_cwd.as_posix()
     initial_task_cwd = execution_contract.task_cwd
     context = _init_spawn(

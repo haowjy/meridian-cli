@@ -7,7 +7,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Fixed
 - OpenCode streaming now fails stale SSE connections after the liveness window instead of reconnecting forever with no events.
 - Streaming finalization now performs a backend scope cleanup pass for any harness with a `ProcessScopeSnapshot` (OpenCode, Codex) so completed spawns do not leave orphaned backend processes behind.
-- Spawn setup failures before spawn-row initialization now return a failed spawn output instead of leaving callers with no error.
+- Spawn setup failures before spawn-row initialization, including payload validation, now return a failed spawn output instead of leaving callers with no error.
 
 ## [0.3.0] - 2026-06-06
 

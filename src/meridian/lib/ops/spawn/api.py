@@ -255,6 +255,29 @@ def _merge_warnings(*warnings: str | None) -> str | None:
     return " ".join(merged)
 
 
+def _pre_init_failed_output_from_payload(
+    *,
+    payload: SpawnCreateInput,
+    exc: Exception,
+) -> SpawnActionOutput:
+    return SpawnActionOutput(
+        command="spawn.create",
+        status="failed",
+        message=f"Spawn setup failed before initialization: {exc}",
+        error="pre_init_failed",
+        model=payload.model or "",
+        harness_id=payload.harness or "",
+        agent=payload.agent,
+        skills=payload.skills,
+        reference_files=payload.files,
+        context_from_resolved=payload.context_from,
+        exit_code=1,
+        authority_root=payload.project_root,
+        task_cwd=payload.task_dir,
+        reference_anchor=payload.task_dir or payload.project_root,
+    )
+
+
 def spawn_create_sync(
     payload: SpawnCreateInput,
     ctx: RuntimeContext | None = None,
@@ -262,75 +285,79 @@ def spawn_create_sync(
     sink: OutputSink | None = None,
     prepared: RuntimeWriteContext | None = None,
 ) -> SpawnActionOutput:
-    prepared_context = prepared
-    register_debug_trace_observer()
-    resolved_context = runtime_context(ctx)
-    spawn_env_id = os.environ.get("MERIDIAN_SPAWN_ID")
-    logical_owner = spawn_env_id if spawn_env_id else "cli"
-    authority = None
-    if prepared_context is not None:
-        resolved_root = _project_root_from_prepared(prepared_context)
-        config = _config_from_prepared(prepared_context)
-        authority = prepared_context.authority
-        register_spawn_telemetry_observer()
-    elif payload.dry_run:
-        authority = resolve_runtime_authority_for_read(payload.project_root)
-        resolved_root = authority.project_root
-        config = load_config(resolved_root, authority=authority)
-        setup_telemetry(runtime_root=None, logical_owner=logical_owner)
-        register_spawn_telemetry_observer()
-    else:
-        authority = resolve_runtime_authority_for_write(payload.project_root)
-        resolved_root = authority.project_root
-        config = load_config(resolved_root, authority=authority)
-        setup_telemetry(
-            runtime_root=authority.runtime_root,
-            logical_owner=logical_owner,
-        )
-        register_spawn_telemetry_observer()
-    payload = payload.model_copy(update={"project_root": resolved_root.as_posix()})
-    payload, preflight_warning = validate_create_input(payload)
-    dry_run_work_warning: str | None = None
-    if payload.dry_run and payload.work.strip():
-        project_local_root = resolve_project_paths(resolved_root).root_dir
-        resolved_work_id, work_exists = _lookup_explicit_work_item(
-            project_state_dir=project_local_root,
-            work_id=payload.work,
-        )
-        payload = payload.model_copy(update={"work": resolved_work_id})
-        if not work_exists:
-            dry_run_work_warning = (
-                f"Work item '{resolved_work_id}' does not exist. "
-                "Dry-run leaves state unchanged; it would be created on launch."
+    try:
+        prepared_context = prepared
+        register_debug_trace_observer()
+        resolved_context = runtime_context(ctx)
+        spawn_env_id = os.environ.get("MERIDIAN_SPAWN_ID")
+        logical_owner = spawn_env_id if spawn_env_id else "cli"
+        authority = None
+        if prepared_context is not None:
+            resolved_root = _project_root_from_prepared(prepared_context)
+            config = _config_from_prepared(prepared_context)
+            authority = prepared_context.authority
+            register_spawn_telemetry_observer()
+        elif payload.dry_run:
+            authority = resolve_runtime_authority_for_read(payload.project_root)
+            resolved_root = authority.project_root
+            config = load_config(resolved_root, authority=authority)
+            setup_telemetry(runtime_root=None, logical_owner=logical_owner)
+            register_spawn_telemetry_observer()
+        else:
+            authority = resolve_runtime_authority_for_write(payload.project_root)
+            resolved_root = authority.project_root
+            config = load_config(resolved_root, authority=authority)
+            setup_telemetry(
+                runtime_root=authority.runtime_root,
+                logical_owner=logical_owner,
+            )
+            register_spawn_telemetry_observer()
+        payload = payload.model_copy(update={"project_root": resolved_root.as_posix()})
+        payload, preflight_warning = validate_create_input(payload)
+        dry_run_work_warning: str | None = None
+        if payload.dry_run and payload.work.strip():
+            project_local_root = resolve_project_paths(resolved_root).root_dir
+            resolved_work_id, work_exists = _lookup_explicit_work_item(
+                project_state_dir=project_local_root,
+                work_id=payload.work,
+            )
+            payload = payload.model_copy(update={"work": resolved_work_id})
+            if not work_exists:
+                dry_run_work_warning = (
+                    f"Work item '{resolved_work_id}' does not exist. "
+                    "Dry-run leaves state unchanged; it would be created on launch."
+                )
+
+        runtime = None
+        if not payload.dry_run:
+            current_depth, max_depth = depth_limits(config.max_depth, ctx=resolved_context)
+            if max_depth_reached(current_depth, max_depth):
+                return depth_exceeded_output(current_depth, max_depth)
+        if prepared_context is not None:
+            from meridian.lib.harness.registry import get_default_harness_registry
+
+            runtime = OperationRuntime.from_prepared(
+                prepared_context,
+                harness_registry=get_default_harness_registry(),
+                sink=sink,
+            )
+        elif not payload.dry_run:
+            runtime = build_runtime_from_root_and_config(
+                resolved_root,
+                config,
+                authority=authority,
+                sink=sink,
             )
 
-    runtime = None
-    if not payload.dry_run:
-        current_depth, max_depth = depth_limits(config.max_depth, ctx=resolved_context)
-        if max_depth_reached(current_depth, max_depth):
-            return depth_exceeded_output(current_depth, max_depth)
-    if prepared_context is not None:
-        from meridian.lib.harness.registry import get_default_harness_registry
-
-        runtime = OperationRuntime.from_prepared(
-            prepared_context,
-            harness_registry=get_default_harness_registry(),
-            sink=sink,
+        artifacts = build_create_payload(
+            payload,
+            runtime=runtime,
+            preflight_warning=preflight_warning,
+            ctx=resolved_context,
         )
-    elif not payload.dry_run:
-        runtime = build_runtime_from_root_and_config(
-            resolved_root,
-            config,
-            authority=authority,
-            sink=sink,
-        )
+    except Exception as exc:
+        return _pre_init_failed_output_from_payload(payload=payload, exc=exc)
 
-    artifacts = build_create_payload(
-        payload,
-        runtime=runtime,
-        preflight_warning=preflight_warning,
-        ctx=resolved_context,
-    )
     prepared_request = artifacts.request
     prepared_surface = artifacts.prepared
     forked_from = _forked_from_output(payload)

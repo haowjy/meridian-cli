@@ -219,6 +219,13 @@ class SpawnActionOutput(BaseModel):
             wire["report"] = self.report
         if self.error is not None:
             wire["error"] = self.error
+            if self.error == "pre_init_failed":
+                if self.message is not None:
+                    wire["message"] = self.message
+                if self.model is not None:
+                    wire["model"] = self.model
+                if self.harness_id is not None:
+                    wire["harness_id"] = self.harness_id
         if self.warning is not None:
             wire["warning"] = self.warning
         if self.exit_code is not None:
