@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-06-07
+
 ### Added
 - Primary launches now accept `--task-dir`, matching spawn's explicit task-directory override and rejecting `--continue --task-dir` in favor of `--fork --task-dir`.
 
