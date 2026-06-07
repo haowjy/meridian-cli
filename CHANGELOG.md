@@ -6,6 +6,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 - Managed backend launch now goes through one `ManagedBackend.launch()` path for Codex/OpenCode/primary attach, and writes `backend_lifecycle.json` at launch for crash recovery.
+- `BackendLivenessPolicy` now owns managed-backend alive decisions (turn-aware silence suppression, process corroboration, stream-stall kill) for Codex and OpenCode connections.
 
 ### Fixed
 - Detached OpenCode/Codex backends now link to the worker lifetime and dead-worker reaping finalizes child spawns while cleaning recorded backend scopes.

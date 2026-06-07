@@ -39,8 +39,9 @@ from meridian.lib.harness.connections.base import (
 )
 from meridian.lib.harness.connections.errors import PortBindError
 from meridian.lib.harness.connections.liveness import (
-    EventStreamLiveness,
+    BackendLivenessPolicy,
     EventStreamLivenessTimeout,
+    LivenessDecision,
 )
 from meridian.lib.harness.connections.managed_backend import (
     ManagedBackend,
@@ -175,9 +176,11 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
         self._session_id: str | None = None
         self._event_path: str | None = None
         self._last_health_ok = False
-        self._liveness = EventStreamLiveness(
+        self._liveness = BackendLivenessPolicy(
             timeout_seconds=lambda: self._LIVENESS_TIMEOUT_SECONDS,
             now=lambda: time.monotonic(),
+            backend_pid=lambda: self._process.pid if self._process is not None else None,
+            backend_birth_time=self._backend_birth_time,
         )
         self._tracer: DebugTracer | None = None
         self._cancel_requested = False
@@ -223,6 +226,12 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
         if handle is None:
             return None
         return handle.snapshot
+
+    def _backend_birth_time(self) -> float | None:
+        snapshot = self.scope_snapshot
+        if snapshot is None:
+            return None
+        return snapshot.root_created_at_epoch
 
     @property
     def managed_backend(self) -> ManagedBackend | None:
@@ -326,7 +335,7 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
         if self._state not in {"starting", "connected"}:
             return False
         process_running = self._process is not None and self._process.returncode is None
-        if not self._liveness.healthy():
+        if not self._liveness.healthy:
             return False
         return process_running and self._last_health_ok
 
@@ -344,6 +353,7 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
         self._require_connected()
         self._cancel_requested = True
         self._signal_in_flight = True
+        self._liveness.signal_request_in_flight("cancel")
         self._transition("stopping")
         await self._post_session_action(
             path_templates=self._CANCEL_PATH_TEMPLATES,
@@ -366,7 +376,10 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
         sse_data_lines: list[str] = []
 
         while self._state in ("connected", "stopping"):
-            if self._liveness.expired():
+            if self._liveness.evaluate() in (
+                LivenessDecision.BACKEND_DEAD,
+                LivenessDecision.STREAM_STALLED,
+            ):
                 logger.warning(
                     "OpenCode event stream liveness timeout after %.1fs without events",
                     self._LIVENESS_TIMEOUT_SECONDS,
@@ -713,44 +726,49 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
         tolerate_incomplete_body: bool = False,
     ) -> tuple[int, object | None, str]:
         client = await self._ensure_http_client()
+        request_key = f"post:{path}"
         trace_wire_send(
             self._tracer,
             "http_post",
             json.dumps(dict(payload)),
             path=path,
         )
-        async with client.post(self._url(path), json=dict(payload)) as response:
-            status = int(response.status)
-            content_type = str(response.headers.get("Content-Type", "")).lower()
-            if skip_body_on_statuses is not None and status in skip_body_on_statuses:
-                response.release()
-                return status, None, content_type
-            try:
-                text_body = await response.text()
-            except Exception as exc:
-                aiohttp = self._ensure_aiohttp()
-                client_payload_error = getattr(aiohttp, "ClientPayloadError", None)
-                if (
-                    tolerate_incomplete_body
-                    and client_payload_error is not None
-                    and isinstance(exc, client_payload_error)
-                ):
-                    logger.warning(
-                        "Ignoring incomplete OpenCode response body on %s (status=%s)",
-                        path,
-                        status,
-                    )
+        self._liveness.signal_request_in_flight(request_key)
+        try:
+            async with client.post(self._url(path), json=dict(payload)) as response:
+                status = int(response.status)
+                content_type = str(response.headers.get("Content-Type", "")).lower()
+                if skip_body_on_statuses is not None and status in skip_body_on_statuses:
+                    response.release()
                     return status, None, content_type
-                raise
-        parsed_body = _parse_response_body(text_body)
-        trace_wire_recv(
-            self._tracer,
-            "http_response",
-            text_body,
-            path=path,
-            status=status,
-        )
-        return status, parsed_body, content_type
+                try:
+                    text_body = await response.text()
+                except Exception as exc:
+                    aiohttp = self._ensure_aiohttp()
+                    client_payload_error = getattr(aiohttp, "ClientPayloadError", None)
+                    if (
+                        tolerate_incomplete_body
+                        and client_payload_error is not None
+                        and isinstance(exc, client_payload_error)
+                    ):
+                        logger.warning(
+                            "Ignoring incomplete OpenCode response body on %s (status=%s)",
+                            path,
+                            status,
+                        )
+                        return status, None, content_type
+                    raise
+            parsed_body = _parse_response_body(text_body)
+            trace_wire_recv(
+                self._tracer,
+                "http_response",
+                text_body,
+                path=path,
+                status=status,
+            )
+            return status, parsed_body, content_type
+        finally:
+            self._liveness.signal_request_resolved(request_key)
 
     async def _open_event_stream(self) -> Any:
         client = await self._ensure_http_client()
@@ -888,6 +906,7 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
         )
         if clears_signal(event):
             self._signal_in_flight = False
+            self._liveness.signal_request_resolved("cancel")
         return event
 
     async def _ensure_http_client(self) -> Any:
@@ -939,6 +958,7 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
         self._last_health_ok = False
         self._cancel_requested = False
         self._signal_in_flight = False
+        self._liveness.signal_request_resolved("cancel")
         self._close_log_handles()
 
     def _url(self, path: str) -> str:

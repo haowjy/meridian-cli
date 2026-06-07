@@ -374,6 +374,15 @@ class _OpenCodeTerminalWithScopeConnection:
         progress: StopProgressCallback | None = None,
     ) -> StopResult:
         _ = reason, progress
+        scope = self._scope_snapshot
+        if scope is not None:
+            process_scope_fallback.terminate_tree_sync(
+                pid=scope.root_pid,
+                created_at_epoch=scope.root_created_at_epoch,
+                grace_secs=5.0,
+                reason="stop_called",
+                scope_id=scope.scope_id,
+            )
         self.state = "stopped"
         self._scope_snapshot = None
         return StopResult()
@@ -407,17 +416,6 @@ class _CodexTerminalWithScopeConnection(_OpenCodeTerminalWithScopeConnection):
     harness = HarnessId.CODEX
     terminal_event_type = "turn/completed"
     terminal_payload_session_key = "threadId"
-
-
-class _AlwaysRunningProcess:
-    def __init__(self, pid: int) -> None:
-        self.pid = pid
-
-    def is_running(self) -> bool:
-        return True
-
-    def create_time(self) -> float:
-        return 12_345.0
 
 
 class _EndMonotonicFailsClock(FakeClock):
@@ -638,7 +636,6 @@ async def test_execute_with_streaming_routes_backend_cleanup_through_stop_spawn(
         )
         return object()
 
-    monkeypatch.setattr(spawn_manager_module.psutil, "Process", _AlwaysRunningProcess)
     monkeypatch.setattr(process_scope_fallback, "terminate_tree_sync", _fake_terminate_tree_sync)
     monkeypatch.setattr(spawn_manager_module, "ControlSocketServer", _FakeControlSocketServer)
 
@@ -688,7 +685,7 @@ async def test_execute_with_streaming_routes_backend_cleanup_through_stop_spawn(
     )
 
     assert exit_code == 0
-    assert cleanup_calls == [(73737, 12_345.0, 5.0, "stop_safety_pass", "running")]
+    assert cleanup_calls == [(73737, 12_345.0, 5.0, "stop_called", "running")]
     row = spawn_store.get_spawn(runtime_root, run.spawn_id)
     assert row is not None
     assert row.status == "succeeded"
