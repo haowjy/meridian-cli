@@ -42,6 +42,7 @@ from meridian.cli.bootstrap import (
 )
 from meridian.cli.bootstrap import (
     maybe_bootstrap_runtime_state,
+    meridian_managed_env_default,
     temporary_config_env,
 )
 from meridian.cli.bootstrap import (
@@ -418,6 +419,17 @@ def root(
         str,
         Parameter(name="--work", help="Attach the primary session to a work item id."),
     ] = "",
+    task_dir: Annotated[
+        str | None,
+        Parameter(
+            name="--task-dir",
+            help=(
+                "Override the source-code edit directory for this primary launch only. "
+                "Does not modify the work item's task_dir setting. "
+                "Relative -f paths resolve against this directory."
+            ),
+        ),
+    ] = None,
     yolo: Annotated[
         bool,
         Parameter(
@@ -496,29 +508,36 @@ def root(
             f"Conflicting harness selections: '{global_harness}' and '{explicit_harness}'."
         )
 
-    _run_primary_launch(
-        continue_ref=continue_ref,
-        fork_ref=fork_ref,
-        fork_fresh_ref=fork_fresh_ref,
-        from_ref=from_ref,
-        model=model,
-        harness=global_harness or explicit_harness,
-        agent=agent,
-        work=work,
-        yolo=yolo,
-        approval=approval,
-        autocompact=autocompact,
-        autocompact_pct=autocompact_pct,
-        effort=effort,
-        sandbox=sandbox,
-        timeout=timeout,
-        dry_run=dry_run,
-        reference_files=tuple(references),
-        prompt=resolved_prompt,
-        skills=tuple(parsed_skills),
-        goal=goal,
-        # See _split_passthrough_args() for why this reads from GlobalOptions.
-        passthrough=get_global_options().passthrough_args,
+    normalized_task_dir = (task_dir or "").strip() or None
+
+    from meridian.cli import primary_launch
+
+    emit(
+        primary_launch.run_primary_launch(
+            project_root=get_global_options().project_root,
+            continue_ref=continue_ref,
+            fork_ref=fork_ref,
+            fork_fresh_ref=fork_fresh_ref,
+            from_ref=from_ref,
+            model=model,
+            harness=global_harness or explicit_harness,
+            agent=agent,
+            work=work,
+            task_dir=normalized_task_dir,
+            yolo=yolo,
+            approval=approval,
+            autocompact=autocompact,
+            autocompact_pct=autocompact_pct,
+            effort=effort,
+            sandbox=sandbox,
+            timeout=timeout,
+            dry_run=dry_run,
+            passthrough=get_global_options().passthrough_args,
+            reference_files=tuple(references),
+            prompt=resolved_prompt,
+            skills=tuple(parsed_skills),
+            goal=goal,
+        )
     )
 
 
@@ -569,60 +588,6 @@ def mars(
     """Forward all arguments to the bundled mars CLI."""
 
     _run_mars_passthrough(args, output_format=get_global_options().output.format)
-
-
-def _run_primary_launch(
-    *,
-    continue_ref: str | None,
-    fork_ref: str | None,
-    fork_fresh_ref: str | None,
-    from_ref: str | None,
-    model: str,
-    harness: str | None,
-    agent: str | None,
-    work: str,
-    yolo: bool,
-    approval: str | None,
-    autocompact: int | None,
-    autocompact_pct: int | None,
-    effort: str | None,
-    sandbox: str | None,
-    timeout: float | None,
-    dry_run: bool,
-    reference_files: tuple[str, ...] = (),
-    prompt: str | None = None,
-    skills: tuple[str, ...] = (),
-    goal: str | None = None,
-    passthrough: tuple[str, ...] = (),
-) -> None:
-    from meridian.cli import primary_launch
-
-    emit(
-        primary_launch.run_primary_launch(
-            project_root=get_global_options().project_root,
-            continue_ref=continue_ref,
-            fork_ref=fork_ref,
-            fork_fresh_ref=fork_fresh_ref,
-            from_ref=from_ref,
-            model=model,
-            harness=harness,
-            agent=agent,
-            work=work,
-            yolo=yolo,
-            approval=approval,
-            autocompact=autocompact,
-            autocompact_pct=autocompact_pct,
-            effort=effort,
-            sandbox=sandbox,
-            timeout=timeout,
-            dry_run=dry_run,
-            passthrough=passthrough,
-            reference_files=reference_files,
-            prompt=prompt,
-            skills=skills,
-            goal=goal,
-        )
-    )
 
 
 @app.command(name="init")
@@ -1070,6 +1035,11 @@ def _directory_env_scope(
 def main(argv: Sequence[str] | None = None) -> None:
     """CLI entry point used by `meridian` and `python -m meridian`."""
 
+    with meridian_managed_env_default():
+        _main_impl(argv=argv)
+
+
+def _main_impl(argv: Sequence[str] | None = None) -> None:
     from meridian.lib.core.logging import configure_logging
 
     args = list(sys.argv[1:] if argv is None else argv)

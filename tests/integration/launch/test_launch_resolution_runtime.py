@@ -298,6 +298,41 @@ def test_primary_launch_resolves_reference_files_from_work_task_dir(
     assert "project shadow" not in prompt
 
 
+def test_primary_launch_resolves_reference_files_from_explicit_task_dir(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = tmp_path / "project"
+    task_dir = tmp_path / "task"
+    project_root.mkdir()
+    task_dir.mkdir()
+    _write_minimal_mars_config(project_root)
+    (project_root / "task-only.txt").write_text("project shadow", encoding="utf-8")
+    (task_dir / "task-only.txt").write_text("task marker", encoding="utf-8")
+    stub_bundle_request_and_resolve(
+        monkeypatch,
+        model="gpt-5.4-mini",
+        harness=HarnessId.CODEX,
+    )
+
+    result = launch_primary(
+        project_root=project_root,
+        request=PrimaryLaunchRequest(
+            model="gpt-5.4-mini",
+            harness=HarnessId.CODEX.value,
+            task_dir=task_dir.as_posix(),
+            reference_files=("task-only.txt",),
+            dry_run=True,
+        ),
+        harness_registry=get_default_harness_registry(),
+    )
+
+    prompt = result.command[-1]
+    assert (task_dir / "task-only.txt").as_posix() in prompt
+    assert "task marker" in prompt
+    assert "project shadow" not in prompt
+
+
 def test_primary_launch_invalid_reference_does_not_create_explicit_work(
     tmp_path: Path,
 ) -> None:

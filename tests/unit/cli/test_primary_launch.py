@@ -220,6 +220,8 @@ def test_run_primary_launch_forwards_primary_spawn_parity_fields(
 ) -> None:
     project_root = tmp_path / "repo"
     project_root.mkdir()
+    task_dir = tmp_path / "task"
+    task_dir.mkdir()
     reference = project_root / "design.md"
     reference.write_text("design notes", encoding="utf-8")
     captured: dict[str, object] = {}
@@ -239,6 +241,7 @@ def test_run_primary_launch_forwards_primary_spawn_parity_fields(
         harness=None,
         agent="tech-lead",
         work="",
+        task_dir=task_dir.as_posix(),
         yolo=False,
         approval=None,
         autocompact=None,
@@ -255,10 +258,38 @@ def test_run_primary_launch_forwards_primary_spawn_parity_fields(
 
     request = cast("LaunchRequest", captured["request"])
     assert reference.is_file()
+    assert request.task_dir == task_dir.as_posix()
     assert request.reference_files == ("design.md",)
     assert request.prompt == "Review the design."
     assert request.skills == ("planning", "dev-principles")
     assert request.goal == "Converge on requirements"
+
+
+def test_run_primary_launch_task_dir_with_continue_reports_conflict(tmp_path: Path) -> None:
+    task_dir = tmp_path / "task"
+    with pytest.raises(
+        ValueError,
+        match=re.escape("--continue does not accept --task-dir. Use --fork --task-dir to diverge."),
+    ):
+        primary_launch.run_primary_launch(
+            project_root=Path.cwd(),
+            continue_ref="c123",
+            fork_ref=None,
+            fork_fresh_ref=None,
+            model="",
+            harness=None,
+            agent=None,
+            work="",
+            task_dir=task_dir.as_posix(),
+            yolo=False,
+            approval=None,
+            autocompact=None,
+            effort=None,
+            sandbox=None,
+            timeout=None,
+            dry_run=True,
+            passthrough=(),
+        )
 
 
 def test_run_primary_launch_from_with_continue_reports_conflict_before_inference(

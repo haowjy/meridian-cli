@@ -27,6 +27,60 @@ bootstrap_services = importlib.import_module("meridian.lib.bootstrap.services")
 cli_utils = importlib.import_module("meridian.cli.utils")
 
 
+def test_full_main_defaults_meridian_managed_during_invocation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    def _fake_run_mars_passthrough(
+        args: tuple[str, ...] | list[str],
+        *,
+        output_format: str | None = None,
+    ) -> None:
+        captured["args"] = tuple(args)
+        captured["output_format"] = output_format
+        captured["managed"] = os.environ.get("MERIDIAN_MANAGED")
+        raise SystemExit(0)
+
+    monkeypatch.delenv("MERIDIAN_MANAGED", raising=False)
+    monkeypatch.setattr(cli_main, "_run_mars_passthrough", _fake_run_mars_passthrough)
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli_main.main(["mars", "models", "list"])
+
+    assert exc_info.value.code == 0
+    assert captured["args"] == ("models", "list")
+    assert captured["managed"] == "1"
+    assert "MERIDIAN_MANAGED" not in os.environ
+
+
+def test_full_main_preserves_outer_meridian_managed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    def _fake_run_mars_passthrough(
+        args: tuple[str, ...] | list[str],
+        *,
+        output_format: str | None = None,
+    ) -> None:
+        captured["args"] = tuple(args)
+        captured["output_format"] = output_format
+        captured["managed"] = os.environ.get("MERIDIAN_MANAGED")
+        raise SystemExit(0)
+
+    monkeypatch.setenv("MERIDIAN_MANAGED", "0")
+    monkeypatch.setattr(cli_main, "_run_mars_passthrough", _fake_run_mars_passthrough)
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli_main.main(["mars", "models", "list"])
+
+    assert exc_info.value.code == 0
+    assert captured["args"] == ("models", "list")
+    assert captured["managed"] == "0"
+    assert os.environ["MERIDIAN_MANAGED"] == "0"
+
+
 def test_main_restores_directory_env_after_return(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -346,6 +400,36 @@ def test_directory_flag_supplies_project_root_to_primary_launch(
 
     assert exc_info.value.code == 0
     assert captured["project_root"] == project.resolve()
+
+
+def test_task_dir_flag_supplies_task_dir_to_primary_launch(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    task_dir = tmp_path / "task"
+    task_dir.mkdir()
+    captured: dict[str, object] = {}
+
+    monkeypatch.chdir(project)
+    monkeypatch.setattr(
+        cli_main,
+        "maybe_bootstrap_runtime_state",
+        lambda *_args, **_kwargs: project,
+    )
+
+    def _fake_primary_launch(**kwargs: object) -> object:
+        captured.update(kwargs)
+        return primary_launch.PrimaryLaunchOutput(message="ok", exit_code=0)
+
+    monkeypatch.setattr(primary_launch, "run_primary_launch", _fake_primary_launch)
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli_main.main(["--task-dir", str(task_dir), "--dry-run"])
+
+    assert exc_info.value.code == 0
+    assert captured["task_dir"] == str(task_dir)
 
 
 def test_primary_launch_prompt_file_value_is_not_treated_as_command(

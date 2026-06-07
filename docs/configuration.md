@@ -170,12 +170,12 @@ CLI/env/profile setting is present.
 ### Native agent copies
 
 Meridian normally delegates through `meridian spawn` and reads agents from
-`.mars/agents/`. During `meridian mars sync`, Meridian sets
-`MERIDIAN_MANAGED=1`; Mars therefore suppresses harness-native agent copies by
-default so `.claude/agents/` and similar directories do not compete with
-Meridian routing.
+`.mars/agents/`. Meridian CLI processes default `MERIDIAN_MANAGED=1` in their environment,
+while preserving an explicit outer override. Mars therefore suppresses
+harness-native agent copies by default so `.claude/agents/` and similar
+directories do not compete with Meridian routing.
 
-Use `[settings.agent_copy]` when you intentionally want selected harness-native
+Use `[settings.meridian.agent_copy]` when you intentionally want selected harness-native
 copies under managed mode:
 
 ```toml
@@ -183,7 +183,7 @@ copies under managed mode:
 targets = [".claude", ".codex"]
 agent_emission = "never"  # optional; agent_copy can still emit selected copies
 
-[settings.agent_copy]
+[settings.meridian.agent_copy]
 harnesses = ["claude"]
 ```
 
@@ -217,7 +217,7 @@ spawns fail before launch. To completely avoid Claude-side delegation, combine
 it with no Claude `agent_copy`:
 
 ```toml
-[settings.agent_copy]
+[settings.meridian.agent_copy]
 harnesses = []
 ```
 

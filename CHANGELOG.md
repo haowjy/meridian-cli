@@ -4,6 +4,12 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- Primary launches now accept `--task-dir`, matching spawn's explicit task-directory override and rejecting `--continue --task-dir` in favor of `--fork --task-dir`.
+
+### Fixed
+- Meridian CLI processes now default `MERIDIAN_MANAGED=1`, while preserving explicit outer overrides.
+
 ## [0.3.0] - 2026-06-06
 
 ### Changed
