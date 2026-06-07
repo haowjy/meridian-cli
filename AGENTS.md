@@ -148,7 +148,7 @@ Do not use `meridian mars version` for these repos — that's for prompt package
 
 ## Always Use `uv`
 
-This project uses `uv` exclusively for Python tooling. Never use `pip`, `pip install`, `python`, or `python -m` directly. Use `uv run`, `uv add`, and `uv sync` instead.
+This project uses `uv` exclusively for Python tooling. Never use `pip`, `pip install`, `python`, or `python -m` directly. Use `uv run`, `uv add`, and `uv sync` instead. Use `uv run` to test your changes.
 
 ## Quality Issue Triage
 
