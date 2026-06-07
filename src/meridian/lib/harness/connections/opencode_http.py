@@ -16,8 +16,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, cast
 from urllib.parse import urlparse
 
-import psutil
-
 if TYPE_CHECKING:
     from meridian.lib.observability.debug_tracer import DebugTracer
 
@@ -44,7 +42,10 @@ from meridian.lib.harness.connections.liveness import (
     EventStreamLiveness,
     EventStreamLivenessTimeout,
 )
-from meridian.lib.harness.errors import HarnessBinaryNotFound
+from meridian.lib.harness.connections.managed_backend import (
+    ManagedBackend,
+    ManagedBackendConfig,
+)
 from meridian.lib.harness.projections.project_opencode_streaming import (
     project_opencode_spec_to_session_payload as _project_opencode_spec_to_session_payload,
 )
@@ -59,18 +60,12 @@ from meridian.lib.observability.trace_helpers import (
     trace_wire_recv,
     trace_wire_send,
 )
-from meridian.lib.platform import IS_WINDOWS
-from meridian.lib.platform.detached_process import (
-    ParentDeathLink,
-    detached_backend_subprocess_kwargs,
-    link_child_lifetime_to_parent,
-)
+from meridian.lib.platform.detached_process import ParentDeathLink
 from meridian.lib.platform.process_scope import (
     ProcessScopeSnapshot,
     ScopedProcessHandle,
 )
 from meridian.lib.state.paths import resolve_spawn_log_dir
-from meridian.lib.state.process_scope_projection import record_scope
 
 logger = logging.getLogger(__name__)
 _STARTUP_STDERR_MAX_BYTES = 16 * 1024
@@ -191,6 +186,7 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
         self._startup_emitter: StartupPhaseEmitter | None = None
         self._scope_handle: ScopedProcessHandle | None = None
         self._parent_death_link: ParentDeathLink | None = None
+        self._managed_backend: ManagedBackend | None = None
 
     @property
     def state(self) -> ConnectionState:
@@ -227,6 +223,10 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
         if handle is None:
             return None
         return handle.snapshot
+
+    @property
+    def managed_backend(self) -> ManagedBackend | None:
+        return self._managed_backend
 
     @property
     def observer_endpoint(self) -> ObserverEndpoint | None:
@@ -472,54 +472,24 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
         self._stderr_log_path = spawn_dir / "stderr.log"
         self._stderr_handle = self._stderr_log_path.open("ab")
         self._stderr_read_offset = self._stderr_handle.tell()
-        subprocess_kwargs = detached_backend_subprocess_kwargs()
-        try:
-            self._process = await asyncio.create_subprocess_exec(
-                *command,
-                cwd=str(config.control_root),
-                env=env,
-                stdout=asyncio.subprocess.DEVNULL,
-                stderr=self._stderr_handle,
-                **subprocess_kwargs,
-            )
-        except (FileNotFoundError, NotADirectoryError) as exc:
-            raise HarnessBinaryNotFound.from_os_error(
+        managed_backend = ManagedBackend(spawn_dir=spawn_dir)
+        handle = await managed_backend.launch(
+            ManagedBackendConfig(
+                spawn_id=config.spawn_id,
                 harness_id=self.harness_id,
-                error=exc,
-                binary_name=command[0],
-            ) from exc
-
-        process = self._process
-        pid = process.pid
-        containment = "pid_tree_fallback"
-        pgid: int | None = None
-        if not IS_WINDOWS:
-            try:
-                pgid = os.getpgid(pid)
-                containment = "posix_pgid"
-            except OSError:
-                pass
-        try:
-            birth_time = psutil.Process(pid).create_time()
-        except (psutil.NoSuchProcess, psutil.AccessDenied):
-            birth_time = time.time()
-        spawn_id_str = str(config.spawn_id)
-        snapshot = ProcessScopeSnapshot(
-            scope_id="backend",
-            owner_policy="spawn_owned",
-            owner_id=spawn_id_str,
-            role="harness_backend",
-            containment=containment,
-            root_pid=pid,
-            root_created_at_epoch=birth_time,
-            pgid=pgid,
-            job_name=None,
-            degraded_reason=None,
+                command=tuple(command),
+                cwd=config.control_root,
+                env=env,
+                control_root=config.control_root,
+                stderr_log_path=self._stderr_log_path,
+                observer_mode=self._primary_observer_mode,
+            ),
+            stderr=self._stderr_handle,
         )
-        self._scope_handle = ScopedProcessHandle(process=process, snapshot=snapshot)
-        self._parent_death_link = link_child_lifetime_to_parent(pid)
-        if not self._primary_observer_mode:
-            record_scope(spawn_dir.parent.parent, config.spawn_id, snapshot)
+        self._managed_backend = managed_backend
+        self._process = handle.process
+        self._scope_handle = handle.scope_handle
+        self._parent_death_link = handle.parent_death_link
 
     async def _create_session_with_retry(
         self,
@@ -962,6 +932,7 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
                 await process.wait()
 
         self._parent_death_link = None
+        self._managed_backend = None
         self._base_url = None
         self._session_id = None
         self._event_path = None

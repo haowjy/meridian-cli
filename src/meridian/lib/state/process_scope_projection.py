@@ -61,7 +61,7 @@ def _snapshot_to_dict(snapshot: ProcessScopeSnapshot) -> dict[str, object]:
     return dataclasses.asdict(snapshot)
 
 
-def _dict_to_snapshot(data: dict[str, object]) -> ProcessScopeSnapshot | None:
+def scope_snapshot_from_dict(data: dict[str, object]) -> ProcessScopeSnapshot | None:
     """Deserialize one scope dict; return None on any error."""
     try:
         if not isinstance(data.get("release_id"), str) or not str(data.get("release_id")):
@@ -165,7 +165,7 @@ def read_scopes_from_disk(
     for entry in cast("list[object]", payload["scopes"]):
         if not isinstance(entry, dict):
             continue
-        snap = _dict_to_snapshot(cast("dict[str, object]", entry))
+        snap = scope_snapshot_from_dict(cast("dict[str, object]", entry))
         if snap is not None:
             snapshots.append(snap)
     return snapshots
@@ -176,4 +176,5 @@ __all__ = [
     "mark_scope_released",
     "read_scopes_from_disk",
     "record_scope",
+    "scope_snapshot_from_dict",
 ]

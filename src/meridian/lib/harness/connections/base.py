@@ -13,7 +13,9 @@ from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.launch.launch_types import SpecT
 
 if TYPE_CHECKING:
+    from meridian.lib.harness.connections.managed_backend import ManagedBackend
     from meridian.lib.observability.debug_tracer import DebugTracer
+    from meridian.lib.platform.process_scope import ProcessScopeSnapshot
 
 # Uniform transport message cap across harness adapters.
 MAX_HARNESS_MESSAGE_BYTES: Final[int] = 10 * 1024 * 1024
@@ -266,6 +268,16 @@ class HarnessConnection(Generic[SpecT], ABC):
     @property
     @abstractmethod
     def subprocess_pid(self) -> int | None: ...
+
+    @property
+    def managed_backend(self) -> ManagedBackend | None:
+        """Managed backend lifecycle owner when this connection launched a backend."""
+        return None
+
+    @property
+    def scope_snapshot(self) -> ProcessScopeSnapshot | None:
+        """Process scope facts for the managed backend subprocess, if any."""
+        return None
 
     @abstractmethod
     async def start(self, config: ConnectionConfig, spec: SpecT) -> None: ...

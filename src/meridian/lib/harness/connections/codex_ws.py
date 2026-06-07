@@ -17,7 +17,6 @@ from io import BufferedWriter
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, Final, cast
 
-import psutil
 from aiohttp import ClientSession, WSMsgType
 
 if TYPE_CHECKING:
@@ -57,7 +56,10 @@ from meridian.lib.harness.connections.liveness import (
     EventStreamLiveness,
     EventStreamLivenessTimeout,
 )
-from meridian.lib.harness.errors import HarnessBinaryNotFound
+from meridian.lib.harness.connections.managed_backend import (
+    ManagedBackend,
+    ManagedBackendConfig,
+)
 from meridian.lib.harness.semantics import clears_signal
 from meridian.lib.launch.env import inherit_child_env
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
@@ -66,18 +68,12 @@ from meridian.lib.observability.trace_helpers import (
     trace_state_change,
     trace_wire_send,
 )
-from meridian.lib.platform import IS_WINDOWS
-from meridian.lib.platform.detached_process import (
-    ParentDeathLink,
-    detached_backend_subprocess_kwargs,
-    link_child_lifetime_to_parent,
-)
+from meridian.lib.platform.detached_process import ParentDeathLink
 from meridian.lib.platform.process_scope import (
     ProcessScopeSnapshot,
     ScopedProcessHandle,
 )
 from meridian.lib.state.paths import resolve_spawn_log_dir
-from meridian.lib.state.process_scope_projection import record_scope
 
 _DEFAULT_CONNECT_TIMEOUT_SECONDS = 30.0
 _DEFAULT_REQUEST_TIMEOUT_SECONDS = 30.0
@@ -202,6 +198,7 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
         self._codex_home: Path | None = None
         self._scope_handle: ScopedProcessHandle | None = None
         self._parent_death_link: ParentDeathLink | None = None
+        self._managed_backend: ManagedBackend | None = None
 
         self._next_request_id = 1
         self._pending_requests: dict[int, asyncio.Future[dict[str, object]]] = {}
@@ -298,6 +295,10 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
             return None
         return handle.snapshot
 
+    @property
+    def managed_backend(self) -> ManagedBackend | None:
+        return self._managed_backend
+
     async def start(
         self,
         config: ConnectionConfig,
@@ -350,61 +351,25 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
                 host=host,
                 port=port,
             )
-            try:
-                self._emit_startup_phase(StartupPhase.LAUNCHING_SUBPROCESS)
-                self._process = await asyncio.create_subprocess_exec(
-                    *appserver_command,
-                    cwd=str(effective_cwd),
-                    env=env,
-                    stdout=asyncio.subprocess.DEVNULL,
-                    stderr=self._stderr_handle,
-                    **detached_backend_subprocess_kwargs(),
-                )
-            except (FileNotFoundError, NotADirectoryError) as exc:
-                raise HarnessBinaryNotFound.from_os_error(
+            self._emit_startup_phase(StartupPhase.LAUNCHING_SUBPROCESS)
+            managed_backend = ManagedBackend(spawn_dir=spawn_dir)
+            handle = await managed_backend.launch(
+                ManagedBackendConfig(
+                    spawn_id=config.spawn_id,
                     harness_id=self.harness_id,
-                    error=exc,
-                    binary_name=appserver_command[0],
-                ) from exc
-
-            # Build scope handle immediately after successful subprocess creation so
-            # that _cleanup_resources can perform group/tree termination rather than
-            # killing only the root process.
-            _proc = self._process
-            _pid = _proc.pid
-            _containment: str
-            _pgid: int | None = None
-            if not IS_WINDOWS:
-                try:
-                    _pgid = os.getpgid(_pid)
-                    _containment = "posix_pgid"
-                except OSError:
-                    _containment = "pid_tree_fallback"
-            else:
-                # Windows Job Object wiring comes in a later subphase; for now
-                # the snapshot carries the intent and terminate() degrades to
-                # psutil tree termination automatically.
-                _containment = "windows_job"
-            try:
-                _birth_time = psutil.Process(_pid).create_time()
-            except (psutil.NoSuchProcess, psutil.AccessDenied):
-                _birth_time = _time.time()
-            _snapshot = ProcessScopeSnapshot(
-                scope_id="backend",
-                owner_policy="spawn_owned",
-                owner_id=str(config.spawn_id),
-                role="harness_backend",
-                containment=_containment,
-                root_pid=_pid,
-                root_created_at_epoch=_birth_time,
-                pgid=_pgid,
-                job_name=None,
-                degraded_reason=None,
+                    command=tuple(appserver_command),
+                    cwd=effective_cwd,
+                    env=env,
+                    control_root=config.control_root,
+                    stderr_log_path=self._stderr_log_path,
+                    observer_mode=self._primary_observer_mode,
+                ),
+                stderr=self._stderr_handle,
             )
-            self._scope_handle = ScopedProcessHandle(process=_proc, snapshot=_snapshot)
-            self._parent_death_link = link_child_lifetime_to_parent(_pid)
-            if not self._primary_observer_mode:
-                record_scope(spawn_dir.parent.parent, config.spawn_id, _snapshot)
+            self._managed_backend = managed_backend
+            self._process = handle.process
+            self._scope_handle = handle.scope_handle
+            self._parent_death_link = handle.parent_death_link
 
             self._emit_startup_phase(StartupPhase.WAITING_FOR_CONNECTION)
             self._ws = await self._connect_with_retry(
@@ -831,6 +796,7 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
                 await process.wait()
 
         self._parent_death_link = None
+        self._managed_backend = None
         self._fail_pending_requests(RuntimeError("Codex connection stopped"))
         await self._clear_stale_hitl_requests(reason="connection_stopped")
         self._current_turn_id = None

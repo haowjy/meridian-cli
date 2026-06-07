@@ -209,27 +209,7 @@ class PrimaryAttachLauncher:
                 self._metadata.backend_port = self._resolve_backend_port()
             self._write_metadata()
 
-            # Record backend scope. session_owned when session_id is available
-            # (normal path) so the backend is preserved across launcher restarts.
-            # Falls back to spawn_owned when session_id is absent (error path)
-            # so normal spawn teardown terminates the orphaned backend process.
-            _backend_pid = self._connection.subprocess_pid
-            if _backend_pid is not None and _backend_pid > 0:
-                _runtime_root = self._spawn_dir.parent.parent
-                _sid = (session_id or "").strip()
-                _policy = "session_owned" if _sid else "spawn_owned"
-                _owner_id = _sid or str(self._spawn_id)
-                record_scope(
-                    _runtime_root,
-                    self._spawn_id,
-                    _make_scope_snapshot(
-                        pid=_backend_pid,
-                        scope_id="backend",
-                        owner_policy=_policy,
-                        owner_id=_owner_id,
-                        role="harness_backend",
-                    ),
-                )
+            self._record_backend_scope_from_connection(session_id)
 
             self._event_writer_task = asyncio.create_task(self._run_event_writer())
             self._set_harness_session_id(session_id)
@@ -395,6 +375,37 @@ class PrimaryAttachLauncher:
                 should_write = True
         if should_write:
             self._write_metadata()
+
+    def _record_backend_scope_from_connection(self, session_id: str | None) -> None:
+        """Record backend scope using facts from the connection's ManagedBackend.
+
+        Primary observer mode suppresses record_scope during launch, so this is
+        the single backend scope write for managed-primary attach.
+        """
+        backend_pid = self._connection.subprocess_pid
+        if backend_pid is None or backend_pid <= 0:
+            return
+
+        managed_backend = self._connection.managed_backend
+        scope_snapshot = (
+            managed_backend.scope_snapshot
+            if managed_backend is not None
+            else self._connection.scope_snapshot
+        )
+        if scope_snapshot is None:
+            return
+
+        session_key = (session_id or "").strip()
+        owner_policy = "session_owned" if session_key else "spawn_owned"
+        owner_id = session_key or str(self._spawn_id)
+        if scope_snapshot.owner_policy != owner_policy or scope_snapshot.owner_id != owner_id:
+            scope_snapshot = replace(
+                scope_snapshot,
+                owner_policy=owner_policy,
+                owner_id=owner_id,
+            )
+
+        record_scope(self._spawn_dir.parent.parent, self._spawn_id, scope_snapshot)
 
     def _record_tui_scope(self, pid: int, session_id: str | None) -> None:
         if pid <= 0:

@@ -7,6 +7,7 @@ from typing import Final
 OUTPUT_FILENAME: Final[str] = "output.jsonl"
 HISTORY_FILENAME: Final[str] = "history.jsonl"
 PRIMARY_META_FILENAME: Final[str] = "primary_meta.json"
+BACKEND_LIFECYCLE_FILENAME: Final[str] = "backend_lifecycle.json"
 PI_RUNTIME_META_FILENAME: Final[str] = "pi_runtime_meta.json"
 STDERR_FILENAME: Final[str] = "stderr.log"
 TOKENS_FILENAME: Final[str] = "tokens.json"
@@ -65,6 +66,7 @@ PRIMARY_BASE_COMMAND_OPENCODE: Final[tuple[str, ...]] = ("opencode",)
 PRIMARY_BASE_COMMAND_PI: Final[tuple[str, ...]] = ("pi",)
 
 __all__ = [
+    "BACKEND_LIFECYCLE_FILENAME",
     "BASE_COMMAND_CLAUDE_STREAMING",
     "BASE_COMMAND_CLAUDE_SUBPROCESS",
     "BASE_COMMAND_CODEX_STREAMING",

@@ -26,7 +26,10 @@ from meridian.lib.launch.process.primary_attach import (
     PrimaryAttachError,
     PrimaryAttachLauncher,
 )
+from meridian.lib.platform.process_scope import ProcessScopeSnapshot
 from meridian.lib.safety.permissions import UnsafeNoOpPermissionResolver
+
+_BACKEND_SCOPE_EPOCH = 12_345.0
 
 
 def _build_config(*, spawn_id: SpawnId, control_root: Path, ws_port: int = 0) -> ConnectionConfig:
@@ -93,6 +96,27 @@ class FakeManagedConnection:
     @property
     def subprocess_pid(self) -> int | None:
         return self._subprocess_pid
+
+    @property
+    def managed_backend(self) -> None:
+        return None
+
+    @property
+    def scope_snapshot(self) -> ProcessScopeSnapshot | None:
+        if self._subprocess_pid <= 0:
+            return None
+        return ProcessScopeSnapshot(
+            scope_id="backend",
+            owner_policy="spawn_owned",
+            owner_id=str(self._spawn_id),
+            role="harness_backend",
+            containment="pid_tree_fallback",
+            root_pid=self._subprocess_pid,
+            root_created_at_epoch=_BACKEND_SCOPE_EPOCH,
+            pgid=None,
+            job_name=None,
+            degraded_reason=None,
+        )
 
     @property
     def observer_endpoint(self) -> ObserverEndpoint | None:
