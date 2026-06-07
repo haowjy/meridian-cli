@@ -146,6 +146,7 @@ def run_primary_launch(
     harness: str | None,
     agent: str | None,
     work: str,
+    task_dir: str | None = None,
     yolo: bool,
     approval: str | None,
     autocompact: int | None,
@@ -197,6 +198,11 @@ def run_primary_launch(
     fork_target_requested = raw_fork_target or None
     fork_fresh_target_requested = raw_fork_fresh_target or None
     context_from_requested = (raw_from_target,) if raw_from_target else ()
+    normalized_task_dir = (task_dir or "").strip() or None
+    if resume_target is not None and normalized_task_dir is not None:
+        raise ValueError(
+            "--continue does not accept --task-dir. Use --fork --task-dir to diverge."
+        )
     resolved_approval = approval if approval is not None else ("never" if yolo else "default")
 
     fork_resolution = validate_fork_mode(
@@ -349,6 +355,7 @@ def run_primary_launch(
             ),
             agent=requested_agent,
             work_id=requested_work_id,
+            task_dir=normalized_task_dir,
             passthrough_args=passthrough,
             session_mode=session_mode,
             pinned_context="",

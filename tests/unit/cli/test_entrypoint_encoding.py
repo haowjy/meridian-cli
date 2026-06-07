@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import sys
 import types
 
@@ -34,6 +35,7 @@ def _make_fake_main_module(captured: dict[str, object]) -> types.ModuleType:
 
     def _noop(*, argv: list[str]) -> None:
         captured["argv"] = argv
+        captured["managed"] = os.environ.get("MERIDIAN_MANAGED")
 
     fake.main = _noop  # type: ignore[attr-defined]
     return fake
@@ -100,6 +102,54 @@ def test_reconfigure_not_called_on_posix(
 
     assert fake_stdout._reconfigure_calls == []
     assert fake_stderr._reconfigure_calls == []
+
+
+def test_entrypoint_defaults_meridian_managed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+    fake_main_module = _make_fake_main_module(captured)
+    original = sys.modules.get("meridian.cli.main")
+    sys.modules["meridian.cli.main"] = fake_main_module
+
+    try:
+        monkeypatch.delenv("MERIDIAN_MANAGED", raising=False)
+        monkeypatch.setattr(sys, "argv", ["meridian", "spawn", "list"])
+
+        entrypoint_module.main()
+    finally:
+        if original is not None:
+            sys.modules["meridian.cli.main"] = original
+        else:
+            sys.modules.pop("meridian.cli.main", None)
+
+    assert captured["argv"] == ["spawn", "list"]
+    assert captured["managed"] == "1"
+    assert "MERIDIAN_MANAGED" not in os.environ
+
+
+def test_entrypoint_preserves_outer_meridian_managed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+    fake_main_module = _make_fake_main_module(captured)
+    original = sys.modules.get("meridian.cli.main")
+    sys.modules["meridian.cli.main"] = fake_main_module
+
+    try:
+        monkeypatch.setenv("MERIDIAN_MANAGED", "0")
+        monkeypatch.setattr(sys, "argv", ["meridian", "spawn", "list"])
+
+        entrypoint_module.main()
+    finally:
+        if original is not None:
+            sys.modules["meridian.cli.main"] = original
+        else:
+            sys.modules.pop("meridian.cli.main", None)
+
+    assert captured["argv"] == ["spawn", "list"]
+    assert captured["managed"] == "0"
+    assert os.environ["MERIDIAN_MANAGED"] == "0"
 
 
 def test_reconfigure_skipped_when_stream_lacks_reconfigure(

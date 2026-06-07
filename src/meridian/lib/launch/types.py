@@ -48,6 +48,7 @@ class LaunchRequest(BaseModel):
     harness: str | None = None
     agent: str | None = None
     work_id: str | None = None
+    task_dir: str | None = None
     session_mode: SessionMode = SessionMode.FRESH
     passthrough_args: tuple[str, ...] = ()
     pinned_context: str = ""

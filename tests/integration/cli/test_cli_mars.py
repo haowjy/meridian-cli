@@ -18,7 +18,6 @@ mars_passthrough = importlib.import_module("meridian.cli.mars_passthrough")
                 request=mars_passthrough.MarsPassthroughRequest(
                     command=("/usr/bin/mars", "--json", "list"),
                     mars_args=("--json", "list"),
-                    is_sync=False,
                     wants_json=True,
                     root_override=None,
                 ),
@@ -36,7 +35,6 @@ mars_passthrough = importlib.import_module("meridian.cli.mars_passthrough")
                 request=mars_passthrough.MarsPassthroughRequest(
                     command=("/usr/bin/mars", "sync"),
                     mars_args=("sync",),
-                    is_sync=True,
                     wants_json=False,
                     root_override=None,
                 ),
@@ -76,16 +74,25 @@ def test_run_mars_passthrough_streaming(
 
 
 @pytest.mark.parametrize(
-    "is_sync",
-    [False, True],
-    ids=["non-sync", "sync"],
+    "mars_args",
+    [
+        ("models", "list"),
+        ("sync",),
+        ("upgrade",),
+        ("link",),
+        ("init", "--link", ".claude"),
+        ("init",),
+    ],
+    ids=["models", "sync", "upgrade", "link", "init-link", "init"],
 )
-def test_execute_mars_passthrough_sets_managed_env_only_for_sync(is_sync: bool) -> None:
-    mars_args = ("sync",) if is_sync else ("models", "list")
+def test_execute_mars_passthrough_sets_managed_env_for_all_commands(
+    mars_args: tuple[str, ...],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("MERIDIAN_MANAGED", raising=False)
     request = mars_passthrough.MarsPassthroughRequest(
         command=("/usr/bin/mars", *mars_args),
         mars_args=mars_args,
-        is_sync=is_sync,
         wants_json=False,
         root_override=None,
     )
@@ -101,11 +108,31 @@ def test_execute_mars_passthrough_sets_managed_env_only_for_sync(is_sync: bool) 
     assert result.returncode == 0
     assert observed["cmd"] == ["/usr/bin/mars", *mars_args]
     env = observed["env"]
-    if is_sync:
-        assert isinstance(env, dict)
-        assert env["MERIDIAN_MANAGED"] == "1"
-    else:
-        assert env is None
+    assert isinstance(env, dict)
+    assert env["MERIDIAN_MANAGED"] == "1"
+
+
+def test_execute_mars_passthrough_preserves_outer_meridian_managed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MERIDIAN_MANAGED", "0")
+    request = mars_passthrough.MarsPassthroughRequest(
+        command=("/usr/bin/mars", "models", "list"),
+        mars_args=("models", "list"),
+        wants_json=False,
+        root_override=None,
+    )
+    observed: dict[str, object] = {}
+
+    def _fake_run(cmd: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        observed["env"] = kwargs.get("env")
+        return subprocess.CompletedProcess(args=cmd, returncode=0)
+
+    mars_passthrough.execute_mars_passthrough(request, run=_fake_run)
+
+    env = observed["env"]
+    assert isinstance(env, dict)
+    assert env["MERIDIAN_MANAGED"] == "0"
 
 
 def test_main_mars_defaults_to_text_in_agent_mode(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -130,5 +157,3 @@ def test_main_mars_defaults_to_text_in_agent_mode(monkeypatch: pytest.MonkeyPatc
     assert exc_info.value.code == 0
     assert captured["args"] == ("list",)
     assert captured["output_format"] == "text"
-
-

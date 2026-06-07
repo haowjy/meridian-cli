@@ -18,7 +18,6 @@ from meridian.lib.ops.mars import resolve_mars_executable
 class MarsPassthroughRequest:
     command: tuple[str, ...]
     mars_args: tuple[str, ...]
-    is_sync: bool
     wants_json: bool
     root_override: Path | None
 
@@ -53,25 +52,6 @@ def mars_requested_root(args: Sequence[str]) -> Path | None:
     return None
 
 
-def mars_subcommand(args: Sequence[str]) -> str | None:
-    index = 0
-    while index < len(args):
-        token = args[index]
-        if token == "--":
-            return None
-        if token == "--root":
-            index += 2
-            continue
-        if token.startswith("--root="):
-            index += 1
-            continue
-        if token.startswith("-"):
-            index += 1
-            continue
-        return token
-    return None
-
-
 def decode_json_values(raw_stdout: str) -> list[object] | None:
     decoder = json.JSONDecoder()
     parsed_values: list[object] = []
@@ -98,7 +78,6 @@ def parse_mars_passthrough(
     """Build an executable Mars passthrough request without side effects."""
 
     mars_args = list(args)
-    is_sync = mars_subcommand(mars_args) == "sync"
     wants_json = mars_requested_json(mars_args) or output_format == "json"
     if wants_json and not mars_requested_json(mars_args):
         mars_args = ["--json", *mars_args]
@@ -109,7 +88,6 @@ def parse_mars_passthrough(
     return MarsPassthroughRequest(
         command=(executable, *mars_args),
         mars_args=tuple(mars_args),
-        is_sync=is_sync,
         wants_json=wants_json,
         root_override=mars_requested_root(mars_args),
     )
@@ -124,11 +102,11 @@ def execute_mars_passthrough(
     """Execute a prepared Mars passthrough request."""
 
     stderr_stream = sys.stderr if stderr is None else stderr
-    run_kwargs: dict[str, object] = {}
-    if request.is_sync:
-        # With MERIDIAN_PROJECT_DIR set, parse_mars_passthrough injects --root to the
-        # launcher project; sync materializes .mars/ there, not the task cwd.
-        run_kwargs["env"] = {**os.environ, "MERIDIAN_MANAGED": "1"}
+    # With MERIDIAN_PROJECT_DIR set, parse_mars_passthrough injects --root to the
+    # launcher project; Mars runs under Meridian management for all passthrough commands.
+    run_kwargs: dict[str, object] = {
+        "env": {**os.environ, "MERIDIAN_MANAGED": os.environ.get("MERIDIAN_MANAGED", "1")},
+    }
     try:
         if request.wants_json:
             result = run(
@@ -196,4 +174,3 @@ def resolve_init_project_root(path: str | None) -> Path:
         return Path(path).expanduser().resolve()
     env_root = os.getenv("MERIDIAN_PROJECT_DIR", "").strip()
     return Path(env_root).expanduser().resolve() if env_root else Path.cwd().resolve()
-

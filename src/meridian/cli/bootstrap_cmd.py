@@ -123,6 +123,7 @@ def register_bootstrap_command(
                 harness=global_harness or explicit_harness,
                 agent=agent,
                 work=work,
+                task_dir=None,
                 yolo=yolo,
                 approval=approval,
                 autocompact=autocompact,

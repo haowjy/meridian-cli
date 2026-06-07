@@ -27,6 +27,7 @@ Primary launch/resume:
   meridian --fork p123                  Fork from ref
   meridian --fork-fresh p123 -m MODEL   Fork and switch identity
   meridian --from p123                  Fresh session with prior context
+  meridian --task-dir PATH              Launch against a different edit directory
   continue/fork refs: chat id (c123), spawn id (p123), or raw harness session id
   --from refs: chat id (c123) or spawn id (p123)
   --fork preserves agent/model/skills identity. --fork-fresh allows
@@ -154,6 +155,8 @@ Primary launch/resume:
   meridian --fork-fresh p123 -m MODEL
 
   meridian --from p123
+
+  meridian --task-dir PATH
 
   continue/fork refs: chat id (c123), spawn id (p123), or raw harness session id
   --from refs: chat id (c123) or spawn id (p123)

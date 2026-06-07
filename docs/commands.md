@@ -12,6 +12,7 @@ Full command surface. Use `--help` on any command for flags and options.
 | `meridian --fork-fresh [REF]` | Launch a new primary session by forking and allowing launch identity changes (`-m`, `-a`). |
 | `meridian --from [REF]` | Launch a fresh primary session with prior spawn or chat/session context as reference material only. `REF` defaults to `$MERIDIAN_SPAWN_ID` inside Meridian sessions. Does not fork transcript lineage. |
 | `meridian bootstrap` | Launch a primary session with all installed bootstrap docs injected — guides first-time setup |
+| `meridian --task-dir PATH` | Override the source-edit directory for this primary launch only. Does not modify the work item's `task_dir` setting. Relative `-f` paths resolve against this directory. Rejected with `--continue` — use `--fork --task-dir` to diverge. |
 | `meridian spawn -a AGENT -p "task"` | Delegate work to a routed agent/model |
 | `meridian spawn list` | See running and recent spawns |
 | `meridian spawn list --profile reviewer` | Show spawns launched with the `reviewer` profile |
@@ -396,7 +397,7 @@ hooks, harness defaults, and primary-session defaults.
 
 `meridian bootstrap --add ... --link ...` runs this same setup flow, then launches a guided bootstrap primary session.
 
-`meridian mars sync` automatically sets `MERIDIAN_MANAGED=1` in the mars subprocess environment. Mars uses this signal to suppress native agent emission to harness directories — agents are read by Meridian from `.mars/agents/`, not duplicated into `.claude/agents/` etc. `[settings.agent_copy] harnesses = ["claude"]` is the selective override when `.claude` is an effective managed target; it materializes qualifying Claude-native copies even under managed mode or `agent_emission = "never"`.
+Meridian CLI processes default `MERIDIAN_MANAGED=1` in their environment, while preserving an explicit outer override. Mars uses this signal to suppress native agent emission to harness directories — agents are read by Meridian from `.mars/agents/`, not duplicated into `.claude/agents/` etc. `[settings.meridian.agent_copy] harnesses = ["claude"]` is the selective override when `.claude` is an effective managed target; it materializes qualifying Claude-native copies even under managed mode or `agent_emission = "never"`.
 
 In Claude launches, native `Agent()` follows that same boundary: generic `Agent` is allowed only with Mars Claude `agent_copy` plus an effective `.claude` managed target. Without it, use `meridian spawn`. Claude built-ins (`Explore`, `Plan`, `General-purpose` / `general-purpose`) stay denied.
 
