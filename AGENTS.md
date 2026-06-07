@@ -95,7 +95,11 @@ Catalog/config modules (`meridian.lib.catalog.*`, `meridian.lib.config.*`) use s
 
 ### Editing Agents & Skills
 
-**NEVER edit generated target directories directly** (for this repo: `.claude/agents/`, `.claude/skills/`, `.cursor/`, `.codex/`, `.opencode/`, `.pi/`) — they are generated output, overwritten by `meridian mars sync`. Edit the source package repos directly in sibling checkouts. Preferred local layout:
+**NEVER edit generated target directories directly** (for this repo: `.claude/agents/`, `.claude/skills/`, `.cursor/`, `.codex/`, `.opencode/`, `.pi/`) — they are generated output, overwritten by `meridian mars sync`. Edit the source package repos directly in sibling checkouts.
+
+**Read the target repo's AGENTS.md before operating on it.** Each sibling repo has its own release process, conventions, and operational instructions. The AGENTS.md loaded from this session root (meridian-cli) does not cover them. Read theirs first — especially before releasing or running commands against them.
+
+Preferred local layout:
 
 - `../meridian-cli` (this repo)
 - `../meridian-web` — general-purpose agent frontend (Apache-2.0). Makefile `frontend` target expects this at `$MERIDIAN_WEB` (default `../meridian-web`).
