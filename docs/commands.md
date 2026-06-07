@@ -12,6 +12,7 @@ Full command surface. Use `--help` on any command for flags and options.
 | `meridian --fork-fresh [REF]` | Launch a new primary session by forking and allowing launch identity changes (`-m`, `-a`). |
 | `meridian --from [REF]` | Launch a fresh primary session with prior spawn or chat/session context as reference material only. `REF` defaults to `$MERIDIAN_SPAWN_ID` inside Meridian sessions. Does not fork transcript lineage. |
 | `meridian bootstrap` | Launch a primary session with all installed bootstrap docs injected — guides first-time setup |
+| `meridian --task-dir PATH` | Override the source-edit directory for this primary launch only. Does not modify the work item's `task_dir` setting. Relative `-f` paths resolve against this directory. Rejected with `--continue` — use `--fork --task-dir` to diverge. |
 | `meridian spawn -a AGENT -p "task"` | Delegate work to a routed agent/model |
 | `meridian spawn list` | See running and recent spawns |
 | `meridian spawn list --profile reviewer` | Show spawns launched with the `reviewer` profile |
