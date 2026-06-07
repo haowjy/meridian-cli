@@ -150,6 +150,7 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
     _SUCCESS_STATUSES: ClassVar[frozenset[int]] = frozenset((200, 201, 202, 204))
     _ACTION_SUCCESS_STATUSES: ClassVar[frozenset[int]] = frozenset((200, 201, 202, 204, 409))
     _EVENT_RETRY_DELAY_SECONDS: ClassVar[float] = 0.25
+    _LIVENESS_TIMEOUT_SECONDS: ClassVar[float] = 120.0
     _STARTUP_TIMEOUT_SECONDS: ClassVar[float] = 30.0
     _STOP_GRACE_SECONDS: ClassVar[float] = 5.0
     _EVENT_ACCEPT_HEADER: ClassVar[dict[str, str]] = {"Accept": "text/event-stream"}
@@ -168,6 +169,7 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
         self._session_id: str | None = None
         self._event_path: str | None = None
         self._last_health_ok = False
+        self._last_event_time: float | None = None
         self._tracer: DebugTracer | None = None
         self._cancel_requested = False
         self._signal_in_flight = False
@@ -306,6 +308,12 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
         if self._state not in {"starting", "connected"}:
             return False
         process_running = self._process is not None and self._process.returncode is None
+        last_event_time = self._last_event_time
+        if (
+            last_event_time is not None
+            and time.monotonic() - last_event_time > self._LIVENESS_TIMEOUT_SECONDS
+        ):
+            return False
         return process_running and self._last_health_ok
 
     async def send_user_message(self, text: str) -> None:
@@ -340,10 +348,18 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
         if self._session_id is None:
             return
 
+        self._last_event_time = time.monotonic()
         sse_event_type: str | None = None
         sse_data_lines: list[str] = []
 
         while self._state in ("connected", "stopping"):
+            if time.monotonic() - self._last_event_time > self._LIVENESS_TIMEOUT_SECONDS:
+                logger.warning(
+                    "OpenCode event stream liveness timeout after %.1fs without events",
+                    self._LIVENESS_TIMEOUT_SECONDS,
+                )
+                self._set_failed()
+                return
             if self._process_exited():
                 self._set_failed()
                 return
@@ -362,11 +378,31 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
 
             buffer = ""
             try:
-                async for chunk in response.content.iter_chunked(4096):
-                    if self._state in ("stopping", "stopped", "failed"):
-                        break
+                while self._state not in ("stopping", "stopped", "failed"):
+                    remaining_liveness_seconds = self._LIVENESS_TIMEOUT_SECONDS - (
+                        time.monotonic() - self._last_event_time
+                    )
+                    if remaining_liveness_seconds <= 0:
+                        logger.warning(
+                            "OpenCode event stream liveness timeout after %.1fs without events",
+                            self._LIVENESS_TIMEOUT_SECONDS,
+                        )
+                        self._set_failed()
+                        return
+                    try:
+                        chunk = await asyncio.wait_for(
+                            response.content.read(4096),
+                            timeout=remaining_liveness_seconds,
+                        )
+                    except TimeoutError:
+                        logger.warning(
+                            "OpenCode event stream liveness timeout after %.1fs without events",
+                            self._LIVENESS_TIMEOUT_SECONDS,
+                        )
+                        self._set_failed()
+                        return
                     if not chunk:
-                        continue
+                        break
                     buffer += chunk.decode("utf-8", errors="replace")
                     while True:
                         newline_index = buffer.find("\n")
@@ -387,17 +423,20 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
                                     direction="inbound",
                                     data={"event_type": event.event_type},
                                 )
+                            self._last_event_time = time.monotonic()
                             yield event
 
                 if buffer.strip():
                     event = self._event_from_json_line(buffer.strip(), raw_text=buffer.strip())
                     if event is not None:
+                        self._last_event_time = time.monotonic()
                         yield event
                 final_sse_event = self._flush_sse_event(
                     sse_event_type=sse_event_type,
                     sse_data_lines=sse_data_lines,
                 )
                 if final_sse_event is not None:
+                    self._last_event_time = time.monotonic()
                     yield final_sse_event
                 sse_event_type = None
             finally:

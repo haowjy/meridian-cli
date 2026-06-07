@@ -4,6 +4,7 @@ launch process, type contracts."""
 
 from __future__ import annotations
 
+import asyncio
 import tempfile
 from collections.abc import Mapping
 from pathlib import Path
@@ -121,6 +122,65 @@ class _TestableOpenCodeConnection(OpenCodeConnection):
         return response
 
 
+class _FakeSseContent:
+    def __init__(self, chunks: list[bytes]) -> None:
+        self._chunks = chunks
+
+    async def read(self, _size: int) -> bytes:
+        if not self._chunks:
+            return b""
+        return self._chunks.pop(0)
+
+    async def iter_chunked(self, _size: int):  # type: ignore[no-untyped-def]
+        for chunk in self._chunks:
+            yield chunk
+
+
+class _BlockingSseContent:
+    async def read(self, _size: int) -> bytes:
+        await asyncio.Event().wait()
+        return b""
+
+
+class _FakeSseResponse:
+    def __init__(self, chunks: list[bytes]) -> None:
+        self.content = _FakeSseContent(chunks)
+        self.closed = False
+
+    def close(self) -> None:
+        self.closed = True
+
+
+class _BlockingSseResponse:
+    def __init__(self) -> None:
+        self.content = _BlockingSseContent()
+        self.closed = False
+
+    def close(self) -> None:
+        self.closed = True
+
+
+class _LivenessProbeOpenCodeConnection(OpenCodeConnection):
+    def __init__(self, responses: list[_FakeSseResponse | _BlockingSseResponse]) -> None:
+        super().__init__()
+        self._state = "connected"
+        self._session_id = "sess-liveness"
+        self._process = _FakeProcess()
+        self._responses = iter(responses)
+        self.open_count = 0
+
+    async def _open_event_stream(self) -> _FakeSseResponse | _BlockingSseResponse:
+        self.open_count += 1
+        try:
+            return next(self._responses)
+        except StopIteration as exc:
+            raise AssertionError("Unexpected _open_event_stream call in test") from exc
+
+
+async def _no_sleep(_delay: float) -> None:
+    return None
+
+
 def _build_connection_config(tmp_path: Path) -> ConnectionConfig:
     return ConnectionConfig(
         spawn_id=SpawnId("p-open-observer"),
@@ -154,6 +214,80 @@ def test_opencode_event_from_json_line_pins_activity_transition_events(event_typ
     assert event.event_type == event_type
     assert event.payload == {"type": event_type, "sessionID": "sess-activity"}
     assert connection._signal_in_flight is False
+
+
+@pytest.mark.asyncio
+async def test_opencode_events_fail_after_liveness_timeout_without_events(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    connection = _LivenessProbeOpenCodeConnection(
+        responses=[_FakeSseResponse([]) for _ in range(100)]
+    )
+
+    monkeypatch.setattr(OpenCodeConnection, "_LIVENESS_TIMEOUT_SECONDS", 0.01)
+    monkeypatch.setattr(OpenCodeConnection, "_EVENT_RETRY_DELAY_SECONDS", 0.001)
+
+    events = [event async for event in connection.events()]
+
+    assert events == []
+    assert connection.open_count > 1
+    assert connection.state == "failed"
+
+
+@pytest.mark.asyncio
+async def test_opencode_events_fail_when_open_stream_stays_silent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    connection = _LivenessProbeOpenCodeConnection(responses=[_BlockingSseResponse()])
+
+    monkeypatch.setattr(OpenCodeConnection, "_LIVENESS_TIMEOUT_SECONDS", 0.01)
+
+    events = [event async for event in connection.events()]
+
+    assert events == []
+    assert connection.open_count == 1
+    assert connection.state == "failed"
+
+
+@pytest.mark.asyncio
+async def test_opencode_events_refresh_liveness_deadline_after_yielded_event(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    connection = _LivenessProbeOpenCodeConnection(
+        responses=[
+            _FakeSseResponse([b'{"type":"session.idle","sessionID":"sess-liveness"}\n']),
+            _FakeSseResponse([]),
+        ]
+    )
+    times = iter([0.0, 0.0, 0.1, 0.7, 0.8, 0.8, 1.0, 1.3])
+
+    monkeypatch.setattr(OpenCodeConnection, "_LIVENESS_TIMEOUT_SECONDS", 0.5)
+    monkeypatch.setattr(OpenCodeConnection, "_EVENT_RETRY_DELAY_SECONDS", 0.0)
+    monkeypatch.setattr(opencode_http.asyncio, "sleep", _no_sleep)
+    monkeypatch.setattr(opencode_http.time, "monotonic", lambda: next(times, 1.3))
+
+    events = [event async for event in connection.events()]
+
+    assert [event.event_type for event in events] == ["session.idle"]
+    assert connection.open_count == 2
+    assert connection.state == "failed"
+
+
+def test_opencode_health_fails_when_event_liveness_expires(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    connection = OpenCodeConnection()
+    connection._state = "connected"
+    connection._process = _FakeProcess()
+    connection._last_health_ok = True
+    connection._last_event_time = 10.0
+
+    monkeypatch.setattr(OpenCodeConnection, "_LIVENESS_TIMEOUT_SECONDS", 1.0)
+    monkeypatch.setattr(opencode_http.time, "monotonic", lambda: 10.5)
+    assert connection.health() is True
+
+    monkeypatch.setattr(opencode_http.time, "monotonic", lambda: 11.1)
+    assert connection.health() is False
 
 
 @pytest.mark.asyncio
