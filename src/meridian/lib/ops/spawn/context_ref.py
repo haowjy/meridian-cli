@@ -67,7 +67,7 @@ def _select_primary_spawn_for_session(project_root: Path, chat_id: str) -> Spawn
     spawns = reconcile_spawns(
         project_root,
         runtime_root,
-        spawn_store.list_spawns(runtime_root, filters={"chat_id": chat_id}),
+        spawn_store.list_spawns(runtime_root, filters={"owner_chat_id": chat_id}),
     )
     primary_spawns = [row for row in spawns if row.kind == "primary"]
     if not primary_spawns:

@@ -58,7 +58,7 @@ def _primary_spawn_for_chat(
     chat_id: str,
 ) -> SpawnRecord | None:
     _ = project_root
-    spawns = spawn_store.list_spawns(runtime_root, filters={"chat_id": chat_id})
+    spawns = spawn_store.list_spawns(runtime_root, filters={"owner_chat_id": chat_id})
     primary_spawns = [row for row in spawns if row.kind == "primary"]
     if not primary_spawns:
         return None

@@ -236,6 +236,7 @@ def start_spawn(
     runtime_root: Path,
     *,
     chat_id: str,
+    owner_chat_id: str | None = None,
     parent_id: str | None = None,
     model: str,
     agent: str,
@@ -302,6 +303,7 @@ def start_spawn(
         record = SpawnRecord(
             id=str(resolved_spawn_id),
             chat_id=chat_id,
+            owner_chat_id=owner_chat_id,
             parent_id=parent_id,
             originating_bash_id=os.environ.get("MERIDIAN_PI_BASH_ID") or None,
             model=model,
@@ -378,6 +380,7 @@ def update_spawn(
     runtime_root: Path,
     spawn_id: SpawnId | str,
     *,
+    chat_id: str | None = None,
     launch_mode: LaunchMode | None = None,
     worker_pid: int | None = None,
     runner_pid: int | None = None,
@@ -401,6 +404,8 @@ def update_spawn(
 
     def merge(current: SpawnRecord) -> SpawnRecord:
         updates: dict[str, object] = {}
+        if chat_id is not None:
+            updates["chat_id"] = chat_id
         if launch_mode is not None:
             updates["launch_mode"] = launch_mode
         if worker_pid is not None:
@@ -454,6 +459,7 @@ def update_spawn(
             seq=next_spawn_sequence(record.id),
             payload={
                 "launch_mode": launch_mode,
+                "chat_id": chat_id,
                 "worker_pid": worker_pid,
                 "runner_pid": runner_pid,
                 "runner_created_at_epoch": resolved_runner_created_at_epoch,
@@ -799,6 +805,11 @@ def list_spawns(
             keep = True
             for key, expected in filters.items():
                 if expected is None:
+                    continue
+                if key == "owner_chat_id":
+                    if (spawn.owner_chat_id or spawn.chat_id) != expected:
+                        keep = False
+                        break
                     continue
                 if key not in spawn_data:
                     continue

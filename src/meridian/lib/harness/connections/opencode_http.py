@@ -272,6 +272,8 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
                 spec,
                 timeout_seconds=startup_timeout,
             )
+            if config.session_id_observer is not None:
+                config.session_id_observer(self._session_id)
             if not self._primary_observer_mode:
                 await self._post_session_message(config.prompt, system=config.system)
         except Exception:

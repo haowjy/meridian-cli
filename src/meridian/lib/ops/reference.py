@@ -91,7 +91,9 @@ def resolve_spawn_ref(runtime_root: Path, ref: str) -> SpawnId | None:
     if spawn is not None:
         return SpawnId(spawn.id)
 
-    matches = spawn_store.list_spawns(runtime_root, filters={"chat_id": ref})
+    matches = spawn_store.list_spawns(runtime_root, filters={"owner_chat_id": ref})
+    if not matches:
+        matches = spawn_store.list_spawns(runtime_root, filters={"chat_id": ref})
     if matches:
         matches.sort(key=lambda item: item.started_at or "", reverse=True)
         return SpawnId(matches[0].id)
@@ -108,7 +110,7 @@ def _latest_harness_session_id(record: session_store.SessionRecord) -> str | Non
 
 
 def _latest_primary_spawn_id_for_chat(runtime_root: Path, chat_id: str) -> str | None:
-    rows = spawn_store.list_spawns(runtime_root, filters={"chat_id": chat_id})
+    rows = spawn_store.list_spawns(runtime_root, filters={"owner_chat_id": chat_id})
     primary_rows = [row for row in rows if row.kind == "primary"]
     if not primary_rows:
         return None
@@ -207,8 +209,11 @@ def _resolve_spawn_reference(
     if row.harness == "pi":
         if row.kind == "primary":
             source_pi_session_dir = _read_primary_pi_session_dir(runtime_root, row.id)
-        elif row.chat_id:
-            primary_spawn_id = _latest_primary_spawn_id_for_chat(runtime_root, row.chat_id)
+        elif row.owner_chat_id or row.chat_id:
+            primary_spawn_id = _latest_primary_spawn_id_for_chat(
+                runtime_root,
+                row.owner_chat_id or row.chat_id or "",
+            )
             if primary_spawn_id is not None:
                 source_pi_session_dir = _read_primary_pi_session_dir(runtime_root, primary_spawn_id)
     return _build_tracked_reference(

@@ -38,6 +38,7 @@ class StoredSpawnState(BaseModel):
 
     id: str
     chat_id: str | None = None
+    owner_chat_id: str | None = None
     parent_id: str | None = None
     originating_bash_id: str | None = None
     model: str | None = None
@@ -111,6 +112,7 @@ def record_to_stored_state(
         revision=revision,
         id=record.id,
         chat_id=record.chat_id,
+        owner_chat_id=record.owner_chat_id,
         parent_id=record.parent_id,
         originating_bash_id=record.originating_bash_id,
         model=record.model,
@@ -167,6 +169,7 @@ def stored_state_to_record(
     return SpawnRecord(
         id=stored.id,
         chat_id=stored.chat_id,
+        owner_chat_id=stored.owner_chat_id,
         parent_id=stored.parent_id,
         originating_bash_id=stored.originating_bash_id,
         model=stored.model,

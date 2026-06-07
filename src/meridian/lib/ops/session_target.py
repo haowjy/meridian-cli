@@ -487,6 +487,22 @@ def _resolve_from_chat_id(
     )
 
 
+def _spawn_linked_chat_session(
+    *,
+    runtime_root: Path,
+    spawn_id: str,
+    chat_id: str | None,
+) -> session_store.SessionRecord | None:
+    if chat_id is None:
+        return None
+    record = session_store.get_session_record(runtime_root, chat_id)
+    if record is None or record.spawn_id != spawn_id:
+        return None
+    if not record.harness_session_id.strip():
+        return None
+    return record
+
+
 def _resolve_from_spawn_id(
     *,
     project_root: Path,
@@ -531,10 +547,6 @@ def _resolve_from_spawn_id(
     session_id = (row.harness_session_id or "").strip()
     harness = (row.harness or "").strip() or None
 
-    if not session_id and row.chat_id is not None:
-        by_chat = session_store.get_session_harness_id(runtime_root, row.chat_id)
-        session_id = (by_chat or "").strip()
-
     if not session_id and is_primary_spawn:
         primary_meta_session_id = read_primary_harness_session_id(runtime_root, spawn_id)
         if primary_meta_session_id is not None:
@@ -569,10 +581,20 @@ def _resolve_from_spawn_id(
             )
             if output_target is not None:
                 return output_target
-            raise ValueError(
-                f"Spawn '{spawn_id}' has no transcript available yet "
-                "(no harness session id recorded and no spawn output found)."
+            record = _spawn_linked_chat_session(
+                runtime_root=runtime_root,
+                spawn_id=spawn_id,
+                chat_id=row.chat_id,
             )
+            if record is not None:
+                session_id = record.harness_session_id.strip()
+                if record.harness.strip():
+                    harness = record.harness.strip()
+            if not session_id:
+                raise ValueError(
+                    f"Spawn '{spawn_id}' has no transcript available yet "
+                    "(no harness session id recorded and no spawn output found)."
+                )
 
     if not session_id:
         raise ValueError(

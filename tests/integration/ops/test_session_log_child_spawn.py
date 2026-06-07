@@ -33,6 +33,42 @@ def _write_spawn_output(
     output_path.write_text("\n".join(json.dumps(event) for event in events) + "\n")
 
 
+def _write_codex_rollout(
+    *,
+    sessions_root: Path,
+    project_root: Path,
+    session_id: str,
+    assistant_text: str,
+) -> None:
+    rollout_dir = sessions_root / "2026" / "04"
+    rollout_dir.mkdir(parents=True, exist_ok=True)
+    rollout_path = rollout_dir / f"rollout-2026-04-22T00-00-00-{session_id}.jsonl"
+    rollout_path.write_text(
+        "\n".join(
+            [
+                json.dumps(
+                    {
+                        "type": "session_meta",
+                        "payload": {"id": session_id, "cwd": project_root.as_posix()},
+                    }
+                ),
+                json.dumps(
+                    {
+                        "type": "response_item",
+                        "payload": {
+                            "type": "message",
+                            "role": "assistant",
+                            "content": [{"type": "output_text", "text": assistant_text}],
+                        },
+                    }
+                ),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+
 def test_resolve_target_chat_missing_harness_session_id_reports_unavailable_transcript(
     tmp_path: Path,
 ) -> None:
@@ -104,6 +140,106 @@ def test_session_log_spawn_missing_harness_session_id_reads_live_output(
     assert [(message.role, message.content) for message in output.messages] == [
         ("assistant", "live progress")
     ]
+
+
+def test_session_log_child_spawn_without_harness_id_does_not_use_parent_chat(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    runtime_root = resolve_project_runtime_root(project_root)
+    runtime_root.mkdir(parents=True, exist_ok=True)
+    codex_home = tmp_path / "codex-home"
+    monkeypatch.setenv("CODEX_HOME", codex_home.as_posix())
+    _write_codex_rollout(
+        sessions_root=codex_home / "sessions",
+        project_root=project_root,
+        session_id="parent-session-id",
+        assistant_text="parent transcript should not appear",
+    )
+    parent_chat_id = session_store.start_session(
+        runtime_root,
+        harness="codex",
+        harness_session_id="parent-session-id",
+        model="gpt-5.4",
+        chat_id="c-parent",
+        kind="primary",
+    )
+    try:
+        spawn_store.start_spawn(
+            runtime_root,
+            spawn_id="p42",
+            chat_id=parent_chat_id,
+            parent_id="p-parent",
+            model="gpt-5.4",
+            agent="coder",
+            harness="codex",
+            prompt="do child thing",
+            harness_session_id="",
+            status="failed",
+        )
+
+        with pytest.raises(ValueError) as exc:
+            session_log_sync(
+                SessionLogInput(ref="p42", project_root=project_root.as_posix(), tail=5)
+            )
+        assert str(exc.value) == (
+            "Spawn 'p42' has no transcript available yet "
+            "(no harness session id recorded and no spawn output found)."
+        )
+    finally:
+        session_store.stop_session(runtime_root, parent_chat_id)
+
+
+def test_session_log_child_spawn_uses_authoritative_child_chat_link(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    runtime_root = resolve_project_runtime_root(project_root)
+    runtime_root.mkdir(parents=True, exist_ok=True)
+    codex_home = tmp_path / "codex-home"
+    monkeypatch.setenv("CODEX_HOME", codex_home.as_posix())
+    _write_codex_rollout(
+        sessions_root=codex_home / "sessions",
+        project_root=project_root,
+        session_id="11111111-1111-4111-8111-111111111111",
+        assistant_text="child transcript",
+    )
+    child_chat_id = session_store.start_session(
+        runtime_root,
+        harness="codex",
+        harness_session_id="11111111-1111-4111-8111-111111111111",
+        model="gpt-5.4",
+        chat_id="c-child",
+        spawn_id="p42",
+    )
+    try:
+        spawn_store.start_spawn(
+            runtime_root,
+            spawn_id="p42",
+            chat_id=child_chat_id,
+            model="gpt-5.4",
+            agent="coder",
+            harness="codex",
+            prompt="do child thing",
+            harness_session_id="",
+            status="failed",
+        )
+
+        output = session_log_sync(
+            SessionLogInput(ref="p42", project_root=project_root.as_posix(), tail=5)
+        )
+
+        assert output.session_id == "11111111-1111-4111-8111-111111111111"
+        assert output.source == "codex transcript"
+        assert [(message.role, message.content) for message in output.messages] == [
+            ("assistant", "child transcript")
+        ]
+    finally:
+        session_store.stop_session(runtime_root, child_chat_id)
 
 
 def test_spawn_output_path_legacy_precedence_with_both_files(tmp_path: Path) -> None:

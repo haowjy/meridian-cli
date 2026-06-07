@@ -5,6 +5,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Fixed
+- Child spawn session logs no longer bind to the parent chat when the child harness session id is not recorded; child rows now point at their own chat and OpenCode records its fresh session id at connect time.
 - OpenCode and Codex streaming now share event-stream liveness detection, so frozen managed backends fail within the liveness window instead of wedging with no events.
 - Backend scope cleanup now runs through `SpawnManager` teardown for harnesses with a `ProcessScopeSnapshot` (OpenCode, Codex), removing the duplicate streaming-finalization cleanup path.
 - Spawn setup failures before spawn-row initialization, including payload validation, now return a consistent failed spawn output through one pre-init boundary.

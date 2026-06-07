@@ -235,6 +235,7 @@ class SpawnLifecycleService:
         self,
         *,
         chat_id: str,
+        owner_chat_id: str | None = None,
         parent_id: str | None = None,
         session_metadata: PrimarySessionMetadata,
         kind: str = "child",
@@ -262,6 +263,7 @@ class SpawnLifecycleService:
             result_id = _spawn_store().start_spawn(
                 self._runtime_root,
                 chat_id=chat_id,
+                owner_chat_id=owner_chat_id,
                 parent_id=parent_id,
                 model=session_metadata.model,
                 agent=session_metadata.agent,

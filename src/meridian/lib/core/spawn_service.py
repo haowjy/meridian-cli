@@ -395,6 +395,7 @@ class SpawnApplicationService:
             await asyncio.to_thread(
                 self._lifecycle.start,
                 chat_id=payload.chat_id or "",
+                owner_chat_id=payload.chat_id or "",
                 parent_id=payload.parent_id,
                 session_metadata=prepare_session_metadata,
                 kind=payload.kind,

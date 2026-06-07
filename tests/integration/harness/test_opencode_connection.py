@@ -377,6 +377,32 @@ async def test_opencode_start_primary_observer_mode_controls_initial_prompt_post
 
 
 @pytest.mark.asyncio
+async def test_opencode_start_reports_session_id_when_connection_starts(tmp_path: Path) -> None:
+    connection = _StartProbeOpenCodeConnection()
+    observed: list[str] = []
+    config = ConnectionConfig(
+        spawn_id=SpawnId("p-open-observer"),
+        harness_id=HarnessId.OPENCODE,
+        prompt="hello from test",
+        control_root=tmp_path,
+        env_overrides={},
+        session_id_observer=observed.append,
+    )
+
+    await connection.start(
+        config,
+        ResolvedLaunchSpec(
+            permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
+        ),
+    )
+
+    assert observed == ["sess-primary-observer"]
+    assert connection.initial_messages == [("hello from test", None)]
+
+    await connection.stop()
+
+
+@pytest.mark.asyncio
 async def test_post_session_message_includes_system_field_when_present() -> None:
     connection = _TestableOpenCodeConnection(responses=[(204, None, "")])
     connection._session_id = "sess-system"

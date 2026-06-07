@@ -901,6 +901,22 @@ async def execute_with_streaming(
                 echo_stderr=stream_stdout_to_terminal,
             )
 
+        observed_harness_session_id: str | None = None
+
+        def _record_harness_session_id(session_id: str) -> None:
+            nonlocal observed_harness_session_id
+            normalized = session_id.strip()
+            if not normalized or normalized == observed_harness_session_id:
+                return
+            spawn_store.update_spawn(
+                runtime_root,
+                run.spawn_id,
+                harness_session_id=normalized,
+            )
+            observed_harness_session_id = normalized
+            if harness_session_id_observer is not None:
+                harness_session_id_observer(normalized)
+
         config = ConnectionConfig(
             spawn_id=run.spawn_id,
             harness_id=resolved_harness_id,
@@ -916,6 +932,7 @@ async def execute_with_streaming(
             pi_task_ping_reset_on_activity=request.pi_task_ping_reset_on_activity,
             pi_session_role=pi_session_role,
             debug_tracer=tracer,
+            session_id_observer=_record_harness_session_id,
         )
 
         # I-10: spawn row MUST exist before execute_with_streaming is called.
@@ -939,29 +956,14 @@ async def execute_with_streaming(
         )
 
         materialized_session_id = (spec.continue_session_id or "").strip()
-        observed_harness_session_id: str | None = None
         if not materialized_session_id:
             seeded_session_id = harness.derive_streaming_seeded_session_id(spec=spec)
             if seeded_session_id:
-                spawn_store.update_spawn(
-                    runtime_root,
-                    run.spawn_id,
-                    harness_session_id=seeded_session_id,
-                )
-                observed_harness_session_id = seeded_session_id
-                if harness_session_id_observer is not None:
-                    harness_session_id_observer(seeded_session_id)
+                _record_harness_session_id(seeded_session_id)
         if materialized_session_id and materialized_session_id != (
             request.session.requested_harness_session_id or ""
         ):
-            spawn_store.update_spawn(
-                runtime_root,
-                run.spawn_id,
-                harness_session_id=materialized_session_id,
-            )
-            observed_harness_session_id = materialized_session_id
-            if harness_session_id_observer is not None:
-                harness_session_id_observer(materialized_session_id)
+            _record_harness_session_id(materialized_session_id)
 
         budget_tracker = (
             LiveBudgetTracker(budget=budget, space_spent_usd=space_spent_usd)
@@ -1097,7 +1099,9 @@ async def execute_with_streaming(
                     )
                     break
 
-                # I-4: observe_session_id() is the sole observation callsite.
+                # I-4: adapter observe_session_id() remains the sole post-attempt
+                # discovery callsite. Streaming connections may report a known
+                # session id earlier through ConnectionConfig.session_id_observer.
                 extracted_harness_session_id = (
                     harness.observe_session_id(
                         artifacts=artifacts,
@@ -1114,19 +1118,9 @@ async def execute_with_streaming(
                     )
                     or ""
                 )
-                if (
-                    extracted_harness_session_id
-                    and extracted_harness_session_id != observed_harness_session_id
-                ):
+                if extracted_harness_session_id:
                     try:
-                        spawn_store.update_spawn(
-                            runtime_root,
-                            run.spawn_id,
-                            harness_session_id=extracted_harness_session_id,
-                        )
-                        observed_harness_session_id = extracted_harness_session_id
-                        if harness_session_id_observer is not None:
-                            harness_session_id_observer(extracted_harness_session_id)
+                        _record_harness_session_id(extracted_harness_session_id)
                     except Exception:
                         logger.warning(
                             "Harness session ID observer failed.",

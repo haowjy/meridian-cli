@@ -683,6 +683,10 @@ def _collect_descendants(
     return result
 
 
+def _row_owner_chat_id(row: SpawnRecord) -> str:
+    return (row.owner_chat_id or row.chat_id or "").strip()
+
+
 def spawn_stats_sync(
     payload: SpawnStatsInput,
     ctx: RuntimeContext | None = None,
@@ -701,7 +705,7 @@ def spawn_stats_sync(
 
     if payload.session is not None and payload.session.strip():
         wanted_session = payload.session.strip()
-        all_spawns = [row for row in all_spawns if row.chat_id == wanted_session]
+        all_spawns = [row for row in all_spawns if _row_owner_chat_id(row) == wanted_session]
 
     if payload.spawn_id is not None:
         root_id = payload.spawn_id.strip()
@@ -1023,7 +1027,7 @@ def _row_in_cancel_scope(
         return True
     if descendant_ids is not None:
         return row.id in descendant_ids
-    return (row.chat_id or "").strip() == (caller_chat_id or "")
+    return _row_owner_chat_id(row) == (caller_chat_id or "")
 
 
 async def _spawn_cancel_impl(
@@ -1294,10 +1298,10 @@ def _discover_pending_spawns(
     pending = [
         row
         for row in all_spawns
-        if (row.chat_id or "").strip() == chat_id
-        and row.status in ACTIVE_SPAWN_STATUSES
+        if row.status in ACTIVE_SPAWN_STATUSES
         and row.id != exclude_spawn_id
         and (descendant_ids is None or row.id in descendant_ids)
+        and (descendant_ids is not None or _row_owner_chat_id(row) == chat_id)
     ]
     pending.sort(key=lambda row: row.id)
     return pending

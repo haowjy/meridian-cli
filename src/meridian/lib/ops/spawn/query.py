@@ -259,7 +259,7 @@ def read_latest_primary_spawn_for_chat_read_only(
     """Return the latest primary spawn row for a chat without reconciliation."""
 
     resolved_runtime_root = runtime_root or resolve_runtime_root_for_read(project_root)
-    spawns = spawn_store.list_spawns(resolved_runtime_root, filters={"chat_id": chat_id})
+    spawns = spawn_store.list_spawns(resolved_runtime_root, filters={"owner_chat_id": chat_id})
     primary_spawns = [row for row in spawns if row.kind == "primary"]
     if not primary_spawns:
         return None

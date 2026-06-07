@@ -191,8 +191,10 @@ async def _prepare_execution_handoff(
                     else None
                 ),
                 execution_cwd=execution_cwd,
+                spawn_id=str(spawn.spawn_id),
             )
         )
+        spawn_store.update_spawn(runtime_root, spawn.spawn_id, chat_id=session_context.chat_id)
         resolved_request = resolved_request.model_copy(
             update={"agent": session_context.resolved_agent_name}
         )

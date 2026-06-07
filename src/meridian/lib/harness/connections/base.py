@@ -225,6 +225,7 @@ class ConnectionConfig:
     ws_port: int = 0
     pi_session_role: PiSessionRole | None = None
     debug_tracer: DebugTracer | None = None
+    session_id_observer: Callable[[str], None] | None = None
 
 
 def validate_prompt_size(config: ConnectionConfig) -> None:
