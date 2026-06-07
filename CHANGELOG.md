@@ -6,6 +6,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 - POSIX process-scope cleanup no longer sends signals to a recorded process group unless the scope root is the group leader; non-isolated children degrade to PID-tree cleanup instead of risking termination of the parent agent/test-runner session.
+- POSIX signal forwarding now falls back to signalling only the child process when a launch inherited the parent process group, avoiding parent-session termination for native-inherit OpenCode/Codex TUI paths.
 - Pipe-captured subprocess launches plus Claude/Pi observer backends now start in isolated POSIX sessions so later scope cleanup targets their own process group, not the launching Meridian process group.
 
 ## [0.3.0] - 2026-06-06
