@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import asyncio
 import json
+import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 import pytest
 
@@ -129,7 +130,8 @@ class FakeManagedConnection:
         self.started_primary_observer_mode = True
         await self.start(config, spec)
 
-    async def stop(self) -> None:
+    async def stop(self, *, reason: str | None = None) -> None:
+        _ = reason
         self.stop_called = True
         self.state = "stopped"
         self._stop_event.set()
@@ -184,6 +186,44 @@ class FakeProcessLauncher(ProcessLauncher):
         return LaunchedProcess(exit_code=self.exit_code, pid=self.pid)
 
 
+@dataclass
+class BlockingProcessLauncher(ProcessLauncher):
+    spawn_dir: Path
+    pid: int = 5252
+    launch_commands: list[tuple[str, ...]] = field(default_factory=list)
+    release: threading.Event = field(default_factory=threading.Event)
+
+    def launch(
+        self,
+        *,
+        command: tuple[str, ...],
+        cwd: Path,
+        env: dict[str, str],
+        output_log_path: Path | None,
+        on_child_started: ChildStartedHook | None = None,
+    ) -> LaunchedProcess:
+        _ = (cwd, env, output_log_path)
+        self.launch_commands.append(command)
+        metadata_path = self.spawn_dir / PRIMARY_META_FILENAME
+        assert metadata_path.exists()
+        if on_child_started is not None:
+            on_child_started(self.pid)
+        self.release.wait(timeout=5.0)
+        return LaunchedProcess(exit_code=143, pid=self.pid)
+
+
+class FailingEventConnection(FakeManagedConnection):
+    def __init__(self, *, fail_after_started: asyncio.Event, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._fail_after_started = fail_after_started
+
+    async def events(self):  # type: ignore[no-untyped-def]
+        await self._fail_after_started.wait()
+        self.state = "failed"
+        if False:
+            yield HarnessEvent(event_type="unreachable", payload={}, harness_id="opencode")
+
+
 def _read_metadata(spawn_dir: Path) -> dict[str, object]:
     return cast(
         "dict[str, object]",
@@ -194,6 +234,53 @@ def _read_metadata(spawn_dir: Path) -> dict[str, object]:
 def _read_history_lines(spawn_dir: Path) -> list[dict[str, object]]:
     lines = (spawn_dir / HISTORY_FILENAME).read_text(encoding="utf-8").splitlines()
     return [cast("dict[str, object]", json.loads(line)) for line in lines if line.strip()]
+
+
+@pytest.mark.asyncio
+async def test_primary_attach_event_writer_failure_stops_connection_and_tui(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    spawn_dir = tmp_path / "spawns" / "p900-liveness"
+    tui_started = asyncio.Event()
+    connection = FailingEventConnection(
+        fail_after_started=tui_started,
+        events=[],
+        session_id="sess-dead",
+    )
+    process_launcher = BlockingProcessLauncher(spawn_dir=spawn_dir)
+    terminated_scopes: list[str] = []
+
+    def _terminate_scope(scope: Any, *, grace_seconds: float, reason: str) -> None:
+        _ = grace_seconds
+        terminated_scopes.append(f"{scope.scope_id}:{reason}")
+        process_launcher.release.set()
+        return None
+
+    monkeypatch.setattr(primary_attach_module, "terminate_scope_sync", _terminate_scope)
+    launcher = PrimaryAttachLauncher(
+        spawn_id=SpawnId("p900-liveness"),
+        spawn_dir=spawn_dir,
+        connection=connection,
+        tui_command_builder=lambda session_id: ("opencode", "attach", session_id),
+        process_launcher=process_launcher,
+        on_running=lambda _pid: tui_started.set(),
+    )
+
+    outcome = await asyncio.wait_for(
+        launcher.run(
+            config=_build_config(spawn_id=SpawnId("p900-liveness"), control_root=tmp_path),
+            spec=_build_spec(),
+            cwd=tmp_path,
+            env={},
+        ),
+        timeout=2.0,
+    )
+
+    assert outcome.exit_code == 1
+    assert connection.stop_called is True
+    assert terminated_scopes == ["tui:event_stream_closed"]
+    assert _read_metadata(spawn_dir)["tui_pid"] == 5252
 
 
 @pytest.mark.asyncio

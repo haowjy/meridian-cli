@@ -5,6 +5,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Fixed
+- Detached OpenCode/Codex backends now link to the worker lifetime and dead-worker reaping finalizes child spawns while cleaning recorded backend scopes.
+- Managed primary attach now fails and tears down the TUI/backend when the observed event stream dies, and OpenCode keepalive chunks no longer reset progress liveness.
 - Child spawn session logs no longer bind to the parent chat when the child harness session id is not recorded; child rows now point at their own chat and OpenCode records its fresh session id at connect time.
 - OpenCode and Codex streaming now share event-stream liveness detection, so frozen managed backends fail within the liveness window instead of wedging with no events.
 - Backend scope cleanup now runs through `SpawnManager` teardown for harnesses with a `ProcessScopeSnapshot` (OpenCode, Codex), removing the duplicate streaming-finalization cleanup path.

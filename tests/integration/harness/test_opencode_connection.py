@@ -78,6 +78,35 @@ class _StartProbeOpenCodeConnection(OpenCodeConnection):
         self.initial_messages.append((text, system))
 
 
+class _HangingSessionOpenCodeConnection(OpenCodeConnection):
+    async def _create_session(self, spec: ResolvedLaunchSpec) -> str:
+        _ = spec
+        await asyncio.Event().wait()
+        raise AssertionError("unreachable")
+
+
+class _PayloadTimeoutOpenCodeConnection(OpenCodeConnection):
+    def __init__(self) -> None:
+        super().__init__()
+        self.payloads: list[dict[str, object]] = []
+
+    async def _post_json(
+        self,
+        path: str,
+        payload: Mapping[str, object],
+        *,
+        skip_body_on_statuses: frozenset[int] | None = None,
+        tolerate_incomplete_body: bool = False,
+    ) -> tuple[int, object | None, str]:
+        _ = path, skip_body_on_statuses, tolerate_incomplete_body
+        payload_dict = dict(payload)
+        self.payloads.append(payload_dict)
+        if payload_dict:
+            await asyncio.Event().wait()
+            raise AssertionError("unreachable")
+        return 200, {"id": "sess-empty-fallback"}, "application/json"
+
+
 class _TestableOpenCodeConnection(OpenCodeConnection):
     def __init__(
         self,
@@ -142,6 +171,12 @@ class _BlockingSseContent:
         return b""
 
 
+class _KeepaliveSseContent:
+    async def read(self, _size: int) -> bytes:
+        await asyncio.sleep(0.001)
+        return b": keepalive\n\n"
+
+
 class _FakeSseResponse:
     def __init__(self, chunks: list[bytes]) -> None:
         self.content = _FakeSseContent(chunks)
@@ -160,10 +195,21 @@ class _BlockingSseResponse:
         self.closed = True
 
 
+class _KeepaliveSseResponse:
+    def __init__(self) -> None:
+        self.content = _KeepaliveSseContent()
+        self.closed = False
+
+    def close(self) -> None:
+        self.closed = True
+
+
 class _LivenessProbeOpenCodeConnection(OpenCodeConnection):
     def __init__(
         self,
-        responses: list[_FakeSseResponse | _BlockingSseResponse | Exception],
+        responses: list[
+            _FakeSseResponse | _BlockingSseResponse | _KeepaliveSseResponse | Exception
+        ],
     ) -> None:
         super().__init__()
         self._state = "connected"
@@ -172,7 +218,9 @@ class _LivenessProbeOpenCodeConnection(OpenCodeConnection):
         self._responses = iter(responses)
         self.open_count = 0
 
-    async def _open_event_stream(self) -> _FakeSseResponse | _BlockingSseResponse:
+    async def _open_event_stream(
+        self,
+    ) -> _FakeSseResponse | _BlockingSseResponse | _KeepaliveSseResponse:
         self.open_count += 1
         try:
             response = next(self._responses)
@@ -195,6 +243,10 @@ class _BlockingOpenStreamConnection(_LivenessProbeOpenCodeConnection):
 
 async def _no_sleep(_delay: float) -> None:
     return None
+
+
+async def _collect_opencode_events(connection: OpenCodeConnection) -> list[HarnessEvent]:
+    return [event async for event in connection.events()]
 
 
 def _build_connection_config(tmp_path: Path) -> ConnectionConfig:
@@ -281,6 +333,21 @@ async def test_opencode_events_fail_when_open_stream_stays_silent(
 
 
 @pytest.mark.asyncio
+async def test_opencode_keepalive_chunks_do_not_refresh_liveness_deadline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    connection = _LivenessProbeOpenCodeConnection(responses=[_KeepaliveSseResponse()])
+
+    monkeypatch.setattr(OpenCodeConnection, "_LIVENESS_TIMEOUT_SECONDS", 0.03)
+
+    events = await asyncio.wait_for(_collect_opencode_events(connection), timeout=1.0)
+
+    assert events == []
+    assert connection.open_count == 1
+    assert connection.state == "failed"
+
+
+@pytest.mark.asyncio
 async def test_opencode_events_refresh_liveness_deadline_after_yielded_event(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -344,6 +411,44 @@ async def test_opencode_start_resets_expired_liveness(
     )
 
     assert connection.health() is True
+
+
+@pytest.mark.asyncio
+async def test_opencode_session_creation_falls_back_when_projected_payload_hangs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    connection = _PayloadTimeoutOpenCodeConnection()
+    connection._process = _FakeProcess()
+    monkeypatch.setattr(OpenCodeConnection, "_SESSION_CREATE_PAYLOAD_TIMEOUT_SECONDS", 0.01)
+
+    session_id = await connection._create_session_with_retry(
+        ResolvedLaunchSpec(
+            model="gpt-5.5",
+            agent_name="prober",
+            permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
+        ),
+        timeout_seconds=1.0,
+    )
+
+    assert session_id == "sess-empty-fallback"
+    assert connection.payloads == [
+        {"model": "gpt-5.5", "modelID": "gpt-5.5", "agent": "prober"},
+        {},
+    ]
+
+
+@pytest.mark.asyncio
+async def test_opencode_session_startup_timeout_wraps_hung_session_request() -> None:
+    connection = _HangingSessionOpenCodeConnection()
+    connection._process = _FakeProcess()
+
+    with pytest.raises(TimeoutError, match=r"did not become ready within 0\.0s"):
+        await connection._create_session_with_retry(
+            ResolvedLaunchSpec(
+                permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
+            ),
+            timeout_seconds=0.01,
+        )
 
 
 @pytest.mark.asyncio

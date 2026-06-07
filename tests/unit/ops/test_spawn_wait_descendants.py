@@ -61,7 +61,6 @@ def _make_record(
         cost_is_estimate=False,
         error=None,
         terminal_origin=None,
-        process_scopes=None,
     )
 
 

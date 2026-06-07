@@ -96,7 +96,6 @@ class SpawnRecord(BaseModel):
     cost_is_estimate: bool
     error: str | None
     terminal_origin: SpawnOrigin | None
-    process_scopes: tuple[dict[str, object], ...] | None = None
     launch_policy_snapshot: LaunchPolicySnapshot | None = None
 
 

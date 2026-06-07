@@ -58,7 +58,6 @@ if TYPE_CHECKING:
     from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
     from meridian.lib.hooks.dispatch import HookDispatcher
     from meridian.lib.launch.types import PrimarySessionMetadata
-    from meridian.lib.platform.process_scope.base import ProcessScopeSnapshot
     from meridian.lib.state.spawn.model import (
         LaunchMode,
         SpawnOrigin,
@@ -308,13 +307,8 @@ class SpawnLifecycleService:
         worker_pid: int | None = None,
         runner_pid: int | None = None,
         runner_created_at_epoch: float | None = None,
-        scope_snapshot: ProcessScopeSnapshot | None = None,
     ) -> None:
-        """Mark a spawn as running and dispatch spawn.running.
-
-        ``scope_snapshot`` is accepted here as a threading seam for Phase 2
-        persistence; it is not used in the current phase.
-        """
+        """Mark a spawn as running and dispatch spawn.running."""
         with bind_lifecycle_correlation(
             self._correlation(operation="mark_running", spawn_id=spawn_id)
         ):

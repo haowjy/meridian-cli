@@ -60,11 +60,17 @@ from meridian.lib.observability.trace_helpers import (
     trace_wire_send,
 )
 from meridian.lib.platform import IS_WINDOWS
+from meridian.lib.platform.detached_process import (
+    ParentDeathLink,
+    detached_backend_subprocess_kwargs,
+    link_child_lifetime_to_parent,
+)
 from meridian.lib.platform.process_scope import (
     ProcessScopeSnapshot,
     ScopedProcessHandle,
 )
 from meridian.lib.state.paths import resolve_spawn_log_dir
+from meridian.lib.state.process_scope_projection import record_scope
 
 logger = logging.getLogger(__name__)
 _STARTUP_STDERR_MAX_BYTES = 16 * 1024
@@ -156,6 +162,7 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
     _EVENT_RETRY_DELAY_SECONDS: ClassVar[float] = 0.25
     _LIVENESS_TIMEOUT_SECONDS: ClassVar[float] = 120.0
     _STARTUP_TIMEOUT_SECONDS: ClassVar[float] = 30.0
+    _SESSION_CREATE_PAYLOAD_TIMEOUT_SECONDS: ClassVar[float] = 5.0
     _STOP_GRACE_SECONDS: ClassVar[float] = 5.0
     _EVENT_ACCEPT_HEADER: ClassVar[dict[str, str]] = {"Accept": "text/event-stream"}
 
@@ -183,6 +190,7 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
         self._primary_observer_mode = False
         self._startup_emitter: StartupPhaseEmitter | None = None
         self._scope_handle: ScopedProcessHandle | None = None
+        self._parent_death_link: ParentDeathLink | None = None
 
     @property
     def state(self) -> ConnectionState:
@@ -405,7 +413,6 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
                         return
                     if not chunk:
                         break
-                    self._liveness.mark_activity()
                     buffer += chunk.decode("utf-8", errors="replace")
                     while True:
                         newline_index = buffer.find("\n")
@@ -465,9 +472,7 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
         self._stderr_log_path = spawn_dir / "stderr.log"
         self._stderr_handle = self._stderr_log_path.open("ab")
         self._stderr_read_offset = self._stderr_handle.tell()
-        subprocess_kwargs: dict[str, Any] = {}
-        if not IS_WINDOWS:
-            subprocess_kwargs["start_new_session"] = True
+        subprocess_kwargs = detached_backend_subprocess_kwargs()
         try:
             self._process = await asyncio.create_subprocess_exec(
                 *command,
@@ -512,6 +517,9 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
             degraded_reason=None,
         )
         self._scope_handle = ScopedProcessHandle(process=process, snapshot=snapshot)
+        self._parent_death_link = link_child_lifetime_to_parent(pid)
+        if not self._primary_observer_mode:
+            record_scope(spawn_dir.parent.parent, config.spawn_id, snapshot)
 
     async def _create_session_with_retry(
         self,
@@ -525,9 +533,14 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
             if self._process_exited():
                 raise self._startup_exit_exception()
             try:
-                session_id = await self._create_session(spec)
+                remaining = max(0.0, deadline - time.monotonic())
+                session_id = await asyncio.wait_for(self._create_session(spec), timeout=remaining)
                 self._last_health_ok = True
                 return session_id
+            except TimeoutError as exc:
+                raise TimeoutError(
+                    f"OpenCode session endpoint did not become ready within {timeout_seconds:.1f}s"
+                ) from exc
             except SessionNotReadyError as exc:
                 last_error = exc
             if time.monotonic() >= deadline:
@@ -597,7 +610,22 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
         for path in self._CREATE_SESSION_PATHS:
             for variant in payload_variants:
                 try:
-                    status, body, _ = await self._post_json(path, variant)
+                    post_request = self._post_json(path, variant)
+                    if variant:
+                        status, body, _ = await asyncio.wait_for(
+                            post_request,
+                            timeout=self._SESSION_CREATE_PAYLOAD_TIMEOUT_SECONDS,
+                        )
+                    else:
+                        status, body, _ = await post_request
+                except TimeoutError:
+                    if variant:
+                        last_error = (
+                            "OpenCode session create timed out with projected payload "
+                            f"on {path}"
+                        )
+                        continue
+                    raise
                 except Exception as exc:
                     if _is_retryable_transport_error(exc):
                         raise SessionNotReadyError(
@@ -933,6 +961,7 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
                 process.kill()
                 await process.wait()
 
+        self._parent_death_link = None
         self._base_url = None
         self._session_id = None
         self._event_path = None

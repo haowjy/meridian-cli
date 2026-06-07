@@ -303,7 +303,7 @@ def test_reconcile_active_spawn_depth_gate_respects_env_matrix(
     if expected_status == "failed":
         assert reconciled.exit_code == 1
         assert latest.exit_code == 1
-def test_reconcile_active_spawn_dead_runner_recent_activity_skips_across_artifact_matrix(
+def test_reconcile_active_spawn_dead_runner_recent_activity_still_fails(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -325,10 +325,134 @@ def test_reconcile_active_spawn_dead_runner_recent_activity_skips_across_artifac
 
     reconciled = _reconcile(tmp_path, runtime_root, record)
 
-    assert reconciled == record
+    assert reconciled.status == "failed"
+    assert reconciled.exit_code == 1
+    assert reconciled.error == "orphan_run"
     latest = _get_spawn(runtime_root, spawn_id)
-    assert latest.status == "running"
-    assert latest.error is None
+    assert latest.status == "failed"
+    assert latest.error == "orphan_run"
+
+
+def test_reconcile_active_spawn_nested_dead_runner_reaps_recorded_backend_scope(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from meridian.lib.core import process_cleanup
+    from meridian.lib.core.types import SpawnId
+    from meridian.lib.platform.process_scope.base import CleanupResult, ProcessScopeSnapshot
+    from meridian.lib.state.process_scope_projection import record_scope
+
+    runtime_root, spawn_id = _create_spawn(
+        tmp_path,
+        kind="child",
+        harness="opencode",
+        runner_pid=9301,
+        started_at=_OLD_STARTED_AT,
+    )
+    backend_scope = ProcessScopeSnapshot(
+        scope_id="backend",
+        owner_policy="spawn_owned",
+        owner_id=spawn_id,
+        role="harness_backend",
+        containment="pid_tree_fallback",
+        root_pid=9402,
+        root_created_at_epoch=100.0,
+        pgid=None,
+        job_name=None,
+        degraded_reason=None,
+    )
+    record_scope(runtime_root, SpawnId(spawn_id), backend_scope)
+    record = _get_spawn(runtime_root, spawn_id)
+    monkeypatch.setenv("MERIDIAN_DEPTH", "1")
+    monkeypatch.setattr(
+        "meridian.lib.state.reaper.is_process_alive",
+        lambda *_args, **_kwargs: False,
+    )
+    terminated_scopes: list[str] = []
+
+    def _terminate_scope(scope, *, grace_seconds: float, reason: str):
+        terminated_scopes.append(f"{scope.scope_id}:{scope.root_pid}:{reason}")
+        return CleanupResult(
+            scope_id=scope.scope_id,
+            root_pid=scope.root_pid,
+            descendant_count=0,
+            reason=reason,
+            grace_seconds=grace_seconds,
+            kill_escalated=False,
+            degraded_fallback=False,
+            skip_reason=None,
+        )
+
+    monkeypatch.setattr(process_cleanup, "terminate_scope_sync", _terminate_scope)
+
+    reconciled = _reconcile(tmp_path, runtime_root, record)
+
+    assert reconciled.status == "failed"
+    assert reconciled.error == "orphan_run"
+    assert terminated_scopes == ["backend:9402:reaper"]
+
+
+def test_reconcile_active_spawn_dead_runner_reaps_recorded_backend_scope(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from meridian.lib.core import process_cleanup
+    from meridian.lib.core.types import SpawnId
+    from meridian.lib.platform.process_scope.base import CleanupResult, ProcessScopeSnapshot
+    from meridian.lib.state.process_scope_projection import record_scope
+
+    runtime_root, spawn_id = _create_spawn(
+        tmp_path,
+        kind="child",
+        harness="opencode",
+        runner_pid=9301,
+        worker_pid=9302,
+        started_at=_OLD_STARTED_AT,
+    )
+    backend_scope = ProcessScopeSnapshot(
+        scope_id="backend",
+        owner_policy="spawn_owned",
+        owner_id=spawn_id,
+        role="harness_backend",
+        containment="pid_tree_fallback",
+        root_pid=9401,
+        root_created_at_epoch=100.0,
+        pgid=None,
+        job_name=None,
+        degraded_reason=None,
+    )
+    record_scope(runtime_root, SpawnId(spawn_id), backend_scope)
+    _write_activity_artifact(runtime_root, spawn_id, "heartbeat", age_secs=5)
+    record = _get_spawn(runtime_root, spawn_id)
+    monkeypatch.setattr(
+        "meridian.lib.state.reaper.is_process_alive",
+        lambda *_args, **_kwargs: False,
+    )
+    terminated_scopes: list[str] = []
+
+    def _terminate_scope(scope, *, grace_seconds: float, reason: str):
+        terminated_scopes.append(f"{scope.scope_id}:{scope.root_pid}:{reason}")
+        return CleanupResult(
+            scope_id=scope.scope_id,
+            root_pid=scope.root_pid,
+            descendant_count=0,
+            reason=reason,
+            grace_seconds=grace_seconds,
+            kill_escalated=False,
+            degraded_fallback=False,
+            skip_reason=None,
+        )
+
+    monkeypatch.setattr(process_cleanup, "terminate_scope_sync", _terminate_scope)
+
+    reconciled = _reconcile(tmp_path, runtime_root, record)
+
+    assert reconciled.status == "failed"
+    assert reconciled.error == "orphan_run"
+    assert terminated_scopes == ["backend:9401:reaper"]
+    latest = _get_spawn(runtime_root, spawn_id)
+    assert latest.status == "failed"
+    assert latest.error == "orphan_run"
 
 
 def test_reconcile_active_spawn_last_attempt_exit_drives_orphan_failure_after_activity_stales(

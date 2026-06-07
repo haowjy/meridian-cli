@@ -21,7 +21,6 @@ from meridian.lib.core.types import SpawnId
 from meridian.lib.platform.process_scope import ProcessScopeSnapshot
 from meridian.lib.platform.process_scope.base import process_scope_release_id
 from meridian.lib.state.atomic import atomic_write_text
-from meridian.lib.state.spawn.model import SpawnRecord
 
 logger = logging.getLogger(__name__)
 
@@ -148,23 +147,6 @@ def is_scope_released(
     return release_id in released
 
 
-def read_scopes(spawn_record: SpawnRecord) -> list[ProcessScopeSnapshot]:
-    """Read scope snapshots from a spawn record's embedded field.
-
-    Returns ``[]`` for legacy spawns where ``process_scopes`` is ``None``.
-    Callers check ``len == 0`` to decide whether to fall back to
-    ``worker_pid`` for cleanup.
-    """
-    if spawn_record.process_scopes is None:
-        return []
-    snapshots: list[ProcessScopeSnapshot] = []
-    for raw in spawn_record.process_scopes:
-        snap = _dict_to_snapshot(dict(raw))
-        if snap is not None:
-            snapshots.append(snap)
-    return snapshots
-
-
 def read_scopes_from_disk(
     runtime_root: Path,
     spawn_id: SpawnId,
@@ -192,7 +174,6 @@ def read_scopes_from_disk(
 __all__ = [
     "is_scope_released",
     "mark_scope_released",
-    "read_scopes",
     "read_scopes_from_disk",
     "record_scope",
 ]

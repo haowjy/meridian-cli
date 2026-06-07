@@ -28,6 +28,7 @@ from meridian.lib.state.managed_primary import (
     read_managed_primary_snapshot,
     terminate_managed_primary_processes,
 )
+from meridian.lib.state.process_scope_projection import read_scopes_from_disk
 from meridian.lib.state.spawn.model import SpawnRecord
 from meridian.lib.state.spawn_report import spawn_report_has_durable_completion
 from meridian.lib.state.timestamps import iso_timestamp_to_epoch
@@ -302,9 +303,6 @@ def decide_generic_reconciliation(
         if decision is not None:
             return decision
 
-    if _has_recent_activity(snapshot):
-        return Skip(reason="recent_activity")
-
     if _in_startup_grace(snapshot.started_epoch, now):
         return Skip(reason="startup_grace")
     if record.cancel_intent is not None:
@@ -526,19 +524,39 @@ def _in_startup_grace(started_epoch: float | None, now: float) -> bool:
     return started_epoch is not None and now - started_epoch < SPAWN_STARTUP_GRACE_SECS
 
 
+
+def _nested_scoped_dead_runner_recovery_allowed(
+    runtime_root: Path,
+    record: SpawnRecord,
+    snapshot: ArtifactSnapshot,
+    now: float,
+) -> bool:
+    if record.runner_pid is None or record.runner_pid <= 0:
+        return False
+    if snapshot.runner_pid_alive:
+        return False
+    if _in_startup_grace(snapshot.started_epoch, now):
+        return False
+    return bool(read_scopes_from_disk(runtime_root, SpawnId(record.id)))
+
 def reconcile_active_spawn(
     project_root: Path,
     runtime_root: Path,
     record: SpawnRecord,
 ) -> SpawnRecord:
     """Reconcile one active spawn. Is the responsible process alive?"""
-    if not is_root_side_effect_process():
-        return record
     if not is_active_spawn_status(record.status):
         return record
 
     now = time.time()
     generic_snapshot = _collect_artifact_snapshot(runtime_root, record, now)
+    if not is_root_side_effect_process() and not _nested_scoped_dead_runner_recovery_allowed(
+        runtime_root,
+        record,
+        generic_snapshot,
+        now,
+    ):
+        return record
     managed_snapshot = read_managed_primary_snapshot(
         runtime_root,
         record,

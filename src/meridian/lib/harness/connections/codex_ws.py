@@ -67,11 +67,17 @@ from meridian.lib.observability.trace_helpers import (
     trace_wire_send,
 )
 from meridian.lib.platform import IS_WINDOWS
+from meridian.lib.platform.detached_process import (
+    ParentDeathLink,
+    detached_backend_subprocess_kwargs,
+    link_child_lifetime_to_parent,
+)
 from meridian.lib.platform.process_scope import (
     ProcessScopeSnapshot,
     ScopedProcessHandle,
 )
 from meridian.lib.state.paths import resolve_spawn_log_dir
+from meridian.lib.state.process_scope_projection import record_scope
 
 _DEFAULT_CONNECT_TIMEOUT_SECONDS = 30.0
 _DEFAULT_REQUEST_TIMEOUT_SECONDS = 30.0
@@ -195,6 +201,7 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
         self._stderr_read_offset = 0
         self._codex_home: Path | None = None
         self._scope_handle: ScopedProcessHandle | None = None
+        self._parent_death_link: ParentDeathLink | None = None
 
         self._next_request_id = 1
         self._pending_requests: dict[int, asyncio.Future[dict[str, object]]] = {}
@@ -351,7 +358,7 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
                     env=env,
                     stdout=asyncio.subprocess.DEVNULL,
                     stderr=self._stderr_handle,
-                    start_new_session=not IS_WINDOWS,
+                    **detached_backend_subprocess_kwargs(),
                 )
             except (FileNotFoundError, NotADirectoryError) as exc:
                 raise HarnessBinaryNotFound.from_os_error(
@@ -382,21 +389,22 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
                 _birth_time = psutil.Process(_pid).create_time()
             except (psutil.NoSuchProcess, psutil.AccessDenied):
                 _birth_time = _time.time()
-            self._scope_handle = ScopedProcessHandle(
-                process=_proc,
-                snapshot=ProcessScopeSnapshot(
-                    scope_id="backend",
-                    owner_policy="spawn_owned",
-                    owner_id=str(config.spawn_id),
-                    role="harness_backend",
-                    containment=_containment,
-                    root_pid=_pid,
-                    root_created_at_epoch=_birth_time,
-                    pgid=_pgid,
-                    job_name=None,
-                    degraded_reason=None,
-                ),
+            _snapshot = ProcessScopeSnapshot(
+                scope_id="backend",
+                owner_policy="spawn_owned",
+                owner_id=str(config.spawn_id),
+                role="harness_backend",
+                containment=_containment,
+                root_pid=_pid,
+                root_created_at_epoch=_birth_time,
+                pgid=_pgid,
+                job_name=None,
+                degraded_reason=None,
             )
+            self._scope_handle = ScopedProcessHandle(process=_proc, snapshot=_snapshot)
+            self._parent_death_link = link_child_lifetime_to_parent(_pid)
+            if not self._primary_observer_mode:
+                record_scope(spawn_dir.parent.parent, config.spawn_id, _snapshot)
 
             self._emit_startup_phase(StartupPhase.WAITING_FOR_CONNECTION)
             self._ws = await self._connect_with_retry(
@@ -822,6 +830,7 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
                 process.kill()
                 await process.wait()
 
+        self._parent_death_link = None
         self._fail_pending_requests(RuntimeError("Codex connection stopped"))
         await self._clear_stale_hitl_requests(reason="connection_stopped")
         self._current_turn_id = None
