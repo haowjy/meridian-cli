@@ -107,7 +107,7 @@ _DEFAULT_CONFIG = MeridianConfig()
 DEFAULT_GUARDRAIL_TIMEOUT_SECONDS = _DEFAULT_CONFIG.guardrail_timeout_minutes * 60.0
 logger = structlog.get_logger(__name__)
 _HEARTBEAT_INTERVAL_SECS = 30.0
-_OPENCODE_FINALIZE_CLEANUP_GRACE_SECONDS = 2.0
+_BACKEND_SCOPE_CLEANUP_GRACE_SECONDS = 2.0
 
 
 @dataclass(frozen=True)
@@ -306,24 +306,31 @@ def _apply_cancel_intent_to_conclusion(
     return True
 
 
-async def _cleanup_opencode_backend_scope_after_attempt(
+async def _cleanup_backend_scope_after_attempt(
     *,
-    harness_id: HarnessId | None,
     scope_snapshot: ProcessScopeSnapshot | None,
     spawn_id: SpawnId,
 ) -> None:
-    if harness_id is not HarnessId.OPENCODE or scope_snapshot is None:
+    """Terminate the managed backend process after a streaming attempt.
+
+    Applies to any harness that records a ProcessScopeSnapshot (currently
+    OpenCode and Codex). Harnesses without a scope snapshot are skipped
+    automatically. This is belt-and-suspenders cleanup: the connection's
+    own stop() should have killed the backend already, but if the runner
+    crashed or the connection's cleanup failed, this catches the orphan.
+    """
+    if scope_snapshot is None:
         return
     try:
         await asyncio.to_thread(
             terminate_scope_sync,
             scope_snapshot,
-            grace_seconds=_OPENCODE_FINALIZE_CLEANUP_GRACE_SECONDS,
+            grace_seconds=_BACKEND_SCOPE_CLEANUP_GRACE_SECONDS,
             reason="streaming_finalize",
         )
     except Exception:
         logger.warning(
-            "OpenCode backend scope cleanup failed after streaming attempt.",
+            "Backend scope cleanup failed after streaming attempt.",
             spawn_id=str(spawn_id),
             root_pid=scope_snapshot.root_pid,
             exc_info=True,
@@ -865,7 +872,6 @@ async def execute_with_streaming(
     loop: asyncio.AbstractEventLoop | None = None
     received_signal: list[signal.Signals | None] = [None]
     last_attempt_scope_snapshot: ProcessScopeSnapshot | None = None
-    last_attempt_harness_id: HarnessId | None = None
 
     try:
         log_dir = resolve_spawn_log_dir(project_root, run.spawn_id)
@@ -1056,7 +1062,6 @@ async def execute_with_streaming(
                 )
                 conclusion.absorb_attempt(attempt)
                 last_attempt_scope_snapshot = attempt.scope_snapshot
-                last_attempt_harness_id = resolved_harness_id
                 if attempt.start_error is not None:
                     logger.info(
                         "Failed to execute streaming spawn attempt.",
@@ -1169,13 +1174,11 @@ async def execute_with_streaming(
                             exc_info=True,
                         )
 
-                await _cleanup_opencode_backend_scope_after_attempt(
-                    harness_id=resolved_harness_id,
+                await _cleanup_backend_scope_after_attempt(
                     scope_snapshot=attempt.scope_snapshot,
                     spawn_id=run.spawn_id,
                 )
                 last_attempt_scope_snapshot = None
-                last_attempt_harness_id = None
 
                 if attempt_cancelled:
                     if attempt.received_signal is not None:
@@ -1386,8 +1389,7 @@ async def execute_with_streaming(
             signal_cleanup()
         if last_attempt_scope_snapshot is not None:
             with suppress(Exception):
-                await _cleanup_opencode_backend_scope_after_attempt(
-                    harness_id=last_attempt_harness_id,
+                await _cleanup_backend_scope_after_attempt(
                     scope_snapshot=last_attempt_scope_snapshot,
                     spawn_id=run.spawn_id,
                 )
