@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-from meridian.cli.bootstrap import first_positional_token
+from meridian.cli.bootstrap import first_positional_token, meridian_managed_env_default
 from meridian.cli.startup.catalog import COMMAND_CATALOG
 from meridian.cli.startup.classify import classify_invocation
 
@@ -38,6 +38,11 @@ def _is_version_request(argv: Sequence[str]) -> bool:
 def main() -> None:
     """Thin CLI entrypoint: handles trivial fast paths, delegates the rest."""
 
+    with meridian_managed_env_default():
+        _main_impl()
+
+
+def _main_impl() -> None:
     import sys
 
     if sys.platform == "win32":

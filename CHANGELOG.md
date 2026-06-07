@@ -9,6 +9,17 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Streaming finalization now performs a backend scope cleanup pass for any harness with a `ProcessScopeSnapshot` (OpenCode, Codex) so completed spawns do not leave orphaned backend processes behind.
 - Spawn setup failures before spawn-row initialization, including payload validation, now return a failed spawn output instead of leaving callers with no error.
 
+## [0.3.1] - 2026-06-07
+
+### Added
+- Primary launches now accept `--task-dir`, matching spawn's explicit task-directory override and rejecting `--continue --task-dir` in favor of `--fork --task-dir`.
+
+### Changed
+- Bump `mars-agents` to 0.8.3.
+
+### Fixed
+- Meridian CLI processes now default `MERIDIAN_MANAGED=1`, while preserving explicit outer overrides.
+
 ## [0.3.0] - 2026-06-06
 
 ### Changed

@@ -35,6 +35,7 @@ _TOP_LEVEL_VALUE_FLAGS = frozenset(
         "--harness",
         "-a",
         "--work",
+        "--task-dir",
         "--autocompact",
         "--autocompact-pct",
         "--effort",
@@ -422,6 +423,19 @@ def maybe_bootstrap_runtime_state(
         return project_root
     except Exception:
         return None
+
+
+@contextmanager
+def meridian_managed_env_default() -> Generator[None, None, None]:
+    prior = os.environ.get("MERIDIAN_MANAGED")
+    os.environ.setdefault("MERIDIAN_MANAGED", "1")
+    try:
+        yield
+    finally:
+        if prior is None:
+            os.environ.pop("MERIDIAN_MANAGED", None)
+        else:
+            os.environ["MERIDIAN_MANAGED"] = prior
 
 
 @contextmanager

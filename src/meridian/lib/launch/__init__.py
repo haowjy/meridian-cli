@@ -107,6 +107,7 @@ def launch_primary(
         project_state_dir=project_state_dir,
         context_from=request.context_from,
         reference_files=request.reference_files,
+        explicit_task_dir=request.task_dir,
         explicit_work_id=preview_work_id,
         ambient_work_id=ambient_work_id,
     )
