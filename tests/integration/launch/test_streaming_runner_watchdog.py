@@ -30,6 +30,7 @@ from meridian.lib.launch.request import (
     LaunchRuntime,
     SpawnRequest,
 )
+from meridian.lib.platform.process_scope import ProcessScopeSnapshot
 from meridian.lib.state import spawn_store
 from meridian.lib.state.artifact_store import LocalStore
 from meridian.lib.state.paths import (
@@ -295,6 +296,105 @@ class _PiTimeoutWithoutTerminalConnection:
             await asyncio.sleep(3600)
 
 
+class _OpenCodeTerminalWithScopeConnection:
+    def __init__(self) -> None:
+        self.state = "created"
+        self._spawn_id = SpawnId("")
+        self._project_root: Path | None = None
+        self._session_id = "session-opencode-cleanup"
+        self._scope_snapshot: ProcessScopeSnapshot | None = ProcessScopeSnapshot(
+            scope_id="backend",
+            owner_policy="spawn_owned",
+            owner_id="",
+            role="harness_backend",
+            containment="pid_tree_fallback",
+            root_pid=73737,
+            root_created_at_epoch=12_345.0,
+            pgid=None,
+            job_name=None,
+            degraded_reason=None,
+        )
+        self.capabilities = ConnectionCapabilities(
+            mid_turn_injection="http_post",
+            supports_steer=False,
+            supports_cancel=True,
+            runtime_model_switch=False,
+            structured_reasoning=True,
+        )
+
+    @property
+    def harness_id(self) -> HarnessId:
+        return HarnessId.OPENCODE
+
+    @property
+    def spawn_id(self) -> SpawnId:
+        return self._spawn_id
+
+    @property
+    def session_id(self) -> str | None:
+        return self._session_id
+
+    @property
+    def subprocess_pid(self) -> int | None:
+        return self._scope_snapshot.root_pid if self._scope_snapshot is not None else None
+
+    @property
+    def scope_snapshot(self) -> ProcessScopeSnapshot | None:
+        return self._scope_snapshot
+
+    async def start(self, config: ConnectionConfig, spec: ResolvedLaunchSpec) -> None:
+        _ = spec
+        self._spawn_id = config.spawn_id
+        self._project_root = config.control_root
+        current_scope = self._scope_snapshot
+        assert current_scope is not None
+        self._scope_snapshot = ProcessScopeSnapshot(
+            scope_id=current_scope.scope_id,
+            owner_policy=current_scope.owner_policy,
+            owner_id=str(config.spawn_id),
+            role=current_scope.role,
+            containment=current_scope.containment,
+            root_pid=current_scope.root_pid,
+            root_created_at_epoch=current_scope.root_created_at_epoch,
+            pgid=current_scope.pgid,
+            job_name=current_scope.job_name,
+            degraded_reason=current_scope.degraded_reason,
+        )
+        self.state = "connected"
+
+    async def stop(
+        self,
+        *,
+        reason: str | None = None,
+        progress: StopProgressCallback | None = None,
+    ) -> StopResult:
+        _ = reason, progress
+        self.state = "stopped"
+        self._scope_snapshot = None
+        return StopResult()
+
+    def health(self) -> bool:
+        return self.state == "connected"
+
+    async def send_user_message(self, text: str) -> None:
+        _ = text
+
+    async def send_cancel(self) -> None:
+        return None
+
+    async def events(self):  # type: ignore[no-untyped-def]
+        project_root = self._project_root
+        assert project_root is not None
+        spawn_dir = resolve_spawn_log_dir(project_root, self._spawn_id)
+        spawn_dir.mkdir(parents=True, exist_ok=True)
+        (spawn_dir / "report.md").write_text("# Done\n\nOpenCode completed.\n", encoding="utf-8")
+        yield HarnessEvent(
+            event_type="session.idle",
+            harness_id="opencode",
+            payload={"type": "session.idle", "sessionID": self._session_id},
+        )
+
+
 class _EndMonotonicFailsClock(FakeClock):
     def __init__(self, start: float = 0.0) -> None:
         super().__init__(start=start)
@@ -360,6 +460,14 @@ def _build_pi_timeout_request(timeout_secs: int) -> SpawnRequest:
         harness=HarnessId.PI.value,
         prompt="Reply with exactly: OK",
         budget=ExecutionBudget(timeout_secs=timeout_secs),
+    )
+
+
+def _build_opencode_request() -> SpawnRequest:
+    return SpawnRequest(
+        model="gpt-5.4",
+        harness=HarnessId.OPENCODE.value,
+        prompt="hello",
     )
 
 
@@ -459,6 +567,87 @@ async def test_execute_with_streaming_succeeds_after_report_watchdog_cleanup(
     assert fake_heartbeat.touches
     report = (runtime_root / "spawns" / str(run.spawn_id) / "report.md").read_text(encoding="utf-8")
     assert "Watchdog fallback completed." in report
+
+
+@pytest.mark.asyncio
+async def test_execute_with_streaming_cleans_up_opencode_scope_before_finalize(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime_root = resolve_project_runtime_root(tmp_path)
+    artifacts = LocalStore(root_dir=tmp_path / ".artifacts")
+    registry = HarnessRegistry.with_defaults()
+    fake_clock = FakeClock(start=1_000.0)
+    fake_heartbeat = FakeHeartbeat()
+    fake_heartbeat.set_clock(fake_clock)
+    cleanup_calls: list[tuple[int, float, float, str, str | None]] = []
+
+    def _fake_terminate_scope_sync(
+        scope: ProcessScopeSnapshot,
+        *,
+        grace_seconds: float,
+        reason: str,
+    ) -> object:
+        row = spawn_store.get_spawn(runtime_root, SpawnId(scope.owner_id))
+        cleanup_calls.append(
+            (
+                scope.root_pid,
+                scope.root_created_at_epoch,
+                grace_seconds,
+                reason,
+                row.status if row is not None else None,
+            )
+        )
+        return object()
+
+    monkeypatch.setattr(spawn_manager_module, "ControlSocketServer", _FakeControlSocketServer)
+    monkeypatch.setattr(
+        "meridian.lib.harness.connections.get_connection_class",
+        lambda _harness_id,
+        _transport_id=TransportId.STREAMING: _OpenCodeTerminalWithScopeConnection,
+    )
+    monkeypatch.setattr(streaming_runner_module, "terminate_scope_sync", _fake_terminate_scope_sync)
+
+    run = Spawn(
+        spawn_id=SpawnId("r-opencode-cleanup"),
+        prompt="hello",
+        model=ModelId("gpt-5.4"),
+        status="queued",
+    )
+    spawn_store.start_spawn(
+        runtime_root,
+        chat_id="test-chat-opencode-cleanup",
+        model=str(run.model),
+        agent="",
+        harness=HarnessId.OPENCODE.value,
+        kind="streaming",
+        prompt=run.prompt,
+        spawn_id=run.spawn_id,
+        launch_mode="foreground",
+        status="queued",
+    )
+
+    exit_code = await asyncio.wait_for(
+        _execute_with_context(
+            run,
+            request=_build_opencode_request(),
+            project_root=tmp_path,
+            runtime_root=runtime_root,
+            artifacts=artifacts,
+            registry=registry,
+            clock=fake_clock,
+            heartbeat_touch=fake_heartbeat.touch,
+            heartbeat_interval_secs=0.001,
+        ),
+        timeout=15.0,
+    )
+
+    assert exit_code == 0
+    assert cleanup_calls == [(73737, 12_345.0, 2.0, "streaming_finalize", "running")]
+    row = spawn_store.get_spawn(runtime_root, run.spawn_id)
+    assert row is not None
+    assert row.status == "succeeded"
+
 
 @pytest.mark.asyncio
 async def test_setup_failure_produces_terminal_event(

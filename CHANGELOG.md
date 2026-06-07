@@ -6,6 +6,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 - OpenCode streaming now fails stale SSE connections after the liveness window instead of reconnecting forever with no events.
+- Streaming finalization now performs a final OpenCode backend scope cleanup pass so completed spawns do not leave `opencode serve` processes behind.
 
 ## [0.3.0] - 2026-06-06
 
