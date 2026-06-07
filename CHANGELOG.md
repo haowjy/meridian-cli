@@ -7,6 +7,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Added
 - Primary launches now accept `--task-dir`, matching spawn's explicit task-directory override and rejecting `--continue --task-dir` in favor of `--fork --task-dir`.
 
+### Changed
+- Bump `mars-agents` to 0.8.3.
+
 ### Fixed
 - Meridian CLI processes now default `MERIDIAN_MANAGED=1`, while preserving explicit outer overrides.
 
