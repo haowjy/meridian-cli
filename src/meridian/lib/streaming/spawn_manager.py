@@ -226,6 +226,8 @@ class SpawnManager:
                 pi_session_role=pi_session_role,
                 notification_timeout_seconds=config.pi_notification_timeout_seconds,
                 child_wave_timeout_seconds=config.pi_child_wave_timeout_seconds,
+                resident_deadline_seconds=config.resident_deadline_seconds,
+                resident_poll_seconds=config.resident_poll_seconds,
             )
         )
         self._sessions[spawn_id] = SpawnSession(
@@ -271,6 +273,8 @@ class SpawnManager:
         pi_session_role: str | None = None,
         notification_timeout_seconds: float | None = None,
         child_wave_timeout_seconds: float | None = None,
+        resident_deadline_seconds: float | None = None,
+        resident_poll_seconds: float | None = None,
     ) -> None:
 
         drain_loop = SpawnDrainLoop(
@@ -293,6 +297,8 @@ class SpawnManager:
             pi_session_role=pi_session_role,
             notification_timeout_seconds=notification_timeout_seconds,
             child_wave_timeout_seconds=child_wave_timeout_seconds,
+            resident_deadline_seconds=resident_deadline_seconds,
+            resident_poll_seconds=resident_poll_seconds,
         )
 
     def subscribe(self, spawn_id: SpawnId) -> asyncio.Queue[HarnessEvent | None] | None:

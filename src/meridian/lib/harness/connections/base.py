@@ -7,12 +7,13 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Final, Generic, Literal, Protocol
+from typing import TYPE_CHECKING, Any, Final, Generic, Literal, Protocol, cast
 
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.launch.launch_types import SpecT
 
 if TYPE_CHECKING:
+    from meridian.lib.harness.connections.liveness import BackendLivenessPolicy
     from meridian.lib.harness.connections.managed_backend import ManagedBackendHandle
     from meridian.lib.observability.debug_tracer import DebugTracer
     from meridian.lib.platform.process_scope import ProcessScopeSnapshot
@@ -221,6 +222,8 @@ class ConnectionConfig:
     timeout_seconds: float | None = None
     pi_notification_timeout_seconds: float | None = None
     pi_child_wave_timeout_seconds: float | None = None
+    resident_deadline_seconds: float | None = None
+    resident_poll_seconds: float | None = None
     pi_task_ping_interval_seconds: float | None = None
     pi_task_ping_reset_on_activity: bool | None = None
     ws_bind_host: str = "127.0.0.1"
@@ -278,6 +281,13 @@ class HarnessConnection(Generic[SpecT], ABC):
     def scope_snapshot(self) -> ProcessScopeSnapshot | None:
         """Process scope facts for the managed backend subprocess, if any."""
         return None
+
+    @property
+    def liveness(self) -> BackendLivenessPolicy | None:
+        """Event-stream liveness policy when the connection exposes one."""
+
+        candidate = getattr(self, "_liveness", None)
+        return cast("BackendLivenessPolicy | None", candidate)
 
     @abstractmethod
     async def start(self, config: ConnectionConfig, spec: SpecT) -> None: ...

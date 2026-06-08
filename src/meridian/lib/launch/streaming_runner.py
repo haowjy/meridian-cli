@@ -59,6 +59,8 @@ from meridian.lib.launch.resolve import (
     resolve_pi_child_wave_timeout_seconds,
     resolve_pi_notification_timeout_seconds,
     resolve_pi_task_ping_interval_seconds,
+    resolve_resident_deadline_seconds,
+    resolve_resident_poll_seconds,
 )
 from meridian.lib.launch.runner_helpers import (
     append_budget_exceeded_event as _append_budget_exceeded_event,
@@ -845,6 +847,12 @@ async def execute_with_streaming(
             explicit_timeout_seconds=None,
             config_snapshot=launch_context.runtime.config_snapshot,
         )
+        resident_deadline_seconds = resolve_resident_deadline_seconds(
+            config_snapshot=launch_context.runtime.config_snapshot,
+        )
+        resident_poll_seconds = resolve_resident_poll_seconds(
+            config_snapshot=launch_context.runtime.config_snapshot,
+        )
         pi_task_ping_interval_seconds = resolve_pi_task_ping_interval_seconds(
             explicit_interval_seconds=request.pi_task_ping_interval_seconds,
             config_snapshot=launch_context.runtime.config_snapshot,
@@ -922,6 +930,8 @@ async def execute_with_streaming(
             timeout_seconds=timeout_seconds,
             pi_notification_timeout_seconds=pi_notification_timeout_seconds,
             pi_child_wave_timeout_seconds=pi_child_wave_timeout_seconds,
+            resident_deadline_seconds=resident_deadline_seconds,
+            resident_poll_seconds=resident_poll_seconds,
             pi_task_ping_interval_seconds=pi_task_ping_interval_seconds,
             pi_task_ping_reset_on_activity=request.pi_task_ping_reset_on_activity,
             pi_session_role=pi_session_role,

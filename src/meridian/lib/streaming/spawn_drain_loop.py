@@ -25,6 +25,7 @@ from meridian.lib.streaming.event_observers import EventObserverRegistry
 from meridian.lib.streaming.pi_drain import PiDrainCoordinator
 from meridian.lib.streaming.pi_process_cleanup import terminate_pi_tracked_subspawns
 from meridian.lib.streaming.pi_subspawn_tracker import PiSubspawnTracker
+from meridian.lib.streaming.resident_drain import ResidentDrainCoordinator
 from meridian.lib.streaming.spawn_session import DrainOutcome, SpawnSession
 
 if TYPE_CHECKING:
@@ -79,6 +80,8 @@ class SpawnDrainLoop:
         pi_session_role: str | None,
         notification_timeout_seconds: float | None,
         child_wave_timeout_seconds: float | None,
+        resident_deadline_seconds: float | None,
+        resident_poll_seconds: float | None,
     ) -> None:
         """Durably append each harness event and fan out to the active subscriber."""
 
@@ -115,6 +118,13 @@ class SpawnDrainLoop:
             emit_phase=_emit_pi_phase,
         )
         await pi_drain.start()
+        resident_drain = ResidentDrainCoordinator.for_connection(
+            runtime_root=self._runtime_root,
+            spawn_id=spawn_id,
+            receiver=receiver,
+            deadline_seconds=resident_deadline_seconds,
+            poll_seconds=resident_poll_seconds,
+        )
 
         policy = drain_policy
         if policy is None:
@@ -127,18 +137,26 @@ class SpawnDrainLoop:
         drain_waiter = DrainInputWaiter(events_iter, pi_drain)
         try:
             while True:
-                wake = await drain_waiter.wait(pi_drain.next_timeout())
+                wake = await drain_waiter.wait(
+                    _min_timeout(pi_drain.next_timeout(), resident_drain.next_timeout())
+                )
                 if isinstance(wake, DrainClosedWake):
                     if pi_drain.quiescence_candidate is not None:
                         recorded_terminal_outcome = pi_drain.quiescence_candidate
+                    elif resident_drain.outcome_on_close() is not None:
+                        recorded_terminal_outcome = resident_drain.outcome_on_close()
                     break
                 if isinstance(wake, DrainDiskChangeWake):
                     await pi_drain.reevaluate_after_disk_change()
                     continue
                 if isinstance(wake, DrainTimeoutWake):
-                    timeout_outcome = await pi_drain.handle_timeout(
-                        _terminate_tracked_pi_children,
-                    )
+                    timeout_outcome = None
+                    if pi_drain.next_timeout() is not None:
+                        timeout_outcome = await pi_drain.handle_timeout(
+                            _terminate_tracked_pi_children,
+                        )
+                    if timeout_outcome is None:
+                        timeout_outcome = resident_drain.handle_poll()
                     if timeout_outcome is not None:
                         recorded_terminal_outcome = timeout_outcome
                         break
@@ -147,7 +165,15 @@ class SpawnDrainLoop:
                 event = wake.event
                 disk_change_ready_after_event = wake.disk_change_ready_after_event
 
-                transition = activity_transition(event) if pi_drain.is_pi_connection else None
+                transition = (
+                    activity_transition(
+                        event,
+                        codex_main_thread_id=_codex_main_thread_id(receiver),
+                    )
+                    if pi_drain.is_pi_connection or resident_drain.enabled
+                    else None
+                )
+                resident_drain.observe_activity_transition(transition)
                 duplicate_canonical_lifecycle_event = await pi_drain.observe_event(
                     event,
                     transition,
@@ -228,12 +254,29 @@ class SpawnDrainLoop:
 
                 if event_outcome is not None:
                     action = policy.classify(event_outcome)
-                    pi_decision = pi_drain.handle_terminal_event(event, event_outcome, action)
-                    if pi_decision.recorded_outcome is not None:
-                        recorded_terminal_outcome = pi_decision.recorded_outcome
+                    if resident_drain.enabled:
+                        resident_decision = resident_drain.handle_terminal_event(
+                            event_outcome,
+                            action,
+                        )
+                        if resident_decision.recorded_outcome is not None:
+                            recorded_terminal_outcome = resident_decision.recorded_outcome
+                            break
+                        if resident_decision.emit_turn_boundary:
+                            await self._fan_out_turn_boundary(spawn_id, event_outcome)
+                    else:
+                        pi_decision = pi_drain.handle_terminal_event(event, event_outcome, action)
+                        if pi_decision.recorded_outcome is not None:
+                            recorded_terminal_outcome = pi_decision.recorded_outcome
+                            break
+                        if pi_decision.emit_turn_boundary:
+                            await self._fan_out_turn_boundary(spawn_id, event_outcome)
+
+                if resident_drain.enabled:
+                    resident_outcome = resident_drain.handle_poll()
+                    if resident_outcome is not None:
+                        recorded_terminal_outcome = resident_outcome
                         break
-                    if pi_decision.emit_turn_boundary:
-                        await self._fan_out_turn_boundary(spawn_id, event_outcome)
 
                 pi_failure = pi_drain.failure_outcome_after_event()
                 if pi_failure is not None:
@@ -251,6 +294,7 @@ class SpawnDrainLoop:
             pending_pi_children_at_exit = pi_drain.pending_children_at_exit()
             await drain_waiter.close()
             await pi_drain.stop()
+            resident_drain.stop()
             await pi_drain.cleanup_pending_children_at_exit(_terminate_tracked_pi_children)
             session = self._sessions.pop(spawn_id, None)
             if session is not None:
@@ -352,3 +396,11 @@ def _safe_connection_session_id(connection: object) -> str | None:
     except Exception:
         return None
     return session_id if isinstance(session_id, str) and session_id.strip() else None
+
+
+def _min_timeout(left: float | None, right: float | None) -> float | None:
+    if left is None:
+        return right
+    if right is None:
+        return left
+    return min(left, right)

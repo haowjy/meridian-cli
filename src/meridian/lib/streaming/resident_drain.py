@@ -1,0 +1,153 @@
+"""Resident-until-done coordinator for managed Codex/OpenCode drains."""
+
+from __future__ import annotations
+
+import time
+from dataclasses import dataclass
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
+
+from meridian.lib.core.types import HarnessId, SpawnId
+from meridian.lib.harness.semantics import TerminalEventOutcome
+from meridian.lib.streaming.drain_policy import DrainAction
+
+if TYPE_CHECKING:
+    from meridian.lib.harness.connections.base import HarnessConnection
+
+
+_RESIDENT_HARNESSES = frozenset({HarnessId.CODEX, HarnessId.OPENCODE})
+_TIMEOUT_FLOOR_SECONDS = 0.001
+
+
+@dataclass(frozen=True)
+class ResidentTerminalDecision:
+    recorded_outcome: TerminalEventOutcome | None = None
+    emit_turn_boundary: bool = False
+
+
+@dataclass
+class ResidentDrainCoordinator:
+    """Own Codex/OpenCode post-turn waiting for Meridian-tracked child spawns."""
+
+    runtime_root: Path
+    spawn_id: SpawnId
+    receiver: HarnessConnection[Any]
+    deadline_seconds: float
+    poll_seconds: float
+    enabled: bool
+    awaiting_outcome: TerminalEventOutcome | None = None
+    deadline_monotonic: float | None = None
+
+    @classmethod
+    def for_connection(
+        cls,
+        *,
+        runtime_root: Path,
+        spawn_id: SpawnId,
+        receiver: HarnessConnection[Any],
+        deadline_seconds: float | None,
+        poll_seconds: float | None,
+    ) -> ResidentDrainCoordinator:
+        return cls(
+            runtime_root=runtime_root,
+            spawn_id=spawn_id,
+            receiver=receiver,
+            deadline_seconds=(
+                deadline_seconds if deadline_seconds and deadline_seconds > 0 else 1800.0
+            ),
+            poll_seconds=poll_seconds if poll_seconds and poll_seconds > 0 else 10.0,
+            enabled=receiver.harness_id in _RESIDENT_HARNESSES,
+        )
+
+    def observe_activity_transition(self, transition: str | None) -> None:
+        """Clear resident-idle liveness once a new turn becomes active."""
+
+        if not self.enabled:
+            return
+        if transition == "turn_active":
+            self._set_awaiting_done(False)
+            self.awaiting_outcome = None
+            self.deadline_monotonic = None
+
+    def handle_terminal_event(
+        self,
+        outcome: TerminalEventOutcome,
+        action: DrainAction,
+    ) -> ResidentTerminalDecision:
+        if not self.enabled:
+            return ResidentTerminalDecision(
+                recorded_outcome=outcome if action.terminate else None,
+                emit_turn_boundary=action.emit_turn_boundary,
+            )
+        if outcome.status != "succeeded":
+            self._set_awaiting_done(False)
+            return ResidentTerminalDecision(recorded_outcome=outcome)
+        if not _has_outstanding_descendant_work(self.runtime_root, self.spawn_id):
+            self._set_awaiting_done(False)
+            return ResidentTerminalDecision(recorded_outcome=outcome)
+
+        self.awaiting_outcome = outcome
+        self.deadline_monotonic = time.monotonic() + self.deadline_seconds
+        self._set_awaiting_done(True)
+        return ResidentTerminalDecision(emit_turn_boundary=True)
+
+    def next_timeout(self) -> float | None:
+        if not self.enabled or self.awaiting_outcome is None:
+            return None
+        now_monotonic = time.monotonic()
+        remaining = self._deadline_remaining(now_monotonic)
+        timeout = self.poll_seconds
+        if remaining is not None:
+            timeout = min(timeout, remaining)
+        return max(timeout, _TIMEOUT_FLOOR_SECONDS)
+
+    def handle_poll(self) -> TerminalEventOutcome | None:
+        if not self.enabled or self.awaiting_outcome is None:
+            return None
+        now_monotonic = time.monotonic()
+        if self._deadline_expired(now_monotonic) or not _has_outstanding_descendant_work(
+            self.runtime_root,
+            self.spawn_id,
+        ):
+            outcome = self.awaiting_outcome
+            self._set_awaiting_done(False)
+            self.awaiting_outcome = None
+            self.deadline_monotonic = None
+            return outcome
+        return None
+
+    def outcome_on_close(self) -> TerminalEventOutcome | None:
+        """Use the completed-turn result if the stream closes during resident wait."""
+
+        return self.awaiting_outcome
+
+    def stop(self) -> None:
+        self._set_awaiting_done(False)
+        self.awaiting_outcome = None
+        self.deadline_monotonic = None
+
+    def _deadline_remaining(self, now_monotonic: float) -> float | None:
+        if self.deadline_monotonic is None:
+            return None
+        return self.deadline_monotonic - now_monotonic
+
+    def _deadline_expired(self, now_monotonic: float) -> bool:
+        remaining = self._deadline_remaining(now_monotonic)
+        return remaining is not None and remaining <= 0
+
+    def _set_awaiting_done(self, awaiting_done: bool) -> None:
+        liveness = getattr(self.receiver, "liveness", None)
+        if liveness is not None:
+            liveness.set_awaiting_done(awaiting_done)
+
+
+def _has_outstanding_descendant_work(runtime_root: Path, spawn_id: SpawnId) -> bool:
+    # Import lazily: meridian.lib.ops.spawn.__init__ exposes CLI operations and
+    # pulls in streaming_runner/spawn_manager. Top-level import here would create
+    # a cycle while SpawnManager imports this coordinator.
+    from meridian.lib.ops.spawn.outstanding import has_outstanding_descendant_work
+
+    return has_outstanding_descendant_work(runtime_root, spawn_id)
+
+
+__all__ = ["ResidentDrainCoordinator", "ResidentTerminalDecision"]

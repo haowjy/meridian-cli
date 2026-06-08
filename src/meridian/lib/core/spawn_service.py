@@ -44,6 +44,8 @@ from meridian.lib.launch.resolve import (
     resolve_pi_child_wave_timeout_seconds,
     resolve_pi_notification_timeout_seconds,
     resolve_pi_task_ping_interval_seconds,
+    resolve_resident_deadline_seconds,
+    resolve_resident_poll_seconds,
 )
 from meridian.lib.launch.types import PrimarySessionMetadata
 from meridian.lib.state import spawn_store
@@ -448,6 +450,12 @@ class SpawnApplicationService:
             ),
             pi_child_wave_timeout_seconds=resolve_pi_child_wave_timeout_seconds(
                 explicit_timeout_seconds=None,
+                config_snapshot=launch_config_snapshot,
+            ),
+            resident_deadline_seconds=resolve_resident_deadline_seconds(
+                config_snapshot=launch_config_snapshot,
+            ),
+            resident_poll_seconds=resolve_resident_poll_seconds(
                 config_snapshot=launch_config_snapshot,
             ),
             pi_task_ping_interval_seconds=resolve_pi_task_ping_interval_seconds(

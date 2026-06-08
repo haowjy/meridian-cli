@@ -287,6 +287,32 @@ def _resolve_pi_child_wave_timeout_from_config_snapshot(
     return None
 
 
+def _resolve_timeout_field_from_config_snapshot(
+    config_snapshot: dict[str, object],
+    field_name: str,
+) -> float | None:
+    try:
+        config = MeridianConfig.model_validate(config_snapshot)
+    except Exception:
+        config = None
+    if config is not None:
+        timeout_seconds = _coerce_positive_timeout_seconds(getattr(config, field_name, None))
+        if timeout_seconds is not None:
+            return timeout_seconds
+
+    timeout_seconds = _coerce_positive_timeout_seconds(config_snapshot.get(field_name))
+    if timeout_seconds is not None:
+        return timeout_seconds
+
+    timeouts_section = config_snapshot.get("timeouts")
+    if isinstance(timeouts_section, dict):
+        typed_timeouts_section = cast("dict[str, object]", timeouts_section)
+        timeout_seconds = _coerce_positive_timeout_seconds(typed_timeouts_section.get(field_name))
+        if timeout_seconds is not None:
+            return timeout_seconds
+    return None
+
+
 def resolve_pi_notification_timeout_seconds(
     *,
     explicit_timeout_seconds: float | None,
@@ -411,6 +437,38 @@ def resolve_pi_child_wave_timeout_seconds(
     return 300.0
 
 
+def resolve_resident_deadline_seconds(
+    *,
+    config_snapshot: dict[str, object] | None,
+) -> float:
+    """Resolve Codex/OpenCode resident hard-cap deadline in seconds."""
+
+    if config_snapshot:
+        timeout_from_config = _resolve_timeout_field_from_config_snapshot(
+            config_snapshot,
+            "resident_deadline_seconds",
+        )
+        if timeout_from_config is not None:
+            return timeout_from_config
+    return 1800.0
+
+
+def resolve_resident_poll_seconds(
+    *,
+    config_snapshot: dict[str, object] | None,
+) -> float:
+    """Resolve Codex/OpenCode resident outstanding-work poll interval."""
+
+    if config_snapshot:
+        timeout_from_config = _resolve_timeout_field_from_config_snapshot(
+            config_snapshot,
+            "resident_poll_seconds",
+        )
+        if timeout_from_config is not None:
+            return timeout_from_config
+    return 10.0
+
+
 __all__ = [
     "ResolvedSkills",
     "dedupe_skill_names",
@@ -422,6 +480,8 @@ __all__ = [
     "resolve_pi_notification_timeout_seconds",
     "resolve_pi_task_ping_interval_seconds",
     "resolve_profile_path",
+    "resolve_resident_deadline_seconds",
+    "resolve_resident_poll_seconds",
     "resolve_skill_paths",
     "resolve_skills_from_profile",
     "validate_harness_compatibility",

@@ -49,6 +49,9 @@ class PiTerminalDecision:
 
 @dataclass
 class PiDrainCoordinator:
+    # TODO(phase-4): Pi quiescence is the Pi-specific instance of the same
+    # resident-until-done model. Fold this into ResidentDrainCoordinator after
+    # the Pi inference machinery is ripped out.
     runtime_root: Path
     spawn_id: SpawnId
     receiver: HarnessConnection[ResolvedLaunchSpec]
