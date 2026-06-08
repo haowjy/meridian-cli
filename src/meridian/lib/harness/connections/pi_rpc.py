@@ -256,9 +256,6 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
         }
         await self._send_rpc_message(payload, event="prompt")
 
-    async def inject_turn(self, message: str) -> None:
-        await self.send_user_message(message)
-
     async def send_steer(self, text: str) -> None:
         payload: dict[str, object] = {
             "type": "steer",

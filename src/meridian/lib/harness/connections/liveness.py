@@ -45,12 +45,14 @@ class BackendLivenessPolicy:
         self._active_turns: set[str] = set()
         self._active_requests: set[str] = set()
         self._awaiting_done = False
+        self._last_decision = LivenessDecision.CONTINUE
 
     def reset(self) -> None:
         self._last_activity_time = None
         self._active_turns.clear()
         self._active_requests.clear()
         self._awaiting_done = False
+        self._last_decision = LivenessDecision.CONTINUE
 
     def mark_activity(self) -> None:
         self._last_activity_time = self._now()
@@ -75,6 +77,34 @@ class BackendLivenessPolicy:
         self._awaiting_done = awaiting_done
 
     def evaluate(self) -> LivenessDecision:
+        decision = self._evaluate()
+        self._last_decision = decision
+        return decision
+
+    def evaluate_stream_health(self) -> LivenessDecision:
+        """Return structured stream health for resident close classification.
+
+        Once an idle, alive backend has been classified as stream-stalled, an
+        awaiting-done wait should not reclassify that same silent stream as
+        healthy suppression. New activity still clears the stall through the
+        normal CONTINUE decision.
+        """
+
+        previous_decision = self._last_decision
+        decision = self._evaluate()
+        if (
+            previous_decision == LivenessDecision.STREAM_STALLED
+            and decision == LivenessDecision.SUPPRESS
+        ):
+            decision = LivenessDecision.STREAM_STALLED
+        self._last_decision = decision
+        return decision
+
+    @property
+    def last_decision(self) -> LivenessDecision:
+        return self._last_decision
+
+    def _evaluate(self) -> LivenessDecision:
         if not self._silence_expired():
             return LivenessDecision.CONTINUE
         pid = self._backend_pid()

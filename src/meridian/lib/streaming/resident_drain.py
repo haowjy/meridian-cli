@@ -8,12 +8,14 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from meridian.lib.core.types import HarnessId, SpawnId
+from meridian.lib.harness.connections.liveness import LivenessDecision
 from meridian.lib.harness.semantics import TerminalEventOutcome
 from meridian.lib.streaming.drain_coordinator import DrainLoopDecision, DrainTerminalDecision
 from meridian.lib.streaming.drain_policy import DrainAction, DrainPolicy, SingleTurnDrainPolicy
 
 if TYPE_CHECKING:
     from meridian.lib.harness.connections.base import HarnessConnection, HarnessEvent
+    from meridian.lib.harness.connections.resident_backend import ResidentBackendControl
 
 
 _RESIDENT_HARNESSES = frozenset({HarnessId.CODEX, HarnessId.OPENCODE})
@@ -169,7 +171,7 @@ class ResidentDrainCoordinator:
             return None
         if intentional_stop:
             return self.awaiting_outcome
-        if not _connection_healthy(self.receiver):
+        if _resident_health_status(self.receiver) == LivenessDecision.BACKEND_DEAD:
             return TerminalEventOutcome(
                 status="failed",
                 exit_code=1,
@@ -229,16 +231,26 @@ class ResidentDrainCoordinator:
         return remaining is not None and remaining <= 0
 
     def _set_awaiting_done(self, awaiting_done: bool) -> None:
-        liveness = getattr(self.receiver, "liveness", None)
-        if liveness is not None:
-            liveness.set_awaiting_done(awaiting_done)
+        resident_backend = _resident_backend(self.receiver)
+        if resident_backend is not None:
+            resident_backend.set_awaiting_done(awaiting_done)
 
 
-def _connection_healthy(receiver: HarnessConnection[Any]) -> bool:
+def _resident_health_status(receiver: HarnessConnection[Any]) -> LivenessDecision | str:
+    resident_backend = _resident_backend(receiver)
+    if resident_backend is None:
+        return "unsupported"
     try:
-        return bool(receiver.health())
+        return resident_backend.health_status()
     except Exception:
-        return False
+        return LivenessDecision.BACKEND_DEAD
+
+
+def _resident_backend(receiver: HarnessConnection[Any]) -> ResidentBackendControl | None:
+    try:
+        return receiver.resident_backend
+    except AttributeError:
+        return None
 
 
 def _terminate_descendant_spawn_tree(runtime_root: Path, spawn_id: SpawnId) -> None:

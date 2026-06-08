@@ -126,7 +126,7 @@ class _RpcCapturePiConnection(PiRpcConnection):
 
 @pytest.mark.asyncio
 async def test_base_inject_turn_defaults_to_unsupported() -> None:
-    with pytest.raises(NotImplementedError, match="does not support turn injection"):
+    with pytest.raises(NotImplementedError, match="does not support resident follow-up turns"):
         await _MinimalConnection().inject_turn("hello")
 
 
@@ -156,7 +156,7 @@ async def test_codex_inject_turn_requires_idle_backend() -> None:
     connection._thread_id = "thread-123"
     connection._current_turn_id = "turn-active"
 
-    with pytest.raises(ConnectionNotReady, match="requires an idle backend"):
+    with pytest.raises(ConnectionNotReady, match="require an idle backend"):
         await connection.inject_turn("too soon")
 
     assert connection.requests == []
@@ -202,14 +202,10 @@ async def test_opencode_inject_turn_requires_current_session() -> None:
 
 
 @pytest.mark.asyncio
-async def test_pi_inject_turn_uses_rpc_prompt_command() -> None:
+async def test_pi_inject_turn_is_explicitly_unsupported_for_nonresident_backend() -> None:
     connection = _RpcCapturePiConnection()
 
-    await connection.inject_turn("next task")
+    with pytest.raises(NotImplementedError, match="does not support resident follow-up turns"):
+        await connection.inject_turn("next task")
 
-    assert connection.messages == [
-        (
-            {"type": "prompt", "message": "next task"},
-            "prompt",
-        )
-    ]
+    assert connection.messages == []

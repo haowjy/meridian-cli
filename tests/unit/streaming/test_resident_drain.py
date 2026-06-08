@@ -9,6 +9,7 @@ import pytest
 
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.common import extract_codex_report
+from meridian.lib.harness.connections import liveness as liveness_module
 from meridian.lib.harness.connections.base import (
     ConnectionCapabilities,
     ConnectionConfig,
@@ -18,6 +19,12 @@ from meridian.lib.harness.connections.base import (
     StopProgressCallback,
     StopResult,
 )
+from meridian.lib.harness.connections.liveness import BackendLivenessPolicy, LivenessDecision
+from meridian.lib.harness.connections.resident_backend import (
+    LivenessResidentBackendControl,
+    ResidentBackendControl,
+)
+from meridian.lib.harness.semantics import TerminalEventOutcome
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.safety.permissions import UnsafeNoOpPermissionResolver
 from meridian.lib.state import spawn_store
@@ -28,16 +35,28 @@ from meridian.lib.streaming.drain_policy import (
     DrainPolicy,
     PersistentDrainPolicy,
 )
+from meridian.lib.streaming.resident_drain import ResidentDrainCoordinator
 from meridian.lib.streaming.spawn_manager import SpawnManager
+from tests.support.fakes import FakeClock
 from tests.unit.streaming.pi_quiescence_test_helpers import NoopControlServer
 
 
-class _FakeLiveness:
+class _FakeResidentBackendControl:
     def __init__(self) -> None:
         self.awaiting_done_values: list[bool] = []
+        self.status: LivenessDecision = LivenessDecision.CONTINUE
 
-    def set_awaiting_done(self, awaiting_done: bool) -> None:
-        self.awaiting_done_values.append(awaiting_done)
+    def health_status(self) -> LivenessDecision:
+        return self.status
+
+    def set_awaiting_done(self, awaiting: bool) -> None:
+        self.awaiting_done_values.append(awaiting)
+
+    async def begin_followup_turn(self, message: str) -> None:
+        _ = message
+
+    def current_turn_state(self) -> str:
+        return "unknown"
 
 
 class _FakeResidentConnection(HarnessConnection[ResolvedLaunchSpec]):
@@ -46,7 +65,7 @@ class _FakeResidentConnection(HarnessConnection[ResolvedLaunchSpec]):
         self._spawn_id = SpawnId("")
         self._state: ConnectionState = "created"
         self._events: asyncio.Queue[HarnessEvent | None] = asyncio.Queue()
-        self._liveness = _FakeLiveness()
+        self._resident_backend = _FakeResidentBackendControl()
         self.stop_reasons: list[str | None] = []
 
     @property
@@ -80,8 +99,12 @@ class _FakeResidentConnection(HarnessConnection[ResolvedLaunchSpec]):
         return 4242
 
     @property
-    def fake_liveness(self) -> _FakeLiveness:
-        return self._liveness
+    def fake_resident_backend(self) -> _FakeResidentBackendControl:
+        return self._resident_backend
+
+    @property
+    def resident_backend(self) -> ResidentBackendControl:
+        return self._resident_backend
 
     async def start(self, config: ConnectionConfig, spec: ResolvedLaunchSpec) -> None:
         _ = spec
@@ -123,6 +146,65 @@ class _FakeResidentConnection(HarnessConnection[ResolvedLaunchSpec]):
 
     def mark_failed(self) -> None:
         self._state = "failed"
+        self._resident_backend.status = LivenessDecision.BACKEND_DEAD
+
+    def mark_stalled(self) -> None:
+        self._resident_backend.status = LivenessDecision.STREAM_STALLED
+
+
+class _LivenessBackedResidentConnection(_FakeResidentConnection):
+    def __init__(
+        self,
+        harness_id: HarnessId,
+        *,
+        liveness: BackendLivenessPolicy,
+        backend_dead: bool = False,
+    ) -> None:
+        super().__init__(harness_id)
+        self._backend_dead = backend_dead
+        self._liveness_resident_backend = LivenessResidentBackendControl(
+            liveness=liveness,
+            backend_dead=lambda: self._backend_dead,
+            begin_followup_turn=self._noop_followup_turn,
+        )
+
+    @property
+    def resident_backend(self) -> ResidentBackendControl:
+        return self._liveness_resident_backend
+
+    async def _noop_followup_turn(self, message: str) -> None:
+        _ = message
+
+
+def _silent_liveness_policy(
+    clock: FakeClock,
+    *,
+    pid: int | None = 4242,
+) -> BackendLivenessPolicy:
+    policy = BackendLivenessPolicy(
+        timeout_seconds=lambda: 10.0,
+        now=clock.monotonic,
+        backend_pid=lambda: pid,
+        backend_birth_time=lambda: None,
+    )
+    policy.mark_activity()
+    clock.advance(11.0)
+    return policy
+
+
+def _awaiting_done_coordinator(
+    tmp_path: Path,
+    connection: HarnessConnection[Any],
+) -> ResidentDrainCoordinator:
+    coordinator = ResidentDrainCoordinator.for_connection(
+        runtime_root=tmp_path,
+        spawn_id=SpawnId("p1"),
+        receiver=connection,
+        deadline_seconds=30.0,
+        poll_seconds=0.01,
+    )
+    coordinator.awaiting_outcome = TerminalEventOutcome(status="succeeded", exit_code=0)
+    return coordinator
 
 
 def _event(harness_id: HarnessId, event_type: str, payload: dict[str, object]) -> HarnessEvent:
@@ -215,7 +297,7 @@ async def test_codex_terminal_success_without_live_children_finalizes_immediatel
         outcome = await asyncio.wait_for(manager.wait_for_completion(spawn_id), timeout=0.5)
         assert outcome is not None
         assert outcome.status == "succeeded"
-        assert True not in connection.fake_liveness.awaiting_done_values
+        assert True not in connection.fake_resident_backend.awaiting_done_values
     finally:
         await manager.stop_spawn(spawn_id)
 
@@ -235,7 +317,7 @@ async def test_opencode_terminal_success_without_live_children_finalizes_immedia
         outcome = await asyncio.wait_for(manager.wait_for_completion(spawn_id), timeout=0.5)
         assert outcome is not None
         assert outcome.status == "succeeded"
-        assert True not in connection.fake_liveness.awaiting_done_values
+        assert True not in connection.fake_resident_backend.awaiting_done_values
     finally:
         await manager.stop_spawn(spawn_id)
 
@@ -275,7 +357,7 @@ async def test_resident_persistent_policy_emits_boundary_and_stays_alive(
                 timeout=0.05,
             )
         assert manager.get_connection(spawn_id) is connection
-        assert True not in connection.fake_liveness.awaiting_done_values
+        assert True not in connection.fake_resident_backend.awaiting_done_values
     finally:
         await manager.stop_spawn(spawn_id)
 
@@ -300,7 +382,7 @@ async def test_opencode_terminal_success_resides_until_child_finishes(
                 timeout=0.05,
             )
         assert manager.get_connection(spawn_id) is connection
-        assert connection.fake_liveness.awaiting_done_values[-1] is True
+        assert connection.fake_resident_backend.awaiting_done_values[-1] is True
 
         spawn_store.finalize_spawn(
             tmp_path,
@@ -312,7 +394,7 @@ async def test_opencode_terminal_success_resides_until_child_finishes(
         outcome = await asyncio.wait_for(manager.wait_for_completion(spawn_id), timeout=0.5)
         assert outcome is not None
         assert outcome.status == "succeeded"
-        assert connection.fake_liveness.awaiting_done_values[-1] is False
+        assert connection.fake_resident_backend.awaiting_done_values[-1] is False
     finally:
         await manager.stop_spawn(spawn_id)
 
@@ -398,6 +480,77 @@ async def test_resident_stream_close_with_dead_backend_fails_while_child_running
 
 
 @pytest.mark.asyncio
+async def test_resident_stream_close_with_stalled_backend_is_not_dead_outcome(
+    tmp_path: Path,
+) -> None:
+    spawn_id = SpawnId("p1")
+    _start_row(tmp_path, str(spawn_id), HarnessId.OPENCODE, None)
+    _start_row(tmp_path, "p2", HarnessId.CODEX, str(spawn_id))
+    connection = _FakeResidentConnection(HarnessId.OPENCODE)
+    manager = await _start_manager(tmp_path, connection, spawn_id=spawn_id)
+
+    connection.emit(_event(HarnessId.OPENCODE, "session.idle", {}))
+
+    try:
+        with pytest.raises(asyncio.TimeoutError):
+            await asyncio.wait_for(
+                asyncio.shield(manager.wait_for_completion(spawn_id)),
+                timeout=0.05,
+            )
+        connection.mark_stalled()
+        connection.close_stream()
+
+        outcome = await asyncio.wait_for(manager.wait_for_completion(spawn_id), timeout=0.5)
+        assert outcome is not None
+        assert outcome.status == "failed"
+        assert outcome.error == "stream_closed_while_awaiting_done"
+    finally:
+        await manager.stop_spawn(spawn_id)
+
+
+def test_resident_close_classifies_dead_backend_through_liveness_policy(
+    tmp_path: Path,
+) -> None:
+    clock = FakeClock(start=0.0)
+    connection = _LivenessBackedResidentConnection(
+        HarnessId.OPENCODE,
+        liveness=_silent_liveness_policy(clock, pid=None),
+    )
+    coordinator = _awaiting_done_coordinator(tmp_path, connection)
+
+    assert connection.resident_backend.health_status() == LivenessDecision.BACKEND_DEAD
+
+    outcome = coordinator.handle_close(intentional_stop=False)
+
+    assert outcome is not None
+    assert outcome.status == "failed"
+    assert outcome.error == "backend_dead_while_awaiting_done"
+
+
+def test_resident_close_preserves_stalled_stream_through_liveness_policy(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(liveness_module, "is_process_alive", lambda *_args, **_kwargs: True)
+    clock = FakeClock(start=0.0)
+    connection = _LivenessBackedResidentConnection(
+        HarnessId.OPENCODE,
+        liveness=_silent_liveness_policy(clock),
+    )
+    coordinator = _awaiting_done_coordinator(tmp_path, connection)
+
+    assert connection.resident_backend.health_status() == LivenessDecision.STREAM_STALLED
+    connection.resident_backend.set_awaiting_done(True)
+    assert connection.resident_backend.health_status() == LivenessDecision.STREAM_STALLED
+
+    outcome = coordinator.handle_close(intentional_stop=False)
+
+    assert outcome is not None
+    assert outcome.status == "failed"
+    assert outcome.error == "stream_closed_while_awaiting_done"
+
+
+@pytest.mark.asyncio
 async def test_codex_resident_deadline_waits_then_reaps_live_child(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -431,13 +584,13 @@ async def test_codex_resident_deadline_waits_then_reaps_live_child(
     try:
         await asyncio.sleep(0.03)
         assert not completion_task.done()
-        assert connection.fake_liveness.awaiting_done_values[-1] is True
+        assert connection.fake_resident_backend.awaiting_done_values[-1] is True
 
         outcome = await asyncio.wait_for(completion_task, timeout=0.5)
         assert outcome is not None
         assert outcome.status == "succeeded"
         assert reaped_spawn_ids == ["p2"]
-        assert connection.fake_liveness.awaiting_done_values[-1] is False
+        assert connection.fake_resident_backend.awaiting_done_values[-1] is False
     finally:
         await manager.stop_spawn(spawn_id)
 

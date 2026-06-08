@@ -15,6 +15,7 @@ from meridian.lib.launch.launch_types import SpecT
 if TYPE_CHECKING:
     from meridian.lib.harness.connections.liveness import BackendLivenessPolicy
     from meridian.lib.harness.connections.managed_backend import ManagedBackendHandle
+    from meridian.lib.harness.connections.resident_backend import ResidentBackendControl
     from meridian.lib.observability.debug_tracer import DebugTracer
     from meridian.lib.platform.process_scope import ProcessScopeSnapshot
 
@@ -278,6 +279,11 @@ class HarnessConnection(Generic[SpecT], ABC):
         return None
 
     @property
+    def resident_backend(self) -> ResidentBackendControl | None:
+        """Resident backend control seam, when this transport supports resident turns."""
+        return None
+
+    @property
     def scope_snapshot(self) -> ProcessScopeSnapshot | None:
         """Process scope facts for the managed backend subprocess, if any."""
         return None
@@ -333,10 +339,14 @@ class HarnessConnection(Generic[SpecT], ABC):
         )
 
     async def inject_turn(self, message: str) -> None:
-        """Start a fresh user turn on an already-resident idle backend."""
+        """Compatibility wrapper for the resident follow-up-turn contract."""
 
-        _ = message
-        raise NotImplementedError(f"{self.harness_id.value} does not support turn injection")
+        resident_backend = self.resident_backend
+        if resident_backend is None:
+            raise NotImplementedError(
+                f"{self.harness_id.value} does not support resident follow-up turns"
+            )
+        await resident_backend.begin_followup_turn(message)
 
     async def respond_request(
         self,

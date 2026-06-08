@@ -48,6 +48,11 @@ from meridian.lib.harness.connections.managed_backend import (
     ManagedBackendHandle,
     launch_managed_backend,
 )
+from meridian.lib.harness.connections.resident_backend import (
+    LivenessResidentBackendControl,
+    ResidentBackendControl,
+    ResidentTurnState,
+)
 from meridian.lib.harness.projections.project_opencode_streaming import (
     project_opencode_spec_to_session_payload as _project_opencode_spec_to_session_payload,
 )
@@ -332,21 +337,27 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
         self._transition("stopped")
         return StopResult()
 
+    @property
+    def resident_backend(self) -> ResidentBackendControl:
+        return LivenessResidentBackendControl(
+            liveness=self._liveness,
+            backend_dead=self._resident_backend_dead,
+            begin_followup_turn=self._begin_followup_turn,
+            current_turn_state=self._resident_turn_state,
+        )
+
     def health(self) -> bool:
-        if self._state not in {"starting", "connected"}:
-            return False
-        process_running = self._process is not None and self._process.returncode is None
-        if not self._liveness.healthy:
-            return False
-        return process_running and self._last_health_ok
+        return not self._resident_backend_dead() and self._liveness.healthy
 
     async def send_user_message(self, text: str) -> None:
         self._require_connected()
         self._signal_in_flight = False
         await self._post_session_message(text)
 
-    async def inject_turn(self, message: str) -> None:
+    async def _begin_followup_turn(self, message: str) -> None:
         self._require_connected()
+        if self._signal_in_flight:
+            raise ConnectionNotReady("OpenCode follow-up turns require an idle backend")
         self._signal_in_flight = False
         await self._post_session_message(message)
 
@@ -1035,6 +1046,17 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
             handle.seek(read_offset, os.SEEK_SET)
             data = handle.read(max(0, end_offset - read_offset))
         return data.decode("utf-8", errors="replace").strip()
+
+    def _resident_backend_dead(self) -> bool:
+        process_running = self._process is not None and self._process.returncode is None
+        return (
+            self._state not in {"starting", "connected"}
+            or not process_running
+            or not self._last_health_ok
+        )
+
+    def _resident_turn_state(self) -> ResidentTurnState:
+        return "active" if self._signal_in_flight else "unknown"
 
     def _transition(self, next_state: ConnectionState) -> None:
         if next_state == self._state:
