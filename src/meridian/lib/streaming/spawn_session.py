@@ -24,6 +24,7 @@ class DrainOutcome:
     exit_code: int
     error: str | None = None
     duration_secs: float = 0.0
+    authoritative: bool = False
 
 
 @dataclass

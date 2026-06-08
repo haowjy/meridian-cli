@@ -264,6 +264,7 @@ class SpawnDrainLoop:
                         exit_code=recorded_terminal_outcome.exit_code,
                         error=recorded_terminal_outcome.error,
                         duration_secs=max(0.0, time.monotonic() - session.started_monotonic),
+                        authoritative=not coordinator.raw_terminal_frames_are_authoritative(),
                     )
                 else:
                     outcome = DrainOutcome(

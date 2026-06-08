@@ -22,10 +22,7 @@ from meridian.lib.bootstrap.services import (
 from meridian.lib.config.settings import MeridianConfig
 from meridian.lib.core.clock import Clock, RealClock
 from meridian.lib.core.domain import Spawn, SpawnStatus
-from meridian.lib.core.spawn_lifecycle import (
-    TERMINAL_SPAWN_STATUSES,
-    ExecutionTerminalFacts,
-)
+from meridian.lib.core.spawn_lifecycle import ExecutionTerminalFacts
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.adapter import StreamEvent
 from meridian.lib.harness.bundle import get_harness_bundle
@@ -735,11 +732,7 @@ async def _run_streaming_attempt(
         if drain_outcome is not None and terminal_outcome is None:
             drain_exit_code = drain_outcome.exit_code
             drain_error = drain_outcome.error
-            if (
-                drain_outcome.status in TERMINAL_SPAWN_STATUSES
-                and drain_outcome.status != "succeeded"
-                and drain_outcome.error != "report_watchdog"
-            ):
+            if drain_outcome.authoritative and drain_outcome.status != "succeeded":
                 authoritative_terminal_status = drain_outcome.status
             if timed_out and drain_outcome.status == "succeeded":
                 timed_out = False

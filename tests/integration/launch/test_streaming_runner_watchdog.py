@@ -572,6 +572,74 @@ class _RetryableOpenCodeConnection:
         )
 
 
+class _CloseWithoutTerminalOpenCodeConnection:
+    starts = 0
+
+    def __init__(self) -> None:
+        self.state = "created"
+        self._spawn_id = SpawnId("")
+        self._session_id = "session-close-without-terminal-opencode"
+        self._attempt_index = 0
+        self.capabilities = ConnectionCapabilities(
+            mid_turn_injection="http_post",
+            supports_steer=False,
+            supports_cancel=True,
+            runtime_model_switch=False,
+            structured_reasoning=True,
+        )
+
+    @property
+    def harness_id(self) -> HarnessId:
+        return HarnessId.OPENCODE
+
+    @property
+    def spawn_id(self) -> SpawnId:
+        return self._spawn_id
+
+    @property
+    def session_id(self) -> str | None:
+        return self._session_id
+
+    @property
+    def subprocess_pid(self) -> int | None:
+        return 8484
+
+    async def start(self, config: ConnectionConfig, spec: ResolvedLaunchSpec) -> None:
+        _ = spec
+        type(self).starts += 1
+        self._attempt_index = type(self).starts
+        self._spawn_id = config.spawn_id
+        self.state = "connected"
+
+    async def stop(
+        self,
+        *,
+        reason: str | None = None,
+        progress: StopProgressCallback | None = None,
+    ) -> StopResult:
+        _ = reason, progress
+        self.state = "stopped"
+        return StopResult()
+
+    def health(self) -> bool:
+        return self.state == "connected"
+
+    async def send_user_message(self, text: str) -> None:
+        _ = text
+
+    async def send_cancel(self) -> None:
+        return None
+
+    async def events(self):  # type: ignore[no-untyped-def]
+        if self._attempt_index == 1:
+            return
+        yield HarnessEvent(
+            event_type="session.idle",
+            harness_id="opencode",
+            payload={"type": "session.idle", "sessionID": self._session_id},
+        )
+
+
 class _EndMonotonicFailsClock(FakeClock):
     def __init__(self, start: float = 0.0) -> None:
         super().__init__(start=start)
@@ -891,6 +959,71 @@ async def test_execute_with_streaming_retries_retryable_single_turn_terminal_fai
     row = spawn_store.get_spawn(runtime_root, run.spawn_id)
     assert exit_code == 0
     assert _RetryableOpenCodeConnection.starts == 2
+    assert row is not None
+    assert row.status == "succeeded"
+    assert row.exit_code == 0
+
+
+@pytest.mark.asyncio
+async def test_execute_with_streaming_retries_single_turn_close_without_terminal_frame(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime_root = resolve_project_runtime_root(tmp_path)
+    artifacts = LocalStore(root_dir=tmp_path / ".artifacts")
+    registry = HarnessRegistry.with_defaults()
+    fake_clock = FakeClock(start=1_000.0)
+    fake_heartbeat = FakeHeartbeat()
+    fake_heartbeat.set_clock(fake_clock)
+    _CloseWithoutTerminalOpenCodeConnection.starts = 0
+    monkeypatch.setattr(spawn_manager_module, "ControlSocketServer", _FakeControlSocketServer)
+    monkeypatch.setattr(
+        "meridian.lib.harness.connections.get_connection_class",
+        lambda _harness_id, _transport_id=TransportId.STREAMING: (
+            _CloseWithoutTerminalOpenCodeConnection
+        ),
+    )
+
+    run = Spawn(
+        spawn_id=SpawnId("r-opencode-close-without-terminal"),
+        prompt="hello",
+        model=ModelId("gpt-5.4"),
+        status="queued",
+    )
+    spawn_store.start_spawn(
+        runtime_root,
+        chat_id="test-chat-opencode-close-without-terminal",
+        model=str(run.model),
+        agent="",
+        harness=HarnessId.OPENCODE.value,
+        kind="streaming",
+        prompt=run.prompt,
+        spawn_id=run.spawn_id,
+        launch_mode="foreground",
+        status="queued",
+    )
+    request = _build_opencode_request().model_copy(
+        update={"retry": RetryPolicy(max_attempts=2, backoff_secs=0.0)}
+    )
+
+    exit_code = await asyncio.wait_for(
+        _execute_with_context(
+            run,
+            request=request,
+            project_root=tmp_path,
+            runtime_root=runtime_root,
+            artifacts=artifacts,
+            registry=registry,
+            clock=fake_clock,
+            heartbeat_touch=fake_heartbeat.touch,
+            heartbeat_interval_secs=0.001,
+        ),
+        timeout=15.0,
+    )
+
+    row = spawn_store.get_spawn(runtime_root, run.spawn_id)
+    assert exit_code == 0
+    assert _CloseWithoutTerminalOpenCodeConnection.starts == 2
     assert row is not None
     assert row.status == "succeeded"
     assert row.exit_code == 0
