@@ -21,7 +21,7 @@ from meridian.lib.ops.spawn.query import (
     read_latest_primary_spawn_for_chat_read_only,
     read_spawn_row_read_only,
 )
-from meridian.lib.state import session_store
+from meridian.lib.state import session_identity, session_store
 from meridian.lib.state.paths import spawn_output_path
 from meridian.lib.state.primary_meta import (
     is_managed_primary,
@@ -51,8 +51,8 @@ class SessionRepairTarget(NamedTuple):
     reason: str | None = None
 
 
-def _is_chat_ref(value: str) -> bool:
-    return value.startswith("c") and value[1:].isdigit()
+def _is_chat_ref(runtime_root: Path, value: str) -> bool:
+    return session_identity.is_tracked_chat_ref(runtime_root, value)
 
 
 def _is_spawn_ref(value: str) -> bool:
@@ -493,14 +493,14 @@ def _spawn_linked_chat_session(
     spawn_id: str,
     chat_id: str | None,
 ) -> session_store.SessionRecord | None:
-    if chat_id is None:
-        return None
-    record = session_store.get_session_record(runtime_root, chat_id)
-    if record is None or record.spawn_id != spawn_id:
-        return None
-    if not record.harness_session_id.strip():
-        return None
-    return record
+    from meridian.lib.state.session_identity import get_session_record_for_spawn
+
+    _ = chat_id
+    return get_session_record_for_spawn(
+        runtime_root,
+        spawn_id,
+        require_harness_session_id=True,
+    )
 
 
 def _resolve_from_spawn_id(
@@ -874,7 +874,7 @@ def resolve_session_repair_target(
     normalized_ref = ref.strip()
     if not normalized_ref:
         raise ValueError("Session reference is required")
-    if _is_chat_ref(normalized_ref):
+    if _is_chat_ref(runtime_root, normalized_ref):
         return _resolve_repair_from_chat_id(
             project_root=project_root,
             runtime_root=runtime_root,
@@ -906,7 +906,7 @@ def resolve_session_log_target(
     if not normalized_ref:
         raise ValueError("Session reference is required unless --file is provided")
 
-    if normalized_ref.startswith("c") and normalized_ref[1:].isdigit():
+    if _is_chat_ref(runtime_root, normalized_ref):
         return _resolve_from_chat_id(
             project_root=project_root,
             runtime_root=runtime_root,

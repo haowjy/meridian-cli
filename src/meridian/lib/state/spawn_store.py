@@ -807,7 +807,9 @@ def list_spawns(
                 if expected is None:
                     continue
                 if key == "owner_chat_id":
-                    if (spawn.owner_chat_id or spawn.chat_id) != expected:
+                    from meridian.lib.state.session_identity import spawn_owner_chat_id
+
+                    if spawn_owner_chat_id(spawn) != expected:
                         keep = False
                         break
                     continue

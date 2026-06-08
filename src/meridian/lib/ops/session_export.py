@@ -13,7 +13,7 @@ from meridian.lib.core.util import FormatContext
 from meridian.lib.harness.transcript import TranscriptMessage
 from meridian.lib.ops.runtime import async_from_sync
 from meridian.lib.ops.session_transcript import read_session_transcript
-from meridian.lib.state import session_store, spawn_store
+from meridian.lib.state import session_identity, session_store, spawn_store
 
 _TOOL_CALL_RE = re.compile(r"^\[tool:\s*(?P<name>[^\]\s]+)(?:\s+(?P<body>.*))?\]$", re.DOTALL)
 _TOOL_RESULT_PREFIX = "[tool_result]"
@@ -205,21 +205,44 @@ def _session_metadata(runtime_root: Path, ref: str) -> list[str]:
     return lines
 
 
-def _chat_id_for_ref(runtime_root: Path, ref: str) -> str | None:
+def _session_scope_for_ref(
+    runtime_root: Path,
+    ref: str,
+) -> tuple[str | None, str | None, str | None]:
+    """Return (exact_chat_id, owner_chat_id, parent_spawn_id) for export grouping."""
+
     normalized = ref.strip()
-    if normalized.startswith("c") and normalized[1:].isdigit():
-        return normalized
+    if session_identity.is_tracked_chat_ref(runtime_root, normalized):
+        exact_chat_id = normalized
+        owner_chat_id = session_identity.get_owner_chat_for_session(runtime_root, exact_chat_id)
+        return exact_chat_id, owner_chat_id, None
     if normalized.startswith("p") and normalized[1:].isdigit():
         spawn = spawn_store.get_spawn(runtime_root, normalized)
-        return spawn.chat_id if spawn is not None else None
+        if spawn is None:
+            return None, None, normalized
+        return (
+            session_identity.spawn_exact_chat_id(spawn),
+            session_identity.spawn_owner_chat_id(spawn),
+            normalized,
+        )
     record = session_store.resolve_session_ref(runtime_root, normalized)
-    return record.chat_id if record is not None else None
+    if record is None:
+        return None, None, None
+    return (
+        session_identity.session_exact_chat_id(record),
+        session_identity.session_owner_chat_id(runtime_root, record),
+        None,
+    )
 
 
 def _spawn_appendices(
-    runtime_root: Path, *, chat_id: str | None, parent_id: str | None
+    runtime_root: Path,
+    *,
+    exact_chat_id: str | None,
+    owner_chat_id: str | None,
+    parent_id: str | None,
 ) -> list[str]:
-    if chat_id is None and parent_id is None:
+    if exact_chat_id is None and owner_chat_id is None and parent_id is None:
         return []
     sections: list[str] = []
     seen: set[str] = set()
@@ -228,9 +251,12 @@ def _spawn_appendices(
             continue
         if spawn.kind == "primary":
             continue
-        if chat_id is not None and spawn.chat_id != chat_id and spawn.parent_id != parent_id:
-            continue
-        if chat_id is None and spawn.parent_id != parent_id:
+        included = parent_id is not None and spawn.parent_id == parent_id
+        if not included and exact_chat_id is not None:
+            included = session_identity.spawn_exact_chat_id(spawn) == exact_chat_id
+        if not included and owner_chat_id is not None:
+            included = session_identity.spawn_matches_owner_chat(spawn, owner_chat_id)
+        if not included:
             continue
         report_path = runtime_root / "spawns" / spawn.id / "report.md"
         if not report_path.is_file():
@@ -276,10 +302,14 @@ def session_export_sync(
         project_root=payload.project_root,
     )
     ref = payload.ref.strip() or transcript.target.session_id
-    chat_id = _chat_id_for_ref(transcript.runtime_root, ref)
-    parent_id = ref if ref.startswith("p") and ref[1:].isdigit() else None
+    exact_chat_id, owner_chat_id, parent_id = _session_scope_for_ref(transcript.runtime_root, ref)
     appendices = (
-        _spawn_appendices(transcript.runtime_root, chat_id=chat_id, parent_id=parent_id)
+        _spawn_appendices(
+            transcript.runtime_root,
+            exact_chat_id=exact_chat_id,
+            owner_chat_id=owner_chat_id,
+            parent_id=parent_id,
+        )
         if payload.include_spawns
         else []
     )

@@ -108,6 +108,43 @@ def test_spawn_stats_includes_finalizing_bucket(tmp_path: Path) -> None:
     assert running_id != finalizing_id
 
 
+def test_spawn_stats_session_filters_by_exact_chat_id(tmp_path: Path) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    runtime_root = _state_root(project_root)
+
+    spawn_store.start_spawn(
+        runtime_root,
+        spawn_id="p-owner-child",
+        chat_id="c-child",
+        owner_chat_id="c-owner",
+        model="gpt-5.4",
+        agent="coder",
+        harness="codex",
+        prompt="child",
+    )
+    spawn_store.start_spawn(
+        runtime_root,
+        spawn_id="p-sibling",
+        chat_id="c-sibling",
+        owner_chat_id="c-owner",
+        model="gpt-5.4",
+        agent="coder",
+        harness="codex",
+        prompt="sibling",
+    )
+
+    child_only = spawn_api.spawn_stats_sync(
+        SpawnStatsInput(project_root=project_root.as_posix(), session="c-child")
+    )
+    owner_family = spawn_api.spawn_stats_sync(
+        SpawnStatsInput(project_root=project_root.as_posix(), session="c-owner")
+    )
+
+    assert child_only.total_runs == 1
+    assert owner_family.total_runs == 0
+
+
 def test_spawn_cancel_all_counts_finalizing_cancellations_as_accepted(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

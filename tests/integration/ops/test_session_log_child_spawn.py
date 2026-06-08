@@ -453,3 +453,77 @@ def test_session_export_spawn_duration_uses_last_attempt_exited_at(
     )
 
     assert "- Duration: 1m 5s" in output.markdown
+
+
+def test_session_export_include_spawns_groups_by_owner_chat(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    runtime_root = resolve_project_runtime_root(project_root)
+    runtime_root.mkdir(parents=True, exist_ok=True)
+    codex_home = tmp_path / "codex-home"
+    monkeypatch.setenv("CODEX_HOME", codex_home.as_posix())
+
+    primary_session_id = "22222222-2222-4222-8222-222222222222"
+    owner_chat_id = session_store.start_session(
+        runtime_root,
+        harness="codex",
+        harness_session_id=primary_session_id,
+        model="gpt-5.4",
+        chat_id="c-owner",
+        kind="primary",
+    )
+    primary_spawn_id = str(
+        spawn_store.start_spawn(
+            runtime_root,
+            spawn_id="p-primary",
+            chat_id=owner_chat_id,
+            owner_chat_id=owner_chat_id,
+            model="gpt-5.4",
+            agent="coder",
+            harness="codex",
+            kind="primary",
+            prompt="primary",
+            harness_session_id=primary_session_id,
+        )
+    )
+    child_spawn_id = str(
+        spawn_store.start_spawn(
+            runtime_root,
+            chat_id="c-child",
+            owner_chat_id=owner_chat_id,
+            parent_id=primary_spawn_id,
+            model="gpt-5.4",
+            agent="coder",
+            harness="codex",
+            kind="child",
+            prompt="child task",
+            harness_session_id="thread-child",
+        )
+    )
+    _write_codex_rollout(
+        sessions_root=codex_home / "sessions",
+        project_root=project_root,
+        session_id=primary_session_id,
+        assistant_text="primary transcript",
+    )
+    report_path = runtime_root / "spawns" / child_spawn_id / "report.md"
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    report_path.write_text("Child spawn report body.\n", encoding="utf-8")
+
+    try:
+        output = session_export_sync(
+            SessionExportInput(
+                ref=owner_chat_id,
+                project_root=project_root.as_posix(),
+                include_spawns=True,
+            )
+        )
+    finally:
+        session_store.stop_session(runtime_root, owner_chat_id)
+
+    assert "## Spawn Reports" in output.markdown
+    assert f"## Spawn: {child_spawn_id}" in output.markdown
+    assert "Child spawn report body." in output.markdown

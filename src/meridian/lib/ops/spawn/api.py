@@ -683,10 +683,6 @@ def _collect_descendants(
     return result
 
 
-def _row_owner_chat_id(row: SpawnRecord) -> str:
-    return (row.owner_chat_id or row.chat_id or "").strip()
-
-
 def spawn_stats_sync(
     payload: SpawnStatsInput,
     ctx: RuntimeContext | None = None,
@@ -704,8 +700,12 @@ def spawn_stats_sync(
     all_spawns = reconcile_spawns(project_root, runtime_root, spawn_store.list_spawns(runtime_root))
 
     if payload.session is not None and payload.session.strip():
+        from meridian.lib.state.session_identity import spawn_matches_exact_session
+
         wanted_session = payload.session.strip()
-        all_spawns = [row for row in all_spawns if _row_owner_chat_id(row) == wanted_session]
+        all_spawns = [
+            row for row in all_spawns if spawn_matches_exact_session(row, wanted_session)
+        ]
 
     if payload.spawn_id is not None:
         root_id = payload.spawn_id.strip()
@@ -1027,7 +1027,9 @@ def _row_in_cancel_scope(
         return True
     if descendant_ids is not None:
         return row.id in descendant_ids
-    return _row_owner_chat_id(row) == (caller_chat_id or "")
+    from meridian.lib.state.session_identity import spawn_matches_owner_chat
+
+    return spawn_matches_owner_chat(row, caller_chat_id or "")
 
 
 async def _spawn_cancel_impl(
@@ -1282,6 +1284,7 @@ def _discover_pending_spawns(
     from blocking on the entire chat tree.
     """
     from meridian.lib.state.reaper import reconcile_spawns
+    from meridian.lib.state.session_identity import spawn_matches_owner_chat
 
     all_spawns = reconcile_spawns(
         project_root,
@@ -1301,7 +1304,10 @@ def _discover_pending_spawns(
         if row.status in ACTIVE_SPAWN_STATUSES
         and row.id != exclude_spawn_id
         and (descendant_ids is None or row.id in descendant_ids)
-        and (descendant_ids is not None or _row_owner_chat_id(row) == chat_id)
+        and (
+            descendant_ids is not None
+            or spawn_matches_owner_chat(row, chat_id or "")
+        )
     ]
     pending.sort(key=lambda row: row.id)
     return pending

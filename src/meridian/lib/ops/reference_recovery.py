@@ -15,7 +15,7 @@ from pathlib import Path
 from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.extractors.pi import detect_pi_session_id_from_session_files
 from meridian.lib.harness.registry import get_default_harness_registry
-from meridian.lib.state import primary_meta, session_store, spawn_store
+from meridian.lib.state import primary_meta, session_identity, session_store, spawn_store
 from meridian.lib.state.spawn.model import SpawnRecord
 
 
@@ -58,7 +58,7 @@ def _primary_spawn_for_chat(
     chat_id: str,
 ) -> SpawnRecord | None:
     _ = project_root
-    spawns = spawn_store.list_spawns(runtime_root, filters={"owner_chat_id": chat_id})
+    spawns = session_identity.list_spawns_for_owner_chat(runtime_root, chat_id)
     primary_spawns = [row for row in spawns if row.kind == "primary"]
     if not primary_spawns:
         return None
@@ -275,21 +275,34 @@ def recover_harness_session_id(
             return result
 
         row = spawn_store.get_spawn(runtime_root, normalized_ref)
-        if row is not None and row.chat_id:
-            result = _recover_from_session_store(runtime_root, row.chat_id)
-            if result is not None:
-                return result
+        if row is not None:
+            linked_record = session_identity.get_session_record_for_spawn(
+                runtime_root,
+                normalized_ref,
+                require_harness_session_id=True,
+            )
+            if linked_record is not None:
+                session_id = _latest_harness_session_id(linked_record)
+                if session_id:
+                    return RecoveryResult(
+                        harness_session_id=session_id,
+                        provenance=RecoveryProvenance.SESSION_STORE,
+                        supporting_chat_id=linked_record.chat_id,
+                    )
 
-            result = _recover_from_primary_meta(runtime_root, normalized_ref, row.chat_id)
-            if result is not None:
-                return result
+            if row.kind == "primary":
+                result = _recover_from_primary_meta(runtime_root, normalized_ref, row.chat_id)
+                if result is not None:
+                    return result
 
-        return _recover_from_detection(
-            project_root=project_root,
-            runtime_root=runtime_root,
-            chat_id=row.chat_id if row else None,
-            harness_hint=recorded_harness,
-        )
+                return _recover_from_detection(
+                    project_root=project_root,
+                    runtime_root=runtime_root,
+                    chat_id=row.chat_id,
+                    harness_hint=recorded_harness,
+                )
+
+        return None
 
     return None
 

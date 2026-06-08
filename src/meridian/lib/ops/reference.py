@@ -14,7 +14,7 @@ from meridian.lib.ops.reference_recovery import (
     recover_harness_session_id,
 )
 from meridian.lib.ops.runtime import resolve_runtime_root_for_read
-from meridian.lib.state import primary_meta, session_store, spawn_store
+from meridian.lib.state import primary_meta, session_identity, session_store, spawn_store
 from meridian.lib.state.paths import resolve_spawn_log_dir
 
 _SPAWN_REF_RE = re.compile(r"^p\d+$")
@@ -91,7 +91,7 @@ def resolve_spawn_ref(runtime_root: Path, ref: str) -> SpawnId | None:
     if spawn is not None:
         return SpawnId(spawn.id)
 
-    matches = spawn_store.list_spawns(runtime_root, filters={"owner_chat_id": ref})
+    matches = session_identity.list_spawns_for_owner_chat(runtime_root, ref)
     if not matches:
         matches = spawn_store.list_spawns(runtime_root, filters={"chat_id": ref})
     if matches:
@@ -110,7 +110,7 @@ def _latest_harness_session_id(record: session_store.SessionRecord) -> str | Non
 
 
 def _latest_primary_spawn_id_for_chat(runtime_root: Path, chat_id: str) -> str | None:
-    rows = spawn_store.list_spawns(runtime_root, filters={"owner_chat_id": chat_id})
+    rows = session_identity.list_spawns_for_owner_chat(runtime_root, chat_id)
     primary_rows = [row for row in rows if row.kind == "primary"]
     if not primary_rows:
         return None
@@ -209,10 +209,10 @@ def _resolve_spawn_reference(
     if row.harness == "pi":
         if row.kind == "primary":
             source_pi_session_dir = _read_primary_pi_session_dir(runtime_root, row.id)
-        elif row.owner_chat_id or row.chat_id:
+        elif session_identity.spawn_owner_chat_id(row):
             primary_spawn_id = _latest_primary_spawn_id_for_chat(
                 runtime_root,
-                row.owner_chat_id or row.chat_id or "",
+                session_identity.spawn_owner_chat_id(row) or "",
             )
             if primary_spawn_id is not None:
                 source_pi_session_dir = _read_primary_pi_session_dir(runtime_root, primary_spawn_id)
@@ -244,9 +244,13 @@ def _resolve_chat_reference(
     stored_harness = _normalize_optional(session.harness)
     source_pi_session_dir: str | None = None
     if stored_harness == "pi":
-        primary_spawn_id = _latest_primary_spawn_id_for_chat(runtime_root, session.chat_id)
-        if primary_spawn_id is not None:
-            source_pi_session_dir = _read_primary_pi_session_dir(runtime_root, primary_spawn_id)
+        owner_chat_id = session_identity.session_owner_chat_id(runtime_root, session)
+        if owner_chat_id is not None:
+            primary_spawn_id = _latest_primary_spawn_id_for_chat(runtime_root, owner_chat_id)
+            if primary_spawn_id is not None:
+                source_pi_session_dir = _read_primary_pi_session_dir(
+                    runtime_root, primary_spawn_id
+                )
     return _build_tracked_reference(
         harness_session_id=harness_session_id,
         stored_harness=stored_harness,
@@ -282,9 +286,13 @@ def _resolve_harness_session_reference(
     stored_harness = _normalize_optional(session.harness)
     source_pi_session_dir: str | None = None
     if stored_harness == "pi":
-        primary_spawn_id = _latest_primary_spawn_id_for_chat(runtime_root, session.chat_id)
-        if primary_spawn_id is not None:
-            source_pi_session_dir = _read_primary_pi_session_dir(runtime_root, primary_spawn_id)
+        owner_chat_id = session_identity.session_owner_chat_id(runtime_root, session)
+        if owner_chat_id is not None:
+            primary_spawn_id = _latest_primary_spawn_id_for_chat(runtime_root, owner_chat_id)
+            if primary_spawn_id is not None:
+                source_pi_session_dir = _read_primary_pi_session_dir(
+                    runtime_root, primary_spawn_id
+                )
     return _build_tracked_reference(
         harness_session_id=harness_session_id,
         stored_harness=stored_harness,
@@ -354,7 +362,9 @@ def resolve_session_reference(
             if recovery is not None:
                 return replace(result, recovery=recovery)
         return result
-    if _CHAT_REF_RE.fullmatch(normalized):
+    if _CHAT_REF_RE.fullmatch(normalized) or session_identity.is_tracked_chat_ref(
+        resolved_runtime_root, normalized
+    ):
         result = _resolve_chat_reference(resolved_runtime_root, normalized, project_root)
         if result.missing_harness_session_id:
             recovery = _try_recover(

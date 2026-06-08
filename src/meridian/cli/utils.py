@@ -98,7 +98,6 @@ def missing_fork_session_error_with_discovery(
         return missing_fork_session_error(normalized_ref)
 
     from meridian.lib.ops.runtime import resolve_runtime_root_for_read
-    from meridian.lib.state import spawn_store
     from meridian.lib.state.primary_meta import read_primary_harness_session_discovery
 
     runtime_root = resolve_runtime_root_for_read(project_root)
@@ -111,7 +110,13 @@ def missing_fork_session_error_with_discovery(
             else (source_chat_id or "").strip()
         )
         if chat_ref:
-            chat_spawns = spawn_store.list_spawns(runtime_root, filters={"chat_id": chat_ref})
+            from meridian.lib.state import session_identity
+
+            owner_chat_id = session_identity.get_owner_chat_for_session(runtime_root, chat_ref)
+            lookup_chat_id = owner_chat_id or chat_ref
+            chat_spawns = session_identity.list_spawns_for_owner_chat(
+                runtime_root, lookup_chat_id
+            )
             pi_primary_spawns = [
                 row for row in chat_spawns if row.kind == "primary" and row.harness == "pi"
             ]
