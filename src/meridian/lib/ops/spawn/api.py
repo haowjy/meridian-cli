@@ -4,6 +4,7 @@ import asyncio
 import json
 import os
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
@@ -393,6 +394,7 @@ def spawn_create_sync(
     *,
     sink: OutputSink | None = None,
     prepared: RuntimeWriteContext | None = None,
+    on_spawn_id: Callable[[str], None] | None = None,
 ) -> SpawnActionOutput:
     failure_payload = [payload]
     preparation = run_pre_init_boundary(
@@ -479,13 +481,16 @@ def spawn_create_sync(
             ctx=resolved_context,
         )
     else:
-        result = execute_spawn_blocking(
-            payload=payload,
-            request=prepared_request,
-            runtime=runtime,
-            ctx=resolved_context,
-            prepared=prepared_surface,
-        )
+        blocking_kwargs: dict[str, Any] = {
+            "payload": payload,
+            "request": prepared_request,
+            "runtime": runtime,
+            "ctx": resolved_context,
+            "prepared": prepared_surface,
+        }
+        if on_spawn_id is not None:
+            blocking_kwargs["on_spawn_id"] = on_spawn_id
+        result = execute_spawn_blocking(**blocking_kwargs)
     _emit_usage_spawn_launched(
         harness=result.harness_id or prepared_request.harness,
         spawn_id=result.spawn_id,

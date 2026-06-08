@@ -85,6 +85,20 @@ def _prepare_spawn_runtime_write() -> RuntimeWriteContext:
     return prepare_for_runtime_write(require_established_project_root())
 
 
+def _foreground_spawn_id_notifier(*, quiet: bool) -> Callable[[str], None] | None:
+    if quiet or _get_global_options().output.format == "json":
+        return None
+    sink = _current_output_sink()
+
+    def _notify(spawn_id: str) -> None:
+        sink.status(f"Spawn id: {spawn_id}")
+        from meridian.cli.output import flush_sink
+
+        flush_sink(sink)
+
+    return _notify
+
+
 def _spawn_create_exit_code(result: SpawnActionOutput) -> int:
     if result.exit_code is not None:
         return result.exit_code
@@ -558,6 +572,7 @@ def _spawn_create(
             ),
             sink=_current_output_sink(),
             prepared=_prepare_spawn_runtime_write(),
+            on_spawn_id=_foreground_spawn_id_notifier(quiet=quiet),
         )
     output_format = _get_global_options().output.format
     if output_format != "json" and metadata:

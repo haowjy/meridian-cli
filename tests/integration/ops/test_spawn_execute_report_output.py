@@ -85,6 +85,39 @@ def test_execute_spawn_blocking_reads_report_and_does_not_print_running_preamble
     )
 
 
+def test_execute_spawn_blocking_notifies_spawn_id_before_launch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = _build_test_runtime(tmp_path, monkeypatch)
+    notifications: list[str] = []
+
+    async def _fake_launch_prepared_spawn(**kwargs: object) -> int:
+        assert notifications == [str(cast("Any", kwargs["spawn"]).spawn_id)]
+        spawn = cast("Any", kwargs["spawn"])
+        runtime_root = Path(cast("Path", kwargs["runtime_root"]))
+        spawn_store.finalize_spawn(
+            runtime_root,
+            str(spawn.spawn_id),
+            "succeeded",
+            0,
+            origin="runner",
+        )
+        return 0
+
+    monkeypatch.setattr(execute_module, "launch_prepared_spawn", _fake_launch_prepared_spawn)
+
+    result = execute_module.execute_spawn_blocking(
+        payload=SpawnCreateInput(prompt="run"),
+        request=SpawnRequest(prompt="run", model="gpt-5.4", harness="codex"),
+        runtime=runtime,
+        on_spawn_id=notifications.append,
+    )
+
+    assert result.status == "succeeded"
+    assert notifications == [str(result.spawn_id)]
+
+
 def test_execute_spawn_blocking_pre_init_failure_returns_failed_output(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

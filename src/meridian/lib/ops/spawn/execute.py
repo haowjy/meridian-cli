@@ -4,6 +4,7 @@ import asyncio
 import os
 import subprocess
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -434,6 +435,7 @@ def execute_spawn_blocking(
     runtime: OperationRuntime,
     ctx: RuntimeContext | None = None,
     prepared: PreparedLaunchSurface | None = None,
+    on_spawn_id: Callable[[str], None] | None = None,
 ) -> SpawnActionOutput:
     preparation = _prepare_spawn_execution(
         payload=payload,
@@ -465,6 +467,9 @@ def execute_spawn_blocking(
         ctx=resolved_context,
     )
     spawn = context.spawn
+    spawn_id_text = str(spawn.spawn_id)
+    if on_spawn_id is not None:
+        on_spawn_id(spawn_id_text)
 
     warning = request.warning
     context_from_resolved = request.context_from
@@ -493,7 +498,7 @@ def execute_spawn_blocking(
         except Exception:
             logger.warning(
                 "Failed to write params.json",
-                spawn_id=str(spawn.spawn_id),
+                spawn_id=spawn_id_text,
                 exc_info=True,
             )
         started = time.monotonic()
@@ -533,11 +538,11 @@ def execute_spawn_blocking(
             spawn.spawn_id,
             str(exc),
         )
-        logger.exception("Foreground spawn crashed.", spawn_id=str(spawn.spawn_id))
+        logger.exception("Foreground spawn crashed.", spawn_id=spawn_id_text)
         return SpawnActionOutput(
             command="spawn.create",
             status="failed",
-            spawn_id=str(spawn.spawn_id),
+            spawn_id=spawn_id_text,
             message=f"Spawn execution failed: {exc}",
             error="execution_crash",
             model=request.model or "",
@@ -579,7 +584,7 @@ def execute_spawn_blocking(
     _emit_subrun_event(
         {
             "t": "meridian.spawn.done",
-            "id": str(spawn.spawn_id),
+            "id": spawn_id_text,
             "exit": exit_code,
             "secs": done_secs,
             "tok": tokens_total,
@@ -592,7 +597,7 @@ def execute_spawn_blocking(
     return SpawnActionOutput(
         command="spawn.create",
         status=status,
-        spawn_id=str(spawn.spawn_id),
+        spawn_id=spawn_id_text,
         message="Spawn completed.",
         model=request.model or "",
         harness_id=request.harness or "",
