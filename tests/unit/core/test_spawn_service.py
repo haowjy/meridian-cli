@@ -60,6 +60,28 @@ def _start_spawn(
     )
 
 
+def _start_spawn_record(
+    runtime_root: Path,
+    spawn_id: str,
+    *,
+    parent_id: str | None = None,
+    status: SpawnStatus = "running",
+) -> str:
+    return str(
+        spawn_store.start_spawn(
+            runtime_root,
+            spawn_id=spawn_id,
+            chat_id=spawn_id,
+            parent_id=parent_id,
+            model="gpt-5.4",
+            agent="coder",
+            harness="codex",
+            prompt=f"prompt {spawn_id}",
+            status=status,
+        )
+    )
+
+
 def _fake_launch_context_builder(child_cwd: Path) -> Any:
     def _bind_spawn_launch_context(**kwargs: object) -> SimpleNamespace:
         prepared = cast("Any", kwargs["prepared"])
@@ -515,6 +537,78 @@ async def test_cancel_app_spawn_records_intent_without_local_force_finalize(
     assert row is not None
     assert row.status == "running"
     assert row.cancel_intent is not None
+
+
+@pytest.mark.asyncio
+async def test_cancel_descendants_forces_active_subtree_to_terminal(
+    tmp_path: Path,
+) -> None:
+    runtime_root = _runtime_root(tmp_path)
+    _start_spawn_record(runtime_root, "p1")
+    _start_spawn_record(runtime_root, "p2", parent_id="p1")
+    _start_spawn_record(runtime_root, "p3", parent_id="p2")
+    _start_spawn_record(runtime_root, "p4", parent_id="p1")
+    spawn_store.finalize_spawn(
+        runtime_root,
+        "p4",
+        "succeeded",
+        0,
+        origin="runner",
+        error=None,
+    )
+    service = _service(runtime_root)
+
+    await service.cancel_descendants(SpawnId("p1"))
+
+    child = spawn_store.get_spawn(runtime_root, "p2")
+    grandchild = spawn_store.get_spawn(runtime_root, "p3")
+    already_terminal = spawn_store.get_spawn(runtime_root, "p4")
+    assert child is not None
+    assert grandchild is not None
+    assert already_terminal is not None
+    assert child.status == "cancelled"
+    assert grandchild.status == "cancelled"
+    assert child.cancel_intent is not None
+    assert child.cancel_intent.requested_by == "system"
+    assert grandchild.cancel_intent is not None
+    assert grandchild.cancel_intent.requested_by == "system"
+    assert already_terminal.status == "succeeded"
+    assert already_terminal.cancel_intent is None
+
+
+@pytest.mark.asyncio
+async def test_cancel_descendants_rescans_to_fixed_point(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime_root = _runtime_root(tmp_path)
+    _start_spawn_record(runtime_root, "p1")
+    _start_spawn_record(runtime_root, "p2", parent_id="p1")
+    service = _service(runtime_root)
+    cancelled: list[tuple[str, str]] = []
+
+    async def _cancel(spawn_id: SpawnId, *, requested_by: str = "user") -> object:
+        cancelled.append((str(spawn_id), requested_by))
+        if spawn_id == SpawnId("p2") and spawn_store.get_spawn(runtime_root, "p3") is None:
+            _start_spawn_record(runtime_root, "p3", parent_id="p2")
+        spawn_store.finalize_spawn(
+            runtime_root,
+            spawn_id,
+            "cancelled",
+            130,
+            origin="cancel",
+            error="cancelled",
+        )
+        return object()
+
+    monkeypatch.setattr(service, "cancel", _cancel)
+
+    await service.cancel_descendants(SpawnId("p1"))
+
+    assert cancelled == [("p2", "system"), ("p3", "system")]
+    grandchild = spawn_store.get_spawn(runtime_root, "p3")
+    assert grandchild is not None
+    assert grandchild.status == "cancelled"
 
 
 @pytest.mark.asyncio

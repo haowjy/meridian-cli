@@ -8,7 +8,9 @@ import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Literal, cast
+
+import structlog
 
 from meridian.lib.catalog.model_aliases import MarsResultCache
 from meridian.lib.config.project_paths import ProjectConfigPaths
@@ -70,6 +72,8 @@ if TYPE_CHECKING:
 _WAIT_POLL_INTERVAL_SECS = 0.1
 _MANAGED_CANCEL_GRACE_SECS = 5.0
 _MANAGED_CANCEL_FALLBACK_WAIT_SECS = 1.0
+_MAX_REAP_PASSES = 4
+logger = structlog.get_logger()
 
 
 def _resolve_explicit_timeout_seconds(resolved_request: object) -> float | None:
@@ -514,7 +518,12 @@ class SpawnApplicationService:
 
     # ---- Spawn Operations ----
 
-    async def cancel(self, spawn_id: SpawnId) -> CancelOutcome:
+    async def cancel(
+        self,
+        spawn_id: SpawnId,
+        *,
+        requested_by: Literal["user", "system"] = "user",
+    ) -> CancelOutcome:
         """Cancel a spawn through the shared surface-neutral pipeline."""
         lock = await self._locks.acquire(str(spawn_id))
         async with lock:
@@ -529,7 +538,7 @@ class SpawnApplicationService:
                     str(spawn_id),
                     exit_code=130,
                     error="cancelled",
-                    requested_by="user",
+                    requested_by=requested_by,
                 )
                 or self.get_spawn(spawn_id)
                 or record
@@ -576,6 +585,42 @@ class SpawnApplicationService:
             if signal_outcome is None:
                 return _cancel_outcome_from_record(str(spawn_id), latest)
             return _cancel_outcome_from_signal(str(spawn_id), signal_outcome, latest)
+
+    async def cancel_descendants(self, root_id: SpawnId | str) -> None:
+        """Cancel the active descendant subtree of a spawn, to a fixed point.
+
+        Each descendant goes through the full cancel pipeline (intent + delivery
+        + forced convergence), so a child whose runner dies without
+        self-finalizing is still driven to a terminal status rather than left
+        as an orphan row. Rescans after each pass to catch descendants spawned
+        during the reap; bounded by ``_MAX_REAP_PASSES`` so a wedged descendant
+        cannot loop forever.
+        """
+        from meridian.lib.state.spawn_tree import active_descendants
+
+        for _ in range(_MAX_REAP_PASSES):
+            descendants = active_descendants(self._runtime_root, root_id)
+            if not descendants:
+                return
+            results = await asyncio.gather(
+                *(self.cancel(SpawnId(d.id), requested_by="system") for d in descendants),
+                return_exceptions=True,
+            )
+            for descendant, result in zip(descendants, results, strict=True):
+                if isinstance(result, BaseException):
+                    logger.warning(
+                        "Descendant reap cancel raised.",
+                        root_id=str(root_id),
+                        descendant_id=descendant.id,
+                        error=repr(result),
+                    )
+        remaining = active_descendants(self._runtime_root, root_id)
+        if remaining:
+            logger.warning(
+                "Descendant reap did not converge; descendants still active.",
+                root_id=str(root_id),
+                remaining=[d.id for d in remaining],
+            )
 
     async def _force_cancel_convergence(
         self,

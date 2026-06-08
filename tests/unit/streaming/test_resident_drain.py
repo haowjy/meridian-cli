@@ -203,6 +203,7 @@ def _awaiting_done_coordinator(
     connection: HarnessConnection[Any],
 ) -> ResidentDrainCoordinator:
     coordinator = ResidentDrainCoordinator.for_connection(
+        project_root=tmp_path,
         runtime_root=tmp_path,
         spawn_id=SpawnId("p1"),
         receiver=connection,
@@ -682,28 +683,29 @@ async def test_codex_resident_deadline_waits_then_reaps_live_child(
     spawn_id = SpawnId("p1")
     _start_row(tmp_path, str(spawn_id), HarnessId.CODEX, None)
     _start_row(tmp_path, "p2", HarnessId.CODEX, str(spawn_id))
-    from meridian.lib.streaming import signal_canceller as signal_canceller_module
+    from meridian.lib.bootstrap import services as bootstrap_services
+    from meridian.lib.state.spawn_tree import active_descendants
 
     reaped_spawn_ids: list[str] = []
 
-    class _FakeCanceller:
-        def __init__(self, *, runtime_root: Path, grace_seconds: float) -> None:
-            self.runtime_root = runtime_root
-            self.grace_seconds = grace_seconds
+    class _FakeService:
+        async def cancel_descendants(self, root_id: SpawnId) -> None:
+            for descendant in active_descendants(tmp_path, root_id):
+                reaped_spawn_ids.append(descendant.id)
+                spawn_store.finalize_spawn(
+                    tmp_path,
+                    descendant.id,
+                    "cancelled",
+                    130,
+                    origin="cancel",
+                    error="cancelled",
+                )
 
-        async def cancel(self, spawn_id: SpawnId) -> object:
-            reaped_spawn_ids.append(str(spawn_id))
-            spawn_store.finalize_spawn(
-                self.runtime_root,
-                spawn_id,
-                "cancelled",
-                130,
-                origin="cancel",
-                error="cancelled",
-            )
-            return object()
-
-    monkeypatch.setattr(signal_canceller_module, "SignalCanceller", _FakeCanceller)
+    monkeypatch.setattr(
+        bootstrap_services,
+        "build_spawn_application_service_from_roots",
+        lambda _project_root, _runtime_root: _FakeService(),
+    )
     connection = _FakeResidentConnection(HarnessId.CODEX)
     manager = await _start_manager(
         tmp_path,
@@ -800,6 +802,7 @@ def _coordinator_with_clock(
     poll_seconds: float = 5.0,
 ) -> ResidentDrainCoordinator:
     coordinator = ResidentDrainCoordinator.for_connection(
+        project_root=tmp_path,
         runtime_root=tmp_path,
         spawn_id=SpawnId("p1"),
         receiver=connection,
@@ -943,8 +946,9 @@ async def test_deadline_reap_cancels_active_descendant_cli_spawns(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    from meridian.lib.bootstrap import services as bootstrap_services
+    from meridian.lib.state.spawn_tree import active_descendants
     from meridian.lib.streaming import resident_drain as resident_drain_module
-    from meridian.lib.streaming import signal_canceller as signal_canceller_module
 
     clock = FakeClock(start=0.0)
     monkeypatch.setattr(resident_drain_module.time, "monotonic", clock.monotonic)
@@ -956,24 +960,24 @@ async def test_deadline_reap_cancels_active_descendant_cli_spawns(
     coordinator = _coordinator_with_clock(tmp_path, connection, clock, deadline_seconds=10.0)
     cancelled: list[str] = []
 
-    class _FakeCanceller:
-        def __init__(self, *, runtime_root: Path, grace_seconds: float) -> None:
-            self.runtime_root = runtime_root
-            self.grace_seconds = grace_seconds
+    class _FakeService:
+        async def cancel_descendants(self, root_id: SpawnId) -> None:
+            for descendant in active_descendants(tmp_path, root_id):
+                cancelled.append(descendant.id)
+                spawn_store.finalize_spawn(
+                    tmp_path,
+                    descendant.id,
+                    "cancelled",
+                    130,
+                    origin="cancel",
+                    error="cancelled",
+                )
 
-        async def cancel(self, spawn_id: SpawnId) -> object:
-            cancelled.append(str(spawn_id))
-            spawn_store.finalize_spawn(
-                self.runtime_root,
-                spawn_id,
-                "cancelled",
-                130,
-                origin="cancel",
-                error="cancelled",
-            )
-            return object()
-
-    monkeypatch.setattr(signal_canceller_module, "SignalCanceller", _FakeCanceller)
+    monkeypatch.setattr(
+        bootstrap_services,
+        "build_spawn_application_service_from_roots",
+        lambda _project_root, _runtime_root: _FakeService(),
+    )
     clock.advance(10.0)
 
     decision = await coordinator.handle_timeout()

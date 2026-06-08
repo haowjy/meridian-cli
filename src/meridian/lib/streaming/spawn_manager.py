@@ -336,6 +336,7 @@ class SpawnManager:
             # "terminal candidate plus descendant work" shape; fold once Pi's
             # lifecycle inference machinery is removed.
             return ResidentDrainCoordinator.for_connection(
+                project_root=self._project_root,
                 runtime_root=self._runtime_root,
                 spawn_id=spawn_id,
                 receiver=receiver,

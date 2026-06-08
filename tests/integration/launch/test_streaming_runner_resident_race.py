@@ -29,7 +29,8 @@ from meridian.lib.launch.streaming_runner import _run_streaming_attempt
 from meridian.lib.safety.permissions import UnsafeNoOpPermissionResolver
 from meridian.lib.state.paths import resolve_runtime_paths
 from meridian.lib.state.spawn.model import BACKGROUND_LAUNCH_MODE
-from meridian.lib.state.spawn_store import finalize_spawn, start_spawn
+from meridian.lib.state.spawn_store import finalize_spawn, get_spawn, start_spawn
+from meridian.lib.state.spawn_tree import active_descendants
 from meridian.lib.streaming.spawn_manager import SpawnManager
 
 
@@ -279,25 +280,25 @@ async def test_resident_runner_marks_deadline_drain_outcome_terminal(
         status="running",
     )
 
-    from meridian.lib.streaming import signal_canceller as signal_canceller_module
+    from meridian.lib.bootstrap import services as bootstrap_services
 
-    class _FastCanceller:
-        def __init__(self, *, runtime_root: Path, grace_seconds: float) -> None:
-            self.runtime_root = runtime_root
-            self.grace_seconds = grace_seconds
+    class _FastService:
+        async def cancel_descendants(self, root_id: SpawnId) -> None:
+            for descendant in active_descendants(runtime_root, root_id):
+                finalize_spawn(
+                    runtime_root,
+                    descendant.id,
+                    "cancelled",
+                    130,
+                    origin="cancel",
+                    error="cancelled",
+                )
 
-        async def cancel(self, spawn_id: SpawnId) -> object:
-            finalize_spawn(
-                self.runtime_root,
-                spawn_id,
-                "cancelled",
-                130,
-                origin="cancel",
-                error="cancelled",
-            )
-            return object()
-
-    monkeypatch.setattr(signal_canceller_module, "SignalCanceller", _FastCanceller)
+    monkeypatch.setattr(
+        bootstrap_services,
+        "build_spawn_application_service_from_roots",
+        lambda _project_root, _runtime_root: _FastService(),
+    )
 
     connection = _ResidentCodexConnection()
 
@@ -357,3 +358,6 @@ async def test_resident_runner_marks_deadline_drain_outcome_terminal(
     assert attempt.timed_out is False
     assert attempt.terminal_observed is True
     assert attempt.authoritative_terminal_status == "timed_out"
+    child = get_spawn(runtime_root, child_id)
+    assert child is not None
+    assert child.status == "cancelled"

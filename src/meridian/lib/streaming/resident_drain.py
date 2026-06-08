@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -44,6 +43,7 @@ logger = structlog.get_logger()
 class ResidentDrainCoordinator:
     """Own Codex/OpenCode post-turn waiting for Meridian-tracked child spawns."""
 
+    project_root: Path
     runtime_root: Path
     spawn_id: SpawnId
     receiver: HarnessConnection[Any]
@@ -59,6 +59,7 @@ class ResidentDrainCoordinator:
     def for_connection(
         cls,
         *,
+        project_root: Path,
         runtime_root: Path,
         spawn_id: SpawnId,
         receiver: HarnessConnection[Any],
@@ -66,6 +67,7 @@ class ResidentDrainCoordinator:
         poll_seconds: float | None,
     ) -> ResidentDrainCoordinator:
         return cls(
+            project_root=project_root,
             runtime_root=runtime_root,
             spawn_id=spawn_id,
             receiver=receiver,
@@ -232,19 +234,15 @@ class ResidentDrainCoordinator:
         )
 
     async def _reap_outstanding_descendants(self) -> None:
-        """Cancel active tracked descendants after resident deadline expiry."""
-
-        from meridian.lib.state.spawn_tree import active_descendants
-        from meridian.lib.streaming.signal_canceller import SignalCanceller
-
-        descendants = active_descendants(self.runtime_root, self.spawn_id)
-        if not descendants:
-            return
-        canceller = SignalCanceller(runtime_root=self.runtime_root, grace_seconds=5.0)
-        await asyncio.gather(
-            *(canceller.cancel(SpawnId(descendant.id)) for descendant in descendants),
-            return_exceptions=True,
+        """Cancel active tracked descendants through the canonical cancel pipeline."""
+        from meridian.lib.bootstrap.services import (
+            build_spawn_application_service_from_roots,
         )
+
+        service = build_spawn_application_service_from_roots(
+            self.project_root, self.runtime_root
+        )
+        await service.cancel_descendants(self.spawn_id)
 
     def wants_aux_wake(self) -> bool:
         return False
