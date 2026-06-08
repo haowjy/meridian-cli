@@ -322,6 +322,12 @@ class HarnessConnection(Generic[SpecT], ABC):
             f"{self.harness_id.value} does not support runtime event injection"
         )
 
+    async def inject_turn(self, message: str) -> None:
+        """Start a fresh user turn on an already-resident idle backend."""
+
+        _ = message
+        raise NotImplementedError(f"{self.harness_id.value} does not support turn injection")
+
     async def respond_request(
         self,
         request_id: str,

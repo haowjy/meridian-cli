@@ -522,6 +522,19 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
             },
         )
 
+    async def inject_turn(self, message: str) -> None:
+        self._require_connected("inject_turn")
+        if self._current_turn_id is not None:
+            raise ConnectionNotReady("Codex turn injection requires an idle backend")
+        self._signal_in_flight = False
+        await self._request(
+            "turn/start",
+            {
+                "threadId": self._require_thread_id("inject_turn"),
+                "input": _build_text_user_input(message),
+            },
+        )
+
     async def send_cancel(self) -> None:
         if self._cancel_requested:
             return
@@ -1127,7 +1140,7 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
     def _require_thread_id(self, operation: str) -> str:
         thread_id = self._thread_id
         if thread_id is None:
-            raise RuntimeError(f"Codex thread ID is unavailable; cannot {operation}")
+            raise ConnectionNotReady(f"Codex thread ID is unavailable; cannot {operation}")
         return thread_id
 
     def _connect_timeout(self) -> float:

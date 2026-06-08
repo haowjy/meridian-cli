@@ -345,6 +345,11 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
         self._signal_in_flight = False
         await self._post_session_message(text)
 
+    async def inject_turn(self, message: str) -> None:
+        self._require_connected()
+        self._signal_in_flight = False
+        await self._post_session_message(message)
+
     async def send_cancel(self) -> None:
         if self._cancel_requested:
             return
