@@ -30,6 +30,7 @@ from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.safety.permissions import (
     UnsafeNoOpPermissionResolver,
 )
+from tests.support.fakes import FakeClock
 
 OPENCODE_ACTIVITY_IDLE_EVENT = "session.idle"
 OPENCODE_ACTIVITY_ERROR_EVENT = "session.error"
@@ -357,12 +358,17 @@ async def test_opencode_events_refresh_liveness_deadline_after_yielded_event(
             _FakeSseResponse([]),
         ]
     )
-    times = iter([0.0, 0.0, 0.1, 0.2, 0.3, 0.3, 0.3, 0.3, 0.3, 0.7])
+    clock = FakeClock(start=0.0)
+
+    def advancing_monotonic() -> float:
+        current = clock.monotonic()
+        clock.advance(0.05)
+        return current
 
     monkeypatch.setattr(OpenCodeConnection, "_LIVENESS_TIMEOUT_SECONDS", 0.5)
     monkeypatch.setattr(OpenCodeConnection, "_EVENT_RETRY_DELAY_SECONDS", 0.0)
     monkeypatch.setattr(opencode_http.asyncio, "sleep", _no_sleep)
-    monkeypatch.setattr(opencode_http.time, "monotonic", lambda: next(times, 1.3))
+    monkeypatch.setattr(opencode_http.time, "monotonic", advancing_monotonic)
 
     events = [event async for event in connection.events()]
 
