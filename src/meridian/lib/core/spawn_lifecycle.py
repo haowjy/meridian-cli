@@ -80,6 +80,7 @@ class ExecutionTerminalFacts:
     failure_reason: str | None = None
     cancellation_observed: bool = False
     durable_report_completion: bool = False
+    terminal_status: SpawnStatus | None = None
 
 
 @dataclass(frozen=True)
@@ -221,11 +222,16 @@ def resolve_execution_terminal_state(
     failure_reason: str | None,
     cancelled: bool = False,
     durable_report_completion: bool = False,
+    terminal_status: SpawnStatus | None = None,
 ) -> tuple[SpawnStatus, int, str | None]:
     """Normalize one execution outcome into the persisted terminal state."""
 
+    if terminal_status is not None and terminal_status != "succeeded":
+        return terminal_status, exit_code, failure_reason
     if durable_report_completion:
         return "succeeded", 0, None
+    if terminal_status is not None:
+        return terminal_status, exit_code, failure_reason
     if cancelled:
         resolved_exit_code = exit_code if exit_code != 0 else 130
         return "cancelled", resolved_exit_code, failure_reason
@@ -244,6 +250,7 @@ def resolve_execution_terminal_outcome(
         failure_reason=facts.failure_reason,
         cancelled=facts.cancellation_observed,
         durable_report_completion=facts.durable_report_completion,
+        terminal_status=facts.terminal_status,
     )
     return ExecutionTerminalOutcome(
         status=status,

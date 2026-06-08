@@ -28,6 +28,7 @@ from meridian.lib.launch.request import (
     ExecutionBudget,
     LaunchArgvIntent,
     LaunchRuntime,
+    RetryPolicy,
     SpawnRequest,
 )
 from meridian.lib.platform.process_scope import ProcessScopeSnapshot
@@ -590,6 +591,86 @@ async def test_execute_with_streaming_succeeds_after_report_watchdog_cleanup(
     assert fake_heartbeat.touches
     report = (runtime_root / "spawns" / str(run.spawn_id) / "report.md").read_text(encoding="utf-8")
     assert "Watchdog fallback completed." in report
+
+
+@pytest.mark.asyncio
+async def test_execute_with_streaming_finalizes_resident_deadline_without_retry(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime_root = resolve_project_runtime_root(tmp_path)
+    artifacts = LocalStore(root_dir=tmp_path / ".artifacts")
+    registry = HarnessRegistry.with_defaults()
+    fake_clock = FakeClock(start=1_000.0)
+    fake_heartbeat = FakeHeartbeat()
+    fake_heartbeat.set_clock(fake_clock)
+    attempts = 0
+
+    async def _resident_deadline_attempt(**kwargs: object) -> object:
+        nonlocal attempts
+        attempts += 1
+        return streaming_runner_module._AttemptRuntime(
+            connection=None,
+            drain_exit_code=1,
+            drain_error="resident_deadline_expired",
+            timed_out=False,
+            received_signal=None,
+            budget_breach=None,
+            terminated_by_report_watchdog=False,
+            terminal_observed=True,
+            authoritative_terminal_status="timed_out",
+        )
+
+    monkeypatch.setattr(
+        streaming_runner_module,
+        "_run_streaming_attempt",
+        _resident_deadline_attempt,
+    )
+
+    parent_id = SpawnId("r-resident-deadline")
+    run = Spawn(
+        spawn_id=parent_id,
+        prompt="hello",
+        model=ModelId("gpt-5.3-codex"),
+        status="queued",
+    )
+    spawn_store.start_spawn(
+        runtime_root,
+        chat_id="test-chat-resident-deadline",
+        model=str(run.model),
+        agent="",
+        harness=HarnessId.CODEX.value,
+        kind="streaming",
+        prompt=run.prompt,
+        spawn_id=parent_id,
+        launch_mode="foreground",
+        status="queued",
+    )
+    request = _build_request().model_copy(
+        update={"retry": RetryPolicy(max_attempts=3, backoff_secs=0.0)}
+    )
+    exit_code = await asyncio.wait_for(
+        _execute_with_context(
+            run,
+            request=request,
+            project_root=tmp_path,
+            runtime_root=runtime_root,
+            artifacts=artifacts,
+            registry=registry,
+            clock=fake_clock,
+            heartbeat_touch=fake_heartbeat.touch,
+            heartbeat_interval_secs=0.001,
+        ),
+        timeout=15.0,
+    )
+
+    row = spawn_store.get_spawn(runtime_root, parent_id)
+    assert exit_code == 1
+    assert attempts == 1
+    assert row is not None
+    assert row.status == "timed_out"
+    assert row.exit_code == 1
+    assert row.error == "resident_deadline_expired"
 
 
 @pytest.mark.asyncio

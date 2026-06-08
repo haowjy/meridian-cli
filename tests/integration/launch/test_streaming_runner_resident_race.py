@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncIterator
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, cast
 
@@ -245,3 +246,93 @@ async def test_resident_runner_waits_for_coordinator_after_raw_terminal_frame(
     assert attempt.drain_exit_code == 0
     assert attempt.drain_error is None
     assert attempt.cancelled_by_request is False
+
+
+@pytest.mark.asyncio
+async def test_resident_runner_marks_deadline_drain_outcome_terminal(
+    tmp_path: Path,
+) -> None:
+    project_root = tmp_path
+    runtime_root = resolve_runtime_paths(project_root).root_dir
+    parent_id = SpawnId("p-parent")
+    child_id = SpawnId("p-child")
+    start_spawn(
+        runtime_root,
+        spawn_id=parent_id,
+        chat_id="chat",
+        model="codex-test",
+        agent="agent",
+        harness=HarnessId.CODEX.value,
+        prompt="parent",
+        status="running",
+    )
+    start_spawn(
+        runtime_root,
+        spawn_id=child_id,
+        parent_id=str(parent_id),
+        chat_id="chat",
+        model="codex-test",
+        agent="agent",
+        harness=HarnessId.CODEX.value,
+        prompt="child",
+        status="running",
+    )
+
+    connection = _ResidentCodexConnection()
+
+    async def _start_connection(
+        config: ConnectionConfig,
+        spec: ResolvedLaunchSpec,
+    ) -> HarnessConnection[Any]:
+        await connection.start(config, spec)
+        return connection
+
+    manager = SpawnManager(
+        runtime_root=runtime_root,
+        project_root=project_root,
+        start_connection=_start_connection,
+        control_server_factory=cast("Any", _FakeControlSocketServer),
+    )
+    run = Spawn(
+        spawn_id=parent_id,
+        prompt="parent",
+        model=ModelId("codex-test"),
+        status="running",
+    )
+    signal_event = asyncio.Event()
+    received_signal: list[Any] = [None]
+
+    attempt_task = asyncio.create_task(
+        _run_streaming_attempt(
+            run=run,
+            runtime_root=runtime_root,
+            launch_mode=BACKGROUND_LAUNCH_MODE,
+            log_dir=tmp_path,
+            manager=manager,
+            config=replace(
+                _connection_config(parent_id, project_root),
+                resident_deadline_seconds=0.01,
+                resident_poll_seconds=0.001,
+            ),
+            run_spec=_launch_spec(),
+            budget_tracker=None,
+            signal_event=signal_event,
+            received_signal=received_signal,
+            timeout_seconds=None,
+            event_observer=None,
+            stream_stdout_to_terminal=False,
+            lifecycle_service=SpawnLifecycleService(runtime_root),
+        )
+    )
+
+    while parent_id not in manager._sessions or manager._sessions[parent_id].subscriber is None:
+        await asyncio.sleep(0)
+
+    connection.release_terminal.set()
+
+    attempt = await asyncio.wait_for(attempt_task, timeout=1.0)
+    assert attempt.drain_exit_code == 1
+    assert attempt.drain_error == "resident_deadline_expired"
+    assert attempt.timed_out is False
+    assert attempt.terminal_observed is True
+    assert attempt.authoritative_terminal_status == "timed_out"

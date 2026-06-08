@@ -139,6 +139,58 @@ def test_resolve_execution_terminal_state_prefers_durable_completion_over_cancel
     assert error is None
 
 
+def test_resolve_execution_terminal_state_prefers_timeout_over_durable_completion() -> None:
+    status, exit_code, error = resolve_execution_terminal_state(
+        exit_code=1,
+        failure_reason="resident_deadline_expired",
+        durable_report_completion=True,
+        terminal_status="timed_out",
+    )
+
+    assert status == "timed_out"
+    assert exit_code == 1
+    assert error == "resident_deadline_expired"
+
+
+def test_resolve_execution_terminal_state_preserves_succeeded_terminal_durable_completion() -> None:
+    status, exit_code, error = resolve_execution_terminal_state(
+        exit_code=1,
+        failure_reason="ignored",
+        durable_report_completion=True,
+        terminal_status="succeeded",
+    )
+
+    assert status == "succeeded"
+    assert exit_code == 0
+    assert error is None
+
+
+def test_resolve_execution_terminal_state_keeps_durable_completion_without_terminal() -> None:
+    status, exit_code, error = resolve_execution_terminal_state(
+        exit_code=1,
+        failure_reason="ignored",
+        durable_report_completion=True,
+        terminal_status=None,
+    )
+
+    assert status == "succeeded"
+    assert exit_code == 0
+    assert error is None
+
+
+def test_resolve_execution_terminal_state_keeps_timeout_without_durable_completion() -> None:
+    status, exit_code, error = resolve_execution_terminal_state(
+        exit_code=1,
+        failure_reason="resident_deadline_expired",
+        durable_report_completion=False,
+        terminal_status="timed_out",
+    )
+
+    assert status == "timed_out"
+    assert exit_code == 1
+    assert error == "resident_deadline_expired"
+
+
 def test_resolve_execution_terminal_outcome_projects_runner_facts() -> None:
     outcome = resolve_execution_terminal_outcome(
         ExecutionTerminalFacts(

@@ -21,8 +21,9 @@ from meridian.lib.bootstrap.services import (
 )
 from meridian.lib.config.settings import MeridianConfig
 from meridian.lib.core.clock import Clock, RealClock
-from meridian.lib.core.domain import Spawn
+from meridian.lib.core.domain import Spawn, SpawnStatus
 from meridian.lib.core.spawn_lifecycle import (
+    TERMINAL_SPAWN_STATUSES,
     ExecutionTerminalFacts,
 )
 from meridian.lib.core.types import HarnessId, SpawnId
@@ -120,6 +121,7 @@ class _AttemptRuntime:
     terminated_by_report_watchdog: bool
     cancelled_by_request: bool = False
     terminal_observed: bool = False
+    authoritative_terminal_status: SpawnStatus | None = None
     start_error: str | None = None
 
 
@@ -131,6 +133,7 @@ class StreamingRunConclusion:
     failure_reason: str | None = None
     extracted: FinalizeExtraction | None = None
     final_attempt_terminal_observed: bool = False
+    authoritative_terminal_status: SpawnStatus | None = None
     cancellation_observed: bool = False
     retries_attempted: int = 0
 
@@ -139,6 +142,7 @@ class StreamingRunConclusion:
 
         self.exit_code = attempt.drain_exit_code
         self.final_attempt_terminal_observed = attempt.terminal_observed
+        self.authoritative_terminal_status = attempt.authoritative_terminal_status
         self.cancellation_observed = self.cancellation_observed or attempt.cancelled_by_request
 
     def terminal_facts(
@@ -160,6 +164,7 @@ class StreamingRunConclusion:
             durable_report_completion=(
                 self.extracted is not None and self.extracted.durable_report_completion
             ),
+            terminal_status=self.authoritative_terminal_status,
         )
 
 
@@ -630,6 +635,7 @@ async def _run_streaming_attempt(
     terminated_by_report_watchdog = False
     cancelled_by_request = False
     terminal_outcome: TerminalEventOutcome | None = None
+    authoritative_terminal_status: SpawnStatus | None = None
     try:
         connection = await manager.start_spawn(config, run_spec)
         terminal_event_capture = (
@@ -729,6 +735,12 @@ async def _run_streaming_attempt(
         if drain_outcome is not None and terminal_outcome is None:
             drain_exit_code = drain_outcome.exit_code
             drain_error = drain_outcome.error
+            if (
+                drain_outcome.status in TERMINAL_SPAWN_STATUSES
+                and drain_outcome.status != "succeeded"
+                and drain_outcome.error != "report_watchdog"
+            ):
+                authoritative_terminal_status = drain_outcome.status
             if timed_out and drain_outcome.status == "succeeded":
                 timed_out = False
             if drain_outcome.error == "report_watchdog":
@@ -763,6 +775,7 @@ async def _run_streaming_attempt(
             terminated_by_report_watchdog=terminated_by_report_watchdog,
             cancelled_by_request=cancelled_by_request,
             terminal_observed=False,
+            authoritative_terminal_status=None,
             start_error=str(exc),
         )
     finally:
@@ -787,7 +800,12 @@ async def _run_streaming_attempt(
         budget_breach=budget_breach_holder[0],
         terminated_by_report_watchdog=terminated_by_report_watchdog,
         cancelled_by_request=cancelled_by_request,
-        terminal_observed=terminal_outcome is not None or pi_drain_terminal,
+        terminal_observed=(
+            terminal_outcome is not None
+            or pi_drain_terminal
+            or authoritative_terminal_status is not None
+        ),
+        authoritative_terminal_status=authoritative_terminal_status,
     )
 
 
@@ -1288,6 +1306,9 @@ async def execute_with_streaming(
                     runtime_root=runtime_root,
                     current_spawn_id=run.spawn_id,
                 ):
+                    break
+
+                if attempt.terminal_observed:
                     break
 
                 if not should_retry(
