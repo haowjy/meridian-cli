@@ -679,7 +679,10 @@ async def test_spawn_manager_pi_child_wave_timeout_not_cleared_by_turn_active(
     )
 
     try:
-        outcome = await asyncio.wait_for(manager.wait_for_completion(spawn_id), timeout=1.0)
+        # This scenario intentionally waits for the child-wave timeout, an unrelated
+        # turn_active event, and the follow-up timeout; the outer wait_for is only a
+        # hung-test safety net, not the behavior under assertion.
+        outcome = await asyncio.wait_for(manager.wait_for_completion(spawn_id), timeout=2.0)
         assert outcome is not None
         assert outcome.status == "failed"
         assert outcome.error == "pi_child_wave_timeout"

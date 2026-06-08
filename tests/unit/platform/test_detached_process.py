@@ -3,16 +3,15 @@
 from __future__ import annotations
 
 import signal
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
+import pytest
 from structlog.testing import capture_logs
 
-from meridian.lib.platform import detached_process
-
-if TYPE_CHECKING:
-    import pytest
+from meridian.lib.platform import IS_WINDOWS, detached_process
 
 
+@pytest.mark.skipif(IS_WINDOWS, reason="Linux prctl parent-death preexec is POSIX-only")
 def test_detached_subprocess_config_links_linux_parent_death_preexec(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

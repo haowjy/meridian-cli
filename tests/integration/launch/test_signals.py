@@ -208,11 +208,12 @@ def test_signal_process_group_degrades_to_process_signal_for_shared_pgid(
 
     killpg_calls: list[tuple[int, signal.Signals]] = []
     monkeypatch.setattr(signals_module.sys, "platform", "linux")
-    monkeypatch.setattr(signals_module.os, "getpgid", lambda _pid: 999)
+    monkeypatch.setattr(signals_module.os, "getpgid", lambda _pid: 999, raising=False)
     monkeypatch.setattr(
         signals_module.os,
         "killpg",
         lambda pgid, signum: killpg_calls.append((pgid, signum)),
+        raising=False,
     )
 
     process = _FakeSignalProcess()
@@ -229,11 +230,12 @@ def test_signal_process_group_uses_killpg_for_group_leader(
 
     killpg_calls: list[tuple[int, signal.Signals]] = []
     monkeypatch.setattr(signals_module.sys, "platform", "linux")
-    monkeypatch.setattr(signals_module.os, "getpgid", lambda _pid: 12345)
+    monkeypatch.setattr(signals_module.os, "getpgid", lambda _pid: 12345, raising=False)
     monkeypatch.setattr(
         signals_module.os,
         "killpg",
         lambda pgid, signum: killpg_calls.append((pgid, signum)),
+        raising=False,
     )
 
     process = _FakeSignalProcess()
@@ -253,11 +255,13 @@ def test_signal_process_group_on_windows_signals_process_only(
         signals_module.os,
         "getpgid",
         lambda _pid: pytest.fail("os.getpgid should not be called on Windows"),
+        raising=False,
     )
     monkeypatch.setattr(
         signals_module.os,
         "killpg",
         lambda _pgid, _signum: pytest.fail("os.killpg should not be called on Windows"),
+        raising=False,
     )
 
     process = _FakeSignalProcess()
@@ -273,11 +277,12 @@ def test_force_kill_process_degrades_to_process_kill_for_shared_pgid(
 
     killpg_calls: list[tuple[int, signal.Signals]] = []
     monkeypatch.setattr(signals_module.sys, "platform", "linux")
-    monkeypatch.setattr(signals_module.os, "getpgid", lambda _pid: 999)
+    monkeypatch.setattr(signals_module.os, "getpgid", lambda _pid: 999, raising=False)
     monkeypatch.setattr(
         signals_module.os,
         "killpg",
         lambda pgid, signum: killpg_calls.append((pgid, signum)),
+        raising=False,
     )
 
     process = _FakeSignalProcess()
@@ -294,11 +299,12 @@ def test_force_kill_process_uses_killpg_for_group_leader(
 
     killpg_calls: list[tuple[int, signal.Signals]] = []
     monkeypatch.setattr(signals_module.sys, "platform", "linux")
-    monkeypatch.setattr(signals_module.os, "getpgid", lambda _pid: 12345)
+    monkeypatch.setattr(signals_module.os, "getpgid", lambda _pid: 12345, raising=False)
     monkeypatch.setattr(
         signals_module.os,
         "killpg",
         lambda pgid, signum: killpg_calls.append((pgid, signum)),
+        raising=False,
     )
 
     process = _FakeSignalProcess()
@@ -318,11 +324,13 @@ def test_force_kill_process_on_windows_kills_process_only(
         signals_module.os,
         "getpgid",
         lambda _pid: pytest.fail("os.getpgid should not be called on Windows"),
+        raising=False,
     )
     monkeypatch.setattr(
         signals_module.os,
         "killpg",
         lambda _pgid, _signum: pytest.fail("os.killpg should not be called on Windows"),
+        raising=False,
     )
 
     process = _FakeSignalProcess()
