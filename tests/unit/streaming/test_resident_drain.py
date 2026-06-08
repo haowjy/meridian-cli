@@ -19,10 +19,10 @@ from meridian.lib.harness.connections.base import (
     StopResult,
 )
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
-from meridian.lib.ops.spawn.outstanding import has_outstanding_descendant_work
 from meridian.lib.safety.permissions import UnsafeNoOpPermissionResolver
 from meridian.lib.state import spawn_store
 from meridian.lib.state.artifact_store import LocalStore
+from meridian.lib.state.spawn_tree import has_outstanding_descendant_work
 from meridian.lib.streaming.drain_policy import (
     TURN_BOUNDARY_EVENT_TYPE,
     DrainPolicy,
@@ -449,7 +449,7 @@ def test_outstanding_descendant_work_is_pure_read_for_grandchild(tmp_path: Path)
     spawn_store.finalize_spawn(tmp_path, SpawnId("p2"), "succeeded", 0, origin="runner")
 
     before = spawn_store.list_spawns(tmp_path)
-    assert has_outstanding_descendant_work(tmp_path, "p1") is True
+    assert has_outstanding_descendant_work("p1", spawn_store.list_spawns(tmp_path)) is True
     after = spawn_store.list_spawns(tmp_path)
 
     assert before == after

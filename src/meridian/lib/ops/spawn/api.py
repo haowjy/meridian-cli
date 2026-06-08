@@ -37,7 +37,6 @@ from meridian.lib.ops.runtime import (
     resolve_runtime_root_for_read,
     runtime_context,
 )
-from meridian.lib.ops.spawn.descendants import iter_descendants_from_parent_map
 from meridian.lib.platform.locking import lock_file
 from meridian.lib.state import session_store, spawn_store, work_store
 from meridian.lib.state.atomic import atomic_write_text
@@ -46,6 +45,7 @@ from meridian.lib.state.primary_meta import (
     read_primary_surface_metadata,
 )
 from meridian.lib.state.spawn.model import SpawnRecord
+from meridian.lib.state.spawn_tree import collect_descendants, descendant_id_set
 from meridian.lib.telemetry.init import setup_telemetry
 from meridian.lib.telemetry.observer import register_spawn_telemetry_observer
 from meridian.lib.telemetry.router import emit_telemetry
@@ -679,34 +679,6 @@ async def spawn_children(
     )
 
 
-def _collect_descendants(
-    root_id: str,
-    all_spawns: list[SpawnRecord],
-) -> list[SpawnRecord]:
-    """Walk the parent→child tree and return root + all descendants."""
-    by_parent: dict[str | None, list[SpawnRecord]] = {}
-    for s in all_spawns:
-        by_parent.setdefault(s.parent_id, []).append(s)
-
-    result: list[SpawnRecord] = []
-    # Find the root spawn itself
-    for s in all_spawns:
-        if s.id == root_id:
-            result.append(s)
-            break
-
-    result.extend(iter_descendants_from_parent_map(root_id, by_parent))
-    return result
-
-
-def collect_descendants(
-    root_id: str,
-    all_spawns: list[SpawnRecord],
-) -> list[SpawnRecord]:
-    """Public read-only descendant walk for spawn tree callers."""
-
-    return _collect_descendants(root_id, all_spawns)
-
 
 def spawn_stats_sync(
     payload: SpawnStatsInput,
@@ -737,7 +709,7 @@ def spawn_stats_sync(
         if payload.flat:
             spawns = [s for s in all_spawns if s.id == root_id]
         else:
-            spawns = _collect_descendants(root_id, all_spawns)
+            spawns = collect_descendants(root_id, all_spawns)
     else:
         spawns = all_spawns
 
@@ -1151,8 +1123,7 @@ def spawn_cancel_all_sync(
     # When called from a nested spawn, scope to that spawn's descendants only.
     # When called from a primary/root context, scope to the full chat.
     if caller_spawn_id is not None and not payload.include_others:
-        desc_records = _collect_descendants(caller_spawn_id, active_rows)
-        descendant_ids: set[str] | None = {r.id for r in desc_records} - {caller_spawn_id}
+        descendant_ids: set[str] | None = descendant_id_set(caller_spawn_id, active_rows)
     else:
         descendant_ids = None
 
@@ -1320,8 +1291,7 @@ def _discover_pending_spawns(
     # Build descendant set if scoping to a parent
     descendant_ids: set[str] | None = None
     if only_descendants_of is not None:
-        desc_records = _collect_descendants(only_descendants_of, all_spawns)
-        descendant_ids = {r.id for r in desc_records} - {only_descendants_of}
+        descendant_ids = descendant_id_set(only_descendants_of, all_spawns)
 
     pending = [
         row

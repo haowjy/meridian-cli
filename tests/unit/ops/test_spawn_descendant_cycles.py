@@ -5,9 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 
 from meridian.lib.core.types import HarnessId, SpawnId
-from meridian.lib.ops.spawn.api import collect_descendants
-from meridian.lib.ops.spawn.outstanding import has_outstanding_descendant_work
 from meridian.lib.state import spawn_store
+from meridian.lib.state.spawn_tree import collect_descendants, has_outstanding_descendant_work
 
 
 def _start_row(
@@ -38,7 +37,7 @@ def test_outstanding_descendant_work_returns_false_for_terminal_cycle(
     spawn_store.finalize_spawn(tmp_path, SpawnId("p1"), "succeeded", 0, origin="runner")
     spawn_store.finalize_spawn(tmp_path, SpawnId("p2"), "succeeded", 0, origin="runner")
 
-    assert has_outstanding_descendant_work(tmp_path, "p1") is False
+    assert has_outstanding_descendant_work("p1", spawn_store.list_spawns(tmp_path)) is False
 
 
 def test_outstanding_descendant_work_finds_live_node_in_cycle(tmp_path: Path) -> None:
@@ -46,7 +45,7 @@ def test_outstanding_descendant_work_finds_live_node_in_cycle(tmp_path: Path) ->
     _start_row(tmp_path, "p2", parent_id="p1")
     spawn_store.finalize_spawn(tmp_path, SpawnId("p1"), "succeeded", 0, origin="runner")
 
-    assert has_outstanding_descendant_work(tmp_path, "p1") is True
+    assert has_outstanding_descendant_work("p1", spawn_store.list_spawns(tmp_path)) is True
 
 
 def test_collect_descendants_dedupes_malformed_cycle(tmp_path: Path) -> None:

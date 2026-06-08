@@ -189,32 +189,21 @@ def _connection_healthy(receiver: HarnessConnection[Any]) -> bool:
 
 
 def _terminate_descendant_spawn_tree(runtime_root: Path, spawn_id: SpawnId) -> None:
-    # Lazy imports keep resident drain independent from spawn CLI operations at
-    # import time while reusing the canonical descendant walk and process cleanup.
-    from meridian.lib.core.process_cleanup import terminate_spawn_scopes
-    from meridian.lib.core.spawn_lifecycle import is_active_spawn_status
-    from meridian.lib.ops.spawn.api import collect_descendants
-    from meridian.lib.state import spawn_store
+    from meridian.lib.state.spawn_tree import terminate_descendant_tree
 
-    all_spawns = spawn_store.list_spawns(runtime_root)
-    descendants = collect_descendants(str(spawn_id), all_spawns)[1:]
-    for descendant in descendants:
-        if is_active_spawn_status(descendant.status):
-            terminate_spawn_scopes(
-                runtime_root,
-                descendant,
-                reason="resident_deadline",
-                grace_seconds=5.0,
-            )
+    terminate_descendant_tree(
+        runtime_root,
+        spawn_id,
+        reason="resident_deadline",
+        grace_seconds=5.0,
+    )
 
 
 def _has_outstanding_descendant_work(runtime_root: Path, spawn_id: SpawnId) -> bool:
-    # Import lazily: meridian.lib.ops.spawn.__init__ exposes CLI operations and
-    # pulls in streaming_runner/spawn_manager. Top-level import here would create
-    # a cycle while SpawnManager imports this coordinator.
-    from meridian.lib.ops.spawn.outstanding import has_outstanding_descendant_work
+    from meridian.lib.state import spawn_store
+    from meridian.lib.state.spawn_tree import has_outstanding_descendant_work
 
-    return has_outstanding_descendant_work(runtime_root, spawn_id)
+    return has_outstanding_descendant_work(str(spawn_id), spawn_store.list_spawns(runtime_root))
 
 
 __all__ = ["ResidentDrainCoordinator", "ResidentPollDecision", "ResidentTerminalDecision"]
