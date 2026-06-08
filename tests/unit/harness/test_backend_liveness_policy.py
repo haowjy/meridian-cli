@@ -40,23 +40,29 @@ def test_evaluate_continue_when_stream_not_silent() -> None:
     assert policy.healthy is True
 
 
-def test_evaluate_suppress_when_turn_in_flight_and_silent() -> None:
+def test_evaluate_suppress_when_turn_in_flight_and_silent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     clock = FakeClock(start=0.0)
     policy = _policy(clock)
     policy.mark_activity()
     policy.signal_turn_started("turn-1")
     clock.advance(11.0)
+    monkeypatch.setattr(liveness_module, "is_process_alive", lambda *_args, **_kwargs: True)
 
     assert policy.evaluate() == LivenessDecision.SUPPRESS
     assert policy.healthy is True
 
 
-def test_evaluate_suppress_when_request_in_flight_and_silent() -> None:
+def test_evaluate_suppress_when_request_in_flight_and_silent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     clock = FakeClock(start=0.0)
     policy = _policy(clock)
     policy.mark_activity()
     policy.signal_request_in_flight("rpc:1")
     clock.advance(11.0)
+    monkeypatch.setattr(liveness_module, "is_process_alive", lambda *_args, **_kwargs: True)
 
     assert policy.evaluate() == LivenessDecision.SUPPRESS
     assert policy.healthy is True
@@ -88,6 +94,20 @@ def test_evaluate_backend_dead_when_idle_silent_and_pid_dead(
     assert policy.healthy is False
 
 
+def test_evaluate_backend_dead_when_silent_with_stale_active_turn(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clock = FakeClock(start=0.0)
+    policy = _policy(clock)
+    policy.mark_activity()
+    policy.signal_turn_started("turn-1")
+    clock.advance(11.0)
+    monkeypatch.setattr(liveness_module, "is_process_alive", lambda *_args, **_kwargs: False)
+
+    assert policy.evaluate() == LivenessDecision.BACKEND_DEAD
+    assert policy.healthy is False
+
+
 def test_evaluate_backend_dead_when_pid_missing() -> None:
     clock = FakeClock(start=0.0)
     policy = _policy(clock, pid=None)
@@ -95,6 +115,34 @@ def test_evaluate_backend_dead_when_pid_missing() -> None:
     clock.advance(11.0)
 
     assert policy.evaluate() == LivenessDecision.BACKEND_DEAD
+
+
+def test_evaluate_awaiting_done_suppresses_stream_stall_when_backend_alive(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clock = FakeClock(start=0.0)
+    policy = _policy(clock)
+    policy.mark_activity()
+    policy.set_awaiting_done(True)
+    clock.advance(11.0)
+    monkeypatch.setattr(liveness_module, "is_process_alive", lambda *_args, **_kwargs: True)
+
+    assert policy.evaluate() == LivenessDecision.SUPPRESS
+    assert policy.healthy is True
+
+
+def test_evaluate_awaiting_done_does_not_suppress_backend_dead(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clock = FakeClock(start=0.0)
+    policy = _policy(clock)
+    policy.mark_activity()
+    policy.set_awaiting_done(True)
+    clock.advance(11.0)
+    monkeypatch.setattr(liveness_module, "is_process_alive", lambda *_args, **_kwargs: False)
+
+    assert policy.evaluate() == LivenessDecision.BACKEND_DEAD
+    assert policy.healthy is False
 
 
 @pytest.mark.asyncio

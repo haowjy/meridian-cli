@@ -44,11 +44,13 @@ class BackendLivenessPolicy:
         self._last_activity_time: float | None = None
         self._active_turns: set[str] = set()
         self._active_requests: set[str] = set()
+        self._awaiting_done = False
 
     def reset(self) -> None:
         self._last_activity_time = None
         self._active_turns.clear()
         self._active_requests.clear()
+        self._awaiting_done = False
 
     def mark_activity(self) -> None:
         self._last_activity_time = self._now()
@@ -69,16 +71,19 @@ class BackendLivenessPolicy:
     def signal_request_resolved(self, request_id: str) -> None:
         self._active_requests.discard(request_id)
 
+    def set_awaiting_done(self, awaiting_done: bool) -> None:
+        self._awaiting_done = awaiting_done
+
     def evaluate(self) -> LivenessDecision:
         if not self._silence_expired():
             return LivenessDecision.CONTINUE
-        if self._active_turns or self._active_requests:
-            return LivenessDecision.SUPPRESS
         pid = self._backend_pid()
         if pid is None:
             return LivenessDecision.BACKEND_DEAD
         if not is_process_alive(pid, created_after_epoch=self._backend_birth_time()):
             return LivenessDecision.BACKEND_DEAD
+        if self._awaiting_done or self._active_turns or self._active_requests:
+            return LivenessDecision.SUPPRESS
         return LivenessDecision.STREAM_STALLED
 
     @property
