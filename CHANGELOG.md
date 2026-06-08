@@ -4,9 +4,14 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- Resident "done" model for Codex and OpenCode (`ResidentDrainCoordinator`): a spawn that ends its turn while tracked work (a `--bg` child spawn tree) is still running stays resident instead of finalizing at the first turn-end event, eliminating early-finalize / orphaned-child. When no tracked work is outstanding it finalizes immediately (unchanged latency); otherwise it keeps the backend alive (`set_awaiting_done`) and finalizes when the descendant tree drains or a monotonic deadline backstop expires — reaping the tracked descendant tree via the canonical `terminate_spawn_scopes` on deadline. Needs zero model cooperation for correctness. Configurable via `timeouts.resident_deadline_seconds` (default 1800s) and `timeouts.resident_poll_seconds` (default 10s).
+- `inject_turn(message)` connection seam (Codex `turn/start`, OpenCode `prompt_async`, Pi `sendMessage`): starts a fresh turn on an already-resident, idle backend. The shared primitive for the upcoming idle-nudge and resume-on-child-completion work (seam only; not yet wired to nudge/resume).
+
 ### Changed
 - Managed harness backends launch through one flat `launch_managed_backend()` helper (Codex/OpenCode/primary attach), replacing the duplicated per-harness launch blocks. The parent-death/containment outcome is recorded on the process-scope snapshot.
 - `BackendLivenessPolicy` owns managed-backend alive decisions (turn-aware silence suppression, process corroboration, stream-stall kill) for Codex and OpenCode connections.
+- `SpawnDrainLoop` dispatches Pi vs resident drain explicitly (`use_resident_drain` selected once); Pi keeps `PiDrainCoordinator` with byte-identical behavior, marked `# TODO(phase-4)` to converge into the resident model when the Pi inference machinery is removed.
 
 ### Removed
 - `backend_lifecycle.json` sidecar and `state/backend_lifecycle.py` — a write-once-never-read second source of truth that drifted vs `process_scopes.json`; the parent-death/containment datum now lives on `ProcessScopeSnapshot`.
