@@ -49,7 +49,7 @@ from .execute_init import (
 from .execute_runner import launch_prepared_spawn
 from .failure_policy import finalize_launch_failure_sync
 from .models import SpawnActionOutput, SpawnCreateInput
-from .pre_init import run_pre_init_boundary
+from .pre_init import EXPECTED_PRE_INIT_EXCEPTIONS, PreInitFailure, run_pre_init_boundary
 from .query import read_report, read_spawn_row
 
 logger = structlog.get_logger(__name__)
@@ -150,22 +150,25 @@ def _prepare_spawn_execution(
     ctx: RuntimeContext | None,
 ) -> SpawnExecutionPreparation | SpawnActionOutput:
     def _operation() -> SpawnExecutionPreparation:
-        resolved_context = runtime_context(ctx)
-        project_paths = resolve_project_config_paths(
-            project_root=runtime.project_root,
-            execution_cwd=runtime.authority.execution_cwd,
-        )
-        execution_contract = _resolve_execution_contract(
-            request=request,
-            project_paths=project_paths,
-            payload=payload,
-            ambient_work_id=resolved_context.work_id,
-        )
-        return SpawnExecutionPreparation(
-            resolved_context=resolved_context,
-            project_paths=project_paths,
-            execution_contract=execution_contract,
-        )
+        try:
+            resolved_context = runtime_context(ctx)
+            project_paths = resolve_project_config_paths(
+                project_root=runtime.project_root,
+                execution_cwd=runtime.authority.execution_cwd,
+            )
+            execution_contract = _resolve_execution_contract(
+                request=request,
+                project_paths=project_paths,
+                payload=payload,
+                ambient_work_id=resolved_context.work_id,
+            )
+            return SpawnExecutionPreparation(
+                resolved_context=resolved_context,
+                project_paths=project_paths,
+                execution_contract=execution_contract,
+            )
+        except EXPECTED_PRE_INIT_EXCEPTIONS as exc:
+            raise PreInitFailure(str(exc)) from exc
 
     return run_pre_init_boundary(payload=payload, request=request, operation=_operation)
 

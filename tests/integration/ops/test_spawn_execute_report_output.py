@@ -92,7 +92,7 @@ def test_execute_spawn_blocking_pre_init_failure_returns_failed_output(
     runtime = _build_test_runtime(tmp_path, monkeypatch)
 
     def _raise_project_paths(**kwargs: object) -> object:
-        raise RuntimeError("harness binary not found")
+        raise ValueError("harness binary not found")
 
     def _fail_init(**kwargs: object) -> object:
         raise AssertionError("_init_spawn should not be called")

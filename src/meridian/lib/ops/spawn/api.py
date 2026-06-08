@@ -81,7 +81,7 @@ from .models import (
     SpawnWrittenFilesInput,
     SpawnWrittenFilesOutput,
 )
-from .pre_init import run_pre_init_boundary
+from .pre_init import EXPECTED_PRE_INIT_EXCEPTIONS, PreInitFailure, run_pre_init_boundary
 from .prepare import SpawnCreateArtifacts, build_create_payload, validate_create_input
 from .query import (
     detail_from_row,
@@ -366,6 +366,26 @@ def _prepare_spawn_create(
     )
 
 
+def _prepare_spawn_create_with_expected_failures(
+    *,
+    payload: SpawnCreateInput,
+    ctx: RuntimeContext | None,
+    sink: OutputSink | None,
+    prepared: RuntimeWriteContext | None,
+    failure_payload: list[SpawnCreateInput],
+) -> SpawnCreatePreparation:
+    try:
+        return _prepare_spawn_create(
+            payload=payload,
+            ctx=ctx,
+            sink=sink,
+            prepared=prepared,
+            failure_payload=failure_payload,
+        )
+    except EXPECTED_PRE_INIT_EXCEPTIONS as exc:
+        raise PreInitFailure(str(exc)) from exc
+
+
 def spawn_create_sync(
     payload: SpawnCreateInput,
     ctx: RuntimeContext | None = None,
@@ -376,7 +396,7 @@ def spawn_create_sync(
     failure_payload = [payload]
     preparation = run_pre_init_boundary(
         payload=lambda: failure_payload[0],
-        operation=lambda: _prepare_spawn_create(
+        operation=lambda: _prepare_spawn_create_with_expected_failures(
             payload=payload,
             ctx=ctx,
             sink=sink,

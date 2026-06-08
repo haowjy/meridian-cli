@@ -5,11 +5,25 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import TypeVar
 
+import structlog
+
 from meridian.lib.launch.request import SpawnRequest
 
 from .models import SpawnActionOutput, SpawnCreateInput
 
 _T = TypeVar("_T")
+logger = structlog.get_logger(__name__)
+
+
+class PreInitFailure(Exception):
+    """Expected spawn setup failure safe to present as ``pre_init_failed``."""
+
+
+EXPECTED_PRE_INIT_EXCEPTIONS = (
+    ValueError,
+    FileNotFoundError,
+    PermissionError,
+)
 
 
 def _payload_task_cwd_source(payload: SpawnCreateInput) -> str | None:
@@ -20,17 +34,18 @@ def _payload_task_cwd_source(payload: SpawnCreateInput) -> str | None:
     return None
 
 
-def pre_init_failed_output(
+def _pre_init_output(
     *,
     payload: SpawnCreateInput,
-    exc: Exception,
+    message: str,
+    error: str,
     request: SpawnRequest | None = None,
 ) -> SpawnActionOutput:
     return SpawnActionOutput(
         command="spawn.create",
         status="failed",
-        message=f"Spawn setup failed before initialization: {exc}",
-        error="pre_init_failed",
+        message=message,
+        error=error,
         model=(request.model if request is not None else payload.model) or "",
         harness_id=(request.harness if request is not None else payload.harness) or "",
         warning=request.warning if request is not None else None,
@@ -58,6 +73,37 @@ def pre_init_failed_output(
     )
 
 
+def pre_init_failed_output(
+    *,
+    payload: SpawnCreateInput,
+    exc: Exception,
+    request: SpawnRequest | None = None,
+) -> SpawnActionOutput:
+    return _pre_init_output(
+        payload=payload,
+        request=request,
+        message=f"Spawn setup failed before initialization: {exc}",
+        error="pre_init_failed",
+    )
+
+
+def unexpected_pre_init_failed_output(
+    *,
+    payload: SpawnCreateInput,
+    exc: Exception,
+    request: SpawnRequest | None = None,
+) -> SpawnActionOutput:
+    return _pre_init_output(
+        payload=payload,
+        request=request,
+        message=(
+            "Unexpected spawn setup error before initialization: "
+            f"{type(exc).__name__}: {exc}"
+        ),
+        error="pre_init_unexpected_error",
+    )
+
+
 def run_pre_init_boundary(
     *,
     payload: SpawnCreateInput | Callable[[], SpawnCreateInput],
@@ -66,9 +112,23 @@ def run_pre_init_boundary(
 ) -> _T | SpawnActionOutput:
     try:
         return operation()
-    except Exception as exc:
+    except PreInitFailure as exc:
         failure_payload = payload() if callable(payload) else payload
         return pre_init_failed_output(payload=failure_payload, request=request, exc=exc)
+    except Exception as exc:
+        logger.error(
+            "spawn_pre_init_unexpected_exception",
+            error_type=type(exc).__name__,
+            exc_info=True,
+        )
+        failure_payload = payload() if callable(payload) else payload
+        return unexpected_pre_init_failed_output(payload=failure_payload, request=request, exc=exc)
 
 
-__all__ = ["pre_init_failed_output", "run_pre_init_boundary"]
+__all__ = [
+    "EXPECTED_PRE_INIT_EXCEPTIONS",
+    "PreInitFailure",
+    "pre_init_failed_output",
+    "run_pre_init_boundary",
+    "unexpected_pre_init_failed_output",
+]
