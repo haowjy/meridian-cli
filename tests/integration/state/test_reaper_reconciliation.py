@@ -333,7 +333,7 @@ def test_reconcile_active_spawn_dead_runner_recent_activity_still_fails(
     assert latest.error == "orphan_run"
 
 
-def test_reconcile_active_spawn_nested_dead_runner_reaps_recorded_backend_scope(
+def test_read_projection_does_not_reap_recorded_scope_but_explicit_reconcile_does(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -385,6 +385,38 @@ def test_reconcile_active_spawn_nested_dead_runner_reaps_recorded_backend_scope(
 
     monkeypatch.setattr(process_cleanup, "terminate_scope_sync", _terminate_scope)
 
+    from meridian.lib.state.reaper import reconcile_spawns
+
+    projected = reconcile_spawns(tmp_path, runtime_root, [record])
+    assert projected[0].status == "failed"
+    assert projected[0].error == "orphan_run"
+    assert _get_spawn(runtime_root, spawn_id).status == "running"
+    assert terminated_scopes == []
+
+    from meridian.lib.ops.spawn import api as spawn_api
+    from meridian.lib.ops.spawn.models import SpawnListInput, SpawnStatsInput, SpawnWaitInput
+
+    listed = spawn_api.spawn_list_sync(
+        SpawnListInput(statuses=(), project_root=tmp_path.as_posix())
+    )
+    assert listed.spawns[0].spawn_id == spawn_id
+    assert listed.spawns[0].status == "failed"
+    stats = spawn_api.spawn_stats_sync(SpawnStatsInput(project_root=tmp_path.as_posix()))
+    assert stats.failed == 1
+    waited = spawn_api.spawn_wait_sync(
+        SpawnWaitInput(
+            spawn_ids=(spawn_id,),
+            timeout=0.01,
+            timeout_explicit=True,
+            poll_interval_secs=0.01,
+            project_root=tmp_path.as_posix(),
+        )
+    )
+    assert waited.spawns[0].status == "failed"
+    assert _get_spawn(runtime_root, spawn_id).status == "running"
+    assert terminated_scopes == []
+
+    monkeypatch.delenv("MERIDIAN_DEPTH", raising=False)
     reconciled = _reconcile(tmp_path, runtime_root, record)
 
     assert reconciled.status == "failed"
