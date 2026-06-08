@@ -222,17 +222,22 @@ class SpawnManager:
                 await connection.stop()
             raise
 
+        coordinator = self._select_drain_coordinator(
+            spawn_id=spawn_id,
+            receiver=connection,
+            pi_session_role=pi_session_role,
+            notification_timeout_seconds=config.pi_notification_timeout_seconds,
+            child_wave_timeout_seconds=config.pi_child_wave_timeout_seconds,
+            resident_deadline_seconds=config.resident_deadline_seconds,
+            resident_poll_seconds=config.resident_poll_seconds,
+        )
         drain_task = asyncio.create_task(
             self._drain_loop(
                 spawn_id,
                 connection,
+                coordinator,
                 tracer,
                 drain_policy=resolved_policy,
-                pi_session_role=pi_session_role,
-                notification_timeout_seconds=config.pi_notification_timeout_seconds,
-                child_wave_timeout_seconds=config.pi_child_wave_timeout_seconds,
-                resident_deadline_seconds=config.resident_deadline_seconds,
-                resident_poll_seconds=config.resident_poll_seconds,
             )
         )
         self._sessions[spawn_id] = SpawnSession(
@@ -243,6 +248,7 @@ class SpawnManager:
             started_monotonic=started_monotonic,
             completion_future=completion_future,
             debug_tracer=tracer,
+            raw_terminal_frames_authoritative=coordinator.raw_terminal_frames_are_authoritative(),
             control_actions=ControlActionCoordinator(
                 spawn_id=spawn_id,
                 spawn_dir=self._spawn_dir(spawn_id),
@@ -273,25 +279,11 @@ class SpawnManager:
         self,
         spawn_id: SpawnId,
         receiver: HarnessConnection[Any],
+        coordinator: DrainCoordinator,
         tracer: DebugTracer | None = None,
         *,
         drain_policy: DrainPolicy | None = None,
-        pi_session_role: str | None = None,
-        notification_timeout_seconds: float | None = None,
-        child_wave_timeout_seconds: float | None = None,
-        resident_deadline_seconds: float | None = None,
-        resident_poll_seconds: float | None = None,
     ) -> None:
-
-        coordinator = self._select_drain_coordinator(
-            spawn_id=spawn_id,
-            receiver=receiver,
-            pi_session_role=pi_session_role,
-            notification_timeout_seconds=notification_timeout_seconds,
-            child_wave_timeout_seconds=child_wave_timeout_seconds,
-            resident_deadline_seconds=resident_deadline_seconds,
-            resident_poll_seconds=resident_poll_seconds,
-        )
         drain_loop = SpawnDrainLoop(
             sessions=self._sessions,
             history_writers=self._history_writers,
@@ -356,6 +348,19 @@ class SpawnManager:
             poll_seconds=resident_poll_seconds,
         )
         return resident_drain if resident_drain.enabled else pi_drain
+
+    def raw_terminal_frames_are_authoritative(self, spawn_id: SpawnId) -> bool:
+        """Return whether raw harness terminal frames may finalize this spawn.
+
+        Coordinators own harness-specific terminal policy.  The runner uses this
+        observer seam to avoid treating a raw turn boundary as final when the
+        selected coordinator must first wait for descendant work or a deadline.
+        """
+
+        session = self._sessions.get(spawn_id)
+        if session is None:
+            return True
+        return session.raw_terminal_frames_authoritative
 
     def subscribe(self, spawn_id: SpawnId) -> asyncio.Queue[HarnessEvent | None] | None:
         """Attach one subscriber queue to the spawn, or return None if unavailable."""

@@ -515,7 +515,9 @@ async def run_streaming_spawn(
 
         terminal_event_future = loop.create_future()
         terminal_event_capture = (
-            terminal_event_future if config.harness_id != HarnessId.PI else None
+            terminal_event_future
+            if manager.raw_terminal_frames_are_authoritative(spawn_id)
+            else None
         )
         codex_thread_tracker = (
             CodexDrainThreadTracker()
@@ -618,14 +620,8 @@ async def _run_streaming_attempt(
     terminal_event_future: asyncio.Future[TerminalEventOutcome] = (
         asyncio.get_running_loop().create_future()
     )
-    terminal_event_capture = (
-        terminal_event_future if config.harness_id != HarnessId.PI else None
-    )
-    codex_thread_tracker = (
-        CodexDrainThreadTracker()
-        if config.harness_id == HarnessId.CODEX and terminal_event_capture is not None
-        else None
-    )
+    terminal_event_capture: asyncio.Future[TerminalEventOutcome] | None = None
+    codex_thread_tracker: CodexDrainThreadTracker | None = None
     subscriber: asyncio.Queue[HarnessEvent | None] | None = None
     connection: HarnessConnection[Any] | None = None
     drain_exit_code = DEFAULT_INFRA_EXIT_CODE
@@ -636,6 +632,16 @@ async def _run_streaming_attempt(
     terminal_outcome: TerminalEventOutcome | None = None
     try:
         connection = await manager.start_spawn(config, run_spec)
+        terminal_event_capture = (
+            terminal_event_future
+            if manager.raw_terminal_frames_are_authoritative(run.spawn_id)
+            else None
+        )
+        codex_thread_tracker = (
+            CodexDrainThreadTracker()
+            if config.harness_id == HarnessId.CODEX and terminal_event_capture is not None
+            else None
+        )
         await manager.start_heartbeat(run.spawn_id)
         lifecycle_service.mark_running(
             run.spawn_id,

@@ -131,6 +131,9 @@ class PiDrainCoordinator:
             PiRpcQuiescenceDrainPolicy,
         )
 
+    def raw_terminal_frames_are_authoritative(self) -> bool:
+        return not self.is_pi_connection
+
     def next_timeout(self) -> float | None:
         if not self.quiescence_enabled:
             return None

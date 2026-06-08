@@ -70,6 +70,11 @@ class ResidentDrainCoordinator:
     def set_policy(self, policy: DrainPolicy) -> None:
         return
 
+    def raw_terminal_frames_are_authoritative(self) -> bool:
+        """Resident drains resolve terminal state after descendant work drains."""
+
+        return not self.enabled
+
     def observe_activity_transition(self, transition: str | None) -> None:
         """Clear resident-idle liveness once a new turn becomes active."""
 

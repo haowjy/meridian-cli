@@ -13,6 +13,7 @@ from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.connections.base import (
     ConnectionCapabilities,
     ConnectionConfig,
+    ConnectionState,
     HarnessConnection,
     HarnessEvent,
     StopProgressCallback,
@@ -33,7 +34,7 @@ class _FakeConnection(HarnessConnection[ResolvedLaunchSpec]):
         self._events = events
 
     @property
-    def state(self) -> str:
+    def state(self) -> ConnectionState:
         return "connected"
 
     @property
@@ -104,6 +105,9 @@ class _FakeCoordinator:
 
     def set_policy(self, policy: DrainPolicy) -> None:
         self.calls.append("set_policy")
+
+    def raw_terminal_frames_are_authoritative(self) -> bool:
+        return True
 
     def next_timeout(self) -> float | None:
         self.calls.append("next_timeout")
