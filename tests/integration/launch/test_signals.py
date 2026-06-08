@@ -21,6 +21,7 @@ from meridian.lib.launch.signals import (
     signal_process_group,
     signal_to_exit_code,
 )
+from meridian.lib.platform import IS_WINDOWS
 from meridian.lib.safety.permissions import PermissionConfig, TieredPermissionResolver
 from meridian.lib.state.paths import resolve_runtime_paths
 from meridian.lib.streaming import spawn_manager as spawn_manager_module
@@ -292,6 +293,7 @@ def test_force_kill_process_degrades_to_process_kill_for_shared_pgid(
     assert killpg_calls == []
 
 
+@pytest.mark.skipif(IS_WINDOWS, reason="POSIX SIGKILL group-leader semantics")
 def test_force_kill_process_uses_killpg_for_group_leader(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

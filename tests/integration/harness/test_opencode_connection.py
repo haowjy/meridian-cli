@@ -293,8 +293,8 @@ async def test_opencode_events_fail_after_liveness_timeout_without_events(
         responses=[_FakeSseResponse([]) for _ in range(100)]
     )
 
-    monkeypatch.setattr(OpenCodeConnection, "_LIVENESS_TIMEOUT_SECONDS", 0.01)
-    monkeypatch.setattr(OpenCodeConnection, "_EVENT_RETRY_DELAY_SECONDS", 0.001)
+    monkeypatch.setattr(OpenCodeConnection, "_LIVENESS_TIMEOUT_SECONDS", 0.1)
+    monkeypatch.setattr(OpenCodeConnection, "_EVENT_RETRY_DELAY_SECONDS", 0.02)
 
     events = [event async for event in connection.events()]
 
