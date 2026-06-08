@@ -25,6 +25,7 @@ from meridian.lib.state import spawn_store
 from meridian.lib.state.atomic import append_text_line
 from meridian.lib.state.history import HarnessHistoryWriter
 from meridian.lib.streaming.control_socket import ControlSocketServer
+from meridian.lib.streaming.drain_coordinator import DrainCoordinator
 from meridian.lib.streaming.drain_policy import (
     TURN_BOUNDARY_EVENT_TYPE,
     DrainPolicy,
@@ -36,6 +37,10 @@ from meridian.lib.streaming.event_observers import (
     HarnessEventCallback,
 )
 from meridian.lib.streaming.heartbeat import heartbeat_loop
+from meridian.lib.streaming.pi_drain import PiDrainCoordinator
+from meridian.lib.streaming.pi_process_cleanup import terminate_pi_tracked_subspawns
+from meridian.lib.streaming.pi_subspawn_tracker import PiSubspawnTracker
+from meridian.lib.streaming.resident_drain import ResidentDrainCoordinator
 from meridian.lib.streaming.spawn_dispatch import dispatch_start
 from meridian.lib.streaming.spawn_drain_loop import SpawnDrainLoop
 from meridian.lib.streaming.spawn_session import DrainOutcome, SpawnSession
@@ -269,6 +274,7 @@ class SpawnManager:
         spawn_id: SpawnId,
         receiver: HarnessConnection[Any],
         tracer: DebugTracer | None = None,
+        *,
         drain_policy: DrainPolicy | None = None,
         pi_session_role: str | None = None,
         notification_timeout_seconds: float | None = None,
@@ -277,8 +283,16 @@ class SpawnManager:
         resident_poll_seconds: float | None = None,
     ) -> None:
 
+        coordinator = self._select_drain_coordinator(
+            spawn_id=spawn_id,
+            receiver=receiver,
+            pi_session_role=pi_session_role,
+            notification_timeout_seconds=notification_timeout_seconds,
+            child_wave_timeout_seconds=child_wave_timeout_seconds,
+            resident_deadline_seconds=resident_deadline_seconds,
+            resident_poll_seconds=resident_poll_seconds,
+        )
         drain_loop = SpawnDrainLoop(
-            runtime_root=self._runtime_root,
             sessions=self._sessions,
             history_writers=self._history_writers,
             observers=self._observers,
@@ -287,19 +301,61 @@ class SpawnManager:
             resolve_completion_future=self._resolve_completion_future,
             fan_out_event=self._fan_out_event,
             fan_out_turn_boundary=self._fan_out_turn_boundary,
-            emit_pi_phase_event=self._emit_pi_phase_event,
         )
         await drain_loop.run(
             spawn_id=spawn_id,
             receiver=receiver,
+            coordinator=coordinator,
             drain_policy=drain_policy,
             tracer=tracer,
-            pi_session_role=pi_session_role,
+        )
+
+    def _select_drain_coordinator(
+        self,
+        *,
+        spawn_id: SpawnId,
+        receiver: HarnessConnection[Any],
+        pi_session_role: str | None,
+        notification_timeout_seconds: float | None,
+        child_wave_timeout_seconds: float | None,
+        resident_deadline_seconds: float | None,
+        resident_poll_seconds: float | None,
+    ) -> DrainCoordinator:
+        """Choose the harness-specific drain coordinator before entering the loop."""
+
+        def _emit_pi_phase(*, phase: str, session_role: str | None, **payload: object) -> None:
+            self._emit_pi_phase_event(
+                spawn_id,
+                receiver,
+                phase=phase,
+                session_role=session_role,
+                **payload,
+            )
+
+        async def _terminate_tracked_pi_children(
+            tracker: PiSubspawnTracker,
+            reason: str,
+        ) -> None:
+            await terminate_pi_tracked_subspawns(spawn_id, tracker, reason=reason)
+
+        pi_drain = PiDrainCoordinator.for_connection(
+            runtime_root=self._runtime_root,
+            spawn_id=spawn_id,
+            receiver=cast("HarnessConnection[ResolvedLaunchSpec]", receiver),
+            session_role=pi_session_role,
             notification_timeout_seconds=notification_timeout_seconds,
             child_wave_timeout_seconds=child_wave_timeout_seconds,
-            resident_deadline_seconds=resident_deadline_seconds,
-            resident_poll_seconds=resident_poll_seconds,
+            emit_phase=_emit_pi_phase,
+            terminate_children=_terminate_tracked_pi_children,
         )
+        resident_drain = ResidentDrainCoordinator.for_connection(
+            runtime_root=self._runtime_root,
+            spawn_id=spawn_id,
+            receiver=receiver,
+            deadline_seconds=resident_deadline_seconds,
+            poll_seconds=resident_poll_seconds,
+        )
+        return resident_drain if resident_drain.enabled else pi_drain
 
     def subscribe(self, spawn_id: SpawnId) -> asyncio.Queue[HarnessEvent | None] | None:
         """Attach one subscriber queue to the spawn, or return None if unavailable."""

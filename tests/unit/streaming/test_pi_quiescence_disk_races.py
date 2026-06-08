@@ -88,7 +88,7 @@ async def test_micro_drain_timeout_rechecks_disk_before_accepting(tmp_path: Path
 
     try:
         result = await coordinator.handle_timeout(_noop_terminate)
-        assert result is None
+        assert result.recorded_outcome is None
         assert coordinator.quiescence_candidate is None
         assert "quiescence_micro_drain_cancelled" in phases
     finally:
@@ -150,7 +150,7 @@ async def test_micro_drain_recheck_preserves_idle_epoch_for_notifications(
 
     try:
         result = await coordinator.handle_timeout(_noop_terminate)
-        assert result is None
+        assert result.recorded_outcome is None
         assert coordinator.quiescence_candidate is None
         assert "quiescence_micro_drain_cancelled" in phases
     finally:
@@ -208,7 +208,7 @@ async def test_micro_drain_cancel_arms_child_wave_for_rescan_discovered_child(
 
     try:
         result = await coordinator.handle_timeout(_noop_terminate)
-        assert result is None
+        assert result.recorded_outcome is None
         assert coordinator.quiescence_candidate is None
         assert coordinator.child_wave_deadline_monotonic is not None
         assert coordinator.pending_child_count() == 1

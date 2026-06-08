@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from meridian.lib.harness.connections.base import HarnessEvent
-from meridian.lib.streaming.pi_drain import PiDrainCoordinator
+from meridian.lib.streaming.drain_coordinator import AuxWakeCoordinator
 
 
 @dataclass(frozen=True)
@@ -19,7 +19,7 @@ class DrainEventWake:
 
 
 @dataclass(frozen=True)
-class DrainDiskChangeWake:
+class DrainAuxWake:
     pass
 
 
@@ -33,19 +33,19 @@ class DrainClosedWake:
     pass
 
 
-DrainWake = DrainEventWake | DrainDiskChangeWake | DrainTimeoutWake | DrainClosedWake
+DrainWake = DrainEventWake | DrainAuxWake | DrainTimeoutWake | DrainClosedWake
 
 
 class DrainInputWaiter:
-    """Wait for the next harness event, Pi disk change, timeout, or stream close."""
+    """Wait for the next harness event, auxiliary wake, timeout, or stream close."""
 
     def __init__(
         self,
         events_iter: AsyncIterator[HarnessEvent],
-        pi_drain: PiDrainCoordinator,
+        aux_wake: AuxWakeCoordinator,
     ) -> None:
         self._events_iter = events_iter
-        self._pi_drain = pi_drain
+        self._aux_wake = aux_wake
         self._pending_event_task: asyncio.Future[HarnessEvent] | None = None
         self._pending_disk_task: asyncio.Task[None] | None = None
 
@@ -61,15 +61,15 @@ class DrainInputWaiter:
                 return DrainEventWake(event, disk_change_ready_after_event)
 
             wait_tasks: set[asyncio.Future[Any]] = {self._pending_event_task}
-            if self._pi_drain.quiescence_enabled:
+            if self._aux_wake.wants_aux_wake():
                 if self._pending_disk_task is None:
                     self._pending_disk_task = asyncio.create_task(
-                        self._pi_drain.wait_for_disk_change()
+                        self._aux_wake.wait_for_aux_wake()
                     )
                 elif self._pending_disk_task.done():
                     self._pending_disk_task.result()
                     self._pending_disk_task = None
-                    return DrainDiskChangeWake()
+                    return DrainAuxWake()
                 wait_tasks.add(self._pending_disk_task)
             if timeout_seconds is not None:
                 timeout_task = asyncio.create_task(asyncio.sleep(timeout_seconds))
@@ -92,7 +92,7 @@ class DrainInputWaiter:
             if self._pending_disk_task is not None and self._pending_disk_task in done:
                 self._pending_disk_task.result()
                 self._pending_disk_task = None
-                return DrainDiskChangeWake()
+                return DrainAuxWake()
             return DrainTimeoutWake()
         except StopAsyncIteration:
             self._pending_event_task = None

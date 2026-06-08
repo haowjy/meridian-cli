@@ -17,7 +17,13 @@ from meridian.lib.core.domain import SpawnStatus
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness import pi_lifecycle_events as pi_lifecycle
 from meridian.lib.harness.connections.base import HarnessEvent
-from meridian.lib.streaming.drain_policy import DrainAction, DrainPolicy, PiRpcQuiescenceDrainPolicy
+from meridian.lib.streaming.drain_coordinator import DrainLoopDecision, DrainTerminalDecision
+from meridian.lib.streaming.drain_policy import (
+    DrainAction,
+    DrainPolicy,
+    PiRpcQuiescenceDrainPolicy,
+    SingleTurnDrainPolicy,
+)
 from meridian.lib.streaming.pi_quiescence import PiQuiescenceTracker
 from meridian.lib.streaming.pi_subspawn_tracker import PiPendingNotification, PiSubspawnTracker
 
@@ -39,12 +45,6 @@ _PI_TIMEOUT_FLOOR_SECONDS: float = 0.001
 
 EmitPiPhase = Callable[..., None]
 TerminatePiChildren = Callable[["PiSubspawnTracker", str], Awaitable[None]]
-
-
-@dataclass(frozen=True)
-class PiTerminalDecision:
-    recorded_outcome: TerminalEventOutcome | None = None
-    emit_turn_boundary: bool = False
 
 
 @dataclass
@@ -76,6 +76,7 @@ class PiDrainCoordinator:
     child_wave_timeout_error: str | None = None
     child_wave_timeout_followup_deadline: float | None = None
     tracked_cleanup_reason: str | None = None
+    terminate_children: TerminatePiChildren | None = None
 
     @classmethod
     def for_connection(
@@ -88,6 +89,7 @@ class PiDrainCoordinator:
         notification_timeout_seconds: float | None,
         child_wave_timeout_seconds: float | None,
         emit_phase: EmitPiPhase,
+        terminate_children: TerminatePiChildren | None = None,
     ) -> PiDrainCoordinator:
         normalized_role = (session_role or "").strip().lower()
         is_pi_connection = receiver.harness_id is HarnessId.PI
@@ -107,6 +109,7 @@ class PiDrainCoordinator:
                 session_role=normalized_role,
             ),
             is_pi_connection=is_pi_connection,
+            terminate_children=terminate_children,
         )
 
     async def start(self) -> None:
@@ -118,6 +121,8 @@ class PiDrainCoordinator:
         await self.quiescence_tracker.stop()
 
     def default_policy(self) -> DrainPolicy:
+        if not self.is_pi_connection:
+            return SingleTurnDrainPolicy()
         return PiRpcQuiescenceDrainPolicy(quiescence_check=self.quiescence_tracker.is_quiescent)
 
     def set_policy(self, policy: DrainPolicy) -> None:
@@ -149,30 +154,35 @@ class PiDrainCoordinator:
 
     async def handle_timeout(
         self,
-        terminate_children: TerminatePiChildren,
-    ) -> TerminalEventOutcome | None:
+        terminate_children: TerminatePiChildren | None = None,
+    ) -> DrainLoopDecision:
+        terminate_children = terminate_children or self.terminate_children
         if not self.quiescence_enabled:
             raise TimeoutError
         if self.quiescence_candidate is not None:
             await self.quiescence_tracker.refresh_disk_state()
             if self.is_quiescent():
-                return self.quiescence_candidate
+                return DrainLoopDecision(self.quiescence_candidate)
             self._emit(
                 "quiescence_micro_drain_cancelled",
                 reason="disk_state_changed",
             )
             self.quiescence_candidate = None
             self._update_idle_waiting_state()
-            return None
+            return DrainLoopDecision()
 
         now_monotonic = time.monotonic()
         expired_notification = self.tracker.pop_expired_notification(now_monotonic)
         if expired_notification is not None:
-            return self._notification_timeout_outcome(expired_notification, now_monotonic)
+            return DrainLoopDecision(
+                self._notification_timeout_outcome(expired_notification, now_monotonic)
+            )
 
         if self._child_wave_timed_out(now_monotonic):
+            if terminate_children is None:
+                raise RuntimeError("Pi child timeout cleanup is not configured")
             await self._handle_child_wave_timeout(terminate_children, now_monotonic)
-            return None
+            return DrainLoopDecision()
 
         if (
             self.child_wave_timeout_followup_deadline is not None
@@ -180,12 +190,14 @@ class PiDrainCoordinator:
             and self.child_wave_timed_out
             and self.child_wave_timeout_error is not None
         ):
-            return _terminal_outcome(
-                status="failed",
-                exit_code=1,
-                error=self.child_wave_timeout_error,
+            return DrainLoopDecision(
+                _terminal_outcome(
+                    status="failed",
+                    exit_code=1,
+                    error=self.child_wave_timeout_error,
+                )
             )
-        return None
+        return DrainLoopDecision()
 
     async def observe_event(self, event: HarnessEvent, transition: str | None) -> bool:
         duplicate = self.tracker.observe(
@@ -246,14 +258,14 @@ class PiDrainCoordinator:
             error=self.tracker.lifecycle_tracking_invalidated_error,
         )
 
-    def handle_terminal_event(
+    async def handle_terminal_event(
         self,
         event: HarnessEvent,
         outcome: TerminalEventOutcome,
         action: DrainAction,
-    ) -> PiTerminalDecision:
+    ) -> DrainTerminalDecision:
         if not self.is_pi_connection:
-            return PiTerminalDecision(
+            return DrainTerminalDecision(
                 recorded_outcome=outcome if action.terminate else None,
                 emit_turn_boundary=action.emit_turn_boundary,
             )
@@ -273,9 +285,9 @@ class PiDrainCoordinator:
                         active_tracked_count=self.pending_child_count(),
                         pending_notification_count=self.tracker.pending_notification_count(),
                     )
-                return PiTerminalDecision()
-            return PiTerminalDecision(recorded_outcome=outcome)
-        return PiTerminalDecision(emit_turn_boundary=action.emit_turn_boundary)
+                return DrainTerminalDecision()
+            return DrainTerminalDecision(recorded_outcome=outcome)
+        return DrainTerminalDecision(emit_turn_boundary=action.emit_turn_boundary)
 
     def failure_outcome_after_event(self) -> TerminalEventOutcome | None:
         if not self.is_pi_connection:
@@ -318,6 +330,22 @@ class PiDrainCoordinator:
         ):
             self.start_micro_drain(self.last_successful_terminal)
 
+    def wants_aux_wake(self) -> bool:
+        return self.quiescence_enabled
+
+    async def wait_for_aux_wake(self) -> None:
+        await self.quiescence_tracker.wait_for_disk_change()
+
+    async def handle_aux_wake(self) -> DrainLoopDecision:
+        await self.reevaluate_after_disk_change()
+        return DrainLoopDecision()
+
+    async def after_event(self) -> DrainLoopDecision:
+        return DrainLoopDecision()
+
+    def handle_close(self, *, intentional_stop: bool) -> TerminalEventOutcome | None:
+        return self.quiescence_candidate
+
     async def reevaluate_after_disk_change(self) -> None:
         if not self.quiescence_enabled:
             return
@@ -346,13 +374,16 @@ class PiDrainCoordinator:
 
     async def cleanup_pending_children_at_exit(
         self,
-        terminate_children: TerminatePiChildren,
+        terminate_children: TerminatePiChildren | None = None,
     ) -> None:
+        terminate_children = terminate_children or self.terminate_children
         if (
             self.is_pi_connection
             and self.tracker.has_pending()
             and self.tracked_cleanup_reason is None
         ):
+            if terminate_children is None:
+                raise RuntimeError("Pi child process-exit cleanup is not configured")
             await terminate_children(self.tracker, "pi_process_exit_with_tracked_children")
             self.tracked_cleanup_reason = "pi_process_exit_with_tracked_children"
 
@@ -365,6 +396,9 @@ class PiDrainCoordinator:
             return self.child_wave_timeout_error
         return None
 
+    def finalization_session_id(self, connection_session_id: str | None) -> str | None:
+        return connection_session_id if self.session_seen else None
+
     def emit_session_phase_if_needed(self, session_id: str | None) -> None:
         if not self.is_pi_connection or self.session_phase_emitted:
             return
@@ -376,9 +410,6 @@ class PiDrainCoordinator:
     def emit_finalized(self, *, status: str, exit_code: int, error: str | None) -> None:
         if self.is_pi_connection:
             self._emit("finalized", status=status, exit_code=exit_code, error=error)
-
-    async def wait_for_disk_change(self) -> None:
-        await self.quiescence_tracker.wait_for_disk_change()
 
     def has_pending_children(self) -> bool:
         return self.tracker.has_pending() or self.quiescence_tracker.has_pending_child_spawns()

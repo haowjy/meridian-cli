@@ -9,26 +9,15 @@ from typing import TYPE_CHECKING, Any
 
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.semantics import TerminalEventOutcome
-from meridian.lib.streaming.drain_policy import DrainAction
+from meridian.lib.streaming.drain_coordinator import DrainLoopDecision, DrainTerminalDecision
+from meridian.lib.streaming.drain_policy import DrainAction, DrainPolicy, SingleTurnDrainPolicy
 
 if TYPE_CHECKING:
-    from meridian.lib.harness.connections.base import HarnessConnection
+    from meridian.lib.harness.connections.base import HarnessConnection, HarnessEvent
 
 
 _RESIDENT_HARNESSES = frozenset({HarnessId.CODEX, HarnessId.OPENCODE})
 _TIMEOUT_FLOOR_SECONDS = 0.001
-
-
-@dataclass(frozen=True)
-class ResidentTerminalDecision:
-    recorded_outcome: TerminalEventOutcome | None = None
-    emit_turn_boundary: bool = False
-
-
-@dataclass(frozen=True)
-class ResidentPollDecision:
-    recorded_outcome: TerminalEventOutcome
-    reap_descendants: bool = False
 
 
 @dataclass
@@ -65,6 +54,20 @@ class ResidentDrainCoordinator:
             enabled=receiver.harness_id in _RESIDENT_HARNESSES,
         )
 
+    async def start(self) -> None:
+        return
+
+    async def stop(self) -> None:
+        self._set_awaiting_done(False)
+        self.awaiting_outcome = None
+        self.deadline_monotonic = None
+
+    def default_policy(self) -> DrainPolicy:
+        return SingleTurnDrainPolicy()
+
+    def set_policy(self, policy: DrainPolicy) -> None:
+        return
+
     def observe_activity_transition(self, transition: str | None) -> None:
         """Clear resident-idle liveness once a new turn becomes active."""
 
@@ -75,13 +78,24 @@ class ResidentDrainCoordinator:
             self.awaiting_outcome = None
             self.deadline_monotonic = None
 
-    def handle_terminal_event(
+    async def observe_event(self, event: HarnessEvent, transition: str | None) -> bool:
+        self.observe_activity_transition(transition)
+        return False
+
+    def note_event_persisted(self, event: HarnessEvent) -> None:
+        return
+
+    def lifecycle_error_outcome(self) -> TerminalEventOutcome | None:
+        return None
+
+    async def handle_terminal_event(
         self,
+        event: HarnessEvent,
         outcome: TerminalEventOutcome,
         action: DrainAction,
-    ) -> ResidentTerminalDecision:
+    ) -> DrainTerminalDecision:
         if not self.enabled:
-            return ResidentTerminalDecision(
+            return DrainTerminalDecision(
                 recorded_outcome=outcome if action.terminate else None,
                 emit_turn_boundary=action.emit_turn_boundary,
             )
@@ -89,18 +103,18 @@ class ResidentDrainCoordinator:
             self._set_awaiting_done(False)
             self.awaiting_outcome = None
             self.deadline_monotonic = None
-            return ResidentTerminalDecision(emit_turn_boundary=action.emit_turn_boundary)
+            return DrainTerminalDecision(emit_turn_boundary=action.emit_turn_boundary)
         if outcome.status != "succeeded":
             self._set_awaiting_done(False)
-            return ResidentTerminalDecision(recorded_outcome=outcome)
+            return DrainTerminalDecision(recorded_outcome=outcome)
         if not _has_outstanding_descendant_work(self.runtime_root, self.spawn_id):
             self._set_awaiting_done(False)
-            return ResidentTerminalDecision(recorded_outcome=outcome)
+            return DrainTerminalDecision(recorded_outcome=outcome)
 
         self.awaiting_outcome = outcome
         self.deadline_monotonic = time.monotonic() + self.deadline_seconds
         self._set_awaiting_done(True)
-        return ResidentTerminalDecision(emit_turn_boundary=True)
+        return DrainTerminalDecision(emit_turn_boundary=True)
 
     def next_timeout(self) -> float | None:
         if not self.enabled or self.awaiting_outcome is None:
@@ -112,9 +126,9 @@ class ResidentDrainCoordinator:
             timeout = min(timeout, remaining)
         return max(timeout, _TIMEOUT_FLOOR_SECONDS)
 
-    def handle_poll(self) -> ResidentPollDecision | None:
+    def _handle_poll(self) -> tuple[DrainLoopDecision, bool]:
         if not self.enabled or self.awaiting_outcome is None:
-            return None
+            return (DrainLoopDecision(), False)
         now_monotonic = time.monotonic()
         deadline_expired = self._deadline_expired(now_monotonic)
         has_outstanding_work = _has_outstanding_descendant_work(
@@ -126,13 +140,24 @@ class ResidentDrainCoordinator:
             self._set_awaiting_done(False)
             self.awaiting_outcome = None
             self.deadline_monotonic = None
-            return ResidentPollDecision(
-                recorded_outcome=outcome,
-                reap_descendants=deadline_expired and has_outstanding_work,
+            return (
+                DrainLoopDecision(recorded_outcome=outcome),
+                deadline_expired and has_outstanding_work,
             )
-        return None
+        return (DrainLoopDecision(), False)
 
-    def outcome_on_close(self, *, intentional_stop: bool) -> TerminalEventOutcome | None:
+    async def handle_timeout(self) -> DrainLoopDecision:
+        decision, reap_descendants = self._handle_poll()
+        if reap_descendants:
+            import asyncio
+
+            await asyncio.to_thread(self.terminate_outstanding_descendants)
+        return decision
+
+    async def after_event(self) -> DrainLoopDecision:
+        return await self.handle_timeout()
+
+    def handle_close(self, *, intentional_stop: bool) -> TerminalEventOutcome | None:
         """Classify stream close while resident-waiting.
 
         A completed turn is success only when Meridian deliberately stopped the
@@ -161,10 +186,38 @@ class ResidentDrainCoordinator:
 
         _terminate_descendant_spawn_tree(self.runtime_root, self.spawn_id)
 
-    def stop(self) -> None:
-        self._set_awaiting_done(False)
-        self.awaiting_outcome = None
-        self.deadline_monotonic = None
+    def wants_aux_wake(self) -> bool:
+        return False
+
+    async def wait_for_aux_wake(self) -> None:
+        return
+
+    async def handle_aux_wake(self) -> DrainLoopDecision:
+        return DrainLoopDecision()
+
+    def failure_outcome_after_event(self) -> TerminalEventOutcome | None:
+        return None
+
+    def maybe_start_quiescence_after_event(self) -> None:
+        return
+
+    def pending_children_at_exit(self) -> bool:
+        return False
+
+    async def cleanup_pending_children_at_exit(self) -> None:
+        return
+
+    def fallback_error_without_recorded_outcome(self) -> str | None:
+        return None
+
+    def finalization_session_id(self, connection_session_id: str | None) -> str | None:
+        return None
+
+    def emit_session_phase_if_needed(self, session_id: str | None) -> None:
+        return
+
+    def emit_finalized(self, *, status: str, exit_code: int, error: str | None) -> None:
+        return
 
     def _deadline_remaining(self, now_monotonic: float) -> float | None:
         if self.deadline_monotonic is None:
@@ -206,4 +259,4 @@ def _has_outstanding_descendant_work(runtime_root: Path, spawn_id: SpawnId) -> b
     return has_outstanding_descendant_work(str(spawn_id), spawn_store.list_spawns(runtime_root))
 
 
-__all__ = ["ResidentDrainCoordinator", "ResidentPollDecision", "ResidentTerminalDecision"]
+__all__ = ["ResidentDrainCoordinator"]
