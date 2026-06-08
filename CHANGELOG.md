@@ -4,20 +4,27 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-### Added
-- Managed backend launch now goes through one `ManagedBackend.launch()` path for Codex/OpenCode/primary attach, and writes `backend_lifecycle.json` at launch for crash recovery.
-- `BackendLivenessPolicy` now owns managed-backend alive decisions (turn-aware silence suppression, process corroboration, stream-stall kill) for Codex and OpenCode connections.
+### Changed
+- Managed harness backends launch through one flat `launch_managed_backend()` helper (Codex/OpenCode/primary attach), replacing the duplicated per-harness launch blocks. The parent-death/containment outcome is recorded on the process-scope snapshot.
+- `BackendLivenessPolicy` owns managed-backend alive decisions (turn-aware silence suppression, process corroboration, stream-stall kill) for Codex and OpenCode connections.
+
+### Removed
+- `backend_lifecycle.json` sidecar and `state/backend_lifecycle.py` — a write-once-never-read second source of truth that drifted vs `process_scopes.json`; the parent-death/containment datum now lives on `ProcessScopeSnapshot`.
 
 ### Fixed
-- Detached OpenCode/Codex backends now link to the worker lifetime and dead-worker reaping finalizes child spawns while cleaning recorded backend scopes.
+- Orphaned harness backends: detached Codex/OpenCode backends link to the worker lifetime (POSIX parent-death where available, Windows Job Object) and dead-worker reaping finalizes child spawns while cleaning recorded backend scopes.
+- `detached_process` parent-death linkage is honest about containment: it reports whether linkage was actually installed (Linux `prctl`; other POSIX degrade to new-session-only and log) instead of silently claiming all non-Windows launches are linked.
+- Managed-backend liveness confirms backend death before turn/request silence suppression, so a stale active-turn flag can no longer mask a dead backend.
 - POSIX process-scope cleanup no longer sends signals to a recorded process group unless the scope root is the group leader; non-isolated children degrade to PID-tree cleanup instead of risking termination of the parent agent/test-runner session.
 - POSIX signal forwarding now falls back to signalling only the child process when a launch inherited the parent process group, avoiding parent-session termination for native-inherit OpenCode/Codex TUI paths.
 - Pipe-captured subprocess launches plus Claude/Pi observer backends now start in isolated POSIX sessions so later scope cleanup targets their own process group, not the launching Meridian process group.
+- Spawn reads (`list`/status/stats/non-destructive wait, doctor discovery) no longer terminate processes as a side effect; dead-runner recovery and scope termination fire only from the explicit reconciliation path.
+- Spawn pre-init failures are typed: expected validation/domain failures return a clean failed output, while unexpected exceptions are logged with a traceback and a distinct error signature instead of being silently bucketed as `pre_init_failed`.
+- Pi child-session references resolve the shared Pi session directory via the owner primary (not the child's own `chat_id`) without inheriting the parent transcript; `session export --include-spawns` now includes child spawn reports; `spawn stats --session` filters by the exact session again (was filtering by owner).
 - Managed primary attach now fails and tears down the TUI/backend when the observed event stream dies, and OpenCode keepalive chunks no longer reset progress liveness.
 - Child spawn session logs no longer bind to the parent chat when the child harness session id is not recorded; child rows now point at their own chat and OpenCode records its fresh session id at connect time.
 - OpenCode and Codex streaming now share event-stream liveness detection, so frozen managed backends fail within the liveness window instead of wedging with no events.
 - Backend scope cleanup now runs through `SpawnManager` teardown for harnesses with a `ProcessScopeSnapshot` (OpenCode, Codex), removing the duplicate streaming-finalization cleanup path.
-- Spawn setup failures before spawn-row initialization, including payload validation, now return a consistent failed spawn output through one pre-init boundary.
 
 ## [0.3.1] - 2026-06-07
 
