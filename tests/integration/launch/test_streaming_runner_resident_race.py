@@ -251,6 +251,7 @@ async def test_resident_runner_waits_for_coordinator_after_raw_terminal_frame(
 @pytest.mark.asyncio
 async def test_resident_runner_marks_deadline_drain_outcome_terminal(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     project_root = tmp_path
     runtime_root = resolve_runtime_paths(project_root).root_dir
@@ -277,6 +278,26 @@ async def test_resident_runner_marks_deadline_drain_outcome_terminal(
         prompt="child",
         status="running",
     )
+
+    from meridian.lib.streaming import signal_canceller as signal_canceller_module
+
+    class _FastCanceller:
+        def __init__(self, *, runtime_root: Path, grace_seconds: float) -> None:
+            self.runtime_root = runtime_root
+            self.grace_seconds = grace_seconds
+
+        async def cancel(self, spawn_id: SpawnId) -> object:
+            finalize_spawn(
+                self.runtime_root,
+                spawn_id,
+                "cancelled",
+                130,
+                origin="cancel",
+                error="cancelled",
+            )
+            return object()
+
+    monkeypatch.setattr(signal_canceller_module, "SignalCanceller", _FastCanceller)
 
     connection = _ResidentCodexConnection()
 

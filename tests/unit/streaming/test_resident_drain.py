@@ -682,17 +682,28 @@ async def test_codex_resident_deadline_waits_then_reaps_live_child(
     spawn_id = SpawnId("p1")
     _start_row(tmp_path, str(spawn_id), HarnessId.CODEX, None)
     _start_row(tmp_path, "p2", HarnessId.CODEX, str(spawn_id))
+    from meridian.lib.streaming import signal_canceller as signal_canceller_module
+
     reaped_spawn_ids: list[str] = []
 
-    def _record_teardown(runtime_root: Path, spawn_record: Any, **kwargs: object) -> list[object]:
-        _ = runtime_root, kwargs
-        reaped_spawn_ids.append(spawn_record.id)
-        return []
+    class _FakeCanceller:
+        def __init__(self, *, runtime_root: Path, grace_seconds: float) -> None:
+            self.runtime_root = runtime_root
+            self.grace_seconds = grace_seconds
 
-    monkeypatch.setattr(
-        "meridian.lib.core.process_cleanup.terminate_spawn_scopes",
-        _record_teardown,
-    )
+        async def cancel(self, spawn_id: SpawnId) -> object:
+            reaped_spawn_ids.append(str(spawn_id))
+            spawn_store.finalize_spawn(
+                self.runtime_root,
+                spawn_id,
+                "cancelled",
+                130,
+                origin="cancel",
+                error="cancelled",
+            )
+            return object()
+
+    monkeypatch.setattr(signal_canceller_module, "SignalCanceller", _FakeCanceller)
     connection = _FakeResidentConnection(HarnessId.CODEX)
     manager = await _start_manager(
         tmp_path,
@@ -715,6 +726,9 @@ async def test_codex_resident_deadline_waits_then_reaps_live_child(
         assert outcome.status == "timed_out"
         assert outcome.error == "resident_deadline_expired"
         assert reaped_spawn_ids == ["p2"]
+        child = spawn_store.get_spawn(tmp_path, SpawnId("p2"))
+        assert child is not None
+        assert child.status == "cancelled"
         assert connection.fake_resident_backend.awaiting_done_values[-1] is False
     finally:
         await manager.stop_spawn(spawn_id)
@@ -911,10 +925,10 @@ async def test_deadline_returns_timed_out_when_descendant_reap_fails(
     connection = _FakeResidentConnection(HarnessId.CODEX)
     coordinator = _coordinator_with_clock(tmp_path, connection, clock, deadline_seconds=10.0)
 
-    def _fail_reap() -> None:
+    async def _fail_reap() -> None:
         raise RuntimeError("teardown failed")
 
-    monkeypatch.setattr(coordinator, "terminate_outstanding_descendants", _fail_reap)
+    monkeypatch.setattr(coordinator, "_reap_outstanding_descendants", _fail_reap)
     clock.advance(10.0)
 
     decision = await coordinator.handle_timeout()
@@ -922,6 +936,57 @@ async def test_deadline_returns_timed_out_when_descendant_reap_fails(
     assert decision.recorded_outcome is not None
     assert decision.recorded_outcome.status == "timed_out"
     assert decision.recorded_outcome.error == "resident_deadline_expired"
+
+
+@pytest.mark.asyncio
+async def test_deadline_reap_cancels_active_descendant_cli_spawns(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from meridian.lib.streaming import resident_drain as resident_drain_module
+    from meridian.lib.streaming import signal_canceller as signal_canceller_module
+
+    clock = FakeClock(start=0.0)
+    monkeypatch.setattr(resident_drain_module.time, "monotonic", clock.monotonic)
+    _start_row(tmp_path, "p1", HarnessId.CODEX, None)
+    _start_row(tmp_path, "p2", HarnessId.OPENCODE, "p1")
+    _start_row(tmp_path, "p3", HarnessId.OPENCODE, "p1")
+    spawn_store.finalize_spawn(tmp_path, SpawnId("p3"), "succeeded", 0, origin="runner")
+    connection = _FakeResidentConnection(HarnessId.CODEX)
+    coordinator = _coordinator_with_clock(tmp_path, connection, clock, deadline_seconds=10.0)
+    cancelled: list[str] = []
+
+    class _FakeCanceller:
+        def __init__(self, *, runtime_root: Path, grace_seconds: float) -> None:
+            self.runtime_root = runtime_root
+            self.grace_seconds = grace_seconds
+
+        async def cancel(self, spawn_id: SpawnId) -> object:
+            cancelled.append(str(spawn_id))
+            spawn_store.finalize_spawn(
+                self.runtime_root,
+                spawn_id,
+                "cancelled",
+                130,
+                origin="cancel",
+                error="cancelled",
+            )
+            return object()
+
+    monkeypatch.setattr(signal_canceller_module, "SignalCanceller", _FakeCanceller)
+    clock.advance(10.0)
+
+    decision = await coordinator.handle_timeout()
+
+    assert decision.recorded_outcome is not None
+    assert decision.recorded_outcome.status == "timed_out"
+    assert cancelled == ["p2"]
+    child = spawn_store.get_spawn(tmp_path, SpawnId("p2"))
+    assert child is not None
+    assert child.status == "cancelled"
+    already_terminal = spawn_store.get_spawn(tmp_path, SpawnId("p3"))
+    assert already_terminal is not None
+    assert already_terminal.status == "succeeded"
 
 
 @pytest.mark.asyncio

@@ -76,34 +76,18 @@ def has_outstanding_descendant_work(root_id: str, rows: Sequence[SpawnRecord]) -
     )
 
 
-def terminate_descendant_tree(
+def active_descendants(
     runtime_root: Path,
     root_id: str | SpawnId,
-    *,
-    reason: str,
-    grace_seconds: float = 5.0,
-) -> list[CleanupResult]:
-    """Terminate active recorded process scopes for descendants of one spawn."""
+) -> list[SpawnRecord]:
+    """Active (non-terminal) transitive descendants of one spawn."""
 
-    from meridian.lib.core.process_cleanup import terminate_spawn_scopes
-
-    all_rows = spawn_store.list_spawns(runtime_root)
-    root = str(root_id)
-    records = iter_descendants_from_parent_map(root, _by_parent(all_rows))
-
-    results: list[CleanupResult] = []
-    for record in records:
-        if not is_active_spawn_status(record.status):
-            continue
-        results.extend(
-            terminate_spawn_scopes(
-                runtime_root,
-                record,
-                reason=reason,
-                grace_seconds=grace_seconds,
-            )
-        )
-    return results
+    rows = spawn_store.list_spawns(runtime_root)
+    return [
+        record
+        for record in iter_descendants_from_parent_map(str(root_id), _by_parent(rows))
+        if is_active_spawn_status(record.status)
+    ]
 
 
 def terminate_recorded_spawn_scope(
@@ -126,10 +110,10 @@ def terminate_recorded_spawn_scope(
 
 
 __all__ = [
+    "active_descendants",
     "collect_descendants",
     "descendant_id_set",
     "has_outstanding_descendant_work",
     "iter_descendants_from_parent_map",
-    "terminate_descendant_tree",
     "terminate_recorded_spawn_scope",
 ]

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -192,10 +193,8 @@ class ResidentDrainCoordinator:
     async def handle_timeout(self) -> DrainLoopDecision:
         decision, reap_descendants, inject_due = self._handle_poll()
         if reap_descendants:
-            import asyncio
-
             try:
-                await asyncio.to_thread(self.terminate_outstanding_descendants)
+                await self._reap_outstanding_descendants()
             except Exception:
                 logger.exception(
                     "Failed to terminate resident descendant spawns after deadline expiry.",
@@ -232,10 +231,20 @@ class ResidentDrainCoordinator:
             error="stream_closed_while_awaiting_done",
         )
 
-    def terminate_outstanding_descendants(self) -> None:
-        """Reap tracked descendant process scopes after resident deadline expiry."""
+    async def _reap_outstanding_descendants(self) -> None:
+        """Cancel active tracked descendants after resident deadline expiry."""
 
-        _terminate_descendant_spawn_tree(self.runtime_root, self.spawn_id)
+        from meridian.lib.state.spawn_tree import active_descendants
+        from meridian.lib.streaming.signal_canceller import SignalCanceller
+
+        descendants = active_descendants(self.runtime_root, self.spawn_id)
+        if not descendants:
+            return
+        canceller = SignalCanceller(runtime_root=self.runtime_root, grace_seconds=5.0)
+        await asyncio.gather(
+            *(canceller.cancel(SpawnId(descendant.id)) for descendant in descendants),
+            return_exceptions=True,
+        )
 
     def wants_aux_wake(self) -> bool:
         return False
@@ -339,17 +348,6 @@ def _resident_backend(receiver: HarnessConnection[Any]) -> ResidentBackendContro
         return receiver.resident_backend
     except AttributeError:
         return None
-
-
-def _terminate_descendant_spawn_tree(runtime_root: Path, spawn_id: SpawnId) -> None:
-    from meridian.lib.state.spawn_tree import terminate_descendant_tree
-
-    terminate_descendant_tree(
-        runtime_root,
-        spawn_id,
-        reason="resident_deadline",
-        grace_seconds=5.0,
-    )
 
 
 def _has_outstanding_descendant_work(runtime_root: Path, spawn_id: SpawnId) -> bool:
