@@ -45,6 +45,9 @@ class ProcessScopeSnapshot:
     degraded_reason: str | None
     """Set when containment fell back from the preferred mechanism."""
 
+    parent_death_linked: bool = False
+    """True when the scope root is linked to the launcher lifetime by platform support."""
+
     release_id: str = ""
     """Stable identity for this concrete scope release."""
 

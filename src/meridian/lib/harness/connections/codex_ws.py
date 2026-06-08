@@ -57,8 +57,9 @@ from meridian.lib.harness.connections.liveness import (
     EventStreamLivenessTimeout,
 )
 from meridian.lib.harness.connections.managed_backend import (
-    ManagedBackend,
     ManagedBackendConfig,
+    ManagedBackendHandle,
+    launch_managed_backend,
 )
 from meridian.lib.harness.semantics import clears_signal
 from meridian.lib.launch.env import inherit_child_env
@@ -198,7 +199,7 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
         self._codex_home: Path | None = None
         self._scope_handle: ScopedProcessHandle | None = None
         self._parent_death_link: ParentDeathLink | None = None
-        self._managed_backend: ManagedBackend | None = None
+        self._managed_backend: ManagedBackendHandle | None = None
 
         self._next_request_id = 1
         self._pending_requests: dict[int, asyncio.Future[dict[str, object]]] = {}
@@ -304,7 +305,7 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
         return snapshot.root_created_at_epoch
 
     @property
-    def managed_backend(self) -> ManagedBackend | None:
+    def managed_backend(self) -> ManagedBackendHandle | None:
         return self._managed_backend
 
     async def start(
@@ -360,8 +361,7 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
                 port=port,
             )
             self._emit_startup_phase(StartupPhase.LAUNCHING_SUBPROCESS)
-            managed_backend = ManagedBackend(spawn_dir=spawn_dir)
-            handle = await managed_backend.launch(
+            handle = await launch_managed_backend(
                 ManagedBackendConfig(
                     spawn_id=config.spawn_id,
                     harness_id=self.harness_id,
@@ -374,7 +374,7 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
                 ),
                 stderr=self._stderr_handle,
             )
-            self._managed_backend = managed_backend
+            self._managed_backend = handle
             self._process = handle.process
             self._scope_handle = handle.scope_handle
             self._parent_death_link = handle.parent_death_link

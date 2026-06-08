@@ -44,8 +44,9 @@ from meridian.lib.harness.connections.liveness import (
     LivenessDecision,
 )
 from meridian.lib.harness.connections.managed_backend import (
-    ManagedBackend,
     ManagedBackendConfig,
+    ManagedBackendHandle,
+    launch_managed_backend,
 )
 from meridian.lib.harness.projections.project_opencode_streaming import (
     project_opencode_spec_to_session_payload as _project_opencode_spec_to_session_payload,
@@ -189,7 +190,7 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
         self._startup_emitter: StartupPhaseEmitter | None = None
         self._scope_handle: ScopedProcessHandle | None = None
         self._parent_death_link: ParentDeathLink | None = None
-        self._managed_backend: ManagedBackend | None = None
+        self._managed_backend: ManagedBackendHandle | None = None
 
     @property
     def state(self) -> ConnectionState:
@@ -234,7 +235,7 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
         return snapshot.root_created_at_epoch
 
     @property
-    def managed_backend(self) -> ManagedBackend | None:
+    def managed_backend(self) -> ManagedBackendHandle | None:
         return self._managed_backend
 
     @property
@@ -485,8 +486,7 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
         self._stderr_log_path = spawn_dir / "stderr.log"
         self._stderr_handle = self._stderr_log_path.open("ab")
         self._stderr_read_offset = self._stderr_handle.tell()
-        managed_backend = ManagedBackend(spawn_dir=spawn_dir)
-        handle = await managed_backend.launch(
+        handle = await launch_managed_backend(
             ManagedBackendConfig(
                 spawn_id=config.spawn_id,
                 harness_id=self.harness_id,
@@ -499,7 +499,7 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
             ),
             stderr=self._stderr_handle,
         )
-        self._managed_backend = managed_backend
+        self._managed_backend = handle
         self._process = handle.process
         self._scope_handle = handle.scope_handle
         self._parent_death_link = handle.parent_death_link

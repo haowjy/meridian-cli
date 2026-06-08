@@ -13,7 +13,7 @@ from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.launch.launch_types import SpecT
 
 if TYPE_CHECKING:
-    from meridian.lib.harness.connections.managed_backend import ManagedBackend
+    from meridian.lib.harness.connections.managed_backend import ManagedBackendHandle
     from meridian.lib.observability.debug_tracer import DebugTracer
     from meridian.lib.platform.process_scope import ProcessScopeSnapshot
 
@@ -270,8 +270,8 @@ class HarnessConnection(Generic[SpecT], ABC):
     def subprocess_pid(self) -> int | None: ...
 
     @property
-    def managed_backend(self) -> ManagedBackend | None:
-        """Managed backend lifecycle owner when this connection launched a backend."""
+    def managed_backend(self) -> ManagedBackendHandle | None:
+        """Managed backend process handle when this connection launched a backend."""
         return None
 
     @property

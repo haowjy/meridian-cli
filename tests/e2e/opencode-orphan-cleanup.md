@@ -62,15 +62,16 @@ root = Path(os.environ["RUNTIME_ROOT"])
 spawn_id = os.environ["SPAWN_ID"]
 spawn_dir = root / "spawns" / spawn_id
 state_path = spawn_dir / "state.json"
-lifecycle_path = spawn_dir / "backend_lifecycle.json"
+scopes_path = spawn_dir / "process_scopes.json"
 deadline = time.time() + 60
 
 while time.time() < deadline:
-    if state_path.is_file() and lifecycle_path.is_file():
+    if state_path.is_file() and scopes_path.is_file():
         state = json.loads(state_path.read_text(encoding="utf-8"))
-        lifecycle = json.loads(lifecycle_path.read_text(encoding="utf-8"))
+        scopes = json.loads(scopes_path.read_text(encoding="utf-8"))
         runner_pid = state.get("runner_pid")
-        backend_pid = lifecycle.get("backend_pid")
+        backend_scope = next((scope for scope in scopes.get("scopes", []) if scope.get("scope_id") == "backend"), {})
+        backend_pid = backend_scope.get("root_pid")
         if isinstance(runner_pid, int) and runner_pid > 0 and isinstance(backend_pid, int) and backend_pid > 0:
             print(f"RUNNER_PID={runner_pid}")
             print(f"BACKEND_PID={backend_pid}")
@@ -94,11 +95,12 @@ import psutil
 root = Path(os.environ["RUNTIME_ROOT"])
 spawn_id = os.environ["SPAWN_ID"]
 state = json.loads((root / "spawns" / spawn_id / "state.json").read_text(encoding="utf-8"))
-lifecycle = json.loads((root / "spawns" / spawn_id / "backend_lifecycle.json").read_text(encoding="utf-8"))
+scopes = json.loads((root / "spawns" / spawn_id / "process_scopes.json").read_text(encoding="utf-8"))
+backend_scope = next((scope for scope in scopes.get("scopes", []) if scope.get("scope_id") == "backend"), {})
 status = state.get("status")
 runner_pid = state.get("runner_pid")
 runner_birth = state.get("runner_created_at_epoch")
-backend_pid = lifecycle.get("backend_pid")
+backend_pid = backend_scope.get("root_pid")
 
 if status not in {"queued", "running", "finalizing"}:
     raise SystemExit(f"FAIL: spawn already terminal before crash injection: {status}")

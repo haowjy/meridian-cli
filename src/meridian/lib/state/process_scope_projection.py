@@ -64,6 +64,10 @@ def _snapshot_to_dict(snapshot: ProcessScopeSnapshot) -> dict[str, object]:
 def scope_snapshot_from_dict(data: dict[str, object]) -> ProcessScopeSnapshot | None:
     """Deserialize one scope dict; return None on any error."""
     try:
+        parent_death_linked = data.get("parent_death_linked", False)
+        if not isinstance(parent_death_linked, bool):
+            return None
+        data["parent_death_linked"] = parent_death_linked
         if not isinstance(data.get("release_id"), str) or not str(data.get("release_id")):
             scope_id = data.get("scope_id")
             root_pid = data.get("root_pid")

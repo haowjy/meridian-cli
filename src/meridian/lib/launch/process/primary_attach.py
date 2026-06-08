@@ -377,7 +377,7 @@ class PrimaryAttachLauncher:
             self._write_metadata()
 
     def _record_backend_scope_from_connection(self, session_id: str | None) -> None:
-        """Record backend scope using facts from the connection's ManagedBackend.
+        """Record backend scope using the connection's managed-backend handle.
 
         Primary observer mode suppresses record_scope during launch, so this is
         the single backend scope write for managed-primary attach.
@@ -387,11 +387,9 @@ class PrimaryAttachLauncher:
             return
 
         managed_backend = self._connection.managed_backend
-        scope_snapshot = (
-            managed_backend.scope_snapshot
-            if managed_backend is not None
-            else self._connection.scope_snapshot
-        )
+        scope_snapshot = managed_backend.scope_snapshot if managed_backend is not None else None
+        if scope_snapshot is None:
+            scope_snapshot = self._connection.scope_snapshot
         if scope_snapshot is None:
             return
 
