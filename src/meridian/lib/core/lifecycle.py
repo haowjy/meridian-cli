@@ -35,6 +35,7 @@ from uuid import UUID
 import psutil
 import structlog
 
+from meridian.lib.core.spawn_lifecycle import TERMINAL_SPAWN_STATUSES, is_active_spawn_status
 from meridian.lib.core.spawn_start import SpawnStartMetadata
 from meridian.lib.core.telemetry import (
     CORE_EVENTS,
@@ -98,14 +99,14 @@ def _spawn_transitions() -> Any:
 # ---------------------------------------------------------------------------
 
 EventType = Literal["spawn.created", "spawn.running", "spawn.finalized"]
-TerminalStatus = Literal["succeeded", "failed", "cancelled"]
+TerminalStatus = Literal["succeeded", "failed", "cancelled", "timed_out"]
 TerminalOrigin = Literal["runner", "launcher", "cancel", "reconciler", "launch_failure"]
 
 
 type TerminalOutcomeCategory = Literal["succeeded"] | SpawnFailureCategory
 
 
-_TERMINAL_STATUS_VALUES: frozenset[str] = frozenset({"succeeded", "failed", "cancelled"})
+_TERMINAL_STATUS_VALUES: frozenset[str] = TERMINAL_SPAWN_STATUSES
 
 # ---------------------------------------------------------------------------
 # Event ID generation
@@ -417,7 +418,7 @@ class SpawnLifecycleService:
             resolved_exited_at = exited_at or _utc_now_iso(clock)
             if self._owns_record(spawn_id):
                 assert self._record is not None
-                if self._record.status not in {"queued", "running", "finalizing"}:
+                if not is_active_spawn_status(self._record.status):
                     return False
                 updated = _spawn_transitions().apply_runner_exit(
                     self._record,
@@ -807,6 +808,7 @@ class SpawnLifecycleService:
             "spawn.succeeded",
             "spawn.failed",
             "spawn.cancelled",
+            "spawn.timed_out",
         }:
             payload = _terminal_telemetry_payload(record)
         _emit_lifecycle_event(event_name, record, payload=payload)

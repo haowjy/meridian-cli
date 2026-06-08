@@ -27,6 +27,9 @@ from meridian.lib.core.spawn_lifecycle import (
 from meridian.lib.core.spawn_lifecycle import (
     is_active_spawn_status as _is_active_spawn_status,
 )
+from meridian.lib.core.spawn_lifecycle import (
+    is_terminal_spawn_status as _is_terminal_spawn_status,
+)
 from meridian.lib.core.spawn_start import SpawnStartMetadata
 from meridian.lib.core.types import SpawnId
 from meridian.lib.state.atomic import atomic_write_text
@@ -519,7 +522,7 @@ def record_runner_exit(
 ) -> SpawnRecord | None:
     """Record runner-resolved terminal intent before finalization."""
 
-    if status not in {"succeeded", "failed", "cancelled"}:
+    if not _is_terminal_spawn_status(status):
         raise ValueError(f"runner exit status must be terminal, got {status!r}")
 
     resolved_clock = clock or RealClock()

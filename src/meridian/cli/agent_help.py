@@ -4,7 +4,7 @@ from __future__ import annotations
 
 _SPAWN_SUPPLEMENT = (
     "Agent Notes:\n\n"
-    "Lifecycle: queued → running → finalizing → succeeded | failed | cancelled.\n"
+    "Lifecycle: queued → running → finalizing → succeeded | failed | cancelled | timed_out.\n"
     "'finalizing' is transient — treat as active when polling.\n\n"
     "Which subcommand when:\n\n"
     "  show ID        Status, report, cost — first check for any spawn\n\n"

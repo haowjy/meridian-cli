@@ -24,7 +24,7 @@ _LAUNCH_MODE_VALUES: frozenset[LaunchMode] = frozenset(
 )
 
 SpawnOrigin = Literal["runner", "launcher", "launch_failure", "cancel", "reconciler"]
-TerminalSpawnStatus = Literal["succeeded", "failed", "cancelled"]
+TerminalSpawnStatus = Literal["succeeded", "failed", "cancelled", "timed_out"]
 _AUTHORITATIVE_ORIGIN_VALUES: tuple[SpawnOrigin, ...] = (
     "runner",
     "launcher",

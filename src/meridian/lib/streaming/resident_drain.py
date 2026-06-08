@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any
 from meridian.lib.core.types import SpawnId
 from meridian.lib.harness.connections.liveness import LivenessDecision
 from meridian.lib.harness.semantics import TerminalEventOutcome
+from meridian.lib.state.spawn_signals import consume_resident_signals
 from meridian.lib.streaming.drain_coordinator import (
     DrainExitDecision,
     DrainLoopDecision,
@@ -24,6 +25,15 @@ if TYPE_CHECKING:
 
 
 _TIMEOUT_FLOOR_SECONDS = 0.001
+_INJECT_INTERVAL_SECONDS = 270.0
+_POLL_MESSAGE = (
+    "Are you done? Run `meridian spawn done` to finish, "
+    "or `meridian spawn rearm` to keep going."
+)
+_TIMEOUT_SOON_MESSAGE = (
+    "This spawn times out soon. Run `meridian spawn rearm` to keep going, "
+    "or `meridian spawn done` to finish."
+)
 
 
 @dataclass
@@ -35,8 +45,11 @@ class ResidentDrainCoordinator:
     receiver: HarnessConnection[Any]
     deadline_seconds: float
     poll_seconds: float
-    awaiting_outcome: TerminalEventOutcome | None = None
+    pending_outcome: TerminalEventOutcome | None = None
     deadline_monotonic: float | None = None
+    resident_requested: bool = False
+    turn_active: bool = False
+    next_inject_monotonic: float | None = None
 
     @classmethod
     def for_connection(
@@ -53,9 +66,9 @@ class ResidentDrainCoordinator:
             spawn_id=spawn_id,
             receiver=receiver,
             deadline_seconds=(
-                deadline_seconds if deadline_seconds and deadline_seconds > 0 else 1800.0
+                deadline_seconds if deadline_seconds and deadline_seconds > 0 else 3300.0
             ),
-            poll_seconds=poll_seconds if poll_seconds and poll_seconds > 0 else 10.0,
+            poll_seconds=poll_seconds if poll_seconds and poll_seconds > 0 else 5.0,
         )
 
     async def start(self) -> None:
@@ -63,8 +76,7 @@ class ResidentDrainCoordinator:
 
     async def stop(self) -> None:
         self._set_awaiting_done(False)
-        self.awaiting_outcome = None
-        self.deadline_monotonic = None
+        self._clear_resident_state()
 
     def default_policy(self) -> DrainPolicy:
         return SingleTurnDrainPolicy()
@@ -78,12 +90,13 @@ class ResidentDrainCoordinator:
         return False
 
     def observe_activity_transition(self, transition: str | None) -> None:
-        """Clear resident-idle liveness once a new turn becomes active."""
+        """Track active follow-up turns without leaving resident control."""
 
         if transition == "turn_active":
+            now_monotonic = time.monotonic()
+            self.turn_active = True
             self._set_awaiting_done(False)
-            self.awaiting_outcome = None
-            self.deadline_monotonic = None
+            self.next_inject_monotonic = now_monotonic + _INJECT_INTERVAL_SECONDS
 
     async def observe_event(self, event: HarnessEvent, transition: str | None) -> bool:
         self.observe_activity_transition(transition)
@@ -99,58 +112,88 @@ class ResidentDrainCoordinator:
         action: DrainAction,
     ) -> DrainTerminalDecision:
         if not action.terminate:
-            self._set_awaiting_done(False)
-            self.awaiting_outcome = None
-            self.deadline_monotonic = None
+            self._clear_resident_state()
             return DrainTerminalDecision(emit_turn_boundary=action.emit_turn_boundary)
         if outcome.status != "succeeded":
-            self._set_awaiting_done(False)
-            return DrainTerminalDecision(recorded_outcome=outcome)
-        if not _has_outstanding_descendant_work(self.runtime_root, self.spawn_id):
-            self._set_awaiting_done(False)
+            self._clear_resident_state()
             return DrainTerminalDecision(recorded_outcome=outcome)
 
-        self.awaiting_outcome = outcome
-        self.deadline_monotonic = time.monotonic() + self.deadline_seconds
+        now_monotonic = time.monotonic()
+        signals = consume_resident_signals(self.runtime_root, self.spawn_id)
+        if signals.done:
+            self._clear_resident_state()
+            return DrainTerminalDecision(recorded_outcome=outcome)
+        if signals.rearm:
+            self._mark_rearmed(now_monotonic)
+        has_outstanding_work = _has_outstanding_descendant_work(self.runtime_root, self.spawn_id)
+        if not (has_outstanding_work or self.resident_requested):
+            self._clear_resident_state()
+            return DrainTerminalDecision(recorded_outcome=outcome)
+
+        self.pending_outcome = outcome
+        if self.deadline_monotonic is None:
+            self.deadline_monotonic = now_monotonic + self.deadline_seconds
+        self.turn_active = False
+        if self.resident_requested:
+            self.next_inject_monotonic = now_monotonic + _INJECT_INTERVAL_SECONDS
         self._set_awaiting_done(True)
         return DrainTerminalDecision(emit_turn_boundary=True)
 
     def next_timeout(self) -> float | None:
-        if self.awaiting_outcome is None:
+        if not self._is_resident():
             return None
         now_monotonic = time.monotonic()
+        candidates = [self.poll_seconds]
         remaining = self._deadline_remaining(now_monotonic)
-        timeout = self.poll_seconds
         if remaining is not None:
-            timeout = min(timeout, remaining)
-        return max(timeout, _TIMEOUT_FLOOR_SECONDS)
+            candidates.append(remaining)
+        return max(min(candidates), _TIMEOUT_FLOOR_SECONDS)
 
-    def _handle_poll(self) -> tuple[DrainLoopDecision, bool]:
-        if self.awaiting_outcome is None:
-            return (DrainLoopDecision(), False)
+    def _handle_poll(self) -> tuple[DrainLoopDecision, bool, bool]:
+        if not self._is_resident():
+            return (DrainLoopDecision(), False, False)
         now_monotonic = time.monotonic()
-        deadline_expired = self._deadline_expired(now_monotonic)
+        signal_decision = self._consume_signals(now_monotonic)
+        if signal_decision is not None:
+            return (signal_decision, False, False)
+        if self._deadline_expired(now_monotonic):
+            self._clear_resident_state()
+            return (
+                DrainLoopDecision(
+                    recorded_outcome=TerminalEventOutcome(
+                        status="timed_out",
+                        exit_code=1,
+                        error="resident_deadline_expired",
+                    )
+                ),
+                True,
+                False,
+            )
+        if self.turn_active:
+            return (DrainLoopDecision(), False, False)
         has_outstanding_work = _has_outstanding_descendant_work(
             self.runtime_root,
             self.spawn_id,
         )
-        if deadline_expired or not has_outstanding_work:
-            outcome = self.awaiting_outcome
-            self._set_awaiting_done(False)
-            self.awaiting_outcome = None
-            self.deadline_monotonic = None
-            return (
-                DrainLoopDecision(recorded_outcome=outcome),
-                deadline_expired and has_outstanding_work,
-            )
-        return (DrainLoopDecision(), False)
+        if has_outstanding_work:
+            return (DrainLoopDecision(), False, False)
+        if self.resident_requested:
+            inject_due = self._inject_due(now_monotonic)
+            if inject_due:
+                self.next_inject_monotonic = now_monotonic + _INJECT_INTERVAL_SECONDS
+            return (DrainLoopDecision(), False, inject_due)
+        outcome = self.pending_outcome
+        self._clear_resident_state()
+        return (DrainLoopDecision(recorded_outcome=outcome), False, False)
 
     async def handle_timeout(self) -> DrainLoopDecision:
-        decision, reap_descendants = self._handle_poll()
+        decision, reap_descendants, inject_due = self._handle_poll()
         if reap_descendants:
             import asyncio
 
             await asyncio.to_thread(self.terminate_outstanding_descendants)
+        if inject_due:
+            await self._inject_poll_message()
         return decision
 
     async def after_event(self) -> DrainLoopDecision:
@@ -164,10 +207,10 @@ class ResidentDrainCoordinator:
         a failure while descendants are still outstanding.
         """
 
-        if self.awaiting_outcome is None:
+        if not self._is_resident():
             return None
         if intentional_stop:
-            return self.awaiting_outcome
+            return self.pending_outcome
         if _resident_health_status(self.receiver) == LivenessDecision.BACKEND_DEAD:
             return TerminalEventOutcome(
                 status="failed",
@@ -207,6 +250,55 @@ class ResidentDrainCoordinator:
         outcome: DrainOutcome,
     ) -> None:
         return
+
+    def _consume_signals(self, now_monotonic: float) -> DrainLoopDecision | None:
+        signals = consume_resident_signals(self.runtime_root, self.spawn_id)
+        if signals.done:
+            outcome = self.pending_outcome or TerminalEventOutcome(status="succeeded", exit_code=0)
+            self._clear_resident_state()
+            return DrainLoopDecision(recorded_outcome=outcome)
+        if signals.rearm:
+            self._mark_rearmed(now_monotonic)
+        return None
+
+    def _mark_rearmed(self, now_monotonic: float) -> None:
+        self.resident_requested = True
+        self.deadline_monotonic = now_monotonic + self.deadline_seconds
+        self.next_inject_monotonic = now_monotonic + _INJECT_INTERVAL_SECONDS
+
+    def _inject_due(self, now_monotonic: float) -> bool:
+        return (
+            self.resident_requested
+            and self.next_inject_monotonic is not None
+            and now_monotonic >= self.next_inject_monotonic
+        )
+
+    async def _inject_poll_message(self) -> None:
+        if _resident_health_status(self.receiver) == LivenessDecision.BACKEND_DEAD:
+            return
+        now_monotonic = time.monotonic()
+        remaining = self._deadline_remaining(now_monotonic)
+        message = (
+            _TIMEOUT_SOON_MESSAGE
+            if remaining is not None and remaining < _INJECT_INTERVAL_SECONDS
+            else _POLL_MESSAGE
+        )
+        try:
+            await self.receiver.inject_turn(message)
+        except Exception:
+            # Poll injection is advisory; drain-loop correctness must not depend on it.
+            return
+
+    def _clear_resident_state(self) -> None:
+        self._set_awaiting_done(False)
+        self.pending_outcome = None
+        self.deadline_monotonic = None
+        self.resident_requested = False
+        self.turn_active = False
+        self.next_inject_monotonic = None
+
+    def _is_resident(self) -> bool:
+        return self.deadline_monotonic is not None
 
     def _deadline_remaining(self, now_monotonic: float) -> float | None:
         if self.deadline_monotonic is None:

@@ -613,6 +613,37 @@ def test_reconcile_active_spawn_finalizes_failed_runner_exit_tuple_after_grace(
     assert latest.error == "guardrail_failed"
 
 
+def test_reconcile_active_spawn_preserves_timed_out_runner_exit_after_grace(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime_root, spawn_id = _create_spawn(tmp_path, started_at=_OLD_STARTED_AT)
+    spawn_store.record_runner_exit(
+        runtime_root,
+        spawn_id,
+        status="timed_out",
+        exit_code=1,
+        error="resident_deadline_expired",
+        exited_at="1970-01-01T00:16:30Z",
+    )
+    record = _get_spawn(runtime_root, spawn_id)
+    monkeypatch.setattr("meridian.lib.state.reaper.time.time", lambda: 1_000.0)
+    monkeypatch.setattr(
+        "meridian.lib.state.reaper.is_process_alive",
+        lambda *_args, **_kwargs: False,
+    )
+
+    reconciled = _reconcile(tmp_path, runtime_root, record)
+
+    assert reconciled.status == "timed_out"
+    assert reconciled.exit_code == 1
+    assert reconciled.error == "resident_deadline_expired"
+    latest = _get_spawn(runtime_root, spawn_id)
+    assert latest.status == "timed_out"
+    assert latest.exit_code == 1
+    assert latest.error == "resident_deadline_expired"
+
+
 def test_reconcile_active_spawn_durable_report_wins_over_cancelled_runner_exit(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

@@ -17,6 +17,8 @@ from meridian.lib.core.lifecycle import SpawnLifecycleService
 from meridian.lib.core.spawn_lifecycle import (
     ExecutionTerminalFacts,
     ExecutionTerminalOutcome,
+    coerce_spawn_status,
+    is_terminal_spawn_status,
     resolve_completion_cancel_precedence,
     resolve_execution_terminal_outcome,
 )
@@ -266,9 +268,7 @@ class SpawnApplicationService:
 
     def is_terminal(self, status: str) -> bool:
         """Check if status is terminal."""
-        from meridian.lib.core.spawn_lifecycle import TERMINAL_SPAWN_STATUSES
-
-        return status in TERMINAL_SPAWN_STATUSES
+        return is_terminal_spawn_status(status)
 
     def require_not_terminal(self, record: SpawnRecord) -> None:
         """Raise if spawn is already terminal."""
@@ -844,7 +844,7 @@ class SpawnApplicationService:
                 spawn_id=spawn_id,
             )
         was_terminal = self.is_terminal(record.status)
-        if not was_terminal and status in {"succeeded", "failed", "cancelled"}:
+        if not was_terminal and self.is_terminal(status):
             terminal_status = cast("TerminalStatus", status)
             await asyncio.to_thread(
                 self._lifecycle.record_runner_exit,
@@ -1020,9 +1020,7 @@ def _cancel_outcome_from_record(
 
 
 def _coerce_cancel_status(status: str) -> SpawnStatus:
-    if status in {"queued", "running", "finalizing", "succeeded", "failed", "cancelled"}:
-        return cast("SpawnStatus", status)
-    return "failed"
+    return coerce_spawn_status(status)
 
 
 def _is_managed_primary_candidate(record: SpawnRecord) -> bool:

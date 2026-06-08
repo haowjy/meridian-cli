@@ -14,6 +14,7 @@ from meridian.lib.core.depth import is_root_side_effect_process
 from meridian.lib.core.domain import SpawnStatus
 from meridian.lib.core.spawn_lifecycle import (
     is_active_spawn_status,
+    is_terminal_spawn_status,
     resolve_completion_cancel_precedence,
     resolve_reconciled_terminal_state,
 )
@@ -201,7 +202,7 @@ def _in_post_runner_exit_finalization_grace(record: SpawnRecord, now: float) -> 
 
 def _finalize_from_runner_exit_decision(record: SpawnRecord) -> FinalizeFromRunnerExit:
     status = record.runner_exit_status
-    if status not in {"succeeded", "failed", "cancelled"}:
+    if status is None or not is_terminal_spawn_status(status):
         return FinalizeFromRunnerExit(status="failed", exit_code=1, error="orphan_run")
     if record.runner_exit_code is not None:
         exit_code = record.runner_exit_code

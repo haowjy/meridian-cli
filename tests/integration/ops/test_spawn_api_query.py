@@ -259,6 +259,50 @@ def test_spawn_list_filters_by_profile_name(tmp_path: Path) -> None:
     assert [entry.spawn_id for entry in output.spawns] == [str(reviewer_spawn_id)]
 
 
+def test_spawn_list_and_status_surface_timed_out_status(tmp_path: Path) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    runtime_root = _state_root(project_root)
+
+    timed_out_id = spawn_store.start_spawn(
+        runtime_root,
+        spawn_id="p-timeout",
+        chat_id="c-timeout",
+        model="gpt-5.4",
+        agent="coder",
+        harness="codex",
+        prompt="timeout",
+    )
+    spawn_store.finalize_spawn(
+        runtime_root,
+        timed_out_id,
+        "timed_out",
+        1,
+        origin="runner",
+    )
+    spawn_store.start_spawn(
+        runtime_root,
+        spawn_id="p-running",
+        chat_id="c-running",
+        model="gpt-5.4",
+        agent="coder",
+        harness="codex",
+        prompt="running",
+    )
+
+    listed = spawn_api.spawn_list_sync(
+        SpawnListInput(project_root=project_root.as_posix(), statuses=("timed_out",))
+    )
+    status = spawn_api.spawn_status_sync(
+        SpawnStatusInput(project_root=project_root.as_posix(), spawn_id=str(timed_out_id))
+    )
+
+    assert [entry.spawn_id for entry in listed.spawns] == [str(timed_out_id)]
+    assert listed.spawns[0].status == "timed_out"
+    assert status.status == "timed_out"
+    assert status.exit_code == 1
+
+
 def test_spawn_status_omits_report_body_until_requested(tmp_path: Path) -> None:
     project_root = tmp_path / "repo"
     project_root.mkdir()
@@ -468,3 +512,4 @@ def test_spawn_show_includes_distinct_task_dir_without_authority_noise(tmp_path:
     wire = detail.to_cli_wire()
     assert wire["task_cwd"] == task_cwd.as_posix()
     assert "authority_root" not in wire
+

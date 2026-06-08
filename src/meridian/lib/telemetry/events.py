@@ -7,6 +7,8 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Literal, TypedDict
 
+from meridian.lib.core.spawn_lifecycle import FAILURE_SPAWN_STATUSES
+
 VALID_DOMAINS = frozenset({"spawn", "chat", "server", "work", "runtime", "usage"})
 VALID_SEVERITIES = frozenset({"debug", "info", "warning", "error"})
 VALID_CONCERNS = frozenset({"operational", "error", "usage"})
@@ -55,12 +57,20 @@ class EventDefinition(TypedDict):
     ids: tuple[str, ...]
 
 
+def _spawn_event_definition(status: str) -> EventDefinition:
+    concerns: tuple[Concern, ...] = (
+        ("operational", "error") if status in FAILURE_SPAWN_STATUSES else ("operational",)
+    )
+    return {"domain": "spawn", "concerns": concerns, "ids": ("spawn_id",)}
+
+
 EVENT_REGISTRY: dict[str, EventDefinition] = {
     # Spawn domain: sparse correlation markers.
     "spawn.process_exited": {"domain": "spawn", "concerns": ("operational",), "ids": ("spawn_id",)},
-    "spawn.succeeded": {"domain": "spawn", "concerns": ("operational",), "ids": ("spawn_id",)},
-    "spawn.failed": {"domain": "spawn", "concerns": ("operational", "error"), "ids": ("spawn_id",)},
-    "spawn.cancelled": {"domain": "spawn", "concerns": ("operational",), "ids": ("spawn_id",)},
+    "spawn.succeeded": _spawn_event_definition("succeeded"),
+    "spawn.failed": _spawn_event_definition("failed"),
+    "spawn.cancelled": _spawn_event_definition("cancelled"),
+    "spawn.timed_out": _spawn_event_definition("timed_out"),
     # Chat domain: dead-zone events.
     "chat.http.request_completed": {
         "domain": "chat",

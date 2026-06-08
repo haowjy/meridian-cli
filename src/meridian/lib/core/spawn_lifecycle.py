@@ -12,13 +12,20 @@ from typing import cast
 
 from meridian.lib.core.domain import SpawnStatus
 
+# TODO(status-authority): SpawnStatus Literal in core/domain.py duplicates these sets.
+ALL_SPAWN_STATUSES: frozenset[str] = frozenset(
+    {"queued", "running", "finalizing", "succeeded", "failed", "cancelled", "timed_out"}
+)
 ACTIVE_SPAWN_STATUSES: frozenset[str] = frozenset({"queued", "running", "finalizing"})
-TERMINAL_SPAWN_STATUSES: frozenset[str] = frozenset({"succeeded", "failed", "cancelled"})
+TERMINAL_SPAWN_STATUSES: frozenset[str] = frozenset(
+    {"succeeded", "failed", "cancelled", "timed_out"}
+)
+FAILURE_SPAWN_STATUSES: frozenset[str] = frozenset({"failed", "timed_out"})
 
 _ALLOWED_TRANSITIONS: dict[str, frozenset[str]] = {
-    "queued": frozenset({"running", "succeeded", "failed", "cancelled"}),
-    "running": frozenset({"finalizing", "succeeded", "failed", "cancelled"}),
-    "finalizing": frozenset({"succeeded", "failed", "cancelled"}),
+    "queued": frozenset({"running", "succeeded", "failed", "cancelled", "timed_out"}),
+    "running": frozenset({"finalizing", "succeeded", "failed", "cancelled", "timed_out"}),
+    "finalizing": frozenset({"succeeded", "failed", "cancelled", "timed_out"}),
 }
 _CONTROL_EVENT_NAMES: frozenset[str] = frozenset(
     {"cancelled", "error", "error.connectionclosed"}
@@ -152,6 +159,18 @@ def is_control_report_payload(payload: dict[str, object]) -> bool:
 
 def is_active_spawn_status(status: str) -> bool:
     return status in ACTIVE_SPAWN_STATUSES
+
+
+def is_terminal_spawn_status(status: str) -> bool:
+    return status in TERMINAL_SPAWN_STATUSES
+
+
+def coerce_spawn_status(status: str) -> SpawnStatus:
+    """Preserve every known spawn status; recover unknown persisted values as failed."""
+
+    if status in ALL_SPAWN_STATUSES:
+        return cast("SpawnStatus", status)
+    return "failed"
 
 
 def validate_transition(from_status: SpawnStatus, to_status: SpawnStatus) -> None:
