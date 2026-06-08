@@ -125,6 +125,7 @@ class SpawnDrainLoop:
             deadline_seconds=resident_deadline_seconds,
             poll_seconds=resident_poll_seconds,
         )
+        use_resident_drain = resident_drain.enabled
 
         policy = drain_policy
         if policy is None:
@@ -138,28 +139,41 @@ class SpawnDrainLoop:
         try:
             while True:
                 wake = await drain_waiter.wait(
-                    _min_timeout(pi_drain.next_timeout(), resident_drain.next_timeout())
+                    resident_drain.next_timeout() if use_resident_drain else pi_drain.next_timeout()
                 )
                 if isinstance(wake, DrainClosedWake):
-                    if pi_drain.quiescence_candidate is not None:
+                    if use_resident_drain:
+                        session = self._sessions.get(spawn_id)
+                        close_outcome = resident_drain.outcome_on_close(
+                            intentional_stop=bool(session.cancel_sent)
+                            if session is not None
+                            else False,
+                        )
+                        if close_outcome is not None:
+                            recorded_terminal_outcome = close_outcome
+                    elif pi_drain.quiescence_candidate is not None:
                         recorded_terminal_outcome = pi_drain.quiescence_candidate
-                    elif resident_drain.outcome_on_close() is not None:
-                        recorded_terminal_outcome = resident_drain.outcome_on_close()
                     break
                 if isinstance(wake, DrainDiskChangeWake):
                     await pi_drain.reevaluate_after_disk_change()
                     continue
                 if isinstance(wake, DrainTimeoutWake):
-                    timeout_outcome = None
-                    if pi_drain.next_timeout() is not None:
+                    if use_resident_drain:
+                        resident_poll = resident_drain.handle_poll()
+                        if resident_poll is not None:
+                            if resident_poll.reap_descendants:
+                                await asyncio.to_thread(
+                                    resident_drain.terminate_outstanding_descendants
+                                )
+                            recorded_terminal_outcome = resident_poll.recorded_outcome
+                            break
+                    else:
                         timeout_outcome = await pi_drain.handle_timeout(
                             _terminate_tracked_pi_children,
                         )
-                    if timeout_outcome is None:
-                        timeout_outcome = resident_drain.handle_poll()
-                    if timeout_outcome is not None:
-                        recorded_terminal_outcome = timeout_outcome
-                        break
+                        if timeout_outcome is not None:
+                            recorded_terminal_outcome = timeout_outcome
+                            break
                     continue
 
                 event = wake.event
@@ -170,7 +184,7 @@ class SpawnDrainLoop:
                         event,
                         codex_main_thread_id=_codex_main_thread_id(receiver),
                     )
-                    if pi_drain.is_pi_connection or resident_drain.enabled
+                    if pi_drain.is_pi_connection or use_resident_drain
                     else None
                 )
                 resident_drain.observe_activity_transition(transition)
@@ -254,7 +268,7 @@ class SpawnDrainLoop:
 
                 if event_outcome is not None:
                     action = policy.classify(event_outcome)
-                    if resident_drain.enabled:
+                    if use_resident_drain:
                         resident_decision = resident_drain.handle_terminal_event(
                             event_outcome,
                             action,
@@ -272,10 +286,14 @@ class SpawnDrainLoop:
                         if pi_decision.emit_turn_boundary:
                             await self._fan_out_turn_boundary(spawn_id, event_outcome)
 
-                if resident_drain.enabled:
-                    resident_outcome = resident_drain.handle_poll()
-                    if resident_outcome is not None:
-                        recorded_terminal_outcome = resident_outcome
+                if use_resident_drain:
+                    resident_poll = resident_drain.handle_poll()
+                    if resident_poll is not None:
+                        if resident_poll.reap_descendants:
+                            await asyncio.to_thread(
+                                resident_drain.terminate_outstanding_descendants
+                            )
+                        recorded_terminal_outcome = resident_poll.recorded_outcome
                         break
 
                 pi_failure = pi_drain.failure_outcome_after_event()
@@ -396,11 +414,3 @@ def _safe_connection_session_id(connection: object) -> str | None:
     except Exception:
         return None
     return session_id if isinstance(session_id, str) and session_id.strip() else None
-
-
-def _min_timeout(left: float | None, right: float | None) -> float | None:
-    if left is None:
-        return right
-    if right is None:
-        return left
-    return min(left, right)

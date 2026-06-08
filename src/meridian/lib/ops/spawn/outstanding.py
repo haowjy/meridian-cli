@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+from collections import deque
 from pathlib import Path
 
 from meridian.lib.core.spawn_lifecycle import is_active_spawn_status
 from meridian.lib.core.types import SpawnId
 from meridian.lib.state import spawn_store
+from meridian.lib.state.spawn.model import SpawnRecord
 
 
 def has_outstanding_descendant_work(runtime_root: Path, spawn_id: SpawnId | str) -> bool:
@@ -17,19 +19,17 @@ def has_outstanding_descendant_work(runtime_root: Path, spawn_id: SpawnId | str)
     zero-cooperation tracked-work signal.
     """
 
-    children = spawn_store.list_spawns(runtime_root, filters={"parent_id": str(spawn_id)})
-    queue = [child.id for child in children]
-    for child in children:
-        if is_active_spawn_status(child.status):
-            return True
+    by_parent: dict[str | None, list[SpawnRecord]] = {}
+    for row in spawn_store.list_spawns(runtime_root):
+        by_parent.setdefault(row.parent_id, []).append(row)
 
+    queue: deque[str] = deque([str(spawn_id)])
     while queue:
-        parent_id = queue.pop(0)
-        descendants = spawn_store.list_spawns(runtime_root, filters={"parent_id": parent_id})
-        for descendant in descendants:
-            if is_active_spawn_status(descendant.status):
+        parent_id = queue.popleft()
+        for child in by_parent.get(parent_id, []):
+            if is_active_spawn_status(child.status):
                 return True
-            queue.append(descendant.id)
+            queue.append(child.id)
     return False
 
 

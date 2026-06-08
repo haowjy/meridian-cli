@@ -25,6 +25,12 @@ class ResidentTerminalDecision:
     emit_turn_boundary: bool = False
 
 
+@dataclass(frozen=True)
+class ResidentPollDecision:
+    recorded_outcome: TerminalEventOutcome
+    reap_descendants: bool = False
+
+
 @dataclass
 class ResidentDrainCoordinator:
     """Own Codex/OpenCode post-turn waiting for Meridian-tracked child spawns."""
@@ -79,6 +85,11 @@ class ResidentDrainCoordinator:
                 recorded_outcome=outcome if action.terminate else None,
                 emit_turn_boundary=action.emit_turn_boundary,
             )
+        if not action.terminate:
+            self._set_awaiting_done(False)
+            self.awaiting_outcome = None
+            self.deadline_monotonic = None
+            return ResidentTerminalDecision(emit_turn_boundary=action.emit_turn_boundary)
         if outcome.status != "succeeded":
             self._set_awaiting_done(False)
             return ResidentTerminalDecision(recorded_outcome=outcome)
@@ -101,25 +112,54 @@ class ResidentDrainCoordinator:
             timeout = min(timeout, remaining)
         return max(timeout, _TIMEOUT_FLOOR_SECONDS)
 
-    def handle_poll(self) -> TerminalEventOutcome | None:
+    def handle_poll(self) -> ResidentPollDecision | None:
         if not self.enabled or self.awaiting_outcome is None:
             return None
         now_monotonic = time.monotonic()
-        if self._deadline_expired(now_monotonic) or not _has_outstanding_descendant_work(
+        deadline_expired = self._deadline_expired(now_monotonic)
+        has_outstanding_work = _has_outstanding_descendant_work(
             self.runtime_root,
             self.spawn_id,
-        ):
+        )
+        if deadline_expired or not has_outstanding_work:
             outcome = self.awaiting_outcome
             self._set_awaiting_done(False)
             self.awaiting_outcome = None
             self.deadline_monotonic = None
-            return outcome
+            return ResidentPollDecision(
+                recorded_outcome=outcome,
+                reap_descendants=deadline_expired and has_outstanding_work,
+            )
         return None
 
-    def outcome_on_close(self) -> TerminalEventOutcome | None:
-        """Use the completed-turn result if the stream closes during resident wait."""
+    def outcome_on_close(self, *, intentional_stop: bool) -> TerminalEventOutcome | None:
+        """Classify stream close while resident-waiting.
 
-        return self.awaiting_outcome
+        A completed turn is success only when Meridian deliberately stopped the
+        session. EOF from a dead or otherwise unexpectedly closed backend wins as
+        a failure while descendants are still outstanding.
+        """
+
+        if self.awaiting_outcome is None:
+            return None
+        if intentional_stop:
+            return self.awaiting_outcome
+        if not _connection_healthy(self.receiver):
+            return TerminalEventOutcome(
+                status="failed",
+                exit_code=1,
+                error="backend_dead_while_awaiting_done",
+            )
+        return TerminalEventOutcome(
+            status="failed",
+            exit_code=1,
+            error="stream_closed_while_awaiting_done",
+        )
+
+    def terminate_outstanding_descendants(self) -> None:
+        """Reap tracked descendant process scopes after resident deadline expiry."""
+
+        _terminate_descendant_spawn_tree(self.runtime_root, self.spawn_id)
 
     def stop(self) -> None:
         self._set_awaiting_done(False)
@@ -141,6 +181,33 @@ class ResidentDrainCoordinator:
             liveness.set_awaiting_done(awaiting_done)
 
 
+def _connection_healthy(receiver: HarnessConnection[Any]) -> bool:
+    try:
+        return bool(receiver.health())
+    except Exception:
+        return False
+
+
+def _terminate_descendant_spawn_tree(runtime_root: Path, spawn_id: SpawnId) -> None:
+    # Lazy imports keep resident drain independent from spawn CLI operations at
+    # import time while reusing the canonical descendant walk and process cleanup.
+    from meridian.lib.core.process_cleanup import terminate_spawn_scopes
+    from meridian.lib.core.spawn_lifecycle import is_active_spawn_status
+    from meridian.lib.ops.spawn.api import collect_descendants
+    from meridian.lib.state import spawn_store
+
+    all_spawns = spawn_store.list_spawns(runtime_root)
+    descendants = collect_descendants(str(spawn_id), all_spawns)[1:]
+    for descendant in descendants:
+        if is_active_spawn_status(descendant.status):
+            terminate_spawn_scopes(
+                runtime_root,
+                descendant,
+                reason="resident_deadline",
+                grace_seconds=5.0,
+            )
+
+
 def _has_outstanding_descendant_work(runtime_root: Path, spawn_id: SpawnId) -> bool:
     # Import lazily: meridian.lib.ops.spawn.__init__ exposes CLI operations and
     # pulls in streaming_runner/spawn_manager. Top-level import here would create
@@ -150,4 +217,4 @@ def _has_outstanding_descendant_work(runtime_root: Path, spawn_id: SpawnId) -> b
     return has_outstanding_descendant_work(runtime_root, spawn_id)
 
 
-__all__ = ["ResidentDrainCoordinator", "ResidentTerminalDecision"]
+__all__ = ["ResidentDrainCoordinator", "ResidentPollDecision", "ResidentTerminalDecision"]

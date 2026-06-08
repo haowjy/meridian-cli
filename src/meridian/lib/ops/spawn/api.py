@@ -703,6 +703,15 @@ def _collect_descendants(
     return result
 
 
+def collect_descendants(
+    root_id: str,
+    all_spawns: list[SpawnRecord],
+) -> list[SpawnRecord]:
+    """Public read-only descendant walk for spawn tree callers."""
+
+    return _collect_descendants(root_id, all_spawns)
+
+
 def spawn_stats_sync(
     payload: SpawnStatsInput,
     ctx: RuntimeContext | None = None,
