@@ -227,10 +227,11 @@ def read_spawn_row(
     resolved_runtime_root = runtime_root or resolve_runtime_root_for_read(project_root)
     record = spawn_store.get_spawn(resolved_runtime_root, spawn_id)
     if record is not None and is_active_spawn_status(record.status):
-        from meridian.lib.state.reaper import reconcile_active_spawn
+        if is_root_side_effect_process():
+            from meridian.lib.state.reaper import peek_reconciled_active_spawn
 
-        record = reconcile_active_spawn(project_root, resolved_runtime_root, record)
-        if is_active_spawn_status(record.status) and not is_root_side_effect_process():
+            record = peek_reconciled_active_spawn(resolved_runtime_root, record)
+        else:
             record = _read_only_nested_staleness_view(
                 runtime_root=resolved_runtime_root,
                 record=record,

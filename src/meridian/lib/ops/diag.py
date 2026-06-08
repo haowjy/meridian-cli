@@ -166,7 +166,7 @@ def _repair_orphan_runs(
     *,
     runtime_root: Path | None = None,
 ) -> tuple[int, tuple[str, ...]]:
-    from meridian.lib.state.reaper import reconcile_spawns
+    from meridian.lib.state.reaper import reconcile_active_spawn
 
     resolved_runtime_root = runtime_root
     if resolved_runtime_root is None:
@@ -177,7 +177,14 @@ def _repair_orphan_runs(
         raise ValueError("Doctor orphan-run repair requires a runtime root.")
     spawns = spawn_store.list_spawns(resolved_runtime_root)
     running_before = {s.id for s in spawns if is_active_spawn_status(s.status)}
-    reconciled = reconcile_spawns(project_root, resolved_runtime_root, spawns)
+    reconciled = [
+        (
+            reconcile_active_spawn(project_root, resolved_runtime_root, spawn)
+            if is_active_spawn_status(spawn.status)
+            else spawn
+        )
+        for spawn in spawns
+    ]
     running_after = {s.id for s in reconciled if is_active_spawn_status(s.status)}
     reconciled_orphans = tuple(sorted(running_before - running_after))
     return len(reconciled_orphans), reconciled_orphans
