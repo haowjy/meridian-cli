@@ -10,6 +10,7 @@ from meridian.lib.streaming.drain_policy import DrainAction, DrainPolicy
 if TYPE_CHECKING:
     from meridian.lib.harness.connections.base import HarnessEvent
     from meridian.lib.harness.semantics import TerminalEventOutcome
+    from meridian.lib.streaming.spawn_session import DrainOutcome
 
 
 @dataclass(frozen=True)
@@ -25,6 +26,14 @@ class DrainLoopDecision:
     """Coordinator decision that may finish the drain loop."""
 
     recorded_outcome: TerminalEventOutcome | None = None
+
+
+@dataclass(frozen=True)
+class DrainExitDecision:
+    """Coordinator decision when the event stream exits before finalization."""
+
+    recorded_outcome: TerminalEventOutcome | None = None
+    fallback_error: str | None = None
 
 
 class DrainCoordinator(Protocol):
@@ -55,9 +64,7 @@ class DrainCoordinator(Protocol):
 
     async def observe_event(self, event: HarnessEvent, transition: str | None) -> bool: ...
 
-    def note_event_persisted(self, event: HarnessEvent) -> None: ...
-
-    def lifecycle_error_outcome(self) -> TerminalEventOutcome | None: ...
+    def note_event_persisted(self, event: HarnessEvent) -> DrainLoopDecision: ...
 
     async def handle_terminal_event(
         self,
@@ -72,21 +79,17 @@ class DrainCoordinator(Protocol):
 
     def handle_close(self, *, intentional_stop: bool) -> TerminalEventOutcome | None: ...
 
-    def failure_outcome_after_event(self) -> TerminalEventOutcome | None: ...
+    async def handle_stream_exit(
+        self,
+        recorded_outcome: TerminalEventOutcome | None,
+    ) -> DrainExitDecision: ...
 
-    def maybe_start_quiescence_after_event(self) -> None: ...
-
-    def pending_children_at_exit(self) -> bool: ...
-
-    async def cleanup_pending_children_at_exit(self) -> None: ...
-
-    def fallback_error_without_recorded_outcome(self) -> str | None: ...
-
-    def finalization_session_id(self, connection_session_id: str | None) -> str | None: ...
-
-    def emit_session_phase_if_needed(self, session_id: str | None) -> None: ...
-
-    def emit_finalized(self, *, status: str, exit_code: int, error: str | None) -> None: ...
+    def after_finalized(
+        self,
+        *,
+        connection_session_id: str | None,
+        outcome: DrainOutcome,
+    ) -> None: ...
 
 
 class AuxWakeCoordinator(Protocol):

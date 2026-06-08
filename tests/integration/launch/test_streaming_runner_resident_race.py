@@ -21,6 +21,8 @@ from meridian.lib.harness.connections.base import (
     StopProgressCallback,
     StopResult,
 )
+from meridian.lib.harness.connections.liveness import LivenessDecision
+from meridian.lib.harness.connections.resident_backend import ResidentBackendControl
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.launch.streaming_runner import _run_streaming_attempt
 from meridian.lib.safety.permissions import UnsafeNoOpPermissionResolver
@@ -43,6 +45,17 @@ class _FakeControlSocketServer:
         return None
 
 
+class _FakeResidentBackendControl:
+    def health_status(self) -> LivenessDecision:
+        return LivenessDecision.CONTINUE
+
+    def set_awaiting_done(self, awaiting: bool) -> None:
+        _ = awaiting
+
+    async def begin_followup_turn(self, message: str) -> None:
+        _ = message
+
+
 class _ResidentCodexConnection(HarnessConnection[ResolvedLaunchSpec]):
     def __init__(self) -> None:
         self._spawn_id = SpawnId("")
@@ -50,6 +63,7 @@ class _ResidentCodexConnection(HarnessConnection[ResolvedLaunchSpec]):
         self.terminal_yielded = asyncio.Event()
         self.stopped = False
         self.cancelled = False
+        self._resident_backend = _FakeResidentBackendControl()
 
     @property
     def state(self) -> ConnectionState:
@@ -80,6 +94,10 @@ class _ResidentCodexConnection(HarnessConnection[ResolvedLaunchSpec]):
     @property
     def subprocess_pid(self) -> int | None:
         return None
+
+    @property
+    def resident_backend(self) -> ResidentBackendControl:
+        return self._resident_backend
 
     async def start(self, config: ConnectionConfig, spec: ResolvedLaunchSpec) -> None:
         _ = spec

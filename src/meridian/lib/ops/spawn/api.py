@@ -481,16 +481,14 @@ def spawn_create_sync(
             ctx=resolved_context,
         )
     else:
-        blocking_kwargs: dict[str, Any] = {
-            "payload": payload,
-            "request": prepared_request,
-            "runtime": runtime,
-            "ctx": resolved_context,
-            "prepared": prepared_surface,
-        }
-        if on_spawn_id is not None:
-            blocking_kwargs["on_spawn_id"] = on_spawn_id
-        result = execute_spawn_blocking(**blocking_kwargs)
+        result = execute_spawn_blocking(
+            payload=payload,
+            request=prepared_request,
+            runtime=runtime,
+            ctx=resolved_context,
+            prepared=prepared_surface,
+            on_spawn_id=on_spawn_id,
+        )
     _emit_usage_spawn_launched(
         harness=result.harness_id or prepared_request.harness,
         spawn_id=result.spawn_id,

@@ -8,7 +8,6 @@ from typing import Literal, Protocol
 from meridian.lib.harness.connections.liveness import BackendLivenessPolicy, LivenessDecision
 
 ResidentHealthStatus = LivenessDecision | Literal["unsupported"]
-ResidentTurnState = Literal["idle", "active", "unknown"]
 
 
 class ResidentBackendControl(Protocol):
@@ -31,10 +30,6 @@ class ResidentBackendControl(Protocol):
         """Start a new user turn on an already-resident idle backend."""
         ...
 
-    def current_turn_state(self) -> ResidentTurnState:
-        """Return whether the resident backend is idle enough for a follow-up turn."""
-        ...
-
 
 class LivenessResidentBackendControl:
     """Resident control backed by ``BackendLivenessPolicy`` and adapter callbacks."""
@@ -45,16 +40,14 @@ class LivenessResidentBackendControl:
         liveness: BackendLivenessPolicy,
         backend_dead: Callable[[], bool],
         begin_followup_turn: Callable[[str], Awaitable[None]],
-        current_turn_state: Callable[[], ResidentTurnState] | None = None,
     ) -> None:
         self._liveness = liveness
         self._backend_dead = backend_dead
         self._begin_followup_turn = begin_followup_turn
-        self._current_turn_state = current_turn_state
 
     def health_status(self) -> ResidentHealthStatus:
         try:
-            decision = self._liveness.evaluate_stream_health()
+            decision = self._liveness.classify_close_stream()
         except Exception:
             return LivenessDecision.BACKEND_DEAD
         if decision == LivenessDecision.BACKEND_DEAD:
@@ -72,15 +65,9 @@ class LivenessResidentBackendControl:
     async def begin_followup_turn(self, message: str) -> None:
         await self._begin_followup_turn(message)
 
-    def current_turn_state(self) -> ResidentTurnState:
-        if self._current_turn_state is None:
-            return "unknown"
-        return self._current_turn_state()
-
 
 __all__ = [
     "LivenessResidentBackendControl",
     "ResidentBackendControl",
     "ResidentHealthStatus",
-    "ResidentTurnState",
 ]

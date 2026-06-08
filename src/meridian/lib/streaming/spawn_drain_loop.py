@@ -119,11 +119,11 @@ class SpawnDrainLoop:
                     event,
                     codex_main_thread_id=_codex_main_thread_id(receiver),
                 )
-                duplicate_canonical_lifecycle_event = await coordinator.observe_event(
+                duplicate_canonical_event = await coordinator.observe_event(
                     event,
                     transition,
                 )
-                if duplicate_canonical_lifecycle_event:
+                if duplicate_canonical_event:
                     continue
 
                 if tracer is not None:
@@ -186,7 +186,10 @@ class SpawnDrainLoop:
                     codex_main_thread_id=_codex_main_thread_id(receiver),
                 )
                 self._fan_out_event(spawn_id, event)
-                coordinator.note_event_persisted(event)
+                persisted_event_decision = coordinator.note_event_persisted(event)
+                if persisted_event_decision.recorded_outcome is not None:
+                    recorded_terminal_outcome = persisted_event_decision.recorded_outcome
+                    break
                 if disk_change_ready_after_event:
                     # Disk change arrived concurrently with this event; reevaluate now
                     # that the event has been persisted and observers notified.
@@ -194,11 +197,6 @@ class SpawnDrainLoop:
                     if aux_wake_outcome.recorded_outcome is not None:
                         recorded_terminal_outcome = aux_wake_outcome.recorded_outcome
                         break
-
-                pi_lifecycle_error = coordinator.lifecycle_error_outcome()
-                if pi_lifecycle_error is not None:
-                    recorded_terminal_outcome = pi_lifecycle_error
-                    break
 
                 if event_outcome is not None:
                     action = policy.classify(event_outcome)
@@ -217,13 +215,6 @@ class SpawnDrainLoop:
                 if after_event_outcome.recorded_outcome is not None:
                     recorded_terminal_outcome = after_event_outcome.recorded_outcome
                     break
-
-                pi_failure = coordinator.failure_outcome_after_event()
-                if pi_failure is not None:
-                    recorded_terminal_outcome = pi_failure
-                    break
-                if recorded_terminal_outcome is None:
-                    coordinator.maybe_start_quiescence_after_event()
         except asyncio.CancelledError:
             drain_cancelled = True
             raise
@@ -231,13 +222,15 @@ class SpawnDrainLoop:
             drain_error = exc
             raise
         finally:
-            pending_children_at_exit = coordinator.pending_children_at_exit()
             await drain_waiter.close()
-            await coordinator.stop()
-            await coordinator.cleanup_pending_children_at_exit()
+            try:
+                exit_decision = await coordinator.handle_stream_exit(recorded_terminal_outcome)
+            finally:
+                await coordinator.stop()
+            recorded_terminal_outcome = exit_decision.recorded_outcome
             session = self._sessions.pop(spawn_id, None)
             if session is not None:
-                fallback_error = coordinator.fallback_error_without_recorded_outcome()
+                fallback_error = exit_decision.fallback_error
                 if drain_cancelled:
                     outcome = DrainOutcome(
                         status="cancelled",
@@ -256,13 +249,6 @@ class SpawnDrainLoop:
                         status="cancelled",
                         exit_code=143,
                         error="cancelled",
-                        duration_secs=max(0.0, time.monotonic() - session.started_monotonic),
-                    )
-                elif recorded_terminal_outcome is None and pending_children_at_exit:
-                    outcome = DrainOutcome(
-                        status="failed",
-                        exit_code=1,
-                        error="pi_process_exited_with_tracked_children",
                         duration_secs=max(0.0, time.monotonic() - session.started_monotonic),
                     )
                 elif fallback_error is not None and recorded_terminal_outcome is None:
@@ -286,14 +272,9 @@ class SpawnDrainLoop:
                         error="connection_closed_without_terminal_event",
                         duration_secs=max(0.0, time.monotonic() - session.started_monotonic),
                     )
-                session_id = coordinator.finalization_session_id(
-                    _safe_connection_session_id(receiver)
-                )
-                coordinator.emit_session_phase_if_needed(session_id)
-                coordinator.emit_finalized(
-                    status=outcome.status,
-                    exit_code=outcome.exit_code,
-                    error=outcome.error,
+                coordinator.after_finalized(
+                    connection_session_id=_safe_connection_session_id(receiver),
+                    outcome=outcome,
                 )
                 self._resolve_completion_future(session, outcome)
                 cleanup_task = asyncio.create_task(

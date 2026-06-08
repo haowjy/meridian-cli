@@ -51,7 +51,6 @@ from meridian.lib.harness.connections.managed_backend import (
 from meridian.lib.harness.connections.resident_backend import (
     LivenessResidentBackendControl,
     ResidentBackendControl,
-    ResidentTurnState,
 )
 from meridian.lib.harness.projections.project_opencode_streaming import (
     project_opencode_spec_to_session_payload as _project_opencode_spec_to_session_payload,
@@ -343,7 +342,6 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
             liveness=self._liveness,
             backend_dead=self._resident_backend_dead,
             begin_followup_turn=self._begin_followup_turn,
-            current_turn_state=self._resident_turn_state,
         )
 
     def health(self) -> bool:
@@ -1054,9 +1052,6 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
             or not process_running
             or not self._last_health_ok
         )
-
-    def _resident_turn_state(self) -> ResidentTurnState:
-        return "active" if self._signal_in_flight else "unknown"
 
     def _transition(self, next_state: ConnectionState) -> None:
         if next_state == self._state:

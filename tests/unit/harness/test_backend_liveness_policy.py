@@ -131,6 +131,22 @@ def test_evaluate_awaiting_done_suppresses_stream_stall_when_backend_alive(
     assert policy.healthy is True
 
 
+def test_close_classification_ignores_interleaved_awaiting_done_health_probe(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clock = FakeClock(start=0.0)
+    policy = _policy(clock)
+    policy.mark_activity()
+    clock.advance(11.0)
+    monkeypatch.setattr(liveness_module, "is_process_alive", lambda *_args, **_kwargs: True)
+
+    assert policy.classify_close_stream() == LivenessDecision.STREAM_STALLED
+
+    policy.set_awaiting_done(True)
+    assert policy.evaluate() == LivenessDecision.SUPPRESS
+    assert policy.classify_close_stream() == LivenessDecision.STREAM_STALLED
+
+
 def test_evaluate_awaiting_done_does_not_suppress_backend_dead(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

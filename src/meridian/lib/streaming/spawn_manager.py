@@ -41,6 +41,7 @@ from meridian.lib.streaming.pi_drain import PiDrainCoordinator
 from meridian.lib.streaming.pi_process_cleanup import terminate_pi_tracked_subspawns
 from meridian.lib.streaming.pi_subspawn_tracker import PiSubspawnTracker
 from meridian.lib.streaming.resident_drain import ResidentDrainCoordinator
+from meridian.lib.streaming.single_turn_drain import SingleTurnDrainCoordinator
 from meridian.lib.streaming.spawn_dispatch import dispatch_start
 from meridian.lib.streaming.spawn_drain_loop import SpawnDrainLoop
 from meridian.lib.streaming.spawn_session import DrainOutcome, SpawnSession
@@ -330,24 +331,34 @@ class SpawnManager:
         ) -> None:
             await terminate_pi_tracked_subspawns(spawn_id, tracker, reason=reason)
 
-        pi_drain = PiDrainCoordinator.for_connection(
-            runtime_root=self._runtime_root,
-            spawn_id=spawn_id,
-            receiver=cast("HarnessConnection[ResolvedLaunchSpec]", receiver),
-            session_role=pi_session_role,
-            notification_timeout_seconds=notification_timeout_seconds,
-            child_wave_timeout_seconds=child_wave_timeout_seconds,
-            emit_phase=_emit_pi_phase,
-            terminate_children=_terminate_tracked_pi_children,
-        )
-        resident_drain = ResidentDrainCoordinator.for_connection(
-            runtime_root=self._runtime_root,
-            spawn_id=spawn_id,
-            receiver=receiver,
-            deadline_seconds=resident_deadline_seconds,
-            poll_seconds=resident_poll_seconds,
-        )
-        return resident_drain if resident_drain.enabled else pi_drain
+        if _resident_backend(receiver) is not None:
+            # TODO(phase-4): resident waiting and Pi quiescence share the same
+            # "terminal candidate plus descendant work" shape; fold once Pi's
+            # lifecycle inference machinery is removed.
+            return ResidentDrainCoordinator.for_connection(
+                runtime_root=self._runtime_root,
+                spawn_id=spawn_id,
+                receiver=receiver,
+                deadline_seconds=resident_deadline_seconds,
+                poll_seconds=resident_poll_seconds,
+            )
+
+        if receiver.harness_id is HarnessId.PI:
+            return PiDrainCoordinator.for_connection(
+                runtime_root=self._runtime_root,
+                spawn_id=spawn_id,
+                receiver=cast("HarnessConnection[ResolvedLaunchSpec]", receiver),
+                session_role=pi_session_role,
+                notification_timeout_seconds=notification_timeout_seconds,
+                child_wave_timeout_seconds=child_wave_timeout_seconds,
+                emit_phase=_emit_pi_phase,
+                terminate_children=_terminate_tracked_pi_children,
+            )
+
+        # TODO(phase-5): SpawnManager still owns persistence, fan-out, synthetic
+        # turn boundaries, and coordinator-emitted phase events. Extract a
+        # recorder/sink once drain selection is stable.
+        return SingleTurnDrainCoordinator()
 
     def raw_terminal_frames_are_authoritative(self, spawn_id: SpawnId) -> bool:
         """Return whether raw harness terminal frames may finalize this spawn.
@@ -983,6 +994,13 @@ class SpawnManager:
         if session.completion_future.done() and not session.completion_future.cancelled():
             return session.completion_future.result()
         return outcome
+
+
+def _resident_backend(receiver: object) -> object | None:
+    try:
+        return cast("Any", receiver).resident_backend
+    except AttributeError:
+        return None
 
 
 __all__ = ["DrainOutcome", "SpawnManager", "SpawnSession", "dispatch_start"]

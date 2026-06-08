@@ -80,29 +80,20 @@ def terminate_descendant_tree(
     runtime_root: Path,
     root_id: str | SpawnId,
     *,
-    rows: Sequence[SpawnRecord] | None = None,
     reason: str,
     grace_seconds: float = 5.0,
-    include_root: bool = False,
-    active_only: bool = True,
 ) -> list[CleanupResult]:
-    """Terminate recorded process scopes for a spawn subtree.
-
-    By default only descendants are terminated. Reaper-style root cleanup can
-    opt into ``include_root`` while still using the same tree/cleanup primitive.
-    """
+    """Terminate active recorded process scopes for descendants of one spawn."""
 
     from meridian.lib.core.process_cleanup import terminate_spawn_scopes
 
-    all_rows = list(rows) if rows is not None else spawn_store.list_spawns(runtime_root)
+    all_rows = spawn_store.list_spawns(runtime_root)
     root = str(root_id)
-    records = collect_descendants(root, all_rows)
-    if not include_root:
-        records = [record for record in records if record.id != root]
+    records = iter_descendants_from_parent_map(root, _by_parent(all_rows))
 
     results: list[CleanupResult] = []
     for record in records:
-        if active_only and not is_active_spawn_status(record.status):
+        if not is_active_spawn_status(record.status):
             continue
         results.extend(
             terminate_spawn_scopes(
@@ -115,10 +106,30 @@ def terminate_descendant_tree(
     return results
 
 
+def terminate_recorded_spawn_scope(
+    runtime_root: Path,
+    record: SpawnRecord,
+    *,
+    reason: str,
+    grace_seconds: float = 5.0,
+) -> list[CleanupResult]:
+    """Terminate one already-selected spawn record's process scopes."""
+
+    from meridian.lib.core.process_cleanup import terminate_spawn_scopes
+
+    return terminate_spawn_scopes(
+        runtime_root,
+        record,
+        reason=reason,
+        grace_seconds=grace_seconds,
+    )
+
+
 __all__ = [
     "collect_descendants",
     "descendant_id_set",
     "has_outstanding_descendant_work",
     "iter_descendants_from_parent_map",
     "terminate_descendant_tree",
+    "terminate_recorded_spawn_scope",
 ]

@@ -55,9 +55,6 @@ class _FakeResidentBackendControl:
     async def begin_followup_turn(self, message: str) -> None:
         _ = message
 
-    def current_turn_state(self) -> str:
-        return "unknown"
-
 
 class _FakeResidentConnection(HarnessConnection[ResolvedLaunchSpec]):
     def __init__(self, harness_id: HarnessId) -> None:

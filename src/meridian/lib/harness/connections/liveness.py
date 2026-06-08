@@ -45,14 +45,12 @@ class BackendLivenessPolicy:
         self._active_turns: set[str] = set()
         self._active_requests: set[str] = set()
         self._awaiting_done = False
-        self._last_decision = LivenessDecision.CONTINUE
 
     def reset(self) -> None:
         self._last_activity_time = None
         self._active_turns.clear()
         self._active_requests.clear()
         self._awaiting_done = False
-        self._last_decision = LivenessDecision.CONTINUE
 
     def mark_activity(self) -> None:
         self._last_activity_time = self._now()
@@ -77,34 +75,20 @@ class BackendLivenessPolicy:
         self._awaiting_done = awaiting_done
 
     def evaluate(self) -> LivenessDecision:
-        decision = self._evaluate()
-        self._last_decision = decision
-        return decision
+        return self._evaluate(suppress_when_awaiting_done=True)
 
-    def evaluate_stream_health(self) -> LivenessDecision:
-        """Return structured stream health for resident close classification.
+    def classify_close_stream(self) -> LivenessDecision:
+        """Classify stream close without suppressing prior idle stream stalls.
 
-        Once an idle, alive backend has been classified as stream-stalled, an
-        awaiting-done wait should not reclassify that same silent stream as
-        healthy suppression. New activity still clears the stall through the
-        normal CONTINUE decision.
+        Close classification asks whether a closed stream was dead, stalled, or
+        still plausibly active. Awaiting descendant work suppresses ordinary
+        adapter health probes but does not turn an already silent idle stream
+        into a healthy close.
         """
 
-        previous_decision = self._last_decision
-        decision = self._evaluate()
-        if (
-            previous_decision == LivenessDecision.STREAM_STALLED
-            and decision == LivenessDecision.SUPPRESS
-        ):
-            decision = LivenessDecision.STREAM_STALLED
-        self._last_decision = decision
-        return decision
+        return self._evaluate(suppress_when_awaiting_done=False)
 
-    @property
-    def last_decision(self) -> LivenessDecision:
-        return self._last_decision
-
-    def _evaluate(self) -> LivenessDecision:
+    def _evaluate(self, *, suppress_when_awaiting_done: bool) -> LivenessDecision:
         if not self._silence_expired():
             return LivenessDecision.CONTINUE
         pid = self._backend_pid()
@@ -112,7 +96,11 @@ class BackendLivenessPolicy:
             return LivenessDecision.BACKEND_DEAD
         if not is_process_alive(pid, created_after_epoch=self._backend_birth_time()):
             return LivenessDecision.BACKEND_DEAD
-        if self._awaiting_done or self._active_turns or self._active_requests:
+        if (
+            (suppress_when_awaiting_done and self._awaiting_done)
+            or self._active_turns
+            or self._active_requests
+        ):
             return LivenessDecision.SUPPRESS
         return LivenessDecision.STREAM_STALLED
 

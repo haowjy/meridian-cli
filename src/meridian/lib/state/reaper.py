@@ -599,15 +599,13 @@ def _cleanup_orphan_scope_processes(
 ) -> None:
     """Terminate recorded orphan process scopes from the root reconcile path."""
 
-    from meridian.lib.state.spawn_tree import terminate_descendant_tree
+    from meridian.lib.state.spawn_tree import terminate_recorded_spawn_scope
 
-    terminate_descendant_tree(
+    terminate_recorded_spawn_scope(
         runtime_root,
-        record.id,
-        rows=[record],
+        record,
         reason="reaper",
         grace_seconds=5.0,
-        include_root=True,
     )
     if managed_snapshot is not None:
         signaled = terminate_managed_primary_processes(

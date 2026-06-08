@@ -64,7 +64,6 @@ from meridian.lib.harness.connections.managed_backend import (
 from meridian.lib.harness.connections.resident_backend import (
     LivenessResidentBackendControl,
     ResidentBackendControl,
-    ResidentTurnState,
 )
 from meridian.lib.harness.semantics import clears_signal
 from meridian.lib.launch.env import inherit_child_env
@@ -500,7 +499,6 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
             liveness=self._liveness,
             backend_dead=self._resident_backend_dead,
             begin_followup_turn=self._begin_followup_turn,
-            current_turn_state=self._resident_turn_state,
         )
 
     def health(self) -> bool:
@@ -1130,9 +1128,6 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
         process_running = self._process is not None and self._process.returncode is None
         ws_open = self._ws is not None and _ws_is_open(self._ws)
         return self._state != "connected" or not process_running or not ws_open
-
-    def _resident_turn_state(self) -> ResidentTurnState:
-        return "active" if self._current_turn_id is not None else "idle"
 
     def _transition(self, next_state: ConnectionState) -> None:
         """Validate and apply a state transition."""

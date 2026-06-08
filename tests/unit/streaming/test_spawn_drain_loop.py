@@ -21,7 +21,11 @@ from meridian.lib.harness.connections.base import (
 )
 from meridian.lib.harness.semantics import TerminalEventOutcome
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
-from meridian.lib.streaming.drain_coordinator import DrainLoopDecision, DrainTerminalDecision
+from meridian.lib.streaming.drain_coordinator import (
+    DrainExitDecision,
+    DrainLoopDecision,
+    DrainTerminalDecision,
+)
 from meridian.lib.streaming.drain_policy import DrainAction, DrainPolicy, SingleTurnDrainPolicy
 from meridian.lib.streaming.event_observers import EventObserverRegistry
 from meridian.lib.streaming.spawn_drain_loop import SpawnDrainLoop
@@ -127,12 +131,9 @@ class _FakeCoordinator:
         self.calls.append(f"observe_event:{transition}")
         return False
 
-    def note_event_persisted(self, event: HarnessEvent) -> None:
+    def note_event_persisted(self, event: HarnessEvent) -> DrainLoopDecision:
         self.calls.append("note_event_persisted")
-
-    def lifecycle_error_outcome(self) -> TerminalEventOutcome | None:
-        self.calls.append("lifecycle_error_outcome")
-        return None
+        return DrainLoopDecision()
 
     async def handle_terminal_event(
         self,
@@ -155,33 +156,20 @@ class _FakeCoordinator:
         self.calls.append(f"handle_close:{intentional_stop}")
         return None
 
-    def failure_outcome_after_event(self) -> TerminalEventOutcome | None:
-        self.calls.append("failure_outcome_after_event")
-        return None
+    async def handle_stream_exit(
+        self,
+        recorded_outcome: TerminalEventOutcome | None,
+    ) -> DrainExitDecision:
+        self.calls.append("handle_stream_exit")
+        return DrainExitDecision(recorded_outcome=recorded_outcome)
 
-    def maybe_start_quiescence_after_event(self) -> None:
-        self.calls.append("maybe_start_quiescence_after_event")
-
-    def pending_children_at_exit(self) -> bool:
-        self.calls.append("pending_children_at_exit")
-        return False
-
-    async def cleanup_pending_children_at_exit(self) -> None:
-        self.calls.append("cleanup_pending_children_at_exit")
-
-    def fallback_error_without_recorded_outcome(self) -> str | None:
-        self.calls.append("fallback_error_without_recorded_outcome")
-        return None
-
-    def finalization_session_id(self, connection_session_id: str | None) -> str | None:
-        self.calls.append("finalization_session_id")
-        return None
-
-    def emit_session_phase_if_needed(self, session_id: str | None) -> None:
-        self.calls.append("emit_session_phase_if_needed")
-
-    def emit_finalized(self, *, status: str, exit_code: int, error: str | None) -> None:
-        self.calls.append(f"emit_finalized:{status}:{exit_code}:{error}")
+    def after_finalized(
+        self,
+        *,
+        connection_session_id: str | None,
+        outcome: DrainOutcome,
+    ) -> None:
+        self.calls.append(f"after_finalized:{outcome.status}:{outcome.exit_code}:{outcome.error}")
 
 
 @pytest.mark.asyncio
@@ -237,5 +225,5 @@ async def test_spawn_drain_loop_drives_coordinator_protocol() -> None:
     assert "default_policy" in coordinator.calls
     assert "observe_event:idle" in coordinator.calls
     assert "handle_terminal_event:succeeded:True" in coordinator.calls
-    assert "emit_finalized:succeeded:0:None" in coordinator.calls
+    assert "after_finalized:succeeded:0:None" in coordinator.calls
     assert cleanup_calls == [spawn_id]
