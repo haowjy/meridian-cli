@@ -899,6 +899,32 @@ async def test_active_followup_turn_still_enforces_deadline(
 
 
 @pytest.mark.asyncio
+async def test_deadline_returns_timed_out_when_descendant_reap_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from meridian.lib.streaming import resident_drain as resident_drain_module
+
+    clock = FakeClock(start=0.0)
+    monkeypatch.setattr(resident_drain_module.time, "monotonic", clock.monotonic)
+    _start_row(tmp_path, "p1", HarnessId.CODEX, None)
+    connection = _FakeResidentConnection(HarnessId.CODEX)
+    coordinator = _coordinator_with_clock(tmp_path, connection, clock, deadline_seconds=10.0)
+
+    def _fail_reap() -> None:
+        raise RuntimeError("teardown failed")
+
+    monkeypatch.setattr(coordinator, "terminate_outstanding_descendants", _fail_reap)
+    clock.advance(10.0)
+
+    decision = await coordinator.handle_timeout()
+
+    assert decision.recorded_outcome is not None
+    assert decision.recorded_outcome.status == "timed_out"
+    assert decision.recorded_outcome.error == "resident_deadline_expired"
+
+
+@pytest.mark.asyncio
 async def test_rearmed_with_tracked_child_uses_poll_timeout_not_inject_floor(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

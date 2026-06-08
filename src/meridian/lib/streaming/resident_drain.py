@@ -7,6 +7,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+import structlog
+
 from meridian.lib.core.types import SpawnId
 from meridian.lib.harness.connections.liveness import LivenessDecision
 from meridian.lib.harness.semantics import TerminalEventOutcome
@@ -34,6 +36,7 @@ _TIMEOUT_SOON_MESSAGE = (
     "This spawn times out soon. Run `meridian spawn rearm` to keep going, "
     "or `meridian spawn done` to finish."
 )
+logger = structlog.get_logger()
 
 
 @dataclass
@@ -191,7 +194,13 @@ class ResidentDrainCoordinator:
         if reap_descendants:
             import asyncio
 
-            await asyncio.to_thread(self.terminate_outstanding_descendants)
+            try:
+                await asyncio.to_thread(self.terminate_outstanding_descendants)
+            except Exception:
+                logger.exception(
+                    "Failed to terminate resident descendant spawns after deadline expiry.",
+                    spawn_id=str(self.spawn_id),
+                )
         if inject_due:
             await self._inject_poll_message()
         return decision

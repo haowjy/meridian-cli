@@ -1308,7 +1308,7 @@ async def execute_with_streaming(
                 ):
                     break
 
-                if attempt.terminal_observed:
+                if attempt.authoritative_terminal_status is not None:
                     break
 
                 if not should_retry(

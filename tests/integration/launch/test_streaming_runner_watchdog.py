@@ -419,6 +419,159 @@ class _CodexTerminalWithScopeConnection(_OpenCodeTerminalWithScopeConnection):
     terminal_payload_session_key = "threadId"
 
 
+class _ResidentDeadlineConnection:
+    starts = 0
+
+    def __init__(self) -> None:
+        self.state = "created"
+        self._spawn_id = SpawnId("")
+        self._session_id = "thread-resident-deadline"
+        self._resident_backend = self
+        self.capabilities = ConnectionCapabilities(
+            mid_turn_injection="queue",
+            supports_steer=True,
+            supports_cancel=True,
+            runtime_model_switch=False,
+            structured_reasoning=True,
+        )
+
+    @property
+    def harness_id(self) -> HarnessId:
+        return HarnessId.CODEX
+
+    @property
+    def spawn_id(self) -> SpawnId:
+        return self._spawn_id
+
+    @property
+    def session_id(self) -> str | None:
+        return self._session_id
+
+    @property
+    def subprocess_pid(self) -> int | None:
+        return 8282
+
+    @property
+    def resident_backend(self) -> object:
+        return self._resident_backend
+
+    async def start(self, config: ConnectionConfig, spec: ResolvedLaunchSpec) -> None:
+        _ = spec
+        type(self).starts += 1
+        self._spawn_id = config.spawn_id
+        self.state = "connected"
+
+    async def stop(
+        self,
+        *,
+        reason: str | None = None,
+        progress: StopProgressCallback | None = None,
+    ) -> StopResult:
+        _ = reason, progress
+        self.state = "stopped"
+        return StopResult()
+
+    def health(self) -> bool:
+        return self.state == "connected"
+
+    async def send_user_message(self, text: str) -> None:
+        _ = text
+
+    async def send_cancel(self) -> None:
+        return None
+
+    def health_status(self) -> object:
+        return "continue"
+
+    def set_awaiting_done(self, awaiting: bool) -> None:
+        _ = awaiting
+
+    async def begin_followup_turn(self, message: str) -> None:
+        _ = message
+
+    async def events(self):  # type: ignore[no-untyped-def]
+        yield HarnessEvent(
+            event_type="turn/completed",
+            harness_id="codex",
+            payload={"threadId": self._session_id, "turnId": "turn-1"},
+        )
+        while True:
+            await asyncio.sleep(3600)
+
+
+class _RetryableOpenCodeConnection:
+    starts = 0
+
+    def __init__(self) -> None:
+        self.state = "created"
+        self._spawn_id = SpawnId("")
+        self._session_id = "session-retryable-opencode"
+        self._attempt_index = 0
+        self.capabilities = ConnectionCapabilities(
+            mid_turn_injection="http_post",
+            supports_steer=False,
+            supports_cancel=True,
+            runtime_model_switch=False,
+            structured_reasoning=True,
+        )
+
+    @property
+    def harness_id(self) -> HarnessId:
+        return HarnessId.OPENCODE
+
+    @property
+    def spawn_id(self) -> SpawnId:
+        return self._spawn_id
+
+    @property
+    def session_id(self) -> str | None:
+        return self._session_id
+
+    @property
+    def subprocess_pid(self) -> int | None:
+        return 8383
+
+    async def start(self, config: ConnectionConfig, spec: ResolvedLaunchSpec) -> None:
+        _ = spec
+        type(self).starts += 1
+        self._attempt_index = type(self).starts
+        self._spawn_id = config.spawn_id
+        self.state = "connected"
+
+    async def stop(
+        self,
+        *,
+        reason: str | None = None,
+        progress: StopProgressCallback | None = None,
+    ) -> StopResult:
+        _ = reason, progress
+        self.state = "stopped"
+        return StopResult()
+
+    def health(self) -> bool:
+        return self.state == "connected"
+
+    async def send_user_message(self, text: str) -> None:
+        _ = text
+
+    async def send_cancel(self) -> None:
+        return None
+
+    async def events(self):  # type: ignore[no-untyped-def]
+        if self._attempt_index == 1:
+            yield HarnessEvent(
+                event_type="session.error",
+                harness_id="opencode",
+                payload={"type": "session.error", "error": "connection reset by peer"},
+            )
+            return
+        yield HarnessEvent(
+            event_type="session.idle",
+            harness_id="opencode",
+            payload={"type": "session.idle", "sessionID": self._session_id},
+        )
+
+
 class _EndMonotonicFailsClock(FakeClock):
     def __init__(self, start: float = 0.0) -> None:
         super().__init__(start=start)
@@ -604,27 +757,21 @@ async def test_execute_with_streaming_finalizes_resident_deadline_without_retry(
     fake_clock = FakeClock(start=1_000.0)
     fake_heartbeat = FakeHeartbeat()
     fake_heartbeat.set_clock(fake_clock)
-    attempts = 0
-
-    async def _resident_deadline_attempt(**kwargs: object) -> object:
-        nonlocal attempts
-        attempts += 1
-        return streaming_runner_module._AttemptRuntime(
-            connection=None,
-            drain_exit_code=1,
-            drain_error="resident_deadline_expired",
-            timed_out=False,
-            received_signal=None,
-            budget_breach=None,
-            terminated_by_report_watchdog=False,
-            terminal_observed=True,
-            authoritative_terminal_status="timed_out",
-        )
-
+    _ResidentDeadlineConnection.starts = 0
+    monkeypatch.setattr(spawn_manager_module, "ControlSocketServer", _FakeControlSocketServer)
+    monkeypatch.setattr(
+        "meridian.lib.harness.connections.get_connection_class",
+        lambda _harness_id, _transport_id=TransportId.STREAMING: _ResidentDeadlineConnection,
+    )
     monkeypatch.setattr(
         streaming_runner_module,
-        "_run_streaming_attempt",
-        _resident_deadline_attempt,
+        "resolve_resident_deadline_seconds",
+        lambda *, config_snapshot: 0.01,
+    )
+    monkeypatch.setattr(
+        streaming_runner_module,
+        "resolve_resident_poll_seconds",
+        lambda *, config_snapshot: 0.001,
     )
 
     parent_id = SpawnId("r-resident-deadline")
@@ -646,6 +793,19 @@ async def test_execute_with_streaming_finalizes_resident_deadline_without_retry(
         launch_mode="foreground",
         status="queued",
     )
+    spawn_store.start_spawn(
+        runtime_root,
+        chat_id="test-chat-resident-deadline-child",
+        parent_id=str(parent_id),
+        model=str(run.model),
+        agent="",
+        harness=HarnessId.CODEX.value,
+        kind="streaming",
+        prompt="child",
+        spawn_id=SpawnId("r-resident-deadline-child"),
+        launch_mode="background",
+        status="running",
+    )
     request = _build_request().model_copy(
         update={"retry": RetryPolicy(max_attempts=3, backoff_secs=0.0)}
     )
@@ -666,11 +826,74 @@ async def test_execute_with_streaming_finalizes_resident_deadline_without_retry(
 
     row = spawn_store.get_spawn(runtime_root, parent_id)
     assert exit_code == 1
-    assert attempts == 1
+    assert _ResidentDeadlineConnection.starts == 1
     assert row is not None
     assert row.status == "timed_out"
     assert row.exit_code == 1
     assert row.error == "resident_deadline_expired"
+
+
+@pytest.mark.asyncio
+async def test_execute_with_streaming_retries_retryable_single_turn_terminal_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime_root = resolve_project_runtime_root(tmp_path)
+    artifacts = LocalStore(root_dir=tmp_path / ".artifacts")
+    registry = HarnessRegistry.with_defaults()
+    fake_clock = FakeClock(start=1_000.0)
+    fake_heartbeat = FakeHeartbeat()
+    fake_heartbeat.set_clock(fake_clock)
+    _RetryableOpenCodeConnection.starts = 0
+    monkeypatch.setattr(spawn_manager_module, "ControlSocketServer", _FakeControlSocketServer)
+    monkeypatch.setattr(
+        "meridian.lib.harness.connections.get_connection_class",
+        lambda _harness_id, _transport_id=TransportId.STREAMING: _RetryableOpenCodeConnection,
+    )
+
+    run = Spawn(
+        spawn_id=SpawnId("r-opencode-retryable"),
+        prompt="hello",
+        model=ModelId("gpt-5.4"),
+        status="queued",
+    )
+    spawn_store.start_spawn(
+        runtime_root,
+        chat_id="test-chat-opencode-retryable",
+        model=str(run.model),
+        agent="",
+        harness=HarnessId.OPENCODE.value,
+        kind="streaming",
+        prompt=run.prompt,
+        spawn_id=run.spawn_id,
+        launch_mode="foreground",
+        status="queued",
+    )
+    request = _build_opencode_request().model_copy(
+        update={"retry": RetryPolicy(max_attempts=2, backoff_secs=0.0)}
+    )
+
+    exit_code = await asyncio.wait_for(
+        _execute_with_context(
+            run,
+            request=request,
+            project_root=tmp_path,
+            runtime_root=runtime_root,
+            artifacts=artifacts,
+            registry=registry,
+            clock=fake_clock,
+            heartbeat_touch=fake_heartbeat.touch,
+            heartbeat_interval_secs=0.001,
+        ),
+        timeout=15.0,
+    )
+
+    row = spawn_store.get_spawn(runtime_root, run.spawn_id)
+    assert exit_code == 0
+    assert _RetryableOpenCodeConnection.starts == 2
+    assert row is not None
+    assert row.status == "succeeded"
+    assert row.exit_code == 0
 
 
 @pytest.mark.asyncio
