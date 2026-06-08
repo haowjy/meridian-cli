@@ -37,6 +37,7 @@ from meridian.lib.ops.runtime import (
     resolve_runtime_root_for_read,
     runtime_context,
 )
+from meridian.lib.ops.spawn.descendants import iter_descendants_from_parent_map
 from meridian.lib.platform.locking import lock_file
 from meridian.lib.state import session_store, spawn_store, work_store
 from meridian.lib.state.atomic import atomic_write_text
@@ -694,12 +695,7 @@ def _collect_descendants(
             result.append(s)
             break
 
-    queue = [root_id]
-    while queue:
-        parent = queue.pop()
-        for child in by_parent.get(parent, []):
-            result.append(child)
-            queue.append(child.id)
+    result.extend(iter_descendants_from_parent_map(root_id, by_parent))
     return result
 
 
