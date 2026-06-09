@@ -162,7 +162,11 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
     _ACTION_SUCCESS_STATUSES: ClassVar[frozenset[int]] = frozenset((200, 201, 202, 204, 409))
     _EVENT_RETRY_DELAY_SECONDS: ClassVar[float] = 0.25
     _LIVENESS_TIMEOUT_SECONDS: ClassVar[float] = 120.0
-    _STARTUP_TIMEOUT_SECONDS: ClassVar[float] = 30.0
+    _STARTUP_TIMEOUT_SECONDS: ClassVar[float] = 90.0
+    _READY_TIMEOUT_SECONDS: ClassVar[float] = 60.0
+    _SESSION_STARTUP_TIMEOUT_SECONDS: ClassVar[float] = (
+        _STARTUP_TIMEOUT_SECONDS - _READY_TIMEOUT_SECONDS
+    )
     _SESSION_CREATE_PAYLOAD_TIMEOUT_SECONDS: ClassVar[float] = 5.0
     _STOP_GRACE_SECONDS: ClassVar[float] = 5.0
     _EVENT_ACCEPT_HEADER: ClassVar[dict[str, str]] = {"Accept": "text/event-stream"}
@@ -281,18 +285,17 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
         self._signal_in_flight = False
         self._transition("starting")
 
-        startup_timeout = (
+        readiness_timeout, session_timeout = self._startup_timeout_budgets(
             config.timeout_seconds
-            if config.timeout_seconds is not None
-            else self._STARTUP_TIMEOUT_SECONDS
         )
 
         try:
             await self._launch_process(config, spec)
             self._emit_startup_phase(StartupPhase.WAITING_FOR_CONNECTION)
+            await self._wait_for_ready(timeout_seconds=readiness_timeout)
             self._session_id = await self._create_session_with_retry(
                 spec,
-                timeout_seconds=startup_timeout,
+                timeout_seconds=session_timeout,
             )
             if config.session_id_observer is not None:
                 config.session_id_observer(self._session_id)
@@ -485,12 +488,13 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
             await asyncio.sleep(self._EVENT_RETRY_DELAY_SECONDS)
 
     async def _launch_process(self, config: ConnectionConfig, spec: ResolvedLaunchSpec) -> None:
-        port = _find_free_port()
-        self._base_url = f"http://127.0.0.1:{port}"
+        host = config.ws_bind_host or "127.0.0.1"
+        port = config.ws_port if config.ws_port > 0 else _find_free_port(host)
+        self._base_url = f"http://{host}:{port}"
         command = project_managed_primary_backend_command(
             self.harness_id,
             spec,
-            host="127.0.0.1",
+            host=host,
             port=port,
         )
         env = inherit_child_env(os.environ, config.env_overrides)
@@ -517,6 +521,58 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
         self._process = handle.process
         self._scope_handle = handle.scope_handle
         self._parent_death_link = handle.parent_death_link
+
+    def _startup_timeout_budgets(self, configured_timeout: float | None) -> tuple[float, float]:
+        if configured_timeout is None:
+            return (self._READY_TIMEOUT_SECONDS, self._SESSION_STARTUP_TIMEOUT_SECONDS)
+
+        total = max(configured_timeout, 0.2)
+        readiness_timeout = max(total * (2.0 / 3.0), 0.1)
+        session_timeout = max(total - readiness_timeout, 0.1)
+        return (readiness_timeout, session_timeout)
+
+    async def _wait_for_ready(self, *, timeout_seconds: float) -> None:
+        deadline = time.monotonic() + max(timeout_seconds, 0.1)
+        last_error: str | None = None
+
+        while True:
+            if self._process_exited():
+                raise self._startup_exit_exception()
+
+            for path in self._HEALTH_PATHS:
+                try:
+                    remaining = max(0.0, deadline - time.monotonic())
+                    status, body, _ = await asyncio.wait_for(
+                        self._get_json(path),
+                        timeout=remaining,
+                    )
+                except TimeoutError as exc:
+                    last_error = f"{path}: {exc or 'timeout'}"
+                    if time.monotonic() >= deadline:
+                        detail = f": {last_error}"
+                        raise TimeoutError(
+                            "OpenCode readiness endpoint did not become ready within "
+                            f"{timeout_seconds:.1f}s ({', '.join(self._HEALTH_PATHS)}){detail}"
+                        ) from exc
+                    continue
+                except Exception as exc:
+                    if not _is_retryable_transport_error(exc):
+                        raise
+                    last_error = f"{path}: {exc}"
+                    continue
+
+                if status in self._SUCCESS_STATUSES:
+                    self._last_health_ok = True
+                    return
+                last_error = f"{path}: status={status} body={_summarize_body(body)}"
+
+            if time.monotonic() >= deadline:
+                detail = f": {last_error}" if last_error else ""
+                raise TimeoutError(
+                    "OpenCode readiness endpoint did not become ready within "
+                    f"{timeout_seconds:.1f}s ({', '.join(self._HEALTH_PATHS)}){detail}"
+                )
+            await asyncio.sleep(0.2)
 
     async def _create_session_with_retry(
         self,
@@ -1107,9 +1163,9 @@ def _extract_session_id_from_mapping(data: Mapping[str, object]) -> str | None:
     return None
 
 
-def _find_free_port() -> int:
+def _find_free_port(host: str = "127.0.0.1") -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-        sock.bind(("127.0.0.1", 0))
+        sock.bind((host, 0))
         return int(sock.getsockname()[1])
 
 

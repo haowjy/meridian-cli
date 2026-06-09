@@ -58,12 +58,20 @@ class _StartProbeOpenCodeConnection(OpenCodeConnection):
         super().__init__()
         self.initial_messages: list[tuple[str, str | None]] = []
         self.launch_calls = 0
+        self.ready_calls = 0
         self.create_session_calls = 0
+        self.start_order: list[str] = []
 
     async def _launch_process(self, config: ConnectionConfig, spec: ResolvedLaunchSpec) -> None:
         _ = config, spec
         self.launch_calls += 1
+        self.start_order.append("launch")
         self._process = _FakeProcess()
+
+    async def _wait_for_ready(self, *, timeout_seconds: float) -> None:
+        _ = timeout_seconds
+        self.ready_calls += 1
+        self.start_order.append("ready")
 
     async def _create_session_with_retry(
         self,
@@ -73,6 +81,7 @@ class _StartProbeOpenCodeConnection(OpenCodeConnection):
     ) -> str:
         _ = spec, timeout_seconds
         self.create_session_calls += 1
+        self.start_order.append("session")
         return "sess-primary-observer"
 
     async def _post_session_message(self, text: str, *, system: str | None = None) -> None:
@@ -150,6 +159,37 @@ class _TestableOpenCodeConnection(OpenCodeConnection):
         if isinstance(response, Exception):
             raise response
         return response
+
+
+class _ReadinessStartupProbeOpenCodeConnection(_TestableOpenCodeConnection):
+    def __init__(
+        self,
+        get_responses: list[tuple[int, object | None, str] | Exception],
+    ) -> None:
+        super().__init__(responses=[], get_responses=get_responses)
+        self.start_order: list[str] = []
+
+    async def _launch_process(self, config: ConnectionConfig, spec: ResolvedLaunchSpec) -> None:
+        _ = config, spec
+        self.start_order.append("launch")
+        self._process = _FakeProcess()
+
+    async def _wait_for_ready(self, *, timeout_seconds: float) -> None:
+        self.start_order.append("ready")
+        await super()._wait_for_ready(timeout_seconds=timeout_seconds)
+
+    async def _create_session_with_retry(
+        self,
+        spec: ResolvedLaunchSpec,
+        *,
+        timeout_seconds: float,
+    ) -> str:
+        _ = spec, timeout_seconds
+        self.start_order.append("session")
+        return "sess-after-readiness-timeout"
+
+    async def _post_session_message(self, text: str, *, system: str | None = None) -> None:
+        _ = text, system
 
 
 class _FakeSseContent:
@@ -481,10 +521,88 @@ async def test_opencode_start_primary_observer_mode_controls_initial_prompt_post
     assert connection.state == "connected"
     assert connection.session_id == "sess-primary-observer"
     assert connection.launch_calls == 1
+    assert connection.ready_calls == 1
     assert connection.create_session_calls == 1
+    assert connection.start_order == ["launch", "ready", "session"]
     assert connection.initial_messages == expected_initial_messages
 
     await connection.stop()
+
+
+@pytest.mark.asyncio
+async def test_opencode_readiness_gate_succeeds_before_session_create(
+    tmp_path: Path,
+) -> None:
+    connection = _StartProbeOpenCodeConnection()
+
+    await connection.start(
+        _build_connection_config(tmp_path),
+        ResolvedLaunchSpec(
+            permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
+        ),
+    )
+
+    assert connection.start_order == ["launch", "ready", "session"]
+    assert connection.state == "connected"
+
+    await connection.stop()
+
+
+@pytest.mark.asyncio
+async def test_opencode_readiness_gate_retries_transient_timeout_before_session_create(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    connection = _ReadinessStartupProbeOpenCodeConnection(
+        get_responses=[
+            TimeoutError("backend still warming"),
+            (200, {"status": "ok"}, "application/json"),
+        ],
+    )
+    monkeypatch.setattr(opencode_http.asyncio, "sleep", _no_sleep)
+
+    await connection.start(
+        _build_connection_config(tmp_path),
+        ResolvedLaunchSpec(
+            permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
+        ),
+    )
+
+    assert connection.state == "connected"
+    assert connection.session_id == "sess-after-readiness-timeout"
+    assert connection.start_order == ["launch", "ready", "session"]
+    assert [path for path, _payload in connection.requests] == [
+        "/global/health",
+        "/global/health",
+    ]
+
+    await connection.stop()
+
+
+@pytest.mark.asyncio
+async def test_opencode_readiness_gate_timeout_is_distinct(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    connection = _TestableOpenCodeConnection(
+        responses=[],
+        get_responses=[
+            (503, {"status": "warming"}, ""),
+        ],
+    )
+    clock = FakeClock(start=0.0)
+
+    def advancing_monotonic() -> float:
+        current = clock.monotonic()
+        clock.advance(0.08)
+        return current
+
+    monkeypatch.setattr(opencode_http.time, "monotonic", advancing_monotonic)
+    monkeypatch.setattr(opencode_http.asyncio, "sleep", _no_sleep)
+
+    with pytest.raises(TimeoutError, match=r"readiness endpoint did not become ready"):
+        await connection._wait_for_ready(timeout_seconds=0.1)
+
+    assert [path for path, _payload in connection.requests] == ["/global/health"]
 
 
 @pytest.mark.asyncio
@@ -565,7 +683,7 @@ async def test_opencode_launch_process_passes_env_overrides_to_inherit_child_env
         captured["env"] = dict(env)
         return fake_process
 
-    monkeypatch.setattr(opencode_http, "_find_free_port", lambda: 17777)
+    monkeypatch.setattr(opencode_http, "_find_free_port", lambda _host="127.0.0.1": 17777)
     monkeypatch.setattr(opencode_http, "inherit_child_env", _fake_inherit_child_env)
     monkeypatch.setattr(
         opencode_http,

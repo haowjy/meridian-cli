@@ -22,6 +22,7 @@ from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.launch.constants import OUTPUT_FILENAME, PRIMARY_META_FILENAME
 from meridian.lib.launch.context import build_launch_context
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
+from meridian.lib.launch.process import runner as runner_module
 from meridian.lib.launch.process.primary_attach import (
     PrimaryAttachError,
     PrimaryAttachOutcome,
@@ -91,6 +92,42 @@ def _build_primary_launch_context(
         dry_run=True,
     )
     return launch_context, harness_registry
+
+
+def test_run_primary_attach_preserves_startup_failure_cause(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    class FailingPrimaryAttachLauncher:
+        def __init__(self, **_kwargs: object) -> None:
+            pass
+
+        async def run(self, **_kwargs: object) -> object:
+            raise TimeoutError(
+                "OpenCode session endpoint did not become ready within 12.0s"
+            )
+
+    monkeypatch.setattr(runner_module, "PrimaryAttachLauncher", FailingPrimaryAttachLauncher)
+
+    with pytest.raises(PrimaryAttachError) as exc_info:
+        runner_module.run_primary_attach(
+            harness_id=HarnessId.OPENCODE,
+            spawn_id=runner_module.SpawnId("p-timeout-cause"),
+            spawn_dir=tmp_path / "spawn",
+            control_root=tmp_path,
+            task_cwd=tmp_path,
+            env={},
+            spec=ResolvedLaunchSpec(
+                permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
+            ),
+            process_launcher=lambda **_kwargs: (1, None),
+        )
+
+    assert str(exc_info.value) == (
+        "Managed primary attach failed for opencode: "
+        "OpenCode session endpoint did not become ready within 12.0s"
+    )
+    assert isinstance(exc_info.value.__cause__, TimeoutError)
 
 
 

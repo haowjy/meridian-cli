@@ -272,6 +272,48 @@ def _target_from_spawn_output(
     )
 
 
+def _managed_primary_output_target(
+    runtime_root: Path,
+    *,
+    spawn_row: SpawnRecord,
+    display_id: str,
+    harness: str | None,
+) -> SessionLogTarget | None:
+    if spawn_row.kind != "primary":
+        return None
+    if not is_managed_primary(runtime_root, spawn_row.id):
+        return None
+    return _target_from_spawn_output(
+        runtime_root,
+        display_id=display_id,
+        spawn_id=spawn_row.id,
+        live_first=(spawn_row.status == "running"),
+        source=_managed_primary_fallback_source(spawn_row.id, harness),
+    )
+
+
+def _running_managed_primary_output_target(
+    runtime_root: Path,
+    *,
+    spawn_row: SpawnRecord | None,
+    display_id: str,
+) -> SessionLogTarget | None:
+    if spawn_row is None:
+        return None
+    if spawn_row.kind != "primary":
+        return None
+    if spawn_row.status not in {"queued", "running"}:
+        return None
+    if not is_managed_primary(runtime_root, spawn_row.id):
+        return None
+    return _target_from_spawn_output(
+        runtime_root,
+        display_id=display_id,
+        spawn_id=spawn_row.id,
+        live_first=True,
+    )
+
+
 def _primary_spawn_for_chat(
     project_root: Path,
     runtime_root: Path,
@@ -432,6 +474,14 @@ def _resolve_from_chat_id(
     if normalized_harness is None and primary_spawn is not None and primary_spawn.harness:
         normalized_harness = primary_spawn.harness.strip() or None
 
+    output_target = _running_managed_primary_output_target(
+        runtime_root,
+        spawn_row=primary_spawn,
+        display_id=chat_id,
+    )
+    if output_target is not None:
+        return output_target
+
     normalized_session_id = _latest_harness_session_id(session_record)
     if normalized_session_id is None and primary_spawn is not None:
         normalized_session_id = (
@@ -480,6 +530,16 @@ def _resolve_from_chat_id(
         if transcript_target is not None:
             return transcript_target
 
+    if primary_spawn is not None:
+        output_target = _managed_primary_output_target(
+            runtime_root,
+            spawn_row=primary_spawn,
+            display_id=chat_id,
+            harness=normalized_harness,
+        )
+        if output_target is not None:
+            return output_target
+
     return _resolve_harness_session_file(
         project_root=project_root,
         session_id=normalized_session_id,
@@ -516,17 +576,10 @@ def _resolve_from_spawn_id(
     is_primary_spawn = row.kind == "primary"
     is_managed_backend_primary = is_primary_spawn and is_managed_primary(runtime_root, spawn_id)
 
-    if (
-        is_managed_backend_primary
-        and row.status in {"queued", "running"}
-        and (
-            output_target := _target_from_spawn_output(
-                runtime_root,
-                display_id=spawn_id,
-                spawn_id=spawn_id,
-                live_first=True,
-            )
-        )
+    if output_target := _running_managed_primary_output_target(
+        runtime_root,
+        spawn_row=row,
+        display_id=spawn_id,
     ):
         return output_target
 
@@ -632,12 +685,11 @@ def _resolve_from_spawn_id(
 
     if is_primary_spawn:
         if is_managed_backend_primary:
-            output_target = _target_from_spawn_output(
+            output_target = _managed_primary_output_target(
                 runtime_root,
                 display_id=spawn_id,
-                spawn_id=spawn_id,
-                live_first=(row.status == "running"),
-                source=_managed_primary_fallback_source(spawn_id, harness),
+                spawn_row=row,
+                harness=harness,
             )
             if output_target is not None:
                 return output_target

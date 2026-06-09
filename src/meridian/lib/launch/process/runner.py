@@ -794,7 +794,9 @@ async def _run_primary_attach(
     except PassthroughError as exc:
         raise PrimaryAttachError(str(exc)) from exc
     except Exception as exc:
-        raise PrimaryAttachError(f"Managed primary attach failed for {harness_id.value}") from exc
+        raise PrimaryAttachError(
+            f"Managed primary attach failed for {harness_id.value}: {exc}"
+        ) from exc
 
 
 def run_primary_attach(
