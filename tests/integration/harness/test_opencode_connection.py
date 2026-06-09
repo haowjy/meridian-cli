@@ -150,7 +150,10 @@ class _TestableOpenCodeConnection(OpenCodeConnection):
     async def _get_json(
         self,
         path: str,
+        *,
+        timeout: float | None = None,
     ) -> tuple[int, object | None, str]:
+        _ = timeout
         self.requests.append((path, {}))
         try:
             response = next(self._get_responses)

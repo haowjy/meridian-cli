@@ -168,6 +168,12 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
         _STARTUP_TIMEOUT_SECONDS - _READY_TIMEOUT_SECONDS
     )
     _SESSION_CREATE_PAYLOAD_TIMEOUT_SECONDS: ClassVar[float] = 5.0
+    # Per-attempt cap for startup probes. `opencode serve` accepts the TCP
+    # connection before its HTTP handler is ready, so the first GET after the
+    # socket starts accepting can hang. Bounding each probe (instead of the whole
+    # remaining budget) lets a hung request be abandoned and retried; aiohttp's
+    # own ClientTimeout tears down the stuck connection so the retry reconnects.
+    _PROBE_TIMEOUT_SECONDS: ClassVar[float] = 4.0
     _STOP_GRACE_SECONDS: ClassVar[float] = 5.0
     _EVENT_ACCEPT_HEADER: ClassVar[dict[str, str]] = {"Accept": "text/event-stream"}
 
@@ -540,10 +546,12 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
             for path in self._HEALTH_PATHS:
                 try:
                     remaining = max(0.0, deadline - time.monotonic())
-                    status, body, _ = await asyncio.wait_for(
-                        self._get_json(path),
-                        timeout=remaining,
+                    # Floor above zero: aiohttp treats ClientTimeout(total=0) as
+                    # "no timeout", which would let a hung probe block forever.
+                    probe_timeout = max(
+                        min(remaining, self._PROBE_TIMEOUT_SECONDS), 0.05
                     )
+                    status, body, _ = await self._get_json(path, timeout=probe_timeout)
                 except TimeoutError as exc:
                     last_error = f"{path}: {exc or 'timeout'}"
                     if time.monotonic() >= deadline:
@@ -589,6 +597,9 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
                 self._last_health_ok = True
                 return session_id
             except TimeoutError as exc:
+                # POST /session is not idempotent: do not replay a create that may
+                # have already taken effect server-side. Only transport-not-ready
+                # (SessionNotReadyError) is safe to retry below.
                 raise TimeoutError(
                     f"OpenCode session endpoint did not become ready within {timeout_seconds:.1f}s"
                 ) from exc
@@ -721,11 +732,25 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
     async def _get_json(
         self,
         path: str,
+        *,
+        timeout: float | None = None,
     ) -> tuple[int, object | None, str]:
-        """Perform a GET request and return (status, parsed_body, content_type)."""
+        """Perform a GET request and return (status, parsed_body, content_type).
+
+        When *timeout* is set, the request is bounded by an aiohttp
+        ``ClientTimeout`` so the underlying connection is torn down on expiry
+        (a stuck connection is not returned to the keep-alive pool). The session
+        default stays unbounded for long-lived streaming reads.
+        """
         client = await self._ensure_http_client()
         trace_wire_send(self._tracer, "http_get", "", path=path)
-        async with client.get(self._url(path)) as response:
+        request_kwargs: dict[str, Any] = {}
+        if timeout is not None:
+            # aiohttp treats total=0 as "no timeout"; keep it strictly positive.
+            request_kwargs["timeout"] = self._ensure_aiohttp().ClientTimeout(
+                total=max(timeout, 0.001)
+            )
+        async with client.get(self._url(path), **request_kwargs) as response:
             status = int(response.status)
             content_type = str(response.headers.get("Content-Type", "")).lower()
             text_body = await response.text()
