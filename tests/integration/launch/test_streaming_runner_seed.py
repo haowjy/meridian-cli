@@ -77,6 +77,10 @@ class _ClaudeSeedPersistenceConnection:
     def subprocess_pid(self) -> int | None:
         return 5252
 
+    @property
+    def resident_backend(self) -> None:
+        return None
+
     async def start(self, config: ConnectionConfig, spec: ResolvedLaunchSpec) -> None:
         self._spawn_id = config.spawn_id
         self._project_root = config.control_root
@@ -136,6 +140,10 @@ class _OpenCodeSeedPortConnection:
     @property
     def subprocess_pid(self) -> int | None:
         return 6262
+
+    @property
+    def resident_backend(self) -> None:
+        return None
 
     async def start(self, config: ConnectionConfig, spec: ResolvedLaunchSpec) -> None:
         _ = spec
@@ -197,6 +205,10 @@ class _OpenCodeConnectSessionConnection:
     @property
     def subprocess_pid(self) -> int | None:
         return 7272
+
+    @property
+    def resident_backend(self) -> None:
+        return None
 
     async def start(self, config: ConnectionConfig, spec: ResolvedLaunchSpec) -> None:
         _ = spec

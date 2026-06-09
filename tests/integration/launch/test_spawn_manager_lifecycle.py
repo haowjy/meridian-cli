@@ -18,6 +18,7 @@ from meridian.lib.harness.connections.base import (
     HarnessEvent,
     StopResult,
 )
+from meridian.lib.harness.control_action import ControlActionCoordinator
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.safety.permissions import UnsafeNoOpPermissionResolver
 from meridian.lib.state.paths import resolve_runtime_paths
@@ -112,6 +113,10 @@ async def test_wait_for_completion_survives_cleanup_without_private_hooks(
         @property
         def subprocess_pid(self) -> int | None:
             return 7373
+
+        @property
+        def resident_backend(self) -> None:
+            return None
 
         async def start(self, config: ConnectionConfig, spec: ResolvedLaunchSpec) -> None:
             _ = spec
@@ -215,6 +220,10 @@ async def test_backpressure_drop_emits_runtime_telemetry(tmp_path: Path) -> None
         def harness_id(self) -> HarnessId:
             return HarnessId.CODEX
 
+        @property
+        def resident_backend(self) -> None:
+            return None
+
         async def stop(
             self,
             *,
@@ -236,6 +245,11 @@ async def test_backpressure_drop_emits_runtime_telemetry(tmp_path: Path) -> None
         control_server=cast("Any", FakeControlServer()),
         started_monotonic=time.monotonic(),
         completion_future=completion_future,
+        raw_terminal_frames_authoritative=True,
+        control_actions=ControlActionCoordinator(
+            spawn_id=spawn_id,
+            spawn_dir=manager._spawn_dir(spawn_id),
+        ),
     )
 
     first = HarnessEvent(event_type="first", harness_id="codex", payload={})
@@ -291,6 +305,10 @@ async def test_stop_spawn_reaps_recorded_scope_when_connection_stop_raises(
         def harness_id(self) -> HarnessId:
             return HarnessId.CODEX
 
+        @property
+        def resident_backend(self) -> None:
+            return None
+
         async def stop(
             self,
             *,
@@ -313,6 +331,11 @@ async def test_stop_spawn_reaps_recorded_scope_when_connection_stop_raises(
         control_server=cast("Any", FakeControlServer()),
         started_monotonic=time.monotonic(),
         completion_future=completion_future,
+        raw_terminal_frames_authoritative=True,
+        control_actions=ControlActionCoordinator(
+            spawn_id=spawn_id,
+            spawn_dir=manager._spawn_dir(spawn_id),
+        ),
     )
 
     outcome = await manager.stop_spawn(spawn_id)
@@ -369,6 +392,10 @@ async def test_spawn_manager_serializes_control_actions_and_persists_transitions
 
         @property
         def subprocess_pid(self) -> int | None:
+            return None
+
+        @property
+        def resident_backend(self) -> None:
             return None
 
         async def start(self, config: ConnectionConfig, spec: ResolvedLaunchSpec) -> None:

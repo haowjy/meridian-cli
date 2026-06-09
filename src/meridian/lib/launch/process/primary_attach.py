@@ -409,10 +409,7 @@ class PrimaryAttachLauncher:
         if backend_pid is None or backend_pid <= 0:
             return
 
-        managed_backend = self._connection.managed_backend
-        scope_snapshot = managed_backend.scope_snapshot if managed_backend is not None else None
-        if scope_snapshot is None:
-            scope_snapshot = self._connection.scope_snapshot
+        scope_snapshot = self._connection.scope_snapshot
         if scope_snapshot is None:
             return
 

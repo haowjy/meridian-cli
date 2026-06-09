@@ -122,21 +122,15 @@ async def test_wait_for_change_polls_late_child_state_after_directory_event(
     await watcher.start()
     try:
         child_dir.mkdir(parents=True)
-        watcher._candidate_child_spawn_ids.add("p123")
-        watcher._refresh_cached_state()
-        await asyncio.wait_for(watcher.wait_for_change(), timeout=1.0)
+        await watcher.force_rescan()
         assert watcher.has_pending_child_spawns() is True
+        assert watcher.pending_child_spawn_count() == 1
 
-        wait_task = asyncio.create_task(watcher.wait_for_change())
-        await asyncio.sleep(0)
-        assert not wait_task.done()
         _write_json(
             child_dir / "state.json",
             {"id": "p123", "parent_id": str(parent_id), "status": "running"},
         )
-        await asyncio.wait_for(wait_task, timeout=1.0)
-        assert watcher._child_spawn_ids == {"p123"}
-        assert watcher._candidate_child_spawn_ids == set()
+        await watcher.force_rescan()
         assert watcher.has_pending_child_spawns() is True
     finally:
         await watcher.stop()

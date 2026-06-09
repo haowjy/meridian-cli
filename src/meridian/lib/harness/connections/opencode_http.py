@@ -45,7 +45,6 @@ from meridian.lib.harness.connections.liveness import (
 )
 from meridian.lib.harness.connections.managed_backend import (
     ManagedBackendConfig,
-    ManagedBackendHandle,
     launch_managed_backend,
 )
 from meridian.lib.harness.connections.resident_backend import (
@@ -204,7 +203,6 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
         self._startup_emitter: StartupPhaseEmitter | None = None
         self._scope_handle: ScopedProcessHandle | None = None
         self._parent_death_link: ParentDeathLink | None = None
-        self._managed_backend: ManagedBackendHandle | None = None
 
     @property
     def state(self) -> ConnectionState:
@@ -247,10 +245,6 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
         if snapshot is None:
             return None
         return snapshot.root_created_at_epoch
-
-    @property
-    def managed_backend(self) -> ManagedBackendHandle | None:
-        return self._managed_backend
 
     @property
     def observer_endpoint(self) -> ObserverEndpoint | None:
@@ -521,7 +515,6 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
             ),
             stderr=self._stderr_handle,
         )
-        self._managed_backend = handle
         self._process = handle.process
         self._scope_handle = handle.scope_handle
         self._parent_death_link = handle.parent_death_link
@@ -1044,7 +1037,6 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
                 await process.wait()
 
         self._parent_death_link = None
-        self._managed_backend = None
         self._base_url = None
         self._session_id = None
         self._event_path = None

@@ -42,7 +42,6 @@ from meridian.lib.streaming.pi_drain import PiDrainCoordinator
 from meridian.lib.streaming.pi_process_cleanup import terminate_pi_tracked_subspawns
 from meridian.lib.streaming.pi_subspawn_tracker import PiSubspawnTracker
 from meridian.lib.streaming.resident_drain import ResidentDrainCoordinator
-from meridian.lib.streaming.single_turn_drain import SingleTurnDrainCoordinator
 from meridian.lib.streaming.spawn_dispatch import dispatch_start
 from meridian.lib.streaming.spawn_drain_loop import SpawnDrainLoop
 from meridian.lib.streaming.spawn_session import DrainOutcome, SpawnSession
@@ -250,7 +249,11 @@ class SpawnManager:
             started_monotonic=started_monotonic,
             completion_future=completion_future,
             debug_tracer=tracer,
-            raw_terminal_frames_authoritative=coordinator.raw_terminal_frames_are_authoritative(),
+            raw_terminal_frames_authoritative=(
+                coordinator.raw_terminal_frames_are_authoritative()
+                if coordinator is not None
+                else True
+            ),
             control_actions=ControlActionCoordinator(
                 spawn_id=spawn_id,
                 spawn_dir=self._spawn_dir(spawn_id),
@@ -281,7 +284,7 @@ class SpawnManager:
         self,
         spawn_id: SpawnId,
         receiver: HarnessConnection[Any],
-        coordinator: DrainCoordinator,
+        coordinator: DrainCoordinator | None,
         tracer: DebugTracer | None = None,
         *,
         drain_policy: DrainPolicy | None = None,
@@ -314,7 +317,7 @@ class SpawnManager:
         child_wave_timeout_seconds: float | None,
         resident_deadline_seconds: float | None,
         resident_poll_seconds: float | None,
-    ) -> DrainCoordinator:
+    ) -> DrainCoordinator | None:
         """Choose the harness-specific drain coordinator before entering the loop."""
 
         def _emit_pi_phase(*, phase: str, session_role: str | None, **payload: object) -> None:
@@ -360,7 +363,7 @@ class SpawnManager:
         async def _send_pi_done_nudge(message: str) -> None:
             await self.inject(spawn_id, message, source="pi_done_nudge")
 
-        if _resident_backend(receiver) is not None:
+        if receiver.resident_backend is not None:
             # TODO(phase-4): resident waiting and Pi quiescence share the same
             # "terminal candidate plus descendant work" shape; fold once Pi's
             # lifecycle inference machinery is removed.
@@ -386,10 +389,8 @@ class SpawnManager:
                 send_done_nudge=_send_pi_done_nudge,
             )
 
-        # TODO(phase-5): SpawnManager still owns persistence, fan-out, synthetic
-        # turn boundaries, and coordinator-emitted phase events. Extract a
-        # recorder/sink once drain selection is stable.
-        return SingleTurnDrainCoordinator()
+        # Plain streaming harnesses use SpawnDrainLoop's single-turn baseline.
+        return None
 
     def raw_terminal_frames_are_authoritative(self, spawn_id: SpawnId) -> bool:
         """Return whether raw harness terminal frames may finalize this spawn.
@@ -467,21 +468,7 @@ class SpawnManager:
             await session.connection.send_user_message(message)
             return inbound_seq
 
-        coordinator = session.control_actions
-        if coordinator is None:
-            try:
-                inbound_seq = await _send_message()
-            except Exception as exc:
-                result = InjectResult(success=False, error=str(exc))
-                if on_result is not None:
-                    on_result(result)
-                return result
-            result = InjectResult(success=True, inbound_seq=inbound_seq)
-            if on_result is not None:
-                on_result(result)
-            return result
-
-        outcome = await coordinator.run_action(
+        outcome = await session.control_actions.run_action(
             action=ControlActionType.INJECT,
             payload={"text": message},
             source=source,
@@ -514,12 +501,7 @@ class SpawnManager:
         if session is None:
             raise RuntimeError(f"Spawn {spawn_id} is not active")
 
-        coordinator = session.control_actions
-        if coordinator is None:
-            await session.connection.send_cancel()
-            return
-
-        outcome = await coordinator.run_action(
+        outcome = await session.control_actions.run_action(
             action=ControlActionType.INTERRUPT,
             payload={},
             source=source,
@@ -546,19 +528,6 @@ class SpawnManager:
         async def _respond() -> None:
             await session.connection.respond_request(request_id, decision, payload)
 
-        coordinator = session.control_actions
-        if coordinator is None:
-            try:
-                await _respond()
-            except Exception as exc:
-                await self._notify_runtime_request_failed(
-                    session.connection,
-                    request_id=request_id,
-                    error=str(exc),
-                )
-                raise
-            return
-
         response_payload: dict[str, object] = {
             "request_id": request_id,
             "decision": decision,
@@ -566,7 +535,7 @@ class SpawnManager:
         if payload is not None:
             response_payload["payload"] = payload
 
-        outcome = await coordinator.run_action(
+        outcome = await session.control_actions.run_action(
             action=ControlActionType.PERMISSION_REPLY,
             payload=response_payload,
             source=source,
@@ -599,20 +568,7 @@ class SpawnManager:
         async def _respond() -> None:
             await session.connection.respond_user_input(request_id, answers)
 
-        coordinator = session.control_actions
-        if coordinator is None:
-            try:
-                await _respond()
-            except Exception as exc:
-                await self._notify_runtime_request_failed(
-                    session.connection,
-                    request_id=request_id,
-                    error=str(exc),
-                )
-                raise
-            return
-
-        outcome = await coordinator.run_action(
+        outcome = await session.control_actions.run_action(
             action=ControlActionType.USER_INPUT_REPLY,
             payload={"request_id": request_id, "answers": answers},
             source=source,
@@ -1046,13 +1002,6 @@ class SpawnManager:
         if session.completion_future.done() and not session.completion_future.cancelled():
             return session.completion_future.result()
         return outcome
-
-
-def _resident_backend(receiver: object) -> object | None:
-    try:
-        return cast("Any", receiver).resident_backend
-    except AttributeError:
-        return None
 
 
 __all__ = ["DrainOutcome", "SpawnManager", "SpawnSession", "dispatch_start"]

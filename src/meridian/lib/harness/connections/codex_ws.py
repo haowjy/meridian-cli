@@ -58,7 +58,6 @@ from meridian.lib.harness.connections.liveness import (
 )
 from meridian.lib.harness.connections.managed_backend import (
     ManagedBackendConfig,
-    ManagedBackendHandle,
     launch_managed_backend,
 )
 from meridian.lib.harness.connections.resident_backend import (
@@ -203,7 +202,6 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
         self._codex_home: Path | None = None
         self._scope_handle: ScopedProcessHandle | None = None
         self._parent_death_link: ParentDeathLink | None = None
-        self._managed_backend: ManagedBackendHandle | None = None
 
         self._next_request_id = 1
         self._pending_requests: dict[int, asyncio.Future[dict[str, object]]] = {}
@@ -308,10 +306,6 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
             return None
         return snapshot.root_created_at_epoch
 
-    @property
-    def managed_backend(self) -> ManagedBackendHandle | None:
-        return self._managed_backend
-
     async def start(
         self,
         config: ConnectionConfig,
@@ -376,7 +370,6 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
                 ),
                 stderr=self._stderr_handle,
             )
-            self._managed_backend = handle
             self._process = handle.process
             self._scope_handle = handle.scope_handle
             self._parent_death_link = handle.parent_death_link
@@ -824,7 +817,6 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
                 await process.wait()
 
         self._parent_death_link = None
-        self._managed_backend = None
         self._fail_pending_requests(RuntimeError("Codex connection stopped"))
         await self._clear_stale_hitl_requests(reason="connection_stopped")
         self._clear_turn_liveness_signals()

@@ -34,6 +34,25 @@ from meridian.lib.state.spawn_tree import active_descendants
 from meridian.lib.streaming.spawn_manager import SpawnManager
 
 
+async def _wait_until_runner_subscribed(manager: SpawnManager, spawn_id: SpawnId) -> None:
+    """Wait through SpawnManager's public subscription seam.
+
+    The runner owns the subscriber in these tests. A temporary successful
+    subscription means the runner has not attached yet, so release it and retry.
+    Once subscribe returns None for an active connection, the runner has claimed
+    the only subscriber slot.
+    """
+
+    while manager.get_connection(spawn_id) is None:
+        await asyncio.sleep(0)
+    while True:
+        probe = manager.subscribe(spawn_id)
+        if probe is None:
+            return
+        manager.unsubscribe(spawn_id)
+        await asyncio.sleep(0)
+
+
 class _FakeControlSocketServer:
     endpoint: str | None = None
 
@@ -224,8 +243,7 @@ async def test_resident_runner_waits_for_coordinator_after_raw_terminal_frame(
         )
     )
 
-    while parent_id not in manager._sessions or manager._sessions[parent_id].subscriber is None:
-        await asyncio.sleep(0)
+    await _wait_until_runner_subscribed(manager, parent_id)
 
     connection.release_terminal.set()
     await asyncio.wait_for(connection.terminal_yielded.wait(), timeout=1.0)
@@ -350,8 +368,7 @@ async def test_resident_runner_marks_deadline_drain_outcome_terminal(
         )
     )
 
-    while parent_id not in manager._sessions or manager._sessions[parent_id].subscriber is None:
-        await asyncio.sleep(0)
+    await _wait_until_runner_subscribed(manager, parent_id)
 
     connection.release_terminal.set()
 

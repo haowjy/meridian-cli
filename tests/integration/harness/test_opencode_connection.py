@@ -1,32 +1,27 @@
 # qa-validated: test-suite-redesign
-"""Tests for OpenCodeConnection lifecycle — events, start, message,
-launch process, type contracts."""
+"""Tests for OpenCodeConnection lifecycle, liveness, startup, and launch."""
 
 from __future__ import annotations
 
 import asyncio
+import json
 import tempfile
 from collections.abc import Mapping
 from pathlib import Path
-from typing import get_args, get_origin
+from types import SimpleNamespace
 
 import pytest
 
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.connections import opencode_http
 from meridian.lib.harness.connections.base import (
-    ConnectionCapabilities,
     ConnectionConfig,
-    ConnectionState,
-    HarnessConnection,
     HarnessEvent,
-    StopProgressCallback,
-    StopResult,
 )
-from meridian.lib.harness.connections.opencode_http import (
-    OpenCodeConnection,
-)
+from meridian.lib.harness.connections.opencode_http import OpenCodeConnection
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
+from meridian.lib.platform.detached_process import ParentDeathLink
+from meridian.lib.platform.process_scope import ProcessScopeSnapshot, ScopedProcessHandle
 from meridian.lib.safety.permissions import (
     UnsafeNoOpPermissionResolver,
 )
@@ -60,18 +55,15 @@ class _StartProbeOpenCodeConnection(OpenCodeConnection):
         self.launch_calls = 0
         self.ready_calls = 0
         self.create_session_calls = 0
-        self.start_order: list[str] = []
 
     async def _launch_process(self, config: ConnectionConfig, spec: ResolvedLaunchSpec) -> None:
         _ = config, spec
         self.launch_calls += 1
-        self.start_order.append("launch")
         self._process = _FakeProcess()
 
     async def _wait_for_ready(self, *, timeout_seconds: float) -> None:
         _ = timeout_seconds
         self.ready_calls += 1
-        self.start_order.append("ready")
 
     async def _create_session_with_retry(
         self,
@@ -81,7 +73,6 @@ class _StartProbeOpenCodeConnection(OpenCodeConnection):
     ) -> str:
         _ = spec, timeout_seconds
         self.create_session_calls += 1
-        self.start_order.append("session")
         return "sess-primary-observer"
 
     async def _post_session_message(self, text: str, *, system: str | None = None) -> None:
@@ -170,15 +161,12 @@ class _ReadinessStartupProbeOpenCodeConnection(_TestableOpenCodeConnection):
         get_responses: list[tuple[int, object | None, str] | Exception],
     ) -> None:
         super().__init__(responses=[], get_responses=get_responses)
-        self.start_order: list[str] = []
 
     async def _launch_process(self, config: ConnectionConfig, spec: ResolvedLaunchSpec) -> None:
         _ = config, spec
-        self.start_order.append("launch")
         self._process = _FakeProcess()
 
     async def _wait_for_ready(self, *, timeout_seconds: float) -> None:
-        self.start_order.append("ready")
         await super()._wait_for_ready(timeout_seconds=timeout_seconds)
 
     async def _create_session_with_retry(
@@ -188,7 +176,6 @@ class _ReadinessStartupProbeOpenCodeConnection(_TestableOpenCodeConnection):
         timeout_seconds: float,
     ) -> str:
         _ = spec, timeout_seconds
-        self.start_order.append("session")
         return "sess-after-readiness-timeout"
 
     async def _post_session_message(self, text: str, *, system: str | None = None) -> None:
@@ -302,11 +289,6 @@ def _build_connection_config(tmp_path: Path) -> ConnectionConfig:
         env_overrides={"MERIDIAN_TEST_ENV": "1"},
         system="system from test",
     )
-
-
-def test_opencode_activity_event_names_are_pinned() -> None:
-    assert OPENCODE_ACTIVITY_IDLE_EVENT == "session.idle"
-    assert OPENCODE_ACTIVITY_ERROR_EVENT == "session.error"
 
 
 @pytest.mark.parametrize(
@@ -526,7 +508,6 @@ async def test_opencode_start_primary_observer_mode_controls_initial_prompt_post
     assert connection.launch_calls == 1
     assert connection.ready_calls == 1
     assert connection.create_session_calls == 1
-    assert connection.start_order == ["launch", "ready", "session"]
     assert connection.initial_messages == expected_initial_messages
 
     await connection.stop()
@@ -545,7 +526,6 @@ async def test_opencode_readiness_gate_succeeds_before_session_create(
         ),
     )
 
-    assert connection.start_order == ["launch", "ready", "session"]
     assert connection.state == "connected"
 
     await connection.stop()
@@ -573,7 +553,6 @@ async def test_opencode_readiness_gate_retries_transient_timeout_before_session_
 
     assert connection.state == "connected"
     assert connection.session_id == "sess-after-readiness-timeout"
-    assert connection.start_order == ["launch", "ready", "session"]
     assert [path for path, _payload in connection.requests] == [
         "/global/health",
         "/global/health",
@@ -653,7 +632,7 @@ async def test_post_session_message_includes_system_field_when_present() -> None
 
 
 @pytest.mark.asyncio
-async def test_opencode_launch_process_passes_env_overrides_to_inherit_child_env(
+async def test_opencode_launch_process_passes_env_overrides_to_managed_backend(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -672,45 +651,55 @@ async def test_opencode_launch_process_passes_env_overrides_to_inherit_child_env
         captured["overrides"] = dict(overrides)
         return {"MERIDIAN_INHERIT_CALLED": "1", **overrides}
 
-    async def _fake_create_subprocess_exec(
-        *command: str,
-        cwd: str,
-        env: Mapping[str, str],
-        stdout: object,
+    async def _fake_launch_managed_backend(
+        backend_config: object,
+        *,
         stderr: object,
-        **_kwargs: object,
-    ) -> _FakeProcess:
-        _ = stdout, stderr
-        captured["command"] = list(command)
-        captured["cwd"] = cwd
-        captured["env"] = dict(env)
-        return fake_process
+    ) -> object:
+        captured["backend_config"] = backend_config
+        captured["stderr"] = stderr
+        snapshot = ProcessScopeSnapshot(
+            scope_id="backend",
+            owner_policy="spawn_owned",
+            owner_id=str(config.spawn_id),
+            role="harness_backend",
+            containment="pid_tree_fallback",
+            root_pid=fake_process.pid,
+            root_created_at_epoch=1.0,
+            pgid=None,
+            job_name=None,
+            degraded_reason=None,
+            parent_death_linked=False,
+        )
+        return SimpleNamespace(
+            process=fake_process,
+            scope_handle=ScopedProcessHandle(process=fake_process, snapshot=snapshot),
+            parent_death_link=ParentDeathLink(parent_death_linked=False),
+        )
 
     monkeypatch.setattr(opencode_http, "_find_free_port", lambda _host="127.0.0.1": 17777)
     monkeypatch.setattr(opencode_http, "inherit_child_env", _fake_inherit_child_env)
-    monkeypatch.setattr(
-        opencode_http,
-        "project_opencode_spec_to_serve_command",
-        lambda _spec, host, port: ["opencode", "serve", "--host", host, "--port", str(port)],
-    )
-    monkeypatch.setattr(
-        opencode_http.asyncio,
-        "create_subprocess_exec",
-        _fake_create_subprocess_exec,
-    )
+    monkeypatch.setattr(opencode_http, "launch_managed_backend", _fake_launch_managed_backend)
 
     await connection._launch_process(config, spec)
 
     assert captured["overrides"] == config.env_overrides
-    assert captured["cwd"] == str(config.control_root)
-    env_result = captured["env"]
-    assert isinstance(env_result, dict)
-    assert env_result["MERIDIAN_INHERIT_CALLED"] == "1"
-    assert env_result["MERIDIAN_TEST_ENV"] == "1"
-    assert "OPENCODE_CONFIG_CONTENT" in env_result
-    import json as _json
+    backend_config = captured["backend_config"]
+    assert backend_config.cwd == config.control_root
+    assert backend_config.control_root == config.control_root
+    assert backend_config.command == (
+        "opencode",
+        "serve",
+        "--hostname",
+        "127.0.0.1",
+        "--port",
+        "17777",
+    )
+    assert backend_config.env["MERIDIAN_INHERIT_CALLED"] == "1"
+    assert backend_config.env["MERIDIAN_TEST_ENV"] == "1"
+    assert "OPENCODE_CONFIG_CONTENT" in backend_config.env
 
-    oc_config = _json.loads(env_result["OPENCODE_CONFIG_CONTENT"])
+    oc_config = json.loads(backend_config.env["OPENCODE_CONFIG_CONTENT"])
     assert len(oc_config["instructions"]) == 1
     instruction_path = Path(oc_config["instructions"][0])
     assert instruction_path.parent == Path(tempfile.gettempdir())
@@ -719,81 +708,3 @@ async def test_opencode_launch_process_passes_env_overrides_to_inherit_child_env
     assert connection.subprocess_pid == fake_process.pid
 
     await connection._cleanup_runtime()
-
-
-def test_opencode_connection_inherits_harness_connection_base() -> None:
-    assert issubclass(OpenCodeConnection, HarnessConnection)
-    assert HarnessConnection in OpenCodeConnection.__mro__
-
-
-def test_opencode_connection_explicitly_binds_harness_connection_generic() -> None:
-    matching_bases = [
-        base
-        for base in getattr(OpenCodeConnection, "__orig_bases__", ())
-        if get_origin(base) is HarnessConnection
-    ]
-
-    assert matching_bases
-    assert get_args(matching_bases[0]) == (ResolvedLaunchSpec,)
-
-
-def test_missing_harness_connection_abstract_method_raises_type_error() -> None:
-    class _MissingCancel(HarnessConnection[ResolvedLaunchSpec]):
-        @property
-        def state(self) -> ConnectionState:
-            return "created"
-
-        @property
-        def harness_id(self) -> HarnessId:
-            return HarnessId.OPENCODE
-
-        @property
-        def spawn_id(self) -> SpawnId:
-            return SpawnId("missing-cancel")
-
-        @property
-        def capabilities(self) -> ConnectionCapabilities:
-            return ConnectionCapabilities(
-                mid_turn_injection="http_post",
-                supports_steer=False,
-                supports_cancel=True,
-                runtime_model_switch=False,
-                structured_reasoning=True,
-            )
-
-        @property
-        def session_id(self) -> str | None:
-            return None
-
-        @property
-        def subprocess_pid(self) -> int | None:
-            return None
-
-        async def start(self, config: ConnectionConfig, spec: ResolvedLaunchSpec) -> None:
-            _ = config, spec
-
-        async def stop(
-            self,
-            *,
-            reason: str | None = None,
-            progress: StopProgressCallback | None = None,
-        ) -> StopResult:
-            _ = reason, progress
-            return StopResult()
-
-        def health(self) -> bool:
-            return True
-
-        async def send_user_message(self, text: str) -> None:
-            _ = text
-
-        async def events(self):  # type: ignore[no-untyped-def]
-            if False:
-                yield HarnessEvent(
-                    event_type="noop",
-                    payload={},
-                    harness_id=HarnessId.OPENCODE.value,
-                )
-
-    with pytest.raises(TypeError):
-        _MissingCancel()

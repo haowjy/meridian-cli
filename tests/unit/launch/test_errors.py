@@ -1,23 +1,27 @@
 from __future__ import annotations
 
-from meridian.lib.launch.errors import should_retry
+import pytest
+
+from meridian.lib.launch.errors import ErrorCategory, classify_error, should_retry
 
 
-def test_should_not_retry_opencode_liveness_startup_failure() -> None:
-    assert not should_retry(
-        exit_code=2,
+@pytest.mark.parametrize(
+    "marker",
+    (
+        "opencode session endpoint did not become ready",
+        "event stream liveness timeout",
+    ),
+)
+def test_liveness_failures_are_unrecoverable(marker: str) -> None:
+    assert classify_error(
+        exit_code=1,
         stderr="",
-        failure_message="OpenCode session endpoint did not become ready within 120.0s",
-        retries_attempted=0,
-        max_retries=3,
-    )
-
-
-def test_should_not_retry_event_stream_liveness_timeout() -> None:
+        failure_message=f"prefix {marker} suffix",
+    ) == ErrorCategory.UNRECOVERABLE
     assert not should_retry(
         exit_code=1,
         stderr="",
-        failure_message="OpenCode event stream liveness timeout after 120.0s without events",
+        failure_message=f"prefix {marker} suffix",
         retries_attempted=0,
         max_retries=3,
     )

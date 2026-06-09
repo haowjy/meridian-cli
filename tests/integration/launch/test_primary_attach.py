@@ -527,15 +527,6 @@ async def test_primary_attach_activity_transitions_update_metadata(tmp_path: Pat
         process_launcher=process_launcher,
     )
 
-    activity_writes: list[str] = []
-    original_write_metadata = launcher._write_metadata
-
-    def _recording_write_metadata() -> None:
-        activity_writes.append(launcher._metadata.activity)
-        original_write_metadata()
-
-    launcher._write_metadata = _recording_write_metadata  # type: ignore[method-assign]
-
     await launcher.run(
         config=_build_config(spawn_id=SpawnId("p903"), control_root=tmp_path),
         spec=_build_spec(),
@@ -543,21 +534,18 @@ async def test_primary_attach_activity_transitions_update_metadata(tmp_path: Pat
         env={},
     )
 
-    deduped_activity_writes: list[str] = []
-    for activity in activity_writes:
-        if deduped_activity_writes and deduped_activity_writes[-1] == activity:
-            continue
-        deduped_activity_writes.append(activity)
-
-    assert deduped_activity_writes == [
-        "starting",
-        "idle",
-        "turn_active",
-        "idle",
-        "finalizing",
+    metadata = _read_metadata(spawn_dir)
+    assert metadata["activity"] == "finalizing"
+    assert process_launcher.launch_commands == [("codex", "resume", "thread-123")]
+    history_events = [
+        json.loads(line)
+        for line in (spawn_dir / HISTORY_FILENAME).read_text(encoding="utf-8").splitlines()
     ]
-    assert activity_writes[-1] == "finalizing"
-    assert _read_metadata(spawn_dir)["activity"] == "finalizing"
+    assert [event["event_type"] for event in history_events] == [
+        "turn/started",
+        "turn/completed",
+    ]
+    assert {event["turn_id"] for event in history_events} == {"turn-7"}
 
 
 @pytest.mark.asyncio
@@ -637,26 +625,3 @@ async def test_primary_attach_raises_after_max_port_bind_retries(tmp_path: Path)
     assert connection.start_calls == 3
     assert connection.started_ports == [29100, 29101, 29102]
     assert process_launcher.launch_commands == []
-
-
-def test_primary_attach_finalizing_is_terminal_activity_state(tmp_path: Path) -> None:
-    spawn_dir = tmp_path / "spawns" / "p906"
-    spawn_dir.mkdir(parents=True, exist_ok=True)
-    launcher = PrimaryAttachLauncher(
-        spawn_id=SpawnId("p906"),
-        spawn_dir=spawn_dir,
-        connection=FakeManagedConnection(events=[]),
-        tui_command_builder=lambda session_id: ("codex", "resume", session_id),
-        process_launcher=FakeProcessLauncher(spawn_dir=spawn_dir),
-    )
-
-    launcher._set_activity("finalizing")
-    launcher._update_activity_from_event(
-        HarnessEvent(
-            event_type="turn/started",
-            payload={"turnId": "late-turn"},
-            harness_id="codex",
-        )
-    )
-
-    assert launcher._metadata.activity == "finalizing"

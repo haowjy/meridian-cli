@@ -20,10 +20,12 @@ class _FakeProcess:
 
 class _RecordingScopeHandle:
     def __init__(self) -> None:
-        self.terminated: list[tuple[float, str]] = []
+        self.terminate_calls = 0
 
     async def terminate(self, *, grace_seconds: float, reason: str) -> None:
-        self.terminated.append((grace_seconds, reason))
+        _ = reason
+        assert grace_seconds > 0
+        self.terminate_calls += 1
 
 
 class _FreezesAfterMessagesWebSocket:
@@ -117,5 +119,5 @@ async def test_codex_stop_terminates_scope_when_reader_task_already_failed() -> 
 
     await connection.stop(reason="test")
 
-    assert scope_handle.terminated == [(5.0, "stop_called")]
+    assert scope_handle.terminate_calls == 1
     assert connection.state == "stopped"

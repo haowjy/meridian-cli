@@ -37,8 +37,8 @@ class SpawnSession:
     control_server: ControlSocketServer
     started_monotonic: float
     completion_future: asyncio.Future[DrainOutcome]
+    raw_terminal_frames_authoritative: bool
+    control_actions: ControlActionCoordinator
     debug_tracer: DebugTracer | None = None
     cancel_sent: bool = False
     cancel_event_emitted: bool = False
-    raw_terminal_frames_authoritative: bool = True
-    control_actions: ControlActionCoordinator | None = None

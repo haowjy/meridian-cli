@@ -81,7 +81,7 @@ means the manager died or the spawn is orphaned.
 - `spawn_session.py` — `SpawnSession`, `DrainOutcome`
 - `pi_drain.py` — `PiDrainCoordinator`: Pi spawned-session quiescence policy
 - `resident_drain.py` — `ResidentDrainCoordinator`: resident-backend descendant waiting policy
-- `single_turn_drain.py` — default terminal-event finalization for plain streaming harnesses
+- `spawn_drain_loop.py` — default terminal-event finalization for plain streaming harnesses
 - `pi_subspawn_tracker.py` — Pi child-spawn, notification, and wave tracking
 - `disk_watcher.py` / `pi_quiescence.py` — disk-backed Pi background-work state
 - `drain_wait.py` — generic event/timeout/aux-wake arbitration for drain loops

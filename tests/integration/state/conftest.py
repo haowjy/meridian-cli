@@ -164,3 +164,70 @@ def _record_launch_boundary(
         launcher_pid=launcher_pid,
         worker_pid=worker_pid,
     )
+
+
+def fake_reaper_liveness(
+    monkeypatch,
+    live_pids,
+) -> None:
+    """Patch reaper runner liveness to a PID allowlist or predicate."""
+
+    def _is_alive(pid: int, created_after_epoch: float | None = None) -> bool:
+        _ = created_after_epoch
+        return live_pids(pid) if callable(live_pids) else pid in live_pids
+
+    monkeypatch.setattr("meridian.lib.state.reaper.is_process_alive", _is_alive)
+
+
+def fake_managed_primary_birth_liveness(
+    monkeypatch,
+    live_pids,
+) -> None:
+    """Patch managed-primary birth-checked liveness to a PID allowlist or predicate."""
+
+    def _is_alive(pid: int, birth_epoch: float | None) -> bool:
+        _ = birth_epoch
+        return live_pids(pid) if callable(live_pids) else pid in live_pids
+
+    monkeypatch.setattr(
+        "meridian.lib.state.managed_primary.is_process_alive_with_birth",
+        _is_alive,
+    )
+
+
+def recording_scope_cleanup(monkeypatch, target: str) -> list[int | str]:
+    """Patch a cleanup function and return the PID/scope calls it receives."""
+
+    from meridian.lib.platform.process_scope.base import CleanupResult
+
+    calls: list[int | str] = []
+
+    def _cleanup(*args, **kwargs):
+        subject = args[0] if args else kwargs.get("pid") or kwargs.get("scope")
+        reason = kwargs.get("reason", "stop_called")
+        if hasattr(subject, "scope_id"):
+            calls.append(f"{subject.scope_id}:{subject.root_pid}:{reason}")
+            return CleanupResult(
+                scope_id=subject.scope_id,
+                root_pid=subject.root_pid,
+                descendant_count=0,
+                reason=reason,
+                grace_seconds=kwargs.get("grace_seconds", 5.0),
+                kill_escalated=False,
+                degraded_fallback=False,
+                skip_reason=None,
+            )
+        calls.append(subject)
+        return CleanupResult(
+            scope_id=kwargs.get("scope_id", ""),
+            root_pid=subject,
+            descendant_count=0,
+            reason=reason,
+            grace_seconds=kwargs.get("grace_secs", 5.0),
+            kill_escalated=False,
+            degraded_fallback=kwargs.get("degraded_fallback", False),
+            skip_reason=None,
+        )
+
+    monkeypatch.setattr(target, _cleanup)
+    return calls

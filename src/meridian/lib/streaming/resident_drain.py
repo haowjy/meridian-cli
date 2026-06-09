@@ -295,8 +295,11 @@ class ResidentDrainCoordinator:
             if remaining is not None and remaining < COMPLETION_NUDGE_INTERVAL_SECONDS
             else COMPLETION_NUDGE_MESSAGE
         )
+        resident_backend = self._resident_backend_or_none()
+        if resident_backend is None:
+            return
         try:
-            await self.receiver.inject_turn(message)
+            await resident_backend.begin_followup_turn(message)
         except Exception:
             # Poll injection is advisory; drain-loop correctness must not depend on it.
             return
@@ -322,26 +325,25 @@ class ResidentDrainCoordinator:
         return remaining is not None and remaining <= 0
 
     def _set_awaiting_done(self, awaiting_done: bool) -> None:
-        resident_backend = _resident_backend(self.receiver)
-        if resident_backend is not None:
-            resident_backend.set_awaiting_done(awaiting_done)
+        self._resident_backend().set_awaiting_done(awaiting_done)
+
+    def _resident_backend(self) -> ResidentBackendControl:
+        resident_backend = self._resident_backend_or_none()
+        assert resident_backend is not None, "ResidentDrainCoordinator requires a resident backend"
+        return resident_backend
+
+    def _resident_backend_or_none(self) -> ResidentBackendControl | None:
+        return self.receiver.resident_backend
 
 
 def _resident_health_status(receiver: HarnessConnection[Any]) -> LivenessDecision | str:
-    resident_backend = _resident_backend(receiver)
+    resident_backend = receiver.resident_backend
     if resident_backend is None:
-        return "unsupported"
+        return LivenessDecision.BACKEND_DEAD
     try:
         return resident_backend.health_status()
     except Exception:
         return LivenessDecision.BACKEND_DEAD
-
-
-def _resident_backend(receiver: HarnessConnection[Any]) -> ResidentBackendControl | None:
-    try:
-        return receiver.resident_backend
-    except AttributeError:
-        return None
 
 
 def _has_outstanding_descendant_work(runtime_root: Path, spawn_id: SpawnId) -> bool:

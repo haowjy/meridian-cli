@@ -7,14 +7,12 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Final, Generic, Literal, Protocol, cast
+from typing import TYPE_CHECKING, Any, Final, Generic, Literal, Protocol
 
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.launch.launch_types import SpecT
 
 if TYPE_CHECKING:
-    from meridian.lib.harness.connections.liveness import BackendLivenessPolicy
-    from meridian.lib.harness.connections.managed_backend import ManagedBackendHandle
     from meridian.lib.harness.connections.resident_backend import ResidentBackendControl
     from meridian.lib.observability.debug_tracer import DebugTracer
     from meridian.lib.platform.process_scope import ProcessScopeSnapshot
@@ -274,11 +272,6 @@ class HarnessConnection(Generic[SpecT], ABC):
     def subprocess_pid(self) -> int | None: ...
 
     @property
-    def managed_backend(self) -> ManagedBackendHandle | None:
-        """Managed backend process handle when this connection launched a backend."""
-        return None
-
-    @property
     def resident_backend(self) -> ResidentBackendControl | None:
         """Resident backend control seam, when this transport supports resident turns."""
         return None
@@ -287,13 +280,6 @@ class HarnessConnection(Generic[SpecT], ABC):
     def scope_snapshot(self) -> ProcessScopeSnapshot | None:
         """Process scope facts for the managed backend subprocess, if any."""
         return None
-
-    @property
-    def liveness(self) -> BackendLivenessPolicy | None:
-        """Event-stream liveness policy when the connection exposes one."""
-
-        candidate = getattr(self, "_liveness", None)
-        return cast("BackendLivenessPolicy | None", candidate)
 
     @abstractmethod
     async def start(self, config: ConnectionConfig, spec: SpecT) -> None: ...
@@ -337,16 +323,6 @@ class HarnessConnection(Generic[SpecT], ABC):
         raise NotImplementedError(
             f"{self.harness_id.value} does not support runtime event injection"
         )
-
-    async def inject_turn(self, message: str) -> None:
-        """Compatibility wrapper for the resident follow-up-turn contract."""
-
-        resident_backend = self.resident_backend
-        if resident_backend is None:
-            raise NotImplementedError(
-                f"{self.harness_id.value} does not support resident follow-up turns"
-            )
-        await resident_backend.begin_followup_turn(message)
 
     async def respond_request(
         self,

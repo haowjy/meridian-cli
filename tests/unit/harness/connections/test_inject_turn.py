@@ -19,7 +19,6 @@ from meridian.lib.harness.connections.base import (
 )
 from meridian.lib.harness.connections.codex_ws import CodexConnection
 from meridian.lib.harness.connections.opencode_http import OpenCodeConnection
-from meridian.lib.harness.connections.pi_rpc import PiRpcConnection
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 
 
@@ -115,28 +114,17 @@ class _PostCaptureOpenCodeConnection(OpenCodeConnection):
         return 202, None, "application/json"
 
 
-class _RpcCapturePiConnection(PiRpcConnection):
-    def __init__(self) -> None:
-        super().__init__()
-        self.messages: list[tuple[dict[str, object], str]] = []
-
-    async def _send_rpc_message(self, payload: dict[str, object], *, event: str) -> None:
-        self.messages.append((payload, event))
+def test_base_connection_has_no_resident_backend_by_default() -> None:
+    assert _MinimalConnection().resident_backend is None
 
 
 @pytest.mark.asyncio
-async def test_base_inject_turn_defaults_to_unsupported() -> None:
-    with pytest.raises(NotImplementedError, match="does not support resident follow-up turns"):
-        await _MinimalConnection().inject_turn("hello")
-
-
-@pytest.mark.asyncio
-async def test_codex_inject_turn_starts_new_turn_on_current_thread() -> None:
+async def test_codex_resident_backend_starts_new_turn_on_current_thread() -> None:
     connection = _RequestCaptureCodexConnection()
     connection._state = "connected"
     connection._thread_id = "thread-123"
 
-    await connection.inject_turn("next task")
+    await connection.resident_backend.begin_followup_turn("next task")
 
     assert connection.requests == [
         (
@@ -150,37 +138,37 @@ async def test_codex_inject_turn_starts_new_turn_on_current_thread() -> None:
 
 
 @pytest.mark.asyncio
-async def test_codex_inject_turn_requires_idle_backend() -> None:
+async def test_codex_resident_backend_requires_idle_backend() -> None:
     connection = _RequestCaptureCodexConnection()
     connection._state = "connected"
     connection._thread_id = "thread-123"
     connection._current_turn_id = "turn-active"
 
     with pytest.raises(ConnectionNotReady, match="require an idle backend"):
-        await connection.inject_turn("too soon")
+        await connection.resident_backend.begin_followup_turn("too soon")
 
     assert connection.requests == []
 
 
 @pytest.mark.asyncio
-async def test_codex_inject_turn_requires_current_thread() -> None:
+async def test_codex_resident_backend_requires_current_thread() -> None:
     connection = _RequestCaptureCodexConnection()
     connection._state = "connected"
 
     with pytest.raises(ConnectionNotReady, match="thread ID is unavailable"):
-        await connection.inject_turn("no session")
+        await connection.resident_backend.begin_followup_turn("no session")
 
     assert connection.requests == []
 
 
 @pytest.mark.asyncio
-async def test_opencode_inject_turn_posts_prompt_to_current_session() -> None:
+async def test_opencode_resident_backend_posts_prompt_to_current_session() -> None:
     connection = _PostCaptureOpenCodeConnection()
     connection._state = "connected"
     connection._base_url = "http://127.0.0.1:9999"
     connection._session_id = "sess-123"
 
-    await connection.inject_turn("next task")
+    await connection.resident_backend.begin_followup_turn("next task")
 
     assert connection.requests == [
         (
@@ -191,21 +179,12 @@ async def test_opencode_inject_turn_posts_prompt_to_current_session() -> None:
 
 
 @pytest.mark.asyncio
-async def test_opencode_inject_turn_requires_current_session() -> None:
+async def test_opencode_resident_backend_requires_current_session() -> None:
     connection = _PostCaptureOpenCodeConnection()
     connection._state = "connected"
 
     with pytest.raises(ConnectionNotReady, match="session has not been created"):
-        await connection.inject_turn("no session")
+        await connection.resident_backend.begin_followup_turn("no session")
 
     assert connection.requests == []
 
-
-@pytest.mark.asyncio
-async def test_pi_inject_turn_is_explicitly_unsupported_for_nonresident_backend() -> None:
-    connection = _RpcCapturePiConnection()
-
-    with pytest.raises(NotImplementedError, match="does not support resident follow-up turns"):
-        await connection.inject_turn("next task")
-
-    assert connection.messages == []

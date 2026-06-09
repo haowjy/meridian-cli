@@ -44,11 +44,8 @@ class ManagedBackendHandle:
     """Immutable facts about a launched managed backend."""
 
     process: asyncio.subprocess.Process
-    scope_snapshot: ProcessScopeSnapshot
     scope_handle: ScopedProcessHandle
     parent_death_link: ParentDeathLink
-    parent_death_linked: bool
-
 
 async def launch_managed_backend(
     config: ManagedBackendConfig,
@@ -119,10 +116,8 @@ async def launch_managed_backend(
 
     return ManagedBackendHandle(
         process=process,
-        scope_snapshot=snapshot,
         scope_handle=scope_handle,
         parent_death_link=parent_death_link,
-        parent_death_linked=parent_death_linked,
     )
 
 

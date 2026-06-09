@@ -92,6 +92,10 @@ async def test_streaming_runner_signal_cancel_invokes_send_cancel_once(
         def subprocess_pid(self) -> int | None:
             return None
 
+        @property
+        def resident_backend(self) -> None:
+            return None
+
         async def start(self, config: ConnectionConfig, spec: object) -> None:
             _ = spec
             self._spawn_id = config.spawn_id
