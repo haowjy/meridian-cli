@@ -7,6 +7,7 @@ from pathlib import Path
 from pydantic import BaseModel, ConfigDict
 
 from meridian.lib.core.depth import is_root_side_effect_process
+from meridian.lib.core.process_cleanup import reclaim_session_owned_scopes_for_chat
 from meridian.lib.core.spawn_lifecycle import is_active_spawn_status
 from meridian.lib.core.util import FormatContext
 from meridian.lib.ops.config import ensure_runtime_state_bootstrap_sync
@@ -158,6 +159,13 @@ def _repair_stale_session_locks(
     if resolved_runtime_root is None:
         raise ValueError("Doctor lock repair requires a runtime root.")
     cleanup = cleanup_stale_sessions(resolved_runtime_root)
+    for chat_id in cleanup.cleaned_ids:
+        reclaim_session_owned_scopes_for_chat(
+            resolved_runtime_root,
+            chat_id,
+            grace_seconds=5.0,
+            require_live_root=True,
+        )
     return len(cleanup.cleaned_ids)
 
 

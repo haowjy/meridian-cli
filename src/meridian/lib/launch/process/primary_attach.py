@@ -9,7 +9,6 @@ import asyncio
 import os
 import socket
 import sys
-import time
 from collections.abc import Callable
 from contextlib import suppress
 from dataclasses import dataclass, field, replace
@@ -25,7 +24,10 @@ from meridian.lib.harness.connections.errors import PortBindError
 from meridian.lib.harness.semantics import activity_transition
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.platform.process_scope import terminate_scope_sync
-from meridian.lib.platform.process_scope.base import ProcessScopeSnapshot
+from meridian.lib.platform.process_scope.base import (
+    PROCESS_BIRTH_UNKNOWN_EPOCH,
+    ProcessScopeSnapshot,
+)
 from meridian.lib.state.history import HarnessHistoryWriter
 from meridian.lib.state.primary_meta import ActivityState, PrimaryMetadata, write_primary_metadata
 from meridian.lib.state.process_scope_projection import record_scope
@@ -51,7 +53,7 @@ def _make_scope_snapshot(
     try:
         birth_time = psutil.Process(pid).create_time()
     except (psutil.NoSuchProcess, psutil.AccessDenied):
-        birth_time = time.time()
+        birth_time = PROCESS_BIRTH_UNKNOWN_EPOCH
 
     pgid: int | None = None
     containment: str
@@ -379,8 +381,9 @@ class PrimaryAttachLauncher:
     def _record_backend_scope_from_connection(self, session_id: str | None) -> None:
         """Record backend scope using the connection's managed-backend handle.
 
-        Primary observer mode suppresses record_scope during launch, so this is
-        the single backend scope write for managed-primary attach.
+        Managed observer mode records a provisional spawn_owned backend scope as
+        soon as the process exists. This write upgrades that same concrete scope
+        to session_owned once the harness session id is known.
         """
         backend_pid = self._connection.subprocess_pid
         if backend_pid is None or backend_pid <= 0:

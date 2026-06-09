@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import os
-import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import IO, Any
@@ -23,6 +22,7 @@ from meridian.lib.platform.process_scope import (
     ProcessScopeSnapshot,
     ScopedProcessHandle,
 )
+from meridian.lib.platform.process_scope.base import PROCESS_BIRTH_UNKNOWN_EPOCH
 from meridian.lib.state.paths import resolve_spawn_log_dir
 from meridian.lib.state.process_scope_projection import record_scope
 
@@ -96,7 +96,7 @@ async def launch_managed_backend(
     try:
         birth_time = psutil.Process(pid).create_time()
     except (psutil.NoSuchProcess, psutil.AccessDenied):
-        birth_time = time.time()
+        birth_time = PROCESS_BIRTH_UNKNOWN_EPOCH
 
     parent_death_link = link_child_lifetime_to_parent(pid)
     parent_death_linked = (
@@ -118,8 +118,7 @@ async def launch_managed_backend(
     )
     scope_handle = ScopedProcessHandle(process=process, snapshot=snapshot)
 
-    if not config.observer_mode:
-        record_scope(runtime_root, config.spawn_id, snapshot)
+    record_scope(runtime_root, config.spawn_id, snapshot)
 
     return ManagedBackendHandle(
         process=process,

@@ -13,7 +13,11 @@ import structlog
 
 from meridian.lib.core.types import SpawnId
 from meridian.lib.platform.process_scope import terminate_scope_sync, terminate_tree_sync
-from meridian.lib.platform.process_scope.base import CleanupResult, ProcessScopeSnapshot
+from meridian.lib.platform.process_scope.base import (
+    CleanupResult,
+    ProcessScopeSnapshot,
+    birth_time_unverified,
+)
 from meridian.lib.state.process_scope_projection import (
     is_scope_released,
     mark_scope_released,
@@ -362,12 +366,17 @@ def reclaim_session_owned_scopes_for_chat(
     chat_id: str,
     *,
     grace_seconds: float = 5.0,
+    require_live_root: bool = False,
 ) -> list[CleanupResult]:
     """Reclaim all session_owned scopes on spawns belonging to a chat.
 
     Called at session exit. Terminates all unreleased session_owned scopes
     on spawns whose chat_id matches, regardless of which specific
     harness_session_id they reference.
+
+    Crash repair passes ``require_live_root=True`` because it runs after a
+    stale lease has been declared terminal; this keeps repair fail-closed when
+    the recorded root is gone or the PID has been reused.
     """
     from meridian.lib.state.spawn_store import list_spawns
 
@@ -381,6 +390,34 @@ def reclaim_session_owned_scopes_for_chat(
                 continue
             if is_scope_released(runtime_root, spawn_id, scope.release_id):
                 continue
+            if require_live_root:
+                skip_reason = _live_root_skip_reason(scope)
+                if skip_reason is not None:
+                    result = CleanupResult(
+                        scope_id=scope.scope_id,
+                        root_pid=scope.root_pid,
+                        descendant_count=None,
+                        reason="session_exit",
+                        grace_seconds=0.0,
+                        kill_escalated=False,
+                        degraded_fallback=False,
+                        skip_reason=skip_reason,
+                    )
+                    logger.debug(
+                        "Skipped session-owned scope reclaim during crash repair.",
+                        spawn_id=record.id,
+                        scope_id=scope.scope_id,
+                        root_pid=scope.root_pid,
+                        descendant_count=None,
+                        reason="session_exit",
+                        grace_seconds=0.0,
+                        kill_escalated=False,
+                        degraded_fallback=False,
+                        skip_reason=skip_reason,
+                        chat_id=chat_id,
+                    )
+                    results.append(result)
+                    continue
             result = terminate_scope_sync(scope, grace_seconds=grace_seconds, reason="session_exit")
             mark_scope_released(runtime_root, spawn_id, scope.release_id)
             logger.debug(
@@ -398,6 +435,18 @@ def reclaim_session_owned_scopes_for_chat(
             )
             results.append(result)
     return results
+
+
+def _live_root_skip_reason(scope: ProcessScopeSnapshot) -> str | None:
+    if birth_time_unverified(scope.root_created_at_epoch):
+        return "birth_time_unverified_skip_crash_reclaim_to_avoid_pid_reuse_kill"
+    try:
+        actual = psutil.Process(scope.root_pid).create_time()
+    except (psutil.NoSuchProcess, psutil.AccessDenied, OSError):
+        return "root_not_alive"
+    if abs(actual - scope.root_created_at_epoch) > 1.0:
+        return "pid_reuse_detected"
+    return None
 
 
 __all__ = [

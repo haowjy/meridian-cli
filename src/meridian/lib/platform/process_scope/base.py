@@ -10,6 +10,19 @@ import structlog
 
 logger = structlog.get_logger(__name__)
 
+PROCESS_BIRTH_UNKNOWN_EPOCH = 0.0
+
+
+def birth_time_unverified(created_at_epoch: float) -> bool:
+    """Return True when process birth time was not observed.
+
+    The sentinel means "unknown", not "process born at epoch zero".
+    Adapters must skip PID-reuse numeric comparisons in this state; callers
+    decide whether an unknown birth time is safe for their policy layer.
+    """
+
+    return created_at_epoch == PROCESS_BIRTH_UNKNOWN_EPOCH
+
 
 @dataclass(frozen=True)
 class ProcessScopeSnapshot:
@@ -231,8 +244,10 @@ def _emit_termination_event(
 
 
 __all__ = [
+    "PROCESS_BIRTH_UNKNOWN_EPOCH",
     "CleanupResult",
     "ProcessScopeSnapshot",
     "ScopedProcessHandle",
+    "birth_time_unverified",
     "process_scope_release_id",
 ]

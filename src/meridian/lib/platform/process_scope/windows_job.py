@@ -13,7 +13,7 @@ from typing import Any, cast
 import psutil
 
 from meridian.lib.platform import IS_WINDOWS
-from meridian.lib.platform.process_scope.base import CleanupResult
+from meridian.lib.platform.process_scope.base import CleanupResult, birth_time_unverified
 
 # ---------------------------------------------------------------------------
 # Windows constants (defined inline so the module imports cleanly on POSIX)
@@ -141,10 +141,11 @@ def terminate_job(
 
     # --- PID reuse guard (PROC-006) ---
     skip_reason: str | None = None
-    with suppress(psutil.NoSuchProcess, psutil.AccessDenied, OSError):
-        actual_create_time = psutil.Process(root_pid).create_time()
-        if abs(actual_create_time - created_at_epoch) > 1.0:
-            skip_reason = "pid_reuse_detected"
+    if not birth_time_unverified(created_at_epoch):
+        with suppress(psutil.NoSuchProcess, psutil.AccessDenied, OSError):
+            actual_create_time = psutil.Process(root_pid).create_time()
+            if abs(actual_create_time - created_at_epoch) > 1.0:
+                skip_reason = "pid_reuse_detected"
 
     if skip_reason is not None:
         return CleanupResult(

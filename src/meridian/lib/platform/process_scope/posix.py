@@ -10,7 +10,7 @@ from contextlib import suppress
 import psutil
 
 from meridian.lib.platform import IS_WINDOWS
-from meridian.lib.platform.process_scope.base import CleanupResult
+from meridian.lib.platform.process_scope.base import CleanupResult, birth_time_unverified
 
 
 def _scan_by_pgid(pgid: int) -> list[psutil.Process]:
@@ -74,12 +74,13 @@ def terminate_pgid(
     # already dead" (degraded mode — PGID kill may still reach live members).
     pid_reuse_detected = False
     root_is_dead = False
-    try:
-        actual_create_time = psutil.Process(root_pid).create_time()
-        if abs(actual_create_time - created_at_epoch) > 1.0:
-            pid_reuse_detected = True
-    except (psutil.NoSuchProcess, psutil.AccessDenied, OSError):
-        root_is_dead = True
+    if not birth_time_unverified(created_at_epoch):
+        try:
+            actual_create_time = psutil.Process(root_pid).create_time()
+            if abs(actual_create_time - created_at_epoch) > 1.0:
+                pid_reuse_detected = True
+        except (psutil.NoSuchProcess, psutil.AccessDenied, OSError):
+            root_is_dead = True
 
     if pid_reuse_detected:
         return CleanupResult(

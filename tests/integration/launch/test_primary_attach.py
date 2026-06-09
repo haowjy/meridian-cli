@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, cast
 
+import psutil
 import pytest
 
 from meridian.lib.core.types import HarnessId, SpawnId
@@ -27,7 +28,9 @@ from meridian.lib.launch.process.primary_attach import (
     PrimaryAttachLauncher,
 )
 from meridian.lib.platform.process_scope import ProcessScopeSnapshot
+from meridian.lib.platform.process_scope.base import PROCESS_BIRTH_UNKNOWN_EPOCH
 from meridian.lib.safety.permissions import UnsafeNoOpPermissionResolver
+from meridian.lib.state.process_scope_projection import read_scopes_from_disk, record_scope
 
 _BACKEND_SCOPE_EPOCH = 12_345.0
 
@@ -260,6 +263,29 @@ def _read_history_lines(spawn_dir: Path) -> list[dict[str, object]]:
     return [cast("dict[str, object]", json.loads(line)) for line in lines if line.strip()]
 
 
+def test_primary_attach_scope_snapshot_records_unknown_birth_sentinel_when_create_time_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _InaccessibleProcess:
+        def __init__(self, pid: int) -> None:
+            self.pid = pid
+
+        def create_time(self) -> float:
+            raise psutil.AccessDenied(pid=self.pid)
+
+    monkeypatch.setattr(primary_attach_module.psutil, "Process", _InaccessibleProcess)
+
+    snapshot = primary_attach_module._make_scope_snapshot(
+        pid=987_654_321,
+        scope_id="tui",
+        owner_policy="session_owned",
+        owner_id="thread-unknown",
+        role="primary_tui",
+    )
+
+    assert snapshot.root_created_at_epoch == PROCESS_BIRTH_UNKNOWN_EPOCH
+
+
 @pytest.mark.asyncio
 async def test_primary_attach_event_writer_failure_stops_connection_and_tui(
     tmp_path: Path,
@@ -340,6 +366,41 @@ async def test_primary_attach_writes_metadata_before_tui_launch(tmp_path: Path) 
     assert launch_meta["backend_port"] == 7811
     assert launch_meta["harness_session_id"] == "thread-123"
     assert process_launcher.output_log_paths == [None]
+
+
+@pytest.mark.asyncio
+async def test_primary_attach_upgrades_provisional_backend_scope_without_duplicate(
+    tmp_path: Path,
+) -> None:
+    spawn_id = SpawnId("p900-scope")
+    spawn_dir = tmp_path / "spawns" / str(spawn_id)
+    connection = FakeManagedConnection(events=[], session_id="thread-upgraded")
+    process_launcher = FakeProcessLauncher(spawn_dir=spawn_dir)
+    provisional = connection.scope_snapshot
+    assert provisional is not None
+    record_scope(tmp_path, spawn_id, provisional)
+
+    launcher = PrimaryAttachLauncher(
+        spawn_id=spawn_id,
+        spawn_dir=spawn_dir,
+        connection=connection,
+        tui_command_builder=lambda session_id: ("codex", "resume", session_id),
+        process_launcher=process_launcher,
+    )
+
+    await launcher.run(
+        config=_build_config(spawn_id=spawn_id, control_root=tmp_path),
+        spec=_build_spec(),
+        cwd=tmp_path,
+        env={},
+    )
+
+    backend_scopes = [
+        scope for scope in read_scopes_from_disk(tmp_path, spawn_id) if scope.scope_id == "backend"
+    ]
+    assert [(scope.owner_policy, scope.owner_id) for scope in backend_scopes] == [
+        ("session_owned", "thread-upgraded")
+    ]
 
 
 @pytest.mark.asyncio

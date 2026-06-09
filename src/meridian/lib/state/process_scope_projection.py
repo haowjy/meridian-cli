@@ -101,14 +101,28 @@ def record_scope(
 ) -> None:
     """Persist a process scope snapshot for a spawn.
 
-    Reads existing sidecar (or starts fresh), appends the new scope entry,
-    and writes atomically.  Safe to call concurrently — last-write-wins per
-    scope_id since each call reads before writing.
+    Reads existing sidecar (or starts fresh), upserts the concrete scope release,
+    and writes atomically.  Re-recording the same process scope (same scope id,
+    PID, and birth time) replaces the previous projection so provisional launch
+    ownership can be upgraded without leaving duplicate cleanup targets. Distinct
+    concrete releases with the same human label are preserved.
     """
     path = _sidecar_path(runtime_root, spawn_id)
     payload = _read_raw(path)
-    scopes: list[object] = list(payload["scopes"])  # type: ignore[arg-type]
-    scopes.append(_snapshot_to_dict(snapshot))
+    snapshot_dict = _snapshot_to_dict(snapshot)
+    scopes: list[object] = []
+    replaced = False
+    for entry in cast("list[object]", payload["scopes"]):
+        existing = cast("dict[str, object]", entry) if isinstance(entry, dict) else None
+        existing_release_id = existing.get("release_id") if existing is not None else None
+        if existing_release_id == snapshot.release_id:
+            if not replaced:
+                scopes.append(snapshot_dict)
+                replaced = True
+            continue
+        scopes.append(cast("object", entry))
+    if not replaced:
+        scopes.append(snapshot_dict)
     payload["scopes"] = scopes
     atomic_write_text(path, json.dumps(payload, separators=(",", ":")))
 
