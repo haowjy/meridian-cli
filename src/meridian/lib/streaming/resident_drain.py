@@ -13,6 +13,11 @@ from meridian.lib.core.types import SpawnId
 from meridian.lib.harness.connections.liveness import LivenessDecision
 from meridian.lib.harness.semantics import TerminalEventOutcome
 from meridian.lib.state.spawn_signals import consume_resident_signals
+from meridian.lib.streaming.completion_nudge import (
+    COMPLETION_NUDGE_INTERVAL_SECONDS,
+    COMPLETION_NUDGE_MESSAGE,
+    TIMEOUT_SOON_COMPLETION_NUDGE_MESSAGE,
+)
 from meridian.lib.streaming.drain_coordinator import (
     DrainExitDecision,
     DrainLoopDecision,
@@ -27,15 +32,6 @@ if TYPE_CHECKING:
 
 
 _TIMEOUT_FLOOR_SECONDS = 0.001
-_INJECT_INTERVAL_SECONDS = 270.0
-_POLL_MESSAGE = (
-    "Are you done? Run `meridian spawn done` to finish, "
-    "or `meridian spawn rearm` to keep going."
-)
-_TIMEOUT_SOON_MESSAGE = (
-    "This spawn times out soon. Run `meridian spawn rearm` to keep going, "
-    "or `meridian spawn done` to finish."
-)
 logger = structlog.get_logger()
 
 
@@ -102,7 +98,7 @@ class ResidentDrainCoordinator:
             now_monotonic = time.monotonic()
             self.turn_active = True
             self._set_awaiting_done(False)
-            self.next_inject_monotonic = now_monotonic + _INJECT_INTERVAL_SECONDS
+            self.next_inject_monotonic = now_monotonic + COMPLETION_NUDGE_INTERVAL_SECONDS
 
     async def observe_event(self, event: HarnessEvent, transition: str | None) -> bool:
         self.observe_activity_transition(transition)
@@ -141,7 +137,7 @@ class ResidentDrainCoordinator:
             self.deadline_monotonic = now_monotonic + self.deadline_seconds
         self.turn_active = False
         if self.resident_requested:
-            self.next_inject_monotonic = now_monotonic + _INJECT_INTERVAL_SECONDS
+            self.next_inject_monotonic = now_monotonic + COMPLETION_NUDGE_INTERVAL_SECONDS
         self._set_awaiting_done(True)
         return DrainTerminalDecision(emit_turn_boundary=True)
 
@@ -186,7 +182,7 @@ class ResidentDrainCoordinator:
         if self.resident_requested:
             inject_due = self._inject_due(now_monotonic)
             if inject_due:
-                self.next_inject_monotonic = now_monotonic + _INJECT_INTERVAL_SECONDS
+                self.next_inject_monotonic = now_monotonic + COMPLETION_NUDGE_INTERVAL_SECONDS
             return (DrainLoopDecision(), False, inject_due)
         outcome = self.pending_outcome
         self._clear_resident_state()
@@ -280,7 +276,7 @@ class ResidentDrainCoordinator:
     def _mark_rearmed(self, now_monotonic: float) -> None:
         self.resident_requested = True
         self.deadline_monotonic = now_monotonic + self.deadline_seconds
-        self.next_inject_monotonic = now_monotonic + _INJECT_INTERVAL_SECONDS
+        self.next_inject_monotonic = now_monotonic + COMPLETION_NUDGE_INTERVAL_SECONDS
 
     def _inject_due(self, now_monotonic: float) -> bool:
         return (
@@ -295,9 +291,9 @@ class ResidentDrainCoordinator:
         now_monotonic = time.monotonic()
         remaining = self._deadline_remaining(now_monotonic)
         message = (
-            _TIMEOUT_SOON_MESSAGE
-            if remaining is not None and remaining < _INJECT_INTERVAL_SECONDS
-            else _POLL_MESSAGE
+            TIMEOUT_SOON_COMPLETION_NUDGE_MESSAGE
+            if remaining is not None and remaining < COMPLETION_NUDGE_INTERVAL_SECONDS
+            else COMPLETION_NUDGE_MESSAGE
         )
         try:
             await self.receiver.inject_turn(message)
@@ -350,9 +346,14 @@ def _resident_backend(receiver: HarnessConnection[Any]) -> ResidentBackendContro
 
 def _has_outstanding_descendant_work(runtime_root: Path, spawn_id: SpawnId) -> bool:
     from meridian.lib.state import spawn_store
+    from meridian.lib.state.reaper import peek_reconciled_active_spawn
     from meridian.lib.state.spawn_tree import has_outstanding_descendant_work
 
-    return has_outstanding_descendant_work(str(spawn_id), spawn_store.list_spawns(runtime_root))
+    rows = [
+        peek_reconciled_active_spawn(runtime_root, row)
+        for row in spawn_store.list_spawns(runtime_root)
+    ]
+    return has_outstanding_descendant_work(str(spawn_id), rows)
 
 
 __all__ = ["ResidentDrainCoordinator"]

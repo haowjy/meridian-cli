@@ -22,6 +22,7 @@ from watchfiles import awatch  # pyright: ignore[reportUnknownVariableType]
 
 from meridian.lib.core.spawn_lifecycle import TERMINAL_SPAWN_STATUSES
 from meridian.lib.core.types import SpawnId
+from meridian.lib.state import spawn_store
 
 # Bounded poll while known or unresolved children may still be pending. ``awatch``
 # on ``spawns/`` is non-recursive, so ``spawns/<child>/state.json`` updates do
@@ -171,7 +172,7 @@ class PiDiskWatcher:
                         self._candidate_child_spawn_ids.discard(path.name)
                         self._child_spawn_ids.add(path.name)
                         found_new = True
-                    elif _is_allocated_spawn_dir_name(path.name) and (
+                    elif spawn_store.is_spawn_id_shape(path.name) and (
                         not state_path.exists() or not data
                     ):
                         self._candidate_child_spawn_ids.add(path.name)
@@ -205,7 +206,7 @@ class PiDiskWatcher:
             if parent_id == self._current_spawn_id:
                 self._candidate_child_spawn_ids.discard(child.name)
                 self._child_spawn_ids.add(child.name)
-            elif _is_allocated_spawn_dir_name(child.name) and (
+            elif spawn_store.is_spawn_id_shape(child.name) and (
                 not state_path.exists() or not data
             ):
                 self._candidate_child_spawn_ids.add(child.name)
@@ -263,10 +264,6 @@ class PiDiskWatcher:
 def _consume_task_result(task: asyncio.Task[None]) -> None:
     with suppress(asyncio.CancelledError, Exception):
         task.result()
-
-
-def _is_allocated_spawn_dir_name(name: str) -> bool:
-    return len(name) > 1 and name[0] == "p" and name[1:].isdigit()
 
 
 def _read_json_object(path: Path) -> dict[str, Any]:

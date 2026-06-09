@@ -12,7 +12,11 @@ from meridian.lib.core.spawn_lifecycle import (
     ExecutionTerminalFacts,
     has_durable_report_completion,
 )
-from meridian.lib.core.spawn_service import PrepareSpawnRequest, SpawnApplicationService
+from meridian.lib.core.spawn_service import (
+    CancelOutcome,
+    PrepareSpawnRequest,
+    SpawnApplicationService,
+)
 from meridian.lib.core.types import SpawnId
 from meridian.lib.launch.request import LaunchRuntime, SpawnRequest
 from meridian.lib.state import spawn_store
@@ -600,7 +604,12 @@ async def test_cancel_descendants_rescans_to_fixed_point(
             origin="cancel",
             error="cancelled",
         )
-        return object()
+        return CancelOutcome(
+            spawn_id=str(spawn_id),
+            status="cancelled",
+            origin="cancel",
+            exit_code=130,
+        )
 
     monkeypatch.setattr(service, "cancel", _cancel)
 
@@ -611,6 +620,53 @@ async def test_cancel_descendants_rescans_to_fixed_point(
     grandchild = spawn_store.get_spawn(runtime_root, "p3")
     assert grandchild is not None
     assert grandchild.status == "cancelled"
+
+
+@pytest.mark.asyncio
+async def test_cancel_descendants_reports_only_proven_terminal_reaped_ids(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime_root = _runtime_root(tmp_path)
+    _start_spawn_record(runtime_root, "p1")
+    _start_spawn_record(runtime_root, "p2", parent_id="p1")
+    _start_spawn_record(runtime_root, "p3", parent_id="p1")
+    service = _service(runtime_root)
+
+    async def _cancel(spawn_id: SpawnId, *, requested_by: str = "user") -> CancelOutcome:
+        _ = requested_by
+        if spawn_id == SpawnId("p2"):
+            record = spawn_store.get_spawn(runtime_root, spawn_id)
+            assert record is not None
+            spawn_store.mark_finalizing(runtime_root, spawn_id)
+            return CancelOutcome(
+                spawn_id=str(spawn_id),
+                status="finalizing",
+                origin="cancel",
+                exit_code=130,
+                finalizing=True,
+            )
+        spawn_store.finalize_spawn(
+            runtime_root,
+            spawn_id,
+            "cancelled",
+            130,
+            origin="cancel",
+            error="cancelled",
+        )
+        return CancelOutcome(
+            spawn_id=str(spawn_id),
+            status="cancelled",
+            origin="cancel",
+            exit_code=130,
+        )
+
+    monkeypatch.setattr(service, "cancel", _cancel)
+
+    reaped_ids = await service.cancel_descendants(SpawnId("p1"))
+
+    assert "p2" not in reaped_ids
+    assert "p3" in reaped_ids
 
 
 @pytest.mark.asyncio

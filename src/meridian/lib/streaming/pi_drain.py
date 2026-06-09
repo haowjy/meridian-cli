@@ -14,9 +14,15 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from meridian.lib.core.domain import SpawnStatus
+from meridian.lib.core.spawn_lifecycle import is_active_spawn_status
 from meridian.lib.core.types import SpawnId
 from meridian.lib.harness import pi_lifecycle_events as pi_lifecycle
 from meridian.lib.harness.connections.base import HarnessEvent
+from meridian.lib.state.spawn_signals import consume_resident_signals
+from meridian.lib.streaming.completion_nudge import (
+    COMPLETION_NUDGE_INTERVAL_SECONDS,
+    PI_COMPLETION_NUDGE_MESSAGE,
+)
 from meridian.lib.streaming.drain_coordinator import (
     DrainExitDecision,
     DrainLoopDecision,
@@ -44,11 +50,22 @@ _PI_PHASE_EVENT_TYPE = pi_lifecycle.PI_PHASE_EVENT_TYPE
 _event_label_candidates = pi_lifecycle.pi_lifecycle_event_label_candidates
 
 PI_MICRO_DRAIN_TIMEOUT_SECONDS: float = 0.05
+PI_DONE_NUDGE_IDLE_DELAY_SECONDS: float = 5.0
 # Non-zero floor to prevent tight loops on expired deadlines.
 _PI_TIMEOUT_FLOOR_SECONDS: float = 0.001
 
 EmitPiPhase = Callable[..., None]
 TerminatePiChildren = Callable[["PiSubspawnTracker", str], Awaitable[None]]
+SendPiDoneNudge = Callable[[str], Awaitable[None]]
+
+
+@dataclass(frozen=True)
+class PiOutstandingWork:
+    """Classify Pi work that remains after the parent goes idle."""
+
+    spawn_children: bool
+    non_spawn_processes: bool
+    unknown_spawn_children: bool = False
 
 
 @dataclass
@@ -80,6 +97,10 @@ class PiDrainCoordinator:
     child_wave_timeout_followup_deadline: float | None = None
     tracked_cleanup_reason: str | None = None
     terminate_children: TerminatePiChildren | None = None
+    send_done_nudge: SendPiDoneNudge | None = None
+    done_nudge_idle_delay_seconds: float = PI_DONE_NUDGE_IDLE_DELAY_SECONDS
+    done_nudge_interval_seconds: float = COMPLETION_NUDGE_INTERVAL_SECONDS
+    next_done_nudge_monotonic: float | None = None
 
     @classmethod
     def for_connection(
@@ -93,6 +114,7 @@ class PiDrainCoordinator:
         child_wave_timeout_seconds: float | None,
         emit_phase: EmitPiPhase,
         terminate_children: TerminatePiChildren | None = None,
+        send_done_nudge: SendPiDoneNudge | None = None,
     ) -> PiDrainCoordinator:
         normalized_role = (session_role or "").strip().lower()
         return cls(
@@ -111,6 +133,7 @@ class PiDrainCoordinator:
                 session_role=normalized_role,
             ),
             terminate_children=terminate_children,
+            send_done_nudge=send_done_nudge,
         )
 
     async def start(self) -> None:
@@ -119,6 +142,7 @@ class PiDrainCoordinator:
 
     async def stop(self) -> None:
         await self.quiescence_tracker.stop()
+        self._clear_done_nudge_timer()
 
     def default_policy(self) -> DrainPolicy:
         return PiRpcQuiescenceDrainPolicy(quiescence_check=self.quiescence_tracker.is_quiescent)
@@ -143,6 +167,10 @@ class PiDrainCoordinator:
         child_wave_remaining = self._child_wave_remaining(now_monotonic)
         if child_wave_remaining is not None:
             next_timeout = _min_timeout(next_timeout, child_wave_remaining)
+
+        done_nudge_remaining = self._done_nudge_remaining(now_monotonic)
+        if done_nudge_remaining is not None:
+            next_timeout = _min_timeout(next_timeout, done_nudge_remaining)
 
         followup_remaining = self._followup_remaining(now_monotonic)
         if followup_remaining is not None:
@@ -170,6 +198,10 @@ class PiDrainCoordinator:
             return DrainLoopDecision()
 
         now_monotonic = time.monotonic()
+        done_decision = self._consume_done_signal()
+        if done_decision is not None:
+            return done_decision
+
         expired_notification = self.tracker.pop_expired_notification(now_monotonic)
         if expired_notification is not None:
             return DrainLoopDecision(
@@ -180,6 +212,11 @@ class PiDrainCoordinator:
             if terminate_children is None:
                 raise RuntimeError("Pi child timeout cleanup is not configured")
             await self._handle_child_wave_timeout(terminate_children, now_monotonic)
+            return DrainLoopDecision()
+
+        if self._done_nudge_due(now_monotonic):
+            self.next_done_nudge_monotonic = now_monotonic + self.done_nudge_interval_seconds
+            await self._send_done_nudge()
             return DrainLoopDecision()
 
         if (
@@ -231,6 +268,7 @@ class PiDrainCoordinator:
             self.child_wave_timeout_followup_deadline = None
         if not self.has_pending_children():
             self._clear_child_wave_timer()
+        self._refresh_done_nudge_state()
         self.emit_waiting_phases_if_needed()
         return False
 
@@ -268,6 +306,7 @@ class PiDrainCoordinator:
             completed_notification_id = self.tracker.resolve_notification_on_terminal(event)
             if completed_notification_id is not None:
                 self._emit("continuation_completed", notification_id=completed_notification_id)
+            self._refresh_done_nudge_state()
             self.emit_waiting_phases_if_needed()
         if action.terminate:
             if self.quiescence_enabled and outcome.status == "succeeded":
@@ -321,6 +360,7 @@ class PiDrainCoordinator:
             and self.is_quiescent()
         ):
             self.start_micro_drain(self.last_successful_terminal)
+            self._clear_done_nudge_timer()
 
     def wants_aux_wake(self) -> bool:
         return self.quiescence_enabled
@@ -363,6 +403,7 @@ class PiDrainCoordinator:
             self.child_wave_deadline_monotonic = wave_start + self.child_wave_timeout_seconds
         if not self.has_pending_children():
             self._clear_child_wave_timer()
+        self._refresh_done_nudge_state()
         self.emit_waiting_phases_if_needed()
 
     def pending_children_at_exit(self) -> bool:
@@ -439,6 +480,50 @@ class PiDrainCoordinator:
     def has_pending_children(self) -> bool:
         return self.tracker.has_pending() or self.quiescence_tracker.has_pending_child_spawns()
 
+    def classify_outstanding_work(self) -> PiOutstandingWork:
+        from meridian.lib.state import spawn_store
+        from meridian.lib.state.spawn.model import SpawnRecord
+        from meridian.lib.state.spawn_tree import (
+            has_outstanding_descendant_work,
+            iter_descendants_from_parent_map,
+        )
+
+        try:
+            rows = spawn_store.list_spawns(self.runtime_root)
+        except Exception:
+            # If the core store cannot produce a valid row view, fail closed:
+            # do not nudge as though only Pi-internal work remains.
+            return PiOutstandingWork(
+                spawn_children=True,
+                non_spawn_processes=self.quiescence_tracker.has_tracked_bash_bg()
+                or self.tracker.has_pending(),
+            )
+        by_parent: dict[str | None, list[SpawnRecord]] = {}
+        for row in rows:
+            by_parent.setdefault(row.parent_id, []).append(row)
+        active_descendant_ids = {
+            child.id
+            for child in iter_descendants_from_parent_map(str(self.spawn_id), by_parent)
+            if is_active_spawn_status(child.status)
+        }
+        rowless_tracked_subspawn_ids = self.tracker.active_ids - active_descendant_ids
+        rowless_meridian_spawn_ids = {
+            subspawn_id
+            for subspawn_id in rowless_tracked_subspawn_ids
+            if spawn_store.is_spawn_id_shape(subspawn_id)
+        }
+        rowless_pi_internal_subspawns = bool(
+            rowless_tracked_subspawn_ids - rowless_meridian_spawn_ids
+        )
+        return PiOutstandingWork(
+            spawn_children=has_outstanding_descendant_work(str(self.spawn_id), rows),
+            unknown_spawn_children=bool(rowless_meridian_spawn_ids)
+            or self.quiescence_tracker.has_pending_child_spawns(),
+            non_spawn_processes=(
+                self.quiescence_tracker.has_tracked_bash_bg() or rowless_pi_internal_subspawns
+            ),
+        )
+
     def pending_child_count(self) -> int:
         return (
             self.tracker.active_tracked_count()
@@ -484,7 +569,65 @@ class PiDrainCoordinator:
     def start_micro_drain(self, outcome: TerminalEventOutcome) -> None:
         self.quiescence_candidate = outcome
         self.micro_drain_event_count = 0
+        self._clear_done_nudge_timer()
         self._emit("quiescence_micro_drain_started")
+
+    def _consume_done_signal(self) -> DrainLoopDecision | None:
+        if self.last_successful_terminal is None:
+            return None
+        signals = consume_resident_signals(self.runtime_root, self.spawn_id)
+        if not signals.done:
+            return None
+        self._clear_done_nudge_timer()
+        return DrainLoopDecision(self.last_successful_terminal)
+
+    def _refresh_done_nudge_state(self) -> None:
+        if (
+            not self.quiescence_enabled
+            or self.last_successful_terminal is None
+            or not self.quiescence_tracker.parent_idle
+            or self.quiescence_candidate is not None
+        ):
+            self._clear_done_nudge_timer()
+            return
+        outstanding = self.classify_outstanding_work()
+        if (
+            outstanding.spawn_children
+            or outstanding.unknown_spawn_children
+            or not outstanding.non_spawn_processes
+        ):
+            self._clear_done_nudge_timer()
+            return
+        if self.next_done_nudge_monotonic is None:
+            delay = max(0.0, self.done_nudge_idle_delay_seconds)
+            self.next_done_nudge_monotonic = time.monotonic() + delay
+
+    def _done_nudge_remaining(self, now_monotonic: float) -> float | None:
+        self._refresh_done_nudge_state()
+        if self.next_done_nudge_monotonic is None:
+            return None
+        remaining = self.next_done_nudge_monotonic - now_monotonic
+        return remaining if remaining > 0 else _PI_TIMEOUT_FLOOR_SECONDS
+
+    def _done_nudge_due(self, now_monotonic: float) -> bool:
+        self._refresh_done_nudge_state()
+        return (
+            self.next_done_nudge_monotonic is not None
+            and now_monotonic >= self.next_done_nudge_monotonic
+        )
+
+    async def _send_done_nudge(self) -> None:
+        try:
+            if self.send_done_nudge is not None:
+                await self.send_done_nudge(PI_COMPLETION_NUDGE_MESSAGE)
+            else:
+                await self.receiver.send_user_message(PI_COMPLETION_NUDGE_MESSAGE)
+        except Exception:
+            # Completion nudges are advisory; drain-loop correctness must not depend on them.
+            return
+
+    def _clear_done_nudge_timer(self) -> None:
+        self.next_done_nudge_monotonic = None
 
     def _notification_timeout_outcome(
         self,

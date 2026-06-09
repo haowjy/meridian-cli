@@ -356,6 +356,9 @@ class SpawnManager:
                 exclude_subspawn_ids=reaped_descendant_ids,
             )
 
+        async def _send_pi_done_nudge(message: str) -> None:
+            await self.inject(spawn_id, message, source="pi_done_nudge")
+
         if _resident_backend(receiver) is not None:
             # TODO(phase-4): resident waiting and Pi quiescence share the same
             # "terminal candidate plus descendant work" shape; fold once Pi's
@@ -379,6 +382,7 @@ class SpawnManager:
                 child_wave_timeout_seconds=child_wave_timeout_seconds,
                 emit_phase=_emit_pi_phase,
                 terminate_children=_terminate_tracked_pi_children,
+                send_done_nudge=_send_pi_done_nudge,
             )
 
         # TODO(phase-5): SpawnManager still owns persistence, fan-out, synthetic

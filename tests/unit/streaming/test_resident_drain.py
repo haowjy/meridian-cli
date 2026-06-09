@@ -409,6 +409,59 @@ async def test_opencode_terminal_success_resides_until_child_finishes(
 
 
 @pytest.mark.asyncio
+async def test_resident_reconciles_finalizing_child_with_durable_report_as_done(
+    tmp_path: Path,
+) -> None:
+    spawn_id = SpawnId("p1")
+    child_id = SpawnId("p2")
+    _start_row(tmp_path, str(spawn_id), HarnessId.OPENCODE, None)
+    _start_row(tmp_path, str(child_id), HarnessId.CODEX, str(spawn_id))
+    spawn_store.mark_finalizing(tmp_path, child_id)
+    (tmp_path / "spawns" / str(child_id) / "report.md").write_text(
+        "# Report\n\nChild completed.\n",
+        encoding="utf-8",
+    )
+    connection = _FakeResidentConnection(HarnessId.OPENCODE)
+    manager = await _start_manager(tmp_path, connection, spawn_id=spawn_id)
+
+    connection.emit(_event(HarnessId.OPENCODE, "session.idle", {}))
+
+    try:
+        outcome = await asyncio.wait_for(manager.wait_for_completion(spawn_id), timeout=0.5)
+        assert outcome is not None
+        assert outcome.status == "succeeded"
+        assert True not in connection.fake_resident_backend.awaiting_done_values
+    finally:
+        await manager.stop_spawn(spawn_id)
+
+
+@pytest.mark.asyncio
+async def test_resident_still_waits_on_genuinely_active_finalizing_child(
+    tmp_path: Path,
+) -> None:
+    spawn_id = SpawnId("p1")
+    child_id = SpawnId("p2")
+    _start_row(tmp_path, str(spawn_id), HarnessId.OPENCODE, None)
+    _start_row(tmp_path, str(child_id), HarnessId.CODEX, str(spawn_id))
+    spawn_store.mark_finalizing(tmp_path, child_id)
+    connection = _FakeResidentConnection(HarnessId.OPENCODE)
+    manager = await _start_manager(tmp_path, connection, spawn_id=spawn_id)
+
+    connection.emit(_event(HarnessId.OPENCODE, "session.idle", {}))
+
+    try:
+        with pytest.raises(asyncio.TimeoutError):
+            await asyncio.wait_for(
+                asyncio.shield(manager.wait_for_completion(spawn_id)),
+                timeout=0.05,
+            )
+        assert manager.get_connection(spawn_id) is connection
+        assert connection.fake_resident_backend.awaiting_done_values[-1] is True
+    finally:
+        await manager.stop_spawn(spawn_id)
+
+
+@pytest.mark.asyncio
 async def test_done_signal_at_terminal_event_wins_over_outstanding_child(
     tmp_path: Path,
 ) -> None:

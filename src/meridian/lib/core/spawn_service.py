@@ -616,7 +616,8 @@ class SpawnApplicationService:
                         error=repr(result),
                     )
                     continue
-                reaped_ids.add(descendant.id)
+                if self.is_terminal(result.status):
+                    reaped_ids.add(descendant.id)
         remaining = active_descendants(self._runtime_root, root_id)
         if remaining:
             logger.warning(

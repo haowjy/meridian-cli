@@ -69,9 +69,16 @@ logger = structlog.get_logger(__name__)
 
 def _spawn_id_index(spawn_id: SpawnId | str) -> int:
     value = str(spawn_id)
-    if len(value) > 1 and value[0] == "p" and value[1:].isdigit():
+    if is_spawn_id_shape(value):
         return int(value[1:])
     return 0
+
+
+def is_spawn_id_shape(spawn_id: SpawnId | str) -> bool:
+    """Return whether *spawn_id* has Meridian's persisted spawn ID shape."""
+
+    value = str(spawn_id)
+    return len(value) > 1 and value[0] == "p" and value[1:].isdigit()
 
 
 def _spawn_counter_path(paths: RuntimePaths) -> Path:
