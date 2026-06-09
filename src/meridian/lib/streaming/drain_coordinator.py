@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol
 
-from meridian.lib.streaming.drain_policy import DrainAction, DrainPolicy
+from meridian.lib.streaming.drain_policy import DrainAction, DrainPolicy, SingleTurnDrainPolicy
 
 if TYPE_CHECKING:
     from meridian.lib.harness.connections.base import HarnessEvent
@@ -36,6 +37,52 @@ class DrainExitDecision:
     fallback_error: str | None = None
 
 
+class AuxWakeCoordinator(Protocol):
+    """Waiter-facing seam for non-event wake sources."""
+
+    def wants_aux_wake(self) -> bool: ...
+
+    async def wait_for_aux_wake(self) -> None: ...
+
+
+class DrainFinalizer(Protocol):
+    """Optional post-finalization side effects for a drain plan."""
+
+    def after_finalized(
+        self,
+        *,
+        connection_session_id: str | None,
+        outcome: DrainOutcome,
+    ) -> None: ...
+
+
+@dataclass(frozen=True)
+class DrainPlan:
+    """Complete drain-loop configuration for one active spawn."""
+
+    coordinator: DrainCoordinator | None = None
+    policy: DrainPolicy | None = None
+    raw_terminal_frames_authoritative: bool = True
+    on_policy_selected: Callable[[DrainPolicy], None] | None = None
+    aux_wake: AuxWakeCoordinator | None = None
+    handle_aux_wake: Callable[[], Awaitable[DrainLoopDecision]] | None = None
+    finalizer: DrainFinalizer | None = None
+
+    def selected_policy(self) -> DrainPolicy:
+        return self.policy or SingleTurnDrainPolicy()
+
+    def with_policy(self, policy: DrainPolicy) -> DrainPlan:
+        return DrainPlan(
+            coordinator=self.coordinator,
+            policy=policy,
+            raw_terminal_frames_authoritative=self.raw_terminal_frames_authoritative,
+            on_policy_selected=self.on_policy_selected,
+            aux_wake=self.aux_wake,
+            handle_aux_wake=self.handle_aux_wake,
+            finalizer=self.finalizer,
+        )
+
+
 class DrainCoordinator(Protocol):
     """Completion policy interface used by ``SpawnDrainLoop``.
 
@@ -48,19 +95,7 @@ class DrainCoordinator(Protocol):
 
     async def stop(self) -> None: ...
 
-    def default_policy(self) -> DrainPolicy: ...
-
-    def set_policy(self, policy: DrainPolicy) -> None: ...
-
-    def raw_terminal_frames_are_authoritative(self) -> bool: ...
-
     def next_timeout(self) -> float | None: ...
-
-    def wants_aux_wake(self) -> bool: ...
-
-    async def wait_for_aux_wake(self) -> None: ...
-
-    async def handle_aux_wake(self) -> DrainLoopDecision: ...
 
     async def observe_event(self, event: HarnessEvent, transition: str | None) -> bool: ...
 
@@ -83,18 +118,3 @@ class DrainCoordinator(Protocol):
         self,
         recorded_outcome: TerminalEventOutcome | None,
     ) -> DrainExitDecision: ...
-
-    def after_finalized(
-        self,
-        *,
-        connection_session_id: str | None,
-        outcome: DrainOutcome,
-    ) -> None: ...
-
-
-class AuxWakeCoordinator(Protocol):
-    """Small waiter-facing seam for non-event wake sources."""
-
-    def wants_aux_wake(self) -> bool: ...
-
-    async def wait_for_aux_wake(self) -> None: ...

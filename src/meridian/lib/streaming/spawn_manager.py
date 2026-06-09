@@ -26,10 +26,12 @@ from meridian.lib.state.atomic import append_text_line
 from meridian.lib.state.history import HarnessHistoryWriter
 from meridian.lib.state.spawn_tree import terminate_recorded_spawn_scope
 from meridian.lib.streaming.control_socket import ControlSocketServer
-from meridian.lib.streaming.drain_coordinator import DrainCoordinator
+from meridian.lib.streaming.drain_coordinator import DrainPlan
 from meridian.lib.streaming.drain_policy import (
     TURN_BOUNDARY_EVENT_TYPE,
     DrainPolicy,
+    PiRpcQuiescenceDrainPolicy,
+    SingleTurnDrainPolicy,
 )
 from meridian.lib.streaming.event_observers import (
     CallbackObserver,
@@ -223,7 +225,7 @@ class SpawnManager:
                 await connection.stop()
             raise
 
-        coordinator = self._select_drain_coordinator(
+        drain_plan = self._select_drain_plan(
             spawn_id=spawn_id,
             receiver=connection,
             pi_session_role=pi_session_role,
@@ -232,13 +234,14 @@ class SpawnManager:
             resident_deadline_seconds=config.resident_deadline_seconds,
             resident_poll_seconds=config.resident_poll_seconds,
         )
+        if resolved_policy is not None:
+            drain_plan = drain_plan.with_policy(resolved_policy)
         drain_task = asyncio.create_task(
             self._drain_loop(
                 spawn_id,
                 connection,
-                coordinator,
+                drain_plan,
                 tracer,
-                drain_policy=resolved_policy,
             )
         )
         self._sessions[spawn_id] = SpawnSession(
@@ -249,11 +252,7 @@ class SpawnManager:
             started_monotonic=started_monotonic,
             completion_future=completion_future,
             debug_tracer=tracer,
-            raw_terminal_frames_authoritative=(
-                coordinator.raw_terminal_frames_are_authoritative()
-                if coordinator is not None
-                else True
-            ),
+            raw_terminal_frames_authoritative=drain_plan.raw_terminal_frames_authoritative,
             control_actions=ControlActionCoordinator(
                 spawn_id=spawn_id,
                 spawn_dir=self._spawn_dir(spawn_id),
@@ -284,10 +283,8 @@ class SpawnManager:
         self,
         spawn_id: SpawnId,
         receiver: HarnessConnection[Any],
-        coordinator: DrainCoordinator | None,
+        drain_plan: DrainPlan,
         tracer: DebugTracer | None = None,
-        *,
-        drain_policy: DrainPolicy | None = None,
     ) -> None:
         drain_loop = SpawnDrainLoop(
             sessions=self._sessions,
@@ -302,12 +299,11 @@ class SpawnManager:
         await drain_loop.run(
             spawn_id=spawn_id,
             receiver=receiver,
-            coordinator=coordinator,
-            drain_policy=drain_policy,
+            drain_plan=drain_plan,
             tracer=tracer,
         )
 
-    def _select_drain_coordinator(
+    def _select_drain_plan(
         self,
         *,
         spawn_id: SpawnId,
@@ -317,8 +313,8 @@ class SpawnManager:
         child_wave_timeout_seconds: float | None,
         resident_deadline_seconds: float | None,
         resident_poll_seconds: float | None,
-    ) -> DrainCoordinator | None:
-        """Choose the harness-specific drain coordinator before entering the loop."""
+    ) -> DrainPlan:
+        """Choose drain-loop configuration before entering the loop."""
 
         def _emit_pi_phase(*, phase: str, session_role: str | None, **payload: object) -> None:
             self._emit_pi_phase_event(
@@ -368,7 +364,7 @@ class SpawnManager:
             # TODO(phase-4): resident waiting and Pi quiescence share the same
             # "terminal candidate plus descendant work" shape; fold once Pi's
             # lifecycle inference machinery is removed.
-            return ResidentDrainCoordinator.for_connection(
+            coordinator = ResidentDrainCoordinator.for_connection(
                 project_root=self._project_root,
                 runtime_root=self._runtime_root,
                 spawn_id=spawn_id,
@@ -377,9 +373,14 @@ class SpawnManager:
                 deadline_seconds=resident_deadline_seconds,
                 poll_seconds=resident_poll_seconds,
             )
+            return DrainPlan(
+                coordinator=coordinator,
+                policy=SingleTurnDrainPolicy(),
+                raw_terminal_frames_authoritative=False,
+            )
 
         if receiver.harness_id is HarnessId.PI:
-            return PiDrainCoordinator.for_connection(
+            coordinator = PiDrainCoordinator.for_connection(
                 runtime_root=self._runtime_root,
                 spawn_id=spawn_id,
                 receiver=cast("HarnessConnection[ResolvedLaunchSpec]", receiver),
@@ -390,9 +391,20 @@ class SpawnManager:
                 terminate_children=_terminate_tracked_pi_children,
                 send_done_nudge=_send_pi_done_nudge,
             )
+            return DrainPlan(
+                coordinator=coordinator,
+                policy=PiRpcQuiescenceDrainPolicy(
+                    quiescence_check=coordinator.quiescence_tracker.is_quiescent,
+                ),
+                raw_terminal_frames_authoritative=False,
+                on_policy_selected=coordinator.set_policy,
+                aux_wake=coordinator,
+                handle_aux_wake=coordinator.handle_aux_wake,
+                finalizer=coordinator,
+            )
 
         # Plain streaming harnesses use SpawnDrainLoop's single-turn baseline.
-        return None
+        return DrainPlan()
 
     def raw_terminal_frames_are_authoritative(self, spawn_id: SpawnId) -> bool:
         """Return whether raw harness terminal frames may finalize this spawn.

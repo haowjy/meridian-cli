@@ -23,12 +23,11 @@ from meridian.lib.streaming.drain_coordinator import (
     DrainLoopDecision,
     DrainTerminalDecision,
 )
-from meridian.lib.streaming.drain_policy import DrainAction, DrainPolicy, SingleTurnDrainPolicy
+from meridian.lib.streaming.drain_policy import DrainAction
 
 if TYPE_CHECKING:
     from meridian.lib.harness.connections.base import HarnessConnection, HarnessEvent
     from meridian.lib.harness.connections.resident_backend import ResidentBackendControl
-    from meridian.lib.streaming.spawn_session import DrainOutcome
 
 
 _TIMEOUT_FLOOR_SECONDS = 0.001
@@ -82,17 +81,6 @@ class ResidentDrainCoordinator:
     async def stop(self) -> None:
         self._set_awaiting_done(False)
         self._clear_resident_state()
-
-    def default_policy(self) -> DrainPolicy:
-        return SingleTurnDrainPolicy()
-
-    def set_policy(self, policy: DrainPolicy) -> None:
-        return
-
-    def raw_terminal_frames_are_authoritative(self) -> bool:
-        """Resident drains resolve terminal state after descendant work drains."""
-
-        return False
 
     def observe_activity_transition(self, transition: str | None) -> None:
         """Track active follow-up turns without leaving resident control."""
@@ -243,28 +231,11 @@ class ResidentDrainCoordinator:
         )
         await service.cancel_descendants(self.spawn_id)
 
-    def wants_aux_wake(self) -> bool:
-        return False
-
-    async def wait_for_aux_wake(self) -> None:
-        return
-
-    async def handle_aux_wake(self) -> DrainLoopDecision:
-        return DrainLoopDecision()
-
     async def handle_stream_exit(
         self,
         recorded_outcome: TerminalEventOutcome | None,
     ) -> DrainExitDecision:
         return DrainExitDecision(recorded_outcome=recorded_outcome)
-
-    def after_finalized(
-        self,
-        *,
-        connection_session_id: str | None,
-        outcome: DrainOutcome,
-    ) -> None:
-        return
 
     def _consume_signals(self, now_monotonic: float) -> DrainLoopDecision | None:
         signals = consume_resident_signals(self.runtime_root, self.spawn_id)

@@ -144,14 +144,8 @@ class PiDrainCoordinator:
         await self.quiescence_tracker.stop()
         self._clear_done_nudge_timer()
 
-    def default_policy(self) -> DrainPolicy:
-        return PiRpcQuiescenceDrainPolicy(quiescence_check=self.quiescence_tracker.is_quiescent)
-
     def set_policy(self, policy: DrainPolicy) -> None:
         self.quiescence_enabled = isinstance(policy, PiRpcQuiescenceDrainPolicy)
-
-    def raw_terminal_frames_are_authoritative(self) -> bool:
-        return False
 
     def next_timeout(self) -> float | None:
         if not self.quiescence_enabled:

@@ -16,9 +16,10 @@ from meridian.lib.streaming.drain_coordinator import (
     DrainCoordinator,
     DrainExitDecision,
     DrainLoopDecision,
+    DrainPlan,
     DrainTerminalDecision,
 )
-from meridian.lib.streaming.drain_policy import DrainAction, DrainPolicy, SingleTurnDrainPolicy
+from meridian.lib.streaming.drain_policy import DrainAction
 from meridian.lib.streaming.drain_wait import (
     DrainAuxWake,
     DrainClosedWake,
@@ -70,8 +71,7 @@ class SpawnDrainLoop:
         *,
         spawn_id: SpawnId,
         receiver: HarnessConnection[Any],
-        coordinator: DrainCoordinator | None,
-        drain_policy: DrainPolicy | None,
+        drain_plan: DrainPlan,
         tracer: DebugTracer | None,
     ) -> None:
         """Durably append each harness event and fan out to the active subscriber."""
@@ -85,13 +85,15 @@ class SpawnDrainLoop:
         drain_error: Exception | None = None
         recorded_terminal_outcome: TerminalEventOutcome | None = None
 
-        policy = drain_policy or _default_policy(coordinator)
+        coordinator = drain_plan.coordinator
+        policy = drain_plan.selected_policy()
+        if drain_plan.on_policy_selected is not None:
+            drain_plan.on_policy_selected(policy)
         if coordinator is not None:
-            coordinator.set_policy(policy)
             await coordinator.start()
 
         events_iter = receiver.events().__aiter__()
-        drain_waiter = DrainInputWaiter(events_iter, coordinator or _NoAuxWake())
+        drain_waiter = DrainInputWaiter(events_iter, drain_plan.aux_wake or _NoAuxWake())
         try:
             while True:
                 wake = await drain_waiter.wait(_next_timeout(coordinator))
@@ -110,7 +112,7 @@ class SpawnDrainLoop:
                         recorded_terminal_outcome = close_outcome
                     break
                 if isinstance(wake, DrainAuxWake):
-                    aux_wake_outcome = await _handle_aux_wake(coordinator)
+                    aux_wake_outcome = await _handle_aux_wake(drain_plan)
                     if aux_wake_outcome.recorded_outcome is not None:
                         recorded_terminal_outcome = aux_wake_outcome.recorded_outcome
                         break
@@ -204,7 +206,7 @@ class SpawnDrainLoop:
                 if disk_change_ready_after_event:
                     # Disk change arrived concurrently with this event; reevaluate now
                     # that the event has been persisted and observers notified.
-                    aux_wake_outcome = await _handle_aux_wake(coordinator)
+                    aux_wake_outcome = await _handle_aux_wake(drain_plan)
                     if aux_wake_outcome.recorded_outcome is not None:
                         recorded_terminal_outcome = aux_wake_outcome.recorded_outcome
                         break
@@ -278,9 +280,7 @@ class SpawnDrainLoop:
                         error=recorded_terminal_outcome.error,
                         duration_secs=max(0.0, time.monotonic() - session.started_monotonic),
                         authoritative=(
-                            not coordinator.raw_terminal_frames_are_authoritative()
-                            if coordinator is not None
-                            else False
+                            not drain_plan.raw_terminal_frames_authoritative
                         ),
                     )
                 else:
@@ -290,8 +290,8 @@ class SpawnDrainLoop:
                         error="connection_closed_without_terminal_event",
                         duration_secs=max(0.0, time.monotonic() - session.started_monotonic),
                     )
-                if coordinator is not None:
-                    coordinator.after_finalized(
+                if drain_plan.finalizer is not None:
+                    drain_plan.finalizer.after_finalized(
                         connection_session_id=_safe_connection_session_id(receiver),
                         outcome=outcome,
                     )
@@ -333,12 +333,6 @@ class _NoAuxWake:
         return
 
 
-def _default_policy(coordinator: DrainCoordinator | None) -> DrainPolicy:
-    if coordinator is None:
-        return SingleTurnDrainPolicy()
-    return coordinator.default_policy()
-
-
 def _next_timeout(coordinator: DrainCoordinator | None) -> float | None:
     if coordinator is None:
         return None
@@ -378,10 +372,10 @@ async def _handle_terminal_event(
     return await coordinator.handle_terminal_event(event, outcome, action)
 
 
-async def _handle_aux_wake(coordinator: DrainCoordinator | None) -> DrainLoopDecision:
-    if coordinator is None:
+async def _handle_aux_wake(drain_plan: DrainPlan) -> DrainLoopDecision:
+    if drain_plan.handle_aux_wake is None:
         return DrainLoopDecision()
-    return await coordinator.handle_aux_wake()
+    return await drain_plan.handle_aux_wake()
 
 
 async def _handle_timeout(coordinator: DrainCoordinator | None) -> DrainLoopDecision:
