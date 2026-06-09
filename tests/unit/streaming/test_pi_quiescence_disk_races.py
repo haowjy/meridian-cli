@@ -6,6 +6,7 @@ from __future__ import annotations
 import asyncio
 import json
 import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -107,6 +108,68 @@ async def _put_pi_parent_idle_after_success(coordinator: PiDrainCoordinator) -> 
         outcome,
         DrainAction(terminate=True, emit_turn_boundary=False),
     )
+
+
+@dataclass
+class _StartedMicroDrain:
+    coordinator: PiDrainCoordinator
+    phases: list[dict[str, object]]
+
+
+async def _started_micro_drain_coordinator(
+    tmp_path: Path,
+    *,
+    spawn_id: SpawnId,
+    child_wave_timeout_seconds: float | None = None,
+    mark_idle: bool = False,
+    start_micro_drain: bool = True,
+) -> _StartedMicroDrain:
+    phases: list[dict[str, object]] = []
+
+    def emit_phase(*, phase: str, session_role: str | None, **payload: object) -> None:
+        phases.append({"phase": phase, **payload})
+        _ = session_role
+
+    connection = _FakePiConnection([])
+    await connection.start(
+        ConnectionConfig(
+            spawn_id=spawn_id,
+            harness_id=HarnessId.PI,
+            prompt="hello",
+            control_root=tmp_path,
+            env_overrides={},
+            pi_session_role="spawned",
+        ),
+        ResolvedLaunchSpec(
+            harness=HarnessId.PI,
+            prompt="hello",
+            permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
+        ),
+    )
+    coordinator = PiDrainCoordinator.for_connection(
+        runtime_root=tmp_path,
+        spawn_id=spawn_id,
+        receiver=connection,
+        session_role="spawned",
+        notification_timeout_seconds=None,
+        child_wave_timeout_seconds=child_wave_timeout_seconds,
+        emit_phase=emit_phase,
+    )
+    await coordinator.start()
+    coordinator.quiescence_enabled = True
+    if mark_idle:
+        await coordinator.quiescence_tracker.mark_idle()
+    if start_micro_drain:
+        terminal = TerminalEventOutcome(status="succeeded", exit_code=0, error=None)
+        coordinator.start_micro_drain(terminal)
+    return _StartedMicroDrain(coordinator=coordinator, phases=phases)
+
+
+async def _noop_terminate(
+    tracker: PiSubspawnTracker,
+    reason: str,
+) -> None:
+    _ = tracker, reason
 
 
 @pytest.mark.asyncio
@@ -398,188 +461,82 @@ async def test_pi_done_nudge_stops_when_done_signal_arrives(tmp_path: Path) -> N
 
 @pytest.mark.asyncio
 async def test_micro_drain_timeout_rechecks_disk_before_accepting(tmp_path: Path) -> None:
-    phases: list[str] = []
-
-    def emit_phase(*, phase: str, session_role: str | None, **payload: object) -> None:
-        _ = session_role, payload
-        phases.append(phase)
-
     spawn_id = SpawnId("p-micro-drain-recheck")
-    connection = _FakePiConnection([])
-    await connection.start(
-        ConnectionConfig(
-            spawn_id=spawn_id,
-            harness_id=HarnessId.PI,
-            prompt="hello",
-            control_root=tmp_path,
-            env_overrides={},
-            pi_session_role="spawned",
-        ),
-        ResolvedLaunchSpec(
-            harness=HarnessId.PI,
-            prompt="hello",
-            permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
-        ),
-    )
-
-    coordinator = PiDrainCoordinator.for_connection(
-        runtime_root=tmp_path,
+    started = await _started_micro_drain_coordinator(
+        tmp_path,
         spawn_id=spawn_id,
-        receiver=connection,
-        session_role="spawned",
-        notification_timeout_seconds=None,
-        child_wave_timeout_seconds=None,
-        emit_phase=emit_phase,
     )
-    await coordinator.start()
-    coordinator.quiescence_enabled = True
-    terminal = TerminalEventOutcome(status="succeeded", exit_code=0, error=None)
-    coordinator.start_micro_drain(terminal)
 
     _write_json(
         tmp_path / "spawns" / "p-disk-child" / "state.json",
         {"id": "p-disk-child", "parent_id": str(spawn_id), "status": "running"},
     )
 
-    async def _noop_terminate(
-        tracker: PiSubspawnTracker,
-        reason: str,
-    ) -> None:
-        _ = tracker, reason
-
     try:
-        result = await coordinator.handle_timeout(_noop_terminate)
+        result = await started.coordinator.handle_timeout(_noop_terminate)
         assert result.recorded_outcome is None
-        assert coordinator.quiescence_candidate is None
-        assert "quiescence_micro_drain_cancelled" in phases
+        assert started.coordinator.quiescence_candidate is None
+        assert any(
+            phase.get("phase") == "quiescence_micro_drain_cancelled"
+            for phase in started.phases
+        )
     finally:
-        await coordinator.stop()
+        await started.coordinator.stop()
 
 
 @pytest.mark.asyncio
 async def test_micro_drain_recheck_preserves_idle_epoch_for_notifications(
     tmp_path: Path,
 ) -> None:
-    phases: list[str] = []
-
-    def emit_phase(*, phase: str, session_role: str | None, **payload: object) -> None:
-        _ = session_role, payload
-        phases.append(phase)
-
     spawn_id = SpawnId("p-micro-drain-notification")
-    connection = _FakePiConnection([])
-    await connection.start(
-        ConnectionConfig(
-            spawn_id=spawn_id,
-            harness_id=HarnessId.PI,
-            prompt="hello",
-            control_root=tmp_path,
-            env_overrides={},
-            pi_session_role="spawned",
-        ),
-        ResolvedLaunchSpec(
-            harness=HarnessId.PI,
-            prompt="hello",
-            permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
-        ),
-    )
-
-    coordinator = PiDrainCoordinator.for_connection(
-        runtime_root=tmp_path,
+    started = await _started_micro_drain_coordinator(
+        tmp_path,
         spawn_id=spawn_id,
-        receiver=connection,
-        session_role="spawned",
-        notification_timeout_seconds=None,
-        child_wave_timeout_seconds=None,
-        emit_phase=emit_phase,
+        mark_idle=True,
     )
-    await coordinator.start()
-    coordinator.quiescence_enabled = True
-    await coordinator.quiescence_tracker.mark_idle()
-    terminal = TerminalEventOutcome(status="succeeded", exit_code=0, error=None)
-    coordinator.start_micro_drain(terminal)
     _write_json(
         tmp_path / "pi-bash" / str(spawn_id) / "last-notification.json",
         {"ts_epoch_secs": time.time()},
     )
 
-    async def _noop_terminate(
-        tracker: PiSubspawnTracker,
-        reason: str,
-    ) -> None:
-        _ = tracker, reason
-
     try:
-        result = await coordinator.handle_timeout(_noop_terminate)
+        result = await started.coordinator.handle_timeout(_noop_terminate)
         assert result.recorded_outcome is None
-        assert coordinator.quiescence_candidate is None
-        assert "quiescence_micro_drain_cancelled" in phases
+        assert started.coordinator.quiescence_candidate is None
+        assert any(
+            phase.get("phase") == "quiescence_micro_drain_cancelled"
+            for phase in started.phases
+        )
     finally:
-        await coordinator.stop()
+        await started.coordinator.stop()
 
 
 @pytest.mark.asyncio
 async def test_micro_drain_cancel_arms_child_wave_for_rescan_discovered_child(
     tmp_path: Path,
 ) -> None:
-    phases: list[dict[str, object]] = []
-
-    def emit_phase(*, phase: str, session_role: str | None, **payload: object) -> None:
-        phases.append({"phase": phase, **payload})
-        _ = session_role
-
     spawn_id = SpawnId("p-micro-drain-child-wave")
-    connection = _FakePiConnection([])
-    await connection.start(
-        ConnectionConfig(
-            spawn_id=spawn_id,
-            harness_id=HarnessId.PI,
-            prompt="hello",
-            control_root=tmp_path,
-            env_overrides={},
-            pi_session_role="spawned",
-        ),
-        ResolvedLaunchSpec(
-            harness=HarnessId.PI,
-            prompt="hello",
-            permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
-        ),
-    )
-    coordinator = PiDrainCoordinator.for_connection(
-        runtime_root=tmp_path,
+    started = await _started_micro_drain_coordinator(
+        tmp_path,
         spawn_id=spawn_id,
-        receiver=connection,
-        session_role="spawned",
-        notification_timeout_seconds=None,
         child_wave_timeout_seconds=1.0,
-        emit_phase=emit_phase,
+        mark_idle=True,
     )
-    await coordinator.start()
-    coordinator.quiescence_enabled = True
-    await coordinator.quiescence_tracker.mark_idle()
-    terminal = TerminalEventOutcome(status="succeeded", exit_code=0, error=None)
-    coordinator.start_micro_drain(terminal)
     (tmp_path / "spawns" / "p123").mkdir(parents=True)
 
-    async def _noop_terminate(
-        tracker: PiSubspawnTracker,
-        reason: str,
-    ) -> None:
-        _ = tracker, reason
-
     try:
-        result = await coordinator.handle_timeout(_noop_terminate)
+        result = await started.coordinator.handle_timeout(_noop_terminate)
         assert result.recorded_outcome is None
-        assert coordinator.quiescence_candidate is None
-        assert coordinator.child_wave_deadline_monotonic is not None
-        assert coordinator.pending_child_count() == 1
+        assert started.coordinator.quiescence_candidate is None
+        assert started.coordinator.child_wave_deadline_monotonic is not None
+        assert started.coordinator.pending_child_count() == 1
         assert any(
             phase.get("phase") == "waiting_for_tracked_children"
             and phase.get("active_tracked_count") == 1
-            for phase in phases
+            for phase in started.phases
         )
     finally:
-        await coordinator.stop()
+        await started.coordinator.stop()
 
 @pytest.mark.asyncio
 async def test_spawn_manager_pi_drain_loop_reevaluates_on_disk_wakeup(
@@ -687,54 +644,27 @@ async def test_spawn_manager_pi_drain_loop_reevaluates_on_disk_wakeup(
 async def test_disk_change_reevaluation_starts_child_wave_while_parent_idle(
     tmp_path: Path,
 ) -> None:
-    phases: list[dict[str, object]] = []
-
-    def emit_phase(*, phase: str, session_role: str | None, **payload: object) -> None:
-        phases.append({"phase": phase, **payload})
-        _ = session_role
-
     spawn_id = SpawnId("p-disk-child-wave")
-    connection = _FakePiConnection([])
-    await connection.start(
-        ConnectionConfig(
-            spawn_id=spawn_id,
-            harness_id=HarnessId.PI,
-            prompt="hello",
-            control_root=tmp_path,
-            env_overrides={},
-            pi_session_role="spawned",
-        ),
-        ResolvedLaunchSpec(
-            harness=HarnessId.PI,
-            prompt="hello",
-            permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
-        ),
-    )
-    coordinator = PiDrainCoordinator.for_connection(
-        runtime_root=tmp_path,
+    started = await _started_micro_drain_coordinator(
+        tmp_path,
         spawn_id=spawn_id,
-        receiver=connection,
-        session_role="spawned",
-        notification_timeout_seconds=None,
         child_wave_timeout_seconds=1.0,
-        emit_phase=emit_phase,
+        mark_idle=True,
+        start_micro_drain=False,
     )
-    await coordinator.start()
-    coordinator.quiescence_enabled = True
-    await coordinator.quiescence_tracker.mark_idle()
     _write_json(
         tmp_path / "spawns" / "p-late-child" / "state.json",
         {"id": "p-late-child", "parent_id": str(spawn_id), "status": "running"},
     )
 
     try:
-        await coordinator.reevaluate_after_disk_change()
-        assert coordinator.child_wave_deadline_monotonic is not None
-        assert coordinator.pending_child_count() == 1
+        await started.coordinator.reevaluate_after_disk_change()
+        assert started.coordinator.child_wave_deadline_monotonic is not None
+        assert started.coordinator.pending_child_count() == 1
         assert any(
             phase.get("phase") == "waiting_for_tracked_children"
             and phase.get("active_tracked_count") == 1
-            for phase in phases
+            for phase in started.phases
         )
     finally:
-        await coordinator.stop()
+        await started.coordinator.stop()

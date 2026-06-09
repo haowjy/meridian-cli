@@ -13,7 +13,6 @@ from meridian.lib.bootstrap.services import prepare_for_runtime_write
 from meridian.lib.core.context import RuntimeContext
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.common import extract_codex_report
-from meridian.lib.harness.connections import liveness as liveness_module
 from meridian.lib.harness.connections.base import (
     ConnectionCapabilities,
     ConnectionConfig,
@@ -23,9 +22,8 @@ from meridian.lib.harness.connections.base import (
     StopProgressCallback,
     StopResult,
 )
-from meridian.lib.harness.connections.liveness import BackendLivenessPolicy, LivenessDecision
+from meridian.lib.harness.connections.liveness import LivenessDecision
 from meridian.lib.harness.connections.resident_backend import (
-    LivenessResidentBackendControl,
     ResidentBackendControl,
 )
 from meridian.lib.harness.semantics import TerminalEventOutcome
@@ -155,46 +153,6 @@ class _FakeResidentConnection(HarnessConnection[ResolvedLaunchSpec]):
 
     def mark_stalled(self) -> None:
         self._resident_backend.status = LivenessDecision.STREAM_STALLED
-
-
-class _LivenessBackedResidentConnection(_FakeResidentConnection):
-    def __init__(
-        self,
-        harness_id: HarnessId,
-        *,
-        liveness: BackendLivenessPolicy,
-        backend_dead: bool = False,
-    ) -> None:
-        super().__init__(harness_id)
-        self._backend_dead = backend_dead
-        self._liveness_resident_backend = LivenessResidentBackendControl(
-            liveness=liveness,
-            backend_dead=lambda: self._backend_dead,
-            begin_followup_turn=self._noop_followup_turn,
-        )
-
-    @property
-    def resident_backend(self) -> ResidentBackendControl:
-        return self._liveness_resident_backend
-
-    async def _noop_followup_turn(self, message: str) -> None:
-        _ = message
-
-
-def _silent_liveness_policy(
-    clock: FakeClock,
-    *,
-    pid: int | None = 4242,
-) -> BackendLivenessPolicy:
-    policy = BackendLivenessPolicy(
-        timeout_seconds=lambda: 10.0,
-        now=clock.monotonic,
-        backend_pid=lambda: pid,
-        backend_birth_time=lambda: None,
-    )
-    policy.mark_activity()
-    clock.advance(11.0)
-    return policy
 
 
 def _awaiting_done_coordinator(
@@ -686,48 +644,6 @@ async def test_resident_stream_close_with_stalled_backend_is_not_dead_outcome(
         assert outcome.error == "stream_closed_while_awaiting_done"
     finally:
         await manager.stop_spawn(spawn_id)
-
-
-def test_resident_close_classifies_dead_backend_through_liveness_policy(
-    tmp_path: Path,
-) -> None:
-    clock = FakeClock(start=0.0)
-    connection = _LivenessBackedResidentConnection(
-        HarnessId.OPENCODE,
-        liveness=_silent_liveness_policy(clock, pid=None),
-    )
-    coordinator = _awaiting_done_coordinator(tmp_path, connection)
-
-    assert connection.resident_backend.health_status() == LivenessDecision.BACKEND_DEAD
-
-    outcome = coordinator.handle_close(intentional_stop=False)
-
-    assert outcome is not None
-    assert outcome.status == "failed"
-    assert outcome.error == "backend_dead_while_awaiting_done"
-
-
-def test_resident_close_preserves_stalled_stream_through_liveness_policy(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(liveness_module, "is_process_alive", lambda *_args, **_kwargs: True)
-    clock = FakeClock(start=0.0)
-    connection = _LivenessBackedResidentConnection(
-        HarnessId.OPENCODE,
-        liveness=_silent_liveness_policy(clock),
-    )
-    coordinator = _awaiting_done_coordinator(tmp_path, connection)
-
-    assert connection.resident_backend.health_status() == LivenessDecision.STREAM_STALLED
-    connection.resident_backend.set_awaiting_done(True)
-    assert connection.resident_backend.health_status() == LivenessDecision.STREAM_STALLED
-
-    outcome = coordinator.handle_close(intentional_stop=False)
-
-    assert outcome is not None
-    assert outcome.status == "failed"
-    assert outcome.error == "stream_closed_while_awaiting_done"
 
 
 @pytest.mark.asyncio

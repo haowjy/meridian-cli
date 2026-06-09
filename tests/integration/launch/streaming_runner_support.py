@@ -23,7 +23,6 @@ from meridian.lib.harness.launch_spec import ResolvedLaunchSpec
 from meridian.lib.harness.registry import HarnessRegistry
 from meridian.lib.launch.context import build_launch_context
 from meridian.lib.launch.request import (
-    ExecutionBudget,
     LaunchArgvIntent,
     LaunchRuntime,
     SpawnRequest,
@@ -146,169 +145,6 @@ class _ReportThenHangConnection:
                 "threadId": self._session_id,
                 "turnId": "turn-1",
             },
-        )
-        while True:
-            await asyncio.sleep(3600)
-
-
-class _PiTimeoutThenTerminalConnection:
-    def __init__(self) -> None:
-        self.state = "created"
-        self._spawn_id = SpawnId("")
-        self._project_root: Path | None = None
-        self._session_id = "session-pi-timeout-race"
-        self._stop_event = asyncio.Event()
-        self.capabilities = ConnectionCapabilities(
-            mid_turn_injection="queue",
-            supports_steer=False,
-            supports_cancel=True,
-            runtime_model_switch=False,
-            structured_reasoning=True,
-        )
-
-    @property
-    def harness_id(self) -> HarnessId:
-        return HarnessId.PI
-
-    @property
-    def spawn_id(self) -> SpawnId:
-        return self._spawn_id
-
-    @property
-    def session_id(self) -> str | None:
-        return self._session_id
-
-    @property
-    def subprocess_pid(self) -> int | None:
-        return 5252
-
-    @property
-    def resident_backend(self) -> object | None:
-        return None
-
-    async def start(self, config: ConnectionConfig, spec: ResolvedLaunchSpec) -> None:
-        _ = spec
-        self._spawn_id = config.spawn_id
-        self._project_root = config.control_root
-        self.state = "connected"
-
-    async def stop(
-        self,
-        *,
-        reason: str | None = None,
-        progress: StopProgressCallback | None = None,
-    ) -> StopResult:
-        _ = reason, progress
-        self.state = "stopped"
-        self._stop_event.set()
-        return StopResult()
-
-    def health(self) -> bool:
-        return self.state == "connected"
-
-    async def send_user_message(self, text: str) -> None:
-        _ = text
-
-    async def send_cancel(self) -> None:
-        return None
-
-    async def events(self):  # type: ignore[no-untyped-def]
-        project_root = self._project_root
-        assert project_root is not None
-        spawn_dir = resolve_spawn_log_dir(project_root, self._spawn_id)
-        spawn_dir.mkdir(parents=True, exist_ok=True)
-        (spawn_dir / "report.md").write_text("# Report\n\nOK\n", encoding="utf-8")
-        yield HarnessEvent(
-            event_type="session",
-            harness_id="pi",
-            payload={"type": "session", "id": self._session_id},
-        )
-        yield HarnessEvent(
-            event_type="turn_start",
-            harness_id="pi",
-            payload={"type": "turn_start"},
-        )
-        await self._stop_event.wait()
-        yield HarnessEvent(
-            event_type="agent_end",
-            harness_id="pi",
-            payload={
-                "type": "agent_end",
-                "messages": [
-                    {"role": "assistant", "stopReason": "stop"},
-                ],
-            },
-        )
-
-
-class _PiTimeoutWithoutTerminalConnection:
-    def __init__(self) -> None:
-        self.state = "created"
-        self._spawn_id = SpawnId("")
-        self._project_root: Path | None = None
-        self._session_id = "session-pi-timeout-no-terminal"
-        self.capabilities = ConnectionCapabilities(
-            mid_turn_injection="queue",
-            supports_steer=False,
-            supports_cancel=True,
-            runtime_model_switch=False,
-            structured_reasoning=True,
-        )
-
-    @property
-    def harness_id(self) -> HarnessId:
-        return HarnessId.PI
-
-    @property
-    def spawn_id(self) -> SpawnId:
-        return self._spawn_id
-
-    @property
-    def session_id(self) -> str | None:
-        return self._session_id
-
-    @property
-    def subprocess_pid(self) -> int | None:
-        return 6262
-
-    @property
-    def resident_backend(self) -> object | None:
-        return None
-
-    async def start(self, config: ConnectionConfig, spec: ResolvedLaunchSpec) -> None:
-        _ = spec
-        self._spawn_id = config.spawn_id
-        self._project_root = config.control_root
-        self.state = "connected"
-
-    async def stop(
-        self,
-        *,
-        reason: str | None = None,
-        progress: StopProgressCallback | None = None,
-    ) -> StopResult:
-        _ = reason, progress
-        self.state = "stopped"
-        return StopResult()
-
-    def health(self) -> bool:
-        return self.state == "connected"
-
-    async def send_user_message(self, text: str) -> None:
-        _ = text
-
-    async def send_cancel(self) -> None:
-        return None
-
-    async def events(self):  # type: ignore[no-untyped-def]
-        project_root = self._project_root
-        assert project_root is not None
-        spawn_dir = resolve_spawn_log_dir(project_root, self._spawn_id)
-        spawn_dir.mkdir(parents=True, exist_ok=True)
-        yield HarnessEvent(
-            event_type="session",
-            harness_id="pi",
-            payload={"type": "session", "id": self._session_id},
         )
         while True:
             await asyncio.sleep(3600)
@@ -520,13 +356,28 @@ class _ResidentDeadlineConnection:
             await asyncio.sleep(3600)
 
 
-class _RetryableOpenCodeConnection:
+class _ScriptedRetryOpenCodeConnection:
     starts = 0
+    first_attempt_events: tuple[HarnessEvent, ...] = ()
+    session_id_value = "session-scripted-retry-opencode"
+    subprocess_pid_value = 8383
+
+    @classmethod
+    def reset(
+        cls,
+        *,
+        first_attempt_events: tuple[HarnessEvent, ...],
+        session_id: str,
+        subprocess_pid: int,
+    ) -> None:
+        cls.starts = 0
+        cls.first_attempt_events = first_attempt_events
+        cls.session_id_value = session_id
+        cls.subprocess_pid_value = subprocess_pid
 
     def __init__(self) -> None:
         self.state = "created"
         self._spawn_id = SpawnId("")
-        self._session_id = "session-retryable-opencode"
         self._attempt_index = 0
         self._resident_backend = _IdleResidentBackend()
         self.capabilities = ConnectionCapabilities(
@@ -547,11 +398,11 @@ class _RetryableOpenCodeConnection:
 
     @property
     def session_id(self) -> str | None:
-        return self._session_id
+        return type(self).session_id_value
 
     @property
     def subprocess_pid(self) -> int | None:
-        return 8383
+        return type(self).subprocess_pid_value
 
     @property
     def resident_backend(self) -> object:
@@ -585,89 +436,13 @@ class _RetryableOpenCodeConnection:
 
     async def events(self):  # type: ignore[no-untyped-def]
         if self._attempt_index == 1:
-            yield HarnessEvent(
-                event_type="session.error",
-                harness_id="opencode",
-                payload={"type": "session.error", "error": "connection reset by peer"},
-            )
+            for event in type(self).first_attempt_events:
+                yield event
             return
         yield HarnessEvent(
             event_type="session.idle",
             harness_id="opencode",
-            payload={"type": "session.idle", "sessionID": self._session_id},
-        )
-
-
-class _CloseWithoutTerminalOpenCodeConnection:
-    starts = 0
-
-    def __init__(self) -> None:
-        self.state = "created"
-        self._spawn_id = SpawnId("")
-        self._session_id = "session-close-without-terminal-opencode"
-        self._attempt_index = 0
-        self._resident_backend = _IdleResidentBackend()
-        self.capabilities = ConnectionCapabilities(
-            mid_turn_injection="http_post",
-            supports_steer=False,
-            supports_cancel=True,
-            runtime_model_switch=False,
-            structured_reasoning=True,
-        )
-
-    @property
-    def harness_id(self) -> HarnessId:
-        return HarnessId.OPENCODE
-
-    @property
-    def spawn_id(self) -> SpawnId:
-        return self._spawn_id
-
-    @property
-    def session_id(self) -> str | None:
-        return self._session_id
-
-    @property
-    def subprocess_pid(self) -> int | None:
-        return 8484
-
-    @property
-    def resident_backend(self) -> object:
-        return self._resident_backend
-
-    async def start(self, config: ConnectionConfig, spec: ResolvedLaunchSpec) -> None:
-        _ = spec
-        type(self).starts += 1
-        self._attempt_index = type(self).starts
-        self._spawn_id = config.spawn_id
-        self.state = "connected"
-
-    async def stop(
-        self,
-        *,
-        reason: str | None = None,
-        progress: StopProgressCallback | None = None,
-    ) -> StopResult:
-        _ = reason, progress
-        self.state = "stopped"
-        return StopResult()
-
-    def health(self) -> bool:
-        return self.state == "connected"
-
-    async def send_user_message(self, text: str) -> None:
-        _ = text
-
-    async def send_cancel(self) -> None:
-        return None
-
-    async def events(self):  # type: ignore[no-untyped-def]
-        if self._attempt_index == 1:
-            return
-        yield HarnessEvent(
-            event_type="session.idle",
-            harness_id="opencode",
-            payload={"type": "session.idle", "sessionID": self._session_id},
+            payload={"type": "session.idle", "sessionID": self.session_id},
         )
 
 
@@ -690,15 +465,6 @@ def _build_request() -> SpawnRequest:
         model="gpt-5.3-codex",
         harness=HarnessId.CODEX.value,
         prompt="hello",
-    )
-
-
-def _build_pi_timeout_request(timeout_secs: int) -> SpawnRequest:
-    return SpawnRequest(
-        model="openai-codex/gpt-5.4-mini",
-        harness=HarnessId.PI.value,
-        prompt="Reply with exactly: OK",
-        budget=ExecutionBudget(timeout_secs=timeout_secs),
     )
 
 

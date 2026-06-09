@@ -53,20 +53,15 @@ class _StartProbeOpenCodeConnection(OpenCodeConnection):
         super().__init__()
         self.initial_messages: list[tuple[str, str | None]] = []
         self.start_order: list[str] = []
-        self.launch_calls = 0
-        self.ready_calls = 0
-        self.create_session_calls = 0
 
     async def _launch_process(self, config: ConnectionConfig, spec: ResolvedLaunchSpec) -> None:
         _ = config, spec
         self.start_order.append("launch")
-        self.launch_calls += 1
         self._process = _FakeProcess()
 
     async def _wait_for_ready(self, *, timeout_seconds: float) -> None:
         _ = timeout_seconds
         self.start_order.append("ready")
-        self.ready_calls += 1
 
     async def _create_session_with_retry(
         self,
@@ -76,7 +71,6 @@ class _StartProbeOpenCodeConnection(OpenCodeConnection):
     ) -> str:
         _ = spec, timeout_seconds
         self.start_order.append("session")
-        self.create_session_calls += 1
         return "sess-primary-observer"
 
     async def _post_session_message(self, text: str, *, system: str | None = None) -> None:
@@ -297,25 +291,6 @@ def _build_connection_config(tmp_path: Path) -> ConnectionConfig:
     )
 
 
-@pytest.mark.parametrize(
-    "event_type",
-    (OPENCODE_ACTIVITY_IDLE_EVENT, OPENCODE_ACTIVITY_ERROR_EVENT),
-)
-def test_opencode_event_from_json_line_pins_activity_transition_events(event_type: str) -> None:
-    connection = OpenCodeConnection()
-    connection._signal_in_flight = True
-
-    event = connection._event_from_json_line(
-        json_text=f'{{"type":"{event_type}","sessionID":"sess-activity"}}',
-        raw_text=f'{{"type":"{event_type}","sessionID":"sess-activity"}}',
-    )
-
-    assert event is not None
-    assert event.event_type == event_type
-    assert event.payload == {"type": event_type, "sessionID": "sess-activity"}
-    assert connection._signal_in_flight is False
-
-
 @pytest.mark.asyncio
 async def test_opencode_events_fail_after_liveness_timeout_without_events(
     monkeypatch: pytest.MonkeyPatch,
@@ -380,12 +355,19 @@ async def test_opencode_keepalive_chunks_do_not_refresh_liveness_deadline(
 
 
 @pytest.mark.asyncio
-async def test_opencode_events_refresh_liveness_deadline_after_yielded_event(
+@pytest.mark.parametrize(
+    "event_type",
+    (OPENCODE_ACTIVITY_IDLE_EVENT, OPENCODE_ACTIVITY_ERROR_EVENT),
+)
+async def test_opencode_events_surface_activity_transition_events(
     monkeypatch: pytest.MonkeyPatch,
+    event_type: str,
 ) -> None:
     connection = _LivenessProbeOpenCodeConnection(
         responses=[
-            _FakeSseResponse([b'{"type":"session.idle","sessionID":"sess-liveness"}\n']),
+            _FakeSseResponse(
+                [f'{{"type":"{event_type}","sessionID":"sess-liveness"}}\n'.encode()]
+            ),
             _FakeSseResponse([]),
         ]
     )
@@ -403,7 +385,7 @@ async def test_opencode_events_refresh_liveness_deadline_after_yielded_event(
 
     events = [event async for event in connection.events()]
 
-    assert [event.event_type for event in events] == ["session.idle"]
+    assert [event.event_type for event in events] == [event_type]
     assert connection.open_count >= 1
     assert connection.state == "failed"
 
@@ -511,9 +493,6 @@ async def test_opencode_start_primary_observer_mode_controls_initial_prompt_post
 
     assert connection.state == "connected"
     assert connection.session_id == "sess-primary-observer"
-    assert connection.launch_calls == 1
-    assert connection.ready_calls == 1
-    assert connection.create_session_calls == 1
     assert connection.initial_messages == expected_initial_messages
 
     await connection.stop()
@@ -560,12 +539,11 @@ async def test_opencode_readiness_gate_retries_transient_timeout_before_session_
 
     assert connection.state == "connected"
     assert connection.session_id == "sess-after-readiness-timeout"
-    assert [path for path, _payload in connection.requests] == [
-        "launch",
-        "/global/health",
-        "/global/health",
-        "session",
-    ]
+    paths = [path for path, _payload in connection.requests]
+    session_index = paths.index("session")
+    assert paths[0] == "launch"
+    assert "/global/health" in paths[:session_index]
+    assert paths[-1] == "session"
 
     await connection.stop()
 

@@ -11,6 +11,7 @@ import pytest
 
 from meridian.lib.core.domain import Spawn
 from meridian.lib.core.types import HarnessId, ModelId, SpawnId, TransportId
+from meridian.lib.harness.connections.base import HarnessEvent
 from meridian.lib.harness.registry import HarnessRegistry
 from meridian.lib.launch.request import RetryPolicy
 from meridian.lib.state import spawn_store
@@ -20,12 +21,11 @@ from meridian.lib.streaming import spawn_manager as spawn_manager_module
 from tests.integration.launch.streaming_runner_support import (
     _build_opencode_request,
     _build_request,
-    _CloseWithoutTerminalOpenCodeConnection,
     _execute_with_context,
     _FakeControlSocketServer,
     _pi_extension_projection_fixture,
     _ResidentDeadlineConnection,
-    _RetryableOpenCodeConnection,
+    _ScriptedRetryOpenCodeConnection,
     streaming_runner_module,
 )
 from tests.support.fakes import FakeClock, FakeHeartbeat
@@ -131,11 +131,21 @@ async def test_execute_with_streaming_does_not_retry_authoritative_terminal_fail
     fake_clock = FakeClock(start=1_000.0)
     fake_heartbeat = FakeHeartbeat()
     fake_heartbeat.set_clock(fake_clock)
-    _RetryableOpenCodeConnection.starts = 0
+    _ScriptedRetryOpenCodeConnection.reset(
+        first_attempt_events=(
+            HarnessEvent(
+                event_type="session.error",
+                harness_id="opencode",
+                payload={"type": "session.error", "error": "connection reset by peer"},
+            ),
+        ),
+        session_id="session-retryable-opencode",
+        subprocess_pid=8383,
+    )
     monkeypatch.setattr(spawn_manager_module, "ControlSocketServer", _FakeControlSocketServer)
     monkeypatch.setattr(
         "meridian.lib.harness.connections.get_connection_class",
-        lambda _harness_id, _transport_id=TransportId.STREAMING: _RetryableOpenCodeConnection,
+        lambda _harness_id, _transport_id=TransportId.STREAMING: _ScriptedRetryOpenCodeConnection,
     )
 
     run = Spawn(
@@ -177,7 +187,7 @@ async def test_execute_with_streaming_does_not_retry_authoritative_terminal_fail
 
     row = spawn_store.get_spawn(runtime_root, run.spawn_id)
     assert exit_code == 1
-    assert _RetryableOpenCodeConnection.starts == 1
+    assert _ScriptedRetryOpenCodeConnection.starts == 1
     assert row is not None
     assert row.status == "failed"
     assert row.exit_code == 1
@@ -195,13 +205,15 @@ async def test_execute_with_streaming_retries_single_turn_close_without_terminal
     fake_clock = FakeClock(start=1_000.0)
     fake_heartbeat = FakeHeartbeat()
     fake_heartbeat.set_clock(fake_clock)
-    _CloseWithoutTerminalOpenCodeConnection.starts = 0
+    _ScriptedRetryOpenCodeConnection.reset(
+        first_attempt_events=(),
+        session_id="session-close-without-terminal-opencode",
+        subprocess_pid=8484,
+    )
     monkeypatch.setattr(spawn_manager_module, "ControlSocketServer", _FakeControlSocketServer)
     monkeypatch.setattr(
         "meridian.lib.harness.connections.get_connection_class",
-        lambda _harness_id, _transport_id=TransportId.STREAMING: (
-            _CloseWithoutTerminalOpenCodeConnection
-        ),
+        lambda _harness_id, _transport_id=TransportId.STREAMING: _ScriptedRetryOpenCodeConnection,
     )
 
     run = Spawn(
@@ -243,7 +255,7 @@ async def test_execute_with_streaming_retries_single_turn_close_without_terminal
 
     row = spawn_store.get_spawn(runtime_root, run.spawn_id)
     assert exit_code == 0
-    assert _CloseWithoutTerminalOpenCodeConnection.starts == 2
+    assert _ScriptedRetryOpenCodeConnection.starts == 2
     assert row is not None
     assert row.status == "succeeded"
     assert row.exit_code == 0
