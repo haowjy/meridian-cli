@@ -689,8 +689,10 @@ async def test_codex_resident_deadline_waits_then_reaps_live_child(
     reaped_spawn_ids: list[str] = []
 
     class _FakeService:
-        async def cancel_descendants(self, root_id: SpawnId) -> None:
+        async def cancel_descendants(self, root_id: SpawnId) -> set[str]:
+            reaped_ids: set[str] = set()
             for descendant in active_descendants(tmp_path, root_id):
+                reaped_ids.add(descendant.id)
                 reaped_spawn_ids.append(descendant.id)
                 spawn_store.finalize_spawn(
                     tmp_path,
@@ -700,6 +702,7 @@ async def test_codex_resident_deadline_waits_then_reaps_live_child(
                     origin="cancel",
                     error="cancelled",
                 )
+            return reaped_ids
 
     monkeypatch.setattr(
         bootstrap_services,
@@ -961,8 +964,10 @@ async def test_deadline_reap_cancels_active_descendant_cli_spawns(
     cancelled: list[str] = []
 
     class _FakeService:
-        async def cancel_descendants(self, root_id: SpawnId) -> None:
+        async def cancel_descendants(self, root_id: SpawnId) -> set[str]:
+            reaped_ids: set[str] = set()
             for descendant in active_descendants(tmp_path, root_id):
+                reaped_ids.add(descendant.id)
                 cancelled.append(descendant.id)
                 spawn_store.finalize_spawn(
                     tmp_path,
@@ -972,6 +977,7 @@ async def test_deadline_reap_cancels_active_descendant_cli_spawns(
                     origin="cancel",
                     error="cancelled",
                 )
+            return reaped_ids
 
     monkeypatch.setattr(
         bootstrap_services,

@@ -462,7 +462,6 @@ class PiDrainCoordinator:
                 self._emit(
                     "waiting_for_tracked_children",
                     active_tracked_count=child_count,
-                    anonymous_tracked_count=self.tracker.anonymous_active_count,
                 )
             self.waiting_child_count = child_count
         else:
@@ -477,7 +476,6 @@ class PiDrainCoordinator:
                 self._emit(
                     "waiting_for_notification_completion",
                     pending_notification_count=notification_count,
-                    anonymous_pending_notification_count=self.tracker.anonymous_pending_notifications,
                 )
             self.waiting_notification_count = notification_count
         else:

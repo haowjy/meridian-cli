@@ -586,7 +586,7 @@ class SpawnApplicationService:
                 return _cancel_outcome_from_record(str(spawn_id), latest)
             return _cancel_outcome_from_signal(str(spawn_id), signal_outcome, latest)
 
-    async def cancel_descendants(self, root_id: SpawnId | str) -> None:
+    async def cancel_descendants(self, root_id: SpawnId | str) -> set[str]:
         """Cancel the active descendant subtree of a spawn, to a fixed point.
 
         Each descendant goes through the full cancel pipeline (intent + delivery
@@ -598,10 +598,11 @@ class SpawnApplicationService:
         """
         from meridian.lib.state.spawn_tree import active_descendants
 
+        reaped_ids: set[str] = set()
         for _ in range(_MAX_REAP_PASSES):
             descendants = active_descendants(self._runtime_root, root_id)
             if not descendants:
-                return
+                return reaped_ids
             results = await asyncio.gather(
                 *(self.cancel(SpawnId(d.id), requested_by="system") for d in descendants),
                 return_exceptions=True,
@@ -614,6 +615,8 @@ class SpawnApplicationService:
                         descendant_id=descendant.id,
                         error=repr(result),
                     )
+                    continue
+                reaped_ids.add(descendant.id)
         remaining = active_descendants(self._runtime_root, root_id)
         if remaining:
             logger.warning(
@@ -621,6 +624,7 @@ class SpawnApplicationService:
                 root_id=str(root_id),
                 remaining=[d.id for d in remaining],
             )
+        return reaped_ids
 
     async def _force_cancel_convergence(
         self,

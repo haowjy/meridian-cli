@@ -558,7 +558,7 @@ async def test_cancel_descendants_forces_active_subtree_to_terminal(
     )
     service = _service(runtime_root)
 
-    await service.cancel_descendants(SpawnId("p1"))
+    reaped_ids = await service.cancel_descendants(SpawnId("p1"))
 
     child = spawn_store.get_spawn(runtime_root, "p2")
     grandchild = spawn_store.get_spawn(runtime_root, "p3")
@@ -574,6 +574,7 @@ async def test_cancel_descendants_forces_active_subtree_to_terminal(
     assert grandchild.cancel_intent.requested_by == "system"
     assert already_terminal.status == "succeeded"
     assert already_terminal.cancel_intent is None
+    assert reaped_ids == {"p2", "p3"}
 
 
 @pytest.mark.asyncio
@@ -603,9 +604,10 @@ async def test_cancel_descendants_rescans_to_fixed_point(
 
     monkeypatch.setattr(service, "cancel", _cancel)
 
-    await service.cancel_descendants(SpawnId("p1"))
+    reaped_ids = await service.cancel_descendants(SpawnId("p1"))
 
     assert cancelled == [("p2", "system"), ("p3", "system")]
+    assert reaped_ids == {"p2", "p3"}
     grandchild = spawn_store.get_spawn(runtime_root, "p3")
     assert grandchild is not None
     assert grandchild.status == "cancelled"

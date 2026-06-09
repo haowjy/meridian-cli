@@ -135,6 +135,36 @@ def test_pi_subspawn_tracker_ignores_noncanonical_parse_diagnostics() -> None:
     assert tracker.lifecycle_tracking_invalidated_error is None
 
 
+def test_pi_subspawn_tracker_invalidates_unknown_pi_lifecycle_namespace_events() -> None:
+    tracker = PiSubspawnTracker.empty()
+
+    tracker.observe(
+        _pi_event(
+            "meridian_subspawn_started",
+            {"id": "legacy-child", "wait_policy": "tracked", "pid": 4401},
+        )
+    )
+
+    assert tracker.has_pending() is False
+    assert tracker.has_pending_notifications() is False
+    assert (
+        tracker.lifecycle_tracking_invalidated_error
+        == "pi_lifecycle_tracking_invalidated:unsupported_lifecycle_event:"
+        "meridian_subspawn_started"
+    )
+
+
+def test_pi_subspawn_tracker_leaves_ordinary_harness_events_unaffected() -> None:
+    tracker = PiSubspawnTracker.empty()
+
+    tracker.observe(_pi_event("agent_progress", {"message": "ordinary output"}))
+
+    assert tracker.has_pending() is False
+    assert tracker.has_pending_notifications() is False
+    assert tracker.notification_failure_error is None
+    assert tracker.lifecycle_tracking_invalidated_error is None
+
+
 def test_pi_subspawn_tracker_deduplicates_canonical_events() -> None:
     tracker = PiSubspawnTracker.empty()
 
@@ -519,6 +549,163 @@ async def test_spawn_manager_pi_micro_drain_resolves_with_bounded_timeout(
         await manager.stop_spawn(spawn_id)
 
 
+async def _run_pi_child_wave_timeout_with_cleanup_mocks(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    cancel_raises: bool = False,
+) -> tuple[list[tuple[object, ...]], Any]:
+    calls: list[tuple[object, ...]] = []
+
+    class _Service:
+        async def cancel_descendants(self, target_spawn_id: SpawnId) -> set[str]:
+            calls.append(("cancel_descendants", str(target_spawn_id)))
+            if cancel_raises:
+                raise RuntimeError("cancel failed")
+            return {"j-hybrid-reap"}
+
+    def _build_service(project_root: Path, runtime_root: Path) -> _Service:
+        assert project_root == tmp_path
+        assert runtime_root == tmp_path
+        return _Service()
+
+    async def _fallback_cleanup(
+        target_spawn_id: SpawnId,
+        tracker: PiSubspawnTracker,
+        *,
+        reason: str,
+        exclude_subspawn_ids: set[str] | None = None,
+    ) -> None:
+        calls.append(
+            (
+                "pgid_fallback",
+                str(target_spawn_id),
+                reason,
+                tracker.active_tracked_pgid_candidates(exclude_ids=exclude_subspawn_ids),
+            )
+        )
+
+    monkeypatch.setattr(
+        "meridian.lib.bootstrap.services.build_spawn_application_service_from_roots",
+        _build_service,
+    )
+    monkeypatch.setattr(
+        "meridian.lib.streaming.spawn_manager.terminate_pi_tracked_subspawns",
+        _fallback_cleanup,
+    )
+
+    class _StuckWaveTimeoutConnection(_FakePiConnection):
+        async def events(self):  # type: ignore[no-untyped-def]
+            for event in self._events:
+                yield event
+            await asyncio.sleep(60)
+
+    fake_connection = _StuckWaveTimeoutConnection(
+        [
+            _pi_event("session", {"id": "ses-pi"}),
+            _pi_event(
+                "meridian.subspawn.start",
+                {
+                    "schema_version": 1,
+                    "subspawn_id": "j-hybrid-reap",
+                    "correlation_id": "j-hybrid-reap",
+                    "wait_policy": "tracked",
+                    "pid": 7701,
+                },
+            ),
+            _pi_event(
+                "meridian.subspawn.start",
+                {
+                    "schema_version": 1,
+                    "subspawn_id": "pi-internal-managed-bash",
+                    "correlation_id": "pi-internal-managed-bash",
+                    "wait_policy": "tracked",
+                    "pid": 8801,
+                },
+            ),
+            _pi_event(
+                "agent_end",
+                {"messages": [{"role": "assistant", "stopReason": "stop"}]},
+            ),
+        ]
+    )
+
+    async def _start_connection(
+        config: ConnectionConfig,
+        spec: ResolvedLaunchSpec,
+    ) -> HarnessConnection[Any]:
+        await fake_connection.start(config, spec)
+        return fake_connection
+
+    manager = SpawnManager(
+        runtime_root=tmp_path,
+        project_root=tmp_path,
+        start_connection=_start_connection,
+        control_server_factory=lambda _spawn_id, _socket_path, _manager: _NoopControlServer(),
+    )
+    spawn_id = SpawnId("p-pi-hybrid-reap")
+    await manager.start_spawn(
+        ConnectionConfig(
+            spawn_id=spawn_id,
+            harness_id=HarnessId.PI,
+            prompt="hello",
+            control_root=tmp_path,
+            env_overrides={},
+            pi_session_role="spawned",
+            pi_child_wave_timeout_seconds=0.02,
+        ),
+        ResolvedLaunchSpec(
+            harness=HarnessId.PI,
+            prompt="hello",
+            permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
+        ),
+    )
+
+    try:
+        outcome = await asyncio.wait_for(manager.wait_for_completion(spawn_id), timeout=1.0)
+    finally:
+        await manager.stop_spawn(spawn_id)
+    assert outcome is not None
+    return calls, outcome
+
+
+@pytest.mark.asyncio
+async def test_spawn_manager_pi_reap_cancels_descendants_before_pgid_fallback(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls, outcome = await _run_pi_child_wave_timeout_with_cleanup_mocks(
+        tmp_path,
+        monkeypatch,
+    )
+
+    assert outcome.status == "failed"
+    assert outcome.error == "pi_child_wave_timeout"
+    assert calls == [
+        ("cancel_descendants", "p-pi-hybrid-reap"),
+        ("pgid_fallback", "p-pi-hybrid-reap", "pi_child_wave_timeout", (8801,)),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_spawn_manager_pi_reap_runs_pgid_fallback_when_cancel_descendants_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls, outcome = await _run_pi_child_wave_timeout_with_cleanup_mocks(
+        tmp_path,
+        monkeypatch,
+        cancel_raises=True,
+    )
+
+    assert outcome.status == "failed"
+    assert outcome.error == "pi_child_wave_timeout"
+    assert calls == [
+        ("cancel_descendants", "p-pi-hybrid-reap"),
+        ("pgid_fallback", "p-pi-hybrid-reap", "pi_child_wave_timeout", (7701, 8801)),
+    ]
+
+
 @pytest.mark.asyncio
 async def test_spawn_manager_pi_child_wave_timeout_cleans_tracked_children_and_fails(
     tmp_path: Path,
@@ -824,6 +1011,68 @@ async def test_spawn_manager_pi_parse_error_invalidates_quiescence_and_fails(
         ]
         assert any(event["event_type"] == "meridian.lifecycle.parse_error" for event in history)
         assert any(event["payload"].get("raw_line") == raw_line for event in history)
+    finally:
+        await manager.stop_spawn(spawn_id)
+
+
+@pytest.mark.asyncio
+async def test_spawn_manager_pi_legacy_lifecycle_event_invalidates_instead_of_finalizing(
+    tmp_path: Path,
+) -> None:
+    events = [
+        _pi_event("session", {"id": "ses-pi"}),
+        _pi_event(
+            "meridian_subspawn_started",
+            {"id": "legacy-child", "wait_policy": "tracked", "pid": 4401},
+        ),
+        _pi_event(
+            "agent_end",
+            {"messages": [{"role": "assistant", "stopReason": "stop"}]},
+        ),
+    ]
+    fake_connection = _FakePiConnection(events)
+
+    async def _start_connection(
+        config: ConnectionConfig,
+        spec: ResolvedLaunchSpec,
+    ) -> HarnessConnection[Any]:
+        await fake_connection.start(config, spec)
+        return fake_connection
+
+    manager = SpawnManager(
+        runtime_root=tmp_path,
+        project_root=tmp_path,
+        start_connection=_start_connection,
+        control_server_factory=lambda _spawn_id, _socket_path, _manager: _NoopControlServer(),
+    )
+
+    spawn_id = SpawnId("p-pi-legacy-lifecycle")
+    await manager.start_spawn(
+        ConnectionConfig(
+            spawn_id=spawn_id,
+            harness_id=HarnessId.PI,
+            prompt="hello",
+            control_root=tmp_path,
+            env_overrides={},
+            pi_session_role="spawned",
+        ),
+        ResolvedLaunchSpec(
+            harness=HarnessId.PI,
+            prompt="hello",
+            permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
+        ),
+    )
+
+    try:
+        outcome = await asyncio.wait_for(manager.wait_for_completion(spawn_id), timeout=1.0)
+        assert outcome is not None
+        assert outcome.status == "failed"
+        assert (
+            outcome.error
+            == "pi_lifecycle_tracking_invalidated:unsupported_lifecycle_event:"
+            "meridian_subspawn_started"
+        )
+        assert fake_connection.stop_reasons == []
     finally:
         await manager.stop_spawn(spawn_id)
 

@@ -283,8 +283,10 @@ async def test_resident_runner_marks_deadline_drain_outcome_terminal(
     from meridian.lib.bootstrap import services as bootstrap_services
 
     class _FastService:
-        async def cancel_descendants(self, root_id: SpawnId) -> None:
+        async def cancel_descendants(self, root_id: SpawnId) -> set[str]:
+            reaped_ids: set[str] = set()
             for descendant in active_descendants(runtime_root, root_id):
+                reaped_ids.add(descendant.id)
                 finalize_spawn(
                     runtime_root,
                     descendant.id,
@@ -293,6 +295,7 @@ async def test_resident_runner_marks_deadline_drain_outcome_terminal(
                     origin="cancel",
                     error="cancelled",
                 )
+            return reaped_ids
 
     monkeypatch.setattr(
         bootstrap_services,

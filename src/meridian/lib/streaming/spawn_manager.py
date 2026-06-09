@@ -329,7 +329,32 @@ class SpawnManager:
             tracker: PiSubspawnTracker,
             reason: str,
         ) -> None:
-            await terminate_pi_tracked_subspawns(spawn_id, tracker, reason=reason)
+            reaped_descendant_ids: set[str] = set()
+            try:
+                from meridian.lib.bootstrap.services import (
+                    build_spawn_application_service_from_roots,
+                )
+
+                service = build_spawn_application_service_from_roots(
+                    self._project_root,
+                    self._runtime_root,
+                )
+                reaped_descendant_ids = await service.cancel_descendants(spawn_id)
+            except Exception:
+                logger.exception(
+                    "Failed to cancel Pi descendant spawns before tracked child cleanup.",
+                    extra={"spawn_id": str(spawn_id), "reason": reason},
+                )
+                # Intentional: if canonical descendant cancellation fails, fall
+                # back to the full tracker set so Pi-internal cleanup is not
+                # skipped because we could not prove which ids were reaped.
+                reaped_descendant_ids = set()
+            await terminate_pi_tracked_subspawns(
+                spawn_id,
+                tracker,
+                reason=reason,
+                exclude_subspawn_ids=reaped_descendant_ids,
+            )
 
         if _resident_backend(receiver) is not None:
             # TODO(phase-4): resident waiting and Pi quiescence share the same
