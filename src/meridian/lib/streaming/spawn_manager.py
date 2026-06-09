@@ -363,7 +363,8 @@ class SpawnManager:
         async def _send_pi_done_nudge(message: str) -> None:
             await self.inject(spawn_id, message, source="pi_done_nudge")
 
-        if receiver.resident_backend is not None:
+        resident_backend = receiver.resident_backend
+        if resident_backend is not None:
             # TODO(phase-4): resident waiting and Pi quiescence share the same
             # "terminal candidate plus descendant work" shape; fold once Pi's
             # lifecycle inference machinery is removed.
@@ -372,6 +373,7 @@ class SpawnManager:
                 runtime_root=self._runtime_root,
                 spawn_id=spawn_id,
                 receiver=receiver,
+                resident_backend=resident_backend,
                 deadline_seconds=resident_deadline_seconds,
                 poll_seconds=resident_poll_seconds,
             )

@@ -3,11 +3,9 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
-from typing import Literal, Protocol
+from typing import Protocol
 
 from meridian.lib.harness.connections.liveness import BackendLivenessPolicy, LivenessDecision
-
-ResidentHealthStatus = LivenessDecision | Literal["unsupported"]
 
 
 class ResidentBackendControl(Protocol):
@@ -18,7 +16,7 @@ class ResidentBackendControl(Protocol):
     turns without knowing transport internals or optional implementation fields.
     """
 
-    def health_status(self) -> ResidentHealthStatus:
+    def health_status(self) -> LivenessDecision:
         """Return structured backend liveness; do not collapse dead and stalled."""
         ...
 
@@ -45,7 +43,7 @@ class LivenessResidentBackendControl:
         self._backend_dead = backend_dead
         self._begin_followup_turn = begin_followup_turn
 
-    def health_status(self) -> ResidentHealthStatus:
+    def health_status(self) -> LivenessDecision:
         try:
             decision = self._liveness.classify_close_stream()
         except Exception:
@@ -69,5 +67,4 @@ class LivenessResidentBackendControl:
 __all__ = [
     "LivenessResidentBackendControl",
     "ResidentBackendControl",
-    "ResidentHealthStatus",
 ]

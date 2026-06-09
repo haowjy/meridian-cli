@@ -201,11 +201,14 @@ def _awaiting_done_coordinator(
     tmp_path: Path,
     connection: HarnessConnection[Any],
 ) -> ResidentDrainCoordinator:
+    resident_backend = connection.resident_backend
+    assert resident_backend is not None
     coordinator = ResidentDrainCoordinator.for_connection(
         project_root=tmp_path,
         runtime_root=tmp_path,
         spawn_id=SpawnId("p1"),
         receiver=connection,
+        resident_backend=resident_backend,
         deadline_seconds=30.0,
         poll_seconds=0.01,
     )
@@ -844,6 +847,7 @@ def _coordinator_with_clock(
         runtime_root=tmp_path,
         spawn_id=SpawnId("p1"),
         receiver=connection,
+        resident_backend=connection.resident_backend,
         deadline_seconds=deadline_seconds,
         poll_seconds=poll_seconds,
     )

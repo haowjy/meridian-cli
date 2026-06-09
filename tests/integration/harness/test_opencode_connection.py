@@ -52,17 +52,20 @@ class _StartProbeOpenCodeConnection(OpenCodeConnection):
     def __init__(self) -> None:
         super().__init__()
         self.initial_messages: list[tuple[str, str | None]] = []
+        self.start_order: list[str] = []
         self.launch_calls = 0
         self.ready_calls = 0
         self.create_session_calls = 0
 
     async def _launch_process(self, config: ConnectionConfig, spec: ResolvedLaunchSpec) -> None:
         _ = config, spec
+        self.start_order.append("launch")
         self.launch_calls += 1
         self._process = _FakeProcess()
 
     async def _wait_for_ready(self, *, timeout_seconds: float) -> None:
         _ = timeout_seconds
+        self.start_order.append("ready")
         self.ready_calls += 1
 
     async def _create_session_with_retry(
@@ -72,6 +75,7 @@ class _StartProbeOpenCodeConnection(OpenCodeConnection):
         timeout_seconds: float,
     ) -> str:
         _ = spec, timeout_seconds
+        self.start_order.append("session")
         self.create_session_calls += 1
         return "sess-primary-observer"
 
@@ -164,6 +168,7 @@ class _ReadinessStartupProbeOpenCodeConnection(_TestableOpenCodeConnection):
 
     async def _launch_process(self, config: ConnectionConfig, spec: ResolvedLaunchSpec) -> None:
         _ = config, spec
+        self.requests.append(("launch", {}))
         self._process = _FakeProcess()
 
     async def _wait_for_ready(self, *, timeout_seconds: float) -> None:
@@ -176,6 +181,7 @@ class _ReadinessStartupProbeOpenCodeConnection(_TestableOpenCodeConnection):
         timeout_seconds: float,
     ) -> str:
         _ = spec, timeout_seconds
+        self.requests.append(("session", {}))
         return "sess-after-readiness-timeout"
 
     async def _post_session_message(self, text: str, *, system: str | None = None) -> None:
@@ -527,6 +533,7 @@ async def test_opencode_readiness_gate_succeeds_before_session_create(
     )
 
     assert connection.state == "connected"
+    assert connection.start_order == ["launch", "ready", "session"]
 
     await connection.stop()
 
@@ -554,8 +561,10 @@ async def test_opencode_readiness_gate_retries_transient_timeout_before_session_
     assert connection.state == "connected"
     assert connection.session_id == "sess-after-readiness-timeout"
     assert [path for path, _payload in connection.requests] == [
+        "launch",
         "/global/health",
         "/global/health",
+        "session",
     ]
 
     await connection.stop()

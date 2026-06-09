@@ -502,8 +502,24 @@ async def test_primary_attach_writes_valid_jsonl_events(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_primary_attach_activity_transitions_update_metadata(tmp_path: Path) -> None:
+async def test_primary_attach_activity_transitions_update_metadata(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     spawn_dir = tmp_path / "spawns" / "p903"
+    activity_transitions: list[object] = []
+    original_write_primary_metadata = primary_attach_module.write_primary_metadata
+
+    def _record_activity_write(spawn_dir_arg: Path, metadata: Any) -> None:
+        if not activity_transitions or activity_transitions[-1] != metadata.activity:
+            activity_transitions.append(metadata.activity)
+        original_write_primary_metadata(spawn_dir_arg, metadata)
+
+    monkeypatch.setattr(
+        primary_attach_module,
+        "write_primary_metadata",
+        _record_activity_write,
+    )
     connection = FakeManagedConnection(
         events=[
             HarnessEvent(
@@ -536,6 +552,7 @@ async def test_primary_attach_activity_transitions_update_metadata(tmp_path: Pat
 
     metadata = _read_metadata(spawn_dir)
     assert metadata["activity"] == "finalizing"
+    assert activity_transitions == ["starting", "idle", "turn_active", "idle", "finalizing"]
     assert process_launcher.launch_commands == [("codex", "resume", "thread-123")]
     history_events = [
         json.loads(line)

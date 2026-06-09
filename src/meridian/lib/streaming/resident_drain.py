@@ -43,6 +43,7 @@ class ResidentDrainCoordinator:
     runtime_root: Path
     spawn_id: SpawnId
     receiver: HarnessConnection[Any]
+    resident_backend: ResidentBackendControl
     deadline_seconds: float
     poll_seconds: float
     pending_outcome: TerminalEventOutcome | None = None
@@ -59,6 +60,7 @@ class ResidentDrainCoordinator:
         runtime_root: Path,
         spawn_id: SpawnId,
         receiver: HarnessConnection[Any],
+        resident_backend: ResidentBackendControl,
         deadline_seconds: float | None,
         poll_seconds: float | None,
     ) -> ResidentDrainCoordinator:
@@ -67,6 +69,7 @@ class ResidentDrainCoordinator:
             runtime_root=runtime_root,
             spawn_id=spawn_id,
             receiver=receiver,
+            resident_backend=resident_backend,
             deadline_seconds=(
                 deadline_seconds if deadline_seconds and deadline_seconds > 0 else 3300.0
             ),
@@ -217,7 +220,7 @@ class ResidentDrainCoordinator:
             return None
         if intentional_stop:
             return self.pending_outcome
-        if _resident_health_status(self.receiver) == LivenessDecision.BACKEND_DEAD:
+        if self._resident_health_status() == LivenessDecision.BACKEND_DEAD:
             return TerminalEventOutcome(
                 status="failed",
                 exit_code=1,
@@ -286,7 +289,7 @@ class ResidentDrainCoordinator:
         )
 
     async def _inject_poll_message(self) -> None:
-        if _resident_health_status(self.receiver) == LivenessDecision.BACKEND_DEAD:
+        if self._resident_health_status() == LivenessDecision.BACKEND_DEAD:
             return
         now_monotonic = time.monotonic()
         remaining = self._deadline_remaining(now_monotonic)
@@ -295,11 +298,8 @@ class ResidentDrainCoordinator:
             if remaining is not None and remaining < COMPLETION_NUDGE_INTERVAL_SECONDS
             else COMPLETION_NUDGE_MESSAGE
         )
-        resident_backend = self._resident_backend_or_none()
-        if resident_backend is None:
-            return
         try:
-            await resident_backend.begin_followup_turn(message)
+            await self.resident_backend.begin_followup_turn(message)
         except Exception:
             # Poll injection is advisory; drain-loop correctness must not depend on it.
             return
@@ -325,25 +325,13 @@ class ResidentDrainCoordinator:
         return remaining is not None and remaining <= 0
 
     def _set_awaiting_done(self, awaiting_done: bool) -> None:
-        self._resident_backend().set_awaiting_done(awaiting_done)
+        self.resident_backend.set_awaiting_done(awaiting_done)
 
-    def _resident_backend(self) -> ResidentBackendControl:
-        resident_backend = self._resident_backend_or_none()
-        assert resident_backend is not None, "ResidentDrainCoordinator requires a resident backend"
-        return resident_backend
-
-    def _resident_backend_or_none(self) -> ResidentBackendControl | None:
-        return self.receiver.resident_backend
-
-
-def _resident_health_status(receiver: HarnessConnection[Any]) -> LivenessDecision | str:
-    resident_backend = receiver.resident_backend
-    if resident_backend is None:
-        return LivenessDecision.BACKEND_DEAD
-    try:
-        return resident_backend.health_status()
-    except Exception:
-        return LivenessDecision.BACKEND_DEAD
+    def _resident_health_status(self) -> LivenessDecision:
+        try:
+            return self.resident_backend.health_status()
+        except Exception:
+            return LivenessDecision.BACKEND_DEAD
 
 
 def _has_outstanding_descendant_work(runtime_root: Path, spawn_id: SpawnId) -> bool:
