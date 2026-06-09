@@ -373,8 +373,6 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
                     cwd=effective_cwd,
                     env=env,
                     control_root=config.control_root,
-                    stderr_log_path=self._stderr_log_path,
-                    observer_mode=self._primary_observer_mode,
                 ),
                 stderr=self._stderr_handle,
             )

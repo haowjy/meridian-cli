@@ -19,7 +19,7 @@ from meridian.lib.harness.connections.managed_backend import (
 )
 from meridian.lib.platform.detached_process import DetachedSubprocessConfig, ParentDeathLink
 from meridian.lib.platform.process_scope.base import PROCESS_BIRTH_UNKNOWN_EPOCH
-from meridian.lib.state.paths import resolve_project_runtime_root, resolve_spawn_log_dir
+from meridian.lib.state.paths import resolve_project_runtime_root
 from meridian.lib.state.process_scope_projection import read_scopes_from_disk
 
 
@@ -29,8 +29,6 @@ async def test_launch_managed_backend_records_scope_with_parent_death_outcome(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     spawn_id = SpawnId("spawn-3")
-    spawn_dir = resolve_spawn_log_dir(tmp_path, spawn_id)
-    stderr_path = spawn_dir / "stderr.log"
 
     monkeypatch.setattr(
         managed_backend,
@@ -51,8 +49,6 @@ async def test_launch_managed_backend_records_scope_with_parent_death_outcome(
             cwd=tmp_path,
             env=os.environ.copy(),
             control_root=tmp_path,
-            stderr_log_path=stderr_path,
-            observer_mode=False,
         ),
         stderr=asyncio.subprocess.DEVNULL,
     )
@@ -62,9 +58,8 @@ async def test_launch_managed_backend_records_scope_with_parent_death_outcome(
 
     assert handle.parent_death_linked is True
     assert handle.scope_snapshot.parent_death_linked is True
-    assert handle.scope_snapshot.root_pid == handle.pid
     assert [(scope.scope_id, scope.root_pid, scope.parent_death_linked) for scope in scopes] == [
-        ("backend", handle.pid, True)
+        ("backend", handle.scope_snapshot.root_pid, True)
     ]
     await handle.process.wait()
 
@@ -101,8 +96,6 @@ async def test_launch_managed_backend_uses_windows_job_parent_death_outcome(
             cwd=tmp_path,
             env=os.environ.copy(),
             control_root=tmp_path,
-            stderr_log_path=tmp_path / "stderr.log",
-            observer_mode=True,
         ),
         stderr=asyncio.subprocess.DEVNULL,
     )
@@ -114,7 +107,7 @@ async def test_launch_managed_backend_uses_windows_job_parent_death_outcome(
     assert handle.scope_snapshot.job_name == "meridian-test-job"
     scopes = read_scopes_from_disk(resolve_project_runtime_root(tmp_path), spawn_id)
     assert [(scope.scope_id, scope.root_pid, scope.owner_policy) for scope in scopes] == [
-        ("backend", handle.pid, "spawn_owned")
+        ("backend", handle.scope_snapshot.root_pid, "spawn_owned")
     ]
     await handle.process.wait()
 
@@ -153,8 +146,6 @@ async def test_launch_managed_backend_records_unknown_birth_sentinel_when_create
             cwd=tmp_path,
             env=os.environ.copy(),
             control_root=tmp_path,
-            stderr_log_path=tmp_path / "stderr.log",
-            observer_mode=True,
         ),
         stderr=asyncio.subprocess.DEVNULL,
     )

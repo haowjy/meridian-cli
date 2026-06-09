@@ -37,7 +37,6 @@ def test_detached_subprocess_config_links_linux_parent_death_preexec(
     assert callable(preexec)
     preexec()
     assert calls == [signal.SIGKILL]
-    assert detached_process.detached_backend_subprocess_kwargs() == config.kwargs
 
 
 def test_detached_subprocess_config_degrades_without_prctl(
@@ -62,7 +61,7 @@ def test_detached_subprocess_config_degrades_without_prctl(
     assert degraded["containment"] == "start_new_session_only"
 
 
-def test_detached_backend_subprocess_kwargs_links_windows_child_with_job(
+def test_detached_subprocess_config_links_windows_child_with_job(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from meridian.lib.platform.process_scope import windows_job
@@ -80,7 +79,6 @@ def test_detached_backend_subprocess_kwargs_links_windows_child_with_job(
     config = detached_process.detached_subprocess_config()
     assert config.parent_death_linked is False
     assert config.kwargs == {}
-    assert detached_process.detached_backend_subprocess_kwargs() == {}
 
     link = detached_process.link_child_lifetime_to_parent(1234)
 

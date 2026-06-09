@@ -37,8 +37,6 @@ class ManagedBackendConfig:
     cwd: Path
     env: dict[str, str]
     control_root: Path
-    stderr_log_path: Path
-    observer_mode: bool
 
 
 @dataclass(frozen=True)
@@ -46,7 +44,6 @@ class ManagedBackendHandle:
     """Immutable facts about a launched managed backend."""
 
     process: asyncio.subprocess.Process
-    pid: int
     scope_snapshot: ProcessScopeSnapshot
     scope_handle: ScopedProcessHandle
     parent_death_link: ParentDeathLink
@@ -122,7 +119,6 @@ async def launch_managed_backend(
 
     return ManagedBackendHandle(
         process=process,
-        pid=pid,
         scope_snapshot=snapshot,
         scope_handle=scope_handle,
         parent_death_link=parent_death_link,

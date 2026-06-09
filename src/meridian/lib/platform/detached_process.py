@@ -77,16 +77,6 @@ def detached_subprocess_config() -> DetachedSubprocessConfig:
     )
 
 
-def detached_backend_subprocess_kwargs() -> dict[str, Any]:
-    """Return subprocess kwargs for detached harness backends.
-
-    Prefer ``detached_subprocess_config()`` when the caller needs to know
-    whether parent-death linkage is available on this platform.
-    """
-
-    return detached_subprocess_config().kwargs
-
-
 def link_child_lifetime_to_parent(pid: int) -> ParentDeathLink:
     """Attach an already-started child to this process lifetime when needed."""
 
@@ -137,7 +127,6 @@ def _set_parent_death_signal(signum: signal.Signals) -> None:
 __all__ = [
     "DetachedSubprocessConfig",
     "ParentDeathLink",
-    "detached_backend_subprocess_kwargs",
     "detached_subprocess_config",
     "link_child_lifetime_to_parent",
 ]
