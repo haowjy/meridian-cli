@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 
 import pytest
@@ -15,6 +16,14 @@ from meridian.lib.harness.connections.codex_ws import CodexConnection
 class _FakeProcess:
     pid = 4242
     returncode: int | None = None
+
+
+class _RecordingScopeHandle:
+    def __init__(self) -> None:
+        self.terminated: list[tuple[float, str]] = []
+
+    async def terminate(self, *, grace_seconds: float, reason: str) -> None:
+        self.terminated.append((grace_seconds, reason))
 
 
 class _FreezesAfterMessagesWebSocket:
@@ -89,3 +98,24 @@ async def test_codex_health_fails_when_event_liveness_expires(
 
     monkeypatch.setattr(codex_ws._time, "monotonic", lambda: 11.1)
     assert connection.health() is False
+
+
+@pytest.mark.asyncio
+async def test_codex_stop_terminates_scope_when_reader_task_already_failed() -> None:
+    async def _failed_reader() -> None:
+        raise RuntimeError("reader failed before stop")
+
+    connection = CodexConnection()
+    connection._state = "connected"
+    connection._process = _FakeProcess()
+    scope_handle = _RecordingScopeHandle()
+    connection._scope_handle = scope_handle  # type: ignore[assignment]
+    reader_task = asyncio.create_task(_failed_reader())
+    with contextlib.suppress(RuntimeError):
+        await reader_task
+    connection._reader_task = reader_task
+
+    await connection.stop(reason="test")
+
+    assert scope_handle.terminated == [(5.0, "stop_called")]
+    assert connection.state == "stopped"

@@ -44,8 +44,8 @@ def test_terminate_managed_primary_processes_skips_unvalidated_child_pid(
         activity="idle",
     )
     monkeypatch.setattr(
-        "meridian.lib.state.managed_primary.is_process_alive",
-        lambda pid, created_after_epoch=None: pid == 8002,
+        "meridian.lib.state.managed_primary.is_process_alive_with_birth",
+        lambda pid, birth_epoch: pid == 8002,
     )
     terminated_pids: list[int] = []
 
@@ -60,7 +60,6 @@ def test_terminate_managed_primary_processes_skips_unvalidated_child_pid(
 
     signaled = terminate_managed_primary_processes(
         metadata,
-        started_epoch=100.0,
         include_launcher=False,
     )
 
@@ -117,8 +116,8 @@ def test_reconcile_active_spawn_managed_primary_dead_launcher_marks_orphan_prima
         lambda *_args, **_kwargs: False,
     )
     monkeypatch.setattr(
-        "meridian.lib.state.managed_primary.is_process_alive",
-        lambda pid, created_after_epoch=None: pid in {8882, 9992},
+        "meridian.lib.state.managed_primary.is_process_alive_with_birth",
+        lambda pid, birth_epoch: pid in {8882, 9992},
     )
     terminated_pids: list[int] = []
 
@@ -228,7 +227,7 @@ def test_reconcile_active_spawn_managed_primary_finalizing_activity_uses_report_
         lambda *_args, **_kwargs: False,
     )
     monkeypatch.setattr(
-        "meridian.lib.state.managed_primary.is_process_alive",
+        "meridian.lib.state.managed_primary.is_process_alive_with_birth",
         lambda *_args, **_kwargs: False,
     )
     terminated_pids: list[int] = []
@@ -281,7 +280,7 @@ def test_reconcile_active_spawn_managed_primary_uses_runner_exit_tuple_before_or
         lambda *_args, **_kwargs: False,
     )
     monkeypatch.setattr(
-        "meridian.lib.state.managed_primary.is_process_alive",
+        "meridian.lib.state.managed_primary.is_process_alive_with_birth",
         lambda *_args, **_kwargs: False,
     )
 
@@ -354,3 +353,118 @@ def test_reconcile_active_spawn_child_orphan_terminates_worker_process_group(
     latest = _get_spawn(runtime_root, spawn_id)
     assert latest.status == "failed"
     assert latest.error == "orphan_run"
+
+
+def test_reconcile_managed_primary_finalizing_cancel_intent_cancels(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime_root, spawn_id = _create_spawn(tmp_path, started_at=_OLD_STARTED_AT)
+    spawn_store.record_cancel_intent(
+        runtime_root,
+        spawn_id,
+        exit_code=130,
+        error="cancelled",
+        requested_at="2026-06-03T01:00:00Z",
+    )
+    _write_primary_meta(
+        runtime_root,
+        spawn_id,
+        launcher_pid=7776,
+        activity="finalizing",
+    )
+    record = _get_spawn(runtime_root, spawn_id)
+    monkeypatch.setattr(
+        "meridian.lib.state.reaper.is_process_alive",
+        lambda *_args, **_kwargs: False,
+    )
+    monkeypatch.setattr(
+        "meridian.lib.state.managed_primary.is_process_alive",
+        lambda *_args, **_kwargs: False,
+    )
+    monkeypatch.setattr(
+        "meridian.lib.state.managed_primary.is_process_alive_with_birth",
+        lambda *_args, **_kwargs: False,
+    )
+
+    reconciled = _reconcile(tmp_path, runtime_root, record)
+
+    assert reconciled.status == "cancelled"
+    assert reconciled.exit_code == 130
+    assert reconciled.error == "cancelled"
+    latest = _get_spawn(runtime_root, spawn_id)
+    assert latest.status == "cancelled"
+
+
+def test_reconcile_managed_primary_orphan_primary_cancel_intent_cancels(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime_root, spawn_id = _create_spawn(tmp_path, started_at=_OLD_STARTED_AT)
+    spawn_store.record_cancel_intent(
+        runtime_root,
+        spawn_id,
+        exit_code=130,
+        error="cancelled",
+        requested_at="2026-06-03T01:00:00Z",
+    )
+    _write_primary_meta(
+        runtime_root,
+        spawn_id,
+        launcher_pid=7777,
+        activity="idle",
+    )
+    record = _get_spawn(runtime_root, spawn_id)
+    monkeypatch.setattr(
+        "meridian.lib.state.reaper.is_process_alive",
+        lambda *_args, **_kwargs: False,
+    )
+    monkeypatch.setattr(
+        "meridian.lib.state.managed_primary.is_process_alive",
+        lambda *_args, **_kwargs: False,
+    )
+    monkeypatch.setattr(
+        "meridian.lib.state.managed_primary.is_process_alive_with_birth",
+        lambda *_args, **_kwargs: False,
+    )
+
+    reconciled = _reconcile(tmp_path, runtime_root, record)
+
+    assert reconciled.status == "cancelled"
+    assert reconciled.exit_code == 130
+    assert reconciled.error == "cancelled"
+    latest = _get_spawn(runtime_root, spawn_id)
+    assert latest.status == "cancelled"
+
+
+def test_reconcile_managed_primary_orphan_primary_uses_report_recovery(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime_root, spawn_id = _create_spawn(tmp_path, started_at=_OLD_STARTED_AT)
+    _write_report(runtime_root, spawn_id)
+    _write_primary_meta(
+        runtime_root,
+        spawn_id,
+        launcher_pid=7778,
+        activity="idle",
+    )
+    record = _get_spawn(runtime_root, spawn_id)
+    monkeypatch.setattr(
+        "meridian.lib.state.reaper.is_process_alive",
+        lambda *_args, **_kwargs: False,
+    )
+    monkeypatch.setattr(
+        "meridian.lib.state.managed_primary.is_process_alive",
+        lambda *_args, **_kwargs: False,
+    )
+    monkeypatch.setattr(
+        "meridian.lib.state.managed_primary.is_process_alive_with_birth",
+        lambda *_args, **_kwargs: False,
+    )
+
+    reconciled = _reconcile(tmp_path, runtime_root, record)
+
+    assert reconciled.status == "succeeded"
+    assert reconciled.exit_code == 0
+    assert reconciled.error is None

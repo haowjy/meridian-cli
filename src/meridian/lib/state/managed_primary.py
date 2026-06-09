@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, cast
 import psutil
 
 from meridian.lib.harness.connections.base import HarnessEvent
-from meridian.lib.state.liveness import is_process_alive
+from meridian.lib.state.liveness import is_process_alive, is_process_alive_with_birth
 from meridian.lib.state.primary_meta import PrimaryMetadata, read_primary_metadata
 from meridian.lib.state.spawn.model import SpawnRecord
 
@@ -175,15 +175,14 @@ class ManagedPrimaryReconciliationStrategy:
         context: ReconciliationContext,
         *,
         has_recent_activity: bool,
-        durable_report_completion: bool,
     ) -> ReconciliationDecision:
         """Decide reconciliation outcome for a managed primary."""
 
         # Import here to avoid circular dependency.
         from meridian.lib.state.reaper import (
             FinalizeFailed,
-            FinalizeSucceededFromReport,
             Skip,
+            _completion_or_cancel_decision,  # pyright: ignore[reportPrivateUsage]
         )
 
         managed = context.managed_snapshot
@@ -191,13 +190,15 @@ class ManagedPrimaryReconciliationStrategy:
         if managed.launcher_pid_alive:
             return Skip(reason="primary_launcher_alive")
 
-        if managed.metadata.activity == "finalizing":
-            if has_recent_activity:
-                return Skip(reason="recent_activity")
-            if durable_report_completion:
-                return FinalizeSucceededFromReport()
-            return FinalizeFailed(error="orphan_finalization")
+        if managed.metadata.activity == "finalizing" and has_recent_activity:
+            return Skip(reason="recent_activity")
 
+        decision = _completion_or_cancel_decision(context.record, context.artifact_snapshot)
+        if decision is not None:
+            return decision
+
+        if managed.metadata.activity == "finalizing":
+            return FinalizeFailed(error="orphan_finalization")
         return FinalizeFailed(error="orphan_primary")
 
 
@@ -242,36 +243,32 @@ def _terminate_pid(pid: int) -> bool:
 def terminate_managed_primary_processes(
     primary_metadata: PrimaryMetadata | None,
     *,
-    started_epoch: float | None = None,
     include_launcher: bool,
     include_runtime_children: bool = True,
 ) -> tuple[int, ...]:
-    """Best-effort SIGTERM for tracked managed-primary processes."""
+    """Best-effort SIGTERM for exact-birth-validated managed-primary processes."""
 
     if primary_metadata is None or not primary_metadata.managed_backend:
         return ()
 
-    if include_launcher and include_runtime_children:
-        candidates = (
-            primary_metadata.launcher_pid,
-            primary_metadata.backend_pid,
-            primary_metadata.tui_pid,
-        )
-    elif include_launcher:
-        candidates = (primary_metadata.launcher_pid,)
-    else:
-        candidates = (
-            primary_metadata.backend_pid,
-            primary_metadata.tui_pid,
+    candidates: list[tuple[int | None, float | None]] = []
+    if include_launcher:
+        candidates.append((primary_metadata.launcher_pid, primary_metadata.launcher_birth_epoch))
+    if include_runtime_children:
+        candidates.extend(
+            (
+                (primary_metadata.backend_pid, primary_metadata.backend_birth_epoch),
+                (primary_metadata.tui_pid, primary_metadata.tui_birth_epoch),
+            )
         )
 
     signaled: list[int] = []
     seen: set[int] = set()
-    for candidate in candidates:
+    for candidate, birth_epoch in candidates:
         if candidate is None or candidate in seen:
             continue
         seen.add(candidate)
-        if not is_process_alive(candidate, created_after_epoch=started_epoch):
+        if not is_process_alive_with_birth(candidate, birth_epoch):
             continue
         if _terminate_pid(candidate):
             signaled.append(candidate)

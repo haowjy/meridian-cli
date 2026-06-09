@@ -73,8 +73,8 @@ def test_cancel_orphan_primary_after_passive_reconcile_still_terminates(
         lambda *_args, **_kwargs: False,
     )
     monkeypatch.setattr(
-        "meridian.lib.state.managed_primary.is_process_alive",
-        lambda pid, created_after_epoch=None: pid in {7302, 7303},
+        "meridian.lib.state.managed_primary.is_process_alive_with_birth",
+        lambda pid, birth_epoch: pid in {7302, 7303},
     )
     terminated_pids: list[int] = []
 
@@ -237,8 +237,8 @@ def test_spawn_cancel_managed_primary_signals_launcher_first(
         lambda pid, created_after_epoch=None: pid == 7001,
     )
     monkeypatch.setattr(
-        "meridian.lib.state.managed_primary.is_process_alive",
-        lambda pid, created_after_epoch=None: pid in {7001, 7002, 7003},
+        "meridian.lib.state.managed_primary.is_process_alive_with_birth",
+        lambda pid, birth_epoch: pid in {7001, 7002, 7003},
     )
     monkeypatch.setattr("meridian.lib.core.spawn_service._MANAGED_CANCEL_GRACE_SECS", 0.01)
     monkeypatch.setattr("meridian.lib.core.spawn_service._MANAGED_CANCEL_FALLBACK_WAIT_SECS", 0.01)
@@ -297,7 +297,7 @@ def test_spawn_cancel_managed_primary_queued_converges_to_terminal(
         lambda *_args, **_kwargs: False,
     )
     monkeypatch.setattr(
-        "meridian.lib.state.managed_primary.is_process_alive",
+        "meridian.lib.state.managed_primary.is_process_alive_with_birth",
         lambda *_args, **_kwargs: False,
     )
     monkeypatch.setattr("meridian.lib.core.spawn_service._MANAGED_CANCEL_GRACE_SECS", 0.01)

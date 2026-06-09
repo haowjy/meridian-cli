@@ -24,6 +24,7 @@ from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.state import spawn_store
 from meridian.lib.state.atomic import append_text_line
 from meridian.lib.state.history import HarnessHistoryWriter
+from meridian.lib.state.spawn_tree import terminate_recorded_spawn_scope
 from meridian.lib.streaming.control_socket import ControlSocketServer
 from meridian.lib.streaming.drain_coordinator import DrainCoordinator
 from meridian.lib.streaming.drain_policy import (
@@ -736,6 +737,8 @@ class SpawnManager:
         with suppress(Exception):
             await session.connection.stop(reason="stop_spawn")
 
+        self._terminate_recorded_spawn_scope_backstop(spawn_id)
+
         # Give drain loop time to persist remaining events after connection closes.
         # The drain loop exits naturally once events() terminates, but enforce a
         # hard timeout to prevent indefinite blocking on a stuck drain.
@@ -763,6 +766,25 @@ class SpawnManager:
         self._completion_futures.pop(spawn_id, None)
         self._history_writers.pop(spawn_id, None)
         return outcome
+
+    def _terminate_recorded_spawn_scope_backstop(self, spawn_id: SpawnId) -> None:
+        """Best-effort recorded scope reap after transport stop attempts."""
+
+        try:
+            record = spawn_store.get_spawn(self._runtime_root, spawn_id)
+            if record is None:
+                return
+            terminate_recorded_spawn_scope(
+                self._runtime_root,
+                record,
+                reason="stop_spawn",
+            )
+        except Exception as exc:
+            logger.warning(
+                "Failed to run stop_spawn scope cleanup backstop for spawn %s: %s",
+                spawn_id,
+                exc,
+            )
 
     async def _emit_cancelled_terminal_event(
         self,

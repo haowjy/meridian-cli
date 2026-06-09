@@ -84,6 +84,12 @@ class PrimaryAttachError(Exception):
     """Managed backend startup failed; caller should fall back to black-box path."""
 
 
+def _process_birth_epoch(pid: int) -> float | None:
+    try:
+        return psutil.Process(pid).create_time()
+    except (psutil.NoSuchProcess, psutil.AccessDenied, OSError):
+        return None
+
 
 @dataclass
 class _LauncherMetadata:
@@ -91,8 +97,13 @@ class _LauncherMetadata:
 
     managed_backend: bool = True
     launcher_pid: int = field(default_factory=os.getpid)
+    launcher_birth_epoch: float | None = field(
+        default_factory=lambda: _process_birth_epoch(os.getpid())
+    )
     backend_pid: int | None = None
+    backend_birth_epoch: float | None = None
     tui_pid: int | None = None
+    tui_birth_epoch: float | None = None
     backend_port: int | None = None
     activity: ActivityState = "starting"
     harness_session_id: str | None = None
@@ -101,8 +112,11 @@ class _LauncherMetadata:
         return PrimaryMetadata(
             managed_backend=self.managed_backend,
             launcher_pid=self.launcher_pid,
+            launcher_birth_epoch=self.launcher_birth_epoch,
             backend_pid=self.backend_pid,
+            backend_birth_epoch=self.backend_birth_epoch,
             tui_pid=self.tui_pid,
+            tui_birth_epoch=self.tui_birth_epoch,
             backend_port=self.backend_port,
             activity=self.activity,
             harness_session_id=self.harness_session_id,
@@ -208,6 +222,11 @@ class PrimaryAttachLauncher:
 
             with self._metadata_lock:
                 self._metadata.backend_pid = self._connection.subprocess_pid
+                self._metadata.backend_birth_epoch = (
+                    _process_birth_epoch(self._connection.subprocess_pid)
+                    if self._connection.subprocess_pid is not None
+                    else None
+                )
                 self._metadata.backend_port = self._resolve_backend_port()
             self._write_metadata()
 
@@ -374,6 +393,7 @@ class PrimaryAttachLauncher:
         with self._metadata_lock:
             if self._metadata.tui_pid != pid:
                 self._metadata.tui_pid = pid
+                self._metadata.tui_birth_epoch = _process_birth_epoch(pid)
                 should_write = True
         if should_write:
             self._write_metadata()

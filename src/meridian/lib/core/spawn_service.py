@@ -673,7 +673,6 @@ class SpawnApplicationService:
                 return
             terminate_managed_primary_processes(
                 metadata,
-                started_epoch=iso_timestamp_to_epoch(record.started_at),
                 include_launcher=False,
             )
             return
@@ -737,14 +736,12 @@ class SpawnApplicationService:
         if launcher_alive:
             terminate_managed_primary_processes(
                 primary_metadata,
-                started_epoch=started_epoch,
                 include_launcher=True,
                 include_runtime_children=False,
             )
         else:
             terminate_managed_primary_processes(
                 primary_metadata,
-                started_epoch=started_epoch,
                 include_launcher=False,
             )
 
@@ -755,7 +752,6 @@ class SpawnApplicationService:
         if latest is None and launcher_alive:
             terminate_managed_primary_processes(
                 primary_metadata,
-                started_epoch=started_epoch,
                 include_launcher=False,
             )
             latest = await self._wait_for_terminal(

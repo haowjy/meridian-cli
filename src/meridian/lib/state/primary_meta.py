@@ -20,8 +20,11 @@ class PrimaryMetadata:
 
     managed_backend: bool = True
     launcher_pid: int | None = None
+    launcher_birth_epoch: float | None = None
     backend_pid: int | None = None
+    backend_birth_epoch: float | None = None
     tui_pid: int | None = None
+    tui_birth_epoch: float | None = None
     backend_port: int | None = None
     activity: ActivityState | None = None
     harness_session_id: str | None = None
@@ -174,8 +177,11 @@ def read_primary_metadata(runtime_root: Path, spawn_id: str) -> PrimaryMetadata 
     return PrimaryMetadata(
         managed_backend=managed_backend,
         launcher_pid=_coerce_positive_int(payload.get("launcher_pid")),
+        launcher_birth_epoch=_coerce_nonnegative_float(payload.get("launcher_birth_epoch")),
         backend_pid=_coerce_positive_int(payload.get("backend_pid")),
+        backend_birth_epoch=_coerce_nonnegative_float(payload.get("backend_birth_epoch")),
         tui_pid=_coerce_positive_int(payload.get("tui_pid")),
+        tui_birth_epoch=_coerce_nonnegative_float(payload.get("tui_birth_epoch")),
         backend_port=_coerce_positive_int(payload.get("backend_port")),
         activity=_coerce_activity_state(payload.get("activity")),
         harness_session_id=_coerce_optional_text(payload.get("harness_session_id")),
@@ -204,8 +210,11 @@ def write_primary_metadata(spawn_dir: Path, metadata: PrimaryMetadata) -> None:
     payload = {
         "managed_backend": metadata.managed_backend,
         "launcher_pid": metadata.launcher_pid,
+        "launcher_birth_epoch": metadata.launcher_birth_epoch,
         "backend_pid": metadata.backend_pid,
+        "backend_birth_epoch": metadata.backend_birth_epoch,
         "tui_pid": metadata.tui_pid,
+        "tui_birth_epoch": metadata.tui_birth_epoch,
         "backend_port": metadata.backend_port,
         "activity": metadata.activity,
         "harness_session_id": metadata.harness_session_id,

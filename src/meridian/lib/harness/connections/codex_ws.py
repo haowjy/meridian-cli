@@ -801,7 +801,7 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
 
         if self._reader_task is not None:
             self._reader_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
+            with contextlib.suppress(asyncio.CancelledError, Exception):
                 await self._reader_task
             self._reader_task = None
 

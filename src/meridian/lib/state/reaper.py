@@ -339,7 +339,6 @@ def decide_reconciliation(
         return strategy.decide(
             context,
             has_recent_activity=_has_recent_activity(generic_snapshot),
-            durable_report_completion=generic_snapshot.durable_report_completion,
         )
 
     if (
@@ -611,7 +610,6 @@ def _cleanup_orphan_scope_processes(
     if managed_snapshot is not None:
         signaled = terminate_managed_primary_processes(
             managed_snapshot.metadata,
-            started_epoch=managed_snapshot.started_epoch,
             include_launcher=True,
             include_runtime_children=True,
         )
@@ -628,7 +626,6 @@ def _cleanup_orphan_scope_processes(
         if metadata is not None:
             signaled = terminate_managed_primary_processes(
                 metadata,
-                started_epoch=generic_snapshot.started_epoch,
                 include_launcher=True,
                 include_runtime_children=True,
             )

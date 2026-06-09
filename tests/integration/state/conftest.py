@@ -90,8 +90,11 @@ def _write_primary_meta(
     spawn_id: str,
     *,
     launcher_pid: int | None,
+    launcher_birth_epoch: float | None = None,
     backend_pid: int | None = None,
+    backend_birth_epoch: float | None = None,
     tui_pid: int | None = None,
+    tui_birth_epoch: float | None = None,
     activity: str = "idle",
     managed_backend: bool = True,
 ) -> Path:
@@ -102,8 +105,11 @@ def _write_primary_meta(
             {
                 "managed_backend": managed_backend,
                 "launcher_pid": launcher_pid,
+                "launcher_birth_epoch": launcher_birth_epoch,
                 "backend_pid": backend_pid,
+                "backend_birth_epoch": backend_birth_epoch,
                 "tui_pid": tui_pid,
+                "tui_birth_epoch": tui_birth_epoch,
                 "activity": activity,
             },
             separators=(",", ":"),
