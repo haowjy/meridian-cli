@@ -280,14 +280,13 @@ caller). The drift guard `check_projection_drift()` runs at import time.
 def project_pi_spec_to_cli_args(spec, *, base_command) -> list[str]:
     command = list(base_command)
 
-    # Model with optional thinking level
+    # Model and separate thinking level
     if spec.model:
-        model = spec.model
-        if spec.effort:
-            thinking = _EFFORT_TO_THINKING.get(spec.effort)
-            if thinking:
-                model = f"{model}:{thinking}"
-        command.extend(("--model", model))
+        command.extend(("--model", spec.model))
+    if spec.effort:
+        thinking = _EFFORT_TO_THINKING.get(spec.effort)
+        if thinking and not _has_model_override_in_passthrough(spec.extra_args):
+            command.extend(("--thinking", thinking))
 
     # System prompt (inline, not file path — differs from Claude)
     if spec.appended_system_prompt:
@@ -328,9 +327,11 @@ def project_pi_spec_to_cli_args(spec, *, base_command) -> list[str]:
 - **Model format**: Pi expects `provider/model-id` (same as OpenCode). Claude
   uses `--model` with the full model string. Codex uses `--model` with the
   anthropic model ID. Pass through whatever the harness expects.
-- **Effort → thinking level**: Pi accepts `:level` suffix on the model string
-  (`sonnet:high`). Map Meridian effort values to harness-specific thinking
-  levels.
+- **Effort → thinking level**: Pi accepts a separate `--thinking <level>` flag.
+  Map Meridian effort values to harness-specific thinking levels. When the
+  user's `extra_args` include a `--model`/`-m` override, suppress the managed
+  `--thinking` flag so the user's model selection wins cleanly (same contract as
+  when effort was encoded in the model token).
 - **Isolation flags**: Every harness has ambient discovery (extensions, MCP
   servers, context files, project config). For spawns, suppress all of it.
   For Pi: `--no-extensions`, `--no-skills`, `--no-context-files`,
@@ -568,7 +569,7 @@ observability.
 ### 2.3 Primary Launch (Native TUI)
 
 ```text
-<resolved-pi> [--model <model[:thinking]>] [--append-system-prompt <text>] [--session <id> | --fork <id>] [permission flags] [extra_args...]
+<resolved-pi> [--model <model>] [--thinking <level>] [--append-system-prompt <text>] [--session <id> | --fork <id>] [permission flags] [extra_args...]
 ```
 
 Environment:
@@ -585,7 +586,7 @@ Primary must not pass `--mode rpc`, managed extensions, or any wrapper-only flag
 ### 2.4 Spawned RPC
 
 ```text
-<resolved-pi> --mode rpc --model <model[:thinking]> --session-dir <dir> --no-extensions -e <managed-bash.js> -e <lifecycle.js> [session flags] [permission flags]
+<resolved-pi> --mode rpc --model <model> [--thinking <level>] --session-dir <dir> --no-extensions -e <managed-bash.js> -e <lifecycle.js> [session flags] [permission flags]
 ```
 
 Environment:

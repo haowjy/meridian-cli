@@ -4,6 +4,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+- Pi projections now pass reasoning effort with `--thinking <level>` instead of appending `:<level>` to model IDs, fixing fully-qualified provider/model launches such as `deepseek`. Passthrough `--model` overrides suppress the managed `--thinking` flag so user model selection wins cleanly.
+
 ## [0.3.2] - 2026-06-10
 
 ### Added
@@ -22,7 +25,6 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `backend_lifecycle.json` sidecar and `state/backend_lifecycle.py` — a write-once-never-read second source of truth that drifted vs `process_scopes.json`; the parent-death/containment datum now lives on `ProcessScopeSnapshot`.
 
 ### Fixed
-- Pi projections now pass reasoning effort with `--thinking <level>` instead of appending `:<level>` to model IDs, fixing fully-qualified provider/model launches such as `deepseek`.
 - Resident terminal finalization is owned by the coordinator, not raw stream frames: a resident-deadline `timed_out` outcome wins over a late durable-report-completion (no longer mis-finalized `succeeded`), and only coordinator-authored terminal outcomes (resident `timed_out`) suppress launch retries — ordinary single-turn close-without-terminal-frame and Pi drain failures stay retry-eligible. Deadline reap is exception-safe: the parent still finalizes `timed_out` even if descendant teardown raises.
 - Orphaned harness backends: detached Codex/OpenCode backends link to the worker lifetime (POSIX parent-death where available, Windows Job Object) and dead-worker reaping finalizes child spawns while cleaning recorded backend scopes.
 - `detached_process` parent-death linkage is honest about containment: it reports whether linkage was actually installed (Linux `prctl`; other POSIX degrade to new-session-only and log) instead of silently claiming all non-Windows launches are linked.
