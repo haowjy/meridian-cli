@@ -124,8 +124,10 @@ Up to 10 retries; raises `RuntimeError` if exhausted.
 
 `spawn/terminal_policy.py:decide_terminal_write()` implements the projection
 authority rule: a runner-origin terminal write supersedes a reconciler-origin write
-on the same spawn. The reaper checks this before finalizing — it will not overwrite
-a spawn that the runner already terminated with a higher-authority origin.
+on the same spawn. Terminal statuses are `succeeded`, `failed`, `cancelled`, and
+`timed_out`; `timed_out` is a terminal failure class distinct from generic
+`failed`. The reaper checks authority before finalizing — it will not overwrite a
+spawn that the runner already terminated with a higher-authority origin.
 
 ### Reaper Behavior
 
@@ -137,13 +139,15 @@ Liveness check sequence per active spawn:
 1. Skip if status is already terminal.
 2. Skip if not a root-side-effect process (`is_root_side_effect_process()`).
 3. Skip if heartbeat age < 120s (recently alive).
-4. If status = `finalizing`: check `runner_exit_status`, then `cancel_intent`, then
-   durable report through `_completion_or_cancel_decision()`. If none apply → mark
-   failed (`orphan_finalization`).
-5. If status = `running` or `queued`: check if `runner_pid` is alive (using
+4. If status = `finalizing`: prefer durable report / cancel precedence and recorded
+   `runner_exit_status`; if neither proves a terminal outcome and activity is stale,
+   mark failed (`orphan_finalization`).
+5. If `runner_exit_status` is already recorded outside `finalizing`, preserve the
+   runner's terminal tuple after the short post-runner-exit grace.
+6. If status = `running` or `queued`: check if `runner_pid` is alive (using
    `liveness.py:is_process_alive()` with PID reuse guard via recorded start time).
-   If dead, check completion/cancel precedence, then recent activity, startup grace,
-   and finally mark failed (`orphan_run` or `missing_runner_pid`).
+   If dead, check completion/cancel precedence, recent activity, startup grace, and
+   finally mark failed (`orphan_run` or `missing_runner_pid`).
 
 `spawn_report_has_durable_completion(runtime_root, spawn_id)` reads `report.md` and returns True
 for non-empty report content that is not a terminal control frame (`cancelled`/`error`
@@ -160,9 +164,9 @@ violating the rule can let a late cancel downgrade a completed spawn.
 **Managed-primary orphan cleanup:**
 
 When a spawn is flagged as a potential managed primary (Codex / OpenCode kind=primary)
-and must be finalized as failed, `reconcile_active_spawn()` attempts process cleanup
-before writing the terminal state. The tier used depends on how much metadata is
-readable:
+and must be finalized as failed, `reconcile_active_spawn()` first uses recorded
+`process_scopes.json` cleanup, then attempts managed-primary cleanup before writing
+the terminal state. The managed tier used depends on how much metadata is readable:
 
 1. **Managed snapshot available** (`read_managed_primary_snapshot()` succeeded):
    `terminate_managed_primary_processes(managed_snapshot.metadata)` — terminates

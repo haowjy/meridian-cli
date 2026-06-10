@@ -12,6 +12,12 @@ SpawnManager
   ├─ _observers: EventObserverRegistry
   └─ _heartbeat_tasks: dict[SpawnId, Task]
 
+DrainPlan
+  ├─ coordinator: DrainCoordinator | None
+  ├─ policy: DrainPolicy
+  ├─ aux_wake / handle_aux_wake
+  └─ finalizer
+
 SpawnSession
   ├─ connection: HarnessConnection   ← live harness connection
   ├─ drain_task: Task                ← background drain loop
@@ -27,7 +33,9 @@ The implementation is split by responsibility:
 - `spawn_manager.py` — public registry/control API and generic live-spawn lifecycle
 - `spawn_dispatch.py` — connection creation/start dispatch
 - `spawn_drain_loop.py` — drain loop, persistence/observer/fan-out ordering, outcome priority
+- `drain_coordinator.py` — `DrainPlan` plus the narrow `DrainCoordinator` seam
 - `spawn_session.py` — `SpawnSession` and `DrainOutcome` carriers
+- `resident_drain.py` — resident-backend descendant waiting and done-nudge model
 - `pi_drain.py` — Pi spawned-session quiescence coordinator
 - `pi_subspawn_tracker.py` — Pi child-spawn and notification tracking
 - `disk_watcher.py` / `pi_quiescence.py` — disk-backed Pi quiescence inputs
@@ -47,6 +55,18 @@ Each event flows through three stages in strict order:
 Persistence is synchronous and happens before any notification. 10 consecutive
 write failures abort the loop with a `failed` outcome. Do not reorder these stages
 — observers and the subscriber must only see events that are durably written.
+
+### DrainPlan Selection
+
+`SpawnManager._select_drain_plan()` returns the whole drain-loop configuration for
+one active spawn. Codex/OpenCode resident backends get a `ResidentDrainCoordinator`;
+Pi RPC gets `PiDrainCoordinator` plus disk-watcher aux wakes; plain streaming
+harnesses intentionally run with `DrainPlan(coordinator=None)`. There is no public
+no-op coordinator class — absence of a coordinator is the plain path.
+
+`DrainCoordinator` stays narrow: it observes events, handles terminal events,
+provides timeouts, classifies stream close, and handles stream exit. Constant
+configuration belongs in `DrainPlan`, not in coordinator methods.
 
 ### DrainOutcome Priority
 
@@ -130,9 +150,9 @@ Generic policies control terminal event behavior:
 
 `SingleTurnDrainPolicy` is the default. Pass `PersistentDrainPolicy` to
 `start_spawn(drain_policy=...)` for chat sessions where the harness stays alive
-across turns. Pi spawned-session behavior is intentionally not another generic
-policy flag: it is delegated to `PiDrainCoordinator`, because it needs disk-backed
-background-work state, child-wave deadlines, notification state, and cleanup decisions.
+across turns. Pi spawned-session behavior and resident descendant waiting are not
+generic policy flags: `SpawnManager` selects coordinators through `DrainPlan` when
+the connection exposes the needed seam.
 
 ## Pi RPC Quiescence Drain
 
