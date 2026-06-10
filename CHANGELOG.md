@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-06-10
+
 ### Added
 - Resident "done" model for Codex and OpenCode (`ResidentDrainCoordinator`): a spawn that ends its turn while tracked work (a `--bg` child spawn tree) is still running stays resident instead of finalizing at the first turn-end event, eliminating early-finalize / orphaned-child. When no tracked work is outstanding it finalizes immediately (unchanged latency); otherwise it keeps the backend alive (`set_awaiting_done`) and finalizes when the descendant tree drains or a monotonic deadline backstop expires. On deadline expiry the parent finalizes `timed_out` and reaps its active descendant tree through the canonical cancel pipeline (`SignalCanceller.cancel` → `terminate_tree_sync(runner_pid)`), terminating each descendant's full runner tree (worker + backends) so a child mid backend-launch-retry cannot relaunch and survive as an orphan; each reaped child finalizes `cancelled`. Needs zero model cooperation for correctness. Configurable via `timeouts.resident_deadline_seconds` (default 3300s) and `timeouts.resident_poll_seconds`.
 - `meridian spawn done` and `meridian spawn rearm` signals: `done` finalizes a resident spawn `succeeded` immediately (even with tracked work outstanding); `rearm` opts a spawn into explicit residency with a fresh deadline and periodic poll-message injection (~270s). Both are file-based signals consumed by the resident drain loop, requiring no live connection to the spawn.
