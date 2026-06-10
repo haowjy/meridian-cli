@@ -41,17 +41,29 @@ def _init_repo(project_root: Path) -> None:
     )
 
 
-def test_models_list_default_delegates_to_mars_without_meridian_visibility_filters(
+@pytest.mark.parametrize(
+    "list_input",
+    [
+        ModelsListInput(project_root=""),
+        ModelsListInput(project_root="", all=True),
+        ModelsListInput(project_root="", show_superseded=True),
+    ],
+    ids=["default", "all", "show-superseded"],
+)
+def test_models_list_passes_mars_rows_through_without_meridian_filters(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    list_input: ModelsListInput,
 ) -> None:
     project_root = tmp_path / "repo"
     _init_repo(project_root)
+    list_input = list_input.model_copy(update={"project_root": project_root.as_posix()})
 
     monkeypatch.setattr(
         "meridian.lib.ops.catalog.run_mars_models_list_all",
         lambda project_root=None: [
-            _model("gpt-5.4"),
+            _model("gpt-5.4", release_date="2026-05-01", matched_aliases=["gpt", "latest"]),
+            _model("gpt-5.2", release_date="2026-04-01", matched_aliases=["stable"]),
             _model(
                 "gemini-3.1-pro",
                 provider="google",
@@ -70,93 +82,28 @@ def test_models_list_default_delegates_to_mars_without_meridian_visibility_filte
                 harness=HarnessId.CLAUDE,
                 release_date="2020-01-01",
             ),
-        ],
-    )
-
-    output = models_list_sync(ModelsListInput(project_root=project_root.as_posix()))
-    model_ids = {str(model.model_id) for model in output.models}
-    assert model_ids == {"gpt-5.4", "gemini-3.1-pro", "claude-expensive", "claude-old"}
-
-
-def test_models_list_show_superseded_flag_no_longer_changes_output(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    project_root = tmp_path / "repo"
-    _init_repo(project_root)
-
-    monkeypatch.setattr(
-        "meridian.lib.ops.catalog.run_mars_models_list_all",
-        lambda project_root=None: [
-            _model("gpt-5.4", release_date="2026-05-01"),
-            _model("gpt-5.2", release_date="2026-04-01"),
-        ],
-    )
-
-    default_output = models_list_sync(ModelsListInput(project_root=project_root.as_posix()))
-    superseded_output = models_list_sync(
-        ModelsListInput(project_root=project_root.as_posix(), show_superseded=True)
-    )
-    assert default_output == superseded_output
-
-
-def test_models_list_all_delegates_to_mars_without_meridian_filters(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    project_root = tmp_path / "repo"
-    _init_repo(project_root)
-
-    monkeypatch.setattr(
-        "meridian.lib.ops.catalog.run_mars_models_list_all",
-        lambda project_root=None: [
             {
-                "id": "gpt-5.4",
-                "harness": "codex",
-                "provider": "openai",
-                "release_date": "2026-05-01",
-                "matched_aliases": ["gpt", "latest"],
-            },
-            {
-                "id": "gpt-5.2",
-                "harness": "codex",
-                "provider": "openai",
-                "release_date": "2026-04-01",
-                "matched_aliases": ["stable"],
-            },
-        ],
-    )
-
-    output = models_list_sync(ModelsListInput(project_root=project_root.as_posix(), all=True))
-    model_ids = [str(model.model_id) for model in output.models]
-    assert model_ids == ["gpt-5.4", "gpt-5.2"]
-    assert [alias.alias for alias in output.models[0].aliases] == ["gpt", "latest"]
-
-
-def test_models_list_all_preserves_null_harness(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    project_root = tmp_path / "repo"
-    _init_repo(project_root)
-
-    monkeypatch.setattr(
-        "meridian.lib.ops.catalog.run_mars_models_list_all",
-        lambda project_root=None: [
-            {
-                "id": "gpt-5.4",
+                "id": "unclaimed-model",
                 "harness": None,
                 "provider": "openai",
-                "matched_aliases": ["gpt"],
+                "matched_aliases": ["unclaimed"],
                 "description": "No harness installed.",
             },
         ],
     )
 
-    output = models_list_sync(ModelsListInput(project_root=project_root.as_posix(), all=True))
-    assert len(output.models) == 1
-    model = output.models[0]
-    assert str(model.model_id) == "gpt-5.4"
+    output = models_list_sync(list_input)
+    model_ids = [str(model.model_id) for model in output.models]
+    assert model_ids == [
+        "gpt-5.4",
+        "gpt-5.2",
+        "gemini-3.1-pro",
+        "claude-expensive",
+        "claude-old",
+        "unclaimed-model",
+    ]
+    assert [alias.alias for alias in output.models[0].aliases] == ["gpt", "latest"]
+    model = output.models[-1]
     assert model.harness is None
     assert model.to_wire()["harness"] is None
     assert "—" in output.format_text()

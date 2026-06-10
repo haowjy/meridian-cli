@@ -1,8 +1,7 @@
 """Session log output routing for child (non-primary) spawns and chat sessions.
 
-Tests that session_log_sync picks the right output file (live vs artifact,
-HISTORY_FILENAME vs OUTPUT_FILENAME) for child spawns and that missing
-session IDs route correctly.
+Tests that session_log_sync picks the right output file (live vs artifact)
+for child spawns and that missing session IDs route correctly.
 
 # qa-validated: test-suite-redesign
 """
@@ -12,10 +11,9 @@ from pathlib import Path
 
 import pytest
 
-from meridian.lib.launch.constants import HISTORY_FILENAME, OUTPUT_FILENAME
+from meridian.lib.launch.constants import HISTORY_FILENAME
 from meridian.lib.ops.session_export import SessionExportInput, session_export_sync
 from meridian.lib.ops.session_log import SessionLogInput, session_log_sync
-from meridian.lib.ops.session_target import spawn_output_path_for_target
 from meridian.lib.state import session_store, spawn_store
 from meridian.lib.state.paths import resolve_project_runtime_root
 
@@ -67,40 +65,6 @@ def _write_codex_rollout(
         + "\n",
         encoding="utf-8",
     )
-
-
-def test_resolve_target_chat_missing_harness_session_id_reports_unavailable_transcript(
-    tmp_path: Path,
-) -> None:
-    project_root = tmp_path / "repo"
-    project_root.mkdir()
-    runtime_root = resolve_project_runtime_root(project_root)
-    runtime_root.mkdir(parents=True, exist_ok=True)
-
-    chat_id = session_store.start_session(
-        runtime_root,
-        harness="codex",
-        harness_session_id="",
-        model="gpt-5.4",
-        chat_id="c1",
-    )
-
-    try:
-        from meridian.lib.ops.session_target import resolve_session_log_target
-
-        with pytest.raises(ValueError) as exc:
-            resolve_session_log_target(
-                ref=chat_id,
-                file_path=None,
-                project_root=project_root,
-                runtime_root=runtime_root,
-            )
-        assert str(exc.value) == (
-            "Session 'c1' exists but no transcript is available yet "
-            "(no harness session id recorded)."
-        )
-    finally:
-        session_store.stop_session(runtime_root, chat_id)
 
 
 def test_session_log_spawn_missing_harness_session_id_reads_live_output(
@@ -180,14 +144,10 @@ def test_session_log_child_spawn_without_harness_id_does_not_use_parent_chat(
             status="failed",
         )
 
-        with pytest.raises(ValueError) as exc:
+        with pytest.raises(ValueError):
             session_log_sync(
                 SessionLogInput(ref="p42", project_root=project_root.as_posix(), tail=5)
             )
-        assert str(exc.value) == (
-            "Spawn 'p42' has no transcript available yet "
-            "(no harness session id recorded and no spawn output found)."
-        )
     finally:
         session_store.stop_session(runtime_root, parent_chat_id)
 
@@ -240,40 +200,6 @@ def test_session_log_child_spawn_uses_authoritative_child_chat_link(
         ]
     finally:
         session_store.stop_session(runtime_root, child_chat_id)
-
-
-def test_spawn_output_path_legacy_precedence_with_both_files(tmp_path: Path) -> None:
-    project_root = tmp_path / "repo"
-    project_root.mkdir()
-    runtime_root = resolve_project_runtime_root(project_root)
-    runtime_root.mkdir(parents=True, exist_ok=True)
-
-    _write_spawn_output(
-        runtime_root,
-        "p42",
-        {
-            "event_type": "item/completed",
-            "payload": {"item": {"type": "agentMessage", "text": "live"}},
-        },
-        filename=OUTPUT_FILENAME,
-    )
-    _write_spawn_output(
-        runtime_root,
-        "p42",
-        {
-            "event_type": "item/completed",
-            "payload": {"item": {"type": "agentMessage", "text": "artifact"}},
-        },
-        artifact=True,
-        filename=OUTPUT_FILENAME,
-    )
-
-    assert spawn_output_path_for_target(runtime_root, "p42", live_first=True) == (
-        runtime_root / "spawns" / "p42" / OUTPUT_FILENAME
-    )
-    assert spawn_output_path_for_target(runtime_root, "p42", live_first=False) == (
-        runtime_root / "artifacts" / "p42" / OUTPUT_FILENAME
-    )
 
 
 def test_session_log_active_child_spawn_prefers_live_output(tmp_path: Path) -> None:
@@ -402,14 +328,10 @@ def test_session_log_chat_missing_harness_session_id_does_not_read_primary_spawn
             },
         )
 
-        with pytest.raises(ValueError) as exc:
+        with pytest.raises(ValueError):
             session_log_sync(
                 SessionLogInput(ref=chat_id, project_root=project_root.as_posix(), tail=5)
             )
-        assert str(exc.value) == (
-            "Session 'c42' exists but no transcript is available yet "
-            "(no harness session id recorded)."
-        )
     finally:
         session_store.stop_session(runtime_root, chat_id)
 

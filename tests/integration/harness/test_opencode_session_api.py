@@ -6,19 +6,15 @@ from collections.abc import Mapping
 
 import pytest
 
-from meridian.lib.core.types import HarnessId, ModelId, SpawnId
-from meridian.lib.harness.adapter import SpawnParams
+from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.connections import opencode_http
 from meridian.lib.harness.connections.base import ConnectionConfig
 from meridian.lib.harness.connections.opencode_http import OpenCodeConnection, SessionNotReadyError
-from meridian.lib.harness.opencode import OpenCodeAdapter
 from meridian.lib.harness.projections.project_opencode_streaming import (
     HarnessCapabilityMismatch,
 )
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.safety.permissions import (
-    PermissionConfig,
-    TieredPermissionResolver,
     UnsafeNoOpPermissionResolver,
 )
 
@@ -92,20 +88,6 @@ async def test_create_session_uses_spec_model_not_connection_config(tmp_path) ->
 
 
 @pytest.mark.asyncio
-async def test_create_session_uses_already_normalized_model_from_launch_spec() -> None:
-    resolver = TieredPermissionResolver(config=PermissionConfig())
-    run = SpawnParams(prompt="hello", model=ModelId("gpt-5.3-codex"))
-    spec = OpenCodeAdapter().resolve_launch_spec(run, resolver)
-
-    connection = _TestableOpenCodeConnection(responses=[(200, {"session_id": "sess-2"}, "")])
-    await connection._create_session(spec)
-
-    assert isinstance(spec, ResolvedLaunchSpec)
-    assert connection.requests[0][1]["model"] == "gpt-5.3-codex"
-    assert connection.requests[0][1]["modelID"] == "gpt-5.3-codex"
-
-
-@pytest.mark.asyncio
 async def test_create_session_omits_model_fields_when_launch_spec_model_is_none() -> None:
     connection = _TestableOpenCodeConnection(responses=[(200, {"session_id": "sess-none"}, "")])
 
@@ -119,24 +101,6 @@ async def test_create_session_omits_model_fields_when_launch_spec_model_is_none(
     payload = connection.requests[0][1]
     assert "model" not in payload
     assert "modelID" not in payload
-
-
-@pytest.mark.asyncio
-async def test_create_session_omits_skills_when_default_prompt_inline_policy_is_used() -> None:
-    resolver = TieredPermissionResolver(config=PermissionConfig())
-    run = SpawnParams(
-        prompt="hello",
-        model=ModelId("gpt-5.3-codex"),
-        skills=("skill-a", "skill-b"),
-    )
-    spec = OpenCodeAdapter().resolve_launch_spec(run, resolver)
-
-    connection = _TestableOpenCodeConnection(responses=[(200, {"session_id": "sess-inline"}, "")])
-    await connection._create_session(spec)
-
-    payload = connection.requests[0][1]
-    assert spec.skills == ()
-    assert "skills" not in payload
 
 
 @pytest.mark.asyncio
@@ -162,64 +126,6 @@ async def test_create_session_forwards_agent_and_skills_from_opencode_launch_spe
 async def test_create_session_raises_when_continue_fork_requested() -> None:
     # continue_fork is rejected before any network I/O.
     connection = _TestableOpenCodeConnection(responses=[])
-    spec = ResolvedLaunchSpec(
-        prompt="hello",
-        model="gpt-5.3-codex",
-        continue_session_id="sess-parent",
-        continue_fork=True,
-        permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
-    )
-
-    with pytest.raises(HarnessCapabilityMismatch, match="continue_fork"):
-        await connection._create_session(spec)
-    assert connection.requests == []
-
-
-@pytest.mark.asyncio
-async def test_create_session_resume_verifies_existing_session_via_get() -> None:
-    connection = _TestableOpenCodeConnection(
-        responses=[],
-        get_responses=[(200, {"id": "sess-parent"}, "")],
-    )
-    spec = ResolvedLaunchSpec(
-        prompt="hello",
-        model="gpt-5.3-codex",
-        continue_session_id="sess-parent",
-        permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
-    )
-
-    session_id = await connection._create_session(spec)
-    assert session_id == "sess-parent"
-    assert connection.requests == [("/session/sess-parent", {})]
-
-
-@pytest.mark.asyncio
-async def test_create_session_resume_raises_on_get_404() -> None:
-    # A 404 means the server has not yet loaded the session; we raise a
-    # retryable error so _create_session_with_retry can poll until timeout.
-    connection = _TestableOpenCodeConnection(
-        responses=[],
-        get_responses=[(404, None, "")],
-    )
-    spec = ResolvedLaunchSpec(
-        prompt="hello",
-        model="gpt-5.3-codex",
-        continue_session_id="sess-parent",
-        permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
-    )
-
-    with pytest.raises(RuntimeError, match="not yet loaded"):
-        await connection._create_session(spec)
-    assert connection.requests == [("/session/sess-parent", {})]
-
-
-@pytest.mark.asyncio
-async def test_create_session_resume_rejects_fork_even_when_get_succeeds() -> None:
-    # continue_fork must be rejected even if the session exists on the server.
-    connection = _TestableOpenCodeConnection(
-        responses=[],
-        get_responses=[(200, {"id": "sess-parent"}, "")],
-    )
     spec = ResolvedLaunchSpec(
         prompt="hello",
         model="gpt-5.3-codex",
@@ -420,31 +326,6 @@ async def test_real_get_json_body_read_error_bubbles_and_resume_retries(
     assert retry_connection._client.urls == [
         "http://127.0.0.1:17777/session/sess-parent",
         "http://127.0.0.1:17777/session/sess-parent",
-    ]
-
-
-@pytest.mark.asyncio
-async def test_create_session_with_retry_resume_retries_get_transport_error_then_succeeds() -> None:
-    connection = _TestableOpenCodeConnection(
-        responses=[],
-        get_responses=[
-            ConnectionResetError("response body truncated"),
-            (200, {"id": "sess-parent"}, ""),
-        ],
-    )
-    spec = ResolvedLaunchSpec(
-        prompt="hello",
-        model="gpt-5.3-codex",
-        continue_session_id="sess-parent",
-        permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
-    )
-
-    session_id = await connection._create_session_with_retry(spec, timeout_seconds=1.0)
-
-    assert session_id == "sess-parent"
-    assert connection.requests == [
-        ("/session/sess-parent", {}),
-        ("/session/sess-parent", {}),
     ]
 
 

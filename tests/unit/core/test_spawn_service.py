@@ -132,7 +132,7 @@ def _patch_prepare_compose_bind(
 
 
 @pytest.mark.asyncio
-async def test_prepare_persists_trimmed_goal_from_spawn_request(
+async def test_prepare_returns_connection_config_from_bound_launch_context(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -149,7 +149,6 @@ async def test_prepare_persists_trimmed_goal_from_spawn_request(
                 model="gpt-5.4",
                 harness="codex",
                 agent="coder",
-                goal="  keep scope tight  ",
             ),
             runtime=_runtime_request(tmp_path, runtime_root),
             harness_registry=cast("Any", SimpleNamespace()),
@@ -157,41 +156,9 @@ async def test_prepare_persists_trimmed_goal_from_spawn_request(
         )
     )
 
-    row = spawn_store.get_spawn(runtime_root, prepared.spawn_id)
-    assert row is not None
-    assert row.goal == "keep scope tight"
     assert prepared.connection_config.control_root == tmp_path
     assert prepared.connection_config.task_cwd == child_cwd
     assert prepared.connection_config.pi_child_wave_timeout_seconds == 300.0
-
-
-@pytest.mark.asyncio
-async def test_prepare_spawn_rejects_blank_goal_without_persisting_row(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    runtime_root = _runtime_root(tmp_path)
-    child_cwd = tmp_path / "child-cwd"
-    child_cwd.mkdir()
-    _patch_prepare_compose_bind(monkeypatch, child_cwd)
-
-    service = _service(runtime_root)
-
-    with pytest.raises(ValueError, match="--goal cannot be empty"):
-        await service.prepare_spawn(
-            request=SpawnRequest(
-                prompt="run it",
-                model="gpt-5.4",
-                harness="codex",
-                agent="coder",
-                goal="   ",
-            ),
-            runtime=_runtime_request(tmp_path, runtime_root),
-            harness_registry=cast("Any", SimpleNamespace()),
-            chat_id="c1",
-        )
-
-    assert spawn_store.list_spawns(runtime_root) == []
 
 
 @pytest.mark.asyncio

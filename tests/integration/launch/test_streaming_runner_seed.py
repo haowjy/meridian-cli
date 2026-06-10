@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import asyncio
-import importlib
 from pathlib import Path
 
 import pytest
@@ -20,8 +19,7 @@ from meridian.lib.harness.connections.base import (
 from meridian.lib.harness.launch_spec import ResolvedLaunchSpec
 from meridian.lib.harness.registry import HarnessRegistry
 from meridian.lib.launch import context as launch_context_module
-from meridian.lib.launch.context import build_launch_context
-from meridian.lib.launch.request import LaunchArgvIntent, LaunchRuntime, SpawnRequest
+from meridian.lib.launch.request import SpawnRequest
 from meridian.lib.launch.workspace_projection import ProjectionResult
 from meridian.lib.state import spawn_store
 from meridian.lib.state.artifact_store import LocalStore
@@ -29,21 +27,11 @@ from meridian.lib.state.paths import (
     resolve_project_runtime_root,
 )
 from meridian.lib.streaming import spawn_manager as spawn_manager_module
+from tests.integration.launch.streaming_runner_support import (
+    _execute_with_context,
+    _FakeControlSocketServer,
+)
 from tests.support.fakes import FakeClock, FakeHeartbeat
-
-streaming_runner_module = importlib.import_module("meridian.lib.launch.streaming_runner")
-
-
-class _FakeControlSocketServer:
-    def __init__(self, spawn_id: SpawnId, socket_path: Path, manager: object) -> None:
-        _ = spawn_id, manager
-        self.socket_path = socket_path
-
-    async def start(self) -> None:
-        self.socket_path.parent.mkdir(parents=True, exist_ok=True)
-
-    async def stop(self) -> None:
-        return None
 
 
 class _ClaudeSeedPersistenceConnection:
@@ -246,40 +234,6 @@ def _build_claude_request() -> SpawnRequest:
         model="claude-sonnet-4-6",
         harness=HarnessId.CLAUDE.value,
         prompt="hello",
-    )
-
-
-async def _execute_with_context(
-    run: Spawn,
-    *,
-    request: SpawnRequest,
-    project_root: Path,
-    runtime_root: Path,
-    artifacts: LocalStore,
-    registry: HarnessRegistry,
-    execution_cwd: Path | None = None,
-    **kwargs: object,
-) -> int:
-    resolved_execution_cwd = execution_cwd or project_root.resolve()
-    launch_context = build_launch_context(
-        spawn_id=str(run.spawn_id),
-        request=request,
-        runtime=LaunchRuntime(
-            argv_intent=LaunchArgvIntent.SPEC_ONLY,
-            runtime_root=runtime_root.as_posix(),
-            project_paths_project_root=project_root.as_posix(),
-            project_paths_execution_cwd=resolved_execution_cwd.as_posix(),
-        ),
-        harness_registry=registry,
-    )
-    return await streaming_runner_module.execute_with_streaming(
-        run,
-        request=request,
-        launch_context=launch_context,
-        project_root=project_root,
-        runtime_root=runtime_root,
-        artifacts=artifacts,
-        **kwargs,
     )
 
 

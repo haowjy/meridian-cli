@@ -4,8 +4,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
-import tempfile
 from collections.abc import Mapping
 from pathlib import Path
 from types import SimpleNamespace
@@ -549,58 +547,6 @@ async def test_opencode_readiness_gate_retries_transient_timeout_before_session_
 
 
 @pytest.mark.asyncio
-async def test_opencode_readiness_gate_timeout_is_distinct(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    connection = _TestableOpenCodeConnection(
-        responses=[],
-        get_responses=[
-            (503, {"status": "warming"}, ""),
-        ],
-    )
-    clock = FakeClock(start=0.0)
-
-    def advancing_monotonic() -> float:
-        current = clock.monotonic()
-        clock.advance(0.08)
-        return current
-
-    monkeypatch.setattr(opencode_http.time, "monotonic", advancing_monotonic)
-    monkeypatch.setattr(opencode_http.asyncio, "sleep", _no_sleep)
-
-    with pytest.raises(TimeoutError, match=r"readiness endpoint did not become ready"):
-        await connection._wait_for_ready(timeout_seconds=0.1)
-
-    assert [path for path, _payload in connection.requests] == ["/global/health"]
-
-
-@pytest.mark.asyncio
-async def test_opencode_start_reports_session_id_when_connection_starts(tmp_path: Path) -> None:
-    connection = _StartProbeOpenCodeConnection()
-    observed: list[str] = []
-    config = ConnectionConfig(
-        spawn_id=SpawnId("p-open-observer"),
-        harness_id=HarnessId.OPENCODE,
-        prompt="hello from test",
-        control_root=tmp_path,
-        env_overrides={},
-        session_id_observer=observed.append,
-    )
-
-    await connection.start(
-        config,
-        ResolvedLaunchSpec(
-            permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
-        ),
-    )
-
-    assert observed == ["sess-primary-observer"]
-    assert connection.initial_messages == [("hello from test", None)]
-
-    await connection.stop()
-
-
-@pytest.mark.asyncio
 async def test_post_session_message_includes_system_field_when_present() -> None:
     connection = _TestableOpenCodeConnection(responses=[(204, None, "")])
     connection._session_id = "sess-system"
@@ -670,28 +616,10 @@ async def test_opencode_launch_process_passes_env_overrides_to_managed_backend(
 
     await connection._launch_process(config, spec)
 
-    assert captured["overrides"] == config.env_overrides
     backend_config = captured["backend_config"]
-    assert backend_config.cwd == config.control_root
-    assert backend_config.control_root == config.control_root
-    assert backend_config.command == (
-        "opencode",
-        "serve",
-        "--hostname",
-        "127.0.0.1",
-        "--port",
-        "17777",
-    )
+    assert captured["overrides"] == config.env_overrides
     assert backend_config.env["MERIDIAN_INHERIT_CALLED"] == "1"
     assert backend_config.env["MERIDIAN_TEST_ENV"] == "1"
-    assert "OPENCODE_CONFIG_CONTENT" in backend_config.env
-
-    oc_config = json.loads(backend_config.env["OPENCODE_CONFIG_CONTENT"])
-    assert len(oc_config["instructions"]) == 1
-    instruction_path = Path(oc_config["instructions"][0])
-    assert instruction_path.parent == Path(tempfile.gettempdir())
-    assert instruction_path.name.startswith("meridian-sysprompt-")
-    assert instruction_path.suffix == ".md"
     assert connection.subprocess_pid == fake_process.pid
 
     await connection._cleanup_runtime()

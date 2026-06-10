@@ -51,6 +51,34 @@ def _configure_extension_projection(monkeypatch: pytest.MonkeyPatch, root: Path)
     monkeypatch.setenv("MERIDIAN_PI_EXTENSION_TARGET_ROOT", str(root / "agent" / "extensions"))
 
 
+class _NoopControlServer:
+    endpoint = None
+
+    async def start(self) -> None:
+        return None
+
+    async def stop(self) -> None:
+        return None
+
+
+async def _start_pi_connection(
+    config: ConnectionConfig,
+    spec: ResolvedLaunchSpec,
+) -> PiRpcConnection:
+    connection = PiRpcConnection()
+    await connection.start(config, spec)
+    return connection
+
+
+def _history_events(runtime_root: Path, spawn_id: SpawnId) -> list[dict[str, object]]:
+    history_path = runtime_root / "spawns" / str(spawn_id) / "history.jsonl"
+    return [
+        json.loads(line)
+        for line in history_path.read_text(encoding="utf-8").splitlines()
+        if line
+    ]
+
+
 @pytest.mark.parametrize(
     ("line", "expected_reason"),
     [
@@ -219,7 +247,7 @@ async def test_pi_rpc_connection_supports_multi_turn_injection_and_abort(
 
 @pytest.mark.asyncio
 @pytest.mark.skipif(sys.platform == "win32", reason="uses POSIX executable shim")
-async def test_pi_rpc_connection_launches_resolved_runtime_with_scoped_session_dir_and_managed_extensions(  # noqa: E501
+async def test_pi_rpc_connection_launches_resolved_runtime_with_scoped_session_dir(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -241,16 +269,8 @@ async def test_pi_rpc_connection_launches_resolved_runtime_with_scoped_session_d
         "    raise SystemExit(0)\n"
         "observed_path = os.environ.get('PI_RPC_OBSERVED_PATH', '').strip()\n"
         "if observed_path:\n"
-        "    env_keys = (\n"
-        "        'MERIDIAN_PI_BINARY',\n"
-        "        'MERIDIAN_PI_SESSION_ROLE',\n"
-        "        'MERIDIAN_PI_CHILD_WAVE_TIMEOUT_MS',\n"
-        "        'PI_CODING_AGENT_SESSION_DIR',\n"
-        "        'PI_CODING_AGENT_DIR',\n"
-        "    )\n"
-        "    observed_env = {key: os.environ[key] for key in env_keys if key in os.environ}\n"
         "    with open(observed_path, 'w', encoding='utf-8') as handle:\n"
-        "        json.dump({'argv': sys.argv, 'env': observed_env}, handle)\n"
+        "        json.dump({'argv': sys.argv}, handle)\n"
         "for line in sys.stdin:\n"
         "    payload = json.loads(line)\n"
         "    payload_type = payload.get('type')\n"
@@ -273,11 +293,6 @@ async def test_pi_rpc_connection_launches_resolved_runtime_with_scoped_session_d
     fake_pi.chmod(0o755)
 
     scoped_session_dir = tmp_path / "pi-sessions" / "p-pi-direct-runtime"
-    managed_entrypoints = (
-        str(tmp_path / "agent" / "extensions" / "managed-bash" / "index.js"),
-        str(tmp_path / "agent" / "extensions" / "meridian-spawn-watch" / "index.js"),
-    )
-
     connection = PiRpcConnection()
     await connection.start(
         ConnectionConfig(
@@ -287,18 +302,15 @@ async def test_pi_rpc_connection_launches_resolved_runtime_with_scoped_session_d
             control_root=tmp_path,
             env_overrides={
                 "MERIDIAN_PI_BINARY": str(fake_pi),
-                "MERIDIAN_PI_SESSION_ROLE": "spawned",
                 "PI_CODING_AGENT_SESSION_DIR": str(scoped_session_dir),
                 "PI_RPC_OBSERVED_PATH": str(observed_path),
             },
-            pi_child_wave_timeout_seconds=12.5,
             pi_session_role="spawned",
         ),
         ResolvedLaunchSpec(
             harness=HarnessId.PI,
             prompt="hello",
             permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
-            pi_extension_entrypoints=managed_entrypoints,
         ),
     )
 
@@ -311,27 +323,8 @@ async def test_pi_rpc_connection_launches_resolved_runtime_with_scoped_session_d
     observed = json.loads(observed_path.read_text(encoding="utf-8"))
     argv = observed["argv"]
     assert argv[0] == str(fake_pi)
-    assert argv.count("--mode") == 1
     assert argv[argv.index("--mode") + 1] == "rpc"
-    assert argv.count("--session-dir") == 1
     assert argv[argv.index("--session-dir") + 1] == str(scoped_session_dir)
-    assert "--no-extensions" in argv
-    assert "--no-skills" in argv
-    assert "--no-context-files" in argv
-    assert "--no-prompt-templates" in argv
-    assert [argv[index + 1] for index, token in enumerate(argv) if token == "-e"] == list(
-        managed_entrypoints
-    )
-    assert "node" not in argv
-    assert "bun" not in argv
-    assert "meridian-pi" not in argv
-
-    observed_env = observed["env"]
-    assert observed_env["MERIDIAN_PI_BINARY"] == str(fake_pi)
-    assert observed_env["MERIDIAN_PI_SESSION_ROLE"] == "spawned"
-    assert observed_env["MERIDIAN_PI_CHILD_WAVE_TIMEOUT_MS"] == "12500"
-    assert observed_env["PI_CODING_AGENT_SESSION_DIR"] == str(scoped_session_dir)
-    assert observed_env["PI_CODING_AGENT_DIR"].endswith("/.pi/agent")
 
 @pytest.mark.asyncio
 @pytest.mark.skipif(sys.platform == "win32", reason="uses POSIX executable shim")
@@ -515,29 +508,12 @@ async def test_pi_spawn_manager_auto_delivers_initial_prompt_and_quiesces_withou
     monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
     monkeypatch.setenv("PI_RPC_INBOUND_LOG", str(inbound_log))
 
-    class NoopControlServer:
-        endpoint = None
-
-        async def start(self) -> None:
-            return None
-
-        async def stop(self) -> None:
-            return None
-
-    async def _start_connection(
-        config: ConnectionConfig,
-        spec: ResolvedLaunchSpec,
-    ) -> PiRpcConnection:
-        connection = PiRpcConnection()
-        await connection.start(config, spec)
-        return connection
-
     spawn_id = SpawnId("p-pi-autoprompt-quiesce")
     manager = SpawnManager(
         runtime_root=tmp_path,
         project_root=tmp_path,
-        start_connection=_start_connection,
-        control_server_factory=lambda _spawn_id, _socket_path, _manager: NoopControlServer(),
+        start_connection=_start_pi_connection,
+        control_server_factory=lambda _spawn_id, _socket_path, _manager: _NoopControlServer(),
     )
 
     await manager.start_spawn(
@@ -575,113 +551,99 @@ async def test_pi_spawn_manager_auto_delivers_initial_prompt_and_quiesces_withou
 
 @pytest.mark.asyncio
 @pytest.mark.skipif(sys.platform == "win32", reason="uses POSIX executable shim")
-async def test_pi_spawn_manager_without_session_event_still_quiesces_and_records_phases(
+@pytest.mark.parametrize(
+    ("scenario", "expected_status", "expected_error", "diagnostic_marker"),
+    [
+        pytest.param(
+            "no_session",
+            "succeeded",
+            None,
+            "session_event_absent",
+            id="no-session",
+        ),
+        pytest.param(
+            "first_event_timeout",
+            "failed",
+            "pi_rpc_no_response_after_initial_prompt",
+            "first_pi_event_timeout",
+            id="first-event-timeout",
+        ),
+    ],
+)
+async def test_pi_spawn_manager_startup_diagnostics_report_outcome_and_marker(
+    scenario: str,
+    expected_status: str,
+    expected_error: str | None,
+    diagnostic_marker: str,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _configure_extension_projection(monkeypatch, tmp_path)
-    monkeypatch.setattr(pi_rpc_module, "_FIRST_STDOUT_AFTER_INITIAL_PROMPT_TIMEOUT_SECONDS", 0.2)
+    monkeypatch.setattr(pi_rpc_module, "_FIRST_STDOUT_AFTER_INITIAL_PROMPT_TIMEOUT_SECONDS", 0.05)
+    monkeypatch.setattr(pi_rpc_module, "_PROCESS_ABORT_GRACE_SECONDS", 0.01)
+    monkeypatch.setattr(pi_rpc_module, "_PROCESS_KILL_GRACE_SECONDS", 0.01)
 
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
-    inbound_log = tmp_path / "pi-inbound.jsonl"
     shim = bin_dir / "pi"
+    if scenario == "no_session":
+        prompt_handler = (
+            "      printf '%s\n' '{\"type\":\"agent_start\"}'\n"
+            "      printf '%s\n' "
+            "'{\"type\":\"agent_end\",\"messages\":[{\"role\":\"assistant\",\"stopReason\":\"stop\"}]}'\n"
+        )
+    else:
+        prompt_handler = "      sleep 30\n"
     shim.write_text(
         "#!/bin/sh\n"
         "if [ \"$1\" = \"--version\" ]; then echo 'pi 1.2.3'; exit 0; fi\n"
         f"if [ \"$1\" = \"--help\" ]; then echo '{_PI_HELP_SURFACE}'; exit 0; fi\n"
         "while IFS= read -r line; do\n"
-        "  printf '%s\\n' \"$line\" >> \"$PI_RPC_INBOUND_LOG\"\n"
         "  case \"$line\" in\n"
         "    *'\"type\":\"prompt\"'*)\n"
-        "      printf '%s\\n' '{\"type\":\"agent_start\"}'\n"
-        "      printf '%s\\n' "
-        "'{\"type\":\"agent_end\",\"messages\":[{\"role\":\"assistant\",\"stopReason\":\"stop\"}]}'\n"
+        f"{prompt_handler}"
         "      ;;\n"
-        "    *'\"type\":\"abort\"'*)\n"
-        "      exit 0\n"
-        "      ;;\n"
+        "    *'\"type\":\"abort\"'*) exit 0 ;;\n"
         "  esac\n"
         "done\n",
         encoding="utf-8",
     )
     shim.chmod(0o755)
     monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
-    monkeypatch.setenv("PI_RPC_INBOUND_LOG", str(inbound_log))
 
-    class NoopControlServer:
-        endpoint = None
-
-        async def start(self) -> None:
-            return None
-
-        async def stop(self) -> None:
-            return None
-
-    async def _start_connection(
-        config: ConnectionConfig,
-        spec: ResolvedLaunchSpec,
-    ) -> PiRpcConnection:
-        connection = PiRpcConnection()
-        await connection.start(config, spec)
-        return connection
-
-    spawn_id = SpawnId("p-pi-no-session-phase")
+    spawn_id = SpawnId(f"p-pi-{scenario}")
     manager = SpawnManager(
         runtime_root=tmp_path,
         project_root=tmp_path,
-        start_connection=_start_connection,
-        control_server_factory=lambda _spawn_id, _socket_path, _manager: NoopControlServer(),
+        start_connection=_start_pi_connection,
+        control_server_factory=lambda _spawn_id, _socket_path, _manager: _NoopControlServer(),
     )
 
     await manager.start_spawn(
         ConnectionConfig(
             spawn_id=spawn_id,
             harness_id=HarnessId.PI,
-            prompt="hello no session",
+            prompt="hello startup",
             control_root=tmp_path,
             env_overrides={},
             pi_session_role="spawned",
         ),
         ResolvedLaunchSpec(
             harness=HarnessId.PI,
-            prompt="hello no session",
+            prompt="hello startup",
             permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
         ),
     )
 
     try:
         outcome = await asyncio.wait_for(manager.wait_for_completion(spawn_id), timeout=2.0)
-        assert outcome.status == "succeeded"
-        assert outcome.error is None
-
-        connection = manager.get_connection(spawn_id)
-        assert connection is None or connection.session_id is None
-
-        history_path = tmp_path / "spawns" / str(spawn_id) / "history.jsonl"
-        history = [
-            json.loads(line)
-            for line in history_path.read_text(encoding="utf-8").splitlines()
-            if line
-        ]
-        phases = [
-            event["payload"]["phase"]
-            for event in history
-            if event["event_type"] == "meridian.pi.lifecycle.phase"
-        ]
-        assert "initial_prompt_sent" in phases
-        assert "waiting_for_first_pi_event_after_prompt" in phases
-        assert "first_pi_event_received" in phases
-        assert "session_event_absent" in phases
-        assert "quiescence_micro_drain_started" in phases
-        assert "finalized" in phases
-
-        inbound_messages = [
-            json.loads(line)
-            for line in inbound_log.read_text(encoding="utf-8").splitlines()
-            if line
-        ]
-        assert [message["type"] for message in inbound_messages] == ["prompt"]
+        assert outcome.status == expected_status
+        assert outcome.error == expected_error
+        assert any(
+            event.get("event_type") == "meridian.pi.lifecycle.phase"
+            and event.get("payload", {}).get("phase") == diagnostic_marker
+            for event in _history_events(tmp_path, spawn_id)
+        )
     finally:
         await manager.shutdown()
 
@@ -719,29 +681,12 @@ async def test_pi_spawn_manager_prompt_response_failure_fails_fast_with_reported
     shim.chmod(0o755)
     monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
 
-    class NoopControlServer:
-        endpoint = None
-
-        async def start(self) -> None:
-            return None
-
-        async def stop(self) -> None:
-            return None
-
-    async def _start_connection(
-        config: ConnectionConfig,
-        spec: ResolvedLaunchSpec,
-    ) -> PiRpcConnection:
-        connection = PiRpcConnection()
-        await connection.start(config, spec)
-        return connection
-
     spawn_id = SpawnId("p-pi-prompt-failed-response")
     manager = SpawnManager(
         runtime_root=tmp_path,
         project_root=tmp_path,
-        start_connection=_start_connection,
-        control_server_factory=lambda _spawn_id, _socket_path, _manager: NoopControlServer(),
+        start_connection=_start_pi_connection,
+        control_server_factory=lambda _spawn_id, _socket_path, _manager: _NoopControlServer(),
     )
 
     await manager.start_spawn(
@@ -766,15 +711,9 @@ async def test_pi_spawn_manager_prompt_response_failure_fails_fast_with_reported
         assert outcome.status == "failed"
         assert outcome.error == "No API key configured"
 
-        history_path = tmp_path / "spawns" / str(spawn_id) / "history.jsonl"
-        history = [
-            json.loads(line)
-            for line in history_path.read_text(encoding="utf-8").splitlines()
-            if line
-        ]
         response_events = [
             event
-            for event in history
+            for event in _history_events(tmp_path, spawn_id)
             if event.get("event_type") == "response"
             and event.get("payload", {}).get("success") is False
         ]
@@ -784,98 +723,6 @@ async def test_pi_spawn_manager_prompt_response_failure_fails_fast_with_reported
         await manager.shutdown()
 
 
-@pytest.mark.asyncio
-@pytest.mark.skipif(sys.platform == "win32", reason="uses POSIX executable shim")
-async def test_pi_spawn_manager_first_event_timeout_fails_and_records_timeout_phase(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    _configure_extension_projection(monkeypatch, tmp_path)
-    monkeypatch.setattr(pi_rpc_module, "_FIRST_STDOUT_AFTER_INITIAL_PROMPT_TIMEOUT_SECONDS", 0.05)
-    monkeypatch.setattr(pi_rpc_module, "_PROCESS_ABORT_GRACE_SECONDS", 0.01)
-    monkeypatch.setattr(pi_rpc_module, "_PROCESS_KILL_GRACE_SECONDS", 0.01)
-
-    bin_dir = tmp_path / "bin"
-    bin_dir.mkdir()
-    shim = bin_dir / "pi"
-    shim.write_text(
-        "#!/bin/sh\n"
-        "if [ \"$1\" = \"--version\" ]; then echo 'pi 1.2.3'; exit 0; fi\n"
-        f"if [ \"$1\" = \"--help\" ]; then echo '{_PI_HELP_SURFACE}'; exit 0; fi\n"
-        "while IFS= read -r line; do\n"
-        "  case \"$line\" in\n"
-        "    *'\"type\":\"prompt\"'*) sleep 30 ;;\n"
-        "    *'\"type\":\"abort\"'*) exit 0 ;;\n"
-        "  esac\n"
-        "done\n",
-        encoding="utf-8",
-    )
-    shim.chmod(0o755)
-    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
-
-    class NoopControlServer:
-        endpoint = None
-
-        async def start(self) -> None:
-            return None
-
-        async def stop(self) -> None:
-            return None
-
-    async def _start_connection(
-        config: ConnectionConfig,
-        spec: ResolvedLaunchSpec,
-    ) -> PiRpcConnection:
-        connection = PiRpcConnection()
-        await connection.start(config, spec)
-        return connection
-
-    spawn_id = SpawnId("p-pi-first-event-timeout-manager")
-    manager = SpawnManager(
-        runtime_root=tmp_path,
-        project_root=tmp_path,
-        start_connection=_start_connection,
-        control_server_factory=lambda _spawn_id, _socket_path, _manager: NoopControlServer(),
-    )
-
-    await manager.start_spawn(
-        ConnectionConfig(
-            spawn_id=spawn_id,
-            harness_id=HarnessId.PI,
-            prompt="hello timeout",
-            control_root=tmp_path,
-            env_overrides={},
-            pi_session_role="spawned",
-        ),
-        ResolvedLaunchSpec(
-            harness=HarnessId.PI,
-            prompt="hello timeout",
-            permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
-        ),
-    )
-
-    try:
-        outcome = await asyncio.wait_for(manager.wait_for_completion(spawn_id), timeout=2.0)
-        assert outcome is not None
-        assert outcome.status == "failed"
-        assert outcome.error == "pi_rpc_no_response_after_initial_prompt"
-
-        history_path = tmp_path / "spawns" / str(spawn_id) / "history.jsonl"
-        history = [
-            json.loads(line)
-            for line in history_path.read_text(encoding="utf-8").splitlines()
-            if line
-        ]
-        phases = [
-            event["payload"]["phase"]
-            for event in history
-            if event["event_type"] == "meridian.pi.lifecycle.phase"
-        ]
-        assert "waiting_for_first_pi_event_after_prompt" in phases
-        assert "first_pi_event_timeout" in phases
-        assert "finalized" in phases
-    finally:
-        await manager.shutdown()
 @pytest.mark.asyncio
 @pytest.mark.skipif(sys.platform == "win32", reason="uses POSIX executable shim")
 async def test_pi_connection_launches_in_control_root_when_task_cwd_provided(

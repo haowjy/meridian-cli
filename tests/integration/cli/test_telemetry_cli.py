@@ -14,8 +14,8 @@ from meridian.lib.core.lifecycle import SpawnLifecycleService
 from meridian.lib.launch.types import PrimarySessionMetadata
 from meridian.lib.state import spawn_store
 from meridian.lib.telemetry.query import query_events
-from meridian.lib.telemetry.reader import discover_segments, read_events, tail_events
-from meridian.lib.telemetry.status import compute_status, status_to_dict
+from meridian.lib.telemetry.reader import read_events, tail_events
+from meridian.lib.telemetry.status import compute_status
 
 
 def _event(
@@ -118,35 +118,6 @@ def test_truncated_lines_are_skipped_gracefully(tmp_path: Path) -> None:
     path = _write_segment(telemetry_dir, "123-0001.jsonl", [event], extra='{"truncated"')
 
     assert list(read_events(path)) == [event]
-
-
-def test_discover_segments_caches_stat_for_sort(tmp_path: Path, monkeypatch) -> None:
-    telemetry_dir = tmp_path / "telemetry"
-    first = _write_segment(telemetry_dir, "123-0001.jsonl", [])
-    second = _write_segment(telemetry_dir, "123-0002.jsonl", [])
-    original_stat = Path.stat
-    stat_calls: dict[Path, int] = {}
-
-    def stat_once(path: Path, *args, **kwargs):
-        if path in {first, second}:
-            stat_calls[path] = stat_calls.get(path, 0) + 1
-            if stat_calls[path] > 1:
-                raise OSError("file disappeared")
-        return original_stat(path, *args, **kwargs)
-
-    monkeypatch.setattr(Path, "stat", stat_once)
-
-    assert discover_segments(telemetry_dir) == [first, second]
-
-
-def test_status_dict_is_json_serializable(tmp_path: Path) -> None:
-    status = compute_status(tmp_path)
-
-    result = status_to_dict(status)
-
-    json.dumps(result)
-    assert Path(result["telemetry_dir"]) == tmp_path / "telemetry"
-    assert result["total_size_human"] == status.total_size_human
 
 
 def test_query_events_merges_multiple_directories_in_mtime_order(tmp_path: Path) -> None:

@@ -484,8 +484,10 @@ async def _execute_with_context(
     runtime_root: Path,
     artifacts: LocalStore,
     registry: HarnessRegistry,
+    execution_cwd: Path | None = None,
     **kwargs: object,
 ) -> int:
+    resolved_execution_cwd = execution_cwd or project_root.resolve()
     launch_context = build_launch_context(
         spawn_id=str(run.spawn_id),
         request=request,
@@ -493,7 +495,7 @@ async def _execute_with_context(
             argv_intent=LaunchArgvIntent.SPEC_ONLY,
             runtime_root=runtime_root.as_posix(),
             project_paths_project_root=project_root.as_posix(),
-            project_paths_execution_cwd=project_root.resolve().as_posix(),
+            project_paths_execution_cwd=resolved_execution_cwd.as_posix(),
         ),
         harness_registry=registry,
     )

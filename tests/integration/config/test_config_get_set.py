@@ -65,115 +65,132 @@ def test_deleted_routing_default_keys_are_not_supported_by_config_commands(
             config_reset_sync(ConfigResetInput(project_root=project_root.as_posix(), key=key))
 
 
-def test_config_show_and_loader_share_project_config_precedence(
+@pytest.mark.parametrize(
+    (
+        "project_toml",
+        "local_toml",
+        "user_toml",
+        "env",
+        "key",
+        "expected_value",
+        "expected_source",
+        "expected_env_var",
+    ),
+    [
+        (
+            '[primary]\nagent = "reviewer"\n',
+            None,
+            '[primary]\nagent = "coder"\n',
+            {},
+            "primary.agent",
+            "reviewer",
+            "file",
+            None,
+        ),
+        (
+            '[primary]\nagent = "reviewer"\n',
+            None,
+            '[primary]\nagent = "coder"\n',
+            {"MERIDIAN_AGENT": "planner"},
+            "primary.agent",
+            "planner",
+            "env var",
+            "MERIDIAN_AGENT",
+        ),
+        (
+            None,
+            None,
+            '[primary]\nagent = "reviewer"\n',
+            {},
+            "primary.agent",
+            "reviewer",
+            "user-config",
+            None,
+        ),
+        (
+            '[primary]\nagent = "reviewer"\n',
+            '[primary]\nagent = "coder"\n',
+            None,
+            {},
+            "primary.agent",
+            "coder",
+            "file",
+            None,
+        ),
+        (
+            None,
+            None,
+            None,
+            {
+                "MERIDIAN_DEFAULT_WAIT_YIELD_SECONDS": "120",
+                "MERIDIAN_MIN_WAIT_YIELD_SECONDS": "45",
+            },
+            "spawn.default_wait_yield_seconds",
+            120.0,
+            "env var",
+            "MERIDIAN_DEFAULT_WAIT_YIELD_SECONDS",
+        ),
+        (
+            None,
+            None,
+            None,
+            {
+                "MERIDIAN_DEFAULT_WAIT_YIELD_SECONDS": "120",
+                "MERIDIAN_MIN_WAIT_YIELD_SECONDS": "45",
+            },
+            "spawn.min_wait_yield_seconds",
+            45.0,
+            "env var",
+            "MERIDIAN_MIN_WAIT_YIELD_SECONDS",
+        ),
+    ],
+    ids=[
+        "project-over-user",
+        "env-over-project",
+        "env-selected-user-config",
+        "local-over-project",
+        "default-wait-env",
+        "min-wait-env",
+    ],
+)
+def test_config_show_get_and_loader_report_same_winning_source(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    project_toml: str | None,
+    local_toml: str | None,
+    user_toml: str | None,
+    env: dict[str, str],
+    key: str,
+    expected_value: object,
+    expected_source: str,
+    expected_env_var: str | None,
 ) -> None:
     project_root = _repo(tmp_path)
-    project_config = project_root / "meridian.toml"
-    project_config.write_text('[primary]\nagent = "reviewer"\n', encoding="utf-8")
-    user_config = tmp_path / "user-config.toml"
-    user_config.write_text('[primary]\nagent = "coder"\n', encoding="utf-8")
-    monkeypatch.setenv("MERIDIAN_CONFIG", user_config.as_posix())
-
-    project_only = config_show_sync(ConfigShowInput(project_root=project_root.as_posix()))
-    project_only_value = next(item for item in project_only.values if item.key == "primary.agent")
-    assert project_only.path == project_config.as_posix()
-    assert project_only_value.value == "reviewer"
-    assert project_only_value.source == "file"
-    assert load_config(project_root).primary.agent == "reviewer"
-
-    monkeypatch.setenv("MERIDIAN_AGENT", "planner")
-
-    resolved = config_show_sync(ConfigShowInput(project_root=project_root.as_posix()))
-    resolved_value = next(item for item in resolved.values if item.key == "primary.agent")
-
-    assert resolved.path == project_config.as_posix()
-    assert resolved_value.value == "planner"
-    assert resolved_value.source == "env var"
-    assert resolved_value.env_var == "MERIDIAN_AGENT"
-    assert load_config(project_root).primary.agent == "planner"
-
-
-def test_config_show_and_get_resolve_env_selected_user_config_like_loader(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    project_root = _repo(tmp_path)
-    env_user_config = tmp_path / "env-user-config.toml"
-    env_user_config.write_text('[primary]\nagent = "reviewer"\n', encoding="utf-8")
-    monkeypatch.setenv("MERIDIAN_CONFIG", env_user_config.as_posix())
+    if project_toml is not None:
+        (project_root / "meridian.toml").write_text(project_toml, encoding="utf-8")
+    if local_toml is not None:
+        (project_root / "meridian.local.toml").write_text(local_toml, encoding="utf-8")
+    if user_toml is not None:
+        user_config = tmp_path / "user-config.toml"
+        user_config.write_text(user_toml, encoding="utf-8")
+        monkeypatch.setenv("MERIDIAN_CONFIG", user_config.as_posix())
+    for env_var, value in env.items():
+        monkeypatch.setenv(env_var, value)
 
     shown = config_show_sync(ConfigShowInput(project_root=project_root.as_posix()))
-    gotten = config_get_sync(
-        ConfigGetInput(project_root=project_root.as_posix(), key="primary.agent")
-    )
-    shown_value = next(item for item in shown.values if item.key == "primary.agent")
+    gotten = config_get_sync(ConfigGetInput(project_root=project_root.as_posix(), key=key))
+    shown_value = next(item for item in shown.values if item.key == key)
 
-    assert shown_value.value == "reviewer"
-    assert shown_value.source == "user-config"
-    assert gotten.key == "primary.agent"
-    assert gotten.value == "reviewer"
-    assert gotten.source == "user-config"
-    assert load_config(project_root).primary.agent == "reviewer"
-
-
-def test_config_show_and_loader_share_local_over_project_precedence(tmp_path: Path) -> None:
-    project_root = _repo(tmp_path)
-    (project_root / "meridian.toml").write_text(
-        '[primary]\nagent = "reviewer"\n',
-        encoding="utf-8",
-    )
-    (project_root / "meridian.local.toml").write_text(
-        '[primary]\nagent = "coder"\n',
-        encoding="utf-8",
-    )
-
-    shown = config_show_sync(ConfigShowInput(project_root=project_root.as_posix()))
-    shown_value = next(item for item in shown.values if item.key == "primary.agent")
-    gotten = config_get_sync(
-        ConfigGetInput(project_root=project_root.as_posix(), key="primary.agent")
-    )
-
-    assert shown_value.value == "coder"
-    assert shown_value.source == "file"
-    assert gotten.value == "coder"
-    assert gotten.source == "file"
-    assert load_config(project_root).primary.agent == "coder"
-
-
-def test_config_show_and_get_report_spawn_wait_yield_env_provenance(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    project_root = _repo(tmp_path)
-    monkeypatch.setenv("MERIDIAN_DEFAULT_WAIT_YIELD_SECONDS", "120")
-    monkeypatch.setenv("MERIDIAN_MIN_WAIT_YIELD_SECONDS", "45")
-
-    shown = config_show_sync(ConfigShowInput(project_root=project_root.as_posix()))
-    shown_default = next(
-        item for item in shown.values if item.key == "spawn.default_wait_yield_seconds"
-    )
-    shown_min = next(item for item in shown.values if item.key == "spawn.min_wait_yield_seconds")
-    gotten_default = config_get_sync(
-        ConfigGetInput(project_root=project_root.as_posix(), key="spawn.default_wait_yield_seconds")
-    )
-    gotten_min = config_get_sync(
-        ConfigGetInput(project_root=project_root.as_posix(), key="spawn.min_wait_yield_seconds")
-    )
-
-    assert shown_default.value == 120.0
-    assert shown_default.source == "env var"
-    assert shown_default.env_var == "MERIDIAN_DEFAULT_WAIT_YIELD_SECONDS"
-    assert shown_min.value == 45.0
-    assert shown_min.source == "env var"
-    assert shown_min.env_var == "MERIDIAN_MIN_WAIT_YIELD_SECONDS"
-    assert gotten_default.value == 120.0
-    assert gotten_default.source == "env var"
-    assert gotten_default.env_var == "MERIDIAN_DEFAULT_WAIT_YIELD_SECONDS"
-    assert gotten_min.value == 45.0
-    assert gotten_min.source == "env var"
-    assert gotten_min.env_var == "MERIDIAN_MIN_WAIT_YIELD_SECONDS"
+    assert shown_value.value == expected_value
+    assert shown_value.source == expected_source
+    assert shown_value.env_var == expected_env_var
+    assert gotten.key == key
+    assert gotten.value == expected_value
+    assert gotten.source == expected_source
+    assert gotten.env_var == expected_env_var
+    loaded = load_config(project_root)
+    if key == "primary.agent":
+        assert loaded.primary.agent == expected_value
 
 
 def test_config_state_retention_days_round_trip(tmp_path: Path) -> None:

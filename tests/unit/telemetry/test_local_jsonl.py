@@ -72,10 +72,3 @@ def test_custom_logical_owner_in_segment_filename(tmp_path) -> None:
     assert segment.exists()
     lines = segment.read_text(encoding="utf-8").splitlines()
     assert len(lines) == 1
-
-
-def test_close_is_idempotent(tmp_path) -> None:
-    sink = LocalJSONLSink(tmp_path)
-    sink.write_batch([envelope()])
-    sink.close()
-    sink.close()

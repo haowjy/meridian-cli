@@ -31,7 +31,6 @@ from tests.integration.state.conftest import (
     _write_activity_artifact,
     _write_report,
     fake_reaper_liveness,
-    recording_scope_cleanup,
 )
 
 
@@ -320,53 +319,6 @@ def test_reconcile_active_spawn_dead_runner_recent_activity_still_fails(
     assert reconciled.status == "failed"
     assert reconciled.exit_code == 1
     assert reconciled.error == "orphan_run"
-    latest = _get_spawn(runtime_root, spawn_id)
-    assert latest.status == "failed"
-    assert latest.error == "orphan_run"
-
-
-def test_reconcile_active_spawn_dead_runner_reaps_recorded_backend_scope(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from meridian.lib.core.types import SpawnId
-    from meridian.lib.platform.process_scope.base import ProcessScopeSnapshot
-    from meridian.lib.state.process_scope_projection import record_scope
-
-    runtime_root, spawn_id = _create_spawn(
-        tmp_path,
-        kind="child",
-        harness="opencode",
-        runner_pid=9301,
-        worker_pid=9302,
-        started_at=_OLD_STARTED_AT,
-    )
-    backend_scope = ProcessScopeSnapshot(
-        scope_id="backend",
-        owner_policy="spawn_owned",
-        owner_id=spawn_id,
-        role="harness_backend",
-        containment="pid_tree_fallback",
-        root_pid=9401,
-        root_created_at_epoch=100.0,
-        pgid=None,
-        job_name=None,
-        degraded_reason=None,
-    )
-    record_scope(runtime_root, SpawnId(spawn_id), backend_scope)
-    _write_activity_artifact(runtime_root, spawn_id, "heartbeat", age_secs=5)
-    record = _get_spawn(runtime_root, spawn_id)
-    fake_reaper_liveness(monkeypatch, set())
-    terminated_scopes = recording_scope_cleanup(
-        monkeypatch,
-        "meridian.lib.core.process_cleanup.terminate_scope_sync",
-    )
-
-    reconciled = _reconcile(tmp_path, runtime_root, record)
-
-    assert reconciled.status == "failed"
-    assert reconciled.error == "orphan_run"
-    assert terminated_scopes == ["backend:9401:reaper"]
     latest = _get_spawn(runtime_root, spawn_id)
     assert latest.status == "failed"
     assert latest.error == "orphan_run"

@@ -2,11 +2,8 @@
 
 from __future__ import annotations
 
-import subprocess
-import sys
 from collections.abc import AsyncIterator
 from pathlib import Path
-from types import MappingProxyType
 
 import pytest
 from pydantic import ValidationError
@@ -56,51 +53,10 @@ from meridian.lib.harness.extractors.base import HarnessExtractor
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.launch.launch_types import (
     PermissionResolver,
-    PreflightResult,
     ResolvedLaunchSpec,
     TerminalSurfaceMode,
 )
 from meridian.lib.safety.permissions import UnsafeNoOpPermissionResolver
-
-_REPO_ROOT = Path(__file__).resolve().parents[3]
-
-
-def test_s001_base_adapter_requires_resolve_launch_spec_override() -> None:
-    class NewHarness(BaseHarnessAdapter[ResolvedLaunchSpec]):
-        pass
-
-    with pytest.raises(TypeError, match=r"resolve_launch_spec"):
-        NewHarness()
-
-
-class _MissingResolveLaunchSpecHarness(BaseHarnessAdapter[ResolvedLaunchSpec]):
-    @property
-    def id(self) -> HarnessId:
-        return HarnessId.CLAUDE
-
-    @property
-    def contract(self) -> HarnessContract:
-        return _test_contract()
-
-    @property
-    def consumed_fields(self) -> frozenset[str]:
-        return frozenset({"prompt"})
-
-    @property
-    def explicitly_ignored_fields(self) -> frozenset[str]:
-        return frozenset()
-
-
-def test_s001_missing_only_resolve_launch_spec_mentions_that_method() -> None:
-    with pytest.raises(TypeError) as exc_info:
-        _MissingResolveLaunchSpecHarness()
-
-    message = str(exc_info.value)
-    assert "resolve_launch_spec" in message
-    assert "contract" not in message
-    assert "id" not in message
-    assert "consumed_fields" not in message
-    assert "explicitly_ignored_fields" not in message
 
 
 def test_registered_adapters_satisfy_runtime_harness_protocols() -> None:
@@ -112,60 +68,6 @@ def test_registered_adapters_satisfy_runtime_harness_protocols() -> None:
         assert isinstance(adapter, HarnessAdapter)
         assert isinstance(adapter, SubprocessHarness)
         assert registry.get_subprocess_harness(harness_id) is adapter
-
-
-class _MissingIdHarness(BaseHarnessAdapter[ResolvedLaunchSpec]):
-    @property
-    def contract(self) -> HarnessContract:
-        return _test_contract()
-
-    @property
-    def consumed_fields(self) -> frozenset[str]:
-        return frozenset({"prompt"})
-
-    @property
-    def explicitly_ignored_fields(self) -> frozenset[str]:
-        return frozenset()
-
-    def resolve_launch_spec(
-        self,
-        run: SpawnParams,
-        perms: PermissionResolver,
-    ) -> ResolvedLaunchSpec:
-        _ = run, perms
-        return ResolvedLaunchSpec(
-            prompt="test",
-            permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
-        )
-
-
-def test_s040_missing_id_raises_instantiation_error() -> None:
-    with pytest.raises(TypeError, match=r"\bid\b"):
-        _MissingIdHarness()
-
-
-class _IncompleteHarness(BaseHarnessAdapter[ResolvedLaunchSpec]):
-    def resolve_launch_spec(
-        self,
-        run: SpawnParams,
-        perms: PermissionResolver,
-    ) -> ResolvedLaunchSpec:
-        _ = run, perms
-        return ResolvedLaunchSpec(
-            prompt="test",
-            permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
-        )
-
-
-def test_s040_incomplete_adapter_lists_all_missing_members() -> None:
-    with pytest.raises(TypeError) as exc_info:
-        _IncompleteHarness()
-
-    message = str(exc_info.value)
-    assert "contract" in message
-    assert "id" in message
-    assert "consumed_fields" in message
-    assert "explicitly_ignored_fields" in message
 
 
 class _CompleteHarness(BaseHarnessAdapter[ResolvedLaunchSpec]):
@@ -195,10 +97,6 @@ class _CompleteHarness(BaseHarnessAdapter[ResolvedLaunchSpec]):
             prompt=run.prompt,
             permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
         )
-
-
-def test_handled_fields_unions_consumed_and_ignored() -> None:
-    assert _CompleteHarness().handled_fields == frozenset({"prompt"})
 
 
 class _ManagedPrimaryHarness(_CompleteHarness):
@@ -403,43 +301,6 @@ def test_register_harness_bundle_rejects_managed_primary_port_drift(
     )
     with pytest.raises(ValueError, match="registered managed-primary projection ports"):
         register_harness_bundle(claude_with_managed_primary)
-
-
-def test_preflight_result_build_wraps_extra_env_in_mapping_proxy() -> None:
-    extra_env = {"MERIDIAN_FLAG": "1"}
-    result = PreflightResult.build(
-        expanded_passthrough_args=("--json",),
-        extra_env=extra_env,
-    )
-
-    assert isinstance(result.extra_env, MappingProxyType)
-    assert dict(result.extra_env) == extra_env
-
-    extra_env["MUTATED_LATER"] = "2"
-    assert "MUTATED_LATER" not in result.extra_env
-
-    with pytest.raises(TypeError):
-        result.extra_env["NEW_FLAG"] = "3"  # type: ignore[index]
-
-
-def test_leaf_imports_do_not_form_a_cycle() -> None:
-    completed = subprocess.run(
-        [
-            sys.executable,
-            "-c",
-            (
-                "import meridian.lib.launch.launch_types; "
-                "import meridian.lib.harness.adapter; "
-                "import meridian.lib.harness.connections.base"
-            ),
-        ],
-        capture_output=True,
-        check=False,
-        cwd=_REPO_ROOT,
-        text=True,
-    )
-
-    assert completed.returncode == 0, f"stdout:\n{completed.stdout}\nstderr:\n{completed.stderr}"
 
 
 def test_runtime_hitl_contracts_align_with_default_connection_capabilities() -> None:

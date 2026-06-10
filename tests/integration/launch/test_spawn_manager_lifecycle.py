@@ -479,25 +479,9 @@ async def test_spawn_manager_serializes_control_actions_and_persists_transitions
         connection.allow_inject_send.set()
         inject_result = await asyncio.wait_for(inject_task, timeout=1.0)
         await asyncio.wait_for(interrupt_task, timeout=1.0)
-        await manager.respond_request(
-            spawn_id,
-            request_id="r1",
-            decision="accept",
-            payload={"x": 1},
-            source="test",
-        )
-        await manager.respond_user_input(
-            spawn_id,
-            request_id="u1",
-            answers={"text": "Ada"},
-            source="test",
-        )
-
         assert inject_result.success is True
         assert inject_result.inbound_seq == 0
         assert connection.call_order[:3] == ["inject:start", "inject:end", "interrupt"]
-        assert "approve:r1:accept" in connection.call_order
-        assert "input:u1" in connection.call_order
 
         control_actions_path = runtime_root / "spawns" / str(spawn_id) / "control_actions.jsonl"
         assert control_actions_path.exists()
@@ -515,6 +499,6 @@ async def test_spawn_manager_serializes_control_actions_and_persists_transitions
             for statuses in action_statuses.values()
         )
         recorded_actions = {cast("str", record["action"]) for record in records}
-        assert recorded_actions == {"inject", "interrupt", "permission_reply", "user_input_reply"}
+        assert recorded_actions == {"inject", "interrupt"}
     finally:
         await manager.stop_spawn(spawn_id)

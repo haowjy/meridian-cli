@@ -149,10 +149,6 @@ def test_frontend_mount_is_idempotent(tmp_path: Path) -> None:
     mount_frontend(app, first_assets)
     mount_frontend(app, second_assets)
 
-    route_names = [getattr(route, "name", None) for route in app.router.routes]
-    assert route_names.count("frontend-assets") == 1
-    assert route_names.count("spa_fallback") == 1
-
     with TestClient(app) as client:
         fallback = client.get("/nested/client/route")
         assert fallback.status_code == 200

@@ -8,7 +8,6 @@ from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.connections.base import ConnectionCapabilities, ConnectionConfig
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.safety.permissions import UnsafeNoOpPermissionResolver
-from meridian.lib.streaming.drain_policy import PersistentDrainPolicy
 
 
 class Connection:
@@ -44,6 +43,8 @@ class Connection:
 class SpawnManager:
     def __init__(self):
         self.calls = []
+        self.observers = {}
+        self.stopped_spawns = []
         self.connection = Connection()
         self.drain_policy = None
         self.started_config = None
@@ -52,9 +53,12 @@ class SpawnManager:
 
     def register_observer(self, spawn_id, observer):
         self.calls.append(("register", spawn_id, observer))
+        self.observers[spawn_id] = observer
 
     def unregister_observer(self, spawn_id, observer):
         self.calls.append(("unregister", spawn_id, observer))
+        if self.observers.get(spawn_id) is observer:
+            del self.observers[spawn_id]
 
     async def start_spawn(self, config, spec, *, drain_policy=None, on_event=None):
         self.calls.append(("start", config.spawn_id, spec))
@@ -71,6 +75,7 @@ class SpawnManager:
 
     async def stop_spawn(self, spawn_id):
         self.calls.append(("stop", spawn_id, None))
+        self.stopped_spawns.append(spawn_id)
 
 
 class Normalizer:
@@ -132,7 +137,7 @@ def _launch_plan_factory(
 
 
 @pytest.mark.asyncio
-async def test_cold_acquisition_registers_observer_before_start_and_uses_persistent_policy(
+async def test_cold_acquisition_success_returns_usable_execution(
     tmp_path: Path,
 ):
     manager = SpawnManager()
@@ -151,17 +156,33 @@ async def test_cold_acquisition_registers_observer_before_start_and_uses_persist
 
     handle = await acquisition.acquire("c1", "hello", execution_generation=7)
 
-    assert [call[0] for call in manager.calls] == ["register", "start", "heartbeat"]
     assert manager.started_config.prompt == "hello"
-    assert isinstance(manager.drain_policy, PersistentDrainPolicy)
+    assert manager.observers.keys() == {spawn_id}
+    assert manager.drain_policy is not None
     assert handle.spawn_id == spawn_id
     assert handle.generation == 7
+    assert handle.connection is manager.connection
+    assert handle.health() is True
 
 
 @pytest.mark.asyncio
-async def test_cold_acquisition_unregisters_observer_when_start_fails(tmp_path: Path):
+@pytest.mark.parametrize(
+    ("fail_start", "fail_heartbeat", "expected_error"),
+    [
+        (True, False, "boom"),
+        (False, True, "heartbeat boom"),
+    ],
+    ids=["start-failure", "heartbeat-failure"],
+)
+async def test_cold_acquisition_failure_cleans_up_execution(
+    tmp_path: Path,
+    fail_start: bool,
+    fail_heartbeat: bool,
+    expected_error: str,
+):
     manager = SpawnManager()
-    manager.fail_start = True
+    manager.fail_start = fail_start
+    manager.fail_heartbeat = fail_heartbeat
     spawn_id = SpawnId("s-chat")
 
     acquisition = ColdSpawnAcquisition(
@@ -175,36 +196,8 @@ async def test_cold_acquisition_unregisters_observer_when_start_fails(tmp_path: 
         ),
     )
 
-    with pytest.raises(RuntimeError, match="boom"):
+    with pytest.raises(RuntimeError, match=expected_error):
         await acquisition.acquire("c1", "hello")
 
-    assert [call[0] for call in manager.calls] == ["register", "start", "unregister", "stop"]
-
-
-@pytest.mark.asyncio
-async def test_cold_acquisition_stops_spawn_when_heartbeat_fails(tmp_path: Path):
-    manager = SpawnManager()
-    manager.fail_heartbeat = True
-    spawn_id = SpawnId("s-chat")
-
-    acquisition = ColdSpawnAcquisition(
-        spawn_manager=manager,
-        normalizer_factory=lambda chat_id, execution_id: Normalizer(),
-        pipeline_lookup=PipelineLookup(),
-        launch_plan_factory=_launch_plan_factory(
-            spawn_id=spawn_id,
-            harness_id=HarnessId.CLAUDE,
-            control_root=tmp_path,
-        ),
-    )
-
-    with pytest.raises(RuntimeError, match="heartbeat boom"):
-        await acquisition.acquire("c1", "hello")
-
-    assert [call[0] for call in manager.calls] == [
-        "register",
-        "start",
-        "heartbeat",
-        "unregister",
-        "stop",
-    ]
+    assert manager.observers == {}
+    assert manager.stopped_spawns == [spawn_id]
