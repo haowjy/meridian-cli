@@ -17,6 +17,7 @@ smoke/
 tmp/
 .tmp-*/
 plan/
+temp/
 
 .orchestrate/
 .scratch/
