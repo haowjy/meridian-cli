@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "hooks": [
+          {
+            "command": "bash '/home/jimyao/.cache/mars/cache/archives/https___github.com_haowjy_meridian-base@3a301bb54ba7271f9b5a_ba747612/hooks/deny-generic-agent/run.sh'",
+            "type": "command"
+          }
+        ],
+        "matcher": ""
+      }
+    ]
+  }
+}
