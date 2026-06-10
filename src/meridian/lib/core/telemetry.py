@@ -9,6 +9,8 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
+from meridian.lib.core.spawn_lifecycle import TERMINAL_SPAWN_STATUSES
+
 if TYPE_CHECKING:
     from meridian.lib.core.types import SpawnId
 
@@ -192,9 +194,7 @@ CORE_EVENTS = frozenset(
         "spawn.running",
         "spawn.process_exited",
         "spawn.finalizing",
-        "spawn.succeeded",
-        "spawn.failed",
-        "spawn.cancelled",
+        *(f"spawn.{status}" for status in TERMINAL_SPAWN_STATUSES),
         "spawn.archived",
     }
 )

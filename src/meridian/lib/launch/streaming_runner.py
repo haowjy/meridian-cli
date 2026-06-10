@@ -21,10 +21,8 @@ from meridian.lib.bootstrap.services import (
 )
 from meridian.lib.config.settings import MeridianConfig
 from meridian.lib.core.clock import Clock, RealClock
-from meridian.lib.core.domain import Spawn
-from meridian.lib.core.spawn_lifecycle import (
-    ExecutionTerminalFacts,
-)
+from meridian.lib.core.domain import Spawn, SpawnStatus
+from meridian.lib.core.spawn_lifecycle import ExecutionTerminalFacts
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.adapter import StreamEvent
 from meridian.lib.harness.bundle import get_harness_bundle
@@ -59,6 +57,8 @@ from meridian.lib.launch.resolve import (
     resolve_pi_child_wave_timeout_seconds,
     resolve_pi_notification_timeout_seconds,
     resolve_pi_task_ping_interval_seconds,
+    resolve_resident_deadline_seconds,
+    resolve_resident_poll_seconds,
 )
 from meridian.lib.launch.runner_helpers import (
     append_budget_exceeded_event as _append_budget_exceeded_event,
@@ -89,7 +89,6 @@ from meridian.lib.state import spawn_store
 from meridian.lib.state.artifact_store import ArtifactStore, make_artifact_key
 from meridian.lib.state.atomic import atomic_write_bytes
 from meridian.lib.state.paths import resolve_spawn_log_dir
-from meridian.lib.state.process_scope_projection import record_scope
 from meridian.lib.state.spawn.model import (
     BACKGROUND_LAUNCH_MODE,
     FOREGROUND_LAUNCH_MODE,
@@ -119,6 +118,7 @@ class _AttemptRuntime:
     terminated_by_report_watchdog: bool
     cancelled_by_request: bool = False
     terminal_observed: bool = False
+    authoritative_terminal_status: SpawnStatus | None = None
     start_error: str | None = None
 
 
@@ -130,6 +130,7 @@ class StreamingRunConclusion:
     failure_reason: str | None = None
     extracted: FinalizeExtraction | None = None
     final_attempt_terminal_observed: bool = False
+    authoritative_terminal_status: SpawnStatus | None = None
     cancellation_observed: bool = False
     retries_attempted: int = 0
 
@@ -138,6 +139,7 @@ class StreamingRunConclusion:
 
         self.exit_code = attempt.drain_exit_code
         self.final_attempt_terminal_observed = attempt.terminal_observed
+        self.authoritative_terminal_status = attempt.authoritative_terminal_status
         self.cancellation_observed = self.cancellation_observed or attempt.cancelled_by_request
 
     def terminal_facts(
@@ -159,6 +161,7 @@ class StreamingRunConclusion:
             durable_report_completion=(
                 self.extracted is not None and self.extracted.durable_report_completion
             ),
+            terminal_status=self.authoritative_terminal_status,
         )
 
 
@@ -514,7 +517,9 @@ async def run_streaming_spawn(
 
         terminal_event_future = loop.create_future()
         terminal_event_capture = (
-            terminal_event_future if config.harness_id != HarnessId.PI else None
+            terminal_event_future
+            if manager.raw_terminal_frames_are_authoritative(spawn_id)
+            else None
         )
         codex_thread_tracker = (
             CodexDrainThreadTracker()
@@ -617,14 +622,8 @@ async def _run_streaming_attempt(
     terminal_event_future: asyncio.Future[TerminalEventOutcome] = (
         asyncio.get_running_loop().create_future()
     )
-    terminal_event_capture = (
-        terminal_event_future if config.harness_id != HarnessId.PI else None
-    )
-    codex_thread_tracker = (
-        CodexDrainThreadTracker()
-        if config.harness_id == HarnessId.CODEX and terminal_event_capture is not None
-        else None
-    )
+    terminal_event_capture: asyncio.Future[TerminalEventOutcome] | None = None
+    codex_thread_tracker: CodexDrainThreadTracker | None = None
     subscriber: asyncio.Queue[HarnessEvent | None] | None = None
     connection: HarnessConnection[Any] | None = None
     drain_exit_code = DEFAULT_INFRA_EXIT_CODE
@@ -633,19 +632,25 @@ async def _run_streaming_attempt(
     terminated_by_report_watchdog = False
     cancelled_by_request = False
     terminal_outcome: TerminalEventOutcome | None = None
+    authoritative_terminal_status: SpawnStatus | None = None
     try:
         connection = await manager.start_spawn(config, run_spec)
+        terminal_event_capture = (
+            terminal_event_future
+            if manager.raw_terminal_frames_are_authoritative(run.spawn_id)
+            else None
+        )
+        codex_thread_tracker = (
+            CodexDrainThreadTracker()
+            if config.harness_id == HarnessId.CODEX and terminal_event_capture is not None
+            else None
+        )
         await manager.start_heartbeat(run.spawn_id)
-        scope_snap = getattr(connection, "scope_snapshot", None)
         lifecycle_service.mark_running(
             run.spawn_id,
             launch_mode=launch_mode,
             worker_pid=connection.subprocess_pid,
-            scope_snapshot=scope_snap,
         )
-        if scope_snap is not None:
-            record_scope(runtime_root, SpawnId(run.spawn_id), scope_snap)
-
         subscriber = manager.subscribe(run.spawn_id)
         if subscriber is None:
             raise RuntimeError("failed to subscribe to spawn stream")
@@ -727,6 +732,8 @@ async def _run_streaming_attempt(
         if drain_outcome is not None and terminal_outcome is None:
             drain_exit_code = drain_outcome.exit_code
             drain_error = drain_outcome.error
+            if drain_outcome.authoritative and drain_outcome.status != "succeeded":
+                authoritative_terminal_status = drain_outcome.status
             if timed_out and drain_outcome.status == "succeeded":
                 timed_out = False
             if drain_outcome.error == "report_watchdog":
@@ -754,13 +761,14 @@ async def _run_streaming_attempt(
         return _AttemptRuntime(
             connection=connection,
             drain_exit_code=DEFAULT_INFRA_EXIT_CODE,
-            drain_error=None,
+            drain_error=str(exc),
             timed_out=False,
             received_signal=received_signal[0],
             budget_breach=budget_breach_holder[0],
             terminated_by_report_watchdog=terminated_by_report_watchdog,
             cancelled_by_request=cancelled_by_request,
             terminal_observed=False,
+            authoritative_terminal_status=None,
             start_error=str(exc),
         )
     finally:
@@ -785,7 +793,12 @@ async def _run_streaming_attempt(
         budget_breach=budget_breach_holder[0],
         terminated_by_report_watchdog=terminated_by_report_watchdog,
         cancelled_by_request=cancelled_by_request,
-        terminal_observed=terminal_outcome is not None or pi_drain_terminal,
+        terminal_observed=(
+            terminal_outcome is not None
+            or pi_drain_terminal
+            or authoritative_terminal_status is not None
+        ),
+        authoritative_terminal_status=authoritative_terminal_status,
     )
 
 
@@ -851,6 +864,12 @@ async def execute_with_streaming(
             explicit_timeout_seconds=None,
             config_snapshot=launch_context.runtime.config_snapshot,
         )
+        resident_deadline_seconds = resolve_resident_deadline_seconds(
+            config_snapshot=launch_context.runtime.config_snapshot,
+        )
+        resident_poll_seconds = resolve_resident_poll_seconds(
+            config_snapshot=launch_context.runtime.config_snapshot,
+        )
         pi_task_ping_interval_seconds = resolve_pi_task_ping_interval_seconds(
             explicit_interval_seconds=request.pi_task_ping_interval_seconds,
             config_snapshot=launch_context.runtime.config_snapshot,
@@ -901,6 +920,22 @@ async def execute_with_streaming(
                 echo_stderr=stream_stdout_to_terminal,
             )
 
+        observed_harness_session_id: str | None = None
+
+        def _record_harness_session_id(session_id: str) -> None:
+            nonlocal observed_harness_session_id
+            normalized = session_id.strip()
+            if not normalized or normalized == observed_harness_session_id:
+                return
+            spawn_store.update_spawn(
+                runtime_root,
+                run.spawn_id,
+                harness_session_id=normalized,
+            )
+            observed_harness_session_id = normalized
+            if harness_session_id_observer is not None:
+                harness_session_id_observer(normalized)
+
         config = ConnectionConfig(
             spawn_id=run.spawn_id,
             harness_id=resolved_harness_id,
@@ -912,10 +947,13 @@ async def execute_with_streaming(
             timeout_seconds=timeout_seconds,
             pi_notification_timeout_seconds=pi_notification_timeout_seconds,
             pi_child_wave_timeout_seconds=pi_child_wave_timeout_seconds,
+            resident_deadline_seconds=resident_deadline_seconds,
+            resident_poll_seconds=resident_poll_seconds,
             pi_task_ping_interval_seconds=pi_task_ping_interval_seconds,
             pi_task_ping_reset_on_activity=request.pi_task_ping_reset_on_activity,
             pi_session_role=pi_session_role,
             debug_tracer=tracer,
+            session_id_observer=_record_harness_session_id,
         )
 
         # I-10: spawn row MUST exist before execute_with_streaming is called.
@@ -939,29 +977,14 @@ async def execute_with_streaming(
         )
 
         materialized_session_id = (spec.continue_session_id or "").strip()
-        observed_harness_session_id: str | None = None
         if not materialized_session_id:
             seeded_session_id = harness.derive_streaming_seeded_session_id(spec=spec)
             if seeded_session_id:
-                spawn_store.update_spawn(
-                    runtime_root,
-                    run.spawn_id,
-                    harness_session_id=seeded_session_id,
-                )
-                observed_harness_session_id = seeded_session_id
-                if harness_session_id_observer is not None:
-                    harness_session_id_observer(seeded_session_id)
+                _record_harness_session_id(seeded_session_id)
         if materialized_session_id and materialized_session_id != (
             request.session.requested_harness_session_id or ""
         ):
-            spawn_store.update_spawn(
-                runtime_root,
-                run.spawn_id,
-                harness_session_id=materialized_session_id,
-            )
-            observed_harness_session_id = materialized_session_id
-            if harness_session_id_observer is not None:
-                harness_session_id_observer(materialized_session_id)
+            _record_harness_session_id(materialized_session_id)
 
         budget_tracker = (
             LiveBudgetTracker(budget=budget, space_spent_usd=space_spent_usd)
@@ -1097,7 +1120,9 @@ async def execute_with_streaming(
                     )
                     break
 
-                # I-4: observe_session_id() is the sole observation callsite.
+                # I-4: adapter observe_session_id() remains the sole post-attempt
+                # discovery callsite. Streaming connections may report a known
+                # session id earlier through ConnectionConfig.session_id_observer.
                 extracted_harness_session_id = (
                     harness.observe_session_id(
                         artifacts=artifacts,
@@ -1114,19 +1139,9 @@ async def execute_with_streaming(
                     )
                     or ""
                 )
-                if (
-                    extracted_harness_session_id
-                    and extracted_harness_session_id != observed_harness_session_id
-                ):
+                if extracted_harness_session_id:
                     try:
-                        spawn_store.update_spawn(
-                            runtime_root,
-                            run.spawn_id,
-                            harness_session_id=extracted_harness_session_id,
-                        )
-                        observed_harness_session_id = extracted_harness_session_id
-                        if harness_session_id_observer is not None:
-                            harness_session_id_observer(extracted_harness_session_id)
+                        _record_harness_session_id(extracted_harness_session_id)
                     except Exception:
                         logger.warning(
                             "Harness session ID observer failed.",
@@ -1284,6 +1299,9 @@ async def execute_with_streaming(
                     runtime_root=runtime_root,
                     current_spawn_id=run.spawn_id,
                 ):
+                    break
+
+                if attempt.authoritative_terminal_status is not None:
                     break
 
                 if not should_retry(

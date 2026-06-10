@@ -8,7 +8,9 @@ import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Literal, cast
+
+import structlog
 
 from meridian.lib.catalog.model_aliases import MarsResultCache
 from meridian.lib.config.project_paths import ProjectConfigPaths
@@ -17,6 +19,8 @@ from meridian.lib.core.lifecycle import SpawnLifecycleService
 from meridian.lib.core.spawn_lifecycle import (
     ExecutionTerminalFacts,
     ExecutionTerminalOutcome,
+    coerce_spawn_status,
+    is_terminal_spawn_status,
     resolve_completion_cancel_precedence,
     resolve_execution_terminal_outcome,
 )
@@ -44,6 +48,8 @@ from meridian.lib.launch.resolve import (
     resolve_pi_child_wave_timeout_seconds,
     resolve_pi_notification_timeout_seconds,
     resolve_pi_task_ping_interval_seconds,
+    resolve_resident_deadline_seconds,
+    resolve_resident_poll_seconds,
 )
 from meridian.lib.launch.types import PrimarySessionMetadata
 from meridian.lib.state import spawn_store
@@ -66,6 +72,8 @@ if TYPE_CHECKING:
 _WAIT_POLL_INTERVAL_SECS = 0.1
 _MANAGED_CANCEL_GRACE_SECS = 5.0
 _MANAGED_CANCEL_FALLBACK_WAIT_SECS = 1.0
+_MAX_REAP_PASSES = 4
+logger = structlog.get_logger()
 
 
 def _resolve_explicit_timeout_seconds(resolved_request: object) -> float | None:
@@ -264,9 +272,7 @@ class SpawnApplicationService:
 
     def is_terminal(self, status: str) -> bool:
         """Check if status is terminal."""
-        from meridian.lib.core.spawn_lifecycle import TERMINAL_SPAWN_STATUSES
-
-        return status in TERMINAL_SPAWN_STATUSES
+        return is_terminal_spawn_status(status)
 
     def require_not_terminal(self, record: SpawnRecord) -> None:
         """Raise if spawn is already terminal."""
@@ -395,6 +401,7 @@ class SpawnApplicationService:
             await asyncio.to_thread(
                 self._lifecycle.start,
                 chat_id=payload.chat_id or "",
+                owner_chat_id=payload.chat_id or "",
                 parent_id=payload.parent_id,
                 session_metadata=prepare_session_metadata,
                 kind=payload.kind,
@@ -447,6 +454,12 @@ class SpawnApplicationService:
             ),
             pi_child_wave_timeout_seconds=resolve_pi_child_wave_timeout_seconds(
                 explicit_timeout_seconds=None,
+                config_snapshot=launch_config_snapshot,
+            ),
+            resident_deadline_seconds=resolve_resident_deadline_seconds(
+                config_snapshot=launch_config_snapshot,
+            ),
+            resident_poll_seconds=resolve_resident_poll_seconds(
                 config_snapshot=launch_config_snapshot,
             ),
             pi_task_ping_interval_seconds=resolve_pi_task_ping_interval_seconds(
@@ -505,7 +518,12 @@ class SpawnApplicationService:
 
     # ---- Spawn Operations ----
 
-    async def cancel(self, spawn_id: SpawnId) -> CancelOutcome:
+    async def cancel(
+        self,
+        spawn_id: SpawnId,
+        *,
+        requested_by: Literal["user", "system"] = "user",
+    ) -> CancelOutcome:
         """Cancel a spawn through the shared surface-neutral pipeline."""
         lock = await self._locks.acquire(str(spawn_id))
         async with lock:
@@ -520,7 +538,7 @@ class SpawnApplicationService:
                     str(spawn_id),
                     exit_code=130,
                     error="cancelled",
-                    requested_by="user",
+                    requested_by=requested_by,
                 )
                 or self.get_spawn(spawn_id)
                 or record
@@ -568,6 +586,47 @@ class SpawnApplicationService:
                 return _cancel_outcome_from_record(str(spawn_id), latest)
             return _cancel_outcome_from_signal(str(spawn_id), signal_outcome, latest)
 
+    async def cancel_descendants(self, root_id: SpawnId | str) -> set[str]:
+        """Cancel the active descendant subtree of a spawn, to a fixed point.
+
+        Each descendant goes through the full cancel pipeline (intent + delivery
+        + forced convergence), so a child whose runner dies without
+        self-finalizing is still driven to a terminal status rather than left
+        as an orphan row. Rescans after each pass to catch descendants spawned
+        during the reap; bounded by ``_MAX_REAP_PASSES`` so a wedged descendant
+        cannot loop forever.
+        """
+        from meridian.lib.state.spawn_tree import active_descendants
+
+        reaped_ids: set[str] = set()
+        for _ in range(_MAX_REAP_PASSES):
+            descendants = active_descendants(self._runtime_root, root_id)
+            if not descendants:
+                return reaped_ids
+            results = await asyncio.gather(
+                *(self.cancel(SpawnId(d.id), requested_by="system") for d in descendants),
+                return_exceptions=True,
+            )
+            for descendant, result in zip(descendants, results, strict=True):
+                if isinstance(result, BaseException):
+                    logger.warning(
+                        "Descendant reap cancel raised.",
+                        root_id=str(root_id),
+                        descendant_id=descendant.id,
+                        error=repr(result),
+                    )
+                    continue
+                if self.is_terminal(result.status):
+                    reaped_ids.add(descendant.id)
+        remaining = active_descendants(self._runtime_root, root_id)
+        if remaining:
+            logger.warning(
+                "Descendant reap did not converge; descendants still active.",
+                root_id=str(root_id),
+                remaining=[d.id for d in remaining],
+            )
+        return reaped_ids
+
     async def _force_cancel_convergence(
         self,
         spawn_id: SpawnId,
@@ -614,7 +673,6 @@ class SpawnApplicationService:
                 return
             terminate_managed_primary_processes(
                 metadata,
-                started_epoch=iso_timestamp_to_epoch(record.started_at),
                 include_launcher=False,
             )
             return
@@ -678,14 +736,12 @@ class SpawnApplicationService:
         if launcher_alive:
             terminate_managed_primary_processes(
                 primary_metadata,
-                started_epoch=started_epoch,
                 include_launcher=True,
                 include_runtime_children=False,
             )
         else:
             terminate_managed_primary_processes(
                 primary_metadata,
-                started_epoch=started_epoch,
                 include_launcher=False,
             )
 
@@ -696,7 +752,6 @@ class SpawnApplicationService:
         if latest is None and launcher_alive:
             terminate_managed_primary_processes(
                 primary_metadata,
-                started_epoch=started_epoch,
                 include_launcher=False,
             )
             latest = await self._wait_for_terminal(
@@ -835,7 +890,7 @@ class SpawnApplicationService:
                 spawn_id=spawn_id,
             )
         was_terminal = self.is_terminal(record.status)
-        if not was_terminal and status in {"succeeded", "failed", "cancelled"}:
+        if not was_terminal and self.is_terminal(status):
             terminal_status = cast("TerminalStatus", status)
             await asyncio.to_thread(
                 self._lifecycle.record_runner_exit,
@@ -1011,9 +1066,7 @@ def _cancel_outcome_from_record(
 
 
 def _coerce_cancel_status(status: str) -> SpawnStatus:
-    if status in {"queued", "running", "finalizing", "succeeded", "failed", "cancelled"}:
-        return cast("SpawnStatus", status)
-    return "failed"
+    return coerce_spawn_status(status)
 
 
 def _is_managed_primary_candidate(record: SpawnRecord) -> bool:

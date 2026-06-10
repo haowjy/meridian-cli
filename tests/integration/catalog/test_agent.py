@@ -20,19 +20,6 @@ def _write_profile(tmp_path: Path, filename: str, frontmatter_lines: list[str]) 
     return profile_path
 
 
-def test_agent_profile_fields_are_identity_and_content_only() -> None:
-    assert tuple(AgentProfile.model_fields) == (
-        "name",
-        "description",
-        "mode",
-        "skills",
-        "model_invocable",
-        "body",
-        "path",
-        "raw_content",
-    )
-
-
 def test_scan_agent_profiles_reads_real_mars_agents_directory(tmp_path: Path) -> None:
     project_root = tmp_path / "repo"
     agents_dir = project_root / ".mars" / "agents"

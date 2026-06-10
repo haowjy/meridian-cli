@@ -8,7 +8,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict
 
 from meridian.lib.ops.runtime import resolve_runtime_root_for_read
-from meridian.lib.state import session_store, spawn_store
+from meridian.lib.state import session_identity, session_store
 from meridian.lib.state.spawn.model import SpawnRecord
 
 from .query import (
@@ -64,10 +64,11 @@ def _select_primary_spawn_for_session(project_root: Path, chat_id: str) -> Spawn
     from meridian.lib.state.reaper import reconcile_spawns
 
     runtime_root = resolve_runtime_root_for_read(project_root)
+    owner_chat_id = session_identity.get_owner_chat_for_session(runtime_root, chat_id) or chat_id
     spawns = reconcile_spawns(
         project_root,
         runtime_root,
-        spawn_store.list_spawns(runtime_root, filters={"chat_id": chat_id}),
+        session_identity.list_spawns_for_owner_chat(runtime_root, owner_chat_id),
     )
     primary_spawns = [row for row in spawns if row.kind == "primary"]
     if not primary_spawns:

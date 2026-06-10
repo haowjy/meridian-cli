@@ -72,6 +72,9 @@ class PiQuiescenceTracker:
     def has_pending_child_spawns(self) -> bool:
         return bool(self._disk_watcher and self._disk_watcher.has_pending_child_spawns())
 
+    def has_tracked_bash_bg(self) -> bool:
+        return bool(self._disk_watcher and self._disk_watcher.has_tracked_bash_bg())
+
     def pending_child_spawn_count(self) -> int:
         if self._disk_watcher is None:
             return 0

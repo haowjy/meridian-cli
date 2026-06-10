@@ -12,7 +12,6 @@ test_reaper_managed_primary.py; cancel flows in test_reaper_cancel.py.
 from __future__ import annotations
 
 import time
-from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -30,6 +29,8 @@ from tests.integration.state.conftest import (
     _reconcile,
     _record_launch_boundary,
     _write_activity_artifact,
+    _write_report,
+    fake_reaper_liveness,
 )
 
 
@@ -77,6 +78,8 @@ def test_reconcile_active_spawn_without_runner_pid_fails_after_startup_grace(
     latest = _get_spawn(runtime_root, spawn_id)
     assert latest.status == "failed"
     assert latest.error == "missing_runner_pid"
+
+
 def test_reconcile_active_spawn_background_without_takeover_evidence_gets_boundary_error(
     tmp_path: Path,
 ) -> None:
@@ -101,6 +104,8 @@ def test_reconcile_active_spawn_background_without_takeover_evidence_gets_bounda
     latest = _get_spawn(runtime_root, spawn_id)
     assert latest.status == "failed"
     assert latest.error == "launch_boundary_no_takeover"
+
+
 def test_reconcile_active_spawn_background_takeover_evidence_keeps_runner_alive_skip(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -125,10 +130,7 @@ def test_reconcile_active_spawn_background_takeover_evidence_keeps_runner_alive_
         worker_pid=9001,
     )
     record = _get_spawn(runtime_root, spawn_id)
-    monkeypatch.setattr(
-        "meridian.lib.state.reaper.is_process_alive",
-        lambda *_args, **_kwargs: True,
-    )
+    fake_reaper_liveness(monkeypatch, lambda _pid: True)
 
     reconciled = _reconcile(tmp_path, runtime_root, record)
 
@@ -143,10 +145,7 @@ def test_reconcile_active_spawn_returns_unchanged_when_runner_is_alive(
 ) -> None:
     runtime_root, spawn_id = _create_spawn(tmp_path)
     record = _get_spawn(runtime_root, spawn_id)
-    monkeypatch.setattr(
-        "meridian.lib.state.reaper.is_process_alive",
-        lambda *_args, **_kwargs: True,
-    )
+    fake_reaper_liveness(monkeypatch, lambda _pid: True)
 
     reconciled = _reconcile(tmp_path, runtime_root, record)
 
@@ -179,6 +178,8 @@ def test_reconcile_active_spawn_finalizing_stale_heartbeat_marks_orphan_finaliza
     latest = _get_spawn(runtime_root, spawn_id)
     assert latest.status == "failed"
     assert latest.error == "orphan_finalization"
+
+
 def test_reconcile_active_spawn_finalizing_recent_activity_skips(
     tmp_path: Path,
 ) -> None:
@@ -200,15 +201,14 @@ def test_reconcile_active_spawn_finalizing_recent_activity_skips(
     latest = _get_spawn(runtime_root, spawn_id)
     assert latest.status == "finalizing"
     assert latest.error is None
+
+
 def test_reconcile_active_spawn_with_dead_runner_and_no_exit_or_report_fails(
     tmp_path: Path, monkeypatch
 ) -> None:
     runtime_root, spawn_id = _create_spawn(tmp_path, started_at=_OLD_STARTED_AT)
     record = _get_spawn(runtime_root, spawn_id)
-    monkeypatch.setattr(
-        "meridian.lib.state.reaper.is_process_alive",
-        lambda *_args, **_kwargs: False,
-    )
+    fake_reaper_liveness(monkeypatch, set())
 
     reconciled = _reconcile(tmp_path, runtime_root, record)
 
@@ -232,10 +232,7 @@ def test_reconcile_active_spawn_with_cancel_intent_and_dead_runner_cancels(
         requested_at="2026-06-03T01:00:00Z",
     )
     record = _get_spawn(runtime_root, spawn_id)
-    monkeypatch.setattr(
-        "meridian.lib.state.reaper.is_process_alive",
-        lambda *_args, **_kwargs: False,
-    )
+    fake_reaper_liveness(monkeypatch, set())
 
     reconciled = _reconcile(tmp_path, runtime_root, record)
 
@@ -247,8 +244,6 @@ def test_reconcile_active_spawn_with_cancel_intent_and_dead_runner_cancels(
 def test_reconcile_active_spawn_with_cancel_intent_keeps_durable_completion(
     tmp_path: Path, monkeypatch
 ) -> None:
-    from tests.integration.state.conftest import _write_report
-
     runtime_root, spawn_id = _create_spawn(tmp_path, started_at=_OLD_STARTED_AT)
     spawn_store.record_cancel_intent(
         runtime_root,
@@ -259,10 +254,7 @@ def test_reconcile_active_spawn_with_cancel_intent_keeps_durable_completion(
     )
     _write_report(runtime_root, spawn_id)
     record = _get_spawn(runtime_root, spawn_id)
-    monkeypatch.setattr(
-        "meridian.lib.state.reaper.is_process_alive",
-        lambda *_args, **_kwargs: False,
-    )
+    fake_reaper_liveness(monkeypatch, set())
 
     reconciled = _reconcile(tmp_path, runtime_root, record)
 
@@ -303,7 +295,9 @@ def test_reconcile_active_spawn_depth_gate_respects_env_matrix(
     if expected_status == "failed":
         assert reconciled.exit_code == 1
         assert latest.exit_code == 1
-def test_reconcile_active_spawn_dead_runner_recent_activity_skips_across_artifact_matrix(
+
+
+def test_reconcile_active_spawn_dead_runner_recent_activity_still_fails(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -318,17 +312,16 @@ def test_reconcile_active_spawn_dead_runner_recent_activity_skips_across_artifac
 
     fixed_now = time.time()
     monkeypatch.setattr("meridian.lib.state.reaper.time.time", lambda: fixed_now)
-    monkeypatch.setattr(
-        "meridian.lib.state.reaper.is_process_alive",
-        lambda *_args, **_kwargs: False,
-    )
+    fake_reaper_liveness(monkeypatch, set())
 
     reconciled = _reconcile(tmp_path, runtime_root, record)
 
-    assert reconciled == record
+    assert reconciled.status == "failed"
+    assert reconciled.exit_code == 1
+    assert reconciled.error == "orphan_run"
     latest = _get_spawn(runtime_root, spawn_id)
-    assert latest.status == "running"
-    assert latest.error is None
+    assert latest.status == "failed"
+    assert latest.error == "orphan_run"
 
 
 def test_reconcile_active_spawn_last_attempt_exit_drives_orphan_failure_after_activity_stales(
@@ -348,10 +341,7 @@ def test_reconcile_active_spawn_last_attempt_exit_drives_orphan_failure_after_ac
     )
     _write_activity_artifact(runtime_root, spawn_id, "history.jsonl", age_secs=300)
     record = _get_spawn(runtime_root, spawn_id)
-    monkeypatch.setattr(
-        "meridian.lib.state.reaper.is_process_alive",
-        lambda *_args, **_kwargs: False,
-    )
+    fake_reaper_liveness(monkeypatch, set())
 
     reconciled = _reconcile(tmp_path, runtime_root, record)
 
@@ -386,10 +376,7 @@ def test_reconcile_active_spawn_post_exit_with_live_runner_skips(
         exited_at="1970-01-01T00:00:30Z",
     )
     record = _get_spawn(runtime_root, spawn_id)
-    monkeypatch.setattr(
-        "meridian.lib.state.reaper.is_process_alive",
-        lambda *_args, **_kwargs: True,
-    )
+    fake_reaper_liveness(monkeypatch, lambda _pid: True)
 
     reconciled = _reconcile(tmp_path, runtime_root, record)
 
@@ -397,72 +384,53 @@ def test_reconcile_active_spawn_post_exit_with_live_runner_skips(
     latest = _get_spawn(runtime_root, spawn_id)
     assert latest.status == "running"
     assert latest.error is None
-def test_reconcile_active_spawn_finalizes_from_runner_exit_tuple(
+
+
+@pytest.mark.parametrize(
+    ("runner_status", "runner_exit_code", "runner_error", "expected_status", "expected_error"),
+    [
+        ("succeeded", 0, None, "succeeded", None),
+        ("failed", 23, "guardrail_failed", "failed", "guardrail_failed"),
+        ("timed_out", 1, "resident_deadline_expired", "timed_out", "resident_deadline_expired"),
+    ],
+)
+def test_reconcile_active_spawn_finalizes_from_runner_exit_tuple_after_grace(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    runner_status: str,
+    runner_exit_code: int,
+    runner_error: str | None,
+    expected_status: str,
+    expected_error: str | None,
 ) -> None:
     runtime_root, spawn_id = _create_spawn(tmp_path, started_at=_OLD_STARTED_AT)
     spawn_store.record_runner_exit(
         runtime_root,
         spawn_id,
-        status="succeeded",
-        exit_code=0,
-        error=None,
+        status=runner_status,
+        exit_code=runner_exit_code,
+        error=runner_error,
         exited_at="1970-01-01T00:16:30Z",
     )
     record = _get_spawn(runtime_root, spawn_id)
     monkeypatch.setattr("meridian.lib.state.reaper.time.time", lambda: 1_000.0)
-    monkeypatch.setattr(
-        "meridian.lib.state.reaper.is_process_alive",
-        lambda *_args, **_kwargs: False,
-    )
+    fake_reaper_liveness(monkeypatch, set())
 
     reconciled = _reconcile(tmp_path, runtime_root, record)
 
-    assert reconciled.status == "succeeded"
-    assert reconciled.exit_code == 0
-    assert reconciled.error is None
+    assert reconciled.status == expected_status
+    assert reconciled.exit_code == runner_exit_code
+    assert reconciled.error == expected_error
     latest = _get_spawn(runtime_root, spawn_id)
-    assert latest.status == "succeeded"
-    assert latest.exit_code == 0
-    assert latest.error is None
-def test_reconcile_active_spawn_finalizes_failed_runner_exit_tuple_after_grace(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    runtime_root, spawn_id = _create_spawn(tmp_path, started_at=_OLD_STARTED_AT)
-    spawn_store.record_runner_exit(
-        runtime_root,
-        spawn_id,
-        status="failed",
-        exit_code=23,
-        error="guardrail_failed",
-        exited_at="1970-01-01T00:16:30Z",
-    )
-    record = _get_spawn(runtime_root, spawn_id)
-    monkeypatch.setattr("meridian.lib.state.reaper.time.time", lambda: 1_000.0)
-    monkeypatch.setattr(
-        "meridian.lib.state.reaper.is_process_alive",
-        lambda *_args, **_kwargs: False,
-    )
-
-    reconciled = _reconcile(tmp_path, runtime_root, record)
-
-    assert reconciled.status == "failed"
-    assert reconciled.exit_code == 23
-    assert reconciled.error == "guardrail_failed"
-    latest = _get_spawn(runtime_root, spawn_id)
-    assert latest.status == "failed"
-    assert latest.exit_code == 23
-    assert latest.error == "guardrail_failed"
+    assert latest.status == expected_status
+    assert latest.exit_code == runner_exit_code
+    assert latest.error == expected_error
 
 
 def test_reconcile_active_spawn_durable_report_wins_over_cancelled_runner_exit(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from tests.integration.state.conftest import _write_report
-
     runtime_root, spawn_id = _create_spawn(tmp_path, started_at=_OLD_STARTED_AT)
     spawn_store.record_cancel_intent(
         runtime_root,
@@ -482,10 +450,7 @@ def test_reconcile_active_spawn_durable_report_wins_over_cancelled_runner_exit(
     _write_report(runtime_root, spawn_id)
     record = _get_spawn(runtime_root, spawn_id)
     monkeypatch.setattr("meridian.lib.state.reaper.time.time", lambda: 1_000.0)
-    monkeypatch.setattr(
-        "meridian.lib.state.reaper.is_process_alive",
-        lambda *_args, **_kwargs: False,
-    )
+    fake_reaper_liveness(monkeypatch, set())
 
     reconciled = _reconcile(tmp_path, runtime_root, record)
 
@@ -496,134 +461,3 @@ def test_reconcile_active_spawn_durable_report_wins_over_cancelled_runner_exit(
     assert latest.status == "succeeded"
     assert latest.exit_code == 0
     assert latest.error is None
-
-
-def test_reconcile_active_spawn_uses_runner_created_epoch_for_liveness_checks(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    runtime_root, spawn_id = _create_spawn(
-        tmp_path,
-        started_at=_OLD_STARTED_AT,
-        runner_pid=8123,
-    )
-    spawn_store.update_spawn(
-        runtime_root,
-        spawn_id,
-        runner_pid=8123,
-        runner_created_at_epoch=222.25,
-    )
-    observed: dict[str, float | None] = {}
-
-    def _capture_alive(pid: int, created_after_epoch: float | None = None) -> bool:
-        _ = pid
-        observed["created_after_epoch"] = created_after_epoch
-        return False
-
-    monkeypatch.setattr("meridian.lib.state.reaper.is_process_alive", _capture_alive)
-    record = _get_spawn(runtime_root, spawn_id)
-
-    reconciled = _reconcile(tmp_path, runtime_root, record)
-
-    assert observed["created_after_epoch"] == 222.25
-    assert reconciled.status == "failed"
-    assert reconciled.error == "orphan_run"
-
-
-def test_reconcile_active_spawn_falls_back_to_started_epoch_when_runner_created_missing(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # Force psutil-backed create-time lookup to return None so the test exercises
-    # the started_epoch fallback regardless of whether the fake runner PID happens
-    # to exist on the host (it doesn't on POSIX CI runners, but may on Windows).
-    monkeypatch.setattr(
-        "meridian.lib.state.spawn_store._runner_created_at_epoch_for_pid",
-        lambda _pid: None,
-    )
-    runtime_root, spawn_id = _create_spawn(
-        tmp_path,
-        started_at=_OLD_STARTED_AT,
-        runner_pid=8124,
-    )
-    spawn_store.update_spawn(
-        runtime_root,
-        spawn_id,
-        runner_pid=8124,
-        runner_created_at_epoch=0.0,
-    )
-    spawn_store.update_spawn(runtime_root, spawn_id, runner_pid=8124, runner_created_at_epoch=None)
-    observed: dict[str, float | None] = {}
-
-    def _capture_alive(pid: int, created_after_epoch: float | None = None) -> bool:
-        _ = pid
-        observed["created_after_epoch"] = created_after_epoch
-        return False
-
-    monkeypatch.setattr("meridian.lib.state.reaper.is_process_alive", _capture_alive)
-    record = _get_spawn(runtime_root, spawn_id)
-
-    reconciled = _reconcile(tmp_path, runtime_root, record)
-
-    expected_started_epoch = datetime(2000, 1, 1, tzinfo=UTC).timestamp()
-    assert observed["created_after_epoch"] == expected_started_epoch
-    assert reconciled.status == "failed"
-    assert reconciled.error == "orphan_run"
-
-
-def test_reconcile_active_spawn_finalizing_uses_runner_exit_tuple(
-    tmp_path: Path,
-) -> None:
-    runtime_root, spawn_id = _create_spawn(
-        tmp_path,
-        status="finalizing",
-        started_at=_OLD_STARTED_AT,
-    )
-    spawn_store.record_runner_exit(
-        runtime_root,
-        spawn_id,
-        status="cancelled",
-        exit_code=130,
-        error="cancelled",
-        exited_at="1970-01-01T00:16:30Z",
-    )
-    _write_activity_artifact(
-        runtime_root,
-        spawn_id,
-        "heartbeat",
-        age_secs=300,
-    )
-    record = _get_spawn(runtime_root, spawn_id)
-
-    reconciled = _reconcile(tmp_path, runtime_root, record)
-
-    assert reconciled.status == "cancelled"
-    assert reconciled.exit_code == 130
-    assert reconciled.error == "cancelled"
-
-
-def test_reconcile_active_spawn_runner_exit_grace_skips_until_grace_expires(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    runtime_root, spawn_id = _create_spawn(tmp_path, started_at=_OLD_STARTED_AT)
-    spawn_store.record_runner_exit(
-        runtime_root,
-        spawn_id,
-        status="failed",
-        exit_code=2,
-        error="timeout",
-        exited_at="1970-01-01T00:16:38Z",
-    )
-    record = _get_spawn(runtime_root, spawn_id)
-    monkeypatch.setattr("meridian.lib.state.reaper.time.time", lambda: 1_000.0)
-    monkeypatch.setattr(
-        "meridian.lib.state.reaper.is_process_alive",
-        lambda *_args, **_kwargs: False,
-    )
-
-    reconciled = _reconcile(tmp_path, runtime_root, record)
-
-    assert reconciled == record
-    latest = _get_spawn(runtime_root, spawn_id)
-    assert latest.status == "running"

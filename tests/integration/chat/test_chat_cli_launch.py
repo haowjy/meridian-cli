@@ -6,7 +6,6 @@ from __future__ import annotations
 import importlib
 from io import StringIO
 from pathlib import Path
-from typing import cast
 
 import pytest
 
@@ -18,19 +17,6 @@ from meridian.lib.launch.launch_types import CompositionWarning
 from meridian.lib.service_context import ApplicationContext, ApplicationServices, ChatEntryPoint
 
 cli_main = importlib.import_module("meridian.cli.main")
-
-
-class EmptyPipelineLookup:
-    def __init__(self, snapshot=None) -> None:
-        self._snapshot = snapshot or default_chat_policy_snapshot()
-
-    def get_pipeline(self, chat_id: str):
-        _ = chat_id
-        return None
-
-    def get_policy_snapshot(self, chat_id: str):
-        _ = chat_id
-        return self._snapshot
 
 
 @pytest.fixture(autouse=True)
@@ -49,7 +35,7 @@ def _stable_policy_resolution(monkeypatch: pytest.MonkeyPatch) -> None:
         ("claude", HarnessId.CLAUDE),
     ],
 )
-def test_chat_cli_builds_runtime_with_factory_inputs(
+def test_chat_cli_starts_server_with_resolved_default_policy(
     monkeypatch, tmp_path, harness_name: str, expected_harness: HarnessId
 ) -> None:
 
@@ -105,23 +91,11 @@ def test_chat_cli_builds_runtime_with_factory_inputs(
     assert captured["entrypoint"] is entrypoint
     assert captured["default_policy_snapshot"] == snapshot
     assert captured["configured_runtime"] is runtime
-
-    factory = cast("chat_cmd._ChatBackendAcquisitionFactory", captured["acquisition_factory"])
+    assert captured["acquisition_factory"] is not None
+    factory = captured["acquisition_factory"]
     assert factory.policy_snapshot == snapshot
-
-    lookup = EmptyPipelineLookup(snapshot)
-    acquisition = factory.build(
-        pipeline_lookup=lookup,
-        project_root=tmp_path,
-        runtime_root=cast("Path", entrypoint.context.runtime_root),
-    )
-    plan = acquisition._build_launch_plan("c1", "hello")
-    config = plan.connection_config
-    spec = plan.spec
-
-    assert config.harness_id == expected_harness
-    assert config.control_root == tmp_path
-    assert spec.model == "model-x"
+    assert factory.policy_snapshot.harness == expected_harness.value
+    assert factory.policy_snapshot.effective_model_id == "model-x"
 
 
 def test_chat_cli_blocks_nested_launch(monkeypatch, tmp_path: Path) -> None:
@@ -176,5 +150,3 @@ def test_chat_cli_prints_policy_warnings_before_backend_url(monkeypatch, tmp_pat
         "Warning (missing_skills_warning): missing skill warning\n"
         "Chat backend: http://127.0.0.1:8765\n"
     )
-
-

@@ -15,9 +15,8 @@ from asyncio.subprocess import Process
 from collections.abc import AsyncIterator, Awaitable, Callable
 from io import BufferedWriter
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Final, cast
+from typing import TYPE_CHECKING, Any, ClassVar, Final, cast
 
-import psutil
 from aiohttp import ClientSession, WSMsgType
 
 if TYPE_CHECKING:
@@ -53,7 +52,18 @@ from meridian.lib.harness.connections.base import (
     validate_prompt_size,
 )
 from meridian.lib.harness.connections.errors import PortBindError
-from meridian.lib.harness.errors import HarnessBinaryNotFound
+from meridian.lib.harness.connections.liveness import (
+    BackendLivenessPolicy,
+    EventStreamLivenessTimeout,
+)
+from meridian.lib.harness.connections.managed_backend import (
+    ManagedBackendConfig,
+    launch_managed_backend,
+)
+from meridian.lib.harness.connections.resident_backend import (
+    LivenessResidentBackendControl,
+    ResidentBackendControl,
+)
 from meridian.lib.harness.semantics import clears_signal
 from meridian.lib.launch.env import inherit_child_env
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
@@ -62,7 +72,7 @@ from meridian.lib.observability.trace_helpers import (
     trace_state_change,
     trace_wire_send,
 )
-from meridian.lib.platform import IS_WINDOWS
+from meridian.lib.platform.detached_process import ParentDeathLink
 from meridian.lib.platform.process_scope import (
     ProcessScopeSnapshot,
     ScopedProcessHandle,
@@ -164,6 +174,8 @@ async def _aiohttp_connect(ws_url: str) -> _AiohttpWebSocketCompat:
 class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
     """JSON-RPC 2.0 bridge between Meridian and Codex app-server."""
 
+    _LIVENESS_TIMEOUT_SECONDS: ClassVar[float] = 120.0
+
     _ALLOWED_TRANSITIONS: Final[dict[ConnectionState, set[ConnectionState]]] = {
         "created": {"starting", "stopping", "stopped", "failed"},
         "starting": {"connected", "stopping", "stopped", "failed"},
@@ -189,11 +201,18 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
         self._stderr_read_offset = 0
         self._codex_home: Path | None = None
         self._scope_handle: ScopedProcessHandle | None = None
+        self._parent_death_link: ParentDeathLink | None = None
 
         self._next_request_id = 1
         self._pending_requests: dict[int, asyncio.Future[dict[str, object]]] = {}
         self._hitl_requests: dict[str, object] = {}
         self._event_queue: asyncio.Queue[HarnessEvent | None] = asyncio.Queue()
+        self._liveness = BackendLivenessPolicy(
+            timeout_seconds=lambda: self._LIVENESS_TIMEOUT_SECONDS,
+            now=lambda: _time.monotonic(),
+            backend_pid=lambda: self._process.pid if self._process is not None else None,
+            backend_birth_time=self._backend_birth_time,
+        )
 
         self._current_turn_id: str | None = None
         self._thread_id: str | None = None
@@ -281,6 +300,12 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
             return None
         return handle.snapshot
 
+    def _backend_birth_time(self) -> float | None:
+        snapshot = self.scope_snapshot
+        if snapshot is None:
+            return None
+        return snapshot.root_created_at_epoch
+
     async def start(
         self,
         config: ConnectionConfig,
@@ -309,6 +334,7 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
         self._current_turn_id = None
         self._thread_id = None
         self._main_turn_thread_id = None
+        self._liveness.reset()
         self._cancel_requested = False
         self._signal_in_flight = False
 
@@ -332,60 +358,21 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
                 host=host,
                 port=port,
             )
-            try:
-                self._emit_startup_phase(StartupPhase.LAUNCHING_SUBPROCESS)
-                self._process = await asyncio.create_subprocess_exec(
-                    *appserver_command,
-                    cwd=str(effective_cwd),
-                    env=env,
-                    stdout=asyncio.subprocess.DEVNULL,
-                    stderr=self._stderr_handle,
-                    start_new_session=not IS_WINDOWS,
-                )
-            except (FileNotFoundError, NotADirectoryError) as exc:
-                raise HarnessBinaryNotFound.from_os_error(
+            self._emit_startup_phase(StartupPhase.LAUNCHING_SUBPROCESS)
+            handle = await launch_managed_backend(
+                ManagedBackendConfig(
+                    spawn_id=config.spawn_id,
                     harness_id=self.harness_id,
-                    error=exc,
-                    binary_name=appserver_command[0],
-                ) from exc
-
-            # Build scope handle immediately after successful subprocess creation so
-            # that _cleanup_resources can perform group/tree termination rather than
-            # killing only the root process.
-            _proc = self._process
-            _pid = _proc.pid
-            _containment: str
-            _pgid: int | None = None
-            if not IS_WINDOWS:
-                try:
-                    _pgid = os.getpgid(_pid)
-                    _containment = "posix_pgid"
-                except OSError:
-                    _containment = "pid_tree_fallback"
-            else:
-                # Windows Job Object wiring comes in a later subphase; for now
-                # the snapshot carries the intent and terminate() degrades to
-                # psutil tree termination automatically.
-                _containment = "windows_job"
-            try:
-                _birth_time = psutil.Process(_pid).create_time()
-            except (psutil.NoSuchProcess, psutil.AccessDenied):
-                _birth_time = _time.time()
-            self._scope_handle = ScopedProcessHandle(
-                process=_proc,
-                snapshot=ProcessScopeSnapshot(
-                    scope_id="backend",
-                    owner_policy="spawn_owned",
-                    owner_id=str(config.spawn_id),
-                    role="harness_backend",
-                    containment=_containment,
-                    root_pid=_pid,
-                    root_created_at_epoch=_birth_time,
-                    pgid=_pgid,
-                    job_name=None,
-                    degraded_reason=None,
+                    command=tuple(appserver_command),
+                    cwd=effective_cwd,
+                    env=env,
+                    control_root=config.control_root,
                 ),
+                stderr=self._stderr_handle,
             )
+            self._process = handle.process
+            self._scope_handle = handle.scope_handle
+            self._parent_death_link = handle.parent_death_link
 
             self._emit_startup_phase(StartupPhase.WAITING_FOR_CONNECTION)
             self._ws = await self._connect_with_retry(
@@ -436,6 +423,7 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
                 await self._send_bootstrap_turn_and_wait()
 
             self._transition("connected")
+            self._liveness.mark_activity()
             self._emit_startup_phase(StartupPhase.HARNESS_READY)
         except Exception:
             self._emit_startup_phase(StartupPhase.HARNESS_FAILED)
@@ -496,10 +484,16 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
         await self._cleanup_resources(mark_stopped=self._state != "failed")
         return StopResult()
 
+    @property
+    def resident_backend(self) -> ResidentBackendControl:
+        return LivenessResidentBackendControl(
+            liveness=self._liveness,
+            backend_dead=self._resident_backend_dead,
+            begin_followup_turn=self._begin_followup_turn,
+        )
+
     def health(self) -> bool:
-        process_running = self._process is not None and self._process.returncode is None
-        ws_open = self._ws is not None and _ws_is_open(self._ws)
-        return self._state == "connected" and process_running and ws_open
+        return not self._resident_backend_dead() and self._liveness.healthy
 
     async def send_user_message(self, text: str) -> None:
         self._require_connected("send_user_message")
@@ -524,6 +518,19 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
             },
         )
 
+    async def _begin_followup_turn(self, message: str) -> None:
+        self._require_connected("begin_followup_turn")
+        if self._current_turn_id is not None:
+            raise ConnectionNotReady("Codex follow-up turns require an idle backend")
+        self._signal_in_flight = False
+        await self._request(
+            "turn/start",
+            {
+                "threadId": self._require_thread_id("begin_followup_turn"),
+                "input": _build_text_user_input(message),
+            },
+        )
+
     async def send_cancel(self) -> None:
         if self._cancel_requested:
             return
@@ -534,6 +541,7 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
 
         self._cancel_requested = True
         self._signal_in_flight = True
+        self._liveness.signal_request_in_flight("cancel")
         self._transition("stopping")
         await self._close_ws()
 
@@ -631,6 +639,7 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
         loop = asyncio.get_running_loop()
         response_future: asyncio.Future[dict[str, object]] = loop.create_future()
         self._pending_requests[request_id] = response_future
+        request_key = f"rpc:{request_id}"
 
         trace_wire_send(
             self._tracer,
@@ -639,6 +648,7 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
             method=method,
             request_id=request_id,
         )
+        self._liveness.signal_request_in_flight(request_key)
         try:
             await self._send_json(payload)
             response = await asyncio.wait_for(
@@ -646,6 +656,7 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
                 timeout=timeout_seconds or _DEFAULT_REQUEST_TIMEOUT_SECONDS,
             )
         finally:
+            self._liveness.signal_request_resolved(request_key)
             self._pending_requests.pop(request_id, None)
 
         error_obj = response.get("error")
@@ -680,7 +691,31 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
             return
 
         try:
-            async for raw_message in ws:
+            ws_iter = ws.__aiter__()
+            while True:
+                try:
+                    raw_message = await self._liveness.wait_for_activity(ws_iter.__anext__())
+                except StopAsyncIteration:
+                    return
+                except EventStreamLivenessTimeout:
+                    message = (
+                        "Codex event stream liveness timeout after "
+                        f"{self._LIVENESS_TIMEOUT_SECONDS:.1f}s without events"
+                    )
+                    logger.warning(message)
+                    if self._state in {"starting", "connected"}:
+                        self._emit_startup_phase(StartupPhase.HARNESS_FAILED)
+                        self._transition("failed")
+                        await self._event_queue.put(
+                            HarnessEvent(
+                                event_type="error/connectionClosed",
+                                payload={"message": message},
+                                harness_id=self.harness_id.value,
+                                raw_text=None,
+                            )
+                        )
+                    return
+                self._liveness.mark_activity()
                 raw_text = _coerce_text(raw_message)
                 if self._tracer is not None:
                     self._tracer.emit(
@@ -757,7 +792,7 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
 
         if self._reader_task is not None:
             self._reader_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
+            with contextlib.suppress(asyncio.CancelledError, Exception):
                 await self._reader_task
             self._reader_task = None
 
@@ -781,13 +816,15 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
                 process.kill()
                 await process.wait()
 
+        self._parent_death_link = None
         self._fail_pending_requests(RuntimeError("Codex connection stopped"))
         await self._clear_stale_hitl_requests(reason="connection_stopped")
-        self._current_turn_id = None
+        self._clear_turn_liveness_signals()
         self._thread_id = None
         self._main_turn_thread_id = None
         self._cancel_requested = False
         self._signal_in_flight = False
+        self._liveness.signal_request_resolved("cancel")
         self._launch_spec = None
         self._codex_home = None
         self._startup_emitter = None
@@ -1077,6 +1114,11 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
             data = handle.read(max(0, end_offset - read_offset))
         return data.decode("utf-8", errors="replace").strip()
 
+    def _resident_backend_dead(self) -> bool:
+        process_running = self._process is not None and self._process.returncode is None
+        ws_open = self._ws is not None and _ws_is_open(self._ws)
+        return self._state != "connected" or not process_running or not ws_open
+
     def _transition(self, next_state: ConnectionState) -> None:
         """Validate and apply a state transition."""
         if next_state == self._state:
@@ -1098,7 +1140,7 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
     def _require_thread_id(self, operation: str) -> str:
         thread_id = self._thread_id
         if thread_id is None:
-            raise RuntimeError(f"Codex thread ID is unavailable; cannot {operation}")
+            raise ConnectionNotReady(f"Codex thread ID is unavailable; cannot {operation}")
         return thread_id
 
     def _connect_timeout(self) -> float:
@@ -1221,8 +1263,9 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
             if thread_id is not None:
                 self._main_turn_thread_id = thread_id
         if clears_signal(event, codex_main_thread_id=self._main_turn_thread_id):
-            self._current_turn_id = None
+            self._end_current_turn()
             self._signal_in_flight = False
+            self._liveness.signal_request_resolved("cancel")
             return
 
         if method in {"thread/start", "thread/started"}:
@@ -1232,8 +1275,20 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
 
         turn_id = _extract_turn_id(payload)
         if turn_id is not None:
+            if self._current_turn_id is not None and self._current_turn_id != turn_id:
+                self._liveness.signal_turn_ended(self._current_turn_id)
             self._current_turn_id = turn_id
+            self._liveness.signal_turn_started(turn_id)
             self._signal_in_flight = False
+            self._liveness.signal_request_resolved("cancel")
+
+    def _end_current_turn(self) -> None:
+        if self._current_turn_id is not None:
+            self._liveness.signal_turn_ended(self._current_turn_id)
+        self._current_turn_id = None
+
+    def _clear_turn_liveness_signals(self) -> None:
+        self._end_current_turn()
 
 
 def _reserve_port(host: str) -> int:

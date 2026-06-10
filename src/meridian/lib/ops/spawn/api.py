@@ -4,8 +4,10 @@ import asyncio
 import json
 import os
 import time
+from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 from meridian.lib.bootstrap.services import (
     RuntimeReadContext,
@@ -18,7 +20,14 @@ from meridian.lib.core.context import RuntimeContext
 from meridian.lib.core.depth import max_depth_reached
 from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
 from meridian.lib.core.sink import NullSink, OutputSink
-from meridian.lib.core.spawn_lifecycle import ACTIVE_SPAWN_STATUSES, is_active_spawn_status
+from meridian.lib.core.spawn_lifecycle import (
+    ACTIVE_SPAWN_STATUSES,
+    ALL_SPAWN_STATUSES,
+    FAILURE_SPAWN_STATUSES,
+    TERMINAL_SPAWN_STATUSES,
+    is_active_spawn_status,
+    is_terminal_spawn_status,
+)
 from meridian.lib.core.spawn_service import CancelOutcome
 from meridian.lib.core.telemetry import register_debug_trace_observer
 from meridian.lib.core.types import SpawnId
@@ -44,6 +53,8 @@ from meridian.lib.state.primary_meta import (
     read_primary_surface_metadata,
 )
 from meridian.lib.state.spawn.model import SpawnRecord
+from meridian.lib.state.spawn_signals import SpawnSignalKind, write_spawn_signal
+from meridian.lib.state.spawn_tree import collect_descendants, descendant_id_set
 from meridian.lib.telemetry.init import setup_telemetry
 from meridian.lib.telemetry.observer import register_spawn_telemetry_observer
 from meridian.lib.telemetry.router import emit_telemetry
@@ -71,6 +82,7 @@ from .models import (
     SpawnListInput,
     SpawnListOutput,
     SpawnShowInput,
+    SpawnSignalInput,
     SpawnStatsChild,
     SpawnStatsInput,
     SpawnStatsOutput,
@@ -80,7 +92,8 @@ from .models import (
     SpawnWrittenFilesInput,
     SpawnWrittenFilesOutput,
 )
-from .prepare import build_create_payload, validate_create_input
+from .pre_init import EXPECTED_PRE_INIT_EXCEPTIONS, PreInitFailure, run_pre_init_boundary
+from .prepare import SpawnCreateArtifacts, build_create_payload, validate_create_input
 from .query import (
     detail_from_row,
     read_spawn_row,
@@ -255,13 +268,25 @@ def _merge_warnings(*warnings: str | None) -> str | None:
     return " ".join(merged)
 
 
-def spawn_create_sync(
-    payload: SpawnCreateInput,
-    ctx: RuntimeContext | None = None,
+@dataclass(frozen=True)
+class SpawnCreatePreparation:
+    payload: SpawnCreateInput
+    resolved_context: RuntimeContext
+    authority: Any
+    runtime: OperationRuntime | None
+    artifacts: SpawnCreateArtifacts | None
+    dry_run_work_warning: str | None
+    depth_exceeded: SpawnActionOutput | None = None
+
+
+def _prepare_spawn_create(
     *,
-    sink: OutputSink | None = None,
-    prepared: RuntimeWriteContext | None = None,
-) -> SpawnActionOutput:
+    payload: SpawnCreateInput,
+    ctx: RuntimeContext | None,
+    sink: OutputSink | None,
+    prepared: RuntimeWriteContext | None,
+    failure_payload: list[SpawnCreateInput],
+) -> SpawnCreatePreparation:
     prepared_context = prepared
     register_debug_trace_observer()
     resolved_context = runtime_context(ctx)
@@ -289,7 +314,9 @@ def spawn_create_sync(
         )
         register_spawn_telemetry_observer()
     payload = payload.model_copy(update={"project_root": resolved_root.as_posix()})
+    failure_payload[0] = payload
     payload, preflight_warning = validate_create_input(payload)
+    failure_payload[0] = payload
     dry_run_work_warning: str | None = None
     if payload.dry_run and payload.work.strip():
         project_local_root = resolve_project_paths(resolved_root).root_dir
@@ -298,6 +325,7 @@ def spawn_create_sync(
             work_id=payload.work,
         )
         payload = payload.model_copy(update={"work": resolved_work_id})
+        failure_payload[0] = payload
         if not work_exists:
             dry_run_work_warning = (
                 f"Work item '{resolved_work_id}' does not exist. "
@@ -308,7 +336,15 @@ def spawn_create_sync(
     if not payload.dry_run:
         current_depth, max_depth = depth_limits(config.max_depth, ctx=resolved_context)
         if max_depth_reached(current_depth, max_depth):
-            return depth_exceeded_output(current_depth, max_depth)
+            return SpawnCreatePreparation(
+                payload=payload,
+                resolved_context=resolved_context,
+                authority=authority,
+                runtime=None,
+                artifacts=None,
+                dry_run_work_warning=dry_run_work_warning,
+                depth_exceeded=depth_exceeded_output(current_depth, max_depth),
+            )
     if prepared_context is not None:
         from meridian.lib.harness.registry import get_default_harness_registry
 
@@ -331,6 +367,68 @@ def spawn_create_sync(
         preflight_warning=preflight_warning,
         ctx=resolved_context,
     )
+    return SpawnCreatePreparation(
+        payload=payload,
+        resolved_context=resolved_context,
+        authority=authority,
+        runtime=runtime,
+        artifacts=artifacts,
+        dry_run_work_warning=dry_run_work_warning,
+    )
+
+
+def _prepare_spawn_create_with_expected_failures(
+    *,
+    payload: SpawnCreateInput,
+    ctx: RuntimeContext | None,
+    sink: OutputSink | None,
+    prepared: RuntimeWriteContext | None,
+    failure_payload: list[SpawnCreateInput],
+) -> SpawnCreatePreparation:
+    try:
+        return _prepare_spawn_create(
+            payload=payload,
+            ctx=ctx,
+            sink=sink,
+            prepared=prepared,
+            failure_payload=failure_payload,
+        )
+    except EXPECTED_PRE_INIT_EXCEPTIONS as exc:
+        raise PreInitFailure(str(exc)) from exc
+
+
+def spawn_create_sync(
+    payload: SpawnCreateInput,
+    ctx: RuntimeContext | None = None,
+    *,
+    sink: OutputSink | None = None,
+    prepared: RuntimeWriteContext | None = None,
+    on_spawn_id: Callable[[str], None] | None = None,
+) -> SpawnActionOutput:
+    failure_payload = [payload]
+    preparation = run_pre_init_boundary(
+        payload=lambda: failure_payload[0],
+        operation=lambda: _prepare_spawn_create_with_expected_failures(
+            payload=payload,
+            ctx=ctx,
+            sink=sink,
+            prepared=prepared,
+            failure_payload=failure_payload,
+        ),
+    )
+    if isinstance(preparation, SpawnActionOutput):
+        return preparation
+    if preparation.depth_exceeded is not None:
+        return preparation.depth_exceeded
+
+    payload = preparation.payload
+    resolved_context = preparation.resolved_context
+    authority = preparation.authority
+    runtime = preparation.runtime
+    artifacts = preparation.artifacts
+    dry_run_work_warning = preparation.dry_run_work_warning
+    if artifacts is None:
+        raise RuntimeError("Spawn create preparation did not produce artifacts.")
     prepared_request = artifacts.request
     prepared_surface = artifacts.prepared
     forked_from = _forked_from_output(payload)
@@ -398,6 +496,7 @@ def spawn_create_sync(
             runtime=runtime,
             ctx=resolved_context,
             prepared=prepared_surface,
+            on_spawn_id=on_spawn_id,
         )
     _emit_usage_spawn_launched(
         harness=result.harness_id or prepared_request.harness,
@@ -592,30 +691,6 @@ async def spawn_children(
     )
 
 
-def _collect_descendants(
-    root_id: str,
-    all_spawns: list[SpawnRecord],
-) -> list[SpawnRecord]:
-    """Walk the parent→child tree and return root + all descendants."""
-    by_parent: dict[str | None, list[SpawnRecord]] = {}
-    for s in all_spawns:
-        by_parent.setdefault(s.parent_id, []).append(s)
-
-    result: list[SpawnRecord] = []
-    # Find the root spawn itself
-    for s in all_spawns:
-        if s.id == root_id:
-            result.append(s)
-            break
-
-    queue = [root_id]
-    while queue:
-        parent = queue.pop()
-        for child in by_parent.get(parent, []):
-            result.append(child)
-            queue.append(child.id)
-    return result
-
 
 def spawn_stats_sync(
     payload: SpawnStatsInput,
@@ -634,15 +709,19 @@ def spawn_stats_sync(
     all_spawns = reconcile_spawns(project_root, runtime_root, spawn_store.list_spawns(runtime_root))
 
     if payload.session is not None and payload.session.strip():
+        from meridian.lib.state.session_identity import spawn_matches_exact_session
+
         wanted_session = payload.session.strip()
-        all_spawns = [row for row in all_spawns if row.chat_id == wanted_session]
+        all_spawns = [
+            row for row in all_spawns if spawn_matches_exact_session(row, wanted_session)
+        ]
 
     if payload.spawn_id is not None:
         root_id = payload.spawn_id.strip()
         if payload.flat:
             spawns = [s for s in all_spawns if s.id == root_id]
         else:
-            spawns = _collect_descendants(root_id, all_spawns)
+            spawns = collect_descendants(root_id, all_spawns)
     else:
         spawns = all_spawns
 
@@ -652,6 +731,7 @@ def spawn_stats_sync(
     succeeded = 0
     failed = 0
     cancelled = 0
+    timed_out = 0
     running = 0
     finalizing = 0
 
@@ -662,6 +742,8 @@ def spawn_stats_sync(
             failed += 1
         elif row.status == "cancelled":
             cancelled += 1
+        elif row.status == "timed_out":
+            timed_out += 1
         elif row.status == "running":
             running += 1
         elif row.status == "finalizing":
@@ -675,13 +757,14 @@ def spawn_stats_sync(
                 "succeeded": 0,
                 "failed": 0,
                 "cancelled": 0,
+                "timed_out": 0,
                 "running": 0,
                 "finalizing": 0,
                 "cost_usd": 0.0,
             },
         )
         acc["total"] = int(acc["total"]) + 1
-        if row.status in ("succeeded", "failed", "cancelled", "running", "finalizing"):
+        if row.status in ALL_SPAWN_STATUSES:
             acc[row.status] = int(acc[row.status]) + 1
         if row.total_cost_usd is not None:
             acc["cost_usd"] = float(acc["cost_usd"]) + row.total_cost_usd
@@ -697,6 +780,7 @@ def spawn_stats_sync(
             succeeded=int(v["succeeded"]),
             failed=int(v["failed"]),
             cancelled=int(v["cancelled"]),
+            timed_out=int(v["timed_out"]),
             running=int(v["running"]),
             finalizing=int(v["finalizing"]),
             cost_usd=float(v["cost_usd"]),
@@ -725,6 +809,7 @@ def spawn_stats_sync(
         succeeded=succeeded,
         failed=failed,
         cancelled=cancelled,
+        timed_out=timed_out,
         running=running,
         finalizing=finalizing,
         total_duration_secs=total_duration_secs,
@@ -957,7 +1042,108 @@ def _row_in_cancel_scope(
         return True
     if descendant_ids is not None:
         return row.id in descendant_ids
-    return (row.chat_id or "").strip() == (caller_chat_id or "")
+    from meridian.lib.state.session_identity import spawn_matches_owner_chat
+
+    return spawn_matches_owner_chat(row, caller_chat_id or "")
+
+
+def _resolve_signal_spawn_id(
+    *,
+    project_root: Path,
+    runtime_root: Path,
+    spawn_id: str | None,
+    ctx: RuntimeContext | None,
+) -> str:
+    candidate = (spawn_id or "").strip()
+    if not candidate:
+        candidate = str(runtime_context(ctx).spawn_id or "").strip()
+    if not candidate:
+        raise ValueError("Spawn ID is required. Pass spawn_id or set MERIDIAN_SPAWN_ID.")
+    resolved_spawn_id = resolve_spawn_reference(
+        project_root,
+        candidate,
+        runtime_root=runtime_root,
+    )
+    if spawn_store.get_spawn(runtime_root, resolved_spawn_id) is None:
+        raise ValueError(f"Spawn '{resolved_spawn_id}' not found")
+    return resolved_spawn_id
+
+
+def _spawn_signal_sync(
+    payload: SpawnSignalInput,
+    *,
+    kind: SpawnSignalKind,
+    command: str,
+    ctx: RuntimeContext | None = None,
+    sink: OutputSink | None = None,
+    prepared: RuntimeWriteContext | None = None,
+) -> SpawnActionOutput:
+    _ = sink
+    if prepared is not None:
+        project_root = _project_root_from_prepared(prepared)
+        runtime_root = _runtime_root_from_prepared_for_read(
+            prepared,
+            project_root=project_root,
+        )
+    else:
+        project_root, _ = resolve_runtime_root_and_config(payload.project_root)
+        runtime_root = resolve_runtime_root(project_root)
+    try:
+        resolved_spawn_id = _resolve_signal_spawn_id(
+            project_root=project_root,
+            runtime_root=runtime_root,
+            spawn_id=payload.spawn_id,
+            ctx=ctx,
+        )
+        write_spawn_signal(runtime_root, resolved_spawn_id, kind)
+    except ValueError as exc:
+        return SpawnActionOutput(
+            command=command,
+            status="failed",
+            message=str(exc),
+            error=str(exc),
+            exit_code=1,
+        )
+    return SpawnActionOutput(
+        command=command,
+        status="succeeded",
+        spawn_id=resolved_spawn_id,
+        message=f"Spawn {kind} signal written.",
+    )
+
+
+def spawn_done_sync(
+    payload: SpawnSignalInput,
+    ctx: RuntimeContext | None = None,
+    *,
+    sink: OutputSink | None = None,
+    prepared: RuntimeWriteContext | None = None,
+) -> SpawnActionOutput:
+    return _spawn_signal_sync(
+        payload,
+        kind="done",
+        command="spawn.done",
+        ctx=ctx,
+        sink=sink,
+        prepared=prepared,
+    )
+
+
+def spawn_rearm_sync(
+    payload: SpawnSignalInput,
+    ctx: RuntimeContext | None = None,
+    *,
+    sink: OutputSink | None = None,
+    prepared: RuntimeWriteContext | None = None,
+) -> SpawnActionOutput:
+    return _spawn_signal_sync(
+        payload,
+        kind="rearm",
+        command="spawn.rearm",
+        ctx=ctx,
+        sink=sink,
+        prepared=prepared,
+    )
 
 
 async def _spawn_cancel_impl(
@@ -1054,8 +1240,7 @@ def spawn_cancel_all_sync(
     # When called from a nested spawn, scope to that spawn's descendants only.
     # When called from a primary/root context, scope to the full chat.
     if caller_spawn_id is not None and not payload.include_others:
-        desc_records = _collect_descendants(caller_spawn_id, active_rows)
-        descendant_ids: set[str] | None = {r.id for r in desc_records} - {caller_spawn_id}
+        descendant_ids: set[str] | None = descendant_id_set(caller_spawn_id, active_rows)
     else:
         descendant_ids = None
 
@@ -1107,13 +1292,20 @@ def spawn_cancel_all_sync(
 
     finalizing_count = sum(1 for result in results if result.status == "finalizing")
     failed_count = sum(1 for result in results if result.status == "failed")
-    cancelled_count = len(results) - failed_count
+    timed_out_count = sum(1 for result in results if result.status == "timed_out")
+    cancelled_count = sum(
+        1
+        for result in results
+        if result.status == "finalizing"
+        or (result.status in TERMINAL_SPAWN_STATUSES and result.status == "cancelled")
+    )
     return SpawnCancelAllOutput(
         work=work_id,
         total_running=len(target_rows),
         cancelled_count=cancelled_count,
         finalizing_count=finalizing_count,
         failed_count=failed_count,
+        timed_out_count=timed_out_count,
         results=tuple(results),
     )
 
@@ -1157,7 +1349,7 @@ async def spawn_cancel(
 
 
 def _spawn_is_terminal(status: str) -> bool:
-    return status not in ACTIVE_SPAWN_STATUSES
+    return is_terminal_spawn_status(status)
 
 
 def _resolve_wait_targets(
@@ -1212,6 +1404,7 @@ def _discover_pending_spawns(
     from blocking on the entire chat tree.
     """
     from meridian.lib.state.reaper import reconcile_spawns
+    from meridian.lib.state.session_identity import spawn_matches_owner_chat
 
     all_spawns = reconcile_spawns(
         project_root,
@@ -1222,16 +1415,18 @@ def _discover_pending_spawns(
     # Build descendant set if scoping to a parent
     descendant_ids: set[str] | None = None
     if only_descendants_of is not None:
-        desc_records = _collect_descendants(only_descendants_of, all_spawns)
-        descendant_ids = {r.id for r in desc_records} - {only_descendants_of}
+        descendant_ids = descendant_id_set(only_descendants_of, all_spawns)
 
     pending = [
         row
         for row in all_spawns
-        if (row.chat_id or "").strip() == chat_id
-        and row.status in ACTIVE_SPAWN_STATUSES
+        if row.status in ACTIVE_SPAWN_STATUSES
         and row.id != exclude_spawn_id
         and (descendant_ids is None or row.id in descendant_ids)
+        and (
+            descendant_ids is not None
+            or spawn_matches_owner_chat(row, chat_id or "")
+        )
     ]
     pending.sort(key=lambda row: row.id)
     return pending
@@ -1272,8 +1467,11 @@ def _build_wait_multi_output(results: tuple[SpawnDetailOutput, ...]) -> SpawnWai
     total_runs = len(results)
     succeeded_runs = sum(1 for run in results if run.status == "succeeded")
     failed_runs = sum(1 for run in results if run.status == "failed")
+    timed_out_runs = sum(1 for run in results if run.status == "timed_out")
     cancelled_runs = sum(1 for run in results if run.status == "cancelled")
-    any_failed = any(run.status in {"failed", "cancelled"} for run in results)
+    any_failed = any(
+        run.status in FAILURE_SPAWN_STATUSES or run.status == "cancelled" for run in results
+    )
 
     spawn_id: str | None = None
     status: str | None = None
@@ -1289,6 +1487,7 @@ def _build_wait_multi_output(results: tuple[SpawnDetailOutput, ...]) -> SpawnWai
         succeeded_runs=succeeded_runs,
         failed_runs=failed_runs,
         cancelled_runs=cancelled_runs,
+        timed_out_runs=timed_out_runs,
         any_failed=any_failed,
         spawn_id=spawn_id,
         status=status,
@@ -1561,8 +1760,12 @@ def spawn_wait_sync(
                     cancelled_runs=sum(
                         1 for detail in checkpoint_details if detail.status == "cancelled"
                     ),
+                    timed_out_runs=sum(
+                        1 for detail in checkpoint_details if detail.status == "timed_out"
+                    ),
                     any_failed=any(
-                        detail.status in {"failed", "cancelled"} for detail in checkpoint_details
+                        detail.status in FAILURE_SPAWN_STATUSES or detail.status == "cancelled"
+                        for detail in checkpoint_details
                     ),
                     checkpoint=True,
                     checkpoint_pending_ids=pending_ids,

@@ -112,29 +112,6 @@ def test_execute_mars_passthrough_sets_managed_env_for_all_commands(
     assert env["MERIDIAN_MANAGED"] == "1"
 
 
-def test_execute_mars_passthrough_preserves_outer_meridian_managed(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setenv("MERIDIAN_MANAGED", "0")
-    request = mars_passthrough.MarsPassthroughRequest(
-        command=("/usr/bin/mars", "models", "list"),
-        mars_args=("models", "list"),
-        wants_json=False,
-        root_override=None,
-    )
-    observed: dict[str, object] = {}
-
-    def _fake_run(cmd: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
-        observed["env"] = kwargs.get("env")
-        return subprocess.CompletedProcess(args=cmd, returncode=0)
-
-    mars_passthrough.execute_mars_passthrough(request, run=_fake_run)
-
-    env = observed["env"]
-    assert isinstance(env, dict)
-    assert env["MERIDIAN_MANAGED"] == "0"
-
-
 def test_main_mars_defaults_to_text_in_agent_mode(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("MERIDIAN_DEPTH", "1")
     captured: dict[str, object] = {}

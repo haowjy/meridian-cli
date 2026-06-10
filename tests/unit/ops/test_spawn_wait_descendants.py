@@ -14,12 +14,14 @@ def _make_record(
     *,
     parent_id: str | None = None,
     chat_id: str = "c1",
+    owner_chat_id: str | None = None,
     status: str = "running",
 ) -> SpawnRecord:
     return SpawnRecord(
         id=spawn_id,
         parent_id=parent_id,
         chat_id=chat_id,
+        owner_chat_id=owner_chat_id,
         status=status,
         model="test",
         agent="test",
@@ -59,7 +61,6 @@ def _make_record(
         cost_is_estimate=False,
         error=None,
         terminal_origin=None,
-        process_scopes=None,
     )
 
 
@@ -110,6 +111,29 @@ def test_descendant_filter_excludes_ancestors_and_siblings(tmp_path: Path) -> No
     # Should only get p3, p4, p6 (descendants of p2)
     # NOT p1 (ancestor), p2 (self, excluded), or p5 (sibling)
     assert {r.id for r in result} == {"p3", "p4", "p6"}
+
+
+def test_descendant_filter_does_not_require_child_transcript_chat_to_match_parent(
+    tmp_path: Path,
+) -> None:
+    spawns = [
+        _make_record("p1", parent_id=None),
+        _make_record("p2", parent_id="p1", chat_id="c-child-parent", owner_chat_id="c1"),
+        _make_record("p3", parent_id="p2", chat_id="c-child-a", owner_chat_id="c1"),
+        _make_record("p4", parent_id="p2", chat_id="c-child-b", owner_chat_id="c1"),
+    ]
+    with (
+        _patch_spawns(spawns),
+        patch("meridian.lib.ops.spawn.api.spawn_store.list_spawns", return_value=[]),
+    ):
+        result = _discover_pending_spawns(
+            tmp_path,
+            tmp_path,
+            "c1",
+            exclude_spawn_id="p2",
+            only_descendants_of="p2",
+        )
+    assert {r.id for r in result} == {"p3", "p4"}
 
 
 def test_descendant_filter_with_completed_children(tmp_path: Path) -> None:

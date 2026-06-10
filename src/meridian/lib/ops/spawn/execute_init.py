@@ -183,6 +183,7 @@ def _init_spawn(
         resolved_work_id = cast("str", resolved_work_id)
         resolved_work_id = ensure_explicit_work_item(project_local_root, resolved_work_id)
     resolved_desc = (desc if desc is not None else payload.desc).strip() or None
+    owner_chat_id = resolve_chat_id(ctx=resolved_context, fallback="c0")
     service = build_spawn_lifecycle_service_from_roots(project_paths.project_root, runtime_root)
     spawn_session_metadata = PrimarySessionMetadata(
         harness=request.harness or "",
@@ -193,7 +194,8 @@ def _init_spawn(
         skill_paths=request.skill_paths,
     )
     spawn_id = service.start(
-        chat_id=resolve_chat_id(ctx=resolved_context, fallback="c0"),
+        chat_id=owner_chat_id,
+        owner_chat_id=owner_chat_id,
         parent_id=str(resolved_context.spawn_id) if resolved_context.spawn_id else None,
         session_metadata=spawn_session_metadata,
         kind="child",

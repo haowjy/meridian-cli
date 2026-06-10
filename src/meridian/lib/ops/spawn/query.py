@@ -13,7 +13,7 @@ from meridian.lib.harness.pi_lifecycle_events import PI_PHASE_EVENT_TYPE as _PI_
 from meridian.lib.launch.constants import OUTPUT_FILENAME
 from meridian.lib.ops.reference import resolve_spawn_ref
 from meridian.lib.ops.runtime import resolve_runtime_root_for_read
-from meridian.lib.state import spawn_store
+from meridian.lib.state import session_identity, spawn_store
 from meridian.lib.state.liveness import is_process_alive
 from meridian.lib.state.reaper import (
     SPAWN_HEARTBEAT_WINDOW_SECS,
@@ -227,10 +227,11 @@ def read_spawn_row(
     resolved_runtime_root = runtime_root or resolve_runtime_root_for_read(project_root)
     record = spawn_store.get_spawn(resolved_runtime_root, spawn_id)
     if record is not None and is_active_spawn_status(record.status):
-        from meridian.lib.state.reaper import reconcile_active_spawn
+        if is_root_side_effect_process():
+            from meridian.lib.state.reaper import peek_reconciled_active_spawn
 
-        record = reconcile_active_spawn(project_root, resolved_runtime_root, record)
-        if is_active_spawn_status(record.status) and not is_root_side_effect_process():
+            record = peek_reconciled_active_spawn(resolved_runtime_root, record)
+        else:
             record = _read_only_nested_staleness_view(
                 runtime_root=resolved_runtime_root,
                 record=record,
@@ -259,7 +260,7 @@ def read_latest_primary_spawn_for_chat_read_only(
     """Return the latest primary spawn row for a chat without reconciliation."""
 
     resolved_runtime_root = runtime_root or resolve_runtime_root_for_read(project_root)
-    spawns = spawn_store.list_spawns(resolved_runtime_root, filters={"chat_id": chat_id})
+    spawns = session_identity.list_spawns_for_owner_chat(resolved_runtime_root, chat_id)
     primary_spawns = [row for row in spawns if row.kind == "primary"]
     if not primary_spawns:
         return None

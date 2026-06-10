@@ -9,8 +9,11 @@ import json
 from pathlib import Path
 
 import pytest
+import structlog
+from structlog.testing import capture_logs
 
 import meridian.lib.ops.spawn.api as spawn_api
+import meridian.lib.ops.spawn.pre_init as pre_init_module
 from meridian.lib.bootstrap.services import prepare_for_runtime_write
 from meridian.lib.core.context import RuntimeContext
 from meridian.lib.core.types import HarnessId
@@ -149,6 +152,129 @@ def test_spawn_create_with_prepared_skips_self_bootstrap(
     assert result.harness_id == "codex"
 
 
+def test_spawn_create_build_payload_failure_returns_pre_init_failed_output(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    (project_root / ".git").mkdir()
+    (project_root / "mars.toml").write_text("", encoding="utf-8")
+    prepared = prepare_for_runtime_write(project_root)
+
+    def _raise_build_create_payload(*_args: object, **_kwargs: object) -> object:
+        raise ValueError("model resolution failed")
+
+    monkeypatch.setattr(spawn_api, "build_create_payload", _raise_build_create_payload)
+
+    result = spawn_api.spawn_create_sync(
+        SpawnCreateInput(
+            prompt="run",
+            model="gpt-5.4",
+            harness="opencode",
+            agent="browser-prober",
+            project_root=project_root.as_posix(),
+            task_dir=(tmp_path / "task").as_posix(),
+            work="browser-investigation",
+        ),
+        prepared=prepared,
+    )
+
+    assert result.status == "failed"
+    assert result.spawn_id is None
+    assert result.error == "pre_init_failed"
+    assert result.exit_code == 1
+    assert result.model == "gpt-5.4"
+    assert result.harness_id == "opencode"
+    assert result.message is not None
+    assert "model resolution failed" in result.message
+    assert result.to_wire()["message"] == result.message
+    assert result.to_wire()["model"] == "gpt-5.4"
+    assert result.to_wire()["harness_id"] == "opencode"
+    assert result.to_wire()["task_cwd_source"] == "explicit-task-dir"
+    assert result.to_wire()["task_cwd_work_item"] == "browser-investigation"
+
+
+def test_spawn_create_unexpected_pre_init_exception_logs_traceback_and_distinct_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    (project_root / ".git").mkdir()
+    (project_root / "mars.toml").write_text("", encoding="utf-8")
+    prepared = prepare_for_runtime_write(project_root)
+
+    def _raise_build_create_payload(*_args: object, **_kwargs: object) -> object:
+        raise RuntimeError("bug in launch composition")
+
+    monkeypatch.setattr(spawn_api, "build_create_payload", _raise_build_create_payload)
+
+    saved_logger = pre_init_module.logger
+    with capture_logs() as logs:
+        pre_init_module.logger = structlog.get_logger(pre_init_module.__name__)
+        try:
+            result = spawn_api.spawn_create_sync(
+                SpawnCreateInput(
+                    prompt="run",
+                    model="gpt-5.4",
+                    harness="opencode",
+                    project_root=project_root.as_posix(),
+                ),
+                prepared=prepared,
+            )
+        finally:
+            pre_init_module.logger = saved_logger
+
+    assert result.status == "failed"
+    assert result.error == "pre_init_unexpected_error"
+    assert result.message is not None
+    assert "RuntimeError: bug in launch composition" in result.message
+    failure_log = next(
+        (log for log in logs if log["event"] == "spawn_pre_init_unexpected_exception"),
+        None,
+    )
+    assert failure_log is not None
+    assert failure_log["error_type"] == "RuntimeError"
+    assert failure_log["exc_info"] is True
+
+
+def test_spawn_create_validation_failure_returns_pre_init_failed_output(
+    tmp_path: Path,
+) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    (project_root / ".git").mkdir()
+    (project_root / "mars.toml").write_text("", encoding="utf-8")
+    prepared = prepare_for_runtime_write(project_root)
+
+    result = spawn_api.spawn_create_sync(
+        SpawnCreateInput(
+            prompt="",
+            model="gpt-5.4",
+            harness="opencode",
+            project_root=project_root.as_posix(),
+            task_dir=(tmp_path / "task").as_posix(),
+            work="browser-investigation",
+        ),
+        prepared=prepared,
+    )
+
+    assert result.status == "failed"
+    assert result.spawn_id is None
+    assert result.error == "pre_init_failed"
+    assert result.exit_code == 1
+    assert result.model == "gpt-5.4"
+    assert result.harness_id == "opencode"
+    assert result.message is not None
+    assert "prompt required" in result.message
+    assert result.to_wire()["message"] == result.message
+    assert result.to_wire()["model"] == "gpt-5.4"
+    assert result.to_wire()["harness_id"] == "opencode"
+    assert result.to_wire()["task_cwd_source"] == "explicit-task-dir"
+    assert result.to_wire()["task_cwd_work_item"] == "browser-investigation"
+
+
 def test_spawn_create_dry_run_with_work_is_non_mutating(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -258,4 +384,3 @@ def test_spawn_create_dry_run_uses_ambient_work_item_task_dir(
     assert result.task_cwd == ambient_task_dir.as_posix()
     assert result.reference_anchor == ambient_task_dir.as_posix()
     assert result.task_cwd_work_item == work.name
-

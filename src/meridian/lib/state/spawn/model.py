@@ -24,7 +24,7 @@ _LAUNCH_MODE_VALUES: frozenset[LaunchMode] = frozenset(
 )
 
 SpawnOrigin = Literal["runner", "launcher", "launch_failure", "cancel", "reconciler"]
-TerminalSpawnStatus = Literal["succeeded", "failed", "cancelled"]
+TerminalSpawnStatus = Literal["succeeded", "failed", "cancelled", "timed_out"]
 _AUTHORITATIVE_ORIGIN_VALUES: tuple[SpawnOrigin, ...] = (
     "runner",
     "launcher",
@@ -52,6 +52,7 @@ class SpawnRecord(BaseModel):
 
     id: str
     chat_id: str | None
+    owner_chat_id: str | None = None
     parent_id: str | None
     originating_bash_id: str | None = None
     model: str | None
@@ -95,7 +96,6 @@ class SpawnRecord(BaseModel):
     cost_is_estimate: bool
     error: str | None
     terminal_origin: SpawnOrigin | None
-    process_scopes: tuple[dict[str, object], ...] | None = None
     launch_policy_snapshot: LaunchPolicySnapshot | None = None
 
 

@@ -19,6 +19,7 @@ Use these guides when the test:
 | `adversarial.md` | Intentionally open-ended adversarial exploration |
 | `fork.md` | Real harness lineage with --fork (partially automatable via dry-run) |
 | `models-cache-auto-refresh.md` | Network/cache freshness behavior |
+| `opencode-orphan-cleanup.md` | Real OpenCode backend orphan cleanup after hard worker crash |
 | `project-resolution.md` | `-C`/`MERIDIAN_PROJECT_DIR` project selection with stale runtime env |
 | `state-integrity.md` | Reconciliation after manual state corruption |
 | `streaming-adapter-parity.md` | Cross-harness streaming behavior |

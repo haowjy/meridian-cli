@@ -90,6 +90,7 @@ def _session_execution_context(
     control_root: str | None = None,
     task_cwd: str | None = None,
     execution_cwd: str | None = None,
+    spawn_id: str | None = None,
 ) -> Generator[_SessionExecutionContext, None, None]:
     with session_scope(
         runtime_root=runtime_root,
@@ -99,6 +100,7 @@ def _session_execution_context(
         control_root=control_root,
         task_cwd=task_cwd,
         execution_cwd=execution_cwd,
+        spawn_id=spawn_id,
     ) as managed:
         attached_work_id = get_session_active_work_id(runtime_root, managed.chat_id)
         if attached_work_id is None:

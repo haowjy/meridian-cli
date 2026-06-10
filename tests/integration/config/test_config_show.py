@@ -188,52 +188,39 @@ def test_config_show_attributes_dynamic_sections_from_file_and_user_config(
     assert next(item for item in shown.values if item.key == "hooks").source == "file"
 
 
-def test_config_show_reports_project_hook_suppression_with_file_provenance(
+@pytest.mark.parametrize(
+    ("project_toml", "user_toml", "expected_source"),
+    [
+        ("hooks = []\n", None, "file"),
+        (None, "hooks = []\n", "user-config"),
+        (
+            "hooks = []\n",
+            '[[hooks]]\nname = "user-hook"\nevent = "spawn"\ncommand = "echo user"\n',
+            "file",
+        ),
+    ],
+    ids=["project", "user", "project-suppression-over-user-hooks"],
+)
+def test_config_show_reports_hook_suppression_provenance_by_precedence(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    project_toml: str | None,
+    user_toml: str | None,
+    expected_source: str,
 ) -> None:
     project_root = _repo(tmp_path)
-    (project_root / "meridian.toml").write_text("hooks = []\n", encoding="utf-8")
+    if project_toml is not None:
+        (project_root / "meridian.toml").write_text(project_toml, encoding="utf-8")
+    if user_toml is not None:
+        user_config = tmp_path / "user-config.toml"
+        user_config.write_text(user_toml, encoding="utf-8")
+        monkeypatch.setenv("MERIDIAN_CONFIG", user_config.as_posix())
 
     shown = config_show_sync(ConfigShowInput(project_root=project_root.as_posix()))
     hook_value = next(item for item in shown.values if item.key == "hooks")
 
     assert hook_value.value == "[] (suppressed)"
-    assert hook_value.source == "file"
-    assert "hooks: [] (suppressed) [source: file]" in shown.format_text(FormatContext())
-
-
-def test_config_show_reports_user_hook_suppression_with_user_provenance(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    project_root = _repo(tmp_path)
-    user_config = tmp_path / "user-config.toml"
-    user_config.write_text("hooks = []\n", encoding="utf-8")
-    monkeypatch.setenv("MERIDIAN_CONFIG", user_config.as_posix())
-
-    shown = config_show_sync(ConfigShowInput(project_root=project_root.as_posix()))
-    hook_value = next(item for item in shown.values if item.key == "hooks")
-
-    assert hook_value.value == "[] (suppressed)"
-    assert hook_value.source == "user-config"
-    assert "hooks: [] (suppressed) [source: user-config]" in shown.format_text(FormatContext())
-
-def test_config_show_reports_project_hook_suppression_over_lower_precedence_user_hooks(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    project_root = _repo(tmp_path)
-    (project_root / "meridian.toml").write_text("hooks = []\n", encoding="utf-8")
-    user_config = tmp_path / "user-config.toml"
-    user_config.write_text(
-        '[[hooks]]\nname = "user-hook"\nevent = "spawn"\ncommand = "echo user"\n',
-        encoding="utf-8",
+    assert hook_value.source == expected_source
+    assert f"hooks: [] (suppressed) [source: {expected_source}]" in shown.format_text(
+        FormatContext()
     )
-    monkeypatch.setenv("MERIDIAN_CONFIG", user_config.as_posix())
-
-    shown = config_show_sync(ConfigShowInput(project_root=project_root.as_posix()))
-    hook_value = next(item for item in shown.values if item.key == "hooks")
-
-    assert hook_value.value == "[] (suppressed)"
-    assert hook_value.source == "file"
-    assert "hooks: [] (suppressed) [source: file]" in shown.format_text(FormatContext())

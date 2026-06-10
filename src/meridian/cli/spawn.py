@@ -37,6 +37,7 @@ from meridian.lib.ops.spawn.api import (
     SpawnForkInput,
     SpawnListInput,
     SpawnShowInput,
+    SpawnSignalInput,
     SpawnStatsInput,
     SpawnStatusInput,
     SpawnWaitInput,
@@ -46,9 +47,11 @@ from meridian.lib.ops.spawn.api import (
     spawn_children_sync,
     spawn_continue_sync,
     spawn_create_sync,
+    spawn_done_sync,
     spawn_files_sync,
     spawn_fork_sync,
     spawn_list_sync,
+    spawn_rearm_sync,
     spawn_show_sync,
     spawn_stats_sync,
     spawn_status_sync,
@@ -83,6 +86,20 @@ def _prepare_spawn_runtime_read() -> RuntimeReadContext:
 
 def _prepare_spawn_runtime_write() -> RuntimeWriteContext:
     return prepare_for_runtime_write(require_established_project_root())
+
+
+def _foreground_spawn_id_notifier(*, quiet: bool) -> Callable[[str], None] | None:
+    if quiet or _get_global_options().output.format == "json":
+        return None
+    sink = _current_output_sink()
+
+    def _notify(spawn_id: str) -> None:
+        sink.status(f"Spawn id: {spawn_id}")
+        from meridian.cli.output import flush_sink
+
+        flush_sink(sink)
+
+    return _notify
 
 
 def _spawn_create_exit_code(result: SpawnActionOutput) -> int:
@@ -558,6 +575,7 @@ def _spawn_create(
             ),
             sink=_current_output_sink(),
             prepared=_prepare_spawn_runtime_write(),
+            on_spawn_id=_foreground_spawn_id_notifier(quiet=quiet),
         )
     output_format = _get_global_options().output.format
     if output_format != "json" and metadata:
@@ -581,7 +599,10 @@ def _spawn_list(
         str | None,
         Parameter(
             name="--status",
-            help="Filter by status: queued, running, finalizing, succeeded, failed, cancelled.",
+            help=(
+                "Filter by status: queued, running, finalizing, succeeded, "
+                "failed, cancelled, timed_out."
+            ),
         ),
     ] = None,
     view: Annotated[
@@ -590,7 +611,7 @@ def _spawn_list(
             name="--view",
             help=(
                 "Preset list view: active, recent (recent active spawns), "
-                "all, running, queued, completed, failed, cancelled. "
+                "all, running, queued, completed, failed, cancelled, timed_out. "
                 "Default: active."
             ),
         ),
@@ -635,6 +656,7 @@ def _spawn_list(
         "completed": ("succeeded",),
         "failed": ("failed",),
         "cancelled": ("cancelled",),
+        "timed_out": ("timed_out",),
     }
     if normalized_view not in view_map:
         supported = ", ".join(view_map)
@@ -969,6 +991,42 @@ def _spawn_cancel_all(
         raise SystemExit(1)
 
 
+def _spawn_done(
+    emit: Any,
+    spawn_id: Annotated[
+        str | None,
+        Parameter(help="Spawn ID to finish (defaults to MERIDIAN_SPAWN_ID)."),
+    ] = None,
+) -> None:
+    result = spawn_done_sync(
+        SpawnSignalInput(spawn_id=spawn_id),
+        ctx=RuntimeContext.from_environment(),
+        sink=_current_output_sink(),
+        prepared=_prepare_spawn_runtime_write(),
+    )
+    emit(result)
+    if result.status == "failed":
+        raise SystemExit(1)
+
+
+def _spawn_rearm(
+    emit: Any,
+    spawn_id: Annotated[
+        str | None,
+        Parameter(help="Spawn ID to keep resident (defaults to MERIDIAN_SPAWN_ID)."),
+    ] = None,
+) -> None:
+    result = spawn_rearm_sync(
+        SpawnSignalInput(spawn_id=spawn_id),
+        ctx=RuntimeContext.from_environment(),
+        sink=_current_output_sink(),
+        prepared=_prepare_spawn_runtime_write(),
+    )
+    emit(result)
+    if result.status == "failed":
+        raise SystemExit(1)
+
+
 def _spawn_inject(
     spawn_id: Annotated[
         str,
@@ -1021,6 +1079,20 @@ def register_spawn_commands(app: App, emit: Emitter) -> tuple[set[str], dict[str
         emit=emit,
         default_handler=partial(_spawn_create, emit),
     )
+    app.command(
+        partial(_spawn_done, emit),
+        name="done",
+        help="Signal a resident spawn to finish successfully.",
+    )
+    registered.add("spawn.done")
+    descriptions["meridian.spawn.done"] = "Signal a resident spawn to finish successfully."
+    app.command(
+        partial(_spawn_rearm, emit),
+        name="rearm",
+        help="Signal a resident spawn to keep running.",
+    )
+    registered.add("spawn.rearm")
+    descriptions["meridian.spawn.rearm"] = "Signal a resident spawn to keep running."
     app.command(
         _spawn_inject,
         name="inject",

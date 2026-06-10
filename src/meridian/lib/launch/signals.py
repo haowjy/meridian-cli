@@ -42,7 +42,10 @@ def signal_process_group(
             process.send_signal(signum)
             return
         pgid = os.getpgid(pid)
-        os.killpg(pgid, signum)
+        if pgid == pid:
+            os.killpg(pgid, signum)
+        else:
+            process.send_signal(signum)
     except (ProcessLookupError, OSError):
         return
 
@@ -64,7 +67,10 @@ def force_kill_process(process: asyncio.subprocess.Process) -> None:
             return
         # On POSIX, send SIGKILL to the process group
         pgid = os.getpgid(process.pid)
-        os.killpg(pgid, signal.SIGKILL)
+        if pgid == process.pid:
+            os.killpg(pgid, signal.SIGKILL)
+        else:
+            process.kill()
     except (ProcessLookupError, OSError):
         return
 

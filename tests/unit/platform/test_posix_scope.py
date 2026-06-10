@@ -12,11 +12,16 @@ fully mocked — no real I/O.
 
 from __future__ import annotations
 
+import os
 import sys
+from dataclasses import dataclass
 from unittest.mock import MagicMock, patch
 
 import psutil
 import pytest
+
+from meridian.lib.platform.process_scope import posix
+from meridian.lib.platform.process_scope.base import PROCESS_BIRTH_UNKNOWN_EPOCH, CleanupResult
 
 posix_only = pytest.mark.skipif(sys.platform == "win32", reason="POSIX-only test")
 
@@ -31,87 +36,23 @@ def _make_mock_proc(pid: int) -> MagicMock:
     return proc
 
 
+@dataclass
+class _FakeProc:
+    pid: int
+    _children: list[object]
+    killed: int = 0
+
+    def create_time(self) -> float:
+        return 100.0
+
+    def children(self, recursive: bool = False) -> list[object]:
+        assert recursive is True
+        return list(self._children)
+
+
 # ---------------------------------------------------------------------------
 # PROC-004: dead root + dissolved PGID → orphan scan runs
 # ---------------------------------------------------------------------------
-
-
-@posix_only
-def test_dead_root_dissolved_pgid_triggers_orphan_scan() -> None:
-    """PROC-004: When root is dead and os.killpg raises ProcessLookupError,
-    _scan_by_pgid must be called and any found orphans must be waited on.
-    """
-    from meridian.lib.platform.process_scope.posix import terminate_pgid
-
-    orphan = _make_mock_proc(pid=99999)
-
-    with (
-        # Root is dead: both create_time() and Process(root_pid) raise
-        patch(
-            "meridian.lib.platform.process_scope.posix.psutil.Process",
-            side_effect=psutil.NoSuchProcess(pid=12345),
-        ),
-        # PGID has dissolved: SIGTERM raises ProcessLookupError
-        patch("os.killpg", side_effect=ProcessLookupError),
-        # Secondary scan finds one orphan
-        patch(
-            "meridian.lib.platform.process_scope.posix._scan_by_pgid",
-            return_value=[orphan],
-        ) as mock_scan,
-        # wait_procs: grace period expires with no alive processes
-        patch(
-            "meridian.lib.platform.process_scope.posix.psutil.wait_procs",
-            return_value=([], []),
-        ),
-    ):
-        result = terminate_pgid(
-            pgid=500,
-            root_pid=12345,
-            created_at_epoch=1_000_000.0,
-            grace_seconds=0.1,
-            reason="test_stop",
-            scope_id="backend",
-        )
-
-    # Seam verification: orphan scan must activate on dissolved PGID
-    mock_scan.assert_called_once_with(500)
-    assert result.degraded_fallback is True, "must be degraded when root was already dead"
-    assert result.skip_reason is None, "must not be skipped — orphans were found"
-    assert result.descendant_count == 1, "one orphan was found via PGID scan"
-
-
-@posix_only
-def test_dead_root_dissolved_pgid_no_orphans_found() -> None:
-    """PROC-004: When orphan scan finds nothing, result is degraded with
-    descendant_count=None (nothing to count / kill).
-    """
-    from meridian.lib.platform.process_scope.posix import terminate_pgid
-
-    with (
-        patch(
-            "meridian.lib.platform.process_scope.posix.psutil.Process",
-            side_effect=psutil.NoSuchProcess(pid=12345),
-        ),
-        patch("os.killpg", side_effect=ProcessLookupError),
-        patch(
-            "meridian.lib.platform.process_scope.posix._scan_by_pgid",
-            return_value=[],
-        ) as mock_scan,
-    ):
-        result = terminate_pgid(
-            pgid=500,
-            root_pid=12345,
-            created_at_epoch=1_000_000.0,
-            grace_seconds=0.1,
-            reason="test_stop",
-            scope_id="backend",
-        )
-
-    # Seam verification: orphan scan must activate on dissolved PGID
-    mock_scan.assert_called_once_with(500)
-    assert result.degraded_fallback is True
-    assert result.skip_reason is None
-    assert result.descendant_count is None
 
 
 @posix_only
@@ -166,7 +107,7 @@ def test_confirmed_pid_reuse_still_skips() -> None:
         patch("os.killpg") as mock_killpg,
     ):
         result = terminate_pgid(
-            pgid=500,
+            pgid=12345,
             root_pid=12345,
             created_at_epoch=1_000_000.0,  # expected birth ≠ 9_999_999
             grace_seconds=0.1,
@@ -176,3 +117,102 @@ def test_confirmed_pid_reuse_still_skips() -> None:
 
     assert result.skip_reason == "pid_reuse_detected"
     mock_killpg.assert_not_called()
+
+
+@posix_only
+def test_unknown_birth_time_proceeds_to_signal_owned_pgid() -> None:
+    """Unknown birth time means unverified, not reused: owned teardown proceeds."""
+    from meridian.lib.platform.process_scope.posix import terminate_pgid
+
+    root_proc = _make_mock_proc(12345)
+    root_proc.create_time.side_effect = AssertionError("birth guard should be skipped")
+    root_proc.children.return_value = []
+
+    with (
+        patch(
+            "meridian.lib.platform.process_scope.posix.psutil.Process",
+            return_value=root_proc,
+        ),
+        patch("meridian.lib.platform.process_scope.posix.psutil.wait_procs", return_value=([], [])),
+        patch("os.killpg") as mock_killpg,
+    ):
+        result = terminate_pgid(
+            pgid=12345,
+            root_pid=12345,
+            created_at_epoch=PROCESS_BIRTH_UNKNOWN_EPOCH,
+            grace_seconds=0.1,
+            reason="test_stop",
+            scope_id="backend",
+        )
+
+    assert result.skip_reason is None
+    mock_killpg.assert_called_once()
+
+
+@posix_only
+def test_terminate_pgid_degrades_to_tree_when_root_is_not_group_leader(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(posix, "IS_WINDOWS", False)
+
+    killpg_calls: list[tuple[int, int]] = []
+    monkeypatch.setattr(os, "killpg", lambda pgid, sig: killpg_calls.append((pgid, sig)))
+
+    fallback_calls: list[dict[str, object]] = []
+    fallback_result = CleanupResult(
+        scope_id="backend",
+        root_pid=111,
+        descendant_count=0,
+        reason="reaper",
+        grace_seconds=5.0,
+        kill_escalated=False,
+        degraded_fallback=True,
+        skip_reason=None,
+    )
+
+    def _fake_terminate_tree_sync(**kwargs: object) -> CleanupResult:
+        fallback_calls.append(kwargs)
+        return fallback_result
+
+    monkeypatch.setattr(
+        "meridian.lib.platform.process_scope.fallback.terminate_tree_sync",
+        _fake_terminate_tree_sync,
+    )
+
+    result = posix.terminate_pgid(
+        pgid=222,
+        root_pid=111,
+        created_at_epoch=100.0,
+        grace_seconds=5.0,
+        reason="reaper",
+        scope_id="backend",
+    )
+
+    assert result == fallback_result
+    assert fallback_calls == [
+        {
+            "pid": 111,
+            "created_at_epoch": 100.0,
+            "grace_secs": 5.0,
+            "reason": "reaper",
+            "scope_id": "backend",
+            "degraded_fallback": True,
+        }
+    ]
+    assert killpg_calls == []
+
+
+def test_terminate_pgid_on_windows_raises_runtime_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(posix, "IS_WINDOWS", True)
+
+    with pytest.raises(RuntimeError, match="not available on Windows"):
+        posix.terminate_pgid(
+            pgid=222,
+            root_pid=111,
+            created_at_epoch=100.0,
+            grace_seconds=5.0,
+            reason="reaper",
+            scope_id="backend",
+        )

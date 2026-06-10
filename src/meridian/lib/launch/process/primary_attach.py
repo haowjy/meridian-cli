@@ -9,7 +9,6 @@ import asyncio
 import os
 import socket
 import sys
-import time
 from collections.abc import Callable
 from contextlib import suppress
 from dataclasses import dataclass, field, replace
@@ -24,8 +23,11 @@ from meridian.lib.harness.connections.base import ConnectionConfig, HarnessConne
 from meridian.lib.harness.connections.errors import PortBindError
 from meridian.lib.harness.semantics import activity_transition
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
-from meridian.lib.platform import IS_WINDOWS
-from meridian.lib.platform.process_scope.base import ProcessScopeSnapshot
+from meridian.lib.platform.process_scope import terminate_scope_sync
+from meridian.lib.platform.process_scope.base import (
+    PROCESS_BIRTH_UNKNOWN_EPOCH,
+    ProcessScopeSnapshot,
+)
 from meridian.lib.state.history import HarnessHistoryWriter
 from meridian.lib.state.primary_meta import ActivityState, PrimaryMetadata, write_primary_metadata
 from meridian.lib.state.process_scope_projection import record_scope
@@ -51,7 +53,7 @@ def _make_scope_snapshot(
     try:
         birth_time = psutil.Process(pid).create_time()
     except (psutil.NoSuchProcess, psutil.AccessDenied):
-        birth_time = time.time()
+        birth_time = PROCESS_BIRTH_UNKNOWN_EPOCH
 
     pgid: int | None = None
     containment: str
@@ -82,26 +84,10 @@ class PrimaryAttachError(Exception):
     """Managed backend startup failed; caller should fall back to black-box path."""
 
 
-def _try_assign_backend_job(pid: int) -> object:
-    """Assign *pid* to a Windows Job Object and return the handle.
-
-    The returned handle must remain alive for ``JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE``
-    to take effect — store it for the lifetime of the launcher.
-
-    Returns ``None`` on POSIX, on assignment failure, or on any exception so
-    the caller always degrades cleanly without crashing the launch.
-    """
-    if not IS_WINDOWS:
-        return None
+def _process_birth_epoch(pid: int) -> float | None:
     try:
-        from meridian.lib.platform import windows_job
-
-        result = windows_job.assign_to_new_job(pid)
-        if result is None:
-            return None
-        _job_name, job_handle = result
-        return job_handle
-    except Exception:
+        return psutil.Process(pid).create_time()
+    except (psutil.NoSuchProcess, psutil.AccessDenied, OSError):
         return None
 
 
@@ -111,8 +97,13 @@ class _LauncherMetadata:
 
     managed_backend: bool = True
     launcher_pid: int = field(default_factory=os.getpid)
+    launcher_birth_epoch: float | None = field(
+        default_factory=lambda: _process_birth_epoch(os.getpid())
+    )
     backend_pid: int | None = None
+    backend_birth_epoch: float | None = None
     tui_pid: int | None = None
+    tui_birth_epoch: float | None = None
     backend_port: int | None = None
     activity: ActivityState = "starting"
     harness_session_id: str | None = None
@@ -121,8 +112,11 @@ class _LauncherMetadata:
         return PrimaryMetadata(
             managed_backend=self.managed_backend,
             launcher_pid=self.launcher_pid,
+            launcher_birth_epoch=self.launcher_birth_epoch,
             backend_pid=self.backend_pid,
+            backend_birth_epoch=self.backend_birth_epoch,
             tui_pid=self.tui_pid,
+            tui_birth_epoch=self.tui_birth_epoch,
             backend_port=self.backend_port,
             activity=self.activity,
             harness_session_id=self.harness_session_id,
@@ -198,8 +192,7 @@ class PrimaryAttachLauncher:
         self._metadata_lock = Lock()
         self._history_writer: HarnessHistoryWriter | None = None
         self._event_writer_task: asyncio.Task[None] | None = None
-        # Kept alive so KILL_ON_JOB_CLOSE terminates the backend on launcher exit.
-        self._backend_job_handle: object = None
+        self._tui_scope_snapshot: ProcessScopeSnapshot | None = None
 
     async def run(
         self,
@@ -229,31 +222,15 @@ class PrimaryAttachLauncher:
 
             with self._metadata_lock:
                 self._metadata.backend_pid = self._connection.subprocess_pid
+                self._metadata.backend_birth_epoch = (
+                    _process_birth_epoch(self._connection.subprocess_pid)
+                    if self._connection.subprocess_pid is not None
+                    else None
+                )
                 self._metadata.backend_port = self._resolve_backend_port()
             self._write_metadata()
 
-            # Record backend scope. session_owned when session_id is available
-            # (normal path) so the backend is preserved across launcher restarts.
-            # Falls back to spawn_owned when session_id is absent (error path)
-            # so normal spawn teardown terminates the orphaned backend process.
-            _backend_pid = self._connection.subprocess_pid
-            if _backend_pid is not None and _backend_pid > 0:
-                _runtime_root = self._spawn_dir.parent.parent
-                _sid = (session_id or "").strip()
-                _policy = "session_owned" if _sid else "spawn_owned"
-                _owner_id = _sid or str(self._spawn_id)
-                record_scope(
-                    _runtime_root,
-                    self._spawn_id,
-                    _make_scope_snapshot(
-                        pid=_backend_pid,
-                        scope_id="backend",
-                        owner_policy=_policy,
-                        owner_id=_owner_id,
-                        role="harness_backend",
-                    ),
-                )
-                self._backend_job_handle = _try_assign_backend_job(_backend_pid)
+            self._record_backend_scope_from_connection(session_id)
 
             self._event_writer_task = asyncio.create_task(self._run_event_writer())
             self._set_harness_session_id(session_id)
@@ -272,38 +249,44 @@ class PrimaryAttachLauncher:
 
             def _handle_running(pid: int) -> None:
                 self._set_tui_pid(pid)
+                self._record_tui_scope(pid, session_id)
                 if running_callback is not None:
                     running_callback(pid)
 
             def _on_child_started(pid: int) -> None:
                 loop.call_soon_threadsafe(_handle_running, pid)
 
-            launched = await asyncio.to_thread(
-                self._process_launcher.launch,
-                command=command,
-                cwd=cwd,
-                env=env,
-                output_log_path=None,
-                on_child_started=_on_child_started,
+            launch_task = asyncio.create_task(
+                asyncio.to_thread(
+                    self._process_launcher.launch,
+                    command=command,
+                    cwd=cwd,
+                    env=env,
+                    output_log_path=None,
+                    on_child_started=_on_child_started,
+                )
             )
             telemetry.clear()
 
-            # Record TUI as session_owned — preserved across launcher death.
-            _tui_pid = launched.pid
-            if _tui_pid is not None and _tui_pid > 0:
-                _runtime_root = self._spawn_dir.parent.parent
-                _owner_id = (session_id or "").strip() or str(self._spawn_id)
-                record_scope(
-                    _runtime_root,
-                    self._spawn_id,
-                    _make_scope_snapshot(
-                        pid=_tui_pid,
-                        scope_id="tui",
-                        owner_policy="session_owned",
-                        owner_id=_owner_id,
-                        role="harness_tui",
-                    ),
+            writer_task = self._event_writer_task
+            done, _pending = await asyncio.wait(
+                {launch_task, writer_task},
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            if writer_task in done and not launch_task.done():
+                with suppress(asyncio.CancelledError, Exception):
+                    writer_task.result()
+                self._event_writer_task = None
+                await self._connection.stop(reason="event_stream_closed")
+                await self._terminate_tui_scope()
+                launched = await launch_task
+                return PrimaryAttachOutcome(
+                    exit_code=1,
+                    session_id=session_id,
+                    tui_pid=launched.pid,
                 )
+
+            launched = await launch_task
 
             return PrimaryAttachOutcome(
                 exit_code=launched.exit_code,
@@ -410,9 +393,63 @@ class PrimaryAttachLauncher:
         with self._metadata_lock:
             if self._metadata.tui_pid != pid:
                 self._metadata.tui_pid = pid
+                self._metadata.tui_birth_epoch = _process_birth_epoch(pid)
                 should_write = True
         if should_write:
             self._write_metadata()
+
+    def _record_backend_scope_from_connection(self, session_id: str | None) -> None:
+        """Record backend scope using the connection's managed-backend handle.
+
+        Managed observer mode records a provisional spawn_owned backend scope as
+        soon as the process exists. This write upgrades that same concrete scope
+        to session_owned once the harness session id is known.
+        """
+        backend_pid = self._connection.subprocess_pid
+        if backend_pid is None or backend_pid <= 0:
+            return
+
+        scope_snapshot = self._connection.scope_snapshot
+        if scope_snapshot is None:
+            return
+
+        session_key = (session_id or "").strip()
+        owner_policy = "session_owned" if session_key else "spawn_owned"
+        owner_id = session_key or str(self._spawn_id)
+        if scope_snapshot.owner_policy != owner_policy or scope_snapshot.owner_id != owner_id:
+            scope_snapshot = replace(
+                scope_snapshot,
+                owner_policy=owner_policy,
+                owner_id=owner_id,
+            )
+
+        record_scope(self._spawn_dir.parent.parent, self._spawn_id, scope_snapshot)
+
+    def _record_tui_scope(self, pid: int, session_id: str | None) -> None:
+        if pid <= 0:
+            return
+        runtime_root = self._spawn_dir.parent.parent
+        owner_id = (session_id or "").strip() or str(self._spawn_id)
+        snapshot = _make_scope_snapshot(
+            pid=pid,
+            scope_id="tui",
+            owner_policy="session_owned",
+            owner_id=owner_id,
+            role="harness_tui",
+        )
+        self._tui_scope_snapshot = snapshot
+        record_scope(runtime_root, self._spawn_id, snapshot)
+
+    async def _terminate_tui_scope(self) -> None:
+        snapshot = self._tui_scope_snapshot
+        if snapshot is None:
+            return
+        await asyncio.to_thread(
+            terminate_scope_sync,
+            snapshot,
+            grace_seconds=5.0,
+            reason="event_stream_closed",
+        )
 
     def _resolve_backend_port(self) -> int | None:
         endpoint = self._connection.observer_endpoint

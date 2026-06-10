@@ -46,6 +46,8 @@ _UNRECOVERABLE_MARKERS: tuple[str, ...] = (
     "pi_prompt_rejected",
     "pi_rpc_no_response_after_initial_prompt",
     "pi_rpc_spawned_prompt_required",
+    "opencode session endpoint did not become ready",
+    "event stream liveness timeout",
 )
 
 _STRATEGY_CHANGE_MARKERS: tuple[str, ...] = (

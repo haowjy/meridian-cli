@@ -56,6 +56,7 @@ dev = [
   "pyright>=1.1.400",
   "pytest>=8.4.0",
   "pytest-asyncio>=0.24.0",
+  "pytest-timeout>=2.4.0",
   "ruff>=0.12.0",
 ]
 templates = [
@@ -140,9 +141,11 @@ ignore = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-ra -n auto"
+addopts = "-ra -n 4"
 asyncio_mode = "auto"
 pythonpath = ["src"]
+timeout = 60
+timeout_method = "thread"
 
 [dependency-groups]
 dev = [

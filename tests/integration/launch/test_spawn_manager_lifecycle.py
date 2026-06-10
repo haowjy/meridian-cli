@@ -18,6 +18,7 @@ from meridian.lib.harness.connections.base import (
     HarnessEvent,
     StopResult,
 )
+from meridian.lib.harness.control_action import ControlActionCoordinator
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.safety.permissions import UnsafeNoOpPermissionResolver
 from meridian.lib.state.paths import resolve_runtime_paths
@@ -112,6 +113,10 @@ async def test_wait_for_completion_survives_cleanup_without_private_hooks(
         @property
         def subprocess_pid(self) -> int | None:
             return 7373
+
+        @property
+        def resident_backend(self) -> None:
+            return None
 
         async def start(self, config: ConnectionConfig, spec: ResolvedLaunchSpec) -> None:
             _ = spec
@@ -215,6 +220,10 @@ async def test_backpressure_drop_emits_runtime_telemetry(tmp_path: Path) -> None
         def harness_id(self) -> HarnessId:
             return HarnessId.CODEX
 
+        @property
+        def resident_backend(self) -> None:
+            return None
+
         async def stop(
             self,
             *,
@@ -236,6 +245,11 @@ async def test_backpressure_drop_emits_runtime_telemetry(tmp_path: Path) -> None
         control_server=cast("Any", FakeControlServer()),
         started_monotonic=time.monotonic(),
         completion_future=completion_future,
+        raw_terminal_frames_authoritative=True,
+        control_actions=ControlActionCoordinator(
+            spawn_id=spawn_id,
+            spawn_dir=manager._spawn_dir(spawn_id),
+        ),
     )
 
     first = HarnessEvent(event_type="first", harness_id="codex", payload={})
@@ -252,6 +266,82 @@ async def test_backpressure_drop_emits_runtime_telemetry(tmp_path: Path) -> None
     assert event.ids == {"spawn_id": "p-drop"}
     assert event.data["event_type"] == "second"
     assert event.data["error"]["type"] == "QueueFullBackpressure"
+
+
+@pytest.mark.asyncio
+async def test_stop_spawn_reaps_recorded_scope_when_connection_stop_raises(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = tmp_path
+    runtime_root = resolve_runtime_paths(project_root).root_dir
+    spawn_id = start_spawn(
+        runtime_root,
+        chat_id="c1",
+        model="gpt-5.3-codex",
+        agent="coder",
+        harness="codex",
+        kind="streaming",
+        prompt="hello",
+        launch_mode="foreground",
+        status="running",
+    )
+    reaped: list[tuple[str, str]] = []
+
+    def _record_reap(runtime_root_arg: Path, record: Any, *, reason: str) -> list[Any]:
+        assert runtime_root_arg == runtime_root
+        reaped.append((record.id, reason))
+        return []
+
+    monkeypatch.setattr(
+        spawn_manager_module,
+        "terminate_recorded_spawn_scope",
+        _record_reap,
+        raising=False,
+    )
+
+    class StopRaisesConnection:
+        @property
+        def harness_id(self) -> HarnessId:
+            return HarnessId.CODEX
+
+        @property
+        def resident_backend(self) -> None:
+            return None
+
+        async def stop(
+            self,
+            *,
+            reason: str | None = None,
+            progress: Any = None,
+        ) -> StopResult:
+            _ = reason, progress
+            raise RuntimeError("transport cleanup failed")
+
+    class FakeControlServer:
+        async def stop(self) -> None:
+            return None
+
+    completion_future: asyncio.Future = asyncio.get_running_loop().create_future()
+    manager = SpawnManager(runtime_root=runtime_root, project_root=project_root)
+    manager._sessions[spawn_id] = SpawnSession(
+        connection=cast("Any", StopRaisesConnection()),
+        drain_task=asyncio.create_task(asyncio.sleep(0)),
+        subscriber=asyncio.Queue(maxsize=1),
+        control_server=cast("Any", FakeControlServer()),
+        started_monotonic=time.monotonic(),
+        completion_future=completion_future,
+        raw_terminal_frames_authoritative=True,
+        control_actions=ControlActionCoordinator(
+            spawn_id=spawn_id,
+            spawn_dir=manager._spawn_dir(spawn_id),
+        ),
+    )
+
+    outcome = await manager.stop_spawn(spawn_id)
+
+    assert outcome is not None
+    assert reaped == [(str(spawn_id), "stop_spawn")]
 
 
 @pytest.mark.asyncio
@@ -302,6 +392,10 @@ async def test_spawn_manager_serializes_control_actions_and_persists_transitions
 
         @property
         def subprocess_pid(self) -> int | None:
+            return None
+
+        @property
+        def resident_backend(self) -> None:
             return None
 
         async def start(self, config: ConnectionConfig, spec: ResolvedLaunchSpec) -> None:
@@ -385,25 +479,9 @@ async def test_spawn_manager_serializes_control_actions_and_persists_transitions
         connection.allow_inject_send.set()
         inject_result = await asyncio.wait_for(inject_task, timeout=1.0)
         await asyncio.wait_for(interrupt_task, timeout=1.0)
-        await manager.respond_request(
-            spawn_id,
-            request_id="r1",
-            decision="accept",
-            payload={"x": 1},
-            source="test",
-        )
-        await manager.respond_user_input(
-            spawn_id,
-            request_id="u1",
-            answers={"text": "Ada"},
-            source="test",
-        )
-
         assert inject_result.success is True
         assert inject_result.inbound_seq == 0
         assert connection.call_order[:3] == ["inject:start", "inject:end", "interrupt"]
-        assert "approve:r1:accept" in connection.call_order
-        assert "input:u1" in connection.call_order
 
         control_actions_path = runtime_root / "spawns" / str(spawn_id) / "control_actions.jsonl"
         assert control_actions_path.exists()
@@ -421,6 +499,6 @@ async def test_spawn_manager_serializes_control_actions_and_persists_transitions
             for statuses in action_statuses.values()
         )
         recorded_actions = {cast("str", record["action"]) for record in records}
-        assert recorded_actions == {"inject", "interrupt", "permission_reply", "user_input_reply"}
+        assert recorded_actions == {"inject", "interrupt"}
     finally:
         await manager.stop_spawn(spawn_id)

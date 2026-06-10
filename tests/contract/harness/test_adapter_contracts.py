@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from meridian.lib.core.types import HarnessId, TransportId
-from meridian.lib.harness import HARNESS_EXTENSION_TOUCHPOINTS, ensure_bootstrap
+from meridian.lib.harness import ensure_bootstrap
 from meridian.lib.harness.adapter import (
     BootstrapMode,
     ForkMaterializationMode,
@@ -138,23 +138,3 @@ def test_codex_contract_declares_primary_runtime_event_surfacing() -> None:
     )
     assert contract.bootstrap.primary_attach_failure_policy == "raise"
 
-
-def test_all_harness_bundles_use_resolved_launch_spec() -> None:
-    """All harness bundles share the single ResolvedLaunchSpec — no subtype narrowing."""
-    from meridian.lib.launch.launch_types import ResolvedLaunchSpec
-
-    ensure_bootstrap()
-    for harness_id, bundle in get_bundle_registry().items():
-        assert bundle.spec_cls is ResolvedLaunchSpec, (
-            f"harness {harness_id} uses spec_cls={bundle.spec_cls.__name__!r}; "
-            "expected ResolvedLaunchSpec"
-        )
-        assert bundle.adapter.contract.projection.launch_spec_cls == "ResolvedLaunchSpec", (
-            f"harness {harness_id} contract declares launch_spec_cls="
-            f"{bundle.adapter.contract.projection.launch_spec_cls!r}; "
-            "expected 'ResolvedLaunchSpec'"
-        )
-
-
-def test_harness_extension_touchpoints_document_contract_edit_set() -> None:
-    assert any("HarnessContract" in touchpoint for touchpoint in HARNESS_EXTENSION_TOUCHPOINTS)

@@ -5,6 +5,8 @@ from pathlib import Path
 
 import psutil
 
+from meridian.lib.platform.process_scope.base import birth_time_unverified
+
 _PID_REUSE_GUARD_SECS = 30.0
 
 
@@ -26,6 +28,27 @@ def is_process_alive(pid: int, created_after_epoch: float | None = None) -> bool
         return False
     except psutil.AccessDenied:
         return True
+
+
+def is_process_alive_with_birth(pid: int, birth_epoch: float | None) -> bool:
+    """Alive AND exact-birth match (PID-reuse safe). Fail closed when birth is unknown."""
+
+    if birth_epoch is None or birth_time_unverified(birth_epoch):
+        return False
+    if not psutil.pid_exists(pid):
+        return False
+
+    try:
+        proc = psutil.Process(pid)
+        if abs(proc.create_time() - birth_epoch) > 1.0:
+            return False
+        return proc.is_running()
+    except psutil.NoSuchProcess:
+        return False
+    except psutil.AccessDenied:
+        return False
+    except OSError:
+        return False
 
 
 def is_spawn_genuinely_active(runtime_root: Path, spawn_id: str) -> bool:

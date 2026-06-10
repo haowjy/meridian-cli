@@ -11,9 +11,13 @@ from contextlib import suppress
 
 import psutil
 
-from meridian.lib.platform.process_scope.base import CleanupResult
+from meridian.lib.platform.process_scope.base import (
+    PROCESS_BIRTH_UNKNOWN_EPOCH,
+    CleanupResult,
+    birth_time_unverified,
+)
 
-_UNSET_EPOCH = 0.0
+_UNSET_EPOCH = PROCESS_BIRTH_UNKNOWN_EPOCH
 
 
 def _validate_pid_birth(root_pid: int, created_at_epoch: float) -> str | None:
@@ -22,7 +26,7 @@ def _validate_pid_birth(root_pid: int, created_at_epoch: float) -> str | None:
     Skips the check when created_at_epoch is 0.0 (sentinel for 'unknown').
     """
 
-    if created_at_epoch == _UNSET_EPOCH:
+    if birth_time_unverified(created_at_epoch):
         return None
 
     with suppress(psutil.NoSuchProcess, psutil.AccessDenied, OSError):
@@ -196,4 +200,4 @@ def terminate_tree_sync(
     )
 
 
-__all__ = ["terminate_tree", "terminate_tree_sync"]
+__all__ = ["PROCESS_BIRTH_UNKNOWN_EPOCH", "terminate_tree", "terminate_tree_sync"]

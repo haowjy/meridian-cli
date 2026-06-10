@@ -35,6 +35,7 @@ from uuid import UUID
 import psutil
 import structlog
 
+from meridian.lib.core.spawn_lifecycle import TERMINAL_SPAWN_STATUSES, is_active_spawn_status
 from meridian.lib.core.spawn_start import SpawnStartMetadata
 from meridian.lib.core.telemetry import (
     CORE_EVENTS,
@@ -58,7 +59,6 @@ if TYPE_CHECKING:
     from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
     from meridian.lib.hooks.dispatch import HookDispatcher
     from meridian.lib.launch.types import PrimarySessionMetadata
-    from meridian.lib.platform.process_scope.base import ProcessScopeSnapshot
     from meridian.lib.state.spawn.model import (
         LaunchMode,
         SpawnOrigin,
@@ -99,14 +99,14 @@ def _spawn_transitions() -> Any:
 # ---------------------------------------------------------------------------
 
 EventType = Literal["spawn.created", "spawn.running", "spawn.finalized"]
-TerminalStatus = Literal["succeeded", "failed", "cancelled"]
+TerminalStatus = Literal["succeeded", "failed", "cancelled", "timed_out"]
 TerminalOrigin = Literal["runner", "launcher", "cancel", "reconciler", "launch_failure"]
 
 
 type TerminalOutcomeCategory = Literal["succeeded"] | SpawnFailureCategory
 
 
-_TERMINAL_STATUS_VALUES: frozenset[str] = frozenset({"succeeded", "failed", "cancelled"})
+_TERMINAL_STATUS_VALUES: frozenset[str] = TERMINAL_SPAWN_STATUSES
 
 # ---------------------------------------------------------------------------
 # Event ID generation
@@ -235,6 +235,7 @@ class SpawnLifecycleService:
         self,
         *,
         chat_id: str,
+        owner_chat_id: str | None = None,
         parent_id: str | None = None,
         session_metadata: PrimarySessionMetadata,
         kind: str = "child",
@@ -262,6 +263,7 @@ class SpawnLifecycleService:
             result_id = _spawn_store().start_spawn(
                 self._runtime_root,
                 chat_id=chat_id,
+                owner_chat_id=owner_chat_id,
                 parent_id=parent_id,
                 model=session_metadata.model,
                 agent=session_metadata.agent,
@@ -306,13 +308,8 @@ class SpawnLifecycleService:
         worker_pid: int | None = None,
         runner_pid: int | None = None,
         runner_created_at_epoch: float | None = None,
-        scope_snapshot: ProcessScopeSnapshot | None = None,
     ) -> None:
-        """Mark a spawn as running and dispatch spawn.running.
-
-        ``scope_snapshot`` is accepted here as a threading seam for Phase 2
-        persistence; it is not used in the current phase.
-        """
+        """Mark a spawn as running and dispatch spawn.running."""
         with bind_lifecycle_correlation(
             self._correlation(operation="mark_running", spawn_id=spawn_id)
         ):
@@ -421,7 +418,7 @@ class SpawnLifecycleService:
             resolved_exited_at = exited_at or _utc_now_iso(clock)
             if self._owns_record(spawn_id):
                 assert self._record is not None
-                if self._record.status not in {"queued", "running", "finalizing"}:
+                if not is_active_spawn_status(self._record.status):
                     return False
                 updated = _spawn_transitions().apply_runner_exit(
                     self._record,
@@ -811,6 +808,7 @@ class SpawnLifecycleService:
             "spawn.succeeded",
             "spawn.failed",
             "spawn.cancelled",
+            "spawn.timed_out",
         }:
             payload = _terminal_telemetry_payload(record)
         _emit_lifecycle_event(event_name, record, payload=payload)

@@ -35,6 +35,10 @@ implement all abstract methods, register in the bundle. Missing registration →
 
 - `base.py` — `HarnessConnection` ABC, `HarnessEvent`, `ConnectionCapabilities`,
   `ConnectionConfig`, `ServerRequestHandler` protocol, size constants.
+- `resident_backend.py` — explicit resident-backend control seam used by
+  `ResidentDrainCoordinator` for structured liveness, awaiting-done signaling,
+  and follow-up turns. This seam's presence, not the harness id, selects the
+  resident drain coordinator.
 - `__init__.py` — `get_connection_class(harness_id, transport_id)`.
 
 ## Depth

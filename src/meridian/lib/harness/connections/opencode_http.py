@@ -16,8 +16,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, cast
 from urllib.parse import urlparse
 
-import psutil
-
 if TYPE_CHECKING:
     from meridian.lib.observability.debug_tracer import DebugTracer
 
@@ -40,7 +38,19 @@ from meridian.lib.harness.connections.base import (
     validate_prompt_size,
 )
 from meridian.lib.harness.connections.errors import PortBindError
-from meridian.lib.harness.errors import HarnessBinaryNotFound
+from meridian.lib.harness.connections.liveness import (
+    BackendLivenessPolicy,
+    EventStreamLivenessTimeout,
+    LivenessDecision,
+)
+from meridian.lib.harness.connections.managed_backend import (
+    ManagedBackendConfig,
+    launch_managed_backend,
+)
+from meridian.lib.harness.connections.resident_backend import (
+    LivenessResidentBackendControl,
+    ResidentBackendControl,
+)
 from meridian.lib.harness.projections.project_opencode_streaming import (
     project_opencode_spec_to_session_payload as _project_opencode_spec_to_session_payload,
 )
@@ -55,7 +65,7 @@ from meridian.lib.observability.trace_helpers import (
     trace_wire_recv,
     trace_wire_send,
 )
-from meridian.lib.platform import IS_WINDOWS
+from meridian.lib.platform.detached_process import ParentDeathLink
 from meridian.lib.platform.process_scope import (
     ProcessScopeSnapshot,
     ScopedProcessHandle,
@@ -150,7 +160,19 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
     _SUCCESS_STATUSES: ClassVar[frozenset[int]] = frozenset((200, 201, 202, 204))
     _ACTION_SUCCESS_STATUSES: ClassVar[frozenset[int]] = frozenset((200, 201, 202, 204, 409))
     _EVENT_RETRY_DELAY_SECONDS: ClassVar[float] = 0.25
-    _STARTUP_TIMEOUT_SECONDS: ClassVar[float] = 30.0
+    _LIVENESS_TIMEOUT_SECONDS: ClassVar[float] = 120.0
+    _STARTUP_TIMEOUT_SECONDS: ClassVar[float] = 90.0
+    _READY_TIMEOUT_SECONDS: ClassVar[float] = 60.0
+    _SESSION_STARTUP_TIMEOUT_SECONDS: ClassVar[float] = (
+        _STARTUP_TIMEOUT_SECONDS - _READY_TIMEOUT_SECONDS
+    )
+    _SESSION_CREATE_PAYLOAD_TIMEOUT_SECONDS: ClassVar[float] = 5.0
+    # Per-attempt cap for startup probes. `opencode serve` accepts the TCP
+    # connection before its HTTP handler is ready, so the first GET after the
+    # socket starts accepting can hang. Bounding each probe (instead of the whole
+    # remaining budget) lets a hung request be abandoned and retried; aiohttp's
+    # own ClientTimeout tears down the stuck connection so the retry reconnects.
+    _PROBE_TIMEOUT_SECONDS: ClassVar[float] = 4.0
     _STOP_GRACE_SECONDS: ClassVar[float] = 5.0
     _EVENT_ACCEPT_HEADER: ClassVar[dict[str, str]] = {"Accept": "text/event-stream"}
 
@@ -168,12 +190,19 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
         self._session_id: str | None = None
         self._event_path: str | None = None
         self._last_health_ok = False
+        self._liveness = BackendLivenessPolicy(
+            timeout_seconds=lambda: self._LIVENESS_TIMEOUT_SECONDS,
+            now=lambda: time.monotonic(),
+            backend_pid=lambda: self._process.pid if self._process is not None else None,
+            backend_birth_time=self._backend_birth_time,
+        )
         self._tracer: DebugTracer | None = None
         self._cancel_requested = False
         self._signal_in_flight = False
         self._primary_observer_mode = False
         self._startup_emitter: StartupPhaseEmitter | None = None
         self._scope_handle: ScopedProcessHandle | None = None
+        self._parent_death_link: ParentDeathLink | None = None
 
     @property
     def state(self) -> ConnectionState:
@@ -211,6 +240,12 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
             return None
         return handle.snapshot
 
+    def _backend_birth_time(self) -> float | None:
+        snapshot = self.scope_snapshot
+        if snapshot is None:
+            return None
+        return snapshot.root_created_at_epoch
+
     @property
     def observer_endpoint(self) -> ObserverEndpoint | None:
         if not self._primary_observer_mode:
@@ -239,6 +274,7 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
         self._config = config
         self._spawn_id = config.spawn_id
         self._tracer = config.debug_tracer
+        self._liveness.reset()
         self._startup_emitter = StartupPhaseEmitter(
             str(config.spawn_id),
             harness_id=config.harness_id.value,
@@ -249,19 +285,20 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
         self._signal_in_flight = False
         self._transition("starting")
 
-        startup_timeout = (
+        readiness_timeout, session_timeout = self._startup_timeout_budgets(
             config.timeout_seconds
-            if config.timeout_seconds is not None
-            else self._STARTUP_TIMEOUT_SECONDS
         )
 
         try:
             await self._launch_process(config, spec)
             self._emit_startup_phase(StartupPhase.WAITING_FOR_CONNECTION)
+            await self._wait_for_ready(timeout_seconds=readiness_timeout)
             self._session_id = await self._create_session_with_retry(
                 spec,
-                timeout_seconds=startup_timeout,
+                timeout_seconds=session_timeout,
             )
+            if config.session_id_observer is not None:
+                config.session_id_observer(self._session_id)
             if not self._primary_observer_mode:
                 await self._post_session_message(config.prompt, system=config.system)
         except Exception:
@@ -302,16 +339,28 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
         self._transition("stopped")
         return StopResult()
 
+    @property
+    def resident_backend(self) -> ResidentBackendControl:
+        return LivenessResidentBackendControl(
+            liveness=self._liveness,
+            backend_dead=self._resident_backend_dead,
+            begin_followup_turn=self._begin_followup_turn,
+        )
+
     def health(self) -> bool:
-        if self._state not in {"starting", "connected"}:
-            return False
-        process_running = self._process is not None and self._process.returncode is None
-        return process_running and self._last_health_ok
+        return not self._resident_backend_dead() and self._liveness.healthy
 
     async def send_user_message(self, text: str) -> None:
         self._require_connected()
         self._signal_in_flight = False
         await self._post_session_message(text)
+
+    async def _begin_followup_turn(self, message: str) -> None:
+        self._require_connected()
+        if self._signal_in_flight:
+            raise ConnectionNotReady("OpenCode follow-up turns require an idle backend")
+        self._signal_in_flight = False
+        await self._post_session_message(message)
 
     async def send_cancel(self) -> None:
         if self._cancel_requested:
@@ -322,6 +371,7 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
         self._require_connected()
         self._cancel_requested = True
         self._signal_in_flight = True
+        self._liveness.signal_request_in_flight("cancel")
         self._transition("stopping")
         await self._post_session_action(
             path_templates=self._CANCEL_PATH_TEMPLATES,
@@ -344,12 +394,30 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
         sse_data_lines: list[str] = []
 
         while self._state in ("connected", "stopping"):
+            if self._liveness.evaluate() in (
+                LivenessDecision.BACKEND_DEAD,
+                LivenessDecision.STREAM_STALLED,
+            ):
+                logger.warning(
+                    "OpenCode event stream liveness timeout after %.1fs without events",
+                    self._LIVENESS_TIMEOUT_SECONDS,
+                )
+                self._set_failed()
+                return
             if self._process_exited():
                 self._set_failed()
                 return
 
+            self._liveness.mark_activity_if_idle()
             try:
-                response = await self._open_event_stream()
+                response = await self._liveness.wait_for_activity(self._open_event_stream())
+            except EventStreamLivenessTimeout:
+                logger.warning(
+                    "OpenCode event stream liveness timeout after %.1fs without events",
+                    self._LIVENESS_TIMEOUT_SECONDS,
+                )
+                self._set_failed()
+                return
             except Exception as exc:
                 if self._state in ("stopping", "stopped"):
                     return
@@ -362,11 +430,20 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
 
             buffer = ""
             try:
-                async for chunk in response.content.iter_chunked(4096):
-                    if self._state in ("stopping", "stopped", "failed"):
-                        break
+                while self._state not in ("stopping", "stopped", "failed"):
+                    try:
+                        chunk = await self._liveness.wait_for_activity(
+                            response.content.read(4096)
+                        )
+                    except EventStreamLivenessTimeout:
+                        logger.warning(
+                            "OpenCode event stream liveness timeout after %.1fs without events",
+                            self._LIVENESS_TIMEOUT_SECONDS,
+                        )
+                        self._set_failed()
+                        return
                     if not chunk:
-                        continue
+                        break
                     buffer += chunk.decode("utf-8", errors="replace")
                     while True:
                         newline_index = buffer.find("\n")
@@ -387,17 +464,20 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
                                     direction="inbound",
                                     data={"event_type": event.event_type},
                                 )
+                            self._liveness.mark_activity()
                             yield event
 
                 if buffer.strip():
                     event = self._event_from_json_line(buffer.strip(), raw_text=buffer.strip())
                     if event is not None:
+                        self._liveness.mark_activity()
                         yield event
                 final_sse_event = self._flush_sse_event(
                     sse_event_type=sse_event_type,
                     sse_data_lines=sse_data_lines,
                 )
                 if final_sse_event is not None:
+                    self._liveness.mark_activity()
                     yield final_sse_event
                 sse_event_type = None
             finally:
@@ -408,12 +488,13 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
             await asyncio.sleep(self._EVENT_RETRY_DELAY_SECONDS)
 
     async def _launch_process(self, config: ConnectionConfig, spec: ResolvedLaunchSpec) -> None:
-        port = _find_free_port()
-        self._base_url = f"http://127.0.0.1:{port}"
+        host = config.ws_bind_host or "127.0.0.1"
+        port = config.ws_port if config.ws_port > 0 else _find_free_port(host)
+        self._base_url = f"http://{host}:{port}"
         command = project_managed_primary_backend_command(
             self.harness_id,
             spec,
-            host="127.0.0.1",
+            host=host,
             port=port,
         )
         env = inherit_child_env(os.environ, config.env_overrides)
@@ -423,53 +504,74 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
         self._stderr_log_path = spawn_dir / "stderr.log"
         self._stderr_handle = self._stderr_log_path.open("ab")
         self._stderr_read_offset = self._stderr_handle.tell()
-        subprocess_kwargs: dict[str, Any] = {}
-        if not IS_WINDOWS:
-            subprocess_kwargs["start_new_session"] = True
-        try:
-            self._process = await asyncio.create_subprocess_exec(
-                *command,
-                cwd=str(config.control_root),
-                env=env,
-                stdout=asyncio.subprocess.DEVNULL,
-                stderr=self._stderr_handle,
-                **subprocess_kwargs,
-            )
-        except (FileNotFoundError, NotADirectoryError) as exc:
-            raise HarnessBinaryNotFound.from_os_error(
+        handle = await launch_managed_backend(
+            ManagedBackendConfig(
+                spawn_id=config.spawn_id,
                 harness_id=self.harness_id,
-                error=exc,
-                binary_name=command[0],
-            ) from exc
-
-        process = self._process
-        pid = process.pid
-        containment = "pid_tree_fallback"
-        pgid: int | None = None
-        if not IS_WINDOWS:
-            try:
-                pgid = os.getpgid(pid)
-                containment = "posix_pgid"
-            except OSError:
-                pass
-        try:
-            birth_time = psutil.Process(pid).create_time()
-        except (psutil.NoSuchProcess, psutil.AccessDenied):
-            birth_time = time.time()
-        spawn_id_str = str(config.spawn_id)
-        snapshot = ProcessScopeSnapshot(
-            scope_id="backend",
-            owner_policy="spawn_owned",
-            owner_id=spawn_id_str,
-            role="harness_backend",
-            containment=containment,
-            root_pid=pid,
-            root_created_at_epoch=birth_time,
-            pgid=pgid,
-            job_name=None,
-            degraded_reason=None,
+                command=tuple(command),
+                cwd=config.control_root,
+                env=env,
+                control_root=config.control_root,
+            ),
+            stderr=self._stderr_handle,
         )
-        self._scope_handle = ScopedProcessHandle(process=process, snapshot=snapshot)
+        self._process = handle.process
+        self._scope_handle = handle.scope_handle
+        self._parent_death_link = handle.parent_death_link
+
+    def _startup_timeout_budgets(self, configured_timeout: float | None) -> tuple[float, float]:
+        if configured_timeout is None:
+            return (self._READY_TIMEOUT_SECONDS, self._SESSION_STARTUP_TIMEOUT_SECONDS)
+
+        total = max(configured_timeout, 0.2)
+        readiness_timeout = max(total * (2.0 / 3.0), 0.1)
+        session_timeout = max(total - readiness_timeout, 0.1)
+        return (readiness_timeout, session_timeout)
+
+    async def _wait_for_ready(self, *, timeout_seconds: float) -> None:
+        deadline = time.monotonic() + max(timeout_seconds, 0.1)
+        last_error: str | None = None
+
+        while True:
+            if self._process_exited():
+                raise self._startup_exit_exception()
+
+            for path in self._HEALTH_PATHS:
+                try:
+                    remaining = max(0.0, deadline - time.monotonic())
+                    # Floor above zero: aiohttp treats ClientTimeout(total=0) as
+                    # "no timeout", which would let a hung probe block forever.
+                    probe_timeout = max(
+                        min(remaining, self._PROBE_TIMEOUT_SECONDS), 0.05
+                    )
+                    status, body, _ = await self._get_json(path, timeout=probe_timeout)
+                except TimeoutError as exc:
+                    last_error = f"{path}: {exc or 'timeout'}"
+                    if time.monotonic() >= deadline:
+                        detail = f": {last_error}"
+                        raise TimeoutError(
+                            "OpenCode readiness endpoint did not become ready within "
+                            f"{timeout_seconds:.1f}s ({', '.join(self._HEALTH_PATHS)}){detail}"
+                        ) from exc
+                    continue
+                except Exception as exc:
+                    if not _is_retryable_transport_error(exc):
+                        raise
+                    last_error = f"{path}: {exc}"
+                    continue
+
+                if status in self._SUCCESS_STATUSES:
+                    self._last_health_ok = True
+                    return
+                last_error = f"{path}: status={status} body={_summarize_body(body)}"
+
+            if time.monotonic() >= deadline:
+                detail = f": {last_error}" if last_error else ""
+                raise TimeoutError(
+                    "OpenCode readiness endpoint did not become ready within "
+                    f"{timeout_seconds:.1f}s ({', '.join(self._HEALTH_PATHS)}){detail}"
+                )
+            await asyncio.sleep(0.2)
 
     async def _create_session_with_retry(
         self,
@@ -483,9 +585,17 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
             if self._process_exited():
                 raise self._startup_exit_exception()
             try:
-                session_id = await self._create_session(spec)
+                remaining = max(0.0, deadline - time.monotonic())
+                session_id = await asyncio.wait_for(self._create_session(spec), timeout=remaining)
                 self._last_health_ok = True
                 return session_id
+            except TimeoutError as exc:
+                # POST /session is not idempotent: do not replay a create that may
+                # have already taken effect server-side. Only transport-not-ready
+                # (SessionNotReadyError) is safe to retry below.
+                raise TimeoutError(
+                    f"OpenCode session endpoint did not become ready within {timeout_seconds:.1f}s"
+                ) from exc
             except SessionNotReadyError as exc:
                 last_error = exc
             if time.monotonic() >= deadline:
@@ -555,7 +665,22 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
         for path in self._CREATE_SESSION_PATHS:
             for variant in payload_variants:
                 try:
-                    status, body, _ = await self._post_json(path, variant)
+                    post_request = self._post_json(path, variant)
+                    if variant:
+                        status, body, _ = await asyncio.wait_for(
+                            post_request,
+                            timeout=self._SESSION_CREATE_PAYLOAD_TIMEOUT_SECONDS,
+                        )
+                    else:
+                        status, body, _ = await post_request
+                except TimeoutError:
+                    if variant:
+                        last_error = (
+                            "OpenCode session create timed out with projected payload "
+                            f"on {path}"
+                        )
+                        continue
+                    raise
                 except Exception as exc:
                     if _is_retryable_transport_error(exc):
                         raise SessionNotReadyError(
@@ -600,11 +725,25 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
     async def _get_json(
         self,
         path: str,
+        *,
+        timeout: float | None = None,
     ) -> tuple[int, object | None, str]:
-        """Perform a GET request and return (status, parsed_body, content_type)."""
+        """Perform a GET request and return (status, parsed_body, content_type).
+
+        When *timeout* is set, the request is bounded by an aiohttp
+        ``ClientTimeout`` so the underlying connection is torn down on expiry
+        (a stuck connection is not returned to the keep-alive pool). The session
+        default stays unbounded for long-lived streaming reads.
+        """
         client = await self._ensure_http_client()
         trace_wire_send(self._tracer, "http_get", "", path=path)
-        async with client.get(self._url(path)) as response:
+        request_kwargs: dict[str, Any] = {}
+        if timeout is not None:
+            # aiohttp treats total=0 as "no timeout"; keep it strictly positive.
+            request_kwargs["timeout"] = self._ensure_aiohttp().ClientTimeout(
+                total=max(timeout, 0.001)
+            )
+        async with client.get(self._url(path), **request_kwargs) as response:
             status = int(response.status)
             content_type = str(response.headers.get("Content-Type", "")).lower()
             text_body = await response.text()
@@ -673,44 +812,49 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
         tolerate_incomplete_body: bool = False,
     ) -> tuple[int, object | None, str]:
         client = await self._ensure_http_client()
+        request_key = f"post:{path}"
         trace_wire_send(
             self._tracer,
             "http_post",
             json.dumps(dict(payload)),
             path=path,
         )
-        async with client.post(self._url(path), json=dict(payload)) as response:
-            status = int(response.status)
-            content_type = str(response.headers.get("Content-Type", "")).lower()
-            if skip_body_on_statuses is not None and status in skip_body_on_statuses:
-                response.release()
-                return status, None, content_type
-            try:
-                text_body = await response.text()
-            except Exception as exc:
-                aiohttp = self._ensure_aiohttp()
-                client_payload_error = getattr(aiohttp, "ClientPayloadError", None)
-                if (
-                    tolerate_incomplete_body
-                    and client_payload_error is not None
-                    and isinstance(exc, client_payload_error)
-                ):
-                    logger.warning(
-                        "Ignoring incomplete OpenCode response body on %s (status=%s)",
-                        path,
-                        status,
-                    )
+        self._liveness.signal_request_in_flight(request_key)
+        try:
+            async with client.post(self._url(path), json=dict(payload)) as response:
+                status = int(response.status)
+                content_type = str(response.headers.get("Content-Type", "")).lower()
+                if skip_body_on_statuses is not None and status in skip_body_on_statuses:
+                    response.release()
                     return status, None, content_type
-                raise
-        parsed_body = _parse_response_body(text_body)
-        trace_wire_recv(
-            self._tracer,
-            "http_response",
-            text_body,
-            path=path,
-            status=status,
-        )
-        return status, parsed_body, content_type
+                try:
+                    text_body = await response.text()
+                except Exception as exc:
+                    aiohttp = self._ensure_aiohttp()
+                    client_payload_error = getattr(aiohttp, "ClientPayloadError", None)
+                    if (
+                        tolerate_incomplete_body
+                        and client_payload_error is not None
+                        and isinstance(exc, client_payload_error)
+                    ):
+                        logger.warning(
+                            "Ignoring incomplete OpenCode response body on %s (status=%s)",
+                            path,
+                            status,
+                        )
+                        return status, None, content_type
+                    raise
+            parsed_body = _parse_response_body(text_body)
+            trace_wire_recv(
+                self._tracer,
+                "http_response",
+                text_body,
+                path=path,
+                status=status,
+            )
+            return status, parsed_body, content_type
+        finally:
+            self._liveness.signal_request_resolved(request_key)
 
     async def _open_event_stream(self) -> Any:
         client = await self._ensure_http_client()
@@ -848,6 +992,7 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
         )
         if clears_signal(event):
             self._signal_in_flight = False
+            self._liveness.signal_request_resolved("cancel")
         return event
 
     async def _ensure_http_client(self) -> Any:
@@ -865,6 +1010,7 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
         return self._aiohttp_module
 
     async def _cleanup_runtime(self) -> None:
+        self._liveness.reset()
         client = self._client
         self._client = None
         if client is not None:
@@ -890,12 +1036,14 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
                 process.kill()
                 await process.wait()
 
+        self._parent_death_link = None
         self._base_url = None
         self._session_id = None
         self._event_path = None
         self._last_health_ok = False
         self._cancel_requested = False
         self._signal_in_flight = False
+        self._liveness.signal_request_resolved("cancel")
         self._close_log_handles()
 
     def _url(self, path: str) -> str:
@@ -968,6 +1116,14 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
             data = handle.read(max(0, end_offset - read_offset))
         return data.decode("utf-8", errors="replace").strip()
 
+    def _resident_backend_dead(self) -> bool:
+        process_running = self._process is not None and self._process.returncode is None
+        return (
+            self._state not in {"starting", "connected"}
+            or not process_running
+            or not self._last_health_ok
+        )
+
     def _transition(self, next_state: ConnectionState) -> None:
         if next_state == self._state:
             return
@@ -1022,9 +1178,9 @@ def _extract_session_id_from_mapping(data: Mapping[str, object]) -> str | None:
     return None
 
 
-def _find_free_port() -> int:
+def _find_free_port(host: str = "127.0.0.1") -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-        sock.bind(("127.0.0.1", 0))
+        sock.bind((host, 0))
         return int(sock.getsockname()[1])
 
 

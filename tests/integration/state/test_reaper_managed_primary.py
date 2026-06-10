@@ -16,8 +16,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from meridian.lib.state import spawn_store
-from meridian.lib.state.managed_primary import terminate_managed_primary_processes
-from meridian.lib.state.primary_meta import PrimaryMetadata
 from tests.integration.state.conftest import (
     _OLD_STARTED_AT,
     _create_spawn,
@@ -27,45 +25,13 @@ from tests.integration.state.conftest import (
     _write_corrupt_primary_meta,
     _write_primary_meta,
     _write_report,
+    fake_managed_primary_birth_liveness,
+    fake_reaper_liveness,
+    recording_scope_cleanup,
 )
 
 if TYPE_CHECKING:
     import pytest
-
-
-def test_terminate_managed_primary_processes_skips_unvalidated_child_pid(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    metadata = PrimaryMetadata(
-        managed_backend=True,
-        launcher_pid=8001,
-        backend_pid=8002,
-        tui_pid=8003,
-        activity="idle",
-    )
-    monkeypatch.setattr(
-        "meridian.lib.state.managed_primary.is_process_alive",
-        lambda pid, created_after_epoch=None: pid == 8002,
-    )
-    terminated_pids: list[int] = []
-
-    class _FakeProcess:
-        def __init__(self, pid: int) -> None:
-            self.pid = pid
-
-        def terminate(self) -> None:
-            terminated_pids.append(self.pid)
-
-    monkeypatch.setattr("meridian.lib.state.managed_primary.psutil.Process", _FakeProcess)
-
-    signaled = terminate_managed_primary_processes(
-        metadata,
-        started_epoch=100.0,
-        include_launcher=False,
-    )
-
-    assert signaled == (8002,)
-    assert terminated_pids == [8002]
 
 
 def test_reconcile_active_spawn_managed_primary_idle_launcher_alive_skips(
@@ -95,6 +61,8 @@ def test_reconcile_active_spawn_managed_primary_idle_launcher_alive_skips(
     latest = _get_spawn(runtime_root, spawn_id)
     assert latest.status == "running"
     assert latest.error is None
+
+
 def test_reconcile_active_spawn_managed_primary_dead_launcher_marks_orphan_primary(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -112,14 +80,8 @@ def test_reconcile_active_spawn_managed_primary_dead_launcher_marks_orphan_prima
         activity="idle",
     )
     record = _get_spawn(runtime_root, spawn_id)
-    monkeypatch.setattr(
-        "meridian.lib.state.reaper.is_process_alive",
-        lambda *_args, **_kwargs: False,
-    )
-    monkeypatch.setattr(
-        "meridian.lib.state.managed_primary.is_process_alive",
-        lambda pid, created_after_epoch=None: pid in {8882, 9992},
-    )
+    fake_reaper_liveness(monkeypatch, set())
+    fake_managed_primary_birth_liveness(monkeypatch, {8882, 9992})
     terminated_pids: list[int] = []
 
     class _FakeProcess:
@@ -146,8 +108,6 @@ def test_reconcile_active_spawn_managed_primary_candidate_unreadable_metadata_ki
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from meridian.lib.platform.process_scope.base import CleanupResult
-
     runner_pid = 9101
     worker_pid = 9102
     runtime_root, spawn_id = _create_spawn(
@@ -161,36 +121,10 @@ def test_reconcile_active_spawn_managed_primary_candidate_unreadable_metadata_ki
     _write_corrupt_primary_meta(runtime_root, spawn_id)
     record = _get_spawn(runtime_root, spawn_id)
 
-    monkeypatch.setattr(
-        "meridian.lib.state.reaper.is_process_alive",
-        lambda pid, created_after_epoch=None: pid == worker_pid,
-    )
-    terminated_pids: list[int] = []
-
-    def _fake_terminate_tree_sync(
-        pid: int,
-        *,
-        created_at_epoch: float = 0.0,
-        grace_secs: float = 5.0,
-        reason: str = "stop_called",
-        scope_id: str = "",
-        degraded_fallback: bool = False,
-    ) -> CleanupResult:
-        terminated_pids.append(pid)
-        return CleanupResult(
-            scope_id=scope_id,
-            root_pid=pid,
-            descendant_count=0,
-            reason=reason,
-            grace_seconds=grace_secs,
-            kill_escalated=False,
-            degraded_fallback=degraded_fallback,
-            skip_reason=None,
-        )
-
-    monkeypatch.setattr(
+    fake_reaper_liveness(monkeypatch, {worker_pid})
+    terminated_pids = recording_scope_cleanup(
+        monkeypatch,
         "meridian.lib.core.process_cleanup.terminate_tree_sync",
-        _fake_terminate_tree_sync,
     )
 
     reconciled = _reconcile(tmp_path, runtime_root, record)
@@ -223,14 +157,8 @@ def test_reconcile_active_spawn_managed_primary_finalizing_activity_uses_report_
         activity="finalizing",
     )
     record = _get_spawn(runtime_root, spawn_id)
-    monkeypatch.setattr(
-        "meridian.lib.state.reaper.is_process_alive",
-        lambda *_args, **_kwargs: False,
-    )
-    monkeypatch.setattr(
-        "meridian.lib.state.managed_primary.is_process_alive",
-        lambda *_args, **_kwargs: False,
-    )
+    fake_reaper_liveness(monkeypatch, set())
+    fake_managed_primary_birth_liveness(monkeypatch, set())
     terminated_pids: list[int] = []
 
     class _FakeProcess:
@@ -276,14 +204,8 @@ def test_reconcile_active_spawn_managed_primary_uses_runner_exit_tuple_before_or
     )
     record = _get_spawn(runtime_root, spawn_id)
     monkeypatch.setattr("meridian.lib.state.reaper.time.time", lambda: 1_000.0)
-    monkeypatch.setattr(
-        "meridian.lib.state.reaper.is_process_alive",
-        lambda *_args, **_kwargs: False,
-    )
-    monkeypatch.setattr(
-        "meridian.lib.state.managed_primary.is_process_alive",
-        lambda *_args, **_kwargs: False,
-    )
+    fake_reaper_liveness(monkeypatch, set())
+    fake_managed_primary_birth_liveness(monkeypatch, set())
 
     reconciled = _reconcile(tmp_path, runtime_root, record)
 
@@ -300,8 +222,6 @@ def test_reconcile_active_spawn_child_orphan_terminates_worker_process_group(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from meridian.lib.platform.process_scope.base import CleanupResult
-
     runner_pid = 9301
     worker_pid = 9302
     runtime_root, spawn_id = _create_spawn(
@@ -313,36 +233,10 @@ def test_reconcile_active_spawn_child_orphan_terminates_worker_process_group(
         started_at=_OLD_STARTED_AT,
     )
     record = _get_spawn(runtime_root, spawn_id)
-    monkeypatch.setattr(
-        "meridian.lib.state.reaper.is_process_alive",
-        lambda pid, created_after_epoch=None: pid == worker_pid,
-    )
-    terminated_pids: list[int] = []
-
-    def _fake_terminate_tree_sync(
-        pid: int,
-        *,
-        created_at_epoch: float = 0.0,
-        grace_secs: float = 5.0,
-        reason: str = "stop_called",
-        scope_id: str = "",
-        degraded_fallback: bool = False,
-    ) -> CleanupResult:
-        terminated_pids.append(pid)
-        return CleanupResult(
-            scope_id=scope_id,
-            root_pid=pid,
-            descendant_count=0,
-            reason=reason,
-            grace_seconds=grace_secs,
-            kill_escalated=False,
-            degraded_fallback=degraded_fallback,
-            skip_reason=None,
-        )
-
-    monkeypatch.setattr(
+    fake_reaper_liveness(monkeypatch, {worker_pid})
+    terminated_pids = recording_scope_cleanup(
+        monkeypatch,
         "meridian.lib.core.process_cleanup.terminate_tree_sync",
-        _fake_terminate_tree_sync,
     )
 
     reconciled = _reconcile(tmp_path, runtime_root, record)
@@ -354,3 +248,37 @@ def test_reconcile_active_spawn_child_orphan_terminates_worker_process_group(
     latest = _get_spawn(runtime_root, spawn_id)
     assert latest.status == "failed"
     assert latest.error == "orphan_run"
+
+
+def test_reconcile_managed_primary_finalizing_cancel_intent_cancels(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime_root, spawn_id = _create_spawn(tmp_path, started_at=_OLD_STARTED_AT)
+    spawn_store.record_cancel_intent(
+        runtime_root,
+        spawn_id,
+        exit_code=130,
+        error="cancelled",
+        requested_at="2026-06-03T01:00:00Z",
+    )
+    _write_primary_meta(
+        runtime_root,
+        spawn_id,
+        launcher_pid=7776,
+        activity="finalizing",
+    )
+    record = _get_spawn(runtime_root, spawn_id)
+    fake_reaper_liveness(monkeypatch, set())
+    monkeypatch.setattr(
+        "meridian.lib.state.managed_primary.is_process_alive", lambda *_args, **_kwargs: False
+    )
+    fake_managed_primary_birth_liveness(monkeypatch, set())
+
+    reconciled = _reconcile(tmp_path, runtime_root, record)
+
+    assert reconciled.status == "cancelled"
+    assert reconciled.exit_code == 130
+    assert reconciled.error == "cancelled"
+    latest = _get_spawn(runtime_root, spawn_id)
+    assert latest.status == "cancelled"

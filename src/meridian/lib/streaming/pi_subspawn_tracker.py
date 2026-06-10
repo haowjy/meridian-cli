@@ -17,17 +17,15 @@ _PI_CANONICAL_LIFECYCLE_EVENT_PREFIXES = pi_lifecycle.PI_CANONICAL_LIFECYCLE_TYP
 _PI_CANONICAL_NOTIFICATION_EVENTS = pi_lifecycle.PI_CANONICAL_NOTIFICATION_EVENTS
 _PI_CANONICAL_SUBSPAWN_END_EVENTS = pi_lifecycle.PI_CANONICAL_SUBSPAWN_END_EVENTS
 _PI_CANONICAL_SUBSPAWN_START_EVENTS = pi_lifecycle.PI_CANONICAL_SUBSPAWN_START_EVENTS
-_PI_LEGACY_SUBSPAWN_END_EVENTS = pi_lifecycle.PI_LEGACY_SUBSPAWN_END_EVENTS
-_PI_LEGACY_SUBSPAWN_START_EVENTS = pi_lifecycle.PI_LEGACY_SUBSPAWN_START_EVENTS
 _PI_NOTIFICATION_COMPLETED_EVENTS = pi_lifecycle.PI_NOTIFICATION_COMPLETED_EVENTS
 _PI_NOTIFICATION_DELIVERED_EVENTS = pi_lifecycle.PI_NOTIFICATION_DELIVERED_EVENTS
 _PI_NOTIFICATION_FAILED_EVENTS = pi_lifecycle.PI_NOTIFICATION_FAILED_EVENTS
 _PI_NOTIFICATION_QUEUED_EVENTS = pi_lifecycle.PI_NOTIFICATION_QUEUED_EVENTS
 _PI_SUBSPAWN_END_EVENTS = pi_lifecycle.PI_SUBSPAWN_END_EVENTS
 _PI_SUBSPAWN_START_EVENTS = pi_lifecycle.PI_SUBSPAWN_START_EVENTS
+_PI_LIFECYCLE_EVENT_ALLOWLIST = pi_lifecycle.PI_LIFECYCLE_EVENT_ALLOWLIST
 _canonical_lifecycle_label = pi_lifecycle.canonical_pi_lifecycle_label
 _event_label_candidates = pi_lifecycle.pi_lifecycle_event_label_candidates
-_is_legacy_notification_label = pi_lifecycle.is_legacy_pi_notification_label
 _pi_correlation_id = pi_lifecycle.pi_correlation_id
 _pi_notification_failure_error = pi_lifecycle.pi_notification_failure_error
 _pi_notification_id = pi_lifecycle.pi_notification_id
@@ -46,15 +44,26 @@ class PiPendingNotification:
     deadline_monotonic: float | None = None
 
 
+def _is_pi_lifecycle_namespace_label(label: str) -> bool:
+    """Return True for Pi lifecycle labels that must not be silently ignored."""
+    normalized = label.strip().lower()
+    return (
+        normalized.startswith("meridian.subspawn.")
+        or normalized.startswith("meridian.notification.")
+        or normalized.startswith("meridian.quiescence.")
+        or normalized.startswith("meridian_subspawn_")
+        or normalized.startswith("meridian_notification_")
+        or normalized.startswith("meridian_quiescence_")
+    )
+
+
 @dataclass
 class PiSubspawnTracker:
     active_ids: set[str]
     active_process_groups: dict[str, int]
     canonical_event_keys: set[tuple[str, str, str]]
     resolved_subspawn_ids: set[str]
-    anonymous_active_count: int = 0
     pending_notifications: dict[str, PiPendingNotification] | None = None
-    anonymous_pending_notifications: int = 0
     notification_failure_error: str | None = None
     notification_timeout_error: str | None = None
     lifecycle_tracking_invalidated_error: str | None = None
@@ -117,7 +126,6 @@ class PiSubspawnTracker:
             if not _pi_wait_policy_is_tracked(event.payload):
                 return False
             has_canonical_label = bool(label_set & _PI_CANONICAL_SUBSPAWN_START_EVENTS)
-            has_legacy_label = bool(label_set & _PI_LEGACY_SUBSPAWN_START_EVENTS)
             subspawn_id = _pi_subspawn_id(event.payload)
             if subspawn_id is not None:
                 if subspawn_id in self.resolved_subspawn_ids:
@@ -140,8 +148,6 @@ class PiSubspawnTracker:
                 self.lifecycle_tracking_invalidated_error = (
                     f"pi_lifecycle_tracking_invalidated:missing_subspawn_id:{canonical_label}"
                 )
-            elif has_legacy_label and not has_canonical_label:
-                self.anonymous_active_count += 1
             return False
 
         is_subspawn_end = bool(label_set & _PI_SUBSPAWN_END_EVENTS)
@@ -149,7 +155,6 @@ class PiSubspawnTracker:
             if not _pi_wait_policy_is_tracked(event.payload):
                 return False
             has_canonical_label = bool(label_set & _PI_CANONICAL_SUBSPAWN_END_EVENTS)
-            has_legacy_label = bool(label_set & _PI_LEGACY_SUBSPAWN_END_EVENTS)
             subspawn_id = _pi_subspawn_id(event.payload)
             if subspawn_id is not None:
                 if subspawn_id in self.resolved_subspawn_ids:
@@ -171,12 +176,16 @@ class PiSubspawnTracker:
                     f"pi_lifecycle_tracking_invalidated:missing_subspawn_id:{canonical_label}"
                 )
                 return False
-            if has_legacy_label and not has_canonical_label and self.anonymous_active_count > 0:
-                self.anonymous_active_count -= 1
             return False
 
         pending_notifications = self.pending_notifications
         if pending_notifications is None:
+            unknown_lifecycle_label = self._unknown_pi_lifecycle_namespace_label(label_set)
+            if unknown_lifecycle_label is not None:
+                self.lifecycle_tracking_invalidated_error = (
+                    "pi_lifecycle_tracking_invalidated:unsupported_lifecycle_event:"
+                    f"{unknown_lifecycle_label}"
+                )
             return False
 
         is_notification_start = bool(
@@ -211,8 +220,6 @@ class PiSubspawnTracker:
                 self.lifecycle_tracking_invalidated_error = (
                     f"pi_lifecycle_tracking_invalidated:missing_notification_id:{canonical_label}"
                 )
-            elif _is_legacy_notification_label(label_set):
-                self.anonymous_pending_notifications += 1
             return False
 
         is_notification_end = bool(
@@ -231,13 +238,16 @@ class PiSubspawnTracker:
                     f"pi_lifecycle_tracking_invalidated:missing_notification_id:{canonical_label}"
                 )
                 return False
-            elif (
-                _is_legacy_notification_label(label_set)
-                and self.anonymous_pending_notifications > 0
-            ):
-                self.anonymous_pending_notifications -= 1
             if label_set & _PI_NOTIFICATION_FAILED_EVENTS:
                 self.notification_failure_error = _pi_notification_failure_error(event.payload)
+            return False
+
+        unknown_lifecycle_label = self._unknown_pi_lifecycle_namespace_label(label_set)
+        if unknown_lifecycle_label is not None:
+            self.lifecycle_tracking_invalidated_error = (
+                "pi_lifecycle_tracking_invalidated:unsupported_lifecycle_event:"
+                f"{unknown_lifecycle_label}"
+            )
         return False
 
     def _canonical_lifecycle_dedup_key(
@@ -278,17 +288,30 @@ class PiSubspawnTracker:
         parse_error = event.payload.get("error")
         return isinstance(parse_error, str) and parse_error == "unsupported_schema_version"
 
+    def _unknown_pi_lifecycle_namespace_label(self, labels: set[str]) -> str | None:
+        for label in sorted(labels):
+            if label in _PI_LIFECYCLE_EVENT_ALLOWLIST:
+                continue
+            if _is_pi_lifecycle_namespace_label(label):
+                return label
+        return None
+
     def has_pending(self) -> bool:
-        return bool(self.active_ids) or self.anonymous_active_count > 0
+        return bool(self.active_ids)
 
     def active_tracked_count(self) -> int:
-        return len(self.active_ids) + self.anonymous_active_count
+        return len(self.active_ids)
 
-    def active_tracked_pgid_candidates(self) -> tuple[int, ...]:
+    def active_tracked_pgid_candidates(
+        self,
+        *,
+        exclude_ids: set[str] | None = None,
+    ) -> tuple[int, ...]:
+        excluded = exclude_ids or set()
         unique = {
             pgid
             for subspawn_id, pgid in self.active_process_groups.items()
-            if subspawn_id in self.active_ids and pgid > 0
+            if subspawn_id in self.active_ids and subspawn_id not in excluded and pgid > 0
         }
         return tuple(sorted(unique))
 
@@ -296,16 +319,15 @@ class PiSubspawnTracker:
         tracked_count = self.active_tracked_count()
         self.active_ids.clear()
         self.active_process_groups.clear()
-        self.anonymous_active_count = 0
         return tracked_count
 
     def has_pending_notifications(self) -> bool:
         pending_notifications = self.pending_notifications
-        return bool(pending_notifications) or self.anonymous_pending_notifications > 0
+        return bool(pending_notifications)
 
     def pending_notification_count(self) -> int:
         pending_notifications = self.pending_notifications
-        return len(pending_notifications or ()) + self.anonymous_pending_notifications
+        return len(pending_notifications or ())
 
     def resolve_notification_on_terminal(self, event: HarnessEvent) -> str | None:
         pending_notifications = self.pending_notifications

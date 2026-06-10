@@ -10,6 +10,10 @@ quiescence is the explicit exception. Keep Pi child-wave, notification, disk-sta
 and tracked-process cleanup policy behind the Pi coordinator/tracker modules instead
 of growing `SpawnManager`.
 
+Resident drain selection is capability-driven: a connection participates in the
+resident descendant-wait path only when `connection.resident_backend` is present.
+Do not key resident behavior off harness ids.
+
 ## Mental Model
 
 ```
@@ -73,11 +77,14 @@ means the manager died or the spawn is orphaned.
 - `spawn_manager.py` — `SpawnManager`: public live-spawn registry/control API
 - `spawn_dispatch.py` — connection creation/start dispatch
 - `spawn_drain_loop.py` — event drain, persistence/observer/fan-out ordering, outcome priority
+- `drain_coordinator.py` — `DrainCoordinator` protocol seam for harness-specific completion policy
 - `spawn_session.py` — `SpawnSession`, `DrainOutcome`
 - `pi_drain.py` — `PiDrainCoordinator`: Pi spawned-session quiescence policy
+- `resident_drain.py` — `ResidentDrainCoordinator`: resident-backend descendant waiting policy
+- `spawn_drain_loop.py` — default terminal-event finalization for plain streaming harnesses
 - `pi_subspawn_tracker.py` — Pi child-spawn, notification, and wave tracking
 - `disk_watcher.py` / `pi_quiescence.py` — disk-backed Pi background-work state
-- `drain_wait.py` — bounded drain/cleanup wait helpers
+- `drain_wait.py` — generic event/timeout/aux-wake arbitration for drain loops
 - `pi_process_cleanup.py` — tracked Pi child process cleanup
 - `drain_policy.py` — `DrainPolicy`, `SingleTurnDrainPolicy`, `PersistentDrainPolicy`
 - `control_socket.py` — per-spawn inject endpoint

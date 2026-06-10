@@ -1337,6 +1337,30 @@ class MeridianConfig(BaseSettings):
             env_vars=("MERIDIAN_PI_CHILD_WAVE_TIMEOUT_SECONDS",),
         ),
     ] = None
+    resident_deadline_seconds: Annotated[
+        float | None,
+        config_field(
+            "timeouts.resident_deadline_seconds",
+            value_kind="float",
+            file_aliases=(
+                file_alias("timeouts", "resident_deadline_seconds"),
+                file_alias(None, "resident_deadline_seconds"),
+            ),
+            env_vars=("MERIDIAN_RESIDENT_DEADLINE_SECONDS",),
+        ),
+    ] = None
+    resident_poll_seconds: Annotated[
+        float | None,
+        config_field(
+            "timeouts.resident_poll_seconds",
+            value_kind="float",
+            file_aliases=(
+                file_alias("timeouts", "resident_poll_seconds"),
+                file_alias(None, "resident_poll_seconds"),
+            ),
+            env_vars=("MERIDIAN_RESIDENT_POLL_SECONDS",),
+        ),
+    ] = None
     pi_task_ping_interval_seconds: Annotated[
         float | None,
         config_field(

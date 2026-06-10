@@ -21,7 +21,6 @@ from meridian.lib.core.types import SpawnId
 from meridian.lib.platform.process_scope import ProcessScopeSnapshot
 from meridian.lib.platform.process_scope.base import process_scope_release_id
 from meridian.lib.state.atomic import atomic_write_text
-from meridian.lib.state.spawn.model import SpawnRecord
 
 logger = logging.getLogger(__name__)
 
@@ -62,9 +61,13 @@ def _snapshot_to_dict(snapshot: ProcessScopeSnapshot) -> dict[str, object]:
     return dataclasses.asdict(snapshot)
 
 
-def _dict_to_snapshot(data: dict[str, object]) -> ProcessScopeSnapshot | None:
+def scope_snapshot_from_dict(data: dict[str, object]) -> ProcessScopeSnapshot | None:
     """Deserialize one scope dict; return None on any error."""
     try:
+        parent_death_linked = data.get("parent_death_linked", False)
+        if not isinstance(parent_death_linked, bool):
+            return None
+        data["parent_death_linked"] = parent_death_linked
         if not isinstance(data.get("release_id"), str) or not str(data.get("release_id")):
             scope_id = data.get("scope_id")
             root_pid = data.get("root_pid")
@@ -98,14 +101,28 @@ def record_scope(
 ) -> None:
     """Persist a process scope snapshot for a spawn.
 
-    Reads existing sidecar (or starts fresh), appends the new scope entry,
-    and writes atomically.  Safe to call concurrently — last-write-wins per
-    scope_id since each call reads before writing.
+    Reads existing sidecar (or starts fresh), upserts the concrete scope release,
+    and writes atomically.  Re-recording the same process scope (same scope id,
+    PID, and birth time) replaces the previous projection so provisional launch
+    ownership can be upgraded without leaving duplicate cleanup targets. Distinct
+    concrete releases with the same human label are preserved.
     """
     path = _sidecar_path(runtime_root, spawn_id)
     payload = _read_raw(path)
-    scopes: list[object] = list(payload["scopes"])  # type: ignore[arg-type]
-    scopes.append(_snapshot_to_dict(snapshot))
+    snapshot_dict = _snapshot_to_dict(snapshot)
+    scopes: list[object] = []
+    replaced = False
+    for entry in cast("list[object]", payload["scopes"]):
+        existing = cast("dict[str, object]", entry) if isinstance(entry, dict) else None
+        existing_release_id = existing.get("release_id") if existing is not None else None
+        if existing_release_id == snapshot.release_id:
+            if not replaced:
+                scopes.append(snapshot_dict)
+                replaced = True
+            continue
+        scopes.append(cast("object", entry))
+    if not replaced:
+        scopes.append(snapshot_dict)
     payload["scopes"] = scopes
     atomic_write_text(path, json.dumps(payload, separators=(",", ":")))
 
@@ -148,23 +165,6 @@ def is_scope_released(
     return release_id in released
 
 
-def read_scopes(spawn_record: SpawnRecord) -> list[ProcessScopeSnapshot]:
-    """Read scope snapshots from a spawn record's embedded field.
-
-    Returns ``[]`` for legacy spawns where ``process_scopes`` is ``None``.
-    Callers check ``len == 0`` to decide whether to fall back to
-    ``worker_pid`` for cleanup.
-    """
-    if spawn_record.process_scopes is None:
-        return []
-    snapshots: list[ProcessScopeSnapshot] = []
-    for raw in spawn_record.process_scopes:
-        snap = _dict_to_snapshot(dict(raw))
-        if snap is not None:
-            snapshots.append(snap)
-    return snapshots
-
-
 def read_scopes_from_disk(
     runtime_root: Path,
     spawn_id: SpawnId,
@@ -183,7 +183,7 @@ def read_scopes_from_disk(
     for entry in cast("list[object]", payload["scopes"]):
         if not isinstance(entry, dict):
             continue
-        snap = _dict_to_snapshot(cast("dict[str, object]", entry))
+        snap = scope_snapshot_from_dict(cast("dict[str, object]", entry))
         if snap is not None:
             snapshots.append(snap)
     return snapshots
@@ -192,7 +192,7 @@ def read_scopes_from_disk(
 __all__ = [
     "is_scope_released",
     "mark_scope_released",
-    "read_scopes",
     "read_scopes_from_disk",
     "record_scope",
+    "scope_snapshot_from_dict",
 ]

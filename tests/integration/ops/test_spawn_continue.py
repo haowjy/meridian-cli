@@ -260,8 +260,9 @@ def test_spawn_continue_replays_source_launch_policy_snapshot(
         runtime: object,
         ctx: object = None,
         prepared: object = None,
+        on_spawn_id: object = None,
     ) -> SpawnActionOutput:
-        _ = (runtime, ctx, prepared)
+        _ = (runtime, ctx, prepared, on_spawn_id)
         captured["payload"] = payload
         captured["request"] = request
         return SpawnActionOutput(command="spawn.create", status="running", spawn_id="p29")
@@ -335,8 +336,9 @@ def test_spawn_continue_uses_legacy_source_launch_policy_without_snapshot(
         runtime: object,
         ctx: object = None,
         prepared: object = None,
+        on_spawn_id: object = None,
     ) -> SpawnActionOutput:
-        _ = (runtime, ctx, prepared)
+        _ = (runtime, ctx, prepared, on_spawn_id)
         captured["payload"] = payload
         captured["request"] = request
         return SpawnActionOutput(command="spawn.create", status="running", spawn_id="p31")

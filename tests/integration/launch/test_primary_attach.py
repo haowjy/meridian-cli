@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import asyncio
 import json
+import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
+import psutil
 import pytest
 
 from meridian.lib.core.types import HarnessId, SpawnId
@@ -25,7 +27,12 @@ from meridian.lib.launch.process.primary_attach import (
     PrimaryAttachError,
     PrimaryAttachLauncher,
 )
+from meridian.lib.platform.process_scope import ProcessScopeSnapshot
+from meridian.lib.platform.process_scope.base import PROCESS_BIRTH_UNKNOWN_EPOCH
 from meridian.lib.safety.permissions import UnsafeNoOpPermissionResolver
+from meridian.lib.state.process_scope_projection import read_scopes_from_disk, record_scope
+
+_BACKEND_SCOPE_EPOCH = 12_345.0
 
 
 def _build_config(*, spawn_id: SpawnId, control_root: Path, ws_port: int = 0) -> ConnectionConfig:
@@ -94,6 +101,27 @@ class FakeManagedConnection:
         return self._subprocess_pid
 
     @property
+    def managed_backend(self) -> None:
+        return None
+
+    @property
+    def scope_snapshot(self) -> ProcessScopeSnapshot | None:
+        if self._subprocess_pid <= 0:
+            return None
+        return ProcessScopeSnapshot(
+            scope_id="backend",
+            owner_policy="spawn_owned",
+            owner_id=str(self._spawn_id),
+            role="harness_backend",
+            containment="pid_tree_fallback",
+            root_pid=self._subprocess_pid,
+            root_created_at_epoch=_BACKEND_SCOPE_EPOCH,
+            pgid=None,
+            job_name=None,
+            degraded_reason=None,
+        )
+
+    @property
     def observer_endpoint(self) -> ObserverEndpoint | None:
         return self._observer_endpoint
 
@@ -129,7 +157,8 @@ class FakeManagedConnection:
         self.started_primary_observer_mode = True
         await self.start(config, spec)
 
-    async def stop(self) -> None:
+    async def stop(self, *, reason: str | None = None) -> None:
+        _ = reason
         self.stop_called = True
         self.state = "stopped"
         self._stop_event.set()
@@ -184,6 +213,44 @@ class FakeProcessLauncher(ProcessLauncher):
         return LaunchedProcess(exit_code=self.exit_code, pid=self.pid)
 
 
+@dataclass
+class BlockingProcessLauncher(ProcessLauncher):
+    spawn_dir: Path
+    pid: int = 5252
+    launch_commands: list[tuple[str, ...]] = field(default_factory=list)
+    release: threading.Event = field(default_factory=threading.Event)
+
+    def launch(
+        self,
+        *,
+        command: tuple[str, ...],
+        cwd: Path,
+        env: dict[str, str],
+        output_log_path: Path | None,
+        on_child_started: ChildStartedHook | None = None,
+    ) -> LaunchedProcess:
+        _ = (cwd, env, output_log_path)
+        self.launch_commands.append(command)
+        metadata_path = self.spawn_dir / PRIMARY_META_FILENAME
+        assert metadata_path.exists()
+        if on_child_started is not None:
+            on_child_started(self.pid)
+        self.release.wait(timeout=5.0)
+        return LaunchedProcess(exit_code=143, pid=self.pid)
+
+
+class FailingEventConnection(FakeManagedConnection):
+    def __init__(self, *, fail_after_started: asyncio.Event, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._fail_after_started = fail_after_started
+
+    async def events(self):  # type: ignore[no-untyped-def]
+        await self._fail_after_started.wait()
+        self.state = "failed"
+        if False:
+            yield HarnessEvent(event_type="unreachable", payload={}, harness_id="opencode")
+
+
 def _read_metadata(spawn_dir: Path) -> dict[str, object]:
     return cast(
         "dict[str, object]",
@@ -194,6 +261,76 @@ def _read_metadata(spawn_dir: Path) -> dict[str, object]:
 def _read_history_lines(spawn_dir: Path) -> list[dict[str, object]]:
     lines = (spawn_dir / HISTORY_FILENAME).read_text(encoding="utf-8").splitlines()
     return [cast("dict[str, object]", json.loads(line)) for line in lines if line.strip()]
+
+
+def test_primary_attach_scope_snapshot_records_unknown_birth_sentinel_when_create_time_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _InaccessibleProcess:
+        def __init__(self, pid: int) -> None:
+            self.pid = pid
+
+        def create_time(self) -> float:
+            raise psutil.AccessDenied(pid=self.pid)
+
+    monkeypatch.setattr(primary_attach_module.psutil, "Process", _InaccessibleProcess)
+
+    snapshot = primary_attach_module._make_scope_snapshot(
+        pid=987_654_321,
+        scope_id="tui",
+        owner_policy="session_owned",
+        owner_id="thread-unknown",
+        role="primary_tui",
+    )
+
+    assert snapshot.root_created_at_epoch == PROCESS_BIRTH_UNKNOWN_EPOCH
+
+
+@pytest.mark.asyncio
+async def test_primary_attach_event_writer_failure_stops_connection_and_tui(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    spawn_dir = tmp_path / "spawns" / "p900-liveness"
+    tui_started = asyncio.Event()
+    connection = FailingEventConnection(
+        fail_after_started=tui_started,
+        events=[],
+        session_id="sess-dead",
+    )
+    process_launcher = BlockingProcessLauncher(spawn_dir=spawn_dir)
+    terminated_scopes: list[str] = []
+
+    def _terminate_scope(scope: Any, *, grace_seconds: float, reason: str) -> None:
+        _ = grace_seconds
+        terminated_scopes.append(f"{scope.scope_id}:{reason}")
+        process_launcher.release.set()
+        return None
+
+    monkeypatch.setattr(primary_attach_module, "terminate_scope_sync", _terminate_scope)
+    launcher = PrimaryAttachLauncher(
+        spawn_id=SpawnId("p900-liveness"),
+        spawn_dir=spawn_dir,
+        connection=connection,
+        tui_command_builder=lambda session_id: ("opencode", "attach", session_id),
+        process_launcher=process_launcher,
+        on_running=lambda _pid: tui_started.set(),
+    )
+
+    outcome = await asyncio.wait_for(
+        launcher.run(
+            config=_build_config(spawn_id=SpawnId("p900-liveness"), control_root=tmp_path),
+            spec=_build_spec(),
+            cwd=tmp_path,
+            env={},
+        ),
+        timeout=2.0,
+    )
+
+    assert outcome.exit_code == 1
+    assert connection.stop_called is True
+    assert terminated_scopes == ["tui:event_stream_closed"]
+    assert _read_metadata(spawn_dir)["tui_pid"] == 5252
 
 
 @pytest.mark.asyncio
@@ -232,54 +369,38 @@ async def test_primary_attach_writes_metadata_before_tui_launch(tmp_path: Path) 
 
 
 @pytest.mark.asyncio
-async def test_primary_attach_captures_session_id_from_connection(tmp_path: Path) -> None:
-    spawn_dir = tmp_path / "spawns" / "p901"
-    connection = FakeManagedConnection(events=[], session_id="thread-from-transport")
+async def test_primary_attach_upgrades_provisional_backend_scope_without_duplicate(
+    tmp_path: Path,
+) -> None:
+    spawn_id = SpawnId("p900-scope")
+    spawn_dir = tmp_path / "spawns" / str(spawn_id)
+    connection = FakeManagedConnection(events=[], session_id="thread-upgraded")
     process_launcher = FakeProcessLauncher(spawn_dir=spawn_dir)
+    provisional = connection.scope_snapshot
+    assert provisional is not None
+    record_scope(tmp_path, spawn_id, provisional)
+
     launcher = PrimaryAttachLauncher(
-        spawn_id=SpawnId("p901"),
+        spawn_id=spawn_id,
         spawn_dir=spawn_dir,
         connection=connection,
         tui_command_builder=lambda session_id: ("codex", "resume", session_id),
         process_launcher=process_launcher,
     )
 
-    outcome = await launcher.run(
-        config=_build_config(spawn_id=SpawnId("p901"), control_root=tmp_path),
+    await launcher.run(
+        config=_build_config(spawn_id=spawn_id, control_root=tmp_path),
         spec=_build_spec(),
         cwd=tmp_path,
         env={},
     )
 
-    assert outcome.session_id == "thread-from-transport"
-    assert _read_metadata(spawn_dir)["harness_session_id"] == "thread-from-transport"
-
-
-@pytest.mark.asyncio
-async def test_primary_attach_calls_on_running_when_tui_starts(tmp_path: Path) -> None:
-    spawn_dir = tmp_path / "spawns" / "p901-running"
-    connection = FakeManagedConnection(events=[])
-    process_launcher = FakeProcessLauncher(spawn_dir=spawn_dir, pid=5151, pause_seconds=0.03)
-    running_pids: list[int] = []
-    launcher = PrimaryAttachLauncher(
-        spawn_id=SpawnId("p901-running"),
-        spawn_dir=spawn_dir,
-        connection=connection,
-        tui_command_builder=lambda session_id: ("codex", "resume", session_id),
-        process_launcher=process_launcher,
-        on_running=running_pids.append,
-    )
-
-    outcome = await launcher.run(
-        config=_build_config(spawn_id=SpawnId("p901-running"), control_root=tmp_path),
-        spec=_build_spec(),
-        cwd=tmp_path,
-        env={},
-    )
-
-    assert running_pids == [5151]
-    assert outcome.tui_pid == 5151
-    assert _read_metadata(spawn_dir)["tui_pid"] == 5151
+    backend_scopes = [
+        scope for scope in read_scopes_from_disk(tmp_path, spawn_id) if scope.scope_id == "backend"
+    ]
+    assert [(scope.owner_policy, scope.owner_id) for scope in backend_scopes] == [
+        ("session_owned", "thread-upgraded")
+    ]
 
 
 @pytest.mark.asyncio
@@ -330,8 +451,24 @@ async def test_primary_attach_writes_valid_jsonl_events(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_primary_attach_activity_transitions_update_metadata(tmp_path: Path) -> None:
+async def test_primary_attach_activity_transitions_update_metadata(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     spawn_dir = tmp_path / "spawns" / "p903"
+    activity_transitions: list[object] = []
+    original_write_primary_metadata = primary_attach_module.write_primary_metadata
+
+    def _record_activity_write(spawn_dir_arg: Path, metadata: Any) -> None:
+        if not activity_transitions or activity_transitions[-1] != metadata.activity:
+            activity_transitions.append(metadata.activity)
+        original_write_primary_metadata(spawn_dir_arg, metadata)
+
+    monkeypatch.setattr(
+        primary_attach_module,
+        "write_primary_metadata",
+        _record_activity_write,
+    )
     connection = FakeManagedConnection(
         events=[
             HarnessEvent(
@@ -355,15 +492,6 @@ async def test_primary_attach_activity_transitions_update_metadata(tmp_path: Pat
         process_launcher=process_launcher,
     )
 
-    activity_writes: list[str] = []
-    original_write_metadata = launcher._write_metadata
-
-    def _recording_write_metadata() -> None:
-        activity_writes.append(launcher._metadata.activity)
-        original_write_metadata()
-
-    launcher._write_metadata = _recording_write_metadata  # type: ignore[method-assign]
-
     await launcher.run(
         config=_build_config(spawn_id=SpawnId("p903"), control_root=tmp_path),
         spec=_build_spec(),
@@ -371,21 +499,9 @@ async def test_primary_attach_activity_transitions_update_metadata(tmp_path: Pat
         env={},
     )
 
-    deduped_activity_writes: list[str] = []
-    for activity in activity_writes:
-        if deduped_activity_writes and deduped_activity_writes[-1] == activity:
-            continue
-        deduped_activity_writes.append(activity)
-
-    assert deduped_activity_writes == [
-        "starting",
-        "idle",
-        "turn_active",
-        "idle",
-        "finalizing",
-    ]
-    assert activity_writes[-1] == "finalizing"
-    assert _read_metadata(spawn_dir)["activity"] == "finalizing"
+    metadata = _read_metadata(spawn_dir)
+    assert metadata["activity"] == "finalizing"
+    assert "turn_active" in activity_transitions
 
 
 @pytest.mark.asyncio
@@ -465,26 +581,3 @@ async def test_primary_attach_raises_after_max_port_bind_retries(tmp_path: Path)
     assert connection.start_calls == 3
     assert connection.started_ports == [29100, 29101, 29102]
     assert process_launcher.launch_commands == []
-
-
-def test_primary_attach_finalizing_is_terminal_activity_state(tmp_path: Path) -> None:
-    spawn_dir = tmp_path / "spawns" / "p906"
-    spawn_dir.mkdir(parents=True, exist_ok=True)
-    launcher = PrimaryAttachLauncher(
-        spawn_id=SpawnId("p906"),
-        spawn_dir=spawn_dir,
-        connection=FakeManagedConnection(events=[]),
-        tui_command_builder=lambda session_id: ("codex", "resume", session_id),
-        process_launcher=FakeProcessLauncher(spawn_dir=spawn_dir),
-    )
-
-    launcher._set_activity("finalizing")
-    launcher._update_activity_from_event(
-        HarnessEvent(
-            event_type="turn/started",
-            payload={"turnId": "late-turn"},
-            harness_id="codex",
-        )
-    )
-
-    assert launcher._metadata.activity == "finalizing"

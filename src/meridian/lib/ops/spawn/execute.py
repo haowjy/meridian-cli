@@ -4,6 +4,7 @@ import asyncio
 import os
 import subprocess
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -49,6 +50,7 @@ from .execute_init import (
 from .execute_runner import launch_prepared_spawn
 from .failure_policy import finalize_launch_failure_sync
 from .models import SpawnActionOutput, SpawnCreateInput
+from .pre_init import EXPECTED_PRE_INIT_EXCEPTIONS, PreInitFailure, run_pre_init_boundary
 from .query import read_report, read_spawn_row
 
 logger = structlog.get_logger(__name__)
@@ -86,6 +88,13 @@ class SpawnExecutionContract:
     execution_cwd: Path
     task_cwd: str | None
     work_id: str | None
+
+
+@dataclass(frozen=True)
+class SpawnExecutionPreparation:
+    resolved_context: RuntimeContext
+    project_paths: Any
+    execution_contract: SpawnExecutionContract
 
 
 def _resolve_execution_contract(
@@ -134,6 +143,37 @@ def _resolve_execution_contract(
     )
 
 
+def _prepare_spawn_execution(
+    *,
+    payload: SpawnCreateInput,
+    request: SpawnRequest,
+    runtime: OperationRuntime,
+    ctx: RuntimeContext | None,
+) -> SpawnExecutionPreparation | SpawnActionOutput:
+    def _operation() -> SpawnExecutionPreparation:
+        try:
+            resolved_context = runtime_context(ctx)
+            project_paths = resolve_project_config_paths(
+                project_root=runtime.project_root,
+                execution_cwd=runtime.authority.execution_cwd,
+            )
+            execution_contract = _resolve_execution_contract(
+                request=request,
+                project_paths=project_paths,
+                payload=payload,
+                ambient_work_id=resolved_context.work_id,
+            )
+            return SpawnExecutionPreparation(
+                resolved_context=resolved_context,
+                project_paths=project_paths,
+                execution_contract=execution_contract,
+            )
+        except EXPECTED_PRE_INIT_EXCEPTIONS as exc:
+            raise PreInitFailure(str(exc)) from exc
+
+    return run_pre_init_boundary(payload=payload, request=request, operation=_operation)
+
+
 def execute_spawn_background(
     *,
     payload: SpawnCreateInput,
@@ -141,17 +181,18 @@ def execute_spawn_background(
     runtime: OperationRuntime,
     ctx: RuntimeContext | None = None,
 ) -> SpawnActionOutput:
-    resolved_context = runtime_context(ctx)
-    project_paths = resolve_project_config_paths(
-        project_root=runtime.project_root,
-        execution_cwd=runtime.authority.execution_cwd,
-    )
-    execution_contract = _resolve_execution_contract(
-        request=request,
-        project_paths=project_paths,
+    preparation = _prepare_spawn_execution(
         payload=payload,
-        ambient_work_id=resolved_context.work_id,
+        request=request,
+        runtime=runtime,
+        ctx=ctx,
     )
+    if isinstance(preparation, SpawnActionOutput):
+        return preparation
+    resolved_context = preparation.resolved_context
+    project_paths = preparation.project_paths
+    execution_contract = preparation.execution_contract
+
     initial_execution_cwd = execution_contract.execution_cwd.as_posix()
     initial_task_cwd = execution_contract.task_cwd
     if payload.stream:
@@ -394,18 +435,20 @@ def execute_spawn_blocking(
     runtime: OperationRuntime,
     ctx: RuntimeContext | None = None,
     prepared: PreparedLaunchSurface | None = None,
+    on_spawn_id: Callable[[str], None] | None = None,
 ) -> SpawnActionOutput:
-    resolved_context = runtime_context(ctx)
-    project_paths = resolve_project_config_paths(
-        project_root=runtime.project_root,
-        execution_cwd=runtime.authority.execution_cwd,
-    )
-    execution_contract = _resolve_execution_contract(
-        request=request,
-        project_paths=project_paths,
+    preparation = _prepare_spawn_execution(
         payload=payload,
-        ambient_work_id=resolved_context.work_id,
+        request=request,
+        runtime=runtime,
+        ctx=ctx,
     )
+    if isinstance(preparation, SpawnActionOutput):
+        return preparation
+    resolved_context = preparation.resolved_context
+    project_paths = preparation.project_paths
+    execution_contract = preparation.execution_contract
+
     initial_execution_cwd = execution_contract.execution_cwd.as_posix()
     initial_task_cwd = execution_contract.task_cwd
     context = _init_spawn(
@@ -424,6 +467,9 @@ def execute_spawn_blocking(
         ctx=resolved_context,
     )
     spawn = context.spawn
+    spawn_id_text = str(spawn.spawn_id)
+    if on_spawn_id is not None:
+        on_spawn_id(spawn_id_text)
 
     warning = request.warning
     context_from_resolved = request.context_from
@@ -452,7 +498,7 @@ def execute_spawn_blocking(
         except Exception:
             logger.warning(
                 "Failed to write params.json",
-                spawn_id=str(spawn.spawn_id),
+                spawn_id=spawn_id_text,
                 exc_info=True,
             )
         started = time.monotonic()
@@ -492,11 +538,11 @@ def execute_spawn_blocking(
             spawn.spawn_id,
             str(exc),
         )
-        logger.exception("Foreground spawn crashed.", spawn_id=str(spawn.spawn_id))
+        logger.exception("Foreground spawn crashed.", spawn_id=spawn_id_text)
         return SpawnActionOutput(
             command="spawn.create",
             status="failed",
-            spawn_id=str(spawn.spawn_id),
+            spawn_id=spawn_id_text,
             message=f"Spawn execution failed: {exc}",
             error="execution_crash",
             model=request.model or "",
@@ -538,7 +584,7 @@ def execute_spawn_blocking(
     _emit_subrun_event(
         {
             "t": "meridian.spawn.done",
-            "id": str(spawn.spawn_id),
+            "id": spawn_id_text,
             "exit": exit_code,
             "secs": done_secs,
             "tok": tokens_total,
@@ -551,7 +597,7 @@ def execute_spawn_blocking(
     return SpawnActionOutput(
         command="spawn.create",
         status=status,
-        spawn_id=str(spawn.spawn_id),
+        spawn_id=spawn_id_text,
         message="Spawn completed.",
         model=request.model or "",
         harness_id=request.harness or "",

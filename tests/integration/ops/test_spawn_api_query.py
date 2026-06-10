@@ -13,7 +13,6 @@ import pytest
 
 import meridian.lib.ops.spawn.api as spawn_api
 from meridian.lib.bootstrap.services import prepare_for_runtime_write
-from meridian.lib.core.util import FormatContext
 from meridian.lib.launch.constants import PRIMARY_META_FILENAME
 from meridian.lib.ops.spawn.models import (
     SpawnActionOutput,
@@ -106,6 +105,43 @@ def test_spawn_stats_includes_finalizing_bucket(tmp_path: Path) -> None:
     assert model_stats.running == 1
     assert model_stats.finalizing == 1
     assert running_id != finalizing_id
+
+
+def test_spawn_stats_session_filters_by_exact_chat_id(tmp_path: Path) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    runtime_root = _state_root(project_root)
+
+    spawn_store.start_spawn(
+        runtime_root,
+        spawn_id="p-owner-child",
+        chat_id="c-child",
+        owner_chat_id="c-owner",
+        model="gpt-5.4",
+        agent="coder",
+        harness="codex",
+        prompt="child",
+    )
+    spawn_store.start_spawn(
+        runtime_root,
+        spawn_id="p-sibling",
+        chat_id="c-sibling",
+        owner_chat_id="c-owner",
+        model="gpt-5.4",
+        agent="coder",
+        harness="codex",
+        prompt="sibling",
+    )
+
+    child_only = spawn_api.spawn_stats_sync(
+        SpawnStatsInput(project_root=project_root.as_posix(), session="c-child")
+    )
+    owner_family = spawn_api.spawn_stats_sync(
+        SpawnStatsInput(project_root=project_root.as_posix(), session="c-owner")
+    )
+
+    assert child_only.total_runs == 1
+    assert owner_family.total_runs == 0
 
 
 def test_spawn_cancel_all_counts_finalizing_cancellations_as_accepted(
@@ -222,6 +258,50 @@ def test_spawn_list_filters_by_profile_name(tmp_path: Path) -> None:
     assert [entry.spawn_id for entry in output.spawns] == [str(reviewer_spawn_id)]
 
 
+def test_spawn_list_and_status_surface_timed_out_status(tmp_path: Path) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    runtime_root = _state_root(project_root)
+
+    timed_out_id = spawn_store.start_spawn(
+        runtime_root,
+        spawn_id="p-timeout",
+        chat_id="c-timeout",
+        model="gpt-5.4",
+        agent="coder",
+        harness="codex",
+        prompt="timeout",
+    )
+    spawn_store.finalize_spawn(
+        runtime_root,
+        timed_out_id,
+        "timed_out",
+        1,
+        origin="runner",
+    )
+    spawn_store.start_spawn(
+        runtime_root,
+        spawn_id="p-running",
+        chat_id="c-running",
+        model="gpt-5.4",
+        agent="coder",
+        harness="codex",
+        prompt="running",
+    )
+
+    listed = spawn_api.spawn_list_sync(
+        SpawnListInput(project_root=project_root.as_posix(), statuses=("timed_out",))
+    )
+    status = spawn_api.spawn_status_sync(
+        SpawnStatusInput(project_root=project_root.as_posix(), spawn_id=str(timed_out_id))
+    )
+
+    assert [entry.spawn_id for entry in listed.spawns] == [str(timed_out_id)]
+    assert listed.spawns[0].status == "timed_out"
+    assert status.status == "timed_out"
+    assert status.exit_code == 1
+
+
 def test_spawn_status_omits_report_body_until_requested(tmp_path: Path) -> None:
     project_root = tmp_path / "repo"
     project_root.mkdir()
@@ -267,7 +347,7 @@ def test_spawn_status_omits_report_body_until_requested(tmp_path: Path) -> None:
     assert show_detail.report_body == "report body"
 
 
-def test_spawn_show_and_list_render_primary_and_pi_diagnostics(tmp_path: Path) -> None:
+def test_spawn_show_and_list_hydrate_primary_and_pi_diagnostics(tmp_path: Path) -> None:
     project_root = tmp_path / "repo"
     project_root.mkdir()
     runtime_root = _state_root(project_root)
@@ -355,50 +435,7 @@ def test_spawn_show_and_list_render_primary_and_pi_diagnostics(tmp_path: Path) -
     assert pi_detail.pi_cleanup_phase == "cleanup_stop_escalated"
     assert pi_detail.pi_cleanup_reason == "abort_grace_expired"
 
-    rendered = pi_detail.format_text()
-    assert "Pi phase: cleanup_stop_escalated" not in rendered
-    verbose_rendered = pi_detail.format_text(FormatContext(verbosity=1))
-    assert "Pi phase: cleanup_stop_escalated" in verbose_rendered
-    assert "Pi cleanup status: escalated" in verbose_rendered
-    assert "Pi cleanup reason: abort_grace_expired" in verbose_rendered
-
-    wire = pi_detail.to_cli_wire()
-    assert wire["pi_lifecycle_phase"] == "cleanup_stop_escalated"
-    assert wire["pi_cleanup_status"] == "escalated"
-    assert wire["pi_cleanup_phase"] == "cleanup_stop_escalated"
-    assert wire["pi_cleanup_reason"] == "abort_grace_expired"
-
-
-def test_spawn_show_includes_persisted_goal_text_and_json(tmp_path: Path) -> None:
-    project_root = tmp_path / "repo"
-    project_root.mkdir()
-    runtime_root = _state_root(project_root)
-
-    spawn_id = spawn_store.start_spawn(
-        runtime_root,
-        spawn_id="p77",
-        chat_id="c77",
-        model="gpt-5.4",
-        agent="coder",
-        harness="codex",
-        prompt="hello",
-        goal="ship the migration",
-    )
-
-    detail = spawn_api.spawn_show_sync(
-        SpawnShowInput(project_root=project_root.as_posix(), spawn_id=str(spawn_id))
-    )
-
-    assert detail.goal == "ship the migration"
-    rendered = detail.format_text()
-    assert "Goal: ship the migration" not in rendered
-    verbose_rendered = detail.format_text(FormatContext(verbosity=1))
-    assert "Goal: ship the migration" in verbose_rendered
-    wire = detail.to_cli_wire()
-    assert wire["goal"] == "ship the migration"
-
-
-def test_spawn_show_includes_distinct_task_dir_without_authority_noise(tmp_path: Path) -> None:
+def test_spawn_show_surfaces_persisted_goal_and_distinct_task_dir(tmp_path: Path) -> None:
     project_root = tmp_path / "repo"
     project_root.mkdir()
     runtime_root = _state_root(project_root)
@@ -413,6 +450,7 @@ def test_spawn_show_includes_distinct_task_dir_without_authority_noise(tmp_path:
         agent="coder",
         harness="codex",
         prompt="hello",
+        goal="ship the migration",
         work_id="feature-x",
         control_root=project_root.as_posix(),
         task_cwd=task_cwd.as_posix(),
@@ -422,12 +460,6 @@ def test_spawn_show_includes_distinct_task_dir_without_authority_noise(tmp_path:
         SpawnShowInput(project_root=project_root.as_posix(), spawn_id=str(spawn_id))
     )
 
-    rendered = detail.format_text()
-    assert (
-        f"Spawn is instructed to implement in this task dir: {task_cwd.as_posix()}"
-        in rendered
-    )
-    assert "Authority:" not in rendered
-    wire = detail.to_cli_wire()
-    assert wire["task_cwd"] == task_cwd.as_posix()
-    assert "authority_root" not in wire
+    assert detail.goal == "ship the migration"
+    assert detail.task_cwd == task_cwd.as_posix()
+

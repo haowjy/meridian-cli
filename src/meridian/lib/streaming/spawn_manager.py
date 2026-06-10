@@ -11,8 +11,6 @@ from contextlib import suppress
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
-import psutil
-
 from meridian.lib.core.domain import SpawnStatus
 from meridian.lib.core.spawn_lifecycle import TERMINAL_SPAWN_STATUSES
 from meridian.lib.core.types import HarnessId, SpawnId
@@ -26,10 +24,14 @@ from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.state import spawn_store
 from meridian.lib.state.atomic import append_text_line
 from meridian.lib.state.history import HarnessHistoryWriter
+from meridian.lib.state.spawn_tree import terminate_recorded_spawn_scope
 from meridian.lib.streaming.control_socket import ControlSocketServer
+from meridian.lib.streaming.drain_coordinator import DrainPlan
 from meridian.lib.streaming.drain_policy import (
     TURN_BOUNDARY_EVENT_TYPE,
     DrainPolicy,
+    PiRpcQuiescenceDrainPolicy,
+    SingleTurnDrainPolicy,
 )
 from meridian.lib.streaming.event_observers import (
     CallbackObserver,
@@ -38,6 +40,10 @@ from meridian.lib.streaming.event_observers import (
     HarnessEventCallback,
 )
 from meridian.lib.streaming.heartbeat import heartbeat_loop
+from meridian.lib.streaming.pi_drain import PiDrainCoordinator
+from meridian.lib.streaming.pi_process_cleanup import terminate_pi_tracked_subspawns
+from meridian.lib.streaming.pi_subspawn_tracker import PiSubspawnTracker
+from meridian.lib.streaming.resident_drain import ResidentDrainCoordinator
 from meridian.lib.streaming.spawn_dispatch import dispatch_start
 from meridian.lib.streaming.spawn_drain_loop import SpawnDrainLoop
 from meridian.lib.streaming.spawn_session import DrainOutcome, SpawnSession
@@ -219,15 +225,23 @@ class SpawnManager:
                 await connection.stop()
             raise
 
+        drain_plan = self._select_drain_plan(
+            spawn_id=spawn_id,
+            receiver=connection,
+            pi_session_role=pi_session_role,
+            notification_timeout_seconds=config.pi_notification_timeout_seconds,
+            child_wave_timeout_seconds=config.pi_child_wave_timeout_seconds,
+            resident_deadline_seconds=config.resident_deadline_seconds,
+            resident_poll_seconds=config.resident_poll_seconds,
+        )
+        if resolved_policy is not None:
+            drain_plan = drain_plan.with_policy(resolved_policy)
         drain_task = asyncio.create_task(
             self._drain_loop(
                 spawn_id,
                 connection,
+                drain_plan,
                 tracer,
-                drain_policy=resolved_policy,
-                pi_session_role=pi_session_role,
-                notification_timeout_seconds=config.pi_notification_timeout_seconds,
-                child_wave_timeout_seconds=config.pi_child_wave_timeout_seconds,
             )
         )
         self._sessions[spawn_id] = SpawnSession(
@@ -238,6 +252,7 @@ class SpawnManager:
             started_monotonic=started_monotonic,
             completion_future=completion_future,
             debug_tracer=tracer,
+            raw_terminal_frames_authoritative=drain_plan.raw_terminal_frames_authoritative,
             control_actions=ControlActionCoordinator(
                 spawn_id=spawn_id,
                 spawn_dir=self._spawn_dir(spawn_id),
@@ -268,15 +283,10 @@ class SpawnManager:
         self,
         spawn_id: SpawnId,
         receiver: HarnessConnection[Any],
+        drain_plan: DrainPlan,
         tracer: DebugTracer | None = None,
-        drain_policy: DrainPolicy | None = None,
-        pi_session_role: str | None = None,
-        notification_timeout_seconds: float | None = None,
-        child_wave_timeout_seconds: float | None = None,
     ) -> None:
-
         drain_loop = SpawnDrainLoop(
-            runtime_root=self._runtime_root,
             sessions=self._sessions,
             history_writers=self._history_writers,
             observers=self._observers,
@@ -285,17 +295,129 @@ class SpawnManager:
             resolve_completion_future=self._resolve_completion_future,
             fan_out_event=self._fan_out_event,
             fan_out_turn_boundary=self._fan_out_turn_boundary,
-            emit_pi_phase_event=self._emit_pi_phase_event,
         )
         await drain_loop.run(
             spawn_id=spawn_id,
             receiver=receiver,
-            drain_policy=drain_policy,
+            drain_plan=drain_plan,
             tracer=tracer,
-            pi_session_role=pi_session_role,
-            notification_timeout_seconds=notification_timeout_seconds,
-            child_wave_timeout_seconds=child_wave_timeout_seconds,
         )
+
+    def _select_drain_plan(
+        self,
+        *,
+        spawn_id: SpawnId,
+        receiver: HarnessConnection[Any],
+        pi_session_role: str | None,
+        notification_timeout_seconds: float | None,
+        child_wave_timeout_seconds: float | None,
+        resident_deadline_seconds: float | None,
+        resident_poll_seconds: float | None,
+    ) -> DrainPlan:
+        """Choose drain-loop configuration before entering the loop."""
+
+        def _emit_pi_phase(*, phase: str, session_role: str | None, **payload: object) -> None:
+            self._emit_pi_phase_event(
+                spawn_id,
+                receiver,
+                phase=phase,
+                session_role=session_role,
+                **payload,
+            )
+
+        async def _terminate_tracked_pi_children(
+            tracker: PiSubspawnTracker,
+            reason: str,
+        ) -> None:
+            reaped_descendant_ids: set[str] = set()
+            try:
+                from meridian.lib.bootstrap.services import (
+                    build_spawn_application_service_from_roots,
+                )
+
+                service = build_spawn_application_service_from_roots(
+                    self._project_root,
+                    self._runtime_root,
+                )
+                reaped_descendant_ids = await service.cancel_descendants(spawn_id)
+            except Exception:
+                logger.exception(
+                    "Failed to cancel Pi descendant spawns before tracked child cleanup.",
+                    extra={"spawn_id": str(spawn_id), "reason": reason},
+                )
+                # Intentional: if canonical descendant cancellation fails, fall
+                # back to the full tracker set so Pi-internal cleanup is not
+                # skipped because we could not prove which ids were reaped.
+                reaped_descendant_ids = set()
+            await terminate_pi_tracked_subspawns(
+                spawn_id,
+                tracker,
+                reason=reason,
+                exclude_subspawn_ids=reaped_descendant_ids,
+            )
+
+        async def _send_pi_done_nudge(message: str) -> None:
+            await self.inject(spawn_id, message, source="pi_done_nudge")
+
+        resident_backend = receiver.resident_backend
+        if resident_backend is not None:
+            # TODO(phase-4): resident waiting and Pi quiescence share the same
+            # "terminal candidate plus descendant work" shape; fold once Pi's
+            # lifecycle inference machinery is removed.
+            coordinator = ResidentDrainCoordinator.for_connection(
+                project_root=self._project_root,
+                runtime_root=self._runtime_root,
+                spawn_id=spawn_id,
+                receiver=receiver,
+                resident_backend=resident_backend,
+                deadline_seconds=resident_deadline_seconds,
+                poll_seconds=resident_poll_seconds,
+            )
+            return DrainPlan(
+                coordinator=coordinator,
+                policy=SingleTurnDrainPolicy(),
+                raw_terminal_frames_authoritative=False,
+            )
+
+        if receiver.harness_id is HarnessId.PI:
+            coordinator = PiDrainCoordinator.for_connection(
+                runtime_root=self._runtime_root,
+                spawn_id=spawn_id,
+                receiver=cast("HarnessConnection[ResolvedLaunchSpec]", receiver),
+                session_role=pi_session_role,
+                notification_timeout_seconds=notification_timeout_seconds,
+                child_wave_timeout_seconds=child_wave_timeout_seconds,
+                emit_phase=_emit_pi_phase,
+                terminate_children=_terminate_tracked_pi_children,
+                send_done_nudge=_send_pi_done_nudge,
+            )
+            return DrainPlan(
+                coordinator=coordinator,
+                policy=PiRpcQuiescenceDrainPolicy(
+                    quiescence_check=coordinator.quiescence_tracker.is_quiescent,
+                ),
+                raw_terminal_frames_authoritative=False,
+                on_policy_selected=coordinator.set_policy,
+                aux_wake=coordinator,
+                handle_aux_wake=coordinator.handle_aux_wake,
+                finalizer=coordinator,
+            )
+
+        # Plain streaming harnesses use SpawnDrainLoop's single-turn baseline.
+        return DrainPlan()
+
+    def raw_terminal_frames_are_authoritative(self, spawn_id: SpawnId) -> bool:
+        """Return whether raw harness terminal frames may finalize this spawn.
+
+        Coordinators own harness-specific terminal policy.  The runner uses this
+        observer seam to avoid treating a raw turn boundary as final when the
+        selected coordinator must first wait for descendant work or a deadline.
+        """
+
+        session = self._sessions.get(spawn_id)
+        if session is None:
+            return True
+        return session.raw_terminal_frames_authoritative
 
     def subscribe(self, spawn_id: SpawnId) -> asyncio.Queue[HarnessEvent | None] | None:
         """Attach one subscriber queue to the spawn, or return None if unavailable."""
@@ -360,21 +482,7 @@ class SpawnManager:
             await session.connection.send_user_message(message)
             return inbound_seq
 
-        coordinator = session.control_actions
-        if coordinator is None:
-            try:
-                inbound_seq = await _send_message()
-            except Exception as exc:
-                result = InjectResult(success=False, error=str(exc))
-                if on_result is not None:
-                    on_result(result)
-                return result
-            result = InjectResult(success=True, inbound_seq=inbound_seq)
-            if on_result is not None:
-                on_result(result)
-            return result
-
-        outcome = await coordinator.run_action(
+        outcome = await session.control_actions.run_action(
             action=ControlActionType.INJECT,
             payload={"text": message},
             source=source,
@@ -407,12 +515,7 @@ class SpawnManager:
         if session is None:
             raise RuntimeError(f"Spawn {spawn_id} is not active")
 
-        coordinator = session.control_actions
-        if coordinator is None:
-            await session.connection.send_cancel()
-            return
-
-        outcome = await coordinator.run_action(
+        outcome = await session.control_actions.run_action(
             action=ControlActionType.INTERRUPT,
             payload={},
             source=source,
@@ -439,19 +542,6 @@ class SpawnManager:
         async def _respond() -> None:
             await session.connection.respond_request(request_id, decision, payload)
 
-        coordinator = session.control_actions
-        if coordinator is None:
-            try:
-                await _respond()
-            except Exception as exc:
-                await self._notify_runtime_request_failed(
-                    session.connection,
-                    request_id=request_id,
-                    error=str(exc),
-                )
-                raise
-            return
-
         response_payload: dict[str, object] = {
             "request_id": request_id,
             "decision": decision,
@@ -459,7 +549,7 @@ class SpawnManager:
         if payload is not None:
             response_payload["payload"] = payload
 
-        outcome = await coordinator.run_action(
+        outcome = await session.control_actions.run_action(
             action=ControlActionType.PERMISSION_REPLY,
             payload=response_payload,
             source=source,
@@ -492,20 +582,7 @@ class SpawnManager:
         async def _respond() -> None:
             await session.connection.respond_user_input(request_id, answers)
 
-        coordinator = session.control_actions
-        if coordinator is None:
-            try:
-                await _respond()
-            except Exception as exc:
-                await self._notify_runtime_request_failed(
-                    session.connection,
-                    request_id=request_id,
-                    error=str(exc),
-                )
-                raise
-            return
-
-        outcome = await coordinator.run_action(
+        outcome = await session.control_actions.run_action(
             action=ControlActionType.USER_INPUT_REPLY,
             payload={"request_id": request_id, "answers": answers},
             source=source,
@@ -627,40 +704,10 @@ class SpawnManager:
         if session.debug_tracer is not None:
             session.debug_tracer.close()
 
-        # Capture scope state BEFORE connection.stop() — both connections clear
-        # subprocess_pid and scope_snapshot inside stop(), so reading them after
-        # would always yield None and make the safety pass a no-op.
-        _pre_stop_pid = session.connection.subprocess_pid
-        _pre_stop_scope = getattr(session.connection, "scope_snapshot", None)
-
         with suppress(Exception):
-            await session.connection.stop()
+            await session.connection.stop(reason="stop_spawn")
 
-        # Safety pass: if the process survived connection.stop() (e.g. the connection
-        # was already dead before stop was called), force-terminate via the scope handle.
-        with suppress(Exception):
-            if _pre_stop_pid is not None and _pre_stop_scope is not None:
-                try:
-                    proc = psutil.Process(_pre_stop_pid)
-                except (psutil.NoSuchProcess, psutil.AccessDenied):
-                    proc = None
-                if proc is not None and proc.is_running():
-                    logger.warning(
-                        "Process %d still alive after connection.stop(); "
-                        "scope safety cleanup for spawn %s",
-                        _pre_stop_pid,
-                        spawn_id,
-                    )
-                    from meridian.lib.platform.process_scope.fallback import terminate_tree_sync
-
-                    await asyncio.to_thread(
-                        terminate_tree_sync,
-                        pid=_pre_stop_pid,
-                        created_at_epoch=_pre_stop_scope.root_created_at_epoch,
-                        grace_secs=5.0,
-                        reason="stop_safety_pass",
-                        scope_id=_pre_stop_scope.scope_id,
-                    )
+        self._terminate_recorded_spawn_scope_backstop(spawn_id)
 
         # Give drain loop time to persist remaining events after connection closes.
         # The drain loop exits naturally once events() terminates, but enforce a
@@ -689,6 +736,25 @@ class SpawnManager:
         self._completion_futures.pop(spawn_id, None)
         self._history_writers.pop(spawn_id, None)
         return outcome
+
+    def _terminate_recorded_spawn_scope_backstop(self, spawn_id: SpawnId) -> None:
+        """Best-effort recorded scope reap after transport stop attempts."""
+
+        try:
+            record = spawn_store.get_spawn(self._runtime_root, spawn_id)
+            if record is None:
+                return
+            terminate_recorded_spawn_scope(
+                self._runtime_root,
+                record,
+                reason="stop_spawn",
+            )
+        except Exception as exc:
+            logger.warning(
+                "Failed to run stop_spawn scope cleanup backstop for spawn %s: %s",
+                spawn_id,
+                exc,
+            )
 
     async def _emit_cancelled_terminal_event(
         self,
@@ -933,7 +999,7 @@ class SpawnManager:
                 )
         else:
             with suppress(Exception):
-                await session.connection.stop()
+                await session.connection.stop(reason="quiescent")
         with suppress(Exception):
             await session.control_server.stop()
         await self._observers.shutdown(spawn_id)

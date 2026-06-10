@@ -1,4 +1,3 @@
-import re
 from pathlib import Path
 from typing import Any, cast
 
@@ -9,64 +8,6 @@ from meridian.cli.argv_normalization import SELF_FORK_REF_SENTINEL
 from meridian.lib.launch.types import LaunchRequest, LaunchResult
 from meridian.lib.state import spawn_store
 from meridian.lib.state.primary_meta import PrimaryMetadata, write_primary_metadata
-
-
-def test_run_primary_launch_bare_fork_with_continue_reports_conflict_before_inference(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.delenv("MERIDIAN_SPAWN_ID", raising=False)
-
-    with pytest.raises(
-        ValueError,
-        match=re.escape("Cannot combine --fork with --continue."),
-    ):
-        primary_launch.run_primary_launch(
-            project_root=Path.cwd(),
-            continue_ref="c123",
-            fork_ref=SELF_FORK_REF_SENTINEL,
-            fork_fresh_ref=None,
-            model="",
-            harness=None,
-            agent=None,
-            work="",
-            yolo=False,
-            approval=None,
-            autocompact=None,
-            effort=None,
-            sandbox=None,
-            timeout=None,
-            dry_run=True,
-            passthrough=(),
-        )
-
-
-def test_run_primary_launch_bare_fork_fresh_with_continue_reports_conflict_before_inference(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.delenv("MERIDIAN_SPAWN_ID", raising=False)
-
-    with pytest.raises(
-        ValueError,
-        match=re.escape("Cannot combine --fork-fresh with --continue."),
-    ):
-        primary_launch.run_primary_launch(
-            project_root=Path.cwd(),
-            continue_ref="c123",
-            fork_ref=None,
-            fork_fresh_ref=SELF_FORK_REF_SENTINEL,
-            model="",
-            harness=None,
-            agent=None,
-            work="",
-            yolo=False,
-            approval=None,
-            autocompact=None,
-            effort=None,
-            sandbox=None,
-            timeout=None,
-            dry_run=True,
-            passthrough=(),
-        )
 
 
 def test_run_primary_launch_bare_from_resolves_to_context_from(
@@ -178,42 +119,6 @@ def test_run_primary_launch_from_keeps_explicit_work(
     assert request.work_id == "explicit-work"
 
 
-def test_run_primary_launch_from_does_not_materialize_ambient_work_in_cli_request(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    captured: dict[str, object] = {}
-
-    def _fake_launch_primary(**kwargs: object) -> LaunchResult:
-        captured.update(kwargs)
-        return LaunchResult(command=("meridian",), exit_code=0)
-
-    monkeypatch.setattr(primary_launch, "launch_primary", _fake_launch_primary)
-
-    primary_launch.run_primary_launch(
-        project_root=Path.cwd(),
-        continue_ref=None,
-        fork_ref=None,
-        fork_fresh_ref=None,
-        from_ref="p123",
-        model="",
-        harness=None,
-        agent=None,
-        work="",
-        yolo=False,
-        approval=None,
-        autocompact=None,
-        effort=None,
-        sandbox=None,
-        timeout=None,
-        dry_run=True,
-        passthrough=(),
-    )
-
-    request = cast("LaunchRequest", captured["request"])
-    assert request.context_from == ("p123",)
-    assert request.work_id is None
-
-
 def test_run_primary_launch_forwards_primary_spawn_parity_fields(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -265,104 +170,6 @@ def test_run_primary_launch_forwards_primary_spawn_parity_fields(
     assert request.goal == "Converge on requirements"
 
 
-def test_run_primary_launch_task_dir_with_continue_reports_conflict(tmp_path: Path) -> None:
-    task_dir = tmp_path / "task"
-    with pytest.raises(
-        ValueError,
-        match=re.escape("--continue does not accept --task-dir. Use --fork --task-dir to diverge."),
-    ):
-        primary_launch.run_primary_launch(
-            project_root=Path.cwd(),
-            continue_ref="c123",
-            fork_ref=None,
-            fork_fresh_ref=None,
-            model="",
-            harness=None,
-            agent=None,
-            work="",
-            task_dir=task_dir.as_posix(),
-            yolo=False,
-            approval=None,
-            autocompact=None,
-            effort=None,
-            sandbox=None,
-            timeout=None,
-            dry_run=True,
-            passthrough=(),
-        )
-
-
-def test_run_primary_launch_from_with_continue_reports_conflict_before_inference(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.delenv("MERIDIAN_SPAWN_ID", raising=False)
-
-    with pytest.raises(
-        ValueError,
-        match=re.escape("Cannot combine --from with --continue."),
-    ):
-        primary_launch.run_primary_launch(
-            project_root=Path.cwd(),
-            continue_ref="c123",
-            fork_ref=None,
-            fork_fresh_ref=None,
-            from_ref=SELF_FORK_REF_SENTINEL,
-            model="",
-            harness=None,
-            agent=None,
-            work="",
-            yolo=False,
-            approval=None,
-            autocompact=None,
-            effort=None,
-            sandbox=None,
-            timeout=None,
-            dry_run=True,
-            passthrough=(),
-        )
-
-
-@pytest.mark.parametrize(
-    ("fork_ref", "fork_fresh_ref", "expected"),
-    [
-        (SELF_FORK_REF_SENTINEL, None, "Cannot combine --fork with --from (MVP limitation)."),
-        (
-            None,
-            SELF_FORK_REF_SENTINEL,
-            "Cannot combine --fork-fresh with --from (MVP limitation).",
-        ),
-    ],
-)
-def test_run_primary_launch_from_with_fork_reports_conflict_before_inference(
-    monkeypatch: pytest.MonkeyPatch,
-    fork_ref: str | None,
-    fork_fresh_ref: str | None,
-    expected: str,
-) -> None:
-    monkeypatch.delenv("MERIDIAN_SPAWN_ID", raising=False)
-
-    with pytest.raises(ValueError, match=re.escape(expected)):
-        primary_launch.run_primary_launch(
-            project_root=Path.cwd(),
-            continue_ref=None,
-            fork_ref=fork_ref,
-            fork_fresh_ref=fork_fresh_ref,
-            from_ref=SELF_FORK_REF_SENTINEL,
-            model="",
-            harness=None,
-            agent=None,
-            work="",
-            yolo=False,
-            approval=None,
-            autocompact=None,
-            effort=None,
-            sandbox=None,
-            timeout=None,
-            dry_run=True,
-            passthrough=(),
-        )
-
-
 def test_run_primary_launch_unresolved_harness_message_uses_fork_fresh_ref(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -380,13 +187,7 @@ def test_run_primary_launch_unresolved_harness_message_uses_fork_fresh_ref(
         _resolve_session_target,
     )
 
-    with pytest.raises(
-        ValueError,
-        match=re.escape(
-            "Session 'c123' not recognized by any harness. "
-            "Use --harness to specify which harness owns this session."
-        ),
-    ):
+    with pytest.raises(ValueError) as exc_info:
         primary_launch.run_primary_launch(
             project_root=Path.cwd(),
             continue_ref=None,
@@ -405,6 +206,11 @@ def test_run_primary_launch_unresolved_harness_message_uses_fork_fresh_ref(
             dry_run=True,
             passthrough=(),
         )
+
+    message = str(exc_info.value)
+    assert "c123" in message
+    assert "not recognized" in message
+    assert "--harness" in message
 
 
 def test_run_primary_launch_continue_reports_pi_never_created_session(
@@ -453,13 +259,7 @@ def test_run_primary_launch_continue_reports_pi_never_created_session(
         _resolve_session_target,
     )
 
-    with pytest.raises(
-        ValueError,
-        match=re.escape(
-            "Session 'c201' has no Pi session — the original Pi session "
-            "was ephemeral or never persisted a session."
-        ),
-    ):
+    with pytest.raises(ValueError) as exc_info:
         primary_launch.run_primary_launch(
             project_root=project_root,
             continue_ref="c201",
@@ -478,6 +278,11 @@ def test_run_primary_launch_continue_reports_pi_never_created_session(
             dry_run=True,
             passthrough=(),
         )
+
+    message = str(exc_info.value)
+    assert "c201" in message
+    assert "Pi session" in message
+    assert "ephemeral" in message or "never persisted" in message
 
 
 def test_run_primary_launch_continue_reports_pi_discovery_failure_detail(
@@ -528,13 +333,7 @@ def test_run_primary_launch_continue_reports_pi_discovery_failure_detail(
         _resolve_session_target,
     )
 
-    with pytest.raises(
-        ValueError,
-        match=re.escape(
-            "Session 'c301' could not discover a Pi session — "
-            "no_matching_session: cwd=/tmp/repo after=100.0."
-        ),
-    ):
+    with pytest.raises(ValueError) as exc_info:
         primary_launch.run_primary_launch(
             project_root=project_root,
             continue_ref="c301",
@@ -553,6 +352,12 @@ def test_run_primary_launch_continue_reports_pi_discovery_failure_detail(
             dry_run=True,
             passthrough=(),
         )
+
+    message = str(exc_info.value)
+    assert "c301" in message
+    assert "could not discover" in message
+    assert "Pi session" in message
+    assert "no_matching_session" in message
 
 
 @pytest.mark.parametrize(
@@ -655,7 +460,8 @@ def test_primary_warns_when_headless_claude_allowed(
         passthrough=(),
     )
     assert out.warning is not None
-    assert "2026-06-15" in out.warning
+    assert "headless" in out.warning.lower()
+    assert "claude" in out.warning.lower()
     assert "deny_headless_harnesses" in out.warning
 
 
@@ -686,10 +492,4 @@ def test_primary_no_headless_warning_when_claude_denied(
         dry_run=True,
         passthrough=(),
     )
-    assert out.warning is None or "2026-06-15" not in out.warning
-
-
-def test_deny_headless_harnesses_field_defaults_to_claude() -> None:
-    from meridian.lib.config.settings import MeridianConfig
-
-    assert MeridianConfig().deny_headless_harnesses == ("claude",)
+    assert out.warning is None

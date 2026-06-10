@@ -13,7 +13,9 @@ from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.launch.launch_types import SpecT
 
 if TYPE_CHECKING:
+    from meridian.lib.harness.connections.resident_backend import ResidentBackendControl
     from meridian.lib.observability.debug_tracer import DebugTracer
+    from meridian.lib.platform.process_scope import ProcessScopeSnapshot
 
 # Uniform transport message cap across harness adapters.
 MAX_HARNESS_MESSAGE_BYTES: Final[int] = 10 * 1024 * 1024
@@ -219,12 +221,15 @@ class ConnectionConfig:
     timeout_seconds: float | None = None
     pi_notification_timeout_seconds: float | None = None
     pi_child_wave_timeout_seconds: float | None = None
+    resident_deadline_seconds: float | None = None
+    resident_poll_seconds: float | None = None
     pi_task_ping_interval_seconds: float | None = None
     pi_task_ping_reset_on_activity: bool | None = None
     ws_bind_host: str = "127.0.0.1"
     ws_port: int = 0
     pi_session_role: PiSessionRole | None = None
     debug_tracer: DebugTracer | None = None
+    session_id_observer: Callable[[str], None] | None = None
 
 
 def validate_prompt_size(config: ConnectionConfig) -> None:
@@ -265,6 +270,16 @@ class HarnessConnection(Generic[SpecT], ABC):
     @property
     @abstractmethod
     def subprocess_pid(self) -> int | None: ...
+
+    @property
+    def resident_backend(self) -> ResidentBackendControl | None:
+        """Resident backend control seam, when this transport supports resident turns."""
+        return None
+
+    @property
+    def scope_snapshot(self) -> ProcessScopeSnapshot | None:
+        """Process scope facts for the managed backend subprocess, if any."""
+        return None
 
     @abstractmethod
     async def start(self, config: ConnectionConfig, spec: SpecT) -> None: ...

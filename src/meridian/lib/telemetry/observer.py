@@ -5,6 +5,7 @@ from __future__ import annotations
 import threading
 from typing import TYPE_CHECKING
 
+from meridian.lib.core.spawn_lifecycle import FAILURE_SPAWN_STATUSES
 from meridian.lib.core.telemetry import LifecycleObserverTier, register_observer
 
 if TYPE_CHECKING:
@@ -18,6 +19,7 @@ TERMINAL_TELEMETRY_EVENTS = frozenset(
         "spawn.succeeded",
         "spawn.failed",
         "spawn.cancelled",
+        "spawn.timed_out",
         "spawn.process_exited",
     }
 )
@@ -48,7 +50,7 @@ class SpawnTelemetryObserver:
             scope="core.lifecycle",
             ids={"spawn_id": event.spawn_id},
             data=_extract_terminal_data(event),
-            severity="error" if event.event == "spawn.failed" else "info",
+            severity="error" if _is_failure_event(event.event) else "info",
         )
 
 
@@ -81,14 +83,28 @@ def _extract_terminal_data(event: LifecycleEvent) -> dict[str, object]:
         value = event.payload.get(key)
         if value is not None:
             data[key] = value
-    if event.event == "spawn.failed":
+    if _is_failure_event(event.event):
         from meridian.lib.telemetry.events import make_error_data
 
-        reason = event.payload.get("reason", "Spawn failed")
+        reason = event.payload.get("reason", f"Spawn {event.event.removeprefix('spawn.')}")
         error_data = make_error_data(message=str(reason))
-        error_data["error"]["type"] = "SpawnFailed"
+        error_data["error"]["type"] = _error_type_for_event(event.event)
         data.update(error_data)
     return data
+
+
+def _is_failure_event(event_name: str) -> bool:
+    prefix, _, status = event_name.partition(".")
+    return prefix == "spawn" and status in FAILURE_SPAWN_STATUSES
+
+
+def _error_type_for_event(event_name: str) -> str:
+    status = event_name.removeprefix("spawn.")
+    if status == "timed_out":
+        return "SpawnTimedOut"
+    if status == "cancelled":
+        return "SpawnCancelled"
+    return "SpawnFailed"
 
 
 __all__ = [

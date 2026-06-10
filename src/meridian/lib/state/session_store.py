@@ -41,6 +41,7 @@ class SessionRecord(BaseModel):
     session_instance_id: str = ""
     active_work_id: str | None = None
     forked_from_chat_id: str | None = None
+    spawn_id: str | None = None
 
 
 class SessionStartEvent(BaseModel):
@@ -65,6 +66,7 @@ class SessionStartEvent(BaseModel):
     session_instance_id: str = ""
     started_at: str
     forked_from_chat_id: str | None = None
+    spawn_id: str | None = None
 
 
 class SessionStopEvent(BaseModel):
@@ -134,6 +136,7 @@ def _record_from_start_event(event: SessionStartEvent) -> SessionRecord:
         session_instance_id=event.session_instance_id,
         active_work_id=None,
         forked_from_chat_id=event.forked_from_chat_id,
+        spawn_id=event.spawn_id,
     )
 
 
@@ -421,6 +424,7 @@ def start_session(
     execution_cwd: str | None = None,
     claude_config_dir: str | None = None,
     kind: Literal["primary", "spawn"] = "spawn",
+    spawn_id: str | None = None,
 ) -> str:
     """Append a session start event and acquire a lifetime session lock."""
 
@@ -452,6 +456,7 @@ def start_session(
             session_instance_id=session_instance_id,
             started_at=started_at,
             forked_from_chat_id=forked_from_chat_id,
+            spawn_id=spawn_id,
         )
         with lock_file(paths.sessions_flock):
             append_event(paths.sessions_jsonl, paths.sessions_flock, event)

@@ -345,10 +345,34 @@ def _cleanup_managed_primary_sidecars(spawn_dir: Path) -> None:
     for filename in (
         PRIMARY_META_FILENAME,
         OUTPUT_FILENAME,
-        "stderr.log",
     ):
         with suppress(OSError):
             (spawn_dir / filename).unlink()
+
+
+def _managed_primary_stderr_excerpt(spawn_dir: Path, *, max_chars: int = 1200) -> str | None:
+    stderr_path = spawn_dir / "stderr.log"
+    max_bytes = max(max_chars * 4, 4096)
+    try:
+        file_size = stderr_path.stat().st_size
+        with stderr_path.open("rb") as handle:
+            truncated = file_size > max_bytes
+            if truncated:
+                handle.seek(-max_bytes, os.SEEK_END)
+            data = handle.read(max_bytes)
+    except OSError:
+        return None
+    text = data.decode("utf-8", errors="replace")
+    excerpt = text.strip()
+    if not excerpt:
+        return None
+    if truncated:
+        excerpt = f"…{excerpt}"
+        if len(excerpt) > max_chars:
+            return f"…{excerpt[-max_chars:].lstrip()}"
+    if len(excerpt) <= max_chars:
+        return excerpt
+    return f"{excerpt[:max_chars].rstrip()}…"
 
 
 def _execute_via_managed_attach(
@@ -482,9 +506,13 @@ def _execute_primary_process(
         except PrimaryAttachError as exc:
             if harness_contract.bootstrap.primary_attach_failure_policy == "raise":
                 raise
+            stderr_excerpt = _managed_primary_stderr_excerpt(log_dir)
             logger.warning(
-                "Managed backend failed, falling back to black-box TUI: %s",
+                "Managed backend failed, falling back to black-box TUI: %s%s",
                 exc,
+                f"\nManaged backend stderr excerpt:\n{stderr_excerpt}"
+                if stderr_excerpt is not None
+                else "",
             )
             _cleanup_managed_primary_sidecars(log_dir)
             use_managed_backend = False
@@ -766,7 +794,9 @@ async def _run_primary_attach(
     except PassthroughError as exc:
         raise PrimaryAttachError(str(exc)) from exc
     except Exception as exc:
-        raise PrimaryAttachError(f"Managed primary attach failed for {harness_id.value}") from exc
+        raise PrimaryAttachError(
+            f"Managed primary attach failed for {harness_id.value}: {exc}"
+        ) from exc
 
 
 def run_primary_attach(

@@ -18,6 +18,7 @@ from meridian.lib.ops.runtime import build_runtime
 from meridian.lib.ops.spawn.execute_runner import _prepare_execution_handoff
 from meridian.lib.ops.spawn.models import SpawnCreateInput
 from meridian.lib.ops.spawn.prepare import build_create_payload
+from meridian.lib.state import session_store, spawn_store
 from tests.support.executables import prepend_fake_executables
 from tests.support.launch import stub_bundle_request_and_resolve
 
@@ -68,23 +69,60 @@ async def test_blocking_spawn_compose_once_then_bind_only_execute(
         model=ModelId("openai-codex/gpt-5.4-mini"),
         status="running",
     )
-
-    handoff = await _prepare_execution_handoff(
-        spawn=spawn,
-        request=artifacts.request,
-        runtime_request=launch_runtime,
-        runtime=runtime,
-        runtime_root=runtime_root,
-        project_paths=project_paths,
-        spawn_record=None,
-        execution_cwd=project_root.as_posix(),
-        work_id=None,
-        ctx=None,
-        prepared=artifacts.prepared,
+    parent_chat_id = session_store.start_session(
+        runtime_root,
+        harness="claude",
+        harness_session_id="parent-session",
+        model="claude-sonnet-4-5",
+        chat_id="c-parent",
+        kind="primary",
     )
-    assert len(captured) == 1
-    assert handoff.launch_context.binding.spec.model == "openai-codex/gpt-5.4-mini"
-    handoff.session_exit_stack.close()
+    spawn_store.start_spawn(
+        runtime_root,
+        spawn_id=spawn.spawn_id,
+        chat_id=parent_chat_id,
+        owner_chat_id=parent_chat_id,
+        parent_id="p-parent",
+        model="openai-codex/gpt-5.4-mini",
+        agent="",
+        harness="pi",
+        prompt="hi",
+        harness_session_id="",
+    )
+
+    handoff = None
+    try:
+        handoff = await _prepare_execution_handoff(
+            spawn=spawn,
+            request=artifacts.request,
+            runtime_request=launch_runtime,
+            runtime=runtime,
+            runtime_root=runtime_root,
+            project_paths=project_paths,
+            spawn_record=None,
+            execution_cwd=project_root.as_posix(),
+            work_id=None,
+            ctx=None,
+            prepared=artifacts.prepared,
+        )
+        assert len(captured) == 1
+        assert handoff.launch_context.binding.spec.model == "openai-codex/gpt-5.4-mini"
+
+        row = spawn_store.get_spawn(runtime_root, spawn.spawn_id)
+        assert row is not None
+        assert row.chat_id == handoff.session_context.chat_id
+        assert row.owner_chat_id == parent_chat_id
+        assert row.chat_id != parent_chat_id
+        session_record = session_store.get_session_record(
+            runtime_root,
+            handoff.session_context.chat_id,
+        )
+        assert session_record is not None
+        assert session_record.spawn_id == str(spawn.spawn_id)
+    finally:
+        if handoff is not None:
+            handoff.session_exit_stack.close()
+        session_store.stop_session(runtime_root, parent_chat_id)
 
 
 def test_bind_spawn_launch_context_does_not_call_mars(

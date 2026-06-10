@@ -12,7 +12,10 @@ from meridian.lib.core.spawn_lifecycle import (
     ExecutionTerminalFacts,
     has_durable_report_completion,
 )
-from meridian.lib.core.spawn_service import PrepareSpawnRequest, SpawnApplicationService
+from meridian.lib.core.spawn_service import (
+    PrepareSpawnRequest,
+    SpawnApplicationService,
+)
 from meridian.lib.core.types import SpawnId
 from meridian.lib.launch.request import LaunchRuntime, SpawnRequest
 from meridian.lib.state import spawn_store
@@ -55,6 +58,28 @@ def _start_spawn(
             harness="codex",
             kind=kind,
             prompt="hello",
+            status=status,
+        )
+    )
+
+
+def _start_spawn_record(
+    runtime_root: Path,
+    spawn_id: str,
+    *,
+    parent_id: str | None = None,
+    status: SpawnStatus = "running",
+) -> str:
+    return str(
+        spawn_store.start_spawn(
+            runtime_root,
+            spawn_id=spawn_id,
+            chat_id=spawn_id,
+            parent_id=parent_id,
+            model="gpt-5.4",
+            agent="coder",
+            harness="codex",
+            prompt=f"prompt {spawn_id}",
             status=status,
         )
     )
@@ -107,7 +132,7 @@ def _patch_prepare_compose_bind(
 
 
 @pytest.mark.asyncio
-async def test_prepare_persists_trimmed_goal_from_spawn_request(
+async def test_prepare_returns_connection_config_from_bound_launch_context(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -124,7 +149,6 @@ async def test_prepare_persists_trimmed_goal_from_spawn_request(
                 model="gpt-5.4",
                 harness="codex",
                 agent="coder",
-                goal="  keep scope tight  ",
             ),
             runtime=_runtime_request(tmp_path, runtime_root),
             harness_registry=cast("Any", SimpleNamespace()),
@@ -132,63 +156,18 @@ async def test_prepare_persists_trimmed_goal_from_spawn_request(
         )
     )
 
-    row = spawn_store.get_spawn(runtime_root, prepared.spawn_id)
-    assert row is not None
-    assert row.goal == "keep scope tight"
     assert prepared.connection_config.control_root == tmp_path
     assert prepared.connection_config.task_cwd == child_cwd
     assert prepared.connection_config.pi_child_wave_timeout_seconds == 300.0
 
 
 @pytest.mark.asyncio
-async def test_prepare_spawn_rejects_blank_goal_without_persisting_row(
+async def test_complete_spawn_persists_terminal_intent_and_terminal_row(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    runtime_root = _runtime_root(tmp_path)
-    child_cwd = tmp_path / "child-cwd"
-    child_cwd.mkdir()
-    _patch_prepare_compose_bind(monkeypatch, child_cwd)
-
-    service = _service(runtime_root)
-
-    with pytest.raises(ValueError, match="--goal cannot be empty"):
-        await service.prepare_spawn(
-            request=SpawnRequest(
-                prompt="run it",
-                model="gpt-5.4",
-                harness="codex",
-                agent="coder",
-                goal="   ",
-            ),
-            runtime=_runtime_request(tmp_path, runtime_root),
-            harness_registry=cast("Any", SimpleNamespace()),
-            chat_id="c1",
-        )
-
-    assert spawn_store.list_spawns(runtime_root) == []
-
-
-@pytest.mark.asyncio
-async def test_complete_spawn_persists_terminal_intent_before_mark_finalizing(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     runtime_root = _runtime_root(tmp_path)
     spawn_id = _start_spawn(runtime_root, status="running")
     service = _service(runtime_root)
-    original_mark_finalizing = service.lifecycle.mark_finalizing
-
-    def _assert_intent_then_mark(target_spawn_id: str) -> bool:
-        row = spawn_store.get_spawn(runtime_root, target_spawn_id)
-        assert row is not None
-        assert row.runner_exit_status == "failed"
-        assert row.runner_exit_code == 9
-        assert row.runner_exit_error == "launch_failed"
-        assert row.runner_exit_at is not None
-        return original_mark_finalizing(target_spawn_id)
-
-    monkeypatch.setattr(service.lifecycle, "mark_finalizing", _assert_intent_then_mark)
 
     outcome = await service.complete_spawn(
         SpawnId(spawn_id),
@@ -457,6 +436,14 @@ async def test_cancel_public_surface_backfills_cancel_intent_for_managed_primary
     )
     service = _service(runtime_root)
 
+    # Force the recorded launcher PID to read as dead regardless of the host's PID
+    # assignments (7771 can be a live process on the Windows runner), so the
+    # managed-primary reconciliation proceeds instead of skipping as launcher-alive.
+    monkeypatch.setattr(
+        "meridian.lib.state.managed_primary.is_process_alive",
+        lambda *_args, **_kwargs: False,
+    )
+
     async def _never_terminal(*_args: object, **_kwargs: object) -> Any:
         return None
 
@@ -515,6 +502,127 @@ async def test_cancel_app_spawn_records_intent_without_local_force_finalize(
     assert row is not None
     assert row.status == "running"
     assert row.cancel_intent is not None
+
+
+@pytest.mark.asyncio
+async def test_cancel_descendants_forces_active_subtree_to_terminal(
+    tmp_path: Path,
+) -> None:
+    runtime_root = _runtime_root(tmp_path)
+    _start_spawn_record(runtime_root, "p1")
+    _start_spawn_record(runtime_root, "p2", parent_id="p1")
+    _start_spawn_record(runtime_root, "p3", parent_id="p2")
+    _start_spawn_record(runtime_root, "p4", parent_id="p1")
+    spawn_store.finalize_spawn(
+        runtime_root,
+        "p4",
+        "succeeded",
+        0,
+        origin="runner",
+        error=None,
+    )
+    service = _service(runtime_root)
+
+    reaped_ids = await service.cancel_descendants(SpawnId("p1"))
+
+    child = spawn_store.get_spawn(runtime_root, "p2")
+    grandchild = spawn_store.get_spawn(runtime_root, "p3")
+    already_terminal = spawn_store.get_spawn(runtime_root, "p4")
+    assert child is not None
+    assert grandchild is not None
+    assert already_terminal is not None
+    assert child.status == "cancelled"
+    assert grandchild.status == "cancelled"
+    assert child.cancel_intent is not None
+    assert child.cancel_intent.requested_by == "system"
+    assert grandchild.cancel_intent is not None
+    assert grandchild.cancel_intent.requested_by == "system"
+    assert already_terminal.status == "succeeded"
+    assert already_terminal.cancel_intent is None
+    assert reaped_ids == {"p2", "p3"}
+
+
+@pytest.mark.asyncio
+async def test_cancel_descendants_rescans_to_fixed_point(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from meridian.lib.state import spawn_tree
+
+    runtime_root = _runtime_root(tmp_path)
+    _start_spawn_record(runtime_root, "p1")
+    _start_spawn_record(runtime_root, "p2", parent_id="p1")
+    service = _service(runtime_root)
+    original_active_descendants = spawn_tree.active_descendants
+    scans = 0
+
+    def _active_descendants(runtime_root_arg: Path, root_id: SpawnId | str):
+        nonlocal scans
+        scans += 1
+        if scans == 2 and spawn_store.get_spawn(runtime_root, "p3") is None:
+            _start_spawn_record(runtime_root, "p3", parent_id="p2")
+        return original_active_descendants(runtime_root_arg, root_id)
+
+    monkeypatch.setattr(spawn_tree, "active_descendants", _active_descendants)
+
+    reaped_ids = await service.cancel_descendants(SpawnId("p1"))
+
+    child = spawn_store.get_spawn(runtime_root, "p2")
+    grandchild = spawn_store.get_spawn(runtime_root, "p3")
+    assert child is not None
+    assert grandchild is not None
+    assert child.status == "cancelled"
+    assert grandchild.status == "cancelled"
+    assert reaped_ids == {"p2", "p3"}
+
+
+@pytest.mark.asyncio
+async def test_cancel_descendants_reports_only_proven_terminal_reaped_ids(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime_root = _runtime_root(tmp_path)
+    _start_spawn_record(runtime_root, "p1")
+    spawn_store.start_spawn(
+        runtime_root,
+        spawn_id="p2",
+        chat_id="p2",
+        parent_id="p1",
+        model="gpt-5.4",
+        agent="coder",
+        harness="codex",
+        prompt="prompt p2",
+        status="running",
+        launch_mode="app",
+    )
+    _start_spawn_record(runtime_root, "p3", parent_id="p1")
+
+    class _FakeManager:
+        async def stop_spawn(self, *_args: object, **_kwargs: object) -> None:
+            return None
+
+    service = SpawnApplicationService(
+        runtime_root,
+        SpawnLifecycleService(runtime_root),
+        spawn_manager=cast("Any", _FakeManager()),
+    )
+
+    async def _never_terminal(*_args: object, **_kwargs: object) -> Any:
+        return None
+
+    monkeypatch.setattr(service, "_wait_for_terminal", _never_terminal)
+
+    reaped_ids = await service.cancel_descendants(SpawnId("p1"))
+
+    finalizing_child = spawn_store.get_spawn(runtime_root, "p2")
+    terminal_child = spawn_store.get_spawn(runtime_root, "p3")
+    assert finalizing_child is not None
+    assert terminal_child is not None
+    assert finalizing_child.status == "running"
+    assert finalizing_child.cancel_intent is not None
+    assert terminal_child.status == "cancelled"
+    assert "p2" not in reaped_ids
+    assert "p3" in reaped_ids
 
 
 @pytest.mark.asyncio

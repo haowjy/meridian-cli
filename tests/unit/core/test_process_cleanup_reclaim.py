@@ -54,7 +54,6 @@ def _record(spawn_id: str = "spawn-1") -> SpawnRecord:
         cost_is_estimate=False,
         error=None,
         terminal_origin=None,
-        process_scopes=None,
     )
 
 

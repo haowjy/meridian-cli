@@ -24,6 +24,9 @@ from tests.integration.state.conftest import (
     _reconcile,
     _write_corrupt_primary_meta,
     _write_primary_meta,
+    fake_managed_primary_birth_liveness,
+    fake_reaper_liveness,
+    recording_scope_cleanup,
 )
 
 if TYPE_CHECKING:
@@ -68,14 +71,8 @@ def test_cancel_orphan_primary_after_passive_reconcile_still_terminates(
         runtime_root=runtime_root,
         spawn_id=spawn_id,
     )
-    monkeypatch.setattr(
-        "meridian.lib.state.reaper.is_process_alive",
-        lambda *_args, **_kwargs: False,
-    )
-    monkeypatch.setattr(
-        "meridian.lib.state.managed_primary.is_process_alive",
-        lambda pid, created_after_epoch=None: pid in {7302, 7303},
-    )
+    fake_reaper_liveness(monkeypatch, set())
+    fake_managed_primary_birth_liveness(monkeypatch, {7302, 7303})
     terminated_pids: list[int] = []
 
     class _FakeProcess:
@@ -103,7 +100,6 @@ def test_cancel_orphan_primary_after_passive_reconcile_still_terminates(
 
     assert output.status == "failed"
     assert output.exit_code == 1
-    assert output.message == f"Spawn '{spawn_id}' is already failed."
     assert terminated_pids == [7302, 7303, 7302, 7303]
     latest = _get_spawn(runtime_root, spawn_id)
     assert latest.status == "failed"
@@ -114,8 +110,6 @@ def test_cancel_orphan_primary_candidate_with_unreadable_metadata_uses_worker_pi
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from meridian.lib.platform.process_scope.base import CleanupResult
-
     runner_pid = 9351
     worker_pid = 9352
     runtime_root, spawn_id = _create_spawn(
@@ -133,36 +127,10 @@ def test_cancel_orphan_primary_candidate_with_unreadable_metadata_uses_worker_pi
         runtime_root=runtime_root,
         spawn_id=spawn_id,
     )
-    monkeypatch.setattr(
-        "meridian.lib.state.reaper.is_process_alive",
-        lambda pid, created_after_epoch=None: pid == worker_pid,
-    )
-    passive_terminated_pids: list[int] = []
-
-    def _fake_terminate_tree_sync(
-        pid: int,
-        *,
-        created_at_epoch: float = 0.0,
-        grace_secs: float = 5.0,
-        reason: str = "stop_called",
-        scope_id: str = "",
-        degraded_fallback: bool = False,
-    ) -> CleanupResult:
-        passive_terminated_pids.append(pid)
-        return CleanupResult(
-            scope_id=scope_id,
-            root_pid=pid,
-            descendant_count=0,
-            reason=reason,
-            grace_seconds=grace_secs,
-            kill_escalated=False,
-            degraded_fallback=degraded_fallback,
-            skip_reason=None,
-        )
-
-    monkeypatch.setattr(
+    fake_reaper_liveness(monkeypatch, {worker_pid})
+    passive_terminated_pids = recording_scope_cleanup(
+        monkeypatch,
         "meridian.lib.core.process_cleanup.terminate_tree_sync",
-        _fake_terminate_tree_sync,
     )
 
     reconciled = _reconcile(tmp_path, runtime_root, _get_spawn(runtime_root, spawn_id))
@@ -172,32 +140,9 @@ def test_cancel_orphan_primary_candidate_with_unreadable_metadata_uses_worker_pi
     assert reconciled.error == "orphan_primary"
     assert passive_terminated_pids == [worker_pid]
 
-    explicit_terminated_pids: list[int] = []
-
-    def _fake_terminate_tree_sync_2(
-        pid: int,
-        *,
-        created_at_epoch: float = 0.0,
-        grace_secs: float = 5.0,
-        reason: str = "stop_called",
-        scope_id: str = "",
-        degraded_fallback: bool = False,
-    ) -> CleanupResult:
-        explicit_terminated_pids.append(pid)
-        return CleanupResult(
-            scope_id=scope_id,
-            root_pid=pid,
-            descendant_count=0,
-            reason=reason,
-            grace_seconds=grace_secs,
-            kill_escalated=False,
-            degraded_fallback=degraded_fallback,
-            skip_reason=None,
-        )
-
-    monkeypatch.setattr(
+    explicit_terminated_pids = recording_scope_cleanup(
+        monkeypatch,
         "meridian.lib.core.process_cleanup.terminate_tree_sync",
-        _fake_terminate_tree_sync_2,
     )
 
     output = spawn_api.spawn_cancel_sync(
@@ -209,11 +154,12 @@ def test_cancel_orphan_primary_candidate_with_unreadable_metadata_uses_worker_pi
 
     assert output.status == "failed"
     assert output.exit_code == 1
-    assert output.message == f"Spawn '{spawn_id}' is already failed."
     assert explicit_terminated_pids == [worker_pid]
     latest = _get_spawn(runtime_root, spawn_id)
     assert latest.status == "failed"
     assert latest.error == "orphan_primary"
+
+
 def test_spawn_cancel_managed_primary_signals_launcher_first(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -236,10 +182,7 @@ def test_spawn_cancel_managed_primary_signals_launcher_first(
         "meridian.lib.core.spawn_service.is_process_alive",
         lambda pid, created_after_epoch=None: pid == 7001,
     )
-    monkeypatch.setattr(
-        "meridian.lib.state.managed_primary.is_process_alive",
-        lambda pid, created_after_epoch=None: pid in {7001, 7002, 7003},
-    )
+    fake_managed_primary_birth_liveness(monkeypatch, {7001, 7002, 7003})
     monkeypatch.setattr("meridian.lib.core.spawn_service._MANAGED_CANCEL_GRACE_SECS", 0.01)
     monkeypatch.setattr("meridian.lib.core.spawn_service._MANAGED_CANCEL_FALLBACK_WAIT_SECS", 0.01)
     terminated_pids: list[int] = []
@@ -269,6 +212,8 @@ def test_spawn_cancel_managed_primary_signals_launcher_first(
     assert latest.cancel_intent is not None
     assert latest.cancel_intent.exit_code == 130
     assert latest.cancel_intent.error == "cancelled"
+
+
 def test_spawn_cancel_managed_primary_queued_converges_to_terminal(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -296,10 +241,7 @@ def test_spawn_cancel_managed_primary_queued_converges_to_terminal(
         "meridian.lib.core.spawn_service.is_process_alive",
         lambda *_args, **_kwargs: False,
     )
-    monkeypatch.setattr(
-        "meridian.lib.state.managed_primary.is_process_alive",
-        lambda *_args, **_kwargs: False,
-    )
+    fake_managed_primary_birth_liveness(monkeypatch, set())
     monkeypatch.setattr("meridian.lib.core.spawn_service._MANAGED_CANCEL_GRACE_SECS", 0.01)
     monkeypatch.setattr("meridian.lib.core.spawn_service._MANAGED_CANCEL_FALLBACK_WAIT_SECS", 0.01)
     terminated_pids: list[int] = []

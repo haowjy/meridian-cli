@@ -18,7 +18,7 @@ from meridian.lib.core.process_cleanup import (
     terminate_recorded_spawn_scopes,
     terminate_spawn_scopes,
 )
-from meridian.lib.core.spawn_lifecycle import TERMINAL_SPAWN_STATUSES
+from meridian.lib.core.spawn_lifecycle import coerce_spawn_status, is_terminal_spawn_status
 from meridian.lib.core.types import SpawnId
 from meridian.lib.platform import IS_WINDOWS
 from meridian.lib.platform.terminate import terminate_tree_sync
@@ -280,7 +280,7 @@ class SignalCanceller:
 
 
 def _is_terminal(status: str) -> bool:
-    return status in TERMINAL_SPAWN_STATUSES
+    return is_terminal_spawn_status(status)
 
 
 def _outcome_from_record(
@@ -297,9 +297,7 @@ def _outcome_from_record(
 
 
 def _status_or_default(status: str) -> SpawnStatus:
-    if status in {"queued", "running", "finalizing", "succeeded", "failed", "cancelled"}:
-        return cast("SpawnStatus", status)
-    return "failed"
+    return coerce_spawn_status(status)
 
 
 def _origin_or_default(origin: SpawnOrigin | None) -> SpawnOrigin:

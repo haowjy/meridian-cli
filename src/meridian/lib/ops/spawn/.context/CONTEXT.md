@@ -43,7 +43,7 @@ This matters: env reading in op API inputs leaks CLI-layer concerns into the ser
 If you add a new cancel or wait operation, derive identity from `ctx`, not from input fields.
 
 **Subtree scoping from nested spawns:** When `MERIDIAN_SPAWN_ID` is set (the caller is itself a
-spawn), `spawn_cancel_all_sync()` uses `_collect_descendants()` to restrict cancellation to that
+spawn), `spawn_cancel_all_sync()` uses `state.spawn_tree.descendant_id_set()` to restrict cancellation to that
 spawn's subtree. Siblings, ancestors, and the primary session are not touched. When called from
 a root/primary context (no `MERIDIAN_SPAWN_ID`), the full chat scope applies.
 

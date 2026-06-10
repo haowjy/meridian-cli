@@ -7,24 +7,26 @@ import logging
 import time
 from collections.abc import Awaitable, Callable, Coroutine
 from contextlib import suppress
-from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 from meridian.lib.core.types import SpawnId
 from meridian.lib.harness.connections.base import HarnessEvent
-from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.state.history import HarnessHistoryWriter
-from meridian.lib.streaming.drain_policy import DrainPolicy, SingleTurnDrainPolicy
+from meridian.lib.streaming.drain_coordinator import (
+    DrainCoordinator,
+    DrainExitDecision,
+    DrainLoopDecision,
+    DrainPlan,
+    DrainTerminalDecision,
+)
+from meridian.lib.streaming.drain_policy import DrainAction
 from meridian.lib.streaming.drain_wait import (
+    DrainAuxWake,
     DrainClosedWake,
-    DrainDiskChangeWake,
     DrainInputWaiter,
     DrainTimeoutWake,
 )
 from meridian.lib.streaming.event_observers import EventObserverRegistry
-from meridian.lib.streaming.pi_drain import PiDrainCoordinator
-from meridian.lib.streaming.pi_process_cleanup import terminate_pi_tracked_subspawns
-from meridian.lib.streaming.pi_subspawn_tracker import PiSubspawnTracker
 from meridian.lib.streaming.spawn_session import DrainOutcome, SpawnSession
 
 if TYPE_CHECKING:
@@ -38,7 +40,6 @@ CleanupCompletedSession = Callable[[SpawnId, SpawnSession], Coroutine[Any, Any, 
 ResolveCompletionFuture = Callable[[SpawnSession, DrainOutcome], DrainOutcome]
 FanOutEvent = Callable[[SpawnId, HarnessEvent], None]
 FanOutTurnBoundary = Callable[[SpawnId, "TerminalEventOutcome"], Awaitable[None]]
-EmitPiPhaseEvent = Callable[..., None]
 
 
 class SpawnDrainLoop:
@@ -47,7 +48,6 @@ class SpawnDrainLoop:
     def __init__(
         self,
         *,
-        runtime_root: Path,
         sessions: dict[SpawnId, SpawnSession],
         history_writers: dict[SpawnId, HarnessHistoryWriter],
         observers: EventObserverRegistry,
@@ -56,9 +56,7 @@ class SpawnDrainLoop:
         resolve_completion_future: ResolveCompletionFuture,
         fan_out_event: FanOutEvent,
         fan_out_turn_boundary: FanOutTurnBoundary,
-        emit_pi_phase_event: EmitPiPhaseEvent,
     ) -> None:
-        self._runtime_root = runtime_root
         self._sessions = sessions
         self._history_writers = history_writers
         self._observers = observers
@@ -67,92 +65,78 @@ class SpawnDrainLoop:
         self._resolve_completion_future = resolve_completion_future
         self._fan_out_event = fan_out_event
         self._fan_out_turn_boundary = fan_out_turn_boundary
-        self._emit_pi_phase_event = emit_pi_phase_event
 
     async def run(
         self,
         *,
         spawn_id: SpawnId,
         receiver: HarnessConnection[Any],
-        drain_policy: DrainPolicy | None,
+        drain_plan: DrainPlan,
         tracer: DebugTracer | None,
-        pi_session_role: str | None,
-        notification_timeout_seconds: float | None,
-        child_wave_timeout_seconds: float | None,
     ) -> None:
         """Durably append each harness event and fan out to the active subscriber."""
 
         # Import at runtime to avoid circular import during module initialization.
         from meridian.lib.harness.semantics import activity_transition, terminal_outcome
 
-        def _emit_pi_phase(*, phase: str, session_role: str | None, **payload: object) -> None:
-            self._emit_pi_phase_event(
-                spawn_id,
-                receiver,
-                phase=phase,
-                session_role=session_role,
-                **payload,
-            )
-
-        async def _terminate_tracked_pi_children(
-            tracker: PiSubspawnTracker,
-            reason: str,
-        ) -> None:
-            await terminate_pi_tracked_subspawns(spawn_id, tracker, reason=reason)
-
         consecutive_write_failures = 0
         max_consecutive_failures = 10
         drain_cancelled = False
         drain_error: Exception | None = None
         recorded_terminal_outcome: TerminalEventOutcome | None = None
-        pi_drain = PiDrainCoordinator.for_connection(
-            runtime_root=self._runtime_root,
-            spawn_id=spawn_id,
-            receiver=cast("HarnessConnection[ResolvedLaunchSpec]", receiver),
-            session_role=pi_session_role,
-            notification_timeout_seconds=notification_timeout_seconds,
-            child_wave_timeout_seconds=child_wave_timeout_seconds,
-            emit_phase=_emit_pi_phase,
-        )
-        await pi_drain.start()
 
-        policy = drain_policy
-        if policy is None:
-            policy = (
-                pi_drain.default_policy() if pi_drain.is_pi_connection else SingleTurnDrainPolicy()
-            )
-        pi_drain.set_policy(policy)
+        coordinator = drain_plan.coordinator
+        policy = drain_plan.selected_policy()
+        if drain_plan.on_policy_selected is not None:
+            drain_plan.on_policy_selected(policy)
+        if coordinator is not None:
+            await coordinator.start()
 
         events_iter = receiver.events().__aiter__()
-        drain_waiter = DrainInputWaiter(events_iter, pi_drain)
+        drain_waiter = DrainInputWaiter(events_iter, drain_plan.aux_wake or _NoAuxWake())
         try:
             while True:
-                wake = await drain_waiter.wait(pi_drain.next_timeout())
+                wake = await drain_waiter.wait(_next_timeout(coordinator))
                 if isinstance(wake, DrainClosedWake):
-                    if pi_drain.quiescence_candidate is not None:
-                        recorded_terminal_outcome = pi_drain.quiescence_candidate
+                    session = self._sessions.get(spawn_id)
+                    close_outcome = (
+                        coordinator.handle_close(
+                            intentional_stop=bool(session.cancel_sent)
+                            if session is not None
+                            else False,
+                        )
+                        if coordinator is not None
+                        else None
+                    )
+                    if close_outcome is not None:
+                        recorded_terminal_outcome = close_outcome
                     break
-                if isinstance(wake, DrainDiskChangeWake):
-                    await pi_drain.reevaluate_after_disk_change()
+                if isinstance(wake, DrainAuxWake):
+                    aux_wake_outcome = await _handle_aux_wake(drain_plan)
+                    if aux_wake_outcome.recorded_outcome is not None:
+                        recorded_terminal_outcome = aux_wake_outcome.recorded_outcome
+                        break
                     continue
                 if isinstance(wake, DrainTimeoutWake):
-                    timeout_outcome = await pi_drain.handle_timeout(
-                        _terminate_tracked_pi_children,
-                    )
-                    if timeout_outcome is not None:
-                        recorded_terminal_outcome = timeout_outcome
+                    timeout_outcome = await _handle_timeout(coordinator)
+                    if timeout_outcome.recorded_outcome is not None:
+                        recorded_terminal_outcome = timeout_outcome.recorded_outcome
                         break
                     continue
 
                 event = wake.event
                 disk_change_ready_after_event = wake.disk_change_ready_after_event
 
-                transition = activity_transition(event) if pi_drain.is_pi_connection else None
-                duplicate_canonical_lifecycle_event = await pi_drain.observe_event(
+                transition = activity_transition(
+                    event,
+                    codex_main_thread_id=_codex_main_thread_id(receiver),
+                )
+                duplicate_canonical_event = await _observe_event(
+                    coordinator,
                     event,
                     transition,
                 )
-                if duplicate_canonical_lifecycle_event:
+                if duplicate_canonical_event:
                     continue
 
                 if tracer is not None:
@@ -215,32 +199,36 @@ class SpawnDrainLoop:
                     codex_main_thread_id=_codex_main_thread_id(receiver),
                 )
                 self._fan_out_event(spawn_id, event)
-                pi_drain.note_event_persisted(event)
+                persisted_event_decision = _note_event_persisted(coordinator, event)
+                if persisted_event_decision.recorded_outcome is not None:
+                    recorded_terminal_outcome = persisted_event_decision.recorded_outcome
+                    break
                 if disk_change_ready_after_event:
                     # Disk change arrived concurrently with this event; reevaluate now
                     # that the event has been persisted and observers notified.
-                    await pi_drain.reevaluate_after_disk_change()
-
-                pi_lifecycle_error = pi_drain.lifecycle_error_outcome()
-                if pi_lifecycle_error is not None:
-                    recorded_terminal_outcome = pi_lifecycle_error
-                    break
+                    aux_wake_outcome = await _handle_aux_wake(drain_plan)
+                    if aux_wake_outcome.recorded_outcome is not None:
+                        recorded_terminal_outcome = aux_wake_outcome.recorded_outcome
+                        break
 
                 if event_outcome is not None:
                     action = policy.classify(event_outcome)
-                    pi_decision = pi_drain.handle_terminal_event(event, event_outcome, action)
-                    if pi_decision.recorded_outcome is not None:
-                        recorded_terminal_outcome = pi_decision.recorded_outcome
+                    terminal_decision = await _handle_terminal_event(
+                        coordinator,
+                        event,
+                        event_outcome,
+                        action,
+                    )
+                    if terminal_decision.recorded_outcome is not None:
+                        recorded_terminal_outcome = terminal_decision.recorded_outcome
                         break
-                    if pi_decision.emit_turn_boundary:
+                    if terminal_decision.emit_turn_boundary:
                         await self._fan_out_turn_boundary(spawn_id, event_outcome)
 
-                pi_failure = pi_drain.failure_outcome_after_event()
-                if pi_failure is not None:
-                    recorded_terminal_outcome = pi_failure
+                after_event_outcome = await _after_event(coordinator)
+                if after_event_outcome.recorded_outcome is not None:
+                    recorded_terminal_outcome = after_event_outcome.recorded_outcome
                     break
-                if recorded_terminal_outcome is None:
-                    pi_drain.maybe_start_quiescence_after_event()
         except asyncio.CancelledError:
             drain_cancelled = True
             raise
@@ -248,13 +236,16 @@ class SpawnDrainLoop:
             drain_error = exc
             raise
         finally:
-            pending_pi_children_at_exit = pi_drain.pending_children_at_exit()
             await drain_waiter.close()
-            await pi_drain.stop()
-            await pi_drain.cleanup_pending_children_at_exit(_terminate_tracked_pi_children)
+            try:
+                exit_decision = await _handle_stream_exit(coordinator, recorded_terminal_outcome)
+            finally:
+                if coordinator is not None:
+                    await coordinator.stop()
+            recorded_terminal_outcome = exit_decision.recorded_outcome
             session = self._sessions.pop(spawn_id, None)
             if session is not None:
-                fallback_pi_error = pi_drain.fallback_error_without_recorded_outcome()
+                fallback_error = exit_decision.fallback_error
                 if drain_cancelled:
                     outcome = DrainOutcome(
                         status="cancelled",
@@ -275,22 +266,11 @@ class SpawnDrainLoop:
                         error="cancelled",
                         duration_secs=max(0.0, time.monotonic() - session.started_monotonic),
                     )
-                elif (
-                    pi_drain.is_pi_connection
-                    and recorded_terminal_outcome is None
-                    and pending_pi_children_at_exit
-                ):
+                elif fallback_error is not None and recorded_terminal_outcome is None:
                     outcome = DrainOutcome(
                         status="failed",
                         exit_code=1,
-                        error="pi_process_exited_with_tracked_children",
-                        duration_secs=max(0.0, time.monotonic() - session.started_monotonic),
-                    )
-                elif fallback_pi_error is not None and recorded_terminal_outcome is None:
-                    outcome = DrainOutcome(
-                        status="failed",
-                        exit_code=1,
-                        error=fallback_pi_error,
+                        error=fallback_error,
                         duration_secs=max(0.0, time.monotonic() - session.started_monotonic),
                     )
                 elif recorded_terminal_outcome is not None:
@@ -299,6 +279,9 @@ class SpawnDrainLoop:
                         exit_code=recorded_terminal_outcome.exit_code,
                         error=recorded_terminal_outcome.error,
                         duration_secs=max(0.0, time.monotonic() - session.started_monotonic),
+                        authoritative=(
+                            not drain_plan.raw_terminal_frames_authoritative
+                        ),
                     )
                 else:
                     outcome = DrainOutcome(
@@ -307,15 +290,11 @@ class SpawnDrainLoop:
                         error="connection_closed_without_terminal_event",
                         duration_secs=max(0.0, time.monotonic() - session.started_monotonic),
                     )
-                session_id = (
-                    _safe_connection_session_id(receiver) if pi_drain.session_seen else None
-                )
-                pi_drain.emit_session_phase_if_needed(session_id)
-                pi_drain.emit_finalized(
-                    status=outcome.status,
-                    exit_code=outcome.exit_code,
-                    error=outcome.error,
-                )
+                if drain_plan.finalizer is not None:
+                    drain_plan.finalizer.after_finalized(
+                        connection_session_id=_safe_connection_session_id(receiver),
+                        outcome=outcome,
+                    )
                 self._resolve_completion_future(session, outcome)
                 cleanup_task = asyncio.create_task(
                     self._cleanup_completed_session(spawn_id, session)
@@ -342,6 +321,82 @@ def _codex_main_thread_id(connection: object) -> str | None:
     except Exception:
         return None
     return thread_id if isinstance(thread_id, str) and thread_id.strip() else None
+
+
+class _NoAuxWake:
+    """Waiter adapter for the plain single-turn baseline."""
+
+    def wants_aux_wake(self) -> bool:
+        return False
+
+    async def wait_for_aux_wake(self) -> None:
+        return
+
+
+def _next_timeout(coordinator: DrainCoordinator | None) -> float | None:
+    if coordinator is None:
+        return None
+    return coordinator.next_timeout()
+
+
+async def _observe_event(
+    coordinator: DrainCoordinator | None,
+    event: HarnessEvent,
+    transition: str | None,
+) -> bool:
+    if coordinator is None:
+        return False
+    return await coordinator.observe_event(event, transition)
+
+
+def _note_event_persisted(
+    coordinator: DrainCoordinator | None,
+    event: HarnessEvent,
+) -> DrainLoopDecision:
+    if coordinator is None:
+        return DrainLoopDecision()
+    return coordinator.note_event_persisted(event)
+
+
+async def _handle_terminal_event(
+    coordinator: DrainCoordinator | None,
+    event: HarnessEvent,
+    outcome: TerminalEventOutcome,
+    action: DrainAction,
+) -> DrainTerminalDecision:
+    if coordinator is None:
+        return DrainTerminalDecision(
+            recorded_outcome=outcome if action.terminate else None,
+            emit_turn_boundary=action.emit_turn_boundary,
+        )
+    return await coordinator.handle_terminal_event(event, outcome, action)
+
+
+async def _handle_aux_wake(drain_plan: DrainPlan) -> DrainLoopDecision:
+    if drain_plan.handle_aux_wake is None:
+        return DrainLoopDecision()
+    return await drain_plan.handle_aux_wake()
+
+
+async def _handle_timeout(coordinator: DrainCoordinator | None) -> DrainLoopDecision:
+    if coordinator is None:
+        return DrainLoopDecision()
+    return await coordinator.handle_timeout()
+
+
+async def _after_event(coordinator: DrainCoordinator | None) -> DrainLoopDecision:
+    if coordinator is None:
+        return DrainLoopDecision()
+    return await coordinator.after_event()
+
+
+async def _handle_stream_exit(
+    coordinator: DrainCoordinator | None,
+    recorded_outcome: TerminalEventOutcome | None,
+) -> DrainExitDecision:
+    if coordinator is None:
+        return DrainExitDecision(recorded_outcome=recorded_outcome)
+    return await coordinator.handle_stream_exit(recorded_outcome)
 
 
 def _safe_connection_session_id(connection: object) -> str | None:

@@ -50,8 +50,9 @@ def test_spawn_prompt_file_dash_reads_stdin_through_main(
         *,
         sink: object | None = None,
         prepared: Any | None = None,
+        on_spawn_id: object | None = None,
     ) -> SpawnActionOutput:
-        _ = (sink, prepared)
+        _ = (sink, prepared, on_spawn_id)
         captured["prompt"] = payload.prompt
         return SpawnActionOutput(command="spawn.create", status="dry-run")
 
@@ -91,8 +92,9 @@ def test_spawn_goal_is_trimmed_and_passed_to_spawn_create(
         *,
         sink: object | None = None,
         prepared: Any | None = None,
+        on_spawn_id: object | None = None,
     ) -> SpawnActionOutput:
-        _ = (sink, prepared)
+        _ = (sink, prepared, on_spawn_id)
         captured["goal"] = payload.goal
         return SpawnActionOutput(command="spawn.create", status="dry-run")
 
@@ -103,6 +105,74 @@ def test_spawn_goal_is_trimmed_and_passed_to_spawn_create(
 
     assert exc_info.value.code == 0
     assert captured["goal"] == "ship phase 3"
+
+
+def test_spawn_foreground_surfaces_spawn_id_on_stderr(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setattr(spawn_cli.sys, "stdin", _FakeStdin("", is_tty=True))
+
+    def _fake_spawn_create_sync(
+        payload: SpawnCreateInput,
+        *,
+        sink: object | None = None,
+        prepared: Any | None = None,
+        on_spawn_id: Any | None = None,
+    ) -> SpawnActionOutput:
+        _ = (payload, sink, prepared)
+        assert callable(on_spawn_id)
+        on_spawn_id("p123")
+        return SpawnActionOutput(command="spawn.create", status="succeeded", spawn_id="p123")
+
+    monkeypatch.setattr(spawn_cli, "spawn_create_sync", _fake_spawn_create_sync)
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli_main.main(["spawn", "-p", "literal"])
+
+    assert exc_info.value.code == 0
+    captured = capsys.readouterr()
+    assert captured.err == "Spawn id: p123\n"
+    assert "p123 succeeded" in captured.out
+
+
+def test_spawn_foreground_spawn_id_notice_suppressed_for_quiet_and_json(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setattr(spawn_cli.sys, "stdin", _FakeStdin("", is_tty=True))
+    callbacks: list[Any | None] = []
+
+    def _fake_spawn_create_sync(
+        payload: SpawnCreateInput,
+        *,
+        sink: object | None = None,
+        prepared: Any | None = None,
+        on_spawn_id: Any | None = None,
+    ) -> SpawnActionOutput:
+        _ = (payload, sink, prepared)
+        callbacks.append(on_spawn_id)
+        if callable(on_spawn_id):
+            on_spawn_id("p456")
+        return SpawnActionOutput(command="spawn.create", status="succeeded", spawn_id="p456")
+
+    monkeypatch.setattr(spawn_cli, "spawn_create_sync", _fake_spawn_create_sync)
+
+    with pytest.raises(SystemExit) as quiet_exit:
+        cli_main.main(["spawn", "-p", "literal", "--quiet"])
+    quiet = capsys.readouterr()
+
+    with pytest.raises(SystemExit) as json_exit:
+        cli_main.main(["--format", "json", "spawn", "-p", "literal"])
+    json_capture = capsys.readouterr()
+
+    assert quiet_exit.value.code == 0
+    assert json_exit.value.code == 0
+    assert callbacks == [None, None]
+    assert quiet.err == ""
+    assert json_capture.err == ""
+    assert "Spawn id:" not in json_capture.out
+    assert '"spawn_id": "p456"' in json_capture.out
 
 
 def test_spawn_goal_rejects_empty_value(
@@ -175,8 +245,9 @@ def test_spawn_runtime_error_is_reported_without_traceback(
         *,
         sink: object | None = None,
         prepared: Any | None = None,
+        on_spawn_id: object | None = None,
     ) -> SpawnActionOutput:
-        _ = (payload, sink, prepared)
+        _ = (payload, sink, prepared, on_spawn_id)
         raise RuntimeError(
             "Mars model resolution failed: no mars.toml found for this project root. "
             "Add mars.toml or choose a fully qualified model id."

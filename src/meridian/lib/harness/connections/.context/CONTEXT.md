@@ -48,6 +48,9 @@ Required abstract methods — every subclass must implement all of these:
 - `start(config, spec)` → async; raises if already started
 - `stop()` → async; idempotent
 - `health()` → bool
+- `resident_backend` → `ResidentBackendControl | None`; Codex/OpenCode expose
+  this for resident-until-done structured liveness and follow-up turns;
+  non-resident transports return None.
 - `send_user_message(text)` → async
 - `send_cancel()` → async
 - `events()` → `AsyncIterator[HarnessEvent]`
@@ -58,6 +61,9 @@ supports the capability:
 - `start_observer(config, spec)` — observer mode; guard with `capabilities.supports_primary_observer`
 - `configure_primary_runtime_requests(policy, event_sink, request_handler)`
 - `inject_runtime_event(event)`
+- `inject_turn(message)` — compatibility wrapper that delegates to
+  `resident_backend.begin_followup_turn`; transports should implement follow-up
+  turns through the resident backend seam instead of overriding this directly.
 - `respond_request(request_id, decision, payload)` — Codex only
 - `respond_user_input(request_id, answers)` — Codex only
 

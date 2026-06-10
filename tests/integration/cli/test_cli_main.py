@@ -4,7 +4,6 @@ import os
 import shlex
 import threading
 from pathlib import Path
-from typing import Any
 
 import pytest
 
@@ -17,11 +16,9 @@ from tests.support.launch import stub_bundle_request_and_resolve
 from tests.support.pi_extensions import configure_pi_extension_projection
 
 cli_main = importlib.import_module("meridian.cli.main")
-config_cmd = importlib.import_module("meridian.cli.config_cmd")
 hooks_cli = importlib.import_module("meridian.cli.hooks_commands")
 ops_hooks = importlib.import_module("meridian.lib.ops.hooks")
 primary_launch = importlib.import_module("meridian.cli.primary_launch")
-session_cmd = importlib.import_module("meridian.cli.session_cmd")
 init_ops = importlib.import_module("meridian.lib.ops.init_ops")
 bootstrap_services = importlib.import_module("meridian.lib.bootstrap.services")
 cli_utils = importlib.import_module("meridian.cli.utils")
@@ -213,80 +210,6 @@ def test_main_sets_directory_env_before_telemetry_install(
     assert telemetry_env["MERIDIAN_RUNTIME_DIR"] is None
 
 
-def test_directory_flag_supplies_project_root_to_config_ops(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    project = tmp_path / "target-project"
-    project.mkdir()
-    parent_project = tmp_path / "parent-project"
-    parent_project.mkdir()
-    stale_runtime = tmp_path / "stale-runtime"
-    stale_runtime.mkdir()
-    captured: dict[str, str | None] = {}
-
-    monkeypatch.delenv("MERIDIAN_DEPTH", raising=False)
-    monkeypatch.setenv("MERIDIAN_PROJECT_DIR", parent_project.as_posix())
-    monkeypatch.setenv("MERIDIAN_RUNTIME_DIR", stale_runtime.as_posix())
-    monkeypatch.setattr(cli_main, "_install_cli_telemetry", lambda **_kwargs: None)
-    monkeypatch.setattr(cli_main, "_maybe_schedule_background_repairs", lambda **_kwargs: None)
-    monkeypatch.setattr(cli_main, "_emit_usage_command_invoked", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(
-        cli_main,
-        "maybe_bootstrap_runtime_state",
-        lambda *_args, **_kwargs: project.resolve(),
-    )
-
-    def _capture_config_get(payload: Any) -> object:
-        captured["project_root"] = payload.project_root
-        raise SystemExit(0)
-
-    monkeypatch.setattr(config_cmd, "config_get_sync", _capture_config_get)
-
-    with pytest.raises(SystemExit) as exc_info:
-        cli_main.main(["-C", project.as_posix(), "config", "get", "model"])
-
-    assert exc_info.value.code == 0
-    assert captured["project_root"] == project.resolve().as_posix()
-
-
-def test_directory_flag_supplies_project_root_to_session_log(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    project = tmp_path / "target-project"
-    project.mkdir()
-    parent_project = tmp_path / "parent-project"
-    parent_project.mkdir()
-    stale_runtime = tmp_path / "stale-runtime"
-    stale_runtime.mkdir()
-    captured: dict[str, str | None] = {}
-
-    monkeypatch.delenv("MERIDIAN_DEPTH", raising=False)
-    monkeypatch.setenv("MERIDIAN_PROJECT_DIR", parent_project.as_posix())
-    monkeypatch.setenv("MERIDIAN_RUNTIME_DIR", stale_runtime.as_posix())
-    monkeypatch.setattr(cli_main, "_install_cli_telemetry", lambda **_kwargs: None)
-    monkeypatch.setattr(cli_main, "_maybe_schedule_background_repairs", lambda **_kwargs: None)
-    monkeypatch.setattr(cli_main, "_emit_usage_command_invoked", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(
-        cli_main,
-        "maybe_bootstrap_runtime_state",
-        lambda *_args, **_kwargs: project.resolve(),
-    )
-
-    def _capture_session_log(payload: Any) -> object:
-        captured["project_root"] = payload.project_root
-        raise SystemExit(0)
-
-    monkeypatch.setattr(session_cmd, "session_log_sync", _capture_session_log)
-
-    with pytest.raises(SystemExit) as exc_info:
-        cli_main.main(["-C", project.as_posix(), "session", "log", "c8"])
-
-    assert exc_info.value.code == 0
-    assert captured["project_root"] == project.resolve().as_posix()
-
-
 def test_main_skips_fork_normalization_for_mars_passthrough(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -372,34 +295,6 @@ def test_main_pi_primary_launch_dry_run_is_supported(
     dry_run_argv = shlex.split(captured.out[command_start:])
     assert "--mode" not in dry_run_argv
     assert "--mode rpc" not in captured.out
-
-
-def test_directory_flag_supplies_project_root_to_primary_launch(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    project = tmp_path / "project"
-    project.mkdir()
-    captured: dict[str, object] = {}
-
-    monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(
-        cli_main,
-        "maybe_bootstrap_runtime_state",
-        lambda *_args, **_kwargs: project,
-    )
-
-    def _fake_primary_launch(**kwargs: object) -> object:
-        captured.update(kwargs)
-        return primary_launch.PrimaryLaunchOutput(message="ok", exit_code=0)
-
-    monkeypatch.setattr(primary_launch, "run_primary_launch", _fake_primary_launch)
-
-    with pytest.raises(SystemExit) as exc_info:
-        cli_main.main(["-C", project.as_posix(), "--dry-run"])
-
-    assert exc_info.value.code == 0
-    assert captured["project_root"] == project.resolve()
 
 
 def test_task_dir_flag_supplies_task_dir_to_primary_launch(

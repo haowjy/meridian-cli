@@ -37,6 +37,7 @@ def session_scope(
     task_cwd: str | None = None,
     execution_cwd: str | None = None,
     kind: Literal["primary", "spawn"] = "spawn",
+    spawn_id: str | None = None,
     _start_session: Callable[..., str] = start_session,
     _stop_session: Callable[[Path, str], None] = stop_session,
     _update_session_harness_id: Callable[[Path, str, str], None] = update_session_harness_id,
@@ -58,6 +59,7 @@ def session_scope(
         task_cwd=task_cwd,
         execution_cwd=execution_cwd,
         kind=kind,
+        spawn_id=spawn_id,
     )
 
     def _record_harness_session_id(session_id: str) -> None:

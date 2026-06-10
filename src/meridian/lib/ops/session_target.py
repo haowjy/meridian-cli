@@ -21,7 +21,7 @@ from meridian.lib.ops.spawn.query import (
     read_latest_primary_spawn_for_chat_read_only,
     read_spawn_row_read_only,
 )
-from meridian.lib.state import session_store
+from meridian.lib.state import session_identity, session_store
 from meridian.lib.state.paths import spawn_output_path
 from meridian.lib.state.primary_meta import (
     is_managed_primary,
@@ -51,8 +51,8 @@ class SessionRepairTarget(NamedTuple):
     reason: str | None = None
 
 
-def _is_chat_ref(value: str) -> bool:
-    return value.startswith("c") and value[1:].isdigit()
+def _is_chat_ref(runtime_root: Path, value: str) -> bool:
+    return session_identity.is_tracked_chat_ref(runtime_root, value)
 
 
 def _is_spawn_ref(value: str) -> bool:
@@ -272,6 +272,48 @@ def _target_from_spawn_output(
     )
 
 
+def _managed_primary_output_target(
+    runtime_root: Path,
+    *,
+    spawn_row: SpawnRecord,
+    display_id: str,
+    harness: str | None,
+) -> SessionLogTarget | None:
+    if spawn_row.kind != "primary":
+        return None
+    if not is_managed_primary(runtime_root, spawn_row.id):
+        return None
+    return _target_from_spawn_output(
+        runtime_root,
+        display_id=display_id,
+        spawn_id=spawn_row.id,
+        live_first=(spawn_row.status == "running"),
+        source=_managed_primary_fallback_source(spawn_row.id, harness),
+    )
+
+
+def _running_managed_primary_output_target(
+    runtime_root: Path,
+    *,
+    spawn_row: SpawnRecord | None,
+    display_id: str,
+) -> SessionLogTarget | None:
+    if spawn_row is None:
+        return None
+    if spawn_row.kind != "primary":
+        return None
+    if spawn_row.status not in {"queued", "running"}:
+        return None
+    if not is_managed_primary(runtime_root, spawn_row.id):
+        return None
+    return _target_from_spawn_output(
+        runtime_root,
+        display_id=display_id,
+        spawn_id=spawn_row.id,
+        live_first=True,
+    )
+
+
 def _primary_spawn_for_chat(
     project_root: Path,
     runtime_root: Path,
@@ -432,6 +474,14 @@ def _resolve_from_chat_id(
     if normalized_harness is None and primary_spawn is not None and primary_spawn.harness:
         normalized_harness = primary_spawn.harness.strip() or None
 
+    output_target = _running_managed_primary_output_target(
+        runtime_root,
+        spawn_row=primary_spawn,
+        display_id=chat_id,
+    )
+    if output_target is not None:
+        return output_target
+
     normalized_session_id = _latest_harness_session_id(session_record)
     if normalized_session_id is None and primary_spawn is not None:
         normalized_session_id = (
@@ -480,10 +530,36 @@ def _resolve_from_chat_id(
         if transcript_target is not None:
             return transcript_target
 
+    if primary_spawn is not None:
+        output_target = _managed_primary_output_target(
+            runtime_root,
+            spawn_row=primary_spawn,
+            display_id=chat_id,
+            harness=normalized_harness,
+        )
+        if output_target is not None:
+            return output_target
+
     return _resolve_harness_session_file(
         project_root=project_root,
         session_id=normalized_session_id,
         harness=normalized_harness,
+    )
+
+
+def _spawn_linked_chat_session(
+    *,
+    runtime_root: Path,
+    spawn_id: str,
+    chat_id: str | None,
+) -> session_store.SessionRecord | None:
+    from meridian.lib.state.session_identity import get_session_record_for_spawn
+
+    _ = chat_id
+    return get_session_record_for_spawn(
+        runtime_root,
+        spawn_id,
+        require_harness_session_id=True,
     )
 
 
@@ -500,17 +576,10 @@ def _resolve_from_spawn_id(
     is_primary_spawn = row.kind == "primary"
     is_managed_backend_primary = is_primary_spawn and is_managed_primary(runtime_root, spawn_id)
 
-    if (
-        is_managed_backend_primary
-        and row.status in {"queued", "running"}
-        and (
-            output_target := _target_from_spawn_output(
-                runtime_root,
-                display_id=spawn_id,
-                spawn_id=spawn_id,
-                live_first=True,
-            )
-        )
+    if output_target := _running_managed_primary_output_target(
+        runtime_root,
+        spawn_row=row,
+        display_id=spawn_id,
     ):
         return output_target
 
@@ -530,10 +599,6 @@ def _resolve_from_spawn_id(
 
     session_id = (row.harness_session_id or "").strip()
     harness = (row.harness or "").strip() or None
-
-    if not session_id and row.chat_id is not None:
-        by_chat = session_store.get_session_harness_id(runtime_root, row.chat_id)
-        session_id = (by_chat or "").strip()
 
     if not session_id and is_primary_spawn:
         primary_meta_session_id = read_primary_harness_session_id(runtime_root, spawn_id)
@@ -569,10 +634,20 @@ def _resolve_from_spawn_id(
             )
             if output_target is not None:
                 return output_target
-            raise ValueError(
-                f"Spawn '{spawn_id}' has no transcript available yet "
-                "(no harness session id recorded and no spawn output found)."
+            record = _spawn_linked_chat_session(
+                runtime_root=runtime_root,
+                spawn_id=spawn_id,
+                chat_id=row.chat_id,
             )
+            if record is not None:
+                session_id = record.harness_session_id.strip()
+                if record.harness.strip():
+                    harness = record.harness.strip()
+            if not session_id:
+                raise ValueError(
+                    f"Spawn '{spawn_id}' has no transcript available yet "
+                    "(no harness session id recorded and no spawn output found)."
+                )
 
     if not session_id:
         raise ValueError(
@@ -610,12 +685,11 @@ def _resolve_from_spawn_id(
 
     if is_primary_spawn:
         if is_managed_backend_primary:
-            output_target = _target_from_spawn_output(
+            output_target = _managed_primary_output_target(
                 runtime_root,
                 display_id=spawn_id,
-                spawn_id=spawn_id,
-                live_first=(row.status == "running"),
-                source=_managed_primary_fallback_source(spawn_id, harness),
+                spawn_row=row,
+                harness=harness,
             )
             if output_target is not None:
                 return output_target
@@ -852,7 +926,7 @@ def resolve_session_repair_target(
     normalized_ref = ref.strip()
     if not normalized_ref:
         raise ValueError("Session reference is required")
-    if _is_chat_ref(normalized_ref):
+    if _is_chat_ref(runtime_root, normalized_ref):
         return _resolve_repair_from_chat_id(
             project_root=project_root,
             runtime_root=runtime_root,
@@ -884,7 +958,7 @@ def resolve_session_log_target(
     if not normalized_ref:
         raise ValueError("Session reference is required unless --file is provided")
 
-    if normalized_ref.startswith("c") and normalized_ref[1:].isdigit():
+    if _is_chat_ref(runtime_root, normalized_ref):
         return _resolve_from_chat_id(
             project_root=project_root,
             runtime_root=runtime_root,

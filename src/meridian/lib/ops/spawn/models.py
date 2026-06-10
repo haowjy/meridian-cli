@@ -7,7 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validat
 
 from meridian.lib.core.domain import SpawnStatus
 from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
-from meridian.lib.core.spawn_lifecycle import is_active_spawn_status
+from meridian.lib.core.spawn_lifecycle import is_active_spawn_status, is_terminal_spawn_status
 from meridian.lib.core.util import FormatContext
 from meridian.lib.launch.request import SessionRequest
 
@@ -219,13 +219,24 @@ class SpawnActionOutput(BaseModel):
             wire["report"] = self.report
         if self.error is not None:
             wire["error"] = self.error
+        if self.status == "failed" and self.spawn_id is None:
+            if self.message is not None:
+                wire["message"] = self.message
+            if self.model is not None:
+                wire["model"] = self.model
+            if self.harness_id is not None:
+                wire["harness_id"] = self.harness_id
         if self.warning is not None:
             wire["warning"] = self.warning
         if self.exit_code is not None:
             wire["exit_code"] = self.exit_code
         if self.context_from_resolved:
             wire["context_from_resolved"] = list(self.context_from_resolved)
-        include_task_context = self.status == "dry-run" or self._has_distinct_task_cwd()
+        include_task_context = (
+            self.status == "dry-run"
+            or (self.status == "failed" and self.spawn_id is None)
+            or self._has_distinct_task_cwd()
+        )
         if include_task_context:
             if self.task_cwd is not None:
                 wire["task_cwd"] = self.task_cwd
@@ -332,7 +343,7 @@ class SpawnActionOutput(BaseModel):
         effective_ctx = ctx or FormatContext()
         if (
             self.command == "spawn.create"
-            and self.status in {"succeeded", "failed", "cancelled"}
+            and is_terminal_spawn_status(self.status)
             and not self.background
             and effective_ctx.verbosity == 0
         ):
@@ -504,12 +515,13 @@ class ModelStats(BaseModel):
     succeeded: int = 0
     failed: int = 0
     cancelled: int = 0
+    timed_out: int = 0
     running: int = 0
     finalizing: int = 0
     cost_usd: float = 0.0
 
     def success_rate(self) -> str:
-        finished = self.succeeded + self.failed
+        finished = self.succeeded + self.failed + self.cancelled + self.timed_out
         if finished == 0:
             return "-"
         return f"{self.succeeded / finished * 100:.0f}%"
@@ -522,6 +534,7 @@ class SpawnStatsOutput(BaseModel):
     succeeded: int
     failed: int
     cancelled: int
+    timed_out: int
     running: int
     finalizing: int = 0
     total_duration_secs: float
@@ -541,6 +554,7 @@ class SpawnStatsOutput(BaseModel):
             f"succeeded: {self.succeeded} ({self._pct(self.succeeded)})",
             f"failed: {self.failed} ({self._pct(self.failed)})",
             f"cancelled: {self.cancelled} ({self._pct(self.cancelled)})",
+            f"timed_out: {self.timed_out} ({self._pct(self.timed_out)})",
             f"running: {self.running}",
             f"finalizing: {self.finalizing}",
             f"total_duration: {self.total_duration_secs:.1f}s",
@@ -550,7 +564,7 @@ class SpawnStatsOutput(BaseModel):
             from meridian.lib.core.formatting import tabular
 
             lines.append("")
-            rows = [["model", "total", "succeeded", "failed", "success%", "cost"]]
+            rows = [["model", "total", "succeeded", "failed", "timed_out", "success%", "cost"]]
             for model, stats in self.models.items():
                 label = model if model else "(unknown)"
                 rows.append(
@@ -559,6 +573,7 @@ class SpawnStatsOutput(BaseModel):
                         str(stats.total),
                         str(stats.succeeded),
                         str(stats.failed),
+                        str(stats.timed_out),
                         stats.success_rate(),
                         f"${stats.cost_usd:.2f}" if stats.cost_usd else "-",
                     ]
@@ -682,6 +697,12 @@ class SpawnShowInput(BaseModel):
     project_root: str | None = None
 
 
+class SpawnSignalInput(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    spawn_id: str | None = None
+    project_root: str | None = None
+
 class SpawnStatusInput(BaseModel):
     model_config = ConfigDict(frozen=True)
 
@@ -714,6 +735,7 @@ class SpawnCancelAllOutput(BaseModel):
     cancelled_count: int
     finalizing_count: int = 0
     failed_count: int = 0
+    timed_out_count: int = 0
     results: tuple["SpawnActionOutput", ...] = ()
 
     def format_text(self, ctx: object | None = None) -> str:
@@ -730,6 +752,8 @@ class SpawnCancelAllOutput(BaseModel):
             for result in self.results:
                 if result.status == "failed":
                     lines.append(result.format_text())
+        if self.timed_out_count:
+            lines.append(f"{self.timed_out_count} cancellation(s) timed out.")
         return "\n".join(lines)
 
 
@@ -1186,6 +1210,7 @@ class SpawnWaitMultiOutput(BaseModel):
     succeeded_runs: int
     failed_runs: int
     cancelled_runs: int
+    timed_out_runs: int = 0
     any_failed: bool
     checkpoint: bool = False
     checkpoint_pending_ids: tuple[str, ...] = ()
@@ -1263,6 +1288,7 @@ class SpawnWaitMultiOutput(BaseModel):
             "succeeded_runs": self.succeeded_runs,
             "failed_runs": self.failed_runs,
             "cancelled_runs": self.cancelled_runs,
+            "timed_out_runs": self.timed_out_runs,
             "any_failed": self.any_failed,
         }
         if self.checkpoint:
@@ -1320,6 +1346,7 @@ __all__ = [
     "SpawnListInput",
     "SpawnListOutput",
     "SpawnShowInput",
+    "SpawnSignalInput",
     "SpawnStatsInput",
     "SpawnStatsOutput",
     "SpawnStatusInput",

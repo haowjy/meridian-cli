@@ -27,6 +27,9 @@ from meridian.lib.core.spawn_lifecycle import (
 from meridian.lib.core.spawn_lifecycle import (
     is_active_spawn_status as _is_active_spawn_status,
 )
+from meridian.lib.core.spawn_lifecycle import (
+    is_terminal_spawn_status as _is_terminal_spawn_status,
+)
 from meridian.lib.core.spawn_start import SpawnStartMetadata
 from meridian.lib.core.types import SpawnId
 from meridian.lib.state.atomic import atomic_write_text
@@ -66,9 +69,16 @@ logger = structlog.get_logger(__name__)
 
 def _spawn_id_index(spawn_id: SpawnId | str) -> int:
     value = str(spawn_id)
-    if len(value) > 1 and value[0] == "p" and value[1:].isdigit():
+    if is_spawn_id_shape(value):
         return int(value[1:])
     return 0
+
+
+def is_spawn_id_shape(spawn_id: SpawnId | str) -> bool:
+    """Return whether *spawn_id* has Meridian's persisted spawn ID shape."""
+
+    value = str(spawn_id)
+    return len(value) > 1 and value[0] == "p" and value[1:].isdigit()
 
 
 def _spawn_counter_path(paths: RuntimePaths) -> Path:
@@ -236,6 +246,7 @@ def start_spawn(
     runtime_root: Path,
     *,
     chat_id: str,
+    owner_chat_id: str | None = None,
     parent_id: str | None = None,
     model: str,
     agent: str,
@@ -302,6 +313,7 @@ def start_spawn(
         record = SpawnRecord(
             id=str(resolved_spawn_id),
             chat_id=chat_id,
+            owner_chat_id=owner_chat_id,
             parent_id=parent_id,
             originating_bash_id=os.environ.get("MERIDIAN_PI_BASH_ID") or None,
             model=model,
@@ -378,6 +390,7 @@ def update_spawn(
     runtime_root: Path,
     spawn_id: SpawnId | str,
     *,
+    chat_id: str | None = None,
     launch_mode: LaunchMode | None = None,
     worker_pid: int | None = None,
     runner_pid: int | None = None,
@@ -401,6 +414,8 @@ def update_spawn(
 
     def merge(current: SpawnRecord) -> SpawnRecord:
         updates: dict[str, object] = {}
+        if chat_id is not None:
+            updates["chat_id"] = chat_id
         if launch_mode is not None:
             updates["launch_mode"] = launch_mode
         if worker_pid is not None:
@@ -454,6 +469,7 @@ def update_spawn(
             seq=next_spawn_sequence(record.id),
             payload={
                 "launch_mode": launch_mode,
+                "chat_id": chat_id,
                 "worker_pid": worker_pid,
                 "runner_pid": runner_pid,
                 "runner_created_at_epoch": resolved_runner_created_at_epoch,
@@ -513,7 +529,7 @@ def record_runner_exit(
 ) -> SpawnRecord | None:
     """Record runner-resolved terminal intent before finalization."""
 
-    if status not in {"succeeded", "failed", "cancelled"}:
+    if not _is_terminal_spawn_status(status):
         raise ValueError(f"runner exit status must be terminal, got {status!r}")
 
     resolved_clock = clock or RealClock()
@@ -799,6 +815,13 @@ def list_spawns(
             keep = True
             for key, expected in filters.items():
                 if expected is None:
+                    continue
+                if key == "owner_chat_id":
+                    from meridian.lib.state.session_identity import spawn_owner_chat_id
+
+                    if spawn_owner_chat_id(spawn) != expected:
+                        keep = False
+                        break
                     continue
                 if key not in spawn_data:
                     continue

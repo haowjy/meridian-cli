@@ -370,6 +370,7 @@ class ClaudeConnection(HarnessConnection[ResolvedLaunchSpec]):
                 stdout=PIPE,
                 stderr=self._stderr_handle,
                 limit=_STDOUT_READLINE_LIMIT,
+                start_new_session=not IS_WINDOWS,
             )
         except (FileNotFoundError, NotADirectoryError) as exc:
             raise HarnessBinaryNotFound.from_os_error(
