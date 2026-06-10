@@ -11,12 +11,13 @@ Each transport wraps a long-lived process and turns its output into a stream of
 `HarnessEvent` objects consumed by the drain loop. The drain loop calls
 `terminal_outcome(event)` on each event; when that returns non-None, it breaks.
 
-Three transports exist, each different at the wire level:
+Transports differ at the wire level:
 - **Claude** (`claude_ws.py`): stdin/stdout NDJSON. No WebSocket despite the filename.
-- **Codex** (`codex_ws.py`): real WebSocket to `codex app-server`, JSON-RPC 2.0.
+- **Codex** (`codex_ws.py`): real WebSocket to a managed `codex app-server`, JSON-RPC 2.0.
   Codex's `requestApproval` and `requestUserInput` messages are dispatched to
   either `AutoAcceptHandler` (spawn paths) or `InteractiveHandler` (managed-primary attach).
-- **OpenCode** (`opencode_http.py`): HTTP+SSE to `opencode serve`.
+- **OpenCode** (`opencode_http.py`): HTTP+SSE to managed `opencode serve`.
+- **Cursor/Pi**: narrower spawned-session transports; no resident backend seam.
 
 ## Key Rules
 
@@ -31,6 +32,14 @@ distinction.
 implement all abstract methods, register in the bundle. Missing registration →
 `KeyError` at lookup time.
 
+**Resident control goes through `resident_backend`.** Do not add connection-level
+turn-injection or managed-backend shims. Codex/OpenCode return a
+`ResidentBackendControl`; callers use `begin_followup_turn()` through that seam.
+
+**Managed backend liveness belongs to `BackendLivenessPolicy`.** Adapters feed it
+activity, active turns, active requests, backend pid, and birth time; callers consume
+its structured decisions instead of inventing per-adapter alive checks.
+
 ## Entry Points
 
 - `base.py` — `HarnessConnection` ABC, `HarnessEvent`, `ConnectionCapabilities`,
@@ -39,6 +48,11 @@ implement all abstract methods, register in the bundle. Missing registration →
   `ResidentDrainCoordinator` for structured liveness, awaiting-done signaling,
   and follow-up turns. This seam's presence, not the harness id, selects the
   resident drain coordinator.
+- `liveness.py` — `BackendLivenessPolicy`, the shared managed-backend liveness
+  classifier for Codex/OpenCode.
+- `managed_backend.py` — single helper for launching managed backend subprocesses,
+  building `ProcessScopeSnapshot`, linking parent-death behavior when possible,
+  and recording `process_scopes.json`.
 - `__init__.py` — `get_connection_class(harness_id, transport_id)`.
 
 ## Depth

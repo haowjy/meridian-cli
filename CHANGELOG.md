@@ -4,6 +4,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+- Pi projections now pass reasoning effort with `--thinking <level>` instead of appending `:<level>` to model IDs, fixing fully-qualified provider/model launches such as `deepseek`. Passthrough `--model` overrides suppress the managed `--thinking` flag so user model selection wins cleanly.
+
 ## [0.3.2] - 2026-06-10
 
 ### Added

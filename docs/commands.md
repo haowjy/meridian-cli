@@ -411,7 +411,7 @@ deny_headless_harnesses = ["claude"]
 That blocks spawn routes after model/profile resolution selects Claude, while
 leaving primary Claude launches available.
 
-See [agent-profiles.md](agent-profiles.md) for the agent profile format including `model-policies`, `no-fallback`, and `mode`. Legacy `fanout` and `fallback-order` are rejected; migrate to `model-policies` list order + `no-fallback: true`.
+See [agent-profiles.md](agent-profiles.md) for the agent profile format including `model-policies`, `no-fallback`, and `mode`. Legacy `fanout` and `fallback-order` are rejected; use `model-policies` list order + `no-fallback: true`.
 
 ## Spawn Statuses
 

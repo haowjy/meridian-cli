@@ -166,9 +166,9 @@ Fallback only activates when:
 - the head candidate's harness is unavailable, **and**
 - the user did not explicitly set a model with `-m` / `MERIDIAN_MODEL`
 
-Legacy `fallback-order` and `fanout` are rejected with migration guidance.
-Migrate by ordering `model-policies` rules directly and adding
-`no-fallback: true` for rules that should never be considered for fallback.
+Legacy `fallback-order` and `fanout` are rejected. Order `model-policies`
+rules directly and add `no-fallback: true` for rules that should never be
+considered for fallback.
 
 ## Skills and Skill Variants
 

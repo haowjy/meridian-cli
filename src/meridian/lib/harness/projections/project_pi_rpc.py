@@ -53,6 +53,7 @@ _DELEGATED_FIELDS: frozenset[str] = frozenset(
 
 _MANAGED_FLAG_ALIASES: dict[str, tuple[str, ...]] = {
     "--model": ("--model", "-m"),
+    "--thinking": ("--thinking",),
     "--append-system-prompt": ("--append-system-prompt",),
     "--session": ("--session",),
     "--fork": ("--fork",),
@@ -143,10 +144,11 @@ def _project_model_arg(spec: ResolvedLaunchSpec) -> str | None:
     if not model:
         return None
 
-    thinking = _EFFORT_TO_THINKING.get((spec.effort or "").strip().lower())
-    if thinking:
-        return f"{model}:{thinking}"
     return model
+
+
+def _project_thinking_level(spec: ResolvedLaunchSpec) -> str | None:
+    return _EFFORT_TO_THINKING.get((spec.effort or "").strip().lower())
 
 
 def _default_pi_session_dir() -> str:
@@ -161,10 +163,19 @@ def project_pi_spec_to_cli_args(
     """Project one ``ResolvedLaunchSpec`` into an ordered Pi RPC command list."""
 
     command: list[str] = list(base_command)
+    passthrough_tail = spec.extra_args
 
     model_arg = _project_model_arg(spec)
     if model_arg is not None:
         command.extend(("--model", model_arg))
+
+    thinking_level = _project_thinking_level(spec)
+    model_override_in_passthrough = any(
+        _has_flag(passthrough_tail, alias) for alias in _MANAGED_FLAG_ALIASES["--model"]
+    )
+    emit_thinking = thinking_level is not None and not model_override_in_passthrough
+    if emit_thinking and thinking_level is not None:
+        command.extend(("--thinking", thinking_level))
 
     if spec.appended_system_prompt:
         command.extend(("--append-system-prompt", spec.appended_system_prompt))
@@ -172,8 +183,6 @@ def project_pi_spec_to_cli_args(
     continue_session_id = (spec.continue_session_id or "").strip()
     has_continue_session = bool(continue_session_id)
     has_continue_fork = has_continue_session and spec.continue_fork
-
-    passthrough_tail = spec.extra_args
     _reject_mode_collisions(passthrough_tail)
     _reject_extension_collisions(passthrough_tail)
     _reject_session_dir_collisions(passthrough_tail)
@@ -181,6 +190,11 @@ def project_pi_spec_to_cli_args(
     _log_collision_if_needed(
         managed_flag="--model",
         has_managed_value=model_arg is not None,
+        passthrough_tail=passthrough_tail,
+    )
+    _log_collision_if_needed(
+        managed_flag="--thinking",
+        has_managed_value=emit_thinking,
         passthrough_tail=passthrough_tail,
     )
     _log_collision_if_needed(

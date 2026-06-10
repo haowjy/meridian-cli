@@ -45,12 +45,16 @@ Required abstract methods — every subclass must implement all of these:
 - `harness_id`, `spawn_id`, `capabilities` properties
 - `session_id` → `str | None` (None until the transport delivers a session identifier)
 - `subprocess_pid` → `int | None`
+- `resident_backend` → `ResidentBackendControl | None`; Codex/OpenCode expose
+  this for resident-until-done structured liveness and follow-up turns;
+  non-resident transports return None. This is the only public resident control
+  seam — callers do not reach for adapter-specific backend objects.
+- `scope_snapshot` → `ProcessScopeSnapshot | None`; managed backends expose the
+  process-scope facts captured at launch so primary attach and cleanup paths do
+  not reconstruct containment from PID fields.
 - `start(config, spec)` → async; raises if already started
 - `stop()` → async; idempotent
 - `health()` → bool
-- `resident_backend` → `ResidentBackendControl | None`; Codex/OpenCode expose
-  this for resident-until-done structured liveness and follow-up turns;
-  non-resident transports return None.
 - `send_user_message(text)` → async
 - `send_cancel()` → async
 - `events()` → `AsyncIterator[HarnessEvent]`
@@ -61,9 +65,6 @@ supports the capability:
 - `start_observer(config, spec)` — observer mode; guard with `capabilities.supports_primary_observer`
 - `configure_primary_runtime_requests(policy, event_sink, request_handler)`
 - `inject_runtime_event(event)`
-- `inject_turn(message)` — compatibility wrapper that delegates to
-  `resident_backend.begin_followup_turn`; transports should implement follow-up
-  turns through the resident backend seam instead of overriding this directly.
 - `respond_request(request_id, decision, payload)` — Codex only
 - `respond_user_input(request_id, answers)` — Codex only
 

@@ -142,8 +142,8 @@ If a spawn stays in `finalizing` for more than a minute or two, the runner may h
 
 Meridian classifies a spawn as orphaned when its runner process is gone and there has been no recent activity on the spawn's artifacts (heartbeat, output, stderr, or report) for 120 seconds. There are two distinct orphan errors:
 
-- **`orphan_run`** — the spawn record was `status=running` (or `queued`) when reaped. The runner died before completing post-exit work; because output drain and report extraction happen while status is still `running`, a crash during drain also produces this error. The spawn likely produced partial or no output.
-- **`orphan_finalization`** — the spawn record was `status=finalizing` when reaped, meaning the runner completed all post-exit work but crashed in the narrow window before persisting the terminal state. The spawn is likely to have a usable `report.md` on disk even though it was classified as failed.
+- **`orphan_run`** — the spawn record was `status=running` (or `queued`) when reaped. The runner died before the finalization boundary. The spawn likely produced partial or no output.
+- **`orphan_finalization`** — the spawn record was `status=finalizing` when reaped, meaning the runner had left active execution and was in the drain/report/final-status window. If a durable report exists, reconciliation prefers it; otherwise the spawn is marked failed with this error.
 - **`launch_boundary_no_takeover`** — a background spawn's `launch-boundary.jsonl` shows that the parent launched the subprocess but the worker process never recorded a takeover event. The harness process died in the startup window before it could begin work. No output was produced.
 - **`orphan_primary`** — a managed Codex/OpenCode primary lost its Meridian launcher/wrapper. Passive reconciliation records the failed state. Use `meridian spawn cancel ID` to clean up tracked runtime processes — it terminates the launcher first (to let harness-driven shutdown propagate), then terminates backend and TUI processes if they are still running.
 

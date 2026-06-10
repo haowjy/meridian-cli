@@ -5,10 +5,12 @@ The async backbone between a live harness connection and the rest of the system.
 core mechanism that moves events from the harness outward to persistence, observers,
 and the subscriber queue.
 
-Mostly mechanism. Generic terminal behavior lives in `DrainPolicy`; Pi spawned-session
-quiescence is the explicit exception. Keep Pi child-wave, notification, disk-state,
-and tracked-process cleanup policy behind the Pi coordinator/tracker modules instead
-of growing `SpawnManager`.
+Mostly mechanism. Generic terminal behavior lives in `DrainPolicy`; harness-specific
+completion waiting enters through `DrainPlan`. Plain streaming harnesses intentionally
+run with `coordinator=None`; Pi and resident Codex/OpenCode paths get narrow
+coordinators only when their connection exposes the needed seam. Keep Pi child-wave,
+notification, disk-state, resident-done nudges, and tracked-process cleanup policy
+behind the coordinator/tracker modules instead of growing `SpawnManager`.
 
 Resident drain selection is capability-driven: a connection participates in the
 resident descendant-wait path only when `connection.resident_backend` is present.
@@ -53,9 +55,9 @@ CLI paths: one short-lived instance per run.
 events are dropped on `QueueFull` (with telemetry). The sentinel evicts one item if
 needed to guarantee it gets through — without it, the subscriber hangs forever.
 
-## DrainPolicy
+## DrainPlan / DrainPolicy
 
-Governs terminal event behavior:
+`DrainPlan` carries the selected coordinator, policy, aux wake, and finalizer for one active spawn. Its `coordinator=None` value is the plain path. `DrainPolicy` governs terminal event behavior:
 
 | Policy | On terminal event | Action |
 |---|---|---|

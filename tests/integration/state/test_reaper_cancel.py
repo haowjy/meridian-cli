@@ -73,6 +73,14 @@ def test_cancel_orphan_primary_after_passive_reconcile_still_terminates(
     )
     fake_reaper_liveness(monkeypatch, set())
     fake_managed_primary_birth_liveness(monkeypatch, {7302, 7303})
+    # Launcher (7301) is dead -> orphan. Fake the non-birth liveness too so the
+    # managed-primary snapshot read does not fall through to real psutil (whose
+    # pid_exists is platform-dependent for synthetic PIDs; on Windows it reached
+    # _FakeProcess.create_time, which the terminate-only fake does not define).
+    monkeypatch.setattr(
+        "meridian.lib.state.managed_primary.is_process_alive",
+        lambda *_args, **_kwargs: False,
+    )
     terminated_pids: list[int] = []
 
     class _FakeProcess:

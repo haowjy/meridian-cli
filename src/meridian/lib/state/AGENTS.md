@@ -79,8 +79,9 @@ Liveness sequence per active spawn:
 1. Skip if already terminal.
 2. Skip if heartbeat age < 120s.
 3. `finalizing` with durable report → mark succeeded.
-4. `finalizing` without durable report → mark failed (`orphan_finalization`).
+4. `finalizing` without durable report or recorded runner terminal tuple → mark failed (`orphan_finalization`).
 5. `running`/`queued` with dead PID (checked with start-time reuse guard) → mark failed (`orphan_run`).
+6. Timeouts are terminal `timed_out`, a failure class distinct from generic `failed`.
 
 ## Entry Points
 

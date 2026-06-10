@@ -59,7 +59,10 @@ def test_pi_rpc_projection_includes_rpc_resume_and_meridian_extensions(
 
     assert command[0:3] == ["pi", "--mode", "rpc"]
     assert command.count("--mode") == 1
-    assert command[command.index("--model") + 1] == "anthropic/claude-sonnet-4:high"
+    assert command[command.index("--model") + 1] == "anthropic/claude-sonnet-4"
+    assert ":" not in command[command.index("--model") + 1]
+    assert command[command.index("--thinking") + 1] == "high"
+    assert command.index("--thinking") == command.index("--model") + 2
     assert command[command.index("--append-system-prompt") + 1] == "You are meridian worker"
     assert command[command.index("--fork") + 1] == "019e3113"
     assert command[command.index("--session-dir") + 1] == str(
@@ -149,6 +152,39 @@ def test_pi_rpc_projection_uses_session_without_fork_when_continue_fork_false(
     assert "--fork" not in command
 
 
+def test_pi_rpc_projection_suppresses_thinking_when_passthrough_overrides_model() -> None:
+    spec = ResolvedLaunchSpec(
+        harness=HarnessId.PI,
+        model="anthropic/claude-sonnet-4",
+        effort="high",
+        prompt="hello",
+        extra_args=("--model", "provider/other-model"),
+        permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
+    )
+
+    command = project_pi_spec_to_cli_args(spec, base_command=BASE_COMMAND_PI_SUBPROCESS)
+
+    assert "--thinking" not in command
+    assert command[-2:] == ["--model", "provider/other-model"]
+
+
+def test_pi_native_projection_suppresses_thinking_when_passthrough_overrides_model() -> None:
+    spec = ResolvedLaunchSpec(
+        harness=HarnessId.PI,
+        model="openai-codex/gpt-5.4-mini",
+        effort="high",
+        prompt="hello",
+        interactive=True,
+        extra_args=("--model", "provider/other-model"),
+        permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
+    )
+
+    command = project_pi_native_tui_spec_to_cli_args(spec, base_command=PRIMARY_BASE_COMMAND_PI)
+
+    assert "--thinking" not in command
+    assert command[-2:] == ["--model", "provider/other-model"]
+
+
 def test_pi_rpc_projection_never_embeds_initial_prompt_in_cli_tail() -> None:
     spec = ResolvedLaunchSpec(
         harness=HarnessId.PI,
@@ -197,7 +233,10 @@ def test_pi_native_projection_loads_all_extensions(
         _bundle_path(extension_source_root, "managed-bash"),
         _bundle_path(extension_source_root, "meridian-spawn-watch"),
     ]
-    assert command[command.index("--model") + 1] == "openai-codex/gpt-5.4-mini:high"
+    assert command[command.index("--model") + 1] == "openai-codex/gpt-5.4-mini"
+    assert ":" not in command[command.index("--model") + 1]
+    assert command[command.index("--thinking") + 1] == "high"
+    assert command.index("--thinking") == command.index("--model") + 2
     assert command[command.index("--append-system-prompt") + 1] == "native primary"
     assert command[command.index("--fork") + 1] == "019e3113-edc8-7751-bb29-9648304465d5"
     assert command[-2:] == ["--provider", "openai"]
