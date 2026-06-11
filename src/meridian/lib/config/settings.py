@@ -428,6 +428,23 @@ def _normalize_harness_table(
     return values
 
 
+def _normalize_env_table(raw_value: object, *, source: str) -> dict[str, str]:
+    if not isinstance(raw_value, dict):
+        raise ValueError(f"Invalid value for '{source}': expected table.")
+    values: dict[str, str] = {}
+    for raw_key, raw_val in cast("dict[str, object]", raw_value).items():
+        key = str(raw_key).strip()
+        if not key:
+            raise ValueError(f"Invalid value for '{source}': expected non-empty key.")
+        if not isinstance(raw_val, str):
+            raise ValueError(
+                f"Invalid value for '{source}.{key}': expected string, got "
+                f"{type(raw_val).__name__} ({raw_val!r})."
+            )
+        values[key] = raw_val
+    return values
+
+
 def _normalize_spawn_table(raw_value: object, *, source: str) -> dict[str, object]:
     if not isinstance(raw_value, dict):
         raise ValueError(f"Invalid value for '{source}': expected table.")
@@ -766,6 +783,19 @@ DYNAMIC_SECTION_DESCRIPTORS: dict[str, DynamicSectionDescriptor] = {
             "",
         ),
     ),
+    "env": DynamicSectionDescriptor(
+        section_key="env",
+        merge_kind="nested_dict",
+        scaffold_lines=(
+            "# -- Environment variables passed to spawned harnesses -----------------------",
+            "# Flat key-value string map. Applied to every spawn from this project.",
+            "# Keys from meridian.local.toml override meridian.toml; project overrides user.",
+            "",
+            "# [env]",
+            '# OPENCODE_ENABLE_EXA = "1"',
+            "",
+        ),
+    ),
 }
 
 
@@ -791,6 +821,8 @@ def normalize_dynamic_sections(
                 source=section_key,
                 project_root=project_root,
             )
+        elif section_key == "env":
+            value = _normalize_env_table(raw_value, source=section_key)
         else:
             continue
         if descriptor.merge_kind != "external" and value is not None:
@@ -861,6 +893,9 @@ def _normalize_toml_payload(
                 normalized,
                 _normalize_spawn_table(raw_value, source="spawn"),
             )
+            continue
+        if key == "env":
+            normalized["env"] = _normalize_env_table(raw_value, source="env")
             continue
         if key in DYNAMIC_SECTION_DESCRIPTORS:
             normalized = merge_dynamic_sections(
@@ -1404,6 +1439,7 @@ class MeridianConfig(BaseSettings):
     output: OutputConfig = Field(default_factory=OutputConfig)
     state: StateConfig = Field(default_factory=StateConfig)
     work: WorkConfig = Field(default_factory=WorkConfig)
+    env: dict[str, str] = Field(default_factory=dict)
 
     @field_validator("default_wait_yield_seconds", "min_wait_yield_seconds")
     @classmethod

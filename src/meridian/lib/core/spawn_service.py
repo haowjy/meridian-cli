@@ -76,6 +76,20 @@ _MAX_REAP_PASSES = 4
 logger = structlog.get_logger()
 
 
+def _config_snapshot_env(config_snapshot: dict[str, object]) -> dict[str, str]:
+    env = config_snapshot.get("env")
+    if isinstance(env, dict):
+        result: dict[str, str] = {}
+        for k, v in cast("dict[str, object]", env).items():
+            if not k.strip():
+                continue
+            if not isinstance(v, str):
+                continue
+            result[k] = v
+        return result
+    return {}
+
+
 def _resolve_explicit_timeout_seconds(resolved_request: object) -> float | None:
     """Extract explicit timeout seconds from resolved request-like objects."""
 
@@ -360,6 +374,9 @@ class SpawnApplicationService:
             project_paths=project_paths,
             spawn_id=str(final_spawn_id),
         )
+        config_env = _config_snapshot_env(payload.runtime.config_snapshot)
+        request_env = dict(prepared_surface.request.env)
+        resolved_env = {**config_env, **request_env}
         launch_ctx = await asyncio.to_thread(
             bind_spawn_launch_context,
             prepared=prepared_surface,
@@ -368,6 +385,7 @@ class SpawnApplicationService:
                 report_output_path=report_output_path,
                 runtime_work_id=effective_work_id,
                 dry_run=False,
+                plan_overrides=resolved_env,
             ),
             runtime=payload.runtime,
             harness_registry=payload.harness_registry,

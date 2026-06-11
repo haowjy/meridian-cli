@@ -990,6 +990,11 @@ def run_harness_process(
                     }
                 )
                 plan_overrides: dict[str, str] = {}
+                config_env = runtime.config_snapshot.get("env")
+                if isinstance(config_env, dict):
+                    for k, v in cast("dict[str, str]", config_env).items():
+                        if k.strip():
+                            plan_overrides[k] = v
                 if runtime_request.execution_policy.autocompact is not None:
                     plan_overrides["CLAUDE_AUTOCOMPACT_PCT_OVERRIDE"] = str(
                         runtime_request.execution_policy.autocompact

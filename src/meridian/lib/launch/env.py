@@ -178,10 +178,10 @@ def merge_env_overrides(
     """
     forbidden: list[tuple[str, str]] = []
     for key in plan_overrides:
-        if key.startswith("MERIDIAN_"):
+        if key.upper().startswith("MERIDIAN_"):
             forbidden.append((key, "plan_overrides"))
     for key in preflight_overrides:
-        if key.startswith("MERIDIAN_"):
+        if key.upper().startswith("MERIDIAN_"):
             forbidden.append((key, "preflight_overrides"))
 
     if forbidden:

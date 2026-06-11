@@ -25,6 +25,7 @@ class LaunchPolicySnapshot(BaseModel):
     skill_paths: tuple[str, ...] = ()
     loaded_skills: tuple[SkillContent, ...] = ()
     extra_args: tuple[str, ...] = ()
+    env: dict[str, str] = Field(default_factory=dict)
     execution_policy: ResolvedExecutionPolicy = Field(default_factory=ResolvedExecutionPolicy)
     tools: ToolsField | None = None
     mcp_tools: tuple[str, ...] = ()

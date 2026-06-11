@@ -41,6 +41,32 @@ from .models import SpawnCreateInput
 _DRY_RUN_REPORT_PATH = "<spawn-report-path>"
 
 
+def _parse_env_assignments(raw: tuple[str, ...]) -> dict[str, str]:
+    parsed: dict[str, str] = {}
+    for item in raw:
+        if "=" not in item:
+            raise ValueError(
+                f"Invalid --env value {item!r}: expected KEY=VALUE format."
+            )
+        key, _, value = item.partition("=")
+        key = key.strip()
+        if not key:
+            raise ValueError(
+                f"Invalid --env value {item!r}: KEY is empty."
+            )
+        parsed[key] = value
+    return parsed
+
+
+def _resolve_spawn_env(payload: SpawnCreateInput) -> dict[str, str]:
+    cli_env = _parse_env_assignments(payload.env)
+    if cli_env:
+        return cli_env
+    if payload.launch_policy_snapshot is not None:
+        return dict(payload.launch_policy_snapshot.env)
+    return {}
+
+
 @dataclass(frozen=True)
 class SpawnCreateArtifacts:
     """Resolved spawn request plus expensive prepared surface for bind-only execute."""
@@ -171,6 +197,7 @@ def build_create_payload(
             launch_policy_snapshot=payload.launch_policy_snapshot,
             pi_task_ping_interval_seconds=parse_duration_seconds(payload.task_ping_interval),
             pi_task_ping_reset_on_activity=payload.task_ping_reset_on_activity,
+            env=_resolve_spawn_env(payload),
         )
 
         mars_runtime_source = runtime or build_runtime_from_root_and_config(
@@ -200,12 +227,15 @@ def build_create_payload(
             ),
         )
         if composition_dry_run:
+            plan_overrides = dict(config.env)
+            plan_overrides.update(raw_request.env)
             preview_context = bind_spawn_launch_context(
                 prepared=prepared_surface,
                 bindings=RuntimeBindings(
                     spawn_id="dry-run",
                     report_output_path=Path(_DRY_RUN_REPORT_PATH),
                     dry_run=True,
+                    plan_overrides=plan_overrides,
                 ),
                 runtime=preview_runtime,
                 harness_registry=harness_registry,

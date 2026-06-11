@@ -73,6 +73,7 @@ class SpawnLaunchOptionUpdates(TypedDict):
     debug: bool
     task_ping_interval: str | None
     task_ping_reset_on_activity: bool | None
+    env: tuple[str, ...]
 
 
 class SpawnLaunchOptions(BaseModel):
@@ -95,6 +96,7 @@ class SpawnLaunchOptions(BaseModel):
     debug: bool = False
     task_ping_interval: str | None = None
     task_ping_reset_on_activity: bool | None = None
+    env: tuple[str, ...] = ()
 
     def launch_option_updates(self) -> SpawnLaunchOptionUpdates:
         return {
@@ -115,6 +117,7 @@ class SpawnLaunchOptions(BaseModel):
             "debug": self.debug,
             "task_ping_interval": self.task_ping_interval,
             "task_ping_reset_on_activity": self.task_ping_reset_on_activity,
+            "env": self.env,
         }
 
 

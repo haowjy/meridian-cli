@@ -500,6 +500,29 @@ def _dynamic_value_source(
     return "builtin"
 
 
+def _resolve_env_config_source(
+    *,
+    env_key: str,
+    project_dynamic_overrides: dict[str, object],
+    user_dynamic_overrides: dict[str, object],
+) -> Literal["file", "user-config", "builtin"]:
+    project_env = project_dynamic_overrides.get("env")
+    if isinstance(project_env, dict) and env_key in project_env:
+        return "file"
+    user_env = user_dynamic_overrides.get("env")
+    if isinstance(user_env, dict) and env_key in user_env:
+        return "user-config"
+    return "builtin"
+
+
+_SECRET_ENV_KEY_SUFFIXES = ("_TOKEN", "_KEY", "_SECRET")
+
+
+def _looks_like_secret_env_key(key: str) -> bool:
+    normalized = key.upper()
+    return any(normalized.endswith(suffix) for suffix in _SECRET_ENV_KEY_SUFFIXES)
+
+
 def _dynamic_config_values(inspection: _ConfigInspectionState) -> list[ConfigResolvedValue]:
     values: list[ConfigResolvedValue] = []
     resolved = inspection.resolved_dynamic_overrides
@@ -563,6 +586,24 @@ def _dynamic_config_values(inspection: _ConfigInspectionState) -> list[ConfigRes
                     value=rendered_hook_value,
                     source=_dynamic_value_source(
                         path=("hooks",),
+                        project_dynamic_overrides=inspection.project_dynamic_overrides,
+                        user_dynamic_overrides=inspection.user_dynamic_overrides,
+                    ),
+                )
+            )
+
+    env_config = inspection.surface.resolved_config.env
+    if env_config:
+        for env_key, env_value in sorted(env_config.items()):
+            display_value: object = env_value
+            if _looks_like_secret_env_key(env_key):
+                display_value = "[redacted]"
+            values.append(
+                ConfigResolvedValue(
+                    key=f"env.{env_key}",
+                    value=display_value,
+                    source=_resolve_env_config_source(
+                        env_key=env_key,
                         project_dynamic_overrides=inspection.project_dynamic_overrides,
                         user_dynamic_overrides=inspection.user_dynamic_overrides,
                     ),

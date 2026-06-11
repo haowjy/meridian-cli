@@ -185,6 +185,7 @@ def _shared_launch_input_kwargs(
     debug: bool,
     task_ping_interval: str | None,
     task_ping_reset_on_activity: bool | None,
+    env: tuple[str, ...],
 ) -> SpawnLaunchOptionUpdates:
     return {
         "dry_run": dry_run,
@@ -204,6 +205,7 @@ def _shared_launch_input_kwargs(
         "debug": debug,
         "task_ping_interval": task_ping_interval,
         "task_ping_reset_on_activity": task_ping_reset_on_activity,
+        "env": env,
     }
 
 
@@ -454,6 +456,18 @@ def _spawn_create(
             show=False,
         ),
     ] = False,
+    env: Annotated[
+        tuple[str, ...],
+        Parameter(
+            name="--env",
+            help=(
+                "Environment variables for the spawned harness "
+                "in KEY=VALUE form (repeatable). "
+                "Overrides config-level [env] defaults."
+            ),
+            negative_iterable=(),
+        ),
+    ] = (),
 ) -> None:
     # Passthrough lives on GlobalOptions, not a function parameter — see
     # _split_passthrough_args() for why cyclopts can't handle ``--`` correctly.
@@ -500,6 +514,7 @@ def _spawn_create(
         task_ping_interval=task_ping_interval,
         task_ping_reset_on_activity=task_ping_reset_on_activity,
         debug=debug,
+        env=env,
     )
     resolved_prompt = _resolve_spawn_prompt(
         prompt,

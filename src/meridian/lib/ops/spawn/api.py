@@ -1868,6 +1868,8 @@ def _reject_continue_policy_overrides(payload: SpawnContinueInput) -> None:
         rejected.append("--autocompact-pct")
     if payload.passthrough_args:
         rejected.append("--")
+    if payload.env:
+        rejected.append("--env")
     if payload.work.strip():
         rejected.append("--work")
     if payload.task_dir is not None and payload.task_dir.strip():

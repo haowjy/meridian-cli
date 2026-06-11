@@ -95,6 +95,7 @@ def build_launch_policy_snapshot(
         tools=request.tools,
         mcp_tools=request.mcp_tools,
         extra_args=request.extra_args,
+        env=request.env,
         model_selection_requested_token=request.model_selection_requested_token,
         model_selection_selected_token=(
             model_selection.selected_model_token

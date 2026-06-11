@@ -31,7 +31,7 @@ def validate_child_env_keys(overrides: Mapping[str, str]) -> None:
     :data:`ALLOWED_CHILD_ENV_KEYS`.
     """
     for key in overrides:
-        if not key.startswith("MERIDIAN_"):
+        if not key.upper().startswith("MERIDIAN_"):
             continue
         if key in ALLOWED_CHILD_ENV_KEYS:
             continue
