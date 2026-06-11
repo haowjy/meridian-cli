@@ -4,6 +4,19 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- `[env]` config section in `meridian.toml` / `~/.meridian/config.toml`: flat key-value string map for environment variables passed to all spawned harness processes. Matches Claude Code's `settings.json` `"env"` shape.
+- `--env KEY=VALUE` repeatable CLI flag on `meridian spawn` for per-spawn environment variable overrides. CLI values override config defaults.
+- `config show` displays `env.*` keys; secret-like keys ending in `_TOKEN`, `_KEY`, or `_SECRET` are redacted as `[redacted]`.
+
+### Changed
+- `MERIDIAN_*` guard in child environment construction is now case-insensitive, preventing Windows env-var case bypass.
+
+### Fixed
+- `spawn --continue` rejects `--env` as a policy-changing override; the original spawn's CLI env is preserved via `LaunchPolicySnapshot` replay.
+- Streaming serve and dry-run paths now pass env through `plan_overrides` (previously skipped).
+- Empty string env values are now allowed through `--env` and `[env]` TOML values; non-string TOML env values are rejected with a clear error.
+
 ## [0.3.3] - 2026-06-10
 
 ### Fixed
