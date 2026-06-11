@@ -4,6 +4,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+- Foreground Codex primary attach no longer kills the app-server when the TUI displaces the observer stream after attach.
+
 ## [0.3.4] - 2026-06-11
 
 ### Added

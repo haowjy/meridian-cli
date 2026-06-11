@@ -393,7 +393,7 @@ def _prepare_spawn_create_with_expected_failures(
             prepared=prepared,
             failure_payload=failure_payload,
         )
-    except EXPECTED_PRE_INIT_EXCEPTIONS as exc:
+    except (*EXPECTED_PRE_INIT_EXCEPTIONS, RuntimeError) as exc:
         raise PreInitFailure(str(exc)) from exc
 
 

@@ -35,10 +35,16 @@ from meridian.lib.state.process_scope_projection import read_scopes_from_disk, r
 _BACKEND_SCOPE_EPOCH = 12_345.0
 
 
-def _build_config(*, spawn_id: SpawnId, control_root: Path, ws_port: int = 0) -> ConnectionConfig:
+def _build_config(
+    *,
+    spawn_id: SpawnId,
+    control_root: Path,
+    ws_port: int = 0,
+    harness_id: HarnessId = HarnessId.CODEX,
+) -> ConnectionConfig:
     return ConnectionConfig(
         spawn_id=spawn_id,
-        harness_id=HarnessId.CODEX,
+        harness_id=harness_id,
         prompt="hello",
         control_root=control_root,
         env_overrides={},
@@ -62,15 +68,18 @@ class FakeManagedConnection:
         session_id: str = "thread-123",
         subprocess_pid: int = 913,
         port_bind_failures: int = 0,
+        harness_id: HarnessId = HarnessId.CODEX,
     ) -> None:
         self.state = "created"
         self._spawn_id = SpawnId("")
+        self._harness_id = harness_id
         self._events = events
         self._session_id = session_id
         self._subprocess_pid = subprocess_pid
         self._port_bind_failures = port_bind_failures
         self._stop_event = asyncio.Event()
         self.stop_called = False
+        self.stop_reasons: list[str | None] = []
         self.started_primary_observer_mode: bool | None = None
         self.started_ports: list[int] = []
         self.start_calls = 0
@@ -86,7 +95,7 @@ class FakeManagedConnection:
 
     @property
     def harness_id(self) -> HarnessId:
-        return HarnessId.CODEX
+        return self._harness_id
 
     @property
     def spawn_id(self) -> SpawnId:
@@ -158,8 +167,8 @@ class FakeManagedConnection:
         await self.start(config, spec)
 
     async def stop(self, *, reason: str | None = None) -> None:
-        _ = reason
         self.stop_called = True
+        self.stop_reasons.append(reason)
         self.state = "stopped"
         self._stop_event.set()
 
@@ -240,13 +249,22 @@ class BlockingProcessLauncher(ProcessLauncher):
 
 
 class FailingEventConnection(FakeManagedConnection):
-    def __init__(self, *, fail_after_started: asyncio.Event, **kwargs: Any) -> None:
+    def __init__(
+        self,
+        *,
+        fail_after_started: asyncio.Event,
+        stream_closed: asyncio.Event | None = None,
+        **kwargs: Any,
+    ) -> None:
         super().__init__(**kwargs)
         self._fail_after_started = fail_after_started
+        self._stream_closed = stream_closed
 
     async def events(self):  # type: ignore[no-untyped-def]
         await self._fail_after_started.wait()
         self.state = "failed"
+        if self._stream_closed is not None:
+            self._stream_closed.set()
         if False:
             yield HarnessEvent(event_type="unreachable", payload={}, harness_id="opencode")
 
@@ -297,6 +315,7 @@ async def test_primary_attach_event_writer_failure_stops_connection_and_tui(
         fail_after_started=tui_started,
         events=[],
         session_id="sess-dead",
+        harness_id=HarnessId.OPENCODE,
     )
     process_launcher = BlockingProcessLauncher(spawn_dir=spawn_dir)
     terminated_scopes: list[str] = []
@@ -319,7 +338,11 @@ async def test_primary_attach_event_writer_failure_stops_connection_and_tui(
 
     outcome = await asyncio.wait_for(
         launcher.run(
-            config=_build_config(spawn_id=SpawnId("p900-liveness"), control_root=tmp_path),
+            config=_build_config(
+                spawn_id=SpawnId("p900-liveness"),
+                control_root=tmp_path,
+                harness_id=HarnessId.OPENCODE,
+            ),
             spec=_build_spec(),
             cwd=tmp_path,
             env={},
@@ -328,8 +351,65 @@ async def test_primary_attach_event_writer_failure_stops_connection_and_tui(
     )
 
     assert outcome.exit_code == 1
-    assert connection.stop_called is True
+    assert connection.stop_reasons == ["event_stream_closed", None]
     assert terminated_scopes == ["tui:event_stream_closed"]
+    assert _read_metadata(spawn_dir)["tui_pid"] == 5252
+
+
+@pytest.mark.asyncio
+async def test_primary_attach_codex_event_stream_closure_does_not_stop_backend_or_tui(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    spawn_dir = tmp_path / "spawns" / "p900-codex-stream"
+    tui_started = asyncio.Event()
+    stream_closed = asyncio.Event()
+    connection = FailingEventConnection(
+        fail_after_started=tui_started,
+        stream_closed=stream_closed,
+        events=[],
+        session_id="sess-codex",
+    )
+    process_launcher = BlockingProcessLauncher(spawn_dir=spawn_dir)
+    terminated_scopes: list[str] = []
+
+    def _terminate_scope(scope: Any, *, grace_seconds: float, reason: str) -> None:
+        _ = grace_seconds
+        terminated_scopes.append(f"{scope.scope_id}:{reason}")
+        return None
+
+    monkeypatch.setattr(primary_attach_module, "terminate_scope_sync", _terminate_scope)
+    launcher = PrimaryAttachLauncher(
+        spawn_id=SpawnId("p900-codex-stream"),
+        spawn_dir=spawn_dir,
+        connection=connection,
+        tui_command_builder=lambda session_id: ("codex", "resume", session_id),
+        process_launcher=process_launcher,
+        on_running=lambda _pid: tui_started.set(),
+    )
+
+    run_task = asyncio.create_task(
+        launcher.run(
+            config=_build_config(spawn_id=SpawnId("p900-codex-stream"), control_root=tmp_path),
+            spec=_build_spec(),
+            cwd=tmp_path,
+            env={},
+        )
+    )
+
+    await asyncio.wait_for(stream_closed.wait(), timeout=2.0)
+    await asyncio.sleep(0)
+
+    assert run_task.done() is False
+    assert connection.stop_reasons == []
+    assert terminated_scopes == []
+
+    process_launcher.release.set()
+    outcome = await asyncio.wait_for(run_task, timeout=2.0)
+
+    assert outcome.exit_code == 143
+    assert connection.stop_reasons == [None]
+    assert terminated_scopes == []
     assert _read_metadata(spawn_dir)["tui_pid"] == 5252
 
 
