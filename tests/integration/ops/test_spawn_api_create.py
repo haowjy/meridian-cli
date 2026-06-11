@@ -206,7 +206,7 @@ def test_spawn_create_unexpected_pre_init_exception_logs_traceback_and_distinct_
     prepared = prepare_for_runtime_write(project_root)
 
     def _raise_build_create_payload(*_args: object, **_kwargs: object) -> object:
-        raise RuntimeError("bug in launch composition")
+        raise TypeError("bug in launch composition")
 
     monkeypatch.setattr(spawn_api, "build_create_payload", _raise_build_create_payload)
 
@@ -229,13 +229,13 @@ def test_spawn_create_unexpected_pre_init_exception_logs_traceback_and_distinct_
     assert result.status == "failed"
     assert result.error == "pre_init_unexpected_error"
     assert result.message is not None
-    assert "RuntimeError: bug in launch composition" in result.message
+    assert "TypeError: bug in launch composition" in result.message
     failure_log = next(
         (log for log in logs if log["event"] == "spawn_pre_init_unexpected_exception"),
         None,
     )
     assert failure_log is not None
-    assert failure_log["error_type"] == "RuntimeError"
+    assert failure_log["error_type"] == "TypeError"
     assert failure_log["exc_info"] is True
 
 
