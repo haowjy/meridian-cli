@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.3.4] - 2026-06-11
+
 ### Added
 - `[env]` config section in `meridian.toml` / `~/.meridian/config.toml`: flat key-value string map for environment variables passed to all spawned harness processes. Matches Claude Code's `settings.json` `"env"` shape.
 - `--env KEY=VALUE` repeatable CLI flag on `meridian spawn` for per-spawn environment variable overrides. CLI values override config defaults.
