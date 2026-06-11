@@ -277,6 +277,15 @@ class PrimaryAttachLauncher:
                 with suppress(asyncio.CancelledError, Exception):
                     writer_task.result()
                 self._event_writer_task = None
+                if self._connection.harness_id is HarnessId.CODEX:
+                    # Codex TUI takes over the observer endpoint after attach;
+                    # the displaced observer stream closing is normal.
+                    launched = await launch_task
+                    return PrimaryAttachOutcome(
+                        exit_code=launched.exit_code,
+                        session_id=session_id,
+                        tui_pid=launched.pid,
+                    )
                 await self._connection.stop(reason="event_stream_closed")
                 await self._terminate_tui_scope()
                 launched = await launch_task
