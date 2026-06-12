@@ -336,3 +336,109 @@ def test_extract_opencode_report_falls_back_to_opencode_db_session(
     store._payloads[f"{spawn_id}/session_id.txt"] = session_id.encode("utf-8")
 
     assert extract_opencode_report(store, spawn_id) == "LIVE_OK"
+
+
+def test_extract_opencode_report_ignores_opencode_db_compaction_handoff(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    session_id = "ses_fixture_report_db_compaction"
+    spawn_id = SpawnId("p-opencode-db-compaction")
+    storage_root = tmp_path / "opencode" / "storage"
+    session_file = storage_root / "session_diff" / f"{session_id}.json"
+    session_file.parent.mkdir(parents=True, exist_ok=True)
+    session_file.write_text("[]\n", encoding="utf-8")
+
+    db_path = tmp_path / "opencode" / "opencode.db"
+    with sqlite3.connect(db_path) as connection:
+        connection.executescript(
+            """
+            CREATE TABLE message (
+                id TEXT PRIMARY KEY,
+                session_id TEXT NOT NULL,
+                time_created INTEGER NOT NULL,
+                time_updated INTEGER NOT NULL,
+                data TEXT NOT NULL
+            );
+            CREATE TABLE part (
+                id TEXT PRIMARY KEY,
+                message_id TEXT NOT NULL,
+                session_id TEXT NOT NULL,
+                time_created INTEGER NOT NULL,
+                time_updated INTEGER NOT NULL,
+                data TEXT NOT NULL
+            );
+            """
+        )
+        connection.execute(
+            "INSERT INTO message "
+            "(id, session_id, time_created, time_updated, data) "
+            "VALUES (?, ?, ?, ?, ?)",
+            ("msg_1", session_id, 1, 1, json.dumps({"role": "assistant"})),
+        )
+        connection.execute(
+            "INSERT INTO part (id, message_id, session_id, time_created, time_updated, data) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (
+                "prt_1",
+                "msg_1",
+                session_id,
+                1,
+                1,
+                json.dumps({"type": "text", "text": "FINAL_OK"}),
+            ),
+        )
+        connection.execute(
+            "INSERT INTO message "
+            "(id, session_id, time_created, time_updated, data) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (
+                "msg_2",
+                session_id,
+                2,
+                2,
+                json.dumps(
+                    {
+                        "role": "assistant",
+                        "mode": "compaction",
+                        "agent": "compaction",
+                    }
+                ),
+            ),
+        )
+        connection.execute(
+            "INSERT INTO part (id, message_id, session_id, time_created, time_updated, data) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (
+                "prt_2",
+                "msg_2",
+                session_id,
+                2,
+                2,
+                json.dumps({"type": "text", "text": "handoff only"}),
+            ),
+        )
+        connection.commit()
+
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+    assert resolve_opencode_storage_root() == storage_root
+
+    store = _artifact_store_from_history_lines(
+        spawn_id,
+        [
+            {
+                "byte_offset": 0,
+                "event_type": "session.idle",
+                "harness_id": "opencode",
+                "payload": {
+                    "id": "evt_idle",
+                    "type": "session.idle",
+                    "properties": {"sessionID": session_id},
+                },
+                "seq": 1,
+            }
+        ],
+    )
+    store._payloads[f"{spawn_id}/session_id.txt"] = session_id.encode("utf-8")
+
+    assert extract_opencode_report(store, spawn_id) == "FINAL_OK"

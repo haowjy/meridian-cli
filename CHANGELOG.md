@@ -6,6 +6,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 - OpenCode `session log` now reads completed transcripts from `opencode.db` before legacy JSON or spawn-history fallback.
+- OpenCode DB compactions now render as segment handoffs, not assistant replies.
+- Empty OpenCode DB transcripts now fall back to legacy JSON or spawn history.
 
 ## [0.3.7] - 2026-06-12
 

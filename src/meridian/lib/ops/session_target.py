@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Literal, NamedTuple
 
 from meridian.lib.core.types import HarnessId
+from meridian.lib.harness.adapter import SubprocessHarness
 from meridian.lib.harness.opencode_transcript import opencode_db_session_exists
 from meridian.lib.harness.pi_paths import resolve_pi_spawn_session_root
 from meridian.lib.harness.registry import get_default_harness_registry
@@ -22,7 +23,7 @@ from meridian.lib.ops.spawn.query import (
     read_latest_primary_spawn_for_chat_read_only,
     read_spawn_row_read_only,
 )
-from meridian.lib.state import session_identity, session_store
+from meridian.lib.state import session_identity, session_store, spawn_store
 from meridian.lib.state.paths import spawn_output_path
 from meridian.lib.state.primary_meta import (
     is_managed_primary,
@@ -45,6 +46,7 @@ class SessionLogTarget(NamedTuple):
     file_path: Path | None
     source: str
     transcript_source: Literal["file", "opencode_db"] = "file"
+    fallback_targets: tuple[SessionLogTarget, ...] = ()
 
 
 class SessionRepairTarget(NamedTuple):
@@ -90,6 +92,42 @@ def _resolve_file_target(file_path: str) -> SessionLogTarget:
     )
 
 
+def _resolve_adapter_file_target(
+    *,
+    project_root: Path,
+    session_id: str,
+    harness_id: HarnessId,
+    adapter: SubprocessHarness,
+) -> SessionLogTarget | None:
+    candidate = adapter.resolve_session_file(
+        project_root=project_root,
+        session_id=session_id,
+    )
+    if candidate is None or not candidate.is_file():
+        return None
+    return SessionLogTarget(
+        session_id=session_id,
+        harness=str(harness_id),
+        file_path=candidate,
+        source=f"{harness_id} transcript",
+    )
+
+
+def _opencode_db_target(
+    *,
+    session_id: str,
+    fallback_targets: tuple[SessionLogTarget, ...] = (),
+) -> SessionLogTarget:
+    return SessionLogTarget(
+        session_id=session_id,
+        harness=HarnessId.OPENCODE.value,
+        file_path=None,
+        source="opencode transcript",
+        transcript_source="opencode_db",
+        fallback_targets=fallback_targets,
+    )
+
+
 def _resolve_harness_session_file(
     *,
     project_root: Path,
@@ -103,17 +141,6 @@ def _resolve_harness_session_file(
     registry = get_default_harness_registry()
     normalized_harness = (harness or "").strip().lower() or None
     if normalized_harness is not None:
-        if (
-            normalized_harness == HarnessId.OPENCODE.value
-            and opencode_db_session_exists(session_id=normalized_session_id)
-        ):
-            return SessionLogTarget(
-                session_id=normalized_session_id,
-                harness=HarnessId.OPENCODE.value,
-                file_path=None,
-                source="opencode transcript",
-                transcript_source="opencode_db",
-            )
         try:
             harness_id = HarnessId(normalized_harness)
             adapter = registry.get_subprocess_harness(harness_id)
@@ -123,17 +150,22 @@ def _resolve_harness_session_file(
                 f"(harness={normalized_harness}) not found"
             ) from exc
 
-        candidate = adapter.resolve_session_file(
+        file_target = _resolve_adapter_file_target(
             project_root=project_root,
             session_id=normalized_session_id,
+            harness_id=harness_id,
+            adapter=adapter,
         )
-        if candidate is not None and candidate.is_file():
-            return SessionLogTarget(
+        if (
+            harness_id == HarnessId.OPENCODE
+            and opencode_db_session_exists(session_id=normalized_session_id)
+        ):
+            return _opencode_db_target(
                 session_id=normalized_session_id,
-                harness=str(harness_id),
-                file_path=candidate,
-                source=f"{harness_id} transcript",
+                fallback_targets=(file_target,) if file_target is not None else (),
             )
+        if file_target is not None:
+            return file_target
         raise FileNotFoundError(
             f"Session file for '{normalized_session_id}' (harness={normalized_harness}) not found"
         )
@@ -145,28 +177,22 @@ def _resolve_harness_session_file(
         except TypeError:
             continue
         checked_harnesses.append(str(harness_id))
+        file_target = _resolve_adapter_file_target(
+            project_root=project_root,
+            session_id=normalized_session_id,
+            harness_id=harness_id,
+            adapter=adapter,
+        )
         if (
             harness_id == HarnessId.OPENCODE
             and opencode_db_session_exists(session_id=normalized_session_id)
         ):
-            return SessionLogTarget(
+            return _opencode_db_target(
                 session_id=normalized_session_id,
-                harness=str(harness_id),
-                file_path=None,
-                source=f"{harness_id} transcript",
-                transcript_source="opencode_db",
+                fallback_targets=(file_target,) if file_target is not None else (),
             )
-        candidate = adapter.resolve_session_file(
-            project_root=project_root,
-            session_id=normalized_session_id,
-        )
-        if candidate is not None and candidate.is_file():
-            return SessionLogTarget(
-                session_id=normalized_session_id,
-                harness=str(harness_id),
-                file_path=candidate,
-                source=f"{harness_id} transcript",
-            )
+        if file_target is not None:
+            return file_target
 
     checked = ", ".join(checked_harnesses) if checked_harnesses else "<none>"
     raise FileNotFoundError(
@@ -296,6 +322,41 @@ def _target_from_spawn_output(
     )
 
 
+def _target_key(target: SessionLogTarget) -> tuple[str, str, str | None, str]:
+    return (
+        target.transcript_source,
+        target.session_id,
+        target.file_path.as_posix() if target.file_path is not None else None,
+        target.source,
+    )
+
+
+def _with_fallback_targets(
+    target: SessionLogTarget,
+    *fallback_targets: SessionLogTarget | None,
+) -> SessionLogTarget:
+    existing = list(target.fallback_targets)
+    seen = {_target_key(target), *(_target_key(fallback) for fallback in existing)}
+    for fallback in fallback_targets:
+        if fallback is None:
+            continue
+        key = _target_key(fallback)
+        if key in seen:
+            continue
+        existing.append(fallback)
+        seen.add(key)
+    return target._replace(fallback_targets=tuple(existing))
+
+
+def _with_opencode_fallback_targets(
+    target: SessionLogTarget,
+    *fallback_targets: SessionLogTarget | None,
+) -> SessionLogTarget:
+    if target.transcript_source != "opencode_db":
+        return target
+    return _with_fallback_targets(target, *fallback_targets)
+
+
 def _managed_primary_output_target(
     runtime_root: Path,
     *,
@@ -336,6 +397,113 @@ def _running_managed_primary_output_target(
         spawn_id=spawn_row.id,
         live_first=True,
     )
+
+
+def _resolved_spawn_output_fallback_target(
+    *,
+    runtime_root: Path,
+    row: SpawnRecord,
+    display_id: str,
+    is_primary_spawn: bool,
+    is_managed_backend_primary: bool,
+    harness: str | None,
+) -> SessionLogTarget | None:
+    if is_primary_spawn:
+        if not is_managed_backend_primary:
+            return None
+        return _managed_primary_output_target(
+            runtime_root,
+            spawn_row=row,
+            display_id=display_id,
+            harness=harness,
+        )
+    return _target_from_spawn_output(
+        runtime_root,
+        display_id=display_id,
+        spawn_id=row.id,
+        live_first=(row.status == "running"),
+    )
+
+
+def _spawn_history_fallback_for_session_ref(
+    *,
+    project_root: Path,
+    runtime_root: Path,
+    display_id: str,
+    record: session_store.SessionRecord,
+) -> SessionLogTarget | None:
+    spawn_id = (record.spawn_id or "").strip()
+    if spawn_id:
+        row = read_spawn_row_read_only(project_root, spawn_id, runtime_root=runtime_root)
+        if row is not None:
+            output_target = _target_from_spawn_output(
+                runtime_root,
+                display_id=display_id,
+                spawn_id=row.id,
+                live_first=(row.status == "running"),
+            )
+            if output_target is not None:
+                return output_target
+
+    return _spawn_history_fallback_for_harness_session_id(
+        runtime_root=runtime_root,
+        display_id=display_id,
+        harness_session_id=record.harness_session_id,
+    )
+
+
+def _spawn_history_fallback_for_harness_session_id(
+    *,
+    runtime_root: Path,
+    display_id: str,
+    harness_session_id: str,
+) -> SessionLogTarget | None:
+    normalized_session_id = harness_session_id.strip()
+    if not normalized_session_id:
+        return None
+    for row in reversed(spawn_store.list_spawns(runtime_root)):
+        if (row.harness_session_id or "").strip() != normalized_session_id:
+            continue
+        output_target = _target_from_spawn_output(
+            runtime_root,
+            display_id=display_id,
+            spawn_id=row.id,
+            live_first=(row.status == "running"),
+        )
+        if output_target is not None:
+            return output_target
+    return None
+
+
+def _spawn_history_fallback_for_chat_ref(
+    *,
+    runtime_root: Path,
+    display_id: str,
+    chat_id: str,
+    primary_spawn: SpawnRecord | None,
+) -> SessionLogTarget | None:
+    candidates: list[SpawnRecord] = []
+    if primary_spawn is not None:
+        candidates.append(primary_spawn)
+    candidates.extend(
+        reversed(session_identity.list_spawns_for_exact_session(runtime_root, chat_id))
+    )
+    candidates.extend(reversed(session_identity.list_spawns_for_owner_chat(runtime_root, chat_id)))
+
+    seen: set[str] = set()
+    for row in candidates:
+        if row.id in seen:
+            continue
+        seen.add(row.id)
+        output_target = _target_from_spawn_output(
+            runtime_root,
+            display_id=display_id,
+            spawn_id=row.id,
+            live_first=(row.status == "running"),
+        )
+        if output_target is not None:
+            return output_target
+    return None
 
 
 def _primary_spawn_for_chat(
@@ -537,7 +705,13 @@ def _resolve_from_chat_id(
         candidate_ids=[normalized_session_id],
     )
     if transcript_target is not None:
-        return transcript_target
+        output_target = _spawn_history_fallback_for_chat_ref(
+            runtime_root=runtime_root,
+            display_id=chat_id,
+            chat_id=chat_id,
+            primary_spawn=primary_spawn,
+        )
+        return _with_opencode_fallback_targets(transcript_target, output_target)
 
     detected_session_id = _detect_primary_session_id(
         project_root=project_root,
@@ -552,7 +726,13 @@ def _resolve_from_chat_id(
             candidate_ids=[detected_session_id],
         )
         if transcript_target is not None:
-            return transcript_target
+            output_target = _spawn_history_fallback_for_chat_ref(
+                runtime_root=runtime_root,
+                display_id=chat_id,
+                chat_id=chat_id,
+                primary_spawn=primary_spawn,
+            )
+            return _with_opencode_fallback_targets(transcript_target, output_target)
 
     if primary_spawn is not None:
         output_target = _managed_primary_output_target(
@@ -689,7 +869,15 @@ def _resolve_from_spawn_id(
         candidate_ids=[session_id],
     )
     if transcript_target is not None:
-        return transcript_target
+        output_target = _resolved_spawn_output_fallback_target(
+            runtime_root=runtime_root,
+            row=row,
+            display_id=spawn_id,
+            is_primary_spawn=is_primary_spawn,
+            is_managed_backend_primary=is_managed_backend_primary,
+            harness=harness,
+        )
+        return _with_opencode_fallback_targets(transcript_target, output_target)
 
     if is_primary_spawn:
         detected_session_id = _detect_primary_session_id(
@@ -705,7 +893,15 @@ def _resolve_from_spawn_id(
                 candidate_ids=[detected_session_id],
             )
             if transcript_target is not None:
-                return transcript_target
+                output_target = _resolved_spawn_output_fallback_target(
+                    runtime_root=runtime_root,
+                    row=row,
+                    display_id=spawn_id,
+                    is_primary_spawn=is_primary_spawn,
+                    is_managed_backend_primary=is_managed_backend_primary,
+                    harness=harness,
+                )
+                return _with_opencode_fallback_targets(transcript_target, output_target)
 
     if is_primary_spawn:
         if is_managed_backend_primary:
@@ -748,19 +944,32 @@ def _resolve_from_session_ref(
     if record is not None:
         session_id = record.harness_session_id.strip() or session_ref
         harness = record.harness.strip() or None
-        return _resolve_harness_session_file(
+        target = _resolve_harness_session_file(
             project_root=project_root,
             session_id=session_id,
             harness=harness,
         )
+        output_target = _spawn_history_fallback_for_session_ref(
+            project_root=project_root,
+            runtime_root=runtime_root,
+            display_id=session_id,
+            record=record,
+        )
+        return _with_opencode_fallback_targets(target, output_target)
 
     inferred = infer_harness_from_untracked_session_ref(project_root, session_ref)
     inferred_name = str(inferred) if inferred is not None else None
-    return _resolve_harness_session_file(
+    target = _resolve_harness_session_file(
         project_root=project_root,
         session_id=session_ref,
         harness=inferred_name,
     )
+    output_target = _spawn_history_fallback_for_harness_session_id(
+        runtime_root=runtime_root,
+        display_id=session_ref,
+        harness_session_id=session_ref,
+    )
+    return _with_opencode_fallback_targets(target, output_target)
 
 
 def _resolve_repair_from_chat_id(

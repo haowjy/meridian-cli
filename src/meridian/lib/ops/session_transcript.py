@@ -9,6 +9,7 @@ from meridian.lib.core.command_strings import format_command_for_display
 from meridian.lib.harness.transcript import (
     ToolCall,
     TranscriptMessage,
+    TranscriptParseResult,
     parse_opencode_db_transcript_with_prologues,
     parse_transcript_file_with_prologues,
 )
@@ -261,6 +262,22 @@ def route_for_corpus_target(target: SessionLogTarget) -> SessionLogRoute:
     return SessionLogRoute(mode="file", value=str(target.file_path))
 
 
+def _parse_target_source(target: SessionLogTarget) -> TranscriptParseResult:
+    if target.transcript_source == "opencode_db":
+        return parse_opencode_db_transcript_with_prologues(target.session_id)
+    if target.file_path is None:
+        raise FileNotFoundError(f"Session file for '{target.session_id}' not found")
+    return parse_transcript_file_with_prologues(target.file_path)
+
+
+def _has_usable_interaction_content(parsed: TranscriptParseResult) -> bool:
+    return any(
+        message.role in {"assistant", "user"} and message.content.strip()
+        for segment in parsed.segments
+        for message in segment
+    )
+
+
 def parse_session_target(
     *,
     project_root: Path,
@@ -268,12 +285,17 @@ def parse_session_target(
     target: SessionLogTarget,
     route: SessionLogRoute,
 ) -> ParsedSessionTranscript:
-    if target.transcript_source == "opencode_db":
-        parsed = parse_opencode_db_transcript_with_prologues(target.session_id)
-    else:
-        if target.file_path is None:
-            raise FileNotFoundError(f"Session file for '{target.session_id}' not found")
-        parsed = parse_transcript_file_with_prologues(target.file_path)
+    parsed = _parse_target_source(target)
+    if target.transcript_source == "opencode_db" and not _has_usable_interaction_content(parsed):
+        for fallback_target in target.fallback_targets:
+            fallback = parse_session_target(
+                project_root=project_root,
+                runtime_root=runtime_root,
+                target=fallback_target,
+                route=route,
+            )
+            if fallback.entries:
+                return fallback
     flattened = flatten_transcript_segments(parsed.segments)
     interaction_entries = group_transcript_entries(flattened)
     segment_entries = build_segment_entries(
