@@ -30,7 +30,6 @@ from meridian.lib.harness.common import parse_json_stream_event, unwrap_event_pa
 from meridian.lib.harness.connections.base import ConnectionConfig, HarnessConnection
 from meridian.lib.harness.extractor import StreamingExtractor
 from meridian.lib.harness.semantics import (
-    PrimaryEventScope,
     PrimaryEventScopeTracker,
     TerminalEventOutcome,
     terminal_outcome,
@@ -447,14 +446,6 @@ async def _report_watchdog(
     return True
 
 
-def _connection_primary_event_scope(
-    connection: HarnessConnection[Any] | None,
-) -> PrimaryEventScope | None:
-    if connection is None:
-        return None
-    return cast("PrimaryEventScope | None", getattr(connection, "primary_event_scope", None))
-
-
 async def run_streaming_spawn(
     *,
     config: ConnectionConfig,
@@ -532,7 +523,7 @@ async def run_streaming_spawn(
         )
         primary_scope_tracker = (
             PrimaryEventScopeTracker(
-                primary_event_scope=_connection_primary_event_scope(connection)
+                primary_event_scope=connection.primary_event_scope
             )
             if terminal_event_capture is not None
             else None
@@ -653,7 +644,7 @@ async def _run_streaming_attempt(
         )
         primary_scope_tracker = (
             PrimaryEventScopeTracker(
-                primary_event_scope=_connection_primary_event_scope(connection)
+                primary_event_scope=connection.primary_event_scope
             )
             if terminal_event_capture is not None
             else None

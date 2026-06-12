@@ -31,7 +31,7 @@ from meridian.lib.streaming.spawn_session import DrainOutcome, SpawnSession
 
 if TYPE_CHECKING:
     from meridian.lib.harness.connections.base import HarnessConnection
-    from meridian.lib.harness.semantics import PrimaryEventScope, TerminalEventOutcome
+    from meridian.lib.harness.semantics import TerminalEventOutcome
     from meridian.lib.observability.debug_tracer import DebugTracer
 
 logger = logging.getLogger(__name__)
@@ -129,7 +129,7 @@ class SpawnDrainLoop:
 
                 transition = activity_transition(
                     event,
-                    primary_event_scope=_primary_event_scope(receiver),
+                    primary_event_scope=receiver.primary_event_scope,
                 )
                 duplicate_canonical_event = await _observe_event(
                     coordinator,
@@ -196,7 +196,7 @@ class SpawnDrainLoop:
 
                 event_outcome = terminal_outcome(
                     event,
-                    primary_event_scope=_primary_event_scope(receiver),
+                    primary_event_scope=receiver.primary_event_scope,
                 )
                 self._fan_out_event(spawn_id, event)
                 persisted_event_decision = _note_event_persisted(coordinator, event)
@@ -311,16 +311,6 @@ class SpawnDrainLoop:
                         with suppress(asyncio.QueueEmpty):
                             session.subscriber.get_nowait()
                         continue
-
-
-def _primary_event_scope(connection: object) -> PrimaryEventScope | None:
-    """Read the connection's primary event scope when it exposes one."""
-
-    try:
-        scope = cast("Any", connection).primary_event_scope
-    except Exception:
-        return None
-    return cast("PrimaryEventScope | None", scope)
 
 
 class _NoAuxWake:

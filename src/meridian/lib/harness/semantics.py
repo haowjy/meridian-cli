@@ -69,16 +69,6 @@ def _stringify_terminal_error(error: object) -> str | None:
     return normalized or None
 
 
-def _resolve_primary_event_scope(
-    primary_event_scope: PrimaryEventScope | None,
-    *,
-    codex_main_thread_id: str | None,
-) -> PrimaryEventScope | None:
-    if primary_event_scope is not None:
-        return primary_event_scope
-    return codex_primary_event_scope(codex_main_thread_id)
-
-
 def _event_scope_id(event: HarnessEvent, scope: PrimaryEventScope) -> str | None:
     if event.harness_id != scope.harness_id.value:
         return None
@@ -120,17 +110,12 @@ def terminal_outcome(
     event: HarnessEvent,
     *,
     primary_event_scope: PrimaryEventScope | None = None,
-    codex_main_thread_id: str | None = None,
 ) -> TerminalEventOutcome | None:
     """Classify whether a harness event completes a spawn drain."""
 
-    resolved_scope = _resolve_primary_event_scope(
-        primary_event_scope,
-        codex_main_thread_id=codex_main_thread_id,
-    )
     if _codex_turn_completes_session(
         event,
-        primary_event_scope=resolved_scope,
+        primary_event_scope=primary_event_scope,
     ):
         return TerminalEventOutcome(status="succeeded", exit_code=0)
 
@@ -188,7 +173,7 @@ def terminal_outcome(
         )
 
     if event.harness_id == HarnessId.OPENCODE.value:
-        if not event_matches_primary_scope(event, primary_event_scope=resolved_scope):
+        if not event_matches_primary_scope(event, primary_event_scope=primary_event_scope):
             return None
         if event.event_type == "session.idle":
             return TerminalEventOutcome(status="succeeded", exit_code=0)
@@ -244,14 +229,9 @@ def activity_transition(
     event: HarnessEvent,
     *,
     primary_event_scope: PrimaryEventScope | None = None,
-    codex_main_thread_id: str | None = None,
 ) -> ActivityState | None:
     """Return primary UI activity transition caused by a harness event."""
 
-    resolved_scope = _resolve_primary_event_scope(
-        primary_event_scope,
-        codex_main_thread_id=codex_main_thread_id,
-    )
     if event.event_type in {
         "turn/started",  # Codex
         "agent_message_chunk",  # OpenCode: assistant text streaming
@@ -259,18 +239,18 @@ def activity_transition(
         "tool_call",  # OpenCode: tool invocation
         "tool_call_update",  # OpenCode: tool result
     }:
-        if not event_matches_primary_scope(event, primary_event_scope=resolved_scope):
+        if not event_matches_primary_scope(event, primary_event_scope=primary_event_scope):
             return None
         return "turn_active"
     if event.event_type == "turn/completed":
         if _codex_turn_completes_session(
             event,
-            primary_event_scope=resolved_scope,
+            primary_event_scope=primary_event_scope,
         ):
             return "idle"
         return None
     if event.event_type == "session.idle":
-        if not event_matches_primary_scope(event, primary_event_scope=resolved_scope):
+        if not event_matches_primary_scope(event, primary_event_scope=primary_event_scope):
             return None
         return "idle"
     if event.harness_id == HarnessId.PI.value:
@@ -292,25 +272,20 @@ def clears_signal(
     event: HarnessEvent,
     *,
     primary_event_scope: PrimaryEventScope | None = None,
-    codex_main_thread_id: str | None = None,
 ) -> bool:
     """Return whether an event clears a pending user signal for its harness."""
 
-    resolved_scope = _resolve_primary_event_scope(
-        primary_event_scope,
-        codex_main_thread_id=codex_main_thread_id,
-    )
     if event.harness_id in {HarnessId.CLAUDE.value, HarnessId.CURSOR.value}:
         return event.event_type == "result"
     if event.harness_id == HarnessId.CODEX.value:
         return _codex_turn_completes_session(
             event,
-            primary_event_scope=resolved_scope,
+            primary_event_scope=primary_event_scope,
         )
     if event.harness_id == HarnessId.OPENCODE.value:
         return (
             event.event_type in {"session.idle", "session.error"}
-            and event_matches_primary_scope(event, primary_event_scope=resolved_scope)
+            and event_matches_primary_scope(event, primary_event_scope=primary_event_scope)
         )
     if event.harness_id == HarnessId.PI.value:
         return event.event_type == "agent_end"
@@ -342,29 +317,9 @@ class PrimaryEventScopeTracker:
         return activity_transition(event, primary_event_scope=self.primary_event_scope)
 
 
-@dataclass
-class CodexDrainThreadTracker:
-    """Track the main Codex thread for thread-aware drain classification."""
-
-    _tracker: PrimaryEventScopeTracker = field(default_factory=PrimaryEventScopeTracker)
-
-    @property
-    def main_thread_id(self) -> str | None:
-        scope = self._tracker.primary_event_scope
-        if scope is None or scope.harness_id is not HarnessId.CODEX:
-            return None
-        return scope.scope_id
-
-    def observe(self, event: HarnessEvent) -> None:
-        self._tracker.observe(event)
-
-    def terminal_outcome(self, event: HarnessEvent) -> TerminalEventOutcome | None:
-        return self._tracker.terminal_outcome(event)
-
 
 __all__ = [
     "ActivityState",
-    "CodexDrainThreadTracker",
     "PrimaryEventScope",
     "PrimaryEventScopeTracker",
     "TerminalEventOutcome",

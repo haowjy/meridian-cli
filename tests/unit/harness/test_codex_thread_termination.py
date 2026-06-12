@@ -5,9 +5,10 @@ from meridian.lib.core.types import ArtifactKey, SpawnId
 from meridian.lib.harness.common import extract_codex_report
 from meridian.lib.harness.connections.base import HarnessEvent
 from meridian.lib.harness.semantics import (
-    CodexDrainThreadTracker,
+    PrimaryEventScopeTracker,
     activity_transition,
     clears_signal,
+    codex_primary_event_scope,
     opencode_primary_event_scope,
     terminal_outcome,
 )
@@ -37,7 +38,7 @@ def _opencode_event(event_type: str, session_id: str | None) -> HarnessEvent:
 
 
 def test_subagent_turn_completed_is_not_terminal_before_main_thread() -> None:
-    tracker = CodexDrainThreadTracker()
+    tracker = PrimaryEventScopeTracker()
     started = _codex_event(
         "turn/started",
         {"threadId": MAIN_THREAD, "turnId": "turn-main"},
@@ -51,19 +52,21 @@ def test_subagent_turn_completed_is_not_terminal_before_main_thread() -> None:
         {"threadId": MAIN_THREAD, "turnId": "turn-main"},
     )
 
+    main_scope = codex_primary_event_scope(MAIN_THREAD)
+
     assert tracker.terminal_outcome(started) is None
-    assert tracker.main_thread_id == MAIN_THREAD
+    assert tracker.primary_event_scope == main_scope
     assert tracker.terminal_outcome(subagent_completed) is None
-    assert terminal_outcome(subagent_completed, codex_main_thread_id=MAIN_THREAD) is None
-    assert clears_signal(subagent_completed, codex_main_thread_id=MAIN_THREAD) is False
-    assert activity_transition(subagent_completed, codex_main_thread_id=MAIN_THREAD) is None
+    assert terminal_outcome(subagent_completed, primary_event_scope=main_scope) is None
+    assert clears_signal(subagent_completed, primary_event_scope=main_scope) is False
+    assert activity_transition(subagent_completed, primary_event_scope=main_scope) is None
 
     outcome = tracker.terminal_outcome(main_completed)
     assert outcome is not None
     assert outcome.status == "succeeded"
     assert outcome.exit_code == 0
-    assert clears_signal(main_completed, codex_main_thread_id=MAIN_THREAD) is True
-    assert activity_transition(main_completed, codex_main_thread_id=MAIN_THREAD) == "idle"
+    assert clears_signal(main_completed, primary_event_scope=main_scope) is True
+    assert activity_transition(main_completed, primary_event_scope=main_scope) == "idle"
 
 
 def test_single_thread_turn_completed_stays_terminal_without_thread_id() -> None:
