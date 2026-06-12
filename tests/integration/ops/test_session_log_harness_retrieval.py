@@ -404,6 +404,74 @@ def test_session_log_renders_opencode_db_completed_tool_parts(
     assert output.messages[2].is_tool_result is True
 
 
+def test_session_log_default_render_shows_completed_opencode_task_result(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    runtime_root = resolve_project_runtime_root(project_root)
+    runtime_root.mkdir(parents=True, exist_ok=True)
+
+    xdg_data_home = tmp_path / "xdg-data"
+    session_id = "ses_fixture_db_task_12345"
+    _write_opencode_db_session_with_parts(
+        db_path=xdg_data_home / "opencode" / "opencode.db",
+        session_id=session_id,
+        messages=[
+            ("user", {}, [{"type": "text", "text": "find KB links"}]),
+            (
+                "assistant",
+                {},
+                [
+                    {"type": "text", "text": "Let me now search for contradictions."},
+                    {
+                        "type": "tool",
+                        "tool": "task",
+                        "state": {
+                            "status": "completed",
+                            "input": {"description": "Search code repo for KB links"},
+                            "output": (
+                                '<task id="ses_child" state="completed">\n'
+                                "<task_result>\n"
+                                "Here is the complete report of all matches found.\n"
+                                "</task_result>\n"
+                                "</task>"
+                            ),
+                        },
+                    },
+                ],
+            ),
+        ],
+    )
+    monkeypatch.setenv("XDG_DATA_HOME", xdg_data_home.as_posix())
+
+    spawn_store.start_spawn(
+        runtime_root,
+        chat_id="c1",
+        model="gpt-5.3-codex",
+        agent="coder",
+        harness="opencode",
+        prompt="hello",
+        spawn_id="p1",
+        harness_session_id=session_id,
+        started_at="2026-04-11T00:00:00Z",
+    )
+
+    output = session_log_sync(
+        SessionLogInput(
+            ref="p1",
+            project_root=project_root.as_posix(),
+            from_ordinal=1,
+            limit=1,
+        )
+    )
+    rendered = output.format_text()
+
+    assert "task: Search code repo for KB links" in rendered
+    assert "(completed) Here is the complete report of all matches found." in rendered
+
+
 def test_session_log_renders_opencode_db_compaction_as_segment_handoff(
     tmp_path: Path,
     monkeypatch: MonkeyPatch,

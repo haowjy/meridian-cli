@@ -60,6 +60,15 @@ def _tool_result(msg_idx: int, content: str) -> SessionLogEntryMessage:
     )
 
 
+def _task_call(msg_idx: int, description: str) -> SessionLogEntryMessage:
+    return SessionLogEntryMessage(
+        segment_message=msg_idx,
+        role="assistant",
+        content=f"[tool: task {description}]",
+        tool_call=ToolCall(name="task", body=description),
+    )
+
+
 def test_clean_content_strips_known_wrappers() -> None:
     cleaned = clean_content(
         "<local-command-caveat>meta</local-command-caveat>"
@@ -150,6 +159,29 @@ def test_codex_exec_command_failed() -> None:
     )
     rendered = _output(entries=(entry,)).format_text()
     assert "(failed: exit 1)" in rendered
+
+
+def test_completed_task_call_shows_collapsed_result_preview() -> None:
+    entry = _entry(
+        index=1,
+        role="mixed",
+        messages=(
+            _task_call(1, "Search code repo for KB links"),
+            _tool_result(
+                2,
+                '<task id="ses_child" state="completed">\n'
+                "<task_result>\n"
+                "Here is the complete report of all matches found.\n"
+                "</task_result>\n"
+                "</task>",
+            ),
+        ),
+    )
+
+    rendered = _output(entries=(entry,)).format_text()
+
+    assert "  task: Search code repo for KB links" in rendered
+    assert "  (completed) Here is the complete report of all matches found." in rendered
 
 
 def test_orphan_tool_call() -> None:
