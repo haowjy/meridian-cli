@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.3.6] - 2026-06-12
+
 ### Added
 - `max` reasoning effort level (`low` < `medium` < `high` < `xhigh` < `max`), matching Claude Code effort scale.
 
