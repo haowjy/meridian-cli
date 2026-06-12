@@ -968,7 +968,7 @@ def resolve_session_log_target(
             chat_id=normalized_ref,
         )
 
-    if normalized_ref.startswith("p") and normalized_ref[1:].isdigit():
+    if _is_spawn_ref(normalized_ref):
         return _resolve_from_spawn_id(
             project_root=project_root,
             runtime_root=runtime_root,
