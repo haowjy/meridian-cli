@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.3.7] - 2026-06-12
+
 ### Changed
 - Fan-out agent config moves from `[settings.meridian.agent_copy].fanout_agents` to peer table `[settings.meridian.fanout].agents`; docs and repo `mars.toml` updated. Legacy `fanout_agents` is deprecated (migration warning, ignored).
 - Bump `mars-agents` to `0.8.5`, which parses `[settings.meridian.fanout]` and dual-lists fan-out agents in the launch inventory.
