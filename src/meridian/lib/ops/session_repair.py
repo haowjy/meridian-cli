@@ -9,7 +9,7 @@ from pydantic import BaseModel, ConfigDict
 from meridian.lib.config.project_root import resolve_project_root_resolution
 from meridian.lib.core.util import FormatContext
 from meridian.lib.ops.runtime import async_from_sync, resolve_runtime_root_for_read
-from meridian.lib.ops.session_target import resolve_session_repair_target
+from meridian.lib.ops.session_repair_target import resolve_session_repair_target
 from meridian.lib.ops.spawn.query import (
     read_latest_primary_spawn_for_chat_read_only,
     read_spawn_row_read_only,

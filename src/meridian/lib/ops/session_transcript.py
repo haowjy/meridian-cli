@@ -14,7 +14,11 @@ from meridian.lib.harness.transcript import (
     parse_transcript_file_with_prologues,
 )
 from meridian.lib.ops.runtime import resolve_runtime_authority_for_read
-from meridian.lib.ops.session_target import SessionLogTarget, resolve_session_log_target
+from meridian.lib.ops.session_target import (
+    SessionLogTarget,
+    TranscriptSource,
+    resolve_session_log_target,
+)
 
 _PROLOGUE_PLACEHOLDER = "[prologue slot reserved: no extractable system prompt]"
 _HANDOFF_PLACEHOLDER = "[compaction handoff slot reserved: no extractable handoff]"
@@ -262,12 +266,21 @@ def route_for_corpus_target(target: SessionLogTarget) -> SessionLogRoute:
     return SessionLogRoute(mode="file", value=str(target.file_path))
 
 
-def _parse_target_source(target: SessionLogTarget) -> TranscriptParseResult:
-    if target.transcript_source == "opencode_db":
-        return parse_opencode_db_transcript_with_prologues(target.session_id)
-    if target.file_path is None:
-        raise FileNotFoundError(f"Session file for '{target.session_id}' not found")
-    return parse_transcript_file_with_prologues(target.file_path)
+def _parse_transcript_source(source: TranscriptSource) -> TranscriptParseResult:
+    if source.kind == "opencode_db":
+        return parse_opencode_db_transcript_with_prologues(source.session_id)
+    if source.path is None:
+        raise FileNotFoundError(f"Session file for '{source.session_id}' not found")
+    return parse_transcript_file_with_prologues(source.path)
+
+
+def _target_for_source(target: SessionLogTarget, source: TranscriptSource) -> SessionLogTarget:
+    return target._replace(
+        session_id=source.session_id,
+        harness=source.harness,
+        file_path=source.path,
+        source=source.source_label,
+    )
 
 
 def _has_usable_interaction_content(parsed: TranscriptParseResult) -> bool:
@@ -285,17 +298,17 @@ def parse_session_target(
     target: SessionLogTarget,
     route: SessionLogRoute,
 ) -> ParsedSessionTranscript:
-    parsed = _parse_target_source(target)
-    if target.transcript_source == "opencode_db" and not _has_usable_interaction_content(parsed):
-        for fallback_target in target.fallback_targets:
-            fallback = parse_session_target(
-                project_root=project_root,
-                runtime_root=runtime_root,
-                target=fallback_target,
-                route=route,
-            )
-            if fallback.entries:
-                return fallback
+    parsed: TranscriptParseResult | None = None
+    resolved_target = target
+    for source in target.sources:
+        candidate = _parse_transcript_source(source)
+        parsed = candidate
+        resolved_target = _target_for_source(target, source)
+        if _has_usable_interaction_content(candidate):
+            break
+    if parsed is None:
+        raise FileNotFoundError(f"Session file for '{target.session_id}' not found")
+
     flattened = flatten_transcript_segments(parsed.segments)
     interaction_entries = group_transcript_entries(flattened)
     segment_entries = build_segment_entries(
@@ -310,7 +323,7 @@ def parse_session_target(
     return ParsedSessionTranscript(
         project_root=project_root,
         runtime_root=runtime_root,
-        target=target,
+        target=resolved_target,
         route=route,
         segments=parsed.segments,
         total_compactions=parsed.total_compactions,

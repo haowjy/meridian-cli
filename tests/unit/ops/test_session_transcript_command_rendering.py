@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import cast
 
 from meridian.lib.core import command_strings
-from meridian.lib.ops.session_target import SessionLogTarget
+from meridian.lib.ops.session_target import SessionLogTarget, TranscriptSource
 from meridian.lib.ops.session_transcript import (
     SessionLogRoute,
     build_session_log_command,
@@ -62,11 +62,21 @@ def test_route_for_corpus_target_uses_native_path_string() -> None:
         def as_posix(self) -> str:
             return "C:/Users/Jane Doe/logs/session&(1).jsonl"
 
+    file_path = cast("Path", _WindowsLikePath())
     target = SessionLogTarget(
         session_id="session-1",
         harness="codex",
-        file_path=cast("Path", _WindowsLikePath()),
+        file_path=file_path,
         source="codex transcript",
+        sources=(
+            TranscriptSource(
+                kind="file",
+                session_id="session-1",
+                harness="codex",
+                path=file_path,
+                source_label="codex transcript",
+            ),
+        ),
     )
 
     route = route_for_corpus_target(target)
