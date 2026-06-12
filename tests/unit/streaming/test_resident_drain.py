@@ -1,10 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-import time
-from collections.abc import AsyncIterator
 from pathlib import Path
-from typing import Any
 
 import pytest
 
@@ -13,258 +10,22 @@ from meridian.lib.bootstrap.services import prepare_for_runtime_write
 from meridian.lib.core.context import RuntimeContext
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.common import extract_codex_report
-from meridian.lib.harness.connections.base import (
-    ConnectionCapabilities,
-    ConnectionConfig,
-    ConnectionState,
-    HarnessConnection,
-    HarnessEvent,
-    StopProgressCallback,
-    StopResult,
-)
-from meridian.lib.harness.connections.liveness import LivenessDecision
-from meridian.lib.harness.connections.resident_backend import (
-    ResidentBackendControl,
-)
-from meridian.lib.harness.semantics import (
-    PrimaryEventScope,
-    TerminalEventOutcome,
-    opencode_primary_event_scope,
-)
-from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.ops.spawn.models import SpawnSignalInput
-from meridian.lib.safety.permissions import UnsafeNoOpPermissionResolver
 from meridian.lib.state import spawn_store
 from meridian.lib.state.artifact_store import LocalStore
 from meridian.lib.streaming.drain_policy import (
-    TURN_BOUNDARY_EVENT_TYPE,
-    DrainPolicy,
     PersistentDrainPolicy,
 )
-from meridian.lib.streaming.resident_drain import ResidentDrainCoordinator
-from meridian.lib.streaming.spawn_manager import SpawnManager
 from tests.support.fakes import FakeClock
-from tests.unit.streaming.pi_quiescence_test_helpers import NoopControlServer
-
-
-class _FakeResidentBackendControl:
-    def __init__(self) -> None:
-        self.awaiting_done_values: list[bool] = []
-        self.status: LivenessDecision = LivenessDecision.CONTINUE
-        self.injected_messages: list[str] = []
-        self.fail_inject: bool = False
-
-    def health_status(self) -> LivenessDecision:
-        return self.status
-
-    def set_awaiting_done(self, awaiting: bool) -> None:
-        self.awaiting_done_values.append(awaiting)
-
-    async def begin_followup_turn(self, message: str) -> None:
-        if self.fail_inject:
-            raise RuntimeError("inject failed")
-        self.injected_messages.append(message)
-
-
-class _FakeResidentConnection(HarnessConnection[ResolvedLaunchSpec]):
-    def __init__(self, harness_id: HarnessId) -> None:
-        self._harness_id = harness_id
-        self._spawn_id = SpawnId("")
-        self._state: ConnectionState = "created"
-        self._events: asyncio.Queue[HarnessEvent | None] = asyncio.Queue()
-        self._resident_backend = _FakeResidentBackendControl()
-        self.stop_reasons: list[str | None] = []
-
-    @property
-    def state(self) -> ConnectionState:
-        return self._state
-
-    @property
-    def harness_id(self) -> HarnessId:
-        return self._harness_id
-
-    @property
-    def spawn_id(self) -> SpawnId:
-        return self._spawn_id
-
-    @property
-    def capabilities(self) -> ConnectionCapabilities:
-        return ConnectionCapabilities(
-            mid_turn_injection="queue",
-            supports_steer=True,
-            supports_cancel=True,
-            runtime_model_switch=False,
-            structured_reasoning=True,
-        )
-
-    @property
-    def session_id(self) -> str | None:
-        return "ses-resident"
-
-    @property
-    def primary_event_scope(self) -> PrimaryEventScope | None:
-        if self._harness_id is HarnessId.OPENCODE:
-            return opencode_primary_event_scope(self.session_id)
-        return None
-
-    @property
-    def subprocess_pid(self) -> int | None:
-        return 4242
-
-    @property
-    def fake_resident_backend(self) -> _FakeResidentBackendControl:
-        return self._resident_backend
-
-    @property
-    def resident_backend(self) -> ResidentBackendControl:
-        return self._resident_backend
-
-    async def start(self, config: ConnectionConfig, spec: ResolvedLaunchSpec) -> None:
-        _ = spec
-        self._spawn_id = config.spawn_id
-        self._state = "connected"
-
-    async def stop(
-        self,
-        *,
-        reason: str | None = None,
-        progress: StopProgressCallback | None = None,
-    ) -> StopResult:
-        _ = progress
-        self.stop_reasons.append(reason)
-        self._state = "stopped"
-        return StopResult()
-
-    def health(self) -> bool:
-        return self._state == "connected"
-
-    async def send_user_message(self, text: str) -> None:
-        _ = text
-
-    async def send_cancel(self) -> None:
-        return None
-
-    async def events(self) -> AsyncIterator[HarnessEvent]:
-        while True:
-            event = await self._events.get()
-            if event is None:
-                return
-            yield event
-
-    def emit(self, event: HarnessEvent) -> None:
-        self._events.put_nowait(event)
-
-    def close_stream(self) -> None:
-        self._events.put_nowait(None)
-
-    def mark_failed(self) -> None:
-        self._state = "failed"
-        self._resident_backend.status = LivenessDecision.BACKEND_DEAD
-
-    def mark_stalled(self) -> None:
-        self._resident_backend.status = LivenessDecision.STREAM_STALLED
-
-
-def _awaiting_done_coordinator(
-    tmp_path: Path,
-    connection: HarnessConnection[Any],
-) -> ResidentDrainCoordinator:
-    resident_backend = connection.resident_backend
-    assert resident_backend is not None
-    coordinator = ResidentDrainCoordinator.for_connection(
-        project_root=tmp_path,
-        runtime_root=tmp_path,
-        spawn_id=SpawnId("p1"),
-        receiver=connection,
-        resident_backend=resident_backend,
-        deadline_seconds=30.0,
-        poll_seconds=0.01,
-    )
-    coordinator.pending_outcome = TerminalEventOutcome(status="succeeded", exit_code=0)
-    coordinator.deadline_monotonic = time.monotonic() + coordinator.deadline_seconds
-    return coordinator
-
-
-def _event(harness_id: HarnessId, event_type: str, payload: dict[str, object]) -> HarnessEvent:
-    if harness_id is HarnessId.OPENCODE and "properties" not in payload:
-        payload = {
-            **payload,
-            "type": event_type,
-            "properties": {"sessionID": "ses-resident"},
-        }
-    return HarnessEvent(event_type=event_type, harness_id=harness_id.value, payload=payload)
-
-
-async def _next_turn_boundary(
-    subscriber: asyncio.Queue[HarnessEvent | None],
-) -> HarnessEvent:
-    while True:
-        event = await asyncio.wait_for(subscriber.get(), timeout=0.5)
-        assert event is not None
-        if event.event_type == TURN_BOUNDARY_EVENT_TYPE:
-            return event
-
-
-def _start_row(
-    runtime_root: Path,
-    spawn_id: str,
-    harness: HarnessId,
-    parent_id: str | None,
-) -> None:
-    spawn_store.start_spawn(
-        runtime_root,
-        spawn_id=SpawnId(spawn_id),
-        chat_id=spawn_id,
-        parent_id=parent_id,
-        model="test-model",
-        agent="test-agent",
-        harness=harness.value,
-        prompt="hello",
-        status="running",
-    )
-
-
-async def _start_manager(
-    tmp_path: Path,
-    connection: _FakeResidentConnection,
-    *,
-    spawn_id: SpawnId,
-    project_root: Path | None = None,
-    resident_deadline_seconds: float = 30.0,
-    resident_poll_seconds: float = 0.01,
-    drain_policy: DrainPolicy | None = None,
-) -> SpawnManager:
-    async def _start_connection(
-        config: ConnectionConfig,
-        spec: ResolvedLaunchSpec,
-    ) -> HarnessConnection[Any]:
-        await connection.start(config, spec)
-        return connection
-
-    manager = SpawnManager(
-        runtime_root=tmp_path,
-        project_root=project_root or tmp_path,
-        start_connection=_start_connection,
-        control_server_factory=lambda _spawn_id, _socket_path, _manager: NoopControlServer(),
-    )
-    await manager.start_spawn(
-        ConnectionConfig(
-            spawn_id=spawn_id,
-            harness_id=connection.harness_id,
-            prompt="hello",
-            control_root=tmp_path,
-            env_overrides={},
-            resident_deadline_seconds=resident_deadline_seconds,
-            resident_poll_seconds=resident_poll_seconds,
-        ),
-        ResolvedLaunchSpec(
-            harness=connection.harness_id.value,
-            prompt="hello",
-            permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
-        ),
-        drain_policy=drain_policy,
-    )
-    return manager
+from tests.unit.streaming.resident_drain_test_helpers import (
+    FakeResidentConnection,
+    awaiting_done_coordinator,
+    coordinator_with_clock,
+    next_turn_boundary,
+    resident_event,
+    start_manager,
+    start_row,
+)
 
 
 @pytest.mark.asyncio
@@ -272,11 +33,11 @@ async def test_codex_terminal_success_without_live_children_finalizes_immediatel
     tmp_path: Path,
 ) -> None:
     spawn_id = SpawnId("p1")
-    _start_row(tmp_path, str(spawn_id), HarnessId.CODEX, None)
-    connection = _FakeResidentConnection(HarnessId.CODEX)
-    manager = await _start_manager(tmp_path, connection, spawn_id=spawn_id)
+    start_row(tmp_path, str(spawn_id), HarnessId.CODEX, None)
+    connection = FakeResidentConnection(HarnessId.CODEX)
+    manager = await start_manager(tmp_path, connection, spawn_id=spawn_id)
 
-    connection.emit(_event(HarnessId.CODEX, "turn/completed", {}))
+    connection.emit(resident_event(HarnessId.CODEX, "turn/completed", {}))
 
     try:
         outcome = await asyncio.wait_for(manager.wait_for_completion(spawn_id), timeout=0.5)
@@ -292,11 +53,11 @@ async def test_opencode_terminal_success_without_live_children_finalizes_immedia
     tmp_path: Path,
 ) -> None:
     spawn_id = SpawnId("p1")
-    _start_row(tmp_path, str(spawn_id), HarnessId.OPENCODE, None)
-    connection = _FakeResidentConnection(HarnessId.OPENCODE)
-    manager = await _start_manager(tmp_path, connection, spawn_id=spawn_id)
+    start_row(tmp_path, str(spawn_id), HarnessId.OPENCODE, None)
+    connection = FakeResidentConnection(HarnessId.OPENCODE)
+    manager = await start_manager(tmp_path, connection, spawn_id=spawn_id)
 
-    connection.emit(_event(HarnessId.OPENCODE, "session.idle", {}))
+    connection.emit(resident_event(HarnessId.OPENCODE, "session.idle", {}))
 
     try:
         outcome = await asyncio.wait_for(manager.wait_for_completion(spawn_id), timeout=0.5)
@@ -312,13 +73,13 @@ async def test_opencode_child_session_idle_does_not_finalize_parent(
     tmp_path: Path,
 ) -> None:
     spawn_id = SpawnId("p1")
-    _start_row(tmp_path, str(spawn_id), HarnessId.OPENCODE, None)
-    connection = _FakeResidentConnection(HarnessId.OPENCODE)
-    manager = await _start_manager(tmp_path, connection, spawn_id=spawn_id)
+    start_row(tmp_path, str(spawn_id), HarnessId.OPENCODE, None)
+    connection = FakeResidentConnection(HarnessId.OPENCODE)
+    manager = await start_manager(tmp_path, connection, spawn_id=spawn_id)
     subscriber = manager.subscribe(spawn_id)
     assert subscriber is not None
 
-    child_idle = _event(
+    child_idle = resident_event(
         HarnessId.OPENCODE,
         "session.idle",
         {"type": "session.idle", "properties": {"sessionID": "ses-child"}},
@@ -335,7 +96,7 @@ async def test_opencode_child_session_idle_does_not_finalize_parent(
             )
 
         connection.emit(
-            _event(
+            resident_event(
                 HarnessId.OPENCODE,
                 "session.idle",
                 {"type": "session.idle", "properties": {"sessionID": "ses-resident"}},
@@ -353,12 +114,12 @@ async def test_opencode_child_session_error_does_not_fail_parent(
     tmp_path: Path,
 ) -> None:
     spawn_id = SpawnId("p1")
-    _start_row(tmp_path, str(spawn_id), HarnessId.OPENCODE, None)
-    connection = _FakeResidentConnection(HarnessId.OPENCODE)
-    manager = await _start_manager(tmp_path, connection, spawn_id=spawn_id)
+    start_row(tmp_path, str(spawn_id), HarnessId.OPENCODE, None)
+    connection = FakeResidentConnection(HarnessId.OPENCODE)
+    manager = await start_manager(tmp_path, connection, spawn_id=spawn_id)
 
     connection.emit(
-        _event(
+        resident_event(
             HarnessId.OPENCODE,
             "session.error",
             {"type": "session.error", "properties": {"sessionID": "ses-child"}},
@@ -373,7 +134,7 @@ async def test_opencode_child_session_error_does_not_fail_parent(
             )
 
         connection.emit(
-            _event(
+            resident_event(
                 HarnessId.OPENCODE,
                 "session.idle",
                 {"type": "session.idle", "properties": {"sessionID": "ses-resident"}},
@@ -400,9 +161,9 @@ async def test_resident_persistent_policy_emits_boundary_and_stays_alive(
     event_type: str,
 ) -> None:
     spawn_id = SpawnId("p1")
-    _start_row(tmp_path, str(spawn_id), harness_id, None)
-    connection = _FakeResidentConnection(harness_id)
-    manager = await _start_manager(
+    start_row(tmp_path, str(spawn_id), harness_id, None)
+    connection = FakeResidentConnection(harness_id)
+    manager = await start_manager(
         tmp_path,
         connection,
         spawn_id=spawn_id,
@@ -411,10 +172,10 @@ async def test_resident_persistent_policy_emits_boundary_and_stays_alive(
     subscriber = manager.subscribe(spawn_id)
     assert subscriber is not None
 
-    connection.emit(_event(harness_id, event_type, {}))
+    connection.emit(resident_event(harness_id, event_type, {}))
 
     try:
-        await _next_turn_boundary(subscriber)
+        await next_turn_boundary(subscriber)
         with pytest.raises(asyncio.TimeoutError):
             await asyncio.wait_for(
                 asyncio.shield(manager.wait_for_completion(spawn_id)),
@@ -432,12 +193,12 @@ async def test_opencode_terminal_success_resides_until_child_finishes(
 ) -> None:
     spawn_id = SpawnId("p1")
     child_id = SpawnId("p2")
-    _start_row(tmp_path, str(spawn_id), HarnessId.OPENCODE, None)
-    _start_row(tmp_path, str(child_id), HarnessId.CODEX, str(spawn_id))
-    connection = _FakeResidentConnection(HarnessId.OPENCODE)
-    manager = await _start_manager(tmp_path, connection, spawn_id=spawn_id)
+    start_row(tmp_path, str(spawn_id), HarnessId.OPENCODE, None)
+    start_row(tmp_path, str(child_id), HarnessId.CODEX, str(spawn_id))
+    connection = FakeResidentConnection(HarnessId.OPENCODE)
+    manager = await start_manager(tmp_path, connection, spawn_id=spawn_id)
 
-    connection.emit(_event(HarnessId.OPENCODE, "session.idle", {}))
+    connection.emit(resident_event(HarnessId.OPENCODE, "session.idle", {}))
 
     try:
         with pytest.raises(asyncio.TimeoutError):
@@ -469,17 +230,17 @@ async def test_resident_reconciles_finalizing_child_with_durable_report_as_done(
 ) -> None:
     spawn_id = SpawnId("p1")
     child_id = SpawnId("p2")
-    _start_row(tmp_path, str(spawn_id), HarnessId.OPENCODE, None)
-    _start_row(tmp_path, str(child_id), HarnessId.CODEX, str(spawn_id))
+    start_row(tmp_path, str(spawn_id), HarnessId.OPENCODE, None)
+    start_row(tmp_path, str(child_id), HarnessId.CODEX, str(spawn_id))
     spawn_store.mark_finalizing(tmp_path, child_id)
     (tmp_path / "spawns" / str(child_id) / "report.md").write_text(
         "# Report\n\nChild completed.\n",
         encoding="utf-8",
     )
-    connection = _FakeResidentConnection(HarnessId.OPENCODE)
-    manager = await _start_manager(tmp_path, connection, spawn_id=spawn_id)
+    connection = FakeResidentConnection(HarnessId.OPENCODE)
+    manager = await start_manager(tmp_path, connection, spawn_id=spawn_id)
 
-    connection.emit(_event(HarnessId.OPENCODE, "session.idle", {}))
+    connection.emit(resident_event(HarnessId.OPENCODE, "session.idle", {}))
 
     try:
         outcome = await asyncio.wait_for(manager.wait_for_completion(spawn_id), timeout=0.5)
@@ -496,13 +257,13 @@ async def test_resident_still_waits_on_genuinely_active_finalizing_child(
 ) -> None:
     spawn_id = SpawnId("p1")
     child_id = SpawnId("p2")
-    _start_row(tmp_path, str(spawn_id), HarnessId.OPENCODE, None)
-    _start_row(tmp_path, str(child_id), HarnessId.CODEX, str(spawn_id))
+    start_row(tmp_path, str(spawn_id), HarnessId.OPENCODE, None)
+    start_row(tmp_path, str(child_id), HarnessId.CODEX, str(spawn_id))
     spawn_store.mark_finalizing(tmp_path, child_id)
-    connection = _FakeResidentConnection(HarnessId.OPENCODE)
-    manager = await _start_manager(tmp_path, connection, spawn_id=spawn_id)
+    connection = FakeResidentConnection(HarnessId.OPENCODE)
+    manager = await start_manager(tmp_path, connection, spawn_id=spawn_id)
 
-    connection.emit(_event(HarnessId.OPENCODE, "session.idle", {}))
+    connection.emit(resident_event(HarnessId.OPENCODE, "session.idle", {}))
 
     try:
         with pytest.raises(asyncio.TimeoutError):
@@ -517,20 +278,20 @@ async def test_resident_still_waits_on_genuinely_active_finalizing_child(
 
 
 @pytest.mark.asyncio
-async def test_done_signal_at_terminal_event_wins_over_outstanding_child(
+async def test_done_signal_at_terminalresident_event_wins_over_outstanding_child(
     tmp_path: Path,
 ) -> None:
     from meridian.lib.state.spawn_signals import write_spawn_signal
 
     spawn_id = SpawnId("p1")
-    _start_row(tmp_path, str(spawn_id), HarnessId.OPENCODE, None)
-    _start_row(tmp_path, "p2", HarnessId.CODEX, str(spawn_id))
+    start_row(tmp_path, str(spawn_id), HarnessId.OPENCODE, None)
+    start_row(tmp_path, "p2", HarnessId.CODEX, str(spawn_id))
     write_spawn_signal(tmp_path, spawn_id, "done")
     write_spawn_signal(tmp_path, spawn_id, "rearm")
-    connection = _FakeResidentConnection(HarnessId.OPENCODE)
-    manager = await _start_manager(tmp_path, connection, spawn_id=spawn_id)
+    connection = FakeResidentConnection(HarnessId.OPENCODE)
+    manager = await start_manager(tmp_path, connection, spawn_id=spawn_id)
 
-    connection.emit(_event(HarnessId.OPENCODE, "session.idle", {}))
+    connection.emit(resident_event(HarnessId.OPENCODE, "session.idle", {}))
 
     try:
         outcome = await asyncio.wait_for(manager.wait_for_completion(spawn_id), timeout=0.5)
@@ -552,17 +313,17 @@ async def test_spawn_done_op_releases_resident_wait_via_environment_default(
     runtime_root = prepared.runtime_root
     assert runtime_root is not None
     spawn_id = SpawnId("p1")
-    _start_row(runtime_root, str(spawn_id), HarnessId.OPENCODE, None)
-    _start_row(runtime_root, "p2", HarnessId.CODEX, str(spawn_id))
-    connection = _FakeResidentConnection(HarnessId.OPENCODE)
-    manager = await _start_manager(
+    start_row(runtime_root, str(spawn_id), HarnessId.OPENCODE, None)
+    start_row(runtime_root, "p2", HarnessId.CODEX, str(spawn_id))
+    connection = FakeResidentConnection(HarnessId.OPENCODE)
+    manager = await start_manager(
         runtime_root,
         connection,
         spawn_id=spawn_id,
         project_root=project_root,
     )
 
-    connection.emit(_event(HarnessId.OPENCODE, "session.idle", {}))
+    connection.emit(resident_event(HarnessId.OPENCODE, "session.idle", {}))
     completion_task = asyncio.create_task(manager.wait_for_completion(spawn_id))
 
     try:
@@ -591,10 +352,10 @@ async def test_spawn_rearm_op_extends_resident_deadline(
     runtime_root = prepared.runtime_root
     assert runtime_root is not None
     spawn_id = SpawnId("p1")
-    _start_row(runtime_root, str(spawn_id), HarnessId.CODEX, None)
-    _start_row(runtime_root, "p2", HarnessId.CODEX, str(spawn_id))
-    connection = _FakeResidentConnection(HarnessId.CODEX)
-    manager = await _start_manager(
+    start_row(runtime_root, str(spawn_id), HarnessId.CODEX, None)
+    start_row(runtime_root, "p2", HarnessId.CODEX, str(spawn_id))
+    connection = FakeResidentConnection(HarnessId.CODEX)
+    manager = await start_manager(
         runtime_root,
         connection,
         spawn_id=spawn_id,
@@ -603,7 +364,7 @@ async def test_spawn_rearm_op_extends_resident_deadline(
         resident_poll_seconds=0.01,
     )
 
-    connection.emit(_event(HarnessId.CODEX, "turn/completed", {}))
+    connection.emit(resident_event(HarnessId.CODEX, "turn/completed", {}))
     completion_task = asyncio.create_task(manager.wait_for_completion(spawn_id))
 
     try:
@@ -635,17 +396,17 @@ async def test_spawn_rearm_op_extends_resident_deadline(
 @pytest.mark.asyncio
 async def test_resident_wait_fans_out_turn_boundary_to_subscriber(tmp_path: Path) -> None:
     spawn_id = SpawnId("p1")
-    _start_row(tmp_path, str(spawn_id), HarnessId.CODEX, None)
-    _start_row(tmp_path, "p2", HarnessId.OPENCODE, str(spawn_id))
-    connection = _FakeResidentConnection(HarnessId.CODEX)
-    manager = await _start_manager(tmp_path, connection, spawn_id=spawn_id)
+    start_row(tmp_path, str(spawn_id), HarnessId.CODEX, None)
+    start_row(tmp_path, "p2", HarnessId.OPENCODE, str(spawn_id))
+    connection = FakeResidentConnection(HarnessId.CODEX)
+    manager = await start_manager(tmp_path, connection, spawn_id=spawn_id)
     subscriber = manager.subscribe(spawn_id)
     assert subscriber is not None
 
-    connection.emit(_event(HarnessId.CODEX, "turn/completed", {}))
+    connection.emit(resident_event(HarnessId.CODEX, "turn/completed", {}))
 
     try:
-        boundary = await _next_turn_boundary(subscriber)
+        boundary = await next_turn_boundary(subscriber)
         assert boundary.payload["status"] == "succeeded"
         with pytest.raises(asyncio.TimeoutError):
             await asyncio.wait_for(
@@ -657,17 +418,17 @@ async def test_resident_wait_fans_out_turn_boundary_to_subscriber(tmp_path: Path
 
 
 @pytest.mark.asyncio
-async def test_child_written_before_terminal_event_is_processed_prevents_early_finalize(
+async def test_child_written_before_terminalresident_event_is_processed_prevents_early_finalize(
     tmp_path: Path,
 ) -> None:
     spawn_id = SpawnId("p1")
     child_id = SpawnId("p2")
-    _start_row(tmp_path, str(spawn_id), HarnessId.CODEX, None)
-    connection = _FakeResidentConnection(HarnessId.CODEX)
-    manager = await _start_manager(tmp_path, connection, spawn_id=spawn_id)
+    start_row(tmp_path, str(spawn_id), HarnessId.CODEX, None)
+    connection = FakeResidentConnection(HarnessId.CODEX)
+    manager = await start_manager(tmp_path, connection, spawn_id=spawn_id)
 
-    connection.emit(_event(HarnessId.CODEX, "turn/completed", {}))
-    _start_row(tmp_path, str(child_id), HarnessId.OPENCODE, str(spawn_id))
+    connection.emit(resident_event(HarnessId.CODEX, "turn/completed", {}))
+    start_row(tmp_path, str(child_id), HarnessId.OPENCODE, str(spawn_id))
 
     try:
         with pytest.raises(asyncio.TimeoutError):
@@ -688,12 +449,12 @@ async def test_resident_stream_close_with_dead_backend_fails_while_child_running
     tmp_path: Path,
 ) -> None:
     spawn_id = SpawnId("p1")
-    _start_row(tmp_path, str(spawn_id), HarnessId.OPENCODE, None)
-    _start_row(tmp_path, "p2", HarnessId.CODEX, str(spawn_id))
-    connection = _FakeResidentConnection(HarnessId.OPENCODE)
-    manager = await _start_manager(tmp_path, connection, spawn_id=spawn_id)
+    start_row(tmp_path, str(spawn_id), HarnessId.OPENCODE, None)
+    start_row(tmp_path, "p2", HarnessId.CODEX, str(spawn_id))
+    connection = FakeResidentConnection(HarnessId.OPENCODE)
+    manager = await start_manager(tmp_path, connection, spawn_id=spawn_id)
 
-    connection.emit(_event(HarnessId.OPENCODE, "session.idle", {}))
+    connection.emit(resident_event(HarnessId.OPENCODE, "session.idle", {}))
 
     try:
         with pytest.raises(asyncio.TimeoutError):
@@ -717,12 +478,12 @@ async def test_resident_stream_close_with_stalled_backend_is_not_dead_outcome(
     tmp_path: Path,
 ) -> None:
     spawn_id = SpawnId("p1")
-    _start_row(tmp_path, str(spawn_id), HarnessId.OPENCODE, None)
-    _start_row(tmp_path, "p2", HarnessId.CODEX, str(spawn_id))
-    connection = _FakeResidentConnection(HarnessId.OPENCODE)
-    manager = await _start_manager(tmp_path, connection, spawn_id=spawn_id)
+    start_row(tmp_path, str(spawn_id), HarnessId.OPENCODE, None)
+    start_row(tmp_path, "p2", HarnessId.CODEX, str(spawn_id))
+    connection = FakeResidentConnection(HarnessId.OPENCODE)
+    manager = await start_manager(tmp_path, connection, spawn_id=spawn_id)
 
-    connection.emit(_event(HarnessId.OPENCODE, "session.idle", {}))
+    connection.emit(resident_event(HarnessId.OPENCODE, "session.idle", {}))
 
     try:
         with pytest.raises(asyncio.TimeoutError):
@@ -747,8 +508,8 @@ async def test_codex_resident_deadline_waits_then_reaps_live_child(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     spawn_id = SpawnId("p1")
-    _start_row(tmp_path, str(spawn_id), HarnessId.CODEX, None)
-    _start_row(tmp_path, "p2", HarnessId.CODEX, str(spawn_id))
+    start_row(tmp_path, str(spawn_id), HarnessId.CODEX, None)
+    start_row(tmp_path, "p2", HarnessId.CODEX, str(spawn_id))
     from meridian.lib.bootstrap import services as bootstrap_services
     from meridian.lib.state.spawn_tree import active_descendants
 
@@ -775,8 +536,8 @@ async def test_codex_resident_deadline_waits_then_reaps_live_child(
         "build_spawn_application_service_from_roots",
         lambda _project_root, _runtime_root: _FakeService(),
     )
-    connection = _FakeResidentConnection(HarnessId.CODEX)
-    manager = await _start_manager(
+    connection = FakeResidentConnection(HarnessId.CODEX)
+    manager = await start_manager(
         tmp_path,
         connection,
         spawn_id=spawn_id,
@@ -784,7 +545,7 @@ async def test_codex_resident_deadline_waits_then_reaps_live_child(
         resident_poll_seconds=0.01,
     )
 
-    connection.emit(_event(HarnessId.CODEX, "turn/completed", {}))
+    connection.emit(resident_event(HarnessId.CODEX, "turn/completed", {}))
     completion_task = asyncio.create_task(manager.wait_for_completion(spawn_id))
 
     try:
@@ -808,19 +569,19 @@ async def test_codex_resident_deadline_waits_then_reaps_live_child(
 async def test_codex_resident_finalization_preserves_artifact_report(tmp_path: Path) -> None:
     spawn_id = SpawnId("p1")
     child_id = SpawnId("p2")
-    _start_row(tmp_path, str(spawn_id), HarnessId.CODEX, None)
-    _start_row(tmp_path, str(child_id), HarnessId.OPENCODE, str(spawn_id))
-    connection = _FakeResidentConnection(HarnessId.CODEX)
-    manager = await _start_manager(tmp_path, connection, spawn_id=spawn_id)
+    start_row(tmp_path, str(spawn_id), HarnessId.CODEX, None)
+    start_row(tmp_path, str(child_id), HarnessId.OPENCODE, str(spawn_id))
+    connection = FakeResidentConnection(HarnessId.CODEX)
+    manager = await start_manager(tmp_path, connection, spawn_id=spawn_id)
 
     connection.emit(
-        _event(
+        resident_event(
             HarnessId.CODEX,
             "item/completed",
             {"item": {"type": "agentMessage", "text": "Resident report."}},
         )
     )
-    connection.emit(_event(HarnessId.CODEX, "turn/completed", {}))
+    connection.emit(resident_event(HarnessId.CODEX, "turn/completed", {}))
 
     try:
         with pytest.raises(asyncio.TimeoutError):
@@ -845,27 +606,6 @@ async def test_codex_resident_finalization_preserves_artifact_report(tmp_path: P
         await manager.stop_spawn(spawn_id)
 
 
-def _coordinator_with_clock(
-    tmp_path: Path,
-    connection: _FakeResidentConnection,
-    clock: FakeClock,
-    *,
-    deadline_seconds: float = 3300.0,
-    poll_seconds: float = 5.0,
-) -> ResidentDrainCoordinator:
-    coordinator = ResidentDrainCoordinator.for_connection(
-        project_root=tmp_path,
-        runtime_root=tmp_path,
-        spawn_id=SpawnId("p1"),
-        receiver=connection,
-        resident_backend=connection.resident_backend,
-        deadline_seconds=deadline_seconds,
-        poll_seconds=poll_seconds,
-    )
-    coordinator.pending_outcome = TerminalEventOutcome(status="succeeded", exit_code=0)
-    coordinator.deadline_monotonic = clock.monotonic() + deadline_seconds
-    coordinator._set_awaiting_done(True)
-    return coordinator
 
 
 @pytest.mark.asyncio
@@ -878,9 +618,9 @@ async def test_rearm_signal_extends_deadline_and_injects_only_after_cadence(
 
     clock = FakeClock(start=100.0)
     monkeypatch.setattr(resident_drain_module.time, "monotonic", clock.monotonic)
-    _start_row(tmp_path, "p1", HarnessId.CODEX, None)
-    connection = _FakeResidentConnection(HarnessId.CODEX)
-    coordinator = _coordinator_with_clock(tmp_path, connection, clock, deadline_seconds=3300.0)
+    start_row(tmp_path, "p1", HarnessId.CODEX, None)
+    connection = FakeResidentConnection(HarnessId.CODEX)
+    coordinator = coordinator_with_clock(tmp_path, connection, clock, deadline_seconds=3300.0)
 
     clock.advance(10.0)
     write_spawn_signal(tmp_path, "p1", "rearm")
@@ -922,9 +662,9 @@ async def test_active_followup_turn_stays_resident_honors_done_and_defers_poll(
 
     clock = FakeClock(start=100.0)
     monkeypatch.setattr(resident_drain_module.time, "monotonic", clock.monotonic)
-    _start_row(tmp_path, "p1", HarnessId.CODEX, None)
-    connection = _FakeResidentConnection(HarnessId.CODEX)
-    coordinator = _coordinator_with_clock(tmp_path, connection, clock, deadline_seconds=300.0)
+    start_row(tmp_path, "p1", HarnessId.CODEX, None)
+    connection = FakeResidentConnection(HarnessId.CODEX)
+    coordinator = coordinator_with_clock(tmp_path, connection, clock, deadline_seconds=300.0)
     coordinator.resident_requested = True
     coordinator.next_inject_monotonic = clock.monotonic()
 
@@ -955,9 +695,9 @@ async def test_active_followup_turn_still_enforces_deadline(
 
     clock = FakeClock(start=0.0)
     monkeypatch.setattr(resident_drain_module.time, "monotonic", clock.monotonic)
-    _start_row(tmp_path, "p1", HarnessId.CODEX, None)
-    connection = _FakeResidentConnection(HarnessId.CODEX)
-    coordinator = _coordinator_with_clock(tmp_path, connection, clock, deadline_seconds=10.0)
+    start_row(tmp_path, "p1", HarnessId.CODEX, None)
+    connection = FakeResidentConnection(HarnessId.CODEX)
+    coordinator = coordinator_with_clock(tmp_path, connection, clock, deadline_seconds=10.0)
     coordinator.observe_activity_transition("turn_active")
 
     clock.advance(10.0)
@@ -978,9 +718,9 @@ async def test_deadline_returns_timed_out_when_descendant_reap_fails(
 
     clock = FakeClock(start=0.0)
     monkeypatch.setattr(resident_drain_module.time, "monotonic", clock.monotonic)
-    _start_row(tmp_path, "p1", HarnessId.CODEX, None)
-    connection = _FakeResidentConnection(HarnessId.CODEX)
-    coordinator = _coordinator_with_clock(tmp_path, connection, clock, deadline_seconds=10.0)
+    start_row(tmp_path, "p1", HarnessId.CODEX, None)
+    connection = FakeResidentConnection(HarnessId.CODEX)
+    coordinator = coordinator_with_clock(tmp_path, connection, clock, deadline_seconds=10.0)
 
     class _FailingService:
         async def cancel_descendants(self, root_id: SpawnId) -> set[str]:
@@ -1012,12 +752,12 @@ async def test_deadline_reap_cancels_active_descendant_cli_spawns(
 
     clock = FakeClock(start=0.0)
     monkeypatch.setattr(resident_drain_module.time, "monotonic", clock.monotonic)
-    _start_row(tmp_path, "p1", HarnessId.CODEX, None)
-    _start_row(tmp_path, "p2", HarnessId.OPENCODE, "p1")
-    _start_row(tmp_path, "p3", HarnessId.OPENCODE, "p1")
+    start_row(tmp_path, "p1", HarnessId.CODEX, None)
+    start_row(tmp_path, "p2", HarnessId.OPENCODE, "p1")
+    start_row(tmp_path, "p3", HarnessId.OPENCODE, "p1")
     spawn_store.finalize_spawn(tmp_path, SpawnId("p3"), "succeeded", 0, origin="runner")
-    connection = _FakeResidentConnection(HarnessId.CODEX)
-    coordinator = _coordinator_with_clock(tmp_path, connection, clock, deadline_seconds=10.0)
+    connection = FakeResidentConnection(HarnessId.CODEX)
+    coordinator = coordinator_with_clock(tmp_path, connection, clock, deadline_seconds=10.0)
     cancelled: list[str] = []
 
     class _FakeService:
@@ -1062,10 +802,10 @@ async def test_done_signal_is_honored_with_tracked_child_outstanding(
 ) -> None:
     from meridian.lib.state.spawn_signals import write_spawn_signal
 
-    _start_row(tmp_path, "p1", HarnessId.OPENCODE, None)
-    _start_row(tmp_path, "p2", HarnessId.CODEX, "p1")
-    connection = _FakeResidentConnection(HarnessId.OPENCODE)
-    coordinator = _awaiting_done_coordinator(tmp_path, connection)
+    start_row(tmp_path, "p1", HarnessId.OPENCODE, None)
+    start_row(tmp_path, "p2", HarnessId.CODEX, "p1")
+    connection = FakeResidentConnection(HarnessId.OPENCODE)
+    coordinator = awaiting_done_coordinator(tmp_path, connection)
 
     write_spawn_signal(tmp_path, "p1", "done")
     decision = await coordinator.handle_timeout()

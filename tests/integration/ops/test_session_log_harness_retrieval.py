@@ -7,9 +7,9 @@ each harness type (opencode, codex, claude) using env-var overrides.
 """
 
 import json
-import sqlite3
 from pathlib import Path
 
+import pytest
 from pytest import MonkeyPatch
 
 from meridian.lib.harness.claude import project_slug
@@ -17,6 +17,10 @@ from meridian.lib.launch.constants import HISTORY_FILENAME
 from meridian.lib.ops.session_log import SessionLogInput, session_log_sync
 from meridian.lib.state import session_store, spawn_store
 from meridian.lib.state.paths import resolve_project_runtime_root
+from tests.support.opencode_db import (
+    write_opencode_db_session,
+    write_opencode_db_session_with_parts,
+)
 
 
 def _write_codex_rollout(
@@ -84,139 +88,6 @@ def _write_claude_session(
     return session_path
 
 
-def _write_opencode_db_session(
-    *,
-    db_path: Path,
-    session_id: str,
-    messages: list[tuple[str, str]],
-) -> None:
-    db_path.parent.mkdir(parents=True, exist_ok=True)
-    with sqlite3.connect(db_path) as connection:
-        connection.executescript(
-            """
-            CREATE TABLE session (
-                id TEXT PRIMARY KEY,
-                time_created INTEGER NOT NULL,
-                time_updated INTEGER NOT NULL
-            );
-            CREATE TABLE message (
-                id TEXT PRIMARY KEY,
-                session_id TEXT NOT NULL,
-                time_created INTEGER NOT NULL,
-                time_updated INTEGER NOT NULL,
-                data TEXT NOT NULL
-            );
-            CREATE TABLE part (
-                id TEXT PRIMARY KEY,
-                message_id TEXT NOT NULL,
-                session_id TEXT NOT NULL,
-                time_created INTEGER NOT NULL,
-                time_updated INTEGER NOT NULL,
-                data TEXT NOT NULL
-            );
-            """
-        )
-        now = 1_778_945_817_030
-        connection.execute(
-            "INSERT INTO session (id, time_created, time_updated) VALUES (?, ?, ?)",
-            (session_id, now, now),
-        )
-        for index, (role, text) in enumerate(messages):
-            timestamp = now + index
-            message_id = f"msg_{index}"
-            part_id = f"prt_{index}"
-            connection.execute(
-                "INSERT INTO message "
-                "(id, session_id, time_created, time_updated, data) "
-                "VALUES (?, ?, ?, ?, ?)",
-                (
-                    message_id,
-                    session_id,
-                    timestamp,
-                    timestamp,
-                    json.dumps({"role": role, "time": {"created": timestamp}}),
-                ),
-            )
-            connection.execute(
-                "INSERT INTO part (id, message_id, session_id, time_created, time_updated, data) "
-                "VALUES (?, ?, ?, ?, ?, ?)",
-                (
-                    part_id,
-                    message_id,
-                    session_id,
-                    timestamp,
-                    timestamp,
-                    json.dumps({"type": "text", "text": text}),
-                ),
-            )
-        connection.commit()
-
-
-def _write_opencode_db_session_with_parts(
-    *,
-    db_path: Path,
-    session_id: str,
-    messages: list[tuple[str, dict[str, object], list[dict[str, object]]]],
-) -> None:
-    db_path.parent.mkdir(parents=True, exist_ok=True)
-    with sqlite3.connect(db_path) as connection:
-        connection.executescript(
-            """
-            CREATE TABLE session (
-                id TEXT PRIMARY KEY,
-                time_created INTEGER NOT NULL,
-                time_updated INTEGER NOT NULL
-            );
-            CREATE TABLE message (
-                id TEXT PRIMARY KEY,
-                session_id TEXT NOT NULL,
-                time_created INTEGER NOT NULL,
-                time_updated INTEGER NOT NULL,
-                data TEXT NOT NULL
-            );
-            CREATE TABLE part (
-                id TEXT PRIMARY KEY,
-                message_id TEXT NOT NULL,
-                session_id TEXT NOT NULL,
-                time_created INTEGER NOT NULL,
-                time_updated INTEGER NOT NULL,
-                data TEXT NOT NULL
-            );
-            """
-        )
-        now = 1_778_945_817_030
-        connection.execute(
-            "INSERT INTO session (id, time_created, time_updated) VALUES (?, ?, ?)",
-            (session_id, now, now),
-        )
-        for message_index, (role, message_data, parts) in enumerate(messages):
-            timestamp = now + (message_index * 100)
-            message_id = f"msg_{message_index}"
-            payload = {"role": role, "time": {"created": timestamp}, **message_data}
-            connection.execute(
-                "INSERT INTO message "
-                "(id, session_id, time_created, time_updated, data) "
-                "VALUES (?, ?, ?, ?, ?)",
-                (message_id, session_id, timestamp, timestamp, json.dumps(payload)),
-            )
-            for part_index, part in enumerate(parts):
-                part_timestamp = timestamp + part_index + 1
-                connection.execute(
-                    "INSERT INTO part "
-                    "(id, message_id, session_id, time_created, time_updated, data) "
-                    "VALUES (?, ?, ?, ?, ?, ?)",
-                    (
-                        f"prt_{message_index}_{part_index}",
-                        message_id,
-                        session_id,
-                        part_timestamp,
-                        part_timestamp,
-                        json.dumps(part),
-                    ),
-                )
-        connection.commit()
-
-
 def test_session_log_resolves_opencode_db_transcript_when_session_diff_is_empty(
     tmp_path: Path,
     monkeypatch: MonkeyPatch,
@@ -231,7 +102,7 @@ def test_session_log_resolves_opencode_db_transcript_when_session_diff_is_empty(
     session_file = xdg_data_home / "opencode" / "storage" / "session_diff" / f"{session_id}.json"
     session_file.parent.mkdir(parents=True)
     session_file.write_text("[]\n", encoding="utf-8")
-    _write_opencode_db_session(
+    write_opencode_db_session(
         db_path=xdg_data_home / "opencode" / "opencode.db",
         session_id=session_id,
         messages=[
@@ -280,7 +151,7 @@ def test_session_log_resolves_opencode_db_without_legacy_session_file(
 
     xdg_data_home = tmp_path / "xdg-data"
     session_id = "ses_fixture_db_only_12345"
-    _write_opencode_db_session_with_parts(
+    write_opencode_db_session_with_parts(
         db_path=xdg_data_home / "opencode" / "opencode.db",
         session_id=session_id,
         messages=[
@@ -345,7 +216,7 @@ def test_session_log_renders_opencode_db_completed_tool_parts(
     xdg_data_home = tmp_path / "xdg-data"
     session_id = "ses_fixture_db_tool_12345"
     target_path = "/tmp/opencode-write.txt"
-    _write_opencode_db_session_with_parts(
+    write_opencode_db_session_with_parts(
         db_path=xdg_data_home / "opencode" / "opencode.db",
         session_id=session_id,
         messages=[
@@ -415,7 +286,7 @@ def test_session_log_default_render_shows_completed_opencode_task_result(
 
     xdg_data_home = tmp_path / "xdg-data"
     session_id = "ses_fixture_db_task_12345"
-    _write_opencode_db_session_with_parts(
+    write_opencode_db_session_with_parts(
         db_path=xdg_data_home / "opencode" / "opencode.db",
         session_id=session_id,
         messages=[
@@ -483,7 +354,7 @@ def test_session_log_renders_opencode_db_compaction_as_segment_handoff(
 
     xdg_data_home = tmp_path / "xdg-data"
     session_id = "ses_fixture_db_compaction_12345"
-    _write_opencode_db_session_with_parts(
+    write_opencode_db_session_with_parts(
         db_path=xdg_data_home / "opencode" / "opencode.db",
         session_id=session_id,
         messages=[
@@ -547,7 +418,7 @@ def test_session_log_falls_back_to_legacy_opencode_json_when_db_has_no_messages(
         json.dumps({"role": "assistant", "content": "legacy JSON transcript"}) + "\n",
         encoding="utf-8",
     )
-    _write_opencode_db_session_with_parts(
+    write_opencode_db_session_with_parts(
         db_path=xdg_data_home / "opencode" / "opencode.db",
         session_id=session_id,
         messages=[],
@@ -581,9 +452,47 @@ def test_session_log_falls_back_to_legacy_opencode_json_when_db_has_no_messages(
     ]
 
 
+def _write_spawn_history(runtime_root: Path, spawn_id: str, text: str) -> None:
+    history_path = runtime_root / "spawns" / spawn_id / HISTORY_FILENAME
+    history_path.write_text(
+        json.dumps(
+            {
+                "event_type": "response_item",
+                "payload": {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{"type": "output_text", "text": text}],
+                },
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+
+@pytest.mark.parametrize(
+    ("ref_kind", "ref", "track_session", "expected_session_id", "history_text"),
+    [
+        ("spawn", "p1", False, "p1", "spawn history transcript"),
+        ("chat", "c1", True, "c1", "chat ref spawn history transcript"),
+        ("raw", "session", True, "session", "raw ref spawn history transcript"),
+        (
+            "raw-untracked",
+            "session",
+            False,
+            "session",
+            "untracked raw ref spawn history transcript",
+        ),
+    ],
+)
 def test_session_log_falls_back_to_spawn_history_when_opencode_db_has_no_messages(
     tmp_path: Path,
     monkeypatch: MonkeyPatch,
+    ref_kind: str,
+    ref: str,
+    track_session: bool,
+    expected_session_id: str,
+    history_text: str,
 ) -> None:
     project_root = tmp_path / "repo"
     project_root.mkdir()
@@ -591,14 +500,23 @@ def test_session_log_falls_back_to_spawn_history_when_opencode_db_has_no_message
     runtime_root.mkdir(parents=True, exist_ok=True)
 
     xdg_data_home = tmp_path / "xdg-data"
-    session_id = "ses_fixture_empty_db_spawn_history_12345"
-    _write_opencode_db_session_with_parts(
+    session_id = f"ses_fixture_empty_db_{ref_kind}_history_12345"
+    write_opencode_db_session_with_parts(
         db_path=xdg_data_home / "opencode" / "opencode.db",
         session_id=session_id,
         messages=[],
     )
     monkeypatch.setenv("XDG_DATA_HOME", xdg_data_home.as_posix())
 
+    if track_session:
+        session_store.start_session(
+            runtime_root,
+            harness="opencode",
+            harness_session_id=session_id,
+            model="gpt-5.3-codex",
+            chat_id="c1",
+            spawn_id="p1",
+        )
     spawn_store.start_spawn(
         runtime_root,
         chat_id="c1",
@@ -610,240 +528,20 @@ def test_session_log_falls_back_to_spawn_history_when_opencode_db_has_no_message
         harness_session_id=session_id,
         started_at="2026-04-11T00:00:00Z",
     )
-    history_path = runtime_root / "spawns" / "p1" / HISTORY_FILENAME
-    history_path.write_text(
-        json.dumps(
-            {
-                "event_type": "response_item",
-                "payload": {
-                    "type": "message",
-                    "role": "assistant",
-                    "content": [
-                        {"type": "output_text", "text": "spawn history transcript"}
-                    ],
-                },
-            }
-        )
-        + "\n",
-        encoding="utf-8",
-    )
+    _write_spawn_history(runtime_root, "p1", history_text)
 
+    resolved_ref = session_id if ref == "session" else ref
     output = session_log_sync(
-        SessionLogInput(
-            ref="p1",
-            project_root=project_root.as_posix(),
-            full=True,
-        )
+        SessionLogInput(ref=resolved_ref, project_root=project_root.as_posix(), full=True)
     )
 
-    assert output.session_id == "p1"
+    expected_output_session_id = (
+        session_id if expected_session_id == "session" else expected_session_id
+    )
+    assert output.session_id == expected_output_session_id
     assert output.source == "spawn p1 output"
     assert [(message.role, message.content) for message in output.messages] == [
-        ("assistant", "spawn history transcript")
-    ]
-
-
-def test_session_log_chat_id_falls_back_to_spawn_history_when_opencode_db_has_no_messages(
-    tmp_path: Path,
-    monkeypatch: MonkeyPatch,
-) -> None:
-    project_root = tmp_path / "repo"
-    project_root.mkdir()
-    runtime_root = resolve_project_runtime_root(project_root)
-    runtime_root.mkdir(parents=True, exist_ok=True)
-
-    xdg_data_home = tmp_path / "xdg-data"
-    session_id = "ses_fixture_empty_db_chat_history_12345"
-    _write_opencode_db_session_with_parts(
-        db_path=xdg_data_home / "opencode" / "opencode.db",
-        session_id=session_id,
-        messages=[],
-    )
-    monkeypatch.setenv("XDG_DATA_HOME", xdg_data_home.as_posix())
-
-    session_store.start_session(
-        runtime_root,
-        harness="opencode",
-        harness_session_id=session_id,
-        model="gpt-5.3-codex",
-        chat_id="c1",
-    )
-    spawn_store.start_spawn(
-        runtime_root,
-        chat_id="c1",
-        model="gpt-5.3-codex",
-        agent="coder",
-        harness="opencode",
-        prompt="hello",
-        spawn_id="p1",
-        harness_session_id=session_id,
-        started_at="2026-04-11T00:00:00Z",
-    )
-    history_path = runtime_root / "spawns" / "p1" / HISTORY_FILENAME
-    history_path.write_text(
-        json.dumps(
-            {
-                "event_type": "response_item",
-                "payload": {
-                    "type": "message",
-                    "role": "assistant",
-                    "content": [
-                        {"type": "output_text", "text": "chat ref spawn history transcript"}
-                    ],
-                },
-            }
-        )
-        + "\n",
-        encoding="utf-8",
-    )
-
-    output = session_log_sync(
-        SessionLogInput(
-            ref="c1",
-            project_root=project_root.as_posix(),
-            full=True,
-        )
-    )
-
-    assert output.session_id == "c1"
-    assert output.source == "spawn p1 output"
-    assert [(message.role, message.content) for message in output.messages] == [
-        ("assistant", "chat ref spawn history transcript")
-    ]
-
-
-def test_session_log_raw_session_id_falls_back_to_spawn_history_when_opencode_db_has_no_messages(
-    tmp_path: Path,
-    monkeypatch: MonkeyPatch,
-) -> None:
-    project_root = tmp_path / "repo"
-    project_root.mkdir()
-    runtime_root = resolve_project_runtime_root(project_root)
-    runtime_root.mkdir(parents=True, exist_ok=True)
-
-    xdg_data_home = tmp_path / "xdg-data"
-    session_id = "ses_fixture_empty_db_raw_ref_history_12345"
-    _write_opencode_db_session_with_parts(
-        db_path=xdg_data_home / "opencode" / "opencode.db",
-        session_id=session_id,
-        messages=[],
-    )
-    monkeypatch.setenv("XDG_DATA_HOME", xdg_data_home.as_posix())
-
-    session_store.start_session(
-        runtime_root,
-        harness="opencode",
-        harness_session_id=session_id,
-        model="gpt-5.3-codex",
-        chat_id="c1",
-        spawn_id="p1",
-    )
-    spawn_store.start_spawn(
-        runtime_root,
-        chat_id="c1",
-        model="gpt-5.3-codex",
-        agent="coder",
-        harness="opencode",
-        prompt="hello",
-        spawn_id="p1",
-        harness_session_id=session_id,
-        started_at="2026-04-11T00:00:00Z",
-    )
-    history_path = runtime_root / "spawns" / "p1" / HISTORY_FILENAME
-    history_path.write_text(
-        json.dumps(
-            {
-                "event_type": "response_item",
-                "payload": {
-                    "type": "message",
-                    "role": "assistant",
-                    "content": [
-                        {"type": "output_text", "text": "raw ref spawn history transcript"}
-                    ],
-                },
-            }
-        )
-        + "\n",
-        encoding="utf-8",
-    )
-
-    output = session_log_sync(
-        SessionLogInput(
-            ref=session_id,
-            project_root=project_root.as_posix(),
-            full=True,
-        )
-    )
-
-    assert output.session_id == session_id
-    assert output.source == "spawn p1 output"
-    assert [(message.role, message.content) for message in output.messages] == [
-        ("assistant", "raw ref spawn history transcript")
-    ]
-
-
-def test_session_log_untracked_raw_session_id_falls_back_to_spawn_history_when_db_is_empty(
-    tmp_path: Path,
-    monkeypatch: MonkeyPatch,
-) -> None:
-    project_root = tmp_path / "repo"
-    project_root.mkdir()
-    runtime_root = resolve_project_runtime_root(project_root)
-    runtime_root.mkdir(parents=True, exist_ok=True)
-
-    xdg_data_home = tmp_path / "xdg-data"
-    session_id = "ses_fixture_empty_db_untracked_raw_history_12345"
-    _write_opencode_db_session_with_parts(
-        db_path=xdg_data_home / "opencode" / "opencode.db",
-        session_id=session_id,
-        messages=[],
-    )
-    monkeypatch.setenv("XDG_DATA_HOME", xdg_data_home.as_posix())
-
-    spawn_store.start_spawn(
-        runtime_root,
-        chat_id="c1",
-        model="gpt-5.3-codex",
-        agent="coder",
-        harness="opencode",
-        prompt="hello",
-        spawn_id="p1",
-        harness_session_id=session_id,
-        started_at="2026-04-11T00:00:00Z",
-    )
-    history_path = runtime_root / "spawns" / "p1" / HISTORY_FILENAME
-    history_path.write_text(
-        json.dumps(
-            {
-                "event_type": "response_item",
-                "payload": {
-                    "type": "message",
-                    "role": "assistant",
-                    "content": [
-                        {
-                            "type": "output_text",
-                            "text": "untracked raw ref spawn history transcript",
-                        }
-                    ],
-                },
-            }
-        )
-        + "\n",
-        encoding="utf-8",
-    )
-
-    output = session_log_sync(
-        SessionLogInput(
-            ref=session_id,
-            project_root=project_root.as_posix(),
-            full=True,
-        )
-    )
-
-    assert output.session_id == session_id
-    assert output.source == "spawn p1 output"
-    assert [(message.role, message.content) for message in output.messages] == [
-        ("assistant", "untracked raw ref spawn history transcript")
+        ("assistant", history_text)
     ]
 
 
