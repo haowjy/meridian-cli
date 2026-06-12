@@ -78,6 +78,13 @@ process state. Called after the process has completed (subprocess path) or after
 drain loop exits (streaming path). `ArtifactStore` is the abstraction — do not reach
 for raw file paths.
 
+Report extraction must preserve the same parent-scope boundary as terminal
+classification. OpenCode's global event stream can include child task sessions; its
+report extractor resolves the parent session from `session_id.txt` or the first parent
+user `message.updated`, then ignores child-session assistant text. Child task output
+stays readable through `meridian session log`, but it must not become the parent
+`report.md`.
+
 ### Protocol is `@runtime_checkable`
 
 `isinstance(obj, HarnessExtractor)` works. The check tests for the presence of the

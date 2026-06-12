@@ -459,6 +459,20 @@ if event.harness_id == HarnessId.PI.value:
 by `event.harness_id` first. `turn/completed` is Codex; OpenCode uses
 `session.idle` for the same semantic.
 
+If the harness can multiplex child work on the same stream, also expose
+`HarnessConnection.primary_event_scope`. The scope identifies the parent conversation
+whose terminal events may complete the spawn. Existing examples:
+
+- Codex uses the main turn `threadId`; subagent-thread `turn/completed` events stay in
+  history but do not complete the parent.
+- OpenCode uses the launched parent `sessionID`; child task `session.idle` /
+  `session.error` events stay in history but do not complete/fail the parent, clear
+  parent signals, or supply the parent report.
+
+Only add scope filtering where the harness stream truly mixes parent and child
+activity. The drain loop must still persist child events before classification so
+`meridian session log` remains complete.
+
 ### 1.7 Permission Flag Projection
 
 **File: `src/meridian/lib/harness/projections/permission_flags.py`**

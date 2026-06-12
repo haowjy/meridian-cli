@@ -56,6 +56,13 @@ Persistence is synchronous and happens before any notification. 10 consecutive
 write failures abort the loop with a `failed` outcome. Do not reorder these stages
 — observers and the subscriber must only see events that are durably written.
 
+Terminal classification happens after persistence. The drain loop passes
+`connection.primary_event_scope` into the harness semantic helpers when a connection
+provides one. This matters for multiplexed streams: child Codex threads and child
+OpenCode task sessions are still written to `history.jsonl` and sent to observers,
+but their terminal events do not complete/fail the parent, clear parent signals, or
+drive parent activity transitions.
+
 ### DrainPlan Selection
 
 `SpawnManager._select_drain_plan()` returns the whole drain-loop configuration for
@@ -67,6 +74,10 @@ no-op coordinator class — absence of a coordinator is the plain path.
 `DrainCoordinator` stays narrow: it observes events, handles terminal events,
 provides timeouts, classifies stream close, and handles stream exit. Constant
 configuration belongs in `DrainPlan`, not in coordinator methods.
+
+Scope filtering happens before coordinator terminal handling. A child OpenCode
+`session.idle` / `session.error` produces no `TerminalEventOutcome` for the parent,
+so resident and plain drain paths never see it as a parent completion candidate.
 
 ### DrainOutcome Priority
 
