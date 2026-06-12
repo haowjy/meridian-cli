@@ -17,11 +17,11 @@ from meridian.lib.harness.common import (
     _coerce_optional_int,  # pyright: ignore[reportPrivateUsage]
     _iter_json_lines_artifact,  # pyright: ignore[reportPrivateUsage]
     coerce_optional_float,
-    extract_opencode_report,
     extract_session_id_from_artifacts_with_patterns,
     extract_usage_from_artifacts,
 )
 from meridian.lib.harness.connections.base import HarnessEvent
+from meridian.lib.harness.opencode_report import extract_opencode_report
 from meridian.lib.harness.opencode_storage import (
     iter_opencode_session_files,
     opencode_session_id_from_path,

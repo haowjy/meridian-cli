@@ -7,8 +7,8 @@ import sqlite3
 from pathlib import Path
 
 from meridian.lib.core.types import ArtifactKey, SpawnId
-from meridian.lib.harness.common import extract_opencode_report
 from meridian.lib.harness.extractors.opencode import OPENCODE_EXTRACTOR
+from meridian.lib.harness.opencode_report import extract_opencode_report
 from meridian.lib.harness.opencode_storage import resolve_opencode_storage_root
 from meridian.lib.launch.constants import HISTORY_FILENAME
 from meridian.lib.launch.report import extract_or_fallback_report

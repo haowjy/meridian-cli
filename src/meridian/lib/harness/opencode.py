@@ -37,13 +37,11 @@ from meridian.lib.harness.bundle import (
     project_subprocess_spec,
     register_harness_bundle,
 )
-from meridian.lib.harness.common import (
-    extract_opencode_report,
-    extract_session_id_from_artifacts_with_patterns,
-)
+from meridian.lib.harness.common import extract_session_id_from_artifacts_with_patterns
 from meridian.lib.harness.connections.opencode_http import OpenCodeConnection
 from meridian.lib.harness.extractors.opencode import OPENCODE_EXTRACTOR
 from meridian.lib.harness.launch_types import SessionSeed
+from meridian.lib.harness.opencode_report import extract_opencode_report
 from meridian.lib.harness.opencode_storage import resolve_opencode_session_file
 from meridian.lib.harness.projections.project_opencode_streaming import (
     project_opencode_spec_to_serve_command,

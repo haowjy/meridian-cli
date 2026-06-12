@@ -8,7 +8,8 @@ from typing import TYPE_CHECKING, Literal, cast
 
 from meridian.lib.core.domain import SpawnStatus
 from meridian.lib.core.types import HarnessId
-from meridian.lib.harness.common import extract_codex_thread_id, extract_opencode_session_id
+from meridian.lib.harness.common import extract_codex_thread_id
+from meridian.lib.harness.opencode_report import extract_opencode_session_id
 
 if TYPE_CHECKING:
     from meridian.lib.harness.connections.base import HarnessEvent
