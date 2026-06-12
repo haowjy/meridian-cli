@@ -186,7 +186,6 @@ agent_emission = "never"  # optional; agent_copy can still emit selected copies
 [settings.meridian.agent_copy]
 harnesses = ["claude"]
 include_fanout = false          # default false: skip fan-out (sub-delegate) agents
-fanout_agents = ["explorer"]    # selectively include specific fan-out agents
 ```
 
 Each listed harness must also have an effective managed target (for Claude,
@@ -198,10 +197,30 @@ unset). Mars then materializes only qualifying agents for that harness;
 `include_fanout` (default `false`) controls whether fan-out agents — sub-delegates
 listed in an agent profile's `fanout` field — are materialized as native copies.
 When `include_fanout = false`, fan-out agents are skipped even if they qualify for
-the selected harness. `fanout_agents` is a selective override: an allowlist of
-specific agent names that still qualify for fan-out emission regardless of
-`include_fanout`. The agent must still qualify for the harness via its model
-policies — `fanout_agents` is a scope filter, not a force-emit.
+the selected harness.
+
+### Fan-out agent routing
+
+`[settings.meridian.fanout]` is a peer table to `[settings.meridian.agent_copy]`,
+not nested under it:
+
+```toml
+[settings.meridian.fanout]
+agents = ["reviewer", "browser-prober", "prober"]
+```
+
+`agents` is an allowlist of fan-out agent names. Each listed agent:
+
+1. **Native-copy emission** — qualifies for harness-native materialization even
+   when `include_fanout = false`. The agent must still qualify for the harness via
+   its model policies; `agents` is a scope filter, not a force-emit.
+2. **Dual inventory listing** — appears in both the Meridian `## Subagent`
+   section (primary route: `meridian spawn -a <name>`) and the native harness
+   section (escalation route: `Agent({subagent_type: "<name>"})` for Claude).
+
+The former `agent_copy` fan-out allowlist key is removed. If present in
+`mars.toml`, mars emits a migration warning pointing to
+`[settings.meridian.fanout].agents` and ignores the old value.
 
 For Claude launches, Meridian uses the same boundary for native `Agent()`
 delegation. Generic Claude `Agent` is allowed only when Mars has Claude
