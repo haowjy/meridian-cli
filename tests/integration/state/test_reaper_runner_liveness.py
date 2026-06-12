@@ -50,6 +50,12 @@ def _patch_runner_process(
             running=running,
         ),
     )
+    # update_spawn auto-derives runner_created_at_epoch from the real OS when epoch
+    # is None; stub it so PID-reuse tests never leak to live PIDs (Windows CI flake).
+    monkeypatch.setattr(
+        "meridian.lib.state.spawn_store._runner_created_at_epoch_for_pid",
+        lambda _pid: None,
+    )
 
 
 @pytest.mark.parametrize(
@@ -105,6 +111,7 @@ def test_reconcile_active_spawn_falls_back_to_started_epoch_for_pid_reuse_behavi
     expected_error: str | None,
 ) -> None:
     runner_pid = 8124
+    _patch_runner_process(monkeypatch, pid=runner_pid, create_time=process_create_time)
     runtime_root, spawn_id = _create_spawn(
         tmp_path,
         started_at=_OLD_STARTED_AT,
@@ -113,8 +120,8 @@ def test_reconcile_active_spawn_falls_back_to_started_epoch_for_pid_reuse_behavi
     spawn_store.update_spawn(
         runtime_root, spawn_id, runner_pid=runner_pid, runner_created_at_epoch=None
     )
-    _patch_runner_process(monkeypatch, pid=runner_pid, create_time=process_create_time)
     record = _get_spawn(runtime_root, spawn_id)
+    assert record.runner_created_at_epoch is None
 
     reconciled = _reconcile(tmp_path, runtime_root, record)
 
