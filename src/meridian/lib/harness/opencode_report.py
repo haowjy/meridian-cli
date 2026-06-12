@@ -110,6 +110,20 @@ def _resolve_opencode_primary_session_id(payloads: list[dict[str, object]]) -> s
     return None
 
 
+
+def _resolve_opencode_terminal_session_id(payloads: list[dict[str, object]]) -> str | None:
+    for payload in reversed(payloads):
+        event_type = _opencode_event_type(payload)
+        message_payload = _opencode_message_payload(payload)
+        inner_type = _opencode_event_type(message_payload)
+        effective_type = event_type or inner_type
+        if effective_type not in {"session.idle", "session.error"}:
+            continue
+        session_id = extract_opencode_session_id(payload)
+        if session_id:
+            return session_id
+    return None
+
 def _opencode_event_matches_session(
     payload: dict[str, object],
     *,
@@ -218,12 +232,46 @@ def _extract_opencode_report_from_stream(
     return last_embedded_message
 
 
+
+
+def extract_opencode_session_id_from_artifacts(
+    artifacts: ArtifactStore,
+    spawn_id: SpawnId,
+) -> str | None:
+    payloads = iter_json_lines_artifact(artifacts, spawn_id, OUTPUT_FILENAME)
+    return (
+        read_session_id_artifact(artifacts, spawn_id)
+        or _resolve_opencode_terminal_session_id(payloads)
+        or _resolve_opencode_primary_session_id(payloads)
+        or extract_session_id_from_artifacts_with_patterns(
+            artifacts,
+            spawn_id,
+            json_keys=_OPENCODE_SESSION_ID_JSON_KEYS,
+        )
+    )
+
+def _extract_opencode_report_from_db(session_id: str) -> str | None:
+    from meridian.lib.harness.opencode_transcript import iter_opencode_db_events
+
+    last_assistant: str | None = None
+    for event in iter_opencode_db_events(session_id=session_id):
+        role = str(event.get("role", "")).strip().lower()
+        mode = str(event.get("mode", "")).strip().lower()
+        agent = str(event.get("agent", "")).strip().lower()
+        if role != "assistant" or (mode == "compaction" and agent == "compaction"):
+            continue
+        content = extract_text(event.get("content"))
+        if content:
+            last_assistant = content
+    return last_assistant
+
 def extract_opencode_report(artifacts: ArtifactStore, spawn_id: SpawnId) -> str | None:
     payloads = iter_json_lines_artifact(artifacts, spawn_id, OUTPUT_FILENAME)
-    primary_session_id = read_session_id_artifact(
-        artifacts,
-        spawn_id,
-    ) or _resolve_opencode_primary_session_id(payloads)
+    primary_session_id = (
+        read_session_id_artifact(artifacts, spawn_id)
+        or _resolve_opencode_terminal_session_id(payloads)
+        or _resolve_opencode_primary_session_id(payloads)
+    )
     report = _extract_opencode_report_from_stream(
         payloads,
         primary_session_id=primary_session_id,
@@ -231,13 +279,16 @@ def extract_opencode_report(artifacts: ArtifactStore, spawn_id: SpawnId) -> str 
     if report:
         return report
 
-    session_id = primary_session_id or extract_session_id_from_artifacts_with_patterns(
+    session_id = primary_session_id or extract_opencode_session_id_from_artifacts(
         artifacts,
         spawn_id,
-        json_keys=_OPENCODE_SESSION_ID_JSON_KEYS,
     )
     if not session_id:
         return None
+
+    db_report = _extract_opencode_report_from_db(session_id)
+    if db_report:
+        return db_report
 
     from meridian.lib.harness.opencode_storage import resolve_opencode_session_file
     from meridian.lib.harness.opencode_transcript import (
@@ -250,4 +301,8 @@ def extract_opencode_report(artifacts: ArtifactStore, spawn_id: SpawnId) -> str 
     return extract_last_assistant_report_from_session_path(session_path)
 
 
-__all__ = ["extract_opencode_report", "extract_opencode_session_id"]
+__all__ = [
+    "extract_opencode_report",
+    "extract_opencode_session_id",
+    "extract_opencode_session_id_from_artifacts",
+]

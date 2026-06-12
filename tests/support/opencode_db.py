@@ -34,19 +34,19 @@ def write_opencode_db_session_with_parts(
     with sqlite3.connect(db_path) as connection:
         connection.executescript(
             """
-            CREATE TABLE session (
+            CREATE TABLE IF NOT EXISTS session (
                 id TEXT PRIMARY KEY,
                 time_created INTEGER NOT NULL,
                 time_updated INTEGER NOT NULL
             );
-            CREATE TABLE message (
+            CREATE TABLE IF NOT EXISTS message (
                 id TEXT PRIMARY KEY,
                 session_id TEXT NOT NULL,
                 time_created INTEGER NOT NULL,
                 time_updated INTEGER NOT NULL,
                 data TEXT NOT NULL
             );
-            CREATE TABLE part (
+            CREATE TABLE IF NOT EXISTS part (
                 id TEXT PRIMARY KEY,
                 message_id TEXT NOT NULL,
                 session_id TEXT NOT NULL,
@@ -58,12 +58,15 @@ def write_opencode_db_session_with_parts(
         )
         now = 1_778_945_817_030
         connection.execute(
-            "INSERT INTO session (id, time_created, time_updated) VALUES (?, ?, ?)",
+            "INSERT OR REPLACE INTO session (id, time_created, time_updated) VALUES (?, ?, ?)",
             (session_id, now, now),
+        )
+        id_prefix = "".join(
+            character if character.isalnum() else "_" for character in session_id
         )
         for message_index, (role, message_data, parts) in enumerate(messages):
             timestamp = now + (message_index * 100)
-            message_id = f"msg_{message_index}"
+            message_id = f"{id_prefix}_msg_{message_index}"
             payload = {"role": role, "time": {"created": timestamp}, **message_data}
             connection.execute(
                 "INSERT INTO message "
@@ -78,7 +81,7 @@ def write_opencode_db_session_with_parts(
                     "(id, message_id, session_id, time_created, time_updated, data) "
                     "VALUES (?, ?, ?, ?, ?, ?)",
                     (
-                        f"prt_{message_index}_{part_index}",
+                        f"{id_prefix}_prt_{message_index}_{part_index}",
                         message_id,
                         session_id,
                         part_timestamp,

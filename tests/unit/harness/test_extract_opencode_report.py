@@ -337,6 +337,79 @@ def test_extract_opencode_report_ignores_child_session_assistant_text() -> None:
         ],
     )
 
+    assert OPENCODE_EXTRACTOR.extract_session_id(store, spawn_id) == "ses_parent"
+    assert extract_opencode_report(store, spawn_id) == "Parent report."
+
+
+
+def test_extract_opencode_report_uses_terminal_parent_scope_without_artifact() -> None:
+    spawn_id = SpawnId("p-opencode-terminal-scope")
+    child_message_id = "msg_child_assistant"
+    parent_message_id = "msg_parent_assistant"
+    store = _artifact_store_from_history_lines(
+        spawn_id,
+        [
+            {
+                "event_type": "message.updated",
+                "payload": {
+                    "type": "message.updated",
+                    "properties": {
+                        "info": {
+                            "id": child_message_id,
+                            "role": "assistant",
+                            "sessionID": "ses_child",
+                        }
+                    },
+                },
+            },
+            {
+                "event_type": "message.part.updated",
+                "payload": {
+                    "type": "message.part.updated",
+                    "properties": {
+                        "part": {
+                            "type": "text",
+                            "messageID": child_message_id,
+                            "sessionID": "ses_child",
+                            "text": "Child report.",
+                        }
+                    },
+                },
+            },
+            {
+                "event_type": "message.updated",
+                "payload": {
+                    "type": "message.updated",
+                    "properties": {
+                        "info": {
+                            "id": parent_message_id,
+                            "role": "assistant",
+                            "sessionID": "ses_parent",
+                        }
+                    },
+                },
+            },
+            {
+                "event_type": "message.part.updated",
+                "payload": {
+                    "type": "message.part.updated",
+                    "properties": {
+                        "part": {
+                            "type": "text",
+                            "messageID": parent_message_id,
+                            "sessionID": "ses_parent",
+                            "text": "Parent report.",
+                        }
+                    },
+                },
+            },
+            {
+                "event_type": "session.idle",
+                "payload": {"type": "session.idle", "properties": {"sessionID": "ses_parent"}},
+            },
+        ],
+    )
+
     assert extract_opencode_report(store, spawn_id) == "Parent report."
 
 
@@ -447,6 +520,42 @@ def test_extract_opencode_report_falls_back_to_opencode_db_session(
     store._payloads[f"{spawn_id}/session_id.txt"] = session_id.encode("utf-8")
 
     assert extract_opencode_report(store, spawn_id) == "LIVE_OK"
+
+
+
+def test_extract_opencode_report_reads_opencode_db_without_legacy_session_file(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    session_id = "ses_fixture_report_db_only"
+    spawn_id = SpawnId("p-opencode-db-only")
+    storage_root = tmp_path / "opencode" / "storage"
+    write_opencode_db_session_with_parts(
+        db_path=tmp_path / "opencode" / "opencode.db",
+        session_id=session_id,
+        messages=[
+            ("assistant", {}, [{"type": "text", "text": "DB_ONLY_OK"}]),
+        ],
+    )
+
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+    assert resolve_opencode_storage_root() == storage_root
+
+    store = _artifact_store_from_history_lines(
+        spawn_id,
+        [
+            {
+                "event_type": "session.idle",
+                "harness_id": "opencode",
+                "payload": {
+                    "type": "session.idle",
+                    "properties": {"sessionID": session_id},
+                },
+            }
+        ],
+    )
+
+    assert extract_opencode_report(store, spawn_id) == "DB_ONLY_OK"
 
 
 def test_extract_opencode_report_ignores_opencode_db_compaction_handoff(
