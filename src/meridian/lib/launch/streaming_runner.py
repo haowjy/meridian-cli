@@ -452,7 +452,7 @@ def _connection_primary_event_scope(
 ) -> PrimaryEventScope | None:
     if connection is None:
         return None
-    return connection.primary_event_scope
+    return cast("PrimaryEventScope | None", getattr(connection, "primary_event_scope", None))
 
 
 async def run_streaming_spawn(

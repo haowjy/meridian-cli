@@ -14,14 +14,14 @@ from contextlib import suppress
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from threading import Lock
-from typing import Any
+from typing import Any, cast
 
 import psutil
 
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.connections.base import ConnectionConfig, HarnessConnection, HarnessEvent
 from meridian.lib.harness.connections.errors import PortBindError
-from meridian.lib.harness.semantics import activity_transition
+from meridian.lib.harness.semantics import PrimaryEventScope, activity_transition
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.platform.process_scope import terminate_scope_sync
 from meridian.lib.platform.process_scope.base import (
@@ -167,6 +167,12 @@ def _startup_phase_message(connection: HarnessConnection[Any]) -> str:
     if connection.harness_id is HarnessId.CODEX:
         return f"Starting {harness_label} app-server..."
     return f"Starting {harness_label} managed session..."
+
+
+def _primary_event_scope(connection: object) -> PrimaryEventScope | None:
+    """Read the connection's primary event scope when it exposes one."""
+
+    return cast("PrimaryEventScope | None", getattr(connection, "primary_event_scope", None))
 
 
 class PrimaryAttachLauncher:
@@ -369,7 +375,7 @@ class PrimaryAttachLauncher:
 
         activity = activity_transition(
             event,
-            primary_event_scope=self._connection.primary_event_scope,
+            primary_event_scope=_primary_event_scope(self._connection),
         )
         if activity is not None:
             self._set_activity(activity)
