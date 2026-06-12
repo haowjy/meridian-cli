@@ -185,6 +185,8 @@ agent_emission = "never"  # optional; agent_copy can still emit selected copies
 
 [settings.meridian.agent_copy]
 harnesses = ["claude"]
+include_fanout = false          # default false: skip fan-out (sub-delegate) agents
+fanout_agents = ["explorer"]    # selectively include specific fan-out agents
 ```
 
 Each listed harness must also have an effective managed target (for Claude,
@@ -192,6 +194,14 @@ Each listed harness must also have an effective managed target (for Claude,
 unset). Mars then materializes only qualifying agents for that harness;
 `.mars/agents/` remains the canonical Meridian spawn source.
 `agent_emission = "always"` is broader and emits all native agent copies.
+
+`include_fanout` (default `false`) controls whether fan-out agents — sub-delegates
+listed in an agent profile's `fanout` field — are materialized as native copies.
+When `include_fanout = false`, fan-out agents are skipped even if they qualify for
+the selected harness. `fanout_agents` is a selective override: an allowlist of
+specific agent names that still qualify for fan-out emission regardless of
+`include_fanout`. The agent must still qualify for the harness via its model
+policies — `fanout_agents` is a scope filter, not a force-emit.
 
 For Claude launches, Meridian uses the same boundary for native `Agent()`
 delegation. Generic Claude `Agent` is allowed only when Mars has Claude
