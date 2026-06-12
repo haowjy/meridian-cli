@@ -213,12 +213,6 @@ def iter_opencode_db_events(
         with sqlite3.connect(
             f"file:{resolved_db_path}?mode=ro", uri=True, timeout=0.1
         ) as connection:
-            session_row = connection.execute(
-                "SELECT 1 FROM session WHERE id = ?",
-                (normalized_session_id,),
-            ).fetchone()
-            if session_row is None:
-                return
             message_rows = connection.execute(
                 """
                 SELECT id, data, time_created
