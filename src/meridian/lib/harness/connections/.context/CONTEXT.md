@@ -49,6 +49,12 @@ Required abstract methods — every subclass must implement all of these:
   this for resident-until-done structured liveness and follow-up turns;
   non-resident transports return None. This is the only public resident control
   seam — callers do not reach for adapter-specific backend objects.
+- `primary_event_scope` → `PrimaryEventScope | None`; parent-conversation identity
+  for transports whose event stream can include child work. Codex returns the main
+  turn `threadId`; OpenCode returns the launched parent `sessionID`. Drain and
+  primary-attach callers pass this into `terminal_outcome()`,
+  `activity_transition()`, and `clears_signal()` so child task events remain
+  persisted but cannot finish or report for the parent.
 - `scope_snapshot` → `ProcessScopeSnapshot | None`; managed backends expose the
   process-scope facts captured at launch so primary attach and cleanup paths do
   not reconstruct containment from PID fields.
@@ -72,8 +78,9 @@ supports the capability:
 
 `event_type` is scoped to the producing harness — it is **not globally unique**.
 Always qualify with `harness_id` before branching on `event_type`. Same-named events
-across harnesses have different semantics. See parent `.context/` for terminal event
-classification.
+across harnesses have different semantics. Terminal semantics are also parent-scope
+aware when `primary_event_scope` is present. See parent `.context/` for the full
+classification table.
 
 ### ConnectionCapabilities
 

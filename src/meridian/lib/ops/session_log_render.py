@@ -10,9 +10,12 @@ from meridian.lib.harness.transcript import ToolCall
 
 _CONTENT_PREVIEW_MAX_LINES = 80
 _CONTENT_PREVIEW_MAX_CHARS = 8000
+_TOOL_RESULT_PREVIEW_MAX_CHARS = 240
 _TOOL_RESULT_HINT = "Use --no-truncate to expand tool outputs"
 _TOOL_RESULT_PREFIX = "[tool_result]"  # Text marker prefix for tool results
 _ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+_TASK_STATE_RE = re.compile(r"<task\b[^>]*\bstate=[\"'](?P<state>[^\"']+)[\"']", re.IGNORECASE)
+_TASK_RESULT_RE = re.compile(r"<task_result>(?P<body>.*?)</task_result>", re.DOTALL | re.IGNORECASE)
 _COMMAND_BLOCK_RE = re.compile(
     r"(?:\s*<command-(?:name|args|message)>.*?</command-(?:name|args|message)>\s*)+",
     re.DOTALL,
@@ -347,6 +350,33 @@ def _tool_failed_reason(result_body: str) -> str | None:
     return None
 
 
+def _preview_first_line(content: str) -> str:
+    for line in clean_content(content).splitlines():
+        compact = " ".join(line.split())
+        if not compact:
+            continue
+        if len(compact) <= _TOOL_RESULT_PREVIEW_MAX_CHARS:
+            return compact
+        return f"{compact[: _TOOL_RESULT_PREVIEW_MAX_CHARS - 3].rstrip()}..."
+    return ""
+
+
+def _task_result_summary(result_body: str) -> str | None:
+    state_match = _TASK_STATE_RE.search(result_body)
+    state = state_match.group("state").strip() if state_match is not None else ""
+    task_result_match = _TASK_RESULT_RE.search(result_body)
+    task_result = task_result_match.group("body") if task_result_match is not None else result_body
+    preview = _preview_first_line(task_result)
+
+    if state and preview:
+        return f"({state}) {preview}"
+    if state:
+        return f"({state})"
+    if preview:
+        return f"(result) {preview}"
+    return None
+
+
 def _render_collapsed_tools(
     messages: Sequence[SessionLogRenderableMessage],
 ) -> tuple[list[str], bool]:
@@ -370,6 +400,12 @@ def _render_collapsed_tools(
                         rendered.append(f"  (failed: {failure})")
                     else:
                         rendered.append("  (failed)")
+                index += 2
+                continue
+            if result_body is not None and tc.name == "task":
+                summary = _task_result_summary(result_body)
+                if summary is not None:
+                    rendered.append(f"  {summary}")
                 index += 2
                 continue
             if result_body is not None:

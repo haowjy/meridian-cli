@@ -32,6 +32,11 @@ steps 1 and 2 could leave observers with data the persistence layer never record
 starting, stopping, injecting messages, subscribing to events, and tracking heartbeats.
 Do not bypass it to reach a connection or subscriber directly.
 
+`connection.primary_event_scope` is part of terminal classification for multiplexed
+streams. The drain loop still persists and broadcasts child Codex/OpenCode events,
+but semantic helpers must receive the scope so child terminal frames cannot finish,
+fail, or clear signals for the parent.
+
 ## Key Rules
 
 **Never call `connection.send_user_message()` directly.** Always use

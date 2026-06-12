@@ -129,7 +129,7 @@ class SpawnDrainLoop:
 
                 transition = activity_transition(
                     event,
-                    codex_main_thread_id=_codex_main_thread_id(receiver),
+                    primary_event_scope=receiver.primary_event_scope,
                 )
                 duplicate_canonical_event = await _observe_event(
                     coordinator,
@@ -196,7 +196,7 @@ class SpawnDrainLoop:
 
                 event_outcome = terminal_outcome(
                     event,
-                    codex_main_thread_id=_codex_main_thread_id(receiver),
+                    primary_event_scope=receiver.primary_event_scope,
                 )
                 self._fan_out_event(spawn_id, event)
                 persisted_event_decision = _note_event_persisted(coordinator, event)
@@ -311,16 +311,6 @@ class SpawnDrainLoop:
                         with suppress(asyncio.QueueEmpty):
                             session.subscriber.get_nowait()
                         continue
-
-
-def _codex_main_thread_id(connection: object) -> str | None:
-    """Read the tracked main Codex thread id when the connection exposes it."""
-
-    try:
-        thread_id = cast("Any", connection).main_turn_thread_id
-    except Exception:
-        return None
-    return thread_id if isinstance(thread_id, str) and thread_id.strip() else None
 
 
 class _NoAuxWake:

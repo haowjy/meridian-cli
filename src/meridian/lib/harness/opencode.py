@@ -37,13 +37,13 @@ from meridian.lib.harness.bundle import (
     project_subprocess_spec,
     register_harness_bundle,
 )
-from meridian.lib.harness.common import (
-    extract_opencode_report,
-    extract_session_id_from_artifacts_with_patterns,
-)
 from meridian.lib.harness.connections.opencode_http import OpenCodeConnection
 from meridian.lib.harness.extractors.opencode import OPENCODE_EXTRACTOR
 from meridian.lib.harness.launch_types import SessionSeed
+from meridian.lib.harness.opencode_report import (
+    extract_opencode_report,
+    extract_opencode_session_id_from_artifacts,
+)
 from meridian.lib.harness.opencode_storage import resolve_opencode_session_file
 from meridian.lib.harness.projections.project_opencode_streaming import (
     project_opencode_spec_to_serve_command,
@@ -528,12 +528,8 @@ class OpenCodeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         return resolve_opencode_session_file(session_id=session_id)
 
     def extract_session_id(self, artifacts: ArtifactStore, spawn_id: SpawnId) -> str | None:
-        return extract_session_id_from_artifacts_with_patterns(
-            artifacts,
-            spawn_id,
-            json_keys=self.SESSION_ID_KEYS,
-            text_patterns=self.SESSION_ID_TEXT_PATTERNS,
-        )
+        _ = self
+        return extract_opencode_session_id_from_artifacts(artifacts, spawn_id)
 
     def owns_untracked_session(self, *, project_root: Path, session_ref: str) -> bool:
         return _owns_session(project_root, session_ref)

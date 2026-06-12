@@ -30,7 +30,7 @@ from meridian.lib.harness.common import parse_json_stream_event, unwrap_event_pa
 from meridian.lib.harness.connections.base import ConnectionConfig, HarnessConnection
 from meridian.lib.harness.extractor import StreamingExtractor
 from meridian.lib.harness.semantics import (
-    CodexDrainThreadTracker,
+    PrimaryEventScopeTracker,
     TerminalEventOutcome,
     terminal_outcome,
 )
@@ -382,7 +382,7 @@ async def _consume_subscriber_events(
     event_observer: Callable[[StreamEvent], None] | None,
     stream_stdout_to_terminal: bool,
     terminal_event_future: asyncio.Future[TerminalEventOutcome] | None = None,
-    codex_thread_tracker: CodexDrainThreadTracker | None = None,
+    primary_scope_tracker: PrimaryEventScopeTracker | None = None,
 ) -> None:
     while True:
         event = await subscriber.get()
@@ -399,8 +399,8 @@ async def _consume_subscriber_events(
                 budget_signal.set()
 
         if terminal_event_future is not None and not terminal_event_future.done():
-            if codex_thread_tracker is not None:
-                event_outcome = codex_thread_tracker.terminal_outcome(event)
+            if primary_scope_tracker is not None:
+                event_outcome = primary_scope_tracker.terminal_outcome(event)
             else:
                 event_outcome = terminal_outcome(event)
             if event_outcome is not None:
@@ -498,7 +498,7 @@ async def run_streaming_spawn(
         runtime_root,
     )
     try:
-        await manager.start_spawn(config, run_spec)
+        connection = await manager.start_spawn(config, run_spec)
         if on_control_endpoint_ready is not None:
             endpoint = manager.control_endpoint(spawn_id)
             if endpoint is not None:
@@ -521,9 +521,11 @@ async def run_streaming_spawn(
             if manager.raw_terminal_frames_are_authoritative(spawn_id)
             else None
         )
-        codex_thread_tracker = (
-            CodexDrainThreadTracker()
-            if config.harness_id == HarnessId.CODEX and terminal_event_capture is not None
+        primary_scope_tracker = (
+            PrimaryEventScopeTracker(
+                primary_event_scope=connection.primary_event_scope
+            )
+            if terminal_event_capture is not None
             else None
         )
         completion_task = asyncio.create_task(manager.wait_for_completion(spawn_id))
@@ -536,7 +538,7 @@ async def run_streaming_spawn(
                 event_observer=None,
                 stream_stdout_to_terminal=stream_to_terminal,
                 terminal_event_future=terminal_event_capture,
-                codex_thread_tracker=codex_thread_tracker,
+                primary_scope_tracker=primary_scope_tracker,
             )
         )
         signal_task = asyncio.create_task(shutdown_event.wait())
@@ -623,7 +625,7 @@ async def _run_streaming_attempt(
         asyncio.get_running_loop().create_future()
     )
     terminal_event_capture: asyncio.Future[TerminalEventOutcome] | None = None
-    codex_thread_tracker: CodexDrainThreadTracker | None = None
+    primary_scope_tracker: PrimaryEventScopeTracker | None = None
     subscriber: asyncio.Queue[HarnessEvent | None] | None = None
     connection: HarnessConnection[Any] | None = None
     drain_exit_code = DEFAULT_INFRA_EXIT_CODE
@@ -640,9 +642,11 @@ async def _run_streaming_attempt(
             if manager.raw_terminal_frames_are_authoritative(run.spawn_id)
             else None
         )
-        codex_thread_tracker = (
-            CodexDrainThreadTracker()
-            if config.harness_id == HarnessId.CODEX and terminal_event_capture is not None
+        primary_scope_tracker = (
+            PrimaryEventScopeTracker(
+                primary_event_scope=connection.primary_event_scope
+            )
+            if terminal_event_capture is not None
             else None
         )
         await manager.start_heartbeat(run.spawn_id)
@@ -666,7 +670,7 @@ async def _run_streaming_attempt(
                 event_observer=event_observer,
                 stream_stdout_to_terminal=stream_stdout_to_terminal,
                 terminal_event_future=terminal_event_capture,
-                codex_thread_tracker=codex_thread_tracker,
+                primary_scope_tracker=primary_scope_tracker,
             )
         )
         signal_task = asyncio.create_task(signal_event.wait())

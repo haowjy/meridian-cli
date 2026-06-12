@@ -74,11 +74,14 @@ startup failure.
 Priority: connection session ID → artifact extraction → known ID → filesystem scan.
 Must not mutate adapter-instance state.
 
-**Terminal event classification is harness-scoped.** `event_type` is NOT globally
-unique — always check `event.harness_id`. `turn/completed` is Codex; OpenCode uses
-`session.idle` for the same semantic. For Codex connection sessions, termination is
-thread-aware: `CodexConnection` tracks the main turn thread, and the drain loop ignores
-subagent-thread `turn/completed` events for session completion/report extraction.
+**Terminal event classification is harness- and parent-scope-aware.** `event_type`
+is NOT globally unique — always check `event.harness_id`. `turn/completed` is Codex;
+OpenCode uses `session.idle` for the same semantic. Some harness streams also
+multiplex child work on the same connection, so `connection.primary_event_scope` is
+part of the contract: Codex scopes completion to the main `threadId`; OpenCode scopes
+completion to the launched parent `sessionID`. Child Codex threads and child OpenCode
+task sessions stay in `history.jsonl`, but do not complete/fail the parent, clear
+parent signals, or supply the parent report.
 
 ## Entry Points
 

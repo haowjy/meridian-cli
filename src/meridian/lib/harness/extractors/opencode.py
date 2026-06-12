@@ -17,11 +17,13 @@ from meridian.lib.harness.common import (
     _coerce_optional_int,  # pyright: ignore[reportPrivateUsage]
     _iter_json_lines_artifact,  # pyright: ignore[reportPrivateUsage]
     coerce_optional_float,
-    extract_opencode_report,
-    extract_session_id_from_artifacts_with_patterns,
     extract_usage_from_artifacts,
 )
 from meridian.lib.harness.connections.base import HarnessEvent
+from meridian.lib.harness.opencode_report import (
+    extract_opencode_report,
+    extract_opencode_session_id_from_artifacts,
+)
 from meridian.lib.harness.opencode_storage import (
     iter_opencode_session_files,
     opencode_session_id_from_path,
@@ -301,12 +303,7 @@ class OpenCodeHarnessExtractor(HarnessExtractor[ResolvedLaunchSpec]):
         return extract_usage_from_artifacts(artifacts, spawn_id)
 
     def extract_session_id(self, artifacts: ArtifactStore, spawn_id: SpawnId) -> str | None:
-        return extract_session_id_from_artifacts_with_patterns(
-            artifacts,
-            spawn_id,
-            json_keys=("session_id", "sessionId", "sessionID", "id"),
-            text_patterns=_SESSION_ID_TEXT_PATTERNS,
-        )
+        return extract_opencode_session_id_from_artifacts(artifacts, spawn_id)
 
     def extract_report(self, artifacts: ArtifactStore, spawn_id: SpawnId) -> str | None:
         return extract_opencode_report(artifacts, spawn_id)

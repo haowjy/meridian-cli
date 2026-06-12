@@ -3,15 +3,15 @@
 from __future__ import annotations
 
 import json
-import sqlite3
 from pathlib import Path
 
 from meridian.lib.core.types import ArtifactKey, SpawnId
-from meridian.lib.harness.common import extract_opencode_report
 from meridian.lib.harness.extractors.opencode import OPENCODE_EXTRACTOR
+from meridian.lib.harness.opencode_report import extract_opencode_report
 from meridian.lib.harness.opencode_storage import resolve_opencode_storage_root
 from meridian.lib.launch.constants import HISTORY_FILENAME
 from meridian.lib.launch.report import extract_or_fallback_report
+from tests.support.opencode_db import write_opencode_db_session_with_parts
 
 
 class _MemoryArtifactStore:
@@ -237,6 +237,224 @@ def test_extract_opencode_report_reads_assistant_text_from_message_part_updated(
     assert extract_opencode_report(store, spawn_id) == "LIVE_OK"
 
 
+def test_extract_opencode_report_ignores_child_session_assistant_text() -> None:
+    spawn_id = SpawnId("p-opencode-parent-scope")
+    child_message_id = "msg_child_assistant"
+    parent_message_id = "msg_parent_assistant"
+    store = _artifact_store_from_history_lines(
+        spawn_id,
+        [
+            {
+                "event_type": "message.updated",
+                "harness_id": "opencode",
+                "payload": {
+                    "type": "message.updated",
+                    "properties": {
+                        "info": {
+                            "id": "msg_parent_user",
+                            "role": "user",
+                            "sessionID": "ses_parent",
+                            "parts": [{"type": "text", "text": "Parent task"}],
+                        }
+                    },
+                },
+            },
+            {
+                "event_type": "message.updated",
+                "harness_id": "opencode",
+                "payload": {
+                    "type": "message.updated",
+                    "properties": {
+                        "info": {
+                            "id": "msg_child_user",
+                            "role": "user",
+                            "sessionID": "ses_child",
+                            "parts": [{"type": "text", "text": "Child task"}],
+                        }
+                    },
+                },
+            },
+            {
+                "event_type": "message.updated",
+                "harness_id": "opencode",
+                "payload": {
+                    "type": "message.updated",
+                    "properties": {
+                        "info": {
+                            "id": child_message_id,
+                            "role": "assistant",
+                            "sessionID": "ses_child",
+                        }
+                    },
+                },
+            },
+            {
+                "event_type": "message.part.updated",
+                "harness_id": "opencode",
+                "payload": {
+                    "type": "message.part.updated",
+                    "properties": {
+                        "sessionID": "ses_child",
+                        "part": {
+                            "messageID": child_message_id,
+                            "sessionID": "ses_child",
+                            "type": "text",
+                            "text": "Child report must not be parent report.",
+                        },
+                    },
+                },
+            },
+            {
+                "event_type": "message.updated",
+                "harness_id": "opencode",
+                "payload": {
+                    "type": "message.updated",
+                    "properties": {
+                        "info": {
+                            "id": parent_message_id,
+                            "role": "assistant",
+                            "sessionID": "ses_parent",
+                        }
+                    },
+                },
+            },
+            {
+                "event_type": "message.part.updated",
+                "harness_id": "opencode",
+                "payload": {
+                    "type": "message.part.updated",
+                    "properties": {
+                        "sessionID": "ses_parent",
+                        "part": {
+                            "messageID": parent_message_id,
+                            "sessionID": "ses_parent",
+                            "type": "text",
+                            "text": "Parent report.",
+                        },
+                    },
+                },
+            },
+        ],
+    )
+
+    assert OPENCODE_EXTRACTOR.extract_session_id(store, spawn_id) == "ses_parent"
+    assert extract_opencode_report(store, spawn_id) == "Parent report."
+
+
+
+def test_extract_opencode_report_uses_terminal_parent_scope_without_artifact() -> None:
+    spawn_id = SpawnId("p-opencode-terminal-scope")
+    child_message_id = "msg_child_assistant"
+    parent_message_id = "msg_parent_assistant"
+    store = _artifact_store_from_history_lines(
+        spawn_id,
+        [
+            {
+                "event_type": "message.updated",
+                "payload": {
+                    "type": "message.updated",
+                    "properties": {
+                        "info": {
+                            "id": child_message_id,
+                            "role": "assistant",
+                            "sessionID": "ses_child",
+                        }
+                    },
+                },
+            },
+            {
+                "event_type": "message.part.updated",
+                "payload": {
+                    "type": "message.part.updated",
+                    "properties": {
+                        "part": {
+                            "type": "text",
+                            "messageID": child_message_id,
+                            "sessionID": "ses_child",
+                            "text": "Child report.",
+                        }
+                    },
+                },
+            },
+            {
+                "event_type": "message.updated",
+                "payload": {
+                    "type": "message.updated",
+                    "properties": {
+                        "info": {
+                            "id": parent_message_id,
+                            "role": "assistant",
+                            "sessionID": "ses_parent",
+                        }
+                    },
+                },
+            },
+            {
+                "event_type": "message.part.updated",
+                "payload": {
+                    "type": "message.part.updated",
+                    "properties": {
+                        "part": {
+                            "type": "text",
+                            "messageID": parent_message_id,
+                            "sessionID": "ses_parent",
+                            "text": "Parent report.",
+                        }
+                    },
+                },
+            },
+            {
+                "event_type": "session.idle",
+                "payload": {"type": "session.idle", "properties": {"sessionID": "ses_parent"}},
+            },
+        ],
+    )
+
+    assert extract_opencode_report(store, spawn_id) == "Parent report."
+
+
+def test_extract_opencode_report_returns_none_when_only_child_session_reports() -> None:
+    spawn_id = SpawnId("p-opencode-child-only")
+    child_message_id = "msg_child_assistant"
+    store = _artifact_store_from_history_lines(
+        spawn_id,
+        [
+            {
+                "event_type": "message.updated",
+                "harness_id": "opencode",
+                "payload": {
+                    "type": "message.updated",
+                    "properties": {
+                        "info": {
+                            "id": "msg_parent_user",
+                            "role": "user",
+                            "sessionID": "ses_parent",
+                            "parts": [{"type": "text", "text": "Parent task"}],
+                        }
+                    },
+                },
+            },
+            {
+                "event_type": "message.updated",
+                "harness_id": "opencode",
+                "payload": {
+                    "type": "message.updated",
+                    "properties": {
+                        "info": {
+                            "id": child_message_id,
+                            "role": "assistant",
+                            "sessionID": "ses_child",
+                            "parts": [{"type": "text", "text": "Child finished."}],
+                        }
+                    },
+                },
+            },
+        ],
+    )
+
+    assert extract_opencode_report(store, spawn_id) is None
+
+
 def test_extract_or_fallback_report_never_returns_session_idle_envelope() -> None:
     spawn_id = SpawnId("p-opencode-fallback-idle")
     store = _artifact_store_from_history_lines(
@@ -273,47 +491,13 @@ def test_extract_opencode_report_falls_back_to_opencode_db_session(
     session_file.parent.mkdir(parents=True, exist_ok=True)
     session_file.write_text("[]\n", encoding="utf-8")
 
-    db_path = tmp_path / "opencode" / "opencode.db"
-    with sqlite3.connect(db_path) as connection:
-        connection.executescript(
-            """
-            CREATE TABLE message (
-                id TEXT PRIMARY KEY,
-                session_id TEXT NOT NULL,
-                time_created INTEGER NOT NULL,
-                time_updated INTEGER NOT NULL,
-                data TEXT NOT NULL
-            );
-            CREATE TABLE part (
-                id TEXT PRIMARY KEY,
-                message_id TEXT NOT NULL,
-                session_id TEXT NOT NULL,
-                time_created INTEGER NOT NULL,
-                time_updated INTEGER NOT NULL,
-                data TEXT NOT NULL
-            );
-            """
-        )
-        connection.execute(
-            "INSERT INTO message "
-            "(id, session_id, time_created, time_updated, data) "
-            "VALUES (?, ?, ?, ?, ?)",
-            ("msg_1", session_id, 1, 1, json.dumps({"role": "assistant"})),
-        )
-        connection.execute(
-            "INSERT INTO part (id, message_id, session_id, time_created, time_updated, data) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            (
-                "prt_1",
-                "msg_1",
-                session_id,
-                1,
-                1,
-                json.dumps({"type": "text", "text": "LIVE_OK"}),
-            ),
-        )
-        connection.commit()
-
+    write_opencode_db_session_with_parts(
+        db_path=tmp_path / "opencode" / "opencode.db",
+        session_id=session_id,
+        messages=[
+            ("assistant", {}, [{"type": "text", "text": "LIVE_OK"}]),
+        ],
+    )
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
     assert resolve_opencode_storage_root() == storage_root
 
@@ -336,3 +520,86 @@ def test_extract_opencode_report_falls_back_to_opencode_db_session(
     store._payloads[f"{spawn_id}/session_id.txt"] = session_id.encode("utf-8")
 
     assert extract_opencode_report(store, spawn_id) == "LIVE_OK"
+
+
+
+def test_extract_opencode_report_reads_opencode_db_without_legacy_session_file(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    session_id = "ses_fixture_report_db_only"
+    spawn_id = SpawnId("p-opencode-db-only")
+    storage_root = tmp_path / "opencode" / "storage"
+    write_opencode_db_session_with_parts(
+        db_path=tmp_path / "opencode" / "opencode.db",
+        session_id=session_id,
+        messages=[
+            ("assistant", {}, [{"type": "text", "text": "DB_ONLY_OK"}]),
+        ],
+    )
+
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+    assert resolve_opencode_storage_root() == storage_root
+
+    store = _artifact_store_from_history_lines(
+        spawn_id,
+        [
+            {
+                "event_type": "session.idle",
+                "harness_id": "opencode",
+                "payload": {
+                    "type": "session.idle",
+                    "properties": {"sessionID": session_id},
+                },
+            }
+        ],
+    )
+
+    assert extract_opencode_report(store, spawn_id) == "DB_ONLY_OK"
+
+
+def test_extract_opencode_report_ignores_opencode_db_compaction_handoff(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    session_id = "ses_fixture_report_db_compaction"
+    spawn_id = SpawnId("p-opencode-db-compaction")
+    storage_root = tmp_path / "opencode" / "storage"
+    session_file = storage_root / "session_diff" / f"{session_id}.json"
+    session_file.parent.mkdir(parents=True, exist_ok=True)
+    session_file.write_text("[]\n", encoding="utf-8")
+
+    write_opencode_db_session_with_parts(
+        db_path=tmp_path / "opencode" / "opencode.db",
+        session_id=session_id,
+        messages=[
+            ("assistant", {}, [{"type": "text", "text": "FINAL_OK"}]),
+            (
+                "assistant",
+                {"mode": "compaction", "agent": "compaction"},
+                [{"type": "text", "text": "handoff only"}],
+            ),
+        ],
+    )
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+    assert resolve_opencode_storage_root() == storage_root
+
+    store = _artifact_store_from_history_lines(
+        spawn_id,
+        [
+            {
+                "byte_offset": 0,
+                "event_type": "session.idle",
+                "harness_id": "opencode",
+                "payload": {
+                    "id": "evt_idle",
+                    "type": "session.idle",
+                    "properties": {"sessionID": session_id},
+                },
+                "seq": 1,
+            }
+        ],
+    )
+    store._payloads[f"{spawn_id}/session_id.txt"] = session_id.encode("utf-8")
+
+    assert extract_opencode_report(store, spawn_id) == "FINAL_OK"

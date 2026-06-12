@@ -115,6 +115,10 @@ async def test_wait_for_completion_survives_cleanup_without_private_hooks(
             return 7373
 
         @property
+        def primary_event_scope(self) -> None:
+            return None
+
+        @property
         def resident_backend(self) -> None:
             return None
 
@@ -392,6 +396,10 @@ async def test_spawn_manager_serializes_control_actions_and_persists_transitions
 
         @property
         def subprocess_pid(self) -> int | None:
+            return None
+
+        @property
+        def primary_event_scope(self) -> None:
             return None
 
         @property

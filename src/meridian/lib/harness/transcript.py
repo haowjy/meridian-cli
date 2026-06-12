@@ -8,7 +8,10 @@ from pathlib import Path
 from typing import NamedTuple, Protocol, cast
 
 from meridian.lib.harness.extractors.base import normalize_harness_event_type
-from meridian.lib.harness.opencode_transcript import OpenCodeStorageTranscriptProvider
+from meridian.lib.harness.opencode_transcript import (
+    OpenCodeStorageTranscriptProvider,
+    iter_opencode_db_events,
+)
 from meridian.lib.launch.constants import HISTORY_FILENAME
 from meridian.lib.state.history import iter_history_events
 
@@ -413,7 +416,8 @@ class DefaultTranscriptEventParser(TranscriptEventParser):
             if isinstance(raw_payload, dict):
                 extracted = _extract_codex_response_item(cast("dict[str, object]", raw_payload))
                 return (extracted, is_boundary)
-            return ([], is_boundary)
+            extracted = _extract_codex_response_item(event)
+            return (extracted, is_boundary)
 
         if event_type == "item.completed":
             item = event.get("item")
@@ -526,6 +530,10 @@ def _extract_claude_system_prologue(event: dict[str, object]) -> str | None:
     if _is_claude_compaction_boundary(event):
         return None
     return text_from_value(event.get("content")) or text_from_value(event.get("text")) or None
+
+
+def _extract_opencode_db_system_prologue(event: dict[str, object]) -> str | None:
+    return text_from_value(event.get("opencode_db_setup")) or None
 
 
 def _extract_claude_boundary_handoff(event: dict[str, object]) -> str | None:
@@ -643,7 +651,10 @@ def _parse_events_with_prologues(
                 continue
 
         if segment_setups[-1] is None:
-            prologue = _extract_claude_system_prologue(normalized_event)
+            prologue = (
+                _extract_claude_system_prologue(normalized_event)
+                or _extract_opencode_db_system_prologue(normalized_event)
+            )
             if prologue:
                 segment_setups[-1] = prologue
 
@@ -699,6 +710,18 @@ def parse_transcript_file_with_prologues(
     return _parse_events_with_prologues(iter_transcript_events(path), parser=resolved_parser)
 
 
+def parse_opencode_db_transcript_with_prologues(
+    session_id: str,
+    *,
+    parser: TranscriptEventParser | None = None,
+) -> TranscriptParseResult:
+    resolved_parser = parser or DefaultTranscriptEventParser()
+    return _parse_events_with_prologues(
+        iter_opencode_db_events(session_id=session_id, text_from_value=text_from_value),
+        parser=resolved_parser,
+    )
+
+
 __all__ = [
     "DefaultTranscriptEventParser",
     "HistoryJsonlTranscriptProvider",
@@ -711,6 +734,7 @@ __all__ = [
     "TranscriptProvider",
     "_text_from_value",
     "iter_transcript_events",
+    "parse_opencode_db_transcript_with_prologues",
     "parse_transcript_events",
     "parse_transcript_events_with_prologues",
     "parse_transcript_file",

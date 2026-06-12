@@ -170,23 +170,44 @@ to inspect without instantiating an adapter. The contract sub-models:
 `semantics.py:terminal_outcome(event)` drives the drain loop's break condition.
 Returns `TerminalEventOutcome(status, exit_code, error)` or `None`.
 `event_type` is NOT globally unique — always qualified by `event.harness_id`.
+For harnesses whose streams can include child work, callers pass a
+`PrimaryEventScope` from `HarnessConnection.primary_event_scope` into
+`terminal_outcome()`, `activity_transition()`, and `clears_signal()`.
 
 Key mappings:
 - Claude: `result` event with `is_error=True` → failed; `subtype in ("", "success")` and `terminal_reason in ("", "completed")` → succeeded
 - Codex: main-thread `turn/completed` → succeeded; `error/connectionClosed` → failed
-- OpenCode: `session.idle` → succeeded; `session.error` → failed
+- OpenCode: parent-session `session.idle` → succeeded; parent-session `session.error` → failed
 - Cursor: `error/connectionClosed` → failed; no explicit success event — stdout EOF
   + process exit code 0 is the success boundary (see `CursorSubprocessConnection.events()`).
 - Pi: `agent_end` → succeeded candidate; `cancelled`/`error` → failed.
   The succeeded candidate is finalized only when `PiDrainCoordinator` confirms
   quiescence (parent idle, no pending children/bash, no pending notifications).
 
-Codex connection sessions are thread-aware. `CodexConnection` captures
-`main_turn_thread_id` from the first main `turn/started` event. The drain loop passes
-that ID into `terminal_outcome()` and activity classification, so a subagent-thread
-`turn/completed` does not end the parent session or supply the extracted final report.
-If Codex omits a thread ID, Meridian falls back to the old conservative behavior and
-treats `turn/completed` as terminal.
+`PrimaryEventScope` is the parent-conversation identity used for this filtering:
+Codex uses the main `threadId`, and OpenCode uses the launched parent `sessionID`.
+This is the single drain-loop scope contract; do not add harness-specific parallel
+parameters (for example, a Codex-only thread-id compatibility argument) to semantic
+helpers or coordinators.
+
+The drain loop persists all child events before classification; scope filtering only
+decides whether an event can end the parent turn, clear a pending signal, update the
+parent activity state, or contribute to the parent report.
+
+Codex keeps a conservative unscoped fallback: if a `turn/completed` event has no
+thread ID, it still counts as terminal for the parent. OpenCode does not use that
+fallback once the parent session is known, because its global SSE stream can emit
+unscoped-looking child task `session.idle` / `session.error` events. If no parent
+scope is known at all, Meridian preserves the legacy behavior and treats OpenCode
+terminal events as parent events.
+
+OpenCode report extraction follows the same boundary and is owned by
+`harness/opencode_report.py`. The OpenCode extractor delegates session-id and report
+parsing there instead of duplicating event-shape logic. `extract_opencode_report()`
+first resolves the parent session from `session_id.txt`, a terminal parent session
+event, or the first parent user `message.updated`, then ignores child-session
+assistant text while building `report.md`. Child task text remains visible through
+`meridian session log`.
 
 ## Rationale
 
@@ -424,13 +445,7 @@ accounting invariant treats any uncovered field as a bug, not a warning.
 
 > KB lives at `$MERIDIAN_CONTEXT_KB_DIR` (see `meridian context kb`).
 
-- `$MERIDIAN_CONTEXT_KB_DIR/codebase/harness-adapters.md` — capability matrix, per-adapter flag projection, connections subpackage
-- `$MERIDIAN_CONTEXT_KB_DIR/codebase/harness/overview.md` — translation pipeline, SpawnParams field table, base commands
-- `$MERIDIAN_CONTEXT_KB_DIR/codebase/harness/event-semantics.md` — full terminal event table, activity transitions, drain policy integration
-- `$MERIDIAN_CONTEXT_KB_DIR/codebase/harness/claude.md` — Claude flags, PTY path, session detection
-- `$MERIDIAN_CONTEXT_KB_DIR/codebase/harness/codex.md` — Codex JSON-RPC, managed-primary, approval routing detail
-- `$MERIDIAN_CONTEXT_KB_DIR/codebase/harness/opencode.md` — OpenCode SSE, SQLite sessions, workspace env merging
-- `$MERIDIAN_CONTEXT_KB_DIR/codebase/harness/pi.md` — Pi RPC, extension architecture, quiescence drain
+- `$MERIDIAN_CONTEXT_KB_DIR/codebase/harness-adapters.md` — capability matrix, per-adapter flag projection, connections subpackage, primary event scope
 - `$MERIDIAN_CONTEXT_KB_DIR/architecture/launch-system.md` — how adapters plug into `build_launch_context()`
 
 ## Related .context/

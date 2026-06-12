@@ -55,7 +55,11 @@ from meridian.lib.harness.projections.project_opencode_streaming import (
     project_opencode_spec_to_session_payload as _project_opencode_spec_to_session_payload,
 )
 from meridian.lib.harness.projections.projection_errors import HarnessCapabilityMismatch
-from meridian.lib.harness.semantics import clears_signal
+from meridian.lib.harness.semantics import (
+    PrimaryEventScope,
+    clears_signal,
+    opencode_primary_event_scope,
+)
 from meridian.lib.launch.env import inherit_child_env
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.launch.workspace_projection import OPENCODE_CONFIG_CONTENT_ENV
@@ -225,6 +229,10 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
     @property
     def session_id(self) -> str | None:
         return self._session_id
+
+    @property
+    def primary_event_scope(self) -> PrimaryEventScope | None:
+        return opencode_primary_event_scope(self._session_id)
 
     @property
     def subprocess_pid(self) -> int | None:
@@ -990,7 +998,7 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
             harness_id=HarnessId.OPENCODE.value,
             raw_text=raw_text,
         )
-        if clears_signal(event):
+        if clears_signal(event, primary_event_scope=self.primary_event_scope):
             self._signal_in_flight = False
             self._liveness.signal_request_resolved("cancel")
         return event

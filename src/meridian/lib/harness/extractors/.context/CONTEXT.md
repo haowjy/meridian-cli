@@ -78,6 +78,19 @@ process state. Called after the process has completed (subprocess path) or after
 drain loop exits (streaming path). `ArtifactStore` is the abstraction — do not reach
 for raw file paths.
 
+Report extraction must preserve the same parent-scope boundary as terminal
+classification. OpenCode's global event stream can include child task sessions; its
+report extractor resolves the parent session from `session_id.txt`, parent terminal
+events, or the first parent user `message.updated`, then ignores child-session
+assistant text. Child task output stays readable through `meridian session log`, but
+it must not become the parent `report.md`.
+
+OpenCode session-id/report parsing is owned by `harness/opencode_report.py`.
+`extractors/opencode.py` delegates to that module for artifact session-id detection
+and report extraction, while keeping live-event detection, usage extraction, and
+filesystem/database discovery local to the extractor. Do not reintroduce duplicate
+OpenCode event parsers in the generic `harness/common.py` helpers.
+
 ### Protocol is `@runtime_checkable`
 
 `isinstance(obj, HarnessExtractor)` works. The check tests for the presence of the

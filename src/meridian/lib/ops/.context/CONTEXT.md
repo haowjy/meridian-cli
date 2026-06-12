@@ -172,6 +172,27 @@ if present, else delegates to `ensure_temporary_worktree()`. When `ensure=False`
 returns status-only response (no-op) if path already exists. When work_id is empty
 and no active work item, uses temporary worktree path.
 
+### session_target.py / session_transcript.py — Ordered Transcript Sources
+
+Session-log target resolution builds an ordered source plan once, then parsing walks
+that plan. Do not implement fallback by recursively re-entering
+`resolve_session_log_target()` or by fabricating placeholder files for non-file
+sources. `SessionLogTarget.sources` is the durable plan; each `TranscriptSource`
+identifies its kind (`file`, `opencode_db`, or `spawn_history`), session id,
+harness, label, and optional path.
+
+OpenCode completed-session precedence is:
+
+1. `opencode.db` when a matching `session.id` exists;
+2. native transcript file (`storage/session_diff/...` / legacy JSON) when present;
+3. Meridian spawn `history.jsonl` as fallback/debug/live output.
+
+`parse_session_target()` tries sources in order and stops at the first source with
+usable user/assistant interaction content. This preserves the completed-session
+preference for OpenCode DB while still allowing native-file or spawn-history fallback
+when a DB row exists but contains no conversation rows. Spawn history is a fallback
+source, not the preferred completed OpenCode transcript.
+
 ### session_log_render.py — Session Log Rendering
 
 Pure rendering module with no IO. Sits at the end of the session-read pipeline:
