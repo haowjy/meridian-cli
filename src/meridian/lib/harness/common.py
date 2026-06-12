@@ -356,6 +356,55 @@ def extract_codex_thread_id(payload: dict[str, object]) -> str | None:
     return None
 
 
+def extract_opencode_session_id(payload: dict[str, object]) -> str | None:
+    """Read an OpenCode session id from an event payload."""
+
+    normalized_payload = _opencode_message_payload(payload)
+    for candidate in _opencode_session_id_candidates(normalized_payload):
+        session_id = _extract_text(candidate)
+        if session_id:
+            return session_id
+    return None
+
+
+def _opencode_session_id_candidates(payload: dict[str, object]) -> list[object]:
+    candidates: list[object] = []
+    for key in ("sessionID", "sessionId", "session_id"):
+        if key in payload:
+            candidates.append(payload[key])
+
+    properties_obj = payload.get("properties")
+    if isinstance(properties_obj, dict):
+        properties = cast("dict[str, object]", properties_obj)
+        for key in ("sessionID", "sessionId", "session_id"):
+            if key in properties:
+                candidates.append(properties[key])
+        for nested_key in ("info", "part", "message"):
+            nested_obj = properties.get(nested_key)
+            if isinstance(nested_obj, dict):
+                nested = cast("dict[str, object]", nested_obj)
+                for key in ("sessionID", "sessionId", "session_id"):
+                    if key in nested:
+                        candidates.append(nested[key])
+
+    for nested_key in ("info", "part", "message"):
+        nested_obj = payload.get(nested_key)
+        if isinstance(nested_obj, dict):
+            nested = cast("dict[str, object]", nested_obj)
+            for key in ("sessionID", "sessionId", "session_id"):
+                if key in nested:
+                    candidates.append(nested[key])
+
+    session_obj = payload.get("session")
+    if isinstance(session_obj, dict):
+        session = cast("dict[str, object]", session_obj)
+        for key in ("id", "sessionID", "sessionId", "session_id"):
+            if key in session:
+                candidates.append(session[key])
+
+    return candidates
+
+
 def _codex_item_type(payload: dict[str, object]) -> str:
     item = payload.get("item")
     if not isinstance(item, dict):
@@ -480,7 +529,60 @@ def _opencode_message_payload(payload: dict[str, object]) -> dict[str, object]:
     return payload
 
 
-def _extract_opencode_report_from_stream(payloads: list[dict[str, object]]) -> str | None:
+def _opencode_message_role(payload: dict[str, object]) -> str:
+    message_payload = _opencode_message_payload(payload)
+    properties_obj = message_payload.get("properties")
+    if not isinstance(properties_obj, dict):
+        return ""
+    properties = cast("dict[str, object]", properties_obj)
+    info_obj = properties.get("info")
+    if not isinstance(info_obj, dict):
+        return ""
+    info = cast("dict[str, object]", info_obj)
+    return str(info.get("role", "")).strip().lower()
+
+
+def _read_session_id_artifact(artifacts: ArtifactStore, spawn_id: SpawnId) -> str | None:
+    key = ArtifactKey(f"{spawn_id}/session_id.txt")
+    if not artifacts.exists(key):
+        return None
+    raw = artifacts.get(key)
+    session_id = raw.decode("utf-8", errors="ignore").strip()
+    return session_id or None
+
+
+def _resolve_opencode_primary_session_id(payloads: list[dict[str, object]]) -> str | None:
+    for payload in payloads:
+        event_type = _opencode_event_type(payload)
+        message_payload = _opencode_message_payload(payload)
+        inner_type = _opencode_event_type(message_payload)
+        effective_type = event_type or inner_type
+        if effective_type != "message.updated":
+            continue
+        if _opencode_message_role(payload) != "user":
+            continue
+        session_id = extract_opencode_session_id(payload)
+        if session_id:
+            return session_id
+    return None
+
+
+def _opencode_event_matches_session(
+    payload: dict[str, object],
+    *,
+    primary_session_id: str | None,
+) -> bool:
+    if primary_session_id is None:
+        return True
+    session_id = extract_opencode_session_id(payload)
+    return session_id == primary_session_id
+
+
+def _extract_opencode_report_from_stream(
+    payloads: list[dict[str, object]],
+    *,
+    primary_session_id: str | None = None,
+) -> str | None:
     assistant_message_ids: set[str] = set()
     part_text_by_message: dict[str, list[str]] = {}
     last_assistant_message_id: str | None = None
@@ -493,6 +595,11 @@ def _extract_opencode_report_from_stream(payloads: list[dict[str, object]]) -> s
         effective_type = event_type or inner_type
 
         if effective_type == "message.updated":
+            if not _opencode_event_matches_session(
+                payload,
+                primary_session_id=primary_session_id,
+            ):
+                continue
             properties_obj = message_payload.get("properties")
             if not isinstance(properties_obj, dict):
                 continue
@@ -533,6 +640,9 @@ def _extract_opencode_report_from_stream(payloads: list[dict[str, object]]) -> s
         if effective_type != "message.part.updated":
             continue
 
+        if not _opencode_event_matches_session(payload, primary_session_id=primary_session_id):
+            continue
+
         properties_obj = message_payload.get("properties")
         if not isinstance(properties_obj, dict):
             continue
@@ -567,11 +677,18 @@ def _extract_opencode_report_from_stream(payloads: list[dict[str, object]]) -> s
 
 def extract_opencode_report(artifacts: ArtifactStore, spawn_id: SpawnId) -> str | None:
     payloads = _iter_json_lines_artifact(artifacts, spawn_id, OUTPUT_FILENAME)
-    report = _extract_opencode_report_from_stream(payloads)
+    primary_session_id = _read_session_id_artifact(
+        artifacts,
+        spawn_id,
+    ) or _resolve_opencode_primary_session_id(payloads)
+    report = _extract_opencode_report_from_stream(
+        payloads,
+        primary_session_id=primary_session_id,
+    )
     if report:
         return report
 
-    session_id = extract_session_id_from_artifacts_with_patterns(
+    session_id = primary_session_id or extract_session_id_from_artifacts_with_patterns(
         artifacts,
         spawn_id,
         json_keys=_OPENCODE_SESSION_ID_JSON_KEYS,

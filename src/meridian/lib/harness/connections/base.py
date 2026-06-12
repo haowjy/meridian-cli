@@ -14,6 +14,7 @@ from meridian.lib.launch.launch_types import SpecT
 
 if TYPE_CHECKING:
     from meridian.lib.harness.connections.resident_backend import ResidentBackendControl
+    from meridian.lib.harness.semantics import PrimaryEventScope
     from meridian.lib.observability.debug_tracer import DebugTracer
     from meridian.lib.platform.process_scope import ProcessScopeSnapshot
 
@@ -266,6 +267,11 @@ class HarnessConnection(Generic[SpecT], ABC):
     @property
     @abstractmethod
     def session_id(self) -> str | None: ...
+
+    @property
+    def primary_event_scope(self) -> PrimaryEventScope | None:
+        """Parent scope for events that multiplex child activity on the same stream."""
+        return None
 
     @property
     @abstractmethod

@@ -26,7 +26,11 @@ from meridian.lib.harness.connections.liveness import LivenessDecision
 from meridian.lib.harness.connections.resident_backend import (
     ResidentBackendControl,
 )
-from meridian.lib.harness.semantics import TerminalEventOutcome
+from meridian.lib.harness.semantics import (
+    PrimaryEventScope,
+    TerminalEventOutcome,
+    opencode_primary_event_scope,
+)
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.ops.spawn.models import SpawnSignalInput
 from meridian.lib.safety.permissions import UnsafeNoOpPermissionResolver
@@ -96,6 +100,12 @@ class _FakeResidentConnection(HarnessConnection[ResolvedLaunchSpec]):
     @property
     def session_id(self) -> str | None:
         return "ses-resident"
+
+    @property
+    def primary_event_scope(self) -> PrimaryEventScope | None:
+        if self._harness_id is HarnessId.OPENCODE:
+            return opencode_primary_event_scope(self.session_id)
+        return None
 
     @property
     def subprocess_pid(self) -> int | None:
@@ -176,6 +186,12 @@ def _awaiting_done_coordinator(
 
 
 def _event(harness_id: HarnessId, event_type: str, payload: dict[str, object]) -> HarnessEvent:
+    if harness_id is HarnessId.OPENCODE and "properties" not in payload:
+        payload = {
+            **payload,
+            "type": event_type,
+            "properties": {"sessionID": "ses-resident"},
+        }
     return HarnessEvent(event_type=event_type, harness_id=harness_id.value, payload=payload)
 
 
@@ -287,6 +303,85 @@ async def test_opencode_terminal_success_without_live_children_finalizes_immedia
         assert outcome is not None
         assert outcome.status == "succeeded"
         assert True not in connection.fake_resident_backend.awaiting_done_values
+    finally:
+        await manager.stop_spawn(spawn_id)
+
+
+@pytest.mark.asyncio
+async def test_opencode_child_session_idle_does_not_finalize_parent(
+    tmp_path: Path,
+) -> None:
+    spawn_id = SpawnId("p1")
+    _start_row(tmp_path, str(spawn_id), HarnessId.OPENCODE, None)
+    connection = _FakeResidentConnection(HarnessId.OPENCODE)
+    manager = await _start_manager(tmp_path, connection, spawn_id=spawn_id)
+    subscriber = manager.subscribe(spawn_id)
+    assert subscriber is not None
+
+    child_idle = _event(
+        HarnessId.OPENCODE,
+        "session.idle",
+        {"type": "session.idle", "properties": {"sessionID": "ses-child"}},
+    )
+    connection.emit(child_idle)
+
+    try:
+        observed = await asyncio.wait_for(subscriber.get(), timeout=0.5)
+        assert observed == child_idle
+        with pytest.raises(asyncio.TimeoutError):
+            await asyncio.wait_for(
+                asyncio.shield(manager.wait_for_completion(spawn_id)),
+                timeout=0.05,
+            )
+
+        connection.emit(
+            _event(
+                HarnessId.OPENCODE,
+                "session.idle",
+                {"type": "session.idle", "properties": {"sessionID": "ses-resident"}},
+            )
+        )
+        outcome = await asyncio.wait_for(manager.wait_for_completion(spawn_id), timeout=0.5)
+        assert outcome is not None
+        assert outcome.status == "succeeded"
+    finally:
+        await manager.stop_spawn(spawn_id)
+
+
+@pytest.mark.asyncio
+async def test_opencode_child_session_error_does_not_fail_parent(
+    tmp_path: Path,
+) -> None:
+    spawn_id = SpawnId("p1")
+    _start_row(tmp_path, str(spawn_id), HarnessId.OPENCODE, None)
+    connection = _FakeResidentConnection(HarnessId.OPENCODE)
+    manager = await _start_manager(tmp_path, connection, spawn_id=spawn_id)
+
+    connection.emit(
+        _event(
+            HarnessId.OPENCODE,
+            "session.error",
+            {"type": "session.error", "properties": {"sessionID": "ses-child"}},
+        )
+    )
+
+    try:
+        with pytest.raises(asyncio.TimeoutError):
+            await asyncio.wait_for(
+                asyncio.shield(manager.wait_for_completion(spawn_id)),
+                timeout=0.05,
+            )
+
+        connection.emit(
+            _event(
+                HarnessId.OPENCODE,
+                "session.idle",
+                {"type": "session.idle", "properties": {"sessionID": "ses-resident"}},
+            )
+        )
+        outcome = await asyncio.wait_for(manager.wait_for_completion(spawn_id), timeout=0.5)
+        assert outcome is not None
+        assert outcome.status == "succeeded"
     finally:
         await manager.stop_spawn(spawn_id)
 

@@ -64,7 +64,11 @@ from meridian.lib.harness.connections.resident_backend import (
     LivenessResidentBackendControl,
     ResidentBackendControl,
 )
-from meridian.lib.harness.semantics import clears_signal
+from meridian.lib.harness.semantics import (
+    PrimaryEventScope,
+    clears_signal,
+    codex_primary_event_scope,
+)
 from meridian.lib.launch.env import inherit_child_env
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.observability.trace_helpers import (
@@ -268,6 +272,10 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
     @property
     def main_turn_thread_id(self) -> str | None:
         return self._main_turn_thread_id
+
+    @property
+    def primary_event_scope(self) -> PrimaryEventScope | None:
+        return codex_primary_event_scope(self._main_turn_thread_id)
 
     @property
     def subprocess_pid(self) -> int | None:
@@ -1262,7 +1270,7 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
             thread_id = _extract_thread_id(payload)
             if thread_id is not None:
                 self._main_turn_thread_id = thread_id
-        if clears_signal(event, codex_main_thread_id=self._main_turn_thread_id):
+        if clears_signal(event, primary_event_scope=self.primary_event_scope):
             self._end_current_turn()
             self._signal_in_flight = False
             self._liveness.signal_request_resolved("cancel")

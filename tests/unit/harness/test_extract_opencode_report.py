@@ -237,6 +237,151 @@ def test_extract_opencode_report_reads_assistant_text_from_message_part_updated(
     assert extract_opencode_report(store, spawn_id) == "LIVE_OK"
 
 
+def test_extract_opencode_report_ignores_child_session_assistant_text() -> None:
+    spawn_id = SpawnId("p-opencode-parent-scope")
+    child_message_id = "msg_child_assistant"
+    parent_message_id = "msg_parent_assistant"
+    store = _artifact_store_from_history_lines(
+        spawn_id,
+        [
+            {
+                "event_type": "message.updated",
+                "harness_id": "opencode",
+                "payload": {
+                    "type": "message.updated",
+                    "properties": {
+                        "info": {
+                            "id": "msg_parent_user",
+                            "role": "user",
+                            "sessionID": "ses_parent",
+                            "parts": [{"type": "text", "text": "Parent task"}],
+                        }
+                    },
+                },
+            },
+            {
+                "event_type": "message.updated",
+                "harness_id": "opencode",
+                "payload": {
+                    "type": "message.updated",
+                    "properties": {
+                        "info": {
+                            "id": "msg_child_user",
+                            "role": "user",
+                            "sessionID": "ses_child",
+                            "parts": [{"type": "text", "text": "Child task"}],
+                        }
+                    },
+                },
+            },
+            {
+                "event_type": "message.updated",
+                "harness_id": "opencode",
+                "payload": {
+                    "type": "message.updated",
+                    "properties": {
+                        "info": {
+                            "id": child_message_id,
+                            "role": "assistant",
+                            "sessionID": "ses_child",
+                        }
+                    },
+                },
+            },
+            {
+                "event_type": "message.part.updated",
+                "harness_id": "opencode",
+                "payload": {
+                    "type": "message.part.updated",
+                    "properties": {
+                        "sessionID": "ses_child",
+                        "part": {
+                            "messageID": child_message_id,
+                            "sessionID": "ses_child",
+                            "type": "text",
+                            "text": "Child report must not be parent report.",
+                        },
+                    },
+                },
+            },
+            {
+                "event_type": "message.updated",
+                "harness_id": "opencode",
+                "payload": {
+                    "type": "message.updated",
+                    "properties": {
+                        "info": {
+                            "id": parent_message_id,
+                            "role": "assistant",
+                            "sessionID": "ses_parent",
+                        }
+                    },
+                },
+            },
+            {
+                "event_type": "message.part.updated",
+                "harness_id": "opencode",
+                "payload": {
+                    "type": "message.part.updated",
+                    "properties": {
+                        "sessionID": "ses_parent",
+                        "part": {
+                            "messageID": parent_message_id,
+                            "sessionID": "ses_parent",
+                            "type": "text",
+                            "text": "Parent report.",
+                        },
+                    },
+                },
+            },
+        ],
+    )
+
+    assert extract_opencode_report(store, spawn_id) == "Parent report."
+
+
+def test_extract_opencode_report_returns_none_when_only_child_session_reports() -> None:
+    spawn_id = SpawnId("p-opencode-child-only")
+    child_message_id = "msg_child_assistant"
+    store = _artifact_store_from_history_lines(
+        spawn_id,
+        [
+            {
+                "event_type": "message.updated",
+                "harness_id": "opencode",
+                "payload": {
+                    "type": "message.updated",
+                    "properties": {
+                        "info": {
+                            "id": "msg_parent_user",
+                            "role": "user",
+                            "sessionID": "ses_parent",
+                            "parts": [{"type": "text", "text": "Parent task"}],
+                        }
+                    },
+                },
+            },
+            {
+                "event_type": "message.updated",
+                "harness_id": "opencode",
+                "payload": {
+                    "type": "message.updated",
+                    "properties": {
+                        "info": {
+                            "id": child_message_id,
+                            "role": "assistant",
+                            "sessionID": "ses_child",
+                            "parts": [{"type": "text", "text": "Child finished."}],
+                        }
+                    },
+                },
+            },
+        ],
+    )
+
+    assert extract_opencode_report(store, spawn_id) is None
+
+
 def test_extract_or_fallback_report_never_returns_session_idle_envelope() -> None:
     spawn_id = SpawnId("p-opencode-fallback-idle")
     store = _artifact_store_from_history_lines(

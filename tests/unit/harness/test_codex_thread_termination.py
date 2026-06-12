@@ -8,6 +8,7 @@ from meridian.lib.harness.semantics import (
     CodexDrainThreadTracker,
     activity_transition,
     clears_signal,
+    opencode_primary_event_scope,
     terminal_outcome,
 )
 from meridian.lib.state.artifact_store import LocalStore
@@ -21,6 +22,17 @@ def _codex_event(event_type: str, payload: dict[str, object]) -> HarnessEvent:
         event_type=event_type,
         payload=payload,
         harness_id="codex",
+    )
+
+
+def _opencode_event(event_type: str, session_id: str | None) -> HarnessEvent:
+    properties: dict[str, object] = {}
+    if session_id is not None:
+        properties["sessionID"] = session_id
+    return HarnessEvent(
+        event_type=event_type,
+        payload={"type": event_type, "properties": properties},
+        harness_id="opencode",
     )
 
 
@@ -59,6 +71,34 @@ def test_single_thread_turn_completed_stays_terminal_without_thread_id() -> None
     outcome = terminal_outcome(event)
     assert outcome is not None
     assert outcome.status == "succeeded"
+
+
+def test_opencode_child_session_terminal_events_do_not_complete_parent_scope() -> None:
+    parent_scope = opencode_primary_event_scope("ses_parent")
+    child_idle = _opencode_event("session.idle", "ses_child")
+    child_error = _opencode_event("session.error", "ses_child")
+    parent_idle = _opencode_event("session.idle", "ses_parent")
+
+    assert terminal_outcome(child_idle, primary_event_scope=parent_scope) is None
+    assert terminal_outcome(child_error, primary_event_scope=parent_scope) is None
+    assert clears_signal(child_idle, primary_event_scope=parent_scope) is False
+    assert activity_transition(child_idle, primary_event_scope=parent_scope) is None
+
+    outcome = terminal_outcome(parent_idle, primary_event_scope=parent_scope)
+    assert outcome is not None
+    assert outcome.status == "succeeded"
+    assert clears_signal(parent_idle, primary_event_scope=parent_scope) is True
+    assert activity_transition(parent_idle, primary_event_scope=parent_scope) == "idle"
+
+
+def test_opencode_unscoped_terminal_event_only_counts_without_parent_scope() -> None:
+    unscoped_idle = _opencode_event("session.idle", None)
+
+    assert terminal_outcome(unscoped_idle) is not None
+    assert terminal_outcome(
+        unscoped_idle,
+        primary_event_scope=opencode_primary_event_scope("ses_parent"),
+    ) is None
 
 
 def test_extract_codex_report_uses_main_thread_agent_message(tmp_path: Path) -> None:

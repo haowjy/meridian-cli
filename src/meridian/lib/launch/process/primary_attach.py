@@ -367,11 +367,10 @@ class PrimaryAttachLauncher:
     def _update_activity_from_event(self, event: HarnessEvent) -> None:
         """Update activity state based on connection events."""
 
-        main_thread_id = getattr(self._connection, "main_turn_thread_id", None)
-        codex_main_thread_id = (
-            main_thread_id if isinstance(main_thread_id, str) and main_thread_id.strip() else None
+        activity = activity_transition(
+            event,
+            primary_event_scope=self._connection.primary_event_scope,
         )
-        activity = activity_transition(event, codex_main_thread_id=codex_main_thread_id)
         if activity is not None:
             self._set_activity(activity)
 

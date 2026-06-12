@@ -9,6 +9,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - OpenCode DB compactions now render as segment handoffs, not assistant replies.
 - Empty OpenCode DB transcripts now fall back to legacy JSON or spawn history.
 - Default OpenCode `session log` output now shows completed `task` tool result previews instead of making finished tasks look unfinished.
+- OpenCode child task sessions no longer complete, fail, clear signals for, or supply reports for their parent spawn.
 
 ## [0.3.7] - 2026-06-12
 

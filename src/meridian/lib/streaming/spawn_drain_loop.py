@@ -31,7 +31,7 @@ from meridian.lib.streaming.spawn_session import DrainOutcome, SpawnSession
 
 if TYPE_CHECKING:
     from meridian.lib.harness.connections.base import HarnessConnection
-    from meridian.lib.harness.semantics import TerminalEventOutcome
+    from meridian.lib.harness.semantics import PrimaryEventScope, TerminalEventOutcome
     from meridian.lib.observability.debug_tracer import DebugTracer
 
 logger = logging.getLogger(__name__)
@@ -129,7 +129,7 @@ class SpawnDrainLoop:
 
                 transition = activity_transition(
                     event,
-                    codex_main_thread_id=_codex_main_thread_id(receiver),
+                    primary_event_scope=_primary_event_scope(receiver),
                 )
                 duplicate_canonical_event = await _observe_event(
                     coordinator,
@@ -196,7 +196,7 @@ class SpawnDrainLoop:
 
                 event_outcome = terminal_outcome(
                     event,
-                    codex_main_thread_id=_codex_main_thread_id(receiver),
+                    primary_event_scope=_primary_event_scope(receiver),
                 )
                 self._fan_out_event(spawn_id, event)
                 persisted_event_decision = _note_event_persisted(coordinator, event)
@@ -313,14 +313,14 @@ class SpawnDrainLoop:
                         continue
 
 
-def _codex_main_thread_id(connection: object) -> str | None:
-    """Read the tracked main Codex thread id when the connection exposes it."""
+def _primary_event_scope(connection: object) -> PrimaryEventScope | None:
+    """Read the connection's primary event scope when it exposes one."""
 
     try:
-        thread_id = cast("Any", connection).main_turn_thread_id
+        scope = cast("Any", connection).primary_event_scope
     except Exception:
         return None
-    return thread_id if isinstance(thread_id, str) and thread_id.strip() else None
+    return cast("PrimaryEventScope | None", scope)
 
 
 class _NoAuxWake:
