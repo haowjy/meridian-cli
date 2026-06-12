@@ -93,6 +93,10 @@ async def test_streaming_runner_signal_cancel_invokes_send_cancel_once(
             return None
 
         @property
+        def primary_event_scope(self) -> None:
+            return None
+
+        @property
         def resident_backend(self) -> None:
             return None
 
