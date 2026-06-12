@@ -10,9 +10,10 @@ from __future__ import annotations
 import re
 from datetime import datetime
 from pathlib import Path
-from typing import NamedTuple
+from typing import Literal, NamedTuple
 
 from meridian.lib.core.types import HarnessId
+from meridian.lib.harness.opencode_transcript import opencode_db_session_exists
 from meridian.lib.harness.pi_paths import resolve_pi_spawn_session_root
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.harness.session_detection import infer_harness_from_untracked_session_ref
@@ -41,8 +42,9 @@ _PRIMARY_TRANSCRIPT_UNAVAILABLE_SUFFIX = (
 class SessionLogTarget(NamedTuple):
     session_id: str
     harness: str | None
-    file_path: Path
+    file_path: Path | None
     source: str
+    transcript_source: Literal["file", "opencode_db"] = "file"
 
 
 class SessionRepairTarget(NamedTuple):
@@ -101,6 +103,17 @@ def _resolve_harness_session_file(
     registry = get_default_harness_registry()
     normalized_harness = (harness or "").strip().lower() or None
     if normalized_harness is not None:
+        if (
+            normalized_harness == HarnessId.OPENCODE.value
+            and opencode_db_session_exists(session_id=normalized_session_id)
+        ):
+            return SessionLogTarget(
+                session_id=normalized_session_id,
+                harness=HarnessId.OPENCODE.value,
+                file_path=None,
+                source="opencode transcript",
+                transcript_source="opencode_db",
+            )
         try:
             harness_id = HarnessId(normalized_harness)
             adapter = registry.get_subprocess_harness(harness_id)
@@ -132,6 +145,17 @@ def _resolve_harness_session_file(
         except TypeError:
             continue
         checked_harnesses.append(str(harness_id))
+        if (
+            harness_id == HarnessId.OPENCODE
+            and opencode_db_session_exists(session_id=normalized_session_id)
+        ):
+            return SessionLogTarget(
+                session_id=normalized_session_id,
+                harness=str(harness_id),
+                file_path=None,
+                source=f"{harness_id} transcript",
+                transcript_source="opencode_db",
+            )
         candidate = adapter.resolve_session_file(
             project_root=project_root,
             session_id=normalized_session_id,

@@ -4,6 +4,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+- OpenCode `session log` now reads completed transcripts from `opencode.db` before legacy JSON or spawn-history fallback.
+
 ## [0.3.7] - 2026-06-12
 
 ### Changed

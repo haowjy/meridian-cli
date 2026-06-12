@@ -9,6 +9,7 @@ from meridian.lib.core.command_strings import format_command_for_display
 from meridian.lib.harness.transcript import (
     ToolCall,
     TranscriptMessage,
+    parse_opencode_db_transcript_with_prologues,
     parse_transcript_file_with_prologues,
 )
 from meridian.lib.ops.runtime import resolve_runtime_authority_for_read
@@ -255,6 +256,8 @@ def _route_from_request(
 
 
 def route_for_corpus_target(target: SessionLogTarget) -> SessionLogRoute:
+    if target.file_path is None:
+        return SessionLogRoute(mode="ref", value=target.session_id)
     return SessionLogRoute(mode="file", value=str(target.file_path))
 
 
@@ -265,7 +268,12 @@ def parse_session_target(
     target: SessionLogTarget,
     route: SessionLogRoute,
 ) -> ParsedSessionTranscript:
-    parsed = parse_transcript_file_with_prologues(target.file_path)
+    if target.transcript_source == "opencode_db":
+        parsed = parse_opencode_db_transcript_with_prologues(target.session_id)
+    else:
+        if target.file_path is None:
+            raise FileNotFoundError(f"Session file for '{target.session_id}' not found")
+        parsed = parse_transcript_file_with_prologues(target.file_path)
     flattened = flatten_transcript_segments(parsed.segments)
     interaction_entries = group_transcript_entries(flattened)
     segment_entries = build_segment_entries(

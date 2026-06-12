@@ -12,7 +12,7 @@ from pathlib import Path
 
 from meridian.lib.harness.claude import project_slug
 from meridian.lib.ops.session_log import SessionLogInput, session_log_sync
-from meridian.lib.state import spawn_store
+from meridian.lib.state import session_store, spawn_store
 from meridian.lib.state.paths import resolve_project_runtime_root
 
 
@@ -149,6 +149,71 @@ def _write_opencode_db_session(
         connection.commit()
 
 
+def _write_opencode_db_session_with_parts(
+    *,
+    db_path: Path,
+    session_id: str,
+    messages: list[tuple[str, dict[str, object], list[dict[str, object]]]],
+) -> None:
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    with sqlite3.connect(db_path) as connection:
+        connection.executescript(
+            """
+            CREATE TABLE session (
+                id TEXT PRIMARY KEY,
+                time_created INTEGER NOT NULL,
+                time_updated INTEGER NOT NULL
+            );
+            CREATE TABLE message (
+                id TEXT PRIMARY KEY,
+                session_id TEXT NOT NULL,
+                time_created INTEGER NOT NULL,
+                time_updated INTEGER NOT NULL,
+                data TEXT NOT NULL
+            );
+            CREATE TABLE part (
+                id TEXT PRIMARY KEY,
+                message_id TEXT NOT NULL,
+                session_id TEXT NOT NULL,
+                time_created INTEGER NOT NULL,
+                time_updated INTEGER NOT NULL,
+                data TEXT NOT NULL
+            );
+            """
+        )
+        now = 1_778_945_817_030
+        connection.execute(
+            "INSERT INTO session (id, time_created, time_updated) VALUES (?, ?, ?)",
+            (session_id, now, now),
+        )
+        for message_index, (role, message_data, parts) in enumerate(messages):
+            timestamp = now + (message_index * 100)
+            message_id = f"msg_{message_index}"
+            payload = {"role": role, "time": {"created": timestamp}, **message_data}
+            connection.execute(
+                "INSERT INTO message "
+                "(id, session_id, time_created, time_updated, data) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (message_id, session_id, timestamp, timestamp, json.dumps(payload)),
+            )
+            for part_index, part in enumerate(parts):
+                part_timestamp = timestamp + part_index + 1
+                connection.execute(
+                    "INSERT INTO part "
+                    "(id, message_id, session_id, time_created, time_updated, data) "
+                    "VALUES (?, ?, ?, ?, ?, ?)",
+                    (
+                        f"prt_{message_index}_{part_index}",
+                        message_id,
+                        session_id,
+                        part_timestamp,
+                        part_timestamp,
+                        json.dumps(part),
+                    ),
+                )
+        connection.commit()
+
+
 def test_session_log_resolves_opencode_db_transcript_when_session_diff_is_empty(
     tmp_path: Path,
     monkeypatch,
@@ -199,6 +264,141 @@ def test_session_log_resolves_opencode_db_transcript_when_session_diff_is_empty(
         ("user", "show transcript please"),
         ("assistant", "here is your transcript"),
     ]
+
+
+def test_session_log_resolves_opencode_db_without_legacy_session_file(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    runtime_root = resolve_project_runtime_root(project_root)
+    runtime_root.mkdir(parents=True, exist_ok=True)
+
+    xdg_data_home = tmp_path / "xdg-data"
+    session_id = "ses_fixture_db_only_12345"
+    _write_opencode_db_session_with_parts(
+        db_path=xdg_data_home / "opencode" / "opencode.db",
+        session_id=session_id,
+        messages=[
+            (
+                "user",
+                {"system": "OpenCode DB setup"},
+                [{"type": "text", "text": "show transcript please"}],
+            ),
+            ("assistant", {}, [{"type": "text", "text": "here is your transcript"}]),
+        ],
+    )
+    monkeypatch.setenv("XDG_DATA_HOME", xdg_data_home.as_posix())
+
+    chat_id = "c1"
+    session_store.start_session(
+        runtime_root,
+        harness="opencode",
+        harness_session_id=session_id,
+        model="gpt-5.3-codex",
+        chat_id=chat_id,
+    )
+    spawn_store.start_spawn(
+        runtime_root,
+        chat_id=chat_id,
+        model="gpt-5.3-codex",
+        agent="coder",
+        harness="opencode",
+        prompt="hello",
+        spawn_id="p1",
+        harness_session_id=session_id,
+        started_at="2026-04-11T00:00:00Z",
+    )
+
+    for ref in ("p1", chat_id, session_id):
+        output = session_log_sync(
+            SessionLogInput(
+                ref=ref,
+                project_root=project_root.as_posix(),
+                full=True,
+            )
+        )
+
+        assert output.session_id == session_id
+        assert output.source == "opencode transcript"
+        assert output.entries[0].role == "system"
+        assert output.entries[0].content == "OpenCode DB setup"
+        assert [(message.role, message.content) for message in output.messages] == [
+            ("user", "show transcript please"),
+            ("assistant", "here is your transcript"),
+        ]
+
+
+def test_session_log_renders_opencode_db_completed_tool_parts(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    runtime_root = resolve_project_runtime_root(project_root)
+    runtime_root.mkdir(parents=True, exist_ok=True)
+
+    xdg_data_home = tmp_path / "xdg-data"
+    session_id = "ses_fixture_db_tool_12345"
+    target_path = "/tmp/opencode-write.txt"
+    _write_opencode_db_session_with_parts(
+        db_path=xdg_data_home / "opencode" / "opencode.db",
+        session_id=session_id,
+        messages=[
+            ("user", {}, [{"type": "text", "text": "write the file"}]),
+            (
+                "assistant",
+                {},
+                [
+                    {"type": "reasoning", "text": "hidden"},
+                    {
+                        "type": "tool",
+                        "tool": "write",
+                        "state": {
+                            "status": "completed",
+                            "input": {"filePath": target_path, "content": "OK\n"},
+                            "output": "Wrote file successfully.",
+                        },
+                    },
+                ],
+            ),
+            ("assistant", {}, [{"type": "text", "text": "File written."}]),
+        ],
+    )
+    monkeypatch.setenv("XDG_DATA_HOME", xdg_data_home.as_posix())
+
+    spawn_store.start_spawn(
+        runtime_root,
+        chat_id="c1",
+        model="gpt-5.3-codex",
+        agent="coder",
+        harness="opencode",
+        prompt="hello",
+        spawn_id="p1",
+        harness_session_id=session_id,
+        started_at="2026-04-11T00:00:00Z",
+    )
+
+    output = session_log_sync(
+        SessionLogInput(
+            ref="p1",
+            project_root=project_root.as_posix(),
+            full=True,
+            truncate=False,
+        )
+    )
+
+    assert [(message.role, message.content) for message in output.messages] == [
+        ("user", "write the file"),
+        ("assistant", f"[tool: write {target_path}]"),
+        ("user", "[tool_result] Wrote file successfully."),
+        ("assistant", "File written."),
+    ]
+    assert output.messages[1].tool_call is not None
+    assert output.messages[1].tool_call.name == "write"
+    assert output.messages[1].tool_call.body == target_path
+    assert output.messages[2].is_tool_result is True
 
 
 def test_session_log_resolves_codex_session_file_from_codex_home_env(
