@@ -78,6 +78,8 @@ configuration belongs in `DrainPlan`, not in coordinator methods.
 Scope filtering happens before coordinator terminal handling. A child OpenCode
 `session.idle` / `session.error` produces no `TerminalEventOutcome` for the parent,
 so resident and plain drain paths never see it as a parent completion candidate.
+`PrimaryEventScope` is the only scope contract passed through the drain stack; do
+not preserve or add compatibility side channels such as a Codex-only thread-id path.
 
 ### DrainOutcome Priority
 

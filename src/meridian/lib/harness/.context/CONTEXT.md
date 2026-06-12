@@ -186,6 +186,10 @@ Key mappings:
 
 `PrimaryEventScope` is the parent-conversation identity used for this filtering:
 Codex uses the main `threadId`, and OpenCode uses the launched parent `sessionID`.
+This is the single drain-loop scope contract; do not add harness-specific parallel
+parameters (for example, a Codex-only thread-id compatibility argument) to semantic
+helpers or coordinators.
+
 The drain loop persists all child events before classification; scope filtering only
 decides whether an event can end the parent turn, clear a pending signal, update the
 parent activity state, or contribute to the parent report.
@@ -197,10 +201,13 @@ unscoped-looking child task `session.idle` / `session.error` events. If no paren
 scope is known at all, Meridian preserves the legacy behavior and treats OpenCode
 terminal events as parent events.
 
-OpenCode report extraction follows the same boundary. `extract_opencode_report()` first
-resolves the parent session from `session_id.txt` or the first parent user
-`message.updated`, then ignores child-session assistant text while building
-`report.md`. Child task text remains visible through `meridian session log`.
+OpenCode report extraction follows the same boundary and is owned by
+`harness/opencode_report.py`. The OpenCode extractor delegates session-id and report
+parsing there instead of duplicating event-shape logic. `extract_opencode_report()`
+first resolves the parent session from `session_id.txt`, a terminal parent session
+event, or the first parent user `message.updated`, then ignores child-session
+assistant text while building `report.md`. Child task text remains visible through
+`meridian session log`.
 
 ## Rationale
 

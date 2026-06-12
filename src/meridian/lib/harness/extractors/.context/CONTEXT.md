@@ -80,10 +80,16 @@ for raw file paths.
 
 Report extraction must preserve the same parent-scope boundary as terminal
 classification. OpenCode's global event stream can include child task sessions; its
-report extractor resolves the parent session from `session_id.txt` or the first parent
-user `message.updated`, then ignores child-session assistant text. Child task output
-stays readable through `meridian session log`, but it must not become the parent
-`report.md`.
+report extractor resolves the parent session from `session_id.txt`, parent terminal
+events, or the first parent user `message.updated`, then ignores child-session
+assistant text. Child task output stays readable through `meridian session log`, but
+it must not become the parent `report.md`.
+
+OpenCode session-id/report parsing is owned by `harness/opencode_report.py`.
+`extractors/opencode.py` delegates to that module for artifact session-id detection
+and report extraction, while keeping live-event detection, usage extraction, and
+filesystem/database discovery local to the extractor. Do not reintroduce duplicate
+OpenCode event parsers in the generic `harness/common.py` helpers.
 
 ### Protocol is `@runtime_checkable`
 
