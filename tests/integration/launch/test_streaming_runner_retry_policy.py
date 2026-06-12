@@ -136,7 +136,11 @@ async def test_execute_with_streaming_does_not_retry_authoritative_terminal_fail
             HarnessEvent(
                 event_type="session.error",
                 harness_id="opencode",
-                payload={"type": "session.error", "error": "connection reset by peer"},
+                payload={
+                    "type": "session.error",
+                    "error": "connection reset by peer",
+                    "sessionID": "session-retryable-opencode",
+                },
             ),
         ),
         session_id="session-retryable-opencode",
