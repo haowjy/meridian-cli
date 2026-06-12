@@ -17,7 +17,9 @@ models_cache_ttl_hours = 24
 [settings.meridian.agent_copy]
 harnesses = ["claude"]
 include_fanout = false
-fanout_agents = [
+
+[settings.meridian.fanout]
+agents = [
     "reviewer",
     "browser-prober",
     "prober",
