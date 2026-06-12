@@ -4,6 +4,13 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- `max` reasoning effort level (`low` < `medium` < `high` < `xhigh` < `max`), matching Claude Code effort scale.
+
+### Fixed
+- `-a ""` (explicit empty agent name) now skips the configured default agent profile instead of falling through to it.
+- Claude `xhigh` effort mapping passes through correctly (`"xhigh"` → `"xhigh"`) instead of remapping to `"max"`.
+
 ## [0.3.5] - 2026-06-11
 
 ### Fixed

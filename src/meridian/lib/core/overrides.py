@@ -31,7 +31,7 @@ EXECUTION_POLICY_FIELDS: tuple[ExecutionPolicyField, ...] = (
 )
 _EXECUTION_POLICY_FIELD_SET = frozenset(EXECUTION_POLICY_FIELDS)
 
-KNOWN_EFFORT_VALUES = frozenset({"low", "medium", "high", "xhigh"})
+KNOWN_EFFORT_VALUES = frozenset({"low", "medium", "high", "max", "xhigh"})
 
 
 def _validate_autocompact_value(v: object) -> object:

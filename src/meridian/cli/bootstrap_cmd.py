@@ -70,7 +70,7 @@ def register_bootstrap_command(
         ] = None,
         effort: Annotated[
             str | None,
-            Parameter(name="--effort", help="Effort level: low, medium, high, xhigh."),
+            Parameter(name="--effort", help="Effort level: low, medium, high, xhigh, max."),
         ] = None,
         sandbox: Annotated[
             str | None,

@@ -99,7 +99,7 @@ def _chat(
     ] = None,
     effort: Annotated[
         str | None,
-        Parameter(name="--effort", help="Effort override: low, medium, high, xhigh."),
+        Parameter(name="--effort", help="Effort override: low, medium, high, xhigh, max."),
     ] = None,
     autocompact: Annotated[
         int | None,

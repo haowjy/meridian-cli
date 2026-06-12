@@ -70,8 +70,8 @@ _EFFORT_TO_THINKING: dict[str, str] = {
     "low": "minimal",
     "medium": "medium",
     "high": "high",
-    "max": "xhigh",
     "xhigh": "xhigh",
+    "max": "xhigh",
 }
 
 

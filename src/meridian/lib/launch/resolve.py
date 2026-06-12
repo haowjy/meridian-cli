@@ -79,7 +79,13 @@ def load_agent_profile_with_fallback(
     1. requested_agent (explicit --agent flag) -> load or raise
     2. configured_default (from config) -> try load
     3. None (no profile)
+
+    An explicit empty string (``-a ""``) short-circuits to None —
+    the caller opted out of any agent profile, including the default.
     """
+
+    if requested_agent is not None and requested_agent.strip() == "":
+        return None, None
 
     requested_profile = requested_agent.strip() if requested_agent is not None else ""
     if requested_profile:

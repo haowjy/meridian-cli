@@ -653,7 +653,7 @@ These override spawn-level runtime policy. They sit above project config but bel
 | Variable | Purpose |
 |---|---|
 | `MERIDIAN_MODEL` | Model for this spawn (alias or canonical ID) |
-| `MERIDIAN_EFFORT` | Reasoning effort: `low`, `medium`, `high`, `xhigh` |
+| `MERIDIAN_EFFORT` | Reasoning effort: `low`, `medium`, `high`, `xhigh`, `max` |
 | `MERIDIAN_APPROVAL` | Approval mode: `default`, `confirm`, `auto`, `yolo` |
 | `MERIDIAN_SANDBOX` | Sandbox level |
 | `MERIDIAN_AUTOCOMPACT` | Context compaction threshold (int 1–100) |

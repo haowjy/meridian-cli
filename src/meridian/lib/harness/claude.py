@@ -355,7 +355,8 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
                 "low": "low",
                 "medium": "medium",
                 "high": "high",
-                "xhigh": "max",
+                "xhigh": "xhigh",
+                "max": "max",
             }.get(normalized_value, normalized_value)
         continue_session_id = (run.continue_harness_session_id or "").strip() or None
         effective_extra_args = run.extra_args
