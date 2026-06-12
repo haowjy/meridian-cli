@@ -21,6 +21,11 @@ from meridian.lib.harness.connections.base import (
 )
 from meridian.lib.harness.launch_spec import ResolvedLaunchSpec
 from meridian.lib.harness.registry import HarnessRegistry
+from meridian.lib.harness.semantics import (
+    PrimaryEventScope,
+    codex_primary_event_scope,
+    opencode_primary_event_scope,
+)
 from meridian.lib.launch.context import build_launch_context
 from meridian.lib.launch.request import (
     LaunchArgvIntent,
@@ -98,6 +103,10 @@ class _ReportThenHangConnection:
     @property
     def subprocess_pid(self) -> int | None:
         return 4242
+
+    @property
+    def primary_event_scope(self) -> None:
+        return None
 
     @property
     def resident_backend(self) -> object:
@@ -196,6 +205,14 @@ class _OpenCodeTerminalWithScopeConnection:
     @property
     def subprocess_pid(self) -> int | None:
         return self._scope_snapshot.root_pid if self._scope_snapshot is not None else None
+
+    @property
+    def primary_event_scope(self) -> PrimaryEventScope | None:
+        if self.harness is HarnessId.CODEX:
+            return codex_primary_event_scope(self._session_id)
+        if self.harness is HarnessId.OPENCODE:
+            return opencode_primary_event_scope(self._session_id)
+        return None
 
     @property
     def resident_backend(self) -> object:
@@ -309,6 +326,10 @@ class _ResidentDeadlineConnection:
         return 8282
 
     @property
+    def primary_event_scope(self) -> None:
+        return None
+
+    @property
     def resident_backend(self) -> object:
         return self._resident_backend
 
@@ -403,6 +424,10 @@ class _ScriptedRetryOpenCodeConnection:
     @property
     def subprocess_pid(self) -> int | None:
         return type(self).subprocess_pid_value
+
+    @property
+    def primary_event_scope(self) -> PrimaryEventScope | None:
+        return opencode_primary_event_scope(type(self).session_id_value)
 
     @property
     def resident_backend(self) -> object:

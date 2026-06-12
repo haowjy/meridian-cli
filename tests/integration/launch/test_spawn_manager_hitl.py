@@ -112,6 +112,10 @@ async def test_spawn_manager_codex_hitl_requests_auto_rejected_for_spawned_agent
             return None
 
         @property
+        def primary_event_scope(self) -> None:
+            return None
+
+        @property
         def resident_backend(self) -> None:
             return None
 
@@ -252,6 +256,10 @@ async def test_spawn_manager_retryable_permission_send_failure_resolves_not_fail
 
         @property
         def subprocess_pid(self) -> int | None:
+            return None
+
+        @property
+        def primary_event_scope(self) -> None:
             return None
 
         @property

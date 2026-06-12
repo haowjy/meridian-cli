@@ -66,6 +66,10 @@ class _ClaudeSeedPersistenceConnection:
         return 5252
 
     @property
+    def primary_event_scope(self) -> None:
+        return None
+
+    @property
     def resident_backend(self) -> None:
         return None
 
@@ -128,6 +132,10 @@ class _OpenCodeSeedPortConnection:
     @property
     def subprocess_pid(self) -> int | None:
         return 6262
+
+    @property
+    def primary_event_scope(self) -> None:
+        return None
 
     @property
     def resident_backend(self) -> None:
@@ -193,6 +201,10 @@ class _OpenCodeConnectSessionConnection:
     @property
     def subprocess_pid(self) -> int | None:
         return 7272
+
+    @property
+    def primary_event_scope(self) -> None:
+        return None
 
     @property
     def resident_backend(self) -> None:
