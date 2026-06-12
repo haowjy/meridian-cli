@@ -110,6 +110,10 @@ class FakeManagedConnection:
         return self._subprocess_pid
 
     @property
+    def primary_event_scope(self) -> None:
+        return None
+
+    @property
     def managed_backend(self) -> None:
         return None
 
