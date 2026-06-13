@@ -82,13 +82,17 @@ def _text_response(
     handler.wfile.write(body)
 
 
+class _QiExplorerServer(ThreadingHTTPServer):
+    explorer_state: ExplorerState
+
+
 def create_server(
     discovery: DiscoveryResult,
     *,
     host: str = "127.0.0.1",
     port: int = 0,
     state: ExplorerState | None = None,
-) -> ThreadingHTTPServer:
+) -> _QiExplorerServer:
     """Create a bound ``ThreadingHTTPServer`` for qi explore."""
 
     explorer_state = state or ExplorerState(discovery)
@@ -171,7 +175,7 @@ def create_server(
                 {"path": result.path, "content": result.content, "kind": result.kind},
             )
 
-    httpd = ThreadingHTTPServer((host, port), QiExplorerHandler)
+    httpd = _QiExplorerServer((host, port), QiExplorerHandler)
     httpd.explorer_state = explorer_state
     return httpd
 

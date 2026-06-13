@@ -158,17 +158,49 @@ class BoundaryNode:
     boundary_dir: Path
 
 
+def _empty_nodes_by_id() -> dict[str, BoundaryNode]:
+    return {}
+
+
+def _empty_boundary_key_to_id() -> dict[tuple[Path, Path], str]:
+    return {}
+
+
+def _empty_file_to_node_id() -> dict[Path, str]:
+    return {}
+
+
+def _empty_roots_by_name() -> dict[str, Path]:
+    return {}
+
+
+def _empty_root_entries() -> list[tuple[str, Path]]:
+    return []
+
+
+def _empty_inbound_from() -> dict[str, list[str]]:
+    return {}
+
+
+def _empty_collapsed_edges() -> list[tuple[str, str, str, int]]:
+    return []
+
+
 @dataclass
 class GraphIndex:
     """Lookup tables shared by graph and content endpoints."""
 
-    nodes_by_id: dict[str, BoundaryNode] = field(default_factory=dict)
-    boundary_key_to_id: dict[tuple[Path, Path], str] = field(default_factory=dict)
-    file_to_node_id: dict[Path, str] = field(default_factory=dict)
-    roots_by_name: dict[str, Path] = field(default_factory=dict)
-    root_entries: list[tuple[str, Path]] = field(default_factory=list)
-    inbound_from: dict[str, list[str]] = field(default_factory=dict)
-    collapsed_edges: list[tuple[str, str, str, int]] = field(default_factory=list)
+    nodes_by_id: dict[str, BoundaryNode] = field(default_factory=_empty_nodes_by_id)
+    boundary_key_to_id: dict[tuple[Path, Path], str] = field(
+        default_factory=_empty_boundary_key_to_id
+    )
+    file_to_node_id: dict[Path, str] = field(default_factory=_empty_file_to_node_id)
+    roots_by_name: dict[str, Path] = field(default_factory=_empty_roots_by_name)
+    root_entries: list[tuple[str, Path]] = field(default_factory=_empty_root_entries)
+    inbound_from: dict[str, list[str]] = field(default_factory=_empty_inbound_from)
+    collapsed_edges: list[tuple[str, str, str, int]] = field(
+        default_factory=_empty_collapsed_edges
+    )
 
 
 def _root_name_map(roots: list[ScanRoot]) -> dict[Path, str]:
@@ -336,7 +368,7 @@ def analysis_to_graph(
     graph_index = index or build_graph_index(analysis, discovery)
     collapsed_edges = graph_index.collapsed_edges
 
-    nodes = []
+    nodes: list[dict[str, Any]] = []
     for node_id in sorted(graph_index.nodes_by_id):
         node = graph_index.nodes_by_id[node_id]
         nodes.append(
