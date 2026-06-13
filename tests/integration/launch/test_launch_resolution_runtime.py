@@ -157,7 +157,12 @@ def test_primary_launch_injects_bundle_inventory(
         harness=HarnessId.CLAUDE,
         prompt_surface_inventory_prompt=bundle_inventory,
     )
-    write_agent(tmp_path, name="dev-orchestrator", model=model)
+    write_agent(
+        tmp_path,
+        name="dev-orchestrator",
+        model=model,
+        subagents=(peer_name,),
+    )
     registry = get_default_harness_registry()
 
     preview = build_launch_context(

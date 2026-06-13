@@ -40,6 +40,8 @@ class LaunchPolicySnapshot(BaseModel):
     field_provenance: dict[str, str] = Field(default_factory=dict)
     fallback_chain: tuple[dict[str, object], ...] = ()
     bundle_inventory_prompt: str | None = None
+    agent_subagents: tuple[str, ...] = ()
+    agent_meridian_capabilities: dict[str, bool] | None = None
 
 
 __all__ = ["LaunchPolicySnapshot"]

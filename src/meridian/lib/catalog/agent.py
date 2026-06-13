@@ -17,6 +17,8 @@ class AgentProfile(BaseModel):
     description: str
     mode: Literal["primary", "subagent"] = "subagent"
     skills: tuple[str, ...]
+    subagents: tuple[str, ...] = ()
+    meridian_capabilities: dict[str, bool] | None = None
     model_invocable: bool = True
     body: str
     path: Path
@@ -33,6 +35,22 @@ def _normalize_string_list(value: object) -> tuple[str, ...]:
         values = [str(item).strip() for item in cast("list[object]", value) if str(item).strip()]
         return tuple(values)
     return ()
+
+
+def _parse_meridian_capabilities(value: object) -> dict[str, bool] | None:
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        return None
+    parsed: dict[str, bool] = {}
+    for raw_key, raw_value in cast("dict[object, object]", value).items():
+        if not isinstance(raw_value, bool):
+            continue
+        key = str(raw_key).strip()
+        if not key:
+            continue
+        parsed[key] = raw_value
+    return parsed or None
 
 
 def parse_agent_profile(path: Path) -> AgentProfile:
@@ -59,6 +77,10 @@ def parse_agent_profile(path: Path) -> AgentProfile:
         description=str(description_value).strip() if description_value is not None else "",
         mode=cast("Literal['primary', 'subagent']", mode),
         skills=_normalize_string_list(frontmatter.get("skills")),
+        subagents=_normalize_string_list(frontmatter.get("subagents")),
+        meridian_capabilities=_parse_meridian_capabilities(
+            frontmatter.get("meridian-capabilities")
+        ),
         model_invocable=model_invocable,
         body=body,
         path=path.resolve(),

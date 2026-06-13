@@ -4,6 +4,14 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- Spawn-capable agents now always receive a harness-templated spawn usage contract (`# Spawning subagents (meridian)`) in their system prompt, gated on the profile's `subagents` field (opt out with `meridian-capabilities: {spawn: false}`). The contract is injected by meridian, not dependent on loading the `meridian-spawn` skill — closing the gap behind three spawn-lifecycle incidents (double-background, lost-thread foreground blocking).
+- Enriched `meridian spawn --help` and `meridian spawn wait --help` as the depth reference the injected contract points to: recommended `--bg` + no-arg `wait` pattern, double-background and block-foreground warnings, lifecycle and crash-recovery notes.
+
+### Changed
+- The agent inventory (`# Meridian Agents`) is now gated on spawn capability: leaf agents (no `subagents`) no longer receive it, carrying zero meridian-specific operational content. The environmental context prompt is unaffected.
+- `LaunchPolicySnapshot` carries `agent_subagents` + `agent_meridian_capabilities`, and stores the pre-gate bundle inventory, so spawn continue/fork re-applies the contract exactly once.
+
 ## [0.3.9] - 2026-06-13
 
 ### Fixed

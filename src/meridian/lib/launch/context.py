@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, cast
 
 from pydantic import ValidationError
 
+from meridian.lib.catalog.agent import AgentProfile
 from meridian.lib.catalog.catalog_session import CatalogSession
 from meridian.lib.catalog.model_aliases import AliasEntry, MarsResultCache
 from meridian.lib.config.context_config import (
@@ -976,20 +977,79 @@ def compile_prepared_policy_surface(
     )
 
 
+_CLAUDE_SPAWN_CONTRACT = """\
+# Spawning subagents (meridian)
+
+Launch detached, then wait — never block the turn or background-wrap.
+
+- Launch with --bg; it returns in ~2s with a spawn id and runs the worker
+  detached:  meridian spawn -a <agent> --prompt-file /tmp/<task>.md --bg
+- NEVER wrap `meridian spawn --bg` inside Bash's run_in_background. It
+  already detaches; double-backgrounding risks the launch being killed
+  before the spawn is recorded.
+- NEVER block-foreground a long spawn (omitting --bg). It will outlive your
+  Bash command timeout; you lose the thread while the spawn runs on.
+- Track with no-arg wait — no id needed; it discovers your pending spawns
+  by session and yields cache-cleanly. Re-invoke to keep waiting:
+      meridian spawn wait
+- Full reference:  meridian spawn --help"""
+
+_GENERIC_SPAWN_CONTRACT = """\
+# Spawning subagents (meridian)
+
+Launch detached, then wait — never block the turn or double-background.
+
+- Launch with --bg; it returns in ~2s with a spawn id and runs the worker
+  detached:  meridian spawn -a <agent> --prompt-file /tmp/<task>.md --bg
+- NEVER wrap `meridian spawn --bg` in your harness's background execution.
+  It already detaches; double-backgrounding risks the launch being killed
+  before the spawn is recorded.
+- NEVER block-foreground a long spawn (omitting --bg). It will outlive your
+  command timeout; you lose the thread while the spawn runs on.
+- Track with no-arg wait — no id needed; it discovers your pending spawns
+  by session and yields cache-cleanly. Re-invoke to keep waiting:
+      meridian spawn wait
+- Full reference:  meridian spawn --help"""
+
+
+def _spawn_usage_contract(harness: HarnessId) -> str:
+    if harness == HarnessId.CLAUDE:
+        return _CLAUDE_SPAWN_CONTRACT
+    return _GENERIC_SPAWN_CONTRACT
+
+
+def _has_spawn_capability(profile: AgentProfile | None) -> bool:
+    if profile is None:
+        return False
+    if (
+        profile.meridian_capabilities is not None
+        and profile.meridian_capabilities.get("spawn") is False
+    ):
+        return False
+    return len(profile.subagents) > 0
+
+
 def _resolve_inventory_and_context_prompts(
     *,
     project_root: Path,
     active_work_dir: Path | None,
     bundle_inventory_prompt: str | None,
+    has_spawn_capability: bool = False,
+    harness_id: HarnessId | None = None,
 ) -> tuple[str | None, str | None]:
-    """Resolve bundle inventory verbatim; always resolve context from the project root."""
-
     context_prompt = build_context_prompt(
         project_root=project_root,
         active_work_dir=active_work_dir,
     )
+    if not has_spawn_capability:
+        return None, context_prompt
+
     normalized_inventory = (bundle_inventory_prompt or "").strip()
-    return normalized_inventory or None, context_prompt
+    inventory = normalized_inventory or None
+    contract = _spawn_usage_contract(harness_id or HarnessId.CLAUDE)
+    inventory = f"{inventory}\n\n{contract}" if inventory else contract
+
+    return inventory, context_prompt
 
 
 def _resolve_spawn_prepare_projection(
@@ -1038,6 +1098,8 @@ def _resolve_spawn_prepare_projection(
         project_root=project_paths.project_root,
         active_work_dir=active_work_dir,
         bundle_inventory_prompt=policy.bundle_inventory_prompt,
+        has_spawn_capability=_has_spawn_capability(profile),
+        harness_id=harness.id,
     )
 
     resolved_work_id = (request.work_id_hint or "").strip() or (
@@ -1101,6 +1163,8 @@ def _resolve_primary_projection(
         project_root=project_paths.project_root,
         active_work_dir=active_work_dir,
         bundle_inventory_prompt=policy.bundle_inventory_prompt,
+        has_spawn_capability=_has_spawn_capability(profile),
+        harness_id=harness.id,
     )
 
     seed = harness.seed_session(
@@ -1453,7 +1517,8 @@ def prepare_launch_surface(
                 resolved_request,
                 model_selection=model_selection,
                 loaded_skills=resolved_skills.loaded_skills,
-                bundle_inventory_prompt=content.agent_inventory_prompt,
+                bundle_inventory_prompt=policies.bundle_inventory_prompt,
+                profile=profile,
             )
         }
     )

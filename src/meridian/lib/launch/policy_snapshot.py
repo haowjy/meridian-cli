@@ -70,6 +70,7 @@ def build_launch_policy_snapshot(
     model_selection: SnapshotModelSelection | None = None,
     loaded_skills: tuple[SkillContent, ...] = (),
     bundle_inventory_prompt: str | None = None,
+    profile: AgentProfile | None = None,
 ) -> LaunchPolicySnapshot:
     """Build a durable launch-policy snapshot from a resolved request."""
 
@@ -116,6 +117,10 @@ def build_launch_policy_snapshot(
             else None
         ),
         bundle_inventory_prompt=(bundle_inventory_prompt or "").strip() or None,
+        agent_subagents=(tuple(profile.subagents) if profile is not None else ()),
+        agent_meridian_capabilities=(
+            profile.meridian_capabilities if profile is not None else None
+        ),
     )
 
 
@@ -217,6 +222,8 @@ def _snapshot_profile(
         name=snapshot_agent,
         description=snapshot.agent_description,
         skills=snapshot_skill_names,
+        subagents=snapshot.agent_subagents,
+        meridian_capabilities=snapshot.agent_meridian_capabilities,
         body=snapshot.agent_profile_body,
         path=profile_path,
         raw_content=snapshot.agent_profile_body,

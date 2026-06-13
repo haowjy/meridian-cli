@@ -55,6 +55,13 @@ def test_spawn_prepare_opencode_keeps_all_references_inline(
             "- `meridian spawn -a dev-orchestrator`: Orchestrate.\n"
         ),
     )
+    write_agent(
+        tmp_path,
+        name="dev-orchestrator",
+        model="gemini-2.5-pro",
+        harness="opencode",
+        subagents=("reviewer",),
+    )
     file_ref = tmp_path / "README.md"
     file_ref.write_text("# hello\n", encoding="utf-8")
     dir_ref = tmp_path / "src"
@@ -68,6 +75,7 @@ def test_spawn_prepare_opencode_keeps_all_references_inline(
             prompt_is_composed=False,
             model="gemini-2.5-pro",
             harness="opencode",
+            agent="dev-orchestrator",
             reference_files=(file_ref.as_posix(), dir_ref.as_posix()),
         ),
         runtime=LaunchRuntime(
@@ -170,6 +178,13 @@ def test_spawn_prepare_system_field_harnesses_route_agent_inventory_to_system_pr
         harness=expected_harness,
         prompt_surface_inventory_prompt=_BUNDLE_INVENTORY,
     )
+    write_agent(
+        tmp_path,
+        name="dev-orchestrator",
+        model=model,
+        harness=harness,
+        subagents=("reviewer",),
+    )
 
     preview = build_launch_context(
         spawn_id=f"dry-run-{harness}-spawn-prepare-no-inventory",
@@ -178,6 +193,7 @@ def test_spawn_prepare_system_field_harnesses_route_agent_inventory_to_system_pr
             prompt_is_composed=False,
             model=model,
             harness=harness,
+            agent="dev-orchestrator",
         ),
         runtime=LaunchRuntime(
             argv_intent=LaunchArgvIntent.REQUIRED,
@@ -223,6 +239,7 @@ def test_spawn_prepare_claude_projects_skills_inventory_and_report_to_system_pro
         name="dev-orchestrator",
         model="claude-sonnet-4-5",
         skills=("verification",),
+        subagents=("reviewer",),
     )
     file_ref = tmp_path / "README.md"
     file_ref.write_text("# project\n", encoding="utf-8")
@@ -306,6 +323,7 @@ def test_spawn_prepare_claude_continue_session_keeps_skills_in_system_prompt(
         name="dev-orchestrator",
         model="claude-sonnet-4-5",
         skills=("verification",),
+        subagents=("reviewer",),
     )
 
     harness_session_id = "claude-session-123"
@@ -345,6 +363,7 @@ def test_spawn_prepare_claude_continue_session_keeps_skills_in_system_prompt(
     assert "# Skill:" not in projected.system_prompt
     assert "# Meridian Agents" in projected.system_prompt
     assert "# Report" in projected.system_prompt
+    assert projected.system_prompt.count("# Spawning subagents (meridian)") == 1
     # Skills still delivered via --append-system-prompt-file
     assert any("--append-system-prompt-file" in str(arg) for arg in preview.binding.argv)
     assert preview.binding.run_params.appended_system_prompt is not None
