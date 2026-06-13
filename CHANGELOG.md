@@ -4,6 +4,10 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- Canonical `SKIP_DIRS` in `lib/ignores.py` shared by kg, mermaid, and qi scanners.
+- `build_analysis()` multi-root scan (`roots`), per-node `scan_root` attribution, and optional `file_filter`.
+
 ## [0.3.9] - 2026-06-13
 
 ### Fixed

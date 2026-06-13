@@ -5,13 +5,14 @@ from __future__ import annotations
 import os
 import re
 from collections import deque
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any, cast
 
 import pathspec
 from markdown_it import MarkdownIt
 
-from meridian.lib.ignores import load_ignore_patterns
+from meridian.lib.ignores import SKIP_DIRS, load_ignore_patterns
 from meridian.lib.kg.types import (
     AnalysisResult,
     CheckFinding,
@@ -22,20 +23,6 @@ from meridian.lib.kg.types import (
 )
 from meridian.lib.markdown.extract import extract_file
 from meridian.lib.markdown.types import ExtractedLink
-
-# Directories to skip when walking
-_SKIP_DIRS = {
-    ".git",
-    "node_modules",
-    "__pycache__",
-    ".venv",
-    "venv",
-    ".tox",
-    ".mypy_cache",
-    "dist",
-    "build",
-    ".ruff_cache",
-}
 
 # External URL prefixes — not checked for broken links
 _EXTERNAL_PREFIXES = ("http://", "https://", "mailto:", "#")
@@ -53,6 +40,8 @@ def build_analysis(
     include_clusters: bool = True,
     targeted_path: Path | None = None,
     exclude: list[str] | None = None,
+    roots: list[Path] | None = None,
+    file_filter: Callable[[Path], bool] | None = None,
 ) -> AnalysisResult:
     """Build complete KG analysis from a root directory.
 
@@ -60,32 +49,52 @@ def build_analysis(
         root: Root directory to scan for .md files
         include_backlinks: Whether to compute missing backlinks
         include_clusters: Whether to compute connected clusters
-        targeted_path: If set, only analyze this file/directory (for kg check)
+        targeted_path: If set, only analyze this file/directory (for kg check).
+            Ignored when ``roots`` is set.
+        exclude: Glob patterns to exclude from the scan
+        roots: When set, scan every root and merge nodes. ``targeted_path`` is
+            ignored.
+        file_filter: When set, only include .md files for which this returns True.
 
     Returns:
         AnalysisResult with nodes, edges, broken_links, orphans, etc.
     """
     root = root.resolve()
 
-    # Collect markdown files
-    if targeted_path is not None:
+    if roots is not None:
+        resolved_roots = [r.resolve() for r in roots]
+        file_to_scan_root = _collect_multi_root_files(
+            resolved_roots,
+            exclude=exclude,
+            file_filter=file_filter,
+        )
+    elif targeted_path is not None:
         targeted = targeted_path.resolve()
         if targeted.is_file():
-            md_files = [targeted]
+            md_files = (
+                [targeted]
+                if file_filter is None or file_filter(targeted)
+                else []
+            )
             scan_root = targeted.parent
         else:
-            md_files = _collect_md_files(targeted, exclude=exclude)
+            md_files = _collect_md_files(
+                targeted, exclude=exclude, file_filter=file_filter
+            )
             scan_root = targeted
+        file_to_scan_root = {p: scan_root for p in md_files}
     else:
-        md_files = _collect_md_files(root, exclude=exclude)
-        scan_root = root
+        md_files = _collect_md_files(root, exclude=exclude, file_filter=file_filter)
+        file_to_scan_root = {p: root for p in md_files}
 
     # Build nodes dict
     nodes: dict[Path, GraphNode] = {}
-    for md_path in md_files:
+    for md_path, scan_root in file_to_scan_root.items():
         doc = extract_file(md_path)
         rel_path = _rel_posix(md_path, scan_root)
-        nodes[md_path] = GraphNode(doc=doc, rel_path=rel_path, in_degree=0)
+        nodes[md_path] = GraphNode(
+            doc=doc, rel_path=rel_path, in_degree=0, scan_root=scan_root
+        )
 
     # Build edges and track inbound links
     edges: list[GraphEdge] = []
@@ -257,10 +266,29 @@ def _is_external(target: str) -> bool:
     return any(target.startswith(prefix) for prefix in _EXTERNAL_PREFIXES)
 
 
+def _collect_multi_root_files(
+    roots: list[Path],
+    *,
+    exclude: list[str] | None = None,
+    file_filter: Callable[[Path], bool] | None = None,
+) -> dict[Path, Path]:
+    """Collect .md files from multiple roots; attribute nested files to longest root."""
+    file_to_scan_root: dict[Path, Path] = {}
+    for scan_root in roots:
+        for md_path in _collect_md_files(
+            scan_root, exclude=exclude, file_filter=file_filter
+        ):
+            existing = file_to_scan_root.get(md_path)
+            if existing is None or len(scan_root.parts) > len(existing.parts):
+                file_to_scan_root[md_path] = scan_root
+    return file_to_scan_root
+
+
 def _collect_md_files(
     root: Path,
     *,
     exclude: list[str] | None = None,
+    file_filter: Callable[[Path], bool] | None = None,
 ) -> list[Path]:
     """Walk directory and collect .md files, applying skip dirs and exclusions."""
     kgignore_spec = load_ignore_patterns(root, ".kgignore")
@@ -275,13 +303,15 @@ def _collect_md_files(
     md_files: list[Path] = []
     for dirpath, dirnames, filenames in os.walk(root):
         # Prune skipped directories in-place
-        dirnames[:] = [d for d in dirnames if d not in _SKIP_DIRS]
+        dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS]
 
         for filename in filenames:
             if not filename.endswith(".md"):
                 continue
 
             full_path = Path(dirpath) / filename
+            if file_filter is not None and not file_filter(full_path):
+                continue
             rel = full_path.relative_to(root).as_posix()
 
             if kgignore_spec and kgignore_spec.match_file(rel):

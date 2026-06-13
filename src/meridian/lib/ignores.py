@@ -7,6 +7,15 @@ from typing import Any, cast
 
 import pathspec
 
+# Directories pruned during filesystem walks (kg, mermaid, qi scanners).
+SKIP_DIRS: frozenset[str] = frozenset({
+    ".git", ".meridian", ".agents",
+    "node_modules", "__pycache__",
+    ".venv", "venv", ".tox",
+    ".mypy_cache", ".ruff_cache", ".pytest_cache",
+    "dist", "build", "site-packages",
+})
+
 
 def load_ignore_patterns(root: Path, filename: str) -> pathspec.PathSpec[Any] | None:
     """Load gitignore-style patterns from a file.
@@ -32,4 +41,4 @@ def load_ignore_patterns(root: Path, filename: str) -> pathspec.PathSpec[Any] | 
     )
 
 
-__all__ = ["load_ignore_patterns"]
+__all__ = ["SKIP_DIRS", "load_ignore_patterns"]
