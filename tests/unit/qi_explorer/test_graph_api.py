@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from meridian.lib.kg.graph import build_analysis
 from meridian.qi_explorer.discovery import DiscoveryResult, ScanRoot, discover_scan_roots
@@ -11,6 +12,9 @@ from meridian.qi_explorer.graph_api import (
     build_graph_index,
     qi_file_filter,
 )
+
+if TYPE_CHECKING:
+    import pytest
 
 
 def _write(path: Path, body: str) -> None:
@@ -134,6 +138,34 @@ def test_multi_root_namespacing_with_shared_boundary_path(tmp_path: Path) -> Non
     link = graph["links"][0]
     assert link["source"] == "codebase:shared"
     assert link["target"] == "kb:shared"
+
+
+def test_discover_scan_roots_ignores_inherited_meridian_project_dir(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_a = tmp_path / "project-a"
+    project_a_kb = project_a / "kb-a"
+    project_b = tmp_path / "project-b"
+    project_b_kb = project_b / "kb-b"
+    nested = project_b / "src" / "nested"
+    nested.mkdir(parents=True)
+    project_a_kb.mkdir(parents=True)
+    project_b_kb.mkdir(parents=True)
+
+    _write(project_a / "meridian.toml", '[context.kb]\npath = "kb-a"\n')
+    _write(project_b / "meridian.toml", '[context.kb]\npath = "kb-b"\n')
+    _write(nested / "AGENTS.md", "# Nested\n")
+    _write(project_b_kb / "AGENTS.md", "# KB B\n")
+    _write(project_a_kb / "AGENTS.md", "# KB A\n")
+
+    monkeypatch.setenv("MERIDIAN_PROJECT_DIR", str(project_a.resolve()))
+
+    discovery = discover_scan_roots(nested)
+
+    assert discovery.primary == nested.resolve()
+    assert discovery.name_to_path["kb"] == project_b_kb.resolve()
+    assert discovery.name_to_path["kb"] != project_a_kb.resolve()
 
 
 def test_nested_subdir_discovers_same_context_roots(tmp_path: Path) -> None:

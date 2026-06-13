@@ -77,8 +77,11 @@ def discover_scan_roots(primary: Path) -> DiscoveryResult:
         kind="primary",
     )
 
+    # ignore_env=True: qi explore resolves context from the explored path,
+    # not the inherited MERIDIAN_PROJECT_DIR of the calling session.
     project_root = resolve_project_root_resolution(
         execution_cwd=primary_resolved,
+        ignore_env=True,
     ).project_root
     context_config = load_context_config(project_root) or ContextConfig()
     resolved = resolve_context_paths(project_root, context_config)
