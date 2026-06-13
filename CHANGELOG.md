@@ -8,10 +8,14 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Spawn-capable agents now always receive a harness-templated spawn usage contract (`# Spawning subagents (meridian)`) in their system prompt, gated on the profile's `subagents` field (opt out with `meridian-capabilities: {spawn: false}`). The contract is injected by meridian, not dependent on loading the `meridian-spawn` skill — closing the gap behind three spawn-lifecycle incidents (double-background, lost-thread foreground blocking).
 - Enriched `meridian spawn --help` and `meridian spawn wait --help` as the depth reference the injected contract points to: recommended `--bg` + no-arg `wait` pattern, double-background and block-foreground warnings, lifecycle and crash-recovery notes.
 
+### Fixed
+- A spawn launcher killed (SIGKILL) during prep — before the spawn row was written — left nothing on disk: invisible to `spawn list/status/wait`, the reconciler, and `doctor --kill-orphans` (the c2076 double-background incident). The durable `queued` row is now reserved before prep, so a killed-mid-prep launch is recovered by the existing reaper (`failed`/`missing_runner_pid`). Reserve/announce is two-phase: work-item creation and lifecycle events (`spawn.created`, telemetry, subrun start) are deferred until prep succeeds, so graceful prep failures remain side-effect-free as before — only the kill path changes.
+
 ### Changed
 - The agent inventory (`# Meridian Agents`) is now gated on spawn capability: leaf agents (no `subagents`) no longer receive it, carrying zero meridian-specific operational content. The environmental context prompt is unaffected.
 - The spawn contract is a first-class composition block (`spawn_contract_prompt`) rendered at composition time, not appended to the inventory string — so spawn continue/fork re-applies it exactly once with no double-append hazard. Spawn gating/contract logic lives in `launch/spawn_guidance.py`; `meridian-capabilities` parses to a typed `MeridianCapabilities`.
 - `LaunchPolicySnapshot` persists the agent profile as a single nested `agent_profile` blob (round-tripped via `model_dump`/`model_validate`) instead of a lossy hand-maintained field subset, so any profile field survives continue/fork replay automatically.
+- `meridian.spawn.execute` reserves the spawn row up front via a shared `_reserve_then_prepare` helper (removes two duplicated post-prep `update_spawn` blocks); a single `resolve_spawn_work_id` resolver replaces the divergent work_id precedence (`execute_init._resolve_work_id` deleted); `remove_spawn_events` now removes the full reserved spawn dir.
 
 ## [0.3.9] - 2026-06-13
 

@@ -135,20 +135,19 @@ def _spawn_background_worker_env(
     return child_env
 
 
-def _resolve_work_id(
-    *,
+def resolve_spawn_work_id(
     payload: SpawnCreateInput,
-    runtime_context: RuntimeContext,
-    runtime_root: Path,
-    work_id: str | None = None,
+    request: SpawnRequest,
+    ctx: RuntimeContext | None = None,
 ) -> str | None:
-    requested_work_id = (work_id or payload.work).strip()
-    if requested_work_id:
-        return requested_work_id
-    inherited_work_id = (runtime_context.work_id or "").strip()
-    if inherited_work_id:
-        return inherited_work_id
-    return None
+    resolved_context = runtime_context(ctx)
+    return (
+        (request.task_cwd_work_item or "").strip()
+        or (request.work_id_hint or "").strip()
+        or payload.work.strip()
+        or (resolved_context.work_id or "").strip()
+        or None
+    )
 
 
 def _init_spawn(
@@ -166,20 +165,16 @@ def _init_spawn(
     task_cwd: str | None = None,
     execution_cwd: str | None = None,
     ctx: RuntimeContext | None = None,
+    announce: bool = True,
 ) -> _SpawnContext:
-    from typing import cast
-
     resolved_context = runtime_context(ctx)
     project_paths = resolve_project_config_paths(project_root=runtime.project_root)
-    project_local_root = resolve_project_paths(project_paths.project_root).root_dir
     runtime_root = resolve_runtime_root(project_paths.project_root)
-    resolved_work_id = _resolve_work_id(
-        payload=payload,
-        runtime_context=resolved_context,
-        runtime_root=runtime_root,
-        work_id=work_id,
-    )
-    if (payload.work or "").strip():
+    resolved_work_id = work_id
+    if announce and (payload.work or "").strip():
+        from typing import cast
+
+        project_local_root = resolve_project_paths(project_paths.project_root).root_dir
         resolved_work_id = cast("str", resolved_work_id)
         resolved_work_id = ensure_explicit_work_item(project_local_root, resolved_work_id)
     resolved_desc = (desc if desc is not None else payload.desc).strip() or None
@@ -215,6 +210,7 @@ def _init_spawn(
         runner_pid=runner_pid,
         launch_policy_snapshot=launch_policy_snapshot or request.launch_policy_snapshot,
         status=status,
+        dispatch_events=announce,
     )
     spawn = Spawn(
         spawn_id=SpawnId(spawn_id),
@@ -223,20 +219,57 @@ def _init_spawn(
         status=status,
     )
     current_depth = resolved_context.depth
-    run_start_event: dict[str, Any] = {
-        "t": "meridian.spawn.start",
-        "id": str(spawn.spawn_id),
-        "model": request.model or "",
-        "d": current_depth,
-    }
-    if request.agent is not None:
-        run_start_event["agent"] = request.agent
-    _emit_subrun_event(run_start_event, sink=runtime.sink, ctx=resolved_context)
+    if announce:
+        _emit_spawn_start_subrun_event(
+            spawn_id=str(spawn.spawn_id),
+            request=request,
+            current_depth=current_depth,
+            sink=runtime.sink,
+            ctx=resolved_context,
+        )
     return _SpawnContext(
         spawn=spawn,
         runtime_root=runtime_root,
         current_depth=current_depth,
         work_id=resolved_work_id,
+    )
+
+
+def _emit_spawn_start_subrun_event(
+    *,
+    spawn_id: str,
+    request: SpawnRequest,
+    current_depth: int,
+    sink: OutputSink,
+    ctx: RuntimeContext | None = None,
+) -> None:
+    run_start_event: dict[str, Any] = {
+        "t": "meridian.spawn.start",
+        "id": spawn_id,
+        "model": request.model or "",
+        "d": current_depth,
+    }
+    if request.agent is not None:
+        run_start_event["agent"] = request.agent
+    _emit_subrun_event(run_start_event, sink=sink, ctx=ctx)
+
+
+def _announce_reserved_spawn(
+    *,
+    context: _SpawnContext,
+    request: SpawnRequest,
+    runtime: OperationRuntime,
+    project_root: Path,
+    ctx: RuntimeContext | None = None,
+) -> None:
+    service = build_spawn_lifecycle_service_from_roots(project_root, context.runtime_root)
+    service.announce_started(str(context.spawn.spawn_id))
+    _emit_spawn_start_subrun_event(
+        spawn_id=str(context.spawn.spawn_id),
+        request=request,
+        current_depth=context.current_depth,
+        sink=runtime.sink,
+        ctx=ctx,
     )
 
 
@@ -277,6 +310,7 @@ def _write_params_json(
 __all__ = [
     "LaunchUserInputError",
     "_SpawnContext",
+    "_announce_reserved_spawn",
     "_emit_subrun_event",
     "_init_spawn",
     "_spawn_background_worker_env",
@@ -285,4 +319,5 @@ __all__ = [
     "build_spawn_mars_runtime",
     "depth_exceeded_output",
     "depth_limits",
+    "resolve_spawn_work_id",
 ]
