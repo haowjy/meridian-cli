@@ -40,6 +40,12 @@ No real users, no real user data. No backwards compatibility needed — complete
 
 NEVER REVERT CHANGES — always assume it's someone else's work.
 
+### Token hygiene for command output
+
+Use `rtk` for noisy human-readable commands so agents spend context on signal instead of raw log volume. Good candidates include `rtk git diff`, `rtk git status`, `rtk rg "<pattern>"`, `rtk pytest`, `rtk cargo test`, and `rtk npm test`.
+
+Use raw commands when exact output is required: machine-readable formats, piped commands, snapshots, reproduction logs, or formatting/debug cases. If `rtk` is unavailable, run the raw command and note that token-compressed output was unavailable.
+
 ## Git Hooks
 
 Run `scripts/setup-hooks.sh` (or `scripts/setup-hooks.ps1` on Windows) once after cloning.
