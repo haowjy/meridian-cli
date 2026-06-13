@@ -132,7 +132,10 @@ Canonical keys accepted by `meridian config set/get/reset`:
 | `spawn.min_wait_yield_seconds` | float | Minimum yield interval for `spawn wait` (seconds) |
 | `primary.autocompact` | int | Context compaction threshold for primary session (1–100) |
 
-Agent profiles are opt-in. When `--agent/-a` is omitted and `primary.agent` is unset, Meridian runs without a predefined profile. Agent definitions live in `mars.toml`, not `meridian.toml`; run `meridian mars sync` after changing them.
+Agent profiles are opt-in. When `--agent/-a` is omitted and `primary.agent` is unset,
+Meridian runs without a predefined profile. Pass `-a ""` to explicitly clear
+`primary.agent` for one launch. Agent definitions live in `mars.toml`, not
+`meridian.toml`; run `meridian mars sync` after changing them.
 
 Project-level routing defaults (`default_model`, `default_harness`) live in
 `mars.toml` under `[settings]`, not in Meridian config.

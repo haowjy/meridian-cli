@@ -495,3 +495,53 @@ def test_snapshot_replay_uses_persisted_loaded_skills_after_live_catalog_changes
     replayed_skill = replayed_policy.resolved_skills.loaded_skills[0]
     assert ".mars/skills/testing-principles/SKILL.md" in replayed_skill.path
     assert replayed_policy.resolved_skills.loaded_skills[0].content == original_skills[0].content
+
+
+def test_explicit_empty_agent_skips_configured_primary_default(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    write_agent(
+        tmp_path,
+        name="product-lead",
+        model="claude-opus-4-6",
+        body="# Product Lead",
+    )
+    captured: dict[str, bundle_adapter.BundleRequest] = {}
+
+    def fake_request(
+        request: bundle_adapter.BundleRequest,
+        *,
+        harness_registry: object,
+    ) -> _FakeBundleResult:
+        _ = harness_registry
+        captured["request"] = request
+        return _FakeBundleResult(
+            model="claude-sonnet-4-5",
+            model_token="claude-sonnet-4-5",
+            harness=HarnessId.CLAUDE,
+            harness_model="claude-sonnet-4-5",
+            execution_policy=ResolvedExecutionPolicy(),
+            provenance={},
+        )
+
+    monkeypatch.setattr(bundle_adapter, "request_and_resolve", fake_request)
+    monkeypatch.setattr(CatalogSession, "alias_map", lambda self: {})
+
+    config = MeridianConfig(primary={"agent": "product-lead"})
+    policy = resolve_launch_policy(
+        SurfacePolicyInput(
+            surface=LaunchCompositionSurface.PRIMARY,
+            catalog=CatalogSession(tmp_path),
+            layers=(RuntimeOverrides(), RuntimeOverrides()),
+            config_overrides=RuntimeOverrides.from_config(config),
+            config=config,
+            harness_registry=get_default_harness_registry(),
+            agent_opt_out=True,
+        )
+    )
+
+    assert policy.profile is None
+    request = captured["request"]
+    assert isinstance(request, bundle_adapter.BundleRequest)
+    assert request.agent is None

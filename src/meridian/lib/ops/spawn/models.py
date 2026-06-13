@@ -129,6 +129,7 @@ class SpawnCreateInput(SpawnLaunchOptions):
     context_from: tuple[str, ...] = ()
     template_vars: tuple[str, ...] = ()
     agent: str | None = None
+    agent_opt_out: bool = False
     skills: tuple[str, ...] = ()
     desc: str = ""
     work: str = ""
@@ -1150,6 +1151,7 @@ class SpawnContinueInput(SpawnLaunchOptions):
     files: tuple[str, ...] = ()
     template_vars: tuple[str, ...] = ()
     agent: str | None = None
+    agent_opt_out: bool = False
     skills: tuple[str, ...] = ()
     goal: str | None = None
     desc: str = ""
@@ -1173,6 +1175,7 @@ class SpawnForkInput(SpawnLaunchOptions):
     files: tuple[str, ...] = ()
     template_vars: tuple[str, ...] = ()
     agent: str | None = None
+    agent_opt_out: bool = False
     skills: tuple[str, ...] = ()
     inherit_source_skills: bool = False
     goal: str | None = None

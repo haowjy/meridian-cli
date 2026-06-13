@@ -18,6 +18,7 @@ class LaunchPolicySnapshot(BaseModel):
     model: str
     harness: str
     agent: str | None = None
+    agent_opt_out: bool = False
     agent_path: str | None = None
     agent_description: str = ""
     agent_profile_body: str = ""

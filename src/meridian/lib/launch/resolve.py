@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
 
@@ -67,11 +68,37 @@ def load_skill_contents(
     return dedupe_skill_contents(loaded)
 
 
+@dataclass(frozen=True)
+class AgentLaunchInput:
+    """Resolved agent selection from a raw CLI ``--agent`` value."""
+
+    agent: str | None = None
+    agent_opt_out: bool = False
+
+
+def resolve_agent_launch_input(raw_agent: str | None) -> AgentLaunchInput:
+    """Map raw ``--agent`` input to launch request fields.
+
+    Three states:
+    - omitted (``None``) -> unset; fall through to ``primary.agent`` / inheritance
+    - ``-a ""`` -> explicit no agent
+    - ``-a coder`` -> named profile
+    """
+
+    if raw_agent is None:
+        return AgentLaunchInput()
+    stripped = raw_agent.strip()
+    if not stripped:
+        return AgentLaunchInput(agent_opt_out=True)
+    return AgentLaunchInput(agent=stripped)
+
+
 def load_agent_profile_with_fallback(
     *,
     project_root: Path,
     requested_agent: str | None = None,
     configured_default: str | None = None,
+    agent_opt_out: bool = False,
 ) -> tuple[AgentProfile | None, str | None]:
     """Load agent profile with a standard fallback chain.
 
@@ -80,11 +107,11 @@ def load_agent_profile_with_fallback(
     2. configured_default (from config) -> try load
     3. None (no profile)
 
-    An explicit empty string (``-a ""``) short-circuits to None —
-    the caller opted out of any agent profile, including the default.
+    When ``agent_opt_out`` is true (``-a ""``), skip all profiles including the
+    configured default.
     """
 
-    if requested_agent is not None and requested_agent.strip() == "":
+    if agent_opt_out:
         return None, None
 
     requested_profile = requested_agent.strip() if requested_agent is not None else ""
@@ -476,11 +503,13 @@ def resolve_resident_poll_seconds(
 
 
 __all__ = [
+    "AgentLaunchInput",
     "ResolvedSkills",
     "dedupe_skill_names",
     "format_missing_skills_warning",
     "load_agent_profile_with_fallback",
     "parse_duration_seconds",
+    "resolve_agent_launch_input",
     "resolve_harness",
     "resolve_pi_child_wave_timeout_seconds",
     "resolve_pi_notification_timeout_seconds",

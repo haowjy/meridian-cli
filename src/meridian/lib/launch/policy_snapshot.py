@@ -83,6 +83,7 @@ def build_launch_policy_snapshot(
         model=model,
         harness=harness,
         agent=(request.agent or "").strip() or None,
+        agent_opt_out=request.agent_opt_out,
         agent_path=(request.agent_metadata.get("session_agent_path") or "").strip() or None,
         agent_description=(
             request.agent_metadata.get("session_agent_description") or ""

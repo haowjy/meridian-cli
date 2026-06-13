@@ -47,6 +47,7 @@ class LaunchRequest(BaseModel):
     model: str = ""
     harness: str | None = None
     agent: str | None = None
+    agent_opt_out: bool = False
     work_id: str | None = None
     task_dir: str | None = None
     session_mode: SessionMode = SessionMode.FRESH

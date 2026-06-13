@@ -15,6 +15,7 @@ from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.launch import LaunchRequest, SessionMode, launch_primary
 from meridian.lib.launch.composition import PromptDocument
 from meridian.lib.launch.request import SessionRequest
+from meridian.lib.launch.resolve import resolve_agent_launch_input
 from meridian.lib.ops.reference import resolve_session_reference
 from meridian.lib.ops.spawn.models import normalize_goal
 
@@ -233,8 +234,10 @@ def run_primary_launch(
     output_forked_from: str | None = None
     session_mode = SessionMode.FRESH
     explicit_harness = harness.strip() if harness is not None and harness.strip() else None
+    agent_launch = resolve_agent_launch_input(agent)
     requested_model = model
-    requested_agent = agent
+    requested_agent = agent_launch.agent
+    agent_opt_out = agent_launch.agent_opt_out
     requested_work_id = work.strip() or None
     if resume_target is not None:
         if model.strip():
@@ -337,7 +340,7 @@ def run_primary_launch(
 
         if not model.strip() and resolved_fork.source_model is not None:
             requested_model = resolved_fork.source_model
-        if (agent is None or not agent.strip()) and resolved_fork.source_agent is not None:
+        if agent is None and not agent_opt_out and resolved_fork.source_agent is not None:
             requested_agent = resolved_fork.source_agent
         if requested_work_id is None and resolved_fork.source_work_id is not None:
             requested_work_id = resolved_fork.source_work_id
@@ -354,6 +357,7 @@ def run_primary_launch(
                 else harness
             ),
             agent=requested_agent,
+            agent_opt_out=agent_opt_out,
             work_id=requested_work_id,
             task_dir=normalized_task_dir,
             passthrough_args=passthrough,

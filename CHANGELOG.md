@@ -4,6 +4,12 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+- `-a ""` is explicit **no agent** via `agent_opt_out` on launch requests: skips `primary.agent`, profile body, native `--agents` payload, and fork/continue agent inheritance. `RuntimeOverrides` keeps normal `None` = unset semantics.
+
+### Changed
+- Bump `mars-agents` to `0.8.7`.
+
 ## [0.3.8] - 2026-06-12
 
 ### Fixed

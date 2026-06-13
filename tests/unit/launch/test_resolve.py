@@ -1,10 +1,15 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from meridian.lib.catalog.model_aliases import AliasEntry
 from meridian.lib.core.types import HarnessId, ModelId
 from meridian.lib.harness.registry import HarnessRegistry, get_default_harness_registry
 from meridian.lib.launch.resolve import (
+    AgentLaunchInput,
     dedupe_skill_names,
+    load_agent_profile_with_fallback,
+    resolve_agent_launch_input,
     parse_duration_seconds,
     resolve_pi_child_wave_timeout_seconds,
     resolve_pi_notification_timeout_seconds,
@@ -19,6 +24,39 @@ def _registry_with_harnesses(*harness_ids: HarnessId) -> HarnessRegistry:
     for harness_id in harness_ids:
         registry.register(base_registry.get(harness_id))
     return registry
+
+
+def test_resolve_agent_launch_input_tri_state() -> None:
+    assert resolve_agent_launch_input(None) == AgentLaunchInput()
+    assert resolve_agent_launch_input("") == AgentLaunchInput(agent_opt_out=True)
+    assert resolve_agent_launch_input("  ") == AgentLaunchInput(agent_opt_out=True)
+    assert resolve_agent_launch_input(" coder ") == AgentLaunchInput(agent="coder")
+
+
+def test_load_agent_profile_with_fallback_honors_agent_opt_out(
+    tmp_path: Path,
+) -> None:
+    from tests.support.fixtures import write_agent
+
+    write_agent(
+        tmp_path,
+        name="product-lead",
+        model="claude-opus-4-6",
+        body="# Product Lead",
+    )
+    (tmp_path / "meridian.toml").write_text(
+        '[primary]\nagent = "product-lead"\n',
+        encoding="utf-8",
+    )
+
+    profile, warning = load_agent_profile_with_fallback(
+        project_root=tmp_path,
+        configured_default="product-lead",
+        agent_opt_out=True,
+    )
+
+    assert profile is None
+    assert warning is None
 
 
 def test_dedupe_skill_names_preserves_first_seen_order() -> None:

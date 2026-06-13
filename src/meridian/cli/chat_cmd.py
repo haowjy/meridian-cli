@@ -44,6 +44,7 @@ from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.registry import HarnessRegistry, get_default_harness_registry
 from meridian.lib.launch.launch_types import CompositionWarning
 from meridian.lib.launch.policies import SurfacePolicyInput, resolve_launch_policy
+from meridian.lib.launch.resolve import resolve_agent_launch_input
 from meridian.lib.launch.request import LaunchCompositionSurface
 from meridian.lib.service_context import ChatEntryPoint
 from meridian.lib.state.user_paths import get_user_home
@@ -577,10 +578,11 @@ def _resolve_chat_policy_snapshot(
     config = load_config(project_root)
     catalog = CatalogSession(project_root)
     harness_registry = get_default_harness_registry()
+    agent_launch = resolve_agent_launch_input(agent)
     cli_overrides = RuntimeOverrides(
         model=(model or "").strip() or None,
         harness=normalized_harness,
-        agent=(agent or "").strip() or None,
+        agent=agent_launch.agent,
         approval=(approval or "").strip() or None,
         sandbox=(sandbox or "").strip() or None,
         effort=(effort or "").strip() or None,
@@ -597,6 +599,7 @@ def _resolve_chat_policy_snapshot(
             harness_registry=harness_registry,
             skills_readonly=True,
             requested_skills=skills,
+            agent_opt_out=agent_launch.agent_opt_out,
             supported_execution_policy_fields=frozenset(
                 {"effort", "sandbox", "approval", "autocompact"}
             ),

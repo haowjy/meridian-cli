@@ -27,6 +27,7 @@ from meridian.lib.core.domain import SpawnStatus
 from meridian.lib.core.spawn_lifecycle import ACTIVE_SPAWN_STATUSES
 from meridian.lib.core.util import FormatContext
 from meridian.lib.extensions.registry import get_first_party_registry
+from meridian.lib.launch.resolve import resolve_agent_launch_input
 from meridian.lib.ops.spawn.api import (
     SpawnActionOutput,
     SpawnCancelAllInput,
@@ -272,7 +273,10 @@ def _spawn_create(
     ] = (),
     agent: Annotated[
         str | None,
-        Parameter(name=["--agent", "-a"], help="Agent profile name to execute."),
+        Parameter(
+            name=["--agent", "-a"],
+            help='Agent profile name to execute. Use -a "" for no profile.',
+        ),
     ] = None,
     skills: Annotated[
         str | None,
@@ -486,6 +490,7 @@ def _spawn_create(
     resolved_approval = approval if approval is not None else ("never" if yolo else None)
     parsed_skills = parse_csv_list(skills, field_name="skills")
     resolved_goal = normalize_goal(goal)
+    agent_launch = resolve_agent_launch_input(agent)
 
     fork_resolution = validate_fork_mode(
         fork_from=raw_fork_from,
@@ -538,7 +543,8 @@ def _spawn_create(
                 model=model if fork_is_fresh else "",
                 files=references,
                 template_vars=template_vars,
-                agent=agent if fork_is_fresh else None,
+                agent=agent_launch.agent if fork_is_fresh else None,
+                agent_opt_out=agent_launch.agent_opt_out,
                 skills=parsed_skills if fork_is_fresh else (),
                 goal=resolved_goal,
                 inherit_source_skills=True if not fork_is_fresh else skills is None,
@@ -559,7 +565,8 @@ def _spawn_create(
                 model=model,
                 files=references,
                 template_vars=template_vars,
-                agent=agent,
+                agent=agent_launch.agent,
+                agent_opt_out=agent_launch.agent_opt_out,
                 skills=parsed_skills,
                 goal=resolved_goal,
                 desc=desc,
@@ -579,7 +586,8 @@ def _spawn_create(
                 files=references,
                 context_from=fork_resolution.resolved_context_from,
                 template_vars=template_vars,
-                agent=agent,
+                agent=agent_launch.agent,
+                agent_opt_out=agent_launch.agent_opt_out,
                 skills=parsed_skills,
                 desc=desc,
                 goal=resolved_goal,

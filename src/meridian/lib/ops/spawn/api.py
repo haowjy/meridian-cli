@@ -1937,7 +1937,16 @@ def _build_continue_create_input(
         ),
         files=payload.files,
         template_vars=payload.template_vars,
-        agent=source_snapshot.agent if source_snapshot is not None else payload.agent,
+        agent=(
+            None
+            if payload.agent_opt_out
+            else (
+                payload.agent
+                if payload.agent is not None
+                else (source_snapshot.agent if source_snapshot is not None else None)
+            )
+        ),
+        agent_opt_out=payload.agent_opt_out,
         skills=source_snapshot.skills if source_snapshot is not None else payload.skills,
         goal=resolved_goal,
         desc=payload.desc,
@@ -1983,6 +1992,19 @@ def _with_command(result: SpawnActionOutput, command: str) -> SpawnActionOutput:
     return result.model_copy(update={"command": command})
 
 
+def _resolve_fork_agent(
+    *,
+    payload: SpawnForkInput,
+    requested_agent: str | None,
+    source_agent: str | None,
+) -> str | None:
+    if payload.agent_opt_out:
+        return None
+    if requested_agent is not None:
+        return requested_agent
+    return source_agent
+
+
 def _build_fork_create_input(
     *,
     payload: SpawnForkInput,
@@ -2003,7 +2025,12 @@ def _build_fork_create_input(
         model=requested_model or (resolved_reference.source_model or ""),
         files=payload.files,
         template_vars=payload.template_vars,
-        agent=requested_agent or resolved_reference.source_agent,
+        agent=_resolve_fork_agent(
+            payload=payload,
+            requested_agent=requested_agent,
+            source_agent=resolved_reference.source_agent,
+        ),
+        agent_opt_out=payload.agent_opt_out,
         skills=inherited_skills,
         desc=payload.desc,
         work=requested_work or (resolved_reference.source_work_id or ""),
@@ -2072,7 +2099,7 @@ def spawn_fork_sync(
         raise ValueError(_missing_follow_up_session_error(normalized_source_ref))
 
     requested_model = payload.model.strip()
-    requested_agent = (payload.agent or "").strip() or None
+    requested_agent = payload.agent
     requested_work = payload.work.strip()
     requested_task_dir = (payload.task_dir or "").strip() or None
     requested_goal = payload.goal
@@ -2089,7 +2116,9 @@ def spawn_fork_sync(
 
     inherited_skills = (
         resolved_reference.source_skills
-        if payload.inherit_source_skills and requested_agent is None
+        if payload.inherit_source_skills
+        and requested_agent is None
+        and not payload.agent_opt_out
         else payload.skills
     )
 
