@@ -67,6 +67,25 @@ _SPAWN_STATUS_VALUES: tuple[SpawnStatus, ...] = cast(
 _ACTIVE_VIEW_STATUSES: tuple[SpawnStatus, ...] = tuple(
     status for status in _SPAWN_STATUS_VALUES if status in ACTIVE_SPAWN_STATUSES
 )
+_SPAWN_USAGE_EPILOGUE = (
+    "Recommended pattern:\n\n"
+    "  meridian spawn --prompt-file PATH --bg    Detach (~2s; returns spawn id)\n"
+    "  meridian spawn wait                       Track this session's pending spawns\n\n"
+    "Do not block-foreground a long spawn — the harness command timeout will kill\n"
+    "your shell while the spawn keeps running and you lose the thread.\n\n"
+    "Harness command lifecycle ≠ meridian spawn lifecycle. The launch command\n"
+    "returning or dying does not stop the spawn.\n\n"
+    "If the launch was killed, reconcile with `meridian spawn wait` or\n"
+    "`meridian status`.\n"
+)
+_SPAWN_WAIT_HELP_EPILOGUE = (
+    "Without spawn ids, discovers pending spawns for MERIDIAN_CHAT_ID.\n"
+    "Cache-preserving yield: exits cleanly at the harness-aware checkpoint;\n"
+    "re-invoke to keep waiting.\n\n"
+    "Examples:\n\n"
+    "  meridian spawn wait\n\n"
+    "  meridian spawn wait p123\n"
+)
 
 
 def _get_global_options() -> Any:
@@ -352,7 +371,12 @@ def _spawn_create(
         bool,
         Parameter(
             name=["--background", "--bg"],
-            help="Run in background and return immediately with spawn ID.",
+            help=(
+                "Run detached; returns in ~2s with spawn id. NEVER wrap "
+                "`meridian spawn --bg` inside the harness's own background "
+                "execution (e.g. run_in_background Bash) — double-backgrounding "
+                "can kill the launch before the spawn row is recorded."
+            ),
         ),
     ] = False,
     timeout: Annotated[
@@ -874,7 +898,13 @@ def _spawn_wait(
     emit: Any,
     spawn_ids: Annotated[
         tuple[str, ...],
-        Parameter(name="spawn_id", help="Spawn IDs to wait for (omit to wait for all pending)."),
+        Parameter(
+            name="spawn_id",
+            help=(
+                "Spawn IDs to wait for. Omit to discover this session's pending "
+                "spawns (MERIDIAN_CHAT_ID) and wait on them."
+            ),
+        ),
     ] = (),
     timeout: Annotated[
         float | None,
@@ -1080,8 +1110,17 @@ def _spawn_log_removed(
     )
 
 
+def _append_spawn_help_epilogue(app: App) -> None:
+    existing = app.help_epilogue or ""
+    if existing and not existing.endswith("\n"):
+        existing += "\n"
+    app.help_epilogue = existing + "\n" + _SPAWN_USAGE_EPILOGUE
+
+
 def register_spawn_commands(app: App, emit: Emitter) -> tuple[set[str], dict[str, str]]:
     """Register spawn CLI commands using registry metadata as source of truth."""
+
+    _append_spawn_help_epilogue(app)
 
     handlers: dict[str, Callable[[], Callable[..., None]]] = {
         "meridian.spawn.children": lambda: partial(_spawn_children, emit),
@@ -1099,6 +1138,9 @@ def register_spawn_commands(app: App, emit: Emitter) -> tuple[set[str], dict[str
         registry=get_first_party_registry(),
         group="spawn",
         handlers=handlers,
+        command_help_epilogues={
+            "meridian.spawn.wait": _SPAWN_WAIT_HELP_EPILOGUE,
+        },
         emit=emit,
         default_handler=partial(_spawn_create, emit),
     )
