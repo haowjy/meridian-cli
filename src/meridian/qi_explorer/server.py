@@ -2,18 +2,29 @@
 
 from __future__ import annotations
 
+import importlib.resources
 import json
 import threading
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from typing import Any
 from urllib.parse import ParseResult, parse_qs, urlparse
 
 from meridian.lib.kg.types import AnalysisResult
-from meridian.qi_explorer.assets import resolve_index_html
 from meridian.qi_explorer.content import build_content_payload, serve_file
 from meridian.qi_explorer.discovery import DiscoveryResult
 from meridian.qi_explorer.graph_api import GraphIndex, build_graph_data
+
+
+def _resolve_index_html() -> Path:
+    package_file = Path(__file__).resolve().parent / "index.html"
+    if package_file.is_file():
+        return package_file
+
+    ref = importlib.resources.files("meridian.qi_explorer") / "index.html"
+    with importlib.resources.as_file(ref) as extracted:
+        return Path(extracted)
 
 
 class ExplorerState:
@@ -26,6 +37,18 @@ class ExplorerState:
         self.index: GraphIndex
         self.analysis: AnalysisResult
         self.graph, self.index, self.analysis = build_graph_data(discovery)
+
+    @property
+    def node_count(self) -> int:
+        return int(self.graph.get("nodeCount", 0))
+
+    @property
+    def edge_count(self) -> int:
+        return int(self.graph.get("edgeCount", 0))
+
+    @property
+    def is_empty(self) -> bool:
+        return self.node_count == 0
 
     def rescan(self) -> dict[str, Any]:
         with self._lock:
@@ -64,14 +87,15 @@ def create_server(
     *,
     host: str = "127.0.0.1",
     port: int = 0,
+    state: ExplorerState | None = None,
 ) -> ThreadingHTTPServer:
     """Create a bound ``ThreadingHTTPServer`` for qi explore."""
 
-    state = ExplorerState(discovery)
-    index_path = resolve_index_html()
+    explorer_state = state or ExplorerState(discovery)
+    index_path = _resolve_index_html()
 
     class QiExplorerHandler(BaseHTTPRequestHandler):
-        server_state = state
+        server_state = explorer_state
         index_html_path = index_path
 
         def log_message(self, format: str, *args: object) -> None:
@@ -148,6 +172,7 @@ def create_server(
             )
 
     httpd = ThreadingHTTPServer((host, port), QiExplorerHandler)
+    httpd.explorer_state = explorer_state
     return httpd
 
 

@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections import defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from meridian.lib.kg.graph import build_analysis
 from meridian.lib.kg.types import AnalysisResult, GraphEdge, GraphNode
@@ -16,6 +16,8 @@ _EXTERNAL_PREFIXES = ("http://", "https://", "mailto:", "#")
 _AGENTS_NAME = "AGENTS.md"
 _CONTEXT_SUFFIX = ".context/CONTEXT.md"
 
+LinkCategory = Literal["cross-ref", "source-ref", "broken"]
+
 
 def qi_file_filter(path: Path) -> bool:
     """Return True for qi-layer markdown files."""
@@ -23,10 +25,16 @@ def qi_file_filter(path: Path) -> bool:
     return path.name == _AGENTS_NAME or path.as_posix().endswith(_CONTEXT_SUFFIX)
 
 
-def boundary_dir(file_path: Path) -> Path:
+def boundary_for_qi_doc(file_path: Path) -> Path:
+    """Return the qi-layer boundary directory for a qi doc path."""
+
     if file_path.name == _AGENTS_NAME:
         return file_path.parent
     return file_path.parent.parent
+
+
+# Backward-compatible alias for internal graph building.
+boundary_dir = boundary_for_qi_doc
 
 
 def _rel_boundary(boundary_dir: Path, scan_root: Path) -> str:
@@ -66,6 +74,72 @@ def _node_label(
     return Path(rel_path).name
 
 
+def _find_scan_root(path: Path, root_entries: list[tuple[str, Path]]) -> tuple[str, Path] | None:
+    resolved = path.resolve()
+    best: tuple[str, Path] | None = None
+    for name, root in root_entries:
+        root_resolved = root.resolve()
+        try:
+            resolved.relative_to(root_resolved)
+        except ValueError:
+            continue
+        if best is None or len(root_resolved.parts) > len(best[1].parts):
+            best = (name, root_resolved)
+    return best
+
+
+def _scan_root_rel_id(name: str, path: Path, root: Path) -> str:
+    rel = path.resolve().relative_to(root.resolve()).as_posix()
+    return f"{name}:{rel}"
+
+
+@dataclass(frozen=True)
+class ResolvedLocalTarget:
+    """Classification of a resolved local link target."""
+
+    category: LinkCategory
+    node_id: str | None = None
+    file_id: str | None = None
+
+
+def resolve_local_target(resolved: Path, index: GraphIndex) -> ResolvedLocalTarget:
+    """Classify a resolved local path for graph edges and HTML annotation.
+
+  Returns ``cross-ref`` when the target is (a) a qi doc already indexed on a
+  node, or (b) a boundary directory present in ``boundary_key_to_id``.
+  Any other existing file inside a scan root is ``source-ref``.
+    """
+
+    target = resolved.resolve()
+
+    if target.is_file():
+        node_id = index.file_to_node_id.get(target)
+        if node_id is not None:
+            return ResolvedLocalTarget("cross-ref", node_id=node_id)
+
+    if target.is_dir():
+        root_match = _find_scan_root(target, index.root_entries)
+        if root_match is not None:
+            _, root = root_match
+            node_id = index.boundary_key_to_id.get((root, target))
+            if node_id is not None:
+                return ResolvedLocalTarget("cross-ref", node_id=node_id)
+
+    root_match = _find_scan_root(target, index.root_entries)
+    if root_match is not None:
+        name, root = root_match
+        if target.exists() and target.is_file():
+            return ResolvedLocalTarget(
+                "source-ref",
+                file_id=_scan_root_rel_id(name, target, root),
+            )
+        return ResolvedLocalTarget("broken")
+
+    if target.exists() and target.is_file():
+        return ResolvedLocalTarget("source-ref")
+    return ResolvedLocalTarget("broken")
+
+
 @dataclass(frozen=True)
 class BoundaryNode:
     """One collapsed qi-layer boundary directory."""
@@ -94,6 +168,7 @@ class GraphIndex:
     roots_by_name: dict[str, Path] = field(default_factory=dict)
     root_entries: list[tuple[str, Path]] = field(default_factory=list)
     inbound_from: dict[str, list[str]] = field(default_factory=dict)
+    collapsed_edges: list[tuple[str, str, str, int]] = field(default_factory=list)
 
 
 def _root_name_map(roots: list[ScanRoot]) -> dict[Path, str]:
@@ -126,7 +201,7 @@ def build_graph_index(
         if scan_root is None:
             continue
         scan_root = scan_root.resolve()
-        boundary = boundary_dir(file_path).resolve()
+        boundary = boundary_for_qi_doc(file_path).resolve()
         key = (scan_root, boundary)
         if file_path.name == _AGENTS_NAME:
             groups[key]["agents"] = file_path
@@ -167,6 +242,7 @@ def build_graph_index(
                 index.file_to_node_id[doc_path.resolve()] = node_id
 
     collapsed_edges = _collapse_edges(analysis, index)
+    index.collapsed_edges = collapsed_edges
     inbound: dict[str, set[str]] = defaultdict(set)
     for source_id, target_id, _label, _weight in collapsed_edges:
         if source_id != target_id:
@@ -193,8 +269,13 @@ def _collapse_edges(
         if not edge.resolved or not isinstance(edge.dst, Path):
             continue
         source_id = index.file_to_node_id.get(edge.src.resolve())
-        target_id = index.file_to_node_id.get(edge.dst.resolve())
-        if source_id is None or target_id is None or source_id == target_id:
+        if source_id is None:
+            continue
+        resolution = resolve_local_target(edge.dst, index)
+        if resolution.category != "cross-ref" or resolution.node_id is None:
+            continue
+        target_id = resolution.node_id
+        if source_id == target_id:
             continue
         label = _edge_label(edge, analysis.nodes.get(edge.src))
         key = (source_id, target_id)
@@ -253,7 +334,7 @@ def analysis_to_graph(
     """Convert analysis output into ``GET /api/graph`` JSON."""
 
     graph_index = index or build_graph_index(analysis, discovery)
-    collapsed_edges = _collapse_edges(analysis, graph_index)
+    collapsed_edges = graph_index.collapsed_edges
 
     nodes = []
     for node_id in sorted(graph_index.nodes_by_id):
@@ -320,8 +401,13 @@ def build_graph_data(
 __all__ = [
     "BoundaryNode",
     "GraphIndex",
+    "LinkCategory",
+    "ResolvedLocalTarget",
     "analysis_to_graph",
+    "boundary_for_qi_doc",
     "build_graph_data",
     "build_graph_index",
+    "is_external_link",
     "qi_file_filter",
+    "resolve_local_target",
 ]

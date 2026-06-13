@@ -124,8 +124,7 @@ def cmd_qi_explore(
     import webbrowser
 
     from meridian.qi_explorer.discovery import discover_scan_roots
-    from meridian.qi_explorer.graph_api import build_graph_data
-    from meridian.qi_explorer.server import create_server
+    from meridian.qi_explorer.server import ExplorerState, create_server
 
     resolved = path.resolve()
     if not resolved.exists():
@@ -139,10 +138,10 @@ def cmd_qi_explore(
         raise SystemExit(2)
 
     discovery = discover_scan_roots(resolved)
-    graph, _, _ = build_graph_data(discovery)
+    state = ExplorerState(discovery)
     context_count = sum(1 for root in discovery.roots if root.kind == "context")
 
-    httpd = create_server(discovery, port=port)
+    httpd = create_server(discovery, port=port, state=state)
     bound_port = httpd.server_address[1]
     url = f"http://127.0.0.1:{bound_port}"
 
@@ -150,7 +149,7 @@ def cmd_qi_explore(
         f"qi explore serving {resolved} (+{context_count} context roots) at {url}",
         flush=True,
     )
-    if graph["nodeCount"] == 0:
+    if state.is_empty:
         print("Notice: no qi-layer nodes found in scan roots.", flush=True)
 
     if not no_open:

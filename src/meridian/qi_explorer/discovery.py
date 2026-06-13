@@ -77,7 +77,9 @@ def discover_scan_roots(primary: Path) -> DiscoveryResult:
         kind="primary",
     )
 
-    project_root = resolve_project_root_resolution(primary_resolved).project_root
+    project_root = resolve_project_root_resolution(
+        execution_cwd=primary_resolved,
+    ).project_root
     context_config = load_context_config(project_root) or ContextConfig()
     resolved = resolve_context_paths(project_root, context_config)
 

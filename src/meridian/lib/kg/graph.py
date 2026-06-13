@@ -62,6 +62,7 @@ def build_analysis(
     root = root.resolve()
 
     if roots is not None:
+        # ``roots`` takes precedence; ``targeted_path`` is ignored when set.
         resolved_roots = [r.resolve() for r in roots]
         file_to_scan_root = _collect_multi_root_files(
             resolved_roots,

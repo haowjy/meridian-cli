@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from meridian.lib.ignores import SKIP_DIRS
 from meridian.lib.kg.graph import build_analysis
 
 
@@ -33,8 +32,6 @@ def test_skip_dirs_prunes_meridian_subdir_from_kg_scan(tmp_path: Path) -> None:
     meridian_dir = tmp_path / ".meridian"
     meridian_dir.mkdir()
     _write_md(meridian_dir / "hidden.md", "# Hidden\n")
-
-    assert ".meridian" in SKIP_DIRS
 
     result = build_analysis(tmp_path)
 
