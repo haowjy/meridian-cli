@@ -413,7 +413,10 @@ def root(
     ] = None,
     agent: Annotated[
         str | None,
-        Parameter(name=["--agent", "-a"], help="Agent profile name for the primary agent."),
+        Parameter(
+            name=["--agent", "-a"],
+            help='Agent profile name for the primary agent. Use -a "" for no profile.',
+        ),
     ] = None,
     work: Annotated[
         str,

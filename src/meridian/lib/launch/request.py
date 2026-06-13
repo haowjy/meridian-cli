@@ -83,6 +83,7 @@ class SpawnRequest(BaseModel):
     model: str | None = None
     harness: str | None = None
     agent: str | None = None
+    agent_opt_out: bool = False
     skills: tuple[str, ...] = ()
     supplemental_prompt_documents: tuple[PromptDocument, ...] = ()
 

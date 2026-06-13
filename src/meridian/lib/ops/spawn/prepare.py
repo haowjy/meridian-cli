@@ -149,6 +149,7 @@ def build_create_payload(
             model=payload.model or None,
             harness=payload.harness,
             agent=payload.agent,
+            agent_opt_out=payload.agent_opt_out,
             skills=payload.skills,
             extra_args=payload.passthrough_args,
             execution_policy=ResolvedExecutionPolicy(

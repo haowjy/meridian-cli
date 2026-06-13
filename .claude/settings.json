@@ -4,7 +4,7 @@
       {
         "hooks": [
           {
-            "command": "bash '/home/jimyao/.cache/mars/cache/archives/https___github.com_haowjy_meridian-base@852867501f56d6a5ffc5_8468d76e/hooks/deny-generic-agent/run.sh'",
+            "command": "bash '/home/jimyao/.cache/mars/cache/archives/https___github.com_haowjy_meridian-base@64592534a9814dffe5cf_0ba70674/hooks/deny-generic-agent/run.sh'",
             "type": "command"
           }
         ],

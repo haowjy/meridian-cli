@@ -15,6 +15,7 @@ from meridian.lib.core.domain import SpawnStatus
 from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.launch.request import LaunchArgvIntent, SpawnRequest
+from meridian.lib.launch.resolve import resolve_agent_launch_input
 from meridian.lib.launch.streaming_runner import run_streaming_spawn, signal_coordinator
 from meridian.lib.ops.runtime import OperationRuntime
 from meridian.lib.ops.spawn.execute_init import build_spawn_mars_runtime
@@ -39,7 +40,7 @@ async def streaming_serve(
     normalized_model = model.strip() if model is not None else None
     if model is not None and not normalized_model:
         raise ValueError("model cannot be empty")
-    normalized_agent = agent.strip() if agent is not None else None
+    agent_launch = resolve_agent_launch_input(agent)
 
     try:
         harness_id = HarnessId(normalized_harness)
@@ -60,7 +61,8 @@ async def streaming_serve(
         prompt=normalized_prompt,
         model=normalized_model,
         harness=harness_id.value,
-        agent=normalized_agent,
+        agent=agent_launch.agent,
+        agent_opt_out=agent_launch.agent_opt_out,
     )
     operation_runtime = OperationRuntime.from_prepared(
         prepared,

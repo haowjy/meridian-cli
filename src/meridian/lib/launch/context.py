@@ -956,6 +956,7 @@ def compile_prepared_policy_surface(
             skills_readonly=dry_run,
             requested_skills=request.skills,
             policy_snapshot=request.launch_policy_snapshot,
+            agent_opt_out=request.agent_opt_out,
         )
     )
 

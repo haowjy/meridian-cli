@@ -111,6 +111,7 @@ class SurfacePolicyInput:
     skills_readonly: bool = True
     requested_skills: tuple[str, ...] = ()
     policy_snapshot: LaunchPolicySnapshot | None = None
+    agent_opt_out: bool = False
     supported_execution_policy_fields: frozenset[ExecutionPolicyField] = (
         _DEFAULT_EXECUTION_POLICY_FIELDS
     )
@@ -416,12 +417,15 @@ def _resolve_policy_from_bundle(surface: SurfacePolicyInput) -> ResolvedLaunchPo
     pre_profile_resolved = resolve(*surface.layers, surface.config_overrides)
     explicit_user_overrides = resolve(*surface.layers)
     requested_agent = explicit_user_overrides.agent
-    configured_default_agent = pre_profile_resolved.agent if not requested_agent else ""
+    configured_default_agent = (
+        pre_profile_resolved.agent if requested_agent is None and not surface.agent_opt_out else ""
+    )
 
     profile, profile_warning = load_agent_profile_with_fallback(
         project_root=project_root,
         requested_agent=requested_agent,
         configured_default=configured_default_agent,
+        agent_opt_out=surface.agent_opt_out,
     )
 
     profile_overrides = RuntimeOverrides.from_agent_profile(profile)

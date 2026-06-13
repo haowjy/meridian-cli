@@ -62,6 +62,7 @@ def _build_primary_launch_context(
     session: SessionRequest | None = None,
     execution_cwd: Path | None = None,
     claude_agent_copy: bool = False,
+    agent_opt_out: bool = False,
 ) -> tuple[Any, Any]:
     _write_minimal_mars_config(project_root, claude_agent_copy=claude_agent_copy)
     harness_registry = get_default_harness_registry()
@@ -76,6 +77,7 @@ def _build_primary_launch_context(
             harness=harness_id.value,
             extra_args=extra_args,
             session=session or SessionRequest(),
+            agent_opt_out=agent_opt_out,
         ),
         runtime=LaunchRuntime(
             argv_intent=LaunchArgvIntent.REQUIRED,
@@ -354,3 +356,33 @@ def test_run_harness_process_claude_primary_stays_on_black_box_path(
 
     assert black_box_calls == 1
     assert outcome.exit_code == 0
+
+
+def test_explicit_no_agent_skips_claude_native_agent_projection(
+    tmp_path: Path,
+) -> None:
+    project_root = tmp_path
+    (project_root / "meridian.toml").write_text(
+        '[primary]\nagent = "product-lead"\n',
+        encoding="utf-8",
+    )
+    from tests.support.fixtures import write_agent
+
+    write_agent(
+        project_root,
+        name="product-lead",
+        model="claude-sonnet-4-5",
+        body="# Product Lead",
+    )
+    launch_context, _ = _build_primary_launch_context(
+        project_root=project_root,
+        harness_id=HarnessId.CLAUDE,
+        model="claude-sonnet-4-5",
+        agent_opt_out=True,
+    )
+
+    command = " ".join(launch_context.binding.argv)
+    assert "--agent" not in command
+    assert "--agents" not in command
+    assert launch_context.binding.spec.agent_name is None
+    assert launch_context.binding.spec.agents_payload is None
