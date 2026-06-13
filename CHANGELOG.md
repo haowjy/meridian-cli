@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.3.9] - 2026-06-13
+
 ### Fixed
 - `-a ""` is explicit **no agent** via `agent_opt_out` on launch requests: skips `primary.agent`, profile body, native `--agents` payload, and fork/continue agent inheritance. `RuntimeOverrides` keeps normal `None` = unset semantics.
 
