@@ -10,8 +10,9 @@ _CLAUDE_SPAWN_CONTRACT = """\
 
 Launch detached, then wait — never block the turn or background-wrap.
 
-- Launch with --bg; it returns in ~2s with a spawn id and runs the worker
-  detached:  meridian spawn -a <agent> --prompt-file /tmp/<task>.md --bg
+- Launch with --bg; it returns a spawn id without waiting for the work and
+  runs the worker detached:
+      meridian spawn -a <agent> --prompt-file /tmp/<task>.md --bg
 - NEVER wrap `meridian spawn --bg` inside Bash's run_in_background. It
   already detaches; double-backgrounding risks the launch being killed
   before the spawn is recorded.
@@ -27,8 +28,9 @@ _GENERIC_SPAWN_CONTRACT = """\
 
 Launch detached, then wait — never block the turn or double-background.
 
-- Launch with --bg; it returns in ~2s with a spawn id and runs the worker
-  detached:  meridian spawn -a <agent> --prompt-file /tmp/<task>.md --bg
+- Launch with --bg; it returns a spawn id without waiting for the work and
+  runs the worker detached:
+      meridian spawn -a <agent> --prompt-file /tmp/<task>.md --bg
 - NEVER wrap `meridian spawn --bg` in your harness's background execution.
   It already detaches; double-backgrounding risks the launch being killed
   before the spawn is recorded.

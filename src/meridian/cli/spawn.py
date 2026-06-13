@@ -69,7 +69,7 @@ _ACTIVE_VIEW_STATUSES: tuple[SpawnStatus, ...] = tuple(
 )
 _SPAWN_USAGE_EPILOGUE = (
     "Recommended pattern:\n\n"
-    "  meridian spawn --prompt-file PATH --bg    Detach (~2s; returns spawn id)\n"
+    "  meridian spawn --prompt-file PATH --bg    Detach; returns a spawn id\n"
     "  meridian spawn wait                       Track this session's pending spawns\n\n"
     "Do not block-foreground a long spawn — the harness command timeout will kill\n"
     "your shell while the spawn keeps running and you lose the thread.\n\n"
@@ -372,7 +372,7 @@ def _spawn_create(
         Parameter(
             name=["--background", "--bg"],
             help=(
-                "Run detached; returns in ~2s with spawn id. NEVER wrap "
+                "Run detached; returns a spawn id without waiting. NEVER wrap "
                 "`meridian spawn --bg` inside the harness's own background "
                 "execution (e.g. run_in_background Bash) — double-backgrounding "
                 "can kill the launch before the spawn row is recorded."
