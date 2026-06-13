@@ -19,9 +19,7 @@ class LaunchPolicySnapshot(BaseModel):
     harness: str
     agent: str | None = None
     agent_opt_out: bool = False
-    agent_path: str | None = None
-    agent_description: str = ""
-    agent_profile_body: str = ""
+    agent_profile: dict[str, object] | None = None
     skills: tuple[str, ...] = ()
     skill_paths: tuple[str, ...] = ()
     loaded_skills: tuple[SkillContent, ...] = ()
@@ -40,8 +38,6 @@ class LaunchPolicySnapshot(BaseModel):
     field_provenance: dict[str, str] = Field(default_factory=dict)
     fallback_chain: tuple[dict[str, object], ...] = ()
     bundle_inventory_prompt: str | None = None
-    agent_subagents: tuple[str, ...] = ()
-    agent_meridian_capabilities: dict[str, bool] | None = None
 
 
 __all__ = ["LaunchPolicySnapshot"]

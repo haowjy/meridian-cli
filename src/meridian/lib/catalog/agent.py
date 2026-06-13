@@ -8,6 +8,14 @@ from meridian.lib.catalog.skill import files_have_equal_text, split_markdown_fro
 from meridian.lib.config.project_root import resolve_project_root_resolution
 
 
+class MeridianCapabilities(BaseModel):
+    """Typed meridian-specific capability overrides from profile frontmatter."""
+
+    model_config = ConfigDict(frozen=True)
+
+    spawn: bool | None = None
+
+
 class AgentProfile(BaseModel):
     """Parsed agent profile with frontmatter defaults + markdown body."""
 
@@ -18,7 +26,7 @@ class AgentProfile(BaseModel):
     mode: Literal["primary", "subagent"] = "subagent"
     skills: tuple[str, ...]
     subagents: tuple[str, ...] = ()
-    meridian_capabilities: dict[str, bool] | None = None
+    meridian_capabilities: MeridianCapabilities | None = None
     model_invocable: bool = True
     body: str
     path: Path
@@ -37,20 +45,19 @@ def _normalize_string_list(value: object) -> tuple[str, ...]:
     return ()
 
 
-def _parse_meridian_capabilities(value: object) -> dict[str, bool] | None:
+def _parse_meridian_capabilities(value: object) -> MeridianCapabilities | None:
     if value is None:
         return None
     if not isinstance(value, dict):
         return None
-    parsed: dict[str, bool] = {}
+    spawn_value: bool | None = None
     for raw_key, raw_value in cast("dict[object, object]", value).items():
-        if not isinstance(raw_value, bool):
+        if str(raw_key).strip() != "spawn" or not isinstance(raw_value, bool):
             continue
-        key = str(raw_key).strip()
-        if not key:
-            continue
-        parsed[key] = raw_value
-    return parsed or None
+        spawn_value = raw_value
+    if spawn_value is None:
+        return None
+    return MeridianCapabilities(spawn=spawn_value)
 
 
 def parse_agent_profile(path: Path) -> AgentProfile:

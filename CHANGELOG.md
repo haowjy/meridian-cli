@@ -10,7 +10,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 - The agent inventory (`# Meridian Agents`) is now gated on spawn capability: leaf agents (no `subagents`) no longer receive it, carrying zero meridian-specific operational content. The environmental context prompt is unaffected.
-- `LaunchPolicySnapshot` carries `agent_subagents` + `agent_meridian_capabilities`, and stores the pre-gate bundle inventory, so spawn continue/fork re-applies the contract exactly once.
+- The spawn contract is a first-class composition block (`spawn_contract_prompt`) rendered at composition time, not appended to the inventory string — so spawn continue/fork re-applies it exactly once with no double-append hazard. Spawn gating/contract logic lives in `launch/spawn_guidance.py`; `meridian-capabilities` parses to a typed `MeridianCapabilities`.
+- `LaunchPolicySnapshot` persists the agent profile as a single nested `agent_profile` blob (round-tripped via `model_dump`/`model_validate`) instead of a lossy hand-maintained field subset, so any profile field survives continue/fork replay automatically.
 
 ## [0.3.9] - 2026-06-13
 

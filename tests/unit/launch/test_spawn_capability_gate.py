@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from meridian.lib.catalog.agent import AgentProfile
+from meridian.lib.catalog.agent import AgentProfile, MeridianCapabilities
 from meridian.lib.catalog.catalog_session import CatalogSession
 from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
 from meridian.lib.core.types import HarnessId
@@ -14,9 +14,7 @@ from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.launch import bundle_adapter
 from meridian.lib.launch.context import (
     PreparedLaunchSurface,
-    _has_spawn_capability,
-    _resolve_inventory_and_context_prompts,
-    _spawn_usage_contract,
+    build_context_prompt,
     build_launch_policy_snapshot,
     compile_prepared_policy_surface,
     prepare_launch_surface,
@@ -28,6 +26,7 @@ from meridian.lib.launch.request import (
     LaunchRuntime,
     SpawnRequest,
 )
+from meridian.lib.launch.spawn_guidance import has_spawn_capability, resolve_spawn_prompt_blocks
 from tests.support.fixtures import allow_headless_claude
 from tests.support.launch import stub_bundle_request_and_resolve
 
@@ -39,17 +38,21 @@ WAIT_GUIDANCE = "meridian spawn wait"
 def _sample_profile(
     *,
     subagents: tuple[str, ...] = ("coder", "explorer"),
-    meridian_capabilities: dict[str, bool] | None = None,
+    meridian_capabilities: MeridianCapabilities | None = None,
+    mode: str = "subagent",
+    model_invocable: bool = True,
 ) -> AgentProfile:
     return AgentProfile(
         name="tech-lead",
         description="Orchestrator",
+        mode=mode,  # type: ignore[arg-type]
         skills=(),
         subagents=subagents,
         meridian_capabilities=meridian_capabilities,
+        model_invocable=model_invocable,
         body="Lead body",
         path=Path("/tmp/tech-lead.md"),
-        raw_content="raw",
+        raw_content="raw profile content",
     )
 
 
@@ -124,33 +127,30 @@ def _replay_request_from_snapshot(snapshot: LaunchPolicySnapshot, *, prompt: str
     )
 
 
-def test_gate_present_injects_contract_into_inventory(tmp_path: Path) -> None:
-    inventory, context = _resolve_inventory_and_context_prompts(
-        project_root=tmp_path,
-        active_work_dir=None,
-        bundle_inventory_prompt=PRE_GATE_INVENTORY,
-        has_spawn_capability=True,
+def test_gate_present_returns_inventory_and_contract_blocks(tmp_path: Path) -> None:
+    inventory, contract = resolve_spawn_prompt_blocks(
+        profile=_sample_profile(),
         harness_id=HarnessId.CLAUDE,
+        bundle_inventory_prompt=PRE_GATE_INVENTORY,
     )
 
-    assert inventory is not None
-    assert inventory.startswith(PRE_GATE_INVENTORY)
-    assert inventory.count(CONTRACT_MARKER) == 1
-    assert "run_in_background" in inventory
-    assert context is not None
+    assert inventory == PRE_GATE_INVENTORY
+    assert contract.count(CONTRACT_MARKER) == 1
+    assert "run_in_background" in contract
+    context = build_context_prompt(project_root=tmp_path, active_work_dir=None)
     assert "# Meridian Context" in context
 
 
-def test_gate_absent_suppresses_inventory_but_keeps_context(tmp_path: Path) -> None:
-    inventory, context = _resolve_inventory_and_context_prompts(
-        project_root=tmp_path,
-        active_work_dir=None,
+def test_gate_absent_returns_empty_blocks_but_context_still_builds(tmp_path: Path) -> None:
+    inventory, contract = resolve_spawn_prompt_blocks(
+        profile=_sample_profile(subagents=()),
+        harness_id=HarnessId.CLAUDE,
         bundle_inventory_prompt=PRE_GATE_INVENTORY,
-        has_spawn_capability=False,
     )
 
-    assert inventory is None
-    assert context is not None
+    assert inventory == ""
+    assert contract == ""
+    context = build_context_prompt(project_root=tmp_path, active_work_dir=None)
     assert "# Meridian Context" in context
 
 
@@ -159,29 +159,37 @@ def test_gate_absent_suppresses_inventory_but_keeps_context(tmp_path: Path) -> N
     [
         (_sample_profile(), True),
         (_sample_profile(subagents=()), False),
-        (_sample_profile(meridian_capabilities={"spawn": False}), False),
-        (_sample_profile(meridian_capabilities={"spawn": True}), True),
+        (_sample_profile(meridian_capabilities=MeridianCapabilities(spawn=False)), False),
+        (_sample_profile(meridian_capabilities=MeridianCapabilities(spawn=True)), True),
         (None, False),
     ],
 )
 def test_has_spawn_capability(profile: AgentProfile | None, expected: bool) -> None:
-    assert _has_spawn_capability(profile) is expected
+    assert has_spawn_capability(profile) is expected
 
 
-def test_spawn_usage_contract_is_harness_templated() -> None:
-    claude = _spawn_usage_contract(HarnessId.CLAUDE)
-    generic = _spawn_usage_contract(HarnessId.CODEX)
+def test_resolve_spawn_prompt_blocks_is_harness_templated() -> None:
+    _, claude_contract = resolve_spawn_prompt_blocks(
+        profile=_sample_profile(),
+        harness_id=HarnessId.CLAUDE,
+        bundle_inventory_prompt=None,
+    )
+    _, generic_contract = resolve_spawn_prompt_blocks(
+        profile=_sample_profile(),
+        harness_id=HarnessId.CODEX,
+        bundle_inventory_prompt=None,
+    )
 
-    assert "run_in_background" in claude
-    assert "run_in_background" not in generic
-    assert CONTRACT_MARKER in claude
-    assert CONTRACT_MARKER in generic
-    assert WAIT_GUIDANCE in claude
-    assert WAIT_GUIDANCE in generic
+    assert "run_in_background" in claude_contract
+    assert "run_in_background" not in generic_contract
+    assert CONTRACT_MARKER in claude_contract
+    assert CONTRACT_MARKER in generic_contract
+    assert WAIT_GUIDANCE in claude_contract
+    assert WAIT_GUIDANCE in generic_contract
 
 
 def test_snapshot_round_trip_preserves_spawn_gate_fields() -> None:
-    profile = _sample_profile(meridian_capabilities={"spawn": False, "notify": True})
+    profile = _sample_profile(meridian_capabilities=MeridianCapabilities(spawn=False))
     snapshot = build_launch_policy_snapshot(
         SpawnRequest(prompt="replay", model="gpt55", harness="claude", agent="tech-lead"),
         bundle_inventory_prompt=PRE_GATE_INVENTORY,
@@ -190,14 +198,44 @@ def test_snapshot_round_trip_preserves_spawn_gate_fields() -> None:
 
     reconstructed = _snapshot_profile(
         snapshot=snapshot,
-        project_root=Path("/tmp/project"),
-        snapshot_agent="tech-lead",
         snapshot_skill_names=(),
+        project_root=Path("/tmp/project"),
     )
 
     assert reconstructed is not None
     assert reconstructed.subagents == profile.subagents
     assert reconstructed.meridian_capabilities == profile.meridian_capabilities
+
+
+def test_snapshot_round_trip_preserves_all_profile_fields() -> None:
+    profile = _sample_profile(
+        subagents=("coder", "reviewer"),
+        meridian_capabilities=MeridianCapabilities(spawn=True),
+        mode="primary",
+        model_invocable=False,
+    )
+    snapshot = build_launch_policy_snapshot(
+        SpawnRequest(prompt="replay", model="gpt55", harness="claude", agent="tech-lead"),
+        bundle_inventory_prompt=PRE_GATE_INVENTORY,
+        profile=profile,
+    )
+
+    reconstructed = _snapshot_profile(
+        snapshot=snapshot,
+        snapshot_skill_names=("loaded-skill",),
+        project_root=Path("/tmp/project"),
+    )
+
+    assert reconstructed is not None
+    assert reconstructed.description == profile.description
+    assert reconstructed.body == profile.body
+    assert reconstructed.subagents == profile.subagents
+    assert reconstructed.meridian_capabilities == profile.meridian_capabilities
+    assert reconstructed.mode == profile.mode
+    assert reconstructed.model_invocable == profile.model_invocable
+    assert reconstructed.raw_content == profile.raw_content
+    assert reconstructed.path == profile.path
+    assert reconstructed.skills == ("loaded-skill",)
 
 
 def _empty_alias_map(_self: CatalogSession) -> dict[str, object]:
@@ -217,7 +255,7 @@ def test_continue_fork_replay_appends_contract_exactly_once(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Compose → snapshot (pre-gate) → replay via policy snapshot → gate once."""
+    """Compose → snapshot (raw inventory) → replay via policy snapshot → gate once."""
     project_root = tmp_path
     _seed_spawn_capable_project(project_root)
     stub_bundle_request_and_resolve(
@@ -247,6 +285,7 @@ def test_continue_fork_replay_appends_contract_exactly_once(
     initial_system_prompt = _composed_system_prompt(initial_prepared)
     assert initial_system_prompt.count(CONTRACT_MARKER) == 1
     assert initial_system_prompt.count(PRE_GATE_INVENTORY) == 1
+    assert CONTRACT_MARKER not in (initial_prepared.content.agent_inventory_prompt or "")
 
     monkeypatch.setattr(bundle_adapter, "request_and_resolve", _block_launch_bundle)
 
@@ -268,7 +307,7 @@ def test_continue_fork_replay_appends_contract_exactly_once(
     assert second_replay_prompt.count(PRE_GATE_INVENTORY) == 1
 
 
-def test_build_launch_policy_snapshot_stores_pre_gate_inventory_only() -> None:
+def test_build_launch_policy_snapshot_stores_raw_inventory_only() -> None:
     profile = _sample_profile()
     snapshot = build_launch_policy_snapshot(
         SpawnRequest(prompt="store", model="gpt55", harness="claude", agent="tech-lead"),
@@ -278,4 +317,5 @@ def test_build_launch_policy_snapshot_stores_pre_gate_inventory_only() -> None:
 
     assert snapshot.bundle_inventory_prompt == PRE_GATE_INVENTORY
     assert CONTRACT_MARKER not in (snapshot.bundle_inventory_prompt or "")
-    assert snapshot.agent_subagents == profile.subagents
+    persisted = AgentProfile.model_validate(snapshot.agent_profile)
+    assert persisted.subagents == profile.subagents

@@ -11,7 +11,6 @@ from typing import TYPE_CHECKING, cast
 
 from pydantic import ValidationError
 
-from meridian.lib.catalog.agent import AgentProfile
 from meridian.lib.catalog.catalog_session import CatalogSession
 from meridian.lib.catalog.model_aliases import AliasEntry, MarsResultCache
 from meridian.lib.config.context_config import (
@@ -125,6 +124,7 @@ from .resolve import (
     resolve_profile_path,
     resolve_skill_paths,
 )
+from .spawn_guidance import resolve_spawn_prompt_blocks
 from .text_utils import sanitize_prior_output, strip_stale_report_paths
 from .workspace import resolve_workspace_snapshot_for_launch
 
@@ -977,80 +977,6 @@ def compile_prepared_policy_surface(
     )
 
 
-_CLAUDE_SPAWN_CONTRACT = """\
-# Spawning subagents (meridian)
-
-Launch detached, then wait — never block the turn or background-wrap.
-
-- Launch with --bg; it returns in ~2s with a spawn id and runs the worker
-  detached:  meridian spawn -a <agent> --prompt-file /tmp/<task>.md --bg
-- NEVER wrap `meridian spawn --bg` inside Bash's run_in_background. It
-  already detaches; double-backgrounding risks the launch being killed
-  before the spawn is recorded.
-- NEVER block-foreground a long spawn (omitting --bg). It will outlive your
-  Bash command timeout; you lose the thread while the spawn runs on.
-- Track with no-arg wait — no id needed; it discovers your pending spawns
-  by session and yields cache-cleanly. Re-invoke to keep waiting:
-      meridian spawn wait
-- Full reference:  meridian spawn --help"""
-
-_GENERIC_SPAWN_CONTRACT = """\
-# Spawning subagents (meridian)
-
-Launch detached, then wait — never block the turn or double-background.
-
-- Launch with --bg; it returns in ~2s with a spawn id and runs the worker
-  detached:  meridian spawn -a <agent> --prompt-file /tmp/<task>.md --bg
-- NEVER wrap `meridian spawn --bg` in your harness's background execution.
-  It already detaches; double-backgrounding risks the launch being killed
-  before the spawn is recorded.
-- NEVER block-foreground a long spawn (omitting --bg). It will outlive your
-  command timeout; you lose the thread while the spawn runs on.
-- Track with no-arg wait — no id needed; it discovers your pending spawns
-  by session and yields cache-cleanly. Re-invoke to keep waiting:
-      meridian spawn wait
-- Full reference:  meridian spawn --help"""
-
-
-def _spawn_usage_contract(harness: HarnessId) -> str:
-    if harness == HarnessId.CLAUDE:
-        return _CLAUDE_SPAWN_CONTRACT
-    return _GENERIC_SPAWN_CONTRACT
-
-
-def _has_spawn_capability(profile: AgentProfile | None) -> bool:
-    if profile is None:
-        return False
-    if (
-        profile.meridian_capabilities is not None
-        and profile.meridian_capabilities.get("spawn") is False
-    ):
-        return False
-    return len(profile.subagents) > 0
-
-
-def _resolve_inventory_and_context_prompts(
-    *,
-    project_root: Path,
-    active_work_dir: Path | None,
-    bundle_inventory_prompt: str | None,
-    has_spawn_capability: bool = False,
-    harness_id: HarnessId | None = None,
-) -> tuple[str | None, str | None]:
-    context_prompt = build_context_prompt(
-        project_root=project_root,
-        active_work_dir=active_work_dir,
-    )
-    if not has_spawn_capability:
-        return None, context_prompt
-
-    normalized_inventory = (bundle_inventory_prompt or "").strip()
-    inventory = normalized_inventory or None
-    contract = _spawn_usage_contract(harness_id or HarnessId.CLAUDE)
-    inventory = f"{inventory}\n\n{contract}" if inventory else contract
-
-    return inventory, context_prompt
-
 
 def _resolve_spawn_prepare_projection(
     *,
@@ -1094,13 +1020,15 @@ def _resolve_spawn_prepare_projection(
         )
         agent_profile_body = f"# Agent Profile\n\n{rendered_agent_body}"
 
-    agent_inventory_prompt, context_prompt = _resolve_inventory_and_context_prompts(
+    agent_inventory_prompt, spawn_contract_prompt = resolve_spawn_prompt_blocks(
+        profile=profile,
+        harness_id=harness.id,
+        bundle_inventory_prompt=policy.bundle_inventory_prompt,
+    )
+    context_prompt = build_context_prompt(
         project_root=project_paths.project_root,
         active_work_dir=active_work_dir,
-        bundle_inventory_prompt=policy.bundle_inventory_prompt,
-        has_spawn_capability=_has_spawn_capability(profile),
-        harness_id=harness.id,
-    )
+    ) or ""
 
     resolved_work_id = (request.work_id_hint or "").strip() or (
         active_work_dir.name if active_work_dir is not None else ""
@@ -1124,8 +1052,9 @@ def _resolve_spawn_prepare_projection(
             available_skills=policy.bundle_available_skills,
             agent_profile_body=agent_profile_body,
             report_instruction=build_report_instruction(),
-            inventory_prompt=agent_inventory_prompt or "",
-            context_prompt=context_prompt or "",
+            inventory_prompt=agent_inventory_prompt,
+            spawn_contract_prompt=spawn_contract_prompt,
+            context_prompt=context_prompt,
             completion_contract=completion_contract,
             launch_preamble=build_spawn_preamble(launch_mode),
             passthrough_system_fragments=(),
@@ -1159,13 +1088,15 @@ def _resolve_primary_projection(
     resolved_skills = policy.resolved_skills
     session_mode = ((request.session.primary_session_mode or "fresh").strip().lower()) or "fresh"
 
-    agent_inventory_prompt, context_prompt = _resolve_inventory_and_context_prompts(
+    agent_inventory_prompt, spawn_contract_prompt = resolve_spawn_prompt_blocks(
+        profile=profile,
+        harness_id=harness.id,
+        bundle_inventory_prompt=policy.bundle_inventory_prompt,
+    )
+    context_prompt = build_context_prompt(
         project_root=project_paths.project_root,
         active_work_dir=active_work_dir,
-        bundle_inventory_prompt=policy.bundle_inventory_prompt,
-        has_spawn_capability=_has_spawn_capability(profile),
-        harness_id=harness.id,
-    )
+    ) or ""
 
     seed = harness.seed_session(
         is_resume=session_mode == "resume",
@@ -1224,8 +1155,9 @@ def _resolve_primary_projection(
             available_skills=policy.bundle_available_skills,
             agent_profile_body=agent_profile_body,
             report_instruction="",
-            inventory_prompt=agent_inventory_prompt or "",
-            context_prompt=context_prompt or "",
+            inventory_prompt=agent_inventory_prompt,
+            spawn_contract_prompt=spawn_contract_prompt,
+            context_prompt=context_prompt,
             completion_contract=completion_contract,
             launch_preamble=build_primary_preamble(),
             passthrough_system_fragments=passthrough_system_fragments,

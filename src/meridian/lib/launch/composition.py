@@ -29,6 +29,7 @@ SYSTEM_INSTRUCTION_BLOCK_ORDER: tuple[str, ...] = (
     "supplemental_documents",
     "available_skills_listing",
     "inventory_prompt",
+    "spawn_contract_prompt",
     "context_prompt",
     "report_instruction",
     # passthrough_system_fragments appended last
@@ -161,6 +162,9 @@ class ComposedLaunchContent:
 
     prior_output: str
     """Sanitized prior-run output."""
+
+    spawn_contract_prompt: str = ""
+    """Harness-templated spawn usage contract; SYSTEM_INSTRUCTION."""
 
     completion_contract: str = ""
     """Deterministic bounded completion contract text (spawn goal)."""
@@ -339,7 +343,7 @@ def render_system_instruction_blocks(content: ComposedLaunchContent) -> str:
     Order: agent_profile_body, completion_contract, auto-loaded skills
     (grouped by type: principles first, then guardrails, then others,
     then bootstrap), available skills listing (names only),
-    inventory_prompt, context_prompt, report_instruction,
+    inventory_prompt, spawn_contract_prompt, context_prompt, report_instruction,
     then passthrough fragments.
     """
     skill_type_priority = {"principle": 0, "guardrail": 1, "reference": 2}
