@@ -6,6 +6,7 @@ Also includes file-backed ID generation for spawns and sessions.
 from __future__ import annotations
 
 import os
+import shutil
 from collections.abc import Mapping
 from contextlib import suppress
 from datetime import UTC, datetime
@@ -381,9 +382,9 @@ def remove_spawn_events(
     """
 
     paths = RuntimePaths.from_root_dir(runtime_root)
-    state_path = paths.spawns_dir / str(spawn_id) / "state.json"
+    spawn_dir = paths.spawns_dir / str(spawn_id)
     with suppress(FileNotFoundError):
-        state_path.unlink()
+        shutil.rmtree(spawn_dir)
 
 
 def update_spawn(

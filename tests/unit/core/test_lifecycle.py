@@ -40,6 +40,16 @@ class StoreSnapshotHook:
         )
 
 
+class EventTypeHook:
+    """Captures lifecycle event types for assertions."""
+
+    def __init__(self) -> None:
+        self.event_types: list[str] = []
+
+    def on_event(self, event: LifecycleEvent) -> None:
+        self.event_types.append(event.event_type)
+
+
 def _make_service(
     runtime_root: Path,
     hooks: list[Any] | None = None,
@@ -202,6 +212,32 @@ def test_start_accepts_typed_metadata_and_persists_goal(tmp_path: Path) -> None:
     assert record.desc == "goal metadata"
     assert record.work_id == "w-lifecycle"
     assert record.goal == "finish migration"
+
+
+def test_start_without_dispatch_events_defers_hook_until_announce_started(tmp_path: Path) -> None:
+    hook = EventTypeHook()
+    service = _make_service(tmp_path, hooks=[hook])
+
+    spawn_id = service.start(
+        chat_id="c1",
+        session_metadata=PrimarySessionMetadata(
+            harness="codex",
+            model="gpt-5.4",
+            agent="coder",
+            agent_path="",
+            skills=(),
+            skill_paths=(),
+        ),
+        prompt="run it",
+        status="queued",
+        dispatch_events=False,
+    )
+
+    assert hook.event_types == []
+
+    service.announce_started(spawn_id)
+
+    assert hook.event_types == ["spawn.created"]
 
 
 def test_owner_mark_running_clears_stale_runner_created_epoch_when_pid_replaced(

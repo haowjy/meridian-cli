@@ -6,7 +6,11 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 import meridian.lib.ops.spawn.execute as execute_module
+import meridian.lib.ops.spawn.execute_init as execute_init_module
 from meridian.lib.config.settings import load_config
+from meridian.lib.core.context import RuntimeContext
+from meridian.lib.core.lifecycle import LifecycleEvent, SpawnLifecycleService
+from meridian.lib.core.sink import OutputSink
 from meridian.lib.launch.request import SpawnRequest
 from meridian.lib.ops.runtime import (
     OperationRuntime,
@@ -14,7 +18,8 @@ from meridian.lib.ops.runtime import (
     resolve_runtime_authority_for_write,
 )
 from meridian.lib.ops.spawn.models import SpawnCreateInput
-from meridian.lib.state import spawn_store
+from meridian.lib.state import spawn_store, work_store
+from meridian.lib.state.paths import resolve_project_paths
 
 if TYPE_CHECKING:
     import pytest
@@ -22,7 +27,43 @@ if TYPE_CHECKING:
 # qa-validated: spawn-return-report
 
 
-def _build_test_runtime(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> OperationRuntime:
+class RecordingOutputSink:
+    def __init__(self) -> None:
+        self.events: list[dict[str, Any]] = []
+
+    def result(self, payload: Any) -> None:
+        _ = payload
+
+    def status(self, message: str) -> None:
+        _ = message
+
+    def warning(self, message: str) -> None:
+        _ = message
+
+    def error(self, message: str, exit_code: int = 1) -> None:
+        _ = (message, exit_code)
+
+    def heartbeat(self, message: str) -> None:
+        _ = message
+
+    def event(self, payload: dict[str, Any]) -> None:
+        self.events.append(payload)
+
+
+class LifecycleEventHook:
+    def __init__(self) -> None:
+        self.event_types: list[str] = []
+
+    def on_event(self, event: LifecycleEvent) -> None:
+        self.event_types.append(event.event_type)
+
+
+def _build_test_runtime(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    sink: OutputSink | None = None,
+) -> OperationRuntime:
     project_root = tmp_path / "repo"
     project_root.mkdir()
     monkeypatch.setenv("MERIDIAN_HOME", (tmp_path / "home").as_posix())
@@ -33,6 +74,7 @@ def _build_test_runtime(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Oper
         project_root,
         config,
         authority=authority,
+        sink=sink,
     )
 
 
@@ -127,11 +169,7 @@ def test_execute_spawn_blocking_pre_init_failure_returns_failed_output(
     def _raise_project_paths(**kwargs: object) -> object:
         raise ValueError("harness binary not found")
 
-    def _fail_init(**kwargs: object) -> object:
-        raise AssertionError("_init_spawn should not be called")
-
     monkeypatch.setattr(execute_module, "resolve_project_config_paths", _raise_project_paths)
-    monkeypatch.setattr(execute_module, "_init_spawn", _fail_init)
 
     result = execute_module.execute_spawn_blocking(
         payload=SpawnCreateInput(prompt="run"),
@@ -160,6 +198,182 @@ def test_execute_spawn_blocking_pre_init_failure_returns_failed_output(
     assert result.to_wire()["harness_id"] == "opencode"
     assert result.to_wire()["task_cwd_source"] == "explicit-task-dir"
     assert result.to_wire()["task_cwd_work_item"] == "browser-investigation"
+    authority = resolve_runtime_authority_for_write(tmp_path / "repo")
+    assert authority.runtime_root is not None
+    assert not list((authority.runtime_root / "spawns").glob("*/state.json"))
+
+
+def test_reserve_then_prepare_graceful_prep_failure_leaks_nothing_with_work(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    hook = LifecycleEventHook()
+    sink = RecordingOutputSink()
+    runtime = _build_test_runtime(tmp_path, monkeypatch, sink=sink)
+    project_root = tmp_path / "repo"
+    project_state_dir = resolve_project_paths(project_root).root_dir
+    authority = resolve_runtime_authority_for_write(project_root)
+    assert authority.runtime_root is not None
+
+    original_factory = execute_init_module.build_spawn_lifecycle_service_from_roots
+
+    def _service_with_hook(project_root_arg: Path, runtime_root: Path) -> SpawnLifecycleService:
+        service = original_factory(project_root_arg, runtime_root)
+        service._hooks = [*service._hooks, hook]
+        return service
+
+    monkeypatch.setattr(
+        execute_init_module,
+        "build_spawn_lifecycle_service_from_roots",
+        _service_with_hook,
+    )
+
+    def _raise_project_paths(**kwargs: object) -> object:
+        raise ValueError("harness binary not found")
+
+    monkeypatch.setattr(execute_module, "resolve_project_config_paths", _raise_project_paths)
+
+    assert work_store.get_work_item(project_state_dir, "new-work-item") is None
+
+    result = execute_module.execute_spawn_blocking(
+        payload=SpawnCreateInput(prompt="run", work="new-work-item"),
+        request=SpawnRequest(
+            prompt="run",
+            model="gpt-5.4",
+            harness="codex",
+        ),
+        runtime=runtime,
+        ctx=RuntimeContext(depth=1, spawn_id="p-parent"),
+    )
+
+    assert result.status == "failed"
+    assert result.spawn_id is None
+    assert result.error == "pre_init_failed"
+    assert not list((authority.runtime_root / "spawns").glob("*/state.json"))
+    assert work_store.get_work_item(project_state_dir, "new-work-item") is None
+    assert hook.event_types == []
+    assert [event.get("t") for event in sink.events] == []
+
+
+def test_reserve_then_prepare_happy_path_announces_once_with_normalized_work_id(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    hook = LifecycleEventHook()
+    sink = RecordingOutputSink()
+    runtime = _build_test_runtime(tmp_path, monkeypatch, sink=sink)
+    project_root = tmp_path / "repo"
+    project_state_dir = resolve_project_paths(project_root).root_dir
+    authority = resolve_runtime_authority_for_write(project_root)
+    assert authority.runtime_root is not None
+
+    original_factory = execute_init_module.build_spawn_lifecycle_service_from_roots
+
+    def _service_with_hook(project_root_arg: Path, runtime_root: Path) -> SpawnLifecycleService:
+        service = original_factory(project_root_arg, runtime_root)
+        service._hooks = [*service._hooks, hook]
+        return service
+
+    monkeypatch.setattr(
+        execute_init_module,
+        "build_spawn_lifecycle_service_from_roots",
+        _service_with_hook,
+    )
+
+    async def _fake_launch_prepared_spawn(**kwargs: object) -> int:
+        spawn = cast("Any", kwargs["spawn"])
+        spawn_store.finalize_spawn(
+            authority.runtime_root,
+            str(spawn.spawn_id),
+            "succeeded",
+            0,
+            origin="runner",
+        )
+        return 0
+
+    monkeypatch.setattr(execute_module, "launch_prepared_spawn", _fake_launch_prepared_spawn)
+    monkeypatch.setattr(
+        execute_module,
+        "read_spawn_row",
+        lambda _project_root, spawn_id, **_kwargs: spawn_store.get_spawn(
+            authority.runtime_root,
+            spawn_id,
+        ),
+    )
+
+    result = execute_module.execute_spawn_blocking(
+        payload=SpawnCreateInput(prompt="run", work="new-work-item"),
+        request=SpawnRequest(
+            prompt="run",
+            model="gpt-5.4",
+            harness="codex",
+            agent="coder",
+        ),
+        runtime=runtime,
+        ctx=RuntimeContext(depth=1, spawn_id="p-parent"),
+    )
+
+    assert result.status == "succeeded"
+    assert result.spawn_id is not None
+    row = spawn_store.get_spawn(authority.runtime_root, result.spawn_id)
+    assert row is not None
+    assert row.work_id == "new-work-item"
+    assert work_store.get_work_item(project_state_dir, "new-work-item") is not None
+    assert hook.event_types == ["spawn.created"]
+    start_events = [event for event in sink.events if event.get("t") == "meridian.spawn.start"]
+    assert len(start_events) == 1
+    assert start_events[0]["id"] == result.spawn_id
+
+
+def test_execute_spawn_blocking_persists_unified_work_id_precedence(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from meridian.lib.core.context import RuntimeContext
+
+    runtime = _build_test_runtime(tmp_path, monkeypatch)
+    authority = resolve_runtime_authority_for_write(tmp_path / "repo")
+    assert authority.runtime_root is not None
+
+    async def _fake_launch_prepared_spawn(**kwargs: object) -> int:
+        spawn = cast("Any", kwargs["spawn"])
+        spawn_store.finalize_spawn(
+            authority.runtime_root,
+            str(spawn.spawn_id),
+            "succeeded",
+            0,
+            origin="runner",
+        )
+        return 0
+
+    monkeypatch.setattr(execute_module, "launch_prepared_spawn", _fake_launch_prepared_spawn)
+    monkeypatch.setattr(
+        execute_module,
+        "read_spawn_row",
+        lambda _project_root, spawn_id, **_kwargs: spawn_store.get_spawn(
+            authority.runtime_root,
+            spawn_id,
+        ),
+    )
+
+    result = execute_module.execute_spawn_blocking(
+        payload=SpawnCreateInput(prompt="run", work="from-payload"),
+        request=SpawnRequest(
+            prompt="run",
+            model="gpt-5.4",
+            harness="codex",
+            task_cwd_work_item="from-request",
+            work_id_hint="from-hint",
+        ),
+        runtime=runtime,
+        ctx=RuntimeContext(work_id="ambient-work"),
+    )
+
+    assert result.status == "succeeded"
+    assert result.spawn_id is not None
+    row = spawn_store.get_spawn(authority.runtime_root, result.spawn_id)
+    assert row is not None
+    assert row.work_id == "from-request"
 
 
 def test_execute_spawn_background_pre_init_failure_returns_failed_output(
@@ -171,11 +385,7 @@ def test_execute_spawn_background_pre_init_failure_returns_failed_output(
     def _raise_project_paths(**kwargs: object) -> object:
         raise PermissionError("permission denied resolving project")
 
-    def _fail_init(**kwargs: object) -> object:
-        raise AssertionError("_init_spawn should not be called")
-
     monkeypatch.setattr(execute_module, "resolve_project_config_paths", _raise_project_paths)
-    monkeypatch.setattr(execute_module, "_init_spawn", _fail_init)
 
     result = execute_module.execute_spawn_background(
         payload=SpawnCreateInput(prompt="run", background=True),
@@ -204,3 +414,6 @@ def test_execute_spawn_background_pre_init_failure_returns_failed_output(
     assert result.to_wire()["harness_id"] == "opencode"
     assert result.to_wire()["task_cwd_source"] == "explicit-task-dir"
     assert result.to_wire()["task_cwd_work_item"] == "browser-investigation"
+    authority = resolve_runtime_authority_for_write(tmp_path / "repo")
+    assert authority.runtime_root is not None
+    assert not list((authority.runtime_root / "spawns").glob("*/state.json"))

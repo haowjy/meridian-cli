@@ -4,6 +4,12 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+- A spawn launcher killed (SIGKILL) during prep — before the spawn row was written — left nothing on disk: invisible to `spawn list/status/wait`, the reconciler, and `doctor --kill-orphans` (the c2076 double-background incident). The durable `queued` row is now reserved before prep, so a killed-mid-prep launch is recovered by the existing reaper (`failed`/`missing_runner_pid`). Reserve/announce is two-phase: work-item creation and lifecycle events (`spawn.created`, telemetry, subrun start) are deferred until prep succeeds, so graceful prep failures remain side-effect-free as before — only the kill path changes.
+
+### Changed
+- `meridian.spawn.execute` reserves the spawn row up front via a shared `_reserve_then_prepare` helper (removes two duplicated post-prep `update_spawn` blocks); a single `resolve_spawn_work_id` resolver replaces the divergent work_id precedence (`execute_init._resolve_work_id` deleted); `remove_spawn_events` now removes the full reserved spawn dir.
+
 ## [0.3.9] - 2026-06-13
 
 ### Fixed
