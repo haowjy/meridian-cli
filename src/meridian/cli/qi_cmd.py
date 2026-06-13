@@ -104,8 +104,69 @@ def cmd_qi_check(
     raise SystemExit(1 if result.has_errors else 0)
 
 
+@qi_app.command(name="explore")
+def cmd_qi_explore(
+    path: Annotated[
+        Path,
+        Parameter(help="Directory to explore (default: cwd)."),
+    ] = Path("."),
+    *,
+    port: Annotated[
+        int,
+        Parameter(help="Port to bind; 0 auto-assigns."),
+    ] = 0,
+    no_open: Annotated[
+        bool,
+        Parameter(name="--no-open", help="Do not open a browser tab."),
+    ] = False,
+) -> None:
+    """Start a local web UI to explore qi-layer boundaries."""
+    import webbrowser
+
+    from meridian.qi_explorer.discovery import discover_scan_roots
+    from meridian.qi_explorer.graph_api import build_graph_data
+    from meridian.qi_explorer.server import create_server
+
+    resolved = path.resolve()
+    if not resolved.exists():
+        print(f"Error: path not found: {path}", file=sys.stderr)
+        raise SystemExit(2)
+    if not resolved.is_dir():
+        print(f"Error: not a directory: {path}", file=sys.stderr)
+        raise SystemExit(2)
+    if port < 0 or port > 65535:
+        print("Error: port must be between 0 and 65535", file=sys.stderr)
+        raise SystemExit(2)
+
+    discovery = discover_scan_roots(resolved)
+    graph, _, _ = build_graph_data(discovery)
+    context_count = sum(1 for root in discovery.roots if root.kind == "context")
+
+    httpd = create_server(discovery, port=port)
+    bound_port = httpd.server_address[1]
+    url = f"http://127.0.0.1:{bound_port}"
+
+    print(
+        f"qi explore serving {resolved} (+{context_count} context roots) at {url}",
+        flush=True,
+    )
+    if graph["nodeCount"] == 0:
+        print("Notice: no qi-layer nodes found in scan roots.", flush=True)
+
+    if not no_open:
+        webbrowser.open(url)
+
+    try:
+        httpd.serve_forever()
+    except KeyboardInterrupt:
+        print("\nqi explore stopped.", flush=True)
+        httpd.server_close()
+        raise SystemExit(0) from None
+
+
 __all__ = [
     "cmd_qi_check",
+    "cmd_qi_explore",
     "cmd_qi_graph",
     "cmd_qi_root",
 ]
