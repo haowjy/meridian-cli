@@ -44,8 +44,8 @@ from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.registry import HarnessRegistry, get_default_harness_registry
 from meridian.lib.launch.launch_types import CompositionWarning
 from meridian.lib.launch.policies import SurfacePolicyInput, resolve_launch_policy
-from meridian.lib.launch.resolve import resolve_agent_launch_input
 from meridian.lib.launch.request import LaunchCompositionSurface
+from meridian.lib.launch.resolve import resolve_agent_launch_input
 from meridian.lib.service_context import ChatEntryPoint
 from meridian.lib.state.user_paths import get_user_home
 from meridian.lib.streaming.spawn_manager import SpawnManager
