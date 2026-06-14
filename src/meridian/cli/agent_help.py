@@ -9,6 +9,8 @@ from typing import Any, cast
 
 from cyclopts import App
 
+from meridian.cli.help_content import GROUPS, render_group_help
+
 logger = logging.getLogger(__name__)
 
 
@@ -20,94 +22,21 @@ class _SubcommandVisibility:
 
 @dataclass(frozen=True)
 class _GroupBaseline:
+    help: str | None
     help_epilogue: str | None
     subcommands: dict[int, _SubcommandVisibility]
 
 
 _BASELINE: dict[str, _GroupBaseline] = {}
 
-# Agent-visible subcommands per top-level group. Tuple order = help display order.
-# Subcommands registered but absent here stay visible in human mode only.
 AGENT_VISIBLE_SUBCOMMANDS: dict[str, tuple[str, ...]] = {
-    # spawn: the agent's primary surface. Hide status (near-dup of show; use
-    # `show --no-report`), stats (analytics), create/continue (driven by the
-    # default route and --continue/--fork flags, not needed as listed subcommands).
-    "spawn": (
-        "show",
-        "wait",
-        "list",
-        "children",
-        "files",
-        "report",
-        "inject",
-        "done",
-        "rearm",
-        "cancel",
-        "cancel-all",
-    ),
-    "session": ("log", "search", "export"),
-    "work": (
-        "start",
-        "current",
-        "root",
-        "done",
-        "sessions",
-        "list",
-        "show",
-        "switch",
-    ),
-    "config": ("show", "get", "set", "init"),
+    name: group.agent_subcommands
+    for name, group in GROUPS.items()
+    if group.agent_subcommands is not None
 }
 
-_SPAWN_SUPPLEMENT = (
-    "Agent Notes:\n\n"
-    "Lifecycle: queued → running → finalizing → succeeded | failed | cancelled | timed_out.\n"
-    "'finalizing' is transient — treat as active when polling.\n\n"
-    "Transcripts: 'meridian session log ID'.\n"
-)
-
-_SESSION_SUPPLEMENT = (
-    "Agent Notes:\n\n"
-    "REF forms: chat id (c123), spawn id (p123), or harness session id.\n\n"
-    "Omitting REF defaults to the top-level primary session at every depth.\n"
-    "Pass an explicit spawn id to inspect a specific spawn's transcript.\n\n"
-    "Decision recovery: 'meridian work sessions WORK_ID --all'\n"
-)
-
-_CONFIG_SUPPLEMENT = (
-    "Agent Notes:\n\n"
-    "Resolution is per field:\n"
-    "CLI flag > env var > profile > project > user > harness default\n\n"
-    "A CLI model override (-m) also drives harness routing.\n"
-)
-
-_WORK_SUPPLEMENT = (
-    "Agent Notes:\n\n"
-    "Artifact placement: $MERIDIAN_ACTIVE_WORK_DIR for this item,\n"
-    "$MERIDIAN_CONTEXT_KB_DIR for project-wide knowledge.\n"
-)
-
-_DOCTOR_SUPPLEMENT = (
-    "Agent Notes:\n\n"
-    "Run when a spawn seems stuck or status doesn't match reality.\n"
-    "Spawn read paths (show, list, wait) and 'doctor' reconcile orphans.\n\n"
-    "Common failure modes:\n\n"
-    "  orphan_run              Runner died mid-flight. Relaunch.\n\n"
-    "  orphan_finalization     Exited without finalizing. Check 'spawn show'\n"
-    "                          for partial report.\n\n"
-    "  Exit 127 / empty report Harness binary missing from PATH.\n\n"
-    "  Exit 143 or 137         Check 'spawn show' first — if already\n"
-    "                          succeeded, signal hit during cleanup.\n"
-    "                          Otherwise retry.\n\n"
-    "For the transcript: 'meridian session log SPAWN_ID'.\n"
-)
-
 AGENT_HELP_SUPPLEMENTS: dict[str, str] = {
-    "spawn": _SPAWN_SUPPLEMENT,
-    "session": _SESSION_SUPPLEMENT,
-    "config": _CONFIG_SUPPLEMENT,
-    "work": _WORK_SUPPLEMENT,
-    "doctor": _DOCTOR_SUPPLEMENT,
+    name: group.agent_notes for name, group in GROUPS.items() if group.agent_notes is not None
 }
 
 
@@ -162,6 +91,7 @@ def _snapshot_baseline(group_app: App, group_name: str) -> None:
             )
 
     _BASELINE[group_name] = _GroupBaseline(
+        help=group_app.help,
         help_epilogue=group_app.help_epilogue,
         subcommands=subcommands,
     )
@@ -183,6 +113,7 @@ def _restore_baseline(group_app: App, group_name: str) -> None:
         subcommand.show = visibility.show
         subcommand.sort_key = visibility.sort_key
 
+    group_app.help = baseline.help
     group_app.help_epilogue = baseline.help_epilogue
 
 
@@ -221,39 +152,26 @@ def _apply_subcommand_visibility(group_app: App, group_name: str) -> None:
 
 
 def apply_agent_help(group_app: App, group_name: str, *, agent_mode: bool) -> None:
-    """Apply or restore agent-mode help curation for one command group."""
+    """Apply or restore mode-specific help curation for one command group."""
 
-    if group_name not in AGENT_HELP_SUPPLEMENTS:
+    if group_name not in GROUPS:
         return
 
     _snapshot_baseline(group_app, group_name)
     if agent_mode:
         if group_name in AGENT_VISIBLE_SUBCOMMANDS:
             _apply_subcommand_visibility(group_app, group_name)
-        baseline = _BASELINE.get(group_name)
-        base_epilogue = baseline.help_epilogue if baseline is not None else group_app.help_epilogue
-        group_app.help_epilogue = agent_help_epilogue(group_name, base_epilogue)
+        group_app.help = render_group_help(group_name, agent_mode=True)
+        group_app.help_epilogue = ""
         return
 
     _restore_baseline(group_app, group_name)
-
-
-def agent_help_epilogue(command_name: str, base_epilogue: str | None = None) -> str | None:
-    """Return a command epilogue with the agent supplement appended, if any."""
-
-    supplement = AGENT_HELP_SUPPLEMENTS.get(command_name)
-    if supplement is None:
-        return base_epilogue
-
-    existing = base_epilogue or ""
-    if existing and not existing.endswith("\n"):
-        existing += "\n"
-    return existing + "\n" + supplement
+    group_app.help = render_group_help(group_name, agent_mode=False)
+    group_app.help_epilogue = ""
 
 
 __all__ = [
     "AGENT_HELP_SUPPLEMENTS",
     "AGENT_VISIBLE_SUBCOMMANDS",
-    "agent_help_epilogue",
     "apply_agent_help",
 ]

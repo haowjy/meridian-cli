@@ -16,8 +16,12 @@ from meridian.cli.app_tree import (
     app,
     completion_app,
     config_app,
+    ext_app,
     hooks_app,
+    kg_app,
+    mermaid_app,
     models_app,
+    qi_app,
     report_app,
     session_app,
     spawn_app,
@@ -658,16 +662,27 @@ def _command_app_from_root(group_name: str) -> App | None:
 
 
 def _agent_help_group_apps() -> dict[str, App]:
-    from meridian.cli.agent_help import AGENT_HELP_SUPPLEMENTS
+    from meridian.cli.help_content import GROUPS
 
     static_group_apps: dict[str, App] = {
         "spawn": spawn_app,
         "session": session_app,
         "work": work_app,
         "config": config_app,
+        "hooks": hooks_app,
+        "models": models_app,
+        "streaming": streaming_app,
+        "test": test_app,
+        "workspace": workspace_app,
+        "kg": kg_app,
+        "mermaid": mermaid_app,
+        "qi": qi_app,
+        "telemetry": telemetry_app,
+        "completion": completion_app,
+        "ext": ext_app,
     }
     group_apps: dict[str, App] = {}
-    for group_name in AGENT_HELP_SUPPLEMENTS:
+    for group_name in GROUPS:
         group_app = static_group_apps.get(group_name)
         if group_app is None:
             group_app = _command_app_from_root(group_name)

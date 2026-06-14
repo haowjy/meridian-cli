@@ -19,6 +19,7 @@ from meridian.cli.agent_help import (
     apply_agent_help,
 )
 from meridian.cli.app_tree import report_app, session_app, spawn_app, work_app
+from meridian.cli.help_content import render_group_help
 
 _ORIGINAL_SPAWN_EPILOGUE = spawn_app.help_epilogue
 
@@ -59,7 +60,7 @@ def _command_names_in_order(help_text: str) -> list[str]:
             continue
         if not in_commands:
             continue
-        if stripped.startswith(("Parameters:", "Examples:", "Agent Notes:")):
+        if stripped.startswith(("Parameters:", "Usage examples:", "Agent Notes:")):
             break
         match = _COMMAND_LINE.match(line)
         if match:
@@ -151,7 +152,7 @@ def test_agent_mode_spawn_help_curates_subcommands_and_supplement() -> None:
     assert "wait" in command_names
     assert "list" in command_names
     assert "Which subcommand when" not in help_text
-    assert "Examples:" in help_text
+    assert "Usage examples:" in help_text
     assert "Agent Notes:" in help_text
     assert "'finalizing' is transient" in help_text
 
@@ -170,7 +171,7 @@ def test_human_mode_spawn_help_shows_all_subcommands() -> None:
 def test_agent_mode_spawn_report_help_has_no_examples() -> None:
     help_text = _render_help(report_app)
 
-    assert "Examples:" not in help_text
+    assert "Usage examples:" not in help_text
 
 
 def test_agent_mode_session_help_has_additive_supplement_only() -> None:
@@ -210,7 +211,7 @@ def test_agent_spawn_help_restores_singleton_before_next_invocation() -> None:
 
     assert spawn_app._commands["status"].show is True
     assert spawn_app._commands["stats"].show is True
-    assert "Agent Notes:" not in (spawn_app.help_epilogue or "")
+    assert "Agent Notes:" not in (spawn_app.help or "")
 
 
 def test_in_process_human_then_agent_curates_spawn_help() -> None:
@@ -230,26 +231,29 @@ def test_apply_agent_help_is_idempotent_and_snapshots_once(
 ) -> None:
     apply_agent_help(spawn_app, "spawn", agent_mode=True)
     first_snapshot = _spawn_visibility_snapshot()
+    first_help = spawn_app.help
     first_epilogue = spawn_app.help_epilogue
 
     apply_agent_help(spawn_app, "spawn", agent_mode=True)
     second_snapshot = _spawn_visibility_snapshot()
 
     assert first_snapshot == second_snapshot
+    assert spawn_app.help == first_help
     assert spawn_app.help_epilogue == first_epilogue
     assert list(agent_help_mod._BASELINE) == ["spawn"]
 
 
-def test_apply_agent_help_restores_human_baseline_epilogue(
+def test_apply_agent_help_restores_human_baseline_help(
     fresh_agent_help_baseline: None,
 ) -> None:
     apply_agent_help(spawn_app, "spawn", agent_mode=True)
-    assert "Agent Notes:" in (spawn_app.help_epilogue or "")
+    assert "Agent Notes:" in (spawn_app.help or "")
 
     apply_agent_help(spawn_app, "spawn", agent_mode=False)
 
+    assert spawn_app.help == render_group_help("spawn", agent_mode=False)
     assert spawn_app.help_epilogue == _ORIGINAL_SPAWN_EPILOGUE
-    assert "Agent Notes:" not in (spawn_app.help_epilogue or "")
+    assert "Agent Notes:" not in (spawn_app.help or "")
 
 
 def test_in_process_agent_then_human_restores_doctor_help() -> None:
@@ -277,7 +281,7 @@ def test_agent_help_is_gated_to_help_requests() -> None:
     assert _spawn_visibility_snapshot() == baseline
     assert spawn_app._commands["status"].show is True
     assert spawn_app._commands["stats"].show is True
-    assert "Agent Notes:" not in (spawn_app.help_epilogue or "")
+    assert "Agent Notes:" not in (spawn_app.help or "")
 
 
 def test_every_agent_help_supplement_resolves_to_registered_app() -> None:

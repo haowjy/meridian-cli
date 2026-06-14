@@ -6,6 +6,7 @@ import sys
 from dataclasses import dataclass
 
 from meridian import __version__
+from meridian.cli.help_content import GROUPS
 from meridian.cli.startup.catalog import COMMAND_CATALOG
 
 
@@ -29,32 +30,7 @@ OPTIONS: tuple[Option, ...] = (
     Option("-v, --version", "Show the application version.", False),
 )
 
-GROUP_DESCRIPTIONS: dict[str, str] = {
-    "spawn": "Create and manage subagent runs.",
-    "session": "Inspect transcripts and progress logs.",
-    "work": "Work item dashboard and coordination.",
-    "config": "Show resolved configuration and sources.",
-    "context": "Show context paths for work and knowledge.",
-    "doctor": "Health check and orphan reconciliation.",
-    "mars": "Package management and agent materialization.",
-    "ext": "Extension command discovery and invocation.",
-    "hooks": "Hook inspection and execution commands.",
-    "sync": "Sync operations and autosync conflict management.",
-    "models": "Model catalog commands.",
-    "streaming": "Streaming layer commands.",
-    "test": "Focused test and demo commands.",
-    "workspace": "Workspace topology commands.",
-    "kg": "Knowledge graph analysis: document relationships and link health.",
-    "mermaid": "Mermaid diagram validation.",
-    "telemetry": "Telemetry inspection: tail, query, and status over local segments.",
-    "completion": "Shell completion helpers.",
-    "serve": "Start FastMCP server on stdio.",
-    "init": "Initialize meridian in a project.",
-    "chat": "Start interactive chat service.",
-    "bootstrap": "Bootstrap an agent runtime.",
-    "migrate": "Run state and configuration migrations.",
-    "qi": "Inline knowledge navigation: AGENTS.md and .context/ locations.",
-}
+GROUP_DESCRIPTIONS: dict[str, str] = {name: group.summary for name, group in GROUPS.items()}
 
 AGENT_DESCRIPTION_OVERRIDES: dict[str, str] = {}
 
