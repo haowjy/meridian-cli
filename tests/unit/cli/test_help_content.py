@@ -73,7 +73,7 @@ def test_spawn_examples_stay_on_group_help_not_leaves() -> None:
         assert "Usage examples:" not in leaf
         assert "Agent Notes:" not in leaf
         assert "meridian spawn wait" not in leaf
-        assert "'finalizing' is transient" not in leaf
+        assert "Treat finalizing as active" not in leaf
     # Leaf still shows its own command description.
     assert "Show spawn status" in human_leaf
 

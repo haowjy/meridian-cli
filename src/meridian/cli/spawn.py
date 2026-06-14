@@ -256,7 +256,8 @@ def _spawn_create(
             name="--prompt-var",
             help=(
                 "Prompt template variables in KEY=VALUE form (repeatable). "
-                "Replaces {{KEY}} during prompt assembly."
+                "Replaces double-curly {{KEY}} placeholders in the prompt file "
+                "at launch."
             ),
             negative_iterable=(),
         ),
@@ -993,7 +994,16 @@ def _spawn_create_metadata_output(result: SpawnActionOutput) -> Any | None:
 
 def _spawn_files(
     emit: Any,
-    spawn_id: str,
+    spawn_id: Annotated[
+        str,
+        Parameter(
+            help=(
+                "Spawn ID. Stage exactly what it changed with "
+                "`meridian spawn files <id> | xargs git add`; use -0 | xargs -0 "
+                "for paths with spaces."
+            ),
+        ),
+    ],
     null: Annotated[
         bool,
         Parameter(name=["-0", "--null"], help="Null-delimited output for xargs -0."),
@@ -1089,7 +1099,12 @@ def _spawn_inject(
     ],
     message: Annotated[
         str,
-        Parameter(help="Message text to inject."),
+        Parameter(
+            help=(
+                "Real user direction to forward mid-run. Self-generated nudges "
+                "waste the spawn's attention."
+            ),
+        ),
     ] = "",
 ) -> None:
     asyncio.run(
@@ -1163,10 +1178,16 @@ def register_spawn_commands(app: App, emit: Emitter) -> tuple[set[str], dict[str
     app.command(
         _spawn_inject,
         name="inject",
-        help="Inject a message into a running streaming spawn.",
+        help=(
+            "Forward real user direction to a running spawn; self-generated nudges "
+            "waste its attention."
+        ),
     )
     registered.add("spawn.inject")
-    descriptions["meridian.spawn.inject"] = "Inject a message into a running streaming spawn."
+    descriptions["meridian.spawn.inject"] = (
+        "Forward real user direction to a running spawn; self-generated nudges waste "
+        "its attention."
+    )
     app.command(
         _spawn_log_removed,
         name="log",

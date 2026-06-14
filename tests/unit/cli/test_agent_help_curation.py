@@ -154,7 +154,7 @@ def test_agent_mode_spawn_help_curates_subcommands_and_supplement() -> None:
     assert "Which subcommand when" not in help_text
     assert "Usage examples:" in help_text
     assert "Agent Notes:" in help_text
-    assert "'finalizing' is transient" in help_text
+    assert "Treat finalizing as active" in help_text
 
     expected_prefix = list(AGENT_VISIBLE_SUBCOMMANDS["spawn"])
     assert command_names[: len(expected_prefix)] == expected_prefix

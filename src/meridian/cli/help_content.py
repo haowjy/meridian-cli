@@ -64,10 +64,37 @@ GROUPS: dict[str, GroupHelp] = {
             ("meridian spawn wait", ""),
         ),
         agent_notes=(
-            "Lifecycle: queued → running → finalizing → succeeded | failed | cancelled | "
-            "timed_out.\n"
-            "'finalizing' is transient — treat as active when polling.\n\n"
-            "Transcripts: 'meridian session log ID'."
+            "Core loop: launch detached with --bg, then drain with no-arg "
+            "`meridian spawn wait`. Every --bg spawn must be drained before you "
+            "respond to the user, start dependent work, or end your turn; "
+            "un-waited background spawns are lost.\n\n"
+            "Lifecycle: queued → running → finalizing → terminal. Treat "
+            "finalizing as active; terminal is succeeded, failed, cancelled, or "
+            "timed_out.\n\n"
+            "Prompt passing: use --prompt-file for delegation. Inline -p is for "
+            "trivial smoke tests only because shell quoting mutates prompts "
+            "($vars, backticks, quotes, multiline) before meridian sees them.\n\n"
+            "Profile vs model: prefer -a <profile> when a role fits; use "
+            "-m <model> for one-offs. Put recurring model choices in profiles "
+            "or config, not hardcoded spawn commands.\n\n"
+            "Context refs: prefer a folder over a file bundle. A folder tells "
+            "the agent where to work; it does not inline everything. Normal "
+            "shape: one folder plus at most one source-of-truth file. "
+            "AGENTS.md and .context/CONTEXT.md auto-load from the work "
+            "directory, so don't pass them redundantly. Use --from for prior "
+            "reasoning that is not in files.\n\n"
+            "--goal is a verifiable exit state, not a restatement of the task.\n\n"
+            "Parallel work: launch several --bg spawns, then one no-arg "
+            "`meridian spawn wait` drains all. Don't babysit with repeated "
+            "`spawn show` or `session log`; wait when you need results.\n\n"
+            "Reuse decision: --continue resumes the same session; --fork "
+            "branches while preserving identity; --fork-fresh branches and "
+            "allows identity changes, with weaker cache locality; --from starts "
+            "fresh while carrying prior context as reference.\n\n"
+            "Inspect a run: `meridian session log <id>`; use "
+            "`meridian spawn children <id>` to trace descendants.\n"
+            "Steer a running spawn: `meridian spawn inject`.\n"
+            "Stage spawn changes: `meridian spawn files <id> | xargs git add`."
         ),
         agent_subcommands=(
             "show",
@@ -98,6 +125,10 @@ GROUPS: dict[str, GroupHelp] = {
             "REF forms: chat id (c123), spawn id (p123), or harness session id.\n\n"
             "Omitting REF defaults to the top-level primary session at every depth.\n"
             "Pass an explicit spawn id to inspect a specific spawn's transcript.\n\n"
+            "Use `session search` to find transcript text; each hit prints a "
+            "deterministic Open command you can run directly. Use `session log "
+            "--segment previous` or `--global --around N` when navigating across "
+            "compaction boundaries.\n\n"
             "Decision recovery: 'meridian work sessions WORK_ID --all'"
         ),
         agent_subcommands=("log", "search", "export"),
@@ -110,7 +141,9 @@ GROUPS: dict[str, GroupHelp] = {
         ),
         agent_notes=(
             "Artifact placement: $MERIDIAN_ACTIVE_WORK_DIR for this item,\n"
-            "$MERIDIAN_CONTEXT_KB_DIR for project-wide knowledge."
+            "$MERIDIAN_CONTEXT_KB_DIR for project-wide durable knowledge.\n\n"
+            "Attach delegated runs with `meridian spawn ... --work WORK_ID` so "
+            "spawns, sessions, and scratch artifacts stay grouped."
         ),
         agent_subcommands=(
             "start",

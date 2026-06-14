@@ -22,7 +22,10 @@ Launch detached, then wait — never block the turn or background-wrap.
 - Track with no-arg wait — no id needed; it discovers your pending spawns
   by session and yields cache-cleanly. Re-invoke to keep waiting:
       meridian spawn wait
-- Full reference:  meridian spawn --help"""
+- Every --bg spawn must be drained with `meridian spawn wait` before you
+  respond to the user, start dependent work, or end your turn; un-waited
+  background spawns are lost.
+- Full reference:  meridian spawn -h"""
 
 _GENERIC_SPAWN_CONTRACT = """\
 # Spawning subagents (meridian)
@@ -41,7 +44,10 @@ Launch detached, then wait — never block the turn or double-background.
 - Track with no-arg wait — no id needed; it discovers your pending spawns
   by session and yields cache-cleanly. Re-invoke to keep waiting:
       meridian spawn wait
-- Full reference:  meridian spawn --help"""
+- Every --bg spawn must be drained with `meridian spawn wait` before you
+  respond to the user, start dependent work, or end your turn; un-waited
+  background spawns are lost.
+- Full reference:  meridian spawn -h"""
 
 
 def _spawn_usage_contract(harness: HarnessId) -> str:
