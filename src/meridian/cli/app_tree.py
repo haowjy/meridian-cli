@@ -50,11 +50,9 @@ spawn_app = App(
 report_app = App(
     name="report",
     help="Report management commands.",
-    help_epilogue=(
-        "Examples:\n\n"
-        "  meridian spawn report show p107\n\n"
-        '  meridian spawn report search "auth bug"\n'
-    ),
+    # Empty string blocks cyclopts app_stack.resolve("help_epilogue") from inheriting
+    # spawn_app's Examples / Agent Notes on `spawn report --help`.
+    help_epilogue="",
     help_formatter="plain",
 )
 session_app = App(

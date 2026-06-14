@@ -1,0 +1,289 @@
+"""Tests for agent-mode CLI help curation."""
+
+from __future__ import annotations
+
+import io
+import re
+from collections.abc import Iterator
+from contextlib import redirect_stdout
+from typing import Any
+
+import pytest
+from rich.console import Console
+
+import meridian.cli.agent_help as agent_help_mod
+import meridian.cli.main as cli_main
+from meridian.cli.agent_help import (
+    AGENT_HELP_SUPPLEMENTS,
+    AGENT_VISIBLE_SUBCOMMANDS,
+    apply_agent_help,
+)
+from meridian.cli.app_tree import report_app, session_app, spawn_app, work_app
+
+_ORIGINAL_SPAWN_EPILOGUE = spawn_app.help_epilogue
+
+
+def _restore_curated_help_state() -> None:
+    for group_name, group_app in cli_main._agent_help_group_apps().items():
+        apply_agent_help(group_app, group_name, agent_mode=False)
+    agent_help_mod._BASELINE.clear()
+
+
+def _reset_agent_help_baseline() -> None:
+    _restore_curated_help_state()
+
+
+@pytest.fixture
+def fresh_agent_help_baseline() -> Iterator[None]:
+    _reset_agent_help_baseline()
+    yield
+
+
+def _render_help(group_app: Any) -> str:
+    buffer = io.StringIO()
+    console = Console(file=buffer, force_terminal=False, width=120)
+    group_app.help_print(console=console)
+    return buffer.getvalue()
+
+
+_COMMAND_LINE = re.compile(r"^\s+([\w-]+):")
+
+
+def _command_names_in_order(help_text: str) -> list[str]:
+    names: list[str] = []
+    in_commands = False
+    for line in help_text.splitlines():
+        stripped = line.strip()
+        if stripped == "Commands:":
+            in_commands = True
+            continue
+        if not in_commands:
+            continue
+        if stripped.startswith(("Parameters:", "Examples:", "Agent Notes:")):
+            break
+        match = _COMMAND_LINE.match(line)
+        if match:
+            names.append(match.group(1))
+    return names
+
+
+def _spawn_visibility_snapshot() -> dict[str, tuple[bool, Any]]:
+    commands = spawn_app._commands
+    return {
+        name: (subcommand.show, subcommand.sort_key)
+        for name, subcommand in commands.items()
+        if not name.startswith("-")
+    }
+
+
+def _capture_help_via_main(group_name: str, *, agent_mode: bool) -> str:
+    mode_flag = "--agent" if agent_mode else "--human"
+    buffer = io.StringIO()
+    with redirect_stdout(buffer), pytest.raises(SystemExit) as exc_info:
+        cli_main.main([mode_flag, group_name, "--help"])
+    assert exc_info.value.code in {0, None}
+    return buffer.getvalue()
+
+
+def _capture_spawn_help_via_main(*, agent_mode: bool) -> str:
+    return _capture_help_via_main("spawn", agent_mode=agent_mode)
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _register_groups_once() -> Iterator[None]:
+    cli_main._register_commands_for_invocation(["--help"], agent_mode=False)
+    yield
+
+
+@pytest.fixture(autouse=True)
+def _restore_group_app_state() -> Iterator[None]:
+    _restore_curated_help_state()
+    yield
+    _restore_curated_help_state()
+
+
+def test_apply_subcommand_visibility_skips_meta_commands() -> None:
+    from cyclopts import App
+
+    app = App(name="group", help_formatter="plain")
+
+    @app.command
+    def show() -> None:
+        pass
+
+    @app.command
+    def status() -> None:
+        pass
+
+    agent_help_mod._apply_subcommand_visibility(app, "spawn")
+
+    assert app._commands["show"].show is True
+    assert app._commands["status"].show is False
+    assert "--help" in app._commands
+    assert app._commands["--help"].show is True
+
+
+def test_apply_subcommand_visibility_degrades_without_commands() -> None:
+    class DummyApp:
+        pass
+
+    dummy: Any = DummyApp()
+    agent_help_mod._apply_subcommand_visibility(dummy, "spawn")
+
+
+def test_apply_subcommand_visibility_degrades_when_commands_not_dict() -> None:
+    class DummyApp:
+        _commands = "not-a-dict"
+
+    dummy: Any = DummyApp()
+    agent_help_mod._apply_subcommand_visibility(dummy, "spawn")
+
+
+def test_agent_mode_spawn_help_curates_subcommands_and_supplement() -> None:
+    apply_agent_help(spawn_app, "spawn", agent_mode=True)
+
+    help_text = _render_help(spawn_app)
+    command_names = _command_names_in_order(help_text)
+
+    assert "status" not in command_names
+    assert "stats" not in command_names
+    assert "show" in command_names
+    assert "wait" in command_names
+    assert "list" in command_names
+    assert "Which subcommand when" not in help_text
+    assert "Examples:" in help_text
+    assert "Agent Notes:" in help_text
+    assert "'finalizing' is transient" in help_text
+
+    expected_prefix = list(AGENT_VISIBLE_SUBCOMMANDS["spawn"])
+    assert command_names[: len(expected_prefix)] == expected_prefix
+
+
+def test_human_mode_spawn_help_shows_all_subcommands() -> None:
+    help_text = _render_help(spawn_app)
+    command_names = _command_names_in_order(help_text)
+
+    assert "status" in command_names
+    assert "stats" in command_names
+
+
+def test_agent_mode_spawn_report_help_has_no_examples() -> None:
+    help_text = _render_help(report_app)
+
+    assert "Examples:" not in help_text
+
+
+def test_agent_mode_session_help_has_additive_supplement_only() -> None:
+    apply_agent_help(session_app, "session", agent_mode=True)
+
+    help_text = _render_help(session_app)
+
+    assert "Which subcommand when" not in help_text
+    assert "REF forms:" in help_text
+    command_names = _command_names_in_order(help_text)
+    assert "log" in command_names
+    assert "search" in command_names
+
+
+def test_agent_mode_work_help_has_artifact_placement_note() -> None:
+    apply_agent_help(work_app, "work", agent_mode=True)
+
+    help_text = _render_help(work_app)
+
+    assert "Quick reference" not in help_text
+    assert "$MERIDIAN_ACTIVE_WORK_DIR" in help_text
+
+
+def test_in_process_agent_then_human_restores_spawn_help() -> None:
+    _capture_spawn_help_via_main(agent_mode=True)
+    human_help = _capture_spawn_help_via_main(agent_mode=False)
+    command_names = _command_names_in_order(human_help)
+
+    assert "status" in command_names
+    assert "stats" in command_names
+
+
+def test_agent_spawn_help_restores_singleton_before_next_invocation() -> None:
+    _capture_spawn_help_via_main(agent_mode=True)
+
+    cli_main._register_commands_for_invocation(["spawn", "list"], agent_mode=False)
+
+    assert spawn_app._commands["status"].show is True
+    assert spawn_app._commands["stats"].show is True
+    assert "Agent Notes:" not in (spawn_app.help_epilogue or "")
+
+
+def test_in_process_human_then_agent_curates_spawn_help() -> None:
+    _capture_spawn_help_via_main(agent_mode=False)
+    agent_help = _capture_spawn_help_via_main(agent_mode=True)
+    command_names = _command_names_in_order(agent_help)
+
+    assert "status" not in command_names
+    assert "stats" not in command_names
+    assert "Agent Notes:" in agent_help
+    expected_prefix = list(AGENT_VISIBLE_SUBCOMMANDS["spawn"])
+    assert command_names[: len(expected_prefix)] == expected_prefix
+
+
+def test_apply_agent_help_is_idempotent_and_snapshots_once(
+    fresh_agent_help_baseline: None,
+) -> None:
+    apply_agent_help(spawn_app, "spawn", agent_mode=True)
+    first_snapshot = _spawn_visibility_snapshot()
+    first_epilogue = spawn_app.help_epilogue
+
+    apply_agent_help(spawn_app, "spawn", agent_mode=True)
+    second_snapshot = _spawn_visibility_snapshot()
+
+    assert first_snapshot == second_snapshot
+    assert spawn_app.help_epilogue == first_epilogue
+    assert list(agent_help_mod._BASELINE) == ["spawn"]
+
+
+def test_apply_agent_help_restores_human_baseline_epilogue(
+    fresh_agent_help_baseline: None,
+) -> None:
+    apply_agent_help(spawn_app, "spawn", agent_mode=True)
+    assert "Agent Notes:" in (spawn_app.help_epilogue or "")
+
+    apply_agent_help(spawn_app, "spawn", agent_mode=False)
+
+    assert spawn_app.help_epilogue == _ORIGINAL_SPAWN_EPILOGUE
+    assert "Agent Notes:" not in (spawn_app.help_epilogue or "")
+
+
+def test_in_process_agent_then_human_restores_doctor_help() -> None:
+    agent_help = _capture_help_via_main("doctor", agent_mode=True)
+    human_help = _capture_help_via_main("doctor", agent_mode=False)
+
+    assert "Agent Notes:" in agent_help
+    assert "Agent Notes:" not in human_help
+
+
+def test_in_process_human_then_agent_curates_doctor_help() -> None:
+    human_help = _capture_help_via_main("doctor", agent_mode=False)
+    agent_help = _capture_help_via_main("doctor", agent_mode=True)
+
+    assert "Agent Notes:" not in human_help
+    assert "Agent Notes:" in agent_help
+    assert "Run when a spawn seems stuck" in agent_help
+
+
+def test_agent_help_is_gated_to_help_requests() -> None:
+    baseline = _spawn_visibility_snapshot()
+
+    cli_main._register_commands_for_invocation(["spawn", "list"], agent_mode=True)
+
+    assert _spawn_visibility_snapshot() == baseline
+    assert spawn_app._commands["status"].show is True
+    assert spawn_app._commands["stats"].show is True
+    assert "Agent Notes:" not in (spawn_app.help_epilogue or "")
+
+
+def test_every_agent_help_supplement_resolves_to_registered_app() -> None:
+    group_apps = cli_main._agent_help_group_apps()
+
+    assert set(AGENT_HELP_SUPPLEMENTS) <= set(group_apps)
+    assert set(AGENT_HELP_SUPPLEMENTS) <= cli_main._registered_command_groups
+    for group_app in group_apps.values():
+        assert hasattr(group_app, "help_epilogue")

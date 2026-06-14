@@ -35,8 +35,6 @@ def _make_doctor_handler(emit: Emitter) -> Callable[..., None]:
 def register_doctor_command(
     app: App,
     emit: Emitter,
-    *,
-    agent_mode: bool = False,
 ) -> tuple[set[str], dict[str, str]]:
     base_epilogue = (
         "Health check and auto-repair for meridian state.\n\n"
@@ -60,13 +58,6 @@ def register_doctor_command(
         "  meridian doctor --kill-orphans        # terminate orphaned process groups\n\n"
         "  meridian doctor --format text          # human-readable summary\n"
     )
-    if agent_mode:
-        from meridian.cli.agent_help import agent_help_epilogue
-
-        doctor_epilogue = agent_help_epilogue("doctor", base_epilogue)
-    else:
-        doctor_epilogue = base_epilogue
-
     handlers: dict[str, Callable[[], Callable[..., None]]] = {
         "meridian.doctor.doctor": lambda: _make_doctor_handler(emit),
     }
@@ -75,6 +66,6 @@ def register_doctor_command(
         registry=get_first_party_registry(),
         group="doctor",
         handlers=handlers,
-        command_help_epilogues={"meridian.doctor.doctor": doctor_epilogue or ""},
+        command_help_epilogues={"meridian.doctor.doctor": base_epilogue},
         emit=emit,
     )
