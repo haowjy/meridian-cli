@@ -693,9 +693,6 @@ def _agent_help_group_apps() -> dict[str, App]:
 
 def _apply_curated_help_for_registered_groups(*, agent_mode: bool, advanced: bool = False) -> None:
     from meridian.cli.agent_help import apply_agent_help
-    from meridian.cli.help_tiers import ADVANCED_PARAMS
-
-    setattr(ADVANCED_PARAMS, "_show", (not agent_mode) or advanced)  # noqa: B010
 
     for group_name, group_app in _agent_help_group_apps().items():
         if group_name in _registered_command_groups:
@@ -1106,9 +1103,18 @@ def _main_impl(argv: Sequence[str] | None = None) -> None:
     if not (cleaned_args and cleaned_args[0] == "mars"):
         cleaned_args, passthrough_args = _split_passthrough_args(cleaned_args)
         options = options.model_copy(update={"passthrough_args": passthrough_args})
-    help_advanced = _is_help_request(cleaned_args) and "--advanced" in cleaned_args
-    if help_advanced:
-        cleaned_args = [arg for arg in cleaned_args if arg != "--advanced"]
+    help_advanced = False
+    if _is_help_request(cleaned_args) and "--advanced" in cleaned_args:
+        from meridian.cli.help_content import GROUPS
+
+        first_token = _first_command_token(cleaned_args)
+        group = GROUPS.get(first_token or "")
+        help_advanced = group is not None and group.agent_core_subcommands is not None
+        if help_advanced:
+            cleaned_args = [arg for arg in cleaned_args if arg != "--advanced"]
+        elif first_token is not None:
+            print('error: Unknown option: "--advanced".', file=sys.stderr)
+            raise SystemExit(1)
     if options.force_agent:
         effective_agent_mode = True
     elif options.force_human:

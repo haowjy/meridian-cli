@@ -121,7 +121,10 @@ def test_spawn_agent_group_help_has_lean_and_advanced_tiers() -> None:
 
     assert "Quick start:" in lean_spawn
     assert "meridian spawn -h --advanced" in lean_spawn
-    assert "Reuse decision" not in lean_spawn
+    assert "Before you launch" in lean_spawn
+    assert "verifiable exit state" in lean_spawn
+    assert "Context: pass one folder plus at most one source-of-truth file" in lean_spawn
+    assert "Reuse: --continue resumes the same session" in lean_spawn
     assert "Usage examples:" not in lean_spawn
     assert "Agent Notes:" not in lean_spawn
 

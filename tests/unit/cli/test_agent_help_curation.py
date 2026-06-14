@@ -5,7 +5,7 @@ from __future__ import annotations
 import io
 import re
 from collections.abc import Iterator
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from typing import Any
 
 import pytest
@@ -21,6 +21,7 @@ from meridian.cli.agent_help import (
 )
 from meridian.cli.app_tree import report_app, session_app, spawn_app, work_app
 from meridian.cli.help_content import render_group_help
+from meridian.cli.help_tiers import ADVANCED_PARAMS
 
 _ORIGINAL_SPAWN_EPILOGUE = spawn_app.help_epilogue
 
@@ -298,9 +299,19 @@ def test_apply_agent_help_restores_human_baseline_help(
 
 
 def test_spawn_help_advanced_params_panel_follows_help_tier() -> None:
-    agent_lean = _capture_spawn_help_via_main(agent_mode=True)
     agent_advanced = _capture_spawn_help_via_main(agent_mode=True, advanced=True)
+    assert ADVANCED_PARAMS._show is True
+
     human = _capture_spawn_help_via_main(agent_mode=False)
+    assert ADVANCED_PARAMS._show is True
+
+    agent_lean = _capture_spawn_help_via_main(agent_mode=True)
+    # The CLI finally-block restores the human baseline after printing help.
+    assert ADVANCED_PARAMS._show is True
+
+    advanced_commands = _command_names_in_order(agent_advanced)
+    human_commands = _command_names_in_order(human)
+    lean_commands = _command_names_in_order(agent_lean)
 
     assert "Advanced:" not in agent_lean
     assert "--approval" not in agent_lean
@@ -310,6 +321,44 @@ def test_spawn_help_advanced_params_panel_follows_help_tier() -> None:
     assert "--verbose" in agent_advanced
     assert "Advanced:" in human
     assert "--approval" in human
+    assert "status" in human_commands
+    assert "stats" in human_commands
+    assert "status" not in lean_commands
+    assert "stats" not in lean_commands
+    assert "children" in advanced_commands
+    assert "children" not in lean_commands
+
+    apply_agent_help(spawn_app, "spawn", agent_mode=True, advanced=True)
+    assert ADVANCED_PARAMS._show is True
+    assert "status" not in _command_names_in_order(_render_help(spawn_app))
+    assert "children" in _command_names_in_order(_render_help(spawn_app))
+
+    apply_agent_help(spawn_app, "spawn", agent_mode=False)
+    assert ADVANCED_PARAMS._show is True
+    assert "status" in _command_names_in_order(_render_help(spawn_app))
+
+    apply_agent_help(spawn_app, "spawn", agent_mode=True)
+    assert ADVANCED_PARAMS._show is False
+    direct_lean = _render_help(spawn_app)
+    assert "Advanced:" not in direct_lean
+    assert "status" not in _command_names_in_order(direct_lean)
+    assert "children" not in _command_names_in_order(direct_lean)
+
+
+def test_non_tiered_group_rejects_advanced_help() -> None:
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+
+    with (
+        redirect_stdout(stdout),
+        redirect_stderr(stderr),
+        pytest.raises(SystemExit) as exc_info,
+    ):
+        cli_main.main(["--agent", "doctor", "-h", "--advanced"])
+
+    assert exc_info.value.code == 1
+    assert stdout.getvalue() == ""
+    assert 'Unknown option: "--advanced"' in stderr.getvalue()
 
 
 def test_in_process_agent_then_human_restores_doctor_help() -> None:

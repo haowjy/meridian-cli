@@ -10,6 +10,7 @@ from typing import Any, cast
 from cyclopts import App
 
 from meridian.cli.help_content import GROUPS, render_group_help
+from meridian.cli.help_tiers import ADVANCED_PARAMS
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +45,15 @@ AGENT_CORE_SUBCOMMANDS: dict[str, tuple[str, ...]] = {
 AGENT_HELP_SUPPLEMENTS: dict[str, str] = {
     name: group.agent_notes for name, group in GROUPS.items() if group.agent_notes is not None
 }
+
+# Only spawn tiers its parameter group today. Keep this explicit until another
+# group owns advanced-only parameters.
+_GROUPS_WITH_ADVANCED_PARAMS = frozenset({"spawn"})
+
+
+def _set_advanced_params_visibility(group_name: str, *, agent_mode: bool, advanced: bool) -> None:
+    if group_name in _GROUPS_WITH_ADVANCED_PARAMS:
+        setattr(ADVANCED_PARAMS, "_show", (not agent_mode) or advanced)  # noqa: B010
 
 
 def _iter_real_subcommands(group_app: App) -> dict[str, App]:
@@ -175,6 +185,7 @@ def apply_agent_help(
         return
 
     _snapshot_baseline(group_app, group_name)
+    _set_advanced_params_visibility(group_name, agent_mode=agent_mode, advanced=advanced)
     if agent_mode:
         visible = (
             AGENT_VISIBLE_SUBCOMMANDS.get(group_name)
@@ -188,6 +199,7 @@ def apply_agent_help(
         return
 
     _restore_baseline(group_app, group_name)
+    _set_advanced_params_visibility(group_name, agent_mode=False, advanced=advanced)
     group_app.help = render_group_help(group_name, agent_mode=False)
     group_app.help_epilogue = ""
 
