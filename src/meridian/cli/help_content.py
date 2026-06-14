@@ -48,12 +48,10 @@ GROUPS: dict[str, GroupHelp] = {
     "spawn": GroupHelp(
         summary="Run subagents with a model and prompt file.",
         long_help=(
-            "Run subagents with a model and prompt file.\n"
-            "Runs in foreground by default; returns when the spawn reaches a terminal state. "
-            "Foreground streaming uses terminal capture when available (Unix TTY sessions). "
-            "On Windows or non-TTY shells, meridian falls back to subprocess capture. "
-            "Use --background to return immediately with the spawn ID. "
-            "For delegation, write the prompt to a file and pass --prompt-file."
+            "Run subagents with a model and prompt file. Runs in the foreground by "
+            "default; pass --bg to return immediately with a spawn id and track it "
+            "with `meridian spawn wait`. For delegation, write the prompt to a file "
+            "and pass --prompt-file."
         ),
         examples=(
             ("meridian spawn -m gpt-5.3-codex --prompt-file /tmp/fix-auth.md --bg", ""),

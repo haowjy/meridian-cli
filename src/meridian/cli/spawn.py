@@ -244,9 +244,7 @@ def _spawn_create(
         Parameter(
             name="--prompt-file",
             help=(
-                "Read prompt from a file. Preferred for delegation. Use '-' to read stdin. "
-                "If neither --prompt nor --prompt-file is set and stdin is piped, "
-                "stdin is used as the prompt."
+                "Read prompt from a file. Preferred for delegation. Use '-' to read stdin."
             ),
             allow_leading_hyphen=True,
         ),
@@ -321,8 +319,7 @@ def _spawn_create(
         Parameter(
             name="--goal",
             help=(
-                "Completion goal for this spawn. Injected as a bounded "
-                "completion contract and persisted as spawn metadata."
+                "Completion goal for this spawn. Injected as a bounded completion contract."
             ),
         ),
     ] = None,
