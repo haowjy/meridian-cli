@@ -13,16 +13,19 @@ class GroupHelp:
     long_help: str | None = None
     examples: tuple[tuple[str, str], ...] = ()
     agent_notes: str | None = None
+    agent_notes_brief: str | None = None
     agent_subcommands: tuple[str, ...] | None = None
+    agent_core_subcommands: tuple[str, ...] | None = None
 
 
-def render_group_help(group_name: str, *, agent_mode: bool) -> str:
+def render_group_help(group_name: str, *, agent_mode: bool, advanced: bool = False) -> str:
     """Render the group description for human or agent help mode."""
 
     group = GROUPS[group_name]
     sections = [group.long_help or group.summary]
+    lean = agent_mode and not advanced and group.agent_notes_brief is not None
 
-    if group.examples:
+    if group.examples and not lean:
         example_lines: list[str] = []
         for invocation, note in group.examples:
             if note:
@@ -31,7 +34,11 @@ def render_group_help(group_name: str, *, agent_mode: bool) -> str:
                 example_lines.append(f"  {invocation}")
         sections.append("Usage examples:\n\n" + "\n\n".join(example_lines))
 
-    if agent_mode and group.agent_notes:
+    if lean:
+        agent_notes_brief = group.agent_notes_brief
+        if agent_notes_brief is not None:
+            sections.append("Quick start:\n\n" + agent_notes_brief.rstrip())
+    elif agent_mode and group.agent_notes:
         sections.append("Agent Notes:\n\n" + group.agent_notes.rstrip())
 
     return "\n\n".join(sections)
@@ -96,6 +103,17 @@ GROUPS: dict[str, GroupHelp] = {
             "Steer a running spawn: `meridian spawn inject`.\n"
             "Stage spawn changes: `meridian spawn files <id> | xargs git add`."
         ),
+        agent_notes_brief=(
+            "Core loop: launch detached with --bg, then drain with no-arg "
+            "`meridian spawn wait` before you respond, start dependent work, "
+            "or end your turn — un-waited spawns are lost.\n\n"
+            "Delegate with --prompt-file (inline -p is for trivial smoke tests; "
+            "shell quoting mutates prompts). Pick a role with -a <profile> or "
+            "a one-off model with -m. Launch several --bg and let one `wait` "
+            "drain them all.\n\n"
+            "Full methodology, all commands, and all flags: "
+            "`meridian spawn -h --advanced`."
+        ),
         agent_subcommands=(
             "show",
             "wait",
@@ -109,6 +127,7 @@ GROUPS: dict[str, GroupHelp] = {
             "cancel",
             "cancel-all",
         ),
+        agent_core_subcommands=("wait", "show", "list", "inject", "files", "cancel"),
     ),
     "session": GroupHelp(
         summary="Inspect transcripts and progress logs.",

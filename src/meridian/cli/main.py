@@ -691,18 +691,22 @@ def _agent_help_group_apps() -> dict[str, App]:
     return group_apps
 
 
-def _apply_curated_help_for_registered_groups(*, agent_mode: bool) -> None:
+def _apply_curated_help_for_registered_groups(*, agent_mode: bool, advanced: bool = False) -> None:
     from meridian.cli.agent_help import apply_agent_help
+    from meridian.cli.help_tiers import ADVANCED_PARAMS
+
+    setattr(ADVANCED_PARAMS, "_show", (not agent_mode) or advanced)  # noqa: B010
 
     for group_name, group_app in _agent_help_group_apps().items():
         if group_name in _registered_command_groups:
-            apply_agent_help(group_app, group_name, agent_mode=agent_mode)
+            apply_agent_help(group_app, group_name, agent_mode=agent_mode, advanced=advanced)
 
 
 def _register_commands_for_invocation(
     argv: Sequence[str],
     *,
     agent_mode: bool = False,
+    advanced: bool = False,
 ) -> None:
     """Register only the command group needed for the current invocation."""
 
@@ -870,7 +874,7 @@ def _register_commands_for_invocation(
             _group_commands_registered = True
 
     if _is_help_request(argv):
-        _apply_curated_help_for_registered_groups(agent_mode=agent_mode)
+        _apply_curated_help_for_registered_groups(agent_mode=agent_mode, advanced=advanced)
 
 
 def _operation_error_message(exc: Exception) -> str:
@@ -1102,6 +1106,9 @@ def _main_impl(argv: Sequence[str] | None = None) -> None:
     if not (cleaned_args and cleaned_args[0] == "mars"):
         cleaned_args, passthrough_args = _split_passthrough_args(cleaned_args)
         options = options.model_copy(update={"passthrough_args": passthrough_args})
+    help_advanced = _is_help_request(cleaned_args) and "--advanced" in cleaned_args
+    if help_advanced:
+        cleaned_args = [arg for arg in cleaned_args if arg != "--advanced"]
     if options.force_agent:
         effective_agent_mode = True
     elif options.force_human:
@@ -1195,7 +1202,11 @@ def _main_impl(argv: Sequence[str] | None = None) -> None:
         options = options.model_copy(update={"project_root": project_root, "sink": active_sink})
         token = _GLOBAL_OPTIONS.set(options)
         try:
-            _register_commands_for_invocation(cleaned_args, agent_mode=effective_agent_mode)
+            _register_commands_for_invocation(
+                cleaned_args,
+                agent_mode=effective_agent_mode,
+                advanced=help_advanced,
+            )
             with temporary_config_env(options.config_file):
                 try:
                     app(cleaned_args)
@@ -1207,6 +1218,6 @@ def _main_impl(argv: Sequence[str] | None = None) -> None:
                     _emit_error(_operation_error_message(exc))
         finally:
             if help_request:
-                _apply_curated_help_for_registered_groups(agent_mode=False)
+                _apply_curated_help_for_registered_groups(agent_mode=False, advanced=False)
             flush_sink(active_sink)
             _GLOBAL_OPTIONS.reset(token)

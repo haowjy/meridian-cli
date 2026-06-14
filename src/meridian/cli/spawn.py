@@ -11,6 +11,7 @@ from cyclopts import App, Parameter
 
 from meridian.cli.argv_normalization import validate_fork_mode
 from meridian.cli.ext_registration import register_extension_cli_group
+from meridian.cli.help_tiers import ADVANCED_PARAMS
 from meridian.cli.spawn_inject import inject_message
 from meridian.cli.utils import (
     parse_csv_list,
@@ -254,6 +255,7 @@ def _spawn_create(
         tuple[str, ...],
         Parameter(
             name="--prompt-var",
+            group=ADVANCED_PARAMS,
             help=(
                 "Prompt template variables in KEY=VALUE form (repeatable). "
                 "Replaces double-curly {{KEY}} placeholders in the prompt file "
@@ -302,12 +304,17 @@ def _spawn_create(
         str | None,
         Parameter(
             name=["--skills", "-s"],
+            group=ADVANCED_PARAMS,
             help="Comma-separated ad-hoc skills to load. Merged with agent profile skills.",
         ),
     ] = None,
     desc: Annotated[
         str,
-        Parameter(name=["--desc", "--description"], help="Short description for the spawn."),
+        Parameter(
+            name=["--desc", "--description"],
+            group=ADVANCED_PARAMS,
+            help="Short description for the spawn.",
+        ),
     ] = "",
     goal: Annotated[
         str | None,
@@ -333,6 +340,7 @@ def _spawn_create(
         str | None,
         Parameter(
             name="--task-dir",
+            group=ADVANCED_PARAMS,
             help=(
                 "Override the source-code edit directory for this spawn only. "
                 "Does not modify the work item's task_dir setting. "
@@ -342,16 +350,23 @@ def _spawn_create(
     ] = None,
     dry_run: Annotated[
         bool,
-        Parameter(name="--dry-run", help="Preview without executing harness."),
+        Parameter(
+            name="--dry-run", group=ADVANCED_PARAMS, help="Preview without executing harness."
+        ),
     ] = False,
     verbose: Annotated[
         bool,
-        Parameter(name="--verbose", help="Enable verbose spawn logging.", show=True),
+        Parameter(
+            name="--verbose",
+            group=ADVANCED_PARAMS,
+            help="Enable verbose spawn logging.",
+        ),
     ] = False,
     metadata: Annotated[
         bool,
         Parameter(
             name="--metadata",
+            group=ADVANCED_PARAMS,
             help=(
                 "Include detailed spawn metadata in text output "
                 "(report-first view remains primary)."
@@ -360,7 +375,11 @@ def _spawn_create(
     ] = False,
     quiet: Annotated[
         bool,
-        Parameter(name="--quiet", help="Reduce non-essential command output.", show=True),
+        Parameter(
+            name="--quiet",
+            group=ADVANCED_PARAMS,
+            help="Reduce non-essential command output.",
+        ),
     ] = False,
     stream: Annotated[
         bool,
@@ -386,6 +405,7 @@ def _spawn_create(
         float | None,
         Parameter(
             name="--timeout",
+            group=ADVANCED_PARAMS,
             help="Maximum runtime in minutes before spawn timeout.",
         ),
     ] = None,
@@ -393,6 +413,7 @@ def _spawn_create(
         str | None,
         Parameter(
             name="--approval",
+            group=ADVANCED_PARAMS,
             help="Approval mode: default, confirm, auto, never. Overrides agent profile.",
         ),
     ] = None,
@@ -400,6 +421,7 @@ def _spawn_create(
         int | None,
         Parameter(
             name="--autocompact",
+            group=ADVANCED_PARAMS,
             help="Autocompact token threshold (minimum 1000). Overrides agent profile.",
         ),
     ] = None,
@@ -407,6 +429,7 @@ def _spawn_create(
         int | None,
         Parameter(
             name="--autocompact-pct",
+            group=ADVANCED_PARAMS,
             help="Percentage of context window for autocompact (1-100). Overrides agent profile.",
         ),
     ] = None,
@@ -414,6 +437,7 @@ def _spawn_create(
         str | None,
         Parameter(
             name="--effort",
+            group=ADVANCED_PARAMS,
             help="Effort level: low, medium, high, xhigh, max. Overrides agent profile.",
         ),
     ] = None,
@@ -421,6 +445,7 @@ def _spawn_create(
         str | None,
         Parameter(
             name="--sandbox",
+            group=ADVANCED_PARAMS,
             help=(
                 "Sandbox mode passed to harness "
                 "(e.g., read-only, workspace-write). Overrides agent profile."
@@ -431,6 +456,7 @@ def _spawn_create(
         bool,
         Parameter(
             name="--yolo",
+            group=ADVANCED_PARAMS,
             help="Skip all harness safety prompts and sandboxing.",
         ),
     ] = False,
@@ -463,6 +489,7 @@ def _spawn_create(
         str | None,
         Parameter(
             name="--task-ping-interval",
+            group=ADVANCED_PARAMS,
             help=(
                 "Default background-task ping interval for spawned Pi "
                 "(e.g. 90m, 1h, 3300). Overrides the 55m extension default."
@@ -473,6 +500,7 @@ def _spawn_create(
         bool | None,
         Parameter(
             name="--task-ping-reset-on-activity",
+            group=ADVANCED_PARAMS,
             help=(
                 "When true, reset each task's ping deadline on log output or "
                 "task tool touch (default true when unset)."
@@ -491,6 +519,7 @@ def _spawn_create(
         tuple[str, ...],
         Parameter(
             name="--env",
+            group=ADVANCED_PARAMS,
             help=(
                 "Environment variables for the spawned harness "
                 "in KEY=VALUE form (repeatable). "
@@ -556,9 +585,7 @@ def _spawn_create(
     )
     normalized_task_dir = (task_dir or "").strip() or None
     if resolved_continue_from is not None and normalized_task_dir is not None:
-        raise ValueError(
-            "--continue does not accept --task-dir. Use --fork --task-dir to diverge."
-        )
+        raise ValueError("--continue does not accept --task-dir. Use --fork --task-dir to diverge.")
 
     fork_source_ref = fork_resolution.fork_ref or fork_resolution.fork_fresh_ref
     if fork_source_ref is not None:
@@ -1185,8 +1212,7 @@ def register_spawn_commands(app: App, emit: Emitter) -> tuple[set[str], dict[str
     )
     registered.add("spawn.inject")
     descriptions["meridian.spawn.inject"] = (
-        "Forward real user direction to a running spawn; self-generated nudges waste "
-        "its attention."
+        "Forward real user direction to a running spawn; self-generated nudges waste its attention."
     )
     app.command(
         _spawn_log_removed,

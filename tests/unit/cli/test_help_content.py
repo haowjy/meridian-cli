@@ -8,7 +8,11 @@ from contextlib import redirect_stdout
 import pytest
 
 import meridian.cli.main as cli_main
-from meridian.cli.agent_help import AGENT_HELP_SUPPLEMENTS, AGENT_VISIBLE_SUBCOMMANDS
+from meridian.cli.agent_help import (
+    AGENT_CORE_SUBCOMMANDS,
+    AGENT_HELP_SUPPLEMENTS,
+    AGENT_VISIBLE_SUBCOMMANDS,
+)
 from meridian.cli.help_content import GROUPS, render_group_help
 from meridian.cli.startup.help import GROUP_DESCRIPTIONS
 
@@ -45,6 +49,11 @@ def test_group_descriptions_are_view_over_shared_content() -> None:
         for name, group in GROUPS.items()
         if group.agent_subcommands is not None
     } == AGENT_VISIBLE_SUBCOMMANDS
+    assert {
+        name: group.agent_core_subcommands
+        for name, group in GROUPS.items()
+        if group.agent_core_subcommands is not None
+    } == AGENT_CORE_SUBCOMMANDS
 
 
 def test_no_group_or_leaf_help_contains_root_launch_resume() -> None:
@@ -65,8 +74,9 @@ def test_spawn_examples_stay_on_group_help_not_leaves() -> None:
 
     assert "Usage examples:" in human_group
     assert "meridian spawn wait" in human_group
-    assert "Usage examples:" in agent_group
-    assert "meridian spawn wait" in agent_group
+    assert "Usage examples:" not in agent_group
+    assert "Quick start:" in agent_group
+    assert "wait" in agent_group
 
     # Group-only content (examples + agent notes) must not leak onto leaves.
     for leaf in (human_leaf, agent_leaf):
@@ -88,13 +98,13 @@ def test_spawn_help_round_trips_in_process() -> None:
 
     assert human_first == human_second
     assert agent_first == agent_second
-    assert "Agent Notes:" in agent_first
+    assert "Quick start:" in agent_first
     assert "Agent Notes:" not in human_first
 
 
 def test_group_help_renderer_adds_only_agent_curation() -> None:
     human_spawn = render_group_help("spawn", agent_mode=False)
-    agent_spawn = render_group_help("spawn", agent_mode=True)
+    agent_spawn = render_group_help("spawn", agent_mode=True, advanced=True)
     human_hooks = render_group_help("hooks", agent_mode=False)
     agent_hooks = render_group_help("hooks", agent_mode=True)
 
@@ -102,3 +112,24 @@ def test_group_help_renderer_adds_only_agent_curation() -> None:
     assert "Agent Notes:" in agent_spawn
     assert human_spawn in agent_spawn
     assert human_hooks == agent_hooks
+
+
+def test_spawn_agent_group_help_has_lean_and_advanced_tiers() -> None:
+    lean_spawn = render_group_help("spawn", agent_mode=True, advanced=False)
+    advanced_spawn = render_group_help("spawn", agent_mode=True, advanced=True)
+    human_spawn = render_group_help("spawn", agent_mode=False)
+
+    assert "Quick start:" in lean_spawn
+    assert "meridian spawn -h --advanced" in lean_spawn
+    assert "Reuse decision" not in lean_spawn
+    assert "Usage examples:" not in lean_spawn
+    assert "Agent Notes:" not in lean_spawn
+
+    assert "Quick start:" not in advanced_spawn
+    assert "Usage examples:" in advanced_spawn
+    assert "Agent Notes:" in advanced_spawn
+    assert "Reuse decision" in advanced_spawn
+
+    assert "Quick start:" not in human_spawn
+    assert "Agent Notes:" not in human_spawn
+    assert "Usage examples:" in human_spawn

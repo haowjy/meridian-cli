@@ -35,6 +35,12 @@ AGENT_VISIBLE_SUBCOMMANDS: dict[str, tuple[str, ...]] = {
     if group.agent_subcommands is not None
 }
 
+AGENT_CORE_SUBCOMMANDS: dict[str, tuple[str, ...]] = {
+    name: group.agent_core_subcommands
+    for name, group in GROUPS.items()
+    if group.agent_core_subcommands is not None
+}
+
 AGENT_HELP_SUPPLEMENTS: dict[str, str] = {
     name: group.agent_notes for name, group in GROUPS.items() if group.agent_notes is not None
 }
@@ -117,14 +123,19 @@ def _restore_baseline(group_app: App, group_name: str) -> None:
     group_app.help_epilogue = baseline.help_epilogue
 
 
-def _apply_subcommand_visibility(group_app: App, group_name: str) -> None:
+def _apply_subcommand_visibility(
+    group_app: App,
+    group_name: str,
+    visible: tuple[str, ...] | None = None,
+) -> None:
     """Hide and order subcommands for agent-mode group help.
 
     Reaches into cyclopts' private ``_commands`` dict deliberately — help
     curation has no public API. Re-check this on cyclopts upgrades.
     """
 
-    visible = AGENT_VISIBLE_SUBCOMMANDS.get(group_name)
+    if visible is None:
+        visible = AGENT_VISIBLE_SUBCOMMANDS.get(group_name)
     if visible is None:
         return
 
@@ -151,7 +162,13 @@ def _apply_subcommand_visibility(group_app: App, group_name: str) -> None:
             subcommand.show = False
 
 
-def apply_agent_help(group_app: App, group_name: str, *, agent_mode: bool) -> None:
+def apply_agent_help(
+    group_app: App,
+    group_name: str,
+    *,
+    agent_mode: bool,
+    advanced: bool = False,
+) -> None:
     """Apply or restore mode-specific help curation for one command group."""
 
     if group_name not in GROUPS:
@@ -159,9 +176,14 @@ def apply_agent_help(group_app: App, group_name: str, *, agent_mode: bool) -> No
 
     _snapshot_baseline(group_app, group_name)
     if agent_mode:
-        if group_name in AGENT_VISIBLE_SUBCOMMANDS:
-            _apply_subcommand_visibility(group_app, group_name)
-        group_app.help = render_group_help(group_name, agent_mode=True)
+        visible = (
+            AGENT_VISIBLE_SUBCOMMANDS.get(group_name)
+            if advanced
+            else AGENT_CORE_SUBCOMMANDS.get(group_name, AGENT_VISIBLE_SUBCOMMANDS.get(group_name))
+        )
+        if visible is not None:
+            _apply_subcommand_visibility(group_app, group_name, visible)
+        group_app.help = render_group_help(group_name, agent_mode=True, advanced=advanced)
         group_app.help_epilogue = ""
         return
 
@@ -171,6 +193,7 @@ def apply_agent_help(group_app: App, group_name: str, *, agent_mode: bool) -> No
 
 
 __all__ = [
+    "AGENT_CORE_SUBCOMMANDS",
     "AGENT_HELP_SUPPLEMENTS",
     "AGENT_VISIBLE_SUBCOMMANDS",
     "apply_agent_help",

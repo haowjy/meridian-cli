@@ -14,6 +14,7 @@ from rich.console import Console
 import meridian.cli.agent_help as agent_help_mod
 import meridian.cli.main as cli_main
 from meridian.cli.agent_help import (
+    AGENT_CORE_SUBCOMMANDS,
     AGENT_HELP_SUPPLEMENTS,
     AGENT_VISIBLE_SUBCOMMANDS,
     apply_agent_help,
@@ -77,17 +78,23 @@ def _spawn_visibility_snapshot() -> dict[str, tuple[bool, Any]]:
     }
 
 
-def _capture_help_via_main(group_name: str, *, agent_mode: bool) -> str:
+def _capture_help_via_main(
+    group_name: str,
+    *,
+    agent_mode: bool,
+    advanced: bool = False,
+) -> str:
     mode_flag = "--agent" if agent_mode else "--human"
+    advanced_args = ["--advanced"] if advanced else []
     buffer = io.StringIO()
     with redirect_stdout(buffer), pytest.raises(SystemExit) as exc_info:
-        cli_main.main([mode_flag, group_name, "--help"])
+        cli_main.main([mode_flag, group_name, *advanced_args, "--help"])
     assert exc_info.value.code in {0, None}
     return buffer.getvalue()
 
 
-def _capture_spawn_help_via_main(*, agent_mode: bool) -> str:
-    return _capture_help_via_main("spawn", agent_mode=agent_mode)
+def _capture_spawn_help_via_main(*, agent_mode: bool, advanced: bool = False) -> str:
+    return _capture_help_via_main("spawn", agent_mode=agent_mode, advanced=advanced)
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -151,10 +158,32 @@ def test_agent_mode_spawn_help_curates_subcommands_and_supplement() -> None:
     assert "show" in command_names
     assert "wait" in command_names
     assert "list" in command_names
+    assert "children" not in command_names
+    assert "report" not in command_names
+    assert "done" not in command_names
+    assert "rearm" not in command_names
+    assert "cancel-all" not in command_names
     assert "Which subcommand when" not in help_text
+    assert "Usage examples:" not in help_text
+    assert "Quick start:" in help_text
+    assert "Agent Notes:" not in help_text
+    assert "Treat finalizing as active" not in help_text
+
+    expected_prefix = list(AGENT_CORE_SUBCOMMANDS["spawn"])
+    assert command_names[: len(expected_prefix)] == expected_prefix
+
+
+def test_agent_mode_spawn_advanced_help_shows_full_agent_tier() -> None:
+    apply_agent_help(spawn_app, "spawn", agent_mode=True, advanced=True)
+
+    help_text = _render_help(spawn_app)
+    command_names = _command_names_in_order(help_text)
+
     assert "Usage examples:" in help_text
     assert "Agent Notes:" in help_text
     assert "Treat finalizing as active" in help_text
+    for name in AGENT_VISIBLE_SUBCOMMANDS["spawn"]:
+        assert name in command_names
 
     expected_prefix = list(AGENT_VISIBLE_SUBCOMMANDS["spawn"])
     assert command_names[: len(expected_prefix)] == expected_prefix
@@ -221,6 +250,18 @@ def test_in_process_human_then_agent_curates_spawn_help() -> None:
 
     assert "status" not in command_names
     assert "stats" not in command_names
+    assert "Quick start:" in agent_help
+    assert "Agent Notes:" not in agent_help
+    expected_prefix = list(AGENT_CORE_SUBCOMMANDS["spawn"])
+    assert command_names[: len(expected_prefix)] == expected_prefix
+
+
+def test_in_process_agent_advanced_spawn_help_shows_full_agent_set() -> None:
+    agent_help = _capture_spawn_help_via_main(agent_mode=True, advanced=True)
+    command_names = _command_names_in_order(agent_help)
+
+    assert "Quick start:" not in agent_help
+    assert "Usage examples:" in agent_help
     assert "Agent Notes:" in agent_help
     expected_prefix = list(AGENT_VISIBLE_SUBCOMMANDS["spawn"])
     assert command_names[: len(expected_prefix)] == expected_prefix
@@ -247,13 +288,28 @@ def test_apply_agent_help_restores_human_baseline_help(
     fresh_agent_help_baseline: None,
 ) -> None:
     apply_agent_help(spawn_app, "spawn", agent_mode=True)
-    assert "Agent Notes:" in (spawn_app.help or "")
+    assert "Quick start:" in (spawn_app.help or "")
 
     apply_agent_help(spawn_app, "spawn", agent_mode=False)
 
     assert spawn_app.help == render_group_help("spawn", agent_mode=False)
     assert spawn_app.help_epilogue == _ORIGINAL_SPAWN_EPILOGUE
     assert "Agent Notes:" not in (spawn_app.help or "")
+
+
+def test_spawn_help_advanced_params_panel_follows_help_tier() -> None:
+    agent_lean = _capture_spawn_help_via_main(agent_mode=True)
+    agent_advanced = _capture_spawn_help_via_main(agent_mode=True, advanced=True)
+    human = _capture_spawn_help_via_main(agent_mode=False)
+
+    assert "Advanced:" not in agent_lean
+    assert "--approval" not in agent_lean
+    assert "--verbose" not in agent_lean
+    assert "Advanced:" in agent_advanced
+    assert "--approval" in agent_advanced
+    assert "--verbose" in agent_advanced
+    assert "Advanced:" in human
+    assert "--approval" in human
 
 
 def test_in_process_agent_then_human_restores_doctor_help() -> None:
