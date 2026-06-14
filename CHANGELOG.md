@@ -4,8 +4,12 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+- Agent-mode detection now recognizes the **primary** launched agent, not just subagents. It keys on managed-session membership (`MERIDIAN_SPAWN_ID`, set for the primary and every subagent) instead of delegation depth (`MERIDIAN_DEPTH > 0`), which the primary launch keeps at `0`. Previously `meridian --help` (and agent output formatting) inside the root agent session rendered as if for a human. New `is_managed_meridian_session()` is the canonical predicate; `is_nested_meridian_process()` (depth>0) is retained for nested-only side-effect/reaper paths.
+
 ### Changed
 - Agent-mode `--help` is curated: group help (`spawn`/`session`/`work`/`config`/`doctor`) shows only agent-relevant subcommands in importance order (hides e.g. `spawn status`/`stats`), drops the duplicated "which subcommand when" enumeration the generated list already covered, and renders usage examples once instead of stacking them at root + group + leaf. `AGENT_HELP_SUPPLEMENTS` is the single curated-group source; curation mutates the cyclopts app singletons scoped to the help render (applied on help requests, restored to baseline after) and is reversible across in-process reuse. Human/TTY help is unchanged; hidden subcommands stay fully invokable.
+- Agent root help drops the `telemetry` command: telemetry inspection (`tail`/`query`/`status` over local segments) is operator-facing diagnostics, not something a working subagent needs. Still listed in human help and fully invokable.
 
 ## [0.3.9] - 2026-06-13
 

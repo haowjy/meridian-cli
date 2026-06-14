@@ -69,7 +69,7 @@ from meridian.cli.startup.classify import classify_invocation
 from meridian.cli.startup.policy import StartupClass, StateRequirement
 from meridian.cli.startup.policy import TelemetryMode as StartupTelemetryMode
 from meridian.cli.utils import parse_csv_list
-from meridian.lib.core.depth import is_nested_meridian_process
+from meridian.lib.core.depth import is_managed_meridian_session
 from meridian.lib.core.sink import OutputSink
 from meridian.lib.core.util import FormatContext
 from meridian.lib.telemetry import emit_telemetry
@@ -192,7 +192,7 @@ def _split_passthrough_args(argv: Sequence[str]) -> tuple[list[str], tuple[str, 
 
 
 def agent_mode_enabled() -> bool:
-    return is_nested_meridian_process()
+    return is_managed_meridian_session()
 
 
 def _spawn_background_requested(argv: Sequence[str]) -> bool:

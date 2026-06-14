@@ -45,7 +45,6 @@ Commands:
   work     Work item dashboard and coordination
   config   Show resolved configuration and sources
   context  Show context paths for work and knowledge
-  telemetry Tail, query, and inspect local telemetry segments
   doctor   Health check and orphan reconciliation
   mars     Package management and agent materialization
   ext      Extension command discovery and invocation
@@ -110,9 +109,9 @@ def _detect_agent_mode(*, force_agent: bool = False, force_human: bool = False) 
         return True
     if force_human:
         return False
-    from meridian.lib.core.depth import is_nested_meridian_process
+    from meridian.lib.core.depth import is_managed_meridian_session
 
-    return is_nested_meridian_process() and not (sys.stdin.isatty() and sys.stdout.isatty())
+    return is_managed_meridian_session() and not (sys.stdin.isatty() and sys.stdout.isatty())
 
 
 def _human_command_lines() -> list[str]:
