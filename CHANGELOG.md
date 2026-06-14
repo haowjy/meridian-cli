@@ -4,6 +4,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+- Agent-mode `--help` is curated: group help (`spawn`/`session`/`work`/`config`/`doctor`) shows only agent-relevant subcommands in importance order (hides e.g. `spawn status`/`stats`), drops the duplicated "which subcommand when" enumeration the generated list already covered, and renders usage examples once instead of stacking them at root + group + leaf. `AGENT_HELP_SUPPLEMENTS` is the single curated-group source; curation mutates the cyclopts app singletons scoped to the help render (applied on help requests, restored to baseline after) and is reversible across in-process reuse. Human/TTY help is unchanged; hidden subcommands stay fully invokable.
+
 ## [0.3.9] - 2026-06-13
 
 ### Fixed
