@@ -234,7 +234,11 @@ def test_snapshot_round_trip_preserves_all_profile_fields() -> None:
     assert reconstructed.mode == profile.mode
     assert reconstructed.model_invocable == profile.model_invocable
     assert reconstructed.raw_content == profile.raw_content
-    assert reconstructed.path == profile.path
+    # Reconstruction resolves the persisted path (policy_snapshot resolves the
+    # session_agent_path). On POSIX an absolute path resolves to itself; on
+    # Windows resolve() anchors the current drive, so compare against the
+    # resolved form rather than the raw original.
+    assert reconstructed.path == profile.path.expanduser().resolve()
     assert reconstructed.skills == ("loaded-skill",)
 
 
