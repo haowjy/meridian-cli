@@ -82,6 +82,19 @@ def _git_subprocess_env() -> dict[str, str]:
     return env
 
 
+def _is_no_upstream_error(message: str) -> bool:
+    """Return whether git reported that @{upstream} cannot be resolved."""
+
+    normalized = message.lower()
+    return (
+        "no upstream configured" in normalized
+        or "no upstream branch" in normalized
+        or "no such branch: 'head...'" in normalized
+        or "no such branch: 'head'" in normalized
+        or ("upstream" in normalized and "unknown revision" in normalized)
+    )
+
+
 @dataclass(frozen=True)
 class _SyncOutcome:
     outcome: HookOutcome
@@ -1131,9 +1144,33 @@ class GitAutosync:
     ) -> tuple[int, int] | None:
         """Check commits ahead/behind upstream. Returns (ahead, behind).
 
-        When rev-list fails, logs a warning and attempts fallback. Returns None
-        when divergence cannot be determined.
+        Repositories without a configured upstream are a benign local-only
+        state for divergence purposes. When an upstream exists but rev-list
+        fails, logs a warning and attempts fallback. Returns None when
+        divergence cannot be determined.
         """
+
+        upstream = self._run_git(
+            clone_path,
+            ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"],
+            timeout=_DIFF_TIMEOUT_SECS,
+        )
+        if upstream.returncode != 0:
+            error_msg = (upstream.stderr or upstream.stdout or "").strip()
+            if _is_no_upstream_error(error_msg):
+                logger.debug(
+                    "git_autosync_divergence_check_skipped",
+                    clone_path=clone_path,
+                    skip_reason="no_upstream",
+                    error=error_msg,
+                )
+            else:
+                logger.warning(
+                    "git_autosync_divergence_check_failed",
+                    clone_path=clone_path,
+                    error=error_msg,
+                )
+            return None
 
         result = self._run_git(
             clone_path,

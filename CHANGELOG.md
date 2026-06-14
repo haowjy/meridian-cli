@@ -4,6 +4,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+- A successful `meridian spawn` no longer emits two pieces of misleading noise. (1) The git-autosync divergence check pre-resolves `@{upstream}`; a clone with no upstream (detached HEAD / no tracking branch) is now a benign debug skip (`git_autosync_divergence_check_skipped`, `skip_reason="no_upstream"`) instead of a `[warning] git_autosync_divergence_check_failed ... no such branch: 'HEAD...'`. Genuine divergence failures still warn; the happy path is unchanged. (2) The Codex websocket reader treats a normal close (`ConnectionClosedOK`, or `ConnectionClosedError` with close code 1000) as clean shutdown, and the liveness cleanup awaits/retrieves the child task on cancellation — eliminating the GC-time `Task exception was never retrieved` / `ConnectionClosedError` traceback. Abnormal closes still surface.
+
 ## [0.3.15] - 2026-06-22
 
 ### Fixed
