@@ -13,9 +13,6 @@ from cyclopts import App, Parameter
 from pydantic import BaseModel, ConfigDict
 
 from meridian.cli.app_tree import (
-    AGENT_ROOT_HELP as _AGENT_ROOT_HELP,
-)
-from meridian.cli.app_tree import (
     app,
     completion_app,
     config_app,
@@ -66,6 +63,7 @@ from meridian.cli.output import (
 from meridian.cli.output import emit as emit_output
 from meridian.cli.startup.catalog import COMMAND_CATALOG
 from meridian.cli.startup.classify import classify_invocation
+from meridian.cli.startup.help import render_root_help
 from meridian.cli.startup.policy import StartupClass, StateRequirement
 from meridian.cli.startup.policy import TelemetryMode as StartupTelemetryMode
 from meridian.cli.utils import parse_csv_list
@@ -1027,7 +1025,7 @@ def _maybe_schedule_background_repairs(
 
 
 def _print_agent_root_help() -> None:
-    print(_AGENT_ROOT_HELP, end="")
+    print(render_root_help(agent_mode=True), end="")
 
 
 @contextmanager
@@ -1119,8 +1117,11 @@ def _main_impl(argv: Sequence[str] | None = None) -> None:
         with _directory_env_scope(options.project_root, options.directory_explicit):
             _run_mars_passthrough(cleaned_args[1:], output_format=options.output.format)
 
-    if effective_agent_mode and (not cleaned_args or _is_root_help_request(cleaned_args)):
+    if effective_agent_mode and not cleaned_args:
         _print_agent_root_help()
+        return
+    if _is_root_help_request(cleaned_args):
+        print(render_root_help(agent_mode=effective_agent_mode), end="")
         return
 
     _validate_top_level_command(cleaned_args, global_harness=options.harness)

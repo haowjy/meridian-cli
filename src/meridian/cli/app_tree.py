@@ -3,7 +3,6 @@
 from cyclopts import App
 
 from meridian import __version__
-from meridian.cli.startup.help import AGENT_ROOT_HELP
 
 app = App(
     name="meridian",
@@ -163,7 +162,6 @@ app.command(telemetry_app, name="telemetry")
 app.command(completion_app, name="completion")
 
 __all__ = [
-    "AGENT_ROOT_HELP",
     "app",
     "completion_app",
     "config_app",
