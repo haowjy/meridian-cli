@@ -290,3 +290,28 @@ def test_direct_launch_context_synthesizes_policy_snapshot(tmp_path: Path) -> No
     assert runtime_ctx.request.launch_policy_snapshot == snapshot
     assert snapshot.model == "gpt-5.4"
     assert snapshot.harness == HarnessId.CODEX.value
+
+
+def test_collect_context_projection_roots_skips_missing_dirs(tmp_path: Path) -> None:
+    """Context roots that don't exist must not be projected into the sandbox.
+
+    Sandboxed harnesses (codex bubblewrap) bind-mount every projected root and
+    abort all command execution if a source path is missing. A not-yet-created
+    context dir (commonly ``work_archive`` before the first archive) must be
+    skipped rather than handed to the sandbox.
+    """
+    from meridian.lib.config.context_config import ContextConfig
+    from meridian.lib.context.resolver import resolve_context_paths
+    from meridian.lib.launch.context import _collect_context_projection_roots
+
+    project_root = tmp_path / "proj"
+    project_root.mkdir()
+    config = ContextConfig()
+    resolved = resolve_context_paths(project_root, config)
+
+    # Fresh project: none of work_root / work_archive / kb_root exist yet.
+    assert _collect_context_projection_roots(project_root, config) == ()
+
+    # Create only work_root; it alone should be projected.
+    resolved.work_root.mkdir(parents=True, exist_ok=True)
+    assert _collect_context_projection_roots(project_root, config) == (resolved.work_root,)

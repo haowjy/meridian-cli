@@ -9,6 +9,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Enriched `meridian spawn --help` and `meridian spawn wait --help` as the depth reference the injected contract points to: recommended `--bg` + no-arg `wait` pattern, double-background and block-foreground warnings, lifecycle and crash-recovery notes.
 
 ### Fixed
+- Context roots are no longer projected into the harness sandbox when they don't exist on disk. A not-yet-created context dir (commonly `work_archive` before the first archive) was handed to codex's bubblewrap sandbox as a bind mount; bwrap aborts the entire exec namespace on a missing source, so **every** command in the worker failed while the spawn still reported `succeeded` (codex's terminal status is turn-completion, not work success). Missing context roots are now skipped before projection (logged at debug for diagnosis).
 - A spawn launcher killed (SIGKILL) during prep — before the spawn row was written — left nothing on disk: invisible to `spawn list/status/wait`, the reconciler, and `doctor --kill-orphans` (the c2076 double-background incident). The durable `queued` row is now reserved before prep, so a killed-mid-prep launch is recovered by the existing reaper (`failed`/`missing_runner_pid`). Reserve/announce is two-phase: work-item creation and lifecycle events (`spawn.created`, telemetry, subrun start) are deferred until prep succeeds, so graceful prep failures remain side-effect-free as before — only the kill path changes.
 
 ### Changed

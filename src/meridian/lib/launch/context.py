@@ -9,6 +9,7 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
+import structlog
 from pydantic import ValidationError
 
 from meridian.lib.catalog.catalog_session import CatalogSession
@@ -130,6 +131,9 @@ from .workspace import resolve_workspace_snapshot_for_launch
 
 if TYPE_CHECKING:
     from meridian.lib.harness.registry import HarnessRegistry
+
+
+logger = structlog.get_logger(__name__)
 
 
 @dataclass(frozen=True)
@@ -700,13 +704,30 @@ def _collect_context_projection_roots(
     """
     effective = config or ContextConfig()
     resolved = resolve_context_paths(project_root, effective)
-    roots: list[Path] = [
-        resolved.work_root,
-        resolved.work_archive,
-        resolved.kb_root,
+    candidates: list[tuple[str, Path]] = [
+        ("work", resolved.work_root),
+        ("work_archive", resolved.work_archive),
+        ("kb", resolved.kb_root),
     ]
-    for path, _source in resolved.extra.values():
-        roots.append(path)
+    candidates.extend((name, path) for name, (path, _source) in resolved.extra.items())
+
+    # Only project context roots that exist on disk. Sandboxed harnesses (codex
+    # bubblewrap) bind-mount every projected root at exec time and abort the whole
+    # namespace if a source path is missing — so a not-yet-created context dir
+    # (commonly `work_archive` before the first archive) would silently break all
+    # command execution in the worker. Skipping the missing root is correct (there
+    # is nothing to mount). Logged at debug, not warning: a missing context dir is
+    # the normal pre-archive state, so it must not pollute stderr on every launch.
+    roots: list[Path] = []
+    for name, path in candidates:
+        if path.exists():
+            roots.append(path)
+        else:
+            logger.debug(
+                "context_projection_root_skipped_missing",
+                context_root=name,
+                path=path.as_posix(),
+            )
 
     return tuple(roots)
 
