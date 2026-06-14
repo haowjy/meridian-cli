@@ -68,7 +68,7 @@ _ACTIVE_VIEW_STATUSES: tuple[SpawnStatus, ...] = tuple(
     status for status in _SPAWN_STATUS_VALUES if status in ACTIVE_SPAWN_STATUSES
 )
 _SPAWN_USAGE_EPILOGUE = (
-    "Recommended pattern:\n\n"
+    "Launch detached, then track:\n\n"
     "  meridian spawn --prompt-file PATH --bg    Detach; returns a spawn id\n"
     "  meridian spawn wait                       Track this session's pending spawns\n\n"
     "Do not block-foreground a long spawn — the harness command timeout will kill\n"
