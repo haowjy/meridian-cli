@@ -288,7 +288,7 @@ def ext_run(
         ),
     ] = False,
 ) -> None:
-    """Run an extension command via app-server HTTP invoke.
+    """Run an extension command.
 
     EB3.4: Locate server, authenticate with token, invoke command endpoint.
     EB3.5: Invalid JSON args exit with 7.

@@ -91,8 +91,7 @@ def register_hooks_commands(app: App, emit: Emitter) -> tuple[set[str], dict[str
             "meridian.hooks.run": (
                 "Examples:\n\n"
                 "  meridian hooks run git-autosync\n\n"
-                "  meridian hooks run git-autosync --event spawn.finalized\n\n"
-                "`hooks run` bypasses interval throttling for manual execution."
+                "  meridian hooks run git-autosync --event spawn.finalized\n"
             )
         },
         emit=emit,

@@ -142,7 +142,7 @@ def _work_sessions(
         Parameter(
             help=(
                 "Work item id. Defaults to the active work item "
-                "attached to this session (via MERIDIAN_CHAT_ID)."
+                "attached to this session."
             )
         ),
     ] = "",

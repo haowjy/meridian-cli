@@ -326,7 +326,7 @@ _OP_SPECS: tuple[ExtensionCommandSpec, ...] = (
     ExtensionCommandSpec.from_op(
         extension_id="meridian.hooks",
         command_id="run",
-        summary="Manually execute one hook by name; bypasses interval throttling.",
+        summary="Manually execute one hook by name.",
         handler=hooks_run,
         sync_handler=hooks_run_sync,
         input_type=HookRunInput,
@@ -455,7 +455,7 @@ _OP_SPECS: tuple[ExtensionCommandSpec, ...] = (
     ExtensionCommandSpec.from_op(
         extension_id="meridian.spawn",
         command_id="files",
-        summary="List edited files for a spawn, one per line. Pipe to git add or xargs.",
+        summary="List edited files for a spawn, one per line.",
         handler=spawn_files,
         sync_handler=spawn_files_sync,
         input_type=SpawnWrittenFilesInput,
@@ -520,8 +520,7 @@ _OP_SPECS: tuple[ExtensionCommandSpec, ...] = (
         extension_id="meridian.spawn",
         command_id="show",
         summary=(
-            "Show spawn status, duration, model, report path, and report text by default. "
-            "Use --no-report to omit report text."
+            "Show spawn status, duration, model, report path, and report text by default."
         ),
         handler=spawn_show,
         sync_handler=spawn_show_sync,

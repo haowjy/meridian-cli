@@ -144,12 +144,10 @@ GROUPS: dict[str, GroupHelp] = {
         summary="Inspect transcripts and progress logs.",
         long_help=(
             "Inspect conversation and progress logs.\n\n"
-            "Session refs accept three forms: chat ids (c123), spawn ids (p123),\n"
-            "or raw harness session ids. Logs prefer harness transcripts when\n"
-            "available and fall back to Meridian spawn output for active or\n"
-            "transcriptless spawns. By default, commands operate on\n"
-            "$MERIDIAN_CHAT_ID -- inherited from the spawning session -- so a\n"
-            "subagent defaults to the top-level primary session log."
+            "Session refs accept three forms: chat ids (c123), spawn ids (p123), or raw\n"
+            "harness session ids. Commands default to $MERIDIAN_CHAT_ID (inherited from\n"
+            "the spawning session), so a subagent defaults to the top-level primary\n"
+            "session log."
         ),
         agent_notes=(
             "REF forms: chat id (c123), spawn id (p123), or harness session id.\n\n"

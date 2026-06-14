@@ -80,8 +80,8 @@ _SPAWN_USAGE_EPILOGUE = (
     "`meridian status`.\n"
 )
 _SPAWN_WAIT_HELP_EPILOGUE = (
-    "Without spawn ids, discovers pending spawns for MERIDIAN_CHAT_ID.\n"
-    "Cache-preserving yield: exits cleanly at the harness-aware checkpoint;\n"
+    "Without spawn ids, discovers your session's pending spawns.\n"
+    "Exits cleanly at a safe checkpoint;\n"
     "re-invoke to keep waiting.\n\n"
     "Examples:\n\n"
     "  meridian spawn wait\n\n"
@@ -282,11 +282,9 @@ def _spawn_create(
         Parameter(
             name=["--from"],
             help=(
-                "Inherit context from a prior spawn or chat/session.\n"
-                "Spawn refs include the spawn report and files touched;\n"
-                "chat refs point at the session log and primary spawn.\n"
-                "Repeatable. Also inherits the source's work item as a\n"
-                "fallback when neither --work nor ambient session provides one."
+                "Inherit context from a prior spawn or chat/session. Repeatable. Also "
+                "inherits the source's work item when neither --work nor the ambient session "
+                "provides one."
             ),
             negative_iterable=(),
         ),
@@ -928,8 +926,8 @@ def _spawn_wait(
         Parameter(
             name="spawn_id",
             help=(
-                "Spawn IDs to wait for. Omit to discover this session's pending "
-                "spawns (MERIDIAN_CHAT_ID) and wait on them."
+                "Spawn IDs to wait for. Omit to discover your session's pending "
+                "spawns and wait on them."
             ),
         ),
     ] = (),
@@ -945,8 +943,8 @@ def _spawn_wait(
         Parameter(
             name="--yield-after-secs",
             help=(
-                "Cache-preserving yield interval in seconds. Overrides harness-aware "
-                "default. Exits cleanly when reached."
+                "Seconds before `wait` yields cleanly so you keep the turn. Overrides the "
+                "harness-aware default. Exits cleanly when reached."
             ),
         ),
     ] = None,
@@ -1022,9 +1020,7 @@ def _spawn_files(
         str,
         Parameter(
             help=(
-                "Spawn ID. Stage exactly what it changed with "
-                "`meridian spawn files <id> | xargs git add`; use -0 | xargs -0 "
-                "for paths with spaces."
+                "Spawn ID. Lists the files this spawn changed, one per line."
             ),
         ),
     ],
@@ -1125,8 +1121,7 @@ def _spawn_inject(
         str,
         Parameter(
             help=(
-                "Real user direction to forward mid-run. Self-generated nudges "
-                "waste the spawn's attention."
+                "Real user direction to forward mid-run."
             ),
         ),
     ] = "",
