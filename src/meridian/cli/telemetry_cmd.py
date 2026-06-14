@@ -218,5 +218,8 @@ def register_telemetry_commands(app: App, emit: Emitter) -> None:
     ) -> None:
         _telemetry_status(emit, global_flag=global_flag)
 
-    app.command(_status_cmd, name="status")
-    app.help_epilogue = f"Note: {ROOTLESS_LIMITATION_NOTE}"
+    app.command(
+        _status_cmd,
+        name="status",
+        help="Show telemetry sink health and local reader limitations.",
+    )

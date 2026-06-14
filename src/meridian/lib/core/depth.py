@@ -5,6 +5,7 @@ from collections.abc import Mapping
 from contextlib import suppress
 
 MERIDIAN_DEPTH_ENV = "MERIDIAN_DEPTH"
+MERIDIAN_SPAWN_ID_ENV = "MERIDIAN_SPAWN_ID"
 
 
 def parse_meridian_depth(raw: str | None) -> int:
@@ -50,6 +51,21 @@ def is_nested_meridian_process(env: Mapping[str, str] | None = None) -> bool:
     return is_nested_meridian_depth(current_meridian_depth(env))
 
 
+def is_managed_meridian_session(env: Mapping[str, str] | None = None) -> bool:
+    """Return whether the process runs inside a Meridian-managed agent session.
+
+    A managed session is any harness Meridian launched: the primary root agent
+    (depth 0) as well as delegated subagents (depth > 0). This is the right
+    signal for "an agent, not a human, is invoking the CLI" — distinct from
+    ``is_nested_meridian_process`` (depth > 0), which excludes the primary
+    because primary launch keeps depth 0. Keyed on the injected
+    ``MERIDIAN_SPAWN_ID`` rather than ``MERIDIAN_MANAGED``, which the entrypoint
+    ``setdefault``s on every invocation (including a human's raw shell).
+    """
+    source = os.environ if env is None else env
+    return bool((source.get(MERIDIAN_SPAWN_ID_ENV) or "").strip())
+
+
 def is_root_side_effect_process(env: Mapping[str, str] | None = None) -> bool:
     """Return whether root-only repair/reaper side effects may run.
 
@@ -72,9 +88,11 @@ def max_depth_reached(current_depth: int, max_depth: int) -> bool:
 
 __all__ = [
     "MERIDIAN_DEPTH_ENV",
+    "MERIDIAN_SPAWN_ID_ENV",
     "child_meridian_depth",
     "current_meridian_depth",
     "has_valid_meridian_depth",
+    "is_managed_meridian_session",
     "is_nested_meridian_depth",
     "is_nested_meridian_process",
     "is_root_side_effect_process",

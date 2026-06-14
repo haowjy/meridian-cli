@@ -7,17 +7,27 @@ from typing import Annotated, Any
 
 from cyclopts import App, Parameter
 
+from meridian.cli.help_content import GROUPS
+
 Emitter = Callable[[Any], None]
 
 
 def register_sync_commands(app: App, emit: Emitter) -> None:
     """Register sync conflict CLI commands under a ``sync`` subapp."""
 
-    sync_app = App(name="sync", help="Sync operations.", help_formatter="plain")
+    sync_app = App(
+        name="sync",
+        help=GROUPS["sync"].long_help or GROUPS["sync"].summary,
+        help_epilogue="",
+        help_formatter="plain",
+        help_format="plaintext",
+    )
     conflict_app = App(
         name="conflict",
         help="Manage autosync conflicts.",
+        help_epilogue="",
         help_formatter="plain",
+        help_format="plaintext",
     )
     sync_app.command(conflict_app, name="conflict")
     app.command(sync_app, name="sync")

@@ -2,97 +2,176 @@
 
 from __future__ import annotations
 
-_SPAWN_SUPPLEMENT = (
-    "Agent Notes:\n\n"
-    "Lifecycle: queued → running → finalizing → succeeded | failed | cancelled | timed_out.\n"
-    "'finalizing' is transient — treat as active when polling.\n\n"
-    "Which subcommand when:\n\n"
-    "  show ID        Status, report, cost — first check for any spawn\n\n"
-    "  wait [ID]      Block until spawn(s) reach terminal state\n\n"
-    "  list           Active spawns (--all for recent history)\n\n"
-    "  children ID    What a spawn delegated to\n\n"
-    "  files ID       List changed paths for staging or review\n\n"
-    "  inject ID      Course-correct a running spawn before cancelling\n\n"
-    "  cancel ID      Stop a spawn when correction is no longer useful\n\n"
-    "Transcripts: 'meridian session log ID'.\n"
-)
+import logging
+from collections import defaultdict
+from dataclasses import dataclass
+from typing import Any, cast
 
-_SESSION_SUPPLEMENT = (
-    "Agent Notes:\n\n"
-    "Omitting REF defaults to the top-level primary session at every depth.\n"
-    "Pass an explicit spawn id to inspect a specific spawn's transcript.\n\n"
-    "Which subcommand when:\n\n"
-    "  log REF            Read a transcript\n\n"
-    "  log REF --tail     Recent context (defaults to last 5 messages)\n\n"
-    "  log REF --around N --context M  Deterministic segment-local jump\n\n"
-    "  log REF --global --around N --context M  Deterministic global jump\n\n"
-    "  log REF --segment previous       Navigate compacted history explicitly\n\n"
-    "  log --file PATH    Read a session file directly\n\n"
-    "  search QUERY [REF] Case-insensitive search (single session or scoped corpus)\n\n"
-    "REF forms: chat id (c123), spawn id (p123), or harness session id.\n\n"
-    "Decision recovery: 'meridian work sessions WORK_ID --all'\n"
-)
+from cyclopts import App
 
-_CONFIG_SUPPLEMENT = (
-    "Agent Notes:\n\n"
-    "Resolution is per field:\n"
-    "CLI flag > env var > profile > project > user > harness default\n\n"
-    "A CLI model override (-m) also drives harness routing.\n\n"
-    "Quick reference:\n\n"
-    "  config show            All resolved values with sources\n\n"
-    "  config get KEY         One key with source\n\n"
-    "  config set KEY VALUE   Set in meridian.toml\n\n"
-    "  config init            Scaffold with commented defaults\n"
-)
+from meridian.cli.help_content import GROUPS, render_group_help
 
-_WORK_SUPPLEMENT = (
-    "Agent Notes:\n\n"
-    "Dashboard: 'meridian work' shows active work items with their spawns.\n\n"
-    "Quick reference:\n\n"
-    "  work start LABEL       Create or switch to a work item\n\n"
-    "  work current           Print active work item directory path\n\n"
-    "  work root              Print work root directory path\n\n"
-    "  work done WORK_ID      Mark done and archive scratch directory\n\n"
-    "  work sessions WORK_ID  Sessions tied to this item (--all for archived)\n\n"
-    "Artifact placement: $MERIDIAN_ACTIVE_WORK_DIR for this item,\n"
-    "$MERIDIAN_CONTEXT_KB_DIR for project-wide knowledge.\n"
-)
+logger = logging.getLogger(__name__)
 
-_DOCTOR_SUPPLEMENT = (
-    "Agent Notes:\n\n"
-    "Run when a spawn seems stuck or status doesn't match reality.\n"
-    "Spawn read paths (show, list, wait) and 'doctor' reconcile orphans.\n\n"
-    "Common failure modes:\n\n"
-    "  orphan_run              Runner died mid-flight. Relaunch.\n\n"
-    "  orphan_finalization     Exited without finalizing. Check 'spawn show'\n"
-    "                          for partial report.\n\n"
-    "  Exit 127 / empty report Harness binary missing from PATH.\n\n"
-    "  Exit 143 or 137         Check 'spawn show' first — if already\n"
-    "                          succeeded, signal hit during cleanup.\n"
-    "                          Otherwise retry.\n\n"
-    "For the transcript: 'meridian session log SPAWN_ID'.\n"
-)
+
+@dataclass(frozen=True)
+class _SubcommandVisibility:
+    show: bool
+    sort_key: Any
+
+
+@dataclass(frozen=True)
+class _GroupBaseline:
+    help: str | None
+    help_epilogue: str | None
+    subcommands: dict[int, _SubcommandVisibility]
+
+
+_BASELINE: dict[str, _GroupBaseline] = {}
+
+AGENT_VISIBLE_SUBCOMMANDS: dict[str, tuple[str, ...]] = {
+    name: group.agent_subcommands
+    for name, group in GROUPS.items()
+    if group.agent_subcommands is not None
+}
 
 AGENT_HELP_SUPPLEMENTS: dict[str, str] = {
-    "spawn": _SPAWN_SUPPLEMENT,
-    "session": _SESSION_SUPPLEMENT,
-    "config": _CONFIG_SUPPLEMENT,
-    "work": _WORK_SUPPLEMENT,
-    "doctor": _DOCTOR_SUPPLEMENT,
+    name: group.agent_notes for name, group in GROUPS.items() if group.agent_notes is not None
 }
 
 
-def agent_help_epilogue(command_name: str, base_epilogue: str | None = None) -> str | None:
-    """Return a command epilogue with the agent supplement appended, if any."""
+def _iter_real_subcommands(group_app: App) -> dict[str, App]:
+    # Deliberately reaches into cyclopts' private ``_commands`` dict: help
+    # curation has no public API. Keep this boundary narrow and re-check it on
+    # cyclopts upgrades.
+    try:
+        commands_obj = object.__getattribute__(group_app, "_commands")
+    except AttributeError:
+        logger.debug(
+            "cyclopts App missing _commands; skipping agent help for %s",
+            getattr(group_app, "name", group_app),
+        )
+        return {}
 
-    supplement = AGENT_HELP_SUPPLEMENTS.get(command_name)
-    if supplement is None:
-        return base_epilogue
+    if not isinstance(commands_obj, dict):
+        logger.debug(
+            "cyclopts App._commands is not a dict; skipping agent help for %s",
+            getattr(group_app, "name", group_app),
+        )
+        return {}
 
-    existing = base_epilogue or ""
-    if existing and not existing.endswith("\n"):
-        existing += "\n"
-    return existing + "\n" + supplement
+    commands = cast("dict[str, object]", commands_obj)
+    real_commands: dict[str, App] = {}
+    for name, subcommand in commands.items():
+        if isinstance(subcommand, App):
+            real_commands[name] = subcommand
+        else:
+            logger.debug(
+                "cyclopts command %s is not an App; skipping for agent help",
+                name,
+            )
+    return real_commands
 
 
-__all__ = ["AGENT_HELP_SUPPLEMENTS", "agent_help_epilogue"]
+def _snapshot_baseline(group_app: App, group_name: str) -> None:
+    if group_name in _BASELINE:
+        return
+
+    commands = _iter_real_subcommands(group_app)
+
+    subcommands: dict[int, _SubcommandVisibility] = {}
+    for name, subcommand in commands.items():
+        if name.startswith("-"):
+            continue
+        sub_id = id(subcommand)
+        if sub_id not in subcommands:
+            subcommands[sub_id] = _SubcommandVisibility(
+                show=subcommand.show,
+                sort_key=subcommand.sort_key,
+            )
+
+    _BASELINE[group_name] = _GroupBaseline(
+        help=group_app.help,
+        help_epilogue=group_app.help_epilogue,
+        subcommands=subcommands,
+    )
+
+
+def _restore_baseline(group_app: App, group_name: str) -> None:
+    baseline = _BASELINE.get(group_name)
+    if baseline is None:
+        return
+
+    commands = _iter_real_subcommands(group_app)
+
+    for name, subcommand in commands.items():
+        if name.startswith("-"):
+            continue
+        visibility = baseline.subcommands.get(id(subcommand))
+        if visibility is None:
+            continue
+        subcommand.show = visibility.show
+        subcommand.sort_key = visibility.sort_key
+
+    group_app.help = baseline.help
+    group_app.help_epilogue = baseline.help_epilogue
+
+
+def _apply_subcommand_visibility(group_app: App, group_name: str) -> None:
+    """Hide and order subcommands for agent-mode group help.
+
+    Reaches into cyclopts' private ``_commands`` dict deliberately — help
+    curation has no public API. Re-check this on cyclopts upgrades.
+    """
+
+    visible = AGENT_VISIBLE_SUBCOMMANDS.get(group_name)
+    if visible is None:
+        return
+
+    commands = _iter_real_subcommands(group_app)
+
+    index_map = {name: index for index, name in enumerate(visible)}
+    names_by_app: dict[int, list[str]] = defaultdict(list)
+    app_by_id: dict[int, Any] = {}
+
+    for name, subcommand in commands.items():
+        if name.startswith("-"):
+            continue
+        sub_id = id(subcommand)
+        names_by_app[sub_id].append(name)
+        app_by_id[sub_id] = subcommand
+
+    for sub_id, names in names_by_app.items():
+        subcommand = app_by_id[sub_id]
+        matching = [name for name in names if name in index_map]
+        if matching:
+            subcommand.show = True
+            subcommand.sort_key = min(index_map[name] for name in matching)
+        else:
+            subcommand.show = False
+
+
+def apply_agent_help(group_app: App, group_name: str, *, agent_mode: bool) -> None:
+    """Apply or restore mode-specific help curation for one command group."""
+
+    if group_name not in GROUPS:
+        return
+
+    _snapshot_baseline(group_app, group_name)
+    if agent_mode:
+        if group_name in AGENT_VISIBLE_SUBCOMMANDS:
+            _apply_subcommand_visibility(group_app, group_name)
+        group_app.help = render_group_help(group_name, agent_mode=True)
+        group_app.help_epilogue = ""
+        return
+
+    _restore_baseline(group_app, group_name)
+    group_app.help = render_group_help(group_name, agent_mode=False)
+    group_app.help_epilogue = ""
+
+
+__all__ = [
+    "AGENT_HELP_SUPPLEMENTS",
+    "AGENT_VISIBLE_SUBCOMMANDS",
+    "apply_agent_help",
+]
