@@ -14,8 +14,9 @@ Launch detached, then wait — never block the turn or background-wrap.
   runs the worker detached:
       meridian spawn -a <agent> --prompt-file /tmp/<task>.md --bg
 - NEVER wrap `meridian spawn --bg` inside Bash's run_in_background. It
-  already detaches; double-backgrounding risks the launch being killed
-  before the spawn is recorded.
+  already detaches — double-wrapping adds nothing and lets the harness kill
+  the launcher mid-startup, before it hands off to the detached worker; the
+  spawn then fails (recorded and visible, but the work never runs).
 - NEVER block-foreground a long spawn (omitting --bg). It will outlive your
   Bash command timeout; you lose the thread while the spawn runs on.
 - Track with no-arg wait — no id needed; it discovers your pending spawns
@@ -32,8 +33,9 @@ Launch detached, then wait — never block the turn or double-background.
   runs the worker detached:
       meridian spawn -a <agent> --prompt-file /tmp/<task>.md --bg
 - NEVER wrap `meridian spawn --bg` in your harness's background execution.
-  It already detaches; double-backgrounding risks the launch being killed
-  before the spawn is recorded.
+  It already detaches — double-wrapping adds nothing and lets the harness
+  kill the launcher mid-startup, before it hands off to the detached worker;
+  the spawn then fails (recorded and visible, but the work never runs).
 - NEVER block-foreground a long spawn (omitting --bg). It will outlive your
   command timeout; you lose the thread while the spawn runs on.
 - Track with no-arg wait — no id needed; it discovers your pending spawns

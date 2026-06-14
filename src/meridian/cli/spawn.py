@@ -374,8 +374,10 @@ def _spawn_create(
             help=(
                 "Run detached; returns a spawn id without waiting. NEVER wrap "
                 "`meridian spawn --bg` inside the harness's own background "
-                "execution (e.g. run_in_background Bash) — double-backgrounding "
-                "can kill the launch before the spawn row is recorded."
+                "execution (e.g. run_in_background Bash) — it already detaches, "
+                "and double-wrapping can kill the launcher before it hands off "
+                "to the detached worker (the spawn then fails visibly without "
+                "running)."
             ),
         ),
     ] = False,
