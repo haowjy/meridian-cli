@@ -75,7 +75,9 @@ def test_spawn_examples_stay_on_group_help_not_leaves() -> None:
     assert "Usage examples:" in human_group
     assert "meridian spawn wait" in human_group
     assert "Usage examples:" not in agent_group
-    assert "Quick start:" in agent_group
+    assert "Playbook:" in agent_group
+    assert "meridian mktemp" in agent_group
+    assert "Core loop:" not in agent_group
     assert "wait" in agent_group
 
     # Group-only content (examples + agent notes) must not leak onto leaves.
@@ -98,7 +100,7 @@ def test_spawn_help_round_trips_in_process() -> None:
 
     assert human_first == human_second
     assert agent_first == agent_second
-    assert "Quick start:" in agent_first
+    assert "Playbook:" in agent_first
     assert "Agent Notes:" not in human_first
 
 
@@ -119,20 +121,20 @@ def test_spawn_agent_group_help_has_lean_and_advanced_tiers() -> None:
     advanced_spawn = render_group_help("spawn", agent_mode=True, advanced=True)
     human_spawn = render_group_help("spawn", agent_mode=False)
 
-    assert "Quick start:" in lean_spawn
+    assert "Playbook:" in lean_spawn
     assert "meridian spawn -h --advanced" in lean_spawn
-    assert "Before you launch" in lean_spawn
+    assert "meridian mktemp" in lean_spawn
+    assert "spawn contract" in lean_spawn
     assert "verifiable exit state" in lean_spawn
-    assert "Context: pass one folder plus at most one source-of-truth file" in lean_spawn
-    assert "Reuse: --continue resumes the same session" in lean_spawn
+    assert "Core loop:" not in lean_spawn
     assert "Usage examples:" not in lean_spawn
     assert "Agent Notes:" not in lean_spawn
 
-    assert "Quick start:" not in advanced_spawn
+    assert "Playbook:" not in advanced_spawn
     assert "Usage examples:" in advanced_spawn
     assert "Agent Notes:" in advanced_spawn
     assert "Reuse decision" in advanced_spawn
 
-    assert "Quick start:" not in human_spawn
+    assert "Playbook:" not in human_spawn
     assert "Agent Notes:" not in human_spawn
     assert "Usage examples:" in human_spawn

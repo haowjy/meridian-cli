@@ -3,16 +3,114 @@
 from __future__ import annotations
 
 import logging
+import textwrap
 from collections import defaultdict
 from dataclasses import dataclass
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from cyclopts import App
+from cyclopts.help.formatters.plain import PlainFormatter
 
 from meridian.cli.help_content import GROUPS, render_group_help
 from meridian.cli.help_tiers import ADVANCED_PARAMS
 
+if TYPE_CHECKING:
+    from cyclopts.help import HelpEntry
+    from rich.console import Console
+
 logger = logging.getLogger(__name__)
+
+
+class AlignedPlainFormatter(PlainFormatter):
+    """Plain help formatter that keeps wrapped description lines aligned."""
+
+    def _wrap_entry(self, left: str, desc: str, console: Console) -> str:
+        left_part = f"{self.indent}{left}: "
+        if not desc:
+            return f"{self.indent}{left}"
+        width = console.width
+        continuation_indent = " " * len(left_part)
+        if len(left_part) >= width - 20:
+            block_indent = self.indent
+            return left_part.rstrip() + "\n" + textwrap.fill(
+                desc,
+                width=width,
+                initial_indent=block_indent,
+                subsequent_indent=block_indent,
+                break_long_words=False,
+                break_on_hyphens=False,
+            )
+        return textwrap.fill(
+            desc,
+            width=width,
+            initial_indent=left_part,
+            subsequent_indent=continuation_indent,
+            break_long_words=False,
+            break_on_hyphens=False,
+        )
+
+    def _format_parameter_entry(
+        self,
+        options: tuple[str, ...],
+        desc: str,
+        console: Console,
+        entry: HelpEntry,
+    ) -> None:
+        if not options:
+            return
+
+        desc_parts: list[str] = []
+        if desc:
+            desc_parts.append(desc)
+        if entry.choices:
+            desc_parts.append(f"[choices: {', '.join(entry.choices)}]")
+        if entry.env_var:
+            desc_parts.append(f"[env var: {', '.join(entry.env_var)}]")
+        if entry.default is not None:
+            desc_parts.append(f"[default: {entry.default}]")
+        if entry.required:
+            desc_parts.append("[required]")
+
+        options_str = ", ".join(options)
+        left = options_str if options_str else ""
+        wrapped = self._wrap_entry(left, " ".join(desc_parts), console)
+        console.print(wrapped, highlight=False, markup=False)
+
+    def _format_command_entry(
+        self,
+        names: tuple[str, ...],
+        shorts: tuple[str, ...],
+        desc: str,
+        console: Console,
+    ) -> None:
+        if names:
+            for index, name in enumerate(names):
+                if index == 0:
+                    parts = [name]
+                    if shorts:
+                        parts.append(", " + " ".join(shorts))
+                    entry_name = "".join(parts)
+                    console.print(
+                        self._wrap_entry(entry_name, desc, console),
+                        highlight=False,
+                        markup=False,
+                    )
+                else:
+                    console.print(
+                        textwrap.indent(name, self.indent),
+                        highlight=False,
+                        markup=False,
+                    )
+        elif shorts:
+            shorts_str = " ".join(shorts)
+            console.print(
+                self._wrap_entry(shorts_str, desc, console),
+                highlight=False,
+                markup=False,
+            )
+
+
+_ALIGNED_PLAIN_FORMATTER = AlignedPlainFormatter()
 
 
 @dataclass(frozen=True)
@@ -25,6 +123,7 @@ class _SubcommandVisibility:
 class _GroupBaseline:
     help: str | None
     help_epilogue: str | None
+    help_formatter: object | None
     subcommands: dict[int, _SubcommandVisibility]
 
 
@@ -109,6 +208,7 @@ def _snapshot_baseline(group_app: App, group_name: str) -> None:
     _BASELINE[group_name] = _GroupBaseline(
         help=group_app.help,
         help_epilogue=group_app.help_epilogue,
+        help_formatter=group_app.help_formatter,
         subcommands=subcommands,
     )
 
@@ -131,6 +231,7 @@ def _restore_baseline(group_app: App, group_name: str) -> None:
 
     group_app.help = baseline.help
     group_app.help_epilogue = baseline.help_epilogue
+    group_app.help_formatter = baseline.help_formatter
 
 
 def _apply_subcommand_visibility(
@@ -186,6 +287,7 @@ def apply_agent_help(
 
     _snapshot_baseline(group_app, group_name)
     _set_advanced_params_visibility(group_name, agent_mode=agent_mode, advanced=advanced)
+    group_app.help_formatter = _ALIGNED_PLAIN_FORMATTER
     if agent_mode:
         visible = (
             AGENT_VISIBLE_SUBCOMMANDS.get(group_name)

@@ -13,7 +13,7 @@ Launch detached, then wait — never block the turn or background-wrap.
 
 - Launch with --bg; it returns a spawn id without waiting for the work and
   runs the worker detached:
-      meridian spawn -a <agent> --prompt-file /tmp/<task>.md --bg
+      meridian spawn -a <agent> --prompt-file <prompt>.md --bg
 - NEVER wrap `meridian spawn --bg` inside Bash's run_in_background. It
   already detaches — double-wrapping adds nothing and lets the harness kill
   the launcher mid-startup, before it hands off to the detached worker; the
@@ -35,7 +35,7 @@ Launch detached, then wait — never block the turn or double-background.
 
 - Launch with --bg; it returns a spawn id without waiting for the work and
   runs the worker detached:
-      meridian spawn -a <agent> --prompt-file /tmp/<task>.md --bg
+      meridian spawn -a <agent> --prompt-file <prompt>.md --bg
 - NEVER wrap `meridian spawn --bg` in your harness's background execution.
   It already detaches — double-wrapping adds nothing and lets the harness
   kill the launcher mid-startup, before it hands off to the detached worker;
