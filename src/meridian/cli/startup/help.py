@@ -102,6 +102,7 @@ _HUMAN_COMMAND_ORDER = (
     "mars",
     "init",
     "chat",
+    "mktemp",
     "doctor",
     "bootstrap",
     "ext",

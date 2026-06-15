@@ -37,7 +37,7 @@ def render_group_help(group_name: str, *, agent_mode: bool, advanced: bool = Fal
     if lean:
         agent_notes_brief = group.agent_notes_brief
         if agent_notes_brief is not None:
-            sections.append("Quick start:\n\n" + agent_notes_brief.rstrip())
+            sections.append("Playbook:\n\n" + agent_notes_brief.rstrip())
     elif agent_mode and group.agent_notes:
         sections.append("Agent Notes:\n\n" + group.agent_notes.rstrip())
 
@@ -48,10 +48,11 @@ GROUPS: dict[str, GroupHelp] = {
     "spawn": GroupHelp(
         summary="Run subagents with a model and prompt file.",
         long_help=(
-            "Run subagents with a model and prompt file. Runs in the foreground by "
-            "default; pass --bg to return immediately with a spawn id and track it "
-            "with `meridian spawn wait`. For delegation, write the prompt to a file "
-            "and pass --prompt-file."
+            "Hand a task to a subagent — a bulk read, a parallel fix, or a job for a "
+            "stronger or cheaper model — so you keep your own context for the parts "
+            "that need your judgment. Write the task to a file and pass --prompt-file; "
+            "add --bg to launch detached and collect the result with "
+            "`meridian spawn wait`."
         ),
         examples=(
             ("meridian spawn -m gpt-5.3-codex --prompt-file /tmp/fix-auth.md --bg", ""),
@@ -78,7 +79,8 @@ GROUPS: dict[str, GroupHelp] = {
             "timed_out.\n\n"
             "Prompt passing: use --prompt-file for delegation. Inline -p is for "
             "trivial smoke tests only because shell quoting mutates prompts "
-            "($vars, backticks, quotes, multiline) before meridian sees them.\n\n"
+            "($vars, backticks, quotes, multiline) before meridian sees them. "
+            "Get a portable temp file with `meridian mktemp`.\n\n"
             "Profile vs model: prefer -a <profile> when a role fits; use "
             "-m <model> for one-offs. Put recurring model choices in profiles "
             "or config, not hardcoded spawn commands.\n\n"
@@ -102,28 +104,30 @@ GROUPS: dict[str, GroupHelp] = {
             "Stage spawn changes: `meridian spawn files <id> | xargs git add`."
         ),
         agent_notes_brief=(
-            "Core loop: launch detached with --bg, then drain with no-arg `meridian "
-            "spawn wait` before you respond, start dependent work, or end your turn — "
-            "un-waited spawns are lost. Launch several --bg and let one `wait` "
-            "drain them all; avoid repeated `spawn show` / `session log` — wait when you "
-            "need results.\n\n"
-            "Delegate with --prompt-file for any real prompt; inline -p is only for a "
-            "one-word smoke test (shell quoting corrupts $vars, quotes, and newlines). "
-            "Pick a role with -a <profile> or a one-off model with -m. Parameterize a "
-            "reusable prompt file with --prompt-var (details in --advanced).\n\n"
-            "Before you launch:\n"
-            "- Context: pass one folder plus at most one source-of-truth file. AGENTS.md "
-            "and .context/CONTEXT.md auto-load from the work dir — don't re-pass them. "
-            "Use --from for prior reasoning that isn't in files.\n"
-            "- --goal: a verifiable exit state (e.g. \"tests pass, lint clean\"), "
-            "not a restatement of the task.\n"
-            "- Reuse: --continue resumes the same session; --fork branches preserving "
-            "identity; --fork-fresh branches and changes identity (weaker cache); --from "
-            "starts fresh with prior context as reference.\n\n"
-            "Inspect a run: `meridian session log <id>`. Steer one: `meridian spawn "
-            "inject`. Find transcript text: `meridian session search`.\n"
-            "Full methodology, troubleshooting, and all flags: `meridian spawn -h "
-            "--advanced`."
+            "The launch/drain loop is in your spawn contract; this is everything "
+            "around it.\n\n"
+            "Delegate with --prompt-file, never inline -p. The shell mangles a prompt "
+            "before meridian sees it — backticks run as commands, $vars expand, quotes "
+            "and newlines collapse. A file preserves exact text and keeps the handoff "
+            "inspectable. Get a portable temp file with `meridian mktemp` (don't hardcode "
+            "/tmp), write your prompt to it, then pass it:\n"
+            "  f=$(meridian mktemp)\n"
+            "  meridian spawn -a coder --prompt-file \"$f\" --bg\n\n"
+            "Pick the runner: -a <profile> when a role fits, -m <model> for a one-off. "
+            "Keep recurring model choices in profiles or config, not in the command.\n\n"
+            "Pass context as a folder, not a file pile. A folder says where to work and "
+            "lets the agent read what it needs; each extra -f may get inlined and drains "
+            "its context. Usual shape: one folder plus at most one source-of-truth file. "
+            "AGENTS.md and .context/CONTEXT.md auto-load from the work dir — don't "
+            "re-pass them. Use --from for prior reasoning that isn't in any file.\n\n"
+            "Set --goal to a verifiable exit state (\"tests pass, lint clean\"), not a "
+            "restatement of the task — it's the contract the agent works until it meets.\n\n"
+            "Going parallel? Launch several --bg and let one `wait` drain them all; don't "
+            "babysit with repeated `spawn show` / `session log` — that spends your "
+            "context supervising instead of working.\n\n"
+            "Reuse a session: --continue resumes it; --fork branches keeping identity; "
+            "--fork-fresh branches and lets identity change (weaker cache). Full "
+            "methodology and every flag: `meridian spawn -h --advanced`."
         ),
         agent_subcommands=(
             "show",
@@ -323,6 +327,10 @@ GROUPS: dict[str, GroupHelp] = {
     "migrate": GroupHelp(
         summary="Run state and configuration migrations.",
         long_help="Run state and configuration migrations.",
+    ),
+    "mktemp": GroupHelp(
+        summary="Create a temp file and print its absolute path.",
+        long_help="Create a temp file and print its absolute path.",
     ),
     "qi": GroupHelp(
         summary="Inline knowledge navigation: AGENTS.md and .context/ locations.",
