@@ -4,6 +4,13 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- `meridian qi explore` — local web UI for browsing qi-layer boundaries, cross-root links, and annotated markdown content.
+- `meridian qi graph` accepts multiple paths.
+- `meridian qi explore` accepts multiple roots; context (kb/work/strategy) loads from a root only when it directly contains meridian.toml (no walk-up / no env inheritance).
+- Canonical `SKIP_DIRS` in `lib/ignores.py` shared by kg, mermaid, and qi scanners.
+- `build_analysis()` multi-root scan (`roots`), per-node `scan_root` attribution, and optional `file_filter`.
+
 ## [0.3.9] - 2026-06-13
 
 ### Fixed

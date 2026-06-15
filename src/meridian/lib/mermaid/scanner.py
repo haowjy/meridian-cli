@@ -9,26 +9,8 @@ from typing import Any, cast
 
 import pathspec
 
-from meridian.lib.ignores import load_ignore_patterns
+from meridian.lib.ignores import SKIP_DIRS, load_ignore_patterns
 from meridian.lib.markdown.extract import extract_file
-
-# Directories to skip unconditionally during walks
-_SKIP_DIRS = frozenset(
-    {
-        ".git",
-        ".venv",
-        "venv",
-        "node_modules",
-        "__pycache__",
-        ".tox",
-        "dist",
-        "build",
-        "site-packages",
-        ".mypy_cache",
-        ".ruff_cache",
-        ".pytest_cache",
-    }
-)
 
 # File extensions to scan
 _MERMAID_STANDALONE = frozenset({".mmd", ".mermaid"})
@@ -173,7 +155,7 @@ def _collect_from_directory(
             continue
 
         # Prune skipped directories in-place
-        dirnames[:] = [d for d in dirnames if d not in _SKIP_DIRS]
+        dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS]
 
         for filename in filenames:
             file_path = dirpath / filename

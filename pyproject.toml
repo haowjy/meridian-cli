@@ -73,7 +73,7 @@ build-backend = "hatchling.build"
 path = "src/meridian/__init__.py"
 
 [tool.hatch.build]
-artifacts = ["src/meridian/web_dist/*", "src/meridian/pi_runtime/dist/extensions/*"]
+artifacts = ["src/meridian/web_dist/*", "src/meridian/pi_runtime/dist/extensions/*", "src/meridian/qi_explorer/*.html"]
 
 [tool.hatch.build.targets.sdist]
 include = [

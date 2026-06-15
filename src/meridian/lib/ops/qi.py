@@ -7,25 +7,7 @@ from pathlib import Path
 from pydantic import BaseModel, ConfigDict
 
 from meridian.lib.core.util import FormatContext
-
-# Directories to skip during discovery scans.
-_SKIP_DIRS: frozenset[str] = frozenset(
-    {
-        ".git",
-        ".meridian",
-        "__pycache__",
-        "node_modules",
-        ".venv",
-        "venv",
-        ".tox",
-        ".mypy_cache",
-        ".ruff_cache",
-        ".pytest_cache",
-        "dist",
-        "build",
-        ".agents",
-    }
-)
+from meridian.lib.ignores import SKIP_DIRS
 
 
 class QiKnowledgePoint(BaseModel):
@@ -99,7 +81,7 @@ def discover_knowledge_points(root: Path) -> list[QiKnowledgePoint]:
     for dirpath_str, dirnames, filenames in os.walk(root):
         dirpath = Path(dirpath_str)
         # Prune skipped directories in-place so os.walk doesn't descend into them.
-        dirnames[:] = [d for d in dirnames if d not in _SKIP_DIRS]
+        dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS]
 
         if "AGENTS.md" in filenames:
             points.append(QiKnowledgePoint(rel_path=_rel(dirpath / "AGENTS.md"), kind="agents"))
@@ -307,7 +289,7 @@ def qi_check_sync(root: Path) -> QiCheckOutput:
 
     for dirpath_str, dirnames, filenames in os.walk(root):
         dirpath = Path(dirpath_str)
-        dirnames[:] = [d for d in dirnames if d not in _SKIP_DIRS]
+        dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS]
 
         # Check .context/ directory health
         if ".context" in dirnames:

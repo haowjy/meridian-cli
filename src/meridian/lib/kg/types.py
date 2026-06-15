@@ -19,8 +19,9 @@ class GraphNode:
     """One document in the knowledge graph."""
 
     doc: ExtractedDocument
-    rel_path: str  # path relative to root (display key), forward slashes
+    rel_path: str  # path relative to scan root (display key), forward slashes
     in_degree: int = 0  # count of inbound links (computed)
+    scan_root: Path | None = None  # absolute scan root this node belongs to
 
 
 @dataclass

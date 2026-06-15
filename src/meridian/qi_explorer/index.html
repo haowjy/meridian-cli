@@ -1,0 +1,947 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>qi explore</title>
+<!--
+  Pinned versions: three@0.158 still ships build/three.min.js (the legacy global
+  UMD build); 3d-force-graph@1.73 is compatible with that three. Unpinned
+  versions resolve to three@r170+ (no global UMD) and 3d-force-graph@1.80,
+  which crashes with "Ak.Timer is not a constructor" due to a duplicate THREE.
+-->
+<script src="https://cdn.jsdelivr.net/npm/three@0.158.0/build/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/3d-force-graph@1.73.4/dist/3d-force-graph.min.js"></script>
+<style>
+  :root {
+    /* Neutral chrome — kept desaturated so node colors are the accent. */
+    --bg:           #0d1117;
+    --bg-raised:   #131922;
+    --bg-sunken:   #0a0e14;
+    --border:      #1f2734;
+    --border-soft: #19202b;
+    --text:        #d7dde6;
+    --text-muted:  #8a93a3;
+    --text-dim:    #5c6675;
+    --text-bright: #f0f3f8;
+
+    /* Scan-root accents (mirror the API contract). */
+    --c-codebase: #4a9eff;
+    --c-kb:       #10b981;
+    --c-strategy: #8b5cf6;
+    --c-work:     #f59e0b;
+    --c-other:    #94a3b8;
+
+    /* Link category cues. */
+    --link-cross:  #4a9eff;
+    --link-source: #8a93a3;
+    --link-ext:    #9aa4b3;
+    --link-broken: #e06464;
+
+    --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Inter, sans-serif;
+    --font-mono: ui-monospace, "JetBrains Mono", SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  }
+
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font-sans);
+    font-size: 14px;
+    line-height: 1.55;
+    overflow: hidden;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  /* ---------- Layout ---------- */
+  .app {
+    display: grid;
+    grid-template-rows: 44px 1fr;
+    grid-template-columns: 1fr;
+    height: 100vh;
+  }
+
+  .topbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 14px;
+    background: var(--bg-raised);
+    border-bottom: 1px solid var(--border);
+    z-index: 10;
+  }
+  .topbar__left {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+  }
+  .topbar__brand {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--text-muted);
+    letter-spacing: 0.02em;
+  }
+  .topbar__repo {
+    font-weight: 600;
+    color: var(--text-bright);
+    font-size: 13px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 60vw;
+  }
+  .topbar__sep {
+    color: var(--text-dim);
+  }
+  .topbar__right {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .topbar__count {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--text-dim);
+  }
+  .btn {
+    appearance: none;
+    background: transparent;
+    color: var(--text);
+    border: 1px solid var(--border);
+    padding: 5px 12px;
+    border-radius: 4px;
+    font: inherit;
+    font-size: 12px;
+    cursor: pointer;
+    transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
+  }
+  .btn:hover { background: #1a2230; border-color: #2a3445; color: var(--text-bright); }
+  .btn:active { background: #232c3d; }
+  .btn:disabled { color: var(--text-dim); cursor: progress; }
+
+  .main {
+    display: grid;
+    grid-template-columns: minmax(0, 3fr) minmax(360px, 2fr);
+    min-height: 0;
+  }
+  @media (max-width: 900px) {
+    .main { grid-template-columns: 1fr; grid-template-rows: 50vh 1fr; }
+  }
+
+  /* ---------- Graph pane ---------- */
+  .graph {
+    position: relative;
+    background: var(--bg-sunken);
+    border-right: 1px solid var(--border);
+    min-width: 0;
+    min-height: 0;
+    overflow: hidden;
+  }
+  .graph__canvas { width: 100%; height: 100%; }
+  .graph__legend {
+    position: absolute;
+    left: 14px;
+    bottom: 14px;
+    background: rgba(13, 17, 23, 0.85);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 8px 10px;
+    font-size: 11px;
+    color: var(--text-muted);
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+    max-width: calc(100% - 28px);
+  }
+  .legend-item { display: inline-flex; align-items: center; gap: 6px; }
+  .legend-swatch {
+    width: 8px; height: 8px; border-radius: 50%;
+    display: inline-block;
+  }
+
+  .graph__empty,
+  .graph__loading {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    color: var(--text-muted);
+    gap: 8px;
+    padding: 20px;
+  }
+  .graph__empty h2 {
+    margin: 0;
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--text);
+  }
+  .graph__empty p {
+    margin: 0;
+    font-size: 13px;
+    max-width: 420px;
+  }
+  .graph__loading {
+    font-family: var(--font-mono);
+    font-size: 12px;
+  }
+
+  /* ---------- Content pane ---------- */
+  .content {
+    background: var(--bg);
+    overflow-y: auto;
+    overflow-x: hidden;
+    min-height: 0;
+    min-width: 0;
+  }
+  .content__inner {
+    padding: 22px 28px 64px;
+    max-width: 760px;
+    margin: 0 auto;
+  }
+  .content__header {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding-bottom: 14px;
+    margin-bottom: 18px;
+    border-bottom: 1px solid var(--border-soft);
+  }
+  .content__title {
+    font-size: 18px;
+    font-weight: 600;
+    color: var(--text-bright);
+    margin: 0;
+    line-height: 1.3;
+  }
+  .content__meta {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 10px;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--text-dim);
+  }
+  .content__path { color: var(--text-muted); }
+  .content__inbound {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    color: var(--text-dim);
+  }
+  .content__inbound strong {
+    color: var(--text-muted);
+    font-weight: 600;
+  }
+  .content__section-label {
+    display: block;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    letter-spacing: 0.08em;
+    color: var(--text-dim);
+    margin: 28px 0 6px;
+    padding-bottom: 4px;
+    border-bottom: 1px dashed var(--border-soft);
+    text-transform: lowercase;
+  }
+  .content__section-label:first-of-type { margin-top: 8px; }
+
+  .content__placeholder {
+    color: var(--text-muted);
+    padding: 40px 0;
+    text-align: center;
+  }
+  .content__placeholder code {
+    color: var(--text);
+    background: var(--bg-raised);
+    padding: 2px 6px;
+    border-radius: 3px;
+    font-size: 12px;
+  }
+
+  /* ---------- File viewer ---------- */
+  .file-view {
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: var(--bg-sunken);
+    margin-top: 6px;
+  }
+  .file-view__header {
+    padding: 6px 10px;
+    border-bottom: 1px solid var(--border);
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--text-muted);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 8px;
+  }
+  .file-view__kind { color: var(--text-dim); }
+  .file-view pre {
+    margin: 0;
+    padding: 12px 14px;
+    font-family: var(--font-mono);
+    font-size: 12.5px;
+    line-height: 1.55;
+    overflow-x: auto;
+    color: var(--text);
+    white-space: pre;
+    tab-size: 4;
+  }
+  .file-view__notice {
+    padding: 14px;
+    font-size: 13px;
+    color: var(--text-muted);
+  }
+
+  /* ---------- Rendered markdown ---------- */
+  .md { color: var(--text); }
+  .md h1, .md h2, .md h3, .md h4, .md h5, .md h6 {
+    color: var(--text-bright);
+    font-weight: 600;
+    line-height: 1.3;
+    margin: 1.6em 0 0.5em;
+  }
+  .md h1 { font-size: 22px; margin-top: 0.3em; }
+  .md h2 {
+    font-size: 17px;
+    border-bottom: 1px solid var(--border-soft);
+    padding-bottom: 0.3em;
+  }
+  .md h3 { font-size: 15px; }
+  .md h4 { font-size: 14px; color: var(--text); }
+  .md p { margin: 0 0 0.9em; }
+  .md ul, .md ol { padding-left: 1.4em; margin: 0 0 0.9em; }
+  .md li { margin: 0.15em 0; }
+  .md li > p { margin: 0.2em 0; }
+  .md blockquote {
+    margin: 0 0 0.9em;
+    padding: 0.1em 1em;
+    border-left: 2px solid var(--border);
+    color: var(--text-muted);
+  }
+  .md hr {
+    border: 0;
+    border-top: 1px solid var(--border-soft);
+    margin: 1.6em 0;
+  }
+  .md code {
+    font-family: var(--font-mono);
+    font-size: 0.88em;
+    background: var(--bg-raised);
+    padding: 1px 5px;
+    border-radius: 3px;
+    color: var(--text-bright);
+  }
+  .md pre {
+    background: var(--bg-sunken);
+    border: 1px solid var(--border-soft);
+    border-radius: 4px;
+    padding: 12px 14px;
+    overflow-x: auto;
+    margin: 0 0 1em;
+    font-size: 12.5px;
+    line-height: 1.55;
+  }
+  .md pre code {
+    background: transparent;
+    padding: 0;
+    border-radius: 0;
+    color: var(--text);
+    font-size: inherit;
+  }
+  .md table {
+    border-collapse: collapse;
+    margin: 0 0 1em;
+    font-size: 13px;
+    width: 100%;
+    display: block;
+    overflow-x: auto;
+  }
+  .md th, .md td {
+    border: 1px solid var(--border-soft);
+    padding: 5px 9px;
+    text-align: left;
+  }
+  .md th { background: var(--bg-raised); color: var(--text-bright); font-weight: 600; }
+  .md img { max-width: 100%; }
+  .md a { color: var(--link-cross); }
+
+  /* ---------- Link categories ----------
+     The server sets data-category on every <a>; styling is scoped to those
+     classes so categories are visually distinct without being decorative. */
+  .qi-link {
+    text-decoration: none;
+    border-bottom: 1px solid transparent;
+    transition: color 100ms ease, border-color 100ms ease;
+    cursor: pointer;
+  }
+  .qi-link--cross-ref {
+    color: var(--link-cross);
+    border-bottom-color: rgba(74, 158, 255, 0.35);
+  }
+  .qi-link--cross-ref:hover {
+    border-bottom-color: var(--link-cross);
+  }
+  .qi-link--source-ref {
+    color: var(--link-source);
+    border-bottom: 1px dotted var(--text-dim);
+  }
+  .qi-link--source-ref:hover {
+    color: var(--text-bright);
+    border-bottom-color: var(--text-muted);
+  }
+  .qi-link--external {
+    color: var(--link-ext);
+    border-bottom: 1px solid var(--border);
+  }
+  .qi-link--external:hover {
+    color: var(--text-bright);
+    border-bottom-color: var(--text-muted);
+  }
+  /* External glyph as CSS, not emoji. */
+  .qi-link--external::after {
+    content: "";
+    display: inline-block;
+    width: 0.65em;
+    height: 0.65em;
+    margin-left: 3px;
+    vertical-align: 0.05em;
+    background-color: currentColor;
+    -webkit-mask: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><path d='M6 2h8v8h-2V5.4l-7.3 7.3-1.4-1.4L10.6 4H6z'/></svg>") no-repeat center / contain;
+            mask: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><path d='M6 2h8v8h-2V5.4l-7.3 7.3-1.4-1.4L10.6 4H6z'/></svg>") no-repeat center / contain;
+    opacity: 0.6;
+  }
+  .qi-link--external:hover::after { opacity: 1; }
+  .qi-link--broken {
+    color: var(--link-broken);
+    text-decoration: line-through;
+    text-decoration-color: rgba(224, 100, 100, 0.5);
+    cursor: not-allowed;
+    border-bottom: none;
+  }
+  .qi-link--broken:hover { color: var(--link-broken); }
+
+  /* ---------- Toast ---------- */
+  .toast {
+    position: fixed;
+    bottom: 16px;
+    right: 16px;
+    background: var(--bg-raised);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 8px 12px;
+    font-size: 12px;
+    color: var(--text);
+    box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+    opacity: 0;
+    transform: translateY(6px);
+    transition: opacity 160ms ease, transform 160ms ease;
+    pointer-events: none;
+    z-index: 100;
+    max-width: 340px;
+  }
+  .toast--visible { opacity: 1; transform: translateY(0); }
+  .toast--error { border-color: #6b2c2c; color: #f4c1c1; }
+
+  /* ---------- Scrollbar (subtle) ---------- */
+  .content::-webkit-scrollbar,
+  .file-view pre::-webkit-scrollbar,
+  .md pre::-webkit-scrollbar { width: 10px; height: 10px; }
+  .content::-webkit-scrollbar-track,
+  .file-view pre::-webkit-scrollbar-track,
+  .md pre::-webkit-scrollbar-track { background: transparent; }
+  .content::-webkit-scrollbar-thumb,
+  .file-view pre::-webkit-scrollbar-thumb,
+  .md pre::-webkit-scrollbar-thumb {
+    background: #1f2734;
+    border-radius: 5px;
+    border: 2px solid var(--bg);
+  }
+  .content::-webkit-scrollbar-thumb:hover { background: #2a3445; }
+</style>
+</head>
+<body>
+<div class="app">
+  <header class="topbar">
+    <div class="topbar__left">
+      <span class="topbar__brand">qi explore</span>
+      <span class="topbar__sep">/</span>
+      <span class="topbar__repo" id="repoName">…</span>
+    </div>
+    <div class="topbar__right">
+      <span class="topbar__count" id="graphCount"></span>
+      <button class="btn" id="rescanBtn" type="button">Rescan</button>
+    </div>
+  </header>
+
+  <main class="main">
+    <section class="graph" id="graphPane">
+      <div class="graph__canvas" id="graphCanvas"></div>
+      <div class="graph__loading" id="graphLoading">loading graph…</div>
+    </section>
+
+    <aside class="content" id="contentPane">
+      <div class="content__inner" id="contentInner">
+        <div class="content__placeholder">
+          Click a node in the graph to load its <code>AGENTS.md</code> and <code>CONTEXT.md</code>.
+        </div>
+      </div>
+    </aside>
+  </main>
+</div>
+
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<script>
+(() => {
+  "use strict";
+
+  // ---------- Constants ----------
+  const COLORS = {
+    codebase: "#4a9eff",
+    kb:       "#10b981",
+    strategy: "#8b5cf6",
+    work:     "#f59e0b",
+  };
+  const EXTENDED_PALETTE = [
+    "#ec4899",
+    "#14b8a6",
+    "#eab308",
+    "#f97316",
+    "#06b6d4",
+    "#a855f7",
+    "#84cc16",
+    "#ef4444",
+  ];
+  const COLOR_FALLBACK = "#94a3b8";
+  const DIM_COLOR = "#2a3038";
+  const DIM_LINK_COLOR = "#1c2230";
+
+  // ---------- DOM refs ----------
+  const $repoName    = document.getElementById("repoName");
+  const $graphCount  = document.getElementById("graphCount");
+  const $rescanBtn   = document.getElementById("rescanBtn");
+  const $graphPane   = document.getElementById("graphPane");
+  const $graphCanvas = document.getElementById("graphCanvas");
+  const $graphLoading = document.getElementById("graphLoading");
+  const $contentInner = document.getElementById("contentInner");
+  const $toast = document.getElementById("toast");
+
+  // ---------- State ----------
+  let graphData = { nodes: [], links: [] };
+  let neighborMap = new Map();   // nodeId -> Set<neighborId>
+  let linkPairs = new Map();     // "src->dst" -> link object (for fast lookup)
+  let selectedId = null;
+  let fg = null;                 // ForceGraph3D instance
+  let scanRoots = [];
+  let groupColors = {};
+
+  // ---------- Utilities ----------
+  function buildGroupColors(roots) {
+    const map = {};
+    let paletteIdx = 0;
+    for (const root of roots || []) {
+      if (COLORS[root.name]) {
+        map[root.name] = COLORS[root.name];
+      } else {
+        map[root.name] = EXTENDED_PALETTE[paletteIdx % EXTENDED_PALETTE.length];
+        paletteIdx += 1;
+      }
+    }
+    return map;
+  }
+
+  function colorFor(group) {
+    return groupColors[group] || COLORS[group] || COLOR_FALLBACK;
+  }
+
+  function idOf(endpoint) {
+    // 3d-force-graph mutates link.source/target into node objects after first tick.
+    return (endpoint && typeof endpoint === "object") ? endpoint.id : endpoint;
+  }
+
+  function buildIndices(data) {
+    neighborMap = new Map();
+    linkPairs = new Map();
+    for (const n of data.nodes) neighborMap.set(n.id, new Set());
+    for (const l of data.links) {
+      const s = idOf(l.source);
+      const t = idOf(l.target);
+      if (neighborMap.has(s)) neighborMap.get(s).add(t);
+      if (neighborMap.has(t)) neighborMap.get(t).add(s);
+      linkPairs.set(s + "->" + t, l);
+    }
+  }
+
+  let toastTimer = null;
+  function toast(msg, opts = {}) {
+    $toast.textContent = msg;
+    $toast.classList.toggle("toast--error", !!opts.error);
+    $toast.classList.add("toast--visible");
+    if (toastTimer) clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => $toast.classList.remove("toast--visible"), opts.duration || 2600);
+  }
+
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, c => ({
+      "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+    }[c]));
+  }
+
+  // ---------- Network ----------
+  async function api(url, init) {
+    const res = await fetch(url, init);
+    const ct = res.headers.get("content-type") || "";
+    const body = ct.includes("application/json") ? await res.json() : await res.text();
+    if (!res.ok) {
+      const msg = (body && body.error) || res.statusText || ("HTTP " + res.status);
+      const err = new Error(msg);
+      err.status = res.status;
+      err.body = body;
+      throw err;
+    }
+    return body;
+  }
+
+  // ---------- Graph rendering ----------
+  function basenameOf(p) {
+    if (!p) return "";
+    let s = p;
+    const colon = s.indexOf(":");
+    if (colon > 0 && Object.prototype.hasOwnProperty.call(groupColors, s.slice(0, colon))) {
+      s = s.slice(colon + 1);
+    }
+    const parts = s.replace(/\\/g, "/").split("/").filter(Boolean);
+    return parts[parts.length - 1] || s || p;
+  }
+
+  function showEmptyState() {
+    $graphCanvas.innerHTML = "";
+    $graphLoading.style.display = "none";
+    const existing = $graphPane.querySelector(".graph__empty");
+    if (existing) existing.remove();
+    const el = document.createElement("div");
+    el.className = "graph__empty";
+    el.innerHTML = `
+      <h2>No qi-layer found</h2>
+      <p>No directories with <code style="font-family:var(--font-mono);color:var(--text);">AGENTS.md</code> or <code style="font-family:var(--font-mono);color:var(--text);">.context/CONTEXT.md</code> were discovered in this project or its context roots.</p>
+    `;
+    $graphPane.appendChild(el);
+    renderLegend([]);
+  }
+
+  function clearEmptyState() {
+    const existing = $graphPane.querySelector(".graph__empty");
+    if (existing) existing.remove();
+  }
+
+  function renderLegend(roots) {
+    let el = $graphPane.querySelector(".graph__legend");
+    if (!roots || roots.length === 0) { if (el) el.remove(); return; }
+    if (!el) {
+      el = document.createElement("div");
+      el.className = "graph__legend";
+      $graphPane.appendChild(el);
+    }
+    el.innerHTML = roots.map(r => {
+      const color = colorFor(r.name);
+      return `<span class="legend-item"><span class="legend-swatch" style="background:${color}"></span>${escapeHtml(r.name)}</span>`;
+    }).join("");
+  }
+
+  function initGraph(data) {
+    clearEmptyState();
+    $graphLoading.style.display = "none";
+    buildIndices(data);
+    graphData = data;
+
+    const rect = $graphPane.getBoundingClientRect();
+    fg = ForceGraph3D()($graphCanvas)
+      .width(rect.width)
+      .height(rect.height)
+      .backgroundColor("#0a0e14")
+      .graphData(data)
+      .nodeLabel(n => n.label || n.id)
+      .nodeRelSize(4)
+      .nodeVal(n => Math.max(1, (n.linkCount || 0) + 1))
+      .nodeColor(nodeColorFn)
+      .nodeOpacity(0.95)
+      .linkColor(linkColorFn)
+      .linkWidth(l => Math.max(0.5, Math.log2((l.weight || 1) + 1)))
+      .linkOpacity(0.55)
+      .linkDirectionalArrowLength(3.5)
+      .linkDirectionalArrowRelPos(1)
+      .linkDirectionalArrowColor(linkColorFn)
+      .linkLabel(l => l.label || "")
+      .onNodeClick(handleNodeClick)
+      .onBackgroundClick(() => {
+        selectedId = null;
+        refreshColors();
+      });
+  }
+
+  function nodeColorFn(n) {
+    if (!selectedId) return colorFor(n.group);
+    if (n.id === selectedId) return colorFor(n.group);
+    const nbrs = neighborMap.get(selectedId);
+    if (nbrs && nbrs.has(n.id)) return colorFor(n.group);
+    return DIM_COLOR;
+  }
+
+  function linkColorFn(l) {
+    if (!selectedId) return "#3a4456";
+    const s = idOf(l.source), t = idOf(l.target);
+    if (s === selectedId || t === selectedId) return "#5d6b82";
+    return DIM_LINK_COLOR;
+  }
+
+  function refreshColors() {
+    if (!fg) return;
+    fg.nodeColor(nodeColorFn).linkColor(linkColorFn).linkDirectionalArrowColor(linkColorFn);
+  }
+
+  function updateGraphData(data) {
+    graphData = data;
+    buildIndices(data);
+    if (!fg) { initGraph(data); return; }
+    fg.graphData(data);
+    refreshColors();
+  }
+
+  // ---------- Node interaction ----------
+  function focusNode(node) {
+    if (!fg || !node) return;
+    // node.x/y/z may be undefined for never-rendered nodes; engine ticks set them.
+    const x = node.x ?? 0, y = node.y ?? 0, z = node.z ?? 0;
+    const dist = 180;
+    // Camera position offset along the vector from origin to node, so we look toward it.
+    const r = Math.hypot(x, y, z) || 1;
+    const k = 1 + dist / r;
+    fg.cameraPosition({ x: x * k, y: y * k, z: z * k }, node, 1500);
+  }
+
+  function handleNodeClick(node) {
+    if (!node) return;
+    selectedId = node.id;
+    refreshColors();
+    focusNode(node);
+    loadContent(node.id);
+  }
+
+  function navigateToNodeId(nodeId) {
+    const node = graphData.nodes.find(n => n.id === nodeId);
+    if (!node) {
+      toast("Unknown node: " + nodeId, { error: true });
+      return;
+    }
+    handleNodeClick(node);
+  }
+
+  // ---------- Content panel ----------
+  function renderPlaceholder(text) {
+    $contentInner.innerHTML = `<div class="content__placeholder">${escapeHtml(text)}</div>`;
+  }
+
+  function renderContent(payload) {
+    const { id, label, relPath, agentsHtml, contextHtml, inboundFrom } = payload;
+    const inboundCount = (inboundFrom || []).length;
+
+    const headerHtml = `
+      <div class="content__header">
+        <h1 class="content__title">${escapeHtml(label || basenameOf(relPath) || id)}</h1>
+        <div class="content__meta">
+          <span class="content__path">${escapeHtml(id)}</span>
+          ${inboundCount > 0
+            ? `<span class="content__inbound" title="${escapeHtml(inboundFrom.join('\n'))}">·  <strong>${inboundCount}</strong> inbound ref${inboundCount === 1 ? "" : "s"}</span>`
+            : `<span class="content__inbound">·  no inbound refs</span>`}
+        </div>
+      </div>
+    `;
+
+    let body = "";
+    if (agentsHtml) {
+      body += `<span class="content__section-label">AGENTS.md</span>`;
+      body += `<div class="md">${agentsHtml}</div>`;
+    }
+    if (contextHtml) {
+      body += `<span class="content__section-label">.context/CONTEXT.md</span>`;
+      body += `<div class="md">${contextHtml}</div>`;
+    }
+    if (!agentsHtml && !contextHtml) {
+      body += `<div class="content__placeholder">This node has no rendered content.</div>`;
+    }
+
+    $contentInner.innerHTML = headerHtml + body;
+    $contentInner.scrollTop = 0;
+    const cp = document.getElementById("contentPane");
+    if (cp) cp.scrollTop = 0;
+  }
+
+  function renderFile(payload) {
+    const { path, content, kind } = payload;
+    const headerHtml = `
+      <div class="content__header">
+        <h1 class="content__title">${escapeHtml(basenameOf(path))}</h1>
+        <div class="content__meta">
+          <span class="content__path">${escapeHtml(path)}</span>
+          <span class="content__inbound">·  <strong>${escapeHtml(kind)}</strong></span>
+        </div>
+      </div>
+    `;
+
+    let body = "";
+    if (kind === "markdown") {
+      // Server returned rendered HTML for markdown files.
+      body = `<div class="md">${content || ""}</div>`;
+    } else if (kind === "source") {
+      // Server returned escaped raw text for source files.
+      body = `
+        <div class="file-view">
+          <div class="file-view__header">
+            <span>source</span>
+            <span class="file-view__kind">${escapeHtml(path)}</span>
+          </div>
+          <pre>${content || ""}</pre>
+        </div>
+      `;
+    } else if (kind === "binary") {
+      body = `<div class="file-view"><div class="file-view__notice">Binary file — cannot display.</div></div>`;
+    } else if (kind === "not-found") {
+      body = `<div class="file-view"><div class="file-view__notice">File not found.</div></div>`;
+    } else {
+      body = `<div class="file-view"><div class="file-view__notice">Unrecognized file kind: ${escapeHtml(String(kind))}</div></div>`;
+    }
+
+    $contentInner.innerHTML = headerHtml + body;
+    const cp = document.getElementById("contentPane");
+    if (cp) cp.scrollTop = 0;
+  }
+
+  async function loadContent(nodeId) {
+    try {
+      const body = await api("/api/content?id=" + encodeURIComponent(nodeId));
+      renderContent(body);
+    } catch (e) {
+      renderPlaceholder("Failed to load content: " + e.message);
+      toast("Content load failed: " + e.message, { error: true });
+    }
+  }
+
+  async function loadFile(scanRootRelId) {
+    try {
+      const body = await api("/api/file?path=" + encodeURIComponent(scanRootRelId));
+      renderFile(body);
+    } catch (e) {
+      if (e.status === 403) {
+        toast("Forbidden: " + scanRootRelId, { error: true });
+      } else {
+        toast("File load failed: " + e.message, { error: true });
+      }
+    }
+  }
+
+  // ---------- Delegated link click handler ----------
+  document.getElementById("contentPane").addEventListener("click", (e) => {
+    const a = e.target.closest("a");
+    if (!a) return;
+    // We only intercept anchors annotated by the server.
+    const category = a.dataset.category;
+    if (!category) return;
+    e.preventDefault();
+
+    switch (category) {
+      case "cross-ref": {
+        const nodeId = a.dataset.nodeId;
+        if (nodeId) navigateToNodeId(nodeId);
+        break;
+      }
+      case "source-ref": {
+        const file = a.dataset.file;
+        if (file) loadFile(file);
+        break;
+      }
+      case "external": {
+        const href = a.getAttribute("href");
+        if (href) window.open(href, "_blank", "noopener,noreferrer");
+        break;
+      }
+      case "broken":
+      default:
+        // No-op. Already styled via qi-link--broken.
+        break;
+    }
+  });
+
+  // ---------- Graph load / rescan ----------
+  async function loadGraph() {
+    try {
+      const data = await api("/api/graph");
+      onGraphData(data);
+    } catch (e) {
+      $graphLoading.textContent = "failed to load graph: " + e.message;
+      toast("Graph load failed: " + e.message, { error: true });
+    }
+  }
+
+  function onGraphData(data) {
+    scanRoots = data.scanRoots || [];
+    groupColors = buildGroupColors(scanRoots);
+    $repoName.textContent = basenameOf(data.root || "") || (scanRoots[0] && scanRoots[0].name) || "qi";
+    $graphCount.textContent = data.nodeCount != null && data.edgeCount != null
+      ? `${data.nodeCount} nodes · ${data.edgeCount} edges`
+      : `${(data.nodes || []).length} nodes · ${(data.links || []).length} edges`;
+
+    if (!data.nodes || data.nodes.length === 0) {
+      graphData = { nodes: [], links: [] };
+      buildIndices(graphData);
+      if (fg) { fg.graphData(graphData); }
+      showEmptyState();
+      return;
+    }
+
+    if (!fg) {
+      initGraph({ nodes: data.nodes, links: data.links });
+    } else {
+      updateGraphData({ nodes: data.nodes, links: data.links });
+    }
+    renderLegend(scanRoots);
+  }
+
+  $rescanBtn.addEventListener("click", async () => {
+    $rescanBtn.disabled = true;
+    const original = $rescanBtn.textContent;
+    $rescanBtn.textContent = "Rescanning…";
+    try {
+      const data = await api("/api/rescan", { method: "POST" });
+      onGraphData(data);
+      toast("Rescan complete");
+    } catch (e) {
+      toast("Rescan failed: " + e.message, { error: true });
+    } finally {
+      $rescanBtn.disabled = false;
+      $rescanBtn.textContent = original;
+    }
+  });
+
+  // ---------- Resize handling ----------
+  const ro = new ResizeObserver(() => {
+    if (!fg) return;
+    const r = $graphPane.getBoundingClientRect();
+    fg.width(r.width).height(r.height);
+  });
+  ro.observe($graphPane);
+
+  // ---------- Boot ----------
+  loadGraph();
+})();
+</script>
+</body>
+</html>
