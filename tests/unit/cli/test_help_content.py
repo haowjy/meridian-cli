@@ -124,7 +124,8 @@ def test_spawn_agent_group_help_has_lean_and_advanced_tiers() -> None:
     assert "Playbook:" in lean_spawn
     assert "meridian spawn -h --advanced" in lean_spawn
     assert "meridian mktemp" in lean_spawn
-    assert "spawn contract" in lean_spawn
+    assert "launch/drain loop" not in lean_spawn
+    assert "--fork / --fork-fresh" in lean_spawn
     assert "verifiable exit state" in lean_spawn
     assert "Core loop:" not in lean_spawn
     assert "Usage examples:" not in lean_spawn

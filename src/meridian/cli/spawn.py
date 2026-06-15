@@ -282,9 +282,9 @@ def _spawn_create(
         Parameter(
             name=["--from"],
             help=(
-                "Inherit context from a prior spawn or chat/session. Repeatable. Also "
-                "inherits the source's work item when neither --work nor the ambient session "
-                "provides one."
+                "Inherit context from a prior spawn or chat/session (repeatable). "
+                "Also inherits the source's work item when neither --work nor the "
+                "ambient session provides one."
             ),
             negative_iterable=(),
         ),
@@ -463,10 +463,11 @@ def _spawn_create(
         str | None,
         Parameter(
             name="--fork",
+            group=ADVANCED_PARAMS,
             help=(
                 "Fork from a session ref while preserving launch identity "
-                "(agent/model/skills): chat id (c123), spawn id (p123), "
-                "or raw harness session id."
+                "(agent/model/skills): chat id (c123), spawn id (p123), or raw "
+                "harness session id."
             ),
         ),
     ] = None,
@@ -474,6 +475,7 @@ def _spawn_create(
         str | None,
         Parameter(
             name="--fork-fresh",
+            group=ADVANCED_PARAMS,
             help=(
                 "Fork from a session ref and allow launch identity changes "
                 "(agent/model/skills). This may reduce prompt-cache locality."
@@ -1198,8 +1200,8 @@ def register_spawn_commands(app: App, emit: Emitter) -> tuple[set[str], dict[str
         _spawn_inject,
         name="inject",
         help=(
-            "Forward real user direction to a running spawn; self-generated nudges "
-            "waste its attention."
+            "Forward real user direction to a running spawn; self-generated "
+            "nudges waste its attention."
         ),
     )
     registered.add("spawn.inject")

@@ -28,10 +28,11 @@ class AlignedPlainFormatter(PlainFormatter):
         left_part = f"{self.indent}{left}: "
         if not desc:
             return f"{self.indent}{left}"
+        desc = " ".join(desc.split())
         width = console.width
         continuation_indent = " " * len(left_part)
         if len(left_part) >= width - 20:
-            block_indent = self.indent
+            block_indent = continuation_indent
             return left_part.rstrip() + "\n" + textwrap.fill(
                 desc,
                 width=width,

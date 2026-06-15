@@ -322,9 +322,14 @@ def test_spawn_help_advanced_params_panel_follows_help_tier() -> None:
     assert "Advanced:" not in agent_lean
     assert "--approval" not in agent_lean
     assert "--verbose" not in agent_lean
+    assert "FORK, --fork" not in agent_lean
+    assert "FORK-FRESH, --fork-fresh" not in agent_lean
+    assert "--continue" in agent_lean
     assert "Advanced:" in agent_advanced
     assert "--approval" in agent_advanced
     assert "--verbose" in agent_advanced
+    assert "FORK, --fork" in agent_advanced
+    assert "FORK-FRESH, --fork-fresh" in agent_advanced
     assert "Advanced:" in human
     assert "--approval" in human
     assert "status" in human_commands

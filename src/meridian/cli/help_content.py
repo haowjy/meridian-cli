@@ -104,8 +104,6 @@ GROUPS: dict[str, GroupHelp] = {
             "Stage spawn changes: `meridian spawn files <id> | xargs git add`."
         ),
         agent_notes_brief=(
-            "The launch/drain loop is in your spawn contract; this is everything "
-            "around it.\n\n"
             "Delegate with --prompt-file, never inline -p. The shell mangles a prompt "
             "before meridian sees it — backticks run as commands, $vars expand, quotes "
             "and newlines collapse. A file preserves exact text and keeps the handoff "
@@ -125,9 +123,8 @@ GROUPS: dict[str, GroupHelp] = {
             "Going parallel? Launch several --bg and let one `wait` drain them all; don't "
             "babysit with repeated `spawn show` / `session log` — that spends your "
             "context supervising instead of working.\n\n"
-            "Reuse a session: --continue resumes it; --fork branches keeping identity; "
-            "--fork-fresh branches and lets identity change (weaker cache). Full "
-            "methodology and every flag: `meridian spawn -h --advanced`."
+            "Reuse a session with --continue. Full methodology and every flag — "
+            "including --fork / --fork-fresh — is in `meridian spawn -h --advanced`."
         ),
         agent_subcommands=(
             "show",
