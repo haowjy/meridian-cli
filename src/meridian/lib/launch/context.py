@@ -73,6 +73,7 @@ from .command import (
 )
 from .composition import (
     ComposedLaunchContent,
+    CompositionBlock,
     ProjectedContent,
     PromptDocument,
     build_inline_file_contributions,
@@ -125,7 +126,7 @@ from .resolve import (
     resolve_profile_path,
     resolve_skill_paths,
 )
-from .spawn_guidance import resolve_spawn_prompt_blocks
+from .spawn_guidance import build_guidance_blocks
 from .text_utils import sanitize_prior_output, strip_stale_report_paths
 from .workspace import resolve_workspace_snapshot_for_launch
 
@@ -308,14 +309,6 @@ class PreparedLaunchSurface:
     @property
     def projected_content(self) -> ProjectedContent | None:
         return self.content.projected_content
-
-    @property
-    def agent_inventory_prompt(self) -> str | None:
-        return self.content.agent_inventory_prompt
-
-    @property
-    def context_prompt(self) -> str | None:
-        return self.content.context_prompt
 
     @property
     def seed_harness_session_id(self) -> str | None:
@@ -999,6 +992,50 @@ def compile_prepared_policy_surface(
 
 
 
+@dataclass(frozen=True)
+class _SharedComposition:
+    completion_contract: str
+    guidance_blocks: tuple[CompositionBlock, ...]
+
+
+def _build_shared_composition(
+    *,
+    request: SpawnRequest,
+    project_paths: ProjectConfigPaths,
+    active_work_dir: Path | None,
+    policy: ResolvedLaunchPolicy,
+) -> _SharedComposition:
+    context_prompt = build_context_prompt(
+        project_root=project_paths.project_root,
+        active_work_dir=active_work_dir,
+    ) or ""
+    guidance_blocks = build_guidance_blocks(
+        profile=policy.profile,
+        harness_id=policy.adapter.id,
+        bundle_inventory_prompt=policy.bundle_inventory_prompt,
+        context_prompt=context_prompt,
+    )
+    resolved_work_id = (request.work_id_hint or "").strip() or (
+        active_work_dir.name if active_work_dir is not None else ""
+    )
+    work_goal: str | None = None
+    if resolved_work_id:
+        project_state_dir = resolve_project_paths(project_paths.project_root).root_dir
+        work_item = work_store.get_work_item(project_state_dir, resolved_work_id)
+        if work_item is not None:
+            work_goal = work_item.goal
+    completion_contract = build_goal_instruction(request.goal)
+    work_goal_instruction = build_work_goal_instruction(work_goal)
+    if completion_contract and work_goal_instruction:
+        completion_contract = f"{work_goal_instruction}\n\n{completion_contract}"
+    elif work_goal_instruction:
+        completion_contract = work_goal_instruction
+    return _SharedComposition(
+        completion_contract=completion_contract,
+        guidance_blocks=guidance_blocks,
+    )
+
+
 def _resolve_spawn_prepare_projection(
     *,
     request: SpawnRequest,
@@ -1041,31 +1078,12 @@ def _resolve_spawn_prepare_projection(
         )
         agent_profile_body = f"# Agent Profile\n\n{rendered_agent_body}"
 
-    agent_inventory_prompt, spawn_contract_prompt = resolve_spawn_prompt_blocks(
-        profile=profile,
-        harness_id=harness.id,
-        bundle_inventory_prompt=policy.bundle_inventory_prompt,
-    )
-    context_prompt = build_context_prompt(
-        project_root=project_paths.project_root,
+    shared = _build_shared_composition(
+        request=request,
+        project_paths=project_paths,
         active_work_dir=active_work_dir,
-    ) or ""
-
-    resolved_work_id = (request.work_id_hint or "").strip() or (
-        active_work_dir.name if active_work_dir is not None else ""
+        policy=policy,
     )
-    work_goal: str | None = None
-    if resolved_work_id:
-        project_state_dir = resolve_project_paths(project_paths.project_root).root_dir
-        work_item = work_store.get_work_item(project_state_dir, resolved_work_id)
-        if work_item is not None:
-            work_goal = work_item.goal
-    completion_contract = build_goal_instruction(request.goal)
-    work_goal_instruction = build_work_goal_instruction(work_goal)
-    if completion_contract and work_goal_instruction:
-        completion_contract = f"{work_goal_instruction}\n\n{completion_contract}"
-    elif work_goal_instruction:
-        completion_contract = work_goal_instruction
 
     projected = harness.project_content(
         ComposedLaunchContent(
@@ -1073,10 +1091,8 @@ def _resolve_spawn_prepare_projection(
             available_skills=policy.bundle_available_skills,
             agent_profile_body=agent_profile_body,
             report_instruction=build_report_instruction(),
-            inventory_prompt=agent_inventory_prompt,
-            spawn_contract_prompt=spawn_contract_prompt,
-            context_prompt=context_prompt,
-            completion_contract=completion_contract,
+            guidance_blocks=shared.guidance_blocks,
+            completion_contract=shared.completion_contract,
             launch_preamble=build_spawn_preamble(launch_mode),
             passthrough_system_fragments=(),
             user_task_prompt=cleaned_user_prompt,
@@ -1091,8 +1107,6 @@ def _resolve_spawn_prepare_projection(
         loaded_references=task_ctx.reference_items,
         prompt_payload=prepare_prompt_payload(projected_content=projected),
         projected_content=projected,
-        agent_inventory_prompt=agent_inventory_prompt,
-        context_prompt=context_prompt,
     )
 
 
@@ -1109,15 +1123,12 @@ def _resolve_primary_projection(
     resolved_skills = policy.resolved_skills
     session_mode = ((request.session.primary_session_mode or "fresh").strip().lower()) or "fresh"
 
-    agent_inventory_prompt, spawn_contract_prompt = resolve_spawn_prompt_blocks(
-        profile=profile,
-        harness_id=harness.id,
-        bundle_inventory_prompt=policy.bundle_inventory_prompt,
-    )
-    context_prompt = build_context_prompt(
-        project_root=project_paths.project_root,
+    shared = _build_shared_composition(
+        request=request,
+        project_paths=project_paths,
         active_work_dir=active_work_dir,
-    ) or ""
+        policy=policy,
+    )
 
     seed = harness.seed_session(
         is_resume=session_mode == "resume",
@@ -1154,32 +1165,14 @@ def _resolve_primary_projection(
         reference_anchor=project_paths.execution_cwd,
     )
 
-    resolved_work_id = (request.work_id_hint or "").strip() or (
-        active_work_dir.name if active_work_dir is not None else ""
-    )
-    work_goal: str | None = None
-    if resolved_work_id:
-        project_state_dir = resolve_project_paths(project_paths.project_root).root_dir
-        work_item = work_store.get_work_item(project_state_dir, resolved_work_id)
-        if work_item is not None:
-            work_goal = work_item.goal
-    completion_contract = build_goal_instruction(request.goal)
-    work_goal_instruction = build_work_goal_instruction(work_goal)
-    if completion_contract and work_goal_instruction:
-        completion_contract = f"{work_goal_instruction}\n\n{completion_contract}"
-    elif work_goal_instruction:
-        completion_contract = work_goal_instruction
-
     projected = harness.project_content(
         ComposedLaunchContent(
             supplemental_documents=supplemental_documents,
             available_skills=policy.bundle_available_skills,
             agent_profile_body=agent_profile_body,
             report_instruction="",
-            inventory_prompt=agent_inventory_prompt,
-            spawn_contract_prompt=spawn_contract_prompt,
-            context_prompt=context_prompt,
-            completion_contract=completion_contract,
+            guidance_blocks=shared.guidance_blocks,
+            completion_contract=shared.completion_contract,
             launch_preamble=build_primary_preamble(),
             passthrough_system_fragments=passthrough_system_fragments,
             user_task_prompt=request.prompt,
@@ -1199,8 +1192,6 @@ def _resolve_primary_projection(
             loaded_references=task_ctx.reference_items,
             prompt_payload=prompt_payload,
             projected_content=projected,
-            agent_inventory_prompt=agent_inventory_prompt,
-            context_prompt=context_prompt,
         ),
         passthrough_args,
         seed.session_id or resolved_continue_harness_session_id,
@@ -1261,8 +1252,6 @@ def _prepare_spawn_surface(
                     user_turn_content=content.prompt_payload.user_turn_content,
                 ),
                 projected_content=content.projected_content,
-                agent_inventory_prompt=content.agent_inventory_prompt,
-                context_prompt=content.context_prompt,
             )
 
     return (
@@ -1419,8 +1408,6 @@ def prepare_launch_surface(
             user_turn_content=content.prompt_payload.user_turn_content,
         ),
         projected_content=content.projected_content,
-        agent_inventory_prompt=content.agent_inventory_prompt,
-        context_prompt=content.context_prompt,
     )
     profile_tools_for_nested_deny = (
         policies.resolved_tools if (profile is not None or using_policy_snapshot) else None

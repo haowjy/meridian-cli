@@ -299,8 +299,6 @@ def build_chat_backend_launch_plan(
         ),
         agent_profile_body=snapshot.prompt_inputs.agent_profile_body,
         report_instruction="",
-        inventory_prompt="",
-        context_prompt="",
         passthrough_system_fragments=(),
         user_task_prompt=initial_prompt,
         reference_items=(),

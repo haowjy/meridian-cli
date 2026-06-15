@@ -16,6 +16,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Agent-mode detection recognizes the primary launched agent (keys on `MERIDIAN_SPAWN_ID` managed-session membership, not `MERIDIAN_DEPTH > 0`).
 
 ### Changed
+- refactor: system prompt guidance now composed from extensible guidance blocks; agents get session/work/context discovery pointers
 - The agent inventory (`# Meridian Agents`) is gated on spawn capability: leaf agents (no `subagents`) no longer receive it.
 - The spawn contract is a first-class composition block (`spawn_contract_prompt`), applied exactly once on continue/fork instead of appended to the inventory string.
 - `LaunchPolicySnapshot` persists the agent profile as one nested `agent_profile` blob, so every field survives continue/fork replay.

@@ -11,6 +11,7 @@ See spec S-1 for category definitions.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from enum import IntEnum
 from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
@@ -28,9 +29,7 @@ SYSTEM_INSTRUCTION_BLOCK_ORDER: tuple[str, ...] = (
     "completion_contract",
     "supplemental_documents",
     "available_skills_listing",
-    "inventory_prompt",
-    "spawn_contract_prompt",
-    "context_prompt",
+    "guidance_blocks",
     "report_instruction",
     # passthrough_system_fragments appended last
 )
@@ -41,6 +40,19 @@ INLINE_BLOCK_ORDER: tuple[str, ...] = (
     "task_context",
     "user_task_prompt",
 )
+
+
+class GuidancePhase(IntEnum):
+    GUIDANCE = 0
+    ENVIRONMENT = 1
+
+
+@dataclass(frozen=True)
+class CompositionBlock:
+    name: str
+    phase: GuidancePhase
+    priority: int = 0
+    content: str = ""
 
 
 @dataclass(frozen=True)
@@ -143,12 +155,6 @@ class ComposedLaunchContent:
     report_instruction: str
     """The 'write a report' directive."""
 
-    inventory_prompt: str
-    """Agent inventory — SYSTEM_INSTRUCTION, not startup context."""
-
-    context_prompt: str
-    """Resolved context directories with env var names."""
-
     passthrough_system_fragments: tuple[str, ...]
     """Explicit --append-system-prompt passthrough args; appended last."""
 
@@ -163,9 +169,6 @@ class ComposedLaunchContent:
     prior_output: str
     """Sanitized prior-run output."""
 
-    spawn_contract_prompt: str = ""
-    """Harness-templated spawn usage contract; SYSTEM_INSTRUCTION."""
-
     completion_contract: str = ""
     """Deterministic bounded completion contract text (spawn goal)."""
 
@@ -174,6 +177,9 @@ class ComposedLaunchContent:
 
     available_skills: tuple[AvailableSkillEntry, ...] = ()
     """On-demand skills listed by name in the prompt (not loaded until triggered)."""
+
+    guidance_blocks: tuple[CompositionBlock, ...] = ()
+    """Ordered guidance blocks (inventory, spawn contract, discovery pointers, context env)."""
 
 
 @dataclass(frozen=True)
@@ -343,7 +349,7 @@ def render_system_instruction_blocks(content: ComposedLaunchContent) -> str:
     Order: agent_profile_body, completion_contract, auto-loaded skills
     (grouped by type: principles first, then guardrails, then others,
     then bootstrap), available skills listing (names only),
-    inventory_prompt, spawn_contract_prompt, context_prompt, report_instruction,
+    guidance_blocks (sorted by phase then priority), report_instruction,
     then passthrough fragments.
     """
     skill_type_priority = {"principle": 0, "guardrail": 1, "reference": 2}
@@ -381,6 +387,12 @@ def render_system_instruction_blocks(content: ComposedLaunchContent) -> str:
             listing = _render_available_skills_block(content.available_skills)
             if listing:
                 ordered_blocks.append(listing)
+            continue
+        if field_name == "guidance_blocks":
+            ordered = sorted(content.guidance_blocks, key=lambda b: (b.phase, b.priority))
+            for block in ordered:
+                if block.content.strip():
+                    ordered_blocks.append(block.content)
             continue
         ordered_blocks.append(getattr(content, field_name))
     return join_content_blocks(*ordered_blocks, *content.passthrough_system_fragments)
@@ -442,6 +454,8 @@ __all__ = [
     "SYSTEM_INSTRUCTION_BLOCK_ORDER",
     "AvailableSkillEntry",
     "ComposedLaunchContent",
+    "CompositionBlock",
+    "GuidancePhase",
     "InlineFileReferenceContribution",
     "ProjectedContent",
     "ProjectionChannels",

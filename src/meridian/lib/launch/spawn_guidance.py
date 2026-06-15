@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from meridian.lib.catalog.agent import AgentProfile
 from meridian.lib.core.types import HarnessId
+from meridian.lib.launch.composition import CompositionBlock, GuidancePhase
 
 _CLAUDE_SPAWN_CONTRACT = """\
 # Spawning subagents (meridian)
@@ -49,6 +50,24 @@ Launch detached, then wait — never block the turn or double-background.
   background spawns are lost.
 - Full reference:  meridian spawn -h"""
 
+_WORK_DISCOVERY = """\
+# Work coordination (meridian)
+
+Group related spawns under a work item — shared dir, goal, session history.
+Learn the commands:  meridian work -h"""
+
+_SESSION_DISCOVERY = """\
+# Session transcripts (meridian)
+
+Read what past spawns did — full transcripts and progress logs, searchable.
+Learn the commands:  meridian session -h"""
+
+_CONTEXT_DISCOVERY = """\
+# Context paths (meridian)
+
+Resolve where knowledge lives — kb, strategy, and work dirs.
+Learn the commands:  meridian context -h"""
+
 
 def _spawn_usage_contract(harness: HarnessId) -> str:
     if harness == HarnessId.CLAUDE:
@@ -64,23 +83,47 @@ def has_spawn_capability(profile: AgentProfile | None) -> bool:
     return len(profile.subagents) > 0
 
 
-def resolve_spawn_prompt_blocks(
+def build_guidance_blocks(
     *,
     profile: AgentProfile | None,
     harness_id: HarnessId,
     bundle_inventory_prompt: str | None,
-) -> tuple[str, str]:
-    """Return (inventory_block, spawn_contract_block).
+    context_prompt: str,
+) -> tuple[CompositionBlock, ...]:
+    """Build all system-prompt guidance blocks.
 
-    Both empty strings when the agent is not spawn-capable.
+    Spawn-gated (only when has_spawn_capability): inventory + spawn contract.
+    General (always): discovery pointers + context env vars.
     """
-    if not has_spawn_capability(profile):
-        return "", ""
-    inventory_block = (bundle_inventory_prompt or "").strip()
-    return inventory_block, _spawn_usage_contract(harness_id)
+    blocks: list[CompositionBlock] = []
+    if has_spawn_capability(profile):
+        inventory = (bundle_inventory_prompt or "").strip()
+        if inventory:
+            blocks.append(CompositionBlock("inventory", GuidancePhase.GUIDANCE, 0, inventory))
+        blocks.append(
+            CompositionBlock(
+                "spawn-contract",
+                GuidancePhase.GUIDANCE,
+                10,
+                _spawn_usage_contract(harness_id),
+            )
+        )
+    blocks.append(
+        CompositionBlock("work-discovery", GuidancePhase.GUIDANCE, 20, _WORK_DISCOVERY)
+    )
+    blocks.append(
+        CompositionBlock("session-discovery", GuidancePhase.GUIDANCE, 21, _SESSION_DISCOVERY)
+    )
+    blocks.append(
+        CompositionBlock("context-discovery", GuidancePhase.GUIDANCE, 22, _CONTEXT_DISCOVERY)
+    )
+    context_env = (context_prompt or "").strip()
+    if context_env:
+        blocks.append(CompositionBlock("context-env", GuidancePhase.ENVIRONMENT, 0, context_env))
+    return tuple(blocks)
 
 
 __all__ = [
+    "build_guidance_blocks",
     "has_spawn_capability",
-    "resolve_spawn_prompt_blocks",
 ]

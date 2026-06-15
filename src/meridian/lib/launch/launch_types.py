@@ -162,8 +162,6 @@ class PreparedLaunchContent:
     loaded_references: tuple[ReferenceItem, ...] = ()
     prompt_payload: PreparedPromptPayload = field(default_factory=PreparedPromptPayload)
     projected_content: ProjectedContent | None = None
-    agent_inventory_prompt: str | None = None
-    context_prompt: str | None = None
 
 
 @dataclass(frozen=True)

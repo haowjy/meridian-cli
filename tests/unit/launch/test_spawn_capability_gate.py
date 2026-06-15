@@ -12,6 +12,12 @@ from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
 from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.launch import bundle_adapter
+from meridian.lib.launch.composition import (
+    ComposedLaunchContent,
+    CompositionBlock,
+    GuidancePhase,
+    render_system_instruction_blocks,
+)
 from meridian.lib.launch.context import (
     PreparedLaunchSurface,
     build_context_prompt,
@@ -26,13 +32,14 @@ from meridian.lib.launch.request import (
     LaunchRuntime,
     SpawnRequest,
 )
-from meridian.lib.launch.spawn_guidance import has_spawn_capability, resolve_spawn_prompt_blocks
+from meridian.lib.launch.spawn_guidance import build_guidance_blocks, has_spawn_capability
 from tests.support.fixtures import allow_headless_claude
 from tests.support.launch import stub_bundle_request_and_resolve
 
 CONTRACT_MARKER = "# Spawning subagents (meridian)"
 PRE_GATE_INVENTORY = "## Meridian Agents\n\n- tech-lead\n- explorer"
 WAIT_GUIDANCE = "meridian spawn wait"
+SAMPLE_CONTEXT = "# Meridian Context\n\nwork: /tmp/work"
 
 
 def _sample_profile(
@@ -127,29 +134,54 @@ def _replay_request_from_snapshot(snapshot: LaunchPolicySnapshot, *, prompt: str
     )
 
 
+def _block_names(blocks: tuple[CompositionBlock, ...]) -> list[str]:
+    return [block.name for block in blocks]
+
+
 def test_gate_present_returns_inventory_and_contract_blocks(tmp_path: Path) -> None:
-    inventory, contract = resolve_spawn_prompt_blocks(
+    blocks = build_guidance_blocks(
         profile=_sample_profile(),
         harness_id=HarnessId.CLAUDE,
         bundle_inventory_prompt=PRE_GATE_INVENTORY,
+        context_prompt=SAMPLE_CONTEXT,
     )
+    names = _block_names(blocks)
 
-    assert inventory == PRE_GATE_INVENTORY
-    assert contract.count(CONTRACT_MARKER) == 1
-    assert "run_in_background" in contract
+    inventory = next(block for block in blocks if block.name == "inventory")
+    contract = next(block for block in blocks if block.name == "spawn-contract")
+
+    assert inventory.content == PRE_GATE_INVENTORY
+    assert contract.content.count(CONTRACT_MARKER) == 1
+    assert "run_in_background" in contract.content
+    assert names == [
+        "inventory",
+        "spawn-contract",
+        "work-discovery",
+        "session-discovery",
+        "context-discovery",
+        "context-env",
+    ]
     context = build_context_prompt(project_root=tmp_path, active_work_dir=None)
     assert "# Meridian Context" in context
 
 
 def test_gate_absent_returns_empty_blocks_but_context_still_builds(tmp_path: Path) -> None:
-    inventory, contract = resolve_spawn_prompt_blocks(
+    blocks = build_guidance_blocks(
         profile=_sample_profile(subagents=()),
         harness_id=HarnessId.CLAUDE,
         bundle_inventory_prompt=PRE_GATE_INVENTORY,
+        context_prompt=SAMPLE_CONTEXT,
     )
+    names = _block_names(blocks)
 
-    assert inventory == ""
-    assert contract == ""
+    assert "inventory" not in names
+    assert "spawn-contract" not in names
+    assert names == [
+        "work-discovery",
+        "session-discovery",
+        "context-discovery",
+        "context-env",
+    ]
     context = build_context_prompt(project_root=tmp_path, active_work_dir=None)
     assert "# Meridian Context" in context
 
@@ -169,23 +201,62 @@ def test_has_spawn_capability(profile: AgentProfile | None, expected: bool) -> N
 
 
 def test_resolve_spawn_prompt_blocks_is_harness_templated() -> None:
-    _, claude_contract = resolve_spawn_prompt_blocks(
+    claude_blocks = build_guidance_blocks(
         profile=_sample_profile(),
         harness_id=HarnessId.CLAUDE,
         bundle_inventory_prompt=None,
+        context_prompt="",
     )
-    _, generic_contract = resolve_spawn_prompt_blocks(
+    generic_blocks = build_guidance_blocks(
         profile=_sample_profile(),
         harness_id=HarnessId.CODEX,
         bundle_inventory_prompt=None,
+        context_prompt="",
+    )
+    claude_contract = next(block for block in claude_blocks if block.name == "spawn-contract")
+    generic_contract = next(block for block in generic_blocks if block.name == "spawn-contract")
+
+    assert "run_in_background" in claude_contract.content
+    assert "run_in_background" not in generic_contract.content
+    assert CONTRACT_MARKER in claude_contract.content
+    assert CONTRACT_MARKER in generic_contract.content
+    assert WAIT_GUIDANCE in claude_contract.content
+    assert WAIT_GUIDANCE in generic_contract.content
+
+
+def test_guidance_blocks_render_sorted_by_phase_and_priority() -> None:
+    blocks = (
+        CompositionBlock("context-env", GuidancePhase.ENVIRONMENT, 0, "CONTEXT-ENV"),
+        CompositionBlock("context-discovery", GuidancePhase.GUIDANCE, 22, "CONTEXT-DISCOVERY"),
+        CompositionBlock("session-discovery", GuidancePhase.GUIDANCE, 21, "SESSION-DISCOVERY"),
+        CompositionBlock("spawn-contract", GuidancePhase.GUIDANCE, 10, "SPAWN-CONTRACT"),
+        CompositionBlock("work-discovery", GuidancePhase.GUIDANCE, 20, "WORK-DISCOVERY"),
+        CompositionBlock("inventory", GuidancePhase.GUIDANCE, 0, "INVENTORY"),
+    )
+    content = ComposedLaunchContent(
+        supplemental_documents=(),
+        agent_profile_body="",
+        report_instruction="",
+        guidance_blocks=blocks,
+        passthrough_system_fragments=(),
+        user_task_prompt="",
+        reference_items=(),
+        prior_output="",
     )
 
-    assert "run_in_background" in claude_contract
-    assert "run_in_background" not in generic_contract
-    assert CONTRACT_MARKER in claude_contract
-    assert CONTRACT_MARKER in generic_contract
-    assert WAIT_GUIDANCE in claude_contract
-    assert WAIT_GUIDANCE in generic_contract
+    rendered = render_system_instruction_blocks(content)
+    expected_sequence = (
+        "INVENTORY",
+        "SPAWN-CONTRACT",
+        "WORK-DISCOVERY",
+        "SESSION-DISCOVERY",
+        "CONTEXT-DISCOVERY",
+        "CONTEXT-ENV",
+    )
+    cursor = -1
+    for part in expected_sequence:
+        cursor = rendered.find(part, cursor + 1)
+        assert cursor != -1, f"Expected '{part}' after position {cursor} in rendered output"
 
 
 def test_snapshot_round_trip_preserves_spawn_gate_fields() -> None:
@@ -289,7 +360,6 @@ def test_continue_fork_replay_appends_contract_exactly_once(
     initial_system_prompt = _composed_system_prompt(initial_prepared)
     assert initial_system_prompt.count(CONTRACT_MARKER) == 1
     assert initial_system_prompt.count(PRE_GATE_INVENTORY) == 1
-    assert CONTRACT_MARKER not in (initial_prepared.content.agent_inventory_prompt or "")
 
     monkeypatch.setattr(bundle_adapter, "request_and_resolve", _block_launch_bundle)
 
