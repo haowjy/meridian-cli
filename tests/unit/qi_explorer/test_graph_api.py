@@ -161,14 +161,15 @@ def test_discover_scan_roots_ignores_inherited_meridian_project_dir(
 
     monkeypatch.setenv("MERIDIAN_PROJECT_DIR", str(project_a.resolve()))
 
-    discovery = discover_scan_roots(nested)
+    discovery = discover_scan_roots([nested])
 
     assert discovery.primary == nested.resolve()
-    assert discovery.name_to_path["kb"] == project_b_kb.resolve()
-    assert discovery.name_to_path["kb"] != project_a_kb.resolve()
+    assert discovery.roots == [
+        ScanRoot(name="codebase", abs_path=nested.resolve(), kind="primary"),
+    ]
 
 
-def test_nested_subdir_discovers_same_context_roots(tmp_path: Path) -> None:
+def test_nested_subdir_without_meridian_toml_has_no_context_roots(tmp_path: Path) -> None:
     project_root = tmp_path / "repo"
     kb = project_root / "kb"
     nested = project_root / "src" / "nested"
@@ -179,10 +180,103 @@ def test_nested_subdir_discovers_same_context_roots(tmp_path: Path) -> None:
     _write(nested / "AGENTS.md", "# Nested\n")
     _write(kb / "AGENTS.md", "# KB\n")
 
-    from_root = discover_scan_roots(project_root)
-    from_nested = discover_scan_roots(nested)
+    from_root = discover_scan_roots([project_root])
+    from_nested = discover_scan_roots([nested])
 
-    assert {root.name for root in from_root.roots} == {root.name for root in from_nested.roots}
-    assert from_root.name_to_path["kb"] == from_nested.name_to_path["kb"]
-    assert from_root.primary == project_root.resolve()
-    assert from_nested.primary == nested.resolve()
+    assert {root.name for root in from_root.roots} == {"codebase", "kb"}
+    assert from_root.name_to_path["kb"] == kb.resolve()
+    assert from_nested.roots == [
+        ScanRoot(name="codebase", abs_path=nested.resolve(), kind="primary"),
+    ]
+
+
+def test_discover_scan_roots_loads_context_from_meridian_toml(tmp_path: Path) -> None:
+    project_root = tmp_path / "repo"
+    kb = project_root / "kb"
+    work = project_root / "work"
+    strategy = project_root / "strategy"
+    project_root.mkdir()
+    kb.mkdir()
+    work.mkdir()
+    strategy.mkdir()
+    _write(
+        project_root / "meridian.toml",
+        "\n".join(
+            [
+                '[context.kb]\npath = "kb"\n',
+                '[context.work]\npath = "work"\n',
+                '[context.strategy]\npath = "strategy"\n',
+            ]
+        ),
+    )
+
+    discovery = discover_scan_roots([project_root])
+
+    assert discovery.name_to_path["kb"] == kb.resolve()
+    assert discovery.name_to_path["work"] == work.resolve()
+    assert discovery.name_to_path["strategy"] == strategy.resolve()
+    context_roots = [root for root in discovery.roots if root.kind == "context"]
+    assert {root.name for root in context_roots} == {"kb", "work", "strategy"}
+
+
+def test_discover_scan_roots_meridian_local_toml_triggers_context(tmp_path: Path) -> None:
+    project_root = tmp_path / "repo"
+    kb = project_root / "kb"
+    project_root.mkdir()
+    kb.mkdir()
+    _write(project_root / "meridian.local.toml", '[context.kb]\npath = "kb"\n')
+
+    discovery = discover_scan_roots([project_root])
+
+    assert discovery.name_to_path["kb"] == kb.resolve()
+
+
+def test_discover_scan_roots_multiple_plain_primaries(tmp_path: Path) -> None:
+    alpha = tmp_path / "alpha"
+    beta = tmp_path / "beta"
+    alpha.mkdir()
+    beta.mkdir()
+
+    discovery = discover_scan_roots([alpha, beta])
+
+    primary_roots = [root for root in discovery.roots if root.kind == "primary"]
+    assert [root.name for root in primary_roots] == ["codebase", "beta"]
+    assert discovery.name_to_path["codebase"] == alpha.resolve()
+    assert discovery.name_to_path["beta"] == beta.resolve()
+
+
+def test_discover_scan_roots_unique_names_when_primary_basenames_collide(tmp_path: Path) -> None:
+    first = tmp_path / "pkg" / "a"
+    second = tmp_path / "other" / "a"
+    third = tmp_path / "more" / "a"
+    first.mkdir(parents=True)
+    second.mkdir(parents=True)
+    third.mkdir(parents=True)
+
+    discovery = discover_scan_roots([first, second, third])
+
+    primary_roots = [root for root in discovery.roots if root.kind == "primary"]
+    assert [root.name for root in primary_roots] == ["codebase", "a", "a-2"]
+
+
+def test_discover_scan_roots_two_projects_with_kb_get_distinct_names(tmp_path: Path) -> None:
+    project_a = tmp_path / "project-a"
+    project_b = tmp_path / "project-b"
+    kb_a = project_a / "kb"
+    kb_b = project_b / "kb"
+    kb_a.mkdir(parents=True)
+    kb_b.mkdir(parents=True)
+    _write(project_a / "meridian.toml", '[context.kb]\npath = "kb"\n')
+    _write(project_b / "meridian.toml", '[context.kb]\npath = "kb"\n')
+
+    discovery = discover_scan_roots([project_a, project_b])
+
+    kb_roots = [
+        root
+        for root in discovery.roots
+        if root.kind == "context" and root.name.startswith("kb")
+    ]
+    assert len(kb_roots) == 2
+    assert kb_roots[0].name == "kb"
+    assert kb_roots[1].name == "kb-2"
+    assert {root.abs_path for root in kb_roots} == {kb_a.resolve(), kb_b.resolve()}

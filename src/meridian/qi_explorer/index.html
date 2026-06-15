@@ -511,6 +511,16 @@
     strategy: "#8b5cf6",
     work:     "#f59e0b",
   };
+  const EXTENDED_PALETTE = [
+    "#ec4899",
+    "#14b8a6",
+    "#eab308",
+    "#f97316",
+    "#06b6d4",
+    "#a855f7",
+    "#84cc16",
+    "#ef4444",
+  ];
   const COLOR_FALLBACK = "#94a3b8";
   const DIM_COLOR = "#2a3038";
   const DIM_LINK_COLOR = "#1c2230";
@@ -532,10 +542,25 @@
   let selectedId = null;
   let fg = null;                 // ForceGraph3D instance
   let scanRoots = [];
+  let groupColors = {};
 
   // ---------- Utilities ----------
+  function buildGroupColors(roots) {
+    const map = {};
+    let paletteIdx = 0;
+    for (const root of roots || []) {
+      if (COLORS[root.name]) {
+        map[root.name] = COLORS[root.name];
+      } else {
+        map[root.name] = EXTENDED_PALETTE[paletteIdx % EXTENDED_PALETTE.length];
+        paletteIdx += 1;
+      }
+    }
+    return map;
+  }
+
   function colorFor(group) {
-    return COLORS[group] || COLOR_FALLBACK;
+    return groupColors[group] || COLORS[group] || COLOR_FALLBACK;
   }
 
   function idOf(endpoint) {
@@ -869,6 +894,7 @@
 
   function onGraphData(data) {
     scanRoots = data.scanRoots || [];
+    groupColors = buildGroupColors(scanRoots);
     $repoName.textContent = basenameOf(data.root || "") || (scanRoots[0] && scanRoots[0].name) || "qi";
     $graphCount.textContent = data.nodeCount != null && data.edgeCount != null
       ? `${data.nodeCount} nodes · ${data.edgeCount} edges`
