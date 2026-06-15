@@ -213,7 +213,8 @@ def test_agent_mode_session_help_has_additive_supplement_only() -> None:
     help_text = _render_help(session_app)
 
     assert "Which subcommand when" not in help_text
-    assert "REF forms:" in help_text
+    assert "Refs take three forms" in help_text
+    assert "REF forms:" not in help_text
     command_names = _command_names_in_order(help_text)
     assert "log" in command_names
     assert "search" in command_names

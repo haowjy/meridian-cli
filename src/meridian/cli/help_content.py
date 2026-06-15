@@ -144,29 +144,28 @@ GROUPS: dict[str, GroupHelp] = {
     "session": GroupHelp(
         summary="Inspect transcripts and progress logs.",
         long_help=(
-            "Inspect conversation and progress logs.\n\n"
-            "Session refs accept three forms: chat ids (c123), spawn ids (p123), or raw\n"
-            "harness session ids. Commands default to $MERIDIAN_CHAT_ID (inherited from\n"
-            "the spawning session), so a subagent defaults to the top-level primary\n"
-            "session log."
+            "Read back what a session did — its conversation and progress logs — to recover a\n"
+            "subagent's reasoning or find what was decided.\n\n"
+            "Refs take three forms: chat ids (c123), spawn ids (p123), or raw harness session\n"
+            "ids. Commands default to $MERIDIAN_CHAT_ID (inherited from the spawning session),\n"
+            "so omitting the ref inspects the top-level primary session at every depth; pass an\n"
+            "explicit spawn id to read one spawn's transcript."
         ),
         agent_notes=(
-            "REF forms: chat id (c123), spawn id (p123), or harness session id.\n\n"
-            "Omitting REF defaults to the top-level primary session at every depth.\n"
-            "Pass an explicit spawn id to inspect a specific spawn's transcript.\n\n"
-            "Use `session search` to find transcript text; each hit prints a "
-            "deterministic Open command you can run directly. Use `session log "
-            "--segment previous` or `--global --around N` when navigating across "
-            "compaction boundaries.\n\n"
-            "Decision recovery: 'meridian work sessions WORK_ID --all'"
+            "Use `session search` to find transcript text; each hit prints a deterministic\n"
+            "Open command you can run directly. Cross compaction boundaries with `session log\n"
+            "--segment previous` or `--global --around N`.\n\n"
+            "Recover decisions across a work item's sessions with `meridian work sessions\n"
+            "WORK_ID --all`."
         ),
         agent_subcommands=("log", "search", "export"),
     ),
     "work": GroupHelp(
         summary="Work item dashboard and coordination.",
         long_help=(
-            "Active activity grouped by work, plus work item coordination commands. "
-            "Unassigned spawns appear under '(no work)'."
+            "Group related runs under a work item — a shared id that keeps spawns, sessions,\n"
+            "and scratch artifacts together so you can find them later. This view lists active\n"
+            "runs grouped by work item; unassigned spawns appear under '(no work)'."
         ),
         agent_notes=(
             "Artifact placement: $MERIDIAN_ACTIVE_WORK_DIR for this item,\n"
@@ -204,7 +203,10 @@ GROUPS: dict[str, GroupHelp] = {
     ),
     "context": GroupHelp(
         summary="Show context paths for work and knowledge.",
-        long_help="Show context paths for work and knowledge.",
+        long_help=(
+            "Resolve context paths for handoffs and artifact placement — the active work dir\n"
+            "and knowledge-base roots. With no args it prints the set; pass --name for one path."
+        ),
     ),
     "doctor": GroupHelp(
         summary="Health check and orphan reconciliation.",
