@@ -614,12 +614,11 @@
   // ---------- Graph rendering ----------
   function basenameOf(p) {
     if (!p) return "";
-    // Strip scan-root namespace prefix ("codebase:src/foo.py" -> "src/foo.py").
-    // Only strip when the prefix looks like a scan-root name (lowercase letters
-    // and underscores) — avoids mangling Windows drive paths like "C:\foo".
     let s = p;
-    const ns = /^([a-z][a-z0-9_]*):(.*)$/.exec(s);
-    if (ns) s = ns[2];
+    const colon = s.indexOf(":");
+    if (colon > 0 && Object.prototype.hasOwnProperty.call(groupColors, s.slice(0, colon))) {
+      s = s.slice(colon + 1);
+    }
     const parts = s.replace(/\\/g, "/").split("/").filter(Boolean);
     return parts[parts.length - 1] || s || p;
   }

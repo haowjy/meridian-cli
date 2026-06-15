@@ -6,7 +6,12 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from meridian.lib.kg.graph import build_analysis
-from meridian.qi_explorer.discovery import DiscoveryResult, ScanRoot, discover_scan_roots
+from meridian.qi_explorer.discovery import (
+    DiscoveryResult,
+    ScanRoot,
+    _root_label,
+    discover_scan_roots,
+)
 from meridian.qi_explorer.graph_api import (
     analysis_to_graph,
     build_graph_index,
@@ -280,3 +285,35 @@ def test_discover_scan_roots_two_projects_with_kb_get_distinct_names(tmp_path: P
     assert kb_roots[0].name == "kb"
     assert kb_roots[1].name == "kb-2"
     assert {root.abs_path for root in kb_roots} == {kb_a.resolve(), kb_b.resolve()}
+
+
+def test_discover_scan_roots_extra_primary_named_kb_keeps_context_name(tmp_path: Path) -> None:
+    project_with_kb_context = tmp_path / "project"
+    kb_dir = project_with_kb_context / "kb"
+    kb_dir.mkdir(parents=True)
+    some_dir_named_kb = tmp_path / "kb"
+    some_dir_named_kb.mkdir()
+    _write(project_with_kb_context / "meridian.toml", '[context.kb]\npath = "kb"\n')
+
+    discovery = discover_scan_roots([project_with_kb_context, some_dir_named_kb])
+
+    primary_roots = [root for root in discovery.roots if root.kind == "primary"]
+    assert [root.name for root in primary_roots] == ["codebase", "kb-2"]
+
+    kb_context = next(
+        root
+        for root in discovery.roots
+        if root.kind == "context" and root.abs_path == kb_dir.resolve()
+    )
+    assert kb_context.name == "kb"
+
+
+def test_root_label_filesystem_root_is_non_empty() -> None:
+    assert _root_label(Path("/"))
+    assert _root_label(Path("/")) == "root"
+
+
+def test_root_label_normal_dir_returns_basename(tmp_path: Path) -> None:
+    normal = tmp_path / "MyRepo"
+    normal.mkdir()
+    assert _root_label(normal) == "MyRepo"

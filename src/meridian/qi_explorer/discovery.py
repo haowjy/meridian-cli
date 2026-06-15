@@ -13,6 +13,7 @@ from meridian.lib.context.resolver import resolve_context_paths
 ScanRootKind = Literal["primary", "context"]
 
 PRIMARY_ROOT_NAME = "codebase"
+RESERVED_CONTEXT_NAMES = frozenset({"kb", "work", "strategy"})
 
 
 @dataclass(frozen=True)
@@ -36,6 +37,15 @@ class DiscoveryResult:
         return {root.name: root.abs_path for root in self.roots}
 
 
+def _root_label(path: Path) -> str:
+    name = path.name
+    if name:
+        return name
+    # Filesystem root (POSIX "/", Windows "D:\\") has empty .name.
+    anchor = "".join(ch for ch in path.anchor if ch.isalnum())
+    return anchor or "root"
+
+
 def _unique_name(base: str, used: set[str]) -> str:
     if base not in used:
         return base
@@ -57,13 +67,14 @@ def _append_root(
     base_name: str,
     path: Path,
     kind: ScanRootKind,
+    reserved: frozenset[str] = frozenset(),
 ) -> None:
     resolved = path.resolve()
     if not resolved.is_dir():
         return
     if resolved in seen:
         return
-    name = _unique_name(base_name, used_names)
+    name = _unique_name(base_name, used_names | reserved)
     used_names.add(name)
     seen.add(resolved)
     roots.append(ScanRoot(name=name, abs_path=resolved, kind=kind))
@@ -131,7 +142,7 @@ def discover_scan_roots(primaries: list[Path]) -> DiscoveryResult:
     used_names: set[str] = set()
 
     for index, primary_path in enumerate(resolved_primaries):
-        base_name = PRIMARY_ROOT_NAME if index == 0 else primary_path.name
+        base_name = PRIMARY_ROOT_NAME if index == 0 else _root_label(primary_path)
         _append_root(
             roots,
             seen,
@@ -139,6 +150,7 @@ def discover_scan_roots(primaries: list[Path]) -> DiscoveryResult:
             base_name=base_name,
             path=primary_path,
             kind="primary",
+            reserved=RESERVED_CONTEXT_NAMES,
         )
 
     for primary_path in resolved_primaries:

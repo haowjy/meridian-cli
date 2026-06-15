@@ -20,7 +20,7 @@ def _paths_or_default(paths: tuple[Path, ...]) -> list[Path]:
     return list(paths) if paths else [Path(".")]
 
 
-def collect_qi_graph_results(
+def _collect_qi_graph_results(
     paths: list[Path],
     project_root: Path,
 ) -> list[QiShowOutput]:
@@ -38,7 +38,7 @@ def collect_qi_graph_results(
     return results
 
 
-def format_qi_graph_text(results: list[QiShowOutput]) -> str:
+def _format_qi_graph_text(results: list[QiShowOutput]) -> str:
     """Format one or more qi graph results for text output."""
     if not results:
         return ""
@@ -98,12 +98,12 @@ def cmd_qi_graph(
 
     project_root = require_established_project_root()
     resolved_paths = [path.resolve() for path in _paths_or_default(paths)]
-    results = collect_qi_graph_results(resolved_paths, project_root)
+    results = _collect_qi_graph_results(resolved_paths, project_root)
 
     if resolve_fmt(fmt) == "json":
         print(json.dumps([result.model_dump() for result in results], indent=2))
     else:
-        print(format_qi_graph_text(results))
+        print(_format_qi_graph_text(results))
 
     raise SystemExit(0)
 
@@ -213,6 +213,4 @@ __all__ = [
     "cmd_qi_explore",
     "cmd_qi_graph",
     "cmd_qi_root",
-    "collect_qi_graph_results",
-    "format_qi_graph_text",
 ]
