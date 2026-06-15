@@ -216,6 +216,65 @@ def test_spawn_prepare_system_field_harnesses_route_agent_inventory_to_system_pr
     assert "# Meridian Agents" not in preview.resolved_request.prompt
 
 
+def test_spawn_prepare_omits_guidance_when_spawn_capability_disabled(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write_minimal_mars_config(tmp_path)
+    stub_bundle_request_and_resolve(
+        monkeypatch,
+        model="gpt-5.4",
+        harness=HarnessId.CODEX,
+        prompt_surface_inventory_prompt=_BUNDLE_INVENTORY,
+    )
+    agents_dir = tmp_path / ".mars" / "agents"
+    agents_dir.mkdir(parents=True)
+    (agents_dir / "dev-orchestrator.md").write_text(
+        "\n".join(
+            [
+                "---",
+                "name: dev-orchestrator",
+                "model: gpt-5.4",
+                "skills: []",
+                "subagents: [reviewer]",
+                "harness: codex",
+                "meridian-capabilities:",
+                "  spawn: false",
+                "---",
+                "",
+                "# dev-orchestrator",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    preview = build_launch_context(
+        spawn_id="dry-run-codex-spawn-prepare-spawn-disabled",
+        request=SpawnRequest(
+            prompt="task prompt",
+            prompt_is_composed=False,
+            model="gpt-5.4",
+            harness="codex",
+            agent="dev-orchestrator",
+        ),
+        runtime=LaunchRuntime(
+            argv_intent=LaunchArgvIntent.REQUIRED,
+            composition_surface=LaunchCompositionSurface.SPAWN_PREPARE,
+            runtime_root=(tmp_path / ".meridian").as_posix(),
+            project_paths_project_root=tmp_path.as_posix(),
+            project_paths_execution_cwd=tmp_path.as_posix(),
+        ),
+        harness_registry=get_default_harness_registry(),
+        dry_run=True,
+    )
+
+    assert preview.projected_content is not None
+    system_prompt = preview.projected_content.system_prompt
+    assert "# Meridian Agents" not in system_prompt
+    assert "# Spawning subagents (meridian)" not in system_prompt
+
+
 def test_spawn_prepare_claude_projects_skills_inventory_and_report_to_system_prompt(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

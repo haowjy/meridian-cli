@@ -11,6 +11,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Agent-mode `meridian spawn -h` is progressively disclosed via `--advanced`: lean default (~85 lines) with core loop, pre-launch decisions, and core commands/flags; `--advanced` reveals full methodology, all commands, and an `Advanced` flag panel. Agent-mode only.
 
 ### Fixed
+- Agent-mode root help: portable `mktemp` quick-start example, spawn subcommand hint drops bogus `fork`, `context` uses imperative voice.
 - Missing context roots are skipped before sandbox projection (a missing bind-mount source aborted codex's whole bwrap exec namespace while the spawn still reported `succeeded`).
 - A spawn launcher killed mid-prep is now recovered: the durable `queued` row is reserved before prep so the reaper sees it; lifecycle side effects are deferred until prep succeeds.
 - Agent-mode detection recognizes the primary launched agent (keys on `MERIDIAN_SPAWN_ID` managed-session membership, not `MERIDIAN_DEPTH > 0`).

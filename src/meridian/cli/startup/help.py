@@ -35,7 +35,7 @@ GROUP_DESCRIPTIONS: dict[str, str] = {name: group.summary for name, group in GRO
 AGENT_DESCRIPTION_OVERRIDES: dict[str, str] = {
     "spawn": (
         "Hand a task to a subagent. Runs in the background; you keep working\n"
-        "and collect the result later. (`fork`, `wait`, `report`)"
+        "and collect the result later. (`wait`, `report`)"
     ),
     "session": (
         "Read the full transcript of any spawn — what it did, what it found —\n"
@@ -46,7 +46,7 @@ AGENT_DESCRIPTION_OVERRIDES: dict[str, str] = {
         "a multi-step effort holds together across handoffs."
     ),
     "context": (
-        "Shows the folders (as env vars) where shared files and project\n"
+        "Show the folders (as env vars) where shared files and project\n"
         "knowledge live, so you read and write them in the right place."
     ),
     "mars": (
@@ -120,7 +120,7 @@ AGENT_ORIENTATION: tuple[str, ...] = (
 HUMAN_TAGLINE = "Multi-agent orchestration across Claude, Codex, and OpenCode."
 
 QUICK_START_EXAMPLES: tuple[tuple[str, str], ...] = (
-    ("meridian spawn -m MODEL --prompt-file /tmp/task.md --bg", ""),
+    ('meridian spawn -a coder --prompt-file "$(meridian mktemp)" --bg', ""),
     ("meridian spawn wait", ""),
     ("meridian mars models list", ""),
 )
