@@ -158,11 +158,11 @@ def test_gate_present_returns_inventory_and_contract_blocks(tmp_path: Path) -> N
         "spawn-contract",
         "work-discovery",
         "session-discovery",
-        "context-discovery",
         "context-env",
     ]
     context = build_context_prompt(project_root=tmp_path, active_work_dir=None)
     assert "# Meridian Context" in context
+    assert "meridian context -h" in context
 
 
 def test_gate_absent_returns_empty_blocks_but_context_still_builds(tmp_path: Path) -> None:
@@ -179,11 +179,11 @@ def test_gate_absent_returns_empty_blocks_but_context_still_builds(tmp_path: Pat
     assert names == [
         "work-discovery",
         "session-discovery",
-        "context-discovery",
         "context-env",
     ]
     context = build_context_prompt(project_root=tmp_path, active_work_dir=None)
     assert "# Meridian Context" in context
+    assert "meridian context -h" in context
 
 
 @pytest.mark.parametrize(
@@ -227,7 +227,6 @@ def test_resolve_spawn_prompt_blocks_is_harness_templated() -> None:
 def test_guidance_blocks_render_sorted_by_phase_and_priority() -> None:
     blocks = (
         CompositionBlock("context-env", GuidancePhase.ENVIRONMENT, 0, "CONTEXT-ENV"),
-        CompositionBlock("context-discovery", GuidancePhase.GUIDANCE, 22, "CONTEXT-DISCOVERY"),
         CompositionBlock("session-discovery", GuidancePhase.GUIDANCE, 21, "SESSION-DISCOVERY"),
         CompositionBlock("spawn-contract", GuidancePhase.GUIDANCE, 10, "SPAWN-CONTRACT"),
         CompositionBlock("work-discovery", GuidancePhase.GUIDANCE, 20, "WORK-DISCOVERY"),
@@ -250,7 +249,6 @@ def test_guidance_blocks_render_sorted_by_phase_and_priority() -> None:
         "SPAWN-CONTRACT",
         "WORK-DISCOVERY",
         "SESSION-DISCOVERY",
-        "CONTEXT-DISCOVERY",
         "CONTEXT-ENV",
     )
     cursor = -1

@@ -97,7 +97,8 @@ def build_context_prompt(
         active_work_dir=active_work_dir,
     )
 
-    return "\n".join([*header, *context_lines]).strip()
+    footer = ["", "Inspect or configure: meridian context -h"]
+    return "\n".join([*header, *context_lines, *footer]).strip()
 
 
 __all__ = [

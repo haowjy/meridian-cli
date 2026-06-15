@@ -62,12 +62,6 @@ _SESSION_DISCOVERY = """\
 Read what past spawns did — full transcripts and progress logs, searchable.
 Learn the commands:  meridian session -h"""
 
-_CONTEXT_DISCOVERY = """\
-# Context paths (meridian)
-
-Resolve where knowledge lives — kb, strategy, and work dirs.
-Learn the commands:  meridian context -h"""
-
 
 def _spawn_usage_contract(harness: HarnessId) -> str:
     if harness == HarnessId.CLAUDE:
@@ -113,9 +107,6 @@ def build_guidance_blocks(
     )
     blocks.append(
         CompositionBlock("session-discovery", GuidancePhase.GUIDANCE, 21, _SESSION_DISCOVERY)
-    )
-    blocks.append(
-        CompositionBlock("context-discovery", GuidancePhase.GUIDANCE, 22, _CONTEXT_DISCOVERY)
     )
     context_env = (context_prompt or "").strip()
     if context_env:
