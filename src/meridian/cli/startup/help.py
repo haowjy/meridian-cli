@@ -20,19 +20,41 @@ class Option:
 
 
 OPTIONS: tuple[Option, ...] = (
-    Option("-m, --model TEXT", "Model id or alias for primary harness.", True),
-    Option("--harness TEXT", "Force harness id (claude, codex, cursor, opencode, or pi).", True),
-    Option("--format TEXT", "Set output format: text or json.", True),
-    Option("--json", "Emit command output as JSON.", True),
+    Option("-m, --model TEXT", "Model id or alias for primary harness.", False),
+    Option("--harness TEXT", "Force harness id (claude, codex, cursor, opencode, or pi).", False),
+    Option("--format TEXT", "Set output format: text or json.", False),
+    Option("--json", "Emit command output as JSON.", False),
     Option("-C, --directory PATH", "Resolve project root from this path instead of CWD.", True),
-    Option("--config TEXT", "Path to a user config TOML overlay.", True),
+    Option("--config TEXT", "Path to a user config TOML overlay.", False),
     Option("-h, --help", "Show this message and exit.", False),
     Option("-v, --version", "Show the application version.", False),
 )
 
 GROUP_DESCRIPTIONS: dict[str, str] = {name: group.summary for name, group in GROUPS.items()}
 
-AGENT_DESCRIPTION_OVERRIDES: dict[str, str] = {}
+AGENT_DESCRIPTION_OVERRIDES: dict[str, str] = {
+    "spawn": (
+        "Hand a task to a subagent. Runs in the background; you keep working\n"
+        "and collect the result later. (`fork`, `wait`, `report`)"
+    ),
+    "session": (
+        "Read the full transcript of any spawn — what it did, what it found —\n"
+        "so you build on it instead of redoing it."
+    ),
+    "work": (
+        "Tie related spawns to one goal with a shared folder and history, so\n"
+        "a multi-step effort holds together across handoffs."
+    ),
+    "context": (
+        "Shows the folders (as env vars) where shared files and project\n"
+        "knowledge live, so you read and write them in the right place."
+    ),
+    "mars": (
+        "List the models, agents, and skills available, so you pick real ones\n"
+        "when you delegate. (`meridian mars models list`)"
+    ),
+    "ext": "Run project-specific extension commands.",
+}
 
 LAUNCH_EXAMPLES: tuple[tuple[str, str], ...] = (
     ("meridian -m MODEL", "Launch the primary harness"),
@@ -56,9 +78,7 @@ AGENT_ROOT_COMMANDS: tuple[str, ...] = (
     "spawn",
     "session",
     "work",
-    "config",
     "context",
-    "doctor",
     "mars",
     "ext",
 )
@@ -88,23 +108,20 @@ _HUMAN_COMMAND_ORDER = (
 )
 
 AGENT_ORIENTATION: tuple[str, ...] = (
-    "Multi-agent orchestration CLI. Meridian is a coordination layer — it launches\n"
-    "subagents through harness adapters and persists state to disk. It is not a\n"
-    "runtime, database, or workflow engine.",
-    "State on disk is the source of truth. Inspect via CLI commands; treat state\n"
-    "files under the state root as implementation detail — do not hand-edit.\n"
-    "Operations are idempotent: re-running after interruption converges to correct\n"
-    "state.",
-    "For automation, use --format json and parse fields from JSON responses.\n"
-    "Avoid scraping prose from text output.",
+    "Meridian lets you hand work to other agents instead of doing everything\n"
+    "yourself. Launch a subagent on a slice of the task — a bulk read, a parallel\n"
+    "fix, a stronger or cheaper model — and keep your own context for the parts\n"
+    "that need your judgment. What each subagent does is recorded, so you can\n"
+    "check a running spawn, read its result when it finishes, or pick up what an\n"
+    "earlier agent already worked out.",
 )
 
 HUMAN_TAGLINE = "Multi-agent orchestration across Claude, Codex, and OpenCode."
 
 QUICK_START_EXAMPLES: tuple[tuple[str, str], ...] = (
-    ("meridian spawn -m MODEL --prompt-file /tmp/task.md --bg", "Launch a subagent"),
-    ("meridian spawn wait", "Wait for all pending spawns"),
-    ("meridian mars models list", "See model catalog inventory"),
+    ("meridian spawn -m MODEL --prompt-file /tmp/task.md --bg", ""),
+    ("meridian spawn wait", ""),
+    ("meridian mars models list", ""),
 )
 
 
@@ -122,10 +139,14 @@ def _detect_agent_mode(*, force_agent: bool = False, force_human: bool = False) 
 
 def _render_table(rows: tuple[tuple[str, str], ...] | list[tuple[str, str]]) -> str:
     width = max((len(left) for left, _right in rows), default=0)
+    continuation_indent = " " * (2 + width + 2)
     rendered: list[str] = []
     for left, right in rows:
         if right:
-            rendered.append(f"  {left.ljust(width)}  {right}")
+            right_lines = right.split("\n")
+            first = f"  {left.ljust(width)}  {right_lines[0]}"
+            rest = [f"{continuation_indent}{line}" for line in right_lines[1:]]
+            rendered.append("\n".join([first, *rest]))
         else:
             rendered.append(f"  {left}")
     return "\n".join(rendered)
@@ -169,19 +190,25 @@ def render_root_help(*, agent_mode: bool) -> str:
         sections.append(HUMAN_TAGLINE)
 
     sections.append(f"Options:\n{_render_table(_option_rows(agent_mode=agent_mode))}")
-    sections.append(
-        "Primary launch/resume:\n"
-        f"{_render_table(list(LAUNCH_EXAMPLES))}\n"
-        f"{LAUNCH_REF_NOTES}"
-    )
 
-    if agent_mode:
-        sections.append(f"Quick start:\n{_render_table(list(QUICK_START_EXAMPLES))}")
+    if not agent_mode:
+        sections.append(
+            "Primary launch/resume:\n"
+            f"{_render_table(list(LAUNCH_EXAMPLES))}\n"
+            f"{LAUNCH_REF_NOTES}"
+        )
 
     sections.append(f"Commands:\n{_render_table(_command_rows(agent_mode=agent_mode))}")
 
     if agent_mode:
-        sections.append("Run 'meridian spawn -h' for full spawn usage.")
+        sections.append(f"Quick start:\n{_render_table(list(QUICK_START_EXAMPLES))}")
+        sections.append(
+            "For details on any command:\n"
+            "  `meridian spawn -h`\n"
+            "  `meridian work -h`\n"
+            "  `meridian session -h`\n"
+            "  `meridian context -h`"
+        )
     else:
         sections.append(
             "Global harness selection: --harness (or prefix with claude/codex/cursor/opencode)\n\n"

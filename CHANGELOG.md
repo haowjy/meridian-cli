@@ -17,6 +17,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 - refactor: system prompt guidance now composed from extensible guidance blocks; agents get session/work/context discovery pointers
+- Agent-mode root help (`meridian -h`) reworked as a skill entry point: curated commands/options, multi-line table rendering, pointer block to group help.
 - The agent inventory (`# Meridian Agents`) is gated on spawn capability: leaf agents (no `subagents`) no longer receive it.
 - The spawn contract is a first-class composition block (`spawn_contract_prompt`), applied exactly once on continue/fork instead of appended to the inventory string.
 - `LaunchPolicySnapshot` persists the agent profile as one nested `agent_profile` blob, so every field survives continue/fork replay.

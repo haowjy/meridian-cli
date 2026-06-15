@@ -859,11 +859,17 @@ def _register_commands_for_invocation(
             if _is_help_request(argv):
                 for group_name, register_fn in set(registrations.values()):
                     _register_once(group_name, register_fn)
+                # A registration bucket (e.g. "misc") can back several command
+                # groups; mark each command-group name so curated help resolves
+                # for all of them, not just the bucket.
+                _registered_command_groups.update(registrations.keys())
             # Root/default commands and decorator-registered commands (mars, serve, init)
             # do not need group registration. Unknown commands are rejected earlier.
         else:
             group_name, register_fn = registration
             _register_once(group_name, register_fn)
+            if first_token:
+                _registered_command_groups.add(first_token)
             if first_token == "spawn":
                 _register_once("report", _register_report)
 
