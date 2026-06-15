@@ -32,7 +32,7 @@ class AlignedPlainFormatter(PlainFormatter):
         width = console.width
         continuation_indent = " " * len(left_part)
         if len(left_part) >= width - 20:
-            block_indent = continuation_indent
+            block_indent = self.indent + "  "
             return left_part.rstrip() + "\n" + textwrap.fill(
                 desc,
                 width=width,
