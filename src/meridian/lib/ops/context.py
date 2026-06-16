@@ -20,6 +20,7 @@ from meridian.lib.core.util import FormatContext
 from meridian.lib.hooks.builtin.autosync_store import read_status
 from meridian.lib.ops.runtime import resolve_runtime_authority_for_read
 from meridian.lib.state.paths import load_context_config
+from meridian.lib.state.work_scope import WorkScope
 
 
 class ContextInput(BaseModel):
@@ -212,6 +213,18 @@ def _resolve_runtime_context(
     )
 
 
+def resolve_active_work_scope(
+    project_root: Path,
+    runtime_root: Path,
+    *,
+    chat_id: str | None = None,
+) -> WorkScope | None:
+    """Return the active work scope using authoritative context resolution."""
+
+    resolved = _resolve_runtime_context(project_root, runtime_root, chat_id=chat_id)
+    return resolved.work_scope
+
+
 def resolve_active_work_scope_dir(
     project_root: Path,
     runtime_root: Path,
@@ -220,8 +233,8 @@ def resolve_active_work_scope_dir(
 ) -> Path | None:
     """Return the active work scope directory using the same resolution as work current."""
 
-    resolved = _resolve_runtime_context(project_root, runtime_root, chat_id=chat_id)
-    return resolved.work_dir
+    scope = resolve_active_work_scope(project_root, runtime_root, chat_id=chat_id)
+    return scope.root if scope is not None else None
 
 
 def _join_scope_path(scope_dir: Path, relpath: str) -> Path:
@@ -381,10 +394,10 @@ def work_current_sync(input: WorkCurrentInput) -> WorkCurrentOutput:
     _ = input
     authority = resolve_runtime_authority_for_read()
     runtime_root = authority.runtime_root or authority.project_state_dir
-    scope_dir = resolve_active_work_scope_dir(authority.project_root, runtime_root)
+    scope = resolve_active_work_scope(authority.project_root, runtime_root)
 
     return WorkCurrentOutput(
-        work_dir=scope_dir.as_posix() if scope_dir is not None else None
+        work_dir=scope.root.as_posix() if scope is not None else None
     )
 
 
@@ -393,11 +406,11 @@ def work_path_sync(input: WorkPathInput) -> WorkPathOutput:
 
     authority = resolve_runtime_authority_for_read()
     runtime_root = authority.runtime_root or authority.project_state_dir
-    scope_dir = resolve_active_work_scope_dir(authority.project_root, runtime_root)
-    if scope_dir is None:
+    scope = resolve_active_work_scope(authority.project_root, runtime_root)
+    if scope is None:
         raise ValueError("No active work scope is resolvable for this process.")
 
-    target = _join_scope_path(scope_dir, input.relpath)
+    target = _join_scope_path(scope.root, input.relpath)
     target.parent.mkdir(parents=True, exist_ok=True)
     return WorkPathOutput(path=target.as_posix())
 
@@ -448,6 +461,7 @@ __all__ = [
     "WorkRootOutput",
     "context",
     "context_sync",
+    "resolve_active_work_scope",
     "resolve_active_work_scope_dir",
     "work_current",
     "work_current_sync",

@@ -13,7 +13,7 @@ from meridian.lib.core.context import RuntimeContext
 from meridian.lib.core.lifecycle import generate_lifecycle_event_id, get_hook_dispatcher
 from meridian.lib.core.spawn_lifecycle import is_active_spawn_status
 from meridian.lib.core.util import FormatContext
-from meridian.lib.ops.context import resolve_active_work_scope_dir
+from meridian.lib.ops.context import resolve_active_work_scope
 from meridian.lib.ops.runtime import (
     async_from_sync,
     resolve_chat_id,
@@ -69,19 +69,19 @@ def _leave_scope_warning(
     chat_id: str,
     new_target: str,
 ) -> str | None:
-    outgoing_dir = resolve_active_work_scope_dir(
+    outgoing_scope = resolve_active_work_scope(
         project_root,
         runtime_root,
         chat_id=chat_id,
     )
-    if outgoing_dir is None:
+    if outgoing_scope is None:
         return None
 
     incoming_dir = work_store.work_scratch_dir(project_state_dir, new_target).resolve()
-    if outgoing_dir.resolve() == incoming_dir:
+    if outgoing_scope.root.resolve() == incoming_dir:
         return None
 
-    count = work_store.count_scope_artifacts(outgoing_dir)
+    count = outgoing_scope.count_artifacts()
     if count <= 0:
         return None
 

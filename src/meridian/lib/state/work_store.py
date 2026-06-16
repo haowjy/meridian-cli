@@ -14,10 +14,13 @@ import re
 import shutil
 from datetime import UTC, datetime
 from pathlib import Path, PurePath
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import structlog
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+if TYPE_CHECKING:
+    from meridian.lib.state.work_scope import WorkScope
 
 from meridian.lib.platform.locking import lock_file
 from meridian.lib.state.atomic import atomic_write_text
@@ -508,25 +511,17 @@ def _has_artifacts(work_dir: Path) -> bool:
     return any(child.name != _STATUS_FILENAME for child in work_dir.iterdir())
 
 
-def count_scope_artifacts(scope_dir: Path) -> int:
+def count_scope_artifacts(scope: WorkScope | Path) -> int:
     """Count keepable artifacts under a work scope (pure read, no mkdir)."""
 
-    if not scope_dir.is_dir():
-        return 0
+    from meridian.lib.state.work_scope import WorkScope as WorkScopeType
+    from meridian.lib.state.work_scope import count_scope_artifacts as count_for_scope
 
-    count = 0
-    for child in scope_dir.iterdir():
-        name = child.name
-        if name in {_STATUS_FILENAME, SCOPE_PROMPTS_DIRNAME}:
-            continue
-        if name == SCOPE_HANDOFFS_DIRNAME:
-            if child.is_dir():
-                count += sum(1 for _ in child.iterdir())
-            else:
-                count += 1
-            continue
-        count += 1
-    return count
+    if isinstance(scope, Path):
+        return count_for_scope(
+            WorkScopeType(kind="ambient_spawn", identifier="", root=scope),
+        )
+    return count_for_scope(scope)
 
 
 def _validate_exact_slug(raw_name: str) -> str:

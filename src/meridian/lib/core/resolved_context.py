@@ -18,6 +18,7 @@ from meridian.lib.core.depth import (
 from meridian.lib.core.types import SpawnId
 from meridian.lib.state import paths as state_paths
 from meridian.lib.state import session_store
+from meridian.lib.state.work_scope import WorkScope, resolve_work_scope_from_parts
 
 
 class ContextBackend(Protocol):
@@ -54,6 +55,7 @@ class ResolvedContext:
     chat_id: str = ""
     work_id: str | None = None
     work_dir: Path | None = None
+    work_scope: WorkScope | None = None
     kb_dir: Path | None = None
     context_dirs: tuple[tuple[str, Path], ...] = ()
 
@@ -135,17 +137,21 @@ class ResolvedContext:
 
         spawn_id = SpawnId(spawn_id_raw) if spawn_id_raw else None
 
-        work_dir: Path | None = None
+        bound_work_dir: Path | None = None
+        project_work_dir = project_paths.work_dir if project_paths is not None else None
+
         if work_dir_raw and not explicit_work_id_raw:
-            work_dir = Path(work_dir_raw).expanduser()
-        elif work_id:
-            # Repo-scoped state paths take precedence when project_root is known.
-            if project_paths is not None:
-                work_dir = project_paths.work_dir / work_id
-            elif runtime_root is not None:
-                work_dir = backend_impl.resolve_work_scratch_dir(runtime_root, work_id)
-        elif spawn_id is not None and project_root is not None:
-            work_dir = state_paths.resolve_ambient_work_dir(project_root, spawn_id)
+            bound_work_dir = Path(work_dir_raw).expanduser()
+
+        work_scope = resolve_work_scope_from_parts(
+            project_root=project_root,
+            runtime_root=runtime_root,
+            spawn_id=spawn_id,
+            work_id=work_id,
+            bound_work_dir=bound_work_dir,
+            project_work_dir=project_work_dir,
+        )
+        work_dir = work_scope.root if work_scope is not None else None
 
         kb_dir = project_paths.kb_dir if project_paths is not None else None
 
@@ -175,6 +181,7 @@ class ResolvedContext:
             chat_id=chat_id_raw,
             work_id=work_id,
             work_dir=work_dir,
+            work_scope=work_scope,
             kb_dir=kb_dir,
             context_dirs=context_dirs,
         )
