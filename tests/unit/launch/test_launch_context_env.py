@@ -463,3 +463,86 @@ def test_build_launch_context_opencode_includes_context_paths_in_external_direct
     assert external_dirs[kb_path] == "allow"
     assert external_dirs[archive_path] == "allow"
     assert external_dirs[strategy_path] == "allow"
+
+
+def test_bind_launch_context_child_ambient_work_dir_matches_prompt(
+    monkeypatch: MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _write_minimal_mars_config(tmp_path)
+    stub_bundle_request_and_resolve(
+        monkeypatch,
+        model="gpt-5.4",
+        harness=HarnessId.CODEX,
+    )
+    parent_ambient = tmp_path / ".meridian" / "spawns" / "p-parent" / "work"
+    monkeypatch.setenv("MERIDIAN_SPAWN_ID", "p-parent")
+    monkeypatch.setenv("MERIDIAN_DEPTH", "1")
+    monkeypatch.setenv("MERIDIAN_ACTIVE_WORK_DIR", parent_ambient.as_posix())
+    monkeypatch.delenv("MERIDIAN_ACTIVE_WORK_ID", raising=False)
+
+    from meridian.lib.state.paths import resolve_ambient_work_dir
+
+    expected_child = resolve_ambient_work_dir(tmp_path, "p-child")
+
+    request = _build_spawn_request().model_copy(update={"prompt_is_composed": False})
+    runtime_ctx = build_launch_context(
+        spawn_id="p-child",
+        request=request,
+        runtime=_build_launch_runtime(
+            tmp_path=tmp_path,
+            composition_surface=LaunchCompositionSurface.SPAWN_PREPARE,
+        ),
+        harness_registry=get_default_harness_registry(),
+        dry_run=True,
+    )
+
+    child_env = runtime_ctx.binding.environment.child_context_env
+    assert child_env.get("MERIDIAN_ACTIVE_WORK_ID") in (None, "")
+    assert "MERIDIAN_ACTIVE_WORK_ID" not in child_env
+    assert child_env["MERIDIAN_ACTIVE_WORK_DIR"] == expected_child.as_posix()
+
+    system_prompt = runtime_ctx.binding.run_params.appended_system_prompt or ""
+    work_line = f"work: $MERIDIAN_ACTIVE_WORK_DIR ({expected_child.as_posix()})"
+    assert work_line in system_prompt
+    assert parent_ambient.as_posix() not in system_prompt
+
+
+def test_bind_launch_context_named_work_dir_matches_prompt(
+    monkeypatch: MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _write_minimal_mars_config(tmp_path)
+    stub_bundle_request_and_resolve(
+        monkeypatch,
+        model="gpt-5.4",
+        harness=HarnessId.CODEX,
+    )
+    monkeypatch.delenv("MERIDIAN_ACTIVE_WORK_ID", raising=False)
+    monkeypatch.delenv("MERIDIAN_ACTIVE_WORK_DIR", raising=False)
+
+    work_id = "feature-x"
+    request = _build_spawn_request().model_copy(
+        update={"work_id_hint": work_id, "prompt_is_composed": False},
+    )
+
+    runtime_ctx = build_launch_context(
+        spawn_id="p-child",
+        request=request,
+        runtime=_build_launch_runtime(
+            tmp_path=tmp_path,
+            composition_surface=LaunchCompositionSurface.SPAWN_PREPARE,
+        ),
+        harness_registry=get_default_harness_registry(),
+        dry_run=True,
+        runtime_work_id=work_id,
+    )
+
+    child_env = runtime_ctx.binding.environment.child_context_env
+    assert child_env["MERIDIAN_ACTIVE_WORK_ID"] == work_id
+    work_dir = child_env["MERIDIAN_ACTIVE_WORK_DIR"]
+    assert work_dir
+
+    system_prompt = runtime_ctx.binding.run_params.appended_system_prompt or ""
+    work_line = f"work: $MERIDIAN_ACTIVE_WORK_DIR ({work_dir})"
+    assert work_line in system_prompt

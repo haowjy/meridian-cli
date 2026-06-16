@@ -55,6 +55,7 @@ from meridian.lib.safety.permissions import PermissionConfig
 from meridian.lib.state import work_store
 from meridian.lib.state.paths import (
     load_context_config,
+    resolve_ambient_work_dir,
     resolve_kb_dir,
     resolve_project_paths,
     resolve_spawn_log_dir,
@@ -186,21 +187,20 @@ class ChildEnvContext:
                 work_id = None
 
         repo_paths = resolve_project_paths(resolved_project_root)
-        work_dir = (
-            parent_ctx.work_dir
-            if (
-                work_id is not None
-                and parent_ctx.work_dir is not None
-                and parent_ctx.work_id == work_id
+        if work_id is not None:
+            work_dir = (
+                parent_ctx.work_dir
+                if parent_ctx.work_dir is not None and parent_ctx.work_id == work_id
+                else resolve_work_scratch_dir_for_project(
+                    resolved_project_root,
+                    work_id,
+                    project_paths=repo_paths,
+                )
             )
-            else resolve_work_scratch_dir_for_project(
-                resolved_project_root,
-                work_id,
-                project_paths=repo_paths,
-            )
-            if work_id is not None
-            else None
-        )
+        elif parent_ctx.work_dir is not None:
+            work_dir = parent_ctx.work_dir
+        else:
+            work_dir = None
 
         resolved_context_paths = resolve_context_paths(
             resolved_project_root,
@@ -875,6 +875,87 @@ def build_child_runtime_env_overrides(
     if additional_overrides:
         runtime_overrides.update(additional_overrides)
     return runtime_overrides
+
+
+_CONTEXT_PROMPT_FOOTER = "Inspect or configure: meridian context -h"
+
+
+def _resolve_bound_active_work_dir(
+    *,
+    project_root: Path,
+    requested_work_id: str | None,
+    child_spawn_id: str,
+) -> Path | None:
+    """Pure bind-time work-dir: named repo scratch or child ambient spawn dir."""
+
+    if requested_work_id is not None:
+        return resolve_work_scratch_dir_for_project(project_root, requested_work_id)
+    return resolve_ambient_work_dir(project_root, child_spawn_id)
+
+
+def _replace_context_prompt_block(*, system_prompt: str, new_context_prompt: str) -> str:
+    marker_start = "# Meridian Context"
+    start = system_prompt.find(marker_start)
+    if start < 0:
+        return system_prompt
+    end = system_prompt.find(_CONTEXT_PROMPT_FOOTER, start)
+    if end < 0:
+        return system_prompt
+    end += len(_CONTEXT_PROMPT_FOOTER)
+    replacement = new_context_prompt.strip()
+    before = system_prompt[:start].rstrip()
+    after = system_prompt[end:].lstrip("\n")
+    if before and after:
+        return f"{before}\n\n{replacement}\n\n{after}"
+    if before:
+        return f"{before}\n\n{replacement}"
+    if after:
+        return f"{replacement}\n\n{after}"
+    return replacement
+
+
+def _refresh_prompt_payload_active_work_dir(
+    *,
+    prompt_payload: PreparedPromptPayload,
+    projected_content: ProjectedContent | None,
+    project_root: Path,
+    bound_work_dir: Path | None,
+) -> tuple[PreparedPromptPayload, ProjectedContent | None]:
+    """Re-render the injected context block so prompt work-dir matches bind env."""
+
+    new_context = build_context_prompt(
+        project_root=project_root,
+        active_work_dir=bound_work_dir,
+    )
+    if new_context is None or not new_context.strip():
+        return prompt_payload, projected_content
+
+    context_block = new_context.strip()
+
+    updated_projected = projected_content
+    if projected_content is not None and projected_content.system_prompt.strip():
+        updated_system = _replace_context_prompt_block(
+            system_prompt=projected_content.system_prompt,
+            new_context_prompt=context_block,
+        )
+        updated_projected = replace(projected_content, system_prompt=updated_system)
+
+    appended = prompt_payload.appended_system_prompt or ""
+    if appended.strip():
+        updated_appended = _replace_context_prompt_block(
+            system_prompt=appended,
+            new_context_prompt=context_block,
+        )
+    elif updated_projected is not None and updated_projected.system_prompt.strip():
+        updated_appended = updated_projected.system_prompt.strip()
+    else:
+        updated_appended = None
+
+    updated_payload = replace(
+        prompt_payload,
+        appended_system_prompt=updated_appended,
+    )
+    return updated_payload, updated_projected
 
 
 def _resolve_session_continuation(
@@ -1772,6 +1853,21 @@ def bind_launch_context(
         if harness.id == HarnessId.PI
         else None
     )
+    requested_work_id = normalize_explicit_work_id(
+        request_work_id_hint=resolved_request.work_id_hint,
+        runtime_work_id=bindings.runtime_work_id,
+    )
+    bound_active_work_dir = _resolve_bound_active_work_dir(
+        project_root=project_paths.project_root,
+        requested_work_id=requested_work_id,
+        child_spawn_id=bindings.spawn_id,
+    )
+    prompt_payload, projected_content = _refresh_prompt_payload_active_work_dir(
+        prompt_payload=prompt_payload,
+        projected_content=projected_content,
+        project_root=project_paths.project_root,
+        bound_work_dir=bound_active_work_dir,
+    )
     materialized = materialize_launch_artifacts(
         harness=harness,
         prompt=resolved_request.prompt,
@@ -1818,11 +1914,6 @@ def bind_launch_context(
             projected_spec=spec,
         )
 
-    is_primary_launch = runtime.composition_surface == LaunchCompositionSurface.PRIMARY
-    requested_work_id = normalize_explicit_work_id(
-        request_work_id_hint=resolved_request.work_id_hint,
-        runtime_work_id=bindings.runtime_work_id,
-    )
     child_context_env = build_child_runtime_env_overrides(
         project_paths=project_paths,
         runtime_root=runtime_root,
@@ -1830,6 +1921,8 @@ def bind_launch_context(
         work_id=requested_work_id,
         increment_depth=not is_primary_launch,
     )
+    if bound_active_work_dir is not None:
+        child_context_env["MERIDIAN_ACTIVE_WORK_DIR"] = bound_active_work_dir.as_posix()
     effective_work_id = (
         child_context_env.get("MERIDIAN_ACTIVE_WORK_ID", "").strip() or requested_work_id
     )
