@@ -962,12 +962,8 @@ def _refresh_prompt_payload_active_work_dir(
             system_prompt=user_turn,
             new_context_prompt=context_block,
         )
-    elif updated_projected is not None and updated_projected.user_turn_content.strip():
-        updated_user_turn_payload = updated_projected.user_turn_content.strip()
-    elif refreshed_composed.strip():
-        updated_user_turn_payload = refreshed_composed.strip()
     else:
-        updated_user_turn_payload = None
+        updated_user_turn_payload = prompt_payload.user_turn_content
 
     updated_payload = replace(
         prompt_payload,
