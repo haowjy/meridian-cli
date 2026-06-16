@@ -584,6 +584,85 @@ def test_bind_launch_context_child_ambient_without_context_markers(
     assert runtime_ctx.binding.run_params.prompt == custom_prompt
 
 
+def test_bind_launch_context_context_refresh_survives_header_footer_wording_change(
+    monkeypatch: MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Bind-time refresh re-projects the typed context-env block, not header/footer markers."""
+    _write_minimal_mars_config(tmp_path)
+    stub_bundle_request_and_resolve(
+        monkeypatch,
+        model="gpt-5.4",
+        harness=HarnessId.CODEX,
+    )
+    parent_ambient = tmp_path / ".meridian" / "spawns" / "p-parent" / "work"
+    monkeypatch.setenv("MERIDIAN_SPAWN_ID", "p-parent")
+    monkeypatch.setenv("MERIDIAN_DEPTH", "1")
+    monkeypatch.setenv("MERIDIAN_ACTIVE_WORK_DIR", parent_ambient.as_posix())
+    monkeypatch.delenv("MERIDIAN_ACTIVE_WORK_ID", raising=False)
+
+    from meridian.lib.state.paths import resolve_ambient_work_dir
+
+    expected_child = resolve_ambient_work_dir(tmp_path, "p-child")
+    original_build_context_prompt = launch_context_module.build_context_prompt
+    revised_header = "# Workspace Context (revised wording)"
+    revised_footer = "See also: meridian context -h"
+
+    def build_context_with_revised_wording_at_bind(
+        *,
+        project_root: Path,
+        active_work_dir: Path | None = None,
+        **kwargs: object,
+    ) -> str | None:
+        rendered = original_build_context_prompt(
+            project_root=project_root,
+            active_work_dir=active_work_dir,
+            **kwargs,  # type: ignore[arg-type]
+        )
+        if rendered is None or active_work_dir != expected_child:
+            return rendered
+        lines = rendered.splitlines()
+        if not lines:
+            return rendered
+        lines[0] = revised_header
+        lines[-1] = revised_footer
+        return "\n".join(lines)
+
+    monkeypatch.setattr(
+        launch_context_module,
+        "build_context_prompt",
+        build_context_with_revised_wording_at_bind,
+    )
+
+    request = _build_spawn_request().model_copy(update={"prompt_is_composed": False})
+    runtime_ctx = build_launch_context(
+        spawn_id="p-child",
+        request=request,
+        runtime=_build_launch_runtime(
+            tmp_path=tmp_path,
+            composition_surface=LaunchCompositionSurface.SPAWN_PREPARE,
+        ),
+        harness_registry=get_default_harness_registry(),
+        dry_run=True,
+    )
+
+    child_env = runtime_ctx.binding.environment.child_context_env
+    run_params = runtime_ctx.binding.run_params
+    _assert_materialized_work_dir_parity(
+        run_params_prompt=run_params.prompt,
+        run_params_appended_system_prompt=run_params.appended_system_prompt or "",
+        child_env=child_env,
+        expected_work_dir=expected_child,
+        parent_ambient=parent_ambient,
+    )
+
+    materialized = run_params.appended_system_prompt or run_params.prompt
+    assert revised_header in materialized
+    assert revised_footer in materialized
+    assert CONTEXT_PROMPT_HEADER not in materialized
+    assert "Inspect or configure: meridian context -h" not in materialized
+
+
 def test_bind_launch_context_named_work_dir_matches_prompt(
     monkeypatch: MonkeyPatch,
     tmp_path: Path,

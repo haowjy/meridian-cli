@@ -10,7 +10,7 @@ See spec S-1 for category definitions.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import IntEnum
 from typing import TYPE_CHECKING, Literal
 
@@ -45,6 +45,9 @@ INLINE_BLOCK_ORDER: tuple[str, ...] = (
 class GuidancePhase(IntEnum):
     GUIDANCE = 0
     ENVIRONMENT = 1
+
+
+CONTEXT_ENV_BLOCK_NAME = "context-env"
 
 
 @dataclass(frozen=True)
@@ -284,6 +287,30 @@ def join_content_blocks(*blocks: str) -> str:
     return "\n\n".join(block.strip() for block in blocks if block.strip())
 
 
+def has_context_env_block(guidance_blocks: tuple[CompositionBlock, ...]) -> bool:
+    """Return whether guidance blocks include the late-bound context-env block."""
+
+    return any(block.name == CONTEXT_ENV_BLOCK_NAME for block in guidance_blocks)
+
+
+def replace_context_env_block(
+    guidance_blocks: tuple[CompositionBlock, ...],
+    *,
+    new_content: str,
+) -> tuple[CompositionBlock, ...]:
+    """Return guidance blocks with the context-env content replaced."""
+
+    if not has_context_env_block(guidance_blocks):
+        return guidance_blocks
+    normalized = new_content.strip()
+    return tuple(
+        replace(block, content=normalized)
+        if block.name == CONTEXT_ENV_BLOCK_NAME
+        else block
+        for block in guidance_blocks
+    )
+
+
 _SKILL_TYPE_DESCRIPTIONS: dict[str, str] = {
     "principle": "Override other guidance when loaded.",
     "guardrail": "Load before acting in sensitive areas.",
@@ -450,6 +477,7 @@ def project_inline_content(content: ComposedLaunchContent) -> ProjectedContent:
 
 
 __all__ = [
+    "CONTEXT_ENV_BLOCK_NAME",
     "INLINE_BLOCK_ORDER",
     "SYSTEM_INSTRUCTION_BLOCK_ORDER",
     "AvailableSkillEntry",
@@ -463,8 +491,10 @@ __all__ = [
     "ReferenceRouting",
     "build_inline_file_contributions",
     "build_reference_routing",
+    "has_context_env_block",
     "join_content_blocks",
     "project_inline_content",
     "render_system_instruction_blocks",
     "render_task_context",
+    "replace_context_env_block",
 ]

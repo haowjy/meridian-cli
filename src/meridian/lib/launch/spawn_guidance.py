@@ -4,7 +4,11 @@ from __future__ import annotations
 
 from meridian.lib.catalog.agent import AgentProfile
 from meridian.lib.core.types import HarnessId
-from meridian.lib.launch.composition import CompositionBlock, GuidancePhase
+from meridian.lib.launch.composition import (
+    CONTEXT_ENV_BLOCK_NAME,
+    CompositionBlock,
+    GuidancePhase,
+)
 
 _CLAUDE_SPAWN_CONTRACT = """\
 # Spawning subagents (meridian)
@@ -110,7 +114,9 @@ def build_guidance_blocks(
     )
     context_env = (context_prompt or "").strip()
     if context_env:
-        blocks.append(CompositionBlock("context-env", GuidancePhase.ENVIRONMENT, 0, context_env))
+        blocks.append(
+            CompositionBlock(CONTEXT_ENV_BLOCK_NAME, GuidancePhase.ENVIRONMENT, 0, context_env)
+        )
     return tuple(blocks)
 
 

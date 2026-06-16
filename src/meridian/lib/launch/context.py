@@ -30,6 +30,7 @@ from meridian.lib.config.settings import (
 from meridian.lib.config.workspace import get_projectable_roots
 from meridian.lib.context.resolver import resolve_context_paths
 from meridian.lib.core.child_env import validate_child_env_keys
+from meridian.lib.core.domain import SkillContent
 from meridian.lib.core.overrides import RuntimeOverrides
 from meridian.lib.core.resolved_context import ResolvedContext
 from meridian.lib.core.types import HarnessId, ModelId, SpawnId
@@ -63,6 +64,7 @@ from meridian.lib.state.paths import (
 )
 from meridian.lib.state.session_store import get_session_active_work_id
 from meridian.lib.state.spawn.model import LaunchMode
+from meridian.lib.state.work_scope import resolve_bound_work_scope
 from meridian.lib.telemetry import emit_telemetry
 from meridian.lib.tools import ToolsField
 from meridian.plugin_api.git import resolve_clone_path
@@ -79,6 +81,8 @@ from .composition import (
     PromptDocument,
     build_inline_file_contributions,
     build_reference_routing,
+    has_context_env_block,
+    replace_context_env_block,
 )
 from .cwd import LaunchDirectoryContext
 from .env import build_env_plan
@@ -108,7 +112,6 @@ from .prompt_context import (
     build_context_prompt,
     compose_skill_injections,
     compose_skill_prompt_documents,
-    replace_context_block,
 )
 from .reference import (
     ReferenceItem,
@@ -888,20 +891,31 @@ def _resolve_bound_active_work_dir(
 ) -> Path | None:
     """Pure bind-time work-dir: named repo scratch or child ambient spawn dir."""
 
-    if requested_work_id is not None:
-        return resolve_work_scratch_dir_for_project(project_root, requested_work_id)
-    return resolve_ambient_work_dir(project_root, child_spawn_id)
+    return resolve_bound_work_scope(
+        project_root=project_root,
+        requested_work_id=requested_work_id,
+        child_spawn_id=child_spawn_id,
+    ).root
 
 
-def _refresh_prompt_payload_active_work_dir(
+def _reproject_context_env_at_bind(
     *,
     composed_prompt: str,
     prompt_payload: PreparedPromptPayload,
     projected_content: ProjectedContent | None,
+    composed_launch_content: ComposedLaunchContent | None,
+    harness: SubprocessHarness,
     project_root: Path,
     bound_work_dir: Path | None,
+    loaded_skills: tuple[SkillContent, ...] = (),
+    primary_prompt_is_synthetic: bool = False,
 ) -> tuple[str, PreparedPromptPayload, ProjectedContent | None]:
-    """Re-render the injected context block so prompt work-dir matches bind env."""
+    """Re-render the typed context-env block and re-project prompt channels at bind."""
+
+    if composed_launch_content is None or not has_context_env_block(
+        composed_launch_content.guidance_blocks
+    ):
+        return composed_prompt, prompt_payload, projected_content
 
     new_context = build_context_prompt(
         project_root=project_root,
@@ -910,67 +924,28 @@ def _refresh_prompt_payload_active_work_dir(
     if new_context is None or not new_context.strip():
         return composed_prompt, prompt_payload, projected_content
 
-    context_block = new_context.strip()
-
-    refreshed_composed = replace_context_block(
-        system_prompt=composed_prompt,
-        new_context_prompt=context_block,
+    refreshed_content = replace(
+        composed_launch_content,
+        guidance_blocks=replace_context_env_block(
+            composed_launch_content.guidance_blocks,
+            new_content=new_context,
+        ),
     )
+    updated_projected = harness.project_content(refreshed_content)
+    updated_payload = prepare_prompt_payload(projected_content=updated_projected)
+    if harness.capabilities.supports_native_skills and loaded_skills:
+        skill_content = compose_skill_injections(loaded_skills)
+        if skill_content:
+            base = updated_payload.appended_system_prompt or ""
+            merged = f"{base}\n\n{skill_content}" if base else skill_content
+            updated_payload = replace(updated_payload, appended_system_prompt=merged)
+    if primary_prompt_is_synthetic:
+        updated_payload = replace(updated_payload, user_turn_content=None)
 
-    updated_projected = projected_content
-    if projected_content is not None:
-        updated_system = (
-            replace_context_block(
-                system_prompt=projected_content.system_prompt,
-                new_context_prompt=context_block,
-            )
-            if projected_content.system_prompt.strip()
-            else projected_content.system_prompt
-        )
-        updated_user_turn = (
-            replace_context_block(
-                system_prompt=projected_content.user_turn_content,
-                new_context_prompt=context_block,
-            )
-            if projected_content.user_turn_content.strip()
-            else projected_content.user_turn_content
-        )
-        if (
-            updated_system != projected_content.system_prompt
-            or updated_user_turn != projected_content.user_turn_content
-        ):
-            updated_projected = replace(
-                projected_content,
-                system_prompt=updated_system,
-                user_turn_content=updated_user_turn,
-            )
-
-    appended = prompt_payload.appended_system_prompt or ""
-    if appended.strip():
-        updated_appended = replace_context_block(
-            system_prompt=appended,
-            new_context_prompt=context_block,
-        )
-    elif updated_projected is not None and updated_projected.system_prompt.strip():
-        updated_appended = updated_projected.system_prompt.strip()
-    else:
-        updated_appended = None
-
-    user_turn = prompt_payload.user_turn_content or ""
-    if user_turn.strip():
-        updated_user_turn_payload = replace_context_block(
-            system_prompt=user_turn,
-            new_context_prompt=context_block,
-        )
-    else:
-        updated_user_turn_payload = prompt_payload.user_turn_content
-
-    updated_payload = replace(
-        prompt_payload,
-        appended_system_prompt=updated_appended,
-        user_turn_content=updated_user_turn_payload,
+    refreshed_prompt = (
+        updated_projected.user_turn_content.strip() or refreshed_content.user_task_prompt
     )
-    return refreshed_composed, updated_payload, updated_projected
+    return refreshed_prompt, updated_payload, updated_projected
 
 
 def _resolve_session_continuation(
@@ -1179,21 +1154,21 @@ def _resolve_spawn_prepare_projection(
         policy=policy,
     )
 
-    projected = harness.project_content(
-        ComposedLaunchContent(
-            supplemental_documents=supplemental_documents,
-            available_skills=policy.bundle_available_skills,
-            agent_profile_body=agent_profile_body,
-            report_instruction=build_report_instruction(),
-            guidance_blocks=shared.guidance_blocks,
-            completion_contract=shared.completion_contract,
-            launch_preamble=build_spawn_preamble(launch_mode),
-            passthrough_system_fragments=(),
-            user_task_prompt=cleaned_user_prompt,
-            reference_items=task_ctx.reference_items,
-            prior_output=task_ctx.prior_output,
-        )
+    composed = ComposedLaunchContent(
+        supplemental_documents=supplemental_documents,
+        available_skills=policy.bundle_available_skills,
+        agent_profile_body=agent_profile_body,
+        report_instruction=build_report_instruction(),
+        guidance_blocks=shared.guidance_blocks,
+        completion_contract=shared.completion_contract,
+        launch_preamble=build_spawn_preamble(launch_mode),
+        passthrough_system_fragments=(),
+        user_task_prompt=cleaned_user_prompt,
+        reference_items=task_ctx.reference_items,
+        prior_output=task_ctx.prior_output,
     )
+
+    projected = harness.project_content(composed)
 
     return PreparedLaunchContent(
         final_prompt=projected.user_turn_content.strip() or cleaned_user_prompt,
@@ -1201,6 +1176,7 @@ def _resolve_spawn_prepare_projection(
         loaded_references=task_ctx.reference_items,
         prompt_payload=prepare_prompt_payload(projected_content=projected),
         projected_content=projected,
+        composed_launch_content=composed,
     )
 
 
@@ -1259,21 +1235,21 @@ def _resolve_primary_projection(
         reference_anchor=project_paths.execution_cwd,
     )
 
-    projected = harness.project_content(
-        ComposedLaunchContent(
-            supplemental_documents=supplemental_documents,
-            available_skills=policy.bundle_available_skills,
-            agent_profile_body=agent_profile_body,
-            report_instruction="",
-            guidance_blocks=shared.guidance_blocks,
-            completion_contract=shared.completion_contract,
-            launch_preamble=build_primary_preamble(),
-            passthrough_system_fragments=passthrough_system_fragments,
-            user_task_prompt=request.prompt,
-            reference_items=task_ctx.reference_items,
-            prior_output=task_ctx.prior_output,
-        )
+    composed = ComposedLaunchContent(
+        supplemental_documents=supplemental_documents,
+        available_skills=policy.bundle_available_skills,
+        agent_profile_body=agent_profile_body,
+        report_instruction="",
+        guidance_blocks=shared.guidance_blocks,
+        completion_contract=shared.completion_contract,
+        launch_preamble=build_primary_preamble(),
+        passthrough_system_fragments=passthrough_system_fragments,
+        user_task_prompt=request.prompt,
+        reference_items=task_ctx.reference_items,
+        prior_output=task_ctx.prior_output,
     )
+
+    projected = harness.project_content(composed)
 
     prompt_payload = prepare_prompt_payload(projected_content=projected)
     if request.primary_prompt_is_synthetic:
@@ -1286,6 +1262,7 @@ def _resolve_primary_projection(
             loaded_references=task_ctx.reference_items,
             prompt_payload=prompt_payload,
             projected_content=projected,
+            composed_launch_content=composed,
         ),
         passthrough_args,
         seed.session_id or resolved_continue_harness_session_id,
@@ -1346,6 +1323,7 @@ def _prepare_spawn_surface(
                     user_turn_content=content.prompt_payload.user_turn_content,
                 ),
                 projected_content=content.projected_content,
+                composed_launch_content=content.composed_launch_content,
             )
 
     return (
@@ -1502,6 +1480,7 @@ def prepare_launch_surface(
             user_turn_content=content.prompt_payload.user_turn_content,
         ),
         projected_content=content.projected_content,
+        composed_launch_content=content.composed_launch_content,
     )
     profile_tools_for_nested_deny = (
         policies.resolved_tools if (profile is not None or using_policy_snapshot) else None
@@ -1877,12 +1856,18 @@ def bind_launch_context(
         requested_work_id=requested_work_id,
         child_spawn_id=bindings.spawn_id,
     )
-    refreshed_prompt, prompt_payload, projected_content = _refresh_prompt_payload_active_work_dir(
+    policy_snapshot = resolved_request.launch_policy_snapshot
+    loaded_skills = policy_snapshot.loaded_skills if policy_snapshot is not None else ()
+    refreshed_prompt, prompt_payload, projected_content = _reproject_context_env_at_bind(
         composed_prompt=resolved_request.prompt,
         prompt_payload=prompt_payload,
         projected_content=projected_content,
+        composed_launch_content=prepared.content.composed_launch_content,
+        harness=harness,
         project_root=project_paths.project_root,
         bound_work_dir=bound_active_work_dir,
+        loaded_skills=loaded_skills,
+        primary_prompt_is_synthetic=resolved_request.primary_prompt_is_synthetic,
     )
     materialized = materialize_launch_artifacts(
         harness=harness,
