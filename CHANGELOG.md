@@ -11,9 +11,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 - `resolve_active_work_scope_dir` threads `explicit_chat_id` through `ResolvedContext.from_environment` instead of temporarily mutating `MERIDIAN_CHAT_ID` (reentrant-safe scope resolution for leave-scope warnings).
-- Child spawn env resolves ambient `MERIDIAN_ACTIVE_WORK_DIR` from the child's spawn id at the shared `ChildEnvContext` seam (not inherited parent ambient); context-block marker replace is single-owned in `prompt_context`.
+- Child spawn env resolves ambient `MERIDIAN_ACTIVE_WORK_DIR` from the child's spawn id at the shared `ChildEnvContext` seam (not inherited parent ambient).
 - Child spawn bind aligns `MERIDIAN_ACTIVE_WORK_DIR` and injected context `work:` line to the child's ambient `spawns/p<N>/work` dir; dir-without-id propagates across env/JSON surfaces.
-- Bind-time context-block refresh rewrites the composed `prompt` and non-empty `user_turn_content` channels (inline harness projection); empty user turns stay unset.
+- Bind-time context refresh keeps the injected `work:` line and bound `MERIDIAN_ACTIVE_WORK_DIR` in parity across the composed `prompt` and non-empty `user_turn_content` channels; empty user turns stay unset.
 - Prompt-file idiom across agent-help surfaces: run `meridian work path prompts/<name>.md`, write there, pass the printed path literally to `--prompt-file` (disposable prompts under `prompts/`, not scope top level).
 - Agent-mode root help: portable quick-start example, spawn subcommand hint drops bogus `fork`, `context` uses imperative voice.
 - Missing context roots are skipped before sandbox projection (a missing bind-mount source aborted codex's whole bwrap exec namespace while the spawn still reported `succeeded`).
@@ -21,6 +21,10 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Agent-mode detection recognizes the primary launched agent (keys on `MERIDIAN_SPAWN_ID` managed-session membership, not `MERIDIAN_DEPTH > 0`).
 
 ### Changed
+- Agent help renders from `GROUPS` metadata via `print_curated_group_help`; the snapshot/restore + Cyclopts `App`-singleton mutation (`_commands`/`show`/`sort_key` toggling) is gone, so help is no longer order-dependent global state.
+- Active work scope is an explicit `WorkScope` object (kind `work_item`/`ambient_spawn`, identifier, root, durable/ephemeral); `work path`, leave-scope warnings, and artifact counting route through it instead of raw paths + `prompts/`/`handoffs/` string heuristics and `MERIDIAN_CHAT_ID` env impersonation.
+- Spawn reservation splits the overloaded `announce=False` into single-concern phases — `reserve_spawn_row` / `_materialize_spawn_work_item` / `announce_reserved_spawn`; same happy-path/kill-mid-prep/graceful-failure guarantees.
+- Bind-time context-env refresh re-renders the typed `context-env` composition block by name and re-projects, instead of string-replacing rendered text by header/footer markers; `replace_context_block` deleted.
 - `ResolvedContext.from_environment` falls back to per-spawn ambient artifact dir (`spawns/p<N>/work`) when no named work is attached; ambient never sets `work_id`.
 - Agent-mode `session`/`work`/`context -h`: task-voice long help, de-duplicated session ref-forms (refs in long_help only).
 - Lean agent `spawn -h` playbook: no core-loop duplication (contract owns that); teaches prompt-file, context, parallel drain.
