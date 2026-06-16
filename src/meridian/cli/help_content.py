@@ -91,8 +91,8 @@ GROUPS: dict[str, GroupHelp] = {
             "Run `meridian work path prompts/<name>.md`, write the prompt to "
             "the printed absolute path, then pass that path literally to "
             "--prompt-file. Disposable launch prompts belong under prompts/ "
-            "(no /tmp, no $(mktemp), no shell var that won't survive the "
-            "next Bash call).\n\n"
+            "(no /tmp, no shell var that won't survive the next Bash "
+            "call).\n\n"
             "Profile vs model: prefer -a <profile> when a role fits; use "
             "-m <model> for one-offs. Put recurring model choices in profiles "
             "or config, not hardcoded spawn commands.\n\n"
@@ -120,8 +120,8 @@ GROUPS: dict[str, GroupHelp] = {
             "before meridian sees it — backticks run as commands, $vars expand, quotes "
             "and newlines collapse. A file preserves exact text and keeps the handoff "
             "inspectable. Run `meridian work path prompts/<name>.md`, write there, "
-            "then pass that path literally (no /tmp, and no $(mktemp)/$f shell var, "
-            "which won't survive your next Bash call):\n"
+            "then pass that path literally (no /tmp, and no $f shell var "
+            "that won't survive your next Bash call):\n"
             '  meridian spawn -a coder --prompt-file '
             '"$(meridian work path prompts/task.md)" --bg\n\n'
             "Pick the runner: -a <profile> when a role fits, -m <model> for a one-off. "
