@@ -62,6 +62,7 @@ class ResolvedContext:
         cls,
         *,
         explicit_work_id: str | None = None,
+        explicit_chat_id: str | None = None,
         explicit_project_root: Path | None = None,
         explicit_runtime_root: Path | None = None,
         backend: ContextBackend | None = None,
@@ -86,10 +87,16 @@ class ResolvedContext:
         parent_spawn_id_raw = os.getenv("MERIDIAN_PARENT_SPAWN_ID", "").strip()
         depth_raw = os.getenv(MERIDIAN_DEPTH_ENV, "0").strip()
         project_root_raw = os.getenv("MERIDIAN_PROJECT_DIR", "").strip()
-        chat_id_raw = os.getenv("MERIDIAN_CHAT_ID", "").strip()
-        work_id_raw = os.getenv("MERIDIAN_ACTIVE_WORK_ID", "").strip()
-        work_dir_raw = os.getenv("MERIDIAN_ACTIVE_WORK_DIR", "").strip()
+        explicit_chat_id_raw = (explicit_chat_id or "").strip()
         explicit_work_id_raw = (explicit_work_id or "").strip()
+        if explicit_chat_id_raw:
+            chat_id_raw = explicit_chat_id_raw
+            work_id_raw = ""
+            work_dir_raw = ""
+        else:
+            chat_id_raw = os.getenv("MERIDIAN_CHAT_ID", "").strip()
+            work_id_raw = os.getenv("MERIDIAN_ACTIVE_WORK_ID", "").strip()
+            work_dir_raw = os.getenv("MERIDIAN_ACTIVE_WORK_DIR", "").strip()
 
         depth = parse_meridian_depth(depth_raw)
 

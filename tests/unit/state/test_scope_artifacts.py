@@ -37,3 +37,28 @@ def test_count_scope_artifacts_counts_top_level_and_handoffs(tmp_path: Path) -> 
     (prompts / "launch.md").write_text("prompt", encoding="utf-8")
 
     assert count_scope_artifacts(scope) == 3
+
+
+def test_count_scope_artifacts_counts_handoffs_children_not_nested_files(
+    tmp_path: Path,
+) -> None:
+    """Direct children of handoffs/ count; nested dirs count as one entry each."""
+
+    scope = tmp_path / "scope"
+    scope.mkdir()
+    handoffs = scope / SCOPE_HANDOFFS_DIRNAME
+    handoffs.mkdir()
+    nested = handoffs / "batch-a"
+    nested.mkdir()
+    (nested / "ctx.md").write_text("nested", encoding="utf-8")
+    (handoffs / "top.md").write_text("top", encoding="utf-8")
+
+    assert count_scope_artifacts(scope) == 2
+
+
+def test_count_scope_artifacts_counts_non_dir_handoffs_as_one(tmp_path: Path) -> None:
+    scope = tmp_path / "scope"
+    scope.mkdir()
+    (scope / SCOPE_HANDOFFS_DIRNAME).write_text("not a directory", encoding="utf-8")
+
+    assert count_scope_artifacts(scope) == 1

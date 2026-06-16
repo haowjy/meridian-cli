@@ -241,3 +241,43 @@ def test_from_environment_session_work_id_still_resolves_named_dir(
     assert ctx.work_dir is not None
     assert ctx.work_dir.name == "session-work"
     backend.get_session_active_work_id.assert_called_once_with(runtime_root, "chat-1")
+
+
+def test_from_environment_explicit_chat_id_ignores_env_work_scope(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    project_root = tmp_path / "repo"
+    state_dir = project_root / ".meridian"
+    state_dir.mkdir(parents=True)
+    (state_dir / "id").write_text("proj-explicit-chat", encoding="utf-8")
+    runtime_root = get_project_home("proj-explicit-chat")
+    caller_scope = tmp_path / "caller-scope"
+    caller_scope.mkdir()
+
+    backend = MagicMock()
+    backend.get_session_active_work_id.return_value = "target-work"
+
+    def _resolve_scratch_dir(root: Path, work_id: str) -> Path:
+        return root / "work" / work_id
+
+    backend.resolve_work_scratch_dir.side_effect = _resolve_scratch_dir
+
+    monkeypatch.setenv("MERIDIAN_PROJECT_DIR", project_root.as_posix())
+    monkeypatch.setenv("MERIDIAN_CHAT_ID", "caller-chat")
+    monkeypatch.setenv("MERIDIAN_ACTIVE_WORK_ID", "caller-work")
+    monkeypatch.setenv("MERIDIAN_ACTIVE_WORK_DIR", caller_scope.as_posix())
+
+    ctx = ResolvedContext.from_environment(
+        explicit_chat_id="target-chat",
+        explicit_project_root=project_root,
+        explicit_runtime_root=runtime_root,
+        backend=backend,
+    )
+
+    assert ctx.chat_id == "target-chat"
+    assert ctx.work_id == "target-work"
+    assert ctx.work_dir is not None
+    assert ctx.work_dir.name == "target-work"
+    assert ctx.work_dir != caller_scope
+    backend.get_session_active_work_id.assert_called_once_with(runtime_root, "target-chat")

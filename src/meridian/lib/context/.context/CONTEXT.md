@@ -44,7 +44,7 @@ agents receive context paths at spawn time — env vars are set before the agent
 any prompt.
 
 Special cases:
-- `work` → `MERIDIAN_ACTIVE_WORK_DIR` (active work item, not derived by `context_env_key`)
+- `work` → `MERIDIAN_ACTIVE_WORK_DIR` (active scope dir: named work item when attached, else ambient spawn scope `spawns/p<N>/work`; not derived by `context_env_key`)
 - `work_archive` → `MERIDIAN_CONTEXT_WORK_ARCHIVE_DIR`
 - `kb` → `MERIDIAN_CONTEXT_KB_DIR`
 

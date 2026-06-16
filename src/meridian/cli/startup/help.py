@@ -119,7 +119,7 @@ AGENT_ORIENTATION: tuple[str, ...] = (
 HUMAN_TAGLINE = "Multi-agent orchestration across Claude, Codex, and OpenCode."
 
 QUICK_START_EXAMPLES: tuple[tuple[str, str], ...] = (
-    ('meridian spawn -a coder --prompt-file "$MERIDIAN_ACTIVE_WORK_DIR/task.md" --bg', ""),
+    ('meridian spawn -a coder --prompt-file "$(meridian work path prompts/task.md)" --bg', ""),
     ("meridian spawn wait", ""),
     ("meridian mars models list", ""),
 )

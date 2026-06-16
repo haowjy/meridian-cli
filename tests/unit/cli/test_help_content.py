@@ -16,6 +16,9 @@ from meridian.cli.agent_help import (
 from meridian.cli.help_content import GROUPS, render_group_help
 from meridian.cli.startup.help import GROUP_DESCRIPTIONS
 
+# Contractual spawn prompt-file idiom — pinned once for help surfaces.
+SPAWN_PROMPT_FILE_IDIOM = "meridian work path prompts/"
+
 _GROUPS_WITH_LEAVES = (
     "spawn",
     "session",
@@ -76,7 +79,7 @@ def test_spawn_examples_stay_on_group_help_not_leaves() -> None:
     assert "meridian spawn wait" in human_group
     assert "Usage examples:" not in agent_group
     assert "Playbook:" in agent_group
-    assert "$MERIDIAN_ACTIVE_WORK_DIR" in agent_group
+    assert SPAWN_PROMPT_FILE_IDIOM in agent_group
     assert "Core loop:" not in agent_group
     assert "wait" in agent_group
 
@@ -123,7 +126,7 @@ def test_spawn_agent_group_help_has_lean_and_advanced_tiers() -> None:
 
     assert "Playbook:" in lean_spawn
     assert "meridian spawn -h --advanced" in lean_spawn
-    assert "$MERIDIAN_ACTIVE_WORK_DIR" in lean_spawn
+    assert SPAWN_PROMPT_FILE_IDIOM in lean_spawn
     assert "launch/drain loop" not in lean_spawn
     assert "--fork / --fork-fresh" in lean_spawn
     assert "verifiable exit state" in lean_spawn

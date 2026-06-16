@@ -196,12 +196,19 @@ class WorkPathOutput(BaseModel):
         return self.path
 
 
-def _resolve_runtime_context(project_root: Path, runtime_root: Path) -> ResolvedContext:
+def _resolve_runtime_context(
+    project_root: Path,
+    runtime_root: Path,
+    *,
+    chat_id: str | None = None,
+) -> ResolvedContext:
     """Resolve context with explicit roots — no env mutation needed."""
 
+    normalized_chat_id = (chat_id or "").strip()
     return ResolvedContext.from_environment(
         explicit_project_root=project_root,
         explicit_runtime_root=runtime_root,
+        explicit_chat_id=normalized_chat_id or None,
     )
 
 
@@ -213,23 +220,8 @@ def resolve_active_work_scope_dir(
 ) -> Path | None:
     """Return the active work scope directory using the same resolution as work current."""
 
-    import os
-
-    normalized_chat_id = (chat_id or "").strip()
-    if not normalized_chat_id:
-        resolved = _resolve_runtime_context(project_root, runtime_root)
-        return resolved.work_dir
-
-    previous_chat_id = os.environ.get("MERIDIAN_CHAT_ID")
-    os.environ["MERIDIAN_CHAT_ID"] = normalized_chat_id
-    try:
-        resolved = _resolve_runtime_context(project_root, runtime_root)
-        return resolved.work_dir
-    finally:
-        if previous_chat_id is None:
-            os.environ.pop("MERIDIAN_CHAT_ID", None)
-        else:
-            os.environ["MERIDIAN_CHAT_ID"] = previous_chat_id
+    resolved = _resolve_runtime_context(project_root, runtime_root, chat_id=chat_id)
+    return resolved.work_dir
 
 
 def _join_scope_path(scope_dir: Path, relpath: str) -> Path:
