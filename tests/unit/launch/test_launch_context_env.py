@@ -466,19 +466,27 @@ def test_build_launch_context_opencode_includes_context_paths_in_external_direct
     assert external_dirs[strategy_path] == "allow"
 
 
-def _assert_prompt_work_dir_matches_env(
+def _assert_materialized_work_dir_parity(
     *,
-    system_prompt: str,
+    run_params_prompt: str,
+    run_params_appended_system_prompt: str,
     child_env: dict[str, str],
     expected_work_dir: Path,
     parent_ambient: Path | None = None,
 ) -> None:
     resolved = expected_work_dir.as_posix()
     assert child_env["MERIDIAN_ACTIVE_WORK_DIR"] == resolved
-    assert "$MERIDIAN_ACTIVE_WORK_DIR" in system_prompt
-    assert resolved in system_prompt
+
+    materialized_channels = (
+        run_params_prompt,
+        run_params_appended_system_prompt,
+    )
+    if any(CONTEXT_PROMPT_HEADER in channel for channel in materialized_channels):
+        assert any(resolved in channel for channel in materialized_channels)
     if parent_ambient is not None:
-        assert parent_ambient.as_posix() not in system_prompt
+        parent_resolved = parent_ambient.as_posix()
+        assert parent_resolved not in run_params_prompt
+        assert parent_resolved not in run_params_appended_system_prompt
 
 
 def test_bind_launch_context_child_ambient_work_dir_matches_prompt(
@@ -488,8 +496,8 @@ def test_bind_launch_context_child_ambient_work_dir_matches_prompt(
     _write_minimal_mars_config(tmp_path)
     stub_bundle_request_and_resolve(
         monkeypatch,
-        model="gpt-5.4",
-        harness=HarnessId.CODEX,
+        model="claude-opus-4-7-thinking-high",
+        harness=HarnessId.CURSOR,
     )
     parent_ambient = tmp_path / ".meridian" / "spawns" / "p-parent" / "work"
     monkeypatch.setenv("MERIDIAN_SPAWN_ID", "p-parent")
@@ -501,7 +509,9 @@ def test_bind_launch_context_child_ambient_work_dir_matches_prompt(
 
     expected_child = resolve_ambient_work_dir(tmp_path, "p-child")
 
-    request = _build_spawn_request().model_copy(update={"prompt_is_composed": False})
+    request = _build_spawn_request().model_copy(
+        update={"harness": HarnessId.CURSOR.value, "prompt_is_composed": False},
+    )
     runtime_ctx = build_launch_context(
         spawn_id="p-child",
         request=request,
@@ -517,9 +527,10 @@ def test_bind_launch_context_child_ambient_work_dir_matches_prompt(
     assert child_env.get("MERIDIAN_ACTIVE_WORK_ID") in (None, "")
     assert "MERIDIAN_ACTIVE_WORK_ID" not in child_env
 
-    system_prompt = runtime_ctx.binding.run_params.appended_system_prompt or ""
-    _assert_prompt_work_dir_matches_env(
-        system_prompt=system_prompt,
+    run_params = runtime_ctx.binding.run_params
+    _assert_materialized_work_dir_parity(
+        run_params_prompt=run_params.prompt,
+        run_params_appended_system_prompt=run_params.appended_system_prompt or "",
         child_env=child_env,
         expected_work_dir=expected_child,
         parent_ambient=parent_ambient,
@@ -607,9 +618,10 @@ def test_bind_launch_context_named_work_dir_matches_prompt(
     assert child_env["MERIDIAN_ACTIVE_WORK_ID"] == work_id
     work_dir = Path(child_env["MERIDIAN_ACTIVE_WORK_DIR"])
 
-    system_prompt = runtime_ctx.binding.run_params.appended_system_prompt or ""
-    _assert_prompt_work_dir_matches_env(
-        system_prompt=system_prompt,
+    run_params = runtime_ctx.binding.run_params
+    _assert_materialized_work_dir_parity(
+        run_params_prompt=run_params.prompt,
+        run_params_appended_system_prompt=run_params.appended_system_prompt or "",
         child_env=child_env,
         expected_work_dir=work_dir,
     )

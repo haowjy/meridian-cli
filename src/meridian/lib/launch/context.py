@@ -895,11 +895,12 @@ def _resolve_bound_active_work_dir(
 
 def _refresh_prompt_payload_active_work_dir(
     *,
+    composed_prompt: str,
     prompt_payload: PreparedPromptPayload,
     projected_content: ProjectedContent | None,
     project_root: Path,
     bound_work_dir: Path | None,
-) -> tuple[PreparedPromptPayload, ProjectedContent | None]:
+) -> tuple[str, PreparedPromptPayload, ProjectedContent | None]:
     """Re-render the injected context block so prompt work-dir matches bind env."""
 
     new_context = build_context_prompt(
@@ -907,17 +908,42 @@ def _refresh_prompt_payload_active_work_dir(
         active_work_dir=bound_work_dir,
     )
     if new_context is None or not new_context.strip():
-        return prompt_payload, projected_content
+        return composed_prompt, prompt_payload, projected_content
 
     context_block = new_context.strip()
 
+    refreshed_composed = replace_context_block(
+        system_prompt=composed_prompt,
+        new_context_prompt=context_block,
+    )
+
     updated_projected = projected_content
-    if projected_content is not None and projected_content.system_prompt.strip():
-        updated_system = replace_context_block(
-            system_prompt=projected_content.system_prompt,
-            new_context_prompt=context_block,
+    if projected_content is not None:
+        updated_system = (
+            replace_context_block(
+                system_prompt=projected_content.system_prompt,
+                new_context_prompt=context_block,
+            )
+            if projected_content.system_prompt.strip()
+            else projected_content.system_prompt
         )
-        updated_projected = replace(projected_content, system_prompt=updated_system)
+        updated_user_turn = (
+            replace_context_block(
+                system_prompt=projected_content.user_turn_content,
+                new_context_prompt=context_block,
+            )
+            if projected_content.user_turn_content.strip()
+            else projected_content.user_turn_content
+        )
+        if (
+            updated_system != projected_content.system_prompt
+            or updated_user_turn != projected_content.user_turn_content
+        ):
+            updated_projected = replace(
+                projected_content,
+                system_prompt=updated_system,
+                user_turn_content=updated_user_turn,
+            )
 
     appended = prompt_payload.appended_system_prompt or ""
     if appended.strip():
@@ -930,11 +956,25 @@ def _refresh_prompt_payload_active_work_dir(
     else:
         updated_appended = None
 
+    user_turn = prompt_payload.user_turn_content or ""
+    if user_turn.strip():
+        updated_user_turn_payload = replace_context_block(
+            system_prompt=user_turn,
+            new_context_prompt=context_block,
+        )
+    elif updated_projected is not None and updated_projected.user_turn_content.strip():
+        updated_user_turn_payload = updated_projected.user_turn_content.strip()
+    elif refreshed_composed.strip():
+        updated_user_turn_payload = refreshed_composed.strip()
+    else:
+        updated_user_turn_payload = None
+
     updated_payload = replace(
         prompt_payload,
         appended_system_prompt=updated_appended,
+        user_turn_content=updated_user_turn_payload,
     )
-    return updated_payload, updated_projected
+    return refreshed_composed, updated_payload, updated_projected
 
 
 def _resolve_session_continuation(
@@ -1841,7 +1881,8 @@ def bind_launch_context(
         requested_work_id=requested_work_id,
         child_spawn_id=bindings.spawn_id,
     )
-    prompt_payload, projected_content = _refresh_prompt_payload_active_work_dir(
+    refreshed_prompt, prompt_payload, projected_content = _refresh_prompt_payload_active_work_dir(
+        composed_prompt=resolved_request.prompt,
         prompt_payload=prompt_payload,
         projected_content=projected_content,
         project_root=project_paths.project_root,
@@ -1849,7 +1890,7 @@ def bind_launch_context(
     )
     materialized = materialize_launch_artifacts(
         harness=harness,
-        prompt=resolved_request.prompt,
+        prompt=refreshed_prompt,
         model=effective_model,
         effort=resolved_request.execution_policy.effort,
         skills=resolved_request.skills,
