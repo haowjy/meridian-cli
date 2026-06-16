@@ -17,7 +17,6 @@ from meridian.lib.core.context import RuntimeContext
 from meridian.lib.launch.context import PreparedLaunchSurface
 from meridian.lib.launch.cwd import resolve_task_cwd
 from meridian.lib.launch.request import LaunchArgvIntent, SpawnRequest
-from meridian.lib.ops.work_attachment import ensure_explicit_work_item
 from meridian.lib.platform import IS_WINDOWS
 from meridian.lib.state import spawn_store
 from meridian.lib.state.launch_boundary import (
@@ -46,7 +45,8 @@ from .execute_bg import (
 from .execute_init import (
     _announce_reserved_spawn,
     _emit_subrun_event,
-    _init_spawn,
+    _materialize_spawn_work_item,
+    _reserve_spawn_row,
     _spawn_background_worker_env,
     _SpawnContext,
     _write_params_json,
@@ -203,7 +203,7 @@ def _reserve_then_prepare(
     runner_pid: int | None = None,
 ) -> tuple[_SpawnContext, SpawnExecutionPreparation] | SpawnActionOutput:
     resolved_context = runtime_context(ctx)
-    context = _init_spawn(
+    context = _reserve_spawn_row(
         payload=payload,
         request=request,
         runtime=runtime,
@@ -214,7 +214,6 @@ def _reserve_then_prepare(
         runner_pid=runner_pid,
         launch_policy_snapshot=request.launch_policy_snapshot,
         ctx=resolved_context,
-        announce=False,
     )
     preparation = _prepare_spawn_execution(
         payload=payload,
@@ -227,21 +226,11 @@ def _reserve_then_prepare(
         return preparation
 
     project_paths = preparation.project_paths
-    final_work_id = context.work_id
-    if (payload.work or "").strip():
-        from typing import cast
-
-        project_local_root = resolve_project_paths(project_paths.project_root).root_dir
-        final_work_id = cast("str", final_work_id)
-        final_work_id = ensure_explicit_work_item(project_local_root, final_work_id)
-        if final_work_id != context.work_id:
-            spawn_store.update_spawn(
-                context.runtime_root,
-                context.spawn.spawn_id,
-                work_id=final_work_id,
-            )
-    context = context.model_copy(update={"work_id": final_work_id})
-
+    context = _materialize_spawn_work_item(
+        context=context,
+        payload=payload,
+        project_root=project_paths.project_root,
+    )
     _persist_execution_contract(context, preparation.execution_contract)
     _announce_reserved_spawn(
         context=context,

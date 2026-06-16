@@ -21,6 +21,7 @@ from meridian.lib.launch.plan import build_spawn_mars_runtime
 from meridian.lib.launch.request import SpawnRequest
 from meridian.lib.launch.types import PrimarySessionMetadata
 from meridian.lib.ops.work_attachment import ensure_explicit_work_item
+from meridian.lib.state import spawn_store
 from meridian.lib.state.atomic import atomic_write_text
 from meridian.lib.state.paths import (
     resolve_project_paths,
@@ -150,7 +151,7 @@ def resolve_spawn_work_id(
     )
 
 
-def _init_spawn(
+def _reserve_spawn_row(
     *,
     payload: SpawnCreateInput,
     request: SpawnRequest,
@@ -165,18 +166,11 @@ def _init_spawn(
     task_cwd: str | None = None,
     execution_cwd: str | None = None,
     ctx: RuntimeContext | None = None,
-    announce: bool = True,
 ) -> _SpawnContext:
+    """Write only the durable spawn row — no work-item creation or lifecycle events."""
     resolved_context = runtime_context(ctx)
     project_paths = resolve_project_config_paths(project_root=runtime.project_root)
     runtime_root = resolve_runtime_root(project_paths.project_root)
-    resolved_work_id = work_id
-    if announce and (payload.work or "").strip():
-        from typing import cast
-
-        project_local_root = resolve_project_paths(project_paths.project_root).root_dir
-        resolved_work_id = cast("str", resolved_work_id)
-        resolved_work_id = ensure_explicit_work_item(project_local_root, resolved_work_id)
     resolved_desc = (desc if desc is not None else payload.desc).strip() or None
     owner_chat_id = resolve_chat_id(ctx=resolved_context, fallback="c0")
     service = build_spawn_lifecycle_service_from_roots(project_paths.project_root, runtime_root)
@@ -188,7 +182,7 @@ def _init_spawn(
         skills=request.skills,
         skill_paths=request.skill_paths,
     )
-    spawn_id = service.start(
+    spawn_id = service.reserve_spawn_row(
         chat_id=owner_chat_id,
         owner_chat_id=owner_chat_id,
         parent_id=str(resolved_context.spawn_id) if resolved_context.spawn_id else None,
@@ -196,7 +190,7 @@ def _init_spawn(
         kind="child",
         prompt=request.prompt,
         desc=resolved_desc,
-        work_id=resolved_work_id,
+        work_id=work_id,
         goal=request.goal,
         # I-10: do NOT pre-populate harness_session_id on fork starts.
         # materialize_fork() writes it via update_spawn after the row exists.
@@ -210,7 +204,6 @@ def _init_spawn(
         runner_pid=runner_pid,
         launch_policy_snapshot=launch_policy_snapshot or request.launch_policy_snapshot,
         status=status,
-        dispatch_events=announce,
     )
     spawn = Spawn(
         spawn_id=SpawnId(spawn_id),
@@ -218,21 +211,35 @@ def _init_spawn(
         model=ModelId(request.model or ""),
         status=status,
     )
-    current_depth = resolved_context.depth
-    if announce:
-        _emit_spawn_start_subrun_event(
-            spawn_id=str(spawn.spawn_id),
-            request=request,
-            current_depth=current_depth,
-            sink=runtime.sink,
-            ctx=resolved_context,
-        )
     return _SpawnContext(
         spawn=spawn,
         runtime_root=runtime_root,
-        current_depth=current_depth,
-        work_id=resolved_work_id,
+        current_depth=resolved_context.depth,
+        work_id=work_id,
     )
+
+
+def _materialize_spawn_work_item(
+    *,
+    context: _SpawnContext,
+    payload: SpawnCreateInput,
+    project_root: Path,
+) -> _SpawnContext:
+    """Create or attach the explicit work item and patch the spawn row when needed."""
+    final_work_id = context.work_id
+    if (payload.work or "").strip():
+        from typing import cast
+
+        project_local_root = resolve_project_paths(project_root).root_dir
+        final_work_id = cast("str", final_work_id)
+        final_work_id = ensure_explicit_work_item(project_local_root, final_work_id)
+        if final_work_id != context.work_id:
+            spawn_store.update_spawn(
+                context.runtime_root,
+                context.spawn.spawn_id,
+                work_id=final_work_id,
+            )
+    return context.model_copy(update={"work_id": final_work_id})
 
 
 def _emit_spawn_start_subrun_event(
@@ -263,7 +270,7 @@ def _announce_reserved_spawn(
     ctx: RuntimeContext | None = None,
 ) -> None:
     service = build_spawn_lifecycle_service_from_roots(project_root, context.runtime_root)
-    service.announce_started(str(context.spawn.spawn_id))
+    service.announce_reserved_spawn(str(context.spawn.spawn_id))
     _emit_spawn_start_subrun_event(
         spawn_id=str(context.spawn.spawn_id),
         request=request,
@@ -312,7 +319,8 @@ __all__ = [
     "_SpawnContext",
     "_announce_reserved_spawn",
     "_emit_subrun_event",
-    "_init_spawn",
+    "_materialize_spawn_work_item",
+    "_reserve_spawn_row",
     "_spawn_background_worker_env",
     "_spawn_child_env",
     "_write_params_json",
