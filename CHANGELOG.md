@@ -5,7 +5,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added
-- Enriched `meridian spawn --help` and `spawn wait --help`: `--bg` + no-arg `wait` pattern, double-background/block-foreground warnings, lifecycle and crash-recovery notes.
+- `meridian work path <relpath>` materializes paths under the active work scope (ambient or named); `prompts/` and `handoffs/` bucket constants drive switch-warning artifact counts.
 - Agent-mode `meridian spawn -h` now carries the full `meridian-spawn` skill methodology, so the skill can be retired; always-on contract gained the drain invariant; leaf help gained boundaries on `spawn inject`/`spawn files`/`--prompt-var`.
 - Agent-mode `meridian spawn -h` is progressively disclosed via `--advanced`: lean default (~85 lines) with core loop, pre-launch decisions, and core commands/flags; `--advanced` reveals full methodology, all commands, and an `Advanced` flag panel. Agent-mode only.
 

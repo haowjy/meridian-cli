@@ -176,6 +176,26 @@ class WorkRootOutput(BaseModel):
         return self.work_root
 
 
+class WorkPathInput(BaseModel):
+    """Input for work path materialization."""
+
+    model_config = ConfigDict(frozen=True)
+
+    relpath: str
+
+
+class WorkPathOutput(BaseModel):
+    """Output for work path materialization."""
+
+    model_config = ConfigDict(frozen=True)
+
+    path: str
+
+    def format_text(self, ctx: FormatContext | None = None) -> str:
+        _ = ctx
+        return self.path
+
+
 def _resolve_runtime_context(project_root: Path, runtime_root: Path) -> ResolvedContext:
     """Resolve context with explicit roots — no env mutation needed."""
 
@@ -183,6 +203,55 @@ def _resolve_runtime_context(project_root: Path, runtime_root: Path) -> Resolved
         explicit_project_root=project_root,
         explicit_runtime_root=runtime_root,
     )
+
+
+def resolve_active_work_scope_dir(
+    project_root: Path,
+    runtime_root: Path,
+    *,
+    chat_id: str | None = None,
+) -> Path | None:
+    """Return the active work scope directory using the same resolution as work current."""
+
+    import os
+
+    normalized_chat_id = (chat_id or "").strip()
+    if not normalized_chat_id:
+        resolved = _resolve_runtime_context(project_root, runtime_root)
+        return resolved.work_dir
+
+    previous_chat_id = os.environ.get("MERIDIAN_CHAT_ID")
+    os.environ["MERIDIAN_CHAT_ID"] = normalized_chat_id
+    try:
+        resolved = _resolve_runtime_context(project_root, runtime_root)
+        return resolved.work_dir
+    finally:
+        if previous_chat_id is None:
+            os.environ.pop("MERIDIAN_CHAT_ID", None)
+        else:
+            os.environ["MERIDIAN_CHAT_ID"] = previous_chat_id
+
+
+def _join_scope_path(scope_dir: Path, relpath: str) -> Path:
+    """Join a relative path under scope_dir, rejecting escapes."""
+
+    normalized = relpath.strip()
+    if not normalized:
+        raise ValueError("work path relpath must not be empty.")
+    relative = Path(normalized)
+    if relative.is_absolute():
+        raise ValueError(f"work path must be relative, got: {relpath}")
+    scope_resolved = scope_dir.resolve()
+    target = (scope_dir / relative).resolve()
+    try:
+        target.relative_to(scope_resolved)
+    except ValueError as exc:
+        raise ValueError(
+            "work path escapes scope directory.\n"
+            f"  Resolved: {target}\n"
+            f"  Scope:    {scope_resolved}"
+        ) from exc
+    return target
 
 
 def _extra_context_config(config: ContextConfig) -> dict[str, ArbitraryContextConfig]:
@@ -320,11 +389,25 @@ def work_current_sync(input: WorkCurrentInput) -> WorkCurrentOutput:
     _ = input
     authority = resolve_runtime_authority_for_read()
     runtime_root = authority.runtime_root or authority.project_state_dir
-    resolved = _resolve_runtime_context(authority.project_root, runtime_root)
+    scope_dir = resolve_active_work_scope_dir(authority.project_root, runtime_root)
 
     return WorkCurrentOutput(
-        work_dir=resolved.work_dir.as_posix() if resolved.work_dir is not None else None
+        work_dir=scope_dir.as_posix() if scope_dir is not None else None
     )
+
+
+def work_path_sync(input: WorkPathInput) -> WorkPathOutput:
+    """Materialize a path under the active work scope and return its absolute path."""
+
+    authority = resolve_runtime_authority_for_read()
+    runtime_root = authority.runtime_root or authority.project_state_dir
+    scope_dir = resolve_active_work_scope_dir(authority.project_root, runtime_root)
+    if scope_dir is None:
+        raise ValueError("No active work scope is resolvable for this process.")
+
+    target = _join_scope_path(scope_dir, input.relpath)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    return WorkPathOutput(path=target.as_posix())
 
 
 def work_root_sync(input: WorkRootInput) -> WorkRootOutput:
@@ -355,18 +438,29 @@ async def work_root(input: WorkRootInput) -> WorkRootOutput:
     return await asyncio.to_thread(work_root_sync, input)
 
 
+async def work_path(input: WorkPathInput) -> WorkPathOutput:
+    """Async handler for work path materialization."""
+
+    return await asyncio.to_thread(work_path_sync, input)
+
+
 __all__ = [
     "ContextEntryOutput",
     "ContextInput",
     "ContextOutput",
     "WorkCurrentInput",
     "WorkCurrentOutput",
+    "WorkPathInput",
+    "WorkPathOutput",
     "WorkRootInput",
     "WorkRootOutput",
     "context",
     "context_sync",
+    "resolve_active_work_scope_dir",
     "work_current",
     "work_current_sync",
+    "work_path",
+    "work_path_sync",
     "work_root",
     "work_root_sync",
 ]

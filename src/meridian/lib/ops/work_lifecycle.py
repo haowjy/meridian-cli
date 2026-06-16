@@ -13,6 +13,7 @@ from meridian.lib.core.context import RuntimeContext
 from meridian.lib.core.lifecycle import generate_lifecycle_event_id, get_hook_dispatcher
 from meridian.lib.core.spawn_lifecycle import is_active_spawn_status
 from meridian.lib.core.util import FormatContext
+from meridian.lib.ops.context import resolve_active_work_scope_dir
 from meridian.lib.ops.runtime import (
     async_from_sync,
     resolve_chat_id,
@@ -58,6 +59,37 @@ def _merge_warnings(*warnings: str | None) -> str | None:
     if not parts:
         return None
     return "\n".join(parts)
+
+
+def _leave_scope_warning(
+    *,
+    project_root: Path,
+    project_state_dir: Path,
+    runtime_root: Path,
+    chat_id: str,
+    new_target: str,
+) -> str | None:
+    outgoing_dir = resolve_active_work_scope_dir(
+        project_root,
+        runtime_root,
+        chat_id=chat_id,
+    )
+    if outgoing_dir is None:
+        return None
+
+    incoming_dir = work_store.work_scratch_dir(project_state_dir, new_target).resolve()
+    if outgoing_dir.resolve() == incoming_dir:
+        return None
+
+    count = work_store.count_scope_artifacts(outgoing_dir)
+    if count <= 0:
+        return None
+
+    noun = "artifact" if count == 1 else "artifacts"
+    return (
+        f"{count} {noun} in the current scope won't follow you to {new_target}; "
+        "move what you want to keep."
+    )
 
 
 def _active_work_attachment_warning(runtime_root: Path, work_id: str) -> str | None:
@@ -371,6 +403,13 @@ def work_start_sync(
         )
         task_dir_warning = f"Set task_dir to {resolved_task_dir.as_posix()}."
 
+    leave_warning = _leave_scope_warning(
+        project_root=project_root,
+        project_state_dir=project_state_dir,
+        runtime_root=runtime_state_root,
+        chat_id=chat_id,
+        new_target=item.name,
+    )
     set_session_work_attachment(runtime_state_root, chat_id=chat_id, work_id=item.name)
     _dispatch_work_hook_event(
         event_name="work.started",
@@ -392,7 +431,13 @@ def work_start_sync(
         created_at=item.created_at,
         work_dir=work_dir_display(project_root, project_state_dir, item.name),
         created=created,
-        warning=_merge_warnings(warning, slug_warning, reattach_warning, task_dir_warning),
+        warning=_merge_warnings(
+            warning,
+            slug_warning,
+            reattach_warning,
+            task_dir_warning,
+            leave_warning,
+        ),
         task_dir=item.task_dir,
     )
 
@@ -537,6 +582,13 @@ def work_switch_sync(
     runtime_state_root = roots.runtime_root
     item = _require_work_item(project_state_dir, payload.work_id)
     chat_id = resolve_chat_id(payload_chat_id=payload.chat_id, ctx=runtime_context(ctx))
+    leave_warning = _leave_scope_warning(
+        project_root=roots.project_root,
+        project_state_dir=project_state_dir,
+        runtime_root=runtime_state_root,
+        chat_id=chat_id,
+        new_target=item.name,
+    )
     updated = set_session_work_attachment(runtime_state_root, chat_id=chat_id, work_id=item.name)
     message = (
         f"Active work item: {item.name}"
@@ -546,7 +598,7 @@ def work_switch_sync(
     return WorkSwitchOutput(
         work_id=item.name,
         message=message,
-        warning=warning,
+        warning=_merge_warnings(warning, leave_warning),
     )
 
 

@@ -11,8 +11,10 @@ from meridian.lib.core.context import RuntimeContext
 from meridian.lib.extensions.registry import get_first_party_registry
 from meridian.lib.ops.context import (
     WorkCurrentInput,
+    WorkPathInput,
     WorkRootInput,
     work_current_sync,
+    work_path_sync,
     work_root_sync,
 )
 from meridian.lib.ops.work_dashboard import (
@@ -301,11 +303,22 @@ def _work_root(emit: Emitter) -> None:
     emit(work_root_sync(WorkRootInput()))
 
 
+def _work_path(
+    emit: Emitter,
+    relpath: Annotated[
+        str,
+        Parameter(help="Relative path under the active work scope."),
+    ],
+) -> None:
+    emit(work_path_sync(WorkPathInput(relpath=relpath)))
+
+
 def register_work_commands(app: App, emit: Emitter) -> tuple[set[str], dict[str, str]]:
     """Register work CLI commands using registry metadata as source of truth."""
 
     handlers: dict[str, Callable[[], Callable[..., None]]] = {
         "meridian.work.current": lambda: partial(_work_current, emit),
+        "meridian.work.path": lambda: partial(_work_path, emit),
         "meridian.work.root": lambda: partial(_work_root, emit),
         "meridian.work.start": lambda: partial(_work_start, emit),
         "meridian.work.list": lambda: partial(_work_list, emit),

@@ -378,6 +378,11 @@ _COMMAND_DESCRIPTORS: tuple[CommandDescriptor, ...] = (
         ("work", "sessions"), "Show sessions for work.", extension_ref="meridian.work.sessions"
     ),
     _read_runtime(("work", "current"), "Show current work.", extension_ref="meridian.work.current"),
+    _write_runtime(
+        ("work", "path"),
+        "Materialize a path under the active work scope.",
+        extension_ref="meridian.work.path",
+    ),
     _read_runtime(("work", "root"), "Show work root.", extension_ref="meridian.work.root"),
     _write_runtime(("work", "start"), "Start work item.", extension_ref="meridian.work.start"),
     _write_runtime(
