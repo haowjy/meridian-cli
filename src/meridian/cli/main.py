@@ -4,7 +4,7 @@ import os
 import subprocess
 import sys
 from collections.abc import Callable, Generator, Sequence
-from contextlib import contextmanager
+from contextlib import AbstractContextManager, contextmanager
 from contextvars import ContextVar
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, cast
@@ -691,20 +691,7 @@ def _agent_help_group_apps() -> dict[str, App]:
     return group_apps
 
 
-def _apply_curated_help_for_registered_groups(*, agent_mode: bool, advanced: bool = False) -> None:
-    from meridian.cli.agent_help import apply_agent_help
-
-    for group_name, group_app in _agent_help_group_apps().items():
-        if group_name in _registered_command_groups:
-            apply_agent_help(group_app, group_name, agent_mode=agent_mode, advanced=advanced)
-
-
-def _register_commands_for_invocation(
-    argv: Sequence[str],
-    *,
-    agent_mode: bool = False,
-    advanced: bool = False,
-) -> None:
+def _register_commands_for_invocation(argv: Sequence[str]) -> None:
     """Register only the command group needed for the current invocation."""
 
     global _group_commands_registered
@@ -876,8 +863,45 @@ def _register_commands_for_invocation(
         if {group for group, _ in registrations.values()}.issubset(_registered_command_groups):
             _group_commands_registered = True
 
-    if _is_help_request(argv):
-        _apply_curated_help_for_registered_groups(agent_mode=agent_mode, advanced=advanced)
+
+def _suppress_parent_group_epilogues_for_leaf_help(
+    argv: Sequence[str],
+) -> AbstractContextManager[None]:
+    from meridian.cli.agent_help import curated_group_help_target
+
+    @contextmanager
+    def _scope() -> Generator[None, None, None]:
+        if curated_group_help_target(
+            argv,
+            root_app=app,
+            registered_groups=_registered_command_groups,
+        ) is not None:
+            yield
+            return
+
+        tokens = [
+            arg
+            for arg in argv
+            if arg not in {"--help", "-h", "--advanced", "--human", "--agent"}
+        ]
+        if len(tokens) < 2:
+            yield
+            return
+
+        group_name = tokens[0]
+        group_app = _agent_help_group_apps().get(group_name)
+        if group_app is None:
+            yield
+            return
+
+        saved_epilogue = group_app.help_epilogue
+        group_app.help_epilogue = ""
+        try:
+            yield
+        finally:
+            group_app.help_epilogue = saved_epilogue
+
+    return _scope()
 
 
 def _operation_error_message(exc: Exception) -> str:
@@ -1214,12 +1238,32 @@ def _main_impl(argv: Sequence[str] | None = None) -> None:
         options = options.model_copy(update={"project_root": project_root, "sink": active_sink})
         token = _GLOBAL_OPTIONS.set(options)
         try:
-            _register_commands_for_invocation(
-                cleaned_args,
-                agent_mode=effective_agent_mode,
-                advanced=help_advanced,
+            from meridian.cli.agent_help import (
+                curated_group_help_target,
+                print_curated_group_help,
             )
-            with temporary_config_env(options.config_file):
+
+            _register_commands_for_invocation(cleaned_args)
+            curated_group = None
+            if help_request:
+                curated_group = curated_group_help_target(
+                    cleaned_args,
+                    root_app=app,
+                    registered_groups=_registered_command_groups,
+                )
+            if curated_group is not None:
+                print_curated_group_help(
+                    app,
+                    cleaned_args,
+                    curated_group,
+                    agent_mode=effective_agent_mode,
+                    advanced=help_advanced,
+                )
+                raise SystemExit(0)
+            with (
+                _suppress_parent_group_epilogues_for_leaf_help(cleaned_args),
+                temporary_config_env(options.config_file),
+            ):
                 try:
                     app(cleaned_args)
                 except SystemExit:
@@ -1229,7 +1273,5 @@ def _main_impl(argv: Sequence[str] | None = None) -> None:
                 except (KeyError, ValueError, FileNotFoundError, OSError, RuntimeError) as exc:
                     _emit_error(_operation_error_message(exc))
         finally:
-            if help_request:
-                _apply_curated_help_for_registered_groups(agent_mode=False, advanced=False)
             flush_sink(active_sink)
             _GLOBAL_OPTIONS.reset(token)

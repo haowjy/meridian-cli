@@ -11,42 +11,40 @@ from typing import Any
 import pytest
 from rich.console import Console
 
-import meridian.cli.agent_help as agent_help_mod
 import meridian.cli.main as cli_main
 from meridian.cli.agent_help import (
     AGENT_CORE_SUBCOMMANDS,
     AGENT_HELP_SUPPLEMENTS,
     AGENT_VISIBLE_SUBCOMMANDS,
-    apply_agent_help,
+    print_curated_group_help,
 )
-from meridian.cli.app_tree import report_app, session_app, spawn_app, work_app
-from meridian.cli.help_content import render_group_help
+from meridian.cli.app_tree import app, report_app, spawn_app
 from meridian.cli.help_tiers import ADVANCED_PARAMS
 from tests.unit.cli.test_help_content import SPAWN_PROMPT_FILE_IDIOM
 
-_ORIGINAL_SPAWN_EPILOGUE = spawn_app.help_epilogue
 
-
-def _restore_curated_help_state() -> None:
-    for group_name, group_app in cli_main._agent_help_group_apps().items():
-        apply_agent_help(group_app, group_name, agent_mode=False)
-    agent_help_mod._BASELINE.clear()
-
-
-def _reset_agent_help_baseline() -> None:
-    _restore_curated_help_state()
-
-
-@pytest.fixture
-def fresh_agent_help_baseline() -> Iterator[None]:
-    _reset_agent_help_baseline()
+@pytest.fixture(scope="module", autouse=True)
+def _register_groups_once() -> Iterator[None]:
+    cli_main._register_commands_for_invocation(["--help"])
     yield
 
 
-def _render_help(group_app: Any) -> str:
+def _render_curated_help(
+    group_name: str,
+    *,
+    agent_mode: bool,
+    advanced: bool = False,
+) -> str:
     buffer = io.StringIO()
     console = Console(file=buffer, force_terminal=False, width=120)
-    group_app.help_print(console=console)
+    print_curated_group_help(
+        app,
+        [group_name, "--help"],
+        group_name,
+        agent_mode=agent_mode,
+        advanced=advanced,
+        console=console,
+    )
     return buffer.getvalue()
 
 
@@ -63,7 +61,7 @@ def _command_names_in_order(help_text: str) -> list[str]:
             continue
         if not in_commands:
             continue
-        if stripped.startswith(("Parameters:", "Usage examples:", "Agent Notes:")):
+        if stripped.startswith(("Parameters:", "Usage examples:", "Agent Notes:", "Playbook:")):
             break
         match = _COMMAND_LINE.match(line)
         if match:
@@ -99,60 +97,8 @@ def _capture_spawn_help_via_main(*, agent_mode: bool, advanced: bool = False) ->
     return _capture_help_via_main("spawn", agent_mode=agent_mode, advanced=advanced)
 
 
-@pytest.fixture(scope="module", autouse=True)
-def _register_groups_once() -> Iterator[None]:
-    cli_main._register_commands_for_invocation(["--help"], agent_mode=False)
-    yield
-
-
-@pytest.fixture(autouse=True)
-def _restore_group_app_state() -> Iterator[None]:
-    _restore_curated_help_state()
-    yield
-    _restore_curated_help_state()
-
-
-def test_apply_subcommand_visibility_skips_meta_commands() -> None:
-    from cyclopts import App
-
-    app = App(name="group", help_formatter="plain")
-
-    @app.command
-    def show() -> None:
-        pass
-
-    @app.command
-    def status() -> None:
-        pass
-
-    agent_help_mod._apply_subcommand_visibility(app, "spawn")
-
-    assert app._commands["show"].show is True
-    assert app._commands["status"].show is False
-    assert "--help" in app._commands
-    assert app._commands["--help"].show is True
-
-
-def test_apply_subcommand_visibility_degrades_without_commands() -> None:
-    class DummyApp:
-        pass
-
-    dummy: Any = DummyApp()
-    agent_help_mod._apply_subcommand_visibility(dummy, "spawn")
-
-
-def test_apply_subcommand_visibility_degrades_when_commands_not_dict() -> None:
-    class DummyApp:
-        _commands = "not-a-dict"
-
-    dummy: Any = DummyApp()
-    agent_help_mod._apply_subcommand_visibility(dummy, "spawn")
-
-
 def test_agent_mode_spawn_help_curates_subcommands_and_supplement() -> None:
-    apply_agent_help(spawn_app, "spawn", agent_mode=True)
-
-    help_text = _render_help(spawn_app)
+    help_text = _render_curated_help("spawn", agent_mode=True)
     command_names = _command_names_in_order(help_text)
 
     assert "status" not in command_names
@@ -179,9 +125,7 @@ def test_agent_mode_spawn_help_curates_subcommands_and_supplement() -> None:
 
 
 def test_agent_mode_spawn_advanced_help_shows_full_agent_tier() -> None:
-    apply_agent_help(spawn_app, "spawn", agent_mode=True, advanced=True)
-
-    help_text = _render_help(spawn_app)
+    help_text = _render_curated_help("spawn", agent_mode=True, advanced=True)
     command_names = _command_names_in_order(help_text)
 
     assert "Usage examples:" in help_text
@@ -195,7 +139,7 @@ def test_agent_mode_spawn_advanced_help_shows_full_agent_tier() -> None:
 
 
 def test_human_mode_spawn_help_shows_all_subcommands() -> None:
-    help_text = _render_help(spawn_app)
+    help_text = _render_curated_help("spawn", agent_mode=False)
     command_names = _command_names_in_order(help_text)
 
     assert "status" in command_names
@@ -203,15 +147,16 @@ def test_human_mode_spawn_help_shows_all_subcommands() -> None:
 
 
 def test_agent_mode_spawn_report_help_has_no_examples() -> None:
-    help_text = _render_help(report_app)
+    buffer = io.StringIO()
+    console = Console(file=buffer, force_terminal=False, width=120)
+    report_app.help_print(console=console)
+    help_text = buffer.getvalue()
 
     assert "Usage examples:" not in help_text
 
 
 def test_agent_mode_session_help_has_additive_supplement_only() -> None:
-    apply_agent_help(session_app, "session", agent_mode=True)
-
-    help_text = _render_help(session_app)
+    help_text = _render_curated_help("session", agent_mode=True)
 
     assert "Which subcommand when" not in help_text
     assert "Refs take three forms" in help_text
@@ -222,9 +167,7 @@ def test_agent_mode_session_help_has_additive_supplement_only() -> None:
 
 
 def test_agent_mode_work_help_has_artifact_placement_note() -> None:
-    apply_agent_help(work_app, "work", agent_mode=True)
-
-    help_text = _render_help(work_app)
+    help_text = _render_curated_help("work", agent_mode=True)
 
     assert "Quick reference" not in help_text
     assert "$MERIDIAN_ACTIVE_WORK_DIR" in help_text
@@ -240,10 +183,12 @@ def test_in_process_agent_then_human_restores_spawn_help() -> None:
 
 
 def test_agent_spawn_help_restores_singleton_before_next_invocation() -> None:
+    before = _spawn_visibility_snapshot()
     _capture_spawn_help_via_main(agent_mode=True)
 
-    cli_main._register_commands_for_invocation(["spawn", "list"], agent_mode=False)
+    cli_main._register_commands_for_invocation(["spawn", "list"])
 
+    assert _spawn_visibility_snapshot() == before
     assert spawn_app._commands["status"].show is True
     assert spawn_app._commands["stats"].show is True
     assert "Agent Notes:" not in (spawn_app.help or "")
@@ -276,46 +221,15 @@ def test_in_process_agent_advanced_spawn_help_shows_full_agent_set() -> None:
     assert command_names[: len(expected_prefix)] == expected_prefix
 
 
-def test_apply_agent_help_is_idempotent_and_snapshots_once(
-    fresh_agent_help_baseline: None,
-) -> None:
-    apply_agent_help(spawn_app, "spawn", agent_mode=True)
-    first_snapshot = _spawn_visibility_snapshot()
-    first_help = spawn_app.help
-    first_epilogue = spawn_app.help_epilogue
-
-    apply_agent_help(spawn_app, "spawn", agent_mode=True)
-    second_snapshot = _spawn_visibility_snapshot()
-
-    assert first_snapshot == second_snapshot
-    assert spawn_app.help == first_help
-    assert spawn_app.help_epilogue == first_epilogue
-    assert list(agent_help_mod._BASELINE) == ["spawn"]
-
-
-def test_apply_agent_help_restores_human_baseline_help(
-    fresh_agent_help_baseline: None,
-) -> None:
-    apply_agent_help(spawn_app, "spawn", agent_mode=True)
-    assert "Playbook:" in (spawn_app.help or "")
-
-    apply_agent_help(spawn_app, "spawn", agent_mode=False)
-
-    assert spawn_app.help == render_group_help("spawn", agent_mode=False)
-    assert spawn_app.help_epilogue == _ORIGINAL_SPAWN_EPILOGUE
-    assert "Agent Notes:" not in (spawn_app.help or "")
-
-
 def test_spawn_help_advanced_params_panel_follows_help_tier() -> None:
     agent_advanced = _capture_spawn_help_via_main(agent_mode=True, advanced=True)
-    assert ADVANCED_PARAMS._show is True
+    assert ADVANCED_PARAMS.show is False
 
     human = _capture_spawn_help_via_main(agent_mode=False)
-    assert ADVANCED_PARAMS._show is True
+    assert ADVANCED_PARAMS.show is False
 
     agent_lean = _capture_spawn_help_via_main(agent_mode=True)
-    # The CLI finally-block restores the human baseline after printing help.
-    assert ADVANCED_PARAMS._show is True
+    assert ADVANCED_PARAMS.show is False
 
     advanced_commands = _command_names_in_order(agent_advanced)
     human_commands = _command_names_in_order(human)
@@ -341,21 +255,13 @@ def test_spawn_help_advanced_params_panel_follows_help_tier() -> None:
     assert "children" in advanced_commands
     assert "children" not in lean_commands
 
-    apply_agent_help(spawn_app, "spawn", agent_mode=True, advanced=True)
-    assert ADVANCED_PARAMS._show is True
-    assert "status" not in _command_names_in_order(_render_help(spawn_app))
-    assert "children" in _command_names_in_order(_render_help(spawn_app))
+    lean_direct = _render_curated_help("spawn", agent_mode=True)
+    assert "Advanced:" not in lean_direct
+    assert "status" not in _command_names_in_order(lean_direct)
+    assert "children" not in _command_names_in_order(lean_direct)
 
-    apply_agent_help(spawn_app, "spawn", agent_mode=False)
-    assert ADVANCED_PARAMS._show is True
-    assert "status" in _command_names_in_order(_render_help(spawn_app))
-
-    apply_agent_help(spawn_app, "spawn", agent_mode=True)
-    assert ADVANCED_PARAMS._show is False
-    direct_lean = _render_help(spawn_app)
-    assert "Advanced:" not in direct_lean
-    assert "status" not in _command_names_in_order(direct_lean)
-    assert "children" not in _command_names_in_order(direct_lean)
+    advanced_direct = _render_curated_help("spawn", agent_mode=True, advanced=True)
+    assert "children" in _command_names_in_order(advanced_direct)
 
 
 def test_non_tiered_group_rejects_advanced_help() -> None:
@@ -394,7 +300,7 @@ def test_in_process_human_then_agent_curates_doctor_help() -> None:
 def test_agent_help_is_gated_to_help_requests() -> None:
     baseline = _spawn_visibility_snapshot()
 
-    cli_main._register_commands_for_invocation(["spawn", "list"], agent_mode=True)
+    cli_main._register_commands_for_invocation(["spawn", "list"])
 
     assert _spawn_visibility_snapshot() == baseline
     assert spawn_app._commands["status"].show is True

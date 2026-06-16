@@ -3,7 +3,10 @@
 from cyclopts import App
 
 from meridian import __version__
+from meridian.cli.agent_help import AlignedPlainFormatter
 from meridian.cli.help_content import GROUPS
+
+_ALIGNED_PLAIN_FORMATTER = AlignedPlainFormatter()
 
 
 def _group_help(name: str) -> str:
@@ -16,7 +19,7 @@ def _group_app(name: str) -> App:
         name=name,
         help=_group_help(name),
         help_epilogue="",
-        help_formatter="plain",
+        help_formatter=_ALIGNED_PLAIN_FORMATTER,
         help_format="plaintext",
     )
 
@@ -33,7 +36,7 @@ report_app = App(
     name="report",
     help="Report management commands.",
     help_epilogue="",
-    help_formatter="plain",
+    help_formatter=_ALIGNED_PLAIN_FORMATTER,
     help_format="plaintext",
 )
 session_app = _group_app("session")

@@ -1,24 +1,39 @@
-"""Agent-mode help supplements for CLI subcommands."""
+"""Agent-mode help rendering for CLI command groups."""
 
 from __future__ import annotations
 
-import logging
+import sys
 import textwrap
-from collections import defaultdict
-from dataclasses import dataclass
+from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any, cast
 
-from cyclopts import App
+from cyclopts import App, Group  # noqa: TC002
 from cyclopts.help.formatters.plain import PlainFormatter
 
 from meridian.cli.help_content import GROUPS, render_group_help
-from meridian.cli.help_tiers import ADVANCED_PARAMS
+from meridian.cli.help_tiers import ADVANCED_PARAMS, advanced_params_visibility
 
 if TYPE_CHECKING:
-    from cyclopts.help import HelpEntry
+    from cyclopts.help import HelpEntry, HelpPanel
     from rich.console import Console
 
-logger = logging.getLogger(__name__)
+AGENT_VISIBLE_SUBCOMMANDS: dict[str, tuple[str, ...]] = {
+    name: group.agent_subcommands
+    for name, group in GROUPS.items()
+    if group.agent_subcommands is not None
+}
+
+AGENT_CORE_SUBCOMMANDS: dict[str, tuple[str, ...]] = {
+    name: group.agent_core_subcommands
+    for name, group in GROUPS.items()
+    if group.agent_core_subcommands is not None
+}
+
+AGENT_HELP_SUPPLEMENTS: dict[str, str] = {
+    name: group.agent_notes for name, group in GROUPS.items() if group.agent_notes is not None
+}
+
+_ADVANCED_PARAM_GROUP_NAME = ADVANCED_PARAMS.name
 
 
 class AlignedPlainFormatter(PlainFormatter):
@@ -114,202 +129,173 @@ class AlignedPlainFormatter(PlainFormatter):
 _ALIGNED_PLAIN_FORMATTER = AlignedPlainFormatter()
 
 
-@dataclass(frozen=True)
-class _SubcommandVisibility:
-    show: bool
-    sort_key: Any
+def curated_group_help_target(
+    argv: Sequence[str],
+    *,
+    root_app: App,
+    registered_groups: set[str],
+) -> str | None:
+    """Return the group name when argv requests curated group-level help."""
+
+    if not any(token in {"--help", "-h"} for token in argv):
+        return None
+
+    tokens = _help_tokens(argv)
+    if not tokens:
+        return None
+
+    group_name = tokens[0]
+    if group_name not in GROUPS or group_name not in registered_groups:
+        return None
+
+    _, apps, _ = root_app.parse_commands(tokens)
+    if len(apps) != 2:
+        return None
+
+    return group_name
 
 
-@dataclass(frozen=True)
-class _GroupBaseline:
-    help: str | None
-    help_epilogue: str | None
-    help_formatter: object | None
-    subcommands: dict[int, _SubcommandVisibility]
+def _help_tokens(argv: Sequence[str]) -> list[str]:
+    skip = {"--help", "-h", "--advanced", "--human", "--agent"}
+    return [arg for arg in argv if arg not in skip]
 
 
-_BASELINE: dict[str, _GroupBaseline] = {}
-
-AGENT_VISIBLE_SUBCOMMANDS: dict[str, tuple[str, ...]] = {
-    name: group.agent_subcommands
-    for name, group in GROUPS.items()
-    if group.agent_subcommands is not None
-}
-
-AGENT_CORE_SUBCOMMANDS: dict[str, tuple[str, ...]] = {
-    name: group.agent_core_subcommands
-    for name, group in GROUPS.items()
-    if group.agent_core_subcommands is not None
-}
-
-AGENT_HELP_SUPPLEMENTS: dict[str, str] = {
-    name: group.agent_notes for name, group in GROUPS.items() if group.agent_notes is not None
-}
-
-# Only spawn tiers its parameter group today. Keep this explicit until another
-# group owns advanced-only parameters.
-_GROUPS_WITH_ADVANCED_PARAMS = frozenset({"spawn"})
-
-
-def _set_advanced_params_visibility(group_name: str, *, agent_mode: bool, advanced: bool) -> None:
-    if group_name in _GROUPS_WITH_ADVANCED_PARAMS:
-        setattr(ADVANCED_PARAMS, "_show", (not agent_mode) or advanced)  # noqa: B010
-
-
-def _iter_real_subcommands(group_app: App) -> dict[str, App]:
-    # Deliberately reaches into cyclopts' private ``_commands`` dict: help
-    # curation has no public API. Keep this boundary narrow and re-check it on
-    # cyclopts upgrades.
-    try:
-        commands_obj = object.__getattribute__(group_app, "_commands")
-    except AttributeError:
-        logger.debug(
-            "cyclopts App missing _commands; skipping agent help for %s",
-            getattr(group_app, "name", group_app),
-        )
-        return {}
-
-    if not isinstance(commands_obj, dict):
-        logger.debug(
-            "cyclopts App._commands is not a dict; skipping agent help for %s",
-            getattr(group_app, "name", group_app),
-        )
-        return {}
-
-    commands = cast("dict[str, object]", commands_obj)
-    real_commands: dict[str, App] = {}
-    for name, subcommand in commands.items():
-        if isinstance(subcommand, App):
-            real_commands[name] = subcommand
-        else:
-            logger.debug(
-                "cyclopts command %s is not an App; skipping for agent help",
-                name,
-            )
-    return real_commands
-
-
-def _snapshot_baseline(group_app: App, group_name: str) -> None:
-    if group_name in _BASELINE:
-        return
-
-    commands = _iter_real_subcommands(group_app)
-
-    subcommands: dict[int, _SubcommandVisibility] = {}
-    for name, subcommand in commands.items():
-        if name.startswith("-"):
-            continue
-        sub_id = id(subcommand)
-        if sub_id not in subcommands:
-            subcommands[sub_id] = _SubcommandVisibility(
-                show=subcommand.show,
-                sort_key=subcommand.sort_key,
-            )
-
-    _BASELINE[group_name] = _GroupBaseline(
-        help=group_app.help,
-        help_epilogue=group_app.help_epilogue,
-        help_formatter=group_app.help_formatter,
-        subcommands=subcommands,
-    )
-
-
-def _restore_baseline(group_app: App, group_name: str) -> None:
-    baseline = _BASELINE.get(group_name)
-    if baseline is None:
-        return
-
-    commands = _iter_real_subcommands(group_app)
-
-    for name, subcommand in commands.items():
-        if name.startswith("-"):
-            continue
-        visibility = baseline.subcommands.get(id(subcommand))
-        if visibility is None:
-            continue
-        subcommand.show = visibility.show
-        subcommand.sort_key = visibility.sort_key
-
-    group_app.help = baseline.help
-    group_app.help_epilogue = baseline.help_epilogue
-    group_app.help_formatter = baseline.help_formatter
-
-
-def _apply_subcommand_visibility(
-    group_app: App,
+def _visible_subcommands(
     group_name: str,
-    visible: tuple[str, ...] | None = None,
-) -> None:
-    """Hide and order subcommands for agent-mode group help.
+    *,
+    agent_mode: bool,
+    advanced: bool,
+) -> tuple[str, ...] | None:
+    if not agent_mode:
+        return None
 
-    Reaches into cyclopts' private ``_commands`` dict deliberately — help
-    curation has no public API. Re-check this on cyclopts upgrades.
-    """
+    group = GROUPS[group_name]
+    if advanced:
+        return group.agent_subcommands
+    if group.agent_core_subcommands is not None:
+        return group.agent_core_subcommands
+    return group.agent_subcommands
 
-    if visible is None:
-        visible = AGENT_VISIBLE_SUBCOMMANDS.get(group_name)
-    if visible is None:
-        return
 
-    commands = _iter_real_subcommands(group_app)
+def _command_entry_name(entry: HelpEntry) -> str:
+    if entry.positive_names:
+        return entry.positive_names[0]
+    if entry.positive_shorts:
+        return entry.positive_shorts[0]
+    return ""
 
-    index_map = {name: index for index, name in enumerate(visible)}
-    names_by_app: dict[int, list[str]] = defaultdict(list)
-    app_by_id: dict[int, Any] = {}
 
-    for name, subcommand in commands.items():
-        if name.startswith("-"):
+def _assemble_help_panels(
+    root_app: App,
+    tokens: list[str],
+    help_format: str,
+    *,
+    agent_mode: bool,
+    advanced: bool,
+) -> list[tuple[Group | None, HelpPanel]]:
+    with advanced_params_visibility(agent_mode=agent_mode, advanced=advanced):
+        return root_app._assemble_help_panels(tokens, help_format)  # pyright: ignore[reportPrivateUsage]
+
+
+def _filter_help_panels(
+    panels: list[tuple[Group | None, HelpPanel]],
+    *,
+    group_name: str,
+    agent_mode: bool,
+    advanced: bool,
+) -> list[tuple[Group | None, HelpPanel]]:
+    visible = _visible_subcommands(group_name, agent_mode=agent_mode, advanced=advanced)
+    filtered: list[tuple[Group | None, HelpPanel]] = []
+
+    for group, panel in panels:
+        if (
+            group is not None
+            and group.name == _ADVANCED_PARAM_GROUP_NAME
+            and agent_mode
+            and not advanced
+        ):
             continue
-        sub_id = id(subcommand)
-        names_by_app[sub_id].append(name)
-        app_by_id[sub_id] = subcommand
 
-    for sub_id, names in names_by_app.items():
-        subcommand = app_by_id[sub_id]
-        matching = [name for name in names if name in index_map]
-        if matching:
-            subcommand.show = True
-            subcommand.sort_key = min(index_map[name] for name in matching)
-        else:
-            subcommand.show = False
+        if panel.format == "command" and visible is not None:
+            index_map = {name: index for index, name in enumerate(visible)}
+            entries = [entry for entry in panel.entries if _command_entry_name(entry) in index_map]
+            entries.sort(key=lambda entry: index_map[_command_entry_name(entry)])
+            panel = panel.copy(entries=entries)
+
+        filtered.append((group, panel))
+
+    return filtered
 
 
-def apply_agent_help(
-    group_app: App,
+def print_curated_group_help(
+    root_app: App,
+    argv: Sequence[str],
     group_name: str,
     *,
     agent_mode: bool,
     advanced: bool = False,
+    console: Console | None = None,
 ) -> None:
-    """Apply or restore mode-specific help curation for one command group."""
+    """Render curated group help from metadata without mutating parser state."""
 
-    if group_name not in GROUPS:
-        return
+    from cyclopts.help import InlineText, format_usage
 
-    _snapshot_baseline(group_app, group_name)
-    _set_advanced_params_visibility(group_name, agent_mode=agent_mode, advanced=advanced)
-    group_app.help_formatter = _ALIGNED_PLAIN_FORMATTER
-    if agent_mode:
-        visible = (
-            AGENT_VISIBLE_SUBCOMMANDS.get(group_name)
-            if advanced
-            else AGENT_CORE_SUBCOMMANDS.get(group_name, AGENT_VISIBLE_SUBCOMMANDS.get(group_name))
-        )
-        if visible is not None:
-            _apply_subcommand_visibility(group_app, group_name, visible)
-        group_app.help = render_group_help(group_name, agent_mode=True, advanced=advanced)
-        group_app.help_epilogue = ""
-        return
+    tokens = _help_tokens(argv)
+    command_chain, apps, _ = root_app.parse_commands(tokens)
+    executing_app = apps[-1]
 
-    _restore_baseline(group_app, group_name)
-    _set_advanced_params_visibility(group_name, agent_mode=False, advanced=advanced)
-    group_app.help = render_group_help(group_name, agent_mode=False)
-    group_app.help_epilogue = ""
+    if console is None:
+        from rich.console import Console as RichConsole
+
+        console = RichConsole(file=sys.stdout, force_terminal=False)
+
+    help_format = executing_app.help_format or "plaintext"
+    formatter = _ALIGNED_PLAIN_FORMATTER
+
+    if executing_app.usage is None:
+        usage = format_usage(root_app, command_chain)
+    elif executing_app.usage:
+        usage = executing_app.usage + "\n"
+    else:
+        usage = None
+
+    description = InlineText.from_format(
+        render_group_help(group_name, agent_mode=agent_mode, advanced=advanced),
+        format=help_format,
+    )
+    panels = _filter_help_panels(
+        _assemble_help_panels(
+            root_app,
+            tokens,
+            help_format,
+            agent_mode=agent_mode,
+            advanced=advanced,
+        ),
+        group_name=group_name,
+        agent_mode=agent_mode,
+        advanced=advanced,
+    )
+
+    if help_prologue := executing_app.help_prologue:
+        prologue = InlineText.from_format(help_prologue, format=help_format)
+        console.print(prologue)
+        console.print()
+
+    formatter.render_usage(console, console.options, usage)
+    formatter.render_description(console, console.options, description)
+
+    for group, panel in panels:
+        panel_formatter = cast("Any", group.help_formatter if group else None)
+        if panel_formatter is None:
+            panel_formatter = formatter
+        panel_formatter(console, console.options, panel)
 
 
 __all__ = [
     "AGENT_CORE_SUBCOMMANDS",
     "AGENT_HELP_SUPPLEMENTS",
     "AGENT_VISIBLE_SUBCOMMANDS",
-    "apply_agent_help",
+    "AlignedPlainFormatter",
+    "curated_group_help_target",
+    "print_curated_group_help",
 ]
