@@ -403,14 +403,6 @@ _COMMAND_DESCRIPTORS: tuple[CommandDescriptor, ...] = (
     _write_project(
         ("config", "reset"), "Reset config value.", extension_ref="meridian.config.reset"
     ),
-    _descriptor(
-        ("mktemp",),
-        StartupClass.TRIVIAL,
-        StateRequirement.NONE,
-        TelemetryMode.NONE,
-        "text",
-        "Create a temp file and print its absolute path.",
-    ),
     _read_project(("context",), "Show context paths.", extension_ref="meridian.context.context"),
     _read_runtime(("doctor",), "Run doctor checks.", extension_ref="meridian.doctor.doctor"),
     _read_runtime(("telemetry", "status"), "Show telemetry status."),

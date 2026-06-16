@@ -5,7 +5,6 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added
-- `meridian mktemp`: portable temp file for agent prompt handoff (replaces hardcoded `/tmp` paths).
 - Enriched `meridian spawn --help` and `spawn wait --help`: `--bg` + no-arg `wait` pattern, double-background/block-foreground warnings, lifecycle and crash-recovery notes.
 - Agent-mode `meridian spawn -h` now carries the full `meridian-spawn` skill methodology, so the skill can be retired; always-on contract gained the drain invariant; leaf help gained boundaries on `spawn inject`/`spawn files`/`--prompt-var`.
 - Agent-mode `meridian spawn -h` is progressively disclosed via `--advanced`: lean default (~85 lines) with core loop, pre-launch decisions, and core commands/flags; `--advanced` reveals full methodology, all commands, and an `Advanced` flag panel. Agent-mode only.
@@ -19,7 +18,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 - Agent-mode `session`/`work`/`context -h`: task-voice long help, de-duplicated session ref-forms (refs in long_help only).
-- Lean agent `spawn -h` playbook: no core-loop duplication (contract owns that); teaches `mktemp`, prompt-file, context, parallel drain.
+- Lean agent `spawn -h` playbook: no core-loop duplication (contract owns that); teaches prompt-file, context, parallel drain.
 - Spawn contract example path is `<prompt>.md`, not `/tmp/<task>.md`.
 - Agent group help wraps multi-line command/parameter descriptions with aligned continuation indent.
 - Agent-mode root help (`meridian -h`) reworked as a skill entry point: curated commands/options, multi-line table rendering, pointer block to group help.

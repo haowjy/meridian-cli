@@ -338,10 +338,6 @@ GROUPS: dict[str, GroupHelp] = {
         summary="Run state and configuration migrations.",
         long_help="Run state and configuration migrations.",
     ),
-    "mktemp": GroupHelp(
-        summary="Create a temp file and print its absolute path.",
-        long_help="Create a temp file and print its absolute path.",
-    ),
     "qi": GroupHelp(
         summary="Inline knowledge navigation: AGENTS.md and .context/ locations.",
         long_help="Inline knowledge navigation: AGENTS.md and .context/ locations.",

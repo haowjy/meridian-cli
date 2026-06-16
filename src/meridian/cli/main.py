@@ -829,11 +829,6 @@ def _register_commands_for_invocation(
 
             register_migrate_command(app, emit)
 
-        def _register_mktemp() -> None:
-            from meridian.cli.mktemp_cmd import register_mktemp_command
-
-            register_mktemp_command(app, emit)
-
         registrations: dict[str, tuple[str, Callable[[], None]]] = {
             "spawn": ("spawn", _register_spawn),
             "session": ("session", _register_session),
@@ -857,7 +852,6 @@ def _register_commands_for_invocation(
             "qi": ("qi", _register_qi),
             "report": ("report", _register_report),
             "migrate": ("migrate", _register_migrate),
-            "mktemp": ("mktemp", _register_mktemp),
         }
 
         registration = registrations.get(first_token or "")
