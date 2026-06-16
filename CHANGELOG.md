@@ -17,6 +17,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Agent-mode detection recognizes the primary launched agent (keys on `MERIDIAN_SPAWN_ID` managed-session membership, not `MERIDIAN_DEPTH > 0`).
 
 ### Changed
+- `ResolvedContext.from_environment` falls back to per-spawn ambient artifact dir (`spawns/p<N>/work`) when no named work is attached; ambient never sets `work_id`.
 - Agent-mode `session`/`work`/`context -h`: task-voice long help, de-duplicated session ref-forms (refs in long_help only).
 - Lean agent `spawn -h` playbook: no core-loop duplication (contract owns that); teaches prompt-file, context, parallel drain.
 - Spawn contract example path is `<prompt>.md`, not `/tmp/<task>.md`.

@@ -386,6 +386,12 @@ def resolve_spawn_log_dir(project_root: Path, spawn_id: SpawnId | str) -> Path:
     return resolve_project_runtime_root(project_root) / spawn_log_subpath(spawn_id)
 
 
+def resolve_ambient_work_dir(project_root: Path, spawn_id: SpawnId | str) -> Path:
+    """Resolve the ambient artifact directory for a spawn (pure path math, no mkdir)."""
+
+    return resolve_spawn_log_dir(project_root, spawn_id) / "work"
+
+
 def heartbeat_path(runtime_root: Path, spawn_id: SpawnId | str) -> Path:
     """Return heartbeat sentinel path for a spawn under a state root."""
 

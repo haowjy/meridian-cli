@@ -1015,9 +1015,7 @@ def _build_shared_composition(
         bundle_inventory_prompt=policy.bundle_inventory_prompt,
         context_prompt=context_prompt,
     )
-    resolved_work_id = (request.work_id_hint or "").strip() or (
-        active_work_dir.name if active_work_dir is not None else ""
-    )
+    resolved_work_id = (request.work_id_hint or "").strip()
     work_goal: str | None = None
     if resolved_work_id:
         project_state_dir = resolve_project_paths(project_paths.project_root).root_dir

@@ -126,6 +126,8 @@ class ResolvedContext:
             else None
         )
 
+        spawn_id = SpawnId(spawn_id_raw) if spawn_id_raw else None
+
         work_dir: Path | None = None
         if work_dir_raw and not explicit_work_id_raw:
             work_dir = Path(work_dir_raw).expanduser()
@@ -135,6 +137,8 @@ class ResolvedContext:
                 work_dir = project_paths.work_dir / work_id
             elif runtime_root is not None:
                 work_dir = backend_impl.resolve_work_scratch_dir(runtime_root, work_id)
+        elif spawn_id is not None and project_root is not None:
+            work_dir = state_paths.resolve_ambient_work_dir(project_root, spawn_id)
 
         kb_dir = project_paths.kb_dir if project_paths is not None else None
 
@@ -156,7 +160,7 @@ class ResolvedContext:
             )
 
         return cls(
-            spawn_id=SpawnId(spawn_id_raw) if spawn_id_raw else None,
+            spawn_id=spawn_id,
             parent_spawn_id=SpawnId(parent_spawn_id_raw) if parent_spawn_id_raw else None,
             depth=depth,
             project_root=project_root,
