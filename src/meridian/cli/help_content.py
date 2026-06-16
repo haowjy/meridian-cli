@@ -55,16 +55,24 @@ GROUPS: dict[str, GroupHelp] = {
             "`meridian spawn wait`."
         ),
         examples=(
-            ("meridian spawn -m gpt-5.3-codex --prompt-file /tmp/fix-auth.md --bg", ""),
             (
-                "meridian spawn -m claude-sonnet-4-6 --prompt-file /tmp/review.md "
-                "--bg -f src/main.py",
+                "meridian spawn -m gpt-5.3-codex "
+                '--prompt-file "$MERIDIAN_ACTIVE_WORK_DIR/fix-auth.md" --bg',
                 "",
             ),
-            ("meridian spawn --fork c123 --prompt-file /tmp/follow-up.md --bg", ""),
             (
-                "meridian spawn --fork-fresh c123 -a reviewer --prompt-file "
-                "/tmp/role-shift.md --bg",
+                "meridian spawn -m claude-sonnet-4-6 "
+                '--prompt-file "$MERIDIAN_ACTIVE_WORK_DIR/review.md" --bg -f src/main.py',
+                "",
+            ),
+            (
+                "meridian spawn --fork c123 "
+                '--prompt-file "$MERIDIAN_ACTIVE_WORK_DIR/follow-up.md" --bg',
+                "",
+            ),
+            (
+                "meridian spawn --fork-fresh c123 -a reviewer "
+                '--prompt-file "$MERIDIAN_ACTIVE_WORK_DIR/role-shift.md" --bg',
                 "",
             ),
             ("meridian spawn wait", ""),
@@ -80,7 +88,10 @@ GROUPS: dict[str, GroupHelp] = {
             "Prompt passing: use --prompt-file for delegation. Inline -p is for "
             "trivial smoke tests only because shell quoting mutates prompts "
             "($vars, backticks, quotes, multiline) before meridian sees them. "
-            "Get a portable temp file with `meridian mktemp`.\n\n"
+            "Write the prompt to a real file at a known path and pass it "
+            "literally — $MERIDIAN_ACTIVE_WORK_DIR/<name>.md is the portable "
+            "home (no /tmp, no $(mktemp), no shell var that won't survive the "
+            "next Bash call).\n\n"
             "Profile vs model: prefer -a <profile> when a role fits; use "
             "-m <model> for one-offs. Put recurring model choices in profiles "
             "or config, not hardcoded spawn commands.\n\n"
@@ -107,10 +118,10 @@ GROUPS: dict[str, GroupHelp] = {
             "Delegate with --prompt-file, never inline -p. The shell mangles a prompt "
             "before meridian sees it — backticks run as commands, $vars expand, quotes "
             "and newlines collapse. A file preserves exact text and keeps the handoff "
-            "inspectable. Get a portable temp file with `meridian mktemp` (don't hardcode "
-            "/tmp), write your prompt to it, then pass it:\n"
-            "  f=$(meridian mktemp)\n"
-            "  meridian spawn -a coder --prompt-file \"$f\" --bg\n\n"
+            "inspectable. Write the prompt to a real file at a known path, then pass that "
+            "path literally — $MERIDIAN_ACTIVE_WORK_DIR is the portable home (no /tmp, and "
+            "no $(mktemp)/$f shell var, which won't survive your next Bash call):\n"
+            "  meridian spawn -a coder --prompt-file \"$MERIDIAN_ACTIVE_WORK_DIR/task.md\" --bg\n\n"
             "Pick the runner: -a <profile> when a role fits, -m <model> for a one-off. "
             "Keep recurring model choices in profiles or config, not in the command.\n\n"
             "Pass context as a folder, not a file pile. A folder says where to work and "

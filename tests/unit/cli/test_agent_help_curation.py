@@ -168,7 +168,8 @@ def test_agent_mode_spawn_help_curates_subcommands_and_supplement() -> None:
     assert "Usage examples:" not in help_text
     assert "Quick start:" not in help_text
     assert "Playbook:" in help_text
-    assert "meridian mktemp" in help_text
+    assert "$MERIDIAN_ACTIVE_WORK_DIR" in help_text
+    assert "f=$(meridian mktemp)" not in help_text
     assert "Core loop:" not in help_text
     assert "Agent Notes:" not in help_text
     assert "Treat finalizing as active" not in help_text
@@ -257,7 +258,8 @@ def test_in_process_human_then_agent_curates_spawn_help() -> None:
     assert "stats" not in command_names
     assert "Quick start:" not in agent_help
     assert "Playbook:" in agent_help
-    assert "meridian mktemp" in agent_help
+    assert "$MERIDIAN_ACTIVE_WORK_DIR" in agent_help
+    assert "f=$(meridian mktemp)" not in agent_help
     assert "Core loop:" not in agent_help
     assert "Agent Notes:" not in agent_help
     expected_prefix = list(AGENT_CORE_SUBCOMMANDS["spawn"])
