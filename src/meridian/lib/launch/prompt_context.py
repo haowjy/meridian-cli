@@ -14,6 +14,31 @@ from meridian.lib.context.resolver import (
 from meridian.lib.core.domain import SkillContent
 from meridian.lib.launch.composition import PromptDocument
 
+CONTEXT_PROMPT_HEADER = "# Meridian Context"
+CONTEXT_PROMPT_FOOTER = "Inspect or configure: meridian context -h"
+
+
+def replace_context_block(*, system_prompt: str, new_context_prompt: str) -> str:
+    """Replace the Meridian context block when markers are present; otherwise no-op."""
+
+    start = system_prompt.find(CONTEXT_PROMPT_HEADER)
+    if start < 0:
+        return system_prompt
+    end = system_prompt.find(CONTEXT_PROMPT_FOOTER, start)
+    if end < 0:
+        return system_prompt
+    end += len(CONTEXT_PROMPT_FOOTER)
+    replacement = new_context_prompt.strip()
+    before = system_prompt[:start].rstrip()
+    after = system_prompt[end:].lstrip("\n")
+    if before and after:
+        return f"{before}\n\n{replacement}\n\n{after}"
+    if before:
+        return f"{before}\n\n{replacement}"
+    if after:
+        return f"{replacement}\n\n{after}"
+    return replacement
+
 
 def _render_skill_blocks(skills: Sequence[SkillContent]) -> tuple[str, ...]:
     blocks: list[str] = []
@@ -86,7 +111,7 @@ def build_context_prompt(
         resolved_context = resolve_context_paths(project_root, context_config)
 
     header = [
-        "# Meridian Context",
+        CONTEXT_PROMPT_HEADER,
         "",
         "Resolved context directories available via environment variables.",
         "",
@@ -97,12 +122,15 @@ def build_context_prompt(
         active_work_dir=active_work_dir,
     )
 
-    footer = ["", "Inspect or configure: meridian context -h"]
+    footer = ["", CONTEXT_PROMPT_FOOTER]
     return "\n".join([*header, *context_lines, *footer]).strip()
 
 
 __all__ = [
+    "CONTEXT_PROMPT_FOOTER",
+    "CONTEXT_PROMPT_HEADER",
     "build_context_prompt",
     "compose_skill_injections",
     "compose_skill_prompt_documents",
+    "replace_context_block",
 ]

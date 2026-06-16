@@ -10,6 +10,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Agent-mode `meridian spawn -h` is progressively disclosed via `--advanced`: lean default (~85 lines) with core loop, pre-launch decisions, and core commands/flags; `--advanced` reveals full methodology, all commands, and an `Advanced` flag panel. Agent-mode only.
 
 ### Fixed
+- Child spawn env resolves ambient `MERIDIAN_ACTIVE_WORK_DIR` from the child's spawn id at the shared `ChildEnvContext` seam (not inherited parent ambient); context-block marker replace is single-owned in `prompt_context`.
 - Child spawn bind aligns `MERIDIAN_ACTIVE_WORK_DIR` and injected context `work:` line to the child's ambient `spawns/p<N>/work` dir; dir-without-id propagates across env/JSON surfaces.
 - Prompt-file idiom standardized across all four agent-help surfaces (root quick-start, `spawn -h` lean playbook, `--advanced` examples, advanced "Prompt passing" note): write the prompt to a real file under `$MERIDIAN_ACTIVE_WORK_DIR/<name>.md` and pass it literally — no `/tmp`, no `$(mktemp)`, no `$f` shell var that won't survive the next Bash call.
 - Agent-mode root help: portable quick-start example, spawn subcommand hint drops bogus `fork`, `context` uses imperative voice.

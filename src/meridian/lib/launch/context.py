@@ -108,6 +108,7 @@ from .prompt_context import (
     build_context_prompt,
     compose_skill_injections,
     compose_skill_prompt_documents,
+    replace_context_block,
 )
 from .reference import (
     ReferenceItem,
@@ -197,9 +198,8 @@ class ChildEnvContext:
                     project_paths=repo_paths,
                 )
             )
-        elif parent_ctx.work_dir is not None:
-            work_dir = parent_ctx.work_dir
         else:
+            # Ambient work dir is per-child spawn id; resolved at child_context bind time.
             work_dir = None
 
         resolved_context_paths = resolve_context_paths(
@@ -235,6 +235,9 @@ class ChildEnvContext:
         child_spawn_id: str | None = None,
         increment_depth: bool = True,
     ) -> dict[str, str]:
+        work_dir = self.work_dir
+        if self.work_id is None and child_spawn_id is not None:
+            work_dir = resolve_ambient_work_dir(self.project_root, child_spawn_id)
         ctx = ResolvedContext(
             spawn_id=SpawnId(self.parent_spawn_id) if self.parent_spawn_id else None,
             depth=self.parent_depth,
@@ -242,7 +245,7 @@ class ChildEnvContext:
             runtime_root=self.runtime_root,
             chat_id=self.parent_chat_id or "",
             work_id=self.work_id,
-            work_dir=self.work_dir,
+            work_dir=work_dir,
             context_dirs=self.context_dirs,
         )
         overrides = ctx.child_env_overrides(
@@ -877,9 +880,6 @@ def build_child_runtime_env_overrides(
     return runtime_overrides
 
 
-_CONTEXT_PROMPT_FOOTER = "Inspect or configure: meridian context -h"
-
-
 def _resolve_bound_active_work_dir(
     *,
     project_root: Path,
@@ -891,27 +891,6 @@ def _resolve_bound_active_work_dir(
     if requested_work_id is not None:
         return resolve_work_scratch_dir_for_project(project_root, requested_work_id)
     return resolve_ambient_work_dir(project_root, child_spawn_id)
-
-
-def _replace_context_prompt_block(*, system_prompt: str, new_context_prompt: str) -> str:
-    marker_start = "# Meridian Context"
-    start = system_prompt.find(marker_start)
-    if start < 0:
-        return system_prompt
-    end = system_prompt.find(_CONTEXT_PROMPT_FOOTER, start)
-    if end < 0:
-        return system_prompt
-    end += len(_CONTEXT_PROMPT_FOOTER)
-    replacement = new_context_prompt.strip()
-    before = system_prompt[:start].rstrip()
-    after = system_prompt[end:].lstrip("\n")
-    if before and after:
-        return f"{before}\n\n{replacement}\n\n{after}"
-    if before:
-        return f"{before}\n\n{replacement}"
-    if after:
-        return f"{replacement}\n\n{after}"
-    return replacement
 
 
 def _refresh_prompt_payload_active_work_dir(
@@ -934,7 +913,7 @@ def _refresh_prompt_payload_active_work_dir(
 
     updated_projected = projected_content
     if projected_content is not None and projected_content.system_prompt.strip():
-        updated_system = _replace_context_prompt_block(
+        updated_system = replace_context_block(
             system_prompt=projected_content.system_prompt,
             new_context_prompt=context_block,
         )
@@ -942,7 +921,7 @@ def _refresh_prompt_payload_active_work_dir(
 
     appended = prompt_payload.appended_system_prompt or ""
     if appended.strip():
-        updated_appended = _replace_context_prompt_block(
+        updated_appended = replace_context_block(
             system_prompt=appended,
             new_context_prompt=context_block,
         )
@@ -1921,8 +1900,6 @@ def bind_launch_context(
         work_id=requested_work_id,
         increment_depth=not is_primary_launch,
     )
-    if bound_active_work_dir is not None:
-        child_context_env["MERIDIAN_ACTIVE_WORK_DIR"] = bound_active_work_dir.as_posix()
     effective_work_id = (
         child_context_env.get("MERIDIAN_ACTIVE_WORK_ID", "").strip() or requested_work_id
     )
