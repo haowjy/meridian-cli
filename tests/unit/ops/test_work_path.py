@@ -58,8 +58,19 @@ def test_work_path_rejects_scope_escape(tmp_path: Path, monkeypatch: MonkeyPatch
         work_path_sync(WorkPathInput(relpath="../escape.md"))
 
 
-def test_work_path_rejects_absolute_relpath(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
+@pytest.mark.parametrize(
+    "relpath",
+    [
+        "/tmp/abs.md",  # POSIX-absolute (drive-relative on Windows)
+        "\\rooted.md",  # rooted on Windows
+        "C:\\windows\\abs.md",  # Windows drive-absolute
+        "C:relative.md",  # Windows drive-relative
+    ],
+)
+def test_work_path_rejects_absolute_relpath(
+    tmp_path: Path, monkeypatch: MonkeyPatch, relpath: str
+) -> None:
     _setup_ambient_project(tmp_path, monkeypatch)
 
     with pytest.raises(ValueError, match="must be relative"):
-        work_path_sync(WorkPathInput(relpath="/tmp/abs.md"))
+        work_path_sync(WorkPathInput(relpath=relpath))

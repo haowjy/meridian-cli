@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import UTC, datetime
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import cast
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -244,7 +244,15 @@ def _join_scope_path(scope_dir: Path, relpath: str) -> Path:
     if not normalized:
         raise ValueError("work path relpath must not be empty.")
     relative = Path(normalized)
-    if relative.is_absolute():
+    # Reject absolute/rooted/drive paths under either OS convention — `is_absolute()`
+    # is platform-dependent (e.g. "/tmp/x" is absolute on POSIX but drive-relative,
+    # so non-absolute, on Windows), and Windows is a first-class target.
+    if (
+        PurePosixPath(normalized).is_absolute()
+        or PureWindowsPath(normalized).is_absolute()
+        or normalized.startswith(("/", "\\"))
+        or PureWindowsPath(normalized).drive != ""
+    ):
         raise ValueError(f"work path must be relative, got: {relpath}")
     scope_resolved = scope_dir.resolve()
     target = (scope_dir / relative).resolve()
