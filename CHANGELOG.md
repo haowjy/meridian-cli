@@ -5,11 +5,12 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added
-- `meridian work path <relpath>` materializes paths under the active work scope (ambient or named); `prompts/` and `handoffs/` bucket constants drive switch-warning artifact counts.
+- `meridian work path <relpath>` materializes paths under the active work scope (ambient or named); `prompts/` and `handoffs/` bucket constants drive switch-warning artifact counts. Now listed in agent-mode `work -h`.
 - Agent-mode `meridian spawn -h` now carries the full `meridian-spawn` skill methodology, so the skill can be retired; always-on contract gained the drain invariant; leaf help gained boundaries on `spawn inject`/`spawn files`/`--prompt-var`.
 - Agent-mode `meridian spawn -h` is progressively disclosed via `--advanced`: lean default (~85 lines) with core loop, pre-launch decisions, and core commands/flags; `--advanced` reveals full methodology, all commands, and an `Advanced` flag panel. Agent-mode only.
 
 ### Fixed
+- `--mode human` (and the TTY downshift) now actually affect emitted output and runtime bootstrap inside a managed session; previously `emit()`/bootstrap keyed on an env-only check that ignored the mode flags and TTY.
 - Agent-mode `meridian spawn --bg` prints the readable submit note (spawn id + the `meridian spawn wait` reminder) instead of a raw JSON field dump; `--json`/`--format json` still emit structured output.
 - Bind-time context refresh rebinds the `work:` line on composed/recomposed requests too (background handoff, continue/fork), keeping it in parity with the child's `MERIDIAN_ACTIVE_WORK_DIR`; reprojection preserves the native adhoc-agent payload (agent/profile body) for Claude/Codex.
 - `resolve_active_work_scope_dir` threads `explicit_chat_id` through `ResolvedContext.from_environment` instead of temporarily mutating `MERIDIAN_CHAT_ID` (reentrant-safe scope resolution for leave-scope warnings).
@@ -23,9 +24,11 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Agent-mode detection recognizes the primary launched agent (keys on `MERIDIAN_SPAWN_ID` managed-session membership, not `MERIDIAN_DEPTH > 0`).
 
 ### Changed
-- Agent help renders from `GROUPS` metadata via `print_curated_group_help`; the snapshot/restore + Cyclopts `App`-singleton mutation (`_commands`/`show`/`sort_key` toggling) is gone, so help is no longer order-dependent global state.
+- **Agent/human render mode** is one resolved value: `--mode agent|human` replaces the `--agent`/`--human` mode flags (the `-a`/`--agent` profile flag is unchanged), a single `resolve_render_mode()` (precedence flag > `MERIDIAN_SPAWN_ID` > TTY downshift) replaces three divergent detection paths, and the result is stored once on `GlobalOptions` so output, bootstrap, and help all read it. Dead `ExtensionCommandSpec.agent_default_format` and `help_profile` metadata removed; output-format defaults resolve through catalog `default_output_mode`.
+- Help rendering is one mode-aware module: group + leaf help render from `GROUPS` metadata via `print_curated_group_help`; the snapshot/restore + Cyclopts `App`-singleton mutation (`_commands`/`show`/`sort_key`) and the leaf-epilogue mutation in `main.py` are gone, so help is no longer order-dependent global state.
+- `WorkScope` owns scope behavior (artifact counting, excluded buckets, kind-specific leave-scope warnings); the raw-`Path` overload that fabricated a fake scope is deleted.
 - Active work scope is an explicit `WorkScope` object (kind `work_item`/`ambient_spawn`, identifier, root, durable/ephemeral); `work path`, leave-scope warnings, and artifact counting route through it instead of raw paths + `prompts/`/`handoffs/` string heuristics and `MERIDIAN_CHAT_ID` env impersonation.
-- Spawn reservation splits the overloaded `announce=False` into single-concern phases — `reserve_spawn_row` / `_materialize_spawn_work_item` / `announce_reserved_spawn`; same happy-path/kill-mid-prep/graceful-failure guarantees.
+- Spawn reservation is a typed seam: a `SpawnReservation` value object + one internal write primitive behind `reserve()` (row only) and `announce()` (events), replacing the overloaded `announce=False` flag and the duplicate full-signature `reserve_spawn_row`/`announce_started` alias; same happy-path/kill-mid-prep/graceful-failure guarantees.
 - Bind-time context-env refresh re-renders the typed `context-env` composition block by name and re-projects, instead of string-replacing rendered text by header/footer markers; `replace_context_block` deleted.
 - `ResolvedContext.from_environment` falls back to per-spawn ambient artifact dir (`spawns/p<N>/work`) when no named work is attached; ambient never sets `work_id`.
 - Agent-mode `session`/`work`/`context -h`: task-voice long help, de-duplicated session ref-forms (refs in long_help only).
