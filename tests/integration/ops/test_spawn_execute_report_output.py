@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
@@ -56,6 +57,24 @@ class LifecycleEventHook:
 
     def on_event(self, event: LifecycleEvent) -> None:
         self.event_types.append(event.event_type)
+
+
+def _patch_lifecycle_service_with_hook(
+    monkeypatch: pytest.MonkeyPatch,
+    hook: LifecycleEventHook,
+) -> None:
+    original_factory = execute_init_module.build_spawn_lifecycle_service_from_roots
+
+    def _service_with_hook(project_root_arg: Path, runtime_root: Path) -> SpawnLifecycleService:
+        service = original_factory(project_root_arg, runtime_root)
+        service.register_hook(hook)
+        return service
+
+    monkeypatch.setattr(
+        execute_init_module,
+        "build_spawn_lifecycle_service_from_roots",
+        _service_with_hook,
+    )
 
 
 def _build_test_runtime(
@@ -215,18 +234,7 @@ def test_reserve_then_prepare_graceful_prep_failure_leaks_nothing_with_work(
     authority = resolve_runtime_authority_for_write(project_root)
     assert authority.runtime_root is not None
 
-    original_factory = execute_init_module.build_spawn_lifecycle_service_from_roots
-
-    def _service_with_hook(project_root_arg: Path, runtime_root: Path) -> SpawnLifecycleService:
-        service = original_factory(project_root_arg, runtime_root)
-        service._hooks = [*service._hooks, hook]
-        return service
-
-    monkeypatch.setattr(
-        execute_init_module,
-        "build_spawn_lifecycle_service_from_roots",
-        _service_with_hook,
-    )
+    _patch_lifecycle_service_with_hook(monkeypatch, hook)
 
     def _raise_project_paths(**kwargs: object) -> object:
         raise ValueError("harness binary not found")
@@ -267,18 +275,7 @@ def test_reserve_then_prepare_happy_path_announces_once_with_normalized_work_id(
     authority = resolve_runtime_authority_for_write(project_root)
     assert authority.runtime_root is not None
 
-    original_factory = execute_init_module.build_spawn_lifecycle_service_from_roots
-
-    def _service_with_hook(project_root_arg: Path, runtime_root: Path) -> SpawnLifecycleService:
-        service = original_factory(project_root_arg, runtime_root)
-        service._hooks = [*service._hooks, hook]
-        return service
-
-    monkeypatch.setattr(
-        execute_init_module,
-        "build_spawn_lifecycle_service_from_roots",
-        _service_with_hook,
-    )
+    _patch_lifecycle_service_with_hook(monkeypatch, hook)
 
     async def _fake_launch_prepared_spawn(**kwargs: object) -> int:
         spawn = cast("Any", kwargs["spawn"])
@@ -292,14 +289,6 @@ def test_reserve_then_prepare_happy_path_announces_once_with_normalized_work_id(
         return 0
 
     monkeypatch.setattr(execute_module, "launch_prepared_spawn", _fake_launch_prepared_spawn)
-    monkeypatch.setattr(
-        execute_module,
-        "read_spawn_row",
-        lambda _project_root, spawn_id, **_kwargs: spawn_store.get_spawn(
-            authority.runtime_root,
-            spawn_id,
-        ),
-    )
 
     result = execute_module.execute_spawn_blocking(
         payload=SpawnCreateInput(prompt="run", work="new-work-item"),
@@ -318,6 +307,51 @@ def test_reserve_then_prepare_happy_path_announces_once_with_normalized_work_id(
     row = spawn_store.get_spawn(authority.runtime_root, result.spawn_id)
     assert row is not None
     assert row.work_id == "new-work-item"
+    assert work_store.get_work_item(project_state_dir, "new-work-item") is not None
+    assert hook.event_types == ["spawn.created"]
+    start_events = [event for event in sink.events if event.get("t") == "meridian.spawn.start"]
+    assert len(start_events) == 1
+    assert start_events[0]["id"] == result.spawn_id
+
+
+def test_reserve_then_prepare_background_happy_path_announces_once_with_normalized_work_id(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    hook = LifecycleEventHook()
+    sink = RecordingOutputSink()
+    runtime = _build_test_runtime(tmp_path, monkeypatch, sink=sink)
+    project_root = tmp_path / "repo"
+    project_state_dir = resolve_project_paths(project_root).root_dir
+    authority = resolve_runtime_authority_for_write(project_root)
+    assert authority.runtime_root is not None
+
+    _patch_lifecycle_service_with_hook(monkeypatch, hook)
+
+    class _FakePopen:
+        pid = 42424
+
+    monkeypatch.setattr(subprocess, "Popen", lambda *args, **kwargs: _FakePopen())
+
+    result = execute_module.execute_spawn_background(
+        payload=SpawnCreateInput(prompt="run", work="new-work-item", background=True),
+        request=SpawnRequest(
+            prompt="run",
+            model="gpt-5.4",
+            harness="codex",
+            agent="coder",
+        ),
+        runtime=runtime,
+        ctx=RuntimeContext(depth=1, spawn_id="p-parent"),
+    )
+
+    assert result.status == "running"
+    assert result.background is True
+    assert result.spawn_id is not None
+    row = spawn_store.get_spawn(authority.runtime_root, result.spawn_id)
+    assert row is not None
+    assert row.work_id == "new-work-item"
+    assert row.status == "running"
     assert work_store.get_work_item(project_state_dir, "new-work-item") is not None
     assert hook.event_types == ["spawn.created"]
     start_events = [event for event in sink.events if event.get("t") == "meridian.spawn.start"]
@@ -347,14 +381,6 @@ def test_execute_spawn_blocking_persists_unified_work_id_precedence(
         return 0
 
     monkeypatch.setattr(execute_module, "launch_prepared_spawn", _fake_launch_prepared_spawn)
-    monkeypatch.setattr(
-        execute_module,
-        "read_spawn_row",
-        lambda _project_root, spawn_id, **_kwargs: spawn_store.get_spawn(
-            authority.runtime_root,
-            spawn_id,
-        ),
-    )
 
     result = execute_module.execute_spawn_blocking(
         payload=SpawnCreateInput(prompt="run", work="from-payload"),

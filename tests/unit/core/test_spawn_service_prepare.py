@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from meridian.lib.core.lifecycle import SpawnLifecycleService
+from meridian.lib.core.spawn_lifecycle import SpawnReservation
 from meridian.lib.core.spawn_service import PrepareSpawnRequest, SpawnApplicationService
 from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.registry import get_default_harness_registry
@@ -52,7 +53,7 @@ async def test_prepare_spawn_calls_mars_once(
     monkeypatch.setattr(
         service._lifecycle,
         "start",
-        lambda **_kwargs: "p99",
+        lambda _reservation, **_kwargs: "p99",
     )
 
     prepared = await service.prepare(
@@ -100,8 +101,9 @@ async def test_prepare_spawn_connection_config_keeps_control_root_when_task_dir_
     )
     captured_start: dict[str, object] = {}
 
-    def _capture_start(**kwargs: object) -> str:
-        captured_start.update(kwargs)
+    def _capture_start(reservation: SpawnReservation, **_kwargs: object) -> str:
+        captured_start["execution_cwd"] = reservation.execution_cwd
+        captured_start["task_cwd"] = reservation.task_cwd
         return "p100"
 
     monkeypatch.setattr(service._lifecycle, "start", _capture_start)

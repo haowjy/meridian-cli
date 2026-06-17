@@ -10,6 +10,7 @@ import meridian.lib.core.telemetry as core_telemetry
 import meridian.lib.telemetry.observer as spawn_observer
 import meridian.lib.telemetry.observers as lifecycle_observers
 from meridian.lib.core.lifecycle import SpawnLifecycleService
+from meridian.lib.core.spawn_lifecycle import SpawnReservation
 from meridian.lib.core.telemetry import SpawnEventCounter
 from meridian.lib.launch.types import PrimarySessionMetadata
 from meridian.lib.telemetry import emit_telemetry
@@ -56,17 +57,19 @@ def write_segment(
 
 def start_spawn(service: SpawnLifecycleService, *, status: str = "running") -> str:
     return service.start(
-        chat_id="chat-1",
-        session_metadata=PrimarySessionMetadata(
-            harness="test-harness",
-            model="test-model",
-            agent="coder",
-            agent_path="",
-            skills=(),
-            skill_paths=(),
-        ),
-        prompt="do the thing",
-        status=status,  # type: ignore[arg-type]
+        SpawnReservation(
+            chat_id="chat-1",
+            session_metadata=PrimarySessionMetadata(
+                harness="test-harness",
+                model="test-model",
+                agent="coder",
+                agent_path="",
+                skills=(),
+                skill_paths=(),
+            ),
+            prompt="do the thing",
+            status=status,  # type: ignore[arg-type]
+        )
     )
 
 

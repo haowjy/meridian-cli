@@ -19,6 +19,7 @@ from meridian.lib.core.lifecycle import SpawnLifecycleService
 from meridian.lib.core.spawn_lifecycle import (
     ExecutionTerminalFacts,
     ExecutionTerminalOutcome,
+    SpawnReservation,
     coerce_spawn_status,
     is_terminal_spawn_status,
     resolve_completion_cancel_precedence,
@@ -418,24 +419,28 @@ class SpawnApplicationService:
         persisted_spawn_id = SpawnId(
             await asyncio.to_thread(
                 self._lifecycle.start,
-                chat_id=payload.chat_id or "",
-                owner_chat_id=payload.chat_id or "",
-                parent_id=payload.parent_id,
-                session_metadata=prepare_session_metadata,
-                kind=payload.kind,
-                prompt=resolved_request.prompt,
-                metadata=start_metadata,
-                spawn_id=str(final_spawn_id),
-                harness_session_id=resolved_request.session.requested_harness_session_id,
-                control_root=launch_ctx.control_root.as_posix(),
-                task_cwd=(
-                    launch_ctx.task_cwd.as_posix() if launch_ctx.task_cwd is not None else None
+                SpawnReservation(
+                    chat_id=payload.chat_id or "",
+                    owner_chat_id=payload.chat_id or "",
+                    parent_id=payload.parent_id,
+                    session_metadata=prepare_session_metadata,
+                    kind=payload.kind,
+                    prompt=resolved_request.prompt,
+                    metadata=start_metadata,
+                    spawn_id=str(final_spawn_id),
+                    harness_session_id=resolved_request.session.requested_harness_session_id,
+                    control_root=launch_ctx.control_root.as_posix(),
+                    task_cwd=(
+                        launch_ctx.task_cwd.as_posix()
+                        if launch_ctx.task_cwd is not None
+                        else None
+                    ),
+                    execution_cwd=launch_ctx.binding.child_cwd.as_posix(),
+                    launch_mode=payload.launch_mode,
+                    runner_pid=payload.runner_pid,
+                    launch_policy_snapshot=resolved_request.launch_policy_snapshot,
+                    status=payload.initial_status,
                 ),
-                execution_cwd=launch_ctx.binding.child_cwd.as_posix(),
-                launch_mode=payload.launch_mode,
-                runner_pid=payload.runner_pid,
-                launch_policy_snapshot=resolved_request.launch_policy_snapshot,
-                status=payload.initial_status,
             )
         )
         if persisted_spawn_id != final_spawn_id:

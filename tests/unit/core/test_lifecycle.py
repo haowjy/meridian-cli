@@ -73,7 +73,7 @@ def _start_spawn(service: SpawnLifecycleService, **overrides: Any) -> str:
         "status": "running",
     }
     defaults.update(overrides)
-    return service.start(**defaults)
+    return service.start(SpawnReservation(**defaults))
 
 
 def test_generate_event_id_is_deterministic() -> None:
@@ -191,21 +191,23 @@ def test_start_accepts_typed_metadata_and_persists_goal(tmp_path: Path) -> None:
     service = _make_service(tmp_path)
 
     spawn_id = service.start(
-        chat_id="c1",
-        session_metadata=PrimarySessionMetadata(
-            harness="codex",
-            model="gpt-5.4",
-            agent="coder",
-            agent_path="",
-            skills=(),
-            skill_paths=(),
-        ),
-        prompt="run it",
-        metadata=SpawnStartMetadata(
-            desc="goal metadata",
-            work_id="  w-lifecycle  ",
-            goal="  finish migration  ",
-        ),
+        SpawnReservation(
+            chat_id="c1",
+            session_metadata=PrimarySessionMetadata(
+                harness="codex",
+                model="gpt-5.4",
+                agent="coder",
+                agent_path="",
+                skills=(),
+                skill_paths=(),
+            ),
+            prompt="run it",
+            metadata=SpawnStartMetadata(
+                desc="goal metadata",
+                work_id="  w-lifecycle  ",
+                goal="  finish migration  ",
+            ),
+        )
     )
 
     record = spawn_store.get_spawn(tmp_path, spawn_id)
@@ -247,17 +249,19 @@ def test_start_without_dispatch_events_defers_hook_until_announce(tmp_path: Path
     service = _make_service(tmp_path, hooks=[hook])
 
     spawn_id = service.start(
-        chat_id="c1",
-        session_metadata=PrimarySessionMetadata(
-            harness="codex",
-            model="gpt-5.4",
-            agent="coder",
-            agent_path="",
-            skills=(),
-            skill_paths=(),
+        SpawnReservation(
+            chat_id="c1",
+            session_metadata=PrimarySessionMetadata(
+                harness="codex",
+                model="gpt-5.4",
+                agent="coder",
+                agent_path="",
+                skills=(),
+                skill_paths=(),
+            ),
+            prompt="run it",
+            status="queued",
         ),
-        prompt="run it",
-        status="queued",
         dispatch_events=False,
     )
 

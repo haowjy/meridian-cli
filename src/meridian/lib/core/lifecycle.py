@@ -40,7 +40,6 @@ from meridian.lib.core.spawn_lifecycle import (
     SpawnReservation,
     is_active_spawn_status,
 )
-from meridian.lib.core.spawn_start import SpawnStartMetadata
 from meridian.lib.core.telemetry import (
     CORE_EVENTS,
     SpawnFailure,
@@ -60,9 +59,7 @@ if TYPE_CHECKING:
 
     from meridian.lib.core.clock import Clock
     from meridian.lib.core.domain import SpawnStatus, TokenUsage
-    from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
     from meridian.lib.hooks.dispatch import HookDispatcher
-    from meridian.lib.launch.types import PrimarySessionMetadata
     from meridian.lib.state.spawn.model import (
         LaunchMode,
         SpawnOrigin,
@@ -231,69 +228,26 @@ class SpawnLifecycleService:
         self._hooks = hooks or []
         self._record: SpawnRecord | None = None
 
+    def register_hook(self, hook: LifecycleHook) -> None:
+        """Register an additional lifecycle hook after construction."""
+        self._hooks.append(hook)
+
     # ------------------------------------------------------------------
     # Lifecycle transitions
     # ------------------------------------------------------------------
 
     def start(
         self,
+        reservation: SpawnReservation,
         *,
-        chat_id: str,
-        owner_chat_id: str | None = None,
-        parent_id: str | None = None,
-        session_metadata: PrimarySessionMetadata,
-        kind: str = "child",
-        prompt: str,
-        metadata: SpawnStartMetadata | None = None,
-        desc: str | None = None,
-        work_id: str | None = None,
-        goal: str | None = None,
-        spawn_id: str | None = None,
-        harness_session_id: str | None = None,
-        control_root: str | None = None,
-        task_cwd: str | None = None,
-        execution_cwd: str | None = None,
-        launch_mode: LaunchMode | None = None,
-        worker_pid: int | None = None,
-        runner_pid: int | None = None,
-        launch_policy_snapshot: LaunchPolicySnapshot | None = None,
-        status: SpawnStatus = "running",
-        started_at: str | None = None,
-        clock: Clock | None = None,
         dispatch_events: bool = True,
     ) -> str:
-        """Start a new spawn and optionally dispatch spawn.created."""
-        return self._start_from_reservation(
-            SpawnReservation(
-                chat_id=chat_id,
-                owner_chat_id=owner_chat_id,
-                parent_id=parent_id,
-                session_metadata=session_metadata,
-                kind=kind,
-                prompt=prompt,
-                metadata=metadata,
-                desc=desc,
-                work_id=work_id,
-                goal=goal,
-                spawn_id=spawn_id,
-                harness_session_id=harness_session_id,
-                control_root=control_root,
-                task_cwd=task_cwd,
-                execution_cwd=execution_cwd,
-                launch_mode=launch_mode,
-                worker_pid=worker_pid,
-                runner_pid=runner_pid,
-                launch_policy_snapshot=launch_policy_snapshot,
-                status=status,
-                started_at=started_at,
-                clock=clock,
-            ),
-            dispatch_events=dispatch_events,
-        )
+        """Persist a spawn row from ``reservation`` and optionally dispatch spawn.created."""
+        return self._start_from_reservation(reservation, dispatch_events=dispatch_events)
 
     def reserve(self, reservation: SpawnReservation) -> str:
         """Persist a spawn row without dispatching lifecycle events."""
-        return self._start_from_reservation(reservation, dispatch_events=False)
+        return self.start(reservation, dispatch_events=False)
 
     def announce(self, spawn_id: str) -> None:
         """Dispatch spawn.created and initial telemetry for a reserved row."""
