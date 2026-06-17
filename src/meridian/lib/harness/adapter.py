@@ -203,12 +203,52 @@ class HarnessContract(BaseModel):
     capability_limits: tuple[str, ...] = ()
 
 
+class SpawnUsageContractVariants(BaseModel):
+    """Harness-specific phrasing for the shared spawn-usage contract template."""
+
+    model_config = ConfigDict(frozen=True)
+
+    intro_line: str
+    double_wrap_bullet: str
+    timeout_bullet: str
+
+
+GENERIC_SPAWN_USAGE_VARIANTS = SpawnUsageContractVariants(
+    intro_line="Launch detached, then wait — never block the turn or double-background.",
+    double_wrap_bullet=(
+        "NEVER wrap `meridian spawn --bg` in your harness's background execution.\n"
+        "  It already detaches — double-wrapping adds nothing and lets the harness kill\n"
+        "  the launcher mid-startup, before it hands off to the detached worker;\n"
+        "  the spawn then fails (recorded and visible, but the work never runs)."
+    ),
+    timeout_bullet=(
+        "NEVER block-foreground a long spawn (omitting --bg). It will outlive your\n"
+        "  command timeout; you lose the thread while the spawn runs on."
+    ),
+)
+
+CLAUDE_SPAWN_USAGE_VARIANTS = SpawnUsageContractVariants(
+    intro_line="Launch detached, then wait — never block the turn or background-wrap.",
+    double_wrap_bullet=(
+        "NEVER wrap `meridian spawn --bg` inside Bash's run_in_background. It\n"
+        "  already detaches — double-wrapping adds nothing and lets the harness kill\n"
+        "  the launcher mid-startup, before it hands off to the detached worker; the\n"
+        "  spawn then fails (recorded and visible, but the work never runs)."
+    ),
+    timeout_bullet=(
+        "NEVER block-foreground a long spawn (omitting --bg). It will outlive your\n"
+        "  Bash command timeout; you lose the thread while the spawn runs on."
+    ),
+)
+
+
 class RunPromptPolicy(BaseModel):
     """Adapter-owned policy for composing one run prompt."""
 
     model_config = ConfigDict(frozen=True)
 
     skill_injection_mode: Literal["none", "append-system-prompt"] = "none"
+    spawn_usage_contract_variants: SpawnUsageContractVariants = GENERIC_SPAWN_USAGE_VARIANTS
 
 
 class SpawnParams(BaseModel):

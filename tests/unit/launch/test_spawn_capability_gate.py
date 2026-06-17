@@ -10,6 +10,10 @@ from meridian.lib.catalog.agent import AgentProfile, MeridianCapabilities
 from meridian.lib.catalog.catalog_session import CatalogSession
 from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
 from meridian.lib.core.types import HarnessId
+from meridian.lib.harness.adapter import (
+    CLAUDE_SPAWN_USAGE_VARIANTS,
+    GENERIC_SPAWN_USAGE_VARIANTS,
+)
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.launch import bundle_adapter
 from meridian.lib.launch.composition import (
@@ -32,7 +36,11 @@ from meridian.lib.launch.request import (
     LaunchRuntime,
     SpawnRequest,
 )
-from meridian.lib.launch.spawn_guidance import build_guidance_blocks, has_spawn_capability
+from meridian.lib.launch.spawn_guidance import (
+    build_guidance_blocks,
+    build_spawn_usage_contract,
+    has_spawn_capability,
+)
 from tests.support.fixtures import allow_headless_claude
 from tests.support.launch import stub_bundle_request_and_resolve
 
@@ -141,7 +149,7 @@ def _block_names(blocks: tuple[CompositionBlock, ...]) -> list[str]:
 def test_gate_present_returns_inventory_and_contract_blocks(tmp_path: Path) -> None:
     blocks = build_guidance_blocks(
         profile=_sample_profile(),
-        harness_id=HarnessId.CLAUDE,
+        spawn_usage_contract=build_spawn_usage_contract(CLAUDE_SPAWN_USAGE_VARIANTS),
         bundle_inventory_prompt=PRE_GATE_INVENTORY,
         context_prompt=SAMPLE_CONTEXT,
     )
@@ -168,7 +176,7 @@ def test_gate_present_returns_inventory_and_contract_blocks(tmp_path: Path) -> N
 def test_gate_absent_returns_empty_blocks_but_context_still_builds(tmp_path: Path) -> None:
     blocks = build_guidance_blocks(
         profile=_sample_profile(subagents=()),
-        harness_id=HarnessId.CLAUDE,
+        spawn_usage_contract=build_spawn_usage_contract(CLAUDE_SPAWN_USAGE_VARIANTS),
         bundle_inventory_prompt=PRE_GATE_INVENTORY,
         context_prompt=SAMPLE_CONTEXT,
     )
@@ -203,13 +211,13 @@ def test_has_spawn_capability(profile: AgentProfile | None, expected: bool) -> N
 def test_resolve_spawn_prompt_blocks_is_harness_templated() -> None:
     claude_blocks = build_guidance_blocks(
         profile=_sample_profile(),
-        harness_id=HarnessId.CLAUDE,
+        spawn_usage_contract=build_spawn_usage_contract(CLAUDE_SPAWN_USAGE_VARIANTS),
         bundle_inventory_prompt=None,
         context_prompt="",
     )
     generic_blocks = build_guidance_blocks(
         profile=_sample_profile(),
-        harness_id=HarnessId.CODEX,
+        spawn_usage_contract=build_spawn_usage_contract(GENERIC_SPAWN_USAGE_VARIANTS),
         bundle_inventory_prompt=None,
         context_prompt="",
     )

@@ -12,6 +12,7 @@ from meridian.lib.core.conversation import Conversation, ConversationTurn, ToolC
 from meridian.lib.core.domain import TokenUsage
 from meridian.lib.core.types import ArtifactKey, HarnessId, SpawnId, TransportId
 from meridian.lib.harness.adapter import (
+    CLAUDE_SPAWN_USAGE_VARIANTS,
     ApprovalContract,
     ArtifactStore,
     BaseHarnessAdapter,
@@ -339,7 +340,10 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         )
 
     def run_prompt_policy(self) -> RunPromptPolicy:
-        return RunPromptPolicy(skill_injection_mode="append-system-prompt")
+        return RunPromptPolicy(
+            skill_injection_mode="append-system-prompt",
+            spawn_usage_contract_variants=CLAUDE_SPAWN_USAGE_VARIANTS,
+        )
 
     def build_adhoc_agent_payload(self, *, name: str, description: str, prompt: str) -> str:
         return build_claude_adhoc_agent_json(name=name, description=description, prompt=prompt)

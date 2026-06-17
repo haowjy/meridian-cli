@@ -130,7 +130,7 @@ from .resolve import (
     resolve_profile_path,
     resolve_skill_paths,
 )
-from .spawn_guidance import build_guidance_blocks
+from .spawn_guidance import build_guidance_blocks, build_spawn_usage_contract
 from .text_utils import sanitize_prior_output, strip_stale_report_paths
 from .workspace import resolve_workspace_snapshot_for_launch
 
@@ -1049,9 +1049,12 @@ def _build_shared_composition(
         project_root=project_paths.project_root,
         active_work_dir=active_work_dir,
     ) or ""
+    spawn_usage_contract = build_spawn_usage_contract(
+        policy.adapter.run_prompt_policy().spawn_usage_contract_variants
+    )
     guidance_blocks = build_guidance_blocks(
         profile=policy.profile,
-        harness_id=policy.adapter.id,
+        spawn_usage_contract=spawn_usage_contract,
         bundle_inventory_prompt=policy.bundle_inventory_prompt,
         context_prompt=context_prompt,
     )

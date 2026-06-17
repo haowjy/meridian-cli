@@ -3,56 +3,12 @@
 from __future__ import annotations
 
 from meridian.lib.catalog.agent import AgentProfile
-from meridian.lib.core.types import HarnessId
+from meridian.lib.harness.adapter import SpawnUsageContractVariants
 from meridian.lib.launch.composition import (
     CONTEXT_ENV_BLOCK_NAME,
     CompositionBlock,
     GuidancePhase,
 )
-
-_CLAUDE_SPAWN_CONTRACT = """\
-# Spawning subagents (meridian)
-
-Launch detached, then wait — never block the turn or background-wrap.
-
-- Launch with --bg; it returns a spawn id without waiting for the work and
-  runs the worker detached:
-      meridian spawn -a <agent> --prompt-file <prompt>.md --bg
-- NEVER wrap `meridian spawn --bg` inside Bash's run_in_background. It
-  already detaches — double-wrapping adds nothing and lets the harness kill
-  the launcher mid-startup, before it hands off to the detached worker; the
-  spawn then fails (recorded and visible, but the work never runs).
-- NEVER block-foreground a long spawn (omitting --bg). It will outlive your
-  Bash command timeout; you lose the thread while the spawn runs on.
-- Track with no-arg wait — no id needed; it discovers your pending spawns
-  by session and yields cache-cleanly. Re-invoke to keep waiting:
-      meridian spawn wait
-- Every --bg spawn must be drained with `meridian spawn wait` before you
-  respond to the user, start dependent work, or end your turn; un-waited
-  background spawns are lost.
-- Full reference:  meridian spawn -h"""
-
-_GENERIC_SPAWN_CONTRACT = """\
-# Spawning subagents (meridian)
-
-Launch detached, then wait — never block the turn or double-background.
-
-- Launch with --bg; it returns a spawn id without waiting for the work and
-  runs the worker detached:
-      meridian spawn -a <agent> --prompt-file <prompt>.md --bg
-- NEVER wrap `meridian spawn --bg` in your harness's background execution.
-  It already detaches — double-wrapping adds nothing and lets the harness
-  kill the launcher mid-startup, before it hands off to the detached worker;
-  the spawn then fails (recorded and visible, but the work never runs).
-- NEVER block-foreground a long spawn (omitting --bg). It will outlive your
-  command timeout; you lose the thread while the spawn runs on.
-- Track with no-arg wait — no id needed; it discovers your pending spawns
-  by session and yields cache-cleanly. Re-invoke to keep waiting:
-      meridian spawn wait
-- Every --bg spawn must be drained with `meridian spawn wait` before you
-  respond to the user, start dependent work, or end your turn; un-waited
-  background spawns are lost.
-- Full reference:  meridian spawn -h"""
 
 _WORK_DISCOVERY = """\
 # Work coordination (meridian)
@@ -67,10 +23,26 @@ Read what past spawns did — full transcripts and progress logs, searchable.
 Learn the commands:  meridian session -h"""
 
 
-def _spawn_usage_contract(harness: HarnessId) -> str:
-    if harness == HarnessId.CLAUDE:
-        return _CLAUDE_SPAWN_CONTRACT
-    return _GENERIC_SPAWN_CONTRACT
+def build_spawn_usage_contract(variants: SpawnUsageContractVariants) -> str:
+    """Render the shared spawn-usage contract filled with adapter-owned phrasing."""
+
+    return f"""\
+# Spawning subagents (meridian)
+
+{variants.intro_line}
+
+- Launch with --bg; it returns a spawn id without waiting for the work and
+  runs the worker detached:
+      meridian spawn -a <agent> --prompt-file <prompt>.md --bg
+- {variants.double_wrap_bullet}
+- {variants.timeout_bullet}
+- Track with no-arg wait — no id needed; it discovers your pending spawns
+  by session and yields cache-cleanly. Re-invoke to keep waiting:
+      meridian spawn wait
+- Every --bg spawn must be drained with `meridian spawn wait` before you
+  respond to the user, start dependent work, or end your turn; un-waited
+  background spawns are lost.
+- Full reference:  meridian spawn -h"""
 
 
 def has_spawn_capability(profile: AgentProfile | None) -> bool:
@@ -84,7 +56,7 @@ def has_spawn_capability(profile: AgentProfile | None) -> bool:
 def build_guidance_blocks(
     *,
     profile: AgentProfile | None,
-    harness_id: HarnessId,
+    spawn_usage_contract: str,
     bundle_inventory_prompt: str | None,
     context_prompt: str,
 ) -> tuple[CompositionBlock, ...]:
@@ -103,7 +75,7 @@ def build_guidance_blocks(
                 "spawn-contract",
                 GuidancePhase.GUIDANCE,
                 10,
-                _spawn_usage_contract(harness_id),
+                spawn_usage_contract,
             )
         )
     blocks.append(
@@ -122,5 +94,6 @@ def build_guidance_blocks(
 
 __all__ = [
     "build_guidance_blocks",
+    "build_spawn_usage_contract",
     "has_spawn_capability",
 ]
