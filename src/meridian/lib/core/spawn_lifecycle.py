@@ -5,12 +5,49 @@ signal after a final report already exists, that cleanup must not downgrade the
 spawn from succeeded to failed.
 """
 
+from __future__ import annotations
+
 import json
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 from meridian.lib.core.domain import SpawnStatus
+from meridian.lib.core.spawn_start import SpawnStartMetadata
+
+if TYPE_CHECKING:
+    from meridian.lib.core.clock import Clock
+    from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
+    from meridian.lib.launch.types import PrimarySessionMetadata
+    from meridian.lib.state.spawn.model import LaunchMode
+
+
+@dataclass(frozen=True)
+class SpawnReservation:
+    """Creation-time fields needed to persist a spawn row before announcement."""
+
+    chat_id: str
+    session_metadata: PrimarySessionMetadata
+    prompt: str
+    owner_chat_id: str | None = None
+    parent_id: str | None = None
+    kind: str = "child"
+    metadata: SpawnStartMetadata | None = None
+    desc: str | None = None
+    work_id: str | None = None
+    goal: str | None = None
+    spawn_id: str | None = None
+    harness_session_id: str | None = None
+    control_root: str | None = None
+    task_cwd: str | None = None
+    execution_cwd: str | None = None
+    launch_mode: LaunchMode | None = None
+    worker_pid: int | None = None
+    runner_pid: int | None = None
+    launch_policy_snapshot: LaunchPolicySnapshot | None = None
+    status: SpawnStatus = "running"
+    started_at: str | None = None
+    clock: Clock | None = None
 
 # TODO(status-authority): SpawnStatus Literal in core/domain.py duplicates these sets.
 ALL_SPAWN_STATUSES: frozenset[str] = frozenset(

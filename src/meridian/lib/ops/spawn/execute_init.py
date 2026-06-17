@@ -16,6 +16,7 @@ from meridian.lib.core.domain import Spawn, SpawnStatus
 from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
 from meridian.lib.core.resolved_context import ResolvedContext
 from meridian.lib.core.sink import OutputSink
+from meridian.lib.core.spawn_lifecycle import SpawnReservation
 from meridian.lib.core.types import ModelId, SpawnId
 from meridian.lib.launch.plan import build_spawn_mars_runtime
 from meridian.lib.launch.request import SpawnRequest
@@ -151,11 +152,10 @@ def resolve_spawn_work_id(
     )
 
 
-def _reserve_spawn_row(
+def build_spawn_reservation(
     *,
     payload: SpawnCreateInput,
     request: SpawnRequest,
-    runtime: OperationRuntime,
     desc: str | None = None,
     work_id: str | None = None,
     status: SpawnStatus = "running",
@@ -166,14 +166,11 @@ def _reserve_spawn_row(
     task_cwd: str | None = None,
     execution_cwd: str | None = None,
     ctx: RuntimeContext | None = None,
-) -> _SpawnContext:
-    """Write only the durable spawn row — no work-item creation or lifecycle events."""
+) -> SpawnReservation:
+    """Build the typed reservation for a child spawn row."""
     resolved_context = runtime_context(ctx)
-    project_paths = resolve_project_config_paths(project_root=runtime.project_root)
-    runtime_root = resolve_runtime_root(project_paths.project_root)
     resolved_desc = (desc if desc is not None else payload.desc).strip() or None
     owner_chat_id = resolve_chat_id(ctx=resolved_context, fallback="c0")
-    service = build_spawn_lifecycle_service_from_roots(project_paths.project_root, runtime_root)
     spawn_session_metadata = PrimarySessionMetadata(
         harness=request.harness or "",
         model=request.model or "",
@@ -182,7 +179,7 @@ def _reserve_spawn_row(
         skills=request.skills,
         skill_paths=request.skill_paths,
     )
-    spawn_id = service.reserve_spawn_row(
+    return SpawnReservation(
         chat_id=owner_chat_id,
         owner_chat_id=owner_chat_id,
         parent_id=str(resolved_context.spawn_id) if resolved_context.spawn_id else None,
@@ -205,17 +202,31 @@ def _reserve_spawn_row(
         launch_policy_snapshot=launch_policy_snapshot or request.launch_policy_snapshot,
         status=status,
     )
+
+
+def _reserve_spawn(
+    *,
+    reservation: SpawnReservation,
+    runtime: OperationRuntime,
+    ctx: RuntimeContext | None = None,
+) -> _SpawnContext:
+    """Persist only the durable spawn row — no work-item creation or lifecycle events."""
+    resolved_context = runtime_context(ctx)
+    project_paths = resolve_project_config_paths(project_root=runtime.project_root)
+    runtime_root = resolve_runtime_root(project_paths.project_root)
+    service = build_spawn_lifecycle_service_from_roots(project_paths.project_root, runtime_root)
+    spawn_id = service.reserve(reservation)
     spawn = Spawn(
         spawn_id=SpawnId(spawn_id),
-        prompt=request.prompt,
-        model=ModelId(request.model or ""),
-        status=status,
+        prompt=reservation.prompt,
+        model=ModelId(reservation.session_metadata.model or ""),
+        status=reservation.status,
     )
     return _SpawnContext(
         spawn=spawn,
         runtime_root=runtime_root,
         current_depth=resolved_context.depth,
-        work_id=work_id,
+        work_id=reservation.work_id,
     )
 
 
@@ -270,7 +281,7 @@ def _announce_reserved_spawn(
     ctx: RuntimeContext | None = None,
 ) -> None:
     service = build_spawn_lifecycle_service_from_roots(project_root, context.runtime_root)
-    service.announce_reserved_spawn(str(context.spawn.spawn_id))
+    service.announce(str(context.spawn.spawn_id))
     _emit_spawn_start_subrun_event(
         spawn_id=str(context.spawn.spawn_id),
         request=request,
@@ -320,11 +331,12 @@ __all__ = [
     "_announce_reserved_spawn",
     "_emit_subrun_event",
     "_materialize_spawn_work_item",
-    "_reserve_spawn_row",
+    "_reserve_spawn",
     "_spawn_background_worker_env",
     "_spawn_child_env",
     "_write_params_json",
     "build_spawn_mars_runtime",
+    "build_spawn_reservation",
     "depth_exceeded_output",
     "depth_limits",
     "resolve_spawn_work_id",

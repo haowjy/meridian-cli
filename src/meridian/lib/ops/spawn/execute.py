@@ -46,11 +46,12 @@ from .execute_init import (
     _announce_reserved_spawn,
     _emit_subrun_event,
     _materialize_spawn_work_item,
-    _reserve_spawn_row,
+    _reserve_spawn,
     _spawn_background_worker_env,
     _SpawnContext,
     _write_params_json,
     build_spawn_mars_runtime,
+    build_spawn_reservation,
     depth_exceeded_output,
     depth_limits,
     resolve_spawn_work_id,
@@ -203,16 +204,20 @@ def _reserve_then_prepare(
     runner_pid: int | None = None,
 ) -> tuple[_SpawnContext, SpawnExecutionPreparation] | SpawnActionOutput:
     resolved_context = runtime_context(ctx)
-    context = _reserve_spawn_row(
+    reservation = build_spawn_reservation(
         payload=payload,
         request=request,
-        runtime=runtime,
         desc=payload.desc,
         work_id=resolve_spawn_work_id(payload, request, ctx=resolved_context),
         status="queued",
         launch_mode=launch_mode,
         runner_pid=runner_pid,
         launch_policy_snapshot=request.launch_policy_snapshot,
+        ctx=resolved_context,
+    )
+    context = _reserve_spawn(
+        reservation=reservation,
+        runtime=runtime,
         ctx=resolved_context,
     )
     preparation = _prepare_spawn_execution(

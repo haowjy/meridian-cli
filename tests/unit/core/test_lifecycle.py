@@ -16,6 +16,7 @@ from meridian.lib.core.lifecycle import (
     generate_event_id,
     generate_lifecycle_event_id,
 )
+from meridian.lib.core.spawn_lifecycle import SpawnReservation
 from meridian.lib.core.spawn_start import SpawnStartMetadata
 from meridian.lib.launch.types import PrimarySessionMetadata
 from meridian.lib.state import spawn_store
@@ -214,32 +215,34 @@ def test_start_accepts_typed_metadata_and_persists_goal(tmp_path: Path) -> None:
     assert record.goal == "finish migration"
 
 
-def test_reserve_spawn_row_defers_hook_until_announce_reserved_spawn(tmp_path: Path) -> None:
+def test_reserve_defers_hook_until_announce(tmp_path: Path) -> None:
     hook = EventTypeHook()
     service = _make_service(tmp_path, hooks=[hook])
 
-    spawn_id = service.reserve_spawn_row(
-        chat_id="c1",
-        session_metadata=PrimarySessionMetadata(
-            harness="codex",
-            model="gpt-5.4",
-            agent="coder",
-            agent_path="",
-            skills=(),
-            skill_paths=(),
-        ),
-        prompt="run it",
-        status="queued",
+    spawn_id = service.reserve(
+        SpawnReservation(
+            chat_id="c1",
+            session_metadata=PrimarySessionMetadata(
+                harness="codex",
+                model="gpt-5.4",
+                agent="coder",
+                agent_path="",
+                skills=(),
+                skill_paths=(),
+            ),
+            prompt="run it",
+            status="queued",
+        )
     )
 
     assert hook.event_types == []
 
-    service.announce_reserved_spawn(spawn_id)
+    service.announce(spawn_id)
 
     assert hook.event_types == ["spawn.created"]
 
 
-def test_start_without_dispatch_events_defers_hook_until_announce_started(tmp_path: Path) -> None:
+def test_start_without_dispatch_events_defers_hook_until_announce(tmp_path: Path) -> None:
     hook = EventTypeHook()
     service = _make_service(tmp_path, hooks=[hook])
 
@@ -260,7 +263,7 @@ def test_start_without_dispatch_events_defers_hook_until_announce_started(tmp_pa
 
     assert hook.event_types == []
 
-    service.announce_started(spawn_id)
+    service.announce(spawn_id)
 
     assert hook.event_types == ["spawn.created"]
 
