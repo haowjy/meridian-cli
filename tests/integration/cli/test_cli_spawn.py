@@ -73,7 +73,9 @@ def test_spawn_rejects_prompt_and_prompt_file_together(
     monkeypatch.setattr(spawn_cli.sys, "stdin", _FakeStdin("", is_tty=True))
 
     with pytest.raises(SystemExit) as exc_info:
-        cli_main.main(["--human", "spawn", "-p", "literal", "--prompt-file", "-", "--dry-run"])
+        cli_main.main(
+            ["--mode", "human", "spawn", "-p", "literal", "--prompt-file", "-", "--dry-run"]
+        )
 
     assert exc_info.value.code == 1
     captured = capsys.readouterr()
@@ -182,7 +184,7 @@ def test_spawn_goal_rejects_empty_value(
     monkeypatch.setattr(spawn_cli.sys, "stdin", _FakeStdin("", is_tty=True))
 
     with pytest.raises(SystemExit) as exc_info:
-        cli_main.main(["--human", "spawn", "-p", "literal", "--goal", "   ", "--dry-run"])
+        cli_main.main(["--mode", "human", "spawn", "-p", "literal", "--goal", "   ", "--dry-run"])
 
     assert exc_info.value.code == 1
     captured = capsys.readouterr()
@@ -199,7 +201,7 @@ def test_spawn_continue_rejects_task_dir_override(
     with pytest.raises(SystemExit) as exc_info:
         cli_main.main(
             [
-                "--human",
+                "--mode", "human",
                 "spawn",
                 "--continue",
                 "p123",
@@ -223,7 +225,7 @@ def test_spawn_rejects_removed_worktree_flags(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     monkeypatch.setattr(spawn_cli.sys, "stdin", _FakeStdin("", is_tty=True))
-    args = ["--human", "spawn", "-p", "literal", "--dry-run", legacy_flag]
+    args = ["--mode", "human", "spawn", "-p", "literal", "--dry-run", legacy_flag]
     if legacy_flag == "--repo":
         args.append(".")
 
@@ -391,7 +393,7 @@ def test_spawn_status_verbose_renders_internal_fields(
     )
 
     with pytest.raises(SystemExit) as exc_info:
-        cli_main.main(["--human", "spawn", "status", "p501", "--verbose"])
+        cli_main.main(["--mode", "human", "spawn", "status", "p501", "--verbose"])
 
     assert exc_info.value.code == 0
     rendered = capsys.readouterr().out
@@ -432,7 +434,7 @@ def test_agent_mode_background_spawn_emits_readable_text(
     )
 
     with pytest.raises(SystemExit) as exc_info:
-        cli_main.main(["--agent", "spawn", "-p", "task", "--bg"])
+        cli_main.main(["--mode", "agent", "spawn", "-p", "task", "--bg"])
 
     assert exc_info.value.code == 0
     rendered = capsys.readouterr().out
@@ -455,7 +457,7 @@ def test_agent_mode_background_spawn_json_when_explicit(
     )
 
     with pytest.raises(SystemExit) as exc_info:
-        cli_main.main(["--agent", "spawn", "-p", "task", "--bg", "--json"])
+        cli_main.main(["--mode", "agent", "spawn", "-p", "task", "--bg", "--json"])
 
     assert exc_info.value.code == 0
     rendered = capsys.readouterr().out
@@ -468,7 +470,7 @@ def test_resolve_output_format_agent_background_defaults_text() -> None:
     resolved = cli_main._resolve_output_format_for_command(
         argv=["spawn", "-p", "task", "--bg"],
         explicit_format=None,
-        agent_mode=True,
+        render_mode="agent",
     )
     assert resolved == "text"
 
@@ -477,6 +479,50 @@ def test_resolve_output_format_agent_background_json_when_explicit() -> None:
     resolved = cli_main._resolve_output_format_for_command(
         argv=["spawn", "-p", "task", "--bg"],
         explicit_format="json",
-        agent_mode=True,
+        render_mode="agent",
     )
     assert resolved == "json"
+
+
+def test_mode_human_overrides_managed_session_output_format(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Regression: --mode human must affect emit() inside a managed agent session."""
+
+    monkeypatch.setenv("MERIDIAN_SPAWN_ID", "p4393")
+    monkeypatch.setattr("sys.stdin.isatty", lambda: False)
+    monkeypatch.setattr("sys.stdout.isatty", lambda: False)
+    monkeypatch.setattr(
+        spawn_cli,
+        "spawn_status_sync",
+        lambda *_args, **_kwargs: SpawnDetailOutput(
+            spawn_id="p501",
+            status="succeeded",
+            model="gpt-5.4",
+            harness="codex",
+            started_at="2026-05-15T00:00:00Z",
+            finished_at="2026-05-15T00:00:01Z",
+            duration_secs=1.0,
+            exit_code=0,
+            failure_reason=None,
+            input_tokens=123,
+            output_tokens=456,
+            cost_usd=0.1,
+            report_path="/tmp/report.md",
+            report_summary=None,
+            report_body=None,
+        ),
+    )
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli_main.main(["spawn", "status", "p501", "--verbose"])
+    assert exc_info.value.code == 0
+    agent_rendered = capsys.readouterr().out
+    assert agent_rendered.lstrip().startswith("{")
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli_main.main(["--mode", "human", "spawn", "status", "p501", "--verbose"])
+    assert exc_info.value.code == 0
+    human_rendered = capsys.readouterr().out
+    assert "Input tokens: 123" in human_rendered

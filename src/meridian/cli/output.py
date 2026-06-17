@@ -73,7 +73,7 @@ def resolve_effective_format(
 
     Resolution order:
     1. Explicit format from --format/--json always wins
-    2. In agent mode, use operation's agent_default_format if set
+    2. In agent mode, use the command catalog's default_output_mode when set
     3. Fall back to "text"
     """
 

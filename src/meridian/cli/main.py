@@ -56,6 +56,7 @@ from meridian.cli.hooks_authority import (
     manual_hook_authority_scope,
     should_suppress_manual_hook_authority,
 )
+from meridian.cli.mode import RenderMode, is_agent_render_mode, resolve_render_mode
 from meridian.cli.output import (
     CLIOutputProtocol,
     OutputConfig,
@@ -71,7 +72,6 @@ from meridian.cli.startup.help import render_root_help
 from meridian.cli.startup.policy import StartupClass, StateRequirement
 from meridian.cli.startup.policy import TelemetryMode as StartupTelemetryMode
 from meridian.cli.utils import parse_csv_list
-from meridian.lib.core.depth import is_managed_meridian_session
 from meridian.lib.core.sink import OutputSink
 from meridian.lib.core.util import FormatContext
 from meridian.lib.telemetry import emit_telemetry
@@ -93,8 +93,7 @@ class GlobalOptions(BaseModel):
     # Future cleanup: `output_explicit` may be removable now that
     # `explicit_format` carries the resolved explicit output selection.
     output_explicit: bool = False
-    force_agent: bool = False
-    force_human: bool = False
+    render_mode: RenderMode = "human"
     passthrough_args: tuple[str, ...] = ()
     sink: OutputSink | None = None
     explicit_format: OutputFormat | None = None
@@ -127,6 +126,12 @@ def current_output_sink() -> OutputSink:
     return sink
 
 
+def is_agent_mode() -> bool:
+    """Return whether the current invocation renders in agent mode."""
+
+    return is_agent_render_mode(get_global_options().render_mode)
+
+
 def emit(payload: object, *, format_ctx: FormatContext | None = None) -> None:
     """Write command output using current output format settings."""
 
@@ -137,7 +142,7 @@ def emit(payload: object, *, format_ctx: FormatContext | None = None) -> None:
             payload.to_cli_output(
                 format=options.output.format,
                 explicit_format=options.explicit_format,
-                agent_mode=agent_mode_enabled(),
+                agent_mode=is_agent_mode(),
             ),
             sink=sink,
             format_ctx=format_ctx,
@@ -164,6 +169,12 @@ def _extract_global_options(argv: Sequence[str]) -> tuple[list[str], GlobalOptio
     if parsed.directory is not None:
         project_root = Path(parsed.directory).expanduser().resolve()
 
+    render_mode = resolve_render_mode(
+        forced=parsed.forced_render_mode,
+        stdin_isatty=sys.stdin.isatty(),
+        stdout_isatty=sys.stdout.isatty(),
+    )
+
     return cleaned, GlobalOptions(
         output=OutputConfig(format=cast("OutputFormat", parsed.output_format)),
         config_file=parsed.config_file,
@@ -171,8 +182,7 @@ def _extract_global_options(argv: Sequence[str]) -> tuple[list[str], GlobalOptio
         yes=parsed.yes,
         no_input=parsed.no_input,
         output_explicit=parsed.output_explicit,
-        force_agent=parsed.force_agent,
-        force_human=parsed.force_human,
+        render_mode=render_mode,
         explicit_format=explicit_format,
         project_root=project_root,
         directory_explicit=parsed.directory_explicit,
@@ -193,15 +203,11 @@ def _split_passthrough_args(argv: Sequence[str]) -> tuple[list[str], tuple[str, 
     return _bootstrap_split_passthrough_args(argv)
 
 
-def agent_mode_enabled() -> bool:
-    return is_managed_meridian_session()
-
-
 def _resolve_output_format_for_command(
     *,
     argv: Sequence[str],
     explicit_format: OutputFormat | None,
-    agent_mode: bool,
+    render_mode: RenderMode,
 ) -> OutputFormat:
     """Resolve effective output format based on command and context."""
     from typing import Literal
@@ -215,13 +221,9 @@ def _resolve_output_format_for_command(
 
     return resolve_effective_format(
         explicit_format=explicit_format,
-        agent_mode=agent_mode,
+        agent_mode=is_agent_render_mode(render_mode),
         agent_default_format=agent_default_format,
     )
-
-
-def _interactive_terminal_attached() -> bool:
-    return sys.stdin.isatty() and sys.stdout.isatty()
 
 
 def _read_primary_prompt_from_stdin(*, explicit_prompt_file_stdin: bool) -> str:
@@ -298,10 +300,10 @@ def root(
             show=False,
         ),
     ] = False,
-    force_agent: Annotated[
-        bool,
-        Parameter(name="--agent", help="Force agent mode for this invocation.", show=False),
-    ] = False,
+    mode: Annotated[
+        str | None,
+        Parameter(name="--mode", help="Force render mode: agent or human.", show=False),
+    ] = None,
     continue_ref: Annotated[
         str | None,
         Parameter(
@@ -473,7 +475,10 @@ def root(
         parsed_skills.extend(parse_csv_list(token, field_name="skills"))
 
     if _GLOBAL_OPTIONS.get() is None:
+        from meridian.cli.mode import parse_render_mode
+
         resolved = normalize_output_format(requested=output_format, json_mode=json_mode)
+        forced_mode = parse_render_mode(mode) if mode is not None else None
         _GLOBAL_OPTIONS.set(
             GlobalOptions(
                 output=OutputConfig(format=resolved),
@@ -481,7 +486,11 @@ def root(
                 harness=harness,
                 yes=yes,
                 no_input=no_input,
-                force_agent=force_agent,
+                render_mode=resolve_render_mode(
+                    forced=forced_mode,
+                    stdin_isatty=sys.stdin.isatty(),
+                    stdout_isatty=sys.stdout.isatty(),
+                ),
             )
         )
 
@@ -861,7 +870,7 @@ def _suppress_parent_group_epilogues_for_leaf_help(
         tokens = [
             arg
             for arg in argv
-            if arg not in {"--help", "-h", "--advanced", "--human", "--agent"}
+            if arg not in {"--help", "-h", "--advanced", "--mode"}
         ]
         if len(tokens) < 2:
             yield
@@ -1124,12 +1133,7 @@ def _main_impl(argv: Sequence[str] | None = None) -> None:
         elif first_token is not None:
             print('error: Unknown option: "--advanced".', file=sys.stderr)
             raise SystemExit(1)
-    if options.force_agent:
-        effective_agent_mode = True
-    elif options.force_human:
-        effective_agent_mode = False
-    else:
-        effective_agent_mode = agent_mode_enabled() and not _interactive_terminal_attached()
+    effective_agent_mode = is_agent_render_mode(options.render_mode)
 
     descriptor = classify_invocation(cleaned_args, COMMAND_CATALOG)
 
@@ -1137,7 +1141,7 @@ def _main_impl(argv: Sequence[str] | None = None) -> None:
     resolved_format = _resolve_output_format_for_command(
         argv=cleaned_args,
         explicit_format=options.explicit_format,
-        agent_mode=effective_agent_mode,
+        render_mode=options.render_mode,
     )
     suppress_events = effective_agent_mode and options.explicit_format is None
     options = options.model_copy(
@@ -1192,7 +1196,7 @@ def _main_impl(argv: Sequence[str] | None = None) -> None:
         if not bootstrap_skipped:
             bootstrap_project_root = maybe_bootstrap_runtime_state(
                 cleaned_args,
-                agent_mode=agent_mode_enabled(),
+                render_mode=options.render_mode,
                 state_requirement=state_requirement,
             )
     _GLOBAL_OPTIONS.reset(_pre_bootstrap_token)

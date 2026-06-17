@@ -34,10 +34,10 @@ _GROUPS_WITH_LEAVES = (
 
 
 def _capture_help(args: list[str], *, agent_mode: bool = False) -> str:
-    mode_flag = "--agent" if agent_mode else "--human"
+    mode_args = ["--mode", "agent" if agent_mode else "human"]
     buffer = io.StringIO()
     with redirect_stdout(buffer), pytest.raises(SystemExit) as exc_info:
-        cli_main.main([mode_flag, *args, "--help"])
+        cli_main.main([*mode_args, *args, "--help"])
     assert exc_info.value.code in {0, None}
     return buffer.getvalue()
 

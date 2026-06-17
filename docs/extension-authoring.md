@@ -60,7 +60,6 @@ SPEC = ExtensionCommandSpec.from_op(
     summary="Archive a completed spawn to hide it from default listings",
     cli_group="spawn",                # optional: routes as `meridian spawn archive`
     cli_name="archive",
-    agent_default_format="json",      # output format in agent mode
     requires_app_server=False,        # True = app server must be running
     first_party=True,
 )
@@ -181,7 +180,7 @@ cli_name="archive",
 
 This makes the command callable as `meridian spawn archive <args>` in addition to `meridian ext run meridian.sessions.archiveSpawn`. Both `cli_group` and `cli_name` must be set together or both left as `None`.
 
-Use `agent_default_format="json"` to return JSON automatically when running in agent mode (when `--format` is not specified and the harness sets agent-mode defaults).
+Set `default_output_mode` on the matching `CommandDescriptor` in `cli/startup/catalog.py` to choose JSON vs text when the CLI runs in agent mode without an explicit `--format`.
 
 ## requires_app_server
 

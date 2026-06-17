@@ -7,6 +7,7 @@ from dataclasses import dataclass
 
 from meridian import __version__
 from meridian.cli.help_content import GROUPS
+from meridian.cli.mode import RenderMode, is_agent_render_mode, resolve_render_mode
 from meridian.cli.startup.catalog import COMMAND_CATALOG
 
 
@@ -125,16 +126,15 @@ QUICK_START_EXAMPLES: tuple[tuple[str, str], ...] = (
 )
 
 
-def _detect_agent_mode(*, force_agent: bool = False, force_human: bool = False) -> bool:
-    """Detect agent mode from env and terminal state."""
+def detect_agent_mode(*, forced: RenderMode | None = None) -> bool:
+    """Detect whether startup should render agent-mode help."""
 
-    if force_agent:
-        return True
-    if force_human:
-        return False
-    from meridian.lib.core.depth import is_managed_meridian_session
-
-    return is_managed_meridian_session() and not (sys.stdin.isatty() and sys.stdout.isatty())
+    render_mode = resolve_render_mode(
+        forced=forced,
+        stdin_isatty=sys.stdin.isatty(),
+        stdout_isatty=sys.stdout.isatty(),
+    )
+    return is_agent_render_mode(render_mode)
 
 
 def _render_table(rows: tuple[tuple[str, str], ...] | list[tuple[str, str]]) -> str:
@@ -172,12 +172,6 @@ def _command_rows(*, agent_mode: bool) -> list[tuple[str, str]]:
 
 def _option_rows(*, agent_mode: bool) -> list[tuple[str, str]]:
     return [(option.flags, option.help) for option in OPTIONS if not agent_mode or option.agent]
-
-
-def detect_agent_mode(*, force_agent: bool = False, force_human: bool = False) -> bool:
-    """Detect whether startup should render agent-mode help."""
-
-    return _detect_agent_mode(force_agent=force_agent, force_human=force_human)
 
 
 def render_root_help(*, agent_mode: bool) -> str:
@@ -227,7 +221,6 @@ __all__ = [
     "LAUNCH_EXAMPLES",
     "OPTIONS",
     "Option",
-    "_detect_agent_mode",
     "detect_agent_mode",
     "render_root_help",
 ]

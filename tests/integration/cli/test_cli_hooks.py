@@ -227,10 +227,10 @@ def test_hooks_check_keeps_inherited_roots_during_bootstrap(
     def _fake_bootstrap(
         _argv: list[str],
         *,
-        agent_mode: bool,
+        render_mode: str,
         state_requirement: object,
     ) -> Path:
-        _ = (agent_mode, state_requirement)
+        _ = (render_mode, state_requirement)
         captured["env"] = (
             os.environ.get("MERIDIAN_PROJECT_DIR"),
             os.environ.get("MERIDIAN_RUNTIME_DIR"),

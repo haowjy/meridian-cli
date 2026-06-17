@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import pytest
 
+from meridian.cli.mode import resolve_render_mode
 from meridian.cli.startup.help import detect_agent_mode
 from meridian.lib.core.depth import is_managed_meridian_session
 
@@ -30,18 +31,25 @@ def test_managed_session_uses_spawn_id_not_depth(env: dict[str, str], expected: 
     assert is_managed_meridian_session(env) is expected
 
 
-def test_detect_agent_mode_primary_session_is_agent(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Regression: depth-0 primary agent (has SPAWN_ID) renders agent help."""
+def test_resolve_render_mode_primary_session_is_agent(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Regression: depth-0 primary agent (has SPAWN_ID) renders agent mode."""
 
     monkeypatch.setenv("MERIDIAN_SPAWN_ID", "p4393")
     monkeypatch.setenv("MERIDIAN_DEPTH", "0")
     monkeypatch.setattr("sys.stdin.isatty", lambda: False)
     monkeypatch.setattr("sys.stdout.isatty", lambda: False)
 
-    assert detect_agent_mode() is True
+    assert (
+        resolve_render_mode(
+            forced=None,
+            stdin_isatty=False,
+            stdout_isatty=False,
+        )
+        == "agent"
+    )
 
 
-def test_detect_agent_mode_human_shell_is_human(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_resolve_render_mode_human_shell_is_human(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("MERIDIAN_SPAWN_ID", raising=False)
     monkeypatch.setattr("sys.stdin.isatty", lambda: True)
     monkeypatch.setattr("sys.stdout.isatty", lambda: True)
@@ -49,7 +57,9 @@ def test_detect_agent_mode_human_shell_is_human(monkeypatch: pytest.MonkeyPatch)
     assert detect_agent_mode() is False
 
 
-def test_detect_agent_mode_interactive_terminal_downshifts(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_resolve_render_mode_interactive_terminal_downshifts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """A human attaching an interactive terminal inside a managed session gets human help."""
 
     monkeypatch.setenv("MERIDIAN_SPAWN_ID", "p4393")
@@ -59,9 +69,16 @@ def test_detect_agent_mode_interactive_terminal_downshifts(monkeypatch: pytest.M
     assert detect_agent_mode() is False
 
 
-def test_detect_agent_mode_flags_override_env(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_resolve_render_mode_forced_overrides_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("MERIDIAN_SPAWN_ID", raising=False)
-    assert detect_agent_mode(force_agent=True) is True
+    assert detect_agent_mode(forced="agent") is True
 
     monkeypatch.setenv("MERIDIAN_SPAWN_ID", "p4393")
-    assert detect_agent_mode(force_human=True) is False
+    assert detect_agent_mode(forced="human") is False
+
+
+def test_parse_render_mode_rejects_invalid_value() -> None:
+    from meridian.cli.mode import parse_render_mode
+
+    with pytest.raises(SystemExit, match="--mode must be one of"):
+        parse_render_mode("robot")

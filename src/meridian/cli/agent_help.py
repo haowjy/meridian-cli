@@ -156,7 +156,7 @@ def curated_group_help_target(
 
 
 def _help_tokens(argv: Sequence[str]) -> list[str]:
-    skip = {"--help", "-h", "--advanced", "--human", "--agent"}
+    skip = {"--help", "-h", "--advanced", "--mode"}
     return [arg for arg in argv if arg not in skip]
 
 

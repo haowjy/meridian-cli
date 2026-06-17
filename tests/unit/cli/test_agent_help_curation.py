@@ -84,11 +84,11 @@ def _capture_help_via_main(
     agent_mode: bool,
     advanced: bool = False,
 ) -> str:
-    mode_flag = "--agent" if agent_mode else "--human"
+    mode_flag = "--mode agent" if agent_mode else "--mode human"
     advanced_args = ["--advanced"] if advanced else []
     buffer = io.StringIO()
     with redirect_stdout(buffer), pytest.raises(SystemExit) as exc_info:
-        cli_main.main([mode_flag, group_name, *advanced_args, "--help"])
+        cli_main.main([*mode_flag.split(), group_name, *advanced_args, "--help"])
     assert exc_info.value.code in {0, None}
     return buffer.getvalue()
 
@@ -273,7 +273,7 @@ def test_non_tiered_group_rejects_advanced_help() -> None:
         redirect_stderr(stderr),
         pytest.raises(SystemExit) as exc_info,
     ):
-        cli_main.main(["--agent", "doctor", "-h", "--advanced"])
+        cli_main.main(["--mode", "agent", "doctor", "-h", "--advanced"])
 
     assert exc_info.value.code == 1
     assert stdout.getvalue() == ""

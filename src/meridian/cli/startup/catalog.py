@@ -33,7 +33,6 @@ class CommandDescriptor:
     telemetry_mode: TelemetryMode
     default_output_mode: str
     redirect: RedirectPolicy | None = None
-    help_profile: str = "default"
     extension_ref: str | None = None
     root_source: RootSource = RootSource.CWD
 

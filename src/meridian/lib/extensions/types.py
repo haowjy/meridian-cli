@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from enum import StrEnum
-from typing import Any, Literal, Protocol, Self, runtime_checkable
+from typing import Any, Protocol, Self, runtime_checkable
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -87,10 +87,6 @@ class ExtensionCommandSpec(BaseModel):
         default=None,
         description="Cyclopts command name within group, e.g. 'start', 'list'.",
     )
-    agent_default_format: Literal["text", "json"] | None = Field(
-        default=None,
-        description="Output format to use in agent mode when caller hasn't specified --format.",
-    )
     sync_handler: Callable[[dict[str, Any]], Any] | None = Field(
         default=None,
         description="Sync version of the handler. Takes dict args, returns raw output.",
@@ -109,7 +105,6 @@ class ExtensionCommandSpec(BaseModel):
         summary: str,
         cli_group: str | None = None,
         cli_name: str | None = None,
-        agent_default_format: Literal["text", "json"] | None = None,
         surfaces: frozenset[ExtensionSurface] | None = None,
         requires_app_server: bool = False,
         first_party: bool = True,
@@ -158,7 +153,6 @@ class ExtensionCommandSpec(BaseModel):
             sync_handler=wrapped_sync,
             cli_group=cli_group,
             cli_name=cli_name,
-            agent_default_format=agent_default_format,
             surfaces=resolved_surfaces,
             first_party=first_party,
             requires_app_server=requires_app_server,
