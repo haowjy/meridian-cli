@@ -704,3 +704,167 @@ def test_bind_launch_context_named_work_dir_matches_prompt(
         child_env=child_env,
         expected_work_dir=work_dir,
     )
+
+
+def _write_codex_subagent_profile(project_root: Path) -> None:
+    agents_dir = project_root / ".mars" / "agents"
+    agents_dir.mkdir(parents=True, exist_ok=True)
+    (agents_dir / "meridian-subagent.md").write_text(
+        "---\n"
+        "name: meridian-subagent\n"
+        "description: Test subagent profile\n"
+        "model: gpt-5.3-codex\n"
+        "---\n"
+        "\n"
+        "NATIVE_AGENT_PROFILE_BODY_FOR_BIND_REFRESH.\n",
+        encoding="utf-8",
+    )
+
+
+def test_bind_launch_context_composed_request_refreshes_child_work_dir(
+    monkeypatch: MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Re-compose on prompt_is_composed requests must still rebind context-env at bind."""
+    _write_minimal_mars_config(tmp_path)
+    stub_bundle_request_and_resolve(
+        monkeypatch,
+        model="gpt-5.4",
+        harness=HarnessId.CODEX,
+    )
+    parent_ambient = tmp_path / ".meridian" / "spawns" / "p-parent" / "work"
+    monkeypatch.setenv("MERIDIAN_SPAWN_ID", "p-parent")
+    monkeypatch.setenv("MERIDIAN_DEPTH", "1")
+    monkeypatch.setenv("MERIDIAN_ACTIVE_WORK_DIR", parent_ambient.as_posix())
+    monkeypatch.delenv("MERIDIAN_ACTIVE_WORK_ID", raising=False)
+
+    from meridian.lib.launch.composition_spawn import (
+        bind_spawn_launch_context,
+        compose_spawn_launch_surface,
+    )
+    from meridian.lib.launch.context import RuntimeBindings
+    from meridian.lib.state.paths import resolve_ambient_work_dir
+
+    runtime = _build_launch_runtime(
+        tmp_path=tmp_path,
+        composition_surface=LaunchCompositionSurface.SPAWN_PREPARE,
+    )
+    parent_ctx = build_launch_context(
+        spawn_id="p-parent",
+        request=_build_spawn_request().model_copy(update={"prompt_is_composed": False}),
+        runtime=runtime,
+        harness_registry=get_default_harness_registry(),
+        dry_run=True,
+    )
+    composed_request = parent_ctx.resolved_request
+    assert composed_request.prompt_is_composed
+
+    prepared = compose_spawn_launch_surface(
+        request=composed_request,
+        runtime=runtime,
+        harness_registry=get_default_harness_registry(),
+        dry_run=True,
+    )
+    assert prepared.content.context_env_refresh_plan is not None
+
+    expected_child = resolve_ambient_work_dir(tmp_path, "p-child")
+    child_ctx = bind_spawn_launch_context(
+        prepared=prepared,
+        bindings=RuntimeBindings(
+            spawn_id="p-child",
+            report_output_path=tmp_path / "report.md",
+            dry_run=True,
+        ),
+        runtime=runtime,
+        harness_registry=get_default_harness_registry(),
+    )
+
+    child_env = child_ctx.binding.environment.child_context_env
+    run_params = child_ctx.binding.run_params
+    _assert_materialized_work_dir_parity(
+        run_params_prompt=run_params.prompt,
+        run_params_appended_system_prompt=run_params.appended_system_prompt or "",
+        child_env=child_env,
+        expected_work_dir=expected_child,
+        parent_ambient=parent_ambient,
+    )
+
+
+def test_bind_launch_context_context_refresh_preserves_adhoc_agent_payload(
+    monkeypatch: MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Bind-time context-env refresh must not strip native-agent adhoc payloads."""
+    _write_minimal_mars_config(tmp_path)
+    _write_codex_subagent_profile(tmp_path)
+    stub_bundle_request_and_resolve(
+        monkeypatch,
+        model="gpt-5.4",
+        harness=HarnessId.CODEX,
+    )
+    parent_ambient = tmp_path / ".meridian" / "spawns" / "p-parent" / "work"
+    monkeypatch.setenv("MERIDIAN_SPAWN_ID", "p-parent")
+    monkeypatch.setenv("MERIDIAN_DEPTH", "1")
+    monkeypatch.setenv("MERIDIAN_ACTIVE_WORK_DIR", parent_ambient.as_posix())
+    monkeypatch.delenv("MERIDIAN_ACTIVE_WORK_ID", raising=False)
+
+    from meridian.lib.launch.composition_spawn import (
+        bind_spawn_launch_context,
+        compose_spawn_launch_surface,
+    )
+    from meridian.lib.launch.context import RuntimeBindings
+    from meridian.lib.state.paths import resolve_ambient_work_dir
+
+    runtime = _build_launch_runtime(
+        tmp_path=tmp_path,
+        composition_surface=LaunchCompositionSurface.SPAWN_PREPARE,
+    )
+    request = _build_spawn_request().model_copy(
+        update={
+            "agent": "meridian-subagent",
+            "prompt_is_composed": False,
+        },
+    )
+    prepared = compose_spawn_launch_surface(
+        request=request,
+        runtime=runtime,
+        harness_registry=get_default_harness_registry(),
+        dry_run=True,
+    )
+    expected_adhoc = "NATIVE_AGENT_PROFILE_BODY_FOR_BIND_REFRESH."
+    assert expected_adhoc in (prepared.prompt_payload.adhoc_agent_payload or "")
+
+    parent_ctx = bind_spawn_launch_context(
+        prepared=prepared,
+        bindings=RuntimeBindings(
+            spawn_id="p-parent",
+            report_output_path=tmp_path / "report-parent.md",
+            dry_run=True,
+        ),
+        runtime=runtime,
+        harness_registry=get_default_harness_registry(),
+    )
+    assert expected_adhoc in (parent_ctx.binding.run_params.adhoc_agent_payload or "")
+
+    child_ctx = bind_spawn_launch_context(
+        prepared=prepared,
+        bindings=RuntimeBindings(
+            spawn_id="p-child",
+            report_output_path=tmp_path / "report.md",
+            dry_run=True,
+        ),
+        runtime=runtime,
+        harness_registry=get_default_harness_registry(),
+    )
+
+    expected_child = resolve_ambient_work_dir(tmp_path, "p-child")
+    child_env = child_ctx.binding.environment.child_context_env
+    run_params = child_ctx.binding.run_params
+    _assert_materialized_work_dir_parity(
+        run_params_prompt=run_params.prompt,
+        run_params_appended_system_prompt=run_params.appended_system_prompt or "",
+        child_env=child_env,
+        expected_work_dir=expected_child,
+        parent_ambient=parent_ambient,
+    )
+    assert expected_adhoc in (run_params.adhoc_agent_payload or "")

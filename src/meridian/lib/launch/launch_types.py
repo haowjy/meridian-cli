@@ -15,7 +15,7 @@ from meridian.lib.core.execution_policy import ResolvedExecutionPolicy as Resolv
 if TYPE_CHECKING:
     from meridian.lib.core.types import HarnessId
     from meridian.lib.harness.adapter import SpawnParams
-    from meridian.lib.launch.composition import ComposedLaunchContent, ProjectedContent
+    from meridian.lib.launch.composition import ContextEnvRefreshPlan, ProjectedContent
     from meridian.lib.launch.reference import ReferenceItem
     from meridian.lib.safety.permissions import PermissionConfig
 
@@ -162,7 +162,7 @@ class PreparedLaunchContent:
     loaded_references: tuple[ReferenceItem, ...] = ()
     prompt_payload: PreparedPromptPayload = field(default_factory=PreparedPromptPayload)
     projected_content: ProjectedContent | None = None
-    composed_launch_content: ComposedLaunchContent | None = None
+    context_env_refresh_plan: ContextEnvRefreshPlan | None = None
 
 
 @dataclass(frozen=True)

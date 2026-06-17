@@ -77,10 +77,12 @@ from .command import (
 from .composition import (
     ComposedLaunchContent,
     CompositionBlock,
+    ContextEnvRefreshPlan,
     ProjectedContent,
     PromptDocument,
     build_inline_file_contributions,
     build_reference_routing,
+    context_env_refresh_plan_from_composed,
     has_context_env_block,
     replace_context_env_block,
 )
@@ -903,7 +905,7 @@ def _reproject_context_env_at_bind(
     composed_prompt: str,
     prompt_payload: PreparedPromptPayload,
     projected_content: ProjectedContent | None,
-    composed_launch_content: ComposedLaunchContent | None,
+    context_env_refresh_plan: ContextEnvRefreshPlan | None,
     harness: SubprocessHarness,
     project_root: Path,
     bound_work_dir: Path | None,
@@ -912,8 +914,8 @@ def _reproject_context_env_at_bind(
 ) -> tuple[str, PreparedPromptPayload, ProjectedContent | None]:
     """Re-render the typed context-env block and re-project prompt channels at bind."""
 
-    if composed_launch_content is None or not has_context_env_block(
-        composed_launch_content.guidance_blocks
+    if context_env_refresh_plan is None or not has_context_env_block(
+        context_env_refresh_plan.guidance_blocks
     ):
         return composed_prompt, prompt_payload, projected_content
 
@@ -924,15 +926,16 @@ def _reproject_context_env_at_bind(
     if new_context is None or not new_context.strip():
         return composed_prompt, prompt_payload, projected_content
 
-    refreshed_content = replace(
-        composed_launch_content,
-        guidance_blocks=replace_context_env_block(
-            composed_launch_content.guidance_blocks,
-            new_content=new_context,
-        ),
+    refreshed_guidance = replace_context_env_block(
+        context_env_refresh_plan.guidance_blocks,
+        new_content=new_context,
     )
+    refreshed_content = context_env_refresh_plan.to_composed(guidance_blocks=refreshed_guidance)
     updated_projected = harness.project_content(refreshed_content)
-    updated_payload = prepare_prompt_payload(projected_content=updated_projected)
+    updated_payload = prepare_prompt_payload(
+        adhoc_agent_payload=prompt_payload.adhoc_agent_payload,
+        projected_content=updated_projected,
+    )
     if harness.capabilities.supports_native_skills and loaded_skills:
         skill_content = compose_skill_injections(loaded_skills)
         if skill_content:
@@ -1105,14 +1108,16 @@ def _build_shared_composition(
     )
 
 
-def _resolve_spawn_prepare_projection(
+def _build_spawn_composed_launch_content(
     *,
     request: SpawnRequest,
     project_paths: ProjectConfigPaths,
     active_work_dir: Path | None,
     policy: ResolvedLaunchPolicy,
     launch_mode: LaunchMode | None = None,
-) -> PreparedLaunchContent:
+) -> tuple[ComposedLaunchContent, tuple[str, ...]]:
+    """Build semantic spawn composition inputs shared by projection and bind refresh."""
+
     profile = policy.profile
     harness = policy.adapter
     resolved_skills = policy.resolved_skills
@@ -1167,16 +1172,36 @@ def _resolve_spawn_prepare_projection(
         reference_items=task_ctx.reference_items,
         prior_output=task_ctx.prior_output,
     )
+    return composed, task_ctx.resolved_context_from
+
+
+def _resolve_spawn_prepare_projection(
+    *,
+    request: SpawnRequest,
+    project_paths: ProjectConfigPaths,
+    active_work_dir: Path | None,
+    policy: ResolvedLaunchPolicy,
+    launch_mode: LaunchMode | None = None,
+) -> PreparedLaunchContent:
+    harness = policy.adapter
+
+    composed, resolved_context_from = _build_spawn_composed_launch_content(
+        request=request,
+        project_paths=project_paths,
+        active_work_dir=active_work_dir,
+        policy=policy,
+        launch_mode=launch_mode,
+    )
 
     projected = harness.project_content(composed)
 
     return PreparedLaunchContent(
-        final_prompt=projected.user_turn_content.strip() or cleaned_user_prompt,
-        resolved_context_from=task_ctx.resolved_context_from,
-        loaded_references=task_ctx.reference_items,
+        final_prompt=projected.user_turn_content.strip() or composed.user_task_prompt,
+        resolved_context_from=resolved_context_from,
+        loaded_references=composed.reference_items,
         prompt_payload=prepare_prompt_payload(projected_content=projected),
         projected_content=projected,
-        composed_launch_content=composed,
+        context_env_refresh_plan=context_env_refresh_plan_from_composed(composed),
     )
 
 
@@ -1262,7 +1287,7 @@ def _resolve_primary_projection(
             loaded_references=task_ctx.reference_items,
             prompt_payload=prompt_payload,
             projected_content=projected,
-            composed_launch_content=composed,
+            context_env_refresh_plan=context_env_refresh_plan_from_composed(composed),
         ),
         passthrough_args,
         seed.session_id or resolved_continue_harness_session_id,
@@ -1291,6 +1316,24 @@ def _prepare_spawn_surface(
             policy=policy,
             launch_mode=launch_mode,
         )
+    else:
+        composed, resolved_context_from = _build_spawn_composed_launch_content(
+            request=request,
+            project_paths=project_paths,
+            active_work_dir=active_work_dir,
+            policy=policy,
+            launch_mode=launch_mode,
+        )
+        refresh_plan = context_env_refresh_plan_from_composed(composed)
+        if refresh_plan is not None:
+            content = PreparedLaunchContent(
+                final_prompt=content.final_prompt,
+                resolved_context_from=resolved_context_from or content.resolved_context_from,
+                loaded_references=composed.reference_items,
+                prompt_payload=content.prompt_payload,
+                projected_content=content.projected_content,
+                context_env_refresh_plan=refresh_plan,
+            )
 
     prompt_policy = policy.adapter.run_prompt_policy()
     if prompt_policy.skill_injection_mode == "append-system-prompt":
@@ -1323,7 +1366,7 @@ def _prepare_spawn_surface(
                     user_turn_content=content.prompt_payload.user_turn_content,
                 ),
                 projected_content=content.projected_content,
-                composed_launch_content=content.composed_launch_content,
+                context_env_refresh_plan=content.context_env_refresh_plan,
             )
 
     return (
@@ -1480,7 +1523,7 @@ def prepare_launch_surface(
             user_turn_content=content.prompt_payload.user_turn_content,
         ),
         projected_content=content.projected_content,
-        composed_launch_content=content.composed_launch_content,
+        context_env_refresh_plan=content.context_env_refresh_plan,
     )
     profile_tools_for_nested_deny = (
         policies.resolved_tools if (profile is not None or using_policy_snapshot) else None
@@ -1862,7 +1905,7 @@ def bind_launch_context(
         composed_prompt=resolved_request.prompt,
         prompt_payload=prompt_payload,
         projected_content=projected_content,
-        composed_launch_content=prepared.content.composed_launch_content,
+        context_env_refresh_plan=prepared.content.context_env_refresh_plan,
         harness=harness,
         project_root=project_paths.project_root,
         bound_work_dir=bound_active_work_dir,
