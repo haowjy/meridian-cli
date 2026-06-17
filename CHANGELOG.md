@@ -10,6 +10,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Agent-mode `meridian spawn -h` is progressively disclosed via `--advanced`: lean default (~85 lines) with core loop, pre-launch decisions, and core commands/flags; `--advanced` reveals full methodology, all commands, and an `Advanced` flag panel. Agent-mode only.
 
 ### Fixed
+- Agent-mode `meridian spawn --bg` prints the readable submit note (spawn id + the `meridian spawn wait` reminder) instead of a raw JSON field dump; `--json`/`--format json` still emit structured output.
+- Bind-time context refresh rebinds the `work:` line on composed/recomposed requests too (background handoff, continue/fork), keeping it in parity with the child's `MERIDIAN_ACTIVE_WORK_DIR`; reprojection preserves the native adhoc-agent payload (agent/profile body) for Claude/Codex.
 - `resolve_active_work_scope_dir` threads `explicit_chat_id` through `ResolvedContext.from_environment` instead of temporarily mutating `MERIDIAN_CHAT_ID` (reentrant-safe scope resolution for leave-scope warnings).
 - Child spawn env resolves ambient `MERIDIAN_ACTIVE_WORK_DIR` from the child's spawn id at the shared `ChildEnvContext` seam (not inherited parent ambient).
 - Child spawn bind aligns `MERIDIAN_ACTIVE_WORK_DIR` and injected context `work:` line to the child's ambient `spawns/p<N>/work` dir; dir-without-id propagates across env/JSON surfaces.
