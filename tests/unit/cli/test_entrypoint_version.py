@@ -3,11 +3,9 @@
 from __future__ import annotations
 
 import sys
-from typing import TYPE_CHECKING
 from unittest.mock import patch
 
-if TYPE_CHECKING:
-    import pytest
+import pytest
 
 import meridian.cli.entrypoint as entrypoint_module
 
@@ -27,3 +25,22 @@ def test_main_prints_version_for_short_v_flag(capsys: pytest.CaptureFixture[str]
     captured = capsys.readouterr()
     assert captured.out.startswith("meridian ")
     assert captured.err == ""
+
+
+def test_main_validates_mode_before_version_fast_path(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with (
+        patch.object(sys, "argv", ["meridian", "--mode", "bogus", "--version"]),
+        pytest.raises(SystemExit),
+    ):
+        entrypoint_module.main()
+    captured = capsys.readouterr()
+    assert not captured.out.startswith("meridian ")
+
+
+def test_main_prints_version_with_valid_mode(capsys: pytest.CaptureFixture[str]) -> None:
+    with patch.object(sys, "argv", ["meridian", "--mode", "human", "--version"]):
+        entrypoint_module.main()
+    captured = capsys.readouterr()
+    assert captured.out.startswith("meridian ")

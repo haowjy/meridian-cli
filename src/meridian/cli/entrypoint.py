@@ -63,6 +63,9 @@ def _main_impl() -> None:
         return
 
     if _is_version_request(args):
+        # Validate --mode on this fast path too, so an invalid/conflicting mode
+        # errors consistently instead of being silently ignored before --version.
+        extract_forced_render_mode(args)
         from meridian import __version__
 
         print(f"meridian {__version__}")
