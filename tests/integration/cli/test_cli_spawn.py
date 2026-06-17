@@ -396,3 +396,87 @@ def test_spawn_status_verbose_renders_internal_fields(
     assert exc_info.value.code == 0
     rendered = capsys.readouterr().out
     assert "Input tokens: 123" in rendered
+
+
+def _fake_background_spawn_create_sync(
+    *,
+    spawn_id: str = "p-bg-1",
+) -> Any:
+    def _fake(
+        payload: SpawnCreateInput,
+        *,
+        sink: object | None = None,
+        prepared: Any | None = None,
+        on_spawn_id: Any | None = None,
+    ) -> SpawnActionOutput:
+        _ = (payload, sink, prepared, on_spawn_id)
+        return SpawnActionOutput(
+            command="spawn.create",
+            status="running",
+            spawn_id=spawn_id,
+            background=True,
+        )
+
+    return _fake
+
+
+def test_agent_mode_background_spawn_emits_readable_text(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setattr(spawn_cli.sys, "stdin", _FakeStdin("", is_tty=True))
+    monkeypatch.setattr(
+        spawn_cli,
+        "spawn_create_sync",
+        _fake_background_spawn_create_sync(),
+    )
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli_main.main(["--agent", "spawn", "-p", "task", "--bg"])
+
+    assert exc_info.value.code == 0
+    rendered = capsys.readouterr().out
+    assert rendered.startswith("Background spawn submitted.")
+    assert "p-bg-1" in rendered
+    assert "meridian spawn wait" in rendered
+    assert "MUST run" in rendered
+    assert not rendered.lstrip().startswith("{")
+
+
+def test_agent_mode_background_spawn_json_when_explicit(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setattr(spawn_cli.sys, "stdin", _FakeStdin("", is_tty=True))
+    monkeypatch.setattr(
+        spawn_cli,
+        "spawn_create_sync",
+        _fake_background_spawn_create_sync(spawn_id="p-bg-json"),
+    )
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli_main.main(["--agent", "spawn", "-p", "task", "--bg", "--json"])
+
+    assert exc_info.value.code == 0
+    rendered = capsys.readouterr().out
+    assert '"spawn_id": "p-bg-json"' in rendered
+    assert '"wait_command": "meridian spawn wait"' in rendered
+    assert '"wait_required": true' in rendered
+
+
+def test_resolve_output_format_agent_background_defaults_text() -> None:
+    resolved = cli_main._resolve_output_format_for_command(
+        argv=["spawn", "-p", "task", "--bg"],
+        explicit_format=None,
+        agent_mode=True,
+    )
+    assert resolved == "text"
+
+
+def test_resolve_output_format_agent_background_json_when_explicit() -> None:
+    resolved = cli_main._resolve_output_format_for_command(
+        argv=["spawn", "-p", "task", "--bg"],
+        explicit_format="json",
+        agent_mode=True,
+    )
+    assert resolved == "json"

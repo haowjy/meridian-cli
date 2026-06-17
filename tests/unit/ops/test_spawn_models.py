@@ -103,6 +103,23 @@ def test_spawn_action_non_create_keeps_default_text() -> None:
     assert output.format_text() == "Spawn succeeded.\nSpawn id: p123"
 
 
+def test_spawn_action_background_running_format_text_includes_wait_reminder() -> None:
+    output = SpawnActionOutput(
+        command="spawn.create",
+        status="running",
+        spawn_id="pbg-text",
+        background=True,
+    )
+
+    text = output.format_text()
+
+    assert text.startswith("Background spawn submitted.")
+    assert "Spawn id: pbg-text" in text
+    assert "you MUST run:" in text
+    assert "meridian spawn wait" in text
+    assert "meridian spawn wait pbg-text" in text
+
+
 def test_spawn_detail_wait_failed_orphan_compact_text_exact() -> None:
     detail = _make_spawn_detail(
         status="failed",
