@@ -4,6 +4,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+- Pytest now restores and fails on repo-local Git config mutations, preventing test runs from leaving checkout-scoped identity changes behind.
+
 ## [0.3.9] - 2026-06-13
 
 ### Fixed

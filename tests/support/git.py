@@ -7,6 +7,10 @@ from collections.abc import Mapping
 from pathlib import Path
 
 
+def is_git_env_key(key: str) -> bool:
+    return key.upper().startswith("GIT_")
+
+
 def isolated_git_env(
     *,
     base_env: Mapping[str, str] | None = None,
@@ -21,7 +25,7 @@ def isolated_git_env(
 
     env = dict(os.environ if base_env is None else base_env)
     for key in tuple(env):
-        if key.startswith("GIT_"):
+        if is_git_env_key(key):
             env.pop(key, None)
 
     env["GIT_CONFIG_NOSYSTEM"] = "1"
