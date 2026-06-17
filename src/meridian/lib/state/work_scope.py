@@ -64,27 +64,6 @@ class WorkScope:
             count += 1
         return count
 
-    def scope_label(self) -> str:
-        """Human-readable label for this scope in user-facing messages."""
-
-        if self.is_durable:
-            return f"work item '{self.identifier}'"
-        if self.identifier:
-            return f"spawn-local work area ({self.identifier})"
-        return "the current scope"
-
-    def format_leave_scope_warning(self, new_target: str) -> str | None:
-        """Return a leave-scope warning when artifacts would be left behind."""
-
-        count = self.count_artifacts()
-        if count <= 0:
-            return None
-        noun = "artifact" if count == 1 else "artifacts"
-        return (
-            f"{count} {noun} in {self.scope_label()} won't follow you to {new_target}; "
-            "move what you want to keep."
-        )
-
 
 def resolve_bound_work_scope(
     *,

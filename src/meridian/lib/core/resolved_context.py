@@ -6,7 +6,7 @@ launch, ops, and child-environment composition paths.
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol, Self
+from typing import Literal, Protocol, Self
 
 from meridian.lib.config.context_config import ContextConfig
 from meridian.lib.context.resolver import context_env_key, resolve_context_paths
@@ -119,12 +119,18 @@ class ResolvedContext:
         # Authoritative work-ID precedence:
         # explicit override > MERIDIAN_ACTIVE_WORK_ID > session attachment.
         work_id: str | None = None
+        work_id_source: Literal["explicit", "env", "session", "none"] = "none"
         if explicit_work_id_raw:
             work_id = explicit_work_id_raw
+            work_id_source = "explicit"
         elif work_id_raw:
             work_id = work_id_raw
+            work_id_source = "env"
         elif runtime_root is not None and chat_id_raw:
-            work_id = backend_impl.get_session_active_work_id(runtime_root, chat_id_raw)
+            session_work_id = backend_impl.get_session_active_work_id(runtime_root, chat_id_raw)
+            if session_work_id:
+                work_id = session_work_id
+                work_id_source = "session"
 
         project_paths = (
             state_paths.resolve_project_paths_from_context(
@@ -140,7 +146,14 @@ class ResolvedContext:
         bound_work_dir: Path | None = None
         project_work_dir = project_paths.work_dir if project_paths is not None else None
 
-        if work_dir_raw and not explicit_work_id_raw:
+        if (
+            work_dir_raw
+            and not explicit_work_id_raw
+            and work_id_source in ("none", "env")
+        ):
+            # Honor launch-bound dirs for ambient scopes and env-carried work IDs.
+            # Session-switched work IDs recompute canonical roots — stale ambient
+            # MERIDIAN_ACTIVE_WORK_DIR from process launch must not shadow them.
             bound_work_dir = Path(work_dir_raw).expanduser()
 
         work_scope = resolve_work_scope_from_parts(

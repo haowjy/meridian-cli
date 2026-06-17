@@ -23,6 +23,7 @@ from meridian.lib.ops.runtime import (
 from meridian.lib.ops.work_attachment import set_session_work_attachment
 from meridian.lib.ops.work_dashboard import work_dir_display
 from meridian.lib.state import session_store, spawn_store, work_store
+from meridian.lib.state.work_scope import WorkScope
 from meridian.lib.telemetry import emit_telemetry
 
 _NESTED_WORK_WARNING = (
@@ -61,6 +62,29 @@ def _merge_warnings(*warnings: str | None) -> str | None:
     return "\n".join(parts)
 
 
+def work_scope_label(scope: WorkScope) -> str:
+    """Human-readable label for a work scope in user-facing messages."""
+
+    if scope.is_durable:
+        return f"work item '{scope.identifier}'"
+    if scope.identifier:
+        return f"spawn-local work area ({scope.identifier})"
+    return "the current scope"
+
+
+def format_leave_scope_warning(scope: WorkScope, new_target: str) -> str | None:
+    """Return a leave-scope warning when artifacts would be left behind."""
+
+    count = scope.count_artifacts()
+    if count <= 0:
+        return None
+    noun = "artifact" if count == 1 else "artifacts"
+    return (
+        f"{count} {noun} in {work_scope_label(scope)} won't follow you to {new_target}; "
+        "move what you want to keep."
+    )
+
+
 def _leave_scope_warning(
     *,
     project_root: Path,
@@ -81,7 +105,7 @@ def _leave_scope_warning(
     if outgoing_scope.root.resolve() == incoming_dir:
         return None
 
-    return outgoing_scope.format_leave_scope_warning(new_target)
+    return format_leave_scope_warning(outgoing_scope, new_target)
 
 
 def _active_work_attachment_warning(runtime_root: Path, work_id: str) -> str | None:

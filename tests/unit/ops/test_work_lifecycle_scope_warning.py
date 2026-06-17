@@ -7,12 +7,14 @@ from meridian.lib.ops.work_attachment import set_session_work_attachment
 from meridian.lib.ops.work_lifecycle import (
     WorkStartInput,
     WorkSwitchInput,
+    format_leave_scope_warning,
+    work_scope_label,
     work_start_sync,
     work_switch_sync,
 )
 from meridian.lib.state import session_store, work_store
 from meridian.lib.state.paths import resolve_ambient_work_dir
-from meridian.lib.state.work_scope import SCOPE_HANDOFFS_DIRNAME, SCOPE_PROMPTS_DIRNAME
+from meridian.lib.state.work_scope import SCOPE_HANDOFFS_DIRNAME, SCOPE_PROMPTS_DIRNAME, WorkScope
 
 
 def _setup_project(tmp_path: Path) -> tuple[Path, Path, Path]:
@@ -112,3 +114,40 @@ def test_work_switch_warns_when_leaving_named_scope_with_artifacts(tmp_path: Pat
     assert "1 artifact" in output.warning
     assert "work item 'scope-a'" in output.warning
     assert "scope-b" in output.warning
+
+
+def test_work_scope_label_differs_by_kind() -> None:
+    durable = WorkScope(kind="work_item", identifier="feature-a", root=Path("/w/feature-a"))
+    ephemeral = WorkScope(kind="ambient_spawn", identifier="p9", root=Path("/w/p9"))
+
+    assert work_scope_label(durable) == "work item 'feature-a'"
+    assert work_scope_label(ephemeral) == "spawn-local work area (p9)"
+
+
+def test_format_leave_scope_warning_uses_kind_specific_label(tmp_path: Path) -> None:
+    durable_dir = tmp_path / "scope-a"
+    durable_dir.mkdir()
+    durable = WorkScope(kind="work_item", identifier="scope-a", root=durable_dir)
+    ephemeral_dir = tmp_path / "p1"
+    ephemeral_dir.mkdir()
+    ephemeral = WorkScope(
+        kind="ambient_spawn",
+        identifier="p1",
+        root=ephemeral_dir,
+    )
+
+    assert format_leave_scope_warning(durable, "scope-b") is None
+
+    (durable_dir / "notes.md").write_text("x", encoding="utf-8")
+
+    warning = format_leave_scope_warning(durable, "scope-b")
+    assert warning is not None
+    assert "work item 'scope-a'" in warning
+    assert "scope-b" in warning
+
+    (ephemeral_dir / "scratch.md").write_text("x", encoding="utf-8")
+
+    ambient_warning = format_leave_scope_warning(ephemeral, "next-scope")
+    assert ambient_warning is not None
+    assert "spawn-local work area (p1)" in ambient_warning
+    assert "next-scope" in ambient_warning
