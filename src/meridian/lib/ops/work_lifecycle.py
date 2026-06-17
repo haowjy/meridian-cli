@@ -81,15 +81,7 @@ def _leave_scope_warning(
     if outgoing_scope.root.resolve() == incoming_dir:
         return None
 
-    count = outgoing_scope.count_artifacts()
-    if count <= 0:
-        return None
-
-    noun = "artifact" if count == 1 else "artifacts"
-    return (
-        f"{count} {noun} in the current scope won't follow you to {new_target}; "
-        "move what you want to keep."
-    )
+    return outgoing_scope.format_leave_scope_warning(new_target)
 
 
 def _active_work_attachment_warning(runtime_root: Path, work_id: str) -> str | None:

@@ -12,12 +12,10 @@ from meridian.lib.state.paths import (
     resolve_work_scratch_dir,
     resolve_work_scratch_dir_for_project,
 )
-from meridian.lib.state.work_store import (
-    SCOPE_HANDOFFS_DIRNAME,
-    SCOPE_PROMPTS_DIRNAME,
-)
 
 _SCOPE_STATUS_FILENAME = "__status.json"
+SCOPE_PROMPTS_DIRNAME = "prompts"
+SCOPE_HANDOFFS_DIRNAME = "handoffs"
 
 WorkScopeKind = Literal["work_item", "ambient_spawn"]
 
@@ -47,7 +45,45 @@ class WorkScope:
     def count_artifacts(self) -> int:
         """Count keepable artifacts under this scope (pure read, no mkdir)."""
 
-        return count_scope_artifacts(self)
+        root = self.root
+        if not root.is_dir():
+            return 0
+
+        excluded = self.excluded_top_level_names
+        count = 0
+        for child in root.iterdir():
+            name = child.name
+            if name in excluded:
+                continue
+            if name == SCOPE_HANDOFFS_DIRNAME:
+                if child.is_dir():
+                    count += sum(1 for _ in child.iterdir())
+                else:
+                    count += 1
+                continue
+            count += 1
+        return count
+
+    def scope_label(self) -> str:
+        """Human-readable label for this scope in user-facing messages."""
+
+        if self.is_durable:
+            return f"work item '{self.identifier}'"
+        if self.identifier:
+            return f"spawn-local work area ({self.identifier})"
+        return "the current scope"
+
+    def format_leave_scope_warning(self, new_target: str) -> str | None:
+        """Return a leave-scope warning when artifacts would be left behind."""
+
+        count = self.count_artifacts()
+        if count <= 0:
+            return None
+        noun = "artifact" if count == 1 else "artifacts"
+        return (
+            f"{count} {noun} in {self.scope_label()} won't follow you to {new_target}; "
+            "move what you want to keep."
+        )
 
 
 def resolve_bound_work_scope(
@@ -104,35 +140,11 @@ def resolve_work_scope_from_parts(
     return None
 
 
-def count_scope_artifacts(scope: WorkScope) -> int:
-    """Count keepable artifacts under a work scope (pure read, no mkdir)."""
-
-    root = scope.root
-    if not root.is_dir():
-        return 0
-
-    excluded = scope.excluded_top_level_names
-    count = 0
-    for child in root.iterdir():
-        name = child.name
-        if name in excluded:
-            continue
-        if name == SCOPE_HANDOFFS_DIRNAME:
-            if child.is_dir():
-                count += sum(1 for _ in child.iterdir())
-            else:
-                count += 1
-            continue
-        count += 1
-    return count
-
-
 __all__ = [
     "SCOPE_HANDOFFS_DIRNAME",
     "SCOPE_PROMPTS_DIRNAME",
     "WorkScope",
     "WorkScopeKind",
-    "count_scope_artifacts",
     "resolve_bound_work_scope",
     "resolve_work_scope_from_parts",
 ]

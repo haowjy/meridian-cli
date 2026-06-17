@@ -15,7 +15,7 @@ from meridian.lib.ops.runtime import resolve_roots
 from meridian.lib.ops.work_attachment import set_session_work_attachment
 from meridian.lib.state import session_store, work_store
 from meridian.lib.state.paths import resolve_ambient_work_dir
-from meridian.lib.state.work_store import SCOPE_HANDOFFS_DIRNAME, SCOPE_PROMPTS_DIRNAME
+from meridian.lib.state.work_scope import SCOPE_HANDOFFS_DIRNAME, SCOPE_PROMPTS_DIRNAME
 
 
 def _setup_ambient_project(tmp_path: Path, monkeypatch: MonkeyPatch) -> Path:

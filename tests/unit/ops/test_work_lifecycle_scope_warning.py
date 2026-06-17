@@ -12,7 +12,7 @@ from meridian.lib.ops.work_lifecycle import (
 )
 from meridian.lib.state import session_store, work_store
 from meridian.lib.state.paths import resolve_ambient_work_dir
-from meridian.lib.state.work_store import SCOPE_HANDOFFS_DIRNAME, SCOPE_PROMPTS_DIRNAME
+from meridian.lib.state.work_scope import SCOPE_HANDOFFS_DIRNAME, SCOPE_PROMPTS_DIRNAME
 
 
 def _setup_project(tmp_path: Path) -> tuple[Path, Path, Path]:
@@ -54,6 +54,7 @@ def test_work_start_warns_when_leaving_scope_with_handoffs(tmp_path: Path, monke
 
     assert output.warning is not None
     assert "1 artifact" in output.warning
+    assert "spawn-local work area (p1)" in output.warning
     assert "next-scope" in output.warning
     assert session_store.get_session_active_work_id(runtime_root, "chat-1") == "next-scope"
 
@@ -109,4 +110,5 @@ def test_work_switch_warns_when_leaving_named_scope_with_artifacts(tmp_path: Pat
 
     assert output.warning is not None
     assert "1 artifact" in output.warning
+    assert "work item 'scope-a'" in output.warning
     assert "scope-b" in output.warning
