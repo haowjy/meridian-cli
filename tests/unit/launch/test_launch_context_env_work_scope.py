@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+import meridian.lib.harness.cursor as cursor_harness
 from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.launch import context as launch_context_module
@@ -140,6 +141,9 @@ def test_bind_launch_context_child_ambient_work_dir_matches_prompt(
     tmp_path: Path,
 ) -> None:
     write_minimal_mars_config(tmp_path)
+    # CI has no Cursor CLI on PATH; stub the preflight binary check (this test
+    # covers ambient work-dir parity, not Cursor availability).
+    monkeypatch.setattr(cursor_harness.shutil, "which", lambda _command: "/usr/bin/cursor")
     stub_bundle_request_and_resolve(
         monkeypatch,
         model="claude-opus-4-7-thinking-high",
