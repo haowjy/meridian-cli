@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
-import sys
 from dataclasses import dataclass
 
 from meridian import __version__
-from meridian.cli.help_content import GROUPS
-from meridian.cli.mode import RenderMode, is_agent_render_mode, resolve_render_mode
+from meridian.cli.command_groups import (
+    AGENT_DESCRIPTION_OVERRIDES,
+    AGENT_ROOT_COMMANDS,
+    GROUP_DESCRIPTIONS,
+    HUMAN_ROOT_ORDER,
+)
 from meridian.cli.startup.catalog import COMMAND_CATALOG
 
 
@@ -31,32 +34,6 @@ OPTIONS: tuple[Option, ...] = (
     Option("-v, --version", "Show the application version.", False),
 )
 
-GROUP_DESCRIPTIONS: dict[str, str] = {name: group.summary for name, group in GROUPS.items()}
-
-AGENT_DESCRIPTION_OVERRIDES: dict[str, str] = {
-    "spawn": (
-        "Hand a task to a subagent. Runs in the background; you keep working\n"
-        "and collect the result later. (`wait`, `report`)"
-    ),
-    "session": (
-        "Read the full transcript of any spawn — what it did, what it found —\n"
-        "so you build on it instead of redoing it."
-    ),
-    "work": (
-        "Tie related spawns to one goal with a shared folder and history, so\n"
-        "a multi-step effort holds together across handoffs."
-    ),
-    "context": (
-        "Show the folders (as env vars) where shared files and project\n"
-        "knowledge live, so you read and write them in the right place."
-    ),
-    "mars": (
-        "List the models, agents, and skills available, so you pick real ones\n"
-        "when you delegate. (`meridian mars models list`)"
-    ),
-    "ext": "Run project-specific extension commands.",
-}
-
 LAUNCH_EXAMPLES: tuple[tuple[str, str], ...] = (
     ("meridian -m MODEL", "Launch the primary harness"),
     ("meridian --continue c123", "Resume from ref"),
@@ -73,39 +50,6 @@ LAUNCH_REF_NOTES = (
     "  --fork preserves agent/model/skills identity. --fork-fresh allows\n"
     "  identity changes and may reduce prompt-cache locality. --from starts\n"
     "  fresh with prior context as reference material only."
-)
-
-AGENT_ROOT_COMMANDS: tuple[str, ...] = (
-    "spawn",
-    "session",
-    "work",
-    "context",
-    "mars",
-    "ext",
-)
-
-_HUMAN_COMMAND_ORDER = (
-    "spawn",
-    "session",
-    "work",
-    "hooks",
-    "sync",
-    "models",
-    "streaming",
-    "test",
-    "config",
-    "workspace",
-    "kg",
-    "mermaid",
-    "telemetry",
-    "completion",
-    "serve",
-    "mars",
-    "init",
-    "chat",
-    "doctor",
-    "bootstrap",
-    "ext",
 )
 
 AGENT_ORIENTATION: tuple[str, ...] = (
@@ -126,17 +70,6 @@ QUICK_START_EXAMPLES: tuple[tuple[str, str], ...] = (
 )
 
 
-def detect_agent_mode(*, forced: RenderMode | None = None) -> bool:
-    """Detect whether startup should render agent-mode help."""
-
-    render_mode = resolve_render_mode(
-        forced=forced,
-        stdin_isatty=sys.stdin.isatty(),
-        stdout_isatty=sys.stdout.isatty(),
-    )
-    return is_agent_render_mode(render_mode)
-
-
 def _render_table(rows: tuple[tuple[str, str], ...] | list[tuple[str, str]]) -> str:
     width = max((len(left) for left, _right in rows), default=0)
     continuation_indent = " " * (2 + width + 2)
@@ -154,7 +87,7 @@ def _render_table(rows: tuple[tuple[str, str], ...] | list[tuple[str, str]]) -> 
 
 def _human_command_names() -> list[str]:
     names = COMMAND_CATALOG.top_level_names()
-    ordered = [name for name in _HUMAN_COMMAND_ORDER if name in names]
+    ordered = [name for name in HUMAN_ROOT_ORDER if name in names]
     ordered.extend(sorted(names - set(ordered)))
     return ordered
 
@@ -221,6 +154,5 @@ __all__ = [
     "LAUNCH_EXAMPLES",
     "OPTIONS",
     "Option",
-    "detect_agent_mode",
     "render_root_help",
 ]

@@ -27,6 +27,7 @@ def register_misc_commands(
     *,
     app: App,
     completion_app: App,
+    context_app: App,
     streaming_app: App,
     test_app: App,
     emit: Callable[[object], None],
@@ -119,7 +120,7 @@ def register_misc_commands(
             )
         )
 
-    @app.command(name="context")
+    @context_app.default
     def context_cmd(  # pyright: ignore[reportUnusedFunction] - registered via decorator.
         name: Annotated[
             str | None,

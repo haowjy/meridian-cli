@@ -16,6 +16,7 @@ from meridian.cli.app_tree import (
     app,
     completion_app,
     config_app,
+    context_app,
     hooks_app,
     models_app,
     report_app,
@@ -48,6 +49,7 @@ from meridian.cli.bootstrap import (
 from meridian.cli.bootstrap import (
     validate_top_level_command as _bootstrap_validate_top_level_command,
 )
+from meridian.cli.command_groups import COMMAND_REGISTRATION, supports_advanced_help
 from meridian.cli.hooks_authority import (
     manual_hook_authority_scope,
     should_suppress_manual_hook_authority,
@@ -718,6 +720,7 @@ def _register_commands_for_invocation(argv: Sequence[str]) -> None:
             register_misc_commands(
                 app=app,
                 completion_app=completion_app,
+                context_app=context_app,
                 streaming_app=streaming_app,
                 test_app=test_app,
                 emit=emit,
@@ -759,29 +762,31 @@ def _register_commands_for_invocation(argv: Sequence[str]) -> None:
 
             register_migrate_command(app, emit)
 
+        bucket_handlers: dict[str, Callable[[], None]] = {
+            "spawn": _register_spawn,
+            "session": _register_session,
+            "work": _register_work,
+            "config": _register_config,
+            "hooks": _register_hooks,
+            "models": _register_models,
+            "ext": _register_ext,
+            "telemetry": _register_telemetry,
+            "workspace": _register_workspace,
+            "doctor": _register_doctor,
+            "bootstrap": _register_bootstrap,
+            "misc": _register_misc,
+            "sync": _register_sync,
+            "chat": _register_chat,
+            "kg": _register_kg,
+            "mermaid": _register_mermaid,
+            "qi": _register_qi,
+            "report": _register_report,
+            "migrate": _register_migrate,
+        }
+
         registrations: dict[str, tuple[str, Callable[[], None]]] = {
-            "spawn": ("spawn", _register_spawn),
-            "session": ("session", _register_session),
-            "work": ("work", _register_work),
-            "config": ("config", _register_config),
-            "hooks": ("hooks", _register_hooks),
-            "models": ("models", _register_models),
-            "ext": ("ext", _register_ext),
-            "telemetry": ("telemetry", _register_telemetry),
-            "workspace": ("workspace", _register_workspace),
-            "doctor": ("doctor", _register_doctor),
-            "bootstrap": ("bootstrap", _register_bootstrap),
-            "completion": ("misc", _register_misc),
-            "context": ("misc", _register_misc),
-            "streaming": ("misc", _register_misc),
-            "test": ("misc", _register_misc),
-            "sync": ("sync", _register_sync),
-            "chat": ("chat", _register_chat),
-            "kg": ("kg", _register_kg),
-            "mermaid": ("mermaid", _register_mermaid),
-            "qi": ("qi", _register_qi),
-            "report": ("report", _register_report),
-            "migrate": ("migrate", _register_migrate),
+            command_name: (bucket, bucket_handlers[bucket])
+            for command_name, bucket in COMMAND_REGISTRATION.items()
         }
 
         registration = registrations.get(first_token or "")
@@ -1038,11 +1043,8 @@ def _main_impl(argv: Sequence[str] | None = None) -> None:
         options = options.model_copy(update={"passthrough_args": passthrough_args})
     help_advanced = False
     if _is_help_request(cleaned_args) and "--advanced" in cleaned_args:
-        from meridian.cli.help_content import GROUPS
-
         first_token = _first_command_token(cleaned_args)
-        group = GROUPS.get(first_token or "")
-        help_advanced = group is not None and group.agent_core_subcommands is not None
+        help_advanced = supports_advanced_help(first_token or "")
         if help_advanced:
             cleaned_args = [arg for arg in cleaned_args if arg != "--advanced"]
         elif first_token is not None:

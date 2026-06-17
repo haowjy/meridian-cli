@@ -4,7 +4,7 @@ from cyclopts import App
 
 from meridian import __version__
 from meridian.cli.agent_help import AlignedPlainFormatter
-from meridian.cli.help_content import GROUPS
+from meridian.cli.command_groups import GROUPS, register_group_app
 
 _ALIGNED_PLAIN_FORMATTER = AlignedPlainFormatter()
 
@@ -53,6 +53,7 @@ qi_app = _group_app("qi")
 telemetry_app = _group_app("telemetry")
 completion_app = _group_app("completion")
 ext_app = _group_app("ext")
+context_app = _group_app("context")
 
 app.command(spawn_app, name="spawn")
 spawn_app.command(report_app, name="report")
@@ -69,11 +70,33 @@ app.command(mermaid_app, name="mermaid")
 app.command(qi_app, name="qi")
 app.command(telemetry_app, name="telemetry")
 app.command(completion_app, name="completion")
+app.command(context_app, name="context")
+
+for _group_name, _group_app_obj in {
+    "spawn": spawn_app,
+    "session": session_app,
+    "work": work_app,
+    "config": config_app,
+    "context": context_app,
+    "hooks": hooks_app,
+    "models": models_app,
+    "streaming": streaming_app,
+    "test": test_app,
+    "workspace": workspace_app,
+    "kg": kg_app,
+    "mermaid": mermaid_app,
+    "qi": qi_app,
+    "telemetry": telemetry_app,
+    "completion": completion_app,
+    "ext": ext_app,
+}.items():
+    register_group_app(_group_name, _group_app_obj)
 
 __all__ = [
     "app",
     "completion_app",
     "config_app",
+    "context_app",
     "ext_app",
     "hooks_app",
     "kg_app",

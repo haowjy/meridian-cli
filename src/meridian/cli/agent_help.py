@@ -18,28 +18,20 @@ from typing import TYPE_CHECKING, Any, cast
 from cyclopts import App, Group
 from cyclopts.help.formatters.plain import PlainFormatter
 
-from meridian.cli.help_content import GROUPS, render_group_help
+from meridian.cli.command_groups import (
+    AGENT_CORE_SUBCOMMANDS,
+    AGENT_HELP_SUPPLEMENTS,
+    AGENT_VISIBLE_SUBCOMMANDS,
+    GROUPS,
+    group_app,
+    group_apps_with_static_apps,
+    render_group_help,
+)
 from meridian.cli.help_tiers import ADVANCED_PARAMS, advanced_params_visibility
 
 if TYPE_CHECKING:
     from cyclopts.help import HelpEntry, HelpPanel
     from rich.console import Console
-
-AGENT_VISIBLE_SUBCOMMANDS: dict[str, tuple[str, ...]] = {
-    name: group.agent_subcommands
-    for name, group in GROUPS.items()
-    if group.agent_subcommands is not None
-}
-
-AGENT_CORE_SUBCOMMANDS: dict[str, tuple[str, ...]] = {
-    name: group.agent_core_subcommands
-    for name, group in GROUPS.items()
-    if group.agent_core_subcommands is not None
-}
-
-AGENT_HELP_SUPPLEMENTS: dict[str, str] = {
-    name: group.agent_notes for name, group in GROUPS.items() if group.agent_notes is not None
-}
 
 _ADVANCED_PARAM_GROUP_NAME = ADVANCED_PARAMS.name
 
@@ -152,48 +144,15 @@ def _command_app_from_root(root_app: App, group_name: str) -> App | None:
 def group_apps_for_help(*, root_app: App) -> dict[str, App]:
     """Return group ``App`` objects addressable by ``GROUPS`` metadata keys."""
 
-    from meridian.cli.app_tree import (
-        completion_app,
-        config_app,
-        ext_app,
-        hooks_app,
-        kg_app,
-        mermaid_app,
-        models_app,
-        qi_app,
-        session_app,
-        spawn_app,
-        streaming_app,
-        telemetry_app,
-        test_app,
-        work_app,
-        workspace_app,
-    )
-
-    static_group_apps: dict[str, App] = {
-        "spawn": spawn_app,
-        "session": session_app,
-        "work": work_app,
-        "config": config_app,
-        "hooks": hooks_app,
-        "models": models_app,
-        "streaming": streaming_app,
-        "test": test_app,
-        "workspace": workspace_app,
-        "kg": kg_app,
-        "mermaid": mermaid_app,
-        "qi": qi_app,
-        "telemetry": telemetry_app,
-        "completion": completion_app,
-        "ext": ext_app,
-    }
-    group_apps: dict[str, App] = {}
+    group_apps = dict(group_apps_with_static_apps())
     for group_name in GROUPS:
-        group_app = static_group_apps.get(group_name)
-        if group_app is None:
-            group_app = _command_app_from_root(root_app, group_name)
-        if group_app is not None:
-            group_apps[group_name] = group_app
+        if group_name in group_apps:
+            continue
+        resolved = group_app(group_name)
+        if resolved is None:
+            resolved = _command_app_from_root(root_app, group_name)
+        if resolved is not None:
+            group_apps[group_name] = resolved
     return group_apps
 
 

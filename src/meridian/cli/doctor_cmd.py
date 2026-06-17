@@ -6,7 +6,6 @@ from typing import Annotated, Any
 from cyclopts import App, Parameter
 
 from meridian.cli.ext_registration import register_extension_cli_group
-from meridian.cli.help_content import render_group_help
 from meridian.lib.extensions.registry import get_first_party_registry
 from meridian.lib.ops.diag import DoctorInput, doctor_sync
 
@@ -54,12 +53,6 @@ def register_doctor_command(
     app: App,
     emit: Emitter,
 ) -> tuple[set[str], dict[str, str]]:
-    base_epilogue = render_group_help(
-        "doctor",
-        # Registration-time epilogue is always human-mode; agent-mode group help
-        # is rendered at display time by the mode-aware help wrapper.
-        agent_mode=False,
-    )
     handlers: dict[str, Callable[[], Callable[..., None]]] = {
         "meridian.doctor.doctor": lambda: _make_doctor_handler(emit),
     }
@@ -68,6 +61,5 @@ def register_doctor_command(
         registry=get_first_party_registry(),
         group="doctor",
         handlers=handlers,
-        command_help_epilogues={"meridian.doctor.doctor": base_epilogue},
         emit=emit,
     )
