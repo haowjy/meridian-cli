@@ -16,6 +16,7 @@ from meridian.cli.agent_help import (
     AGENT_CORE_SUBCOMMANDS,
     AGENT_HELP_SUPPLEMENTS,
     AGENT_VISIBLE_SUBCOMMANDS,
+    group_apps_for_help,
     print_curated_group_help,
 )
 from meridian.cli.app_tree import app, report_app, spawn_app
@@ -171,6 +172,15 @@ def test_agent_mode_work_help_has_artifact_placement_note() -> None:
 
     assert "Quick reference" not in help_text
     assert "$MERIDIAN_ACTIVE_WORK_DIR" in help_text
+    assert "path" in _command_names_in_order(help_text)
+
+
+def test_agent_mode_work_help_lists_path_subcommand() -> None:
+    help_text = _capture_help_via_main("work", agent_mode=True)
+    command_names = _command_names_in_order(help_text)
+
+    assert "path" in command_names
+    assert command_names.index("path") < command_names.index("done")
 
 
 def test_in_process_agent_then_human_restores_spawn_help() -> None:
@@ -309,7 +319,7 @@ def test_agent_help_is_gated_to_help_requests() -> None:
 
 
 def test_every_agent_help_supplement_resolves_to_registered_app() -> None:
-    group_apps = cli_main._agent_help_group_apps()
+    group_apps = group_apps_for_help(root_app=app)
 
     assert set(AGENT_HELP_SUPPLEMENTS) <= set(group_apps)
     assert set(AGENT_HELP_SUPPLEMENTS) <= cli_main._registered_command_groups

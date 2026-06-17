@@ -4,24 +4,20 @@ import os
 import subprocess
 import sys
 from collections.abc import Callable, Generator, Sequence
-from contextlib import AbstractContextManager, contextmanager
+from contextlib import contextmanager
 from contextvars import ContextVar
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, cast
 
-from cyclopts import App, Parameter
+from cyclopts import Parameter
 from pydantic import BaseModel, ConfigDict
 
 from meridian.cli.app_tree import (
     app,
     completion_app,
     config_app,
-    ext_app,
     hooks_app,
-    kg_app,
-    mermaid_app,
     models_app,
-    qi_app,
     report_app,
     session_app,
     spawn_app,
@@ -638,47 +634,6 @@ def _is_help_request(argv: Sequence[str]) -> bool:
     return any(token in {"--help", "-h"} for token in argv)
 
 
-def _command_app_from_root(group_name: str) -> App | None:
-    commands_obj = object.__getattribute__(app, "_commands")
-    if not isinstance(commands_obj, dict):
-        return None
-    commands = cast("dict[str, object]", commands_obj)
-    command = commands.get(group_name)
-    if isinstance(command, App):
-        return command
-    return None
-
-
-def _agent_help_group_apps() -> dict[str, App]:
-    from meridian.cli.help_content import GROUPS
-
-    static_group_apps: dict[str, App] = {
-        "spawn": spawn_app,
-        "session": session_app,
-        "work": work_app,
-        "config": config_app,
-        "hooks": hooks_app,
-        "models": models_app,
-        "streaming": streaming_app,
-        "test": test_app,
-        "workspace": workspace_app,
-        "kg": kg_app,
-        "mermaid": mermaid_app,
-        "qi": qi_app,
-        "telemetry": telemetry_app,
-        "completion": completion_app,
-        "ext": ext_app,
-    }
-    group_apps: dict[str, App] = {}
-    for group_name in GROUPS:
-        group_app = static_group_apps.get(group_name)
-        if group_app is None:
-            group_app = _command_app_from_root(group_name)
-        if group_app is not None:
-            group_apps[group_name] = group_app
-    return group_apps
-
-
 def _register_commands_for_invocation(argv: Sequence[str]) -> None:
     """Register only the command group needed for the current invocation."""
 
@@ -850,46 +805,6 @@ def _register_commands_for_invocation(argv: Sequence[str]) -> None:
 
         if {group for group, _ in registrations.values()}.issubset(_registered_command_groups):
             _group_commands_registered = True
-
-
-def _suppress_parent_group_epilogues_for_leaf_help(
-    argv: Sequence[str],
-) -> AbstractContextManager[None]:
-    from meridian.cli.agent_help import curated_group_help_target
-
-    @contextmanager
-    def _scope() -> Generator[None, None, None]:
-        if curated_group_help_target(
-            argv,
-            root_app=app,
-            registered_groups=_registered_command_groups,
-        ) is not None:
-            yield
-            return
-
-        tokens = [
-            arg
-            for arg in argv
-            if arg not in {"--help", "-h", "--advanced", "--mode"}
-        ]
-        if len(tokens) < 2:
-            yield
-            return
-
-        group_name = tokens[0]
-        group_app = _agent_help_group_apps().get(group_name)
-        if group_app is None:
-            yield
-            return
-
-        saved_epilogue = group_app.help_epilogue
-        group_app.help_epilogue = ""
-        try:
-            yield
-        finally:
-            group_app.help_epilogue = saved_epilogue
-
-    return _scope()
 
 
 def _operation_error_message(exc: Exception) -> str:
@@ -1222,29 +1137,25 @@ def _main_impl(argv: Sequence[str] | None = None) -> None:
         token = _GLOBAL_OPTIONS.set(options)
         try:
             from meridian.cli.agent_help import (
-                curated_group_help_target,
-                print_curated_group_help,
+                leaf_help_rendering_scope,
+                try_render_curated_group_help,
             )
 
             _register_commands_for_invocation(cleaned_args)
-            curated_group = None
-            if help_request:
-                curated_group = curated_group_help_target(
+            if help_request and try_render_curated_group_help(
+                app,
+                cleaned_args,
+                registered_groups=_registered_command_groups,
+                agent_mode=effective_agent_mode,
+                advanced=help_advanced,
+            ):
+                raise SystemExit(0)
+            with (
+                leaf_help_rendering_scope(
                     cleaned_args,
                     root_app=app,
                     registered_groups=_registered_command_groups,
-                )
-            if curated_group is not None:
-                print_curated_group_help(
-                    app,
-                    cleaned_args,
-                    curated_group,
-                    agent_mode=effective_agent_mode,
-                    advanced=help_advanced,
-                )
-                raise SystemExit(0)
-            with (
-                _suppress_parent_group_epilogues_for_leaf_help(cleaned_args),
+                ),
                 temporary_config_env(options.config_file),
             ):
                 try:

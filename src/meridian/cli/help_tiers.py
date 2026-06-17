@@ -24,7 +24,12 @@ def advanced_params_visibility(
     agent_mode: bool,
     advanced: bool,
 ) -> Generator[None, None, None]:
-    """Temporarily reveal the Advanced parameter group for help assembly."""
+    """Temporarily reveal the Advanced parameter group for help assembly.
+
+    Cyclopts ``Group.show`` is read-only; assembly consults the private ``_show``
+    field, so we toggle it here and restore after render. All coupling stays in
+    this module — callers use :func:`advanced_params_visible` for policy only.
+    """
 
     reveal = advanced_params_visible(agent_mode=agent_mode, advanced=advanced)
     prior_show = ADVANCED_PARAMS._show

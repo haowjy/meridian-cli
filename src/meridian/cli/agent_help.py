@@ -1,13 +1,21 @@
-"""Agent-mode help rendering for CLI command groups."""
+"""Mode-aware Cyclopts help rendering for the Meridian CLI.
+
+This module is the single owner for help display policy: given a resolved
+``RenderMode`` (via ``agent_mode`` / ``advanced`` flags) and per-command
+metadata (``GROUPS``, catalog), it renders curated group help or scopes leaf
+help so parent group epilogues do not leak. ``main`` should resolve mode and
+dispatch here — it must not mutate shared ``App`` help state for rendering.
+"""
 
 from __future__ import annotations
 
 import sys
 import textwrap
-from collections.abc import Sequence
+from collections.abc import Generator, Sequence
+from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any, cast
 
-from cyclopts import App, Group  # noqa: TC002
+from cyclopts import App, Group
 from cyclopts.help.formatters.plain import PlainFormatter
 
 from meridian.cli.help_content import GROUPS, render_group_help
@@ -128,6 +136,66 @@ class AlignedPlainFormatter(PlainFormatter):
 
 _ALIGNED_PLAIN_FORMATTER = AlignedPlainFormatter()
 
+_HELP_SKIP_TOKENS = frozenset({"--help", "-h", "--advanced", "--mode"})
+
+
+def _command_app_from_root(root_app: App, group_name: str) -> App | None:
+    commands_obj = object.__getattribute__(root_app, "_commands")
+    if not isinstance(commands_obj, dict):
+        return None
+    command = commands_obj.get(group_name)
+    if isinstance(command, App):
+        return command
+    return None
+
+
+def group_apps_for_help(*, root_app: App) -> dict[str, App]:
+    """Return group ``App`` objects addressable by ``GROUPS`` metadata keys."""
+
+    from meridian.cli.app_tree import (
+        completion_app,
+        config_app,
+        ext_app,
+        hooks_app,
+        kg_app,
+        mermaid_app,
+        models_app,
+        qi_app,
+        session_app,
+        spawn_app,
+        streaming_app,
+        telemetry_app,
+        test_app,
+        work_app,
+        workspace_app,
+    )
+
+    static_group_apps: dict[str, App] = {
+        "spawn": spawn_app,
+        "session": session_app,
+        "work": work_app,
+        "config": config_app,
+        "hooks": hooks_app,
+        "models": models_app,
+        "streaming": streaming_app,
+        "test": test_app,
+        "workspace": workspace_app,
+        "kg": kg_app,
+        "mermaid": mermaid_app,
+        "qi": qi_app,
+        "telemetry": telemetry_app,
+        "completion": completion_app,
+        "ext": ext_app,
+    }
+    group_apps: dict[str, App] = {}
+    for group_name in GROUPS:
+        group_app = static_group_apps.get(group_name)
+        if group_app is None:
+            group_app = _command_app_from_root(root_app, group_name)
+        if group_app is not None:
+            group_apps[group_name] = group_app
+    return group_apps
+
 
 def curated_group_help_target(
     argv: Sequence[str],
@@ -156,8 +224,78 @@ def curated_group_help_target(
 
 
 def _help_tokens(argv: Sequence[str]) -> list[str]:
-    skip = {"--help", "-h", "--advanced", "--mode"}
-    return [arg for arg in argv if arg not in skip]
+    return [arg for arg in argv if arg not in _HELP_SKIP_TOKENS]
+
+
+def try_render_curated_group_help(
+    root_app: App,
+    argv: Sequence[str],
+    *,
+    registered_groups: set[str],
+    agent_mode: bool,
+    advanced: bool = False,
+) -> bool:
+    """Render curated group help when argv requests it.
+
+    Returns ``True`` when help was rendered (caller should exit successfully).
+    """
+
+    group_name = curated_group_help_target(
+        argv,
+        root_app=root_app,
+        registered_groups=registered_groups,
+    )
+    if group_name is None:
+        return False
+
+    print_curated_group_help(
+        root_app,
+        argv,
+        group_name,
+        agent_mode=agent_mode,
+        advanced=advanced,
+    )
+    return True
+
+
+@contextmanager
+def leaf_help_rendering_scope(
+    argv: Sequence[str],
+    *,
+    root_app: App,
+    registered_groups: set[str],
+) -> Generator[None, None, None]:
+    """Scope Cyclopts leaf help so parent group epilogues stay suppressed.
+
+    Group-level help is handled by :func:`try_render_curated_group_help`; this
+    context manager only affects subcommand (leaf) ``-h`` / ``--help`` requests.
+    """
+
+    if curated_group_help_target(
+        argv,
+        root_app=root_app,
+        registered_groups=registered_groups,
+    ) is not None:
+        yield
+        return
+
+    tokens = _help_tokens(argv)
+    if len(tokens) < 2:
+        yield
+        return
+
+    group_name = tokens[0]
+    group_app = group_apps_for_help(root_app=root_app).get(group_name)
+    if group_app is None:
+        yield
+        return
+
+    saved_epilogue = group_app.help_epilogue
+    group_app.help_epilogue = ""
+    try:
+        yield
+    finally:
+        group_app.help_epilogue = saved_epilogue
 
 
 def _visible_subcommands(
@@ -297,5 +435,8 @@ __all__ = [
     "AGENT_VISIBLE_SUBCOMMANDS",
     "AlignedPlainFormatter",
     "curated_group_help_target",
+    "group_apps_for_help",
+    "leaf_help_rendering_scope",
     "print_curated_group_help",
+    "try_render_curated_group_help",
 ]

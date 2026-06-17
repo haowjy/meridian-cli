@@ -54,7 +54,12 @@ def register_doctor_command(
     app: App,
     emit: Emitter,
 ) -> tuple[set[str], dict[str, str]]:
-    base_epilogue = render_group_help("doctor", agent_mode=False)
+    base_epilogue = render_group_help(
+        "doctor",
+        # Registration-time epilogue is always human-mode; agent-mode group help
+        # is rendered at display time by the mode-aware help wrapper.
+        agent_mode=False,
+    )
     handlers: dict[str, Callable[[], Callable[..., None]]] = {
         "meridian.doctor.doctor": lambda: _make_doctor_handler(emit),
     }
