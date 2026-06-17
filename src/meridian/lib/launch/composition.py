@@ -185,71 +185,14 @@ class ComposedLaunchContent:
     """Ordered guidance blocks (inventory, spawn contract, discovery pointers, context env)."""
 
 
-@dataclass(frozen=True)
-class ContextEnvRefreshPlan:
-    """Bind-time inputs for re-projecting the typed context-env block.
-
-    Carries harness projection state without dragging idle composed content
-    through unrelated prepare rewrites. Populated whenever guidance blocks
-    include a context-env block, including on ``prompt_is_composed`` paths.
-    """
-
-    supplemental_documents: tuple[PromptDocument, ...]
-    available_skills: tuple[AvailableSkillEntry, ...]
-    agent_profile_body: str
-    report_instruction: str
-    completion_contract: str
-    launch_preamble: str
-    passthrough_system_fragments: tuple[str, ...]
-    user_task_prompt: str
-    reference_items: tuple[ReferenceItem, ...]
-    prior_output: str
-    guidance_blocks: tuple[CompositionBlock, ...]
-
-    @classmethod
-    def from_composed(cls, composed: ComposedLaunchContent) -> ContextEnvRefreshPlan:
-        return cls(
-            supplemental_documents=composed.supplemental_documents,
-            available_skills=composed.available_skills,
-            agent_profile_body=composed.agent_profile_body,
-            report_instruction=composed.report_instruction,
-            completion_contract=composed.completion_contract,
-            launch_preamble=composed.launch_preamble,
-            passthrough_system_fragments=composed.passthrough_system_fragments,
-            user_task_prompt=composed.user_task_prompt,
-            reference_items=composed.reference_items,
-            prior_output=composed.prior_output,
-            guidance_blocks=composed.guidance_blocks,
-        )
-
-    def to_composed(
-        self,
-        *,
-        guidance_blocks: tuple[CompositionBlock, ...],
-    ) -> ComposedLaunchContent:
-        return ComposedLaunchContent(
-            supplemental_documents=self.supplemental_documents,
-            available_skills=self.available_skills,
-            agent_profile_body=self.agent_profile_body,
-            report_instruction=self.report_instruction,
-            completion_contract=self.completion_contract,
-            launch_preamble=self.launch_preamble,
-            passthrough_system_fragments=self.passthrough_system_fragments,
-            user_task_prompt=self.user_task_prompt,
-            reference_items=self.reference_items,
-            prior_output=self.prior_output,
-            guidance_blocks=guidance_blocks,
-        )
-
-
-def context_env_refresh_plan_from_composed(
+def composed_content_for_bind_refresh(
     composed: ComposedLaunchContent,
-) -> ContextEnvRefreshPlan | None:
-    """Return a bind-refresh plan when composed content includes a context-env block."""
+) -> ComposedLaunchContent | None:
+    """Return composed content when bind must re-project the context-env block."""
 
     if not has_context_env_block(composed.guidance_blocks):
         return None
-    return ContextEnvRefreshPlan.from_composed(composed)
+    return composed
 
 
 @dataclass(frozen=True)
@@ -550,7 +493,6 @@ __all__ = [
     "AvailableSkillEntry",
     "ComposedLaunchContent",
     "CompositionBlock",
-    "ContextEnvRefreshPlan",
     "GuidancePhase",
     "InlineFileReferenceContribution",
     "ProjectedContent",
@@ -559,7 +501,7 @@ __all__ = [
     "ReferenceRouting",
     "build_inline_file_contributions",
     "build_reference_routing",
-    "context_env_refresh_plan_from_composed",
+    "composed_content_for_bind_refresh",
     "has_context_env_block",
     "join_content_blocks",
     "project_inline_content",
