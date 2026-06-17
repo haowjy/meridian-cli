@@ -23,6 +23,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Missing context roots are skipped before sandbox projection (a missing bind-mount source aborted codex's whole bwrap exec namespace while the spawn still reported `succeeded`).
 - A spawn launcher killed mid-prep is now recovered: the durable `queued` row is reserved before prep so the reaper sees it; lifecycle side effects are deferred until prep succeeds.
 - Agent-mode detection recognizes the primary launched agent (keys on `MERIDIAN_SPAWN_ID` managed-session membership, not `MERIDIAN_DEPTH > 0`).
+- Pytest now restores and fails on repo-local Git config mutations, preventing test runs from leaving checkout-scoped identity changes behind.
 
 ### Changed
 - **Agent/human render mode** is one resolved value: `--mode agent|human` replaces the `--agent`/`--human` mode flags (the `-a`/`--agent` profile flag is unchanged), a single `resolve_render_mode()` (precedence flag > `MERIDIAN_SPAWN_ID` > TTY downshift) replaces three divergent detection paths, and the result is stored once on `GlobalOptions` so output, bootstrap, and help all read it. Dead `ExtensionCommandSpec.agent_default_format` and `help_profile` metadata removed; output-format defaults resolve through catalog `default_output_mode`.
