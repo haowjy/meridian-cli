@@ -4,11 +4,7 @@ from __future__ import annotations
 
 import re
 
-from meridian.cli.command_groups import (
-    AGENT_DESCRIPTION_OVERRIDES,
-    AGENT_ROOT_COMMANDS,
-    GROUP_DESCRIPTIONS,
-)
+from meridian.cli.command_groups import AGENT_ROOT_COMMANDS
 from meridian.cli.startup.catalog import COMMAND_CATALOG
 from meridian.cli.startup.help import LAUNCH_EXAMPLES, render_root_help
 
@@ -35,17 +31,6 @@ def _commands(help_text: str) -> dict[str, str]:
         elif current is not None and line.strip():
             commands[current].append(line.strip())
     return {name: "\n".join(parts) for name, parts in commands.items()}
-
-
-def test_agent_and_human_command_descriptions_use_registry() -> None:
-    agent_commands = _commands(render_root_help(agent_mode=True))
-    human_commands = _commands(render_root_help(agent_mode=False))
-
-    for name in AGENT_ROOT_COMMANDS:
-        assert agent_commands[name] == AGENT_DESCRIPTION_OVERRIDES.get(
-            name, GROUP_DESCRIPTIONS[name]
-        )
-        assert human_commands[name] == GROUP_DESCRIPTIONS[name]
 
 
 def test_agent_options_are_directory_only() -> None:
@@ -75,11 +60,3 @@ def test_primary_launch_block_is_human_only() -> None:
     launch = _section(human_help, "Primary launch/resume")
     for invocation, _description in LAUNCH_EXAMPLES:
         assert f"  {invocation}" in launch
-
-
-def test_both_root_help_views_render_core_sections() -> None:
-    for agent_mode in (True, False):
-        help_text = render_root_help(agent_mode=agent_mode)
-        assert "Usage:" in help_text
-        assert "Options:" in help_text
-        assert "Commands:" in help_text

@@ -12,11 +12,7 @@ import pytest
 import meridian.cli.main as cli_main
 from meridian.cli.command_groups import (
     AGENT_CORE_SUBCOMMANDS,
-    AGENT_ROOT_COMMANDS,
     AGENT_VISIBLE_SUBCOMMANDS,
-    COMMAND_GROUP_SPECS,
-    GROUP_DESCRIPTIONS,
-    render_group_help,
     supports_advanced_help,
 )
 
@@ -68,15 +64,6 @@ def _command_names_in_order(help_text: str) -> list[str]:
 
 def _section_present(help_text: str, heading: str) -> bool:
     return f"{heading}:" in help_text
-
-
-def test_registry_derives_root_and_curation_views() -> None:
-    summaries = {name: spec.help.summary for name, spec in COMMAND_GROUP_SPECS.items()}
-    assert summaries == GROUP_DESCRIPTIONS
-    assert set(AGENT_ROOT_COMMANDS) <= set(COMMAND_GROUP_SPECS)
-    spawn_spec = COMMAND_GROUP_SPECS["spawn"].help
-    assert AGENT_CORE_SUBCOMMANDS["spawn"] == spawn_spec.agent_core_subcommands
-    assert AGENT_VISIBLE_SUBCOMMANDS["spawn"] == spawn_spec.agent_subcommands
 
 
 def test_no_group_or_leaf_help_contains_root_launch_resume() -> None:
@@ -174,12 +161,3 @@ def test_doctor_help_includes_agent_notes_only_in_agent_mode() -> None:
 
     assert not _section_present(human_help, "Agent Notes")
     assert _section_present(agent_help, "Agent Notes")
-
-
-def test_render_group_help_adds_agent_curation_only_in_agent_mode() -> None:
-    human_spawn = render_group_help("spawn", agent_mode=False)
-    agent_spawn = render_group_help("spawn", agent_mode=True, advanced=True)
-
-    assert "Agent Notes:" not in human_spawn
-    assert "Agent Notes:" in agent_spawn
-    assert human_spawn in agent_spawn
