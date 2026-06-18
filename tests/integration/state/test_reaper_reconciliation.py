@@ -461,3 +461,107 @@ def test_reconcile_active_spawn_durable_report_wins_over_cancelled_runner_exit(
     assert latest.status == "succeeded"
     assert latest.exit_code == 0
     assert latest.error is None
+
+
+class _MidPrepKillSimulation(Exception):
+    """Simulates abrupt launcher death during prep (no cleanup)."""
+
+
+def test_reserve_then_prepare_mid_prep_kill_leaves_queued_row_reconciled(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import meridian.lib.ops.spawn.execute as execute_module
+    from meridian.lib.config.settings import load_config
+    from meridian.lib.core.context import RuntimeContext
+    from meridian.lib.core.sink import OutputSink
+    from meridian.lib.launch.request import SpawnRequest
+    from meridian.lib.ops.runtime import (
+        build_runtime_from_root_and_config,
+        resolve_runtime_authority_for_write,
+    )
+    from meridian.lib.ops.spawn.models import SpawnCreateInput
+    from meridian.lib.state import work_store
+    from meridian.lib.state.paths import resolve_project_paths
+    from meridian.lib.state.spawn.model import BACKGROUND_LAUNCH_MODE
+    from meridian.lib.state.spawn.repository import scan_spawn_ids, write_state_locked
+
+    class _RecordingSink:
+        def __init__(self) -> None:
+            self.events: list[dict[str, object]] = []
+
+        def result(self, payload: object) -> None:
+            _ = payload
+
+        def status(self, message: str) -> None:
+            _ = message
+
+        def warning(self, message: str) -> None:
+            _ = message
+
+        def error(self, message: str, exit_code: int = 1) -> None:
+            _ = (message, exit_code)
+
+        def heartbeat(self, message: str) -> None:
+            _ = message
+
+        def event(self, payload: dict[str, object]) -> None:
+            self.events.append(payload)
+
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    monkeypatch.setenv("MERIDIAN_HOME", (tmp_path / "home").as_posix())
+    authority = resolve_runtime_authority_for_write(project_root)
+    assert authority.runtime_root is not None
+    config = load_config(project_root, authority=authority)
+    sink: OutputSink = _RecordingSink()
+    runtime = build_runtime_from_root_and_config(
+        project_root,
+        config,
+        authority=authority,
+        sink=sink,
+    )
+    runtime_root = authority.runtime_root
+    project_state_dir = resolve_project_paths(project_root).root_dir
+    assert work_store.get_work_item(project_state_dir, "new-work-item") is None
+
+    def _prep_kill(**kwargs: object) -> object:
+        spawn_ids = scan_spawn_ids(runtime_root / "spawns")
+        assert len(spawn_ids) == 1
+        record = spawn_store.get_spawn(runtime_root, spawn_ids[0])
+        assert record is not None
+        assert record.status == "queued"
+        assert record.runner_pid is None
+        raise _MidPrepKillSimulation()
+
+    monkeypatch.setattr(execute_module, "_prepare_spawn_execution", _prep_kill)
+
+    with pytest.raises(_MidPrepKillSimulation):
+        execute_module._reserve_then_prepare(
+            payload=SpawnCreateInput(prompt="run", work="new-work-item"),
+            request=SpawnRequest(prompt="run", model="gpt-5.4", harness="codex"),
+            runtime=runtime,
+            ctx=RuntimeContext(depth=1, spawn_id="p-parent"),
+            launch_mode=BACKGROUND_LAUNCH_MODE,
+        )
+
+    spawn_ids = scan_spawn_ids(runtime_root / "spawns")
+    assert len(spawn_ids) == 1
+    spawn_id = spawn_ids[0]
+    assert work_store.get_work_item(project_state_dir, "new-work-item") is None
+    assert [event.get("t") for event in sink.events] == []
+    write_state_locked(
+        runtime_root / "spawns",
+        spawn_id,
+        lambda current: current.model_copy(update={"started_at": _OLD_STARTED_AT}),
+    )
+    record = _get_spawn(runtime_root, spawn_id)
+
+    reconciled = _reconcile(project_root, runtime_root, record)
+
+    assert reconciled.status == "failed"
+    assert reconciled.exit_code == 1
+    assert reconciled.error == "missing_runner_pid"
+    latest = _get_spawn(runtime_root, spawn_id)
+    assert latest.status == "failed"
+    assert latest.error == "missing_runner_pid"

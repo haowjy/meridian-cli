@@ -20,6 +20,7 @@ from meridian.lib.catalog.model_aliases import MarsResultCache
 from meridian.lib.core.domain import TokenUsage
 from meridian.lib.core.spawn_lifecycle import (
     ExecutionTerminalFacts,
+    SpawnReservation,
     has_durable_report_completion,
 )
 from meridian.lib.core.spawn_service import SpawnApplicationService
@@ -925,18 +926,22 @@ def run_harness_process(
                 )
                 primary_spawn_id = SpawnId(
                     lifecycle_service.start(
-                        chat_id=chat_id,
-                        session_metadata=session_metadata,
-                        kind="primary",
-                        prompt=preview_request.prompt,
-                        harness_session_id=None if should_fork else resolved_harness_session_id,
-                        control_root=str(control_root),
-                        task_cwd=None,
-                        execution_cwd=str(execution_cwd),
-                        launch_mode=FOREGROUND_LAUNCH_MODE,
-                        work_id=attached_work_id,
-                        runner_pid=os.getpid(),
-                        status="queued",
+                        SpawnReservation(
+                            chat_id=chat_id,
+                            session_metadata=session_metadata,
+                            kind="primary",
+                            prompt=preview_request.prompt,
+                            harness_session_id=(
+                                None if should_fork else resolved_harness_session_id
+                            ),
+                            control_root=str(control_root),
+                            task_cwd=None,
+                            execution_cwd=str(execution_cwd),
+                            launch_mode=FOREGROUND_LAUNCH_MODE,
+                            work_id=attached_work_id,
+                            runner_pid=os.getpid(),
+                            status="queued",
+                        )
                     )
                 )
                 forked_session_id: str | None = None

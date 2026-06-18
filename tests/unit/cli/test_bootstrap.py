@@ -17,24 +17,24 @@ def _normalize_output_format(requested: str | None, json_mode: bool) -> str:
     return "json" if json_mode else "text"
 
 
-def test_extract_global_options_keeps_spawn_list_command_after_force_agent_flag() -> None:
+def test_extract_global_options_parses_mode_agent() -> None:
     cleaned, parsed = extract_global_options(
-        ["--agent", "spawn", "list"],
+        ["--mode", "agent", "spawn", "list"],
         normalize_output_format=_normalize_output_format,
     )
 
     assert cleaned == ["spawn", "list"]
-    assert parsed.force_agent is True
+    assert parsed.forced_render_mode == "agent"
 
 
-def test_extract_global_options_keeps_mars_command_after_force_agent_flag() -> None:
+def test_extract_global_options_parses_mode_human_before_mars() -> None:
     cleaned, parsed = extract_global_options(
-        ["--agent", "mars", "models", "list"],
+        ["--mode", "human", "mars", "models", "list"],
         normalize_output_format=_normalize_output_format,
     )
 
     assert cleaned == ["mars", "models", "list"]
-    assert parsed.force_agent is True
+    assert parsed.forced_render_mode == "human"
 
 
 def test_extract_global_options_preserves_agent_profile_selection() -> None:
@@ -43,8 +43,8 @@ def test_extract_global_options_preserves_agent_profile_selection() -> None:
         normalize_output_format=_normalize_output_format,
     )
 
-    assert cleaned == ["-a", "reviewer", "--dry-run"]
-    assert parsed.force_agent is False
+    assert cleaned == ["--agent", "reviewer", "--dry-run"]
+    assert parsed.forced_render_mode is None
 
 
 def test_extract_global_options_keeps_spawn_list_agent_flag_for_subcommand_validation() -> None:
@@ -54,7 +54,15 @@ def test_extract_global_options_keeps_spawn_list_agent_flag_for_subcommand_valid
     )
 
     assert cleaned == ["spawn", "list", "--agent", "reviewer"]
-    assert parsed.force_agent is False
+    assert parsed.forced_render_mode is None
+
+
+def test_extract_global_options_rejects_conflicting_mode_values() -> None:
+    with pytest.raises(SystemExit, match="conflicting --mode"):
+        extract_global_options(
+            ["--mode", "agent", "--mode", "human", "spawn", "list"],
+            normalize_output_format=_normalize_output_format,
+        )
 
 
 def _root_value_flags_from_signature() -> tuple[str, ...]:

@@ -70,6 +70,7 @@ def build_launch_policy_snapshot(
     model_selection: SnapshotModelSelection | None = None,
     loaded_skills: tuple[SkillContent, ...] = (),
     bundle_inventory_prompt: str | None = None,
+    profile: AgentProfile | None = None,
 ) -> LaunchPolicySnapshot:
     """Build a durable launch-policy snapshot from a resolved request."""
 
@@ -84,11 +85,7 @@ def build_launch_policy_snapshot(
         harness=harness,
         agent=(request.agent or "").strip() or None,
         agent_opt_out=request.agent_opt_out,
-        agent_path=(request.agent_metadata.get("session_agent_path") or "").strip() or None,
-        agent_description=(
-            request.agent_metadata.get("session_agent_description") or ""
-        ).strip(),
-        agent_profile_body=request.agent_metadata.get("session_agent_profile_body") or "",
+        agent_profile=_persisted_agent_profile(profile=profile, request=request),
         skills=resolved_skill_names,
         skill_paths=resolved_skill_paths,
         loaded_skills=loaded_skills,
@@ -149,9 +146,8 @@ def replay_launch_policy_snapshot(
 
     profile = _snapshot_profile(
         snapshot=snapshot,
-        project_root=project_root,
-        snapshot_agent=snapshot_agent,
         snapshot_skill_names=snapshot_skill_names,
+        project_root=project_root,
     )
     resolved_skills = _snapshot_skills(
         snapshot=snapshot,
@@ -198,29 +194,54 @@ def replay_launch_policy_snapshot(
     )
 
 
+def _persisted_agent_profile(
+    *,
+    profile: AgentProfile | None,
+    request: SpawnRequest,
+) -> dict[str, object] | None:
+    if profile is not None:
+        return profile.model_dump(mode="json")
+
+    agent = (request.agent or "").strip() or None
+    if agent is None:
+        return None
+
+    metadata = request.agent_metadata
+    description = (metadata.get("session_agent_description") or "").strip()
+    body = metadata.get("session_agent_profile_body") or ""
+    path_str = (metadata.get("session_agent_path") or "").strip()
+    profile_path = (
+        Path(path_str).expanduser().resolve()
+        if path_str
+        else Path(".mars") / "agents" / f"{agent}.md"
+    )
+    return AgentProfile(
+        name=agent,
+        description=description,
+        skills=tuple(request.skills),
+        body=body,
+        path=profile_path,
+        raw_content=body,
+    ).model_dump(mode="json")
+
+
 def _snapshot_profile(
     *,
     snapshot: LaunchPolicySnapshot,
-    project_root: Path,
-    snapshot_agent: str | None,
     snapshot_skill_names: tuple[str, ...],
+    project_root: Path,
 ) -> AgentProfile | None:
-    if snapshot_agent is None:
+    if snapshot.agent_profile is None:
         return None
 
-    profile_path = (
-        Path(snapshot.agent_path).expanduser().resolve()
-        if snapshot.agent_path is not None and snapshot.agent_path.strip()
-        else (project_root / ".mars" / "agents" / f"{snapshot_agent}.md").resolve()
-    )
-    return AgentProfile(
-        name=snapshot_agent,
-        description=snapshot.agent_description,
-        skills=snapshot_skill_names,
-        body=snapshot.agent_profile_body,
-        path=profile_path,
-        raw_content=snapshot.agent_profile_body,
-    )
+    profile = AgentProfile.model_validate(snapshot.agent_profile)
+    updates: dict[str, object] = {"skills": snapshot_skill_names}
+    # Direct-launch fallback may persist a relative profile path (no project
+    # root at build time); resolve it against the project root on replay so
+    # downstream consumers (e.g. session_agent_path) keep absolute-path parity.
+    if not profile.path.is_absolute():
+        updates["path"] = (project_root / profile.path).resolve()
+    return profile.model_copy(update=updates)
 
 
 def _snapshot_skills(

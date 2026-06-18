@@ -5,6 +5,8 @@ from pathlib import Path
 from meridian.lib.core.domain import SkillContent
 from meridian.lib.launch.composition import (
     ComposedLaunchContent,
+    CompositionBlock,
+    GuidancePhase,
     PromptDocument,
     project_inline_content,
     render_system_instruction_blocks,
@@ -48,8 +50,6 @@ def test_compose_prompt_keeps_context_isolated_and_sanitized(tmp_path: Path) -> 
             supplemental_documents=compose_skill_prompt_documents((skill,)),
             agent_profile_body="",
             report_instruction=build_report_instruction(),
-            inventory_prompt="",
-            context_prompt="",
             completion_contract="",
             passthrough_system_fragments=(),
             user_task_prompt=substitute_template_variables(
@@ -101,8 +101,6 @@ def test_compose_prompt_with_directory_renders_tree(tmp_path: Path) -> None:
             supplemental_documents=(),
             agent_profile_body="",
             report_instruction="",
-            inventory_prompt="",
-            context_prompt="",
             completion_contract="",
             passthrough_system_fragments=(),
             user_task_prompt="Explore the directory",
@@ -151,8 +149,6 @@ def test_compose_prompt_mixed_files_and_directories(tmp_path: Path) -> None:
             supplemental_documents=(),
             agent_profile_body="",
             report_instruction="",
-            inventory_prompt="",
-            context_prompt="",
             completion_contract="",
             passthrough_system_fragments=(),
             user_task_prompt="Check both",
@@ -199,8 +195,10 @@ def test_system_instruction_renders_reordered_blocks_and_skill_type_groups() -> 
         ),
         agent_profile_body="PROFILE",
         report_instruction="REPORT",
-        inventory_prompt="INVENTORY",
-        context_prompt="CONTEXT",
+        guidance_blocks=(
+            CompositionBlock("inventory", GuidancePhase.GUIDANCE, 0, "INVENTORY"),
+            CompositionBlock("context-env", GuidancePhase.ENVIRONMENT, 0, "CONTEXT"),
+        ),
         completion_contract="GOAL",
         passthrough_system_fragments=("PASSTHROUGH",),
         user_task_prompt="USER",

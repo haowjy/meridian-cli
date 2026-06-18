@@ -661,7 +661,7 @@ The following features are not yet supported for the Cursor harness:
 | `MERIDIAN_RUNTIME_DIR` | Override the runtime state root. Absolute path = use as-is; relative path = resolve relative to repo root. Repo-owned default paths (`kb/`, `work/`, `archive/work/`) always stay in `.meridian/` regardless of this setting. |
 | `MERIDIAN_FS_DIR` | Resolved shared filesystem path for the current repo state root |
 | `MERIDIAN_ACTIVE_WORK_ID` | Active attached work item slug, when one exists |
-| `MERIDIAN_ACTIVE_WORK_DIR` | Scratch/docs directory for the active work item, when one exists |
+| `MERIDIAN_ACTIVE_WORK_DIR` | Active scope directory: named work item scratch dir when attached, else the run's ambient spawn scope (`spawns/p<N>/work`) |
 | `MERIDIAN_SPAWN_ID` | Current run/spawn ID for primary and delegated execution |
 | `MERIDIAN_CHAT_ID` | Top-level chat/session id inherited across the spawn tree |
 | `MERIDIAN_DEPTH` | Zero-based delegation depth (`0` = primary/root, `1` = first delegated spawn) |

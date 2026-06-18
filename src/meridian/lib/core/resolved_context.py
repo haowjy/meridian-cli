@@ -6,7 +6,7 @@ launch, ops, and child-environment composition paths.
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol, Self
+from typing import Literal, Protocol, Self
 
 from meridian.lib.config.context_config import ContextConfig
 from meridian.lib.context.resolver import context_env_key, resolve_context_paths
@@ -18,6 +18,7 @@ from meridian.lib.core.depth import (
 from meridian.lib.core.types import SpawnId
 from meridian.lib.state import paths as state_paths
 from meridian.lib.state import session_store
+from meridian.lib.state.work_scope import WorkScope, resolve_work_scope_from_parts
 
 
 class ContextBackend(Protocol):
@@ -54,6 +55,7 @@ class ResolvedContext:
     chat_id: str = ""
     work_id: str | None = None
     work_dir: Path | None = None
+    work_scope: WorkScope | None = None
     kb_dir: Path | None = None
     context_dirs: tuple[tuple[str, Path], ...] = ()
 
@@ -62,6 +64,7 @@ class ResolvedContext:
         cls,
         *,
         explicit_work_id: str | None = None,
+        explicit_chat_id: str | None = None,
         explicit_project_root: Path | None = None,
         explicit_runtime_root: Path | None = None,
         backend: ContextBackend | None = None,
@@ -86,10 +89,16 @@ class ResolvedContext:
         parent_spawn_id_raw = os.getenv("MERIDIAN_PARENT_SPAWN_ID", "").strip()
         depth_raw = os.getenv(MERIDIAN_DEPTH_ENV, "0").strip()
         project_root_raw = os.getenv("MERIDIAN_PROJECT_DIR", "").strip()
-        chat_id_raw = os.getenv("MERIDIAN_CHAT_ID", "").strip()
-        work_id_raw = os.getenv("MERIDIAN_ACTIVE_WORK_ID", "").strip()
-        work_dir_raw = os.getenv("MERIDIAN_ACTIVE_WORK_DIR", "").strip()
+        explicit_chat_id_raw = (explicit_chat_id or "").strip()
         explicit_work_id_raw = (explicit_work_id or "").strip()
+        if explicit_chat_id_raw:
+            chat_id_raw = explicit_chat_id_raw
+            work_id_raw = ""
+            work_dir_raw = ""
+        else:
+            chat_id_raw = os.getenv("MERIDIAN_CHAT_ID", "").strip()
+            work_id_raw = os.getenv("MERIDIAN_ACTIVE_WORK_ID", "").strip()
+            work_dir_raw = os.getenv("MERIDIAN_ACTIVE_WORK_DIR", "").strip()
 
         depth = parse_meridian_depth(depth_raw)
 
@@ -110,12 +119,18 @@ class ResolvedContext:
         # Authoritative work-ID precedence:
         # explicit override > MERIDIAN_ACTIVE_WORK_ID > session attachment.
         work_id: str | None = None
+        work_id_source: Literal["explicit", "env", "session", "none"] = "none"
         if explicit_work_id_raw:
             work_id = explicit_work_id_raw
+            work_id_source = "explicit"
         elif work_id_raw:
             work_id = work_id_raw
+            work_id_source = "env"
         elif runtime_root is not None and chat_id_raw:
-            work_id = backend_impl.get_session_active_work_id(runtime_root, chat_id_raw)
+            session_work_id = backend_impl.get_session_active_work_id(runtime_root, chat_id_raw)
+            if session_work_id:
+                work_id = session_work_id
+                work_id_source = "session"
 
         project_paths = (
             state_paths.resolve_project_paths_from_context(
@@ -126,15 +141,30 @@ class ResolvedContext:
             else None
         )
 
-        work_dir: Path | None = None
-        if work_dir_raw and not explicit_work_id_raw:
-            work_dir = Path(work_dir_raw).expanduser()
-        elif work_id:
-            # Repo-scoped state paths take precedence when project_root is known.
-            if project_paths is not None:
-                work_dir = project_paths.work_dir / work_id
-            elif runtime_root is not None:
-                work_dir = backend_impl.resolve_work_scratch_dir(runtime_root, work_id)
+        spawn_id = SpawnId(spawn_id_raw) if spawn_id_raw else None
+
+        bound_work_dir: Path | None = None
+        project_work_dir = project_paths.work_dir if project_paths is not None else None
+
+        if (
+            work_dir_raw
+            and not explicit_work_id_raw
+            and work_id_source in ("none", "env")
+        ):
+            # Honor launch-bound dirs for ambient scopes and env-carried work IDs.
+            # Session-switched work IDs recompute canonical roots — stale ambient
+            # MERIDIAN_ACTIVE_WORK_DIR from process launch must not shadow them.
+            bound_work_dir = Path(work_dir_raw).expanduser()
+
+        work_scope = resolve_work_scope_from_parts(
+            project_root=project_root,
+            runtime_root=runtime_root,
+            spawn_id=spawn_id,
+            work_id=work_id,
+            bound_work_dir=bound_work_dir,
+            project_work_dir=project_work_dir,
+        )
+        work_dir = work_scope.root if work_scope is not None else None
 
         kb_dir = project_paths.kb_dir if project_paths is not None else None
 
@@ -156,7 +186,7 @@ class ResolvedContext:
             )
 
         return cls(
-            spawn_id=SpawnId(spawn_id_raw) if spawn_id_raw else None,
+            spawn_id=spawn_id,
             parent_spawn_id=SpawnId(parent_spawn_id_raw) if parent_spawn_id_raw else None,
             depth=depth,
             project_root=project_root,
@@ -164,6 +194,7 @@ class ResolvedContext:
             chat_id=chat_id_raw,
             work_id=work_id,
             work_dir=work_dir,
+            work_scope=work_scope,
             kb_dir=kb_dir,
             context_dirs=context_dirs,
         )

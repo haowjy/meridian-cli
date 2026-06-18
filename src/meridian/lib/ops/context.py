@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import UTC, datetime
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import cast
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -20,6 +20,7 @@ from meridian.lib.core.util import FormatContext
 from meridian.lib.hooks.builtin.autosync_store import read_status
 from meridian.lib.ops.runtime import resolve_runtime_authority_for_read
 from meridian.lib.state.paths import load_context_config
+from meridian.lib.state.work_scope import WorkScope
 
 
 class ContextInput(BaseModel):
@@ -176,13 +177,94 @@ class WorkRootOutput(BaseModel):
         return self.work_root
 
 
-def _resolve_runtime_context(project_root: Path, runtime_root: Path) -> ResolvedContext:
+class WorkPathInput(BaseModel):
+    """Input for work path materialization."""
+
+    model_config = ConfigDict(frozen=True)
+
+    relpath: str
+
+
+class WorkPathOutput(BaseModel):
+    """Output for work path materialization."""
+
+    model_config = ConfigDict(frozen=True)
+
+    path: str
+
+    def format_text(self, ctx: FormatContext | None = None) -> str:
+        _ = ctx
+        return self.path
+
+
+def _resolve_runtime_context(
+    project_root: Path,
+    runtime_root: Path,
+    *,
+    chat_id: str | None = None,
+) -> ResolvedContext:
     """Resolve context with explicit roots — no env mutation needed."""
 
+    normalized_chat_id = (chat_id or "").strip()
     return ResolvedContext.from_environment(
         explicit_project_root=project_root,
         explicit_runtime_root=runtime_root,
+        explicit_chat_id=normalized_chat_id or None,
     )
+
+
+def resolve_active_work_scope(
+    project_root: Path,
+    runtime_root: Path,
+    *,
+    chat_id: str | None = None,
+) -> WorkScope | None:
+    """Return the active work scope using authoritative context resolution."""
+
+    resolved = _resolve_runtime_context(project_root, runtime_root, chat_id=chat_id)
+    return resolved.work_scope
+
+
+def resolve_active_work_scope_dir(
+    project_root: Path,
+    runtime_root: Path,
+    *,
+    chat_id: str | None = None,
+) -> Path | None:
+    """Return the active work scope directory using the same resolution as work current."""
+
+    scope = resolve_active_work_scope(project_root, runtime_root, chat_id=chat_id)
+    return scope.root if scope is not None else None
+
+
+def _join_scope_path(scope_dir: Path, relpath: str) -> Path:
+    """Join a relative path under scope_dir, rejecting escapes."""
+
+    normalized = relpath.strip()
+    if not normalized:
+        raise ValueError("work path relpath must not be empty.")
+    relative = Path(normalized)
+    # Reject absolute/rooted/drive paths under either OS convention — `is_absolute()`
+    # is platform-dependent (e.g. "/tmp/x" is absolute on POSIX but drive-relative,
+    # so non-absolute, on Windows), and Windows is a first-class target.
+    if (
+        PurePosixPath(normalized).is_absolute()
+        or PureWindowsPath(normalized).is_absolute()
+        or normalized.startswith(("/", "\\"))
+        or PureWindowsPath(normalized).drive != ""
+    ):
+        raise ValueError(f"work path must be relative, got: {relpath}")
+    scope_resolved = scope_dir.resolve()
+    target = (scope_dir / relative).resolve()
+    try:
+        target.relative_to(scope_resolved)
+    except ValueError as exc:
+        raise ValueError(
+            "work path escapes scope directory.\n"
+            f"  Resolved: {target}\n"
+            f"  Scope:    {scope_resolved}"
+        ) from exc
+    return target
 
 
 def _extra_context_config(config: ContextConfig) -> dict[str, ArbitraryContextConfig]:
@@ -320,11 +402,25 @@ def work_current_sync(input: WorkCurrentInput) -> WorkCurrentOutput:
     _ = input
     authority = resolve_runtime_authority_for_read()
     runtime_root = authority.runtime_root or authority.project_state_dir
-    resolved = _resolve_runtime_context(authority.project_root, runtime_root)
+    scope = resolve_active_work_scope(authority.project_root, runtime_root)
 
     return WorkCurrentOutput(
-        work_dir=resolved.work_dir.as_posix() if resolved.work_dir is not None else None
+        work_dir=scope.root.as_posix() if scope is not None else None
     )
+
+
+def work_path_sync(input: WorkPathInput) -> WorkPathOutput:
+    """Materialize a path under the active work scope and return its absolute path."""
+
+    authority = resolve_runtime_authority_for_read()
+    runtime_root = authority.runtime_root or authority.project_state_dir
+    scope = resolve_active_work_scope(authority.project_root, runtime_root)
+    if scope is None:
+        raise ValueError("No active work scope is resolvable for this process.")
+
+    target = _join_scope_path(scope.root, input.relpath)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    return WorkPathOutput(path=target.as_posix())
 
 
 def work_root_sync(input: WorkRootInput) -> WorkRootOutput:
@@ -355,18 +451,30 @@ async def work_root(input: WorkRootInput) -> WorkRootOutput:
     return await asyncio.to_thread(work_root_sync, input)
 
 
+async def work_path(input: WorkPathInput) -> WorkPathOutput:
+    """Async handler for work path materialization."""
+
+    return await asyncio.to_thread(work_path_sync, input)
+
+
 __all__ = [
     "ContextEntryOutput",
     "ContextInput",
     "ContextOutput",
     "WorkCurrentInput",
     "WorkCurrentOutput",
+    "WorkPathInput",
+    "WorkPathOutput",
     "WorkRootInput",
     "WorkRootOutput",
     "context",
     "context_sync",
+    "resolve_active_work_scope",
+    "resolve_active_work_scope_dir",
     "work_current",
     "work_current_sync",
+    "work_path",
+    "work_path_sync",
     "work_root",
     "work_root_sync",
 ]

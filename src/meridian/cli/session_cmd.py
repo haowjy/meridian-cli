@@ -50,7 +50,7 @@ def _session_log(
         Parameter(
             name="--global",
             help=(
-                "Use one global stream across all segment entries (including entry 0 slots) "
+                "Use one global stream across all segment entries "
                 "for --from/--before/--around. "
                 "Conflicts with --segment."
             ),
@@ -299,7 +299,7 @@ def register_session_commands(app: App, emit: Emitter) -> tuple[set[str], dict[s
                 '  meridian session search "auth bug" c123\n\n'
                 '  meridian session search "timeout" --workspace\n\n'
                 '  meridian session search "report" --work feature/api-audit\n\n'
-                "Search is case-insensitive. Each match includes a deterministic Open command.\n"
+                "Search is case-insensitive. Each match includes an Open command.\n"
             ),
             "meridian.session.repair": (
                 "Examples:\n\n"

@@ -8,6 +8,14 @@ from meridian.lib.catalog.skill import files_have_equal_text, split_markdown_fro
 from meridian.lib.config.project_root import resolve_project_root_resolution
 
 
+class MeridianCapabilities(BaseModel):
+    """Typed meridian-specific capability overrides from profile frontmatter."""
+
+    model_config = ConfigDict(frozen=True)
+
+    spawn: bool | None = None
+
+
 class AgentProfile(BaseModel):
     """Parsed agent profile with frontmatter defaults + markdown body."""
 
@@ -17,6 +25,8 @@ class AgentProfile(BaseModel):
     description: str
     mode: Literal["primary", "subagent"] = "subagent"
     skills: tuple[str, ...]
+    subagents: tuple[str, ...] = ()
+    meridian_capabilities: MeridianCapabilities | None = None
     model_invocable: bool = True
     body: str
     path: Path
@@ -33,6 +43,21 @@ def _normalize_string_list(value: object) -> tuple[str, ...]:
         values = [str(item).strip() for item in cast("list[object]", value) if str(item).strip()]
         return tuple(values)
     return ()
+
+
+def _parse_meridian_capabilities(value: object) -> MeridianCapabilities | None:
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        return None
+    spawn_value: bool | None = None
+    for raw_key, raw_value in cast("dict[object, object]", value).items():
+        if str(raw_key).strip() != "spawn" or not isinstance(raw_value, bool):
+            continue
+        spawn_value = raw_value
+    if spawn_value is None:
+        return None
+    return MeridianCapabilities(spawn=spawn_value)
 
 
 def parse_agent_profile(path: Path) -> AgentProfile:
@@ -59,6 +84,10 @@ def parse_agent_profile(path: Path) -> AgentProfile:
         description=str(description_value).strip() if description_value is not None else "",
         mode=cast("Literal['primary', 'subagent']", mode),
         skills=_normalize_string_list(frontmatter.get("skills")),
+        subagents=_normalize_string_list(frontmatter.get("subagents")),
+        meridian_capabilities=_parse_meridian_capabilities(
+            frontmatter.get("meridian-capabilities")
+        ),
         model_invocable=model_invocable,
         body=body,
         path=path.resolve(),

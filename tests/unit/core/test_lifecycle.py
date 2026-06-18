@@ -16,6 +16,7 @@ from meridian.lib.core.lifecycle import (
     generate_event_id,
     generate_lifecycle_event_id,
 )
+from meridian.lib.core.spawn_lifecycle import SpawnReservation
 from meridian.lib.core.spawn_start import SpawnStartMetadata
 from meridian.lib.launch.types import PrimarySessionMetadata
 from meridian.lib.state import spawn_store
@@ -40,6 +41,16 @@ class StoreSnapshotHook:
         )
 
 
+class EventTypeHook:
+    """Captures lifecycle event types for assertions."""
+
+    def __init__(self) -> None:
+        self.event_types: list[str] = []
+
+    def on_event(self, event: LifecycleEvent) -> None:
+        self.event_types.append(event.event_type)
+
+
 def _make_service(
     runtime_root: Path,
     hooks: list[Any] | None = None,
@@ -62,7 +73,7 @@ def _start_spawn(service: SpawnLifecycleService, **overrides: Any) -> str:
         "status": "running",
     }
     defaults.update(overrides)
-    return service.start(**defaults)
+    return service.start(SpawnReservation(**defaults))
 
 
 def test_generate_event_id_is_deterministic() -> None:
@@ -180,21 +191,23 @@ def test_start_accepts_typed_metadata_and_persists_goal(tmp_path: Path) -> None:
     service = _make_service(tmp_path)
 
     spawn_id = service.start(
-        chat_id="c1",
-        session_metadata=PrimarySessionMetadata(
-            harness="codex",
-            model="gpt-5.4",
-            agent="coder",
-            agent_path="",
-            skills=(),
-            skill_paths=(),
-        ),
-        prompt="run it",
-        metadata=SpawnStartMetadata(
-            desc="goal metadata",
-            work_id="  w-lifecycle  ",
-            goal="  finish migration  ",
-        ),
+        SpawnReservation(
+            chat_id="c1",
+            session_metadata=PrimarySessionMetadata(
+                harness="codex",
+                model="gpt-5.4",
+                agent="coder",
+                agent_path="",
+                skills=(),
+                skill_paths=(),
+            ),
+            prompt="run it",
+            metadata=SpawnStartMetadata(
+                desc="goal metadata",
+                work_id="  w-lifecycle  ",
+                goal="  finish migration  ",
+            ),
+        )
     )
 
     record = spawn_store.get_spawn(tmp_path, spawn_id)
@@ -202,6 +215,61 @@ def test_start_accepts_typed_metadata_and_persists_goal(tmp_path: Path) -> None:
     assert record.desc == "goal metadata"
     assert record.work_id == "w-lifecycle"
     assert record.goal == "finish migration"
+
+
+def test_reserve_defers_hook_until_announce(tmp_path: Path) -> None:
+    hook = EventTypeHook()
+    service = _make_service(tmp_path, hooks=[hook])
+
+    spawn_id = service.reserve(
+        SpawnReservation(
+            chat_id="c1",
+            session_metadata=PrimarySessionMetadata(
+                harness="codex",
+                model="gpt-5.4",
+                agent="coder",
+                agent_path="",
+                skills=(),
+                skill_paths=(),
+            ),
+            prompt="run it",
+            status="queued",
+        )
+    )
+
+    assert hook.event_types == []
+
+    service.announce(spawn_id)
+
+    assert hook.event_types == ["spawn.created"]
+
+
+def test_start_without_dispatch_events_defers_hook_until_announce(tmp_path: Path) -> None:
+    hook = EventTypeHook()
+    service = _make_service(tmp_path, hooks=[hook])
+
+    spawn_id = service.start(
+        SpawnReservation(
+            chat_id="c1",
+            session_metadata=PrimarySessionMetadata(
+                harness="codex",
+                model="gpt-5.4",
+                agent="coder",
+                agent_path="",
+                skills=(),
+                skill_paths=(),
+            ),
+            prompt="run it",
+            status="queued",
+        ),
+        dispatch_events=False,
+    )
+
+    assert hook.event_types == []
+
+    service.announce(spawn_id)
+
+    assert hook.event_types == ["spawn.created"]
 
 
 def test_owner_mark_running_clears_stale_runner_created_epoch_when_pid_replaced(

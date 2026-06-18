@@ -195,7 +195,7 @@ class HookContext:
                 "id": self.work_id,
                 "dir": self.work_dir,
             }
-            if self.work_id
+            if self.work_id or self.work_dir
             else None,
         }
         return json.dumps(payload)

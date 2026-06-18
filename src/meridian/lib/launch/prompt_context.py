@@ -14,6 +14,9 @@ from meridian.lib.context.resolver import (
 from meridian.lib.core.domain import SkillContent
 from meridian.lib.launch.composition import PromptDocument
 
+CONTEXT_PROMPT_HEADER = "# Meridian Context"
+CONTEXT_PROMPT_FOOTER = "Inspect or configure: meridian context -h"
+
 
 def _render_skill_blocks(skills: Sequence[SkillContent]) -> tuple[str, ...]:
     blocks: list[str] = []
@@ -86,7 +89,7 @@ def build_context_prompt(
         resolved_context = resolve_context_paths(project_root, context_config)
 
     header = [
-        "# Meridian Context",
+        CONTEXT_PROMPT_HEADER,
         "",
         "Resolved context directories available via environment variables.",
         "",
@@ -97,10 +100,13 @@ def build_context_prompt(
         active_work_dir=active_work_dir,
     )
 
-    return "\n".join([*header, *context_lines]).strip()
+    footer = ["", CONTEXT_PROMPT_FOOTER]
+    return "\n".join([*header, *context_lines, *footer]).strip()
 
 
 __all__ = [
+    "CONTEXT_PROMPT_FOOTER",
+    "CONTEXT_PROMPT_HEADER",
     "build_context_prompt",
     "compose_skill_injections",
     "compose_skill_prompt_documents",

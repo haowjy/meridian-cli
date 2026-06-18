@@ -11,6 +11,7 @@ from cyclopts import App, Parameter
 
 from meridian.cli.argv_normalization import validate_fork_mode
 from meridian.cli.ext_registration import register_extension_cli_group
+from meridian.cli.help_tiers import ADVANCED_PARAMS
 from meridian.cli.spawn_inject import inject_message
 from meridian.cli.utils import (
     parse_csv_list,
@@ -66,6 +67,25 @@ _SPAWN_STATUS_VALUES: tuple[SpawnStatus, ...] = cast(
 )
 _ACTIVE_VIEW_STATUSES: tuple[SpawnStatus, ...] = tuple(
     status for status in _SPAWN_STATUS_VALUES if status in ACTIVE_SPAWN_STATUSES
+)
+_SPAWN_USAGE_EPILOGUE = (
+    "Launch detached, then track:\n\n"
+    "  meridian spawn --prompt-file PATH --bg    Detach; returns a spawn id\n"
+    "  meridian spawn wait                       Track this session's pending spawns\n\n"
+    "Do not block-foreground a long spawn — the harness command timeout will kill\n"
+    "your shell while the spawn keeps running and you lose the thread.\n\n"
+    "Harness command lifecycle ≠ meridian spawn lifecycle. The launch command\n"
+    "returning or dying does not stop the spawn.\n\n"
+    "If the launch was killed, reconcile with `meridian spawn wait` or\n"
+    "`meridian status`.\n"
+)
+_SPAWN_WAIT_HELP_EPILOGUE = (
+    "Without spawn ids, discovers your session's pending spawns.\n"
+    "Exits cleanly at a safe checkpoint;\n"
+    "re-invoke to keep waiting.\n\n"
+    "Examples:\n\n"
+    "  meridian spawn wait\n\n"
+    "  meridian spawn wait p123\n"
 )
 
 
@@ -224,9 +244,7 @@ def _spawn_create(
         Parameter(
             name="--prompt-file",
             help=(
-                "Read prompt from a file. Preferred for delegation. Use '-' to read stdin. "
-                "If neither --prompt nor --prompt-file is set and stdin is piped, "
-                "stdin is used as the prompt."
+                "Read prompt from a file. Preferred for delegation. Use '-' to read stdin."
             ),
             allow_leading_hyphen=True,
         ),
@@ -235,9 +253,11 @@ def _spawn_create(
         tuple[str, ...],
         Parameter(
             name="--prompt-var",
+            group=ADVANCED_PARAMS,
             help=(
                 "Prompt template variables in KEY=VALUE form (repeatable). "
-                "Replaces {{KEY}} during prompt assembly."
+                "Replaces double-curly {{KEY}} placeholders in the prompt file "
+                "at launch."
             ),
             negative_iterable=(),
         ),
@@ -262,11 +282,9 @@ def _spawn_create(
         Parameter(
             name=["--from"],
             help=(
-                "Inherit context from a prior spawn or chat/session.\n"
-                "Spawn refs include the spawn report and files touched;\n"
-                "chat refs point at the session log and primary spawn.\n"
-                "Repeatable. Also inherits the source's work item as a\n"
-                "fallback when neither --work nor ambient session provides one."
+                "Inherit context from a prior spawn or chat/session (repeatable). "
+                "Also inherits the source's work item when neither --work nor the "
+                "ambient session provides one."
             ),
             negative_iterable=(),
         ),
@@ -282,20 +300,24 @@ def _spawn_create(
         str | None,
         Parameter(
             name=["--skills", "-s"],
+            group=ADVANCED_PARAMS,
             help="Comma-separated ad-hoc skills to load. Merged with agent profile skills.",
         ),
     ] = None,
     desc: Annotated[
         str,
-        Parameter(name=["--desc", "--description"], help="Short description for the spawn."),
+        Parameter(
+            name=["--desc", "--description"],
+            group=ADVANCED_PARAMS,
+            help="Short description for the spawn.",
+        ),
     ] = "",
     goal: Annotated[
         str | None,
         Parameter(
             name="--goal",
             help=(
-                "Completion goal for this spawn. Injected as a bounded "
-                "completion contract and persisted as spawn metadata."
+                "Completion goal for this spawn. Injected as a bounded completion contract."
             ),
         ),
     ] = None,
@@ -313,6 +335,7 @@ def _spawn_create(
         str | None,
         Parameter(
             name="--task-dir",
+            group=ADVANCED_PARAMS,
             help=(
                 "Override the source-code edit directory for this spawn only. "
                 "Does not modify the work item's task_dir setting. "
@@ -322,16 +345,23 @@ def _spawn_create(
     ] = None,
     dry_run: Annotated[
         bool,
-        Parameter(name="--dry-run", help="Preview without executing harness."),
+        Parameter(
+            name="--dry-run", group=ADVANCED_PARAMS, help="Preview without executing harness."
+        ),
     ] = False,
     verbose: Annotated[
         bool,
-        Parameter(name="--verbose", help="Enable verbose spawn logging.", show=True),
+        Parameter(
+            name="--verbose",
+            group=ADVANCED_PARAMS,
+            help="Enable verbose spawn logging.",
+        ),
     ] = False,
     metadata: Annotated[
         bool,
         Parameter(
             name="--metadata",
+            group=ADVANCED_PARAMS,
             help=(
                 "Include detailed spawn metadata in text output "
                 "(report-first view remains primary)."
@@ -340,7 +370,11 @@ def _spawn_create(
     ] = False,
     quiet: Annotated[
         bool,
-        Parameter(name="--quiet", help="Reduce non-essential command output.", show=True),
+        Parameter(
+            name="--quiet",
+            group=ADVANCED_PARAMS,
+            help="Reduce non-essential command output.",
+        ),
     ] = False,
     stream: Annotated[
         bool,
@@ -352,13 +386,21 @@ def _spawn_create(
         bool,
         Parameter(
             name=["--background", "--bg"],
-            help="Run in background and return immediately with spawn ID.",
+            help=(
+                "Run detached; returns a spawn id without waiting. NEVER wrap "
+                "`meridian spawn --bg` inside the harness's own background "
+                "execution (e.g. run_in_background Bash) — it already detaches, "
+                "and double-wrapping can kill the launcher before it hands off "
+                "to the detached worker (the spawn then fails visibly without "
+                "running)."
+            ),
         ),
     ] = False,
     timeout: Annotated[
         float | None,
         Parameter(
             name="--timeout",
+            group=ADVANCED_PARAMS,
             help="Maximum runtime in minutes before spawn timeout.",
         ),
     ] = None,
@@ -366,6 +408,7 @@ def _spawn_create(
         str | None,
         Parameter(
             name="--approval",
+            group=ADVANCED_PARAMS,
             help="Approval mode: default, confirm, auto, never. Overrides agent profile.",
         ),
     ] = None,
@@ -373,6 +416,7 @@ def _spawn_create(
         int | None,
         Parameter(
             name="--autocompact",
+            group=ADVANCED_PARAMS,
             help="Autocompact token threshold (minimum 1000). Overrides agent profile.",
         ),
     ] = None,
@@ -380,6 +424,7 @@ def _spawn_create(
         int | None,
         Parameter(
             name="--autocompact-pct",
+            group=ADVANCED_PARAMS,
             help="Percentage of context window for autocompact (1-100). Overrides agent profile.",
         ),
     ] = None,
@@ -387,6 +432,7 @@ def _spawn_create(
         str | None,
         Parameter(
             name="--effort",
+            group=ADVANCED_PARAMS,
             help="Effort level: low, medium, high, xhigh, max. Overrides agent profile.",
         ),
     ] = None,
@@ -394,6 +440,7 @@ def _spawn_create(
         str | None,
         Parameter(
             name="--sandbox",
+            group=ADVANCED_PARAMS,
             help=(
                 "Sandbox mode passed to harness "
                 "(e.g., read-only, workspace-write). Overrides agent profile."
@@ -404,6 +451,7 @@ def _spawn_create(
         bool,
         Parameter(
             name="--yolo",
+            group=ADVANCED_PARAMS,
             help="Skip all harness safety prompts and sandboxing.",
         ),
     ] = False,
@@ -415,10 +463,11 @@ def _spawn_create(
         str | None,
         Parameter(
             name="--fork",
+            group=ADVANCED_PARAMS,
             help=(
                 "Fork from a session ref while preserving launch identity "
-                "(agent/model/skills): chat id (c123), spawn id (p123), "
-                "or raw harness session id."
+                "(agent/model/skills): chat id (c123), spawn id (p123), or raw "
+                "harness session id."
             ),
         ),
     ] = None,
@@ -426,6 +475,7 @@ def _spawn_create(
         str | None,
         Parameter(
             name="--fork-fresh",
+            group=ADVANCED_PARAMS,
             help=(
                 "Fork from a session ref and allow launch identity changes "
                 "(agent/model/skills). This may reduce prompt-cache locality."
@@ -436,6 +486,7 @@ def _spawn_create(
         str | None,
         Parameter(
             name="--task-ping-interval",
+            group=ADVANCED_PARAMS,
             help=(
                 "Default background-task ping interval for spawned Pi "
                 "(e.g. 90m, 1h, 3300). Overrides the 55m extension default."
@@ -446,6 +497,7 @@ def _spawn_create(
         bool | None,
         Parameter(
             name="--task-ping-reset-on-activity",
+            group=ADVANCED_PARAMS,
             help=(
                 "When true, reset each task's ping deadline on log output or "
                 "task tool touch (default true when unset)."
@@ -464,6 +516,7 @@ def _spawn_create(
         tuple[str, ...],
         Parameter(
             name="--env",
+            group=ADVANCED_PARAMS,
             help=(
                 "Environment variables for the spawned harness "
                 "in KEY=VALUE form (repeatable). "
@@ -529,9 +582,7 @@ def _spawn_create(
     )
     normalized_task_dir = (task_dir or "").strip() or None
     if resolved_continue_from is not None and normalized_task_dir is not None:
-        raise ValueError(
-            "--continue does not accept --task-dir. Use --fork --task-dir to diverge."
-        )
+        raise ValueError("--continue does not accept --task-dir. Use --fork --task-dir to diverge.")
 
     fork_source_ref = fork_resolution.fork_ref or fork_resolution.fork_fresh_ref
     if fork_source_ref is not None:
@@ -874,7 +925,13 @@ def _spawn_wait(
     emit: Any,
     spawn_ids: Annotated[
         tuple[str, ...],
-        Parameter(name="spawn_id", help="Spawn IDs to wait for (omit to wait for all pending)."),
+        Parameter(
+            name="spawn_id",
+            help=(
+                "Spawn IDs to wait for. Omit to discover your session's pending "
+                "spawns and wait on them."
+            ),
+        ),
     ] = (),
     timeout: Annotated[
         float | None,
@@ -888,8 +945,8 @@ def _spawn_wait(
         Parameter(
             name="--yield-after-secs",
             help=(
-                "Cache-preserving yield interval in seconds. Overrides harness-aware "
-                "default. Exits cleanly when reached."
+                "Seconds before `wait` yields cleanly so you keep the turn. Overrides the "
+                "harness-aware default. Exits cleanly when reached."
             ),
         ),
     ] = None,
@@ -961,7 +1018,14 @@ def _spawn_create_metadata_output(result: SpawnActionOutput) -> Any | None:
 
 def _spawn_files(
     emit: Any,
-    spawn_id: str,
+    spawn_id: Annotated[
+        str,
+        Parameter(
+            help=(
+                "Spawn ID. Lists the files this spawn changed, one per line."
+            ),
+        ),
+    ],
     null: Annotated[
         bool,
         Parameter(name=["-0", "--null"], help="Null-delimited output for xargs -0."),
@@ -1057,7 +1121,11 @@ def _spawn_inject(
     ],
     message: Annotated[
         str,
-        Parameter(help="Message text to inject."),
+        Parameter(
+            help=(
+                "Real user direction to forward mid-run."
+            ),
+        ),
     ] = "",
 ) -> None:
     asyncio.run(
@@ -1080,8 +1148,17 @@ def _spawn_log_removed(
     )
 
 
+def _append_spawn_help_epilogue(app: App) -> None:
+    existing = app.help_epilogue or ""
+    if existing and not existing.endswith("\n"):
+        existing += "\n"
+    app.help_epilogue = existing + "\n" + _SPAWN_USAGE_EPILOGUE
+
+
 def register_spawn_commands(app: App, emit: Emitter) -> tuple[set[str], dict[str, str]]:
     """Register spawn CLI commands using registry metadata as source of truth."""
+
+    _append_spawn_help_epilogue(app)
 
     handlers: dict[str, Callable[[], Callable[..., None]]] = {
         "meridian.spawn.children": lambda: partial(_spawn_children, emit),
@@ -1099,6 +1176,9 @@ def register_spawn_commands(app: App, emit: Emitter) -> tuple[set[str], dict[str
         registry=get_first_party_registry(),
         group="spawn",
         handlers=handlers,
+        command_help_epilogues={
+            "meridian.spawn.wait": _SPAWN_WAIT_HELP_EPILOGUE,
+        },
         emit=emit,
         default_handler=partial(_spawn_create, emit),
     )
@@ -1119,10 +1199,15 @@ def register_spawn_commands(app: App, emit: Emitter) -> tuple[set[str], dict[str
     app.command(
         _spawn_inject,
         name="inject",
-        help="Inject a message into a running streaming spawn.",
+        help=(
+            "Forward real user direction to a running spawn; self-generated "
+            "nudges waste its attention."
+        ),
     )
     registered.add("spawn.inject")
-    descriptions["meridian.spawn.inject"] = "Inject a message into a running streaming spawn."
+    descriptions["meridian.spawn.inject"] = (
+        "Forward real user direction to a running spawn; self-generated nudges waste its attention."
+    )
     app.command(
         _spawn_log_removed,
         name="log",

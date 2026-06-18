@@ -20,6 +20,7 @@ class RuntimeContext(BaseModel):
     runtime_root: Path | None = None
     chat_id: str = ""
     work_id: str | None = None
+    work_dir: Path | None = None
 
     @property
     def is_nested(self) -> bool:
@@ -38,6 +39,7 @@ class RuntimeContext(BaseModel):
             runtime_root=resolved.runtime_root,
             chat_id=resolved.chat_id,
             work_id=resolved.work_id,
+            work_dir=resolved.work_dir,
         )
 
     def to_env_overrides(self) -> dict[str, str]:
@@ -52,6 +54,9 @@ class RuntimeContext(BaseModel):
             overrides["MERIDIAN_CHAT_ID"] = self.chat_id
         if self.work_id:
             overrides["MERIDIAN_ACTIVE_WORK_ID"] = self.work_id
+        if self.work_dir is not None:
+            overrides["MERIDIAN_ACTIVE_WORK_DIR"] = self.work_dir.as_posix()
+        elif self.work_id:
             if self.project_root is not None:
                 overrides["MERIDIAN_ACTIVE_WORK_DIR"] = resolve_work_scratch_dir_for_project(
                     self.project_root,

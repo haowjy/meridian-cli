@@ -4,8 +4,50 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- `meridian work path <relpath>` materializes paths under the active work scope (ambient or named); `prompts/` and `handoffs/` bucket constants drive switch-warning artifact counts. Now listed in agent-mode `work -h`.
+- Agent-mode `meridian spawn -h` now carries the full `meridian-spawn` skill methodology, so the skill can be retired; always-on contract gained the drain invariant; leaf help gained boundaries on `spawn inject`/`spawn files`/`--prompt-var`.
+- Agent-mode `meridian spawn -h` is progressively disclosed via `--advanced`: lean default (~85 lines) with core loop, pre-launch decisions, and core commands/flags; `--advanced` reveals full methodology, all commands, and an `Advanced` flag panel. Agent-mode only.
+
 ### Fixed
+- A same-process `meridian work start`/`work switch` is no longer shadowed by the launch-bound `MERIDIAN_ACTIVE_WORK_DIR`: when `work_id` comes from session attachment, the scope root is recomputed from the work item, so `work path`/artifacts land in the switched scope (child-spawn ambient/named binding preserved).
+- `--mode human` (and the TTY downshift) now actually affect emitted output and runtime bootstrap inside a managed session; previously `emit()`/bootstrap keyed on an env-only check that ignored the mode flags and TTY.
+- Agent-mode `meridian spawn --bg` prints the readable submit note (spawn id + the `meridian spawn wait` reminder) instead of a raw JSON field dump; `--json`/`--format json` still emit structured output.
+- Bind-time context refresh rebinds the `work:` line on composed/recomposed requests too (background handoff, continue/fork), keeping it in parity with the child's `MERIDIAN_ACTIVE_WORK_DIR`; reprojection preserves the native adhoc-agent payload (agent/profile body) for Claude/Codex.
+- `resolve_active_work_scope_dir` threads `explicit_chat_id` through `ResolvedContext.from_environment` instead of temporarily mutating `MERIDIAN_CHAT_ID` (reentrant-safe scope resolution for leave-scope warnings).
+- Child spawn env resolves ambient `MERIDIAN_ACTIVE_WORK_DIR` from the child's spawn id at the shared `ChildEnvContext` seam (not inherited parent ambient).
+- Child spawn bind aligns `MERIDIAN_ACTIVE_WORK_DIR` and injected context `work:` line to the child's ambient `spawns/p<N>/work` dir; dir-without-id propagates across env/JSON surfaces.
+- Bind-time context refresh keeps the injected `work:` line and bound `MERIDIAN_ACTIVE_WORK_DIR` in parity across the composed `prompt` and non-empty `user_turn_content` channels; empty user turns stay unset.
+- Prompt-file idiom across agent-help surfaces: run `meridian work path prompts/<name>.md`, write there, pass the printed path literally to `--prompt-file` (disposable prompts under `prompts/`, not scope top level).
+- Agent-mode root help: portable quick-start example, spawn subcommand hint drops bogus `fork`, `context` uses imperative voice.
+- Missing context roots are skipped before sandbox projection (a missing bind-mount source aborted codex's whole bwrap exec namespace while the spawn still reported `succeeded`).
+- A spawn launcher killed mid-prep is now recovered: the durable `queued` row is reserved before prep so the reaper sees it; lifecycle side effects are deferred until prep succeeds.
+- Agent-mode detection recognizes the primary launched agent (keys on `MERIDIAN_SPAWN_ID` managed-session membership, not `MERIDIAN_DEPTH > 0`).
 - Pytest now restores and fails on repo-local Git config mutations, preventing test runs from leaving checkout-scoped identity changes behind.
+
+### Changed
+- Test suite aggressively pruned low-value unit/contract/integration coverage: mock-heavy CLI and adapter wiring, help/output presentation contracts, trivial field/default checks, and private-helper tests were removed while retaining signal, process-lifecycle, state-reconciliation, parsing/security, and smoke-like integration coverage.
+- Test suite pruned low-value unit coverage for version/help boilerplate and default-property checks while retaining the parsing edge cases and agent-help behavior contracts.
+- **Agent/human render mode** is one resolved value: `--mode agent|human` replaces the `--agent`/`--human` mode flags (the `-a`/`--agent` profile flag is unchanged), a single `resolve_render_mode()` (precedence flag > `MERIDIAN_SPAWN_ID` > TTY downshift) replaces three divergent detection paths, and the result is stored once on `GlobalOptions` so output, bootstrap, and help all read it. Dead `ExtensionCommandSpec.agent_default_format` and `help_profile` metadata removed; output-format defaults resolve through catalog `default_output_mode`.
+- Help is one mode-aware system: all command-group truth lives in a single `CommandGroupSpec` registry (`cli/command_groups.py`) that feeds root help, curated agent help, app lookup, and command registration; group + leaf help render via `print_curated_group_help` with no Cyclopts `App`-singleton mutation or `main.py` leaf-epilogue mutation. `context` is a real group; `doctor` help flows the same path.
+- `WorkScope` is a pure value object (kind/identifier/root + durability + artifact counting); the raw-`Path` overload that fabricated a fake scope is deleted and leave-scope warning/label wording lives in ops, not the state layer.
+- The harness spawn-usage contract phrasing is adapter-owned (`RunPromptPolicy.spawn_usage_contract_variants`); `build_guidance_blocks` composes a caller-supplied contract with no `HarnessId` conditional, so a new harness sets its phrasing in its own adapter.
+- Active work scope is an explicit `WorkScope` object (kind `work_item`/`ambient_spawn`, identifier, root, durable/ephemeral); `work path`, leave-scope warnings, and artifact counting route through it instead of raw paths + `prompts/`/`handoffs/` string heuristics and `MERIDIAN_CHAT_ID` env impersonation.
+- Spawn reservation is a typed seam: `SpawnReservation` is the single lifecycle creation input (`start(reservation)`; `reserve()` is the events-off alias), with field mapping in one write site; replaces the overloaded `announce=False` flag and the duplicate full-signature `reserve_spawn_row`/`announce_started` alias; same happy-path/kill-mid-prep/graceful-failure guarantees.
+- Bind-time context-env refresh re-renders the typed `context-env` block by name and re-projects (no header/footer marker surgery; `replace_context_block` deleted), carried as one `ComposedLaunchContent` (the mirror `ContextEnvRefreshPlan` is gone); `ChildEnvContext` is a projection of `ResolvedContext`, not a parallel resolver.
+- `ResolvedContext.from_environment` falls back to per-spawn ambient artifact dir (`spawns/p<N>/work`) when no named work is attached; ambient never sets `work_id`.
+- Agent-mode `session`/`work`/`context -h`: task-voice long help, de-duplicated session ref-forms (refs in long_help only).
+- Lean agent `spawn -h` playbook: no core-loop duplication (contract owns that); teaches prompt-file, context, parallel drain.
+- Spawn contract example path is `<prompt>.md`, not `/tmp/<task>.md`.
+- Agent group help wraps multi-line command/parameter descriptions with aligned continuation indent.
+- Agent-mode root help (`meridian -h`) reworked as a skill entry point: curated commands/options, multi-line table rendering, pointer block to group help.
+- The agent inventory (`# Meridian Agents`) is gated on spawn capability: leaf agents (no `subagents`) no longer receive it.
+- The spawn contract is a first-class composition block (`spawn_contract_prompt`), applied exactly once on continue/fork instead of appended to the inventory string.
+- `LaunchPolicySnapshot` persists the agent profile as one nested `agent_profile` blob, so every field survives continue/fork replay.
+- `meridian.spawn.execute` reserves the spawn row up front via `_reserve_then_prepare`; a single `resolve_spawn_work_id` replaces the divergent work_id precedence.
+- Agent-mode `--help` is curated: group help shows only agent-relevant subcommands, drops the duplicated enumeration, renders usage examples once. Human help unchanged; hidden subcommands stay invokable.
+- Agent root help drops the operator-facing `telemetry` command (still in human help, still invokable).
+- Root and group/leaf `--help` render from one shared source (`cli/help_content.py`); root/group blocks no longer leak into nested help via cyclopts epilogue inheritance.
 
 ## [0.3.9] - 2026-06-13
 

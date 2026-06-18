@@ -35,8 +35,11 @@ from uuid import UUID
 import psutil
 import structlog
 
-from meridian.lib.core.spawn_lifecycle import TERMINAL_SPAWN_STATUSES, is_active_spawn_status
-from meridian.lib.core.spawn_start import SpawnStartMetadata
+from meridian.lib.core.spawn_lifecycle import (
+    TERMINAL_SPAWN_STATUSES,
+    SpawnReservation,
+    is_active_spawn_status,
+)
 from meridian.lib.core.telemetry import (
     CORE_EVENTS,
     SpawnFailure,
@@ -56,9 +59,7 @@ if TYPE_CHECKING:
 
     from meridian.lib.core.clock import Clock
     from meridian.lib.core.domain import SpawnStatus, TokenUsage
-    from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
     from meridian.lib.hooks.dispatch import HookDispatcher
-    from meridian.lib.launch.types import PrimarySessionMetadata
     from meridian.lib.state.spawn.model import (
         LaunchMode,
         SpawnOrigin,
@@ -227,78 +228,96 @@ class SpawnLifecycleService:
         self._hooks = hooks or []
         self._record: SpawnRecord | None = None
 
+    def register_hook(self, hook: LifecycleHook) -> None:
+        """Register an additional lifecycle hook after construction."""
+        self._hooks.append(hook)
+
     # ------------------------------------------------------------------
     # Lifecycle transitions
     # ------------------------------------------------------------------
 
     def start(
         self,
+        reservation: SpawnReservation,
         *,
-        chat_id: str,
-        owner_chat_id: str | None = None,
-        parent_id: str | None = None,
-        session_metadata: PrimarySessionMetadata,
-        kind: str = "child",
-        prompt: str,
-        metadata: SpawnStartMetadata | None = None,
-        desc: str | None = None,
-        work_id: str | None = None,
-        goal: str | None = None,
-        spawn_id: str | None = None,
-        harness_session_id: str | None = None,
-        control_root: str | None = None,
-        task_cwd: str | None = None,
-        execution_cwd: str | None = None,
-        launch_mode: LaunchMode | None = None,
-        worker_pid: int | None = None,
-        runner_pid: int | None = None,
-        launch_policy_snapshot: LaunchPolicySnapshot | None = None,
-        status: SpawnStatus = "running",
-        started_at: str | None = None,
-        clock: Clock | None = None,
+        dispatch_events: bool = True,
     ) -> str:
-        """Start a new spawn and dispatch spawn.created."""
-        with bind_lifecycle_correlation(self._correlation(operation="start", spawn_id=spawn_id)):
+        """Persist a spawn row from ``reservation`` and optionally dispatch spawn.created."""
+        return self._start_from_reservation(reservation, dispatch_events=dispatch_events)
+
+    def reserve(self, reservation: SpawnReservation) -> str:
+        """Persist a spawn row without dispatching lifecycle events."""
+        return self.start(reservation, dispatch_events=False)
+
+    def announce(self, spawn_id: str) -> None:
+        """Dispatch spawn.created and initial telemetry for a reserved row."""
+        with bind_lifecycle_correlation(
+            self._correlation(operation="announce", spawn_id=spawn_id)
+        ):
+            record = _spawn_store().get_spawn(self._runtime_root, spawn_id)
+            if record is None:
+                raise ValueError(f"spawn row not found: {spawn_id}")
+            self._record = record
+            self._dispatch_spawn_started_events(status=record.status, spawn_id=spawn_id)
+
+    def _start_from_reservation(
+        self,
+        reservation: SpawnReservation,
+        *,
+        dispatch_events: bool,
+    ) -> str:
+        with bind_lifecycle_correlation(
+            self._correlation(operation="start", spawn_id=reservation.spawn_id)
+        ):
+            session_metadata = reservation.session_metadata
             # Authoritative transition write still happens in _spawn_store().
             result_id = _spawn_store().start_spawn(
                 self._runtime_root,
-                chat_id=chat_id,
-                owner_chat_id=owner_chat_id,
-                parent_id=parent_id,
+                chat_id=reservation.chat_id,
+                owner_chat_id=reservation.owner_chat_id,
+                parent_id=reservation.parent_id,
                 model=session_metadata.model,
                 agent=session_metadata.agent,
                 agent_path=session_metadata.agent_path or None,
                 skills=session_metadata.skills,
                 skill_paths=session_metadata.skill_paths,
                 harness=session_metadata.harness,
-                kind=kind,
-                prompt=prompt,
-                metadata=metadata,
-                desc=desc,
-                work_id=work_id,
-                goal=goal,
-                spawn_id=spawn_id,
-                harness_session_id=harness_session_id,
-                control_root=control_root,
-                task_cwd=task_cwd,
-                execution_cwd=execution_cwd,
-                launch_mode=launch_mode,
-                worker_pid=worker_pid,
-                runner_pid=runner_pid,
-                launch_policy_snapshot=launch_policy_snapshot,
-                status=status,
-                started_at=started_at,
-                clock=clock,
+                kind=reservation.kind,
+                prompt=reservation.prompt,
+                metadata=reservation.metadata,
+                desc=reservation.desc,
+                work_id=reservation.work_id,
+                goal=reservation.goal,
+                spawn_id=reservation.spawn_id,
+                harness_session_id=reservation.harness_session_id,
+                control_root=reservation.control_root,
+                task_cwd=reservation.task_cwd,
+                execution_cwd=reservation.execution_cwd,
+                launch_mode=reservation.launch_mode,
+                worker_pid=reservation.worker_pid,
+                runner_pid=reservation.runner_pid,
+                launch_policy_snapshot=reservation.launch_policy_snapshot,
+                status=reservation.status,
+                started_at=reservation.started_at,
+                clock=reservation.clock,
             )
             allocate_spawn_sequence(str(result_id))
             record = _spawn_store().get_spawn(self._runtime_root, result_id)
             self._record = record
-            event = self._build_event("spawn.created", self._record, spawn_id=str(result_id))
-            self._dispatch(event)
-            self._emit_telemetry_event("spawn.queued", self._record)
-            if status == "running":
-                self._emit_telemetry_event("spawn.running", self._record)
+            if dispatch_events:
+                self._dispatch_spawn_started_events(
+                    status=reservation.status,
+                    spawn_id=str(result_id),
+                )
             return str(result_id)
+
+    def _dispatch_spawn_started_events(self, *, status: SpawnStatus, spawn_id: str) -> None:
+        assert self._record is not None
+        event = self._build_event("spawn.created", self._record, spawn_id=spawn_id)
+        self._dispatch(event)
+        self._emit_telemetry_event("spawn.queued", self._record)
+        if status == "running":
+            self._emit_telemetry_event("spawn.running", self._record)
 
     def mark_running(
         self,

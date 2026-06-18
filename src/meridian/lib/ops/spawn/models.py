@@ -389,6 +389,17 @@ class SpawnActionOutput(BaseModel):
         return "\n".join(lines)
 
     def _format_default_text(self) -> str:
+        if (
+            self.background
+            and self.status == "running"
+            and self.spawn_id
+            and not self.message
+        ):
+            text = _background_wait_note(self.spawn_id)
+            if self.warning:
+                text = f"{text}\nWarning: {self.warning}"
+            return text
+
         lines: list[str] = []
         if self.message:
             lines.append(self.message)
@@ -396,14 +407,6 @@ class SpawnActionOutput(BaseModel):
             lines.append(f"Spawn {self.status}.")
         if self.spawn_id:
             lines.append(f"Spawn id: {self.spawn_id}")
-            if self.background and self.status == "running":
-                lines.append("")
-                lines.append("After spawning all subagents, you MUST run:")
-                lines.append("")
-                lines.append("  meridian spawn wait")
-                lines.append("")
-                lines.append("This waits for all pending spawns for this chat.")
-                lines.append(f"Or wait for this spawn only: meridian spawn wait {self.spawn_id}")
         if self.forked_from:
             lines.append(f"Forked from: {self.forked_from}")
         if self.model and self.harness_id:

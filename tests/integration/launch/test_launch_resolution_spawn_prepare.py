@@ -55,6 +55,13 @@ def test_spawn_prepare_opencode_keeps_all_references_inline(
             "- `meridian spawn -a dev-orchestrator`: Orchestrate.\n"
         ),
     )
+    write_agent(
+        tmp_path,
+        name="dev-orchestrator",
+        model="gemini-2.5-pro",
+        harness="opencode",
+        subagents=("reviewer",),
+    )
     file_ref = tmp_path / "README.md"
     file_ref.write_text("# hello\n", encoding="utf-8")
     dir_ref = tmp_path / "src"
@@ -68,6 +75,7 @@ def test_spawn_prepare_opencode_keeps_all_references_inline(
             prompt_is_composed=False,
             model="gemini-2.5-pro",
             harness="opencode",
+            agent="dev-orchestrator",
             reference_files=(file_ref.as_posix(), dir_ref.as_posix()),
         ),
         runtime=LaunchRuntime(
@@ -170,6 +178,13 @@ def test_spawn_prepare_system_field_harnesses_route_agent_inventory_to_system_pr
         harness=expected_harness,
         prompt_surface_inventory_prompt=_BUNDLE_INVENTORY,
     )
+    write_agent(
+        tmp_path,
+        name="dev-orchestrator",
+        model=model,
+        harness=harness,
+        subagents=("reviewer",),
+    )
 
     preview = build_launch_context(
         spawn_id=f"dry-run-{harness}-spawn-prepare-no-inventory",
@@ -178,6 +193,7 @@ def test_spawn_prepare_system_field_harnesses_route_agent_inventory_to_system_pr
             prompt_is_composed=False,
             model=model,
             harness=harness,
+            agent="dev-orchestrator",
         ),
         runtime=LaunchRuntime(
             argv_intent=LaunchArgvIntent.REQUIRED,
@@ -198,6 +214,65 @@ def test_spawn_prepare_system_field_harnesses_route_agent_inventory_to_system_pr
     assert "`meridian spawn -a reviewer`" in inventory_channel
     assert "# Meridian Agents" not in preview.projected_content.user_turn_content
     assert "# Meridian Agents" not in preview.resolved_request.prompt
+
+
+def test_spawn_prepare_omits_guidance_when_spawn_capability_disabled(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write_minimal_mars_config(tmp_path)
+    stub_bundle_request_and_resolve(
+        monkeypatch,
+        model="gpt-5.4",
+        harness=HarnessId.CODEX,
+        prompt_surface_inventory_prompt=_BUNDLE_INVENTORY,
+    )
+    agents_dir = tmp_path / ".mars" / "agents"
+    agents_dir.mkdir(parents=True)
+    (agents_dir / "dev-orchestrator.md").write_text(
+        "\n".join(
+            [
+                "---",
+                "name: dev-orchestrator",
+                "model: gpt-5.4",
+                "skills: []",
+                "subagents: [reviewer]",
+                "harness: codex",
+                "meridian-capabilities:",
+                "  spawn: false",
+                "---",
+                "",
+                "# dev-orchestrator",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    preview = build_launch_context(
+        spawn_id="dry-run-codex-spawn-prepare-spawn-disabled",
+        request=SpawnRequest(
+            prompt="task prompt",
+            prompt_is_composed=False,
+            model="gpt-5.4",
+            harness="codex",
+            agent="dev-orchestrator",
+        ),
+        runtime=LaunchRuntime(
+            argv_intent=LaunchArgvIntent.REQUIRED,
+            composition_surface=LaunchCompositionSurface.SPAWN_PREPARE,
+            runtime_root=(tmp_path / ".meridian").as_posix(),
+            project_paths_project_root=tmp_path.as_posix(),
+            project_paths_execution_cwd=tmp_path.as_posix(),
+        ),
+        harness_registry=get_default_harness_registry(),
+        dry_run=True,
+    )
+
+    assert preview.projected_content is not None
+    system_prompt = preview.projected_content.system_prompt
+    assert "# Meridian Agents" not in system_prompt
+    assert "# Spawning subagents (meridian)" not in system_prompt
 
 
 def test_spawn_prepare_claude_projects_skills_inventory_and_report_to_system_prompt(
@@ -223,6 +298,7 @@ def test_spawn_prepare_claude_projects_skills_inventory_and_report_to_system_pro
         name="dev-orchestrator",
         model="claude-sonnet-4-5",
         skills=("verification",),
+        subagents=("reviewer",),
     )
     file_ref = tmp_path / "README.md"
     file_ref.write_text("# project\n", encoding="utf-8")
@@ -306,6 +382,7 @@ def test_spawn_prepare_claude_continue_session_keeps_skills_in_system_prompt(
         name="dev-orchestrator",
         model="claude-sonnet-4-5",
         skills=("verification",),
+        subagents=("reviewer",),
     )
 
     harness_session_id = "claude-session-123"
@@ -345,6 +422,7 @@ def test_spawn_prepare_claude_continue_session_keeps_skills_in_system_prompt(
     assert "# Skill:" not in projected.system_prompt
     assert "# Meridian Agents" in projected.system_prompt
     assert "# Report" in projected.system_prompt
+    assert projected.system_prompt.count("# Spawning subagents (meridian)") == 1
     # Skills still delivered via --append-system-prompt-file
     assert any("--append-system-prompt-file" in str(arg) for arg in preview.binding.argv)
     assert preview.binding.run_params.appended_system_prompt is not None

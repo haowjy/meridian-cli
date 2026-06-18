@@ -9,8 +9,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
-from meridian.cli.argv_normalization import SYNTHETIC_VALUE_TOKENS
-from meridian.cli.startup.catalog import COMMAND_CATALOG
+from meridian.cli.mode import RenderMode, is_agent_render_mode, parse_render_mode
 from meridian.cli.startup.policy import StateRequirement
 
 # Keep these startup parse tables in sync with `@app.default root(...)` in
@@ -34,6 +33,7 @@ _TOP_LEVEL_VALUE_FLAGS = frozenset(
         "-m",
         "--harness",
         "-a",
+        "--agent",
         "--work",
         "--task-dir",
         "--autocompact",
@@ -44,6 +44,7 @@ _TOP_LEVEL_VALUE_FLAGS = frozenset(
         "--timeout",
         "-C",
         "--directory",
+        "--mode",
     }
 )
 _TOP_LEVEL_BOOL_FLAGS = frozenset(
@@ -59,8 +60,6 @@ _TOP_LEVEL_BOOL_FLAGS = frozenset(
         "--no-yes",
         "--no-input",
         "--no-no-input",
-        "--agent",
-        "--human",
         "--yolo",
         "--no-yolo",
         "--dry-run",
@@ -69,7 +68,6 @@ _TOP_LEVEL_BOOL_FLAGS = frozenset(
 )
 HARNESS_SHORTCUT_NAMES = frozenset({"claude", "codex", "cursor", "opencode", "pi"})
 _CHAT_MANAGEMENT_SUBCOMMANDS = frozenset({"ls", "show", "log", "close"})
-_TOP_LEVEL_COMMAND_TOKENS = frozenset(COMMAND_CATALOG.top_level_names()) | HARNESS_SHORTCUT_NAMES
 
 
 @dataclass(frozen=True)
@@ -80,8 +78,7 @@ class ParsedGlobalOptions:
     yes: bool
     no_input: bool
     output_explicit: bool
-    force_agent: bool
-    force_human: bool
+    forced_render_mode: RenderMode | None
     directory: str | None
     directory_explicit: bool = False
 
@@ -115,13 +112,6 @@ def _first_positional_token(argv: Sequence[str]) -> str | None:
     return token
 
 
-def _first_positional_token_for_global_parse(argv: Sequence[str]) -> str | None:
-    token = _first_positional_token(argv)
-    if token in SYNTHETIC_VALUE_TOKENS:
-        return None
-    return token
-
-
 def first_positional_token_with_index(argv: Sequence[str]) -> tuple[int, str] | None:
     return _first_positional_token_with_index(argv)
 
@@ -145,27 +135,6 @@ def _is_chat_management_invocation(argv: Sequence[str]) -> bool:
     return argv[0] == "chat" and argv[1] in _CHAT_MANAGEMENT_SUBCOMMANDS
 
 
-def _is_top_level_command_token(token: str) -> bool:
-    return token in _TOP_LEVEL_COMMAND_TOKENS
-
-
-def _leading_positionals(argv: Sequence[str], *, limit: int) -> tuple[str, ...]:
-    tokens: list[str] = []
-    for token in argv:
-        if token == "--":
-            break
-        if token.startswith("-"):
-            continue
-        tokens.append(token)
-        if len(tokens) >= limit:
-            break
-    return tuple(tokens)
-
-
-def _is_spawn_list_invocation(argv: Sequence[str]) -> bool:
-    return _leading_positionals(argv, limit=2) == ("spawn", "list")
-
-
 def extract_global_options(
     argv: Sequence[str],
     *,
@@ -179,8 +148,7 @@ def extract_global_options(
     yes = False
     no_input = False
     output_explicit = False
-    force_agent = False
-    force_human = False
+    forced_render_mode: RenderMode | None = None
     harness_source: str | None = None
     cleaned: list[str] = []
 
@@ -282,27 +250,20 @@ def extract_global_options(
         if arg == "--no-no-input":
             index += 1
             continue
-        if arg == "--agent":
-            has_positional = _first_positional_token_for_global_parse(cleaned) is not None
-            if index + 1 < len(argv) and not argv[index + 1].startswith("-"):
-                next_token = argv[index + 1]
-                if has_positional and _is_spawn_list_invocation(cleaned):
-                    cleaned.extend(("--agent", next_token))
-                    index += 2
-                    continue
-                if has_positional or not _is_top_level_command_token(next_token):
-                    cleaned.extend(("-a", next_token))
-                    index += 2
-                    continue
-            if has_positional:
-                cleaned.append("-a")
-                index += 1
-                continue
-            force_agent = True
-            index += 1
+        if arg == "--mode":
+            if index + 1 >= len(argv):
+                raise SystemExit("--mode requires a value")
+            parsed_mode = parse_render_mode(argv[index + 1])
+            if forced_render_mode is not None and parsed_mode != forced_render_mode:
+                raise SystemExit("Cannot combine conflicting --mode values.")
+            forced_render_mode = parsed_mode
+            index += 2
             continue
-        if arg == "--human":
-            force_human = True
+        if arg.startswith("--mode="):
+            parsed_mode = parse_render_mode(arg.partition("=")[2])
+            if forced_render_mode is not None and parsed_mode != forced_render_mode:
+                raise SystemExit("Cannot combine conflicting --mode values.")
+            forced_render_mode = parsed_mode
             index += 1
             continue
         if arg == "--verbose" and _first_positional_token(cleaned) is None:
@@ -330,9 +291,6 @@ def extract_global_options(
         if harness_source in HARNESS_SHORTCUT_NAMES:
             raise SystemExit(f'Unknown option: "{harness_source}"')
 
-    if force_agent and force_human:
-        raise SystemExit("Cannot combine --agent with --human.")
-
     return cleaned, ParsedGlobalOptions(
         output_format=normalize_output_format(output_format, json_mode),
         config_file=config_file,
@@ -342,8 +300,7 @@ def extract_global_options(
         yes=yes,
         no_input=no_input,
         output_explicit=output_explicit,
-        force_agent=force_agent,
-        force_human=force_human,
+        forced_render_mode=forced_render_mode,
     )
 
 
@@ -385,7 +342,7 @@ def _state_requirement_for_argv(argv: Sequence[str]) -> StateRequirement | None:
 def maybe_bootstrap_runtime_state(
     argv: Sequence[str],
     *,
-    agent_mode: bool,
+    render_mode: RenderMode,
     state_requirement: StateRequirement | None = None,
 ) -> Path | None:
     """Prepare startup state according to catalog policy and return project root.
@@ -394,7 +351,7 @@ def maybe_bootstrap_runtime_state(
     downstream startup work instead of resolving it again.
     """
 
-    if agent_mode:
+    if is_agent_render_mode(render_mode):
         return None
     try:
         from meridian.cli.utils import require_established_project_root

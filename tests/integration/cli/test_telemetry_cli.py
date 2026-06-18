@@ -11,6 +11,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from meridian.lib.core.lifecycle import SpawnLifecycleService
+from meridian.lib.core.spawn_lifecycle import SpawnReservation
 from meridian.lib.launch.types import PrimarySessionMetadata
 from meridian.lib.state import spawn_store
 from meridian.lib.telemetry.query import query_events
@@ -220,17 +221,19 @@ def test_status_aggregates_active_writers_across_project_directories_and_legacy(
 
     service_a = SpawnLifecycleService(project_a_root)
     spawn_a = service_a.start(
-        chat_id="chat-a",
-        session_metadata=PrimarySessionMetadata(
-            harness="test-harness",
-            model="test-model",
-            agent="coder",
-            agent_path="",
-            skills=(),
-            skill_paths=(),
-        ),
-        prompt="do the thing",
-        status="running",
+        SpawnReservation(
+            chat_id="chat-a",
+            session_metadata=PrimarySessionMetadata(
+                harness="test-harness",
+                model="test-model",
+                agent="coder",
+                agent_path="",
+                skills=(),
+                skill_paths=(),
+            ),
+            prompt="do the thing",
+            status="running",
+        )
     )
     spawn_b = str(
         spawn_store.start_spawn(

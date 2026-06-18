@@ -10,7 +10,8 @@ See spec S-1 for category definitions.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from enum import IntEnum
 from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
@@ -28,8 +29,7 @@ SYSTEM_INSTRUCTION_BLOCK_ORDER: tuple[str, ...] = (
     "completion_contract",
     "supplemental_documents",
     "available_skills_listing",
-    "inventory_prompt",
-    "context_prompt",
+    "guidance_blocks",
     "report_instruction",
     # passthrough_system_fragments appended last
 )
@@ -40,6 +40,22 @@ INLINE_BLOCK_ORDER: tuple[str, ...] = (
     "task_context",
     "user_task_prompt",
 )
+
+
+class GuidancePhase(IntEnum):
+    GUIDANCE = 0
+    ENVIRONMENT = 1
+
+
+CONTEXT_ENV_BLOCK_NAME = "context-env"
+
+
+@dataclass(frozen=True)
+class CompositionBlock:
+    name: str
+    phase: GuidancePhase
+    priority: int = 0
+    content: str = ""
 
 
 @dataclass(frozen=True)
@@ -142,12 +158,6 @@ class ComposedLaunchContent:
     report_instruction: str
     """The 'write a report' directive."""
 
-    inventory_prompt: str
-    """Agent inventory — SYSTEM_INSTRUCTION, not startup context."""
-
-    context_prompt: str
-    """Resolved context directories with env var names."""
-
     passthrough_system_fragments: tuple[str, ...]
     """Explicit --append-system-prompt passthrough args; appended last."""
 
@@ -170,6 +180,19 @@ class ComposedLaunchContent:
 
     available_skills: tuple[AvailableSkillEntry, ...] = ()
     """On-demand skills listed by name in the prompt (not loaded until triggered)."""
+
+    guidance_blocks: tuple[CompositionBlock, ...] = ()
+    """Ordered guidance blocks (inventory, spawn contract, discovery pointers, context env)."""
+
+
+def composed_content_for_bind_refresh(
+    composed: ComposedLaunchContent,
+) -> ComposedLaunchContent | None:
+    """Return composed content when bind must re-project the context-env block."""
+
+    if not has_context_env_block(composed.guidance_blocks):
+        return None
+    return composed
 
 
 @dataclass(frozen=True)
@@ -274,6 +297,30 @@ def join_content_blocks(*blocks: str) -> str:
     return "\n\n".join(block.strip() for block in blocks if block.strip())
 
 
+def has_context_env_block(guidance_blocks: tuple[CompositionBlock, ...]) -> bool:
+    """Return whether guidance blocks include the late-bound context-env block."""
+
+    return any(block.name == CONTEXT_ENV_BLOCK_NAME for block in guidance_blocks)
+
+
+def replace_context_env_block(
+    guidance_blocks: tuple[CompositionBlock, ...],
+    *,
+    new_content: str,
+) -> tuple[CompositionBlock, ...]:
+    """Return guidance blocks with the context-env content replaced."""
+
+    if not has_context_env_block(guidance_blocks):
+        return guidance_blocks
+    normalized = new_content.strip()
+    return tuple(
+        replace(block, content=normalized)
+        if block.name == CONTEXT_ENV_BLOCK_NAME
+        else block
+        for block in guidance_blocks
+    )
+
+
 _SKILL_TYPE_DESCRIPTIONS: dict[str, str] = {
     "principle": "Override other guidance when loaded.",
     "guardrail": "Load before acting in sensitive areas.",
@@ -339,7 +386,7 @@ def render_system_instruction_blocks(content: ComposedLaunchContent) -> str:
     Order: agent_profile_body, completion_contract, auto-loaded skills
     (grouped by type: principles first, then guardrails, then others,
     then bootstrap), available skills listing (names only),
-    inventory_prompt, context_prompt, report_instruction,
+    guidance_blocks (sorted by phase then priority), report_instruction,
     then passthrough fragments.
     """
     skill_type_priority = {"principle": 0, "guardrail": 1, "reference": 2}
@@ -377,6 +424,12 @@ def render_system_instruction_blocks(content: ComposedLaunchContent) -> str:
             listing = _render_available_skills_block(content.available_skills)
             if listing:
                 ordered_blocks.append(listing)
+            continue
+        if field_name == "guidance_blocks":
+            ordered = sorted(content.guidance_blocks, key=lambda b: (b.phase, b.priority))
+            for block in ordered:
+                if block.content.strip():
+                    ordered_blocks.append(block.content)
             continue
         ordered_blocks.append(getattr(content, field_name))
     return join_content_blocks(*ordered_blocks, *content.passthrough_system_fragments)
@@ -434,10 +487,13 @@ def project_inline_content(content: ComposedLaunchContent) -> ProjectedContent:
 
 
 __all__ = [
+    "CONTEXT_ENV_BLOCK_NAME",
     "INLINE_BLOCK_ORDER",
     "SYSTEM_INSTRUCTION_BLOCK_ORDER",
     "AvailableSkillEntry",
     "ComposedLaunchContent",
+    "CompositionBlock",
+    "GuidancePhase",
     "InlineFileReferenceContribution",
     "ProjectedContent",
     "ProjectionChannels",
@@ -445,8 +501,11 @@ __all__ = [
     "ReferenceRouting",
     "build_inline_file_contributions",
     "build_reference_routing",
+    "composed_content_for_bind_refresh",
+    "has_context_env_block",
     "join_content_blocks",
     "project_inline_content",
     "render_system_instruction_blocks",
     "render_task_context",
+    "replace_context_env_block",
 ]

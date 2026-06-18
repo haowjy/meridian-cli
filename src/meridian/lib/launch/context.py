@@ -9,6 +9,7 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
+import structlog
 from pydantic import ValidationError
 
 from meridian.lib.catalog.catalog_session import CatalogSession
@@ -29,9 +30,10 @@ from meridian.lib.config.settings import (
 from meridian.lib.config.workspace import get_projectable_roots
 from meridian.lib.context.resolver import resolve_context_paths
 from meridian.lib.core.child_env import validate_child_env_keys
+from meridian.lib.core.domain import SkillContent
 from meridian.lib.core.overrides import RuntimeOverrides
 from meridian.lib.core.resolved_context import ResolvedContext
-from meridian.lib.core.types import HarnessId, ModelId, SpawnId
+from meridian.lib.core.types import HarnessId, ModelId
 from meridian.lib.diagnostics import capture_library_diagnostics
 from meridian.lib.harness.adapter import SpawnParams, SubprocessHarness
 from meridian.lib.launch.launch_types import (
@@ -54,13 +56,13 @@ from meridian.lib.safety.permissions import PermissionConfig
 from meridian.lib.state import work_store
 from meridian.lib.state.paths import (
     load_context_config,
+    resolve_ambient_work_dir,
     resolve_kb_dir,
     resolve_project_paths,
     resolve_spawn_log_dir,
-    resolve_work_scratch_dir_for_project,
 )
-from meridian.lib.state.session_store import get_session_active_work_id
 from meridian.lib.state.spawn.model import LaunchMode
+from meridian.lib.state.work_scope import resolve_bound_work_scope
 from meridian.lib.telemetry import emit_telemetry
 from meridian.lib.tools import ToolsField
 from meridian.plugin_api.git import resolve_clone_path
@@ -72,10 +74,14 @@ from .command import (
 )
 from .composition import (
     ComposedLaunchContent,
+    CompositionBlock,
     ProjectedContent,
     PromptDocument,
     build_inline_file_contributions,
     build_reference_routing,
+    composed_content_for_bind_refresh,
+    has_context_env_block,
+    replace_context_env_block,
 )
 from .cwd import LaunchDirectoryContext
 from .env import build_env_plan
@@ -124,6 +130,7 @@ from .resolve import (
     resolve_profile_path,
     resolve_skill_paths,
 )
+from .spawn_guidance import build_guidance_blocks, build_spawn_usage_contract
 from .text_utils import sanitize_prior_output, strip_stale_report_paths
 from .workspace import resolve_workspace_snapshot_for_launch
 
@@ -131,18 +138,19 @@ if TYPE_CHECKING:
     from meridian.lib.harness.registry import HarnessRegistry
 
 
+logger = structlog.get_logger(__name__)
+
+
 @dataclass(frozen=True)
 class ChildEnvContext:
-    """Sole producer for child `MERIDIAN_*` environment overrides."""
+    """Sole producer for child `MERIDIAN_*` environment overrides.
 
-    parent_spawn_id: str | None
-    project_root: Path
-    runtime_root: Path
-    parent_chat_id: str | None
-    parent_depth: int
-    work_id: str | None = None
-    work_dir: Path | None = None
-    context_dirs: tuple[tuple[str, Path], ...] = ()
+    Thin projection of ``ResolvedContext``; child-specific rule: ambient work
+    dirs bind to the concrete ``child_spawn_id`` at emit time, not the parent's
+    ambient ``MERIDIAN_ACTIVE_WORK_DIR``.
+    """
+
+    resolved: ResolvedContext
 
     @classmethod
     def from_environment(
@@ -156,72 +164,49 @@ class ChildEnvContext:
         resolved_runtime_root = runtime_root.resolve()
         normalized_explicit_work_id = (explicit_work_id or "").strip() or None
         context_config = load_context_config(resolved_project_root) or ContextConfig()
-        parent_ctx = ResolvedContext.from_environment(
+        resolved = ResolvedContext.from_environment(
             explicit_work_id=normalized_explicit_work_id,
             explicit_project_root=resolved_project_root,
             explicit_runtime_root=resolved_runtime_root,
             context_config=context_config,
         )
-        parent_spawn_id = str(parent_ctx.spawn_id) if parent_ctx.spawn_id else None
-        parent_chat_id = parent_ctx.chat_id.strip() or None
-        parent_depth = parent_ctx.depth
+        return cls(resolved=resolved)
 
-        work_id = (
-            normalized_explicit_work_id
-            or parent_ctx.work_id
-            or os.getenv("MERIDIAN_ACTIVE_WORK_ID", "").strip()
-            or None
-        )
-        if work_id is None and parent_chat_id:
-            # Keep launch semantics: runtime_root decides active work lookup.
-            try:
-                work_id = get_session_active_work_id(resolved_runtime_root, parent_chat_id)
-            except Exception:
-                work_id = None
+    @property
+    def parent_spawn_id(self) -> str | None:
+        return str(self.resolved.spawn_id) if self.resolved.spawn_id else None
 
-        repo_paths = resolve_project_paths(resolved_project_root)
-        work_dir = (
-            parent_ctx.work_dir
-            if (
-                work_id is not None
-                and parent_ctx.work_dir is not None
-                and parent_ctx.work_id == work_id
-            )
-            else resolve_work_scratch_dir_for_project(
-                resolved_project_root,
-                work_id,
-                project_paths=repo_paths,
-            )
-            if work_id is not None
-            else None
-        )
+    @property
+    def project_root(self) -> Path:
+        assert self.resolved.project_root is not None
+        return self.resolved.project_root
 
-        resolved_context_paths = resolve_context_paths(
-            resolved_project_root,
-            context_config,
-        )
-        context_dirs = (
-            ("work", resolved_context_paths.work_root),
-            ("work_archive", resolved_context_paths.work_archive),
-            ("kb", resolved_context_paths.kb_root),
-            *tuple(
-                sorted((name, path) for name, (path, _) in resolved_context_paths.extra.items())
-            ),
-        )
+    @property
+    def runtime_root(self) -> Path:
+        assert self.resolved.runtime_root is not None
+        return self.resolved.runtime_root
 
-        return cls(
-            # Keep MERIDIAN_PROJECT_DIR anchored to the project/config root so
-            # nested meridian commands resolve repo-local profiles, skills,
-            # and config from the same place as the parent launch.
-            parent_spawn_id=parent_spawn_id,
-            project_root=resolved_project_root,
-            runtime_root=resolved_runtime_root,
-            parent_chat_id=parent_chat_id,
-            parent_depth=parent_depth,
-            work_id=work_id,
-            work_dir=work_dir,
-            context_dirs=context_dirs,
-        )
+    @property
+    def parent_chat_id(self) -> str | None:
+        return self.resolved.chat_id.strip() or None
+
+    @property
+    def parent_depth(self) -> int:
+        return self.resolved.depth
+
+    @property
+    def work_id(self) -> str | None:
+        return self.resolved.work_id
+
+    @property
+    def work_dir(self) -> Path | None:
+        if self.resolved.work_id is None:
+            return None
+        return self.resolved.work_dir
+
+    @property
+    def context_dirs(self) -> tuple[tuple[str, Path], ...]:
+        return self.resolved.context_dirs
 
     def child_context(
         self,
@@ -229,16 +214,13 @@ class ChildEnvContext:
         child_spawn_id: str | None = None,
         increment_depth: bool = True,
     ) -> dict[str, str]:
-        ctx = ResolvedContext(
-            spawn_id=SpawnId(self.parent_spawn_id) if self.parent_spawn_id else None,
-            depth=self.parent_depth,
-            project_root=self.project_root,
-            runtime_root=self.runtime_root,
-            chat_id=self.parent_chat_id or "",
-            work_id=self.work_id,
-            work_dir=self.work_dir,
-            context_dirs=self.context_dirs,
-        )
+        work_dir = self.resolved.work_dir
+        if self.resolved.work_id is None and child_spawn_id is not None:
+            work_dir = resolve_ambient_work_dir(self.project_root, child_spawn_id)
+        elif self.resolved.work_id is None:
+            work_dir = None
+
+        ctx = replace(self.resolved, work_dir=work_dir)
         overrides = ctx.child_env_overrides(
             increment_depth=increment_depth,
             child_spawn_id=child_spawn_id,
@@ -303,14 +285,6 @@ class PreparedLaunchSurface:
     @property
     def projected_content(self) -> ProjectedContent | None:
         return self.content.projected_content
-
-    @property
-    def agent_inventory_prompt(self) -> str | None:
-        return self.content.agent_inventory_prompt
-
-    @property
-    def context_prompt(self) -> str | None:
-        return self.content.context_prompt
 
     @property
     def seed_harness_session_id(self) -> str | None:
@@ -699,13 +673,30 @@ def _collect_context_projection_roots(
     """
     effective = config or ContextConfig()
     resolved = resolve_context_paths(project_root, effective)
-    roots: list[Path] = [
-        resolved.work_root,
-        resolved.work_archive,
-        resolved.kb_root,
+    candidates: list[tuple[str, Path]] = [
+        ("work", resolved.work_root),
+        ("work_archive", resolved.work_archive),
+        ("kb", resolved.kb_root),
     ]
-    for path, _source in resolved.extra.values():
-        roots.append(path)
+    candidates.extend((name, path) for name, (path, _source) in resolved.extra.items())
+
+    # Only project context roots that exist on disk. Sandboxed harnesses (codex
+    # bubblewrap) bind-mount every projected root at exec time and abort the whole
+    # namespace if a source path is missing — so a not-yet-created context dir
+    # (commonly `work_archive` before the first archive) would silently break all
+    # command execution in the worker. Skipping the missing root is correct (there
+    # is nothing to mount). Logged at debug, not warning: a missing context dir is
+    # the normal pre-archive state, so it must not pollute stderr on every launch.
+    roots: list[Path] = []
+    for name, path in candidates:
+        if path.exists():
+            roots.append(path)
+        else:
+            logger.debug(
+                "context_projection_root_skipped_missing",
+                context_root=name,
+                path=path.as_posix(),
+            )
 
     return tuple(roots)
 
@@ -862,6 +853,70 @@ def build_child_runtime_env_overrides(
     return runtime_overrides
 
 
+def _resolve_bound_active_work_dir(
+    *,
+    project_root: Path,
+    requested_work_id: str | None,
+    child_spawn_id: str,
+) -> Path | None:
+    """Pure bind-time work-dir: named repo scratch or child ambient spawn dir."""
+
+    return resolve_bound_work_scope(
+        project_root=project_root,
+        requested_work_id=requested_work_id,
+        child_spawn_id=child_spawn_id,
+    ).root
+
+
+def _reproject_context_env_at_bind(
+    *,
+    composed_prompt: str,
+    prompt_payload: PreparedPromptPayload,
+    projected_content: ProjectedContent | None,
+    composed_content: ComposedLaunchContent | None,
+    harness: SubprocessHarness,
+    project_root: Path,
+    bound_work_dir: Path | None,
+    loaded_skills: tuple[SkillContent, ...] = (),
+    primary_prompt_is_synthetic: bool = False,
+) -> tuple[str, PreparedPromptPayload, ProjectedContent | None]:
+    """Re-render the typed context-env block and re-project prompt channels at bind."""
+
+    if composed_content is None or not has_context_env_block(composed_content.guidance_blocks):
+        return composed_prompt, prompt_payload, projected_content
+
+    new_context = build_context_prompt(
+        project_root=project_root,
+        active_work_dir=bound_work_dir,
+    )
+    if new_context is None or not new_context.strip():
+        return composed_prompt, prompt_payload, projected_content
+
+    refreshed_guidance = replace_context_env_block(
+        composed_content.guidance_blocks,
+        new_content=new_context,
+    )
+    refreshed_content = replace(composed_content, guidance_blocks=refreshed_guidance)
+    updated_projected = harness.project_content(refreshed_content)
+    updated_payload = prepare_prompt_payload(
+        adhoc_agent_payload=prompt_payload.adhoc_agent_payload,
+        projected_content=updated_projected,
+    )
+    if harness.capabilities.supports_native_skills and loaded_skills:
+        skill_content = compose_skill_injections(loaded_skills)
+        if skill_content:
+            base = updated_payload.appended_system_prompt or ""
+            merged = f"{base}\n\n{skill_content}" if base else skill_content
+            updated_payload = replace(updated_payload, appended_system_prompt=merged)
+    if primary_prompt_is_synthetic:
+        updated_payload = replace(updated_payload, user_turn_content=None)
+
+    refreshed_prompt = (
+        updated_projected.user_turn_content.strip() or refreshed_content.user_task_prompt
+    )
+    return refreshed_prompt, updated_payload, updated_projected
+
+
 def _resolve_session_continuation(
     *,
     request: SpawnRequest,
@@ -976,30 +1031,62 @@ def compile_prepared_policy_surface(
     )
 
 
-def _resolve_inventory_and_context_prompts(
+
+@dataclass(frozen=True)
+class _SharedComposition:
+    completion_contract: str
+    guidance_blocks: tuple[CompositionBlock, ...]
+
+
+def _build_shared_composition(
     *,
-    project_root: Path,
+    request: SpawnRequest,
+    project_paths: ProjectConfigPaths,
     active_work_dir: Path | None,
-    bundle_inventory_prompt: str | None,
-) -> tuple[str | None, str | None]:
-    """Resolve bundle inventory verbatim; always resolve context from the project root."""
-
+    policy: ResolvedLaunchPolicy,
+) -> _SharedComposition:
     context_prompt = build_context_prompt(
-        project_root=project_root,
+        project_root=project_paths.project_root,
         active_work_dir=active_work_dir,
+    ) or ""
+    spawn_usage_contract = build_spawn_usage_contract(
+        policy.adapter.run_prompt_policy().spawn_usage_contract_variants
     )
-    normalized_inventory = (bundle_inventory_prompt or "").strip()
-    return normalized_inventory or None, context_prompt
+    guidance_blocks = build_guidance_blocks(
+        profile=policy.profile,
+        spawn_usage_contract=spawn_usage_contract,
+        bundle_inventory_prompt=policy.bundle_inventory_prompt,
+        context_prompt=context_prompt,
+    )
+    resolved_work_id = (request.work_id_hint or "").strip()
+    work_goal: str | None = None
+    if resolved_work_id:
+        project_state_dir = resolve_project_paths(project_paths.project_root).root_dir
+        work_item = work_store.get_work_item(project_state_dir, resolved_work_id)
+        if work_item is not None:
+            work_goal = work_item.goal
+    completion_contract = build_goal_instruction(request.goal)
+    work_goal_instruction = build_work_goal_instruction(work_goal)
+    if completion_contract and work_goal_instruction:
+        completion_contract = f"{work_goal_instruction}\n\n{completion_contract}"
+    elif work_goal_instruction:
+        completion_contract = work_goal_instruction
+    return _SharedComposition(
+        completion_contract=completion_contract,
+        guidance_blocks=guidance_blocks,
+    )
 
 
-def _resolve_spawn_prepare_projection(
+def _build_spawn_composed_launch_content(
     *,
     request: SpawnRequest,
     project_paths: ProjectConfigPaths,
     active_work_dir: Path | None,
     policy: ResolvedLaunchPolicy,
     launch_mode: LaunchMode | None = None,
-) -> PreparedLaunchContent:
+) -> tuple[ComposedLaunchContent, tuple[str, ...]]:
+    """Build semantic spawn composition inputs shared by projection and bind refresh."""
+
     profile = policy.profile
     harness = policy.adapter
     resolved_skills = policy.resolved_skills
@@ -1034,53 +1121,56 @@ def _resolve_spawn_prepare_projection(
         )
         agent_profile_body = f"# Agent Profile\n\n{rendered_agent_body}"
 
-    agent_inventory_prompt, context_prompt = _resolve_inventory_and_context_prompts(
-        project_root=project_paths.project_root,
+    shared = _build_shared_composition(
+        request=request,
+        project_paths=project_paths,
         active_work_dir=active_work_dir,
-        bundle_inventory_prompt=policy.bundle_inventory_prompt,
+        policy=policy,
     )
 
-    resolved_work_id = (request.work_id_hint or "").strip() or (
-        active_work_dir.name if active_work_dir is not None else ""
+    composed = ComposedLaunchContent(
+        supplemental_documents=supplemental_documents,
+        available_skills=policy.bundle_available_skills,
+        agent_profile_body=agent_profile_body,
+        report_instruction=build_report_instruction(),
+        guidance_blocks=shared.guidance_blocks,
+        completion_contract=shared.completion_contract,
+        launch_preamble=build_spawn_preamble(launch_mode),
+        passthrough_system_fragments=(),
+        user_task_prompt=cleaned_user_prompt,
+        reference_items=task_ctx.reference_items,
+        prior_output=task_ctx.prior_output,
     )
-    work_goal: str | None = None
-    if resolved_work_id:
-        project_state_dir = resolve_project_paths(project_paths.project_root).root_dir
-        work_item = work_store.get_work_item(project_state_dir, resolved_work_id)
-        if work_item is not None:
-            work_goal = work_item.goal
-    completion_contract = build_goal_instruction(request.goal)
-    work_goal_instruction = build_work_goal_instruction(work_goal)
-    if completion_contract and work_goal_instruction:
-        completion_contract = f"{work_goal_instruction}\n\n{completion_contract}"
-    elif work_goal_instruction:
-        completion_contract = work_goal_instruction
+    return composed, task_ctx.resolved_context_from
 
-    projected = harness.project_content(
-        ComposedLaunchContent(
-            supplemental_documents=supplemental_documents,
-            available_skills=policy.bundle_available_skills,
-            agent_profile_body=agent_profile_body,
-            report_instruction=build_report_instruction(),
-            inventory_prompt=agent_inventory_prompt or "",
-            context_prompt=context_prompt or "",
-            completion_contract=completion_contract,
-            launch_preamble=build_spawn_preamble(launch_mode),
-            passthrough_system_fragments=(),
-            user_task_prompt=cleaned_user_prompt,
-            reference_items=task_ctx.reference_items,
-            prior_output=task_ctx.prior_output,
-        )
+
+def _resolve_spawn_prepare_projection(
+    *,
+    request: SpawnRequest,
+    project_paths: ProjectConfigPaths,
+    active_work_dir: Path | None,
+    policy: ResolvedLaunchPolicy,
+    launch_mode: LaunchMode | None = None,
+) -> PreparedLaunchContent:
+    harness = policy.adapter
+
+    composed, resolved_context_from = _build_spawn_composed_launch_content(
+        request=request,
+        project_paths=project_paths,
+        active_work_dir=active_work_dir,
+        policy=policy,
+        launch_mode=launch_mode,
     )
+
+    projected = harness.project_content(composed)
 
     return PreparedLaunchContent(
-        final_prompt=projected.user_turn_content.strip() or cleaned_user_prompt,
-        resolved_context_from=task_ctx.resolved_context_from,
-        loaded_references=task_ctx.reference_items,
+        final_prompt=projected.user_turn_content.strip() or composed.user_task_prompt,
+        resolved_context_from=resolved_context_from,
+        loaded_references=composed.reference_items,
         prompt_payload=prepare_prompt_payload(projected_content=projected),
         projected_content=projected,
-        agent_inventory_prompt=agent_inventory_prompt,
-        context_prompt=context_prompt,
+        composed_content=composed_content_for_bind_refresh(composed),
     )
 
 
@@ -1097,10 +1187,11 @@ def _resolve_primary_projection(
     resolved_skills = policy.resolved_skills
     session_mode = ((request.session.primary_session_mode or "fresh").strip().lower()) or "fresh"
 
-    agent_inventory_prompt, context_prompt = _resolve_inventory_and_context_prompts(
-        project_root=project_paths.project_root,
+    shared = _build_shared_composition(
+        request=request,
+        project_paths=project_paths,
         active_work_dir=active_work_dir,
-        bundle_inventory_prompt=policy.bundle_inventory_prompt,
+        policy=policy,
     )
 
     seed = harness.seed_session(
@@ -1138,38 +1229,21 @@ def _resolve_primary_projection(
         reference_anchor=project_paths.execution_cwd,
     )
 
-    resolved_work_id = (request.work_id_hint or "").strip() or (
-        active_work_dir.name if active_work_dir is not None else ""
+    composed = ComposedLaunchContent(
+        supplemental_documents=supplemental_documents,
+        available_skills=policy.bundle_available_skills,
+        agent_profile_body=agent_profile_body,
+        report_instruction="",
+        guidance_blocks=shared.guidance_blocks,
+        completion_contract=shared.completion_contract,
+        launch_preamble=build_primary_preamble(),
+        passthrough_system_fragments=passthrough_system_fragments,
+        user_task_prompt=request.prompt,
+        reference_items=task_ctx.reference_items,
+        prior_output=task_ctx.prior_output,
     )
-    work_goal: str | None = None
-    if resolved_work_id:
-        project_state_dir = resolve_project_paths(project_paths.project_root).root_dir
-        work_item = work_store.get_work_item(project_state_dir, resolved_work_id)
-        if work_item is not None:
-            work_goal = work_item.goal
-    completion_contract = build_goal_instruction(request.goal)
-    work_goal_instruction = build_work_goal_instruction(work_goal)
-    if completion_contract and work_goal_instruction:
-        completion_contract = f"{work_goal_instruction}\n\n{completion_contract}"
-    elif work_goal_instruction:
-        completion_contract = work_goal_instruction
 
-    projected = harness.project_content(
-        ComposedLaunchContent(
-            supplemental_documents=supplemental_documents,
-            available_skills=policy.bundle_available_skills,
-            agent_profile_body=agent_profile_body,
-            report_instruction="",
-            inventory_prompt=agent_inventory_prompt or "",
-            context_prompt=context_prompt or "",
-            completion_contract=completion_contract,
-            launch_preamble=build_primary_preamble(),
-            passthrough_system_fragments=passthrough_system_fragments,
-            user_task_prompt=request.prompt,
-            reference_items=task_ctx.reference_items,
-            prior_output=task_ctx.prior_output,
-        )
-    )
+    projected = harness.project_content(composed)
 
     prompt_payload = prepare_prompt_payload(projected_content=projected)
     if request.primary_prompt_is_synthetic:
@@ -1182,8 +1256,7 @@ def _resolve_primary_projection(
             loaded_references=task_ctx.reference_items,
             prompt_payload=prompt_payload,
             projected_content=projected,
-            agent_inventory_prompt=agent_inventory_prompt,
-            context_prompt=context_prompt,
+            composed_content=composed_content_for_bind_refresh(composed),
         ),
         passthrough_args,
         seed.session_id or resolved_continue_harness_session_id,
@@ -1212,6 +1285,24 @@ def _prepare_spawn_surface(
             policy=policy,
             launch_mode=launch_mode,
         )
+    else:
+        composed, resolved_context_from = _build_spawn_composed_launch_content(
+            request=request,
+            project_paths=project_paths,
+            active_work_dir=active_work_dir,
+            policy=policy,
+            launch_mode=launch_mode,
+        )
+        stored_composed = composed_content_for_bind_refresh(composed)
+        if stored_composed is not None:
+            content = PreparedLaunchContent(
+                final_prompt=content.final_prompt,
+                resolved_context_from=resolved_context_from or content.resolved_context_from,
+                loaded_references=composed.reference_items,
+                prompt_payload=content.prompt_payload,
+                projected_content=content.projected_content,
+                composed_content=stored_composed,
+            )
 
     prompt_policy = policy.adapter.run_prompt_policy()
     if prompt_policy.skill_injection_mode == "append-system-prompt":
@@ -1244,8 +1335,7 @@ def _prepare_spawn_surface(
                     user_turn_content=content.prompt_payload.user_turn_content,
                 ),
                 projected_content=content.projected_content,
-                agent_inventory_prompt=content.agent_inventory_prompt,
-                context_prompt=content.context_prompt,
+                composed_content=content.composed_content,
             )
 
     return (
@@ -1402,8 +1492,7 @@ def prepare_launch_surface(
             user_turn_content=content.prompt_payload.user_turn_content,
         ),
         projected_content=content.projected_content,
-        agent_inventory_prompt=content.agent_inventory_prompt,
-        context_prompt=content.context_prompt,
+        composed_content=content.composed_content,
     )
     profile_tools_for_nested_deny = (
         policies.resolved_tools if (profile is not None or using_policy_snapshot) else None
@@ -1453,7 +1542,8 @@ def prepare_launch_surface(
                 resolved_request,
                 model_selection=model_selection,
                 loaded_skills=resolved_skills.loaded_skills,
-                bundle_inventory_prompt=content.agent_inventory_prompt,
+                bundle_inventory_prompt=policies.bundle_inventory_prompt,
+                profile=profile,
             )
         }
     )
@@ -1769,9 +1859,31 @@ def bind_launch_context(
         if harness.id == HarnessId.PI
         else None
     )
+    requested_work_id = normalize_explicit_work_id(
+        request_work_id_hint=resolved_request.work_id_hint,
+        runtime_work_id=bindings.runtime_work_id,
+    )
+    bound_active_work_dir = _resolve_bound_active_work_dir(
+        project_root=project_paths.project_root,
+        requested_work_id=requested_work_id,
+        child_spawn_id=bindings.spawn_id,
+    )
+    policy_snapshot = resolved_request.launch_policy_snapshot
+    loaded_skills = policy_snapshot.loaded_skills if policy_snapshot is not None else ()
+    refreshed_prompt, prompt_payload, projected_content = _reproject_context_env_at_bind(
+        composed_prompt=resolved_request.prompt,
+        prompt_payload=prompt_payload,
+        projected_content=projected_content,
+        composed_content=prepared.content.composed_content,
+        harness=harness,
+        project_root=project_paths.project_root,
+        bound_work_dir=bound_active_work_dir,
+        loaded_skills=loaded_skills,
+        primary_prompt_is_synthetic=resolved_request.primary_prompt_is_synthetic,
+    )
     materialized = materialize_launch_artifacts(
         harness=harness,
-        prompt=resolved_request.prompt,
+        prompt=refreshed_prompt,
         model=effective_model,
         effort=resolved_request.execution_policy.effort,
         skills=resolved_request.skills,
@@ -1815,11 +1927,6 @@ def bind_launch_context(
             projected_spec=spec,
         )
 
-    is_primary_launch = runtime.composition_surface == LaunchCompositionSurface.PRIMARY
-    requested_work_id = normalize_explicit_work_id(
-        request_work_id_hint=resolved_request.work_id_hint,
-        runtime_work_id=bindings.runtime_work_id,
-    )
     child_context_env = build_child_runtime_env_overrides(
         project_paths=project_paths,
         runtime_root=runtime_root,
