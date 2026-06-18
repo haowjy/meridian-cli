@@ -299,25 +299,25 @@ _COMMAND_DESCRIPTORS: tuple[CommandDescriptor, ...] = (
     _write_runtime(
         ("spawn", "continue"),
         "Continue a spawn.",
-        default_output_mode="json",
+        default_output_mode="text",
         extension_ref="meridian.spawn.continue",
     ),
     _read_runtime(
         ("spawn", "list"),
         "List spawns.",
-        default_output_mode="json",
+        default_output_mode="text",
         extension_ref="meridian.spawn.list",
     ),
     _read_runtime(
         ("spawn", "show"),
         "Show spawn details.",
-        default_output_mode="json",
+        default_output_mode="text",
         extension_ref="meridian.spawn.show",
     ),
     _read_runtime(
         ("spawn", "status"),
         "Show spawn status details without report body by default.",
-        default_output_mode="json",
+        default_output_mode="text",
         extension_ref="meridian.spawn.status",
     ),
     _read_runtime(
@@ -329,22 +329,22 @@ _COMMAND_DESCRIPTORS: tuple[CommandDescriptor, ...] = (
     _write_runtime(
         ("spawn", "cancel"),
         "Cancel a spawn.",
-        default_output_mode="json",
+        default_output_mode="text",
         extension_ref="meridian.spawn.cancel",
     ),
     _write_runtime(
         ("spawn", "cancel-all"),
         "Cancel all spawns.",
-        default_output_mode="json",
+        default_output_mode="text",
         extension_ref="meridian.spawn.cancelAll",
     ),
     _write_runtime(
-        ("spawn", "inject"), "Inject a message into a spawn.", default_output_mode="json"
+        ("spawn", "inject"), "Inject a message into a spawn.", default_output_mode="text"
     ),
     _read_runtime(
         ("spawn", "children"),
         "List child spawns.",
-        default_output_mode="json",
+        default_output_mode="text",
         extension_ref="meridian.spawn.children",
     ),
     _read_runtime(
