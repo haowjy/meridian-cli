@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.3.10] - 2026-06-18
+
 ### Added
 - `meridian work path <relpath>` materializes paths under the active work scope (ambient or named); `prompts/` and `handoffs/` bucket constants drive switch-warning artifact counts. Now listed in agent-mode `work -h`.
 - Agent-mode `meridian spawn -h` now carries the full `meridian-spawn` skill methodology, so the skill can be retired; always-on contract gained the drain invariant; leaf help gained boundaries on `spawn inject`/`spawn files`/`--prompt-var`.
