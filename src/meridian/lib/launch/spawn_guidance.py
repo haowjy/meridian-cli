@@ -31,6 +31,9 @@ def build_spawn_usage_contract(variants: SpawnUsageContractVariants) -> str:
 
 {variants.intro_line}
 
+- Do NOT use the Agent() tool for work that a meridian agent can do.
+  Use `meridian spawn -a <agent>` instead — it routes to the right
+  model and harness, tracks the work, and produces inspectable artifacts.
 - Launch with --bg; it returns a spawn id without waiting for the work and
   runs the worker detached:
       meridian spawn -a <agent> --prompt-file <prompt>.md --bg

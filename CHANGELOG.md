@@ -4,6 +4,17 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Removed
+- `meridian chat` feature — entire chat backend, CLI command, frontend, and tests deleted.
+
+### Added
+- `--from` context refs now include `task_cwd` so receiving sessions know the prior spawn's working directory.
+- `-a @explorer` syntax: leading `@` is stripped from agent names for convenience.
+- Spawn contract warns agents not to use `Agent()` tool when meridian agents are available.
+
+### Changed
+- Bumped mars-agents from 0.8.8 to 0.8.9 (`list` subcommand for `mars agents` and `mars skills`).
+
 ## [0.3.10] - 2026-06-18
 
 ### Added

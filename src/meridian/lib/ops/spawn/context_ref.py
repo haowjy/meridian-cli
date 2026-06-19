@@ -39,6 +39,7 @@ class SpawnContextRef(BaseModel):
     harness_session_id: str | None = None
     chat_id: str | None = None
     work_id: str | None = None
+    task_cwd: str | None = None
 
 
 class SessionContextRef(BaseModel):
@@ -55,6 +56,7 @@ class SessionContextRef(BaseModel):
     harness: str
     harness_session_id: str | None = None
     work_id: str | None = None
+    task_cwd: str | None = None
 
 
 type ContextRef = SpawnContextRef | SessionContextRef
@@ -131,6 +133,7 @@ def _spawn_context_ref(row: SpawnRecord, project_root: Path) -> SpawnContextRef:
         harness_session_id=row.harness_session_id,
         chat_id=row.chat_id,
         work_id=(row.work_id or "").strip() or None,
+        task_cwd=(row.task_cwd or "").strip() or None,
     )
 
 
@@ -151,6 +154,7 @@ def _session_context_ref(primary_row: SpawnRecord, project_root: Path) -> Sessio
         harness=primary_row.harness or "",
         harness_session_id=primary_row.harness_session_id,
         work_id=work_id,
+        task_cwd=(primary_row.task_cwd or "").strip() or None,
     )
 
 
@@ -186,11 +190,15 @@ def _render_context_ref(ref: ContextRef) -> str:
             f"# Prior session: {ref.chat_id}",
             f"**Primary spawn:** {ref.primary_spawn_id} | "
             f"**Status:** {status} | **Agent:** {agent}",
+        ]
+        if ref.task_cwd:
+            lines.append(f"**Task directory:** `{ref.task_cwd}`")
+        lines.extend([
             "",
             "## Explore Further",
             f"- Session transcript: `meridian session log {transcript_ref}`",
             f"- Primary spawn: `meridian spawn show {ref.primary_spawn_id}`",
-        ]
+        ])
         if ref.harness_session_id and ref.harness_session_id.strip():
             lines.insert(
                 3,
@@ -205,9 +213,13 @@ def _render_context_ref(ref: ContextRef) -> str:
         f'<prior-spawn-context spawn="{ref.spawn_id}">',
         f"# Prior spawn: {ref.spawn_id}",
         f"**Status:** {status} | **Agent:** {agent} | **Desc:** {desc}",
+    ]
+    if ref.task_cwd:
+        lines.append(f"**Task directory:** `{ref.task_cwd}`")
+    lines.extend([
         "",
         "## Report",
-    ]
+    ])
     if ref.report_text and ref.report_text.strip():
         lines.append(ref.report_text.strip())
     else:

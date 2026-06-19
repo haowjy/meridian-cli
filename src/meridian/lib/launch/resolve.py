@@ -87,7 +87,7 @@ def resolve_agent_launch_input(raw_agent: str | None) -> AgentLaunchInput:
 
     if raw_agent is None:
         return AgentLaunchInput()
-    stripped = raw_agent.strip()
+    stripped = raw_agent.strip().lstrip("@")
     if not stripped:
         return AgentLaunchInput(agent_opt_out=True)
     return AgentLaunchInput(agent=stripped)
