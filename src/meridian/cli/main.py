@@ -771,7 +771,6 @@ def _register_commands_for_invocation(argv: Sequence[str]) -> None:
             "bootstrap": _register_bootstrap,
             "misc": _register_misc,
             "sync": _register_sync,
-
             "kg": _register_kg,
             "mermaid": _register_mermaid,
             "qi": _register_qi,
