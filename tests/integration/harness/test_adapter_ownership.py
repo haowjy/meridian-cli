@@ -9,17 +9,12 @@ from uuid import uuid4
 import pytest
 
 from meridian.lib.core.types import SpawnId
-from meridian.lib.harness.claude import (
-    ClaudeAdapter,
-    _candidate_claude_project_dirs,
-    project_slug,
-    reconcile_tui_trampoline_session_id,
-)
+from meridian.lib.harness.claude import ClaudeAdapter
+from meridian.lib.harness.claude_sessions import candidate_claude_project_dirs, project_slug
 from meridian.lib.harness.codex import CodexAdapter
 from meridian.lib.harness.opencode import OpenCodeAdapter
 from meridian.lib.harness.session_detection import infer_harness_from_untracked_session_ref
 from meridian.lib.launch.request import SessionRequest
-from meridian.lib.state.artifact_store import InMemoryStore
 
 
 @pytest.fixture(autouse=True)
@@ -129,7 +124,7 @@ def test_candidate_dirs_returns_exact_slug_only(
     exact_dir.mkdir(parents=True)
     prefixed_child_dir.mkdir(parents=True)
 
-    assert _candidate_claude_project_dirs(project_root) == [exact_dir]
+    assert candidate_claude_project_dirs(project_root) == [exact_dir]
 
 
 def test_claude_adapter_does_not_resolve_session_from_prefixed_child_project_slug(
@@ -252,238 +247,6 @@ def test_claude_adapter_uses_claude_config_dir_override(
         is False
     )
     assert infer_harness_from_untracked_session_ref(project_root, override_session_id) == "claude"
-
-
-def test_claude_reconciliation_keeps_recorded_id_when_transcript_exists(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    project_root = tmp_path / "repo"
-    project_root.mkdir()
-    fake_home = tmp_path / "home"
-    monkeypatch.setenv("HOME", fake_home.as_posix())
-
-    recorded_session_id = str(uuid4())
-    real_session_id = str(uuid4())
-    project_dir = fake_home / ".claude" / "projects" / project_slug(project_root)
-    project_dir.mkdir(parents=True)
-    (project_dir / f"{recorded_session_id}.jsonl").write_text(
-        json.dumps({"type": "agent-setting", "sessionId": recorded_session_id}) + "\n",
-        encoding="utf-8",
-    )
-    (fake_home / ".claude" / "history.jsonl").write_text(
-        "\n".join(
-            (
-                json.dumps(
-                    {
-                        "display": "/tui fullscreen",
-                        "project": project_root.as_posix(),
-                        "sessionId": recorded_session_id,
-                        "timestamp": 1781827479996,
-                    }
-                ),
-                json.dumps(
-                    {
-                        "display": "real prompt",
-                        "project": project_root.as_posix(),
-                        "sessionId": real_session_id,
-                        "timestamp": 1781827539538,
-                    }
-                ),
-            )
-        )
-        + "\n",
-        encoding="utf-8",
-    )
-
-    assert (
-        reconcile_tui_trampoline_session_id(
-            project_root=project_root,
-            recorded_session_id=recorded_session_id,
-            started_at_epoch=None,
-        )
-        == recorded_session_id
-    )
-
-
-def test_claude_reconciliation_replaces_tui_trampoline_with_successor_transcript(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    project_root = tmp_path / "repo"
-    project_root.mkdir()
-    fake_home = tmp_path / "home"
-    monkeypatch.setenv("HOME", fake_home.as_posix())
-
-    recorded_session_id = str(uuid4())
-    real_session_id = str(uuid4())
-    project_dir = fake_home / ".claude" / "projects" / project_slug(project_root)
-    project_dir.mkdir(parents=True)
-    real_transcript = project_dir / f"{real_session_id}.jsonl"
-    real_transcript.write_text(
-        "\n".join(
-            (
-                json.dumps({"type": "agent-setting", "sessionId": real_session_id}),
-                json.dumps(
-                    {
-                        "type": "user",
-                        "message": {"role": "user", "content": "real prompt"},
-                        "timestamp": 1781827539538,
-                        "sessionId": real_session_id,
-                    }
-                ),
-            )
-        )
-        + "\n",
-        encoding="utf-8",
-    )
-    now = time.time()
-    os.utime(real_transcript, (now, now))
-    (fake_home / ".claude" / "history.jsonl").write_text(
-        "\n".join(
-            (
-                json.dumps(
-                    {
-                        "display": "/tui fullscreen",
-                        "project": project_root.as_posix(),
-                        "sessionId": recorded_session_id,
-                        "timestamp": 1781827479996,
-                    }
-                ),
-                json.dumps(
-                    {
-                        "display": "real prompt",
-                        "project": project_root.as_posix(),
-                        "sessionId": real_session_id,
-                        "timestamp": 1781827539538,
-                    }
-                ),
-            )
-        )
-        + "\n",
-        encoding="utf-8",
-    )
-
-    adapter = ClaudeAdapter()
-    assert (
-        adapter.observe_session_id(
-            artifacts=InMemoryStore(),
-            current_session_id=recorded_session_id,
-            project_root=project_root,
-            started_at_epoch=now - 1,
-        )
-        == real_session_id
-    )
-
-
-def test_claude_reconciliation_preserves_recorded_id_without_trampoline_evidence(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    project_root = tmp_path / "repo"
-    project_root.mkdir()
-    fake_home = tmp_path / "home"
-    monkeypatch.setenv("HOME", fake_home.as_posix())
-
-    recorded_session_id = str(uuid4())
-    real_session_id = str(uuid4())
-    project_dir = fake_home / ".claude" / "projects" / project_slug(project_root)
-    project_dir.mkdir(parents=True)
-    (project_dir / f"{real_session_id}.jsonl").write_text(
-        json.dumps({"type": "agent-setting", "sessionId": real_session_id}) + "\n",
-        encoding="utf-8",
-    )
-    (fake_home / ".claude" / "history.jsonl").write_text(
-        json.dumps(
-            {
-                "display": "unrelated prompt",
-                "project": project_root.as_posix(),
-                "sessionId": real_session_id,
-                "timestamp": 1781827539538,
-            }
-        )
-        + "\n",
-        encoding="utf-8",
-    )
-
-    assert (
-        ClaudeAdapter().observe_session_id(
-            artifacts=InMemoryStore(),
-            current_session_id=recorded_session_id,
-            project_root=project_root,
-            started_at_epoch=None,
-        )
-        == recorded_session_id
-    )
-
-
-def test_claude_reconciliation_preserves_recorded_id_for_existing_same_project_session(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    project_root = tmp_path / "repo"
-    project_root.mkdir()
-    fake_home = tmp_path / "home"
-    monkeypatch.setenv("HOME", fake_home.as_posix())
-
-    recorded_session_id = str(uuid4())
-    unrelated_session_id = str(uuid4())
-    project_dir = fake_home / ".claude" / "projects" / project_slug(project_root)
-    project_dir.mkdir(parents=True)
-    unrelated_transcript = project_dir / f"{unrelated_session_id}.jsonl"
-    unrelated_transcript.write_text(
-        "\n".join(
-            (
-                json.dumps({"type": "agent-setting", "sessionId": unrelated_session_id}),
-                json.dumps(
-                    {
-                        "type": "user",
-                        "message": {"role": "user", "content": "same prompt"},
-                        "timestamp": 1781827469538,
-                        "sessionId": unrelated_session_id,
-                    }
-                ),
-            )
-        )
-        + "\n",
-        encoding="utf-8",
-    )
-    now = time.time()
-    os.utime(unrelated_transcript, (now, now))
-    (fake_home / ".claude" / "history.jsonl").write_text(
-        "\n".join(
-            (
-                json.dumps(
-                    {
-                        "display": "/tui fullscreen",
-                        "project": project_root.as_posix(),
-                        "sessionId": recorded_session_id,
-                        "timestamp": 1781827479996,
-                    }
-                ),
-                json.dumps(
-                    {
-                        "display": "same prompt",
-                        "project": project_root.as_posix(),
-                        "sessionId": unrelated_session_id,
-                        "timestamp": 1781827539538,
-                    }
-                ),
-            )
-        )
-        + "\n",
-        encoding="utf-8",
-    )
-
-    assert (
-        ClaudeAdapter().observe_session_id(
-            artifacts=InMemoryStore(),
-            current_session_id=recorded_session_id,
-            project_root=project_root,
-            started_at_epoch=now - 1,
-        )
-        == recorded_session_id
-    )
 
 
 @pytest.mark.parametrize(

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import os
-import re
 import shutil
 from collections.abc import Mapping
 from pathlib import Path
@@ -12,6 +11,7 @@ from typing import cast
 
 import structlog
 
+from meridian.lib.harness.claude_sessions import project_slug
 from meridian.lib.launch.launch_types import PreflightResult
 from meridian.lib.launch.text_utils import dedupe_nonempty
 from meridian.lib.platform import IS_WINDOWS, get_home_path
@@ -35,12 +35,6 @@ def _claude_config_root() -> Path:
     if configured:
         return Path(configured).expanduser().resolve()
     return _default_canonical_claude_config_root()
-
-
-def project_slug(project_root: Path) -> str:
-    """Map a repo path to Claude's on-disk project slug format."""
-
-    return re.sub(r"[^a-zA-Z0-9]", "-", str(project_root.resolve()))
 
 
 def _dedupe_roots(*roots: Path | None) -> tuple[Path, ...]:

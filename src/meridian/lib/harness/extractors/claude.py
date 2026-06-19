@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import re
 from collections.abc import Mapping
 from pathlib import Path
 from typing import cast
@@ -11,6 +10,7 @@ from typing import cast
 from meridian.lib.core.domain import TokenUsage
 from meridian.lib.core.types import SpawnId
 from meridian.lib.harness.adapter import ArtifactStore
+from meridian.lib.harness.claude_sessions import project_slug
 from meridian.lib.harness.claude_utils import extract_session_id_from_args
 from meridian.lib.harness.common import (
     OUTPUT_FILENAME,
@@ -27,10 +27,6 @@ from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from .base import HarnessExtractor, session_from_mapping_with_keys
 
 
-def _project_slug(path: Path) -> str:
-    return re.sub(r"[^a-zA-Z0-9]", "-", str(path.resolve()))
-
-
 def _detect_primary_session_id(  # pyright: ignore[reportUnusedFunction]
     *,
     child_cwd: Path,
@@ -39,7 +35,7 @@ def _detect_primary_session_id(  # pyright: ignore[reportUnusedFunction]
     home = launch_env.get("HOME", "").strip()
     home_path = Path(home).expanduser() if home else Path.home()
     projects_root = home_path / ".claude" / "projects"
-    project_dir = projects_root / _project_slug(child_cwd)
+    project_dir = projects_root / project_slug(child_cwd)
     if not project_dir.is_dir():
         return None
 
