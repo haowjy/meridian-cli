@@ -33,7 +33,7 @@ read back. Process exit signals completion. Used for non-streaming spawns.
 
 **Connection path** (`lib/harness/connections/`): starts a long-lived process then
 connects bidirectionally. Events flow through the `SpawnManager` drain loop. Used
-for streaming app server and `meridian chat`.
+for streaming app server.
 
 Per-harness mapping:
 - Claude subprocess: `claude -p --output-format stream-json --verbose -`

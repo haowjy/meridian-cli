@@ -61,7 +61,7 @@ config entry. If adding a feature requires editing 10 files, the abstraction is 
 | `lib/context/` | Context resolution (KB, strategy, work directories) |
 | `lib/hooks/` | Hook dispatch, config layering, built-in hooks |
 | `lib/extensions/` | Extension command registry |
-| `lib/chat/` | Chat session management |
+
 | `lib/observability/` | Spawn-scoped JSONL tracing |
 | `lib/mermaid/` | Mermaid diagram validation |
 | `lib/kg/` | Markdown link checking |

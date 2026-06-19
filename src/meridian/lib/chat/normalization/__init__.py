@@ -1,1 +1,0 @@
-"""Chat event normalization package."""

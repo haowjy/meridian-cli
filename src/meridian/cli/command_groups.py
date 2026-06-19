@@ -141,10 +141,6 @@ _GROUP_HELP: dict[str, GroupHelp] = {
         summary='Initialize meridian in a project.',
         long_help='Initialize meridian in a project.',
     ),
-    "chat": GroupHelp(
-        summary='Start interactive chat service.',
-        long_help='Start interactive chat service.',
-    ),
     "bootstrap": GroupHelp(
         summary='Bootstrap an agent runtime.',
         long_help='Bootstrap an agent runtime.',
@@ -282,11 +278,6 @@ COMMAND_GROUP_SPECS: dict[str, CommandGroupSpec] = {
     "init": CommandGroupSpec(
         help=_GROUP_HELP["init"],
         human_root_order=16,
-    ),
-    "chat": CommandGroupSpec(
-        help=_GROUP_HELP["chat"],
-        human_root_order=17,
-        registration_bucket='chat',
     ),
     "bootstrap": CommandGroupSpec(
         help=_GROUP_HELP["bootstrap"],

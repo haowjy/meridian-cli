@@ -1,1 +1,0 @@
-"""Headless chat backend substrate."""

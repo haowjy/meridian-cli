@@ -80,9 +80,8 @@ a sensible fallback.
 **`SystemExit` is a `BaseException`, not `Exception`.** Code that wraps calls to
 this function in `except Exception` will silently swallow the exit. Use
 `except BaseException` (or let it propagate) in any wrapper that must not eat it.
-`_check_stale_assets()` in `chat_cmd.py` was fixed from `except Exception` to
-`except BaseException` exactly because the chat server called this guard in a
-non-project directory and the swallowed `SystemExit` caused a confusing crash.
+`SystemExit` propagation matters whenever a guard is called from a context
+that wraps in `except Exception` — the swallowed exit causes confusing crashes.
 
 ## `to_cli_output()` Dispatch
 

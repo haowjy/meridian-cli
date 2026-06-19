@@ -732,11 +732,6 @@ def _register_commands_for_invocation(argv: Sequence[str]) -> None:
 
             register_sync_commands(app, emit)
 
-        def _register_chat() -> None:
-            from meridian.cli.chat_cmd import register_chat_command
-
-            register_chat_command(app)
-
         def _register_kg() -> None:
             import meridian.cli.kg_cmd as _kg_cmd
 
@@ -776,7 +771,7 @@ def _register_commands_for_invocation(argv: Sequence[str]) -> None:
             "bootstrap": _register_bootstrap,
             "misc": _register_misc,
             "sync": _register_sync,
-            "chat": _register_chat,
+
             "kg": _register_kg,
             "mermaid": _register_mermaid,
             "qi": _register_qi,

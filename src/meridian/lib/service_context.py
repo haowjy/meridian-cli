@@ -39,7 +39,7 @@ class ApplicationEntryPoint:
 
 
 SpawnEntryPoint = ApplicationEntryPoint
-ChatEntryPoint = ApplicationEntryPoint
+
 ExtensionEntryPoint = ApplicationEntryPoint
 
 
@@ -47,7 +47,7 @@ __all__ = [
     "ApplicationContext",
     "ApplicationEntryPoint",
     "ApplicationServices",
-    "ChatEntryPoint",
+
     "ExtensionEntryPoint",
     "SpawnEntryPoint",
 ]

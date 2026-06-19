@@ -49,9 +49,9 @@ RuntimeWriteContext(RuntimeReadContext)
 
 ## `ApplicationContext` and Entrypoints
 
-`build_spawn_entrypoint()`, `build_chat_entrypoint()`, `build_extension_entrypoint()`
+`build_spawn_entrypoint()`, `build_extension_entrypoint()`
 convert prepared contexts into typed entrypoint carriers. These carriers
-(`SpawnEntryPoint`, `ChatEntryPoint`, `ExtensionEntryPoint`) carry
+(`SpawnEntryPoint`, `ExtensionEntryPoint`) carry
 `ApplicationContext + ApplicationServices` downstream without exposing
 bootstrap internals to command handlers.
 
