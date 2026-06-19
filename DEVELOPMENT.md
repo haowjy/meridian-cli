@@ -234,8 +234,8 @@ Commit shared repo-layout conventions in `meridian.toml` with `[workspace.NAME]`
 If your repos are not at the paths in `meridian.toml`, create `[workspace]` overrides in `meridian.local.toml`:
 
 ```toml
-[workspace.frontend]
-path = "/home/you/src/meridian-web"
+[workspace.prompts]
+path = "/home/you/src/prompts/meridian-base"
 ```
 
 Missing committed paths are silently skipped so partial checkouts work. Missing local override paths produce `workspace_local_missing_root` because they usually indicate a typo or stale local config. There is no `enabled` field and no subtractive override for disabling an existing committed entry; that limitation is intentional and can be extended later if needed.

@@ -61,7 +61,6 @@ Prefer smoke tests over unit tests. See `tests/AGENTS.md`.
 
 Read the target repo's AGENTS.md before operating on it.
 
-- `../meridian-web` — agent frontend
 - `../prompts/meridian-base`, `../prompts/meridian-dev-workflow` — prompt packages
 - `../mars-agents` — package manager (Rust)
 

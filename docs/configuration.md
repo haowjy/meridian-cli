@@ -381,15 +381,15 @@ Declare one named table per root:
 
 ```toml
 # meridian.toml — committed convention
-[workspace.frontend]
-path = "../meridian-web"
-
 [workspace.prompts]
 path = "../prompts/meridian-base"
 
+[workspace.mars]
+path = "../mars-agents"
+
 # meridian.local.toml — machine-specific override or addition
-[workspace.frontend]
-path = "/home/user/src/meridian-web"
+[workspace.prompts]
+path = "/home/user/src/prompts/meridian-base"
 
 [workspace.local-data]
 path = "/data/large-dataset"
