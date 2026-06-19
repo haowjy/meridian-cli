@@ -15,6 +15,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Changed
 - Bumped mars-agents from 0.8.8 to 0.8.9 (`list` subcommand for `mars agents` and `mars skills`).
 
+### Fixed
+- Claude primary finalization now repairs TUI trampoline session IDs to the durable transcript ID when prompt history proves the successor.
+
 ## [0.3.10] - 2026-06-18
 
 ### Added
