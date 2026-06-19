@@ -163,6 +163,7 @@ def test_gate_present_returns_inventory_and_contract_blocks(tmp_path: Path) -> N
     assert "run_in_background" in contract.content
     assert names == [
         "inventory",
+        "spawn-prompting",
         "spawn-contract",
         "work-discovery",
         "session-discovery",

@@ -10,6 +10,15 @@ from meridian.lib.launch.composition import (
     GuidancePhase,
 )
 
+_SPAWN_PROMPTING = """\
+# Prompting subagents
+
+Every spawn starts with fresh context — scope the handoff to what the \
+subagent needs, not what you've been thinking about. Front-load the task; \
+the subagent should know its job by line 3.
+
+For model-specific prompting guidance:  meridian mars models prompting <model>"""
+
 _WORK_DISCOVERY = """\
 # Work coordination (meridian)
 
@@ -73,6 +82,9 @@ def build_guidance_blocks(
         inventory = (bundle_inventory_prompt or "").strip()
         if inventory:
             blocks.append(CompositionBlock("inventory", GuidancePhase.GUIDANCE, 0, inventory))
+        blocks.append(
+            CompositionBlock("spawn-prompting", GuidancePhase.GUIDANCE, 5, _SPAWN_PROMPTING)
+        )
         blocks.append(
             CompositionBlock(
                 "spawn-contract",
