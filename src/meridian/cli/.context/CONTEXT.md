@@ -26,8 +26,7 @@ never queries the extension registry for routing answers.
 | `WRITE_RUNTIME` | `spawn create`, `work start` | runtime-write | segment |
 | `PRIMARY_LAUNCH` | bare `meridian` | runtime-write | segment |
 | `SERVICE_ROOTLESS` | `serve` | none | stderr |
-| `SERVICE_RUNTIME` | `chat` | runtime-write | segment |
-| `CLIENT_READ` | `chat ls`, `chat show` | runtime-read | none |
+| `SERVICE_RUNTIME` | `streaming serve` | runtime-write | segment |
 
 Read-only classes install no telemetry, spawn no writer thread, create no
 UUID, and make no filesystem mutations.

@@ -22,7 +22,7 @@ Pick based on the `StartupClass` of the command (from `cli/startup/policy.py`):
 |---|---|
 | `TRIVIAL` | None |
 | `READ_PROJECT` | `prepare_for_project_read()` |
-| `READ_RUNTIME`, `CLIENT_READ` | `prepare_for_runtime_read()` |
+| `READ_RUNTIME` | `prepare_for_runtime_read()` |
 | `WRITE_PROJECT` | `prepare_for_project_write()` |
 | `WRITE_RUNTIME`, `PRIMARY_LAUNCH`, `SERVICE_RUNTIME` | `prepare_for_runtime_write()` |
 | `SERVICE_ROOTLESS` | None (or minimal manual setup) |

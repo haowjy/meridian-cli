@@ -67,7 +67,6 @@ _TOP_LEVEL_BOOL_FLAGS = frozenset(
     }
 )
 HARNESS_SHORTCUT_NAMES = frozenset({"claude", "codex", "cursor", "opencode", "pi"})
-_CHAT_MANAGEMENT_SUBCOMMANDS = frozenset({"ls", "show", "log", "close"})
 
 
 @dataclass(frozen=True)
@@ -129,12 +128,6 @@ def split_passthrough_args(argv: Sequence[str]) -> tuple[list[str], tuple[str, .
     return list(argv[:sep_idx]), tuple(argv[sep_idx + 1 :])
 
 
-def _is_chat_management_invocation(argv: Sequence[str]) -> bool:
-    if len(argv) < 2:
-        return False
-    return argv[0] == "chat" and argv[1] in _CHAT_MANAGEMENT_SUBCOMMANDS
-
-
 def extract_global_options(
     argv: Sequence[str],
     *,
@@ -149,7 +142,6 @@ def extract_global_options(
     no_input = False
     output_explicit = False
     forced_render_mode: RenderMode | None = None
-    harness_source: str | None = None
     cleaned: list[str] = []
 
     index = 0
@@ -221,7 +213,6 @@ def extract_global_options(
                     f"Conflicting harness selections: '{harness}' and '{requested_harness}'."
                 )
             harness = requested_harness
-            harness_source = "--harness"
             index += 2
             continue
         if arg.startswith("--harness="):
@@ -233,7 +224,6 @@ def extract_global_options(
                     f"Conflicting harness selections: '{harness}' and '{requested_harness}'."
                 )
             harness = requested_harness
-            harness_source = "--harness"
             index += 1
             continue
         if arg == "--yes":
@@ -282,14 +272,7 @@ def extract_global_options(
                     f"Conflicting harness selections: '{harness}' and '{shortcut_value}'."
                 )
             harness = shortcut_value
-            harness_source = shortcut_value
             del cleaned[shortcut_index]
-
-    if harness is not None and _is_chat_management_invocation(cleaned):
-        if harness_source == "--harness":
-            raise SystemExit('Unknown option: "--harness"')
-        if harness_source in HARNESS_SHORTCUT_NAMES:
-            raise SystemExit(f'Unknown option: "{harness_source}"')
 
     return cleaned, ParsedGlobalOptions(
         output_format=normalize_output_format(output_format, json_mode),

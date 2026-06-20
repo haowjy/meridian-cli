@@ -17,6 +17,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 - Claude primary finalization now repairs TUI trampoline session IDs to the durable transcript ID when prompt history proves the successor.
+- Deleted chat command invocations now fail through normal unknown-command routing instead of stale startup metadata.
 
 ## [0.3.10] - 2026-06-18
 

@@ -462,10 +462,10 @@ workspace.applicability.opencode = active
 Pass `--verbose` or `--json` to get per-root detail:
 
 ```text
-workspace.roots[0].name = frontend
+workspace.roots[0].name = mars-agents
 workspace.roots[0].source = merged
-workspace.roots[0].declared_path = ../meridian-web
-workspace.roots[0].resolved_path = /home/user/repos/meridian-web
+workspace.roots[0].declared_path = ../mars-agents
+workspace.roots[0].resolved_path = /home/user/repos/mars-agents
 workspace.roots[0].status = projected
 
 workspace.roots[1].name = prompts
@@ -663,7 +663,7 @@ The following features are not yet supported for the Cursor harness:
 | `MERIDIAN_ACTIVE_WORK_ID` | Active attached work item slug, when one exists |
 | `MERIDIAN_ACTIVE_WORK_DIR` | Active scope directory: named work item scratch dir when attached, else the run's ambient spawn scope (`spawns/p<N>/work`) |
 | `MERIDIAN_SPAWN_ID` | Current run/spawn ID for primary and delegated execution |
-| `MERIDIAN_CHAT_ID` | Top-level chat/session id inherited across the spawn tree |
+| `MERIDIAN_CHAT_ID` | Top-level session id inherited across the spawn tree |
 | `MERIDIAN_DEPTH` | Zero-based delegation depth (`0` = primary/root, `1` = first delegated spawn) |
 | `MERIDIAN_MAX_DEPTH` | Max zero-based delegated spawn depth override |
 | `MERIDIAN_PARENT_SPAWN_ID` | Immediate parent spawn ID for nested execution |

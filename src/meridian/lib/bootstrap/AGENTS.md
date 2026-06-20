@@ -9,7 +9,7 @@ Four entry points, one per invocation class tier. Pick based on what the command
 | Startup class | Call |
 |---|---|
 | `READ_PROJECT` | `prepare_for_project_read()` |
-| `READ_RUNTIME`, `CLIENT_READ` | `prepare_for_runtime_read()` |
+| `READ_RUNTIME` | `prepare_for_runtime_read()` |
 | `WRITE_PROJECT` | `prepare_for_project_write()` |
 | `WRITE_RUNTIME`, `PRIMARY_LAUNCH`, `SERVICE_RUNTIME` | `prepare_for_runtime_write()` |
 

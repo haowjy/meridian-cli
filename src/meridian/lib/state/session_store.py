@@ -687,7 +687,7 @@ def get_session_active_work_id(runtime_root: Path, chat_id: str) -> str | None:
 
 
 def get_session_harness_id(runtime_root: Path, chat_id: str) -> str | None:
-    """Return harness session ID for a meridian chat/session ID."""
+    """Return harness session ID for a Meridian session ID."""
 
     record = _records_by_session(runtime_root).get(chat_id)
     if record is None:
@@ -696,7 +696,7 @@ def get_session_harness_id(runtime_root: Path, chat_id: str) -> str | None:
 
 
 def get_session_harness_ids(runtime_root: Path, chat_id: str) -> tuple[str, ...]:
-    """Return all harness session IDs observed for a meridian chat/session ID."""
+    """Return all harness session IDs observed for a Meridian session ID."""
 
     record = _records_by_session(runtime_root).get(chat_id)
     if record is None:
