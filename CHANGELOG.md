@@ -13,7 +13,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Spawn contract warns agents not to use `Agent()` tool when meridian agents are available.
 
 ### Changed
-- Bumped mars-agents from 0.8.8 to 0.8.9 (`list` subcommand for `mars agents` and `mars skills`).
+- Bumped mars-agents to 0.8.10.
 
 ### Fixed
 - Spawn prompting guidance now points at `meridian mars models prompting <agent-or-model>`.
