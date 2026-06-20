@@ -16,6 +16,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Bumped mars-agents from 0.8.8 to 0.8.9 (`list` subcommand for `mars agents` and `mars skills`).
 
 ### Fixed
+- Spawn prompting guidance now points at `meridian mars models prompt <agent-or-model>`.
 - Claude primary finalization now repairs TUI trampoline session IDs to the durable transcript ID when prompt history proves the successor.
 - Deleted chat command invocations now fail through normal unknown-command routing instead of stale startup metadata.
 
