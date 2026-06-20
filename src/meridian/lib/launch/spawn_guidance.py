@@ -17,7 +17,7 @@ Every spawn starts with fresh context — scope the handoff to what the \
 subagent needs, not what you've been thinking about. Front-load the task; \
 the subagent should know its job by line 3.
 
-For model-specific prompting guidance:  meridian mars models prompt <agent-or-model>"""
+For model-specific prompting guidance:  meridian mars models prompting <agent-or-model>"""
 
 _WORK_DISCOVERY = """\
 # Work coordination (meridian)
