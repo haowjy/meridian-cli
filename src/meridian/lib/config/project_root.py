@@ -7,16 +7,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict
 
 USER_CONFIG_ENV_VAR = "MERIDIAN_CONFIG"
-ProjectRootSource = Literal[
-    "explicit",
-    "env",
-    "mars",
-    "meridian-toml",
-    "meridian-local-toml",
-    "project-state",
-    "git",
-    "cwd",
-]
+ProjectRootSource = Literal["explicit", "env", "cwd"]
 
 
 class ProjectRootResolution(BaseModel):
@@ -29,36 +20,6 @@ class ProjectRootResolution(BaseModel):
     source: ProjectRootSource
 
 
-def _has_project_state_marker(candidate: Path) -> bool:
-    """Return True when ``candidate`` has project-local state evidence."""
-
-    from meridian.lib.state.user_paths import get_user_home
-
-    meridian_dir = candidate / ".meridian"
-    if not meridian_dir.is_dir():
-        return False
-    if meridian_dir.resolve() == get_user_home().resolve():
-        return False
-    return (meridian_dir / "id").is_file()
-
-
-def _discover_project_root(candidate: Path) -> ProjectRootSource | None:
-    if (candidate / ".mars").is_dir():
-        return "mars"
-    if (candidate / "meridian.toml").is_file():
-        return "meridian-toml"
-    if (candidate / "meridian.local.toml").is_file():
-        return "meridian-local-toml"
-    if _has_project_state_marker(candidate):
-        return "project-state"
-    git_marker = candidate / ".git"
-    if git_marker.exists():
-        # A .git entry (file for worktree/submodule, directory for standalone
-        # repo) marks a repo boundary.
-        return "git"
-    return None
-
-
 def resolve_project_root_resolution(
     explicit: Path | None = None,
     *,
@@ -68,7 +29,7 @@ def resolve_project_root_resolution(
     """Resolve project root and describe how it was discovered.
 
     ``ignore_env`` skips the ``MERIDIAN_PROJECT_DIR`` env var check, forcing
-    CWD-based discovery. Use this when the caller must resolve relative to the
+    CWD-based resolution. Use this when the caller must resolve relative to the
     actual CWD and not the inherited session project (e.g. hooks commands).
     """
 
@@ -88,21 +49,6 @@ def resolve_project_root_resolution(
                 execution_cwd=resolved_execution_cwd,
                 source="env",
             )
-
-    candidate = resolved_execution_cwd
-    while True:
-        source = _discover_project_root(candidate)
-        if source is not None:
-            return ProjectRootResolution(
-                project_root=candidate,
-                execution_cwd=resolved_execution_cwd,
-                source=source,
-            )
-
-        parent = candidate.parent
-        if parent == candidate:
-            break
-        candidate = parent
 
     return ProjectRootResolution(
         project_root=resolved_execution_cwd,

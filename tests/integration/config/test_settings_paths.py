@@ -12,84 +12,89 @@ from meridian.lib.ops.config_surface import build_config_surface
 from meridian.lib.ops.runtime import resolve_project_authority, resolve_runtime_authority_for_read
 
 
-def test_resolve_project_root_prefers_mars_skills_ancestor(
+def test_resolve_project_root_uses_literal_cwd(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     project_root = tmp_path / "repo"
-    nested = project_root / "src" / "feature"
-    (project_root / ".mars" / "skills").mkdir(parents=True)
-    nested.mkdir(parents=True)
-    monkeypatch.chdir(nested)
-
-    assert resolve_project_root_resolution().project_root == project_root.resolve()
-
-
-def test_resolve_project_root_stops_at_git_boundary(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    project_root = tmp_path / "repo"
-    nested = project_root / "src" / "feature"
     project_root.mkdir()
-    nested.mkdir(parents=True)
-    (project_root / ".git").mkdir()
-    monkeypatch.chdir(nested)
+    monkeypatch.chdir(project_root)
 
-    assert resolve_project_root_resolution().project_root == project_root.resolve()
+    resolution = resolve_project_root_resolution()
+
+    assert resolution.project_root == project_root.resolve()
+    assert resolution.execution_cwd == project_root.resolve()
+    assert resolution.source == "cwd"
 
 
-def test_resolve_project_root_prefers_meridian_toml_in_plain_directory(
+def test_resolve_project_root_nested_cwd_does_not_walk_to_ancestor(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    project_root = tmp_path / "plain-project"
+    project_root = tmp_path / "repo"
     nested = project_root / "src" / "feature"
     project_root.mkdir()
     nested.mkdir(parents=True)
     (project_root / "meridian.toml").write_text("", encoding="utf-8")
+    (project_root / ".git").mkdir()
     monkeypatch.chdir(nested)
+
+    resolution = resolve_project_root_resolution()
+
+    assert resolution.project_root == nested.resolve()
+    assert resolution.execution_cwd == nested.resolve()
+    assert resolution.source == "cwd"
+
+
+def test_resolve_project_root_prefers_meridian_project_dir_env(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = tmp_path / "repo"
+    nested = project_root / "src" / "feature"
+    project_root.mkdir()
+    nested.mkdir(parents=True)
+    monkeypatch.chdir(nested)
+    monkeypatch.setenv("MERIDIAN_PROJECT_DIR", project_root.as_posix())
 
     resolution = resolve_project_root_resolution()
 
     assert resolution.project_root == project_root.resolve()
     assert resolution.execution_cwd == nested.resolve()
-    assert resolution.source == "meridian-toml"
+    assert resolution.source == "env"
 
 
-def test_resolve_project_root_prefers_project_state_in_plain_directory(
+def test_resolve_project_root_explicit_wins_over_env(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    project_root = tmp_path / "plain-project"
-    nested = project_root / "pkg" / "module"
-    project_state_dir = project_root / ".meridian"
-    project_state_dir.mkdir(parents=True)
-    (project_state_dir / "id").write_text("project-uuid", encoding="utf-8")
-    nested.mkdir(parents=True)
-    monkeypatch.chdir(nested)
+    project_root = tmp_path / "repo"
+    other_root = tmp_path / "other"
+    project_root.mkdir()
+    other_root.mkdir()
+    monkeypatch.setenv("MERIDIAN_PROJECT_DIR", other_root.as_posix())
 
-    resolution = resolve_project_root_resolution()
+    resolution = resolve_project_root_resolution(project_root)
 
     assert resolution.project_root == project_root.resolve()
-    assert resolution.source == "project-state"
+    assert resolution.source == "explicit"
 
 
-def test_resolve_project_root_does_not_treat_user_home_state_dir_as_project_marker(
+def test_resolve_project_root_ignore_env_uses_cwd(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    home_root = tmp_path / "home"
-    nested = home_root / "notes" / "daily"
-    (home_root / ".meridian").mkdir(parents=True)
-    nested.mkdir(parents=True)
-    monkeypatch.setenv("HOME", home_root.as_posix())
-    monkeypatch.delenv("MERIDIAN_HOME", raising=False)
+    project_root = tmp_path / "repo"
+    nested = project_root / "src"
+    project_root.mkdir()
+    nested.mkdir()
     monkeypatch.chdir(nested)
+    monkeypatch.setenv("MERIDIAN_PROJECT_DIR", project_root.as_posix())
 
-    resolution = resolve_project_root_resolution()
+    resolution = resolve_project_root_resolution(ignore_env=True)
 
-    assert resolution.project_root != home_root.resolve()
+    assert resolution.project_root == nested.resolve()
+    assert resolution.source == "cwd"
 
 
 def test_load_config_reads_primary_agent_at_project_root(tmp_path: Path) -> None:
@@ -279,7 +284,7 @@ def test_resolve_project_config_state_reports_present_when_meridian_toml_exists(
     assert state.write_path == config_path.resolve()
 
 
-def test_project_authority_keeps_nested_plain_dir_root_and_paths(
+def test_project_authority_keeps_explicit_root_with_nested_execution_cwd(
     tmp_path: Path,
 ) -> None:
     project_root = tmp_path / "plain-project"
@@ -288,11 +293,11 @@ def test_project_authority_keeps_nested_plain_dir_root_and_paths(
     nested.mkdir(parents=True)
     (project_root / "meridian.local.toml").write_text("", encoding="utf-8")
 
-    authority = resolve_project_authority(execution_cwd=nested)
+    authority = resolve_project_authority(project_root, execution_cwd=nested)
 
     assert authority.project_root == project_root.resolve()
     assert authority.execution_cwd == nested.resolve()
-    assert authority.project_root_source == "meridian-local-toml"
+    assert authority.project_root_source == "explicit"
     assert authority.project_config_paths.project_root == project_root.resolve()
     assert authority.project_config_paths.execution_cwd == nested.resolve()
 
@@ -362,7 +367,7 @@ def test_runtime_authority_for_read_falls_back_to_project_state_in_plain_directo
     (runtime_root / "id").write_text("project-uuid", encoding="utf-8")
     (runtime_root / "spawns.jsonl").write_text("", encoding="utf-8")
 
-    authority = resolve_runtime_authority_for_read(execution_cwd=nested)
+    authority = resolve_runtime_authority_for_read(project_root, execution_cwd=nested)
 
     assert authority.project_root == project_root.resolve()
     assert authority.runtime_root == runtime_root.resolve()
