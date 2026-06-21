@@ -17,13 +17,25 @@ NEVER REVERT CHANGES — always assume it's someone else's work.
 `.cursor/`, `.codex/`, `.opencode/`, `.pi/`). Overwritten by `meridian mars sync`.
 Edit source package repos in sibling checkouts.
 
-**NEVER switch the primary checkout's branch.** This working tree may be shared
-with another agent/session. Do not `git checkout`/`switch`/`stash` it, or commit a
-different branch in it — in **any** form, including `git -C <repo>`. To work on
-another branch, create a worktree:
-`git worktree add ../meridian-cli.worktrees/<name> -b <branch> origin/main`, then
-edit/commit/push from the worktree and remove it when done. A denied command is a
-**stop signal** — never route around it with a different invocation.
+**NEVER swap the primary checkout off `main`.** This working tree
+(`meridian-cli/`) is shared with other agents/sessions. Do not
+`git checkout`/`switch`/`stash`, or commit another branch, in it — in **any** form,
+including `git -C <repo>`. A denied command is a **stop signal**; never route around
+it with a different invocation.
+
+To work on another branch, use a **worktree** under `meridian-cli.worktrees/`:
+
+```bash
+git worktree add ../meridian-cli.worktrees/<name> -b <branch> origin/main
+# or bind one to a work item:
+meridian work start <slug> --task-dir ../meridian-cli.worktrees/<name>
+```
+
+Edit/commit/push from the worktree and remove it when done. **Always set
+`--task-dir` to the worktree on every spawn** (`meridian spawn … --task-dir
+../meridian-cli.worktrees/<name>`) so agents edit the worktree, never the shared
+checkout. (Pre-push runs the suite, which needs the Pi extensions —
+`cd src/meridian/pi_runtime && npm run build:extensions` in a fresh worktree.)
 
 ## Dev Commands
 
