@@ -15,6 +15,7 @@ from meridian.lib.bootstrap.services import (
     build_spawn_application_service,
     build_spawn_application_service_from_roots,
 )
+from meridian.lib.catalog.agent import scan_agent_profiles
 from meridian.lib.config.settings import MeridianConfig, load_config
 from meridian.lib.core.context import RuntimeContext
 from meridian.lib.core.depth import max_depth_reached
@@ -69,6 +70,8 @@ from .execute import (
 from .models import (
     ModelStats,
     SpawnActionOutput,
+    SpawnAgentsInput,
+    SpawnAgentsOutput,
     SpawnCancelAllInput,
     SpawnCancelAllOutput,
     SpawnCancelInput,
@@ -967,6 +970,39 @@ async def spawn_files(
     prepared: RuntimeReadContext | None = None,
 ) -> SpawnWrittenFilesOutput:
     return await asyncio.to_thread(spawn_files_sync, payload, ctx=ctx, sink=sink, prepared=prepared)
+
+
+def spawn_agents_sync(
+    payload: SpawnAgentsInput,
+    ctx: RuntimeContext | None = None,
+    *,
+    sink: OutputSink | None = None,
+    prepared: RuntimeReadContext | None = None,
+) -> SpawnAgentsOutput:
+    _ = (ctx, sink)
+    project_root, _runtime_root = _resolve_spawn_read_authority(
+        project_root=payload.project_root,
+        prepared=prepared,
+    )
+    profiles = scan_agent_profiles(project_root=project_root)
+    names = tuple(sorted(profile.name for profile in profiles))
+    return SpawnAgentsOutput(names=names)
+
+
+async def spawn_agents(
+    payload: SpawnAgentsInput,
+    ctx: RuntimeContext | None = None,
+    *,
+    sink: OutputSink | None = None,
+    prepared: RuntimeReadContext | None = None,
+) -> SpawnAgentsOutput:
+    return await asyncio.to_thread(
+        spawn_agents_sync,
+        payload,
+        ctx=ctx,
+        sink=sink,
+        prepared=prepared,
+    )
 
 
 def _spawn_cancel_output_from_outcome(outcome: CancelOutcome) -> SpawnActionOutput:

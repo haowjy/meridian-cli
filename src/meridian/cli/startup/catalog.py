@@ -307,6 +307,11 @@ _COMMAND_DESCRIPTORS: tuple[CommandDescriptor, ...] = (
         extension_ref="meridian.spawn.children",
     ),
     _read_runtime(
+        ("spawn", "agents"),
+        "List available agent profile names.",
+        extension_ref="meridian.spawn.agents",
+    ),
+    _read_runtime(
         ("spawn", "files"), "List files changed by a spawn.", extension_ref="meridian.spawn.files"
     ),
     _read_runtime(("spawn", "stats"), "Show spawn stats.", extension_ref="meridian.spawn.stats"),
@@ -384,6 +389,21 @@ _COMMAND_DESCRIPTORS: tuple[CommandDescriptor, ...] = (
         ("hooks", "check"), "Check hook configuration.", extension_ref="meridian.hooks.check"
     ),
     _write_project(("hooks", "run"), "Run hooks.", extension_ref="meridian.hooks.run"),
+    _read_runtime(
+        ("task-dir",),
+        "Print effective source-edit directory.",
+        extension_ref="meridian.task-dir",
+    ),
+    _write_runtime(
+        ("task-dir", "set"),
+        "Set spawn-scope source-edit directory.",
+        extension_ref="meridian.task-dir.set",
+    ),
+    _write_runtime(
+        ("task-dir", "clear"),
+        "Clear spawn-scope source-edit directory override.",
+        extension_ref="meridian.task-dir.clear",
+    ),
     _read_runtime(("sync", "conflict", "list"), "List unresolved autosync conflicts."),
     _read_runtime(("sync", "conflict", "show"), "Show autosync conflict details."),
     _write_runtime(("sync", "conflict", "resolve"), "Mark autosync conflict resolved."),

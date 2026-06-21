@@ -95,6 +95,13 @@ _GROUP_HELP: dict[str, GroupHelp] = {
         summary='Hook inspection and execution commands.',
         long_help='Hook inspection and execution commands.',
     ),
+    "task-dir": GroupHelp(
+        summary='Query and mutate the current spawn source-edit directory.',
+        long_help=(
+            "Resolve or change where this session reads and edits source code.\n\n"
+            "Distinct from `meridian work task-dir`, which sets durable work-item metadata."
+        ),
+    ),
     "sync": GroupHelp(
         summary='Sync operations and autosync conflict management.',
         long_help='Sync operations and autosync conflict management.',
@@ -218,26 +225,32 @@ COMMAND_GROUP_SPECS: dict[str, CommandGroupSpec] = {
         registration_bucket='hooks',
         has_group_app=True,
     ),
+    "task-dir": CommandGroupSpec(
+        help=_GROUP_HELP["task-dir"],
+        human_root_order=4,
+        registration_bucket='task-dir',
+        has_group_app=True,
+    ),
     "sync": CommandGroupSpec(
         help=_GROUP_HELP["sync"],
-        human_root_order=4,
+        human_root_order=5,
         registration_bucket='sync',
     ),
     "models": CommandGroupSpec(
         help=_GROUP_HELP["models"],
-        human_root_order=5,
+        human_root_order=6,
         registration_bucket='models',
         has_group_app=True,
     ),
     "streaming": CommandGroupSpec(
         help=_GROUP_HELP["streaming"],
-        human_root_order=6,
+        human_root_order=7,
         registration_bucket='misc',
         has_group_app=True,
     ),
     "test": CommandGroupSpec(
         help=_GROUP_HELP["test"],
-        human_root_order=7,
+        human_root_order=8,
         registration_bucket='misc',
         has_group_app=True,
     ),

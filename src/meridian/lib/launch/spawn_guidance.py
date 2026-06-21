@@ -25,6 +25,15 @@ _WORK_DISCOVERY = """\
 Group related spawns under a work item — shared dir, goal, session history.
 Learn the commands:  meridian work -h"""
 
+_TASK_DIR_DISCOVERY = """\
+# Source-edit directory (meridian)
+
+`MERIDIAN_TASK_DIR` is where source reads, edits, git, builds, and tests run.
+`MERIDIAN_ACTIVE_WORK_DIR` is for scratch/work artifacts — not your checkout.
+Shell cwd may be the project/control root; `cd "$MERIDIAN_TASK_DIR"` or use absolute
+paths before source ops.
+Live query:  meridian task-dir"""
+
 _SESSION_DISCOVERY = """\
 # Session transcripts (meridian)
 
@@ -97,7 +106,10 @@ def build_guidance_blocks(
         CompositionBlock("work-discovery", GuidancePhase.GUIDANCE, 20, _WORK_DISCOVERY)
     )
     blocks.append(
-        CompositionBlock("session-discovery", GuidancePhase.GUIDANCE, 21, _SESSION_DISCOVERY)
+        CompositionBlock("task-dir-discovery", GuidancePhase.GUIDANCE, 21, _TASK_DIR_DISCOVERY)
+    )
+    blocks.append(
+        CompositionBlock("session-discovery", GuidancePhase.GUIDANCE, 22, _SESSION_DISCOVERY)
     )
     context_env = (context_prompt or "").strip()
     if context_env:

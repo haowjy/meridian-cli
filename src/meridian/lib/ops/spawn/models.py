@@ -1147,6 +1147,22 @@ class SpawnWrittenFilesOutput(BaseModel):
         return "\n".join(self.written_files)
 
 
+class SpawnAgentsInput(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    project_root: str | None = None
+
+
+class SpawnAgentsOutput(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    names: tuple[str, ...]
+
+    def format_text(self, ctx: FormatContext | None = None) -> str:
+        _ = ctx
+        return "\n".join(self.names)
+
+
 class SpawnContinueInput(SpawnLaunchOptions):
     spawn_id: str
     prompt: str
@@ -1345,6 +1361,8 @@ class SpawnWaitMultiOutput(BaseModel):
 
 __all__ = [
     "SpawnActionOutput",
+    "SpawnAgentsInput",
+    "SpawnAgentsOutput",
     "SpawnCancelInput",
     "SpawnContinueInput",
     "SpawnCreateInput",
