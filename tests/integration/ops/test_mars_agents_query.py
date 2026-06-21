@@ -129,9 +129,11 @@ def test_mars_list_subagents_parses_list_envelope(
             stdout=json.dumps(
                 {
                     "agents": [
-                        {"name": "reviewer"},
-                        {"name": "coder"},
-                        {"name": "coder"},
+                        {"name": "reviewer", "mode": "subagent"},
+                        {"name": "coder", "mode": "subagent"},
+                        {"name": "coder", "mode": "subagent"},
+                        {"name": "tech-lead", "mode": "primary"},
+                        {"name": "no-mode"},
                     ]
                 }
             )
@@ -142,13 +144,15 @@ def test_mars_list_subagents_parses_list_envelope(
 
     result = mars_list_subagents(_PROJECT_ROOT)
 
+    # Only subagent-mode entries survive the client-side filter; primary and
+    # mode-less entries are dropped.
     assert result == ("coder", "reviewer")
+    # The ``--mode`` filter is NOT passed to ``agents list`` (it belongs to the
+    # parent ``mars agents`` command); filtering happens client-side.
     assert recorded["command"] == [
         _FAKE_MARS,
         "agents",
         "list",
-        "--mode",
-        "subagent",
         "--json",
         "--root",
         _PROJECT_ROOT.as_posix(),
@@ -186,6 +190,45 @@ def test_mars_list_subagents_failure_returns_empty(
 
     assert result == ()
     assert caplog.records
+
+
+def test_mars_query_commands_accepted_by_real_mars(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression guard against mars CLI arg-contract drift.
+
+    The mocked tests above pin whatever command the helper builds; they cannot
+    catch a command the real mars binary rejects (e.g. ``--mode`` is an argument
+    of ``mars agents``, not of the ``list`` subcommand). Here we capture the exact
+    arg vector each helper sends and replay it against the REAL mars binary. A
+    bare project yields a config error ("no mars.toml"), never a clap usage error
+    ("unexpected argument"). This test fails for the buggy
+    ``agents list --mode subagent`` form.
+    """
+
+    executable = mars_module.resolve_mars_executable()
+    if executable is None:
+        pytest.skip("mars binary not available")
+
+    captured: list[list[str]] = []
+    real_run = subprocess.run
+
+    def capturing_run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        captured.append(list(command))
+        return real_run(command, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(mars_module.subprocess, "run", capturing_run)
+
+    mars_agent_subagents(tmp_path, "tech-lead")
+    mars_list_subagents(tmp_path)
+
+    assert captured, "helpers did not invoke mars"
+    for command in captured:
+        result = real_run(command, check=False, capture_output=True, text=True, timeout=60)
+        assert "unexpected argument" not in (result.stderr or ""), (
+            f"real mars rejected helper command {command!r}: {result.stderr!r}"
+        )
 
 
 def test_mars_helpers_no_warning_when_binary_missing(

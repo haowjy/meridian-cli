@@ -222,9 +222,12 @@ def mars_agent_subagents(project_root: Path, agent_name: str) -> tuple[str, ...]
 
 
 def mars_list_subagents(project_root: Path) -> tuple[str, ...]:
-    """List subagent profile names via ``mars agents list --mode subagent``.
+    """List subagent-mode profile names via ``mars agents list``.
 
-    Returns ``()`` on any failure (graceful degradation).
+    The ``--mode`` filter is an argument of the parent ``mars agents`` command,
+    not of the ``list`` subcommand, so we list everything and filter on each
+    entry's ``mode`` client-side. Returns ``()`` on any failure (graceful
+    degradation).
     """
 
     executable = resolve_mars_executable()
@@ -235,8 +238,6 @@ def mars_list_subagents(project_root: Path) -> tuple[str, ...]:
         executable,
         "agents",
         "list",
-        "--mode",
-        "subagent",
         "--json",
         "--root",
         project_root.as_posix(),
@@ -251,25 +252,26 @@ def mars_list_subagents(project_root: Path) -> tuple[str, ...]:
             timeout=60,
         )
     except (FileNotFoundError, OSError, subprocess.TimeoutExpired) as exc:
-        _logger.warning("mars agents list --mode subagent failed: %s", exc)
+        _logger.warning("mars agents list failed: %s", exc)
         return ()
 
     if result.returncode != 0:
         _logger.warning(
-            "mars agents list --mode subagent failed: exit code %s",
+            "mars agents list failed: exit code %s (%s)",
             result.returncode,
+            (result.stderr or "").strip(),
         )
         return ()
 
     try:
         payload = json.loads(result.stdout)
     except (json.JSONDecodeError, ValueError) as exc:
-        _logger.warning("mars agents list --mode subagent returned malformed JSON: %s", exc)
+        _logger.warning("mars agents list returned malformed JSON: %s", exc)
         return ()
 
     if not isinstance(payload, dict):
         _logger.warning(
-            "mars agents list --mode subagent returned unexpected JSON: expected object, got %s",
+            "mars agents list returned unexpected JSON: expected object, got %s",
             type(payload).__name__,
         )
         return ()
@@ -283,7 +285,10 @@ def mars_list_subagents(project_root: Path) -> tuple[str, ...]:
     for row_obj in cast("list[object]", agents_raw):
         if not isinstance(row_obj, dict):
             continue
-        name = cast("dict[str, object]", row_obj).get("name")
+        row = cast("dict[str, object]", row_obj)
+        if row.get("mode") != "subagent":
+            continue
+        name = row.get("name")
         if not isinstance(name, str):
             continue
         normalized = name.strip()
