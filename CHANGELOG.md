@@ -4,6 +4,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+- `meridian doctor` no longer hard-fails in a clean shell with no project — runs diagnostics and reports bare-cwd resolution instead of exiting before checks.
+
 ## [0.3.11] - 2026-06-21
 
 ### Removed

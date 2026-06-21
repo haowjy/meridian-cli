@@ -373,7 +373,15 @@ _COMMAND_DESCRIPTORS: tuple[CommandDescriptor, ...] = (
         ("config", "reset"), "Reset config value.", extension_ref="meridian.config.reset"
     ),
     _read_project(("context",), "Show context paths.", extension_ref="meridian.context.context"),
-    _read_runtime(("doctor",), "Run doctor checks.", extension_ref="meridian.doctor.doctor"),
+    _descriptor(
+        ("doctor",),
+        StartupClass.READ_RUNTIME,
+        StateRequirement.NONE,
+        TelemetryMode.NONE,
+        "text",
+        "Run doctor checks.",
+        extension_ref="meridian.doctor.doctor",
+    ),
     _read_runtime(("telemetry", "status"), "Show telemetry status."),
     _read_runtime(("telemetry", "tail"), "Tail telemetry events."),
     _read_runtime(("telemetry", "query"), "Query telemetry events."),
