@@ -184,7 +184,7 @@ _CONSUMED_FIELDS = frozenset({
     "projected_roots",
 })
 _EXPLICITLY_IGNORED_FIELDS = frozenset({
-    "skills", "agent", "adhoc_agent_payload", "report_output_path",
+    "skills", "agent", "adhoc_agent_payload", "report_artifact_path",
     "context_from_payload", "reference_items", "task_cwd",
 })
 ```

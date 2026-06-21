@@ -117,10 +117,10 @@ Every `SpawnParams` field must appear in each adapter's `consumed_fields` **or**
 `explicitly_ignored_fields`. Enforced at import time by `launch_spec.py:_enforce_spawn_params_accounting()`. Adding a field to `SpawnParams` without updating all adapters → `ImportError` on startup. This is not documentation — it is enforcement.
 
 Currently ignored fields:
-- Claude ignores `report_output_path`, `task_cwd`, `context_from_payload`, `reference_items`
+- Claude ignores `task_cwd`, `context_from_payload`, `reference_items` (consumes `report_artifact_path` for `system-prompt.md` parent dir)
 - Codex ignores `skills`, `agent`, `task_cwd`, `context_from_payload`, `reference_items`
 - Cursor ignores `skills`, `agent`, `adhoc_agent_payload`, `control_root`,
-  `appended_system_prompt`, `report_output_path`, `user_turn_content`,
+  `appended_system_prompt`, `report_artifact_path`, `user_turn_content`,
   `context_from_payload`, `reference_items`, `continue_harness_session_id`,
   `continue_fork`, `effort`
 

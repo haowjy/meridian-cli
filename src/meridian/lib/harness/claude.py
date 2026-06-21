@@ -186,11 +186,11 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             "projected_roots",
             "user_turn_content",
             "claude_allow_builtin_agents",
+            "report_artifact_path",
         }
     )
     _EXPLICITLY_IGNORED_FIELDS: ClassVar[frozenset[str]] = frozenset(
         {
-            "report_output_path",
             "context_from_payload",
             "reference_items",
             "task_cwd",
@@ -286,14 +286,14 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         if continue_session_id is None and not has_session_identity_in_args(run.extra_args):
             effective_extra_args = (*run.extra_args, "--session-id", str(uuid4()))
 
-        # Prefer the spawn log directory (from report_output_path) for system-prompt.md.
+        # Prefer the spawn log directory (from report_artifact_path) for system-prompt.md.
         # Keep project_root fallback for compatibility with contexts that do not set
-        # report_output_path.
+        # report_artifact_path.
         prompt_file_path: str | None = None
-        report_output_path = (run.report_output_path or "").strip()
-        if report_output_path:
+        report_artifact_path = (run.report_artifact_path or "").strip()
+        if report_artifact_path:
             prompt_file_path = str(
-                Path(report_output_path).expanduser().parent / "system-prompt.md"
+                Path(report_artifact_path).expanduser().parent / "system-prompt.md"
             )
         elif run.control_root:
             prompt_file_path = str(Path(run.control_root) / "system-prompt.md")

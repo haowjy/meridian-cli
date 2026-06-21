@@ -29,7 +29,7 @@ from meridian.lib.launch.context import (
     LaunchContext,
     PreparedLaunchSurface,
     RuntimeBindings,
-    resolve_report_output_path,
+    resolve_report_artifact_path,
 )
 from meridian.lib.launch.fork import materialize_fork
 from meridian.lib.launch.request import LaunchArgvIntent, LaunchRuntime, SpawnRequest
@@ -258,14 +258,14 @@ async def _prepare_execution_handoff(
             project_root=project_paths.project_root,
             execution_cwd=Path(execution_cwd),
         )
-        report_output_path = resolve_report_output_path(
+        report_artifact_path = resolve_report_artifact_path(
             runtime=launch_runtime,
             project_paths=execution_project_paths,
             spawn_id=str(spawn.spawn_id),
         )
         bindings = RuntimeBindings(
             spawn_id=str(spawn.spawn_id),
-            report_output_path=report_output_path,
+            report_artifact_path=report_artifact_path,
             runtime_work_id=runtime_work_id,
             plan_overrides=dict(run_env_overrides),
             dry_run=False,

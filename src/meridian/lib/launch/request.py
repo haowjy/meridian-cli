@@ -162,7 +162,7 @@ class LaunchRuntime(BaseModel):
     runtime_override_snapshot: dict[str, object] | None = None
     unsafe_no_permissions: bool = False
     debug: bool = False
-    report_output_path: str | None = None
+    report_artifact_path: str | None = None
     runtime_root: str
     config_root: str | None = None
     control_root: str | None = None

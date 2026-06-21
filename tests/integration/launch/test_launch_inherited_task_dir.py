@@ -95,13 +95,13 @@ def test_bind_child_env_uses_resolved_task_dir_not_stale_parent_inherited(
         control_root=project_root,
         execution_cwd=artifacts.request.task_cwd,
         argv_intent=LaunchArgvIntent.REQUIRED,
-        report_output_path="<report>",
+        report_artifact_path="<report>",
     )
     bound = bind_spawn_launch_context(
         prepared=artifacts.prepared,
         bindings=RuntimeBindings(
             spawn_id="p-child",
-            report_output_path=tmp_path / "report.md",
+            report_artifact_path=tmp_path / "report.md",
             dry_run=True,
         ),
         runtime=launch_runtime,

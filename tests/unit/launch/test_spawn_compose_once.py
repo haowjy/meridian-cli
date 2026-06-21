@@ -163,7 +163,7 @@ def test_bind_spawn_launch_context_does_not_call_mars(
         prepared=artifacts.prepared,
         bindings=RuntimeBindings(
             spawn_id="p2",
-            report_output_path=project_root / "report.md",
+            report_artifact_path=project_root / "report.md",
             dry_run=False,
         ),
         runtime=launch_runtime,

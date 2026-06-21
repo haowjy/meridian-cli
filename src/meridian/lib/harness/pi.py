@@ -112,7 +112,7 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             "skills",
             "agent",
             "adhoc_agent_payload",
-            "report_output_path",
+            "report_artifact_path",
             "context_from_payload",
             "reference_items",
             "task_cwd",

@@ -42,7 +42,7 @@ from meridian.lib.launch.composition_spawn import (
     bind_spawn_launch_context,
     compose_spawn_launch_surface,
 )
-from meridian.lib.launch.context import LaunchContext, RuntimeBindings, resolve_report_output_path
+from meridian.lib.launch.context import LaunchContext, RuntimeBindings, resolve_report_artifact_path
 from meridian.lib.launch.env import resolve_pi_session_role
 from meridian.lib.launch.request import LaunchRuntime, SpawnRequest
 from meridian.lib.launch.resolve import (
@@ -370,7 +370,7 @@ class SpawnApplicationService:
             project_root=resolved_config_root,
             execution_cwd=resolved_requested_task_cwd,
         )
-        report_output_path = resolve_report_output_path(
+        report_artifact_path = resolve_report_artifact_path(
             runtime=payload.runtime,
             project_paths=project_paths,
             spawn_id=str(final_spawn_id),
@@ -383,7 +383,7 @@ class SpawnApplicationService:
             prepared=prepared_surface,
             bindings=RuntimeBindings(
                 spawn_id=str(final_spawn_id),
-                report_output_path=report_output_path,
+                report_artifact_path=report_artifact_path,
                 runtime_work_id=effective_work_id,
                 dry_run=False,
                 plan_overrides=resolved_env,

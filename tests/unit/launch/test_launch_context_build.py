@@ -63,7 +63,7 @@ def _build_launch_runtime(
     return LaunchRuntime(
         argv_intent=argv_intent,
         composition_surface=composition_surface,
-        report_output_path=(tmp_path / "report.md").as_posix(),
+        report_artifact_path=(tmp_path / "report.md").as_posix(),
         runtime_root=(tmp_path / ".meridian").as_posix(),
         project_paths_project_root=tmp_path.as_posix(),
         project_paths_execution_cwd=resolved_execution_cwd.as_posix(),

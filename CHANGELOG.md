@@ -4,6 +4,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+- Internal: split the overloaded `report_output_path` field. The generic Meridian report.md artifact location is now `report_artifact_path` (all harnesses); `ResolvedLaunchSpec.report_output_path` is now genuinely codex-only (the subprocess `-o` target). No behavior change — report.md still lands at `spawns/<id>/report.md` and codex still emits `-o`.
+
 ## [0.3.13] - 2026-06-21
 
 ### Added

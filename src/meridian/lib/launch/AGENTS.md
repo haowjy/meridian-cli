@@ -69,7 +69,7 @@ Four code paths call `build_launch_context()` — each has a defined entry:
 - `PreparedLaunchSurface` — preparation output; carries resolved request, skills, refs.
   Excludes spawn IDs, report paths, env — everything that varies per bind.
 - `RuntimeBindings` — the only things that differ between preview and real bind:
-  `spawn_id`, `report_output_path`, `runtime_work_id`, `chat_id`, `dry_run`.
+  `spawn_id`, `report_artifact_path`, `runtime_work_id`, `chat_id`, `dry_run`.
 - `LaunchContext` — fully composed; complete at construction, ready to hand to an executor.
 
 ## Finalization Ownership

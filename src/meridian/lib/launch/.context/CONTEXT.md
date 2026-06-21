@@ -47,7 +47,7 @@ version used by `bind_launch_context()`.
 
 ### RuntimeBindings
 
-Frozen dataclass for runtime-only values: `spawn_id`, `report_output_path`,
+Frozen dataclass for runtime-only values: `spawn_id`, `report_artifact_path`,
 `runtime_work_id`, `chat_id`, `forked_harness_session_id`, `plan_overrides`, `dry_run`.
 These are the only things that differ between the preview bind and the real bind.
 
