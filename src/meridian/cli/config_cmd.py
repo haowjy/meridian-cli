@@ -7,7 +7,7 @@ from typing import Any
 from cyclopts import App
 
 from meridian.cli.ext_registration import register_extension_cli_group
-from meridian.cli.utils import cli_project_root_posix
+from meridian.cli.utils import cli_project_root_posix, optional_cli_project_root_posix
 from meridian.lib.extensions.registry import get_first_party_registry
 from meridian.lib.ops.config import (
     ConfigGetInput,
@@ -27,7 +27,11 @@ def _config_set(emit: Emitter, key: str, value: str) -> None:
 
 
 def _config_get(emit: Emitter, key: str) -> None:
-    emit(config_get_sync(ConfigGetInput(key=key, project_root=cli_project_root_posix())))
+    emit(
+        config_get_sync(
+            ConfigGetInput(key=key, project_root=optional_cli_project_root_posix())
+        )
+    )
 
 
 def _config_reset(emit: Emitter, key: str) -> None:

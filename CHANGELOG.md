@@ -5,7 +5,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Fixed
-- `meridian doctor` no longer hard-fails in a clean shell with no project — runs diagnostics and reports bare-cwd resolution instead of exiting before checks.
+- Tool-level commands no longer require a Meridian project — `meridian doctor`, the content linters (`kg check`/`graph`, `qi check`/`list`, `mermaid check`), config readers (`config show`/`get`), and `ext list`/`commands` now run from any cwd instead of hard-failing with "No Meridian project found". Project-scoped commands (`spawn`, `work`, `telemetry`, …) still require one.
 
 ## [0.3.11] - 2026-06-21
 

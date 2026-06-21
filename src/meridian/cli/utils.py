@@ -30,6 +30,25 @@ def require_established_project_root() -> Path:
 
 
 
+def optional_cli_project_root_posix() -> str | None:
+    """Return an established project root when explicitly targeted, else None.
+
+    Unlike ``require_established_project_root()``, bare CWD resolution returns
+    None so read-only config/inspection callers can degrade to user defaults.
+    """
+
+    from meridian.cli.main import get_global_options
+    from meridian.lib.config.project_root import resolve_project_root_resolution
+
+    opts = get_global_options()
+    if opts.project_root is not None:
+        return opts.project_root.as_posix()
+    resolution = resolve_project_root_resolution(execution_cwd=Path.cwd())
+    if resolution.source == "cwd":
+        return None
+    return resolution.project_root.as_posix()
+
+
 def cli_project_root_posix() -> str:
     """Return the established CLI project root as a POSIX string."""
 
