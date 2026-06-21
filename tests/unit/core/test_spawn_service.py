@@ -440,7 +440,7 @@ async def test_cancel_public_surface_backfills_cancel_intent_for_managed_primary
     # assignments (7771 can be a live process on the Windows runner), so the
     # managed-primary reconciliation proceeds instead of skipping as launcher-alive.
     monkeypatch.setattr(
-        "meridian.lib.state.managed_primary.is_process_alive",
+        "meridian.lib.core.spawn_service.is_process_alive",
         lambda *_args, **_kwargs: False,
     )
 

@@ -3,7 +3,7 @@
 import json
 import multiprocessing
 from pathlib import Path
-from typing import Any, TypedDict
+from typing import TypedDict
 
 from meridian.lib.core.lifecycle import SpawnLifecycleService
 from meridian.lib.core.spawn_lifecycle import SpawnReservation
@@ -19,6 +19,7 @@ from meridian.lib.state.spawn_store import (
     update_spawn,
 )
 from tests.conftest import posix_only
+from tests.support.process_race import run_spawn_race_or_skip
 
 
 def _write_start_and_finalize(project_root: str, idx: int) -> None:
@@ -56,30 +57,16 @@ class _HarnessUpdatePayload(TypedDict):
     claude_config_dir: str
 
 
-def _reserve_id_in_subprocess(
-    runtime_root_str: str,
-    ready_queue: Any,
-    start_event: Any,
-    result_queue: Any,
-) -> None:
-    runtime_root = Path(runtime_root_str)
-    ready_queue.put("ready")
-    start_event.wait()
-    reserved = reserve_spawn_id(runtime_root)
-    result_queue.put(str(reserved))
+def _reserve_spawn_id_worker(runtime_root_str: str) -> str:
+    return str(reserve_spawn_id(Path(runtime_root_str)))
 
 
-def _concurrent_update_in_subprocess(
+def _concurrent_update_worker(
     runtime_root_str: str,
     spawn_id: str,
     payload: _ExecutionUpdatePayload | _HarnessUpdatePayload,
-    ready_queue: Any,
-    start_event: Any,
-    result_queue: Any,
-) -> None:
+) -> dict[str, object]:
     runtime_root = Path(runtime_root_str)
-    ready_queue.put("ready")
-    start_event.wait()
     if "worker_pid" in payload:
         update_spawn(
             runtime_root,
@@ -96,7 +83,7 @@ def _concurrent_update_in_subprocess(
         )
     row = get_spawn(runtime_root, spawn_id)
     assert row is not None
-    result_queue.put(row.model_dump())
+    return row.model_dump()
 
 
 @posix_only  # msvcrt.locking (used by the fcntl-shim on Windows) has a write-contention race when
@@ -133,29 +120,13 @@ def test_cross_process_reserve_spawn_id_returns_unique_contiguous_ids(tmp_path: 
     runtime_root.mkdir(parents=True, exist_ok=True)
     process_count = 6
 
-    ctx = multiprocessing.get_context("spawn")
-    ready_queue = ctx.Queue()
-    result_queue = ctx.Queue()
-    start_event = ctx.Event()
-    processes = [
-        ctx.Process(
-            target=_reserve_id_in_subprocess,
-            args=(runtime_root.as_posix(), ready_queue, start_event, result_queue),
-        )
-        for _ in range(process_count)
-    ]
+    outcome = run_spawn_race_or_skip(
+        _reserve_spawn_id_worker,
+        [(runtime_root.as_posix(),) for _ in range(process_count)],
+    )
+    outcome.assert_all_succeeded()
 
-    for process in processes:
-        process.start()
-    for _ in processes:
-        assert ready_queue.get(timeout=10) == "ready"
-    start_event.set()
-    for process in processes:
-        process.join(timeout=10)
-        assert process.exitcode == 0
-
-    reserved = sorted(result_queue.get(timeout=10) for _ in processes)
-
+    reserved = sorted(outcome.results)
     assert reserved == [f"p{idx}" for idx in range(1, process_count + 1)]
     assert (runtime_root / "spawn-id-counter").read_text(encoding="utf-8").strip() == str(
         process_count
@@ -176,39 +147,20 @@ def test_concurrent_update_spawn_preserves_non_overlapping_fields(tmp_path: Path
         )
     )
 
-    ctx = multiprocessing.get_context("spawn")
-    ready_queue = ctx.Queue()
-    result_queue = ctx.Queue()
-    start_event = ctx.Event()
     payloads: list[_ExecutionUpdatePayload | _HarnessUpdatePayload] = [
         {"execution_cwd": "/tmp/job", "worker_pid": 101},
         {"harness_session_id": "sess-123", "claude_config_dir": "/tmp/claude"},
     ]
-    processes = [
-        ctx.Process(
-            target=_concurrent_update_in_subprocess,
-            args=(
-                runtime_root.as_posix(),
-                spawn_id,
-                payload,
-                ready_queue,
-                start_event,
-                result_queue,
-            ),
-        )
-        for payload in payloads
-    ]
+    outcome = run_spawn_race_or_skip(
+        _concurrent_update_worker,
+        [
+            (runtime_root.as_posix(), spawn_id, payload)
+            for payload in payloads
+        ],
+    )
+    outcome.assert_all_succeeded()
 
-    for process in processes:
-        process.start()
-    for _ in processes:
-        assert ready_queue.get(timeout=10) == "ready"
-    start_event.set()
-    for process in processes:
-        process.join(timeout=10)
-        assert process.exitcode == 0
-
-    snapshots = [result_queue.get(timeout=10) for _ in processes]
+    snapshots = outcome.results
     row = get_spawn(runtime_root, spawn_id)
 
     assert row is not None

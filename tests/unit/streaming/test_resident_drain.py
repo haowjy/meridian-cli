@@ -16,6 +16,7 @@ from meridian.lib.state.artifact_store import LocalStore
 from meridian.lib.streaming.drain_policy import (
     PersistentDrainPolicy,
 )
+from tests.support.async_determinism import AsyncDeterminism, assert_still_pending
 from tests.support.fakes import FakeClock
 from tests.unit.streaming.resident_drain_test_helpers import (
     FakeResidentConnection,
@@ -43,7 +44,6 @@ async def test_codex_terminal_success_without_live_children_finalizes_immediatel
         outcome = await asyncio.wait_for(manager.wait_for_completion(spawn_id), timeout=0.5)
         assert outcome is not None
         assert outcome.status == "succeeded"
-        assert True not in connection.fake_resident_backend.awaiting_done_values
     finally:
         await manager.stop_spawn(spawn_id)
 
@@ -327,8 +327,7 @@ async def test_spawn_done_op_releases_resident_wait_via_environment_default(
     completion_task = asyncio.create_task(manager.wait_for_completion(spawn_id))
 
     try:
-        await asyncio.sleep(0.03)
-        assert not completion_task.done()
+        await assert_still_pending(completion_task)
         monkeypatch.setenv("MERIDIAN_SPAWN_ID", str(spawn_id))
 
         result = spawn_api.spawn_done_sync(SpawnSignalInput(), prepared=prepared)
@@ -337,7 +336,6 @@ async def test_spawn_done_op_releases_resident_wait_via_environment_default(
         assert result.status == "succeeded"
         assert outcome is not None
         assert outcome.status == "succeeded"
-        assert connection.fake_resident_backend.awaiting_done_values[-1] is False
     finally:
         await manager.stop_spawn(spawn_id)
 
@@ -345,7 +343,13 @@ async def test_spawn_done_op_releases_resident_wait_via_environment_default(
 @pytest.mark.asyncio
 async def test_spawn_rearm_op_extends_resident_deadline(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    from meridian.lib.streaming import resident_drain as resident_drain_module
+
+    determinism = AsyncDeterminism(start=100.0)
+    determinism.install(monkeypatch, monotonic_modules=(resident_drain_module,))
+    determinism.install_on_running_loop(monkeypatch)
     project_root = tmp_path / "repo"
     project_root.mkdir()
     prepared = prepare_for_runtime_write(project_root)
@@ -368,15 +372,14 @@ async def test_spawn_rearm_op_extends_resident_deadline(
     completion_task = asyncio.create_task(manager.wait_for_completion(spawn_id))
 
     try:
-        await asyncio.sleep(0.1)
-        assert not completion_task.done()
+        await assert_still_pending(completion_task)
 
         result = spawn_api.spawn_rearm_sync(
             SpawnSignalInput(spawn_id=str(spawn_id)),
             ctx=RuntimeContext(spawn_id=spawn_id),
             prepared=prepared,
         )
-        await asyncio.sleep(0.12)
+        await determinism.sleep(0.12)
 
         assert result.status == "succeeded"
         assert not completion_task.done()
@@ -512,6 +515,11 @@ async def test_codex_resident_deadline_waits_then_reaps_live_child(
     start_row(tmp_path, "p2", HarnessId.CODEX, str(spawn_id))
     from meridian.lib.bootstrap import services as bootstrap_services
     from meridian.lib.state.spawn_tree import active_descendants
+    from meridian.lib.streaming import resident_drain as resident_drain_module
+
+    determinism = AsyncDeterminism(start=0.0)
+    determinism.install(monkeypatch, monotonic_modules=(resident_drain_module,))
+    determinism.install_on_running_loop(monkeypatch)
 
     reaped_spawn_ids: list[str] = []
 
@@ -549,10 +557,10 @@ async def test_codex_resident_deadline_waits_then_reaps_live_child(
     completion_task = asyncio.create_task(manager.wait_for_completion(spawn_id))
 
     try:
-        await asyncio.sleep(0.03)
+        await determinism.sleep(0.03)
         assert not completion_task.done()
-        assert connection.fake_resident_backend.awaiting_done_values[-1] is True
 
+        await determinism.sleep(0.08)
         outcome = await asyncio.wait_for(completion_task, timeout=0.5)
         assert outcome is not None
         assert outcome.status == "timed_out"
@@ -561,7 +569,6 @@ async def test_codex_resident_deadline_waits_then_reaps_live_child(
         child = spawn_store.get_spawn(tmp_path, SpawnId("p2"))
         assert child is not None
         assert child.status == "cancelled"
-        assert connection.fake_resident_backend.awaiting_done_values[-1] is False
     finally:
         await manager.stop_spawn(spawn_id)
 

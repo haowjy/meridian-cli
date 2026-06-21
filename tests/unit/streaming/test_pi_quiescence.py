@@ -5,8 +5,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+from contextlib import suppress
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -22,6 +23,7 @@ from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.safety.permissions import UnsafeNoOpPermissionResolver
 from meridian.lib.streaming.pi_subspawn_tracker import PiSubspawnTracker
 from meridian.lib.streaming.spawn_manager import SpawnManager
+from tests.support.async_determinism import TaskGate, wait_until
 from tests.unit.streaming.pi_quiescence_test_helpers import (
     FakePiConnection as _FakePiConnection,
 )
@@ -31,6 +33,19 @@ from tests.unit.streaming.pi_quiescence_test_helpers import (
 from tests.unit.streaming.pi_quiescence_test_helpers import (
     pi_event as _pi_event,
 )
+
+
+def _read_history_phases(history_path: Path) -> list[str]:
+    history = [
+        json.loads(line)
+        for line in history_path.read_text(encoding="utf-8").splitlines()
+        if line
+    ]
+    return [
+        cast("str", event.get("payload", {}).get("phase"))
+        for event in history
+        if event.get("event_type") == "meridian.pi.lifecycle.phase"
+    ]
 
 
 @pytest.mark.asyncio
@@ -274,9 +289,13 @@ async def test_spawn_manager_pi_cleanup_escalation_does_not_block_terminal_succe
         assert outcome.status == "succeeded"
         assert outcome.error is None
         assert fake_connection.stop_reasons == []
-        await asyncio.sleep(0.05)
 
         history_path = tmp_path / "spawns" / str(spawn_id) / "history.jsonl"
+        await wait_until(
+            lambda: "cleanup_escalated"
+            in _read_history_phases(history_path),
+            description="cleanup_escalated lifecycle phase",
+        )
         history = [
             json.loads(line)
             for line in history_path.read_text(encoding="utf-8").splitlines()
@@ -619,6 +638,8 @@ async def test_spawn_manager_pi_child_wave_timeout_cleans_tracked_children_and_f
 async def test_spawn_manager_pi_child_wave_timeout_not_cleared_by_turn_active(
     tmp_path: Path,
 ) -> None:
+    late_turn_gate = TaskGate()
+
     class _DelayedWaveTimeoutConnection(_FakePiConnection):
         def __init__(self, delayed_events: list[tuple[float, HarnessEvent]]) -> None:
             super().__init__([])
@@ -627,9 +648,9 @@ async def test_spawn_manager_pi_child_wave_timeout_not_cleared_by_turn_active(
         async def events(self):  # type: ignore[no-untyped-def]
             for delay, event in self._delayed_events:
                 if delay > 0:
-                    await asyncio.sleep(delay)
+                    await late_turn_gate.wait_open()
                 yield event
-            await asyncio.sleep(60)
+            await asyncio.Event().wait()
 
     fake_connection = _DelayedWaveTimeoutConnection(
         [
@@ -690,15 +711,28 @@ async def test_spawn_manager_pi_child_wave_timeout_not_cleared_by_turn_active(
         ),
     )
 
+    async def _release_late_turn_after_child_wave_timeout() -> None:
+        await wait_until(
+            lambda: (
+                (history_path := tmp_path / "spawns" / str(spawn_id) / "history.jsonl").exists()
+                and "pi_child_wave_timeout"
+                in _read_history_phases(history_path)
+            ),
+            description="child-wave timeout phase before late turn_active",
+        )
+        late_turn_gate.open()
+
+    release_task = asyncio.create_task(_release_late_turn_after_child_wave_timeout())
+
     try:
-        # This scenario intentionally waits for the child-wave timeout, an unrelated
-        # turn_active event, and the follow-up timeout; the outer wait_for is only a
-        # hung-test safety net, not the behavior under assertion.
         outcome = await asyncio.wait_for(manager.wait_for_completion(spawn_id), timeout=2.0)
         assert outcome is not None
         assert outcome.status == "failed"
         assert outcome.error == "pi_child_wave_timeout"
     finally:
+        release_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await release_task
         await manager.stop_spawn(spawn_id)
 
 
