@@ -6,8 +6,9 @@ import asyncio
 import json
 import logging
 import os
+import uuid
 from asyncio.subprocess import DEVNULL, PIPE, Process
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from contextlib import suppress
 from io import BufferedWriter
 from typing import Final, cast
@@ -24,6 +25,7 @@ from meridian.lib.harness.connections.base import (
     StopResult,
     validate_prompt_size,
 )
+from meridian.lib.harness.extractors.cursor import CURSOR_EXTRACTOR
 from meridian.lib.launch.constants import BASE_COMMAND_CURSOR_SUBPROCESS, BLOCKED_CHILD_ENV_VARS
 from meridian.lib.launch.env import inherit_child_env
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
@@ -33,6 +35,7 @@ logger = logging.getLogger(__name__)
 
 _HARNESS_NAME: Final[str] = HarnessId.CURSOR.value
 _PROCESS_STOP_TIMEOUT_SECONDS: Final[float] = 10.0
+_CREATE_CHAT_TIMEOUT_SECONDS: Final[float] = 30.0
 _STDOUT_READLINE_LIMIT: Final[int] = 128 * 1024 * 1024  # 128 MiB — match claude_ws.py
 
 
@@ -54,6 +57,8 @@ class CursorSubprocessConnection(HarnessConnection[ResolvedLaunchSpec]):
     def __init__(self) -> None:
         self._state: ConnectionState = "created"
         self._spawn_id: SpawnId = SpawnId("")
+        self._session_id: str | None = None
+        self._session_id_observer: Callable[[str], None] | None = None
         self._process: Process | None = None
         self._stderr_handle: BufferedWriter | None = None
         self._event_stream_started = False
@@ -78,7 +83,7 @@ class CursorSubprocessConnection(HarnessConnection[ResolvedLaunchSpec]):
 
     @property
     def session_id(self) -> str | None:
-        return None
+        return self._session_id
 
     @property
     def subprocess_pid(self) -> int | None:
@@ -99,15 +104,29 @@ class CursorSubprocessConnection(HarnessConnection[ResolvedLaunchSpec]):
         spawn_dir.mkdir(parents=True, exist_ok=True)
         self._stderr_handle = (spawn_dir / "stderr.log").open("ab")
 
-        command = project_subprocess_spec(
-            self.harness_id,
-            spec,
-            base_command=BASE_COMMAND_CURSOR_SUBPROCESS,
-        )
         env = inherit_child_env(
             os.environ,
             config.env_overrides,
             blocked=BLOCKED_CHILD_ENV_VARS,
+        )
+        self._session_id_observer = config.session_id_observer
+
+        chat_id = (spec.continue_session_id or "").strip() or await _mint_chat_id(
+            cwd=str(config.control_root),
+            env=env,
+        )
+        if chat_id:
+            self._session_id = chat_id
+            if config.session_id_observer is not None:
+                config.session_id_observer(chat_id)
+            spec_for_cmd = spec.model_copy(update={"continue_session_id": chat_id})
+        else:
+            spec_for_cmd = spec
+
+        command = project_subprocess_spec(
+            self.harness_id,
+            spec_for_cmd,
+            base_command=BASE_COMMAND_CURSOR_SUBPROCESS,
         )
 
         try:
@@ -205,6 +224,7 @@ class CursorSubprocessConnection(HarnessConnection[ResolvedLaunchSpec]):
                 return
 
             self._protocol_validated = True
+            self._observe_session_id_from_event(event)
             yield event
 
     def _parse_stdout_line(self, raw_text: str) -> HarnessEvent | None:
@@ -263,6 +283,14 @@ class CursorSubprocessConnection(HarnessConnection[ResolvedLaunchSpec]):
                 await process.wait()
         self._process = None
 
+    def _observe_session_id_from_event(self, event: HarnessEvent) -> None:
+        detected = CURSOR_EXTRACTOR.detect_session_id_from_event(event)
+        if not detected:
+            return
+        self._session_id = detected
+        if self._session_id_observer is not None:
+            self._session_id_observer(detected)
+
     def _error_event(self, message: str, *, raw_text: str | None = None) -> HarnessEvent:
         return HarnessEvent(
             event_type="error/connectionClosed",
@@ -270,6 +298,65 @@ class CursorSubprocessConnection(HarnessConnection[ResolvedLaunchSpec]):
             harness_id=_HARNESS_NAME,
             raw_text=raw_text,
         )
+
+
+def _looks_like_uuid(value: str) -> bool:
+    try:
+        uuid.UUID(value)
+    except ValueError:
+        return False
+    return True
+
+
+async def _mint_chat_id(*, cwd: str, env: dict[str, str]) -> str | None:
+    """Mint a Cursor chat id via ``cursor agent create-chat``.
+
+    Bounded by ``_CREATE_CHAT_TIMEOUT_SECONDS`` so a wedged ``create-chat`` cannot
+    reintroduce an unbounded pre-launch hang. On any failure (timeout, nonzero exit,
+    non-UUID output, exec error) it logs and degrades to ``None`` — the spawn then
+    launches without a pre-recorded chat id (prior behavior).
+    """
+    process: Process | None = None
+    try:
+        process = await asyncio.create_subprocess_exec(
+            BASE_COMMAND_CURSOR_SUBPROCESS[0],
+            "agent",
+            "create-chat",
+            cwd=cwd,
+            env=env,
+            stdin=DEVNULL,
+            stdout=PIPE,
+            stderr=DEVNULL,
+        )
+        stdout, _ = await asyncio.wait_for(
+            process.communicate(),
+            timeout=_CREATE_CHAT_TIMEOUT_SECONDS,
+        )
+        if process.returncode != 0:
+            logger.warning(
+                "cursor agent create-chat exited with code %s",
+                process.returncode,
+            )
+            return None
+        chat_id = stdout.decode("utf-8", errors="replace").strip()
+        if not _looks_like_uuid(chat_id):
+            logger.warning("cursor agent create-chat returned non-UUID: %r", chat_id)
+            return None
+        return chat_id
+    except TimeoutError:
+        logger.warning(
+            "cursor agent create-chat timed out after %ss; launching without a minted chat id",
+            _CREATE_CHAT_TIMEOUT_SECONDS,
+        )
+        if process is not None:
+            with suppress(ProcessLookupError):
+                process.kill()
+            with suppress(Exception):
+                await process.wait()
+        return None
+    except Exception:
+        logger.warning("cursor agent create-chat failed", exc_info=True)
+        return None
 
 
 __all__ = ["CursorSubprocessConnection"]

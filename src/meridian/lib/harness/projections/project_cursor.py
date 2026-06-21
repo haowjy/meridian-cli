@@ -19,13 +19,13 @@ _PROJECTED_FIELDS: frozenset[str] = frozenset(
         "permission_resolver",
         "extra_args",
         "task_cwd",
+        "continue_session_id",
     }
 )
 
 _DELEGATED_FIELDS: frozenset[str] = frozenset(
     {
         "harness",
-        "continue_session_id",
         "continue_fork",
         "interactive",
         "mcp_tools",
@@ -93,11 +93,6 @@ def _assert_supported_for_mvp(spec: ResolvedLaunchSpec) -> None:
             "Cursor subprocess continue_fork is not supported for MVP."
         )
 
-    if (spec.continue_session_id or "").strip():
-        raise HarnessCapabilityMismatch(
-            "Cursor subprocess session resume is not supported for MVP."
-        )
-
     if spec.interactive:
         raise HarnessCapabilityMismatch(
             "Cursor subprocess interactive mode is not supported for MVP."
@@ -125,6 +120,10 @@ def project_cursor_spec_to_cli_args(
 
     command.extend(_project_approval_flags(spec))
     command.extend(_project_sandbox_flags(spec))
+
+    chat_id = (spec.continue_session_id or "").strip()
+    if chat_id:
+        command.extend(("--resume", chat_id))
 
     workspace = (spec.task_cwd or "").strip()
     if workspace:

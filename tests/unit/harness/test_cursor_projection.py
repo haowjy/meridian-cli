@@ -74,7 +74,6 @@ def test_cursor_projection_maps_approval_flags_and_keeps_prompt_last(
 @pytest.mark.parametrize(
     ("updates", "message"),
     [
-        ({"continue_session_id": "ses-123"}, "session resume"),
         ({"continue_session_id": "ses-123", "continue_fork": True}, "continue_fork"),
         ({"mcp_tools": ("fs",)}, "mcp_tools"),
         ({"interactive": True}, "interactive mode"),
@@ -95,6 +94,37 @@ def test_cursor_projection_rejects_mvp_unsupported_fields(
             base_spec.model_copy(update=updates),
             base_command=BASE_COMMAND_CURSOR_SUBPROCESS,
         )
+
+
+def test_cursor_projection_emits_resume_when_continue_session_id_set(tmp_path: Path) -> None:
+    chat_id = "550e8400-e29b-41d4-a716-446655440000"
+    spec = ResolvedLaunchSpec(
+        harness="cursor",
+        prompt="hello",
+        continue_session_id=chat_id,
+        permission_resolver=_Resolver(approval="default"),
+        task_cwd=str(tmp_path / "ws"),
+    )
+
+    command = project_cursor_spec_to_cli_args(spec, base_command=BASE_COMMAND_CURSOR_SUBPROCESS)
+
+    idx = command.index("--resume")
+    assert command[idx + 1] == chat_id
+    assert command[-1] == "hello"
+
+
+def test_cursor_projection_omits_resume_without_continue_session_id(tmp_path: Path) -> None:
+    spec = ResolvedLaunchSpec(
+        harness="cursor",
+        prompt="hello",
+        permission_resolver=_Resolver(approval="default"),
+        task_cwd=str(tmp_path / "ws"),
+    )
+
+    command = project_cursor_spec_to_cli_args(spec, base_command=BASE_COMMAND_CURSOR_SUBPROCESS)
+
+    assert "--resume" not in command
+    assert command[-1] == "hello"
 
 
 def test_cursor_projection_ignores_projected_roots_for_mvp(tmp_path: Path) -> None:

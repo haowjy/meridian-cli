@@ -125,7 +125,7 @@ class CursorAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         return HarnessCapabilities(
             supports_stream_events=True,
             supports_stdin_prompt=False,
-            supports_session_resume=False,
+            supports_session_resume=True,
             supports_session_fork=False,
             supports_native_skills=False,
             supports_native_agents=False,

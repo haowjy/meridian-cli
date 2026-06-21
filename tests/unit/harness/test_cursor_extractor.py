@@ -90,6 +90,54 @@ def test_cursor_extractor_returns_none_when_report_or_session_missing() -> None:
     assert CURSOR_EXTRACTOR.extract_session_id(store, spawn_id) is None
 
 
+def test_cursor_extractor_falls_back_to_last_assistant_message_when_no_result() -> None:
+    spawn_id = SpawnId("p-cursor-assistant-fallback")
+    store = _artifact_store_from_lines(
+        spawn_id,
+        [
+            {
+                "type": "assistant",
+                "message": {
+                    "role": "assistant",
+                    "content": [{"type": "text", "text": "first assistant reply"}],
+                },
+            },
+            {
+                "type": "assistant",
+                "message": {
+                    "role": "assistant",
+                    "content": [{"type": "text", "text": "final assistant reply"}],
+                },
+            },
+        ],
+    )
+
+    assert CURSOR_EXTRACTOR.extract_report(store, spawn_id) == "final assistant reply"
+
+
+def test_cursor_extractor_prefers_result_over_assistant_message() -> None:
+    spawn_id = SpawnId("p-cursor-result-preferred")
+    store = _artifact_store_from_lines(
+        spawn_id,
+        [
+            {
+                "type": "assistant",
+                "message": {
+                    "role": "assistant",
+                    "content": [{"type": "text", "text": "assistant-only text"}],
+                },
+            },
+            {
+                "type": "result",
+                "subtype": "success",
+                "result": "terminal result text",
+            },
+        ],
+    )
+
+    assert CURSOR_EXTRACTOR.extract_report(store, spawn_id) == "terminal result text"
+
+
 def test_cursor_extractor_usage_defaults_when_no_usage_present() -> None:
     spawn_id = SpawnId("p-cursor-empty-usage")
     store = _artifact_store_from_lines(
