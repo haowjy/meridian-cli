@@ -31,7 +31,6 @@ from meridian.lib.extensions.registry import get_first_party_registry
 from meridian.lib.launch.resolve import resolve_agent_launch_input
 from meridian.lib.ops.spawn.api import (
     SpawnActionOutput,
-    SpawnAgentsInput,
     SpawnCancelAllInput,
     SpawnCancelInput,
     SpawnChildrenInput,
@@ -43,9 +42,9 @@ from meridian.lib.ops.spawn.api import (
     SpawnSignalInput,
     SpawnStatsInput,
     SpawnStatusInput,
+    SpawnSubagentsInput,
     SpawnWaitInput,
     SpawnWrittenFilesInput,
-    spawn_agents_sync,
     spawn_cancel_all_sync,
     spawn_cancel_sync,
     spawn_children_sync,
@@ -59,6 +58,7 @@ from meridian.lib.ops.spawn.api import (
     spawn_show_sync,
     spawn_stats_sync,
     spawn_status_sync,
+    spawn_subagents_sync,
     spawn_wait_sync,
 )
 from meridian.lib.ops.spawn.models import SpawnLaunchOptionUpdates, normalize_goal
@@ -1047,10 +1047,10 @@ def _spawn_files(
         emit(result)
 
 
-def _spawn_agents(emit: Any) -> None:
+def _spawn_subagents(emit: Any) -> None:
     emit(
-        spawn_agents_sync(
-            SpawnAgentsInput(),
+        spawn_subagents_sync(
+            SpawnSubagentsInput(),
             sink=_current_output_sink(),
             prepared=_prepare_spawn_runtime_read(),
         )
@@ -1173,7 +1173,7 @@ def register_spawn_commands(app: App, emit: Emitter) -> tuple[set[str], dict[str
     _append_spawn_help_epilogue(app)
 
     handlers: dict[str, Callable[[], Callable[..., None]]] = {
-        "meridian.spawn.agents": lambda: partial(_spawn_agents, emit),
+        "meridian.spawn.subagents": lambda: partial(_spawn_subagents, emit),
         "meridian.spawn.children": lambda: partial(_spawn_children, emit),
         "meridian.spawn.files": lambda: partial(_spawn_files, emit),
         "meridian.spawn.list": lambda: partial(_spawn_list, emit),

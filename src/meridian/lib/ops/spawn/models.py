@@ -1147,13 +1147,13 @@ class SpawnWrittenFilesOutput(BaseModel):
         return "\n".join(self.written_files)
 
 
-class SpawnAgentsInput(BaseModel):
+class SpawnSubagentsInput(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     project_root: str | None = None
 
 
-class SpawnAgentsOutput(BaseModel):
+class SpawnSubagentsOutput(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     names: tuple[str, ...]
@@ -1361,8 +1361,6 @@ class SpawnWaitMultiOutput(BaseModel):
 
 __all__ = [
     "SpawnActionOutput",
-    "SpawnAgentsInput",
-    "SpawnAgentsOutput",
     "SpawnCancelInput",
     "SpawnContinueInput",
     "SpawnCreateInput",
@@ -1377,6 +1375,8 @@ __all__ = [
     "SpawnStatsInput",
     "SpawnStatsOutput",
     "SpawnStatusInput",
+    "SpawnSubagentsInput",
+    "SpawnSubagentsOutput",
     "SpawnWaitInput",
     "SpawnWaitMultiOutput",
     "SpawnWrittenFilesInput",

@@ -307,9 +307,9 @@ _COMMAND_DESCRIPTORS: tuple[CommandDescriptor, ...] = (
         extension_ref="meridian.spawn.children",
     ),
     _read_runtime(
-        ("spawn", "agents"),
-        "List available agent profile names.",
-        extension_ref="meridian.spawn.agents",
+        ("spawn", "subagents"),
+        "List subagents the current agent may spawn.",
+        extension_ref="meridian.spawn.subagents",
     ),
     _read_runtime(
         ("spawn", "files"), "List files changed by a spawn.", extension_ref="meridian.spawn.files"

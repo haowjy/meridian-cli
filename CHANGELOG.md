@@ -10,12 +10,13 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 - Inheritable `MERIDIAN_TASK_DIR` launch surface: per-spawn `scope.json`, inherited task-dir precedence tier, and `meridian task-dir` (query/set/clear).
-- `meridian spawn agents` lists installed agent profile names.
+- `meridian spawn subagents` lists subagents the current agent may spawn (mars-delegated inventory).
 - `--from` context refs now include `task_cwd` so receiving sessions know the prior spawn's working directory.
 - `-a @explorer` syntax: leading `@` is stripped from agent names for convenience.
 - Spawn contract warns agents not to use `Agent()` tool when meridian agents are available.
 
 ### Changed
+- `meridian spawn agents` renamed to `meridian spawn subagents`; now agent-relative (respects current spawn's declared subagent allow-list) and delegates inventory to mars instead of parsing frontmatter.
 - Project root resolution is explicit only: `-C` / `--directory` → `MERIDIAN_PROJECT_DIR` → literal CWD. `ProjectRootSource` narrowed to `explicit | env | cwd`.
 - Bumped mars-agents to 0.8.10.
 
