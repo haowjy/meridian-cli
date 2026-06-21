@@ -29,7 +29,7 @@ def _noop_setup_telemetry(**_kwargs: object) -> None:
     pass
 
 
-def test_spawn_create_dry_run_resolves_project_root_from_nested_cwd(
+def test_spawn_create_dry_run_resolves_project_root_from_explicit_path(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -52,13 +52,14 @@ def test_spawn_create_dry_run_resolves_project_root_from_nested_cwd(
             prompt="run",
             model="gpt-5.4-mini",
             files=("guide.md",),
+            project_root=project_root.as_posix(),
             dry_run=True,
         )
     )
 
     assert result.status == "dry-run"
     assert result.project_root == project_root.resolve().as_posix()
-    assert result.project_root_source == "mars"
+    assert result.project_root_source == "explicit"
     assert result.runtime_root is None
     assert result.runtime_root_source == "unresolved"
     resolved_reference = reference_file.resolve()

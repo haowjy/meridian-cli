@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import shutil
 import subprocess
 import sys
@@ -10,6 +11,8 @@ from pathlib import Path
 from typing import Literal, cast
 
 from pydantic import BaseModel, ConfigDict
+
+_logger = logging.getLogger(__name__)
 
 
 class UpgradeAvailability(BaseModel):
@@ -132,6 +135,170 @@ def check_upgrade_availability(project_root: Path | None = None) -> UpgradeAvail
     )
 
 
+def _sorted_unique_strings(values: object) -> tuple[str, ...] | None:
+    if not isinstance(values, list):
+        return None
+    names: list[str] = []
+    seen: set[str] = set()
+    for item in cast("list[object]", values):
+        if not isinstance(item, str):
+            continue
+        normalized = item.strip()
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        names.append(normalized)
+    return tuple(sorted(names))
+
+
+def mars_agent_subagents(project_root: Path, agent_name: str) -> tuple[str, ...] | None:
+    """Return declared subagent allow-list for *agent_name* via ``mars agents show``.
+
+    Returns ``None`` when mars is missing, the agent is unknown, the call fails, or
+    JSON is malformed. An agent that exists with an empty ``subagents`` list returns
+    ``()`` so callers can distinguish "no restriction declared" from "could not resolve".
+    """
+
+    executable = resolve_mars_executable()
+    if executable is None:
+        return None
+
+    command = [
+        executable,
+        "agents",
+        "show",
+        agent_name,
+        "--json",
+        "--root",
+        project_root.as_posix(),
+    ]
+
+    try:
+        result = subprocess.run(
+            command,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+    except (FileNotFoundError, OSError, subprocess.TimeoutExpired) as exc:
+        _logger.warning(
+            "mars agents show failed for %r: %s",
+            agent_name,
+            exc,
+        )
+        return None
+
+    if result.returncode != 0:
+        _logger.warning(
+            "mars agents show failed for %r: exit code %s",
+            agent_name,
+            result.returncode,
+        )
+        return None
+
+    try:
+        payload = json.loads(result.stdout)
+    except (json.JSONDecodeError, ValueError) as exc:
+        _logger.warning(
+            "mars agents show returned malformed JSON for %r: %s",
+            agent_name,
+            exc,
+        )
+        return None
+
+    if not isinstance(payload, dict):
+        _logger.warning(
+            "mars agents show returned unexpected JSON for %r: expected object, got %s",
+            agent_name,
+            type(payload).__name__,
+        )
+        return None
+
+    subagents = _sorted_unique_strings(cast("dict[str, object]", payload).get("subagents"))
+    if subagents is None:
+        return ()
+    return subagents
+
+
+def mars_list_subagents(project_root: Path) -> tuple[str, ...]:
+    """List subagent-mode profile names via ``mars agents list``.
+
+    The ``--mode`` filter is an argument of the parent ``mars agents`` command,
+    not of the ``list`` subcommand, so we list everything and filter on each
+    entry's ``mode`` client-side. Returns ``()`` on any failure (graceful
+    degradation).
+    """
+
+    executable = resolve_mars_executable()
+    if executable is None:
+        return ()
+
+    command = [
+        executable,
+        "agents",
+        "list",
+        "--json",
+        "--root",
+        project_root.as_posix(),
+    ]
+
+    try:
+        result = subprocess.run(
+            command,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+    except (FileNotFoundError, OSError, subprocess.TimeoutExpired) as exc:
+        _logger.warning("mars agents list failed: %s", exc)
+        return ()
+
+    if result.returncode != 0:
+        _logger.warning(
+            "mars agents list failed: exit code %s (%s)",
+            result.returncode,
+            (result.stderr or "").strip(),
+        )
+        return ()
+
+    try:
+        payload = json.loads(result.stdout)
+    except (json.JSONDecodeError, ValueError) as exc:
+        _logger.warning("mars agents list returned malformed JSON: %s", exc)
+        return ()
+
+    if not isinstance(payload, dict):
+        _logger.warning(
+            "mars agents list returned unexpected JSON: expected object, got %s",
+            type(payload).__name__,
+        )
+        return ()
+
+    agents_raw = cast("dict[str, object]", payload).get("agents")
+    if not isinstance(agents_raw, list):
+        return ()
+
+    names: list[str] = []
+    seen: set[str] = set()
+    for row_obj in cast("list[object]", agents_raw):
+        if not isinstance(row_obj, dict):
+            continue
+        row = cast("dict[str, object]", row_obj)
+        if row.get("mode") != "subagent":
+            continue
+        name = row.get("name")
+        if not isinstance(name, str):
+            continue
+        normalized = name.strip()
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        names.append(normalized)
+    return tuple(sorted(names))
+
+
 def format_upgrade_availability(
     availability: UpgradeAvailability,
     *,
@@ -174,5 +341,7 @@ __all__ = [
     "UpgradeAvailability",
     "check_upgrade_availability",
     "format_upgrade_availability",
+    "mars_agent_subagents",
+    "mars_list_subagents",
     "resolve_mars_executable",
 ]

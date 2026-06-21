@@ -28,19 +28,12 @@ class ContextBackend(Protocol):
         """Look up the active work ID for a session."""
         ...
 
-    def resolve_work_scratch_dir(self, runtime_root: Path, work_id: str) -> Path:
-        """Resolve the scratch directory for a work item."""
-        ...
-
 
 class LocalFilesystemBackend:
     """Default context backend backed by local state modules."""
 
     def get_session_active_work_id(self, runtime_root: Path, chat_id: str) -> str | None:
         return session_store.get_session_active_work_id(runtime_root, chat_id)
-
-    def resolve_work_scratch_dir(self, runtime_root: Path, work_id: str) -> Path:
-        return state_paths.resolve_work_scratch_dir(runtime_root, work_id)
 
 
 @dataclass(frozen=True)
@@ -58,6 +51,7 @@ class ResolvedContext:
     work_scope: WorkScope | None = None
     kb_dir: Path | None = None
     context_dirs: tuple[tuple[str, Path], ...] = ()
+    inherited_task_dir: Path | None = None
 
     @classmethod
     def from_environment(
@@ -89,6 +83,12 @@ class ResolvedContext:
         parent_spawn_id_raw = os.getenv("MERIDIAN_PARENT_SPAWN_ID", "").strip()
         depth_raw = os.getenv(MERIDIAN_DEPTH_ENV, "0").strip()
         project_root_raw = os.getenv("MERIDIAN_PROJECT_DIR", "").strip()
+        task_dir_raw = os.getenv("MERIDIAN_TASK_DIR", "").strip()
+        inherited_task_dir = (
+            Path(task_dir_raw).expanduser().resolve()
+            if task_dir_raw
+            else None
+        )
         explicit_chat_id_raw = (explicit_chat_id or "").strip()
         explicit_work_id_raw = (explicit_work_id or "").strip()
         if explicit_chat_id_raw:
@@ -158,7 +158,6 @@ class ResolvedContext:
 
         work_scope = resolve_work_scope_from_parts(
             project_root=project_root,
-            runtime_root=runtime_root,
             spawn_id=spawn_id,
             work_id=work_id,
             bound_work_dir=bound_work_dir,
@@ -197,6 +196,7 @@ class ResolvedContext:
             work_scope=work_scope,
             kb_dir=kb_dir,
             context_dirs=context_dirs,
+            inherited_task_dir=inherited_task_dir,
         )
 
     def child_env_overrides(
@@ -220,6 +220,8 @@ class ResolvedContext:
             overrides["MERIDIAN_ACTIVE_WORK_ID"] = self.work_id
         if self.work_dir is not None:
             overrides["MERIDIAN_ACTIVE_WORK_DIR"] = self.work_dir.as_posix()
+        if self.inherited_task_dir is not None:
+            overrides["MERIDIAN_TASK_DIR"] = self.inherited_task_dir.as_posix()
         for context_name, context_dir in self.context_dirs:
             env_key = context_env_key(context_name)
             if env_key == "MERIDIAN_CONTEXT__DIR":

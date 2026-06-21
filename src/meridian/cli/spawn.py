@@ -42,6 +42,7 @@ from meridian.lib.ops.spawn.api import (
     SpawnSignalInput,
     SpawnStatsInput,
     SpawnStatusInput,
+    SpawnSubagentsInput,
     SpawnWaitInput,
     SpawnWrittenFilesInput,
     spawn_cancel_all_sync,
@@ -57,6 +58,7 @@ from meridian.lib.ops.spawn.api import (
     spawn_show_sync,
     spawn_stats_sync,
     spawn_status_sync,
+    spawn_subagents_sync,
     spawn_wait_sync,
 )
 from meridian.lib.ops.spawn.models import SpawnLaunchOptionUpdates, normalize_goal
@@ -1045,6 +1047,16 @@ def _spawn_files(
         emit(result)
 
 
+def _spawn_subagents(emit: Any) -> None:
+    emit(
+        spawn_subagents_sync(
+            SpawnSubagentsInput(),
+            sink=_current_output_sink(),
+            prepared=_prepare_spawn_runtime_read(),
+        )
+    )
+
+
 def _spawn_cancel_all(
     emit: Any,
     work: Annotated[
@@ -1161,6 +1173,7 @@ def register_spawn_commands(app: App, emit: Emitter) -> tuple[set[str], dict[str
     _append_spawn_help_epilogue(app)
 
     handlers: dict[str, Callable[[], Callable[..., None]]] = {
+        "meridian.spawn.subagents": lambda: partial(_spawn_subagents, emit),
         "meridian.spawn.children": lambda: partial(_spawn_children, emit),
         "meridian.spawn.files": lambda: partial(_spawn_files, emit),
         "meridian.spawn.list": lambda: partial(_spawn_list, emit),

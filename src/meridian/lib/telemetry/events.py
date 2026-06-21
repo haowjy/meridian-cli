@@ -71,39 +71,7 @@ EVENT_REGISTRY: dict[str, EventDefinition] = {
     "spawn.failed": _spawn_event_definition("failed"),
     "spawn.cancelled": _spawn_event_definition("cancelled"),
     "spawn.timed_out": _spawn_event_definition("timed_out"),
-    # Chat domain: dead-zone events.
-    "chat.http.request_completed": {
-        "domain": "chat",
-        "concerns": ("operational",),
-        "ids": ("chat_id", "command_id"),
-    },
-    "chat.ws.connected": {
-        "domain": "chat",
-        "concerns": ("operational", "usage"),
-        "ids": ("chat_id",),
-    },
-    "chat.ws.disconnected": {"domain": "chat", "concerns": ("operational",), "ids": ("chat_id",)},
-    "chat.ws.rejected": {
-        "domain": "chat",
-        "concerns": ("operational", "error"),
-        "ids": ("chat_id",),
-    },
-    "chat.command.dispatched": {
-        "domain": "chat",
-        "concerns": ("operational", "usage"),
-        "ids": ("chat_id", "command_id"),
-    },
-    "chat.runtime.stopping": {"domain": "chat", "concerns": ("operational",), "ids": ("chat_id",)},
-    "chat.runtime.stopped": {"domain": "chat", "concerns": ("operational",), "ids": ("chat_id",)},
     # Server domain.
-    "dev_frontend.launched": {"domain": "server", "concerns": ("operational", "usage"), "ids": ()},
-    "dev_frontend.ready": {"domain": "server", "concerns": ("operational", "usage"), "ids": ()},
-    "dev_frontend.readiness_timeout": {
-        "domain": "server",
-        "concerns": ("operational", "error"),
-        "ids": (),
-    },
-    "dev_frontend.exited": {"domain": "server", "concerns": ("operational",), "ids": ()},
     "mcp.command.invoked": {
         "domain": "server",
         "concerns": ("operational", "usage"),

@@ -14,7 +14,6 @@ class StartupClass(StrEnum):
     PRIMARY_LAUNCH = "primary_launch"
     SERVICE_ROOTLESS = "service_rootless"
     SERVICE_RUNTIME = "service_runtime"
-    CLIENT_READ = "client_read"
 
 
 class StateRequirement(StrEnum):

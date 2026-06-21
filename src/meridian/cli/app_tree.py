@@ -42,6 +42,7 @@ report_app = App(
 session_app = _group_app("session")
 work_app = _group_app("work")
 hooks_app = _group_app("hooks")
+task_dir_app = _group_app("task-dir")
 models_app = _group_app("models")
 streaming_app = _group_app("streaming")
 test_app = _group_app("test")
@@ -60,6 +61,7 @@ spawn_app.command(report_app, name="report")
 app.command(session_app, name="session")
 app.command(work_app, name="work")
 app.command(hooks_app, name="hooks")
+app.command(task_dir_app, name="task-dir")
 app.command(models_app, name="models")
 app.command(streaming_app, name="streaming")
 app.command(test_app, name="test")
@@ -79,6 +81,7 @@ for _group_name, _group_app_obj in {
     "config": config_app,
     "context": context_app,
     "hooks": hooks_app,
+    "task-dir": task_dir_app,
     "models": models_app,
     "streaming": streaming_app,
     "test": test_app,
@@ -107,6 +110,7 @@ __all__ = [
     "session_app",
     "spawn_app",
     "streaming_app",
+    "task_dir_app",
     "telemetry_app",
     "test_app",
     "work_app",

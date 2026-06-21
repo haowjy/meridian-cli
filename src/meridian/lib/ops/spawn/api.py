@@ -32,6 +32,7 @@ from meridian.lib.core.spawn_service import CancelOutcome
 from meridian.lib.core.telemetry import register_debug_trace_observer
 from meridian.lib.core.types import SpawnId
 from meridian.lib.launch.request import SessionRequest
+from meridian.lib.ops.mars import mars_agent_subagents, mars_list_subagents
 from meridian.lib.ops.reference import ResolvedSessionReference, resolve_session_reference
 from meridian.lib.ops.runtime import (
     OperationRuntime,
@@ -87,6 +88,8 @@ from .models import (
     SpawnStatsInput,
     SpawnStatsOutput,
     SpawnStatusInput,
+    SpawnSubagentsInput,
+    SpawnSubagentsOutput,
     SpawnWaitInput,
     SpawnWaitMultiOutput,
     SpawnWrittenFilesInput,
@@ -967,6 +970,54 @@ async def spawn_files(
     prepared: RuntimeReadContext | None = None,
 ) -> SpawnWrittenFilesOutput:
     return await asyncio.to_thread(spawn_files_sync, payload, ctx=ctx, sink=sink, prepared=prepared)
+
+
+def spawn_subagents_sync(
+    payload: SpawnSubagentsInput,
+    ctx: RuntimeContext | None = None,
+    *,
+    sink: OutputSink | None = None,
+    prepared: RuntimeReadContext | None = None,
+) -> SpawnSubagentsOutput:
+    _ = (ctx, sink)
+    project_root, runtime_root = _resolve_spawn_read_authority(
+        project_root=payload.project_root,
+        prepared=prepared,
+    )
+    spawn_id = (os.environ.get("MERIDIAN_SPAWN_ID") or "").strip() or None
+    agent: str | None = None
+    if spawn_id is not None:
+        row = read_spawn_row(project_root, spawn_id, runtime_root=runtime_root)
+        agent = (row.agent or "").strip() or None if row is not None else None
+
+    if agent is not None:
+        # Resolved current agent → its declared subagents verbatim.
+        # An empty allow-list is a LEAF agent (spawns nothing), not "spawn anything".
+        # None means mars could not resolve the profile → treat as empty.
+        declared = mars_agent_subagents(project_root, agent)
+        names = declared if declared is not None else ()
+    else:
+        # No current agent (no spawn context / record has no agent) → orchestrator
+        # view: list all subagent-mode agents.
+        names = mars_list_subagents(project_root)
+
+    return SpawnSubagentsOutput(names=tuple(sorted(set(names))))
+
+
+async def spawn_subagents(
+    payload: SpawnSubagentsInput,
+    ctx: RuntimeContext | None = None,
+    *,
+    sink: OutputSink | None = None,
+    prepared: RuntimeReadContext | None = None,
+) -> SpawnSubagentsOutput:
+    return await asyncio.to_thread(
+        spawn_subagents_sync,
+        payload,
+        ctx=ctx,
+        sink=sink,
+        prepared=prepared,
+    )
 
 
 def _spawn_cancel_output_from_outcome(outcome: CancelOutcome) -> SpawnActionOutput:

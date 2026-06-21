@@ -15,11 +15,17 @@ from meridian.lib.context.resolver import (
     render_context_lines,
     resolve_context_paths,
 )
+from meridian.lib.core.context import RuntimeContext
 from meridian.lib.core.resolved_context import ResolvedContext
 from meridian.lib.core.util import FormatContext
 from meridian.lib.hooks.builtin.autosync_store import read_status
-from meridian.lib.ops.runtime import resolve_runtime_authority_for_read
+from meridian.lib.launch.cwd import resolve_effective_task_dir
+from meridian.lib.ops.runtime import (
+    resolve_runtime_authority_for_read,
+    resolve_runtime_authority_for_write,
+)
 from meridian.lib.state.paths import load_context_config
+from meridian.lib.state.spawn_scope import write_spawn_scope_task_dir
 from meridian.lib.state.work_scope import WorkScope
 
 
@@ -159,6 +165,50 @@ class WorkCurrentOutput(BaseModel):
         return self.work_dir or ""
 
 
+class TaskDirInput(BaseModel):
+    """Input for spawn-scope task-dir query."""
+
+    model_config = ConfigDict(frozen=True)
+
+
+class TaskDirSetInput(BaseModel):
+    """Input for spawn-scope task-dir set."""
+
+    model_config = ConfigDict(frozen=True)
+
+    path: str
+
+
+class TaskDirClearInput(BaseModel):
+    """Input for spawn-scope task-dir clear."""
+
+    model_config = ConfigDict(frozen=True)
+
+
+class TaskDirOutput(BaseModel):
+    """Output for spawn-scope task-dir query."""
+
+    model_config = ConfigDict(frozen=True)
+
+    task_dir: str
+    source: str
+    spawn_id: str | None = None
+
+    def format_text(self, ctx: FormatContext | None = None) -> str:
+        _ = ctx
+        return self.task_dir
+
+
+class TaskDirMutationOutput(BaseModel):
+    """Output for spawn-scope task-dir set/clear (no text output)."""
+
+    model_config = ConfigDict(frozen=True)
+
+    def format_text(self, ctx: FormatContext | None = None) -> str:
+        _ = ctx
+        return ""
+
+
 class WorkRootInput(BaseModel):
     """Input for work root operation."""
 
@@ -265,6 +315,80 @@ def _join_scope_path(scope_dir: Path, relpath: str) -> Path:
             f"  Scope:    {scope_resolved}"
         ) from exc
     return target
+
+
+def _require_session_spawn_id(ctx: RuntimeContext) -> str:
+    if ctx.spawn_id is None:
+        raise ValueError("Not in a session (MERIDIAN_SPAWN_ID is unset).")
+    return str(ctx.spawn_id)
+
+
+def _validated_task_dir_path(path: str) -> Path:
+    resolved = Path(path).expanduser().resolve()
+    if resolved.is_dir():
+        return resolved
+    if not resolved.exists():
+        raise ValueError(f"task_dir does not exist: {resolved}")
+    raise ValueError(f"task_dir is not a directory: {resolved}")
+
+
+def _resolve_effective_task_dir_output() -> TaskDirOutput:
+    authority = resolve_runtime_authority_for_read()
+    runtime_ctx = RuntimeContext.from_environment()
+    resolved = ResolvedContext.from_environment()
+    effective = resolve_effective_task_dir(
+        project_root=authority.project_root,
+        project_state_dir=authority.project_state_dir,
+        spawn_id=str(runtime_ctx.spawn_id) if runtime_ctx.spawn_id is not None else None,
+        inherited_task_dir=resolved.inherited_task_dir,
+        work_id=resolved.work_id,
+    )
+    return TaskDirOutput(
+        task_dir=effective.task_dir.as_posix(),
+        source=effective.source,
+        spawn_id=str(runtime_ctx.spawn_id) if runtime_ctx.spawn_id is not None else None,
+    )
+
+
+def task_dir_sync(input: TaskDirInput) -> TaskDirOutput:
+    """Synchronous handler for spawn-scope task-dir query."""
+
+    _ = input
+    return _resolve_effective_task_dir_output()
+
+
+def task_dir_set_sync(input: TaskDirSetInput) -> TaskDirMutationOutput:
+    """Write spawn-scope task-dir override for the current session."""
+
+    authority = resolve_runtime_authority_for_write()
+    runtime_ctx = RuntimeContext.from_environment()
+    spawn_id = _require_session_spawn_id(runtime_ctx)
+    task_dir = _validated_task_dir_path(input.path)
+    write_spawn_scope_task_dir(authority.project_root, spawn_id, task_dir)
+    return TaskDirMutationOutput()
+
+
+def task_dir_clear_sync(input: TaskDirClearInput) -> TaskDirMutationOutput:
+    """Tombstone spawn-scope task-dir for the current session."""
+
+    _ = input
+    authority = resolve_runtime_authority_for_write()
+    runtime_ctx = RuntimeContext.from_environment()
+    spawn_id = _require_session_spawn_id(runtime_ctx)
+    write_spawn_scope_task_dir(authority.project_root, spawn_id, None)
+    return TaskDirMutationOutput()
+
+
+async def task_dir(input: TaskDirInput) -> TaskDirOutput:
+    return await asyncio.to_thread(task_dir_sync, input)
+
+
+async def task_dir_set(input: TaskDirSetInput) -> TaskDirMutationOutput:
+    return await asyncio.to_thread(task_dir_set_sync, input)
+
+
+async def task_dir_clear(input: TaskDirClearInput) -> TaskDirMutationOutput:
+    return await asyncio.to_thread(task_dir_clear_sync, input)
 
 
 def _extra_context_config(config: ContextConfig) -> dict[str, ArbitraryContextConfig]:
@@ -461,6 +585,11 @@ __all__ = [
     "ContextEntryOutput",
     "ContextInput",
     "ContextOutput",
+    "TaskDirClearInput",
+    "TaskDirInput",
+    "TaskDirMutationOutput",
+    "TaskDirOutput",
+    "TaskDirSetInput",
     "WorkCurrentInput",
     "WorkCurrentOutput",
     "WorkPathInput",
@@ -471,6 +600,12 @@ __all__ = [
     "context_sync",
     "resolve_active_work_scope",
     "resolve_active_work_scope_dir",
+    "task_dir",
+    "task_dir_clear",
+    "task_dir_clear_sync",
+    "task_dir_set",
+    "task_dir_set_sync",
+    "task_dir_sync",
     "work_current",
     "work_current_sync",
     "work_path",

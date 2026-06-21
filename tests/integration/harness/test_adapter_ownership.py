@@ -9,11 +9,8 @@ from uuid import uuid4
 import pytest
 
 from meridian.lib.core.types import SpawnId
-from meridian.lib.harness.claude import (
-    ClaudeAdapter,
-    _candidate_claude_project_dirs,
-    project_slug,
-)
+from meridian.lib.harness.claude import ClaudeAdapter
+from meridian.lib.harness.claude_sessions import candidate_claude_project_dirs, project_slug
 from meridian.lib.harness.codex import CodexAdapter
 from meridian.lib.harness.opencode import OpenCodeAdapter
 from meridian.lib.harness.session_detection import infer_harness_from_untracked_session_ref
@@ -127,7 +124,7 @@ def test_candidate_dirs_returns_exact_slug_only(
     exact_dir.mkdir(parents=True)
     prefixed_child_dir.mkdir(parents=True)
 
-    assert _candidate_claude_project_dirs(project_root) == [exact_dir]
+    assert candidate_claude_project_dirs(project_root) == [exact_dir]
 
 
 def test_claude_adapter_does_not_resolve_session_from_prefixed_child_project_slug(

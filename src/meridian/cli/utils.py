@@ -6,11 +6,12 @@ from typing import Literal, overload
 
 
 def require_established_project_root() -> Path:
-    """Resolve project root from GlobalOptions or CWD walk, erroring if none found.
+    """Resolve project root from GlobalOptions or env, erroring if only bare CWD.
 
     Reads opts.project_root first (set from -C / --directory flag), then falls
-    back to env/CWD discovery via resolve_project_root_resolution. Raises
-    SystemExit(1) when the discovery falls back to bare CWD with no project marker.
+    back to env/CWD resolution via resolve_project_root_resolution. Raises
+    SystemExit(1) when resolution falls back to bare CWD without explicit or
+    inherited project targeting.
     """
     from meridian.cli.main import get_global_options
     from meridian.lib.config.project_root import resolve_project_root_resolution
@@ -21,7 +22,7 @@ def require_established_project_root() -> Path:
     resolution = resolve_project_root_resolution(execution_cwd=Path.cwd())
     if resolution.source == "cwd":
         print(
-            "No Meridian project found. Run from a project directory or pass -C <path>.",
+            "No Meridian project found. Run from the project root or pass -C <path>.",
             file=sys.stderr,
         )
         raise SystemExit(1)

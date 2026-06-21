@@ -32,14 +32,14 @@ class ApplicationServices:
 
 @dataclass(frozen=True)
 class ApplicationEntryPoint:
-    """Typed carrier shared by chat, spawn, and extension entrypoints."""
+    """Typed carrier shared by spawn and extension entrypoints."""
 
     context: ApplicationContext = field(default_factory=ApplicationContext)
     services: ApplicationServices = field(default_factory=ApplicationServices)
 
 
 SpawnEntryPoint = ApplicationEntryPoint
-ChatEntryPoint = ApplicationEntryPoint
+
 ExtensionEntryPoint = ApplicationEntryPoint
 
 
@@ -47,7 +47,6 @@ __all__ = [
     "ApplicationContext",
     "ApplicationEntryPoint",
     "ApplicationServices",
-    "ChatEntryPoint",
     "ExtensionEntryPoint",
     "SpawnEntryPoint",
 ]

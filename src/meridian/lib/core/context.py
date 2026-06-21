@@ -8,7 +8,7 @@ from pydantic import BaseModel, ConfigDict
 from meridian.lib.core.depth import is_nested_meridian_depth
 from meridian.lib.core.resolved_context import ResolvedContext
 from meridian.lib.core.types import SpawnId
-from meridian.lib.state.paths import resolve_work_scratch_dir, resolve_work_scratch_dir_for_project
+from meridian.lib.state.paths import resolve_work_scratch_dir_for_project
 
 
 class RuntimeContext(BaseModel):
@@ -56,17 +56,11 @@ class RuntimeContext(BaseModel):
             overrides["MERIDIAN_ACTIVE_WORK_ID"] = self.work_id
         if self.work_dir is not None:
             overrides["MERIDIAN_ACTIVE_WORK_DIR"] = self.work_dir.as_posix()
-        elif self.work_id:
-            if self.project_root is not None:
-                overrides["MERIDIAN_ACTIVE_WORK_DIR"] = resolve_work_scratch_dir_for_project(
-                    self.project_root,
-                    self.work_id,
-                ).as_posix()
-            elif self.runtime_root is not None:
-                overrides["MERIDIAN_ACTIVE_WORK_DIR"] = resolve_work_scratch_dir(
-                    self.runtime_root,
-                    self.work_id,
-                ).as_posix()
+        elif self.work_id and self.project_root is not None:
+            overrides["MERIDIAN_ACTIVE_WORK_DIR"] = resolve_work_scratch_dir_for_project(
+                self.project_root,
+                self.work_id,
+            ).as_posix()
         return overrides
 
 

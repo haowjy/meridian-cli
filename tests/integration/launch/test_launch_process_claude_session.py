@@ -8,6 +8,7 @@ repairs diverged state, and that resume launches do not inject seed args.
 
 from __future__ import annotations
 
+import json
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
@@ -16,6 +17,7 @@ import pytest
 
 from meridian.lib.config.settings import load_config
 from meridian.lib.core.types import HarnessId
+from meridian.lib.harness.claude import project_slug
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.launch.context import build_launch_context
 from meridian.lib.launch.process import runner as process_runner
@@ -85,6 +87,11 @@ def _build_primary_launch_context(
     return launch_context, harness_registry
 
 
+def _no_observed_session(**kwargs: object) -> None:
+    _ = kwargs
+    return None
+
+
 @pytest.mark.slow
 def test_run_harness_process_fresh_claude_primary_seeds_session_id(
     monkeypatch: pytest.MonkeyPatch,
@@ -118,7 +125,7 @@ def test_run_harness_process_fresh_claude_primary_seeds_session_id(
         on_child_started(555)
         return (0, 555)
 
-    monkeypatch.setattr(claude_adapter, "observe_session_id", lambda **kwargs: None)
+    monkeypatch.setattr(claude_adapter, "observe_session_id", _no_observed_session)
 
     outcome = run_harness_process(
         launch_context,
@@ -196,7 +203,7 @@ def test_run_harness_process_records_generated_claude_command_session_id(
         return (0, 556)
 
     monkeypatch.setattr(process_runner, "build_launch_context", fake_build_launch_context)
-    monkeypatch.setattr(claude_adapter, "observe_session_id", lambda **kwargs: None)
+    monkeypatch.setattr(claude_adapter, "observe_session_id", _no_observed_session)
 
     outcome = run_harness_process(
         launch_context,
@@ -245,7 +252,11 @@ def test_run_harness_process_repairs_state_when_observed_session_differs(
         on_child_started(666)
         return (0, 666)
 
-    monkeypatch.setattr(claude_adapter, "observe_session_id", lambda **kwargs: observed_id)
+    def observed_session(**kwargs: object) -> str:
+        _ = kwargs
+        return observed_id
+
+    monkeypatch.setattr(claude_adapter, "observe_session_id", observed_session)
 
     outcome = run_harness_process(
         launch_context,
@@ -260,6 +271,97 @@ def test_run_harness_process_repairs_state_when_observed_session_differs(
     # Spawn record should have the observed ID
     spawns = list_spawns(launch_context.runtime_root)
     assert any(spawn.harness_session_id == observed_id for spawn in spawns)
+
+
+@pytest.mark.slow
+def test_run_harness_process_reconciles_claude_tui_trampoline_session_id(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.delenv("MERIDIAN_CHAT_ID", raising=False)
+    monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
+    fake_home = tmp_path / "home"
+    monkeypatch.setenv("HOME", fake_home.as_posix())
+    project_root = tmp_path / "claude-tui-trampoline"
+    project_root.mkdir()
+    launch_context, harness_registry = _build_primary_launch_context(
+        project_root=project_root,
+        harness_id=HarnessId.CLAUDE,
+        model="claude-sonnet-4-5",
+    )
+    real_session_id = "9a4846b0-5380-461d-98cb-304e7cee6e64"
+
+    def fake_run_primary_process_with_capture(
+        command: Any,
+        cwd: Any,
+        env: Any,
+        output_log_path: Any,
+        on_child_started: Any = None,
+    ) -> tuple[int, int]:
+        command = tuple(command)
+        recorded_session_id = command[command.index("--session-id") + 1]
+        project_dir = fake_home / ".claude" / "projects" / project_slug(project_root)
+        project_dir.mkdir(parents=True)
+        (project_dir / f"{real_session_id}.jsonl").write_text(
+            "\n".join(
+                (
+                    json.dumps({"type": "agent-setting", "sessionId": real_session_id}),
+                    json.dumps(
+                        {
+                            "type": "user",
+                            "message": {"role": "user", "content": "real prompt"},
+                            "timestamp": 1781827539538,
+                            "sessionId": real_session_id,
+                        }
+                    ),
+                )
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        (fake_home / ".claude" / "history.jsonl").write_text(
+            "\n".join(
+                (
+                    json.dumps(
+                        {
+                            "display": "/tui fullscreen",
+                            "project": project_root.as_posix(),
+                            "sessionId": recorded_session_id,
+                            "timestamp": 1781827479996,
+                        }
+                    ),
+                    json.dumps(
+                        {
+                            "display": "real prompt",
+                            "project": project_root.as_posix(),
+                            "sessionId": real_session_id,
+                            "timestamp": 1781827539538,
+                        }
+                    ),
+                )
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        assert callable(on_child_started)
+        on_child_started(667)
+        return (0, 667)
+
+    outcome = run_harness_process(
+        launch_context,
+        harness_registry,
+        run_primary_process_with_capture_fn=fake_run_primary_process_with_capture,
+    )
+
+    assert outcome.resolved_harness_session_id == real_session_id
+    assert outcome.chat_id is not None
+    spawns = list_spawns(launch_context.runtime_root)
+    assert len(spawns) == 1
+    assert spawns[0].harness_session_id == real_session_id
+    assert (
+        session_store.get_session_harness_id(launch_context.runtime_root, outcome.chat_id)
+        == real_session_id
+    )
 
 
 @pytest.mark.slow

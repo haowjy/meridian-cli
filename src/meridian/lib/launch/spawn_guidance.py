@@ -10,11 +10,29 @@ from meridian.lib.launch.composition import (
     GuidancePhase,
 )
 
+_SPAWN_PROMPTING = """\
+# Prompting subagents
+
+Every spawn starts with fresh context — scope the handoff to what the \
+subagent needs, not what you've been thinking about. Front-load the task; \
+the subagent should know its job by line 3.
+
+For model-specific prompting guidance:  meridian mars models prompting <agent-or-model>"""
+
 _WORK_DISCOVERY = """\
 # Work coordination (meridian)
 
 Group related spawns under a work item — shared dir, goal, session history.
 Learn the commands:  meridian work -h"""
+
+_TASK_DIR_DISCOVERY = """\
+# Source-edit directory (meridian)
+
+`MERIDIAN_TASK_DIR` is where source reads, edits, git, builds, and tests run.
+`MERIDIAN_ACTIVE_WORK_DIR` is for scratch/work artifacts — not your checkout.
+Shell cwd may be the project/control root; `cd "$MERIDIAN_TASK_DIR"` or use absolute
+paths before source ops.
+Live query:  meridian task-dir"""
 
 _SESSION_DISCOVERY = """\
 # Session transcripts (meridian)
@@ -31,6 +49,9 @@ def build_spawn_usage_contract(variants: SpawnUsageContractVariants) -> str:
 
 {variants.intro_line}
 
+- Do NOT use the Agent() tool for work that a meridian agent can do.
+  Use `meridian spawn -a <agent>` instead — it routes to the right
+  model and harness, tracks the work, and produces inspectable artifacts.
 - Launch with --bg; it returns a spawn id without waiting for the work and
   runs the worker detached:
       meridian spawn -a <agent> --prompt-file <prompt>.md --bg
@@ -71,6 +92,9 @@ def build_guidance_blocks(
         if inventory:
             blocks.append(CompositionBlock("inventory", GuidancePhase.GUIDANCE, 0, inventory))
         blocks.append(
+            CompositionBlock("spawn-prompting", GuidancePhase.GUIDANCE, 5, _SPAWN_PROMPTING)
+        )
+        blocks.append(
             CompositionBlock(
                 "spawn-contract",
                 GuidancePhase.GUIDANCE,
@@ -82,7 +106,10 @@ def build_guidance_blocks(
         CompositionBlock("work-discovery", GuidancePhase.GUIDANCE, 20, _WORK_DISCOVERY)
     )
     blocks.append(
-        CompositionBlock("session-discovery", GuidancePhase.GUIDANCE, 21, _SESSION_DISCOVERY)
+        CompositionBlock("task-dir-discovery", GuidancePhase.GUIDANCE, 21, _TASK_DIR_DISCOVERY)
+    )
+    blocks.append(
+        CompositionBlock("session-discovery", GuidancePhase.GUIDANCE, 22, _SESSION_DISCOVERY)
     )
     context_env = (context_prompt or "").strip()
     if context_env:

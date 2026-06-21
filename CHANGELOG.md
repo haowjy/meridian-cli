@@ -4,6 +4,28 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Removed
+- `meridian chat` feature — entire chat backend, CLI command, frontend, and tests deleted.
+- CWD walk-up / marker-based project-root discovery (`.mars/`, `meridian.toml`, `.meridian/id`, `.git`, etc.).
+
+### Added
+- Inheritable `MERIDIAN_TASK_DIR` launch surface: per-spawn `scope.json`, inherited task-dir precedence tier, and `meridian task-dir` (query/set/clear).
+- `meridian spawn subagents` lists subagents the current agent may spawn (mars-delegated inventory).
+- `--from` context refs now include `task_cwd` so receiving sessions know the prior spawn's working directory.
+- `-a @explorer` syntax: leading `@` is stripped from agent names for convenience.
+- Spawn contract warns agents not to use `Agent()` tool when meridian agents are available.
+
+### Changed
+- `meridian spawn agents` renamed to `meridian spawn subagents`; now agent-relative (respects current spawn's declared subagent allow-list) and delegates inventory to mars instead of parsing frontmatter.
+- Project root resolution is explicit only: `-C` / `--directory` → `MERIDIAN_PROJECT_DIR` → literal CWD. `ProjectRootSource` narrowed to `explicit | env | cwd`.
+- Bumped mars-agents to 0.8.12.
+
+### Fixed
+- Named work items no longer leak into the project repo. Active work-scope resolution only honors `[context.work]`; the context-blind `<runtime_root>/work/<slug>` fallback (which wrote `<repo>/.meridian/work/<slug>` under repo-local runtimes) is removed. Without project context the active work dir is now absent rather than fabricated.
+- Spawn prompting guidance now points at `meridian mars models prompting <agent-or-model>`.
+- Claude primary finalization now repairs TUI trampoline session IDs to the durable transcript ID when prompt history proves the successor.
+- Deleted chat command invocations now fail through normal unknown-command routing instead of stale startup metadata.
+
 ## [0.3.10] - 2026-06-18
 
 ### Added
@@ -271,7 +293,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [0.2.18] - 2026-05-31
 
 ### Changed
-- `AGENTS.md`: clarify split between `MERIDIAN_TASK_DIR` and inherited `MERIDIAN_PROJECT_DIR`; use `meridian -C "$MERIDIAN_TASK_DIR" ...` for nested Meridian commands targeting task checkouts.
+- `AGENTS.md`: clarify split between `MERIDIAN_TASK_DIR` and inherited `MERIDIAN_PROJECT_DIR`; use `--task-dir` for source checkout targeting (not `-C`, which retargets the entire project/control root).
 - `mars.toml`: use canonical `haowjy/meridian-prompter` dependency URL.
 
 ### Fixed

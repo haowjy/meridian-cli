@@ -9,12 +9,13 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from meridian.lib.core.context import RuntimeContext
 from meridian.lib.core.resolved_context import ResolvedContext
 from meridian.lib.ops.context import WorkPathInput, resolve_active_work_scope_dir, work_path_sync
 from meridian.lib.ops.runtime import resolve_roots
 from meridian.lib.ops.work_attachment import set_session_work_attachment
 from meridian.lib.state import session_store, work_store
-from meridian.lib.state.paths import resolve_ambient_work_dir
+from meridian.lib.state.paths import resolve_ambient_work_dir, resolve_work_scratch_dir_for_project
 from meridian.lib.state.user_paths import get_project_home
 from meridian.lib.state.work_scope import WorkScope, resolve_work_scope_from_parts
 
@@ -47,11 +48,6 @@ class _ResolutionCase:
 
 def _make_backend(session_work_id: str | None) -> MagicMock:
     backend = MagicMock()
-
-    def _resolve_scratch_dir(root: Path, work_id: str) -> Path:
-        return root / "work" / work_id
-
-    backend.resolve_work_scratch_dir.side_effect = _resolve_scratch_dir
     backend.get_session_active_work_id.return_value = session_work_id
     return backend
 
@@ -325,13 +321,152 @@ def test_resolve_work_scope_from_parts_prefers_bound_dir_with_env_work_id() -> N
     bound = Path("/tmp/custom-bound")
     scope = resolve_work_scope_from_parts(
         project_root=Path("/repo"),
-        runtime_root=Path("/runtime"),
         spawn_id=None,
         work_id="attached",
         bound_work_dir=bound,
     )
 
     assert scope == WorkScope(kind="work_item", identifier="attached", root=bound)
+
+
+def test_resolve_work_scope_from_parts_uses_context_dir_when_project_root_set(
+    tmp_path: Path,
+) -> None:
+    project_root = tmp_path / "repo"
+    state_dir = project_root / ".meridian"
+    state_dir.mkdir(parents=True)
+    (state_dir / "id").write_text("proj-scope-parts", encoding="utf-8")
+    (project_root / "meridian.local.toml").write_text(
+        "\n".join(
+            [
+                "[context.work]",
+                'path = "ctx/work"',
+                'archive = "ctx/archive/work"',
+                "",
+                "[context.kb]",
+                'path = "ctx/kb"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    runtime_root = tmp_path / "runtime"
+    runtime_root.mkdir()
+
+    scope = resolve_work_scope_from_parts(
+        project_root=project_root,
+        spawn_id=None,
+        work_id="feature-x",
+        bound_work_dir=None,
+        project_work_dir=None,
+    )
+
+    assert scope is not None
+    expected = resolve_work_scratch_dir_for_project(project_root, "feature-x")
+    assert scope.root == expected
+    assert scope.root == project_root / "ctx/work/feature-x"
+    assert scope.root != runtime_root / "work/feature-x"
+
+
+def test_resolve_work_scope_from_parts_returns_none_without_project_context() -> None:
+    scope = resolve_work_scope_from_parts(
+        project_root=None,
+        spawn_id=None,
+        work_id="feature-x",
+        bound_work_dir=None,
+    )
+
+    assert scope is None
+
+
+def test_runtime_context_to_env_overrides_uses_context_resolved_work_dir(
+    tmp_path: Path,
+) -> None:
+    project_root = tmp_path / "repo"
+    state_dir = project_root / ".meridian"
+    state_dir.mkdir(parents=True)
+    (state_dir / "id").write_text("proj-runtime-ctx", encoding="utf-8")
+    (project_root / "meridian.local.toml").write_text(
+        "\n".join(
+            [
+                "[context.work]",
+                'path = "ctx/work"',
+                "",
+                "[context.kb]",
+                'path = "ctx/kb"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    runtime_root = tmp_path / "runtime"
+    runtime_root.mkdir()
+
+    ctx = RuntimeContext(
+        work_id="feature-x",
+        project_root=project_root,
+        runtime_root=runtime_root,
+    )
+    overrides = ctx.to_env_overrides()
+
+    assert overrides["MERIDIAN_ACTIVE_WORK_ID"] == "feature-x"
+    assert overrides["MERIDIAN_ACTIVE_WORK_DIR"] == (project_root / "ctx/work/feature-x").as_posix()
+    assert overrides["MERIDIAN_ACTIVE_WORK_DIR"] != (runtime_root / "work/feature-x").as_posix()
+
+
+def test_runtime_context_to_env_overrides_omits_work_dir_without_project_root(
+    tmp_path: Path,
+) -> None:
+    runtime_root = tmp_path / "runtime"
+    runtime_root.mkdir()
+
+    ctx = RuntimeContext(
+        work_id="feature-x",
+        runtime_root=runtime_root,
+        project_root=None,
+    )
+    overrides = ctx.to_env_overrides()
+
+    assert overrides["MERIDIAN_ACTIVE_WORK_ID"] == "feature-x"
+    assert "MERIDIAN_ACTIVE_WORK_DIR" not in overrides
+
+
+def test_named_work_resolves_under_context_work_not_runtime_root(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    project_root = tmp_path / "repo"
+    state_dir = project_root / ".meridian"
+    state_dir.mkdir(parents=True)
+    (state_dir / "id").write_text("proj-ctx-work", encoding="utf-8")
+    (project_root / "meridian.local.toml").write_text(
+        "\n".join(
+            [
+                "[context.work]",
+                'path = "ctx/work"',
+                'archive = "ctx/archive/work"',
+                "",
+                "[context.kb]",
+                'path = "ctx/kb"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    runtime_root = get_project_home("proj-ctx-work")
+
+    monkeypatch.setenv("MERIDIAN_PROJECT_DIR", project_root.as_posix())
+    monkeypatch.setenv("MERIDIAN_ACTIVE_WORK_ID", "feature-x")
+    monkeypatch.delenv("MERIDIAN_ACTIVE_WORK_DIR", raising=False)
+
+    ctx = ResolvedContext.from_environment()
+
+    expected = project_root / "ctx/work/feature-x"
+    assert ctx.work_scope is not None
+    assert ctx.work_scope.kind == "work_item"
+    assert ctx.work_dir == expected
+    assert ctx.work_dir != runtime_root / "work/feature-x"
+    assert ".meridian/work/feature-x" not in ctx.work_dir.as_posix()
 
 
 def test_resolve_active_work_scope_dir_explicit_chat_id_wiring(

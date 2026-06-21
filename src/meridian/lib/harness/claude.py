@@ -1,9 +1,7 @@
 """Claude CLI harness adapter."""
 
 import json
-import logging
 import os
-import re
 from pathlib import Path
 from typing import Any, ClassVar, cast
 from uuid import uuid4
@@ -44,6 +42,14 @@ from meridian.lib.harness.claude_preflight import (
     build_claude_preflight_result,
     ensure_claude_session_accessible,
 )
+from meridian.lib.harness.claude_sessions import (
+    candidate_claude_project_dirs,
+    detect_primary_session_id,
+    reconcile_tui_trampoline_session_id,
+)
+from meridian.lib.harness.claude_sessions import (
+    project_slug as project_slug,
+)
 from meridian.lib.harness.claude_utils import (
     extract_session_id_from_args,
     has_session_identity_in_args,
@@ -77,10 +83,7 @@ from meridian.lib.launch.launch_types import (
     TerminalSurfaceMode,
 )
 from meridian.lib.launch.request import SessionRequest
-from meridian.lib.platform import get_home_path
 from meridian.lib.safety.permissions import PermissionConfig
-
-logger = logging.getLogger(__name__)
 
 
 def build_claude_adhoc_agent_json(
@@ -104,91 +107,7 @@ def build_claude_adhoc_agent_json(
     return json.dumps(payload, separators=(",", ":"), sort_keys=True)
 
 
-def project_slug(project_root: Path) -> str:
-    return re.sub(r"[^a-zA-Z0-9]", "-", str(project_root.resolve()))
-
-
-def _claude_config_root() -> Path:
-    configured_root = os.environ.get("CLAUDE_CONFIG_DIR", "").strip()
-    if configured_root:
-        return Path(configured_root).expanduser().resolve()
-    return get_home_path() / ".claude"
-
-
-def _claude_projects_root() -> Path:
-    return _claude_config_root() / "projects"
-
-
-def _claude_project_dir(project_root: Path) -> Path:
-    return _claude_projects_root() / project_slug(project_root)
-
-
-def _candidate_claude_project_dirs(project_root: Path) -> list[Path]:
-    """Return the exact Claude project directory for this project root."""
-    return [_claude_projects_root() / project_slug(project_root)]
-
-
-def _read_claude_session_id(path: Path) -> str | None:
-    try:
-        with path.open("r", encoding="utf-8", errors="ignore") as handle:
-            first_line = handle.readline().strip()
-    except OSError:
-        logger.debug("Failed to read Claude session file %s", path, exc_info=True)
-        return None
-    if not first_line:
-        return None
-    try:
-        payload = json.loads(first_line)
-    except json.JSONDecodeError:
-        return path.stem.strip() or None
-    if not isinstance(payload, dict):
-        return path.stem.strip() or None
-    payload_dict = cast("dict[str, object]", payload)
-    session_id = payload_dict.get("sessionId")
-    if isinstance(session_id, str) and session_id.strip():
-        return session_id.strip()
-    return path.stem.strip() or None
-
-
-def _detect_primary_session_id(
-    project_root: Path,
-    started_at_epoch: float,
-    *,
-    expected_session_id: str | None = None,
-) -> str | None:
-    """Detect Claude primary session ID by verifying a known session file only."""
-    if not expected_session_id:
-        logger.debug("No expected session ID for primary detection; skipping heuristic scan")
-        return None
-
-    project_dir = _claude_project_dir(project_root)
-    if not project_dir.is_dir():
-        logger.warning(
-            "Expected Claude session directory not found",
-            extra={"session_id": expected_session_id, "project_dir": str(project_dir)},
-        )
-        return None
-
-    candidate = project_dir / f"{expected_session_id}.jsonl"
-    try:
-        if not candidate.is_file():
-            logger.warning(
-                "Expected Claude session file not found",
-                extra={"session_id": expected_session_id, "project_dir": str(project_dir)},
-            )
-            return None
-        if candidate.stat().st_mtime + 1 < started_at_epoch:
-            return None
-        resolved = _read_claude_session_id(candidate)
-        if resolved == expected_session_id:
-            return expected_session_id
-        logger.warning(
-            "Claude session file exists but embedded ID mismatches",
-            extra={"expected": expected_session_id, "found": resolved},
-        )
-    except OSError:
-        logger.debug("Failed to verify Claude session file", exc_info=True)
-    return None
+_candidate_claude_project_dirs = candidate_claude_project_dirs
 
 
 def _extract_passthrough_session_id(args: tuple[str, ...]) -> str:
@@ -614,11 +533,47 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         expected_session_id: str | None = None,
     ) -> str | None:
         _ = started_at_local_iso
-        return _detect_primary_session_id(
+        return detect_primary_session_id(
             project_root,
             started_at_epoch,
             expected_session_id=expected_session_id,
         )
+
+    def observe_session_id(
+        self,
+        *,
+        artifacts: ArtifactStore,
+        spawn_id: SpawnId | None = None,
+        current_session_id: str | None = None,
+        connection_session_id: str | None = None,
+        project_root: Path | None = None,
+        started_at_epoch: float | None = None,
+        started_at_local_iso: str | None = None,
+        expected_session_id: str | None = None,
+    ) -> str | None:
+        _ = started_at_local_iso
+
+        live_session_id = (connection_session_id or "").strip()
+        if live_session_id:
+            return live_session_id
+
+        if spawn_id is not None:
+            extracted_session_id = (self.extract_session_id(artifacts, spawn_id) or "").strip()
+            if extracted_session_id:
+                return extracted_session_id
+
+        normalized_current = (current_session_id or expected_session_id or "").strip()
+        if not normalized_current:
+            return None
+        if project_root is None:
+            return normalized_current
+
+        reconciled = reconcile_tui_trampoline_session_id(
+            project_root=project_root,
+            recorded_session_id=normalized_current,
+            started_at_epoch=started_at_epoch,
+        )
+        return reconciled or normalized_current
 
     def resolve_session_file(self, *, project_root: Path, session_id: str) -> Path | None:
         normalized_session_id = session_id.strip()

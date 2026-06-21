@@ -9,7 +9,7 @@ Four entry points, one per invocation class tier. Pick based on what the command
 | Startup class | Call |
 |---|---|
 | `READ_PROJECT` | `prepare_for_project_read()` |
-| `READ_RUNTIME`, `CLIENT_READ` | `prepare_for_runtime_read()` |
+| `READ_RUNTIME` | `prepare_for_runtime_read()` |
 | `WRITE_PROJECT` | `prepare_for_project_write()` |
 | `WRITE_RUNTIME`, `PRIMARY_LAUNCH`, `SERVICE_RUNTIME` | `prepare_for_runtime_write()` |
 
@@ -28,7 +28,7 @@ This is the central invariant. Violating it causes read-only command paths to si
 
 - **Don't instantiate `SpawnApplicationService` directly.** Use `build_spawn_application_service(runtime_write_ctx)`. It's the correct factory.
 - **Post-parse bootstrap exception**: commands with `root_source = RootSource.ARGV` (e.g. `meridian init [path]`) call `prepare_for_project_write(arg_derived_root)` themselves after argument parsing. All other commands receive a pre-prepared context.
-- **Entrypoint carriers** (`SpawnEntryPoint`, `ChatEntryPoint`, `ExtensionEntryPoint`) carry `ApplicationContext + ApplicationServices` downstream. Use `build_spawn_entrypoint()`, `build_chat_entrypoint()`, `build_extension_entrypoint()` — don't assemble them manually.
+- **Entrypoint carriers** (`SpawnEntryPoint`, `ExtensionEntryPoint`) carry `ApplicationContext + ApplicationServices` downstream. Use `build_spawn_entrypoint()`, `build_extension_entrypoint()` — don't assemble them manually.
 
 ## Context Hierarchy
 

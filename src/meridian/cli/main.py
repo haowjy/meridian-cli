@@ -23,6 +23,7 @@ from meridian.cli.app_tree import (
     session_app,
     spawn_app,
     streaming_app,
+    task_dir_app,
     telemetry_app,
     test_app,
     work_app,
@@ -675,6 +676,11 @@ def _register_commands_for_invocation(argv: Sequence[str]) -> None:
 
             register_hooks_commands(hooks_app, emit)
 
+        def _register_task_dir() -> None:
+            from meridian.cli.task_dir_cmd import register_task_dir_commands
+
+            register_task_dir_commands(task_dir_app, emit)
+
         def _register_models() -> None:
             from meridian.cli.models_cmd import register_models_commands
 
@@ -732,11 +738,6 @@ def _register_commands_for_invocation(argv: Sequence[str]) -> None:
 
             register_sync_commands(app, emit)
 
-        def _register_chat() -> None:
-            from meridian.cli.chat_cmd import register_chat_command
-
-            register_chat_command(app)
-
         def _register_kg() -> None:
             import meridian.cli.kg_cmd as _kg_cmd
 
@@ -768,6 +769,7 @@ def _register_commands_for_invocation(argv: Sequence[str]) -> None:
             "work": _register_work,
             "config": _register_config,
             "hooks": _register_hooks,
+            "task-dir": _register_task_dir,
             "models": _register_models,
             "ext": _register_ext,
             "telemetry": _register_telemetry,
@@ -776,7 +778,6 @@ def _register_commands_for_invocation(argv: Sequence[str]) -> None:
             "bootstrap": _register_bootstrap,
             "misc": _register_misc,
             "sync": _register_sync,
-            "chat": _register_chat,
             "kg": _register_kg,
             "mermaid": _register_mermaid,
             "qi": _register_qi,

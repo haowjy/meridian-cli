@@ -674,7 +674,7 @@ assert row is not None and row.chat_id
 records = session_store.get_session_records(runtime_root, {row.chat_id})
 assert records
 assert records[0].forked_from_chat_id is None
-print("PASS: raw harness fork worked without meridian chat lineage")
+print("PASS: raw harness fork worked without session lineage")
 PY
 ```
 

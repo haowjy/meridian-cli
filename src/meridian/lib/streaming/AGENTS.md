@@ -70,8 +70,8 @@ needed to guarantee it gets through — without it, the subscriber hangs forever
 | `PersistentDrainPolicy` | `succeeded` | emit `meridian/turn_completed`, continue |
 | `PersistentDrainPolicy` | error/cancel | terminate |
 
-Pass `PersistentDrainPolicy` to `start_spawn(drain_policy=...)` for chat sessions
-that keep the harness alive across turns.
+Pass `PersistentDrainPolicy` to `start_spawn(drain_policy=...)` for long-lived
+session drains that keep the harness alive across turns.
 
 ## Heartbeat / Reaper Contract
 

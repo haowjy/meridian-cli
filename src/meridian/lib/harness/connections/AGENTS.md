@@ -1,7 +1,7 @@
 # harness/connections/ — Bidirectional Transports
 
 Full-duplex streaming connections between Meridian and a running harness process.
-Only used by the SpawnManager drain loop and `meridian chat` — not the subprocess
+Only used by the SpawnManager drain loop — not the subprocess
 path. If a spawn is one-shot (no streaming, no managed-primary), this package is
 not involved.
 

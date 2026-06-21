@@ -33,7 +33,7 @@ read back. Process exit signals completion. Used for non-streaming spawns.
 
 **Connection path** (`lib/harness/connections/`): starts a long-lived process then
 connects bidirectionally. Events flow through the `SpawnManager` drain loop. Used
-for streaming app server and `meridian chat`.
+for streaming app server.
 
 Per-harness mapping:
 - Claude subprocess: `claude -p --output-format stream-json --verbose -`
@@ -143,7 +143,8 @@ startup failure.
 ### `observe_session_id()` Priority Chain
 
 Called exactly once per launch by the driving adapter after the executor returns.
-Must not mutate adapter-instance state:
+Must not mutate adapter-instance state. The base implementation uses a simple
+fallback chain; Claude overrides it with harness-specific reconciliation:
 
 1. `connection_session_id` — live session ID from transport layer (present for connection-based paths)
 2. `extract_session_id()` — extraction from spawn artifacts (`session_id.txt`, then JSONL history)
@@ -151,6 +152,23 @@ Must not mutate adapter-instance state:
 4. `detect_primary_session_id()` — filesystem scan (only when `project_root` and `started_at_epoch` provided)
 
 Callers treat the result as authoritative. Only skip an earlier step if its source is absent (no connection, no artifacts file).
+
+**Claude override.** `ClaudeAdapter.observe_session_id()` replaces the base
+implementation's priority chain with a trampoline-aware path: after steps 1–2,
+it calls `reconcile_tui_trampoline_session_id()` before falling through to
+`current_session_id`. The reconciliation checks `~/.claude/history.jsonl` for
+`/tui fullscreen` evidence tied to the recorded session ID, finds the next
+same-project prompt with a different session ID, and verifies the successor has
+a transcript whose first user message matches. If the recorded ID already has a
+transcript, it is preserved — reconciliation only activates when the transcript
+is missing. Fallback is always the recorded ID rather than `None`, so existing
+behavior is preserved when no trampoline successor exists.
+
+This is a Claude-specific concern. Claude's new TUI creates a transient session
+when entering `/tui fullscreen`, then writes the durable transcript under a
+different session ID. Meridian records the transient ID during launch; the
+override repairs it to the durable ID at finalization time. Codex, OpenCode,
+and Pi do not have this pattern and use the base implementation unchanged.
 
 ### `HarnessContract` as Inspectable Surface
 

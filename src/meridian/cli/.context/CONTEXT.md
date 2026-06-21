@@ -26,8 +26,7 @@ never queries the extension registry for routing answers.
 | `WRITE_RUNTIME` | `spawn create`, `work start` | runtime-write | segment |
 | `PRIMARY_LAUNCH` | bare `meridian` | runtime-write | segment |
 | `SERVICE_ROOTLESS` | `serve` | none | stderr |
-| `SERVICE_RUNTIME` | `chat` | runtime-write | segment |
-| `CLIENT_READ` | `chat ls`, `chat show` | runtime-read | none |
+| `SERVICE_RUNTIME` | `streaming serve` | runtime-write | segment |
 
 Read-only classes install no telemetry, spawn no writer thread, create no
 UUID, and make no filesystem mutations.
@@ -63,26 +62,25 @@ command catalog — no runtime mutation of shared `App` objects. Do not call
 ## `require_established_project_root()`
 
 `utils.py:require_established_project_root()` is the fail-fast guard used by
-commands that require an actual project directory. It raises `SystemExit` when
-`resolve_project_root_resolution()` returns `source="cwd"` — meaning the
-directory walk from CWD found no project marker (`.mars/`, `meridian.toml`,
-`.meridian/id`, `.git`, etc.) and fell back to bare CWD.
+commands that require an actual project directory. It reads `GlobalOptions.project_root`
+first (`-C` / `--directory`), then calls `resolve_project_root_resolution()`.
+It raises `SystemExit(1)` when resolution falls back to bare CWD (`source="cwd"`)
+without explicit or inherited project targeting — there is no marker walk-up.
 
 The "established" in the name is deliberate: it makes the policy visible at
 every call site. A command that calls this asserts it cannot proceed in an
-arbitrary directory — it needs a real project root, not a best-guess fallback.
+arbitrary directory — it needs an explicit project root (`-C`, `MERIDIAN_PROJECT_DIR`,
+or cwd that is intentionally the project root).
 
-Do not use this in commands that should work anywhere (e.g. `config init`,
-which creates the project marker). Use `resolve_project_root_resolution()`
-directly and handle the `source="cwd"` case explicitly if the command has
-a sensible fallback.
+Do not use this in commands that should work anywhere (e.g. `config init`).
+Use `resolve_project_root_resolution()` directly and handle the `source="cwd"`
+case explicitly if the command has a sensible fallback.
 
 **`SystemExit` is a `BaseException`, not `Exception`.** Code that wraps calls to
 this function in `except Exception` will silently swallow the exit. Use
 `except BaseException` (or let it propagate) in any wrapper that must not eat it.
-`_check_stale_assets()` in `chat_cmd.py` was fixed from `except Exception` to
-`except BaseException` exactly because the chat server called this guard in a
-non-project directory and the swallowed `SystemExit` caused a confusing crash.
+`SystemExit` propagation matters whenever a guard is called from a context
+that wraps in `except Exception` — the swallowed exit causes confusing crashes.
 
 ## `to_cli_output()` Dispatch
 

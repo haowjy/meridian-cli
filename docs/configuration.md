@@ -381,15 +381,15 @@ Declare one named table per root:
 
 ```toml
 # meridian.toml — committed convention
-[workspace.frontend]
-path = "../meridian-web"
-
 [workspace.prompts]
 path = "../prompts/meridian-base"
 
+[workspace.mars]
+path = "../mars-agents"
+
 # meridian.local.toml — machine-specific override or addition
-[workspace.frontend]
-path = "/home/user/src/meridian-web"
+[workspace.prompts]
+path = "/home/user/src/prompts/meridian-base"
 
 [workspace.local-data]
 path = "/data/large-dataset"
@@ -462,10 +462,10 @@ workspace.applicability.opencode = active
 Pass `--verbose` or `--json` to get per-root detail:
 
 ```text
-workspace.roots[0].name = frontend
+workspace.roots[0].name = mars-agents
 workspace.roots[0].source = merged
-workspace.roots[0].declared_path = ../meridian-web
-workspace.roots[0].resolved_path = /home/user/repos/meridian-web
+workspace.roots[0].declared_path = ../mars-agents
+workspace.roots[0].resolved_path = /home/user/repos/mars-agents
 workspace.roots[0].status = projected
 
 workspace.roots[1].name = prompts
@@ -651,11 +651,38 @@ The following features are not yet supported for the Cursor harness:
 
 ## Environment Variables
 
+### Project root and task directory
+
+Project root (control root for config, runtime state, and harness context) resolves
+in this order:
+
+1. `-C` / `--directory` (CLI flag)
+2. `MERIDIAN_PROJECT_DIR` (inherited across spawns)
+3. Literal process CWD (no marker walk-up)
+
+Commands that require an established project error when only bare CWD applies —
+run from the project root, pass `-C <path>`, or set `MERIDIAN_PROJECT_DIR`.
+
+Task directory (where source reads, edits, git, builds, and tests run) is separate.
+`MERIDIAN_TASK_DIR` is inherited across spawns. Precedence within a session:
+spawn-scope override (`meridian task-dir set`, stored in per-spawn `scope.json`) →
+work-item `task_dir` (`meridian work task-dir`) → inherited `MERIDIAN_TASK_DIR` →
+project root. Query with `meridian task-dir`; clear a stale inherited value with
+`meridian task-dir clear`. Use `--task-dir` on primary/spawn launch for one-shot
+overrides — not `-C`, which retargets the entire project/control root.
+
+`MERIDIAN_PROJECT_ROOT` is the bind-time export of the resolved project/control
+root to child sessions. `MERIDIAN_TASK_CWD` is a bind-time alias for the child's
+resolved logical task cwd; it is not inherited.
+
 ### Core
 
 | Variable | Purpose |
 |---|---|
-| `MERIDIAN_PROJECT_DIR` | Force repo root resolution |
+| `MERIDIAN_PROJECT_DIR` | Inherited project/control root; wins over literal CWD when set |
+| `MERIDIAN_PROJECT_ROOT` | Bind-time export of project/control root to child sessions |
+| `MERIDIAN_TASK_DIR` | Inherited source-edit directory; set/clear via `meridian task-dir` |
+| `MERIDIAN_TASK_CWD` | Bind-time alias for the child's resolved task cwd (not inherited) |
 | `MERIDIAN_CONFIG` | User config overlay path |
 | `MERIDIAN_HOME` | Override user state root (default `~/.meridian/` on Unix/macOS, `%LOCALAPPDATA%\meridian\` on Windows) |
 | `MERIDIAN_RUNTIME_DIR` | Override the runtime state root. Absolute path = use as-is; relative path = resolve relative to repo root. Repo-owned default paths (`kb/`, `work/`, `archive/work/`) always stay in `.meridian/` regardless of this setting. |
@@ -663,7 +690,7 @@ The following features are not yet supported for the Cursor harness:
 | `MERIDIAN_ACTIVE_WORK_ID` | Active attached work item slug, when one exists |
 | `MERIDIAN_ACTIVE_WORK_DIR` | Active scope directory: named work item scratch dir when attached, else the run's ambient spawn scope (`spawns/p<N>/work`) |
 | `MERIDIAN_SPAWN_ID` | Current run/spawn ID for primary and delegated execution |
-| `MERIDIAN_CHAT_ID` | Top-level chat/session id inherited across the spawn tree |
+| `MERIDIAN_CHAT_ID` | Top-level session id inherited across the spawn tree |
 | `MERIDIAN_DEPTH` | Zero-based delegation depth (`0` = primary/root, `1` = first delegated spawn) |
 | `MERIDIAN_MAX_DEPTH` | Max zero-based delegated spawn depth override |
 | `MERIDIAN_PARENT_SPAWN_ID` | Immediate parent spawn ID for nested execution |

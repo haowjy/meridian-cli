@@ -163,8 +163,10 @@ def test_gate_present_returns_inventory_and_contract_blocks(tmp_path: Path) -> N
     assert "run_in_background" in contract.content
     assert names == [
         "inventory",
+        "spawn-prompting",
         "spawn-contract",
         "work-discovery",
+        "task-dir-discovery",
         "session-discovery",
         "context-env",
     ]
@@ -186,6 +188,7 @@ def test_gate_absent_returns_empty_blocks_but_context_still_builds(tmp_path: Pat
     assert "spawn-contract" not in names
     assert names == [
         "work-discovery",
+        "task-dir-discovery",
         "session-discovery",
         "context-env",
     ]

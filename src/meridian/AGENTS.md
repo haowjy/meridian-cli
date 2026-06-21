@@ -61,7 +61,7 @@ config entry. If adding a feature requires editing 10 files, the abstraction is 
 | `lib/context/` | Context resolution (KB, strategy, work directories) |
 | `lib/hooks/` | Hook dispatch, config layering, built-in hooks |
 | `lib/extensions/` | Extension command registry |
-| `lib/chat/` | Chat session management |
+
 | `lib/observability/` | Spawn-scoped JSONL tracing |
 | `lib/mermaid/` | Mermaid diagram validation |
 | `lib/kg/` | Markdown link checking |
@@ -95,7 +95,8 @@ path without understanding how finalization ownership works will produce orphane
 
 ## Related
 
-- `CLAUDE.md` — architecture philosophy, design principles, dev workflow
+- `CLAUDE.md` → `AGENTS.md` — safety rules, design constraints, dev commands
+- `.context/CONTEXT.md` — design philosophy, logging, cross-platform paths
 - `lib/launch/AGENTS.md` — composition seam; four driving adapters
 - `lib/harness/AGENTS.md` — translation pipeline; SpawnParams accounting
 - `lib/state/AGENTS.md` — file layout; atomic write invariants

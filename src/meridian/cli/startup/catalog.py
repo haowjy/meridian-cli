@@ -243,46 +243,6 @@ _COMMAND_DESCRIPTORS: tuple[CommandDescriptor, ...] = (
         "text",
         "Install shell completion.",
     ),
-    _descriptor(
-        ("chat",),
-        StartupClass.SERVICE_RUNTIME,
-        StateRequirement.RUNTIME_WRITE,
-        TelemetryMode.SEGMENT,
-        "text",
-        "Start interactive chat service.",
-    ),
-    _descriptor(
-        ("chat", "ls"),
-        StartupClass.CLIENT_READ,
-        StateRequirement.RUNTIME_READ,
-        TelemetryMode.NONE,
-        "text",
-        "List chats.",
-    ),
-    _descriptor(
-        ("chat", "show"),
-        StartupClass.CLIENT_READ,
-        StateRequirement.RUNTIME_READ,
-        TelemetryMode.NONE,
-        "text",
-        "Show chat details.",
-    ),
-    _descriptor(
-        ("chat", "log"),
-        StartupClass.CLIENT_READ,
-        StateRequirement.RUNTIME_READ,
-        TelemetryMode.NONE,
-        "text",
-        "Show chat log.",
-    ),
-    _descriptor(
-        ("chat", "close"),
-        StartupClass.CLIENT_READ,
-        StateRequirement.RUNTIME_READ,
-        TelemetryMode.NONE,
-        "text",
-        "Close chat.",
-    ),
     _write_runtime(
         ("spawn",),
         "Create a spawn via spawn default route.",
@@ -345,6 +305,11 @@ _COMMAND_DESCRIPTORS: tuple[CommandDescriptor, ...] = (
         "List child spawns.",
         default_output_mode="text",
         extension_ref="meridian.spawn.children",
+    ),
+    _read_runtime(
+        ("spawn", "subagents"),
+        "List subagents the current agent may spawn.",
+        extension_ref="meridian.spawn.subagents",
     ),
     _read_runtime(
         ("spawn", "files"), "List files changed by a spawn.", extension_ref="meridian.spawn.files"
@@ -424,6 +389,21 @@ _COMMAND_DESCRIPTORS: tuple[CommandDescriptor, ...] = (
         ("hooks", "check"), "Check hook configuration.", extension_ref="meridian.hooks.check"
     ),
     _write_project(("hooks", "run"), "Run hooks.", extension_ref="meridian.hooks.run"),
+    _read_runtime(
+        ("task-dir",),
+        "Print effective source-edit directory.",
+        extension_ref="meridian.task-dir",
+    ),
+    _write_runtime(
+        ("task-dir", "set"),
+        "Set spawn-scope source-edit directory.",
+        extension_ref="meridian.task-dir.set",
+    ),
+    _write_runtime(
+        ("task-dir", "clear"),
+        "Clear spawn-scope source-edit directory override.",
+        extension_ref="meridian.task-dir.clear",
+    ),
     _read_runtime(("sync", "conflict", "list"), "List unresolved autosync conflicts."),
     _read_runtime(("sync", "conflict", "show"), "Show autosync conflict details."),
     _write_runtime(("sync", "conflict", "resolve"), "Mark autosync conflict resolved."),

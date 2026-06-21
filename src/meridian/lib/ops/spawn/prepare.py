@@ -37,6 +37,7 @@ from ..runtime import (
     runtime_context,
 )
 from .models import SpawnCreateInput
+from .task_dir import derive_inheritable_task_dir
 
 _DRY_RUN_REPORT_PATH = "<spawn-report-path>"
 
@@ -127,6 +128,15 @@ def build_create_payload(
             except Exception:
                 ambient_work_id = None
         project_state_dir = resolve_project_paths(project_root).root_dir
+        spawn_id = (
+            str(resolved_context.spawn_id) if resolved_context.spawn_id is not None else None
+        )
+        inherited_for_child = derive_inheritable_task_dir(
+            project_root=project_root,
+            project_state_dir=project_state_dir,
+            spawn_id=spawn_id,
+            work_id=ambient_work_id,
+        )
         launch_resolution = resolve_launch_inputs(
             authority_root=project_root,
             project_state_dir=project_state_dir,
@@ -134,6 +144,7 @@ def build_create_payload(
             reference_files=tuple(str(path) for path in payload.files),
             explicit_task_dir=payload.task_dir,
             explicit_work_id=explicit_work_id,
+            inherited_task_dir=inherited_for_child,
             ambient_work_id=ambient_work_id,
             caller_cwd=payload.caller_cwd,
         )

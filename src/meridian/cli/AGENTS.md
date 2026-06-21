@@ -39,8 +39,7 @@ argv
 | `WRITE_RUNTIME` | `spawn create`, `work start` | `prepare_for_runtime_write()` |
 | `PRIMARY_LAUNCH` | bare `meridian` | `prepare_for_runtime_write()` |
 | `SERVICE_ROOTLESS` | `serve` | none |
-| `SERVICE_RUNTIME` | `chat` | `prepare_for_runtime_write()` |
-| `CLIENT_READ` | `chat ls`, `chat show` | `prepare_for_runtime_read()` |
+| `SERVICE_RUNTIME` | `streaming serve` | `prepare_for_runtime_write()` |
 
 ## Entry Points
 

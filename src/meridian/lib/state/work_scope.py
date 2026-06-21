@@ -9,7 +9,6 @@ from typing import Literal
 from meridian.lib.core.types import SpawnId
 from meridian.lib.state.paths import (
     resolve_ambient_work_dir,
-    resolve_work_scratch_dir,
     resolve_work_scratch_dir_for_project,
 )
 
@@ -83,7 +82,6 @@ def resolve_bound_work_scope(
 def resolve_work_scope_from_parts(
     *,
     project_root: Path | None,
-    runtime_root: Path | None,
     spawn_id: SpawnId | None,
     work_id: str | None,
     bound_work_dir: Path | None,
@@ -106,8 +104,8 @@ def resolve_work_scope_from_parts(
     if work_id:
         if project_work_dir is not None:
             root = project_work_dir / work_id
-        elif runtime_root is not None:
-            root = resolve_work_scratch_dir(runtime_root, work_id)
+        elif project_root is not None:
+            root = resolve_work_scratch_dir_for_project(project_root, work_id)
         else:
             return None
         return WorkScope(kind="work_item", identifier=work_id, root=root)

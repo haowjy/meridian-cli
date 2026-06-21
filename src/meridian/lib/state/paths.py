@@ -356,12 +356,6 @@ def resolve_kb_dir(project_root: Path) -> Path:
     return resolve_project_paths(project_root).kb_dir
 
 
-def resolve_work_scratch_dir(runtime_root: Path, work_id: str) -> Path:
-    """Return the runtime-root-local scratch directory for a work item."""
-
-    return RuntimePaths.from_root_dir(runtime_root).work_dir / work_id
-
-
 def resolve_work_scratch_dir_for_project(
     project_root: Path,
     work_id: str,

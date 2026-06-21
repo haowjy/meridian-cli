@@ -61,6 +61,7 @@ from .failure_policy import finalize_launch_failure_sync
 from .models import SpawnActionOutput, SpawnCreateInput
 from .pre_init import EXPECTED_PRE_INIT_EXCEPTIONS, PreInitFailure, run_pre_init_boundary
 from .query import read_report, read_spawn_row
+from .task_dir import derive_inheritable_task_dir
 
 logger = structlog.get_logger(__name__)
 _BACKGROUND_SUBMIT_MESSAGE = "Background spawn submitted."
@@ -124,12 +125,22 @@ def _resolve_execution_contract(
         execution_cwd = Path(request_task_cwd).expanduser().resolve()
     else:
         explicit_work_id = payload.work.strip() or None
+        ambient_work_id = None if explicit_work_id else ctx.work_id
+        project_state_dir = resolve_project_paths(project_paths.project_root).root_dir
+        spawn_id = str(ctx.spawn_id) if ctx.spawn_id is not None else None
+        inherited_for_child = derive_inheritable_task_dir(
+            project_root=project_paths.project_root,
+            project_state_dir=project_state_dir,
+            spawn_id=spawn_id,
+            work_id=ambient_work_id,
+        )
         execution_cwd = resolve_task_cwd(
             project_paths.project_root,
-            project_state_dir=resolve_project_paths(project_paths.project_root).root_dir,
+            project_state_dir=project_state_dir,
             explicit_task_dir=payload.task_dir,
             explicit_work_id=explicit_work_id,
-            ambient_work_id=None if explicit_work_id else ctx.work_id,
+            inherited_task_dir=inherited_for_child,
+            ambient_work_id=ambient_work_id,
             caller_cwd=payload.caller_cwd,
         ).task_cwd
 

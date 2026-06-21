@@ -32,7 +32,7 @@ back on exit. Used for non-streaming spawns.
 
 **Connection path** (`connections/`): starts a long-lived process, then connects
 bidirectionally. Events flow through the SpawnManager drain loop. Used for
-streaming and `meridian chat`.
+streaming.
 
 Per-harness commands:
 - Claude subprocess: `claude -p --output-format stream-json --verbose -`

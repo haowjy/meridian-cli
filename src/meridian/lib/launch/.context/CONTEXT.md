@@ -196,9 +196,10 @@ from explicit task-dir/work-item intent, ambient work attachment, or the caller 
 when a nested spawn is launched from outside the project tree.
 
 **`actual_process_cwd`** is where the child process actually starts. It defaults
-to `logical_task_cwd` but may differ — Claude harness forces it to `authority_root`
-when `has_distinct_task_cwd` is true, because Claude's `--add-dir` grants access
-without needing the process to start in the task directory.
+to `authority_root` (the project/control root). Harness subprocess cwd always
+stays at control root; distinct task directories are exposed via `MERIDIAN_TASK_DIR`,
+bind-time env, and task-cwd instructions — not by starting the process in the
+task directory.
 
 **Task CWD instruction injection.** For non-primary child spawns with a distinct
 `logical_task_cwd`, launch composition adds a prompt instruction that states the
@@ -213,9 +214,10 @@ future primary flow explicitly needs task-cwd steering. Controlled by
 Resolution priority in `resolve_task_cwd()`:
 1. explicit task-dir override
 2. explicit work item task_dir
-3. ambient work item task_dir
-3.5. caller cwd when outside the project tree (`source="ambient-cwd"`)
-4. authority root default
+3. inherited task-dir (`MERIDIAN_TASK_DIR`)
+4. ambient work item task_dir
+5. caller cwd when outside the project tree (`source="ambient-cwd"`)
+6. authority root default
 
 ### Reference Loading and Anchor Semantics
 

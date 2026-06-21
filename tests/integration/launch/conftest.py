@@ -1,12 +1,11 @@
 """Shared fixtures for launch integration tests.
 
-Sets up a minimal project root (meridian.toml marker) at tmp_path and
-points CWD there so that require_established_project_root() resolves
-correctly for tests that depend on CWD-based root discovery.
+Sets CWD and MERIDIAN_PROJECT_DIR to tmp_path so
+require_established_project_root() resolves for tests that depend on
+project targeting without passing -C explicitly.
 
-Tests that need a different project root can override CWD via
-monkeypatch.chdir() or pass explicit paths — this fixture only
-establishes the baseline.
+Tests that need a different project root can override CWD or env via
+monkeypatch — this fixture only establishes the baseline.
 """
 
 from __future__ import annotations
@@ -18,10 +17,6 @@ import pytest
 
 @pytest.fixture(autouse=True)
 def _launch_project_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Write a meridian.toml marker and set CWD for launch tests.
-
-    Scoped to root-discovery callers (e.g. test_streaming_serve). Tests that
-    pass explicit project_root paths are unaffected by the CWD change.
-    """
-    (tmp_path / "meridian.toml").touch()
+    """Pin CWD and inherited project dir for launch integration tests."""
     monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("MERIDIAN_PROJECT_DIR", tmp_path.as_posix())

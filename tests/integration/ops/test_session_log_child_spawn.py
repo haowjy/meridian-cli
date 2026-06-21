@@ -1,4 +1,4 @@
-"""Session log output routing for child (non-primary) spawns and chat sessions.
+"""Session log output routing for child (non-primary) spawns and primary sessions.
 
 Tests that session_log_sync picks the right output file (live vs artifact)
 for child spawns and that missing session IDs route correctly.
