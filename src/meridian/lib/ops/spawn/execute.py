@@ -15,7 +15,7 @@ from meridian.lib.bootstrap.services import build_spawn_lifecycle_service_from_r
 from meridian.lib.config.project_paths import resolve_project_config_paths
 from meridian.lib.core.context import RuntimeContext
 from meridian.lib.launch.context import PreparedLaunchSurface
-from meridian.lib.launch.cwd import resolve_task_cwd
+from meridian.lib.launch.cwd import resolve_effective_task_dir, resolve_task_cwd
 from meridian.lib.launch.request import LaunchArgvIntent, SpawnRequest
 from meridian.lib.platform import IS_WINDOWS
 from meridian.lib.state import spawn_store
@@ -124,12 +124,28 @@ def _resolve_execution_contract(
         execution_cwd = Path(request_task_cwd).expanduser().resolve()
     else:
         explicit_work_id = payload.work.strip() or None
+        ambient_work_id = None if explicit_work_id else ctx.work_id
+        project_state_dir = resolve_project_paths(project_paths.project_root).root_dir
+        inherited_task_dir_raw = os.getenv("MERIDIAN_TASK_DIR", "").strip()
+        inherited_task_dir_env = (
+            Path(inherited_task_dir_raw).expanduser().resolve()
+            if inherited_task_dir_raw
+            else None
+        )
+        parent_effective = resolve_effective_task_dir(
+            project_root=project_paths.project_root,
+            project_state_dir=project_state_dir,
+            spawn_id=os.getenv("MERIDIAN_SPAWN_ID", "").strip() or None,
+            inherited_task_dir=inherited_task_dir_env,
+            work_id=ambient_work_id,
+        )
         execution_cwd = resolve_task_cwd(
             project_paths.project_root,
-            project_state_dir=resolve_project_paths(project_paths.project_root).root_dir,
+            project_state_dir=project_state_dir,
             explicit_task_dir=payload.task_dir,
             explicit_work_id=explicit_work_id,
-            ambient_work_id=None if explicit_work_id else ctx.work_id,
+            inherited_task_dir=parent_effective.task_dir,
+            ambient_work_id=ambient_work_id,
             caller_cwd=payload.caller_cwd,
         ).task_cwd
 

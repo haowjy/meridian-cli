@@ -18,6 +18,7 @@ ALLOWED_CHILD_ENV_KEYS: frozenset[str] = frozenset(
         "MERIDIAN_CHAT_ID",
         "MERIDIAN_ACTIVE_WORK_ID",
         "MERIDIAN_ACTIVE_WORK_DIR",
+        "MERIDIAN_TASK_DIR",
     }
 )
 

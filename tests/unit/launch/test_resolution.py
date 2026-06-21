@@ -102,3 +102,23 @@ def test_resolve_launch_inputs_resolves_references_from_selected_task_dir(
     assert resolution.directory_context.reference_anchor == task_dir.resolve()
     assert resolution.reference_files == (task_file.resolve(),)
     assert resolution.runtime_updates["requested_task_cwd"] == task_dir.resolve().as_posix()
+
+
+def test_resolve_launch_inputs_passes_inherited_task_dir(tmp_path: Path) -> None:
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    inherited = tmp_path / "inherited"
+    inherited.mkdir()
+    project_state_dir = project_root / ".meridian"
+    project_state_dir.mkdir(parents=True)
+
+    resolution = resolve_launch_inputs(
+        authority_root=project_root,
+        project_state_dir=project_state_dir,
+        context_from=(),
+        reference_files=(),
+        inherited_task_dir=inherited.as_posix(),
+    )
+
+    assert resolution.directory_context.logical_task_cwd == inherited.resolve()
+    assert resolution.directory_context.task_cwd_source == "inherited-task-dir"

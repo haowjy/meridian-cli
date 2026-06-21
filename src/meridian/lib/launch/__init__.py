@@ -109,7 +109,9 @@ def launch_primary(
         reference_files=request.reference_files,
         explicit_task_dir=request.task_dir,
         explicit_work_id=preview_work_id,
+        inherited_task_dir=runtime_context.inherited_task_dir,
         ambient_work_id=ambient_work_id,
+        caller_cwd=Path.cwd(),
     )
 
     runtime = build_primary_launch_runtime(

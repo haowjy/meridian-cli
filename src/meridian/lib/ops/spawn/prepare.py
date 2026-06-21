@@ -1,5 +1,6 @@
 """Spawn create-input validation and payload preparation helpers."""
 
+import os
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -13,6 +14,7 @@ from meridian.lib.launch.composition_spawn import (
     compose_spawn_launch_surface,
 )
 from meridian.lib.launch.context import PreparedLaunchSurface, RuntimeBindings
+from meridian.lib.launch.cwd import resolve_effective_task_dir
 from meridian.lib.launch.plan import build_spawn_mars_runtime
 from meridian.lib.launch.reference import parse_template_assignments
 from meridian.lib.launch.request import (
@@ -127,6 +129,31 @@ def build_create_payload(
             except Exception:
                 ambient_work_id = None
         project_state_dir = resolve_project_paths(project_root).root_dir
+        inherited_task_dir_raw = os.getenv("MERIDIAN_TASK_DIR", "").strip()
+        inherited_task_dir_env = (
+            Path(inherited_task_dir_raw).expanduser().resolve()
+            if inherited_task_dir_raw
+            else None
+        )
+        parent_effective = resolve_effective_task_dir(
+            project_root=project_root,
+            project_state_dir=project_state_dir,
+            spawn_id=os.getenv("MERIDIAN_SPAWN_ID", "").strip() or None,
+            inherited_task_dir=inherited_task_dir_env,
+            work_id=ambient_work_id,
+        )
+        # Only inherit the genuinely inheritable surface — the parent's mutable
+        # scope file or its inherited MERIDIAN_TASK_DIR env. Work-item and
+        # project-root provenance are left to resolve_task_cwd's own tiers
+        # (ambient-work-task-dir, ambient-cwd, authority-root); folding them into
+        # the inherited tier here would shadow those lower tiers because
+        # resolve_effective_task_dir always returns a path (defaulting to the
+        # project root).
+        inherited_for_child = (
+            parent_effective.task_dir
+            if parent_effective.source in ("scope", "inherited")
+            else None
+        )
         launch_resolution = resolve_launch_inputs(
             authority_root=project_root,
             project_state_dir=project_state_dir,
@@ -134,6 +161,7 @@ def build_create_payload(
             reference_files=tuple(str(path) for path in payload.files),
             explicit_task_dir=payload.task_dir,
             explicit_work_id=explicit_work_id,
+            inherited_task_dir=inherited_for_child,
             ambient_work_id=ambient_work_id,
             caller_cwd=payload.caller_cwd,
         )

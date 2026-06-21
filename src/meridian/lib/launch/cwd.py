@@ -4,9 +4,19 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 from pathlib import Path
+from typing import Literal
 
 from meridian.lib.launch.request import LaunchCompositionSurface
 from meridian.lib.state import work_store
+from meridian.lib.state.spawn_scope import read_spawn_scope
+
+
+@dataclass(frozen=True)
+class EffectiveTaskDir:
+    """Resolved task-dir for the current process (not a child launch)."""
+
+    task_dir: Path
+    source: Literal["scope", "work-item", "inherited", "project-root"]
 
 
 @dataclass(frozen=True)
@@ -100,6 +110,74 @@ def _validated_explicit_task_dir(task_dir: Path) -> Path:
     raise ValueError(f"task_dir is not a directory: {task_dir}")
 
 
+def _validated_inherited_task_dir(task_dir: Path) -> Path:
+    resolved = task_dir.expanduser().resolve()
+    if resolved.is_dir():
+        return resolved
+    raise ValueError(
+        f"Inherited MERIDIAN_TASK_DIR does not exist: {resolved}\n"
+        "Use --task-dir to set a valid directory, or meridian task-dir clear to reset "
+        "past the stale bootstrap value."
+    )
+
+
+def _validated_scope_task_dir(task_dir: Path) -> Path:
+    resolved = task_dir.expanduser().resolve()
+    if resolved.is_dir():
+        return resolved
+    raise ValueError(f"Spawn scope task_dir does not exist: {resolved}")
+
+
+def resolve_effective_task_dir(
+    *,
+    project_root: Path,
+    project_state_dir: Path,
+    spawn_id: str | None = None,
+    inherited_task_dir: Path | None = None,
+    work_id: str | None = None,
+) -> EffectiveTaskDir:
+    """Resolve where the current process edits source code."""
+
+    resolved_project_root = project_root.expanduser().resolve()
+    normalized_spawn_id = (spawn_id or "").strip() or None
+    normalized_work_id = (work_id or "").strip() or None
+
+    if normalized_spawn_id is not None:
+        scope = read_spawn_scope(resolved_project_root, normalized_spawn_id)
+        if scope.task_dir is not None:
+            return EffectiveTaskDir(
+                task_dir=_validated_scope_task_dir(scope.task_dir),
+                source="scope",
+            )
+        skip_inherited = scope.task_dir_cleared
+    else:
+        skip_inherited = False
+
+    if normalized_work_id is not None:
+        work_path = _active_task_dir_for_item(
+            project_state_dir=project_state_dir,
+            work_id=normalized_work_id,
+        )
+        if work_path is not None:
+            return EffectiveTaskDir(
+                task_dir=_validated_task_dir(
+                    task_dir=work_path,
+                    work_id=normalized_work_id,
+                ),
+                source="work-item",
+            )
+
+    if not skip_inherited and inherited_task_dir is not None:
+        resolved_inherited = inherited_task_dir.expanduser().resolve()
+        if resolved_inherited.is_dir():
+            return EffectiveTaskDir(task_dir=resolved_inherited, source="inherited")
+
+    return EffectiveTaskDir(
+        task_dir=resolved_project_root,
+        source="project-root",
+    )
+
+
 def _path_is_within(path: Path, root: Path) -> bool:
     try:
         path.resolve().relative_to(root.resolve())
@@ -131,6 +209,7 @@ def resolve_task_cwd(
     project_state_dir: Path,
     explicit_task_dir: str | Path | None = None,
     explicit_work_id: str | None = None,
+    inherited_task_dir: str | Path | None = None,
     ambient_work_id: str | None = None,
     caller_cwd: str | Path | None = None,
 ) -> TaskCwdResolution:
@@ -139,9 +218,10 @@ def resolve_task_cwd(
     Resolution priority:
       1. explicit task-dir override
       2. explicit work item task_dir
-      3. ambient work item task_dir
-      3.5. caller cwd when outside the project tree
-      4. authority root default
+      3. inherited task-dir from parent
+      4. ambient work item task_dir
+      5. caller cwd when outside the project tree
+      6. authority root default
     """
 
     resolved_authority_root = authority_root.resolve()
@@ -180,6 +260,19 @@ def resolve_task_cwd(
             ),
             source="explicit-work-task-dir",
             work_item=selected_work_id,
+        )
+
+    inherited_override = (
+        str(inherited_task_dir).strip() if inherited_task_dir is not None else ""
+    )
+    if inherited_override:
+        inherited_path = _validated_inherited_task_dir(
+            Path(inherited_override).expanduser().resolve()
+        )
+        return TaskCwdResolution(
+            task_cwd=inherited_path,
+            source="inherited-task-dir",
+            work_item=ambient_selected_work_id,
         )
 
     if ambient_selected_work_id is not None:

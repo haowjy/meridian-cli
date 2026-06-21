@@ -56,6 +56,7 @@ def resolve_launch_inputs(
     reference_files: tuple[str, ...],
     explicit_task_dir: str | Path | None = None,
     explicit_work_id: str | None = None,
+    inherited_task_dir: str | Path | None = None,
     ambient_work_id: str | None = None,
     caller_cwd: str | Path | None = None,
     inherit_context_work: bool = True,
@@ -92,6 +93,7 @@ def resolve_launch_inputs(
         project_state_dir=project_state_dir,
         explicit_task_dir=explicit_task_dir,
         explicit_work_id=task_explicit_work_id,
+        inherited_task_dir=inherited_task_dir,
         ambient_work_id=task_ambient_work_id,
         caller_cwd=caller_cwd,
     )

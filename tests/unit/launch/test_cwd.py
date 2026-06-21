@@ -4,8 +4,15 @@ from pathlib import Path
 
 import pytest
 
-from meridian.lib.launch.cwd import LaunchDirectoryContext, TaskCwdResolution, resolve_task_cwd
+from meridian.lib.launch.cwd import (
+    EffectiveTaskDir,
+    LaunchDirectoryContext,
+    TaskCwdResolution,
+    resolve_effective_task_dir,
+    resolve_task_cwd,
+)
 from meridian.lib.state import work_store
+from meridian.lib.state.spawn_scope import write_spawn_scope_task_dir
 
 
 def _roots(tmp_path: Path) -> tuple[Path, Path]:
@@ -201,3 +208,186 @@ def test_resolve_task_cwd_caller_cwd_keeps_actual_process_cwd_at_authority_root(
 
     assert context.logical_task_cwd == worktree.resolve()
     assert context.actual_process_cwd == authority_root.resolve()
+
+
+def test_resolve_task_cwd_inherited_wins_over_ambient_work(tmp_path: Path) -> None:
+    authority_root, state_dir = _roots(tmp_path)
+    ambient_id = _work_with_task_dir(state_dir, tmp_path, "ambient-work")
+    inherited = tmp_path / "inherited-task"
+    inherited.mkdir(parents=True, exist_ok=True)
+
+    resolved = resolve_task_cwd(
+        authority_root,
+        project_state_dir=state_dir,
+        inherited_task_dir=inherited.as_posix(),
+        ambient_work_id=ambient_id,
+    )
+
+    assert resolved.task_cwd == inherited.resolve()
+    assert resolved.source == "inherited-task-dir"
+
+
+def test_resolve_task_cwd_explicit_task_dir_wins_over_inherited(tmp_path: Path) -> None:
+    authority_root, state_dir = _roots(tmp_path)
+    explicit = tmp_path / "explicit-task"
+    explicit.mkdir(parents=True, exist_ok=True)
+    inherited = tmp_path / "inherited-task"
+    inherited.mkdir(parents=True, exist_ok=True)
+
+    resolved = resolve_task_cwd(
+        authority_root,
+        project_state_dir=state_dir,
+        explicit_task_dir=explicit.as_posix(),
+        inherited_task_dir=inherited.as_posix(),
+    )
+
+    assert resolved.task_cwd == explicit.resolve()
+    assert resolved.source == "explicit-task-dir"
+
+
+def test_resolve_task_cwd_explicit_work_task_dir_wins_over_inherited(tmp_path: Path) -> None:
+    authority_root, state_dir = _roots(tmp_path)
+    work_id = _work_with_task_dir(state_dir, tmp_path, "feature-work")
+    inherited = tmp_path / "inherited-task"
+    inherited.mkdir(parents=True, exist_ok=True)
+
+    resolved = resolve_task_cwd(
+        authority_root,
+        project_state_dir=state_dir,
+        explicit_work_id=work_id,
+        inherited_task_dir=inherited.as_posix(),
+    )
+
+    assert resolved.task_cwd == (tmp_path / "feature-work-task-dir").resolve()
+    assert resolved.source == "explicit-work-task-dir"
+
+
+def test_resolve_task_cwd_explicit_work_without_task_dir_preserves_inherited(
+    tmp_path: Path,
+) -> None:
+    authority_root, state_dir = _roots(tmp_path)
+    explicit = work_store.create_work_item(state_dir, "explicit-work", "", None)
+    inherited = tmp_path / "inherited-task"
+    inherited.mkdir(parents=True, exist_ok=True)
+
+    resolved = resolve_task_cwd(
+        authority_root,
+        project_state_dir=state_dir,
+        explicit_work_id=explicit.name,
+        inherited_task_dir=inherited.as_posix(),
+    )
+
+    assert resolved.source == "explicit-work-authority-root"
+    assert resolved.task_cwd == authority_root.resolve()
+
+
+def test_resolve_task_cwd_stale_inherited_raises(tmp_path: Path) -> None:
+    authority_root, state_dir = _roots(tmp_path)
+
+    with pytest.raises(ValueError, match="Inherited MERIDIAN_TASK_DIR does not exist"):
+        resolve_task_cwd(
+            authority_root,
+            project_state_dir=state_dir,
+            inherited_task_dir=(tmp_path / "missing-inherited").as_posix(),
+        )
+
+
+def test_resolve_task_cwd_inherited_inside_project_subdir_not_ambient_cwd(
+    tmp_path: Path,
+) -> None:
+    authority_root, state_dir = _roots(tmp_path)
+    inside = authority_root / "worktree"
+    inside.mkdir(parents=True, exist_ok=True)
+
+    resolved = resolve_task_cwd(
+        authority_root,
+        project_state_dir=state_dir,
+        inherited_task_dir=inside.as_posix(),
+        caller_cwd=inside.as_posix(),
+    )
+
+    assert resolved.task_cwd == inside.resolve()
+    assert resolved.source == "inherited-task-dir"
+
+
+def test_resolve_effective_task_dir_precedence_scope_work_inherited_root(
+    tmp_path: Path,
+) -> None:
+    project_root = tmp_path / "project"
+    project_root.mkdir(parents=True)
+    state_dir = project_root / ".meridian"
+    state_dir.mkdir(parents=True)
+    inherited = tmp_path / "inherited"
+    inherited.mkdir(parents=True)
+    scope_dir = tmp_path / "scope-task"
+    scope_dir.mkdir(parents=True)
+    work_task_dir = tmp_path / "work-task"
+    work_task_dir.mkdir(parents=True)
+    work_id = _work_with_task_dir(state_dir, tmp_path, "feature")
+
+    write_spawn_scope_task_dir(project_root, "p1", scope_dir)
+    effective = resolve_effective_task_dir(
+        project_root=project_root,
+        project_state_dir=state_dir,
+        spawn_id="p1",
+        inherited_task_dir=inherited,
+        work_id=work_id,
+    )
+    assert effective == EffectiveTaskDir(task_dir=scope_dir.resolve(), source="scope")
+
+    write_spawn_scope_task_dir(project_root, "p1", None)
+    effective = resolve_effective_task_dir(
+        project_root=project_root,
+        project_state_dir=state_dir,
+        spawn_id="p1",
+        inherited_task_dir=inherited,
+        work_id=work_id,
+    )
+    assert effective == EffectiveTaskDir(
+        task_dir=(tmp_path / "feature-task-dir").resolve(),
+        source="work-item",
+    )
+
+    effective = resolve_effective_task_dir(
+        project_root=project_root,
+        project_state_dir=state_dir,
+        spawn_id=None,
+        inherited_task_dir=inherited,
+        work_id=None,
+    )
+    assert effective == EffectiveTaskDir(task_dir=inherited.resolve(), source="inherited")
+
+    effective = resolve_effective_task_dir(
+        project_root=project_root,
+        project_state_dir=state_dir,
+        spawn_id=None,
+        inherited_task_dir=None,
+        work_id=None,
+    )
+    assert effective == EffectiveTaskDir(
+        task_dir=project_root.resolve(),
+        source="project-root",
+    )
+
+
+def test_resolve_effective_task_dir_tombstone_skips_inherited(tmp_path: Path) -> None:
+    project_root = tmp_path / "project"
+    project_root.mkdir(parents=True)
+    state_dir = project_root / ".meridian"
+    state_dir.mkdir(parents=True)
+    inherited = tmp_path / "inherited"
+    inherited.mkdir(parents=True)
+
+    write_spawn_scope_task_dir(project_root, "p1", None)
+    effective = resolve_effective_task_dir(
+        project_root=project_root,
+        project_state_dir=state_dir,
+        spawn_id="p1",
+        inherited_task_dir=inherited,
+        work_id=None,
+    )
+
+    assert effective == EffectiveTaskDir(
+        task_dir=project_root.resolve(),
+        source="project-root",
+    )

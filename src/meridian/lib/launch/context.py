@@ -1941,6 +1941,9 @@ def bind_launch_context(
     # Not a policy override — from_env() does not read it back.
     child_context_env["MERIDIAN_HARNESS"] = harness.id.value
     child_context_env["MERIDIAN_PROJECT_ROOT"] = resolved_control_root.as_posix()
+    # Override inherited task-dir with the child's resolved task-dir.
+    # child_env_overrides() carries the parent's MERIDIAN_TASK_DIR;
+    # bind resolves the child's logical_task_cwd and overwrites.
     child_context_env["MERIDIAN_TASK_DIR"] = directory_context.logical_task_cwd.as_posix()
     if harness.id == HarnessId.PI:
         child_context_env["MERIDIAN_PI_STATE_DIR"] = runtime_root.as_posix()
