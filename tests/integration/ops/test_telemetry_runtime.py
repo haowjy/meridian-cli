@@ -16,15 +16,7 @@ from meridian.lib.launch.types import PrimarySessionMetadata
 from meridian.lib.telemetry import emit_telemetry
 from meridian.lib.telemetry.init import setup_telemetry
 from meridian.lib.telemetry.retention import run_retention_cleanup
-
-
-def wait_for(predicate, timeout: float = 1.0) -> None:
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        if predicate():
-            return
-        time.sleep(0.01)
-    raise AssertionError("condition not met")
+from meridian.lib.telemetry.router import get_global_router
 
 
 def read_telemetry_events(runtime_root: Path) -> list[dict[str, object]]:
@@ -174,9 +166,10 @@ def test_retention_size_pressure_prefers_legacy_orphan_over_stale_recognized_seg
 def test_full_pipeline_emit_queue_writer_segment(tmp_path) -> None:
     setup_telemetry(runtime_root=tmp_path)
     emit_telemetry("server", "mcp.command.invoked", scope="mcp.server", ids={"request_id": "r1"})
+    get_global_router().close()
 
     segment = tmp_path / "telemetry" / f"cli.{os.getpid()}-0001.jsonl"
-    wait_for(lambda: segment.exists() and segment.read_text(encoding="utf-8"))
+    assert segment.exists()
     event = json.loads(segment.read_text(encoding="utf-8").splitlines()[0])
     assert event["event"] == "mcp.command.invoked"
     assert event["ids"] == {"request_id": "r1"}
@@ -205,12 +198,9 @@ def test_spawn_terminal_success_and_failure_project_to_telemetry_segment(
         error="boom",
     )
 
-    wait_for(
-        lambda: {event["event"] for event in read_telemetry_events(tmp_path)}.issuperset(
-            {"spawn.succeeded", "spawn.failed"}
-        )
-    )
+    get_global_router().close()
     events = read_telemetry_events(tmp_path)
+    assert {event["event"] for event in events}.issuperset({"spawn.succeeded", "spawn.failed"})
     succeeded = next(event for event in events if event["event"] == "spawn.succeeded")
     failed = next(event for event in events if event["event"] == "spawn.failed")
 

@@ -13,6 +13,7 @@ from meridian.lib.harness.connections.liveness import (
     EventStreamLivenessTimeout,
     LivenessDecision,
 )
+from tests.support.async_determinism import AsyncDeterminism, assert_still_pending
 from tests.support.fakes import FakeClock
 
 
@@ -165,10 +166,13 @@ def test_evaluate_awaiting_done_does_not_suppress_backend_dead(
 async def test_wait_for_activity_suppresses_during_turn(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    determinism = AsyncDeterminism(start=0.0)
+    determinism.install(monkeypatch)
+    determinism.install_on_running_loop(monkeypatch)
     monkeypatch.setattr(liveness_module, "is_process_alive", lambda *_args, **_kwargs: True)
     policy = BackendLivenessPolicy(
         timeout_seconds=lambda: 0.05,
-        now=time.monotonic,
+        now=determinism.clock.monotonic,
         backend_pid=lambda: 4242,
         backend_birth_time=lambda: 0.0,
     )
@@ -182,11 +186,13 @@ async def test_wait_for_activity_suppresses_during_turn(
         return "done"
 
     task = asyncio.create_task(policy.wait_for_activity(blocked()))
-    await asyncio.sleep(0.1)
-    assert not task.done()
+    await assert_still_pending(task)
+
+    await determinism.sleep(0.1)
+    await assert_still_pending(task)
 
     gate.set()
-    assert await asyncio.wait_for(task, timeout=1.0) == "done"
+    assert await task == "done"
 
 
 @pytest.mark.asyncio
@@ -215,10 +221,13 @@ async def test_wait_for_activity_raises_on_stream_stalled(
 async def test_wait_for_activity_resolves_after_multiple_suppress_windows(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    determinism = AsyncDeterminism(start=0.0)
+    determinism.install(monkeypatch)
+    determinism.install_on_running_loop(monkeypatch)
     monkeypatch.setattr(liveness_module, "is_process_alive", lambda *_args, **_kwargs: True)
     policy = BackendLivenessPolicy(
         timeout_seconds=lambda: 0.05,
-        now=time.monotonic,
+        now=determinism.clock.monotonic,
         backend_pid=lambda: 4242,
         backend_birth_time=lambda: 0.0,
     )
@@ -228,13 +237,13 @@ async def test_wait_for_activity_resolves_after_multiple_suppress_windows(
     gate = asyncio.Event()
 
     async def blocked() -> str:
-        await asyncio.sleep(0.15)
+        await determinism.sleep(0.15)
         gate.set()
         return "done"
 
     task = asyncio.create_task(policy.wait_for_activity(blocked()))
     await gate.wait()
-    assert await asyncio.wait_for(task, timeout=1.0) == "done"
+    assert await task == "done"
 
 
 @pytest.mark.asyncio

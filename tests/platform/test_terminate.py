@@ -10,6 +10,7 @@ import pytest
 from meridian.lib.platform.process_scope.fallback import _snapshot_tree
 from meridian.lib.platform.terminate import terminate_tree
 from tests.conftest import windows_only
+from tests.support.async_determinism import wait_until
 
 _PARENT_WITH_CHILD = textwrap.dedent(
     """
@@ -47,24 +48,23 @@ async def _wait_for_snapshot_child(
     child_pid: int,
     timeout: float = 5.0,
 ) -> None:
-    loop = asyncio.get_running_loop()
-    deadline = loop.time() + timeout
-    while loop.time() < deadline:
+    def _child_visible() -> bool:
         root, children = _snapshot_tree(parent_pid)
-        if root is not None and any(proc.pid == child_pid for proc in children):
-            return
-        await asyncio.sleep(0.05)
-    pytest.fail(f"timed out waiting for child {child_pid} in snapshot of {parent_pid}")
+        return root is not None and any(proc.pid == child_pid for proc in children)
+
+    await wait_until(
+        _child_visible,
+        timeout=timeout,
+        description=f"child {child_pid} in snapshot of {parent_pid}",
+    )
 
 
 async def _wait_for_pid_exit(pid: int, timeout: float = 5.0) -> None:
-    loop = asyncio.get_running_loop()
-    deadline = loop.time() + timeout
-    while loop.time() < deadline:
-        if not psutil.pid_exists(pid):
-            return
-        await asyncio.sleep(0.05)
-    pytest.fail(f"timed out waiting for process {pid} to exit")
+    await wait_until(
+        lambda: not psutil.pid_exists(pid),
+        timeout=timeout,
+        description=f"process {pid} to exit",
+    )
 
 
 @pytest.mark.asyncio

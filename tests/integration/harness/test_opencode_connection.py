@@ -23,6 +23,7 @@ from meridian.lib.platform.process_scope import ProcessScopeSnapshot, ScopedProc
 from meridian.lib.safety.permissions import (
     UnsafeNoOpPermissionResolver,
 )
+from tests.support.async_determinism import AsyncDeterminism
 from tests.support.fakes import FakeClock
 
 OPENCODE_ACTIVITY_IDLE_EVENT = "session.idle"
@@ -278,6 +279,32 @@ async def _collect_opencode_events(connection: OpenCodeConnection) -> list[Harne
     return [event async for event in connection.events()]
 
 
+def _install_opencode_determinism(monkeypatch: pytest.MonkeyPatch) -> AsyncDeterminism:
+    determinism = AsyncDeterminism(start=0.0)
+    determinism.install(monkeypatch, monotonic_modules=(opencode_http,))
+    return determinism
+
+
+async def _collect_events_under_fake_clock(
+    determinism: AsyncDeterminism,
+    connection: OpenCodeConnection,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    advance_budget: float = 1.0,
+    step: float = 0.01,
+) -> list[HarnessEvent]:
+    determinism.install_on_running_loop(monkeypatch)
+    task = asyncio.create_task(_collect_opencode_events(connection))
+    advanced = 0.0
+    while not task.done() and advanced < advance_budget:
+        await determinism.sleep(step)
+        advanced += step
+    assert task.done(), (
+        f"event collection did not finish within fake-clock budget {advance_budget}"
+    )
+    return await task
+
+
 def _build_connection_config(tmp_path: Path) -> ConnectionConfig:
     return ConnectionConfig(
         spawn_id=SpawnId("p-open-observer"),
@@ -293,6 +320,7 @@ def _build_connection_config(tmp_path: Path) -> ConnectionConfig:
 async def test_opencode_events_fail_after_liveness_timeout_without_events(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    determinism = _install_opencode_determinism(monkeypatch)
     connection = _LivenessProbeOpenCodeConnection(
         responses=[_FakeSseResponse([]) for _ in range(100)]
     )
@@ -300,7 +328,7 @@ async def test_opencode_events_fail_after_liveness_timeout_without_events(
     monkeypatch.setattr(OpenCodeConnection, "_LIVENESS_TIMEOUT_SECONDS", 0.1)
     monkeypatch.setattr(OpenCodeConnection, "_EVENT_RETRY_DELAY_SECONDS", 0.02)
 
-    events = [event async for event in connection.events()]
+    events = await _collect_events_under_fake_clock(determinism, connection, monkeypatch)
 
     assert events == []
     assert connection.open_count > 1
@@ -311,11 +339,12 @@ async def test_opencode_events_fail_after_liveness_timeout_without_events(
 async def test_opencode_events_fail_after_liveness_timeout_opening_stream(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    determinism = _install_opencode_determinism(monkeypatch)
     connection = _BlockingOpenStreamConnection()
 
     monkeypatch.setattr(OpenCodeConnection, "_LIVENESS_TIMEOUT_SECONDS", 0.01)
 
-    events = [event async for event in connection.events()]
+    events = await _collect_events_under_fake_clock(determinism, connection, monkeypatch)
 
     assert events == []
     assert connection.open_count == 1
@@ -326,11 +355,12 @@ async def test_opencode_events_fail_after_liveness_timeout_opening_stream(
 async def test_opencode_events_fail_when_open_stream_stays_silent(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    determinism = _install_opencode_determinism(monkeypatch)
     connection = _LivenessProbeOpenCodeConnection(responses=[_BlockingSseResponse()])
 
     monkeypatch.setattr(OpenCodeConnection, "_LIVENESS_TIMEOUT_SECONDS", 0.01)
 
-    events = [event async for event in connection.events()]
+    events = await _collect_events_under_fake_clock(determinism, connection, monkeypatch)
 
     assert events == []
     assert connection.open_count == 1
@@ -341,11 +371,12 @@ async def test_opencode_events_fail_when_open_stream_stays_silent(
 async def test_opencode_keepalive_chunks_do_not_refresh_liveness_deadline(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    determinism = _install_opencode_determinism(monkeypatch)
     connection = _LivenessProbeOpenCodeConnection(responses=[_KeepaliveSseResponse()])
 
     monkeypatch.setattr(OpenCodeConnection, "_LIVENESS_TIMEOUT_SECONDS", 0.03)
 
-    events = await asyncio.wait_for(_collect_opencode_events(connection), timeout=1.0)
+    events = await _collect_events_under_fake_clock(determinism, connection, monkeypatch)
 
     assert events == []
     assert connection.open_count == 1
@@ -434,18 +465,25 @@ async def test_opencode_start_resets_expired_liveness(
 async def test_opencode_session_creation_falls_back_when_projected_payload_hangs(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    determinism = _install_opencode_determinism(monkeypatch)
+    determinism.install_on_running_loop(monkeypatch)
     connection = _PayloadTimeoutOpenCodeConnection()
     connection._process = _FakeProcess()
     monkeypatch.setattr(OpenCodeConnection, "_SESSION_CREATE_PAYLOAD_TIMEOUT_SECONDS", 0.01)
 
-    session_id = await connection._create_session_with_retry(
-        ResolvedLaunchSpec(
-            model="gpt-5.5",
-            agent_name="prober",
-            permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
-        ),
-        timeout_seconds=1.0,
+    create_task = asyncio.create_task(
+        connection._create_session_with_retry(
+            ResolvedLaunchSpec(
+                model="gpt-5.5",
+                agent_name="prober",
+                permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
+            ),
+            timeout_seconds=1.0,
+        )
     )
+    while not create_task.done():
+        await determinism.sleep(0.01)
+    session_id = await create_task
 
     assert session_id == "sess-empty-fallback"
     assert connection.payloads == [
@@ -455,17 +493,27 @@ async def test_opencode_session_creation_falls_back_when_projected_payload_hangs
 
 
 @pytest.mark.asyncio
-async def test_opencode_session_startup_timeout_wraps_hung_session_request() -> None:
+async def test_opencode_session_startup_timeout_wraps_hung_session_request(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    determinism = _install_opencode_determinism(monkeypatch)
+    determinism.install_on_running_loop(monkeypatch)
     connection = _HangingSessionOpenCodeConnection()
     connection._process = _FakeProcess()
 
-    with pytest.raises(TimeoutError, match=r"did not become ready within 0\.0s"):
-        await connection._create_session_with_retry(
+    create_task = asyncio.create_task(
+        connection._create_session_with_retry(
             ResolvedLaunchSpec(
                 permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
             ),
             timeout_seconds=0.01,
         )
+    )
+    while not create_task.done():
+        await determinism.sleep(0.01)
+
+    with pytest.raises(TimeoutError, match=r"did not become ready within 0\.0s"):
+        await create_task
 
 
 @pytest.mark.asyncio

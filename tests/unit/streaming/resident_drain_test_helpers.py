@@ -189,7 +189,7 @@ async def next_turn_boundary(
     subscriber: asyncio.Queue[HarnessEvent | None],
 ) -> HarnessEvent:
     while True:
-        event = await asyncio.wait_for(subscriber.get(), timeout=0.5)
+        event = await subscriber.get()
         assert event is not None
         if event.event_type == TURN_BOUNDARY_EVENT_TYPE:
             return event

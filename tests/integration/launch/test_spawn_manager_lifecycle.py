@@ -27,6 +27,7 @@ from meridian.lib.streaming import spawn_manager as spawn_manager_module
 from meridian.lib.streaming.spawn_manager import SpawnManager, SpawnSession
 from meridian.lib.streaming.types import InjectResult
 from meridian.lib.telemetry import init_telemetry
+from tests.support.async_determinism import assert_still_pending
 from tests.support.fakes import RecordingTelemetrySink, wait_for_telemetry
 
 
@@ -179,10 +180,8 @@ async def test_wait_for_completion_survives_cleanup_without_private_hooks(
     await manager.start_spawn(_build_config(spawn_id, project_root), _build_spec())
 
     try:
-        await asyncio.wait_for(cleanup_started.wait(), timeout=1.0)
-        completion_before_cleanup_release = await asyncio.wait_for(
-            manager.wait_for_completion(spawn_id), timeout=1.0
-        )
+        await cleanup_started.wait()
+        completion_before_cleanup_release = await manager.wait_for_completion(spawn_id)
         assert completion_before_cleanup_release is not None
         assert completion_before_cleanup_release.status == "failed"
         assert completion_before_cleanup_release.exit_code == 1
@@ -200,9 +199,7 @@ async def test_wait_for_completion_survives_cleanup_without_private_hooks(
 
         release_cleanup.set()
         await asyncio.sleep(0)
-        completion_after_cleanup_release = await asyncio.wait_for(
-            manager.wait_for_completion(spawn_id), timeout=1.0
-        )
+        completion_after_cleanup_release = await manager.wait_for_completion(spawn_id)
         assert completion_after_cleanup_release == completion_before_cleanup_release
     finally:
         release_cleanup.set()
@@ -478,18 +475,17 @@ async def test_spawn_manager_serializes_control_actions_and_persists_transitions
 
     try:
         inject_task = asyncio.create_task(manager.inject(spawn_id, "hello", source="test"))
-        await asyncio.wait_for(connection.inject_started.wait(), timeout=1.0)
+        await connection.inject_started.wait()
 
         interrupt_task = asyncio.create_task(manager.interrupt(spawn_id, source="test"))
-        await asyncio.sleep(0.05)
-        assert not interrupt_task.done()
+
+        await assert_still_pending(interrupt_task)
 
         connection.allow_inject_send.set()
-        inject_result = await asyncio.wait_for(inject_task, timeout=1.0)
-        await asyncio.wait_for(interrupt_task, timeout=1.0)
+        inject_result = await inject_task
+        await interrupt_task
         assert inject_result.success is True
         assert inject_result.inbound_seq == 0
-        assert connection.call_order[:3] == ["inject:start", "inject:end", "interrupt"]
 
         control_actions_path = runtime_root / "spawns" / str(spawn_id) / "control_actions.jsonl"
         assert control_actions_path.exists()
@@ -499,14 +495,25 @@ async def test_spawn_manager_serializes_control_actions_and_persists_transitions
             if line.strip()
         ]
         action_statuses: dict[str, list[str]] = {}
-        for record in records:
+        inject_ack_index: int | None = None
+        interrupt_requested_index: int | None = None
+        for index, record in enumerate(records):
             action_id = cast("str", record["action_id"])
-            action_statuses.setdefault(action_id, []).append(cast("str", record["status"]))
+            action = cast("str", record["action"])
+            status = cast("str", record["status"])
+            action_statuses.setdefault(action_id, []).append(status)
+            if action == "inject" and status == "acknowledged":
+                inject_ack_index = index
+            if action == "interrupt" and status == "requested":
+                interrupt_requested_index = index
         assert all(
             statuses == ["requested", "sent", "acknowledged"]
             for statuses in action_statuses.values()
         )
         recorded_actions = {cast("str", record["action"]) for record in records}
         assert recorded_actions == {"inject", "interrupt"}
+        assert inject_ack_index is not None
+        assert interrupt_requested_index is not None
+        assert inject_ack_index < interrupt_requested_index
     finally:
         await manager.stop_spawn(spawn_id)

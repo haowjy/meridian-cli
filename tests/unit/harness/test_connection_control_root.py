@@ -1,5 +1,5 @@
 # qa-validated: test-suite-redesign
-"""Split-root connection regression tests for harness subprocess cwd handling."""
+"""Unit tests for harness subprocess cwd handling (control_root vs task_cwd)."""
 
 from __future__ import annotations
 
@@ -140,50 +140,47 @@ async def _capture_codex_launch_cwd(
 
 
 @pytest.mark.asyncio
-async def test_codex_connection_launches_subprocess_from_control_root_when_task_cwd_provided(
+@pytest.mark.parametrize(
+    ("task_cwd_provided", "ws_port"),
+    [(True, 19091), (False, 19092)],
+    ids=["with-task-cwd", "without-task-cwd"],
+)
+async def test_codex_connection_launches_subprocess_from_control_root(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
+    task_cwd_provided: bool,
+    ws_port: int,
 ) -> None:
     control_root = tmp_path / "project"
     control_root.mkdir(parents=True)
-    task_cwd = tmp_path / "task"
-    task_cwd.mkdir(parents=True)
+    task_cwd = tmp_path / "task" if task_cwd_provided else None
+    if task_cwd is not None:
+        task_cwd.mkdir(parents=True)
 
     captured_cwd = await _capture_codex_launch_cwd(
         monkeypatch,
         control_root=control_root,
         task_cwd=task_cwd,
-        ws_port=19091,
+        ws_port=ws_port,
     )
 
     assert captured_cwd == str(control_root)
 
 
-@pytest.mark.asyncio
-async def test_codex_connection_launches_subprocess_from_control_root_without_task_cwd(
-    monkeypatch: pytest.MonkeyPatch,
+@pytest.mark.parametrize(
+    "task_cwd_provided",
+    [True, False],
+    ids=["with-task-cwd", "without-task-cwd"],
+)
+def test_codex_managed_bootstrap_request_uses_control_root(
     tmp_path: Path,
+    task_cwd_provided: bool,
 ) -> None:
     control_root = tmp_path / "project"
     control_root.mkdir(parents=True)
-
-    captured_cwd = await _capture_codex_launch_cwd(
-        monkeypatch,
-        control_root=control_root,
-        task_cwd=None,
-        ws_port=19092,
-    )
-
-    assert captured_cwd == str(control_root)
-
-
-def test_codex_managed_bootstrap_request_uses_control_root_when_task_cwd_provided(
-    tmp_path: Path,
-) -> None:
-    control_root = tmp_path / "project"
-    control_root.mkdir(parents=True)
-    task_cwd = tmp_path / "task"
-    task_cwd.mkdir(parents=True)
+    task_cwd = tmp_path / "task" if task_cwd_provided else None
+    if task_cwd is not None:
+        task_cwd.mkdir(parents=True)
 
     connection = CodexConnection()
     connection._config = ConnectionConfig(
@@ -192,25 +189,6 @@ def test_codex_managed_bootstrap_request_uses_control_root_when_task_cwd_provide
         prompt="hi",
         control_root=control_root,
         task_cwd=task_cwd,
-        env_overrides={},
-    )
-    method, payload = connection._thread_bootstrap_request(_build_spec())
-
-    assert method == "thread/start"
-    assert payload["cwd"] == str(control_root)
-
-
-def test_codex_managed_bootstrap_request_uses_control_root_without_task_cwd(tmp_path: Path) -> None:
-    control_root = tmp_path / "project"
-    control_root.mkdir(parents=True)
-
-    connection = CodexConnection()
-    connection._config = ConnectionConfig(
-        spawn_id=SpawnId("p-codex-bootstrap-control-cwd"),
-        harness_id=HarnessId.CODEX,
-        prompt="hi",
-        control_root=control_root,
-        task_cwd=None,
         env_overrides={},
     )
     method, payload = connection._thread_bootstrap_request(_build_spec())

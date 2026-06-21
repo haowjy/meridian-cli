@@ -8,6 +8,7 @@ import pytest
 from meridian.lib.core.types import SpawnId
 from meridian.lib.launch.streaming_runner import _sleep_retry_backoff_or_cancel
 from meridian.lib.state import spawn_store
+from tests.support.async_determinism import TaskGate, yield_to_loop
 
 
 @pytest.mark.asyncio
@@ -23,9 +24,10 @@ async def test_retry_backoff_wakes_when_cancel_intent_is_recorded(tmp_path: Path
         prompt="hello",
     )
     shutdown_event = asyncio.Event()
+    cancel_gate = TaskGate()
 
     async def request_cancel() -> None:
-        await asyncio.sleep(0.01)
+        await cancel_gate.wait_open()
         spawn_store.record_cancel_intent(
             tmp_path,
             spawn_id,
@@ -36,6 +38,8 @@ async def test_retry_backoff_wakes_when_cancel_intent_is_recorded(tmp_path: Path
 
     task = asyncio.create_task(request_cancel())
     try:
+        await yield_to_loop()
+        cancel_gate.open()
         cancelled = await _sleep_retry_backoff_or_cancel(
             delay_seconds=10.0,
             shutdown_event=shutdown_event,

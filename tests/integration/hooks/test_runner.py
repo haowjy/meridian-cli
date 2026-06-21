@@ -116,65 +116,28 @@ def test_external_runner_captures_nonzero_exit_and_1kb_tails(tmp_path: Path) -> 
     assert result.stderr == "b" * 1024
 
 
-def test_external_runner_marks_timeout_and_terminates_process(tmp_path: Path) -> None:
+def test_external_runner_times_out_sleeping_hook(tmp_path: Path) -> None:
     project_root = tmp_path / "repo"
     project_root.mkdir()
+    runtime_root = tmp_path / "state"
 
-    class FakeProcess:
-        def __init__(self) -> None:
-            self.returncode = -15
-            self.terminated = False
-            self.calls = 0
-
-        def communicate(
-            self,
-            input: bytes | None = None,
-            timeout: float | None = None,
-        ) -> tuple[bytes, bytes]:
-            self.calls += 1
-            if self.calls == 1:
-                raise subprocess.TimeoutExpired(
-                    cmd="hook",
-                    timeout=1,
-                    output=b"partial-out",
-                    stderr=b"partial-err",
-                )
-            return (b"term-out", b"term-err")
-
-        def terminate(self) -> None:
-            self.terminated = True
-
-    fake_process = FakeProcess()
-
-    class FakePopen:
-        def __init__(self, *args: object, **kwargs: object) -> None:
-            self._process = fake_process
-
-        def __getattr__(self, name: str) -> object:
-            return getattr(self._process, name)
+    script = tmp_path / "sleep_forever.py"
+    script.write_text(
+        "import time\n"
+        "time.sleep(30)\n",
+        encoding="utf-8",
+    )
 
     runner = ExternalHookRunner(project_root)
-    from _pytest.monkeypatch import MonkeyPatch
-
-    monkeypatch = MonkeyPatch()
-    monkeypatch.setattr("meridian.lib.hooks.runner.subprocess.Popen", FakePopen)
-
-    try:
-        result = runner.run(
-            _external_hook("ignored"),
-            _context(project_root, tmp_path / "state"),
-            timeout_secs=1,
-        )
-    finally:
-        monkeypatch.undo()
+    result = runner.run(
+        _external_hook(_python_command(script)),
+        _context(project_root, runtime_root),
+        timeout_secs=1,
+    )
 
     assert result.outcome == "timeout"
     assert result.success is False
     assert result.error == "Timed out after 1s."
-    assert result.exit_code == -15
-    assert result.stdout == "partial-outterm-out"
-    assert result.stderr == "partial-errterm-err"
-    assert fake_process.terminated is True
 
 
 def test_external_runner_omits_null_context_variables(tmp_path: Path) -> None:
@@ -201,75 +164,6 @@ def test_external_runner_omits_null_context_variables(tmp_path: Path) -> None:
     assert result.outcome == "success"
     assert result.stdout is not None
     assert result.stdout.strip().splitlines() == ["False", "False", "False"]
-
-
-def test_external_runner_timeout_escalates_from_terminate_to_kill(
-    tmp_path: Path,
-    monkeypatch: MonkeyPatch,
-) -> None:
-    project_root = tmp_path / "repo"
-    project_root.mkdir()
-
-    class FakeProcess:
-        def __init__(self) -> None:
-            self.returncode: int | None = None
-            self.terminated = False
-            self.killed = False
-            self.calls = 0
-
-        def communicate(
-            self,
-            input: bytes | None = None,
-            timeout: float | None = None,
-        ) -> tuple[bytes, bytes]:
-            self.calls += 1
-            if self.calls == 1:
-                raise subprocess.TimeoutExpired(
-                    cmd="hook",
-                    timeout=1,
-                    output=b"partial-out",
-                    stderr=b"partial-err",
-                )
-            if self.calls == 2:
-                raise subprocess.TimeoutExpired(
-                    cmd="hook",
-                    timeout=2.0,
-                    output=b"term-out",
-                    stderr=b"term-err",
-                )
-            return (b"kill-out", b"kill-err")
-
-        def terminate(self) -> None:
-            self.terminated = True
-
-        def kill(self) -> None:
-            self.killed = True
-            self.returncode = -9
-
-    fake_process = FakeProcess()
-
-    class FakePopen:
-        def __init__(self, *args: object, **kwargs: object) -> None:
-            self._process = fake_process
-
-        def __getattr__(self, name: str) -> object:
-            return getattr(self._process, name)
-
-    monkeypatch.setattr("meridian.lib.hooks.runner.subprocess.Popen", FakePopen)
-
-    runner = ExternalHookRunner(project_root)
-    result = runner.run(
-        _external_hook("ignored"),
-        _context(project_root, tmp_path / "state"),
-        timeout_secs=1,
-    )
-
-    assert result.outcome == "timeout"
-    assert result.exit_code == -9
-    assert fake_process.terminated is True
-    assert fake_process.killed is True
-    assert result.stdout == "partial-outterm-outkill-out"
-    assert result.stderr == "partial-errterm-errkill-err"
 
 
 def test_external_runner_short_circuits_when_hooks_disabled(

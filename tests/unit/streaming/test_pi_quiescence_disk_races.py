@@ -24,6 +24,7 @@ from meridian.lib.streaming.drain_policy import DrainAction
 from meridian.lib.streaming.pi_drain import PiDrainCoordinator
 from meridian.lib.streaming.pi_subspawn_tracker import PiSubspawnTracker
 from meridian.lib.streaming.spawn_manager import SpawnManager
+from tests.support.async_determinism import AsyncDeterminism, assert_still_pending
 from tests.unit.streaming.pi_quiescence_test_helpers import (
     FakePiConnection as _FakePiConnection,
 )
@@ -383,7 +384,15 @@ async def test_pi_candidate_child_dir_before_row_suppresses_done_nudge_until_ter
 
 
 @pytest.mark.asyncio
-async def test_pi_done_nudge_repeats_on_bounded_cadence(tmp_path: Path) -> None:
+async def test_pi_done_nudge_repeats_on_bounded_cadence(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from meridian.lib.streaming import pi_drain as pi_drain_module
+
+    determinism = AsyncDeterminism(start=100.0)
+    determinism.install(monkeypatch, monotonic_modules=(pi_drain_module,))
+
     spawn_id = SpawnId("p-nudge-cadence")
     sent_messages: list[str] = []
     _write_running_bash_record(tmp_path, spawn_id, running=True)
@@ -400,7 +409,7 @@ async def test_pi_done_nudge_repeats_on_bounded_cadence(tmp_path: Path) -> None:
         await coordinator.handle_timeout()
         assert sent_messages == [PI_COMPLETION_NUDGE_MESSAGE]
 
-        await asyncio.sleep(0.06)
+        determinism.advance(0.06)
         await coordinator.handle_timeout()
 
         assert sent_messages == [PI_COMPLETION_NUDGE_MESSAGE, PI_COMPLETION_NUDGE_MESSAGE]
@@ -614,14 +623,13 @@ async def test_spawn_manager_pi_drain_loop_reevaluates_on_disk_wakeup(
 
     try:
         completion = asyncio.create_task(manager.wait_for_completion(spawn_id))
-        await asyncio.sleep(0.05)
-        assert not completion.done()
+        await assert_still_pending(completion)
         _write_json(
             child_state,
             {"id": "p123", "parent_id": str(spawn_id), "status": "succeeded"},
         )
         disk_wakeup.set()
-        outcome = await asyncio.wait_for(completion, timeout=1.0)
+        outcome = await completion
         assert outcome is not None
         assert outcome.status == "succeeded"
         history_path = tmp_path / "spawns" / str(spawn_id) / "history.jsonl"

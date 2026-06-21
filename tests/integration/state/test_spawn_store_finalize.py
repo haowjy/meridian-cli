@@ -10,10 +10,8 @@ operations live in test_spawn_store_crud.py.
 from __future__ import annotations
 
 import json
-import multiprocessing
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import Any
 
 from meridian.lib.core.domain import SpawnStatus, TokenUsage
 from meridian.lib.state.spawn_store import (
@@ -22,6 +20,7 @@ from meridian.lib.state.spawn_store import (
     mark_finalizing,
     start_spawn,
 )
+from tests.support.process_race import run_spawn_race_or_skip
 
 
 def _state_root(tmp_path: Path) -> Path:
@@ -50,18 +49,13 @@ def _state_revision(runtime_root: Path, spawn_id: str) -> int:
     return int(payload["revision"])
 
 
-def _finalize_in_subprocess(
+def _finalize_spawn_worker(
     runtime_root_str: str,
     spawn_id: str,
     status: SpawnStatus,
     exit_code: int,
     duration_secs: float,
-    ready_queue: Any,
-    start_event: Any,
-    result_queue: Any,
-) -> None:
-    ready_queue.put("ready")
-    start_event.wait()
+) -> tuple[bool, bool]:
     outcome = finalize_spawn(
         Path(runtime_root_str),
         spawn_id,
@@ -70,7 +64,7 @@ def _finalize_in_subprocess(
         origin="runner",
         duration_secs=duration_secs,
     )
-    result_queue.put((outcome.wrote, outcome.transitioned))
+    return (outcome.wrote, outcome.transitioned)
 
 
 def test_mark_finalizing_state_machine_enforces_running_only(tmp_path: Path) -> None:
@@ -198,57 +192,21 @@ def test_finalize_rejects_losing_authoritative_after_terminal(tmp_path: Path) ->
     assert row.total_cost_usd is None
     assert row.error is None
     assert row.terminal_origin == "runner"
+
+
 def test_cross_process_authoritative_finalizers_persist_one_winner(
     tmp_path: Path,
 ) -> None:
     """CR2.1: file-lock winner semantics hold across processes, not just threads."""
     runtime_root = _state_root(tmp_path)
     spawn_id = _start_test_spawn(runtime_root)
-    ctx = multiprocessing.get_context("spawn")
-    ready_queue = ctx.Queue()
-    result_queue = ctx.Queue()
-    start_event = ctx.Event()
-    processes = [
-        ctx.Process(
-            target=_finalize_in_subprocess,
-            args=(
-                runtime_root.as_posix(),
-                spawn_id,
-                "succeeded",
-                0,
-                10.0,
-                ready_queue,
-                start_event,
-                result_queue,
-            ),
-        ),
-        ctx.Process(
-            target=_finalize_in_subprocess,
-            args=(
-                runtime_root.as_posix(),
-                spawn_id,
-                "failed",
-                1,
-                99.0,
-                ready_queue,
-                start_event,
-                result_queue,
-            ),
-        ),
-    ]
-
-    for process in processes:
-        process.start()
-
-    for _ in processes:
-        assert ready_queue.get(timeout=10) == "ready"
-    start_event.set()
-
-    for process in processes:
-        process.join(timeout=10)
-        assert process.exitcode == 0
-
-    outcomes = [result_queue.get(timeout=10) for _ in processes]
+    outcomes = run_spawn_race_or_skip(
+        _finalize_spawn_worker,
+        [
+            (runtime_root.as_posix(), spawn_id, "succeeded", 0, 10.0),
+            (runtime_root.as_posix(), spawn_id, "failed", 1, 99.0),
+        ],
+    )
     row = get_spawn(runtime_root, spawn_id)
 
     assert sorted(outcomes) == [(False, False), (True, True)]

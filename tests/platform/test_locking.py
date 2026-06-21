@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import threading
-import time
 from pathlib import Path
 
 from meridian.lib.platform.locking import lock_file
@@ -38,14 +37,13 @@ def test_lock_file_blocks_other_threads_until_release(tmp_path: Path) -> None:
     release_first = threading.Event()
     waiter_attempting = threading.Event()
     second_acquired = threading.Event()
-    waiter_elapsed: list[float] = []
     errors: list[BaseException] = []
 
     def _holder() -> None:
         try:
             with lock_file(lock_path):
                 first_has_lock.set()
-                release_first.wait(timeout=5)
+                release_first.wait()
         except BaseException as exc:  # pragma: no cover - failure path for thread handoff
             errors.append(exc)
             first_has_lock.set()
@@ -56,9 +54,7 @@ def test_lock_file_blocks_other_threads_until_release(tmp_path: Path) -> None:
             if not first_has_lock.wait(timeout=2):
                 raise AssertionError("holder did not acquire lock")
             waiter_attempting.set()
-            start = time.monotonic()
             with lock_file(lock_path):
-                waiter_elapsed.append(time.monotonic() - start)
                 second_acquired.set()
         except BaseException as exc:  # pragma: no cover - failure path for thread handoff
             errors.append(exc)
@@ -80,8 +76,6 @@ def test_lock_file_blocks_other_threads_until_release(tmp_path: Path) -> None:
     waiter.join(timeout=2)
 
     assert errors == []
-    assert waiter_elapsed
-    assert waiter_elapsed[0] >= 0.2
 
 
 @windows_only

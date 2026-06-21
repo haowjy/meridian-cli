@@ -79,7 +79,7 @@ async def test_wait_for_change_wakes_on_refresh(tmp_path: Path) -> None:
         assert not wait_task.done()
         _write_json(marker_path, {"ts_epoch_secs": 2.0})
         await watcher.force_rescan()
-        await asyncio.wait_for(wait_task, timeout=1.0)
+        await wait_task
     finally:
         await watcher.stop()
 
@@ -94,7 +94,7 @@ async def test_wait_for_change_observes_pre_signaled_refresh(tmp_path: Path) -> 
     try:
         _write_json(marker_path, {"ts_epoch_secs": 1.0})
         await watcher.force_rescan()
-        await asyncio.wait_for(watcher.wait_for_change(), timeout=1.0)
+        await watcher.wait_for_change()
 
         wait_task = asyncio.create_task(watcher.wait_for_change())
         await asyncio.sleep(0)
@@ -248,7 +248,7 @@ async def test_wait_for_change_wakes_on_child_terminal_without_manual_rescan(
             child_state,
             {"id": "p-child", "parent_id": str(parent_id), "status": "succeeded"},
         )
-        await asyncio.wait_for(wait_task, timeout=2.0)
+        await wait_task
         assert watcher.has_pending_child_spawns() is False
     finally:
         await watcher.stop()

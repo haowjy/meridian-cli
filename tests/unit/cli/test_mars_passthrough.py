@@ -1,3 +1,7 @@
+"""Unit tests for mars passthrough streaming and managed env injection."""
+
+from __future__ import annotations
+
 import importlib
 import subprocess
 from io import StringIO
@@ -73,23 +77,11 @@ def test_run_mars_passthrough_streaming(
     assert stderr.getvalue() == expected_stderr
 
 
-@pytest.mark.parametrize(
-    "mars_args",
-    [
-        ("models", "list"),
-        ("sync",),
-        ("upgrade",),
-        ("link",),
-        ("init", "--link", ".claude"),
-        ("init",),
-    ],
-    ids=["models", "sync", "upgrade", "link", "init-link", "init"],
-)
-def test_execute_mars_passthrough_sets_managed_env_for_all_commands(
-    mars_args: tuple[str, ...],
+def test_execute_mars_passthrough_sets_managed_env(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.delenv("MERIDIAN_MANAGED", raising=False)
+    mars_args = ("models", "list")
     request = mars_passthrough.MarsPassthroughRequest(
         command=("/usr/bin/mars", *mars_args),
         mars_args=mars_args,

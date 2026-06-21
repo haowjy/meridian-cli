@@ -1,11 +1,9 @@
-"""Integration tests for telemetry reader/query/status helpers."""
+"""Integration tests for telemetry reader, query, and status helpers."""
 
 from __future__ import annotations
 
 import json
 import os
-import queue
-import threading
 import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -51,15 +49,6 @@ def _write_segment(
     path = telemetry_dir / name
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return path
-
-
-def _wait_for(predicate, timeout: float = 1.0) -> None:
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        if predicate():
-            return
-        time.sleep(0.01)
-    raise AssertionError("condition not met")
 
 
 def test_query_with_no_filters_returns_events_from_segments(tmp_path: Path) -> None:
@@ -149,43 +138,31 @@ def test_tail_events_yields_new_lines_from_multiple_directories(tmp_path: Path) 
     first_path = _write_segment(first_dir, "cli.100-0001.jsonl", [])
     second_path = _write_segment(second_dir, "cli.200-0001.jsonl", [])
     iterator = tail_events([first_dir, second_dir], poll_interval=0.01)
-    seen_queue: queue.Queue[str] = queue.Queue()
 
-    def _consume_events() -> None:
-        seen_queue.put(next(iterator)["event"])
-        seen_queue.put(next(iterator)["event"])
-
-    def _append_events() -> None:
-        with first_path.open("a", encoding="utf-8") as file:
-            file.write(
-                json.dumps(
-                    _event(datetime.now(UTC), "chat.ws.connected"),
-                    separators=(",", ":"),
-                )
-                + "\n"
+    with first_path.open("a", encoding="utf-8") as file:
+        file.write(
+            json.dumps(
+                _event(datetime.now(UTC), "chat.ws.connected"),
+                separators=(",", ":"),
             )
-        time.sleep(0.02)
-        with second_path.open("a", encoding="utf-8") as file:
-            file.write(
-                json.dumps(
-                    _event(datetime.now(UTC), "spawn.succeeded", domain="spawn"),
-                    separators=(",", ":"),
-                )
-                + "\n"
+            + "\n"
+        )
+    first_event = next(iterator)
+
+    with second_path.open("a", encoding="utf-8") as file:
+        file.write(
+            json.dumps(
+                _event(datetime.now(UTC), "spawn.succeeded", domain="spawn"),
+                separators=(",", ":"),
             )
+            + "\n"
+        )
+    second_event = next(iterator)
 
-    consumer = threading.Thread(target=_consume_events, daemon=True)
-    consumer.start()
-    time.sleep(0.02)
-
-    writer = threading.Thread(target=_append_events)
-    writer.start()
-    writer.join(timeout=1.0)
-    consumer.join(timeout=1.0)
-
-    seen = [seen_queue.get(timeout=1.0), seen_queue.get(timeout=1.0)]
-
-    assert seen == ["chat.ws.connected", "spawn.succeeded"]
+    assert [first_event["event"], second_event["event"]] == [
+        "chat.ws.connected",
+        "spawn.succeeded",
+    ]
 
 
 def test_status_aggregates_active_writers_across_project_directories_and_legacy(
