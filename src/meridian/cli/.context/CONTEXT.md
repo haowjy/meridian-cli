@@ -5,8 +5,8 @@
 Every CLI invocation is classified against `COMMAND_CATALOG` before any
 heavy module loads. `CommandDescriptor` carries all routing information:
 
-- `startup_class` — determines which bootstrap call to make
-- `state_requirement` — `none | project-read | runtime-read | project-write | runtime-write`
+- `startup_class` — drives telemetry mode + primary-launch background repairs (TRIVIAL, READ_ROOTLESS, READ_PROJECT, READ_RUNTIME, WRITE_PROJECT, WRITE_RUNTIME, PRIMARY_LAUNCH, SERVICE_ROOTLESS, SERVICE_RUNTIME)
+- `state_requirement` — `none | project-read | runtime-read | project-write | runtime-write`; drives bootstrap preparation
 - `telemetry_mode` — `none | stderr | segment`
 - `lazy_target` — import path string for the Cyclopts handler
 - `root_source` — `"cwd"` (default) or `"argv"` (post-parse root resolution)
@@ -20,7 +20,8 @@ never queries the extension registry for routing answers.
 | Class | Examples | Bootstrap | Telemetry |
 |---|---|---|---|
 | `TRIVIAL` | `--help`, `--version` | none | none |
-| `READ_PROJECT` | `config show`, `work current` | project-read | none |
+| `READ_ROOTLESS` | `doctor`, `kg check`, `qi`, `mermaid check`, `config show`, `ext list` | none | none |
+| `READ_PROJECT` | `context`, `work current`, `hooks list` | project-read | none |
 | `READ_RUNTIME` | `spawn list`, `session log` | runtime-read | none |
 | `WRITE_PROJECT` | `config init` | project-write | optional |
 | `WRITE_RUNTIME` | `spawn create`, `work start` | runtime-write | segment |
@@ -28,8 +29,8 @@ never queries the extension registry for routing answers.
 | `SERVICE_ROOTLESS` | `serve` | none | stderr |
 | `SERVICE_RUNTIME` | `streaming serve` | runtime-write | segment |
 
-Read-only classes install no telemetry, spawn no writer thread, create no
-UUID, and make no filesystem mutations.
+Read-only classes (`READ_ROOTLESS`, `READ_PROJECT`, `READ_RUNTIME`, `TRIVIAL`) install no
+telemetry, spawn no writer thread, create no UUID, and make no filesystem mutations.
 
 ## Lazy Import Strategy
 
@@ -59,28 +60,45 @@ Human vs agent mode selects a `HelpProfile` at app-build time from the
 command catalog — no runtime mutation of shared `App` objects. Do not call
 `apply_agent_help_supplements()` (archived pattern).
 
-## `require_established_project_root()`
+## Project Root Resolution
 
-`utils.py:require_established_project_root()` is the fail-fast guard used by
-commands that require an actual project directory. It reads `GlobalOptions.project_root`
-first (`-C` / `--directory`), then calls `resolve_project_root_resolution()`.
-It raises `SystemExit(1)` when resolution falls back to bare CWD (`source="cwd"`)
-without explicit or inherited project targeting — there is no marker walk-up.
+The canonical resolver is `resolve_cli_project_root() -> CliProjectRoot` in
+`utils.py`. It returns a typed result (never raises):
 
-The "established" in the name is deliberate: it makes the policy visible at
-every call site. A command that calls this asserts it cannot proceed in an
-arbitrary directory — it needs an explicit project root (`-C`, `MERIDIAN_PROJECT_DIR`,
-or cwd that is intentionally the project root).
+- `project_root: Path | None` — `None` when the project isn't established
+- `source: "explicit" | "env" | "cwd"` — how the root was discovered
+- `established: bool` — `True` when the project is usable for project-required commands
 
-Do not use this in commands that should work anywhere (e.g. `config init`).
-Use `resolve_project_root_resolution()` directly and handle the `source="cwd"`
-case explicitly if the command has a sensible fallback.
+### Established-project detection
 
-**`SystemExit` is a `BaseException`, not `Exception`.** Code that wraps calls to
-this function in `except Exception` will silently swallow the exit. Use
-`except BaseException` (or let it propagate) in any wrapper that must not eat it.
-`SystemExit` propagation matters whenever a guard is called from a context
-that wraps in `except Exception` — the swallowed exit causes confusing crashes.
+A project is **established** when:
+
+1. **Explicit targeting:** `-C <path>` or `MERIDIAN_PROJECT_DIR`, OR
+2. **Literal-cwd marker:** `cwd_has_project_id(cwd)` returns `True` — the CWD
+   contains its own `.meridian/id` file. **No ancestor walk.**
+
+CWD resolution where `cwd_has_project_id()` returns `False` is **not established** —
+project-required commands exit 1; rootless commands exit 0.
+
+### Adapters
+
+- `require_established_project_root() -> Path` — calls `resolve_cli_project_root()`
+  and raises `SystemExit(1)` via `exit_no_established_project()` if not established.
+  Used by project-required commands (spawn, work, telemetry).
+- `optional_cli_project_root_posix() -> str | None` — returns `None` when not
+  established. Used by config/inspection commands that degrade gracefully.
+- `exit_no_established_project()` — the single CLI-edge `SystemExit(1)`.
+
+### Footgun killed
+
+Before #338, `require_established_project_root()` raised `SystemExit` (a
+`BaseException`) directly. `maybe_bootstrap_runtime_state()` in `bootstrap.py`
+wrapped bootstrap in `except Exception`, which silently swallowed the
+`SystemExit` — causing confusing downstream crashes instead of the intended
+"No Meridian project found" message.
+
+The fix: `resolve_cli_project_root()` never raises. The no-project exit is an
+explicit decision *outside* the `except Exception` guard.
 
 ## `to_cli_output()` Dispatch
 
