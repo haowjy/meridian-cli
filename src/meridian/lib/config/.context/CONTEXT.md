@@ -68,7 +68,8 @@ callables. It is only valid during `MeridianConfig()` construction.
 
 `project_root.py:resolve_project_root_resolution()` accepts an `ignore_env`
 flag (default `False`). When `True`, it skips the `MERIDIAN_PROJECT_DIR` env
-var check and falls through to CWD-based directory-walk discovery.
+var check and resolves project root to literal CWD (`source="cwd"`). There is
+no marker walk-up.
 
 **Why it exists:** Hooks commands (`cli/hooks_commands.py`) run inside spawned
 processes that inherit the outer session's `MERIDIAN_PROJECT_DIR`. Without

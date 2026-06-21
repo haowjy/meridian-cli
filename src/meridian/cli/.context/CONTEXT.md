@@ -62,19 +62,19 @@ command catalog — no runtime mutation of shared `App` objects. Do not call
 ## `require_established_project_root()`
 
 `utils.py:require_established_project_root()` is the fail-fast guard used by
-commands that require an actual project directory. It raises `SystemExit` when
-`resolve_project_root_resolution()` returns `source="cwd"` — meaning the
-directory walk from CWD found no project marker (`.mars/`, `meridian.toml`,
-`.meridian/id`, `.git`, etc.) and fell back to bare CWD.
+commands that require an actual project directory. It reads `GlobalOptions.project_root`
+first (`-C` / `--directory`), then calls `resolve_project_root_resolution()`.
+It raises `SystemExit(1)` when resolution falls back to bare CWD (`source="cwd"`)
+without explicit or inherited project targeting — there is no marker walk-up.
 
 The "established" in the name is deliberate: it makes the policy visible at
 every call site. A command that calls this asserts it cannot proceed in an
-arbitrary directory — it needs a real project root, not a best-guess fallback.
+arbitrary directory — it needs an explicit project root (`-C`, `MERIDIAN_PROJECT_DIR`,
+or cwd that is intentionally the project root).
 
-Do not use this in commands that should work anywhere (e.g. `config init`,
-which creates the project marker). Use `resolve_project_root_resolution()`
-directly and handle the `source="cwd"` case explicitly if the command has
-a sensible fallback.
+Do not use this in commands that should work anywhere (e.g. `config init`).
+Use `resolve_project_root_resolution()` directly and handle the `source="cwd"`
+case explicitly if the command has a sensible fallback.
 
 **`SystemExit` is a `BaseException`, not `Exception`.** Code that wraps calls to
 this function in `except Exception` will silently swallow the exit. Use

@@ -6,13 +6,17 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Removed
 - `meridian chat` feature — entire chat backend, CLI command, frontend, and tests deleted.
+- CWD walk-up / marker-based project-root discovery (`.mars/`, `meridian.toml`, `.meridian/id`, `.git`, etc.).
 
 ### Added
+- Inheritable `MERIDIAN_TASK_DIR` launch surface: per-spawn `scope.json`, inherited task-dir precedence tier, and `meridian task-dir` (query/set/clear).
+- `meridian spawn agents` lists installed agent profile names.
 - `--from` context refs now include `task_cwd` so receiving sessions know the prior spawn's working directory.
 - `-a @explorer` syntax: leading `@` is stripped from agent names for convenience.
 - Spawn contract warns agents not to use `Agent()` tool when meridian agents are available.
 
 ### Changed
+- Project root resolution is explicit only: `-C` / `--directory` → `MERIDIAN_PROJECT_DIR` → literal CWD. `ProjectRootSource` narrowed to `explicit | env | cwd`.
 - Bumped mars-agents to 0.8.10.
 
 ### Fixed
