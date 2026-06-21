@@ -28,19 +28,12 @@ class ContextBackend(Protocol):
         """Look up the active work ID for a session."""
         ...
 
-    def resolve_work_scratch_dir(self, runtime_root: Path, work_id: str) -> Path:
-        """Resolve the scratch directory for a work item."""
-        ...
-
 
 class LocalFilesystemBackend:
     """Default context backend backed by local state modules."""
 
     def get_session_active_work_id(self, runtime_root: Path, chat_id: str) -> str | None:
         return session_store.get_session_active_work_id(runtime_root, chat_id)
-
-    def resolve_work_scratch_dir(self, runtime_root: Path, work_id: str) -> Path:
-        return state_paths.resolve_work_scratch_dir(runtime_root, work_id)
 
 
 @dataclass(frozen=True)
@@ -165,7 +158,6 @@ class ResolvedContext:
 
         work_scope = resolve_work_scope_from_parts(
             project_root=project_root,
-            runtime_root=runtime_root,
             spawn_id=spawn_id,
             work_id=work_id,
             bound_work_dir=bound_work_dir,

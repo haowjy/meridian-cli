@@ -21,6 +21,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Bumped mars-agents to 0.8.12.
 
 ### Fixed
+- Named work items no longer leak into the project repo. Active work-scope resolution only honors `[context.work]`; the context-blind `<runtime_root>/work/<slug>` fallback (which wrote `<repo>/.meridian/work/<slug>` under repo-local runtimes) is removed. Without project context the active work dir is now absent rather than fabricated.
 - Spawn prompting guidance now points at `meridian mars models prompting <agent-or-model>`.
 - Claude primary finalization now repairs TUI trampoline session IDs to the durable transcript ID when prompt history proves the successor.
 - Deleted chat command invocations now fail through normal unknown-command routing instead of stale startup metadata.
