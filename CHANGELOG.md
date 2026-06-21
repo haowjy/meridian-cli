@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.3.11] - 2026-06-21
+
 ### Removed
 - `meridian chat` feature — entire chat backend, CLI command, frontend, and tests deleted.
 - CWD walk-up / marker-based project-root discovery (`.mars/`, `meridian.toml`, `.meridian/id`, `.git`, etc.).
