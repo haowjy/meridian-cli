@@ -34,8 +34,13 @@ def resolve_cli_project_root() -> CliProjectRoot:
             source="explicit",
             established=True,
         )
+    from meridian.lib.config.project_root import cwd_has_project_id
+
     resolution = resolve_project_root_resolution(execution_cwd=Path.cwd())
-    established = resolution.source != "cwd"
+    if resolution.source == "cwd":
+        established = cwd_has_project_id(resolution.project_root)
+    else:
+        established = True
     return CliProjectRoot(
         project_root=resolution.project_root if established else None,
         source=resolution.source,

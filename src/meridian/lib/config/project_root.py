@@ -20,6 +20,12 @@ class ProjectRootResolution(BaseModel):
     source: ProjectRootSource
 
 
+def cwd_has_project_id(cwd: Path) -> bool:
+    """Return True when the literal cwd contains its own `.meridian/id` marker."""
+
+    return (cwd / ".meridian" / "id").is_file()
+
+
 def resolve_project_root_resolution(
     explicit: Path | None = None,
     *,
