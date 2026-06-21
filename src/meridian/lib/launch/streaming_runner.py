@@ -35,12 +35,14 @@ from meridian.lib.harness.semantics import (
     terminal_outcome,
 )
 from meridian.lib.launch.constants import (
+    CURSOR_INACTIVITY_TIMEOUT_SECONDS,
     DEFAULT_INFRA_EXIT_CODE,
     HISTORY_FILENAME,
     REPORT_FILENAME,
     REPORT_WATCHDOG_GRACE_SECONDS,
     REPORT_WATCHDOG_POLL_SECONDS,
     STDERR_FILENAME,
+    SUBPROCESS_REPORT_WATCHDOG_POLL_SECONDS,
     TOKENS_FILENAME,
 )
 from meridian.lib.launch.context import LaunchContext
@@ -116,6 +118,7 @@ class _AttemptRuntime:
     received_signal: signal.Signals | None
     budget_breach: BudgetBreach | None
     terminated_by_report_watchdog: bool
+    terminated_by_inactivity: bool = False
     cancelled_by_request: bool = False
     terminal_observed: bool = False
     authoritative_terminal_status: SpawnStatus | None = None
@@ -163,6 +166,21 @@ class StreamingRunConclusion:
             ),
             terminal_status=self.authoritative_terminal_status,
         )
+
+
+def _inactivity_terminal_outcome(
+    extraction: FinalizeExtraction,
+) -> tuple[int | None, str | None]:
+    """Map inactivity termination to terminal exit_code/failure_reason updates.
+
+    When a durable last-message report was recovered, treat the run as success.
+    Otherwise finalize as ``stalled`` without rewriting exit_code (caller keeps
+    the drain exit code from the inactivity stop).
+    """
+
+    if extraction.durable_report_completion:
+        return 0, None
+    return None, "stalled"
 
 
 def _touch_heartbeat_file(
@@ -383,11 +401,15 @@ async def _consume_subscriber_events(
     stream_stdout_to_terminal: bool,
     terminal_event_future: asyncio.Future[TerminalEventOutcome] | None = None,
     primary_scope_tracker: PrimaryEventScopeTracker | None = None,
+    last_event_at: list[float] | None = None,
 ) -> None:
     while True:
         event = await subscriber.get()
         if event is None:
             return
+
+        if last_event_at is not None:
+            last_event_at[0] = asyncio.get_running_loop().time()
 
         if budget_breach_holder[0] is None:
             breach = _observe_budget_from_event(
@@ -442,6 +464,34 @@ async def _report_watchdog(
         "Report watchdog stopped active streaming connection after grace timeout.",
         spawn_id=str(spawn_id),
         grace_seconds=grace_seconds,
+    )
+    return True
+
+
+async def _inactivity_watchdog(
+    *,
+    last_event_at: list[float],
+    completion_event: asyncio.Event,
+    manager: SpawnManager,
+    spawn_id: SpawnId,
+    timeout_seconds: float,
+    poll_seconds: float = SUBPROCESS_REPORT_WATCHDOG_POLL_SECONDS,
+) -> bool:
+    loop = asyncio.get_running_loop()
+    while True:
+        if completion_event.is_set():
+            return False
+        idle = loop.time() - last_event_at[0]
+        if idle >= timeout_seconds:
+            break
+        await asyncio.sleep(min(poll_seconds, max(0.0, timeout_seconds - idle)))
+    if completion_event.is_set():
+        return False
+    await manager.stop_spawn(spawn_id, status="failed", exit_code=1, error="inactivity_stall")
+    logger.info(
+        "Inactivity watchdog stopped stalled spawn after silence.",
+        spawn_id=str(spawn_id),
+        timeout_seconds=timeout_seconds,
     )
     return True
 
@@ -617,10 +667,12 @@ async def _run_streaming_attempt(
     signal_task: asyncio.Task[bool] | None = None
     budget_task: asyncio.Task[bool] | None = None
     watchdog_task: asyncio.Task[bool] | None = None
+    inactivity_task: asyncio.Task[bool] | None = None
     consume_task: asyncio.Task[None] | None = None
     completion_event = asyncio.Event()
     budget_signal = asyncio.Event()
     budget_breach_holder: list[BudgetBreach | None] = [None]
+    last_event_at: list[float] = [asyncio.get_running_loop().time()]
     terminal_event_future: asyncio.Future[TerminalEventOutcome] = (
         asyncio.get_running_loop().create_future()
     )
@@ -632,6 +684,7 @@ async def _run_streaming_attempt(
     drain_error: str | None = None
     timed_out = False
     terminated_by_report_watchdog = False
+    terminated_by_inactivity = False
     cancelled_by_request = False
     terminal_outcome: TerminalEventOutcome | None = None
     authoritative_terminal_status: SpawnStatus | None = None
@@ -671,6 +724,7 @@ async def _run_streaming_attempt(
                 stream_stdout_to_terminal=stream_stdout_to_terminal,
                 terminal_event_future=terminal_event_capture,
                 primary_scope_tracker=primary_scope_tracker,
+                last_event_at=last_event_at,
             )
         )
         signal_task = asyncio.create_task(signal_event.wait())
@@ -686,6 +740,16 @@ async def _run_streaming_attempt(
                 spawn_id=run.spawn_id,
             )
         )
+        if config.harness_id == HarnessId.CURSOR:
+            inactivity_task = asyncio.create_task(
+                _inactivity_watchdog(
+                    last_event_at=last_event_at,
+                    completion_event=completion_event,
+                    manager=manager,
+                    spawn_id=run.spawn_id,
+                    timeout_seconds=CURSOR_INACTIVITY_TIMEOUT_SECONDS,
+                )
+            )
 
         decision = await arbitrate_terminal(
             completion_task=completion_task,
@@ -694,6 +758,7 @@ async def _run_streaming_attempt(
             timeout_task=timeout_task,
             budget_task=budget_task,
             watchdog_task=watchdog_task,
+            inactivity_task=inactivity_task,
         )
         terminal_outcome = decision.terminal_outcome
         if decision.trigger == TriggerKind.BUDGET:
@@ -716,6 +781,8 @@ async def _run_streaming_attempt(
             drain_exit_code = 3
         elif decision.trigger == TriggerKind.WATCHDOG:
             terminated_by_report_watchdog = not decision.watchdog_noop
+        elif decision.trigger == TriggerKind.INACTIVITY:
+            terminated_by_inactivity = not decision.watchdog_noop
         elif decision.stop_required:
             stop_exit_code = decision.synthetic_exit_code
             if decision.trigger == TriggerKind.SIGNAL:
@@ -742,6 +809,8 @@ async def _run_streaming_attempt(
                 timed_out = False
             if drain_outcome.error == "report_watchdog":
                 terminated_by_report_watchdog = True
+            if drain_outcome.error == "inactivity_stall":
+                terminated_by_inactivity = True
 
         # The watchdog resolves the completion future mid-flight inside
         # stop_spawn(), so completion_task can finish before watchdog_task.
@@ -770,6 +839,7 @@ async def _run_streaming_attempt(
             received_signal=received_signal[0],
             budget_breach=budget_breach_holder[0],
             terminated_by_report_watchdog=terminated_by_report_watchdog,
+            terminated_by_inactivity=terminated_by_inactivity,
             cancelled_by_request=cancelled_by_request,
             terminal_observed=False,
             authoritative_terminal_status=None,
@@ -778,7 +848,14 @@ async def _run_streaming_attempt(
     finally:
         if subscriber is not None:
             manager.unsubscribe(run.spawn_id)
-        for task in (timeout_task, signal_task, budget_task, watchdog_task, consume_task):
+        for task in (
+            timeout_task,
+            signal_task,
+            budget_task,
+            watchdog_task,
+            inactivity_task,
+            consume_task,
+        ):
             if task is not None and not task.done():
                 task.cancel()
                 with suppress(asyncio.CancelledError):
@@ -796,6 +873,7 @@ async def _run_streaming_attempt(
         received_signal=received_signal[0],
         budget_breach=budget_breach_holder[0],
         terminated_by_report_watchdog=terminated_by_report_watchdog,
+        terminated_by_inactivity=terminated_by_inactivity,
         cancelled_by_request=cancelled_by_request,
         terminal_observed=(
             terminal_outcome is not None
@@ -1175,6 +1253,19 @@ async def execute_with_streaming(
                     if breach is not None:
                         _append_budget_exceeded_event(run=run, breach=breach)
                     conclusion.exit_code = DEFAULT_INFRA_EXIT_CODE
+                    break
+
+                if attempt.terminated_by_inactivity:
+                    # Inactivity is terminal: either we recovered a durable report
+                    # (success) or we finalize as "stalled". Never fall through to the
+                    # generic retry classifier — re-running a stalled cursor turn would
+                    # redo already-completed work.
+                    exit_override, failure_override = _inactivity_terminal_outcome(
+                        extraction
+                    )
+                    if exit_override is not None:
+                        conclusion.exit_code = exit_override
+                    conclusion.failure_reason = failure_override
                     break
 
                 if (

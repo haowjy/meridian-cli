@@ -91,18 +91,29 @@ class CursorHarnessExtractor(HarnessExtractor[ResolvedLaunchSpec]):
 
     def extract_report(self, artifacts: ArtifactStore, spawn_id: SpawnId) -> str | None:
         final_report: str | None = None
+        last_assistant_text: str | None = None
         for payload in _iter_json_lines_artifact(artifacts, spawn_id, OUTPUT_FILENAME):
-            if not _is_result_event(payload):
+            if _is_result_event(payload):
+                for nested in iter_nested_dicts(payload):
+                    for key in ("result", "text", "output", "content", "message"):
+                        if key not in nested:
+                            continue
+                        text = _extract_text(nested.get(key))
+                        if text:
+                            final_report = text
                 continue
 
-            for nested in iter_nested_dicts(payload):
-                for key in ("result", "text", "output", "content", "message"):
-                    if key not in nested:
-                        continue
-                    text = _extract_text(nested.get(key))
-                    if text:
-                        final_report = text
-        return final_report
+            if normalize_harness_event_type(payload) != "assistant":
+                continue
+
+            message = payload.get("message")
+            if not isinstance(message, dict):
+                continue
+            text = _extract_text(cast("dict[str, object]", message))
+            if text:
+                last_assistant_text = text
+
+        return final_report or last_assistant_text
 
 
 CURSOR_EXTRACTOR = CursorHarnessExtractor()

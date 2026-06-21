@@ -175,6 +175,47 @@ async def test_watchdog_true_reports_watchdog_trigger() -> None:
 
 
 @pytest.mark.asyncio
+async def test_inactivity_false_is_noop_decision() -> None:
+    decision = await arbitrate_terminal(
+        completion_task=_future(),
+        terminal_event_future=_terminal_future(),
+        signal_task=_future(),
+        inactivity_task=_future(False, done=True),
+    )
+
+    assert decision.trigger is TriggerKind.INACTIVITY
+    assert decision.stop_required is False
+    assert decision.watchdog_noop is True
+
+
+@pytest.mark.asyncio
+async def test_inactivity_true_reports_inactivity_trigger() -> None:
+    decision = await arbitrate_terminal(
+        completion_task=_future(),
+        terminal_event_future=_terminal_future(),
+        signal_task=_future(),
+        inactivity_task=_future(True, done=True),
+    )
+
+    assert decision.trigger is TriggerKind.INACTIVITY
+    assert decision.stop_required is False
+    assert decision.watchdog_noop is False
+
+
+@pytest.mark.asyncio
+async def test_inactivity_absent_when_not_passed() -> None:
+    decision = await arbitrate_terminal(
+        completion_task=_future(None, done=True),
+        terminal_event_future=_terminal_future(),
+        signal_task=_future(),
+        inactivity_task=None,
+    )
+
+    assert decision.trigger is TriggerKind.COMPLETION
+    assert decision.stop_required is False
+
+
+@pytest.mark.asyncio
 async def test_completion_beats_signal_when_both_ready() -> None:
     decision = await arbitrate_terminal(
         completion_task=_future(None, done=True),

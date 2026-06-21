@@ -15,6 +15,7 @@ from meridian.lib.launch.report import ExtractedReport, ReportSource
 from meridian.lib.launch.streaming_runner import (
     StreamingRunConclusion,
     _AttemptRuntime,
+    _inactivity_terminal_outcome,
 )
 from meridian.lib.state.artifact_store import InMemoryStore, make_artifact_key
 
@@ -147,6 +148,42 @@ def test_retry_count_tracks_attempts() -> None:
     conclusion.retries_attempted += 1
 
     assert conclusion.retries_attempted == 2
+
+
+def test_inactivity_terminal_outcome_success_when_durable_report_recovered() -> None:
+    exit_override, failure_reason = _inactivity_terminal_outcome(
+        _extraction_with_report("recovered report"),
+    )
+
+    assert exit_override == 0
+    assert failure_reason is None
+
+
+def test_inactivity_terminal_outcome_stalled_without_durable_report() -> None:
+    exit_override, failure_reason = _inactivity_terminal_outcome(
+        _extraction_with_report(None),
+    )
+
+    assert exit_override is None
+    assert failure_reason == "stalled"
+
+
+def test_inactivity_terminal_outcome_applied_to_conclusion_without_retry() -> None:
+    conclusion = StreamingRunConclusion(
+        exit_code=1,
+        failure_reason="inactivity_stall",
+        retries_attempted=0,
+    )
+    extraction = _extraction_with_report(None)
+
+    exit_override, failure_override = _inactivity_terminal_outcome(extraction)
+    if exit_override is not None:
+        conclusion.exit_code = exit_override
+    conclusion.failure_reason = failure_override
+
+    assert conclusion.exit_code == 1
+    assert conclusion.failure_reason == "stalled"
+    assert conclusion.retries_attempted == 0
 
 
 def test_scope_pi_session_dir_for_spawn_updates_env_and_creates_directory(tmp_path: Path) -> None:
