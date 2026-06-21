@@ -18,7 +18,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Changed
 - `meridian spawn agents` renamed to `meridian spawn subagents`; now agent-relative (respects current spawn's declared subagent allow-list) and delegates inventory to mars instead of parsing frontmatter.
 - Project root resolution is explicit only: `-C` / `--directory` → `MERIDIAN_PROJECT_DIR` → literal CWD. `ProjectRootSource` narrowed to `explicit | env | cwd`.
-- Bumped mars-agents to 0.8.10.
+- Bumped mars-agents to 0.8.12.
 
 ### Fixed
 - Spawn prompting guidance now points at `meridian mars models prompting <agent-or-model>`.
