@@ -168,9 +168,8 @@ def resolve_effective_task_dir(
             )
 
     if not skip_inherited and inherited_task_dir is not None:
-        resolved_inherited = inherited_task_dir.expanduser().resolve()
-        if resolved_inherited.is_dir():
-            return EffectiveTaskDir(task_dir=resolved_inherited, source="inherited")
+        resolved_inherited = _validated_inherited_task_dir(inherited_task_dir)
+        return EffectiveTaskDir(task_dir=resolved_inherited, source="inherited")
 
     return EffectiveTaskDir(
         task_dir=resolved_project_root,

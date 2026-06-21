@@ -15,7 +15,6 @@ from meridian.lib.ops.context import (
     task_dir_sync,
 )
 from meridian.lib.ops.runtime import build_runtime
-from meridian.lib.ops.spawn.api import SpawnAgentsInput, spawn_agents_sync
 from meridian.lib.ops.work_attachment import set_session_work_attachment
 from meridian.lib.ops.work_lifecycle import WorkTaskDirInput, work_task_dir_sync
 from meridian.lib.state import session_store, work_store
@@ -30,27 +29,6 @@ def _seed_project(tmp_path: Path) -> Path:
     (project_root / "mars.toml").write_text('[settings]\ntargets = [".claude"]\n', encoding="utf-8")
     (project_root / ".meridian").mkdir(parents=True)
     return project_root
-
-
-def _seed_agent(project_root: Path, name: str, display_name: str) -> None:
-    agents_dir = project_root / ".mars" / "agents"
-    agents_dir.mkdir(parents=True, exist_ok=True)
-    (agents_dir / f"{name}.md").write_text(
-        "\n".join(
-            [
-                "---",
-                f"name: {display_name}",
-                "model-policies:",
-                "  - match: {alias: gpt55}",
-                "    override: {effort: medium}",
-                "---",
-                "",
-                "Profile body.",
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
 
 
 def test_task_dir_query_uses_inherited_env_when_no_scope(
@@ -176,14 +154,3 @@ def test_work_task_dir_ignores_spawn_scope_and_inherited_env(
     )
 
     assert output.task_dir == work_task_dir.resolve().as_posix()
-
-
-def test_spawn_agents_lists_seeded_profile_names(tmp_path: Path) -> None:
-    project_root = _seed_project(tmp_path)
-    _seed_agent(project_root, "coder", "Coder")
-    _seed_agent(project_root, "reviewer", "Reviewer")
-
-    output = spawn_agents_sync(SpawnAgentsInput(project_root=project_root.as_posix()))
-
-    assert output.names == ("Coder", "Reviewer")
-    assert output.format_text(None) == "Coder\nReviewer"

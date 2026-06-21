@@ -152,3 +152,30 @@ def test_parent_scope_file_task_dir_is_inherited_by_child(
 
     assert artifacts.request.task_cwd == scope_dir.resolve().as_posix()
     assert artifacts.request.task_cwd_source == "inherited-task-dir"
+
+
+def test_stale_inherited_task_dir_raises_through_dry_run_prepare(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = _seed_project(tmp_path)
+    stale_inherited = tmp_path / "deleted-worktree"
+    stub_bundle_request_and_resolve(
+        monkeypatch,
+        model="gpt-5.4",
+        harness=HarnessId.CODEX,
+    )
+    monkeypatch.setenv("MERIDIAN_TASK_DIR", stale_inherited.as_posix())
+    runtime = build_runtime(project_root)
+
+    with pytest.raises(ValueError, match="Inherited MERIDIAN_TASK_DIR does not exist"):
+        build_create_payload(
+            SpawnCreateInput(
+                prompt="task",
+                model="gpt-5.4",
+                harness="codex",
+                project_root=str(project_root),
+                dry_run=True,
+            ),
+            runtime=runtime,
+        )

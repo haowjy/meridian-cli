@@ -9,7 +9,11 @@ from pathlib import Path
 from typing import cast
 
 from meridian.lib.state.atomic import atomic_write_text
-from meridian.lib.state.paths import resolve_spawn_log_dir
+from meridian.lib.state.paths import (
+    resolve_project_runtime_root_for_write,
+    resolve_spawn_log_dir,
+    spawn_log_subpath,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -24,14 +28,19 @@ class SpawnScope:
     task_dir_cleared: bool = False
 
 
-def _scope_path(project_root: Path, spawn_id: str) -> Path:
+def _scope_path_for_read(project_root: Path, spawn_id: str) -> Path:
     return resolve_spawn_log_dir(project_root, spawn_id) / _SCOPE_FILENAME
+
+
+def _scope_path_for_write(project_root: Path, spawn_id: str) -> Path:
+    runtime_root = resolve_project_runtime_root_for_write(project_root)
+    return runtime_root / spawn_log_subpath(spawn_id) / _SCOPE_FILENAME
 
 
 def read_spawn_scope(project_root: Path, spawn_id: str) -> SpawnScope:
     """Read scope.json for a spawn. Tolerates missing, empty, or corrupt files."""
 
-    path = _scope_path(project_root, spawn_id)
+    path = _scope_path_for_read(project_root, spawn_id)
     if not path.is_file():
         return SpawnScope()
     try:
@@ -65,7 +74,7 @@ def write_spawn_scope_task_dir(
 ) -> None:
     """Write or tombstone task_dir in scope.json. Atomic tmp+rename."""
 
-    path = _scope_path(project_root, spawn_id)
+    path = _scope_path_for_write(project_root, spawn_id)
     if task_dir is None:
         payload = {"task_dir": None}
     else:

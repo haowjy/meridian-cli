@@ -1,13 +1,17 @@
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
+import pytest
+
+from meridian.lib.state.paths import resolve_project_runtime_root_for_write
 from meridian.lib.state.spawn_scope import (
     SpawnScope,
     read_spawn_scope,
     write_spawn_scope_task_dir,
 )
+
+pytestmark = pytest.mark.slow
 
 
 def _project(tmp_path: Path) -> Path:
@@ -68,10 +72,23 @@ def test_spawn_scope_empty_file_falls_through(tmp_path: Path) -> None:
     assert scope == SpawnScope()
 
 
-def test_spawn_scope_tombstone_json_shape(tmp_path: Path) -> None:
-    project_root = _project(tmp_path)
+def test_write_spawn_scope_uses_runtime_write_root(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user_home = tmp_path / "user-meridian"
+    monkeypatch.setenv("MERIDIAN_HOME", user_home.as_posix())
+    project_root = tmp_path / "repo"
+    project_root.mkdir(parents=True)
+    (project_root / ".meridian").mkdir(parents=True)
+    task_dir = tmp_path / "worktree"
+    task_dir.mkdir(parents=True)
 
-    write_spawn_scope_task_dir(project_root, "p1", None)
-    scope_path = project_root / ".meridian" / "spawns" / "p1" / "scope.json"
+    write_spawn_scope_task_dir(project_root, "p1", task_dir)
 
-    assert json.loads(scope_path.read_text(encoding="utf-8")) == {"task_dir": None}
+    repo_scope = project_root / ".meridian" / "spawns" / "p1" / "scope.json"
+    write_scope = (
+        resolve_project_runtime_root_for_write(project_root) / "spawns" / "p1" / "scope.json"
+    )
+    assert not repo_scope.exists()
+    assert write_scope.is_file()

@@ -370,6 +370,22 @@ def test_resolve_effective_task_dir_precedence_scope_work_inherited_root(
     )
 
 
+def test_resolve_effective_task_dir_stale_inherited_raises(tmp_path: Path) -> None:
+    project_root = tmp_path / "project"
+    project_root.mkdir(parents=True)
+    state_dir = project_root / ".meridian"
+    state_dir.mkdir(parents=True)
+
+    with pytest.raises(ValueError, match="Inherited MERIDIAN_TASK_DIR does not exist"):
+        resolve_effective_task_dir(
+            project_root=project_root,
+            project_state_dir=state_dir,
+            spawn_id=None,
+            inherited_task_dir=tmp_path / "missing-inherited",
+            work_id=None,
+        )
+
+
 def test_resolve_effective_task_dir_tombstone_skips_inherited(tmp_path: Path) -> None:
     project_root = tmp_path / "project"
     project_root.mkdir(parents=True)
