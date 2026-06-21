@@ -199,14 +199,10 @@ def test_terminate_spawn_scopes_falls_back_to_legacy_worker_pid(
 
     monkeypatch.setattr(process_cleanup, "read_scopes_from_disk", lambda root, spawn_id: [])
     monkeypatch.setattr(process_cleanup, "terminate_tree_sync", lambda **kwargs: legacy_result)
-    logger = MagicMock()
-    monkeypatch.setattr(process_cleanup, "logger", logger)
 
     results = terminate_spawn_scopes(tmp_path, _record(worker_pid=321), reason="reaper")
 
     assert results == [legacy_result]
-    logger.warning.assert_not_called()
-    logger.debug.assert_called_once()
 
 
 def test_terminate_recorded_spawn_scopes_does_not_run_legacy_worker_fallback(

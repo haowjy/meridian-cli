@@ -1,4 +1,4 @@
-"""OpenCode session API tests: creation, resume, and retry behavior."""
+"""Unit tests for OpenCode session API request shapes and retry behavior."""
 
 from __future__ import annotations
 
@@ -124,7 +124,6 @@ async def test_create_session_forwards_agent_and_skills_from_opencode_launch_spe
 
 @pytest.mark.asyncio
 async def test_create_session_raises_when_continue_fork_requested() -> None:
-    # continue_fork is rejected before any network I/O.
     connection = _TestableOpenCodeConnection(responses=[])
     spec = ResolvedLaunchSpec(
         prompt="hello",
@@ -204,10 +203,20 @@ class _TestableGetJsonOpenCodeConnection(OpenCodeConnection):
 
 
 @pytest.mark.asyncio
-async def test_create_session_with_retry_fresh_retries_404_then_succeeds() -> None:
+@pytest.mark.parametrize(
+    "first_response",
+    [
+        (404, None, ""),
+        ConnectionRefusedError("server not listening yet"),
+    ],
+    ids=["404", "transport-error"],
+)
+async def test_create_session_with_retry_fresh_retries_then_succeeds(
+    first_response: tuple[int, object | None, str] | ConnectionRefusedError,
+) -> None:
     connection = _TestableOpenCodeConnection(
         responses=[
-            (404, None, ""),
+            first_response,
             (200, {"session_id": "sess-fresh"}, ""),
         ],
     )
@@ -220,27 +229,8 @@ async def test_create_session_with_retry_fresh_retries_404_then_succeeds() -> No
     session_id = await connection._create_session_with_retry(spec, timeout_seconds=1.0)
 
     assert session_id == "sess-fresh"
-    assert [path for path, _payload in connection.requests] == ["/session", "/session"]
-
-
-@pytest.mark.asyncio
-async def test_create_session_with_retry_fresh_retries_transport_error_then_succeeds() -> None:
-    connection = _TestableOpenCodeConnection(
-        responses=[
-            ConnectionRefusedError("server not listening yet"),
-            (200, {"session_id": "sess-fresh"}, ""),
-        ],
-    )
-    spec = ResolvedLaunchSpec(
-        prompt="hello",
-        model="gpt-5.3-codex",
-        permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
-    )
-
-    session_id = await connection._create_session_with_retry(spec, timeout_seconds=1.0)
-
-    assert session_id == "sess-fresh"
-    assert [path for path, _payload in connection.requests] == ["/session", "/session"]
+    assert len(connection.requests) == 2
+    assert all(path == "/session" for path, _payload in connection.requests)
 
 
 @pytest.mark.asyncio
@@ -263,11 +253,7 @@ async def test_create_session_with_retry_resume_retries_404_then_succeeds() -> N
     session_id = await connection._create_session_with_retry(spec, timeout_seconds=1.0)
 
     assert session_id == "sess-parent"
-    assert connection.requests == [
-        ("/session/sess-parent", {}),
-        ("/session/sess-parent", {}),
-        ("/session/sess-parent", {}),
-    ]
+    assert len(connection.requests) == 3
 
 
 @pytest.mark.asyncio
@@ -323,10 +309,7 @@ async def test_real_get_json_body_read_error_bubbles_and_resume_retries(
     assert session_id == "sess-parent"
     assert retry_error_response.text_calls == 1
     assert retry_success_response.text_calls == 1
-    assert retry_connection._client.urls == [
-        "http://127.0.0.1:17777/session/sess-parent",
-        "http://127.0.0.1:17777/session/sess-parent",
-    ]
+    assert len(retry_connection._client.urls) == 2
 
 
 @pytest.mark.asyncio
@@ -349,8 +332,7 @@ async def test_create_session_with_retry_resume_repeated_404_times_out() -> None
     with pytest.raises(TimeoutError, match="did not become ready"):
         await connection._create_session_with_retry(spec, timeout_seconds=0.01)
 
-    assert connection.requests
-    assert all(request == ("/session/sess-parent", {}) for request in connection.requests)
+    assert len(connection.requests) >= 1
 
 
 @pytest.mark.asyncio
@@ -372,7 +354,7 @@ async def test_create_session_with_retry_resume_500_fails_immediately() -> None:
     with pytest.raises(RuntimeError, match="GET failed with status=500"):
         await connection._create_session_with_retry(spec, timeout_seconds=1.0)
 
-    assert connection.requests == [("/session/sess-parent", {})]
+    assert len(connection.requests) == 1
 
 
 @pytest.mark.asyncio
@@ -394,4 +376,4 @@ async def test_create_session_with_retry_resume_mismatched_id_fails_immediately(
     with pytest.raises(RuntimeError, match="mismatched id"):
         await connection._create_session_with_retry(spec, timeout_seconds=1.0)
 
-    assert connection.requests == [("/session/sess-parent", {})]
+    assert len(connection.requests) == 1

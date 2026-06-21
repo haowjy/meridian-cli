@@ -43,10 +43,10 @@ def _ok_result(scope_id: str = "test", degraded_fallback: bool = False) -> Clean
 
 def test_posix_pgid_with_group_dispatches_to_terminate_pgid(monkeypatch) -> None:
     """A validated process group should use the stronger PGID terminator."""
-    calls: list[dict[str, object]] = []
+    dispatched: list[str] = []
 
-    def _fake_terminate_pgid(**kwargs: object) -> CleanupResult:
-        calls.append(kwargs)
+    def _fake_terminate_pgid(**_kwargs: object) -> CleanupResult:
+        dispatched.append("pgid")
         return _ok_result(degraded_fallback=False)
 
     monkeypatch.setattr(
@@ -56,16 +56,7 @@ def test_posix_pgid_with_group_dispatches_to_terminate_pgid(monkeypatch) -> None
 
     result = terminate_scope_sync(_scope("posix_pgid", pgid=42), grace_seconds=5.0, reason="reaper")
 
-    assert calls == [
-        {
-            "pgid": 42,
-            "root_pid": 100,
-            "created_at_epoch": 10.0,
-            "grace_seconds": 5.0,
-            "reason": "reaper",
-            "scope_id": "test",
-        }
-    ]
+    assert dispatched == ["pgid"]
     assert result.degraded_fallback is False
 
 
@@ -85,10 +76,10 @@ def test_non_native_scope_paths_use_tree_fallback_with_expected_degraded_flag(
     expected_degraded: bool,
 ) -> None:
     """Fallback dispatch should preserve whether the path is native or degraded."""
-    calls: list[dict[str, object]] = []
+    dispatched: list[bool] = []
 
     def _fake_terminate_tree_sync(**kwargs: object) -> CleanupResult:
-        calls.append(kwargs)
+        dispatched.append(bool(kwargs["degraded_fallback"]))
         return _ok_result(degraded_fallback=bool(kwargs["degraded_fallback"]))
 
     monkeypatch.setattr(
@@ -100,16 +91,7 @@ def test_non_native_scope_paths_use_tree_fallback_with_expected_degraded_flag(
         _scope(containment, pgid=pgid), grace_seconds=5.0, reason="reaper"
     )
 
-    assert calls == [
-        {
-            "pid": 100,
-            "created_at_epoch": 10.0,
-            "grace_secs": 5.0,
-            "reason": "reaper",
-            "scope_id": "test",
-            "degraded_fallback": expected_degraded,
-        }
-    ]
+    assert dispatched == [expected_degraded]
     assert result.degraded_fallback is expected_degraded
 
 

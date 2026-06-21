@@ -11,6 +11,7 @@ import pytest
 from meridian.lib.harness.connections import codex_ws
 from meridian.lib.harness.connections.base import HarnessEvent
 from meridian.lib.harness.connections.codex_ws import CodexConnection
+from tests.support.async_determinism import AsyncDeterminism
 
 
 class _FakeProcess:
@@ -50,10 +51,36 @@ async def _collect_events(connection: CodexConnection) -> list[HarnessEvent]:
     return [event async for event in connection.events()]
 
 
+async def _collect_codex_events_under_fake_clock(
+    determinism: AsyncDeterminism,
+    connection: CodexConnection,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    advance_budget: float = 1.0,
+    step: float = 0.01,
+) -> list[HarnessEvent]:
+    determinism.install_on_running_loop(monkeypatch)
+    reader_task = asyncio.create_task(connection._read_messages_loop())
+    collect_task = asyncio.create_task(_collect_events(connection))
+    advanced = 0.0
+    while not collect_task.done() and advanced < advance_budget:
+        await determinism.sleep(step)
+        advanced += step
+    assert collect_task.done(), (
+        f"event collection did not finish within fake-clock budget {advance_budget}"
+    )
+    events = await collect_task
+    await reader_task
+    return events
+
+
 @pytest.mark.asyncio
 async def test_codex_events_fail_after_liveness_timeout_mid_stream(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    determinism = AsyncDeterminism(start=0.0)
+    monkeypatch.setattr(codex_ws._time, "monotonic", determinism.clock.monotonic)
+    determinism.install(monkeypatch)
     connection = CodexConnection()
     connection._state = "connected"
     connection._process = _FakeProcess()
@@ -70,9 +97,9 @@ async def test_codex_events_fail_after_liveness_timeout_mid_stream(
     )
     monkeypatch.setattr(CodexConnection, "_LIVENESS_TIMEOUT_SECONDS", 0.01)
 
-    reader_task = asyncio.create_task(connection._read_messages_loop())
-    events = await asyncio.wait_for(_collect_events(connection), timeout=1.0)
-    await reader_task
+    events = await _collect_codex_events_under_fake_clock(
+        determinism, connection, monkeypatch
+    )
 
     assert [event.event_type for event in events] == [
         "item/updated",
