@@ -20,8 +20,7 @@ Edit source package repos in sibling checkouts.
 **NEVER swap the primary checkout off `main`.** This working tree
 (`meridian-cli/`) is shared with other agents/sessions. Do not
 `git checkout`/`switch`/`stash`, or commit another branch, in it — in **any** form,
-including `git -C <repo>`. A denied command is a **stop signal**; never route around
-it with a different invocation.
+including `git -C <repo>`.
 
 To work on another branch, use a **worktree** under `meridian-cli.worktrees/`:
 
