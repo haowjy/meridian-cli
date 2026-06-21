@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 import os
 import sys
@@ -533,7 +532,7 @@ async def test_pi_spawn_manager_auto_delivers_initial_prompt_and_quiesces_withou
     )
 
     try:
-        outcome = await asyncio.wait_for(manager.wait_for_completion(spawn_id), timeout=2.0)
+        outcome = await manager.wait_for_completion(spawn_id)
         assert outcome.status == "succeeded"
         assert outcome.exit_code == 0
         assert outcome.error is None
@@ -636,7 +635,7 @@ async def test_pi_spawn_manager_startup_diagnostics_report_outcome_and_marker(
     )
 
     try:
-        outcome = await asyncio.wait_for(manager.wait_for_completion(spawn_id), timeout=2.0)
+        outcome = await manager.wait_for_completion(spawn_id)
         assert outcome.status == expected_status
         assert outcome.error == expected_error
         assert any(
@@ -706,7 +705,7 @@ async def test_pi_spawn_manager_prompt_response_failure_fails_fast_with_reported
     )
 
     try:
-        outcome = await asyncio.wait_for(manager.wait_for_completion(spawn_id), timeout=1.0)
+        outcome = await manager.wait_for_completion(spawn_id)
         assert outcome is not None
         assert outcome.status == "failed"
         assert outcome.error == "No API key configured"

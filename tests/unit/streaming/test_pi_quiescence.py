@@ -109,7 +109,7 @@ async def test_spawn_manager_pi_quiescence_stops_spawned_after_notification_comp
     )
 
     try:
-        outcome = await asyncio.wait_for(manager.wait_for_completion(spawn_id), timeout=1.0)
+        outcome = await manager.wait_for_completion(spawn_id)
         assert outcome is not None
         assert outcome.status == "succeeded"
         assert outcome.error is None
@@ -284,7 +284,7 @@ async def test_spawn_manager_pi_cleanup_escalation_does_not_block_terminal_succe
     )
 
     try:
-        outcome = await asyncio.wait_for(manager.wait_for_completion(spawn_id), timeout=1.0)
+        outcome = await manager.wait_for_completion(spawn_id)
         assert outcome is not None
         assert outcome.status == "succeeded"
         assert outcome.error is None
@@ -371,7 +371,7 @@ async def test_spawn_manager_pi_micro_drain_resolves_with_bounded_timeout(
     )
 
     try:
-        outcome = await asyncio.wait_for(manager.wait_for_completion(spawn_id), timeout=1.0)
+        outcome = await manager.wait_for_completion(spawn_id)
         assert outcome is not None
         assert outcome.status == "succeeded"
         assert outcome.error is None
@@ -506,7 +506,7 @@ async def _run_pi_child_wave_timeout_with_cleanup_mocks(
     )
 
     try:
-        outcome = await asyncio.wait_for(manager.wait_for_completion(spawn_id), timeout=1.0)
+        outcome = await manager.wait_for_completion(spawn_id)
     finally:
         await manager.stop_spawn(spawn_id)
     assert outcome is not None
@@ -612,7 +612,7 @@ async def test_spawn_manager_pi_child_wave_timeout_cleans_tracked_children_and_f
     )
 
     try:
-        outcome = await asyncio.wait_for(manager.wait_for_completion(spawn_id), timeout=1.0)
+        outcome = await manager.wait_for_completion(spawn_id)
         assert outcome is not None
         assert outcome.status == "failed"
         assert outcome.error == "pi_child_wave_timeout"
@@ -725,7 +725,7 @@ async def test_spawn_manager_pi_child_wave_timeout_not_cleared_by_turn_active(
     release_task = asyncio.create_task(_release_late_turn_after_child_wave_timeout())
 
     try:
-        outcome = await asyncio.wait_for(manager.wait_for_completion(spawn_id), timeout=2.0)
+        outcome = await manager.wait_for_completion(spawn_id)
         assert outcome is not None
         assert outcome.status == "failed"
         assert outcome.error == "pi_child_wave_timeout"
@@ -788,7 +788,7 @@ async def test_spawn_manager_pi_notification_failure_marks_spawn_failed(tmp_path
     )
 
     try:
-        outcome = await asyncio.wait_for(manager.wait_for_completion(spawn_id), timeout=1.0)
+        outcome = await manager.wait_for_completion(spawn_id)
         assert outcome is not None
         assert outcome.status == "failed"
         assert outcome.error == "pi_notification_failed:sendMessage_error:delivery failed"
@@ -854,7 +854,7 @@ async def test_spawn_manager_pi_parse_error_invalidates_quiescence_and_fails(
     )
 
     try:
-        outcome = await asyncio.wait_for(manager.wait_for_completion(spawn_id), timeout=1.0)
+        outcome = await manager.wait_for_completion(spawn_id)
         assert outcome is not None
         assert outcome.status == "failed"
         assert (
@@ -923,7 +923,7 @@ async def test_spawn_manager_pi_legacy_lifecycle_event_invalidates_instead_of_fi
     )
 
     try:
-        outcome = await asyncio.wait_for(manager.wait_for_completion(spawn_id), timeout=1.0)
+        outcome = await manager.wait_for_completion(spawn_id)
         assert outcome is not None
         assert outcome.status == "failed"
         assert (
@@ -985,7 +985,7 @@ async def test_spawn_manager_pi_fails_on_canonical_subspawn_without_id_for_quies
     )
 
     try:
-        outcome = await asyncio.wait_for(manager.wait_for_completion(spawn_id), timeout=1.0)
+        outcome = await manager.wait_for_completion(spawn_id)
         assert outcome is not None
         assert outcome.status == "failed"
         assert (

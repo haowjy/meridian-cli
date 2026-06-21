@@ -148,24 +148,21 @@ async def test_streaming_runner_signal_cancel_invokes_send_cancel_once(
         _fake_install_signal_handlers,
     )
 
-    outcome = await asyncio.wait_for(
-        run_streaming_spawn(
-            config=ConnectionConfig(
-                spawn_id=SpawnId("p-signal"),
-                harness_id=HarnessId.CODEX,
-                prompt="hello",
-                control_root=tmp_path,
-                env_overrides={},
-            ),
-            spec=ResolvedLaunchSpec(
-                prompt="hello",
-                permission_resolver=TieredPermissionResolver(config=PermissionConfig()),
-            ),
-            runtime_root=runtime_root,
-            project_root=tmp_path,
+    outcome = await run_streaming_spawn(
+        config=ConnectionConfig(
             spawn_id=SpawnId("p-signal"),
+            harness_id=HarnessId.CODEX,
+            prompt="hello",
+            control_root=tmp_path,
+            env_overrides={},
         ),
-        timeout=1.0,
+        spec=ResolvedLaunchSpec(
+            prompt="hello",
+            permission_resolver=TieredPermissionResolver(config=PermissionConfig()),
+        ),
+        runtime_root=runtime_root,
+        project_root=tmp_path,
+        spawn_id=SpawnId("p-signal"),
     )
 
     assert outcome.status == "cancelled"

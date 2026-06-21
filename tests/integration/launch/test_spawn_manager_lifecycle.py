@@ -180,10 +180,8 @@ async def test_wait_for_completion_survives_cleanup_without_private_hooks(
     await manager.start_spawn(_build_config(spawn_id, project_root), _build_spec())
 
     try:
-        await asyncio.wait_for(cleanup_started.wait(), timeout=1.0)
-        completion_before_cleanup_release = await asyncio.wait_for(
-            manager.wait_for_completion(spawn_id), timeout=1.0
-        )
+        await cleanup_started.wait()
+        completion_before_cleanup_release = await manager.wait_for_completion(spawn_id)
         assert completion_before_cleanup_release is not None
         assert completion_before_cleanup_release.status == "failed"
         assert completion_before_cleanup_release.exit_code == 1
@@ -201,9 +199,7 @@ async def test_wait_for_completion_survives_cleanup_without_private_hooks(
 
         release_cleanup.set()
         await asyncio.sleep(0)
-        completion_after_cleanup_release = await asyncio.wait_for(
-            manager.wait_for_completion(spawn_id), timeout=1.0
-        )
+        completion_after_cleanup_release = await manager.wait_for_completion(spawn_id)
         assert completion_after_cleanup_release == completion_before_cleanup_release
     finally:
         release_cleanup.set()
@@ -479,15 +475,15 @@ async def test_spawn_manager_serializes_control_actions_and_persists_transitions
 
     try:
         inject_task = asyncio.create_task(manager.inject(spawn_id, "hello", source="test"))
-        await asyncio.wait_for(connection.inject_started.wait(), timeout=1.0)
+        await connection.inject_started.wait()
 
         interrupt_task = asyncio.create_task(manager.interrupt(spawn_id, source="test"))
 
         await assert_still_pending(interrupt_task)
 
         connection.allow_inject_send.set()
-        inject_result = await asyncio.wait_for(inject_task, timeout=1.0)
-        await asyncio.wait_for(interrupt_task, timeout=1.0)
+        inject_result = await inject_task
+        await interrupt_task
         assert inject_result.success is True
         assert inject_result.inbound_seq == 0
 

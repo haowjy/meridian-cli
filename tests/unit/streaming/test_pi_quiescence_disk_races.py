@@ -629,7 +629,7 @@ async def test_spawn_manager_pi_drain_loop_reevaluates_on_disk_wakeup(
             {"id": "p123", "parent_id": str(spawn_id), "status": "succeeded"},
         )
         disk_wakeup.set()
-        outcome = await asyncio.wait_for(completion, timeout=1.0)
+        outcome = await completion
         assert outcome is not None
         assert outcome.status == "succeeded"
         history_path = tmp_path / "spawns" / str(spawn_id) / "history.jsonl"

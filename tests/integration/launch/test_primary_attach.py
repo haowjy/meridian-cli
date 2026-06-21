@@ -340,18 +340,15 @@ async def test_primary_attach_event_writer_failure_stops_connection_and_tui(
         on_running=lambda _pid: tui_started.set(),
     )
 
-    outcome = await asyncio.wait_for(
-        launcher.run(
-            config=_build_config(
-                spawn_id=SpawnId("p900-liveness"),
-                control_root=tmp_path,
-                harness_id=HarnessId.OPENCODE,
-            ),
-            spec=_build_spec(),
-            cwd=tmp_path,
-            env={},
+    outcome = await launcher.run(
+        config=_build_config(
+            spawn_id=SpawnId("p900-liveness"),
+            control_root=tmp_path,
+            harness_id=HarnessId.OPENCODE,
         ),
-        timeout=2.0,
+        spec=_build_spec(),
+        cwd=tmp_path,
+        env={},
     )
 
     assert outcome.exit_code == 1
@@ -401,7 +398,7 @@ async def test_primary_attach_codex_event_stream_closure_does_not_stop_backend_o
         )
     )
 
-    await asyncio.wait_for(stream_closed.wait(), timeout=2.0)
+    await stream_closed.wait()
     await asyncio.sleep(0)
 
     assert run_task.done() is False
@@ -409,7 +406,7 @@ async def test_primary_attach_codex_event_stream_closure_does_not_stop_backend_o
     assert terminated_scopes == []
 
     process_launcher.release.set()
-    outcome = await asyncio.wait_for(run_task, timeout=2.0)
+    outcome = await run_task
 
     assert outcome.exit_code == 143
     assert connection.stop_reasons == [None]

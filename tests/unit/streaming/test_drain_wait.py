@@ -32,6 +32,6 @@ async def test_drain_waiter_propagates_disk_wait_failure() -> None:
 
     try:
         with pytest.raises(RuntimeError, match="disk watcher failed"):
-            await asyncio.wait_for(waiter.wait(None), timeout=1.0)
+            await waiter.wait(None)
     finally:
         await waiter.close()

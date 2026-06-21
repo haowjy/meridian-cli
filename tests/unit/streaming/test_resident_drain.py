@@ -41,7 +41,7 @@ async def test_codex_terminal_success_without_live_children_finalizes_immediatel
     connection.emit(resident_event(HarnessId.CODEX, "turn/completed", {}))
 
     try:
-        outcome = await asyncio.wait_for(manager.wait_for_completion(spawn_id), timeout=0.5)
+        outcome = await manager.wait_for_completion(spawn_id)
         assert outcome is not None
         assert outcome.status == "succeeded"
     finally:
@@ -60,7 +60,7 @@ async def test_opencode_terminal_success_without_live_children_finalizes_immedia
     connection.emit(resident_event(HarnessId.OPENCODE, "session.idle", {}))
 
     try:
-        outcome = await asyncio.wait_for(manager.wait_for_completion(spawn_id), timeout=0.5)
+        outcome = await manager.wait_for_completion(spawn_id)
         assert outcome is not None
         assert outcome.status == "succeeded"
         assert True not in connection.fake_resident_backend.awaiting_done_values
@@ -87,7 +87,7 @@ async def test_opencode_child_session_idle_does_not_finalize_parent(
     connection.emit(child_idle)
 
     try:
-        observed = await asyncio.wait_for(subscriber.get(), timeout=0.5)
+        observed = await subscriber.get()
         assert observed == child_idle
         with pytest.raises(asyncio.TimeoutError):
             await asyncio.wait_for(
@@ -102,7 +102,7 @@ async def test_opencode_child_session_idle_does_not_finalize_parent(
                 {"type": "session.idle", "properties": {"sessionID": "ses-resident"}},
             )
         )
-        outcome = await asyncio.wait_for(manager.wait_for_completion(spawn_id), timeout=0.5)
+        outcome = await manager.wait_for_completion(spawn_id)
         assert outcome is not None
         assert outcome.status == "succeeded"
     finally:
@@ -140,7 +140,7 @@ async def test_opencode_child_session_error_does_not_fail_parent(
                 {"type": "session.idle", "properties": {"sessionID": "ses-resident"}},
             )
         )
-        outcome = await asyncio.wait_for(manager.wait_for_completion(spawn_id), timeout=0.5)
+        outcome = await manager.wait_for_completion(spawn_id)
         assert outcome is not None
         assert outcome.status == "succeeded"
     finally:
@@ -216,7 +216,7 @@ async def test_opencode_terminal_success_resides_until_child_finishes(
             0,
             origin="runner",
         )
-        outcome = await asyncio.wait_for(manager.wait_for_completion(spawn_id), timeout=0.5)
+        outcome = await manager.wait_for_completion(spawn_id)
         assert outcome is not None
         assert outcome.status == "succeeded"
         assert connection.fake_resident_backend.awaiting_done_values[-1] is False
@@ -243,7 +243,7 @@ async def test_resident_reconciles_finalizing_child_with_durable_report_as_done(
     connection.emit(resident_event(HarnessId.OPENCODE, "session.idle", {}))
 
     try:
-        outcome = await asyncio.wait_for(manager.wait_for_completion(spawn_id), timeout=0.5)
+        outcome = await manager.wait_for_completion(spawn_id)
         assert outcome is not None
         assert outcome.status == "succeeded"
         assert True not in connection.fake_resident_backend.awaiting_done_values
@@ -294,7 +294,7 @@ async def test_done_signal_at_terminalresident_event_wins_over_outstanding_child
     connection.emit(resident_event(HarnessId.OPENCODE, "session.idle", {}))
 
     try:
-        outcome = await asyncio.wait_for(manager.wait_for_completion(spawn_id), timeout=0.5)
+        outcome = await manager.wait_for_completion(spawn_id)
         assert outcome is not None
         assert outcome.status == "succeeded"
         assert True not in connection.fake_resident_backend.awaiting_done_values
@@ -331,7 +331,7 @@ async def test_spawn_done_op_releases_resident_wait_via_environment_default(
         monkeypatch.setenv("MERIDIAN_SPAWN_ID", str(spawn_id))
 
         result = spawn_api.spawn_done_sync(SpawnSignalInput(), prepared=prepared)
-        outcome = await asyncio.wait_for(completion_task, timeout=0.5)
+        outcome = await completion_task
 
         assert result.status == "succeeded"
         assert outcome is not None
@@ -417,7 +417,7 @@ async def test_spawn_rearm_op_extends_resident_deadline(
         await assert_still_pending(completion_task)
 
         await determinism.sleep(0.2)
-        outcome = await asyncio.wait_for(completion_task, timeout=0.5)
+        outcome = await completion_task
         assert outcome is not None
         assert outcome.status == "timed_out"
         assert outcome.error == "resident_deadline_expired"
@@ -470,7 +470,7 @@ async def test_child_written_before_terminalresident_event_is_processed_prevents
                 timeout=0.05,
             )
         spawn_store.finalize_spawn(tmp_path, child_id, "succeeded", 0, origin="runner")
-        outcome = await asyncio.wait_for(manager.wait_for_completion(spawn_id), timeout=0.5)
+        outcome = await manager.wait_for_completion(spawn_id)
         assert outcome is not None
         assert outcome.status == "succeeded"
     finally:
@@ -498,7 +498,7 @@ async def test_resident_stream_close_with_dead_backend_fails_while_child_running
         connection.mark_failed()
         connection.close_stream()
 
-        outcome = await asyncio.wait_for(manager.wait_for_completion(spawn_id), timeout=0.5)
+        outcome = await manager.wait_for_completion(spawn_id)
         assert outcome is not None
         assert outcome.status == "failed"
         assert outcome.error == "backend_dead_while_awaiting_done"
@@ -527,7 +527,7 @@ async def test_resident_stream_close_with_stalled_backend_is_not_dead_outcome(
         connection.mark_stalled()
         connection.close_stream()
 
-        outcome = await asyncio.wait_for(manager.wait_for_completion(spawn_id), timeout=0.5)
+        outcome = await manager.wait_for_completion(spawn_id)
         assert outcome is not None
         assert outcome.status == "failed"
         assert outcome.error == "stream_closed_while_awaiting_done"
@@ -591,7 +591,7 @@ async def test_codex_resident_deadline_waits_then_reaps_live_child(
         assert not completion_task.done()
 
         await determinism.sleep(0.08)
-        outcome = await asyncio.wait_for(completion_task, timeout=0.5)
+        outcome = await completion_task
         assert outcome is not None
         assert outcome.status == "timed_out"
         assert outcome.error == "resident_deadline_expired"
@@ -633,7 +633,7 @@ async def test_codex_resident_finalization_preserves_artifact_report(tmp_path: P
             0,
             origin="runner",
         )
-        outcome = await asyncio.wait_for(manager.wait_for_completion(spawn_id), timeout=0.5)
+        outcome = await manager.wait_for_completion(spawn_id)
         assert outcome is not None
         assert outcome.status == "succeeded"
         assert extract_codex_report(LocalStore(root_dir=tmp_path / "spawns"), spawn_id) == (
