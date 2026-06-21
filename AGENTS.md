@@ -17,6 +17,14 @@ NEVER REVERT CHANGES — always assume it's someone else's work.
 `.cursor/`, `.codex/`, `.opencode/`, `.pi/`). Overwritten by `meridian mars sync`.
 Edit source package repos in sibling checkouts.
 
+**NEVER switch the primary checkout's branch.** This working tree may be shared
+with another agent/session. Do not `git checkout`/`switch`/`stash` it, or commit a
+different branch in it — in **any** form, including `git -C <repo>`. To work on
+another branch, create a worktree:
+`git worktree add ../meridian-cli.worktrees/<name> -b <branch> origin/main`, then
+edit/commit/push from the worktree and remove it when done. A denied command is a
+**stop signal** — never route around it with a different invocation.
+
 ## Dev Commands
 
 `uv` exclusively — never `pip` or raw `python`.
