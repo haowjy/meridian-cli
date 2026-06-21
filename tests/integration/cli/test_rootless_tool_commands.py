@@ -55,6 +55,15 @@ def meridian_home(tmp_path: Path) -> Path:
 
 
 @pytest.mark.integration
+def test_qi_root_without_project(
+    no_project_workspace: Path,
+    meridian_home: Path,
+) -> None:
+    result = _run_meridian(["qi"], cwd=no_project_workspace, meridian_home=meridian_home)
+    _assert_rootless_success(result)
+
+
+@pytest.mark.integration
 def test_kg_check_without_project(
     no_project_workspace: Path,
     meridian_home: Path,

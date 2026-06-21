@@ -7,6 +7,7 @@ class StartupClass(StrEnum):
     """High-level startup tier for a CLI invocation."""
 
     TRIVIAL = "trivial"
+    READ_ROOTLESS = "read_rootless"
     READ_PROJECT = "read_project"
     READ_RUNTIME = "read_runtime"
     WRITE_PROJECT = "write_project"

@@ -123,7 +123,7 @@ def _read_rootless(
     path: tuple[str, ...],
     summary: str,
     *,
-    startup_class: StartupClass = StartupClass.READ_PROJECT,
+    startup_class: StartupClass = StartupClass.READ_ROOTLESS,
     default_output_mode: str = "text",
     extension_ref: str | None = None,
 ) -> CommandDescriptor:
@@ -397,7 +397,6 @@ _COMMAND_DESCRIPTORS: tuple[CommandDescriptor, ...] = (
     _read_rootless(
         ("doctor",),
         "Run doctor checks.",
-        startup_class=StartupClass.READ_RUNTIME,
         extension_ref="meridian.doctor.doctor",
     ),
     _read_runtime(("telemetry", "status"), "Show telemetry status."),
@@ -409,13 +408,11 @@ _COMMAND_DESCRIPTORS: tuple[CommandDescriptor, ...] = (
     _read_rootless(
         ("ext", "list"),
         "List extensions.",
-        startup_class=StartupClass.READ_RUNTIME,
     ),
     _read_runtime(("ext", "show"), "Show extension."),
     _read_rootless(
         ("ext", "commands"),
         "List extension commands.",
-        startup_class=StartupClass.READ_RUNTIME,
     ),
     _read_runtime(("ext", "run"), "Run extension command."),
     _read_project(("hooks", "list"), "List hooks.", extension_ref="meridian.hooks.list"),
@@ -450,7 +447,7 @@ _COMMAND_DESCRIPTORS: tuple[CommandDescriptor, ...] = (
     _read_rootless(("kg", "graph"), "Render knowledge graph."),
     _read_rootless(("kg", "check"), "Check knowledge graph links."),
     _read_rootless(("mermaid", "check"), "Check Mermaid diagrams."),
-    _read_project(("qi",), "Show inline knowledge for current path."),
+    _read_rootless(("qi",), "Show inline knowledge for current path."),
     _read_rootless(("qi", "list"), "List all inline knowledge locations."),
     _read_rootless(("qi", "check"), "Check inline knowledge health."),
     _write_runtime(("streaming", "test"), "Run streaming test."),

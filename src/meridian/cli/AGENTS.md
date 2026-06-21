@@ -9,8 +9,8 @@ argv
   └── normalize_optional_value_flags()  ← pre-Cyclopts: rewrites bare --fork/--from
         └── classify_invocation()       ← longest-prefix match against COMMAND_CATALOG
               └── CommandDescriptor     ← routing information for this invocation
-                    ├── startup_class   → which bootstrap function to call
-                    ├── state_requirement
+                    ├── startup_class   → telemetry mode + primary-launch handling
+                    ├── state_requirement → bootstrap/state preparation
                     ├── telemetry_mode
                     ├── lazy_target     → import path string (deferred import)
                     └── redirect        → optional redirect (e.g. models list → mars models list)
@@ -23,23 +23,26 @@ argv
 - **Lazy imports everywhere.** `_register_commands_for_invocation()` imports only the module group matching the first positional token. Full registration fires only for `--help`. `make_lazy_command("module.path:function")` in `lazy_dispatch.py` registers a Cyclopts handler without importing it.
 - **`app_tree.py` breaks the circular import.** It defines top-level Cyclopts app objects (`spawn_app`, `session_app`, etc.) without importing any command implementations. If you import command implementations from `app_tree.py`, the lazy strategy collapses.
 - **`to_cli_output()` dispatch, not `isinstance` in `main.py`.** Command handlers return typed result objects. Each implements `to_cli_output()`. Adding result types does not require editing `main.py`.
-- **Read-only invocation classes install no telemetry, create no filesystem state.** `READ_PROJECT` and `READ_RUNTIME` classes never write UUIDs, create directories, or spawn writer threads.
+- **Read-only invocation classes install no telemetry, create no filesystem state.** `READ_ROOTLESS`, `READ_PROJECT`, and `READ_RUNTIME` classes never write UUIDs, create directories, or spawn writer threads.
 - **`root_source = RootSource.ARGV`** commands (e.g. `meridian init [path]`) defer bootstrap until after argument parsing. They call `prepare_for_project_write(arg_derived_root)` themselves — they don't receive a pre-prepared context.
 - **`validate_fork_mode()` is the single place for fork/from/continue conflict checks.** `spawn.py` and `primary_launch.py` both call it and consume `ForkModeResolution`. Do not re-implement conflict logic or ref resolution in handlers.
 - **`normalize_optional_value_flags()` runs before everything.** It rewrites bare `--fork`/`--fork-fresh`/`--from` to `--fork __SELF__` so Cyclopts always receives a value. Never call Cyclopts on raw argv containing these flags.
 
 ## Invocation Classes
 
-| Class | Examples | Bootstrap |
+| Class | Examples | State prep (`state_requirement`) |
 |---|---|---|
 | `TRIVIAL` | `--help`, `--version` | none |
-| `READ_PROJECT` | `config show`, `work current` | `prepare_for_project_read()` |
+| `READ_ROOTLESS` | `doctor`, `qi`, `kg check`, `config show` | none |
+| `READ_PROJECT` | `context`, `hooks list` | `prepare_for_project_read()` |
 | `READ_RUNTIME` | `spawn list`, `session log` | `prepare_for_runtime_read()` |
 | `WRITE_PROJECT` | `config init` | `prepare_for_project_write()` |
 | `WRITE_RUNTIME` | `spawn create`, `work start` | `prepare_for_runtime_write()` |
 | `PRIMARY_LAUNCH` | bare `meridian` | `prepare_for_runtime_write()` |
 | `SERVICE_ROOTLESS` | `serve` | none |
 | `SERVICE_RUNTIME` | `streaming serve` | `prepare_for_runtime_write()` |
+
+`startup_class` drives telemetry installation and primary-launch background repairs — not bootstrap. Bootstrap is selected solely by `state_requirement`.
 
 ## Entry Points
 

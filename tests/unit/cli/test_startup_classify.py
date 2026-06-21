@@ -3,10 +3,24 @@ from meridian.cli.startup.classify import classify_invocation
 from meridian.cli.startup.policy import StartupClass, StateRequirement
 
 
-def test_doctor_is_read_runtime_without_pre_dispatch_state() -> None:
+def test_doctor_is_read_rootless_without_pre_dispatch_state() -> None:
     descriptor = COMMAND_CATALOG.get(("doctor",))
     assert descriptor is not None
-    assert descriptor.startup_class is StartupClass.READ_RUNTIME
+    assert descriptor.startup_class is StartupClass.READ_ROOTLESS
+    assert descriptor.state_requirement is StateRequirement.NONE
+
+
+def test_qi_root_is_read_rootless_without_pre_dispatch_state() -> None:
+    descriptor = COMMAND_CATALOG.get(("qi",))
+    assert descriptor is not None
+    assert descriptor.startup_class is StartupClass.READ_ROOTLESS
+    assert descriptor.state_requirement is StateRequirement.NONE
+
+
+def test_config_show_is_read_rootless_without_pre_dispatch_state() -> None:
+    descriptor = COMMAND_CATALOG.get(("config", "show"))
+    assert descriptor is not None
+    assert descriptor.startup_class is StartupClass.READ_ROOTLESS
     assert descriptor.state_requirement is StateRequirement.NONE
 
 
