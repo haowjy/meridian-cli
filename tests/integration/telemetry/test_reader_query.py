@@ -138,7 +138,7 @@ def test_tail_events_yields_new_lines_from_multiple_directories(tmp_path: Path) 
     first_path = _write_segment(first_dir, "cli.100-0001.jsonl", [])
     second_path = _write_segment(second_dir, "cli.200-0001.jsonl", [])
     offsets = snapshot_segment_offsets([first_dir, second_dir])
-    iterator = tail_events([first_dir, second_dir], poll_interval=0.01, initial_offsets=offsets)
+    iterator = tail_events([first_dir, second_dir], start_offsets=offsets, poll_interval=0.01)
 
     with first_path.open("a", encoding="utf-8") as file:
         file.write(

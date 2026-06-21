@@ -345,16 +345,43 @@ async def test_spawn_rearm_op_extends_resident_deadline(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    from meridian.lib.bootstrap import services as bootstrap_services
+    from meridian.lib.state.spawn_tree import active_descendants
     from meridian.lib.streaming import resident_drain as resident_drain_module
 
     determinism = AsyncDeterminism(start=100.0)
     determinism.install(monkeypatch, monotonic_modules=(resident_drain_module,))
     determinism.install_on_running_loop(monkeypatch)
+
+    reaped_spawn_ids: list[str] = []
+
+    class _FakeService:
+        async def cancel_descendants(self, root_id: SpawnId) -> set[str]:
+            reaped_ids: set[str] = set()
+            for descendant in active_descendants(runtime_root, root_id):
+                reaped_ids.add(descendant.id)
+                reaped_spawn_ids.append(descendant.id)
+                spawn_store.finalize_spawn(
+                    runtime_root,
+                    descendant.id,
+                    "cancelled",
+                    130,
+                    origin="cancel",
+                    error="cancelled",
+                )
+            return reaped_ids
+
     project_root = tmp_path / "repo"
     project_root.mkdir()
     prepared = prepare_for_runtime_write(project_root)
     runtime_root = prepared.runtime_root
     assert runtime_root is not None
+
+    monkeypatch.setattr(
+        bootstrap_services,
+        "build_spawn_application_service_from_roots",
+        lambda _project_root, _runtime_root: _FakeService(),
+    )
     spawn_id = SpawnId("p1")
     start_row(runtime_root, str(spawn_id), HarnessId.CODEX, None)
     start_row(runtime_root, "p2", HarnessId.CODEX, str(spawn_id))
@@ -372,26 +399,29 @@ async def test_spawn_rearm_op_extends_resident_deadline(
     completion_task = asyncio.create_task(manager.wait_for_completion(spawn_id))
 
     try:
+        while connection.fake_resident_backend.awaiting_done_values != [True]:
+            await determinism.sleep(0.01)
         await assert_still_pending(completion_task)
+
+        await determinism.sleep(0.18)
 
         result = spawn_api.spawn_rearm_sync(
             SpawnSignalInput(spawn_id=str(spawn_id)),
             ctx=RuntimeContext(spawn_id=spawn_id),
             prepared=prepared,
         )
-        await determinism.sleep(0.12)
-
         assert result.status == "succeeded"
-        assert not completion_task.done()
 
-        done_result = spawn_api.spawn_done_sync(
-            SpawnSignalInput(spawn_id=str(spawn_id)),
-            prepared=prepared,
-        )
+        await determinism.sleep(0.05)
+        await determinism.sleep(0.03)
+        await assert_still_pending(completion_task)
+
+        await determinism.sleep(0.2)
         outcome = await asyncio.wait_for(completion_task, timeout=0.5)
-        assert done_result.status == "succeeded"
         assert outcome is not None
-        assert outcome.status == "succeeded"
+        assert outcome.status == "timed_out"
+        assert outcome.error == "resident_deadline_expired"
+        assert reaped_spawn_ids == ["p2"]
     finally:
         await manager.stop_spawn(spawn_id)
 

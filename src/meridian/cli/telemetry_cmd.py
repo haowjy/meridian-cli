@@ -14,7 +14,7 @@ from meridian.cli.utils import require_established_project_root
 from meridian.lib.ops.runtime import resolve_runtime_root_for_read
 from meridian.lib.state.user_paths import get_user_home
 from meridian.lib.telemetry.query import query_events
-from meridian.lib.telemetry.reader import tail_events
+from meridian.lib.telemetry.reader import snapshot_segment_offsets, tail_events
 from meridian.lib.telemetry.status import (
     ROOTLESS_LIMITATION_NOTE,
     compute_status,
@@ -119,8 +119,10 @@ def _telemetry_tail(
     if not dirs:
         return
     try:
+        offsets = snapshot_segment_offsets(dirs)
         for event in tail_events(
             dirs,
+            start_offsets=offsets,
             domain=domain,
             ids_filter=_ids_filter(spawn_id=spawn_id, chat_id=chat_id, work_id=work_id),
         ):

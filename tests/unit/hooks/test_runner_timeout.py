@@ -95,6 +95,9 @@ def test_external_runner_marks_timeout_and_invokes_process_tree_teardown(
     assert result.outcome == "timeout"
     assert result.success is False
     assert result.error == "Timed out after 1s."
+    assert result.exit_code == -15
+    assert result.stdout == "partial-outdrained-out"
+    assert result.stderr == "partial-errdrained-err"
     assert teardown_calls == [4242]
 
 
@@ -164,4 +167,6 @@ def test_external_runner_timeout_escalates_to_kill_when_drain_times_out(
 
     assert result.outcome == "timeout"
     assert result.exit_code == -9
+    assert result.stdout == "partial-outterm-outkill-out"
+    assert result.stderr == "partial-errterm-errkill-err"
     assert killed is True

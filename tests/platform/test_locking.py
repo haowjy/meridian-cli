@@ -67,7 +67,7 @@ def test_lock_file_blocks_other_threads_until_release(tmp_path: Path) -> None:
 
     assert first_has_lock.wait(timeout=2)
     assert waiter_attempting.wait(timeout=2)
-    assert not second_acquired.is_set()
+    assert not second_acquired.wait(timeout=0.2)
 
     release_first.set()
     assert second_acquired.wait(timeout=2)

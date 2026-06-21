@@ -188,6 +188,9 @@ async def test_wait_for_activity_suppresses_during_turn(
     task = asyncio.create_task(policy.wait_for_activity(blocked()))
     await assert_still_pending(task)
 
+    await determinism.sleep(0.1)
+    await assert_still_pending(task)
+
     gate.set()
     assert await task == "done"
 

@@ -91,9 +91,8 @@ def read_events(
 def snapshot_segment_offsets(telemetry_dir: Path | list[Path]) -> dict[Path, int]:
     """Return byte offsets for all known segments (tail start position).
 
-    Captures the read cursor before following new lines. Tests and callers that
-    need a deterministic starting point can pass the result as
-    ``initial_offsets`` to :func:`tail_events`.
+    Captures the read cursor before following new lines. Pass the result as
+    ``start_offsets`` to :func:`tail_events`.
     """
     dirs = telemetry_dir if isinstance(telemetry_dir, list) else [telemetry_dir]
     seen_files: dict[Path, int] = {}
@@ -109,26 +108,22 @@ def snapshot_segment_offsets(telemetry_dir: Path | list[Path]) -> dict[Path, int
 def tail_events(
     telemetry_dir: Path | list[Path],
     *,
+    start_offsets: dict[Path, int],
     domain: str | None = None,
     ids_filter: dict[str, str] | None = None,
     poll_interval: float = 1.0,
-    initial_offsets: dict[Path, int] | None = None,
 ) -> Generator[dict[str, Any], None, None]:
     """Follow telemetry segments, yielding new events as they arrive.
 
     Watches for new lines in existing segments and new segments appearing.
     Like ``tail -f`` but across rotating JSONL segment files.
 
-    ``initial_offsets`` fixes the starting byte cursor (from
-    :func:`snapshot_segment_offsets`) so callers can exclude data that already
+    ``start_offsets`` is the starting byte cursor (from
+    :func:`snapshot_segment_offsets`) so callers exclude data that already
     existed before tailing began.
     """
     dirs = telemetry_dir if isinstance(telemetry_dir, list) else [telemetry_dir]
-    seen_files = (
-        dict(initial_offsets)
-        if initial_offsets is not None
-        else snapshot_segment_offsets(dirs)
-    )
+    seen_files = dict(start_offsets)
 
     while True:
         found_new = False

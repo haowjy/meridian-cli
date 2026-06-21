@@ -54,6 +54,42 @@ def test_reserve_chat_id_is_safe_under_concurrency(tmp_path: Path) -> None:
     assert (runtime_root / "session-id-counter").read_text(encoding="utf-8") == f"{process_count}\n"
 
 
+def test_start_session_acquires_lifetime_lock_before_appending_start_event(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runtime_root = _state_root(tmp_path)
+    original_append_event = session_store.append_event
+    observed = {"checked": False}
+
+    def _append_event_with_lock_check(*args: object, **kwargs: object) -> None:
+        event = kwargs.get("event")
+        if event is None and len(args) >= 3:
+            event = args[2]
+        if isinstance(event, session_store.SessionStartEvent):
+            lock_path = runtime_root / "sessions" / f"{event.chat_id}.lock"
+            held = run_spawn_race_or_skip(
+                _can_acquire_lock_nonblocking_worker,
+                [(lock_path.as_posix(),)],
+            )
+            held.assert_all_succeeded()
+            assert held.results == [False]
+            observed["checked"] = True
+        original_append_event(*args, **kwargs)
+
+    monkeypatch.setattr(session_store, "append_event", _append_event_with_lock_check)
+
+    chat_id = session_store.start_session(
+        runtime_root,
+        harness="codex",
+        harness_session_id="thread-ordered",
+        model="gpt-5.4",
+    )
+    try:
+        assert observed["checked"] is True
+    finally:
+        session_store.stop_session(runtime_root, chat_id)
+
+
 def test_start_session_holds_exclusive_lock_across_processes(tmp_path: Path) -> None:
     runtime_root = _state_root(tmp_path)
     chat_id = session_store.start_session(

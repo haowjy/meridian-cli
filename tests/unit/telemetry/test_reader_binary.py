@@ -24,7 +24,7 @@ def test_tail_events_reads_new_event(tmp_path: Path) -> None:
     offsets = snapshot_segment_offsets(tmp_path)
     _write_event(seg, "new.event")
 
-    event = next(tail_events(tmp_path, poll_interval=0.001, initial_offsets=offsets))
+    event = next(tail_events(tmp_path, poll_interval=0.001, start_offsets=offsets))
 
     assert event["event"] == "new.event"
 
@@ -42,7 +42,7 @@ def test_tail_events_byte_stable_offset_across_handle_lifetimes(tmp_path: Path) 
     """
     seg = tmp_path / "seg.jsonl"
     offsets = snapshot_segment_offsets(tmp_path)
-    gen = tail_events(tmp_path, poll_interval=0.001, initial_offsets=offsets)
+    gen = tail_events(tmp_path, poll_interval=0.001, start_offsets=offsets)
 
     _write_event(seg, "e1", {"msg": "€uro sign"})
     results = [next(gen)]
@@ -58,7 +58,7 @@ def test_tail_events_byte_stable_offset_across_handle_lifetimes(tmp_path: Path) 
 def test_tail_events_picks_up_new_segment(tmp_path: Path) -> None:
     """Events in a segment that didn't exist at tail start are yielded."""
     offsets = snapshot_segment_offsets(tmp_path)
-    gen = tail_events(tmp_path, poll_interval=0.001, initial_offsets=offsets)
+    gen = tail_events(tmp_path, poll_interval=0.001, start_offsets=offsets)
     seg = tmp_path / "new_seg.jsonl"
     _write_event(seg, "fresh.event")
 
@@ -71,7 +71,7 @@ def test_tail_events_domain_filter_with_binary_mode(tmp_path: Path) -> None:
     """domain filter is applied correctly when reading in binary mode."""
     seg = tmp_path / "seg.jsonl"
     offsets = snapshot_segment_offsets(tmp_path)
-    gen = tail_events(tmp_path, domain="wanted", poll_interval=0.001, initial_offsets=offsets)
+    gen = tail_events(tmp_path, domain="wanted", poll_interval=0.001, start_offsets=offsets)
 
     _write_event(seg, "skip.event")
     wanted = {
@@ -106,7 +106,7 @@ def test_tail_events_polls_until_new_data_arrives(tmp_path: Path, monkeypatch) -
 
     writer_thread = threading.Thread(target=writer, daemon=True)
     writer_thread.start()
-    event = next(tail_events(tmp_path, poll_interval=0.001, initial_offsets=offsets))
+    event = next(tail_events(tmp_path, poll_interval=0.001, start_offsets=offsets))
     writer_thread.join(timeout=5.0)
 
     assert event["event"] == "polled.event"
