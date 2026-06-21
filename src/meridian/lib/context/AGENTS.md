@@ -29,13 +29,17 @@ intended for terminal output. Use the default `check_env=True` for human-readabl
 `_resolve_path()` only derives the expected path from `resolve_clone_path(remote)`.
 Actual cloning is handled by git-autosync hooks at a different layer.
 
-**Fresh projects always produce valid `ResolvedContextPaths`.** When `{project}` cannot
-resolve, fallbacks kick in:
+Paths resolve via `[context.work]` and `[context.kb]` configuration. Defaults are user-scoped:
+- `work_root` → `{user_home}/context/{project}/work`
+- `kb_root` → `{user_home}/context/{project}/kb`
+
+When `{project}` cannot resolve (no `.meridian/id`), fallbacks kick in:
 - `work_root` → `<project_root>/.meridian/work`
 - `kb_root` → `<project_root>/.meridian/kb`
 - Extra contexts requiring `{project}` → silently skipped
 
-Callers can assume a non-null result but must not assume the paths exist on disk.
+A normally initialized project never hits the fallback. Callers can assume a non-null
+result but must not assume the paths exist on disk.
 
 ## Entry Points
 

@@ -33,7 +33,7 @@ Roots are deduplicated and resolved to absolute paths before projection. Paths t
 
 Managed primary sessions surface approval requests instead of auto-accepting or rejecting them.
 
-In the managed architecture Meridian is the websocket client connected to the Codex app-server. When Codex issues a `*/requestApproval` or `item/tool/requestUserInput` JSON-RPC server request, it goes to Meridian — not to the TUI. Meridian dispatches these through an interactive handler (`ManagedPrimaryRequestHandler`) that records them as `request/opened` events in the spawn's harness history. A controller — CLI, chat frontend, or API — can then answer via `respond_request()` or `respond_user_input()`.
+In the managed architecture Meridian is the websocket client connected to the Codex app-server. When Codex issues a `*/requestApproval` or `item/tool/requestUserInput` JSON-RPC server request, it goes to Meridian — not to the TUI. Meridian dispatches these through an interactive handler (`ManagedPrimaryRequestHandler`) that records them as `request/opened` events in the spawn's harness history. A controller (CLI or API) can then answer via `respond_request()` or `respond_user_input()`.
 
 Key properties:
 

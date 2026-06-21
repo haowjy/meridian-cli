@@ -3,14 +3,13 @@
 File-backed authority for all Meridian runtime state. No database, no service,
 no in-memory objects that survive process death. If it's not on disk, it doesn't exist.
 
-## Dual-Root Layout
+## Roots
 
-State splits across two roots — understand which goes where before writing anything:
+State splits across distinct roots — understand which goes where before writing anything:
 
 ```
 .meridian/                          ← repo-local, committed scaffolding
   id                                — project UUID / three-word ID
-  work-items/<slug>.json            — mutable JSON per work item
 
 ~/.meridian/projects/<id>/          ← user runtime, never committed
   sessions.jsonl                    — session events (append-only)
@@ -19,10 +18,20 @@ State splits across two roots — understand which goes where before writing any
     state.lock                      — per-spawn lock for external writers
     history.jsonl                   — primary output artifact
     heartbeat · report.md · stderr.log · params.json · tokens.json
+
+<context.work root>/<slug>/         ← context-resolved, NOT repo-local
+  __status.json                     — mutable per-work-item metadata
+  prompts/ handoffs/ …              — work artifacts
 ```
 
 The project UUID in `.meridian/id` keys into `~/.meridian/projects/<id>/`. Projects
 can move or be renamed without losing runtime history.
+
+Work items live under the `[context.work]` root (default
+`{user_home}/context/<id>/work/<slug>/`), resolved by `work_scope.py` /
+`work_store.py` — **never** the project repo. The legacy
+`.meridian/work-items/<slug>.json` layout is gone; see `docs/configuration.md`
+for context-path resolution.
 
 ## Spawn State: V2 Per-Spawn Files
 

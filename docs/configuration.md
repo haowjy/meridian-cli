@@ -66,9 +66,7 @@ Meridian splits state across two roots: repo-tracked files that belong in versio
   .meridian/
     .gitignore               # committed — controls what else is tracked
     id                       # committed — project UUID (stable across renames)
-    kb/                      # committed — knowledge base directory
-    work/                    # committed — active work-item scratch dirs
-    archive/work/            # committed — scratch for completed work items
+    kb/                      # committed — KB fallback (used only when no project ID)
 ```
 
 Read-only commands (`meridian spawn list`, `meridian config show`, etc.) do not create `.meridian/id` or any runtime state. `meridian doctor` skips bootstrap at startup but calls `ensure_runtime_state_bootstrap_sync` internally, so it **does** create the UUID and runtime dir when run.
@@ -95,7 +93,7 @@ High-churn runtime state lives outside the repo, keyed by project UUID so the re
 
 The UUID is stored in `.meridian/id` (committed project identity — tracked in version control). Because state is keyed by UUID rather than path, renaming or moving the repo does not orphan runtime state.
 
-By default, `work/` and `archive/work/` stay repo-side so work-item scratch files are visible to all collaborators and survive across machines.
+`work/` and `archive/work/` directories no longer live here by default. Work items resolve under `[context.work]` (default `{user_home}/context/{project}/work/`). The `.meridian/` equivalents are used only as a fallback when no project ID is available — a normally initialized project never hits this path.
 
 ## `meridian.toml` Keys
 
@@ -545,8 +543,8 @@ path   = "project/strategy"
 | --- | ---- | ------- | ------- |
 | `source` | str | `"local"` | `"local"` or `"git"` |
 | `remote` | str | — | Git remote URL (required when `source = "git"`) |
-| `path` | str | `".meridian/work"` | Path to the work directory, relative to repo or clone root |
-| `archive` | str | `".meridian/archive/work"` | Path to the work archive directory |
+| `path` | str | `"{user_home}/context/{project}/work"` | Path to the work directory (see path resolution below) |
+| `archive` | str | `"{user_home}/context/{project}/archive/work"` | Path to the work archive directory |
 
 #### `[context.kb]`
 
@@ -554,7 +552,7 @@ path   = "project/strategy"
 | --- | ---- | ------- | ------- |
 | `source` | str | `"local"` | `"local"` or `"git"` |
 | `remote` | str | — | Git remote URL (required when `source = "git"`) |
-| `path` | str | `".meridian/kb"` | Path to the knowledge base directory |
+| `path` | str | `"{user_home}/context/{project}/kb"` | Path to the knowledge base directory (see path resolution below) |
 
 #### `[context.NAME]`
 
@@ -567,6 +565,24 @@ Arbitrary named context tables are allowed alongside the built-in `work` and `kb
 | `path` | str | — | Path to the context directory, relative to repo or clone root |
 
 When `source = "git"`, Meridian clones the remote into a local cache and resolves paths relative to the clone root. Use `meridian context` to inspect the resolved paths.
+
+#### Path resolution
+
+`path` values support two placeholders:
+
+- `{user_home}` — the Meridian user home (e.g. `~/.meridian`).
+- `{project}` — the project ID from `.meridian/id`.
+
+For `source = "git"`, `path` is resolved relative to the clone root. For
+`source = "local"`, absolute paths (including expanded placeholders) are used as
+given; a relative `path` resolves against the project root.
+
+The built-in defaults are user-scoped (`{user_home}/context/{project}/...`), so
+work and KB live **outside** the project repo. As a fallback only, when a `path`
+contains `{project}` but no project ID can be resolved (no `.meridian/id`),
+Meridian uses the project-local `.meridian/` equivalents (`.meridian/work`,
+`.meridian/kb`, `.meridian/archive/work`). A normally initialized project never
+hits this fallback.
 
 ## Model Catalog
 
