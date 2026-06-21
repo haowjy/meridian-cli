@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.3.13] - 2026-06-21
+
 ### Added
 - Cursor spawns record their harness session id (minted up front via `cursor agent create-chat`), so `meridian session log` works for cursor spawns and cursor sessions are resumable (`--resume`).
 - Inactivity watchdog: a cursor spawn with no stream activity for 300s is stopped and finalized from its last assistant message instead of hanging.
