@@ -66,9 +66,7 @@ Meridian splits state across two roots: repo-tracked files that belong in versio
   .meridian/
     .gitignore               # committed — controls what else is tracked
     id                       # committed — project UUID (stable across renames)
-    kb/                      # committed — knowledge base directory
-    work/                    # committed — active work-item scratch dirs
-    archive/work/            # committed — scratch for completed work items
+    kb/                      # committed — KB fallback (used only when no project ID)
 ```
 
 Read-only commands (`meridian spawn list`, `meridian config show`, etc.) do not create `.meridian/id` or any runtime state. `meridian doctor` skips bootstrap at startup but calls `ensure_runtime_state_bootstrap_sync` internally, so it **does** create the UUID and runtime dir when run.
@@ -95,7 +93,7 @@ High-churn runtime state lives outside the repo, keyed by project UUID so the re
 
 The UUID is stored in `.meridian/id` (committed project identity — tracked in version control). Because state is keyed by UUID rather than path, renaming or moving the repo does not orphan runtime state.
 
-By default, `work/` and `archive/work/` stay repo-side so work-item scratch files are visible to all collaborators and survive across machines.
+`work/` and `archive/work/` directories no longer live here by default. Work items resolve under `[context.work]` (default `{user_home}/context/{project}/work/`). The `.meridian/` equivalents are used only as a fallback when no project ID is available — a normally initialized project never hits this path.
 
 ## `meridian.toml` Keys
 
