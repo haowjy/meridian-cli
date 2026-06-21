@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
+import time
 from pathlib import Path
 from uuid import uuid4
 
@@ -279,13 +280,16 @@ def test_dispatch_pipeline_times_out_then_continues_to_later_hooks(tmp_path: Pat
     hanging_script.write_text(
         "import signal\n"
         "import sys\n"
+        "import time\n"
         "from pathlib import Path\n"
         "marker = Path(sys.argv[1])\n"
         "def _handle_term(signum, frame):\n"
         "    marker.write_text('terminated', encoding='utf-8')\n"
-        "    raise SystemExit(0)\n"
+        "    while True:\n"
+        "        time.sleep(0.1)\n"
         "signal.signal(signal.SIGTERM, _handle_term)\n"
-        "signal.pause()\n",
+        "while True:\n"
+        "    time.sleep(0.1)\n",
         encoding="utf-8",
     )
     success_script = tmp_path / "success.py"
@@ -324,7 +328,9 @@ def test_dispatch_pipeline_times_out_then_continues_to_later_hooks(tmp_path: Pat
     assert [result.outcome for result in results] == ["timeout", "success"]
     assert success_marker.read_text(encoding="utf-8") == "ok"
     if sys.platform != "win32":
-        assert term_marker.exists()
+        deadline = time.monotonic() + 3
+        while not term_marker.exists() and time.monotonic() < deadline:
+            time.sleep(0.05)
         assert term_marker.read_text(encoding="utf-8") == "terminated"
 
 
