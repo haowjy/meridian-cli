@@ -1104,7 +1104,7 @@ def _main_impl(argv: Sequence[str] | None = None) -> None:
     # and reject invalid --dry-run combinations before any startup writes.
     if _bootstrap_setup_requested(cleaned_args):
         state_requirement = StateRequirement.NONE
-    # Install options early so require_established_project_root() sees project_root
+    # Install options early so resolve_cli_project_root() sees project_root
     # from -C / --directory during bootstrap resolution.
     _pre_bootstrap_token = _GLOBAL_OPTIONS.set(options)
     bootstrap_project_root = None

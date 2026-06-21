@@ -69,6 +69,30 @@ def cmd_qi_graph(
     raise SystemExit(0)
 
 
+@qi_app.command(name="list")
+def cmd_qi_list(
+    path: Annotated[
+        Path,
+        Parameter(help="Directory to list (default: cwd)."),
+    ] = Path("."),
+) -> None:
+    """List all inline knowledge locations under a directory."""
+    from meridian.lib.ops.qi import discover_knowledge_points
+
+    resolved = path.resolve()
+    if not resolved.exists():
+        print(f"Error: path not found: {path}", file=sys.stderr)
+        raise SystemExit(2)
+    if not resolved.is_dir():
+        print(f"Error: not a directory: {path}", file=sys.stderr)
+        raise SystemExit(2)
+
+    points = discover_knowledge_points(resolved)
+    for point in sorted(points, key=lambda item: (item.kind, item.rel_path)):
+        print(f"{point.kind}\t{point.rel_path}")
+    raise SystemExit(0)
+
+
 @qi_app.command(name="check")
 def cmd_qi_check(
     path: Annotated[
@@ -107,5 +131,6 @@ def cmd_qi_check(
 __all__ = [
     "cmd_qi_check",
     "cmd_qi_graph",
+    "cmd_qi_list",
     "cmd_qi_root",
 ]

@@ -4,6 +4,10 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+- Tool-level commands no longer require a Meridian project — `meridian doctor`, the content linters (`kg check`/`graph`, `qi`/`qi check`/`list`, `mermaid check`), config readers (`config show`/`get`), and `ext list`/`commands` now run from any cwd instead of hard-failing with "No Meridian project found". Project-scoped commands (`spawn`, `work`, `telemetry`, …) still require one.
+- `python -m meridian` now routes through the same entrypoint as the `meridian` console script — gains the Windows UTF-8 stdout reconfigure, so glyph output (e.g. `mermaid check`) no longer crashes under cp1252.
+
 ## [0.3.11] - 2026-06-21
 
 ### Removed

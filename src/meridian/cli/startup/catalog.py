@@ -119,6 +119,27 @@ def _read_project(
     )
 
 
+def _read_rootless(
+    path: tuple[str, ...],
+    summary: str,
+    *,
+    startup_class: StartupClass = StartupClass.READ_ROOTLESS,
+    default_output_mode: str = "text",
+    extension_ref: str | None = None,
+) -> CommandDescriptor:
+    """Path- or user-level read commands that do not require a Meridian project."""
+
+    return _descriptor(
+        path,
+        startup_class,
+        StateRequirement.NONE,
+        TelemetryMode.NONE,
+        default_output_mode,
+        summary,
+        extension_ref=extension_ref,
+    )
+
+
 def _write_project(
     path: tuple[str, ...],
     summary: str,
@@ -363,26 +384,36 @@ _COMMAND_DESCRIPTORS: tuple[CommandDescriptor, ...] = (
         "Print or set the active work item's source-code edit directory.",
         extension_ref="meridian.work.task-dir",
     ),
-    _read_project(
+    _read_rootless(
         ("config", "show"), "Show resolved config.", extension_ref="meridian.config.show"
     ),
-    _read_project(("config", "get"), "Get config value.", extension_ref="meridian.config.get"),
+    _read_rootless(("config", "get"), "Get config value.", extension_ref="meridian.config.get"),
     _write_project(("config", "init"), "Initialize config.", extension_ref="meridian.config.init"),
     _write_project(("config", "set"), "Set config value.", extension_ref="meridian.config.set"),
     _write_project(
         ("config", "reset"), "Reset config value.", extension_ref="meridian.config.reset"
     ),
     _read_project(("context",), "Show context paths.", extension_ref="meridian.context.context"),
-    _read_runtime(("doctor",), "Run doctor checks.", extension_ref="meridian.doctor.doctor"),
+    _read_rootless(
+        ("doctor",),
+        "Run doctor checks.",
+        extension_ref="meridian.doctor.doctor",
+    ),
     _read_runtime(("telemetry", "status"), "Show telemetry status."),
     _read_runtime(("telemetry", "tail"), "Tail telemetry events."),
     _read_runtime(("telemetry", "query"), "Query telemetry events."),
     _write_project(("init",), "Initialize meridian in a project.", root_source=RootSource.ARGV),
     _write_project(("migrate",), "Migrate project ID from UUID to three-word format."),
     _read_runtime(("ext",), "List extension commands."),
-    _read_runtime(("ext", "list"), "List extensions."),
+    _read_rootless(
+        ("ext", "list"),
+        "List extensions.",
+    ),
     _read_runtime(("ext", "show"), "Show extension."),
-    _read_runtime(("ext", "commands"), "List extension commands."),
+    _read_rootless(
+        ("ext", "commands"),
+        "List extension commands.",
+    ),
     _read_runtime(("ext", "run"), "Run extension command."),
     _read_project(("hooks", "list"), "List hooks.", extension_ref="meridian.hooks.list"),
     _read_project(
@@ -413,12 +444,12 @@ _COMMAND_DESCRIPTORS: tuple[CommandDescriptor, ...] = (
         "Initialize workspace config.",
         extension_ref="meridian.workspace.init",
     ),
-    _read_project(("kg", "graph"), "Render knowledge graph."),
-    _read_project(("kg", "check"), "Check knowledge graph links."),
-    _read_project(("mermaid", "check"), "Check Mermaid diagrams."),
-    _read_project(("qi",), "Show inline knowledge for current path."),
-    _read_project(("qi", "list"), "List all inline knowledge locations."),
-    _read_project(("qi", "check"), "Check inline knowledge health."),
+    _read_rootless(("kg", "graph"), "Render knowledge graph."),
+    _read_rootless(("kg", "check"), "Check knowledge graph links."),
+    _read_rootless(("mermaid", "check"), "Check Mermaid diagrams."),
+    _read_rootless(("qi",), "Show inline knowledge for current path."),
+    _read_rootless(("qi", "list"), "List all inline knowledge locations."),
+    _read_rootless(("qi", "check"), "Check inline knowledge health."),
     _write_runtime(("streaming", "test"), "Run streaming test."),
     _descriptor(
         ("streaming", "serve"),

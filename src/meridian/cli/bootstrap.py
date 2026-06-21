@@ -336,20 +336,26 @@ def maybe_bootstrap_runtime_state(
 
     if is_agent_render_mode(render_mode):
         return None
+
+    requirement = state_requirement or _state_requirement_for_argv(argv)
+    if requirement in {None, StateRequirement.NONE}:
+        return None
+
+    from meridian.cli.utils import exit_no_established_project, resolve_cli_project_root
+
+    resolution = resolve_cli_project_root()
+    if not resolution.established or resolution.project_root is None:
+        exit_no_established_project()
+    assert resolution.project_root is not None
+    project_root = resolution.project_root
+
     try:
-        from meridian.cli.utils import require_established_project_root
         from meridian.lib.bootstrap.services import (
             prepare_for_project_read,
             prepare_for_project_write,
             prepare_for_runtime_read,
             prepare_for_runtime_write,
         )
-
-        requirement = state_requirement or _state_requirement_for_argv(argv)
-        if requirement in {None, StateRequirement.NONE}:
-            return None
-
-        project_root = require_established_project_root()
 
         if requirement == StateRequirement.PROJECT_READ:
             prepare_for_project_read(project_root)

@@ -43,9 +43,12 @@ def _make_auto_handler_from_spec(
             return None
 
     def auto_handler() -> None:
-        from meridian.cli.utils import cli_project_root_posix
+        from meridian.cli.utils import optional_cli_project_root_posix
 
-        emit(sync_handler({"project_root": cli_project_root_posix()}))
+        payload: dict[str, object] = {}
+        if "project_root" in spec.args_schema.model_fields:
+            payload["project_root"] = optional_cli_project_root_posix()
+        emit(sync_handler(payload))
 
     return auto_handler
 

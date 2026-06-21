@@ -1,33 +1,77 @@
 """Shared CLI-local parsing and validation helpers."""
 
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, overload
 
+from meridian.lib.config.project_root import ProjectRootSource
 
-def require_established_project_root() -> Path:
-    """Resolve project root from GlobalOptions or env, erroring if only bare CWD.
+NO_ESTABLISHED_PROJECT_MSG = (
+    "No Meridian project found. Run from the project root or pass -C <path>."
+)
 
-    Reads opts.project_root first (set from -C / --directory flag), then falls
-    back to env/CWD resolution via resolve_project_root_resolution. Raises
-    SystemExit(1) when resolution falls back to bare CWD without explicit or
-    inherited project targeting.
-    """
+
+@dataclass(frozen=True)
+class CliProjectRoot:
+    """CLI project root resolution with established-project semantics."""
+
+    project_root: Path | None
+    source: ProjectRootSource
+    established: bool
+
+
+def resolve_cli_project_root() -> CliProjectRoot:
+    """Resolve project root from GlobalOptions and env/CWD without raising."""
+
     from meridian.cli.main import get_global_options
     from meridian.lib.config.project_root import resolve_project_root_resolution
 
     opts = get_global_options()
     if opts.project_root is not None:
-        return opts.project_root
+        return CliProjectRoot(
+            project_root=opts.project_root,
+            source="explicit",
+            established=True,
+        )
+    from meridian.lib.config.project_root import cwd_has_project_id
+
     resolution = resolve_project_root_resolution(execution_cwd=Path.cwd())
     if resolution.source == "cwd":
-        print(
-            "No Meridian project found. Run from the project root or pass -C <path>.",
-            file=sys.stderr,
-        )
-        raise SystemExit(1)
+        established = cwd_has_project_id(resolution.project_root)
+    else:
+        established = True
+    return CliProjectRoot(
+        project_root=resolution.project_root if established else None,
+        source=resolution.source,
+        established=established,
+    )
+
+
+def exit_no_established_project() -> None:
+    """Exit with the standard no-project error message."""
+
+    print(NO_ESTABLISHED_PROJECT_MSG, file=sys.stderr)
+    raise SystemExit(1)
+
+
+def require_established_project_root() -> Path:
+    """Resolve an established project root or exit with a user-facing error."""
+
+    resolution = resolve_cli_project_root()
+    if not resolution.established or resolution.project_root is None:
+        exit_no_established_project()
+    assert resolution.project_root is not None
     return resolution.project_root
 
+
+def optional_cli_project_root_posix() -> str | None:
+    """Return an established project root when explicitly targeted, else None."""
+
+    resolution = resolve_cli_project_root()
+    if not resolution.established or resolution.project_root is None:
+        return None
+    return resolution.project_root.as_posix()
 
 
 def cli_project_root_posix() -> str:
