@@ -83,6 +83,7 @@ from .composition import (
     has_context_env_block,
     replace_context_env_block,
 )
+from .constants import DRY_RUN_REPORT_PATH, REPORT_FILENAME, SYSTEM_PROMPT_FILENAME
 from .cwd import LaunchDirectoryContext
 from .env import build_env_plan
 from .env import merge_env_overrides as _merge_env_overrides
@@ -310,7 +311,6 @@ class RuntimeBindings:
     """Runtime-only values for the bind phase."""
 
     spawn_id: str
-    report_artifact_path: Path
     runtime_work_id: str | None = None
     chat_id: str | None = None
     forked_harness_session_id: str | None = None
@@ -524,7 +524,6 @@ def materialize_launch_artifacts(
     interactive: bool = False,
     continue_harness_session_id: str | None = None,
     continue_fork: bool = False,
-    report_artifact_path: str | None = None,
     context_from_payload: tuple[str, ...] = (),
     reference_items: tuple[ReferenceItem, ...] = (),
     inject_task_cwd_instruction: bool = False,
@@ -576,7 +575,6 @@ def materialize_launch_artifacts(
         interactive=interactive,
         continue_harness_session_id=continue_harness_session_id,
         continue_fork=continue_fork,
-        report_artifact_path=report_artifact_path,
         appended_system_prompt=effective_appended_system or None,
         context_from_payload=context_from_payload,
         reference_items=reference_items,
@@ -794,18 +792,6 @@ def normalize_usage_model_family(model: str | None) -> str:
     if parts[0].startswith("o") and any(char.isdigit() for char in parts[0]):
         return "openai-o"
     return "other"
-
-
-def resolve_report_artifact_path(
-    *,
-    runtime: LaunchRuntime,
-    project_paths: ProjectConfigPaths,
-    spawn_id: str,
-) -> Path:
-    report_path_raw = (runtime.report_artifact_path or "").strip()
-    if report_path_raw:
-        return Path(report_path_raw).expanduser()
-    return resolve_spawn_log_dir(project_paths.project_root, spawn_id) / "report.md"
 
 
 def normalize_explicit_work_id(
@@ -1637,7 +1623,7 @@ def bind_launch_context(
 ) -> LaunchContext:
     """Cheap materialization: env, cwd, spec, argv, permissions."""
 
-    _ = (harness_registry, bindings.chat_id, bindings.dry_run)
+    _ = (harness_registry, bindings.chat_id)
 
     resolved_config_root = Path(runtime.resolved_config_root).expanduser().resolve()
     resolved_control_root = Path(runtime.resolved_control_root).expanduser().resolve()
@@ -1670,7 +1656,9 @@ def bind_launch_context(
     projected_content = prepared.projected_content
     seed_harness_session_args = prepared.seed_session_args
     model_selection = prepared.model_selection
-    report_artifact_path = bindings.report_artifact_path
+    spawn_log_dir = resolve_spawn_log_dir(project_paths.project_root, bindings.spawn_id)
+    report_artifact_path = spawn_log_dir / REPORT_FILENAME
+    system_prompt_path = spawn_log_dir / SYSTEM_PROMPT_FILENAME
     logical_task_cwd = project_paths.execution_cwd.resolve()
     directory_context = LaunchDirectoryContext(
         authority_root=resolved_control_root,
@@ -1905,7 +1893,6 @@ def bind_launch_context(
             if bindings.continue_fork_override is not None
             else resolved_request.session.continue_fork
         ),
-        report_artifact_path=report_artifact_path.as_posix(),
         context_from_payload=resolved_request.context_from,
         reference_items=loaded_references,
         sandbox=resolved_request.execution_policy.sandbox,
@@ -1921,6 +1908,18 @@ def bind_launch_context(
     permission_config = materialized.permission_config
     perms = materialized.perms
     spec = materialized.spec
+    if harness.id == HarnessId.CODEX and not spec.interactive:
+        spec = spec.model_copy(
+            update={
+                "report_output_path": (
+                    DRY_RUN_REPORT_PATH
+                    if bindings.dry_run
+                    else report_artifact_path.as_posix()
+                )
+            }
+        )
+    elif harness.id == HarnessId.CLAUDE:
+        spec = spec.model_copy(update={"prompt_file_path": system_prompt_path.as_posix()})
     argv: tuple[str, ...] = ()
     if runtime.argv_intent != LaunchArgvIntent.SPEC_ONLY:
         argv = build_launch_argv(
@@ -1983,7 +1982,6 @@ def bind_launch_context(
     binding = ResolvedLaunchBinding(
         work_id=effective_work_id,
         child_cwd=child_cwd,
-        report_artifact_path=report_artifact_path,
         run_params=run_params,
         permission_config=permission_config,
         perms=perms,
@@ -2067,11 +2065,6 @@ def _build_launch_context_impl(
 
     bindings = RuntimeBindings(
         spawn_id=spawn_id,
-        report_artifact_path=resolve_report_artifact_path(
-            runtime=runtime,
-            project_paths=project_paths,
-            spawn_id=spawn_id,
-        ),
         runtime_work_id=runtime_work_id,
         plan_overrides=dict(plan_overrides or {}),
         dry_run=dry_run,

@@ -217,7 +217,6 @@ class ResolvedLaunchBinding:
 
     work_id: str | None
     child_cwd: Path
-    report_artifact_path: Path
     run_params: SpawnParams
     permission_config: PermissionConfig
     perms: PermissionResolver

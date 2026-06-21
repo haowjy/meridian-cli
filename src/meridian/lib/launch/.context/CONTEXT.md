@@ -47,9 +47,11 @@ version used by `bind_launch_context()`.
 
 ### RuntimeBindings
 
-Frozen dataclass for runtime-only values: `spawn_id`, `report_artifact_path`,
+Frozen dataclass for runtime-only values: `spawn_id`,
 `runtime_work_id`, `chat_id`, `forked_harness_session_id`, `plan_overrides`, `dry_run`.
 These are the only things that differ between the preview bind and the real bind.
+The report and `system-prompt.md` paths are derived in `bind_launch_context` from
+`spawn_id` (the spawn log dir), not carried here.
 
 ### Four Driving Adapters
 

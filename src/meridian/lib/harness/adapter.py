@@ -272,7 +272,6 @@ class SpawnParams(BaseModel):
     continue_harness_session_id: str | None = None
     continue_fork: bool = False
     appended_system_prompt: str | None = None
-    report_artifact_path: str | None = None
     user_turn_content: str | None = None
     context_from_payload: tuple[str, ...] = ()
     reference_items: tuple[Any, ...] = ()

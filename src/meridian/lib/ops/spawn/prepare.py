@@ -1,7 +1,6 @@
 """Spawn create-input validation and payload preparation helpers."""
 
 from dataclasses import dataclass
-from pathlib import Path
 
 from meridian.lib.config.settings import load_config
 from meridian.lib.core.context import RuntimeContext
@@ -38,8 +37,6 @@ from ..runtime import (
 )
 from .models import SpawnCreateInput
 from .task_dir import derive_inheritable_task_dir
-
-_DRY_RUN_REPORT_PATH = "<spawn-report-path>"
 
 
 def _parse_env_assignments(raw: tuple[str, ...]) -> dict[str, str]:
@@ -227,7 +224,6 @@ def build_create_payload(
                 if composition_dry_run
                 else LaunchArgvIntent.SPEC_ONLY
             ),
-            report_artifact_path=_DRY_RUN_REPORT_PATH,
         )
         prepared_surface = compose_spawn_launch_surface(
             request=raw_request,
@@ -245,7 +241,6 @@ def build_create_payload(
                 prepared=prepared_surface,
                 bindings=RuntimeBindings(
                     spawn_id="dry-run",
-                    report_artifact_path=Path(_DRY_RUN_REPORT_PATH),
                     dry_run=True,
                     plan_overrides=plan_overrides,
                 ),

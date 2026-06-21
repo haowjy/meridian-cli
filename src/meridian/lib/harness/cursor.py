@@ -67,7 +67,6 @@ class CursorAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             "adhoc_agent_payload",
             "control_root",
             "appended_system_prompt",
-            "report_artifact_path",
             "user_turn_content",
             "context_from_payload",
             "reference_items",

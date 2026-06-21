@@ -7,6 +7,8 @@ from typing import cast
 
 import pytest
 
+from meridian.lib.harness.adapter import SpawnParams
+from meridian.lib.harness.cursor import CursorAdapter
 from meridian.lib.harness.projections.project_cursor import (
     HarnessCapabilityMismatch,
     project_cursor_spec_to_cli_args,
@@ -14,6 +16,37 @@ from meridian.lib.harness.projections.project_cursor import (
 from meridian.lib.launch.constants import BASE_COMMAND_CURSOR_SUBPROCESS
 from meridian.lib.launch.launch_types import PermissionResolver, ResolvedLaunchSpec
 from meridian.lib.safety.permissions import ApprovalMode, PermissionConfig, SandboxMode
+
+
+def test_cursor_resolve_launch_spec_leaves_report_output_path_none(
+    tmp_path: Path,
+) -> None:
+    adapter = CursorAdapter()
+
+    spec = adapter.resolve_launch_spec(
+        SpawnParams(
+            prompt="do work",
+            task_cwd=str(tmp_path / "task"),
+        ),
+        _Resolver(approval="default"),
+    )
+
+    assert spec.report_output_path is None
+
+
+def test_cursor_subprocess_projection_emits_no_o_flag() -> None:
+    adapter = CursorAdapter()
+    spec = adapter.resolve_launch_spec(
+        SpawnParams(prompt="do work", task_cwd="/tmp/task"),
+        _Resolver(approval="default"),
+    )
+
+    command = project_cursor_spec_to_cli_args(
+        spec,
+        base_command=BASE_COMMAND_CURSOR_SUBPROCESS,
+    )
+
+    assert "-o" not in command
 
 
 class _Resolver(PermissionResolver):

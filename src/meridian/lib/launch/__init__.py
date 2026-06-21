@@ -168,7 +168,6 @@ def launch_primary(
         prepared=prepared,
         bindings=RuntimeBindings(
             spawn_id="dry-run-primary",
-            report_artifact_path=Path(runtime.report_artifact_path or "report.md"),
             runtime_work_id=effective_work_id,
             dry_run=True,
         ),

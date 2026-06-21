@@ -11,6 +11,8 @@ PI_RUNTIME_META_FILENAME: Final[str] = "pi_runtime_meta.json"
 STDERR_FILENAME: Final[str] = "stderr.log"
 TOKENS_FILENAME: Final[str] = "tokens.json"
 REPORT_FILENAME: Final[str] = "report.md"
+SYSTEM_PROMPT_FILENAME: Final[str] = "system-prompt.md"
+DRY_RUN_REPORT_PATH: Final[str] = "<spawn-report-path>"
 
 DEFAULT_INFRA_EXIT_CODE: Final[int] = 2
 POST_EXIT_PIPE_DRAIN_TIMEOUT_SECONDS: Final[float] = 1.0
@@ -78,6 +80,7 @@ __all__ = [
     "BLOCKED_CHILD_ENV_VARS",
     "CURSOR_INACTIVITY_TIMEOUT_SECONDS",
     "DEFAULT_INFRA_EXIT_CODE",
+    "DRY_RUN_REPORT_PATH",
     "HISTORY_FILENAME",
     "OUTPUT_FILENAME",
     "PI_RUNTIME_META_FILENAME",
@@ -92,5 +95,6 @@ __all__ = [
     "REPORT_WATCHDOG_POLL_SECONDS",
     "STDERR_FILENAME",
     "SUBPROCESS_REPORT_WATCHDOG_POLL_SECONDS",
+    "SYSTEM_PROMPT_FILENAME",
     "TOKENS_FILENAME",
 ]

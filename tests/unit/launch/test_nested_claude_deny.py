@@ -40,7 +40,6 @@ def _build_launch_runtime(
 ) -> LaunchRuntime:
     return LaunchRuntime(
         composition_surface=composition_surface,
-        report_artifact_path=(tmp_path / "report.md").as_posix(),
         runtime_root=(tmp_path / ".meridian").as_posix(),
         project_paths_project_root=tmp_path.as_posix(),
         project_paths_execution_cwd=tmp_path.as_posix(),

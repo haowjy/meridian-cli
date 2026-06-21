@@ -345,7 +345,6 @@ class OpenCodeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
     )
     _EXPLICITLY_IGNORED_FIELDS: ClassVar[frozenset[str]] = frozenset(
         {
-            "report_artifact_path",
             "context_from_payload",
             "reference_items",
             "task_cwd",
