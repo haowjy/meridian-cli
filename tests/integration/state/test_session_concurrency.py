@@ -43,13 +43,12 @@ def test_reserve_chat_id_is_safe_under_concurrency(tmp_path: Path) -> None:
     runtime_root = _state_root(tmp_path)
     process_count = 8
 
-    outcome = run_spawn_race_or_skip(
+    allocated = run_spawn_race_or_skip(
         _reserve_chat_id_worker,
         [(runtime_root.as_posix(),) for _ in range(process_count)],
     )
-    outcome.assert_all_succeeded()
 
-    allocated = sorted(outcome.results)
+    allocated = sorted(allocated)
     assert allocated == [f"c{idx}" for idx in range(1, process_count + 1)]
     assert (runtime_root / "session-id-counter").read_text(encoding="utf-8") == f"{process_count}\n"
 
@@ -71,8 +70,7 @@ def test_start_session_acquires_lifetime_lock_before_appending_start_event(
                 _can_acquire_lock_nonblocking_worker,
                 [(lock_path.as_posix(),)],
             )
-            held.assert_all_succeeded()
-            assert held.results == [False]
+            assert held == [False]
             observed["checked"] = True
         original_append_event(*args, **kwargs)
 
@@ -105,8 +103,7 @@ def test_start_session_holds_exclusive_lock_across_processes(tmp_path: Path) -> 
             _can_acquire_lock_nonblocking_worker,
             [(lock_path.as_posix(),)],
         )
-        held.assert_all_succeeded()
-        assert held.results == [False]
+        assert held == [False]
     finally:
         session_store.stop_session(runtime_root, chat_id)
 
@@ -114,8 +111,7 @@ def test_start_session_holds_exclusive_lock_across_processes(tmp_path: Path) -> 
         _can_acquire_lock_nonblocking_worker,
         [(lock_path.as_posix(),)],
     )
-    released.assert_all_succeeded()
-    assert released.results == [True]
+    assert released == [True]
 
 
 def test_start_session_rolls_back_lock_and_event_on_append_failure(
@@ -146,9 +142,7 @@ def test_start_session_rolls_back_lock_and_event_on_append_failure(
     )
 
     lock_path = runtime_root / "sessions" / f"{chat_id}.lock"
-    outcome = run_spawn_race_or_skip(
+    assert run_spawn_race_or_skip(
         _can_acquire_lock_nonblocking_worker,
         [(lock_path.as_posix(),)],
-    )
-    outcome.assert_all_succeeded()
-    assert outcome.results == [True]
+    ) == [True]

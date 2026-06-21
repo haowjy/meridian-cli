@@ -13,7 +13,7 @@ from meridian.lib.core.spawn_lifecycle import SpawnReservation
 from meridian.lib.launch.types import PrimarySessionMetadata
 from meridian.lib.state import spawn_store
 from meridian.lib.telemetry.query import query_events
-from meridian.lib.telemetry.reader import read_events, snapshot_segment_offsets, tail_events
+from meridian.lib.telemetry.reader import read_events, tail_events
 from meridian.lib.telemetry.status import compute_status
 
 
@@ -137,8 +137,7 @@ def test_tail_events_yields_new_lines_from_multiple_directories(tmp_path: Path) 
     second_dir = tmp_path / "project-b" / "telemetry"
     first_path = _write_segment(first_dir, "cli.100-0001.jsonl", [])
     second_path = _write_segment(second_dir, "cli.200-0001.jsonl", [])
-    offsets = snapshot_segment_offsets([first_dir, second_dir])
-    iterator = tail_events([first_dir, second_dir], start_offsets=offsets, poll_interval=0.01)
+    iterator = tail_events([first_dir, second_dir], poll_interval=0.01)
 
     with first_path.open("a", encoding="utf-8") as file:
         file.write(

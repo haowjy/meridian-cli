@@ -11,12 +11,11 @@ Example::
 
     from tests.support.process_race import run_spawn_race_or_skip
 
-    outcome = run_spawn_race_or_skip(
+    results = run_spawn_race_or_skip(
         reserve_chat_id,
         [(runtime_root,) for _ in range(8)],
     )
-    outcome.assert_all_succeeded()
-    assert sorted(outcome.results) == [f"c{i}" for i in range(1, 9)]
+    assert sorted(results) == [f"c{i}" for i in range(1, 9)]
 """
 
 from __future__ import annotations
@@ -27,64 +26,10 @@ import multiprocessing
 import time
 import traceback
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
-from typing import Any, Generic, TypeVar
+from typing import Any, TypeVar
 
 T = TypeVar("T")
 _MISSING = object()
-
-
-class SpawnRaceUnavailableError(RuntimeError):
-    """Raised when spawn multiprocessing primitives are unavailable."""
-
-
-@dataclass(frozen=True)
-class WorkerOutcome(Generic[T]):
-    """Per-worker result collected after a spawn race."""
-
-    index: int
-    result: T | None
-    exitcode: int | None
-    stderr: str
-    error: str | None = None
-    has_result: bool = False
-
-
-@dataclass(frozen=True)
-class SpawnRaceOutcome(Generic[T]):
-    """Aggregate outcome from :func:`run_spawn_race`."""
-
-    workers: list[WorkerOutcome[T]]
-
-    @property
-    def results(self) -> list[T]:
-        """Worker return values ordered by worker index."""
-        ordered = sorted(self.workers, key=lambda worker: worker.index)
-        failures = [
-            f"worker {worker.index}: {worker.error} (stderr={worker.stderr!r})"
-            for worker in ordered
-            if worker.error is not None
-        ]
-        if failures:
-            raise AssertionError("spawn race worker(s) raised:\n" + "\n".join(failures))
-        missing = [worker.index for worker in ordered if not worker.has_result]
-        if missing:
-            raise AssertionError(
-                "spawn race missing result(s) from worker(s): " + ", ".join(map(str, missing))
-            )
-        return [worker.result for worker in ordered]  # type: ignore[misc]
-
-    def assert_all_succeeded(self) -> None:
-        """Fail with child stderr when any worker exited non-zero."""
-        failures: list[str] = []
-        for worker in self.workers:
-            if worker.exitcode != 0 or worker.error is not None:
-                detail = worker.error or f"exitcode={worker.exitcode!r}"
-                failures.append(
-                    f"worker {worker.index}: {detail} (stderr={worker.stderr!r})"
-                )
-        if failures:
-            raise AssertionError("spawn race worker(s) failed:\n" + "\n".join(failures))
 
 
 def _race_entrypoint(
@@ -110,13 +55,13 @@ def _race_entrypoint(
         result_queue.put(("stderr", index, stderr_buffer.getvalue()))
 
 
-def run_spawn_race(
+def run_spawn_race_or_skip(
     target: Callable[..., T],
     worker_args: Sequence[tuple[Any, ...]],
     *,
     timeout: float = 120.0,
-) -> SpawnRaceOutcome[T]:
-    """Run *target* in parallel spawned workers released by a ready barrier.
+) -> list[T]:
+    """Run *target* in parallel spawned workers; skip when spawn is unavailable.
 
     Parameters
     ----------
@@ -130,16 +75,18 @@ def run_spawn_race(
 
     Returns
     -------
-    SpawnRaceOutcome
-        Per-worker results, exit codes, stderr, and captured exceptions.
+    list[T]
+        Worker return values ordered by worker index.
 
     Raises
     ------
-    SpawnRaceUnavailableError
+    pytest.skip
         When spawn queues/events cannot be created or processes cannot start.
     AssertionError
-        On overall timeout or incomplete worker result collection.
+        On overall timeout or any worker failure.
     """
+    import pytest
+
     worker_count = len(worker_args)
     if worker_count == 0:
         raise ValueError("worker_args must contain at least one worker")
@@ -150,9 +97,7 @@ def run_spawn_race(
         result_queue = ctx.Queue()
         release_event = ctx.Event()
     except PermissionError as exc:
-        raise SpawnRaceUnavailableError(
-            f"multiprocessing semaphore unavailable in this environment: {exc}"
-        ) from exc
+        pytest.skip(f"multiprocessing semaphore unavailable in this environment: {exc}")
 
     processes: list[Any] = []
     for index, args in enumerate(worker_args):
@@ -172,9 +117,9 @@ def run_spawn_race(
             try:
                 proc.start()
             except PermissionError as exc:
-                raise SpawnRaceUnavailableError(
+                pytest.skip(
                     f"multiprocessing semaphore unavailable in this environment: {exc}"
-                ) from exc
+                )
 
         armed: set[int] = set()
         while len(armed) < worker_count:
@@ -225,35 +170,26 @@ def run_spawn_race(
             elif kind == "stderr":
                 stderrs[index] = payload
 
-        workers = [
-            WorkerOutcome(
-                index=index,
-                result=None if results[index] is _MISSING else results[index],
-                exitcode=processes[index].exitcode,
-                stderr=stderrs.get(index, ""),
-                error=errors.get(index),
-                has_result=results[index] is not _MISSING,
+        failures: list[str] = []
+        for index in range(worker_count):
+            exitcode = processes[index].exitcode
+            error = errors.get(index)
+            if exitcode != 0 or error is not None:
+                detail = error or f"exitcode={exitcode!r}"
+                failures.append(
+                    f"worker {index}: {detail} (stderr={stderrs.get(index, '')!r})"
+                )
+        if failures:
+            raise AssertionError("spawn race worker(s) failed:\n" + "\n".join(failures))
+
+        missing = [index for index in range(worker_count) if results[index] is _MISSING]
+        if missing:
+            raise AssertionError(
+                "spawn race missing result(s) from worker(s): " + ", ".join(map(str, missing))
             )
-            for index in range(worker_count)
-        ]
-        return SpawnRaceOutcome(workers=workers)
+        return [results[index] for index in range(worker_count)]
     finally:
         for proc in processes:
             if proc.is_alive():
                 proc.terminate()
                 proc.join()
-
-
-def run_spawn_race_or_skip(
-    target: Callable[..., T],
-    worker_args: Sequence[tuple[Any, ...]],
-    *,
-    timeout: float = 120.0,
-) -> SpawnRaceOutcome[T]:
-    """Like :func:`run_spawn_race`, but ``pytest.skip`` when spawn is unavailable."""
-    import pytest
-
-    try:
-        return run_spawn_race(target, worker_args, timeout=timeout)
-    except SpawnRaceUnavailableError as exc:
-        pytest.skip(str(exc))

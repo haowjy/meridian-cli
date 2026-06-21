@@ -88,12 +88,8 @@ def read_events(
         return
 
 
-def snapshot_segment_offsets(telemetry_dir: Path | list[Path]) -> dict[Path, int]:
-    """Return byte offsets for all known segments (tail start position).
-
-    Captures the read cursor before following new lines. Pass the result as
-    ``start_offsets`` to :func:`tail_events`.
-    """
+def _snapshot_segment_offsets(telemetry_dir: Path | list[Path]) -> dict[Path, int]:
+    """Return byte offsets for all known segments (tail start position)."""
     dirs = telemetry_dir if isinstance(telemetry_dir, list) else [telemetry_dir]
     seen_files: dict[Path, int] = {}
     for directory in dirs:
@@ -108,7 +104,6 @@ def snapshot_segment_offsets(telemetry_dir: Path | list[Path]) -> dict[Path, int
 def tail_events(
     telemetry_dir: Path | list[Path],
     *,
-    start_offsets: dict[Path, int],
     domain: str | None = None,
     ids_filter: dict[str, str] | None = None,
     poll_interval: float = 1.0,
@@ -118,10 +113,27 @@ def tail_events(
     Watches for new lines in existing segments and new segments appearing.
     Like ``tail -f`` but across rotating JSONL segment files.
 
-    ``start_offsets`` is the starting byte cursor (from
-    :func:`snapshot_segment_offsets`) so callers exclude data that already
-    existed before tailing began.
+    Byte offsets are snapshotted at call time so data written before tailing
+    begins is excluded even if iteration starts later.
     """
+    start_offsets = _snapshot_segment_offsets(telemetry_dir)
+    return _tail_events_from_offsets(
+        telemetry_dir,
+        start_offsets=start_offsets,
+        domain=domain,
+        ids_filter=ids_filter,
+        poll_interval=poll_interval,
+    )
+
+
+def _tail_events_from_offsets(
+    telemetry_dir: Path | list[Path],
+    *,
+    start_offsets: dict[Path, int],
+    domain: str | None = None,
+    ids_filter: dict[str, str] | None = None,
+    poll_interval: float = 1.0,
+) -> Generator[dict[str, Any], None, None]:
     dirs = telemetry_dir if isinstance(telemetry_dir, list) else [telemetry_dir]
     seen_files = dict(start_offsets)
 

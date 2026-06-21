@@ -200,16 +200,13 @@ def test_cross_process_authoritative_finalizers_persist_one_winner(
     """CR2.1: file-lock winner semantics hold across processes, not just threads."""
     runtime_root = _state_root(tmp_path)
     spawn_id = _start_test_spawn(runtime_root)
-    race = run_spawn_race_or_skip(
+    outcomes = run_spawn_race_or_skip(
         _finalize_spawn_worker,
         [
             (runtime_root.as_posix(), spawn_id, "succeeded", 0, 10.0),
             (runtime_root.as_posix(), spawn_id, "failed", 1, 99.0),
         ],
     )
-    race.assert_all_succeeded()
-
-    outcomes = race.results
     row = get_spawn(runtime_root, spawn_id)
 
     assert sorted(outcomes) == [(False, False), (True, True)]

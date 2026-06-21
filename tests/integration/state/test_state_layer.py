@@ -120,13 +120,12 @@ def test_cross_process_reserve_spawn_id_returns_unique_contiguous_ids(tmp_path: 
     runtime_root.mkdir(parents=True, exist_ok=True)
     process_count = 6
 
-    outcome = run_spawn_race_or_skip(
+    reserved = run_spawn_race_or_skip(
         _reserve_spawn_id_worker,
         [(runtime_root.as_posix(),) for _ in range(process_count)],
     )
-    outcome.assert_all_succeeded()
 
-    reserved = sorted(outcome.results)
+    reserved = sorted(reserved)
     assert reserved == [f"p{idx}" for idx in range(1, process_count + 1)]
     assert (runtime_root / "spawn-id-counter").read_text(encoding="utf-8").strip() == str(
         process_count
@@ -151,16 +150,13 @@ def test_concurrent_update_spawn_preserves_non_overlapping_fields(tmp_path: Path
         {"execution_cwd": "/tmp/job", "worker_pid": 101},
         {"harness_session_id": "sess-123", "claude_config_dir": "/tmp/claude"},
     ]
-    outcome = run_spawn_race_or_skip(
+    snapshots = run_spawn_race_or_skip(
         _concurrent_update_worker,
         [
             (runtime_root.as_posix(), spawn_id, payload)
             for payload in payloads
         ],
     )
-    outcome.assert_all_succeeded()
-
-    snapshots = outcome.results
     row = get_spawn(runtime_root, spawn_id)
 
     assert row is not None

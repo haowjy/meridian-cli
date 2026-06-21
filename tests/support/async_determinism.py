@@ -7,18 +7,12 @@ API
     patches.  ``install()`` patches the event-loop clock and replaces
     ``asyncio.sleep`` so delays advance the fake clock and yield once.
 
-``install_monotonic(monkeypatch, clock, *modules)``
-    Patch ``time.monotonic`` on production modules that read wall time directly.
-
 ``yield_to_loop()``
     Yield one event-loop tick (``asyncio.sleep(0)``) without advancing fake time.
 
 ``wait_until(predicate, *, timeout=1.0, on_tick=None)``
     Poll *predicate* until true, yielding each tick.  Optional *on_tick* runs
     after each yield (e.g. ``clock.advance``).
-
-``wait_while(predicate, *, timeout=1.0, on_tick=None)``
-    Poll until *predicate* is false.
 
 ``assert_still_pending(task)``
     Assert an ``asyncio.Task`` has not completed yet (replaces sleep-then-assert).
@@ -66,36 +60,10 @@ async def wait_until(
     raise AssertionError(f"timed out waiting for {description}")
 
 
-async def wait_while(
-    predicate: Callable[[], bool],
-    *,
-    timeout: float = 1.0,
-    on_tick: Callable[[], None] | None = None,
-    description: str = "condition to clear",
-) -> None:
-    """Wait until *predicate* returns false."""
-    await wait_until(
-        lambda: not predicate(),
-        timeout=timeout,
-        on_tick=on_tick,
-        description=f"clearance of {description}",
-    )
-
-
 async def assert_still_pending(task: asyncio.Task[Any]) -> None:
     """Assert *task* has not completed; yield once so concurrent work can run."""
     await yield_to_loop()
     assert not task.done(), "expected task to still be pending"
-
-
-def install_monotonic(
-    monkeypatch: pytest.MonkeyPatch,
-    clock: FakeClock,
-    *modules: ModuleType,
-) -> None:
-    """Patch ``time.monotonic`` on each module to read from *clock*."""
-    for module in modules:
-        monkeypatch.setattr(module.time, "monotonic", clock.monotonic)
 
 
 class AsyncDeterminism:
@@ -110,7 +78,8 @@ class AsyncDeterminism:
         *,
         monotonic_modules: tuple[ModuleType, ...] = (),
     ) -> None:
-        install_monotonic(monkeypatch, self.clock, *monotonic_modules)
+        for module in monotonic_modules:
+            monkeypatch.setattr(module.time, "monotonic", self.clock.monotonic)
         monkeypatch.setattr(asyncio, "sleep", self._fake_sleep)
 
     def install_on_running_loop(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -139,9 +108,6 @@ class TaskGate:
 
     def open(self) -> None:
         self._event.set()
-
-    def close(self) -> None:
-        self._event.clear()
 
     async def wait_open(self) -> None:
         await self._event.wait()
