@@ -4,6 +4,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+- Bump mars-agents to 0.9.0: convention-based tool name projection with source-verified harness tool names (exec_command/apply_patch/spawn_agent for Codex, StrReplace/Shell/Task for Cursor, view/browser/fetch for OpenCode, find for Pi).
+
 ## [0.3.16] - 2026-06-22
 
 ### Fixed
