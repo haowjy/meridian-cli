@@ -170,13 +170,22 @@ def fake_reaper_liveness(
     monkeypatch,
     live_pids,
 ) -> None:
-    """Patch reaper runner liveness to a PID allowlist or predicate."""
+    """Patch runner liveness to a PID allowlist or predicate.
+
+    Both the reaper reconcile path and the nested read-projection path
+    (``query._read_only_nested_staleness_view`` under ``MERIDIAN_DEPTH=1``)
+    consult ``is_process_alive`` via their own module-local bindings. Patch
+    both so a test that exercises either path is fully deterministic — a fake
+    that covered only the reaper binding let the nested read path fall through
+    to the real OS, which is flaky on Windows when the fixture PID happens to
+    be live (e.g. 9301)."""
 
     def _is_alive(pid: int, created_after_epoch: float | None = None) -> bool:
         _ = created_after_epoch
         return live_pids(pid) if callable(live_pids) else pid in live_pids
 
     monkeypatch.setattr("meridian.lib.state.reaper.is_process_alive", _is_alive)
+    monkeypatch.setattr("meridian.lib.ops.spawn.query.is_process_alive", _is_alive)
 
 
 def fake_managed_primary_birth_liveness(

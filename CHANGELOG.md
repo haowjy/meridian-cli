@@ -4,6 +4,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+- Internal (tests): the `fake_reaper_liveness` reaper-test helper now also patches the nested read-projection liveness binding (`meridian.lib.ops.spawn.query.is_process_alive`), not just the reaper binding. The nested read path (`MERIDIAN_DEPTH=1`) consulted a real-OS PID liveness check the fake didn't cover, making `test_read_projection_does_not_reap_recorded_scope_but_explicit_reconcile_does` flaky on Windows when the fixture PID happened to be live.
+
 ## [0.3.14] - 2026-06-22
 
 ### Changed
