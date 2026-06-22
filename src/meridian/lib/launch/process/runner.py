@@ -991,7 +991,6 @@ def run_harness_process(
                         # Legacy aliases.
                         "project_paths_project_root": config_root.as_posix(),
                         "project_paths_execution_cwd": execution_cwd.as_posix(),
-                        "report_output_path": (log_dir / "report.md").as_posix(),
                     }
                 )
                 plan_overrides: dict[str, str] = {}
@@ -1009,7 +1008,6 @@ def run_harness_process(
                         prepared=prepared,
                         bindings=RuntimeBindings(
                             spawn_id=str(primary_spawn_id),
-                            report_output_path=log_dir / "report.md",
                             runtime_work_id=attached_work_id,
                             chat_id=chat_id,
                             forked_harness_session_id=forked_session_id,

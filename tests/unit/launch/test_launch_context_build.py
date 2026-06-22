@@ -12,6 +12,7 @@ from meridian.lib.core.execution_policy import ResolvedExecutionPolicy
 from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.launch.composition import PromptDocument
+from meridian.lib.launch.constants import DRY_RUN_REPORT_PATH, REPORT_FILENAME
 from meridian.lib.launch.context import build_launch_context
 from meridian.lib.launch.request import (
     LaunchArgvIntent,
@@ -19,6 +20,7 @@ from meridian.lib.launch.request import (
     LaunchRuntime,
     SpawnRequest,
 )
+from meridian.lib.state.paths import resolve_spawn_log_dir
 from tests.support.fixtures import allow_headless_claude
 from tests.support.launch import stub_bundle_request_and_resolve
 
@@ -63,7 +65,6 @@ def _build_launch_runtime(
     return LaunchRuntime(
         argv_intent=argv_intent,
         composition_surface=composition_surface,
-        report_output_path=(tmp_path / "report.md").as_posix(),
         runtime_root=(tmp_path / ".meridian").as_posix(),
         project_paths_project_root=tmp_path.as_posix(),
         project_paths_execution_cwd=resolved_execution_cwd.as_posix(),
@@ -92,8 +93,8 @@ def _write_minimal_mars_config(project_root: Path) -> None:
             LaunchArgvIntent.REQUIRED,
             False,
             None,
-            True,
-            id="raw-request-runtime-dry-run-share-argv",
+            False,
+            id="raw-request-runtime-bind-argv",
         ),
         pytest.param(
             (),
@@ -154,6 +155,34 @@ def test_build_launch_context_behaviors(
 
     if patch_argv_failure:
         assert runtime_ctx.binding.spec is not None
+
+
+def test_build_launch_context_dry_run_codex_o_uses_sentinel(tmp_path: Path) -> None:
+    request = _build_spawn_request()
+    runtime = _build_launch_runtime(tmp_path=tmp_path)
+    registry = get_default_harness_registry()
+    spawn_id = "p-ctx"
+
+    runtime_ctx = build_launch_context(
+        spawn_id=spawn_id,
+        request=request,
+        runtime=runtime,
+        harness_registry=registry,
+        dry_run=False,
+    )
+    dry_run_ctx = build_launch_context(
+        spawn_id=spawn_id,
+        request=request,
+        runtime=runtime,
+        harness_registry=registry,
+        dry_run=True,
+    )
+
+    runtime_o = runtime_ctx.binding.argv.index("-o")
+    dry_o = dry_run_ctx.binding.argv.index("-o")
+    expected_report = resolve_spawn_log_dir(tmp_path, spawn_id) / REPORT_FILENAME
+    assert runtime_ctx.binding.argv[runtime_o + 1] == expected_report.as_posix()
+    assert dry_run_ctx.binding.argv[dry_o + 1] == DRY_RUN_REPORT_PATH
 
 
 def test_build_launch_context_primary_projects_supplemental_documents(

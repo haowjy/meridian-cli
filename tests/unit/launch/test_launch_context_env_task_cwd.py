@@ -148,7 +148,6 @@ def test_build_launch_context_prefers_explicit_runtime_roots_over_legacy_aliases
     runtime = LaunchRuntime(
         argv_intent=LaunchArgvIntent.REQUIRED,
         composition_surface=LaunchCompositionSurface.DIRECT,
-        report_output_path=(tmp_path / "report.md").as_posix(),
         runtime_root=(tmp_path / ".meridian").as_posix(),
         config_root=tmp_path.as_posix(),
         control_root=tmp_path.as_posix(),

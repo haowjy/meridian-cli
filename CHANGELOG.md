@@ -4,6 +4,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+- Internal: untangled the overloaded `report_output_path` field. The spawn report/`system-prompt.md` paths are no longer threaded through the launch/bind/adapter layers — they are derived once in `bind_launch_context` from the spawn log dir (`spawn_id`). `ResolvedLaunchSpec.report_output_path` is now genuinely codex-only (the subprocess `-o` target, set at bind). No behavior change — report.md still lands at `spawns/<id>/report.md` and codex still emits `-o`.
+
 ## [0.3.13] - 2026-06-21
 
 ### Added

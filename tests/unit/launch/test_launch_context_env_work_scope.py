@@ -397,7 +397,6 @@ def test_bind_launch_context_composed_request_refreshes_child_work_dir(
         prepared=prepared,
         bindings=RuntimeBindings(
             spawn_id="p-child",
-            report_output_path=tmp_path / "report.md",
             dry_run=True,
         ),
         runtime=runtime,
@@ -461,7 +460,6 @@ def test_bind_launch_context_context_refresh_preserves_adhoc_agent_payload(
         prepared=prepared,
         bindings=RuntimeBindings(
             spawn_id="p-parent",
-            report_output_path=tmp_path / "report-parent.md",
             dry_run=True,
         ),
         runtime=runtime,
@@ -473,7 +471,6 @@ def test_bind_launch_context_context_refresh_preserves_adhoc_agent_payload(
         prepared=prepared,
         bindings=RuntimeBindings(
             spawn_id="p-child",
-            report_output_path=tmp_path / "report.md",
             dry_run=True,
         ),
         runtime=runtime,

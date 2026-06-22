@@ -78,7 +78,6 @@ def test_spawn_execute_uses_harness_model_from_mars(
         prepared=artifacts.prepared,
         bindings=RuntimeBindings(
             spawn_id="p-exec",
-            report_output_path=project_root / "report.md",
             dry_run=False,
         ),
         runtime=launch_runtime,
@@ -133,7 +132,6 @@ def test_spawn_prepare_then_execute_binding_spec_model(
         prepared=artifacts.prepared,
         bindings=RuntimeBindings(
             spawn_id="p-exec",
-            report_output_path=project_root / "report.md",
             dry_run=False,
         ),
         runtime=execute_runtime,

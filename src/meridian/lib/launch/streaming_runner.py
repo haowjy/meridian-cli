@@ -933,7 +933,7 @@ async def execute_with_streaming(
     try:
         log_dir = resolve_spawn_log_dir(project_root, run.spawn_id)
         output_log_path = log_dir / HISTORY_FILENAME
-        report_path = launch_context.binding.report_output_path
+        report_path = log_dir / REPORT_FILENAME
 
         timeout_seconds = (
             float(request.budget.timeout_secs) if request.budget.timeout_secs is not None else None

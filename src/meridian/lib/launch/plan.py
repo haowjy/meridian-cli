@@ -19,8 +19,6 @@ from .request import (
 )
 from .types import LaunchRequest, SessionMode, build_primary_prompt
 
-_DRY_RUN_REPORT_PATH = "<spawn-report-path>"
-
 
 def _requires_primary_synthetic_prompt(request: LaunchRequest) -> bool:
     """Return whether the resolved harness requires a synthetic first prompt.
@@ -125,7 +123,6 @@ def build_primary_launch_runtime(
             mode="json",
             exclude_none=True,
         ),
-        report_output_path=_DRY_RUN_REPORT_PATH,
         runtime_root=runtime_root.as_posix(),
         config_root=resolved_root.as_posix(),
         control_root=resolved_root.as_posix(),
@@ -143,7 +140,6 @@ def build_spawn_mars_runtime(
     control_root: Path,
     execution_cwd: str,
     argv_intent: LaunchArgvIntent,
-    report_output_path: str | None = None,
     debug: bool = False,
 ) -> LaunchRuntime:
     """Launch runtime for spawn paths that need Mars harness_model routing."""
@@ -158,7 +154,6 @@ def build_spawn_mars_runtime(
             mode="json",
             exclude_none=True,
         ),
-        report_output_path=report_output_path,
         runtime_root=runtime_root.as_posix(),
         config_root=control_root_str,
         control_root=control_root_str,

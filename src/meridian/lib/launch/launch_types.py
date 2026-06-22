@@ -112,7 +112,7 @@ class ResolvedLaunchSpec(BaseModel):
     # Claude + Codex
     user_turn_content: str | None = None
 
-    # Codex only
+    # Codex only: subprocess `-o` target; None for every other harness.
     report_output_path: str | None = None
     base_instructions: str | None = None
     developer_instructions: str | None = None
@@ -217,7 +217,6 @@ class ResolvedLaunchBinding:
 
     work_id: str | None
     child_cwd: Path
-    report_output_path: Path
     run_params: SpawnParams
     permission_config: PermissionConfig
     perms: PermissionResolver

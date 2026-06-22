@@ -39,7 +39,6 @@ def build_launch_runtime(
     return LaunchRuntime(
         argv_intent=argv_intent,
         composition_surface=composition_surface,
-        report_output_path=(tmp_path / "report.md").as_posix(),
         runtime_root=(tmp_path / ".meridian").as_posix(),
         config_root=tmp_path.as_posix(),
         control_root=tmp_path.as_posix(),

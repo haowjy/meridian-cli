@@ -13,7 +13,6 @@ from typing import TYPE_CHECKING, Literal, cast
 import structlog
 
 from meridian.lib.catalog.model_aliases import MarsResultCache
-from meridian.lib.config.project_paths import ProjectConfigPaths
 from meridian.lib.core.domain import SpawnStatus, TokenUsage
 from meridian.lib.core.lifecycle import SpawnLifecycleService
 from meridian.lib.core.spawn_lifecycle import (
@@ -42,7 +41,7 @@ from meridian.lib.launch.composition_spawn import (
     bind_spawn_launch_context,
     compose_spawn_launch_surface,
 )
-from meridian.lib.launch.context import LaunchContext, RuntimeBindings, resolve_report_output_path
+from meridian.lib.launch.context import LaunchContext, RuntimeBindings
 from meridian.lib.launch.env import resolve_pi_session_role
 from meridian.lib.launch.request import LaunchRuntime, SpawnRequest
 from meridian.lib.launch.resolve import (
@@ -360,21 +359,6 @@ class SpawnApplicationService:
             spawn_store.reserve_spawn_id,
             self._runtime_root,
         )
-        resolved_config_root = Path(payload.runtime.resolved_config_root).expanduser().resolve()
-        resolved_requested_task_cwd = (
-            Path(payload.runtime.resolved_requested_task_cwd).expanduser().resolve()
-            if payload.runtime.resolved_requested_task_cwd is not None
-            else Path(payload.runtime.resolved_control_root).expanduser().resolve()
-        )
-        project_paths = ProjectConfigPaths(
-            project_root=resolved_config_root,
-            execution_cwd=resolved_requested_task_cwd,
-        )
-        report_output_path = resolve_report_output_path(
-            runtime=payload.runtime,
-            project_paths=project_paths,
-            spawn_id=str(final_spawn_id),
-        )
         config_env = _config_snapshot_env(payload.runtime.config_snapshot)
         request_env = dict(prepared_surface.request.env)
         resolved_env = {**config_env, **request_env}
@@ -383,7 +367,6 @@ class SpawnApplicationService:
             prepared=prepared_surface,
             bindings=RuntimeBindings(
                 spawn_id=str(final_spawn_id),
-                report_output_path=report_output_path,
                 runtime_work_id=effective_work_id,
                 dry_run=False,
                 plan_overrides=resolved_env,

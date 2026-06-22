@@ -47,7 +47,6 @@ def _build_workspace_launch_context(
     runtime = LaunchRuntime(
         argv_intent=LaunchArgvIntent.SPEC_ONLY,
         composition_surface=surface,
-        report_output_path=(project_root / "report.md").as_posix(),
         runtime_root=(project_root / ".meridian").as_posix(),
         project_paths_project_root=project_root.as_posix(),
         project_paths_execution_cwd=project_root.as_posix(),
