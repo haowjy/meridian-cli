@@ -266,3 +266,33 @@ async def test_wait_for_activity_raises_on_backend_dead(
 
     with pytest.raises(EventStreamLivenessTimeout):
         await policy.wait_for_activity(blocked())
+
+
+@pytest.mark.asyncio
+async def test_wait_for_activity_retrieves_child_exception_when_cancelled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    policy = BackendLivenessPolicy(
+        timeout_seconds=lambda: 10.0,
+        now=time.monotonic,
+        backend_pid=lambda: 4242,
+        backend_birth_time=lambda: 0.0,
+    )
+    policy.mark_activity()
+    loop = asyncio.get_running_loop()
+    child: asyncio.Future[None] = loop.create_future()
+
+    async def fake_wait(
+        fs: set[asyncio.Future[None]],
+        timeout: float | None = None,
+    ) -> tuple[set[asyncio.Future[None]], set[asyncio.Future[None]]]:
+        _ = fs, timeout
+        child.set_exception(RuntimeError("normal close raced with teardown"))
+        raise asyncio.CancelledError
+
+    monkeypatch.setattr(liveness_module.asyncio, "wait", fake_wait)
+
+    with pytest.raises(asyncio.CancelledError):
+        await policy.wait_for_activity(child)
+
+    assert child._log_traceback is False

@@ -137,8 +137,8 @@ class BackendLivenessPolicy:
         except BaseException:
             if not task.done():
                 task.cancel()
-                with contextlib.suppress(asyncio.CancelledError):
-                    await task
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await task
             raise
 
     def _silence_expired(self) -> bool:

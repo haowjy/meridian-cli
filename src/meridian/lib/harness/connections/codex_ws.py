@@ -129,6 +129,25 @@ def _ws_is_open(ws: object) -> bool:
     return False
 
 
+def _is_clean_websocket_close(exc: BaseException) -> bool:
+    """Return whether a websocket close exception represents normal closure."""
+
+    exceptions_module = getattr(_WEBSOCKETS_MODULE, "exceptions", None)
+    connection_closed_ok = getattr(exceptions_module, "ConnectionClosedOK", None)
+    if connection_closed_ok is not None and isinstance(exc, connection_closed_ok):
+        return True
+
+    connection_closed_error = getattr(exceptions_module, "ConnectionClosedError", None)
+    if connection_closed_error is None or not isinstance(exc, connection_closed_error):
+        return False
+
+    for attr in ("rcvd", "sent"):
+        close_frame = getattr(exc, attr, None)
+        if getattr(close_frame, "code", None) == 1000:
+            return True
+    return False
+
+
 class _AiohttpWebSocketCompat:
     """Compatibility layer matching the subset of the websockets API we use."""
 
@@ -723,6 +742,10 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
                             )
                         )
                     return
+                except Exception as exc:
+                    if _is_clean_websocket_close(exc):
+                        return
+                    raise
                 self._liveness.mark_activity()
                 raw_text = _coerce_text(raw_message)
                 if self._tracer is not None:
