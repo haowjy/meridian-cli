@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import meridian.lib.harness.cursor as cursor_harness
 from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.adapter import SpawnParams
 from meridian.lib.harness.codex import CodexAdapter
@@ -168,6 +169,7 @@ def test_bind_non_codex_leaves_report_output_path_none(
     project_root.mkdir()
     (project_root / "mars.toml").write_text('[settings]\ntargets = [".claude"]\n', encoding="utf-8")
     (project_root / ".meridian").mkdir()
+    monkeypatch.setattr(cursor_harness.shutil, "which", lambda _command: "/usr/bin/cursor")
     stub_bundle_request_and_resolve(
         monkeypatch,
         model="opus47",
