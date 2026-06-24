@@ -526,6 +526,19 @@ def read_written_files(
     return extract_written_files(artifacts, SpawnId(spawn_id))
 
 
+def spawn_session_log_available(
+    runtime_root: Path,
+    spawn_id: str,
+    *,
+    harness_session_id: str | None = None,
+) -> bool:
+    """Return whether ``meridian session log`` can resolve content for one spawn."""
+    if (harness_session_id or "").strip():
+        return True
+    history_path = runtime_root / "spawns" / spawn_id / "history.jsonl"
+    return history_path.is_file()
+
+
 def detail_from_row(
     *,
     project_root: Path,
@@ -554,6 +567,8 @@ def detail_from_row(
         row.id,
         runtime_root=runtime_root,
     )
+
+    resolved_runtime_root = runtime_root or resolve_runtime_root_for_read(project_root)
 
     return SpawnDetailOutput(
         spawn_id=row.id,
@@ -596,6 +611,11 @@ def detail_from_row(
         last_attempt_exited_at=row.last_attempt_exited_at,
         last_attempt_exit_code=row.last_attempt_exit_code,
         session_config_dir=row.claude_config_dir,
+        session_log_available=spawn_session_log_available(
+            resolved_runtime_root,
+            row.id,
+            harness_session_id=row.harness_session_id,
+        ),
     )
 
 
@@ -608,4 +628,5 @@ __all__ = [
     "read_written_files",
     "resolve_spawn_reference",
     "resolve_spawn_references",
+    "spawn_session_log_available",
 ]

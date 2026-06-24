@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Mapping
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -23,6 +24,7 @@ from meridian.lib.platform.process_scope import ProcessScopeSnapshot, ScopedProc
 from meridian.lib.safety.permissions import (
     UnsafeNoOpPermissionResolver,
 )
+from meridian.lib.state.paths import resolve_spawn_log_dir
 from tests.support.async_determinism import AsyncDeterminism
 from tests.support.fakes import FakeClock
 
@@ -671,3 +673,84 @@ async def test_opencode_launch_process_passes_env_overrides_to_managed_backend(
     assert connection.subprocess_pid == fake_process.pid
 
     await connection._cleanup_runtime()
+
+
+class _EarlyExitStartupOpenCodeConnection(OpenCodeConnection):
+    def __init__(self, *, stderr_text: str) -> None:
+        super().__init__()
+        self._startup_stderr_text = stderr_text
+
+    async def _launch_process(self, config: ConnectionConfig, spec: ResolvedLaunchSpec) -> None:
+        _ = spec
+        spawn_dir = resolve_spawn_log_dir(config.control_root, config.spawn_id)
+        spawn_dir.mkdir(parents=True, exist_ok=True)
+        self._stderr_log_path = spawn_dir / "stderr.log"
+        self._stderr_log_path.write_text(self._startup_stderr_text, encoding="utf-8")
+        self._stderr_read_offset = 0
+        self._process = _FakeProcess()
+        self._process.returncode = 1
+
+
+def _write_startup_stderr(connection: OpenCodeConnection, tmp_path: Path, text: str) -> None:
+    spawn_dir = tmp_path / "spawns" / "p-startup-fail"
+    spawn_dir.mkdir(parents=True, exist_ok=True)
+    connection._stderr_log_path = spawn_dir / "stderr.log"
+    connection._stderr_log_path.write_text(text, encoding="utf-8")
+    connection._stderr_read_offset = 0
+    connection._process = _FakeProcess()
+    connection._process.returncode = 1
+    connection._config = _build_connection_config(tmp_path)
+
+
+@pytest.mark.asyncio
+async def test_opencode_startup_exit_surfaces_stderr_and_xdg_hint(tmp_path: Path) -> None:
+    connection = _EarlyExitStartupOpenCodeConnection(
+        stderr_text=(
+            "EACCES: permission denied, mkdir '/root/meridian-probe-opencode-no-access/opencode'\n"
+        ),
+    )
+    config = _build_connection_config(tmp_path)
+    config = replace(
+        config,
+        env_overrides={"XDG_DATA_HOME": "/root/meridian-probe-opencode-no-access"},
+    )
+
+    with pytest.raises(RuntimeError) as exc_info:
+        await connection.start(
+            config,
+            ResolvedLaunchSpec(
+                permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
+            ),
+        )
+
+    message = str(exc_info.value)
+    assert "OpenCode backend failed to start (exit=1)" in message
+    assert "EACCES: permission denied" in message
+    assert "Hint:" in message
+    assert "XDG_DATA_HOME (/root/meridian-probe-opencode-no-access)" in message
+    assert connection.state == "failed"
+
+
+def test_opencode_startup_exit_message_without_stderr(tmp_path: Path) -> None:
+    connection = OpenCodeConnection()
+    _write_startup_stderr(connection, tmp_path, "")
+
+    message = str(connection._startup_exit_exception())
+
+    assert message == "OpenCode backend failed to start (exit=1)."
+
+
+def test_spawn_action_output_omits_transcript_when_session_log_unavailable() -> None:
+    from meridian.lib.ops.spawn.models import SpawnActionOutput
+
+    output = SpawnActionOutput(
+        command="spawn.create",
+        status="failed",
+        spawn_id="p4735",
+        session_log_available=False,
+        duration_secs=0.5,
+    )
+
+    text = output.format_text()
+    assert "Transcript:" not in text
+    assert output.to_wire().get("transcript_command") is None
