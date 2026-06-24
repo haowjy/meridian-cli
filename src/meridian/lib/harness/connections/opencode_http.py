@@ -1099,12 +1099,18 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
                 "OpenCode backend failed to bind HTTP port "
                 f"(exit={exit_code}): {stderr_excerpt or '<no stderr>'}"
             )
-        if stderr_excerpt:
-            return RuntimeError(
-                "OpenCode process exited before becoming healthy "
-                f"(exit={exit_code}): {stderr_excerpt}"
-            )
-        return RuntimeError(f"OpenCode process exited before becoming healthy (exit={exit_code})")
+        message = _format_opencode_startup_failure_message(
+            exit_code=exit_code,
+            stderr_excerpt=stderr_excerpt,
+            env=self._startup_child_env(),
+        )
+        return RuntimeError(message)
+
+    def _startup_child_env(self) -> dict[str, str]:
+        config = self._config
+        if config is None:
+            return dict(os.environ)
+        return inherit_child_env(os.environ, config.env_overrides)
 
     def _read_startup_stderr_excerpt(self) -> str:
         stderr_handle = self._stderr_handle
@@ -1269,3 +1275,50 @@ def _materialize_system_prompt(
 def _looks_like_address_in_use(stderr_text: str) -> bool:
     normalized = stderr_text.lower()
     return any(marker in normalized for marker in _ADDRESS_IN_USE_MARKERS)
+
+
+def _format_opencode_startup_failure_message(
+    *,
+    exit_code: int | None,
+    stderr_excerpt: str,
+    env: Mapping[str, str],
+) -> str:
+    lines = [f"OpenCode backend failed to start (exit={exit_code})."]
+    if stderr_excerpt:
+        lines.append(stderr_excerpt)
+    hint = _opencode_startup_failure_hint(stderr_excerpt, env)
+    if hint is not None:
+        lines.append("")
+        lines.append(f"Hint: {hint}")
+    return "\n".join(lines)
+
+
+def _opencode_startup_failure_hint(stderr_text: str, env: Mapping[str, str]) -> str | None:
+    normalized = stderr_text.lower()
+    if not normalized:
+        return None
+
+    data_dir_markers = (
+        "eacces",
+        "eperm",
+        "permission denied",
+        "enotdir",
+        "read-only file system",
+        "erofs",
+    )
+    if not any(marker in normalized for marker in data_dir_markers):
+        return None
+    if "mkdir" not in normalized and "opencode" not in normalized:
+        return None
+
+    xdg_data_home = env.get("XDG_DATA_HOME", "").strip()
+    if xdg_data_home:
+        return (
+            f"OpenCode cannot write its data directory under XDG_DATA_HOME ({xdg_data_home}). "
+            "Ensure that path exists and is writable, or unset XDG_DATA_HOME to use the default "
+            "(~/.local/share)."
+        )
+    return (
+        "OpenCode cannot create its data directory. Check permissions for ~/.local/share/opencode, "
+        "or set XDG_DATA_HOME to a writable directory."
+    )
