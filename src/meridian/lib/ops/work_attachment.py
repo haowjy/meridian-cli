@@ -31,3 +31,30 @@ def ensure_explicit_work_item(runtime_root: Path, work_id: str) -> str:
     """Create-or-attach an explicitly named work item and return its slug."""
 
     return work_store.ensure_work_item_metadata(runtime_root, work_id).name
+
+
+def materialize_launch_work_id(
+    runtime_root: Path,
+    *,
+    explicit_work_id: str | None,
+    context_work_id: str | None,
+) -> str | None:
+    """Materialize explicit ``--work`` or inherited ``--from`` work onto disk."""
+
+    candidate = (explicit_work_id or "").strip() or (context_work_id or "").strip() or None
+    if candidate is None:
+        return None
+    return ensure_explicit_work_item(runtime_root, candidate)
+
+
+def preview_launch_work_id(
+    *,
+    explicit_work_id: str | None,
+    context_work_id: str | None,
+) -> str | None:
+    """Normalize explicit or inherited work for dry-run without creating it."""
+
+    candidate = (explicit_work_id or "").strip() or (context_work_id or "").strip() or None
+    if candidate is None:
+        return None
+    return work_store.slugify(candidate) or None

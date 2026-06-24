@@ -197,6 +197,7 @@ def build_create_payload(
             template_vars=parsed_template_vars,
             goal=payload.goal,
             work_id_hint=resolved_work_id_hint,
+            inherited_context_work_id=launch_resolution.context_work_id,
             warning=preflight_warning.strip() if preflight_warning is not None else None,
             authority_root=launch_resolution.directory_context.authority_root.as_posix(),
             task_cwd=launch_resolution.directory_context.logical_task_cwd.as_posix(),

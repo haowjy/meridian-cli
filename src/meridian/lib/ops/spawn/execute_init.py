@@ -234,15 +234,15 @@ def _materialize_spawn_work_item(
     *,
     context: _SpawnContext,
     payload: SpawnCreateInput,
+    request: SpawnRequest,
     project_root: Path,
 ) -> _SpawnContext:
-    """Create or attach the explicit work item and patch the spawn row when needed."""
+    """Create or attach explicit or inherited ``--from`` work and patch the spawn row."""
     final_work_id = context.work_id
-    if (payload.work or "").strip():
-        from typing import cast
-
+    explicit_work = (payload.work or "").strip()
+    inherited_context_work = (request.inherited_context_work_id or "").strip()
+    if (explicit_work or inherited_context_work) and final_work_id:
         project_local_root = resolve_project_paths(project_root).root_dir
-        final_work_id = cast("str", final_work_id)
         final_work_id = ensure_explicit_work_item(project_local_root, final_work_id)
         if final_work_id != context.work_id:
             spawn_store.update_spawn(

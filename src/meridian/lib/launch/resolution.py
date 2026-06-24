@@ -15,6 +15,7 @@ class LaunchInputResolution:
     """Resolved work, task cwd, and reference path surface shared by launch callers."""
 
     effective_work_id: str | None
+    context_work_id: str | None
     task_cwd_resolution: TaskCwdResolution
     directory_context: LaunchDirectoryContext
     reference_files: tuple[Path, ...]
@@ -109,6 +110,7 @@ def resolve_launch_inputs(
 
     return LaunchInputResolution(
         effective_work_id=effective_work_id,
+        context_work_id=context_work_id,
         task_cwd_resolution=task_cwd_resolution,
         directory_context=directory_context,
         reference_files=validated_reference_files,
