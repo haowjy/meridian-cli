@@ -235,6 +235,7 @@ def run_primary_launch(
     continue_source_tracked = False
     continue_source_ref: str | None = None
     continue_launch_policy_snapshot: LaunchPolicySnapshot | None = None
+    continue_passthrough_args: tuple[str, ...] = ()
     output_forked_from: str | None = None
     session_mode = SessionMode.FRESH
     explicit_harness = harness.strip() if harness is not None and harness.strip() else None
@@ -250,6 +251,8 @@ def run_primary_launch(
             raise ValueError("Cannot combine --continue with --agent.")
         if skills:
             raise ValueError("Cannot combine --continue with --skills.")
+        if passthrough:
+            raise ValueError("Cannot combine --continue with passthrough args (--).")
         resolved_continue = resolve_session_target(
             project_root=project_root, continue_ref=resume_target
         )
@@ -294,6 +297,8 @@ def run_primary_launch(
         continue_source_ref = resume_target
         # Replay persisted launch contract so agent/model/skills stay fixed on resume.
         continue_launch_policy_snapshot = resolved_continue.source_launch_policy_snapshot
+        if continue_launch_policy_snapshot is not None:
+            continue_passthrough_args = continue_launch_policy_snapshot.extra_args
         session_mode = SessionMode.RESUME
     elif selected_fork_target is not None:
         resolved_fork = resolve_session_target(
@@ -366,7 +371,9 @@ def run_primary_launch(
             agent_opt_out=agent_opt_out,
             work_id=requested_work_id,
             task_dir=normalized_task_dir,
-            passthrough_args=passthrough,
+            passthrough_args=(
+                continue_passthrough_args if resume_target is not None else passthrough
+            ),
             session_mode=session_mode,
             pinned_context="",
             supplemental_prompt_documents=supplemental_prompt_documents,

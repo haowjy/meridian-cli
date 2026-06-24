@@ -6,7 +6,7 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import patch
 
-import pytest  # noqa: TC002
+import pytest
 
 from meridian.cli.primary_launch import run_primary_launch
 from meridian.lib.catalog.catalog_session import CatalogSession
@@ -19,7 +19,7 @@ from meridian.lib.launch import LaunchRequest, LaunchResult, compile_prepared_po
 from meridian.lib.launch.plan import build_primary_launch_runtime, build_primary_spawn_request
 from meridian.lib.launch.request import SessionRequest
 from meridian.lib.launch.types import SessionMode
-from meridian.lib.state import spawn_store
+from meridian.lib.state import session_store, spawn_store
 from meridian.lib.state.paths import resolve_project_runtime_root
 from tests.support.fixtures import write_skill
 from tests.support.launch import stub_bundle_request_and_resolve
@@ -152,9 +152,232 @@ def test_primary_continue_replays_source_launch_policy_snapshot(
 
     request = captured["request"]
     assert request.launch_policy_snapshot == snapshot
+    assert request.passthrough_args == snapshot.extra_args
     assert request.agent is None
     assert request.model == ""
     assert request.skills == ()
+
+
+def test_primary_continue_spawn_session_ref_recovers_linked_spawn_snapshot(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Tracked spawn-session chat refs must load the linked spawn row's snapshot."""
+
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    runtime_root = _state_root(project_root)
+    primary_snapshot = LaunchPolicySnapshot(
+        model="gpt-5.3-codex",
+        harness="codex",
+        agent="agent-primary",
+        skills=(),
+    )
+    spawn_snapshot = LaunchPolicySnapshot(
+        model="claude-sonnet-4-6",
+        harness="claude",
+        agent="agent-spawn",
+        skills=("testing-principles",),
+        extra_args=("--permission-mode", "acceptEdits"),
+    )
+    _seed_primary_spawn(
+        runtime_root,
+        spawn_id="p50",
+        harness_session_id="session-primary",
+        launch_policy_snapshot=primary_snapshot,
+    )
+    spawn_store.start_spawn(
+        runtime_root,
+        spawn_id="p51",
+        chat_id="c-spawn",
+        owner_chat_id="c-primary",
+        model=spawn_snapshot.model,
+        agent=spawn_snapshot.agent or "agent-spawn",
+        skills=spawn_snapshot.skills,
+        harness=spawn_snapshot.harness,
+        kind="child",
+        prompt="child prompt",
+        harness_session_id="session-spawn",
+        launch_policy_snapshot=spawn_snapshot,
+    )
+    spawn_chat_id = session_store.start_session(
+        runtime_root,
+        harness="claude",
+        harness_session_id="session-spawn",
+        model=spawn_snapshot.model,
+        chat_id="c-spawn",
+        agent=spawn_snapshot.agent or "agent-spawn",
+        skills=spawn_snapshot.skills,
+        kind="spawn",
+        spawn_id="p51",
+    )
+
+    def fail_bundle_resolution(*_args: object, **_kwargs: object) -> object:
+        raise AssertionError("snapshot replay should not re-resolve live policy")
+
+    monkeypatch.setattr(
+        "meridian.lib.launch.bundle_adapter.request_and_resolve",
+        fail_bundle_resolution,
+    )
+
+    captured: dict[str, LaunchRequest] = {}
+
+    def fake_launch_primary(
+        *,
+        project_root: Path,
+        request: LaunchRequest,
+        harness_registry: object,
+    ) -> LaunchResult:
+        _ = (project_root, harness_registry)
+        captured["request"] = request
+        return LaunchResult(
+            command=(),
+            exit_code=0,
+            continue_ref="session-spawn",
+            continue_chat_id=spawn_chat_id,
+        )
+
+    try:
+        with patch("meridian.cli.primary_launch.launch_primary", side_effect=fake_launch_primary):
+            run_primary_launch(
+                project_root=project_root,
+                continue_ref=spawn_chat_id,
+                fork_ref=None,
+                fork_fresh_ref=None,
+                model="",
+                harness=None,
+                agent=None,
+                work="",
+                task_dir=None,
+                yolo=False,
+                approval=None,
+                autocompact=None,
+                effort=None,
+                sandbox=None,
+                timeout=None,
+                dry_run=False,
+                passthrough=(),
+                skills=(),
+            )
+    finally:
+        session_store.stop_session(runtime_root, spawn_chat_id)
+
+    request = captured["request"]
+    assert request.launch_policy_snapshot == spawn_snapshot
+    assert request.passthrough_args == spawn_snapshot.extra_args
+
+
+def test_primary_continue_rejects_passthrough_args(tmp_path: Path) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    runtime_root = _state_root(project_root)
+    _seed_primary_spawn(
+        runtime_root,
+        spawn_id="p52",
+        harness_session_id="session-52",
+        launch_policy_snapshot=LaunchPolicySnapshot(
+            model="gpt-5.3-codex",
+            harness="codex",
+        ),
+    )
+
+    with pytest.raises(ValueError) as exc_info:
+        run_primary_launch(
+            project_root=project_root,
+            continue_ref="p52",
+            fork_ref=None,
+            fork_fresh_ref=None,
+            model="",
+            harness=None,
+            agent=None,
+            work="",
+            task_dir=None,
+            yolo=False,
+            approval=None,
+            autocompact=None,
+            effort=None,
+            sandbox=None,
+            timeout=None,
+            dry_run=False,
+            passthrough=("--custom",),
+            skills=(),
+        )
+
+    assert "--" in str(exc_info.value)
+
+
+def test_primary_continue_replays_snapshot_extra_args_not_cli_passthrough(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    runtime_root = _state_root(project_root)
+    snapshot = LaunchPolicySnapshot(
+        model="claude-sonnet-4-6",
+        harness="claude",
+        agent="agent-a",
+        skills=(),
+        extra_args=("--permission-mode", "acceptEdits"),
+    )
+    _seed_primary_spawn(
+        runtime_root,
+        spawn_id="p53",
+        harness_session_id="session-53",
+        launch_policy_snapshot=snapshot,
+    )
+
+    def fail_bundle_resolution(*_args: object, **_kwargs: object) -> object:
+        raise AssertionError("snapshot replay should not re-resolve live policy")
+
+    monkeypatch.setattr(
+        "meridian.lib.launch.bundle_adapter.request_and_resolve",
+        fail_bundle_resolution,
+    )
+
+    captured: dict[str, LaunchRequest] = {}
+
+    def fake_launch_primary(
+        *,
+        project_root: Path,
+        request: LaunchRequest,
+        harness_registry: object,
+    ) -> LaunchResult:
+        _ = (project_root, harness_registry)
+        captured["request"] = request
+        return LaunchResult(
+            command=(),
+            exit_code=0,
+            continue_ref="session-53",
+            continue_chat_id="c53",
+        )
+
+    with patch("meridian.cli.primary_launch.launch_primary", side_effect=fake_launch_primary):
+        run_primary_launch(
+            project_root=project_root,
+            continue_ref="p53",
+            fork_ref=None,
+            fork_fresh_ref=None,
+            model="",
+            harness=None,
+            agent=None,
+            work="",
+            task_dir=None,
+            yolo=False,
+            approval=None,
+            autocompact=None,
+            effort=None,
+            sandbox=None,
+            timeout=None,
+            dry_run=False,
+            passthrough=(),
+            skills=(),
+        )
+
+    spawn_request = build_primary_spawn_request(request=captured["request"])
+    assert captured["request"].passthrough_args == snapshot.extra_args
+    assert spawn_request.extra_args == snapshot.extra_args
+    assert spawn_request.extra_args != ("--custom",)
 
 
 def test_primary_continue_uses_legacy_bundle_resolution_without_snapshot(
