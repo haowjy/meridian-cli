@@ -145,6 +145,27 @@ def _primary_launch_policy_snapshot(
     return primary_row.launch_policy_snapshot
 
 
+def _launch_policy_snapshot_for_session(
+    runtime_root: Path,
+    session: session_store.SessionRecord,
+) -> LaunchPolicySnapshot | None:
+    """Load a persisted launch-policy snapshot for a tracked session reference."""
+
+    normalized_spawn_id = (session.spawn_id or "").strip()
+    if session.kind == "spawn" or normalized_spawn_id:
+        if not normalized_spawn_id:
+            return None
+        spawn_row = spawn_store.get_spawn(runtime_root, normalized_spawn_id)
+        if spawn_row is None:
+            return None
+        return spawn_row.launch_policy_snapshot
+
+    return _primary_launch_policy_snapshot(
+        runtime_root,
+        chat_id=session.chat_id,
+    )
+
+
 def _read_primary_pi_session_dir(runtime_root: Path, spawn_id: str) -> str | None:
     metadata = primary_meta.read_primary_metadata(runtime_root, spawn_id)
     if metadata is None:
@@ -301,9 +322,9 @@ def _resolve_chat_reference(
         ),
         source_claude_config_dir=_normalize_optional(session.claude_config_dir),
         source_pi_session_dir=source_pi_session_dir,
-        source_launch_policy_snapshot=_primary_launch_policy_snapshot(
+        source_launch_policy_snapshot=_launch_policy_snapshot_for_session(
             runtime_root,
-            chat_id=session.chat_id,
+            session,
         ),
         project_root=project_root,
     )
@@ -347,9 +368,9 @@ def _resolve_harness_session_reference(
         ),
         source_claude_config_dir=_normalize_optional(session.claude_config_dir),
         source_pi_session_dir=source_pi_session_dir,
-        source_launch_policy_snapshot=_primary_launch_policy_snapshot(
+        source_launch_policy_snapshot=_launch_policy_snapshot_for_session(
             runtime_root,
-            chat_id=session.chat_id,
+            session,
         ),
         project_root=project_root,
     )
