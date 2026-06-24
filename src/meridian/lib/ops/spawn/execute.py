@@ -674,7 +674,9 @@ def execute_spawn_blocking(
         session_log_available=_session_log_available_for_spawn(
             context.runtime_root,
             spawn_id_text,
-            harness_session_id=getattr(row, "harness_session_id", None) if row is not None else None,
+            harness_session_id=(
+                getattr(row, "harness_session_id", None) if row is not None else None
+            ),
         ),
     )
 

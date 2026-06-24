@@ -4,6 +4,15 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+- `--from` now inherits the **same work** as the source reference. Previously the inherited work was carried only as a non-binding hint and never materialized, so the new session did not join the source's work; both primary launch and `spawn` now materialize it (`ensure_explicit_work_item`) exactly like an explicit `--work`. Explicit `--work` still takes precedence.
+- `--from` with a filesystem path now fails fast with an actionable error (it expects a spawn/chat reference) instead of an opaque reference-resolution failure.
+- Primary `meridian --continue` is now idempotent: it persists a `LaunchPolicySnapshot` and replays it on resume (parity with `spawn --continue`), so the agent/model/skills/system-prompt no longer silently drift to the current config/catalog default. Snapshots are recovered for all accepted reference forms (primary chat, tracked spawn-session chat, harness session id), passthrough args are rejected on `--continue`, and `extra_args` are replayed from the snapshot. Sessions without a snapshot fall back to the previous behavior.
+- OpenCode spawn startup failures now surface an actionable diagnostic (captured stderr + an `XDG_DATA_HOME`/data-dir hint) instead of a bare error, and a spawn that fails before any session exists no longer prints a `meridian session log` transcript command that can never work.
+
+### Changed
+- Bump mars-agents to 0.10.0: inbound import fidelity, per-tool MCP tool bridge, and convention-based discovery for skills/agents (PR haowjy/mars-agents#119). Validated against meridian-cli discovery/sync/catalog surfaces.
+
 ## [0.3.17] - 2026-06-22
 
 ### Changed
