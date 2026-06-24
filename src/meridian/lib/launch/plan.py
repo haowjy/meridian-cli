@@ -99,6 +99,7 @@ def build_primary_spawn_request(
         session=normalized_session,
         goal=request.goal,
         work_id_hint=(request.work_id or "").strip() or None,
+        launch_policy_snapshot=request.launch_policy_snapshot,
     )
 
 

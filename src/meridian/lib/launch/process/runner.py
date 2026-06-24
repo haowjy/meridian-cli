@@ -1037,6 +1037,16 @@ def run_harness_process(
                 resolved_harness_session_id = (
                     runtime_context.binding.effective_harness_session_id or ""
                 )
+                persisted_launch_policy_snapshot = (
+                    runtime_context.resolved_request.launch_policy_snapshot
+                )
+                if persisted_launch_policy_snapshot is not None:
+                    # Persist resolved launch contract for idempotent primary --continue.
+                    spawn_store.update_spawn(
+                        runtime_root,
+                        primary_spawn_id,
+                        launch_policy_snapshot=persisted_launch_policy_snapshot,
+                    )
                 launch_child_cwd = runtime_context.binding.child_cwd
                 child_env = dict(runtime_context.binding.environment.final_env)
                 if managed.chat_id:
