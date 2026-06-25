@@ -404,6 +404,7 @@ def update_spawn(
     error: str | None = None,
     desc: str | None = None,
     work_id: str | None = None,
+    launch_policy_snapshot: LaunchPolicySnapshot | None = None,
 ) -> None:
     """Update v2 spawn metadata under the per-spawn state lock."""
 
@@ -442,6 +443,8 @@ def update_spawn(
             updates["desc"] = desc
         if work_id is not None:
             updates["work_id"] = work_id.strip() or None
+        if launch_policy_snapshot is not None:
+            updates["launch_policy_snapshot"] = launch_policy_snapshot
         return current.model_copy(update=updates)
 
     try:

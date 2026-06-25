@@ -20,6 +20,34 @@ from .query import (
 
 _SESSION_REF_RE = re.compile(r"^c\d+$")
 _SPAWN_REF_RE = re.compile(r"^p\d+$")
+_WINDOWS_DRIVE_PATH_RE = re.compile(r"^[A-Za-z]:[\\/]")
+
+
+def _is_filesystem_path_ref(value: str) -> bool:
+    """Return True when a ``--from`` value looks like a filesystem path, not a session ref."""
+
+    normalized = value.strip()
+    if not normalized or normalized.startswith("@"):
+        return False
+    if _SPAWN_REF_RE.fullmatch(normalized) or _SESSION_REF_RE.fullmatch(normalized):
+        return False
+    if normalized.startswith(("./", "../", "/", "~")):
+        return True
+    if "\\" in normalized:
+        return True
+    if "/" in normalized:
+        return True
+    return bool(_WINDOWS_DRIVE_PATH_RE.match(normalized))
+
+
+def _reject_filesystem_path_context_ref(value: str) -> None:
+    if not _is_filesystem_path_ref(value):
+        return
+    raise ValueError(
+        f"--from does not accept filesystem paths ({value!r}). "
+        "Use a spawn id (p123), chat id (c123), or harness session id. "
+        "To include file contents in the prompt, use --file/-f instead."
+    )
 
 
 class SpawnContextRef(BaseModel):
@@ -102,6 +130,8 @@ def resolve_context_ref(project_root: Path, ref: str) -> ContextRef:
     normalized = ref.strip()
     if not normalized:
         raise ValueError("context reference is required")
+
+    _reject_filesystem_path_context_ref(normalized)
 
     if normalized.startswith("@") or _SPAWN_REF_RE.fullmatch(normalized):
         spawn_id = resolve_spawn_reference(project_root, normalized)

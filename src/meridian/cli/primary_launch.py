@@ -10,6 +10,7 @@ from pydantic import BaseModel, ConfigDict
 from meridian.cli.argv_normalization import validate_fork_mode
 from meridian.cli.utils import missing_fork_session_error_with_discovery
 from meridian.lib.core.execution_policy import ResolvedExecutionPolicy
+from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
 from meridian.lib.core.util import FormatContext
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.launch import LaunchRequest, SessionMode, launch_primary
@@ -99,6 +100,7 @@ class _ResolvedSessionTarget(BaseModel):
     source_execution_cwd: str | None = None
     source_claude_config_dir: str | None = None
     source_pi_session_dir: str | None = None
+    source_launch_policy_snapshot: LaunchPolicySnapshot | None = None
     tracked: bool = False
     warning: str | None = None
 
@@ -131,6 +133,7 @@ def resolve_session_target(
         source_execution_cwd=resolved.source_execution_cwd,
         source_claude_config_dir=resolved.source_claude_config_dir,
         source_pi_session_dir=resolved.source_pi_session_dir,
+        source_launch_policy_snapshot=resolved.source_launch_policy_snapshot,
         tracked=resolved.tracked,
         warning=resolved.warning,
     )
@@ -231,6 +234,8 @@ def run_primary_launch(
     source_pi_session_dir: str | None = None
     continue_source_tracked = False
     continue_source_ref: str | None = None
+    continue_launch_policy_snapshot: LaunchPolicySnapshot | None = None
+    continue_passthrough_args: tuple[str, ...] = ()
     output_forked_from: str | None = None
     session_mode = SessionMode.FRESH
     explicit_harness = harness.strip() if harness is not None and harness.strip() else None
@@ -246,6 +251,8 @@ def run_primary_launch(
             raise ValueError("Cannot combine --continue with --agent.")
         if skills:
             raise ValueError("Cannot combine --continue with --skills.")
+        if passthrough:
+            raise ValueError("Cannot combine --continue with passthrough args (--).")
         resolved_continue = resolve_session_target(
             project_root=project_root, continue_ref=resume_target
         )
@@ -288,6 +295,10 @@ def run_primary_launch(
         source_pi_session_dir = resolved_continue.source_pi_session_dir
         continue_source_tracked = resolved_continue.tracked
         continue_source_ref = resume_target
+        # Replay persisted launch contract so agent/model/skills stay fixed on resume.
+        continue_launch_policy_snapshot = resolved_continue.source_launch_policy_snapshot
+        if continue_launch_policy_snapshot is not None:
+            continue_passthrough_args = continue_launch_policy_snapshot.extra_args
         session_mode = SessionMode.RESUME
     elif selected_fork_target is not None:
         resolved_fork = resolve_session_target(
@@ -360,7 +371,9 @@ def run_primary_launch(
             agent_opt_out=agent_opt_out,
             work_id=requested_work_id,
             task_dir=normalized_task_dir,
-            passthrough_args=passthrough,
+            passthrough_args=(
+                continue_passthrough_args if resume_target is not None else passthrough
+            ),
             session_mode=session_mode,
             pinned_context="",
             supplemental_prompt_documents=supplemental_prompt_documents,
@@ -379,6 +392,7 @@ def run_primary_launch(
                 autocompact=autocompact,
                 autocompact_pct=autocompact_pct,
             ),
+            launch_policy_snapshot=continue_launch_policy_snapshot,
             session=SessionRequest(
                 requested_harness_session_id=continue_harness_session_id,
                 continue_harness=continue_harness,

@@ -60,11 +60,24 @@ from .execute_runner import launch_prepared_spawn
 from .failure_policy import finalize_launch_failure_sync
 from .models import SpawnActionOutput, SpawnCreateInput
 from .pre_init import EXPECTED_PRE_INIT_EXCEPTIONS, PreInitFailure, run_pre_init_boundary
-from .query import read_report, read_spawn_row
+from .query import read_report, read_spawn_row, spawn_session_log_available
 from .task_dir import derive_inheritable_task_dir
 
 logger = structlog.get_logger(__name__)
 _BACKGROUND_SUBMIT_MESSAGE = "Background spawn submitted."
+
+
+def _session_log_available_for_spawn(
+    runtime_root: Path,
+    spawn_id: str,
+    *,
+    harness_session_id: str | None = None,
+) -> bool:
+    return spawn_session_log_available(
+        runtime_root,
+        spawn_id,
+        harness_session_id=harness_session_id,
+    )
 
 
 def _build_detached_popen_kwargs() -> dict[str, Any]:
@@ -245,6 +258,7 @@ def _reserve_then_prepare(
     context = _materialize_spawn_work_item(
         context=context,
         payload=payload,
+        request=request,
         project_root=project_paths.project_root,
     )
     _persist_execution_contract(context, preparation.execution_contract)
@@ -371,6 +385,7 @@ def execute_spawn_background(
             reference_anchor=request.reference_anchor or execution_cwd_str,
             task_cwd_source=request.task_cwd_source,
             task_cwd_work_item=request.task_cwd_work_item,
+            session_log_available=False,
         )
 
     stdout_path = log_dir / BACKGROUND_STDOUT_FILENAME
@@ -441,6 +456,7 @@ def execute_spawn_background(
             reference_anchor=request.reference_anchor or execution_cwd_str,
             task_cwd_source=request.task_cwd_source,
             task_cwd_work_item=request.task_cwd_work_item,
+            session_log_available=False,
         )
 
     _record_launch_boundary_observation(
@@ -572,6 +588,7 @@ def execute_spawn_blocking(
             str(exc),
         )
         logger.exception("Foreground spawn crashed.", spawn_id=spawn_id_text)
+        failure_row = read_spawn_row(project_paths.project_root, spawn_id_text)
         return SpawnActionOutput(
             command="spawn.create",
             status="failed",
@@ -591,6 +608,13 @@ def execute_spawn_blocking(
             reference_anchor=request.reference_anchor or initial_execution_cwd,
             task_cwd_source=request.task_cwd_source,
             task_cwd_work_item=request.task_cwd_work_item,
+            session_log_available=_session_log_available_for_spawn(
+                context.runtime_root,
+                spawn_id_text,
+                harness_session_id=getattr(failure_row, "harness_session_id", None)
+                if failure_row is not None
+                else None,
+            ),
         )
 
     duration = time.monotonic() - started
@@ -647,6 +671,13 @@ def execute_spawn_blocking(
         reference_anchor=request.reference_anchor or initial_execution_cwd,
         task_cwd_source=request.task_cwd_source,
         task_cwd_work_item=request.task_cwd_work_item,
+        session_log_available=_session_log_available_for_spawn(
+            context.runtime_root,
+            spawn_id_text,
+            harness_session_id=(
+                getattr(row, "harness_session_id", None) if row is not None else None
+            ),
+        ),
     )
 
 

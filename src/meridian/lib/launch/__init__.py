@@ -7,7 +7,6 @@ from typing import TYPE_CHECKING, Any
 
 from meridian.lib.launch.launch_types import summarize_composition_warnings
 from meridian.lib.launch.resolution import resolve_launch_inputs
-from meridian.lib.state import work_store
 from meridian.lib.state.paths import resolve_project_paths, resolve_work_scratch_dir_for_project
 
 if TYPE_CHECKING:
@@ -49,25 +48,41 @@ if TYPE_CHECKING:
     )
 
 
-def _resolve_work_id_for_launch(project_root: Path, request: LaunchRequest) -> str | None:
+def _explicit_work_id_for_launch(request: LaunchRequest) -> str | None:
+    return (request.work_id or "").strip() or None
+
+
+def _resolve_work_id_for_launch(
+    project_root: Path,
+    request: LaunchRequest,
+    *,
+    context_work_id: str | None,
+) -> str | None:
     """Resolve work item before entering the launch layer (policy, not mechanism)."""
 
-    from meridian.lib.ops.work_attachment import ensure_explicit_work_item
+    from meridian.lib.ops.work_attachment import materialize_launch_work_id
 
-    explicit_work_id = (request.work_id or "").strip() or None
-    if explicit_work_id is not None:
-        project_local_root = resolve_project_paths(project_root).root_dir
-        return ensure_explicit_work_item(project_local_root, explicit_work_id)
-    return None
+    project_local_root = resolve_project_paths(project_root).root_dir
+    return materialize_launch_work_id(
+        project_local_root,
+        explicit_work_id=_explicit_work_id_for_launch(request),
+        context_work_id=context_work_id,
+    )
 
 
-def _preview_work_id_for_launch(request: LaunchRequest) -> str | None:
-    """Normalize an explicit work item for dry-run preview without creating it."""
+def _preview_work_id_for_launch(
+    request: LaunchRequest,
+    *,
+    context_work_id: str | None,
+) -> str | None:
+    """Normalize explicit or inherited work for dry-run preview without creating it."""
 
-    explicit_work_id = (request.work_id or "").strip()
-    if not explicit_work_id:
-        return None
-    return work_store.slugify(explicit_work_id) or None
+    from meridian.lib.ops.work_attachment import preview_launch_work_id
+
+    return preview_launch_work_id(
+        explicit_work_id=_explicit_work_id_for_launch(request),
+        context_work_id=context_work_id,
+    )
 
 
 def launch_primary(
@@ -94,13 +109,13 @@ def launch_primary(
     from .types import LaunchResult
 
     resolved_project_root = resolve_project_root_resolution(project_root).project_root
-    preview_work_id = _preview_work_id_for_launch(request)
+    explicit_work_id = _explicit_work_id_for_launch(request)
     runtime_root_for_context = resolve_runtime_root_for_read(resolved_project_root)
     runtime_context = resolve_runtime_context(
         project_root=resolved_project_root,
         runtime_root=runtime_root_for_context,
     )
-    ambient_work_id = None if preview_work_id is not None else runtime_context.work_id
+    ambient_work_id = None if explicit_work_id is not None else runtime_context.work_id
     project_state_dir = resolve_project_paths(resolved_project_root).root_dir
     launch_resolution = resolve_launch_inputs(
         authority_root=resolved_project_root,
@@ -108,10 +123,14 @@ def launch_primary(
         context_from=request.context_from,
         reference_files=request.reference_files,
         explicit_task_dir=request.task_dir,
-        explicit_work_id=preview_work_id,
+        explicit_work_id=explicit_work_id,
         inherited_task_dir=runtime_context.inherited_task_dir,
         ambient_work_id=ambient_work_id,
         caller_cwd=Path.cwd(),
+    )
+    preview_work_id = _preview_work_id_for_launch(
+        request,
+        context_work_id=launch_resolution.context_work_id,
     )
 
     runtime = build_primary_launch_runtime(
@@ -130,9 +149,13 @@ def launch_primary(
             }
         )
     resolved_work_id = (
-        _preview_work_id_for_launch(request)
+        preview_work_id
         if request.dry_run
-        else _resolve_work_id_for_launch(resolved_project_root, request)
+        else _resolve_work_id_for_launch(
+            resolved_project_root,
+            request,
+            context_work_id=launch_resolution.context_work_id,
+        )
     )
 
     runtime = runtime.model_copy(update=launch_resolution.runtime_updates)

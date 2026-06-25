@@ -6,6 +6,7 @@ from enum import StrEnum
 from pydantic import BaseModel, ConfigDict, Field
 
 from meridian.lib.core.execution_policy import ResolvedExecutionPolicy
+from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
 from meridian.lib.launch.composition import PromptDocument
 from meridian.lib.launch.request import SessionRequest
 
@@ -61,6 +62,8 @@ class LaunchRequest(BaseModel):
     goal: str | None = None
     include_bootstrap_documents: bool = False
     dry_run: bool = False
+    # Replay persisted launch contract on primary --continue (idempotent resume).
+    launch_policy_snapshot: LaunchPolicySnapshot | None = None
     # Execution policy carrier (replaces flat effort/sandbox/approval/autocompact/etc.)
     execution_policy: ResolvedExecutionPolicy = Field(default_factory=ResolvedExecutionPolicy)
     session: SessionRequest = Field(default_factory=SessionRequest)

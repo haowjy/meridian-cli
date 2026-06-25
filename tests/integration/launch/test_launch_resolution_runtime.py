@@ -25,6 +25,7 @@ from meridian.lib.launch.request import LaunchCompositionSurface
 from meridian.lib.launch.types import LaunchRequest, build_primary_prompt
 from meridian.lib.ops.spawn import context_ref
 from meridian.lib.state import work_store
+from meridian.lib.state.paths import resolve_project_paths
 from tests.support.fixtures import write_agent
 from tests.support.launch import stub_bundle_request_and_resolve
 
@@ -357,6 +358,114 @@ def test_primary_launch_invalid_reference_does_not_create_explicit_work(
 
     assert not (project_root / ".meridian" / "work").exists()
     assert not (project_root / ".meridian" / "id").exists()
+
+
+def test_primary_launch_materializes_context_from_work(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    _write_minimal_mars_config(project_root)
+    project_state_dir = resolve_project_paths(project_root).root_dir
+    stub_bundle_request_and_resolve(
+        monkeypatch,
+        model="gpt-5.4-mini",
+        harness=HarnessId.CODEX,
+    )
+
+    def fake_resolve_context_ref(_root: Path, _ref: str) -> context_ref.SpawnContextRef:
+        return context_ref.SpawnContextRef(
+            spawn_id="p123",
+            status="succeeded",
+            agent="coder",
+            desc="prior task",
+            model="gpt-5.4-mini",
+            harness="codex",
+            work_id="inherited-work",
+        )
+
+    monkeypatch.setattr(context_ref, "resolve_context_ref", fake_resolve_context_ref)
+
+    from meridian.lib.launch.process import ProcessOutcome
+
+    def fake_run_harness_process(preview_context, harness_registry, *, prepared=None):
+        _ = (preview_context, harness_registry, prepared)
+        return ProcessOutcome(
+            command=(),
+            exit_code=0,
+            chat_id="c1",
+            primary_spawn_id="p1",
+            primary_started=0.0,
+            primary_started_epoch=0.0,
+            primary_started_local_iso=None,
+            resolved_harness_session_id="sess-1",
+        )
+
+    monkeypatch.setattr(
+        "meridian.lib.launch.process.run_harness_process",
+        fake_run_harness_process,
+    )
+
+    assert work_store.get_work_item(project_state_dir, "inherited-work") is None
+
+    result = launch_primary(
+        project_root=project_root,
+        request=PrimaryLaunchRequest(
+            model="gpt-5.4-mini",
+            harness=HarnessId.CODEX.value,
+            context_from=("p123",),
+            dry_run=False,
+        ),
+        harness_registry=get_default_harness_registry(),
+    )
+
+    assert result.exit_code == 0
+    assert work_store.get_work_item(project_state_dir, "inherited-work") is not None
+
+
+def test_primary_launch_explicit_work_precedence_over_context_from(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    _write_minimal_mars_config(project_root)
+    project_state_dir = resolve_project_paths(project_root).root_dir
+    stub_bundle_request_and_resolve(
+        monkeypatch,
+        model="gpt-5.4-mini",
+        harness=HarnessId.CODEX,
+    )
+
+    def fake_resolve_context_ref(_root: Path, _ref: str) -> context_ref.SpawnContextRef:
+        return context_ref.SpawnContextRef(
+            spawn_id="p123",
+            status="succeeded",
+            agent="coder",
+            desc="prior task",
+            model="gpt-5.4-mini",
+            harness="codex",
+            work_id="from-work",
+        )
+
+    monkeypatch.setattr(context_ref, "resolve_context_ref", fake_resolve_context_ref)
+
+    result = launch_primary(
+        project_root=project_root,
+        request=PrimaryLaunchRequest(
+            model="gpt-5.4-mini",
+            harness=HarnessId.CODEX.value,
+            work_id="explicit-work",
+            context_from=("p123",),
+            dry_run=True,
+        ),
+        harness_registry=get_default_harness_registry(),
+    )
+
+    assert result.exit_code == 0
+    assert work_store.get_work_item(project_state_dir, "explicit-work") is None
+    assert work_store.get_work_item(project_state_dir, "from-work") is None
 
 
 @pytest.mark.parametrize(

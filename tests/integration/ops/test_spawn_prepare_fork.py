@@ -132,6 +132,7 @@ def test_build_create_payload_inherits_work_from_context_from(
     )
 
     assert artifacts.request.task_cwd_work_item == "feature-x"
+    assert artifacts.request.inherited_context_work_id == "feature-x"
     assert artifacts.request.task_cwd_source == "ambient-work-authority-root"
 
 
@@ -164,8 +165,10 @@ def test_build_create_payload_work_precedence_over_context_from(
     )
 
     assert explicit.request.task_cwd_work_item == "explicit-work"
+    assert explicit.request.inherited_context_work_id is None
     assert explicit.request.task_cwd_source == "explicit-work-authority-root"
     assert ambient.request.task_cwd_work_item == "ambient-work"
+    assert ambient.request.inherited_context_work_id is None
     assert ambient.request.task_cwd_source == "ambient-work-authority-root"
 
 

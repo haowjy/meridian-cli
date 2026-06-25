@@ -189,6 +189,7 @@ class SpawnActionOutput(BaseModel):
     duration_secs: float | None = None
     background: bool = False
     forked_from: str | None = None
+    session_log_available: bool | None = None
 
     @computed_field
     @property
@@ -202,6 +203,12 @@ class SpawnActionOutput(BaseModel):
 
     def _transcript_command(self) -> str | None:
         if self.command != "spawn.create" or self.spawn_id is None or self.background:
+            return None
+        if self.session_log_available is False:
+            return None
+        if self.session_log_available is True:
+            return f"meridian session log {self.spawn_id}"
+        if self.status == "failed":
             return None
         return f"meridian session log {self.spawn_id}"
 
@@ -384,8 +391,10 @@ class SpawnActionOutput(BaseModel):
         elif self.status == "succeeded":
             lines.append("")
             lines.append("(no report)")
-        lines.append("")
-        lines.append(f"Transcript: meridian session log {self.spawn_id}")
+        transcript_command = self._transcript_command()
+        if transcript_command is not None:
+            lines.append("")
+            lines.append(f"Transcript: {transcript_command}")
         return "\n".join(lines)
 
     def _format_default_text(self) -> str:
@@ -809,6 +818,7 @@ class SpawnDetailOutput(BaseModel):
     last_attempt_exited_at: str | None = None
     last_attempt_exit_code: int | None = None
     session_config_dir: str | None = None
+    session_log_available: bool = False
 
     def _normalized_report_body(self) -> str | None:
         report_text = (self.report_body or "").strip()
@@ -851,7 +861,9 @@ class SpawnDetailOutput(BaseModel):
             return None
         return f"Report for {self.spawn_id}\n{report_text}"
 
-    def transcript_command(self) -> str:
+    def transcript_command(self) -> str | None:
+        if not self.session_log_available:
+            return None
         return f"meridian session log {self.spawn_id}"
 
     def _has_distinct_task_cwd(self) -> bool:
@@ -987,7 +999,9 @@ class SpawnDetailOutput(BaseModel):
             lines.append("")
         else:
             lines.append("")
-        lines.append(f"Transcript: {self.transcript_command()}")
+        transcript_command = self.transcript_command()
+        if transcript_command is not None:
+            lines.append(f"Transcript: {transcript_command}")
 
         return "\n".join(lines)
 
@@ -1017,7 +1031,9 @@ class SpawnDetailOutput(BaseModel):
             lines.append(report_text)
 
         lines.append("")
-        lines.append(f"Transcript: {self.transcript_command()}")
+        transcript_command = self.transcript_command()
+        if transcript_command is not None:
+            lines.append(f"Transcript: {transcript_command}")
         return "\n".join(lines)
 
     def _format_verbose_text(self, *, always_show_transcript: bool = False) -> str:
@@ -1119,8 +1135,7 @@ class SpawnDetailOutput(BaseModel):
             (
                 "Transcript",
                 self.transcript_command()
-                if always_show_transcript
-                or (self.harness_session_id is not None and self.harness_session_id.strip())
+                if always_show_transcript or self.session_log_available
                 else None,
             ),
         ]
@@ -1332,14 +1347,18 @@ class SpawnWaitMultiOutput(BaseModel):
             wire["exit_code"] = self.exit_code
         if len(self.spawns) == 1:
             single = self.spawns[0]
-            wire["transcript_command"] = single.transcript_command()
+            transcript_command = single.transcript_command()
+            if transcript_command is not None:
+                wire["transcript_command"] = transcript_command
             if single.report_body is not None:
                 wire["report_body"] = single.report_body
         # Sparse spawn details.
         spawn_wires: list[dict[str, object]] = []
         for spawn in self.spawns:
             spawn_wire = spawn.to_cli_wire()
-            spawn_wire["transcript_command"] = spawn.transcript_command()
+            transcript_command = spawn.transcript_command()
+            if transcript_command is not None:
+                spawn_wire["transcript_command"] = transcript_command
             spawn_wires.append(spawn_wire)
         wire["spawns"] = spawn_wires
         return wire

@@ -111,6 +111,8 @@ def test_execute_spawn_blocking_reads_report_and_does_not_print_running_preamble
         report_path = runtime_root / "spawns" / spawn_id / "report.md"
         report_path.parent.mkdir(parents=True, exist_ok=True)
         report_path.write_text("fake report body\n", encoding="utf-8")
+        history_path = runtime_root / "spawns" / spawn_id / "history.jsonl"
+        history_path.write_text('{"event_type":"session.idle"}\n', encoding="utf-8")
         spawn_store.finalize_spawn(
             runtime_root,
             spawn_id,
@@ -400,6 +402,58 @@ def test_execute_spawn_blocking_persists_unified_work_id_precedence(
     row = spawn_store.get_spawn(authority.runtime_root, result.spawn_id)
     assert row is not None
     assert row.work_id == "from-request"
+
+
+def test_reserve_then_prepare_materializes_context_from_work(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    hook = LifecycleEventHook()
+    sink = RecordingOutputSink()
+    runtime = _build_test_runtime(tmp_path, monkeypatch, sink=sink)
+    project_root = tmp_path / "repo"
+    project_state_dir = resolve_project_paths(project_root).root_dir
+    authority = resolve_runtime_authority_for_write(project_root)
+    assert authority.runtime_root is not None
+
+    _patch_lifecycle_service_with_hook(monkeypatch, hook)
+    work_store.create_work_item(project_state_dir, "source-work", "", None)
+
+    async def _fake_launch_prepared_spawn(**kwargs: object) -> int:
+        spawn = cast("Any", kwargs["spawn"])
+        spawn_store.finalize_spawn(
+            authority.runtime_root,
+            str(spawn.spawn_id),
+            "succeeded",
+            0,
+            origin="runner",
+        )
+        return 0
+
+    monkeypatch.setattr(execute_module, "launch_prepared_spawn", _fake_launch_prepared_spawn)
+
+    result = execute_module.execute_spawn_blocking(
+        payload=SpawnCreateInput(prompt="run", context_from=("p123",)),
+        request=SpawnRequest(
+            prompt="run",
+            model="gpt-5.4",
+            harness="codex",
+            agent="coder",
+            context_from=("p123",),
+            work_id_hint="source-work",
+            task_cwd_work_item="source-work",
+            inherited_context_work_id="source-work",
+        ),
+        runtime=runtime,
+        ctx=RuntimeContext(depth=1, spawn_id="p-parent"),
+    )
+
+    assert result.status == "succeeded"
+    assert result.spawn_id is not None
+    row = spawn_store.get_spawn(authority.runtime_root, result.spawn_id)
+    assert row is not None
+    assert row.work_id == "source-work"
+    assert work_store.get_work_item(project_state_dir, "source-work") is not None
 
 
 def test_execute_spawn_background_pre_init_failure_returns_failed_output(

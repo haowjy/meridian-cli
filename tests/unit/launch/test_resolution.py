@@ -40,6 +40,7 @@ def test_resolve_launch_inputs_inherits_context_work_as_last_resort(
     )
 
     assert resolution.effective_work_id == "from-work"
+    assert resolution.context_work_id == "from-work"
     assert resolution.directory_context.work_item == "from-work"
     assert resolution.directory_context.task_cwd_source == "ambient-work-authority-root"
     assert resolution.request_updates["work_id_hint"] == "from-work"
@@ -68,8 +69,10 @@ def test_resolve_launch_inputs_keeps_explicit_and_ambient_precedence(
     )
 
     assert explicit.effective_work_id == "explicit-work"
+    assert explicit.context_work_id is None
     assert explicit.directory_context.task_cwd_source == "explicit-work-authority-root"
     assert ambient.effective_work_id == "ambient-work"
+    assert ambient.context_work_id is None
     assert ambient.directory_context.task_cwd_source == "ambient-work-authority-root"
 
 
