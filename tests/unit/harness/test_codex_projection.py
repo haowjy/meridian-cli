@@ -8,11 +8,11 @@ import meridian.lib.harness.cursor as cursor_harness
 from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.adapter import SpawnParams
 from meridian.lib.harness.codex import CodexAdapter
-from meridian.lib.harness.projections.project_codex_subprocess import (
-    project_codex_spec_to_cli_args,
-)
 from meridian.lib.harness.projections.project_codex_streaming import (
     project_codex_spec_to_appserver_command,
+)
+from meridian.lib.harness.projections.project_codex_subprocess import (
+    project_codex_spec_to_cli_args,
 )
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.launch.composition_spawn import bind_spawn_launch_context
