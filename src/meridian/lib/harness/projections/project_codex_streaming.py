@@ -144,9 +144,11 @@ def project_codex_spec_to_appserver_command(
 
     command.extend(project_codex_mcp_config_flags(spec.mcp_tools))
 
-    # Codex ignores bundle tool grants; `--search` enables the native web_search tool.
+    # Codex ignores bundle tool grants. Enable the native Responses `web_search` tool via
+    # the config knob — the streaming transport runs `codex app-server`, which rejects the
+    # `exec`-only `--search` flag but accepts `-c tools.web_search=true`.
     if spec.web_search_enabled:
-        command.append("--search")
+        command.extend(("-c", "tools.web_search=true"))
 
     if spec.report_output_path is not None:
         logger.debug("Codex streaming ignores report_output_path; reports extracted from artifacts")

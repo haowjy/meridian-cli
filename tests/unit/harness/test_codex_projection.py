@@ -87,7 +87,7 @@ def test_codex_subprocess_projection_emits_search_when_web_search_enabled() -> N
         base_command=BASE_COMMAND_CODEX_SUBPROCESS,
     )
 
-    assert "--search" in command
+    assert "tools.web_search=true" in command
 
 
 def test_codex_subprocess_projection_omits_search_without_web_grant() -> None:
@@ -101,7 +101,7 @@ def test_codex_subprocess_projection_omits_search_without_web_grant() -> None:
         base_command=BASE_COMMAND_CODEX_SUBPROCESS,
     )
 
-    assert "--search" not in command
+    assert "tools.web_search=true" not in command
 
 
 def test_codex_streaming_projection_emits_search_when_web_search_enabled() -> None:
@@ -112,7 +112,7 @@ def test_codex_streaming_projection_emits_search_when_web_search_enabled() -> No
 
     command = project_codex_spec_to_appserver_command(spec, host="127.0.0.1", port=8765)
 
-    assert "--search" in command
+    assert "tools.web_search=true" in command
 
 
 def test_bind_codex_argv_includes_search_when_bundle_grants_web_search(
@@ -154,7 +154,7 @@ def test_bind_codex_argv_includes_search_when_bundle_grants_web_search(
     )
 
     assert bound.binding.spec.web_search_enabled is True
-    assert "--search" in bound.binding.argv
+    assert "tools.web_search=true" in bound.binding.argv
 
 
 def test_bind_codex_argv_omits_search_without_web_grant(
@@ -195,7 +195,7 @@ def test_bind_codex_argv_omits_search_without_web_grant(
     )
 
     assert bound.binding.spec.web_search_enabled is False
-    assert "--search" not in bound.binding.argv
+    assert "tools.web_search=true" not in bound.binding.argv
 
 
 def test_bind_sets_codex_report_output_path_from_spawn_log_dir(

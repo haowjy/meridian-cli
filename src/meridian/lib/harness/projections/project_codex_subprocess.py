@@ -148,9 +148,12 @@ def project_codex_spec_to_cli_args(
     command.extend(project_codex_permission_flags(spec.permission_resolver))
     command.extend(project_codex_mcp_config_flags(spec.mcp_tools))
 
-    # Codex ignores bundle tool grants; `--search` enables the native web_search tool.
+    # Codex ignores bundle tool grants. Enable the native Responses `web_search`
+    # tool via the config knob (`-c tools.web_search=true`) rather than the `exec`-only
+    # `--search` flag: the streaming transport launches `codex app-server`, which rejects
+    # `--search` but accepts `-c key=value`. One mechanism works for both transports.
     if spec.web_search_enabled:
-        command.append("--search")
+        command.extend(("-c", "tools.web_search=true"))
 
     if harness_session_id:
         command.extend(("resume", harness_session_id))
