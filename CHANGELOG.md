@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.3.18] - 2026-06-25
+
 ### Fixed
 - `--from` now inherits the **same work** as the source reference. Previously the inherited work was carried only as a non-binding hint and never materialized, so the new session did not join the source's work; both primary launch and `spawn` now materialize it (`ensure_explicit_work_item`) exactly like an explicit `--work`. Explicit `--work` still takes precedence.
 - `--from` with a filesystem path now fails fast with an actionable error (it expects a spawn/chat reference) instead of an opaque reference-resolution failure.
