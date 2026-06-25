@@ -69,11 +69,6 @@ class RuntimePaths(BaseModel):
 
         return self.chats_dir / c_id / "lifecycle.jsonl"
 
-    def chat_policy_path(self, c_id: str) -> Path:
-        """Return policy snapshot path for a chat."""
-
-        return self.chats_dir / c_id / "policy.json"
-
     def spawn_history_path(self, p_id: str) -> Path:
         """Return history.jsonl path for a spawn."""
 
