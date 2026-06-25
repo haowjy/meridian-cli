@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.3.20] - 2026-06-25
+
 ### Fixed
 - Codex agents that grant the `web` capability (e.g. `web-researcher`) now actually get web search: the codex harness enables codex's native Responses `web_search` tool via `-c tools.web_search=true` (works for both the `exec` and `app-server` transports; the `exec`-only `--search` flag crashed the streaming path). Previously the Mars `tools.allowed: [web_search]` grant was inert for codex — the agent loaded but could make no web-search calls.
 
