@@ -4,6 +4,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Removed
+- Removed dead `RuntimePaths.chat_policy_path()` (`chats/<id>/policy.json`) — never written or read; launch-policy snapshots persist in spawn state (`spawns/<pid>/state.json`).
+
 ## [0.3.18] - 2026-06-25
 
 ### Fixed
