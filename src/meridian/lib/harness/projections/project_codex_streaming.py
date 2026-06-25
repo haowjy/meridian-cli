@@ -118,6 +118,35 @@ def _consume_streaming_lifecycle_fields(spec: ResolvedLaunchSpec) -> None:
         )
 
 
+# Flags accepted by `codex app-server` (from `codex app-server --help`). Unlike
+# `codex exec`, app-server takes almost nothing as a bare flag — model/sandbox/etc.
+# must be `-c key=value` config overrides (or per-WS-request). Any other bare flag
+# (e.g. the exec-only `--search`) crashes the transport with "unexpected argument".
+# `APPSERVER_ACCEPTED_FLAGS` is the contract; the guard test asserts the builder
+# only ever emits flags from this set. Keep in sync with the codex CLI.
+APPSERVER_ACCEPTED_FLAGS: frozenset[str] = frozenset(
+    {
+        "-c",
+        "--config",
+        "--enable",
+        "--disable",
+        "--strict-config",
+        "--listen",
+        "--stdio",
+        "--analytics-default-enabled",
+        "--ws-auth",
+        "--ws-token-file",
+        "--ws-token-sha256",
+        "--ws-shared-secret-file",
+        "--ws-issuer",
+        "--ws-audience",
+        "--ws-max-clock-skew-seconds",
+        "-h",
+        "--help",
+    }
+)
+
+
 def project_codex_spec_to_appserver_command(
     spec: ResolvedLaunchSpec,
     *,
