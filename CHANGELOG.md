@@ -11,7 +11,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - OpenCode spawn startup failures now surface an actionable diagnostic (captured stderr + an `XDG_DATA_HOME`/data-dir hint) instead of a bare error, and a spawn that fails before any session exists no longer prints a `meridian session log` transcript command that can never work.
 
 ### Changed
-- Bump mars-agents to 0.10.1rc1: inbound import fidelity, per-tool MCP tool bridge, and convention-based discovery for skills/agents (PR haowjy/mars-agents#119). The `build launch-bundle` schema stayed at v3, so meridian-cli's bundle-consumption contract is unchanged; validated end-to-end against discovery/sync/catalog surfaces (real agent resolve: tools/skills/warnings parse cleanly; full test suite + pyright green).
+- Bump mars-agents to 0.10.1: inbound import fidelity, per-tool MCP tool bridge, and convention-based discovery for skills/agents (PR haowjy/mars-agents#119), plus OpenCode skills no longer emitting per-skill `model-invocable` dropped-field warning noise (haowjy/mars-agents#123). The `build launch-bundle` schema stayed at v3, so meridian-cli's bundle-consumption contract is unchanged; validated end-to-end against discovery/sync/catalog surfaces (real agent resolve: tools/skills/warnings parse cleanly; full test suite + pyright green).
 
 ## [0.3.17] - 2026-06-22
 
