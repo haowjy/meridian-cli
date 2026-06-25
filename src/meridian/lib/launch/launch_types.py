@@ -116,6 +116,9 @@ class ResolvedLaunchSpec(BaseModel):
     report_output_path: str | None = None
     base_instructions: str | None = None
     developer_instructions: str | None = None
+    # Codex requires `--search` to expose the native Responses `web_search` tool;
+    # Mars `tools.allowed: [web_search]` alone does not enable it.
+    web_search_enabled: bool = False
 
     # OpenCode only
     skills: tuple[str, ...] = ()

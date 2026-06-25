@@ -47,6 +47,7 @@ _DELEGATED_FIELDS: frozenset[str] = frozenset(
         "prompt_file_path",
         "reference_items",
         "report_output_path",
+        "web_search_enabled",
         "user_turn_content",
         "task_cwd",
     }
