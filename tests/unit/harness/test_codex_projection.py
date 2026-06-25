@@ -9,6 +9,7 @@ from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.adapter import SpawnParams
 from meridian.lib.harness.codex import CodexAdapter
 from meridian.lib.harness.projections.project_codex_streaming import (
+    APPSERVER_ACCEPTED_FLAGS,
     project_codex_spec_to_appserver_command,
 )
 from meridian.lib.harness.projections.project_codex_subprocess import (
@@ -113,6 +114,55 @@ def test_codex_streaming_projection_emits_search_when_web_search_enabled() -> No
     command = project_codex_spec_to_appserver_command(spec, host="127.0.0.1", port=8765)
 
     assert "tools.web_search=true" in command
+
+
+def test_appserver_command_emits_only_appserver_accepted_flags() -> None:
+    """Guard: `codex app-server` accepts a tiny flag set — everything else must be
+    `-c key=value` (or per-WS-request). A bare flag valid on `codex exec` but not
+    app-server (e.g. `--search`) crashes the streaming transport, and that's
+    invisible to dry-runs and unit-level projection tests. Build a fully-featured
+    app-server command and assert every dash-led token is app-server-accepted.
+    """
+    spec = CodexAdapter().resolve_launch_spec(
+        SpawnParams(prompt="research topic"),
+        TieredPermissionResolver(
+            config=PermissionConfig(sandbox="workspace-write", approval="never")
+        ),
+    ).model_copy(
+        update={
+            "web_search_enabled": True,
+            "mcp_tools": ("demo=run-demo",),
+            "projected_roots": (Path("/tmp/workspace-root"),),
+        }
+    )
+
+    command = project_codex_spec_to_appserver_command(spec, host="127.0.0.1", port=8765)
+
+    # Sanity: the features we set must actually have produced `-c` overrides, else
+    # the guard would pass vacuously.
+    assert "tools.web_search=true" in command
+    assert any(tok.startswith("sandbox_mode=") for tok in command)
+    assert any(tok.startswith("approval_policy=") for tok in command)
+    assert any(tok.startswith("mcp.servers.") for tok in command)
+    assert any(tok.startswith("sandbox_workspace_write.writable_roots=") for tok in command)
+
+    offenders: list[str] = []
+    skip_next = False
+    for token in command:
+        if skip_next:
+            # `-c`/`--config` payload is `key=value`, not a flag.
+            skip_next = False
+            continue
+        if token in ("-c", "--config"):
+            skip_next = True
+            continue
+        if token.startswith("-") and token not in APPSERVER_ACCEPTED_FLAGS:
+            offenders.append(token)
+
+    assert not offenders, (
+        f"codex app-server rejects these bare flags: {offenders}. "
+        "Pass them as `-c key=value` config overrides instead."
+    )
 
 
 def test_bind_codex_argv_includes_search_when_bundle_grants_web_search(
