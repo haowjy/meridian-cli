@@ -64,7 +64,7 @@ from meridian.lib.state.paths import (
 from meridian.lib.state.spawn.model import LaunchMode
 from meridian.lib.state.work_scope import resolve_bound_work_scope
 from meridian.lib.telemetry import emit_telemetry
-from meridian.lib.tools import ToolsField
+from meridian.lib.tools import ToolsField, tools_field_to_map
 from meridian.plugin_api.git import resolve_clone_path
 
 from .command import (
@@ -507,6 +507,15 @@ def _request_prompt_payload(prompt_payload: PreparedPromptPayload) -> RequestPro
     )
 
 
+def _codex_web_search_enabled(tools: ToolsField | None) -> bool:
+    """True when Mars launch-bundle explicitly granted codex ``web_search``."""
+
+    if tools is None:
+        return False
+    action = tools_field_to_map(tools).get("web_search")
+    return action in ("allow", "ask")
+
+
 def materialize_launch_artifacts(
     *,
     harness: SubprocessHarness,
@@ -534,6 +543,7 @@ def materialize_launch_artifacts(
     pi_harness_profile: PiHarnessProfileConfig | None = None,
     claude_native_agents_enabled: bool = False,
     claude_allow_builtin_agents: bool = False,
+    web_search_enabled: bool = False,
 ) -> MaterializedLaunchArtifacts:
     """Build shared run/spec/permission launch artifacts."""
 
@@ -593,6 +603,8 @@ def materialize_launch_artifacts(
         spec = spec.model_copy(
             update={"claude_native_agents_enabled": claude_native_agents_enabled}
         )
+    elif harness.id == HarnessId.CODEX and web_search_enabled:
+        spec = spec.model_copy(update={"web_search_enabled": True})
     return MaterializedLaunchArtifacts(
         run_params=run_params,
         permission_config=permission_config,
@@ -1502,9 +1514,13 @@ def prepare_launch_surface(
                 else request.mcp_tools
             ),
             "execution_policy": execution_policy,
+            # Prefer the bundle's authoritative resolved tool grant whenever it exists
+            # (covers spawned subagents, where profile/snapshot aren't set at bind but the
+            # resolved grant — e.g. codex `web_search` — must still propagate). Falls back
+            # to request.tools only when no resolved grant was produced.
             "tools": (
                 policies.resolved_tools
-                if (profile is not None or using_policy_snapshot)
+                if policies.resolved_tools is not None
                 else request.tools
             ),
             "session": request.session.model_copy(
@@ -1786,6 +1802,12 @@ def bind_launch_context(
         if harness.id == HarnessId.CLAUDE
         else False
     )
+    # resolved_request.tools carries the bundle's authoritative resolved grant, which
+    # includes the codex `web_search` token when the agent grants `web`. Codex needs
+    # `--search` to actually expose the native tool; the grant alone is inert.
+    codex_web_search_enabled = harness.id == HarnessId.CODEX and _codex_web_search_enabled(
+        resolved_request.tools
+    )
 
     if (
         runtime.composition_surface == LaunchCompositionSurface.SPAWN_PREPARE
@@ -1902,6 +1924,7 @@ def bind_launch_context(
         pi_harness_profile=pi_harness_profile,
         claude_native_agents_enabled=claude_native_agents_enabled,
         claude_allow_builtin_agents=claude_allow_builtin_agents,
+        web_search_enabled=codex_web_search_enabled,
     )
     run_params = materialized.run_params
 

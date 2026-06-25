@@ -43,6 +43,7 @@ _DELEGATED_FIELDS: frozenset[str] = frozenset(
         "base_instructions",
         "developer_instructions",
         "report_output_path",
+        "web_search_enabled",
         "user_turn_content",
         "skills",
         "reference_items",

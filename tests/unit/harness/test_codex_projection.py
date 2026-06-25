@@ -11,6 +11,9 @@ from meridian.lib.harness.codex import CodexAdapter
 from meridian.lib.harness.projections.project_codex_subprocess import (
     project_codex_spec_to_cli_args,
 )
+from meridian.lib.harness.projections.project_codex_streaming import (
+    project_codex_spec_to_appserver_command,
+)
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.launch.composition_spawn import bind_spawn_launch_context
 from meridian.lib.launch.constants import (
@@ -71,6 +74,128 @@ def test_codex_subprocess_projection_emits_o_flag_for_report_output_path(
 
     o_index = command.index("-o")
     assert command[o_index + 1] == report_path
+
+
+def test_codex_subprocess_projection_emits_search_when_web_search_enabled() -> None:
+    spec = CodexAdapter().resolve_launch_spec(
+        SpawnParams(prompt="research topic"),
+        TieredPermissionResolver(config=PermissionConfig()),
+    ).model_copy(update={"web_search_enabled": True})
+
+    command = project_codex_spec_to_cli_args(
+        spec,
+        base_command=BASE_COMMAND_CODEX_SUBPROCESS,
+    )
+
+    assert "--search" in command
+
+
+def test_codex_subprocess_projection_omits_search_without_web_grant() -> None:
+    spec = CodexAdapter().resolve_launch_spec(
+        SpawnParams(prompt="do work"),
+        TieredPermissionResolver(config=PermissionConfig()),
+    )
+
+    command = project_codex_spec_to_cli_args(
+        spec,
+        base_command=BASE_COMMAND_CODEX_SUBPROCESS,
+    )
+
+    assert "--search" not in command
+
+
+def test_codex_streaming_projection_emits_search_when_web_search_enabled() -> None:
+    spec = CodexAdapter().resolve_launch_spec(
+        SpawnParams(prompt="research topic"),
+        TieredPermissionResolver(config=PermissionConfig()),
+    ).model_copy(update={"web_search_enabled": True})
+
+    command = project_codex_spec_to_appserver_command(spec, host="127.0.0.1", port=8765)
+
+    assert "--search" in command
+
+
+def test_bind_codex_argv_includes_search_when_bundle_grants_web_search(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    (project_root / "mars.toml").write_text('[settings]\ntargets = [".claude"]\n', encoding="utf-8")
+    (project_root / ".meridian").mkdir()
+    stub_bundle_request_and_resolve(
+        monkeypatch,
+        model="gpt-5.4-mini",
+        harness=HarnessId.CODEX,
+        tools_allowed=("web_search",),
+    )
+    runtime = build_runtime(project_root)
+    artifacts = build_create_payload(
+        SpawnCreateInput(
+            prompt="research topic",
+            model="gpt-5.4-mini",
+            harness="codex",
+            project_root=str(project_root),
+        ),
+        runtime=runtime,
+    )
+    launch_runtime = build_spawn_mars_runtime(
+        runtime=runtime,
+        runtime_root=project_root / ".meridian",
+        control_root=project_root,
+        execution_cwd=project_root.as_posix(),
+        argv_intent=LaunchArgvIntent.REQUIRED,
+    )
+    bound = bind_spawn_launch_context(
+        prepared=artifacts.prepared,
+        bindings=RuntimeBindings(spawn_id="p-codex-web", dry_run=False),
+        runtime=launch_runtime,
+        harness_registry=get_default_harness_registry(),
+    )
+
+    assert bound.binding.spec.web_search_enabled is True
+    assert "--search" in bound.binding.argv
+
+
+def test_bind_codex_argv_omits_search_without_web_grant(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    (project_root / "mars.toml").write_text('[settings]\ntargets = [".claude"]\n', encoding="utf-8")
+    (project_root / ".meridian").mkdir()
+    stub_bundle_request_and_resolve(
+        monkeypatch,
+        model="gpt-5.4",
+        harness=HarnessId.CODEX,
+    )
+    runtime = build_runtime(project_root)
+    artifacts = build_create_payload(
+        SpawnCreateInput(
+            prompt="do work",
+            model="gpt-5.4",
+            harness="codex",
+            project_root=str(project_root),
+        ),
+        runtime=runtime,
+    )
+    launch_runtime = build_spawn_mars_runtime(
+        runtime=runtime,
+        runtime_root=project_root / ".meridian",
+        control_root=project_root,
+        execution_cwd=project_root.as_posix(),
+        argv_intent=LaunchArgvIntent.REQUIRED,
+    )
+    bound = bind_spawn_launch_context(
+        prepared=artifacts.prepared,
+        bindings=RuntimeBindings(spawn_id="p-codex-no-web", dry_run=False),
+        runtime=launch_runtime,
+        harness_registry=get_default_harness_registry(),
+    )
+
+    assert bound.binding.spec.web_search_enabled is False
+    assert "--search" not in bound.binding.argv
 
 
 def test_bind_sets_codex_report_output_path_from_spawn_log_dir(

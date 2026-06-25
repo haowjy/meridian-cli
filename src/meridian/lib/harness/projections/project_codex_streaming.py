@@ -26,6 +26,7 @@ _APP_SERVER_ARG_FIELDS: frozenset[str] = frozenset(
         "projected_roots",
         "report_output_path",
         "mcp_tools",
+        "web_search_enabled",
     }
 )
 
@@ -142,6 +143,10 @@ def project_codex_spec_to_appserver_command(
         command.extend(("-c", f"approval_policy={json.dumps(approval_policy)}"))
 
     command.extend(project_codex_mcp_config_flags(spec.mcp_tools))
+
+    # Codex ignores bundle tool grants; `--search` enables the native web_search tool.
+    if spec.web_search_enabled:
+        command.append("--search")
 
     if spec.report_output_path is not None:
         logger.debug("Codex streaming ignores report_output_path; reports extracted from artifacts")

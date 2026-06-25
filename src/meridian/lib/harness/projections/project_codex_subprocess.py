@@ -32,6 +32,7 @@ _PROJECTED_FIELDS: frozenset[str] = frozenset(
         "base_instructions",
         "developer_instructions",
         "user_turn_content",
+        "web_search_enabled",
     }
 )
 
@@ -146,6 +147,10 @@ def project_codex_spec_to_cli_args(
 
     command.extend(project_codex_permission_flags(spec.permission_resolver))
     command.extend(project_codex_mcp_config_flags(spec.mcp_tools))
+
+    # Codex ignores bundle tool grants; `--search` enables the native web_search tool.
+    if spec.web_search_enabled:
+        command.append("--search")
 
     if harness_session_id:
         command.extend(("resume", harness_session_id))

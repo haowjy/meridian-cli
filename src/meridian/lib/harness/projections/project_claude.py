@@ -54,6 +54,7 @@ _DELEGATED_FIELDS: frozenset[str] = frozenset(
         "load_all_pi_extensions",
         "reference_items",
         "report_output_path",
+        "web_search_enabled",
         "skills",
         "task_cwd",
     }
