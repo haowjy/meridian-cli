@@ -68,7 +68,7 @@ from meridian.cli.output import emit as emit_output
 from meridian.cli.startup.catalog import COMMAND_CATALOG
 from meridian.cli.startup.classify import classify_invocation
 from meridian.cli.startup.help import render_root_help
-from meridian.cli.startup.policy import StartupClass, StateRequirement
+from meridian.cli.startup.policy import RootSource, StartupClass, StateRequirement
 from meridian.cli.startup.policy import TelemetryMode as StartupTelemetryMode
 from meridian.cli.utils import parse_csv_list
 from meridian.lib.core.sink import OutputSink
@@ -1100,6 +1100,11 @@ def _main_impl(argv: Sequence[str] | None = None) -> None:
     help_request = _is_help_request(cleaned_args)
     bootstrap_skipped = help_request
     state_requirement = descriptor.state_requirement if descriptor is not None else None
+    # Commands whose target root comes from argv (for example `meridian init [path]`)
+    # must parse first, then let the handler bootstrap that target. Pre-bootstrap
+    # cannot require an already-established project for commands that create one.
+    if descriptor is not None and descriptor.root_source == RootSource.ARGV:
+        state_requirement = StateRequirement.NONE
     # bootstrap --add/--link must resolve root with init semantics in the handler
     # and reject invalid --dry-run combinations before any startup writes.
     if _bootstrap_setup_requested(cleaned_args):

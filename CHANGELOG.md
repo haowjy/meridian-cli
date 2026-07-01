@@ -7,6 +7,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Added
 - Added a guard test asserting the `codex app-server` (streaming) command only ever emits app-server-accepted flags — bare flags valid on `codex exec` but not app-server (like the `--search` regression) now fail CI instead of crashing a live streaming spawn.
 
+### Fixed
+- `meridian init` now works from an uninitialized directory in human mode instead of failing the pre-init project-root guard.
+
 ## [0.3.20] - 2026-06-25
 
 ### Fixed

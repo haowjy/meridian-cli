@@ -83,6 +83,45 @@ def test_spawn_list_fails_from_cwd_without_project_id(
 
 
 @pytest.mark.integration
+def test_init_succeeds_from_cwd_without_project_id(
+    cwd_without_project_id: Path,
+    meridian_home: Path,
+) -> None:
+    result = _run_meridian(
+        ["--mode", "human", "init"],
+        cwd=cwd_without_project_id,
+        meridian_home=meridian_home,
+    )
+
+    assert result.returncode == 0, result.stderr or result.stdout
+    assert NO_PROJECT_MSG not in (result.stdout + result.stderr)
+    assert (cwd_without_project_id / "meridian.toml").is_file()
+    assert (cwd_without_project_id / ".meridian" / "id").is_file()
+
+
+@pytest.mark.integration
+def test_init_succeeds_for_explicit_path_from_cwd_without_project_id(
+    cwd_without_project_id: Path,
+    meridian_home: Path,
+    tmp_path: Path,
+) -> None:
+    target = tmp_path / "target-project"
+
+    result = _run_meridian(
+        ["--mode", "human", "init", target.as_posix()],
+        cwd=cwd_without_project_id,
+        meridian_home=meridian_home,
+    )
+
+    assert result.returncode == 0, result.stderr or result.stdout
+    assert NO_PROJECT_MSG not in (result.stdout + result.stderr)
+    assert (target / "meridian.toml").is_file()
+    assert (target / ".meridian" / "id").is_file()
+    assert not (cwd_without_project_id / "meridian.toml").exists()
+    assert not (cwd_without_project_id / ".meridian").exists()
+
+
+@pytest.mark.integration
 def test_doctor_runs_from_cwd_with_project_id(
     cwd_with_project_id: Path,
     meridian_home: Path,
