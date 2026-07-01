@@ -6,6 +6,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 
 from meridian.cli.startup.policy import (
+    BootstrapPlan,
     RootSource,
     StartupClass,
     StateRequirement,
@@ -29,7 +30,7 @@ class CommandDescriptor:
     lazy_target: str
     summary: str
     startup_class: StartupClass
-    state_requirement: StateRequirement
+    bootstrap_plan: BootstrapPlan
     telemetry_mode: TelemetryMode
     default_output_mode: str
     redirect: RedirectPolicy | None = None
@@ -89,14 +90,19 @@ def _descriptor(
     redirect: RedirectPolicy | None = None,
     extension_ref: str | None = None,
     root_source: RootSource = RootSource.CWD,
+    auto_init_cwd: bool = False,
 ) -> CommandDescriptor:
     target = lazy_target or f"meridian.cli.main:{'.'.join(path) if path else 'root'}"
+    bootstrap_plan = BootstrapPlan(
+        StateRequirement.NONE if root_source == RootSource.ARGV else state_requirement,
+        auto_init_cwd=auto_init_cwd,
+    )
     return CommandDescriptor(
         command_path=path,
         lazy_target=target,
         summary=summary,
         startup_class=startup_class,
-        state_requirement=state_requirement,
+        bootstrap_plan=bootstrap_plan,
         telemetry_mode=telemetry_mode,
         default_output_mode=default_output_mode,
         redirect=redirect,
@@ -146,6 +152,7 @@ def _write_project(
     *,
     extension_ref: str | None = None,
     root_source: RootSource = RootSource.CWD,
+    auto_init_cwd: bool = False,
 ) -> CommandDescriptor:
     return _descriptor(
         path,
@@ -156,6 +163,7 @@ def _write_project(
         summary,
         extension_ref=extension_ref,
         root_source=root_source,
+        auto_init_cwd=auto_init_cwd,
     )
 
 
@@ -183,6 +191,7 @@ def _write_runtime(
     *,
     default_output_mode: str = "text",
     extension_ref: str | None = None,
+    auto_init_cwd: bool = False,
 ) -> CommandDescriptor:
     return _descriptor(
         path,
@@ -192,6 +201,7 @@ def _write_runtime(
         default_output_mode,
         summary,
         extension_ref=extension_ref,
+        auto_init_cwd=auto_init_cwd,
     )
 
 
@@ -203,6 +213,7 @@ _COMMAND_DESCRIPTORS: tuple[CommandDescriptor, ...] = (
         TelemetryMode.SEGMENT,
         "text",
         "Launch or resume the primary harness.",
+        auto_init_cwd=True,
     ),
     _descriptor(
         ("serve",),
@@ -269,12 +280,14 @@ _COMMAND_DESCRIPTORS: tuple[CommandDescriptor, ...] = (
         "Create a spawn via spawn default route.",
         default_output_mode="text",
         extension_ref="meridian.spawn.create",
+        auto_init_cwd=True,
     ),
     _write_runtime(
         ("spawn", "create"),
         "Create a spawn.",
         default_output_mode="text",
         extension_ref="meridian.spawn.create",
+        auto_init_cwd=True,
     ),
     _write_runtime(
         ("spawn", "continue"),
@@ -369,7 +382,12 @@ _COMMAND_DESCRIPTORS: tuple[CommandDescriptor, ...] = (
         extension_ref="meridian.work.path",
     ),
     _read_runtime(("work", "root"), "Show work root.", extension_ref="meridian.work.root"),
-    _write_runtime(("work", "start"), "Start work item.", extension_ref="meridian.work.start"),
+    _write_runtime(
+        ("work", "start"),
+        "Start work item.",
+        extension_ref="meridian.work.start",
+        auto_init_cwd=True,
+    ),
     _write_runtime(
         ("work", "switch"), "Switch current work.", extension_ref="meridian.work.switch"
     ),
@@ -388,8 +406,18 @@ _COMMAND_DESCRIPTORS: tuple[CommandDescriptor, ...] = (
         ("config", "show"), "Show resolved config.", extension_ref="meridian.config.show"
     ),
     _read_rootless(("config", "get"), "Get config value.", extension_ref="meridian.config.get"),
-    _write_project(("config", "init"), "Initialize config.", extension_ref="meridian.config.init"),
-    _write_project(("config", "set"), "Set config value.", extension_ref="meridian.config.set"),
+    _write_project(
+        ("config", "init"),
+        "Initialize config.",
+        extension_ref="meridian.config.init",
+        root_source=RootSource.ARGV,
+    ),
+    _write_project(
+        ("config", "set"),
+        "Set config value.",
+        extension_ref="meridian.config.set",
+        auto_init_cwd=True,
+    ),
     _write_project(
         ("config", "reset"), "Reset config value.", extension_ref="meridian.config.reset"
     ),
@@ -443,6 +471,7 @@ _COMMAND_DESCRIPTORS: tuple[CommandDescriptor, ...] = (
         ("workspace", "init"),
         "Initialize workspace config.",
         extension_ref="meridian.workspace.init",
+        auto_init_cwd=True,
     ),
     _read_rootless(("kg", "graph"), "Render knowledge graph."),
     _read_rootless(("kg", "check"), "Check knowledge graph links."),
@@ -467,6 +496,7 @@ _COMMAND_DESCRIPTORS: tuple[CommandDescriptor, ...] = (
         TelemetryMode.SEGMENT,
         "text",
         "Bootstrap an agent runtime.",
+        auto_init_cwd=True,
     ),
 )
 

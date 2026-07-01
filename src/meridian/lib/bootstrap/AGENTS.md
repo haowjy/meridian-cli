@@ -11,7 +11,8 @@ Four entry points, one per invocation class tier. Pick based on what the command
 | `READ_PROJECT` | `prepare_for_project_read()` |
 | `READ_RUNTIME` | `prepare_for_runtime_read()` |
 | `WRITE_PROJECT` | `prepare_for_project_write()` |
-| `WRITE_RUNTIME`, `PRIMARY_LAUNCH`, `SERVICE_RUNTIME` | `prepare_for_runtime_write()` |
+| `WRITE_RUNTIME`, `SERVICE_RUNTIME` | `prepare_for_runtime_write()` |
+| `PRIMARY_LAUNCH` | `prepare_for_runtime_write()`; `bootstrap_plan.auto_init_cwd` auto-inits config first |
 
 Each function returns a typed context object (`ProjectReadContext`, `RuntimeReadContext`, `ProjectWriteContext`, `RuntimeWriteContext`). These carry the prepared state downstream to command handlers without exposing bootstrap internals.
 
@@ -28,6 +29,7 @@ This is the central invariant. Violating it causes read-only command paths to si
 
 - **Don't instantiate `SpawnApplicationService` directly.** Use `build_spawn_application_service(runtime_write_ctx)`. It's the correct factory.
 - **Post-parse bootstrap exception**: commands with `root_source = RootSource.ARGV` (e.g. `meridian init [path]`) call `prepare_for_project_write(arg_derived_root)` themselves after argument parsing. All other commands receive a pre-prepared context.
+- **Auto-init exception**: descriptors whose `bootstrap_plan.auto_init_cwd` is true may create `meridian.toml` and project/runtime state from an unestablished literal cwd before continuing. Do not infer this from write-ness; existing-state mutations stay strict.
 - **Entrypoint carriers** (`SpawnEntryPoint`, `ExtensionEntryPoint`) carry `ApplicationContext + ApplicationServices` downstream. Use `build_spawn_entrypoint()`, `build_extension_entrypoint()` — don't assemble them manually.
 
 ## Context Hierarchy

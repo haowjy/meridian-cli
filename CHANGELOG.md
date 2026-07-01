@@ -9,6 +9,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 - `meridian init` now works from an uninitialized directory in human mode instead of failing the pre-init project-root guard.
+- Creation/bootstrap commands (`meridian`, `spawn create`, `work start`, `config init`/`set`, `workspace init`) now auto-initialize an uninitialized cwd instead of failing the project-root guard; read and existing-state commands remain strict.
 
 ## [0.3.20] - 2026-06-25
 

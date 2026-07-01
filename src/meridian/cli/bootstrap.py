@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from meridian.cli.mode import RenderMode, is_agent_render_mode, parse_render_mode
-from meridian.cli.startup.policy import StateRequirement
+from meridian.cli.startup.policy import BootstrapPlan, StateRequirement
 
 # Keep these startup parse tables in sync with `@app.default root(...)` in
 # `main.py` plus startup-only flags parsed before cyclopts (`--verbose` at root).
@@ -310,23 +310,10 @@ def is_root_help_request(argv: Sequence[str]) -> bool:
     return _first_positional_token(argv) is None
 
 
-def _state_requirement_for_argv(argv: Sequence[str]) -> StateRequirement | None:
-    """Return catalog startup state policy for argv without importing handlers."""
-
-    from meridian.cli.startup.catalog import COMMAND_CATALOG
-    from meridian.cli.startup.classify import classify_invocation
-
-    descriptor = classify_invocation(argv, COMMAND_CATALOG)
-    if descriptor is None:
-        return None
-    return descriptor.state_requirement
-
-
 def maybe_bootstrap_runtime_state(
-    argv: Sequence[str],
     *,
     render_mode: RenderMode,
-    state_requirement: StateRequirement | None = None,
+    plan: BootstrapPlan | None,
 ) -> Path | None:
     """Prepare startup state according to catalog policy and return project root.
 
@@ -337,19 +324,29 @@ def maybe_bootstrap_runtime_state(
     if is_agent_render_mode(render_mode):
         return None
 
-    requirement = state_requirement or _state_requirement_for_argv(argv)
+    requirement = plan.state_requirement if plan is not None else None
     if requirement in {None, StateRequirement.NONE}:
         return None
 
     from meridian.cli.utils import exit_no_established_project, resolve_cli_project_root
 
     resolution = resolve_cli_project_root()
-    if not resolution.established or resolution.project_root is None:
-        exit_no_established_project()
-    assert resolution.project_root is not None
     project_root = resolution.project_root
+    auto_initialized_cwd = False
+    if not resolution.established or project_root is None:
+        if plan is not None and plan.auto_init_cwd and resolution.source == "cwd":
+            project_root = Path.cwd().resolve()
+            auto_initialized_cwd = True
+        else:
+            exit_no_established_project()
+    assert project_root is not None
 
     try:
+        if auto_initialized_cwd:
+            from meridian.lib.ops.config import ConfigInitInput, config_init_sync
+
+            config_init_sync(ConfigInitInput(project_root=project_root.as_posix()))
+
         from meridian.lib.bootstrap.services import (
             prepare_for_project_read,
             prepare_for_project_write,

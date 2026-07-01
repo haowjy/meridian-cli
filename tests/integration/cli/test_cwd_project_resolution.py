@@ -33,6 +33,16 @@ def _run_meridian(
     )
 
 
+def _assert_project_initialized(project_root: Path) -> None:
+    assert (project_root / "meridian.toml").is_file()
+    assert (project_root / ".meridian" / "id").is_file()
+
+
+def _assert_project_not_initialized(project_root: Path) -> None:
+    assert not (project_root / "meridian.toml").exists()
+    assert not (project_root / ".meridian").exists()
+
+
 @pytest.fixture
 def meridian_home(tmp_path: Path) -> Path:
     home = tmp_path / "meridian-home"
@@ -80,6 +90,7 @@ def test_spawn_list_fails_from_cwd_without_project_id(
 
     assert result.returncode == 1
     assert NO_PROJECT_MSG in (result.stdout + result.stderr)
+    _assert_project_not_initialized(cwd_without_project_id)
 
 
 @pytest.mark.integration
@@ -95,8 +106,7 @@ def test_init_succeeds_from_cwd_without_project_id(
 
     assert result.returncode == 0, result.stderr or result.stdout
     assert NO_PROJECT_MSG not in (result.stdout + result.stderr)
-    assert (cwd_without_project_id / "meridian.toml").is_file()
-    assert (cwd_without_project_id / ".meridian" / "id").is_file()
+    _assert_project_initialized(cwd_without_project_id)
 
 
 @pytest.mark.integration
@@ -115,10 +125,107 @@ def test_init_succeeds_for_explicit_path_from_cwd_without_project_id(
 
     assert result.returncode == 0, result.stderr or result.stdout
     assert NO_PROJECT_MSG not in (result.stdout + result.stderr)
-    assert (target / "meridian.toml").is_file()
-    assert (target / ".meridian" / "id").is_file()
-    assert not (cwd_without_project_id / "meridian.toml").exists()
-    assert not (cwd_without_project_id / ".meridian").exists()
+    _assert_project_initialized(target)
+    _assert_project_not_initialized(cwd_without_project_id)
+
+
+@pytest.mark.integration
+def test_primary_launch_auto_initializes_cwd_without_project_id(
+    cwd_without_project_id: Path,
+    meridian_home: Path,
+) -> None:
+    result = _run_meridian(
+        [
+            "--mode",
+            "human",
+            "--harness",
+            "definitely-missing",
+            "--timeout",
+            "0.1",
+        ],
+        cwd=cwd_without_project_id,
+        meridian_home=meridian_home,
+    )
+
+    assert result.returncode == 1
+    assert NO_PROJECT_MSG not in (result.stdout + result.stderr)
+    _assert_project_initialized(cwd_without_project_id)
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    "args",
+    [
+        ["--mode", "human", "config", "init"],
+        ["--mode", "human", "config", "set", "defaults.max_depth", "7"],
+        ["--mode", "human", "work", "start", "first work"],
+        ["--mode", "human", "--harness", "definitely-missing", "spawn", "-p", "hi"],
+        ["--mode", "human", "workspace", "init"],
+    ],
+)
+def test_create_commands_auto_initialize_cwd_without_project_id(
+    args: list[str],
+    cwd_without_project_id: Path,
+    meridian_home: Path,
+) -> None:
+    result = _run_meridian(
+        args,
+        cwd=cwd_without_project_id,
+        meridian_home=meridian_home,
+    )
+
+    assert NO_PROJECT_MSG not in (result.stdout + result.stderr)
+    _assert_project_initialized(cwd_without_project_id)
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    "args",
+    [
+        ["--mode", "human", "spawn", "cancel", "p999"],
+        ["--mode", "human", "config", "reset", "defaults.max_depth"],
+        ["--mode", "human", "work", "list"],
+        ["--mode", "human", "streaming", "test"],
+        ["--mode", "human", "test", "harness"],
+    ],
+)
+def test_strict_commands_do_not_auto_initialize_cwd_without_project_id(
+    args: list[str],
+    cwd_without_project_id: Path,
+    meridian_home: Path,
+) -> None:
+    result = _run_meridian(
+        args,
+        cwd=cwd_without_project_id,
+        meridian_home=meridian_home,
+    )
+
+    assert result.returncode == 1
+    assert NO_PROJECT_MSG in (result.stdout + result.stderr)
+    _assert_project_not_initialized(cwd_without_project_id)
+
+
+@pytest.mark.integration
+def test_primary_launch_does_not_scaffold_config_for_established_cwd(
+    cwd_with_project_id: Path,
+    meridian_home: Path,
+) -> None:
+    result = _run_meridian(
+        [
+            "--mode",
+            "human",
+            "--harness",
+            "definitely-missing",
+            "--timeout",
+            "0.1",
+        ],
+        cwd=cwd_with_project_id,
+        meridian_home=meridian_home,
+    )
+
+    assert result.returncode == 1
+    assert NO_PROJECT_MSG not in (result.stdout + result.stderr)
+    assert not (cwd_with_project_id / "meridian.toml").exists()
 
 
 @pytest.mark.integration

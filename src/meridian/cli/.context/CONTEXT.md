@@ -6,7 +6,7 @@ Every CLI invocation is classified against `COMMAND_CATALOG` before any
 heavy module loads. `CommandDescriptor` carries all routing information:
 
 - `startup_class` — drives telemetry mode + primary-launch background repairs (TRIVIAL, READ_ROOTLESS, READ_PROJECT, READ_RUNTIME, WRITE_PROJECT, WRITE_RUNTIME, PRIMARY_LAUNCH, SERVICE_ROOTLESS, SERVICE_RUNTIME)
-- `state_requirement` — `none | project-read | runtime-read | project-write | runtime-write`; drives bootstrap preparation
+- `bootstrap_plan` — state preparation plus cwd auto-init policy
 - `telemetry_mode` — `none | stderr | segment`
 - `lazy_target` — import path string for the Cyclopts handler
 - `root_source` — `"cwd"` (default) or `"argv"` (post-parse root resolution)
@@ -25,7 +25,7 @@ never queries the extension registry for routing answers.
 | `READ_RUNTIME` | `spawn list`, `session log` | runtime-read | none |
 | `WRITE_PROJECT` | `config init` | project-write | optional |
 | `WRITE_RUNTIME` | `spawn create`, `work start` | runtime-write | segment |
-| `PRIMARY_LAUNCH` | bare `meridian` | runtime-write | segment |
+| `PRIMARY_LAUNCH` | bare `meridian` | runtime-write; `bootstrap_plan.auto_init_cwd` auto-inits config first | segment |
 | `SERVICE_ROOTLESS` | `serve` | none | stderr |
 | `SERVICE_RUNTIME` | `streaming serve` | runtime-write | segment |
 
@@ -79,6 +79,13 @@ A project is **established** when:
 
 CWD resolution where `cwd_has_project_id()` returns `False` is **not established** —
 project-required commands exit 1; rootless commands exit 0.
+
+Descriptors whose `bootstrap_plan.auto_init_cwd` is true are the write-path
+exception: when the literal cwd is not established, they treat cwd as a new
+project, scaffold `meridian.toml`, then run normal project/runtime bootstrap.
+This flag belongs on creation/bootstrap commands (`meridian`, `spawn create`,
+`work start`), not existing-state operations (`spawn cancel`, `work switch`,
+`config reset`) or read commands.
 
 ### Adapters
 

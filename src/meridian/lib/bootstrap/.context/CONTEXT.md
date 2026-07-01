@@ -24,7 +24,8 @@ Pick based on the `StartupClass` of the command (from `cli/startup/policy.py`):
 | `READ_PROJECT` | `prepare_for_project_read()` |
 | `READ_RUNTIME` | `prepare_for_runtime_read()` |
 | `WRITE_PROJECT` | `prepare_for_project_write()` |
-| `WRITE_RUNTIME`, `PRIMARY_LAUNCH`, `SERVICE_RUNTIME` | `prepare_for_runtime_write()` |
+| `WRITE_RUNTIME`, `SERVICE_RUNTIME` | `prepare_for_runtime_write()` |
+| `PRIMARY_LAUNCH` | `prepare_for_runtime_write()`; `bootstrap_plan.auto_init_cwd` auto-inits config first |
 | `SERVICE_ROOTLESS` | None (or minimal manual setup) |
 
 ## Context Hierarchy
