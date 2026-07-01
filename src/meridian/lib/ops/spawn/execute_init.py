@@ -19,7 +19,7 @@ from meridian.lib.core.sink import OutputSink
 from meridian.lib.core.spawn_lifecycle import SpawnReservation
 from meridian.lib.core.types import ModelId, SpawnId
 from meridian.lib.launch.plan import build_spawn_mars_runtime
-from meridian.lib.launch.request import SpawnRequest
+from meridian.lib.launch.request import SpawnRequest, is_exact_continue_session
 from meridian.lib.launch.types import PrimarySessionMetadata
 from meridian.lib.ops.work_attachment import ensure_explicit_work_item
 from meridian.lib.state import spawn_store
@@ -143,12 +143,16 @@ def resolve_spawn_work_id(
     ctx: RuntimeContext | None = None,
 ) -> str | None:
     resolved_context = runtime_context(ctx)
+    ambient_work_id = (
+        None
+        if is_exact_continue_session(request.session)
+        else (resolved_context.work_id or "").strip() or None
+    )
     return (
         (request.task_cwd_work_item or "").strip()
         or (request.work_id_hint or "").strip()
         or payload.work.strip()
-        or (resolved_context.work_id or "").strip()
-        or None
+        or ambient_work_id
     )
 
 

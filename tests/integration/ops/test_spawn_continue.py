@@ -6,6 +6,7 @@ SpawnForkInput tests live in test_spawn_fork.py and test_spawn_fork_harness.py.
 """
 
 from pathlib import Path
+from typing import Any, cast
 
 import pytest
 
@@ -14,9 +15,14 @@ from meridian.lib.core.domain import SkillContent
 from meridian.lib.core.execution_policy import ResolvedExecutionPolicy
 from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
 from meridian.lib.core.types import HarnessId
+from meridian.lib.launch.request import SpawnRequest
+from meridian.lib.ops.reference import ResolvedSessionReference
+from meridian.lib.ops.reference_recovery import RecoveryProvenance, RecoveryResult
+from meridian.lib.ops.spawn.execute_init import resolve_spawn_work_id
 from meridian.lib.ops.spawn.models import SpawnActionOutput, SpawnContinueInput, SpawnCreateInput
 from meridian.lib.state import spawn_store
 from meridian.lib.state.paths import resolve_project_runtime_root
+from meridian.lib.state.spawn.model import SpawnRecord
 from tests.support.fixtures import write_skill
 from tests.support.launch import stub_bundle_request_and_resolve
 
@@ -40,6 +46,8 @@ def _seed_spawn(
     harness_session_id: str | None,
     prompt: str = "seed prompt",
     goal: str | None = None,
+    work_id: str | None = "w-spawn",
+    task_cwd: str | None = None,
     execution_cwd: str | None = None,
     launch_policy_snapshot: LaunchPolicySnapshot | None = None,
 ) -> None:
@@ -61,8 +69,9 @@ def _seed_spawn(
         harness=harness,
         prompt=prompt,
         goal=goal,
-        work_id="w-spawn",
+        work_id=work_id,
         harness_session_id=harness_session_id,
+        task_cwd=task_cwd,
         execution_cwd=execution_cwd,
         launch_policy_snapshot=launch_policy_snapshot,
     )
@@ -120,10 +129,19 @@ def test_spawn_continue_rejects_model_override_before_legacy_fallback_resolution
     project_root.mkdir()
     runtime_root = _state_root(project_root)
     _seed_spawn(runtime_root, spawn_id="p26", harness_session_id="session-26")
+
+    def resolve_claude_harness(
+        _create_input: SpawnCreateInput,
+        *,
+        resolved_project_root: Path | None = None,
+    ) -> str:
+        _ = resolved_project_root
+        return "claude"
+
     monkeypatch.setattr(
         spawn_api,
         "_resolve_effective_fork_target_harness",
-        lambda _create_input, *, resolved_project_root=None: "claude",
+        resolve_claude_harness,
     )
 
     with pytest.raises(ValueError) as exc_info:
@@ -172,7 +190,7 @@ def test_spawn_continue_rejects_policy_flags_without_snapshot(
                 spawn_id="p25",
                 prompt="follow-up prompt",
                 project_root=project_root.as_posix(),
-                **updates,
+                **cast("Any", updates),
             )
         )
 
@@ -212,6 +230,8 @@ def test_spawn_continue_replays_source_launch_policy_snapshot(
 ) -> None:
     project_root = tmp_path / "repo"
     project_root.mkdir()
+    source_task_dir = tmp_path / "source-worktree"
+    source_task_dir.mkdir()
     runtime_root = _state_root(project_root)
     write_skill(project_root, "testing-principles")
     snapshot = LaunchPolicySnapshot(
@@ -237,11 +257,13 @@ def test_spawn_continue_replays_source_launch_policy_snapshot(
         runtime_root,
         spawn_id="p28",
         harness_session_id="session-28",
+        task_cwd=source_task_dir.as_posix(),
         launch_policy_snapshot=snapshot,
     )
     monkeypatch.setenv("MERIDIAN_MODEL", "gpt-5.4")
     monkeypatch.setenv("MERIDIAN_APPROVAL", "confirm")
     monkeypatch.setenv("MERIDIAN_SANDBOX", "read-only")
+    monkeypatch.setenv("MERIDIAN_AGENT", "other-agent")
 
     def fail_bundle_resolution(*_args: object, **_kwargs: object) -> object:
         raise AssertionError("snapshot replay should not re-resolve live policy")
@@ -251,20 +273,21 @@ def test_spawn_continue_replays_source_launch_policy_snapshot(
         fail_bundle_resolution,
     )
 
-    captured: dict[str, object] = {}
+    captured_payload: list[SpawnCreateInput] = []
+    captured_request: list[SpawnRequest] = []
 
     def fake_execute_spawn_blocking(
         *,
         payload: SpawnCreateInput,
-        request: object,
+        request: SpawnRequest,
         runtime: object,
         ctx: object = None,
         prepared: object = None,
         on_spawn_id: object = None,
     ) -> SpawnActionOutput:
         _ = (runtime, ctx, prepared, on_spawn_id)
-        captured["payload"] = payload
-        captured["request"] = request
+        captured_payload.append(payload)
+        captured_request.append(request)
         return SpawnActionOutput(command="spawn.create", status="running", spawn_id="p29")
 
     monkeypatch.setattr(spawn_api, "execute_spawn_blocking", fake_execute_spawn_blocking)
@@ -278,11 +301,16 @@ def test_spawn_continue_replays_source_launch_policy_snapshot(
     )
 
     assert result.command == "spawn.continue"
-    create_input = captured["request"]
-    continue_input = captured["payload"]
-    assert isinstance(continue_input, SpawnCreateInput)
+    create_input = captured_request[0]
+    continue_input = captured_payload[0]
+    assert continue_input.work == "w-spawn"
+    assert continue_input.task_dir == source_task_dir.as_posix()
     assert continue_input.launch_policy_snapshot == snapshot
     assert create_input.launch_policy_snapshot == snapshot
+    assert create_input.launch_policy_snapshot is not None
+    assert create_input.work_id_hint == "w-spawn"
+    assert create_input.task_cwd == source_task_dir.as_posix()
+    assert create_input.task_cwd_work_item == "w-spawn"
     assert create_input.model == snapshot.model
     assert create_input.harness == snapshot.harness
     assert create_input.agent == snapshot.agent
@@ -291,7 +319,69 @@ def test_spawn_continue_replays_source_launch_policy_snapshot(
     assert create_input.execution_policy.approval == snapshot.execution_policy.approval
     assert create_input.execution_policy.sandbox == snapshot.execution_policy.sandbox
     assert create_input.execution_policy.effort == snapshot.execution_policy.effort
+    assert create_input.tools == snapshot.tools
+    assert create_input.mcp_tools == snapshot.mcp_tools
     assert create_input.extra_args == snapshot.extra_args
+
+
+def test_spawn_continue_from_source_without_work_suppresses_ambient_work(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    source_task_dir = tmp_path / "source-worktree"
+    source_task_dir.mkdir()
+    ambient_work_dir = tmp_path / "ambient-work"
+    ambient_work_dir.mkdir()
+    runtime_root = _state_root(project_root)
+    _seed_spawn(
+        runtime_root,
+        spawn_id="p29",
+        harness_session_id="session-29",
+        work_id=None,
+        task_cwd=source_task_dir.as_posix(),
+        launch_policy_snapshot=LaunchPolicySnapshot(model="gpt-5.3-codex", harness="codex"),
+    )
+    monkeypatch.setenv("MERIDIAN_ACTIVE_WORK_ID", "ambient-work")
+    monkeypatch.setenv("MERIDIAN_ACTIVE_WORK_DIR", ambient_work_dir.as_posix())
+
+    captured_payload: list[SpawnCreateInput] = []
+    captured_request: list[SpawnRequest] = []
+
+    def fake_execute_spawn_blocking(
+        *,
+        payload: SpawnCreateInput,
+        request: SpawnRequest,
+        runtime: object,
+        ctx: object = None,
+        prepared: object = None,
+        on_spawn_id: object = None,
+    ) -> SpawnActionOutput:
+        _ = (runtime, ctx, prepared, on_spawn_id)
+        captured_payload.append(payload)
+        captured_request.append(request)
+        return SpawnActionOutput(command="spawn.create", status="running", spawn_id="p29c")
+
+    monkeypatch.setattr(spawn_api, "execute_spawn_blocking", fake_execute_spawn_blocking)
+
+    result = spawn_api.spawn_continue_sync(
+        SpawnContinueInput(
+            spawn_id="p29",
+            prompt="follow-up prompt",
+            project_root=project_root.as_posix(),
+        )
+    )
+
+    assert result.command == "spawn.continue"
+    continue_input = captured_payload[0]
+    create_request = captured_request[0]
+    assert continue_input.work == ""
+    assert continue_input.task_dir == source_task_dir.as_posix()
+    assert create_request.work_id_hint is None
+    assert create_request.task_cwd == source_task_dir.as_posix()
+    assert create_request.task_cwd_work_item is None
+    assert resolve_spawn_work_id(continue_input, create_request) is None
 
 
 def test_spawn_continue_uses_legacy_source_launch_policy_without_snapshot(
@@ -300,8 +390,15 @@ def test_spawn_continue_uses_legacy_source_launch_policy_without_snapshot(
 ) -> None:
     project_root = tmp_path / "repo"
     project_root.mkdir()
+    source_task_dir = tmp_path / "legacy-worktree"
+    source_task_dir.mkdir()
     runtime_root = _state_root(project_root)
-    _seed_spawn(runtime_root, spawn_id="p30", harness_session_id="session-30")
+    _seed_spawn(
+        runtime_root,
+        spawn_id="p30",
+        harness_session_id="session-30",
+        task_cwd=source_task_dir.as_posix(),
+    )
 
     monkeypatch.setenv("MERIDIAN_MODEL", "claude-sonnet-4-6")
     monkeypatch.setenv("MERIDIAN_APPROVAL", "confirm")
@@ -327,20 +424,21 @@ def test_spawn_continue_uses_legacy_source_launch_policy_without_snapshot(
         fail_live_harness_resolution,
     )
 
-    captured: dict[str, object] = {}
+    captured_payload: list[SpawnCreateInput] = []
+    captured_request: list[SpawnRequest] = []
 
     def fake_execute_spawn_blocking(
         *,
         payload: SpawnCreateInput,
-        request: object,
+        request: SpawnRequest,
         runtime: object,
         ctx: object = None,
         prepared: object = None,
         on_spawn_id: object = None,
     ) -> SpawnActionOutput:
         _ = (runtime, ctx, prepared, on_spawn_id)
-        captured["payload"] = payload
-        captured["request"] = request
+        captured_payload.append(payload)
+        captured_request.append(request)
         return SpawnActionOutput(command="spawn.create", status="running", spawn_id="p31")
 
     monkeypatch.setattr(spawn_api, "execute_spawn_blocking", fake_execute_spawn_blocking)
@@ -354,9 +452,85 @@ def test_spawn_continue_uses_legacy_source_launch_policy_without_snapshot(
     )
 
     assert result.command == "spawn.continue"
-    create_input = captured["request"]
-    continue_input = captured["payload"]
-    assert isinstance(continue_input, SpawnCreateInput)
+    create_input = captured_request[0]
+    continue_input = captured_payload[0]
+    assert continue_input.work == "w-spawn"
+    assert continue_input.task_dir == source_task_dir.as_posix()
     assert continue_input.launch_policy_snapshot is None
+    assert create_input.work_id_hint == "w-spawn"
+    assert create_input.task_cwd == source_task_dir.as_posix()
+    assert create_input.task_cwd_work_item == "w-spawn"
     assert create_input.harness == "codex"
     assert create_input.model == "gpt-5.3-codex"
+
+
+def test_continue_create_input_uses_authoritative_recovered_session_id(
+    tmp_path: Path,
+) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    runtime_root = _state_root(project_root)
+    _seed_spawn(runtime_root, spawn_id="p32", harness_session_id=None)
+    source_spawn = spawn_store.get_spawn(runtime_root, "p32")
+    assert isinstance(source_spawn, SpawnRecord)
+    resolved_reference = ResolvedSessionReference(
+        harness_session_id=None,
+        harness="codex",
+        source_chat_id="c-seed",
+        source_model="gpt-5.3-codex",
+        source_agent="coder",
+        source_skills=("skill-c",),
+        source_work_id="w-spawn",
+        tracked=True,
+        source_execution_cwd=tmp_path.as_posix(),
+        recovery=RecoveryResult(
+            harness_session_id="recovered-session",
+            provenance=RecoveryProvenance.SESSION_STORE,
+        ),
+    )
+
+    build_continue_create_input = vars(spawn_api)["_build_continue_create_input"]
+    create_input = build_continue_create_input(
+        payload=SpawnContinueInput(spawn_id="p32", prompt="follow-up prompt"),
+        source_spawn=source_spawn,
+        source_spawn_id="p32",
+        resolved_reference=resolved_reference,
+        source_harness="codex",
+        source_snapshot=None,
+    )
+
+    assert create_input.session.requested_harness_session_id == "recovered-session"
+
+
+def test_fork_create_input_uses_authoritative_recovered_session_id() -> None:
+    resolved_reference = ResolvedSessionReference(
+        harness_session_id=None,
+        harness="codex",
+        source_chat_id="c-seed",
+        source_model="gpt-5.3-codex",
+        source_agent="coder",
+        source_skills=("skill-c",),
+        source_work_id="w-spawn",
+        tracked=True,
+        source_execution_cwd="/tmp/source",
+        recovery=RecoveryResult(
+            harness_session_id="recovered-session",
+            provenance=RecoveryProvenance.SPAWN_ROW,
+        ),
+    )
+
+    build_fork_create_input = vars(spawn_api)["_build_fork_create_input"]
+    create_input = build_fork_create_input(
+        payload=spawn_api.SpawnForkInput(source_ref="p33", prompt="fork prompt"),
+        normalized_source_ref="p33",
+        resolved_reference=resolved_reference,
+        requested_model="",
+        requested_agent=None,
+        inherited_skills=resolved_reference.source_skills,
+        requested_work="",
+        requested_task_dir=None,
+        requested_goal=None,
+        harness="codex",
+    )
+
+    assert create_input.session.requested_harness_session_id == "recovered-session"

@@ -25,11 +25,13 @@ from meridian.lib.launch.composition import (
 from meridian.lib.launch.context import (
     PreparedLaunchSurface,
     build_context_prompt,
+    build_launch_context,
     build_launch_policy_snapshot,
     compile_prepared_policy_surface,
     prepare_launch_surface,
 )
-from meridian.lib.launch.policy_snapshot import _snapshot_profile
+from meridian.lib.launch.launch_types import TerminalSurfaceMode
+from meridian.lib.launch.policy_snapshot import _snapshot_profile, replay_launch_policy_snapshot
 from meridian.lib.launch.request import (
     LaunchArgvIntent,
     LaunchCompositionSurface,
@@ -171,6 +173,7 @@ def test_gate_present_returns_inventory_and_contract_blocks(tmp_path: Path) -> N
         "context-env",
     ]
     context = build_context_prompt(project_root=tmp_path, active_work_dir=None)
+    assert context is not None
     assert "# Meridian Context" in context
     assert "meridian context -h" in context
 
@@ -193,6 +196,7 @@ def test_gate_absent_returns_empty_blocks_but_context_still_builds(tmp_path: Pat
         "context-env",
     ]
     context = build_context_prompt(project_root=tmp_path, active_work_dir=None)
+    assert context is not None
     assert "# Meridian Context" in context
     assert "meridian context -h" in context
 
@@ -320,6 +324,65 @@ def test_snapshot_round_trip_preserves_all_profile_fields() -> None:
     # resolved form rather than the raw original.
     assert reconstructed.path == profile.path.expanduser().resolve()
     assert reconstructed.skills == ("loaded-skill",)
+
+
+def test_snapshot_replay_allows_empty_model_for_opencode_without_model_flag(
+    tmp_path: Path,
+) -> None:
+    def terminal_surface_mode(*, harness_id: HarnessId) -> TerminalSurfaceMode:
+        _ = harness_id
+        return TerminalSurfaceMode.PTY_MEDIATED
+
+    snapshot = LaunchPolicySnapshot(model="", harness="opencode")
+    harness_registry = get_default_harness_registry()
+
+    replayed = replay_launch_policy_snapshot(
+        snapshot=snapshot,
+        project_root=tmp_path,
+        harness_registry=harness_registry,
+        skills_readonly=True,
+        alias_catalog={},
+        resolve_terminal_surface_mode=terminal_surface_mode,
+    )
+
+    assert replayed.model == ""
+    assert replayed.routing.model is None
+    assert replayed.model_selection is None
+
+    ctx = build_launch_context(
+        spawn_id="empty-opencode-model",
+        request=_replay_request_from_snapshot(snapshot, prompt="continue task"),
+        runtime=LaunchRuntime(
+            argv_intent=LaunchArgvIntent.REQUIRED,
+            composition_surface=LaunchCompositionSurface.SPAWN_PREPARE,
+            runtime_root=(tmp_path / ".meridian").as_posix(),
+            project_paths_project_root=tmp_path.as_posix(),
+            project_paths_execution_cwd=tmp_path.as_posix(),
+        ),
+        harness_registry=harness_registry,
+        dry_run=True,
+    )
+
+    assert ctx.model_selection is None
+    assert ctx.binding.run_params.model is None
+    assert ctx.binding.spec.model is None
+    assert "--model" not in ctx.binding.argv
+
+
+def test_snapshot_replay_keeps_empty_harness_invalid(tmp_path: Path) -> None:
+    def terminal_surface_mode(*, harness_id: HarnessId) -> TerminalSurfaceMode:
+        _ = harness_id
+        return TerminalSurfaceMode.PTY_MEDIATED
+
+    with pytest.raises(ValueError, match="missing harness"):
+        replay_launch_policy_snapshot(
+            snapshot=LaunchPolicySnapshot(model="gpt-5.3-codex", harness=""),
+            project_root=tmp_path,
+            harness_registry=get_default_harness_registry(),
+            skills_readonly=True,
+            alias_catalog={},
+            resolve_terminal_surface_mode=terminal_surface_mode,
+        )
 
 
 def _empty_alias_map(_self: CatalogSession) -> dict[str, object]:
