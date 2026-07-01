@@ -68,7 +68,7 @@ from meridian.cli.output import emit as emit_output
 from meridian.cli.startup.catalog import COMMAND_CATALOG
 from meridian.cli.startup.classify import classify_invocation
 from meridian.cli.startup.help import render_root_help
-from meridian.cli.startup.policy import StartupClass, StateRequirement
+from meridian.cli.startup.policy import StartupClass
 from meridian.cli.startup.policy import TelemetryMode as StartupTelemetryMode
 from meridian.cli.utils import parse_csv_list
 from meridian.lib.core.sink import OutputSink
@@ -1099,11 +1099,11 @@ def _main_impl(argv: Sequence[str] | None = None) -> None:
     )
     help_request = _is_help_request(cleaned_args)
     bootstrap_skipped = help_request
-    state_requirement = descriptor.state_requirement if descriptor is not None else None
+    bootstrap_plan = descriptor.bootstrap_plan if descriptor is not None else None
     # bootstrap --add/--link must resolve root with init semantics in the handler
     # and reject invalid --dry-run combinations before any startup writes.
     if _bootstrap_setup_requested(cleaned_args):
-        state_requirement = StateRequirement.NONE
+        bootstrap_plan = None
     # Install options early so resolve_cli_project_root() sees project_root
     # from -C / --directory during bootstrap resolution.
     _pre_bootstrap_token = _GLOBAL_OPTIONS.set(options)
@@ -1113,9 +1113,8 @@ def _main_impl(argv: Sequence[str] | None = None) -> None:
     ):
         if not bootstrap_skipped:
             bootstrap_project_root = maybe_bootstrap_runtime_state(
-                cleaned_args,
                 render_mode=options.render_mode,
-                state_requirement=state_requirement,
+                plan=bootstrap_plan,
             )
     _GLOBAL_OPTIONS.reset(_pre_bootstrap_token)
     # Prefer bootstrap's resolved root; fall back to -C path if bootstrap was skipped/no-op.

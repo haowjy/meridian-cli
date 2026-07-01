@@ -1,5 +1,6 @@
 """Startup policy enums for command classification."""
 
+from dataclasses import dataclass
 from enum import StrEnum
 
 
@@ -41,3 +42,11 @@ class RootSource(StrEnum):
 
     CWD = "cwd"
     ARGV = "argv"
+
+
+@dataclass(frozen=True)
+class BootstrapPlan:
+    """Pre-dispatch filesystem bootstrap policy for a command."""
+
+    state_requirement: StateRequirement
+    auto_init_cwd: bool = False
