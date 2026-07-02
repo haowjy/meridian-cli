@@ -2002,11 +2002,11 @@ def _build_continue_create_input(
         goal=resolved_goal,
         desc=payload.desc,
         work=source_spawn.work_id or "",
-        task_dir=None,
+        task_dir=resolved_reference.source_execution_cwd,
         caller_cwd=payload.caller_cwd,
         launch_policy_snapshot=source_snapshot,
         session=SessionRequest(
-            requested_harness_session_id=resolved_reference.harness_session_id,
+            requested_harness_session_id=resolved_reference.authoritative_harness_session_id,
             continue_harness=resolved_reference.harness,
             continue_source_tracked=resolved_reference.tracked,
             continue_source_ref=source_spawn_id,
@@ -2089,7 +2089,7 @@ def _build_fork_create_input(
         caller_cwd=payload.caller_cwd,
         goal=requested_goal,
         session=SessionRequest(
-            requested_harness_session_id=resolved_reference.harness_session_id,
+            requested_harness_session_id=resolved_reference.authoritative_harness_session_id,
             continue_harness=resolved_reference.harness,
             continue_source_tracked=resolved_reference.tracked,
             continue_source_ref=normalized_source_ref,

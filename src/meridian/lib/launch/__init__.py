@@ -115,7 +115,12 @@ def launch_primary(
         project_root=resolved_project_root,
         runtime_root=runtime_root_for_context,
     )
-    ambient_work_id = None if explicit_work_id is not None else runtime_context.work_id
+    inherit_ambient_work = request.session_mode.value != "resume"
+    ambient_work_id = (
+        None
+        if explicit_work_id is not None or not inherit_ambient_work
+        else runtime_context.work_id
+    )
     project_state_dir = resolve_project_paths(resolved_project_root).root_dir
     launch_resolution = resolve_launch_inputs(
         authority_root=resolved_project_root,
@@ -166,7 +171,7 @@ def launch_primary(
             effective_work_id,
         )
         if effective_work_id is not None
-        else runtime_context.work_dir
+        else (runtime_context.work_dir if inherit_ambient_work else None)
     )
     request_updates = dict(launch_resolution.request_updates)
     request_updates["work_id_hint"] = effective_work_id

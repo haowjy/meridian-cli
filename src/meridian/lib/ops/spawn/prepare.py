@@ -20,6 +20,7 @@ from meridian.lib.launch.request import (
     RetryPolicy,
     SessionRequest,
     SpawnRequest,
+    is_exact_continue_session,
 )
 from meridian.lib.launch.resolution import resolve_launch_inputs
 from meridian.lib.launch.resolve import parse_duration_seconds
@@ -63,6 +64,10 @@ def _resolve_spawn_env(payload: SpawnCreateInput) -> dict[str, str]:
     if payload.launch_policy_snapshot is not None:
         return dict(payload.launch_policy_snapshot.env)
     return {}
+
+
+def _is_exact_continue(payload: SpawnCreateInput) -> bool:
+    return is_exact_continue_session(payload.session)
 
 
 @dataclass(frozen=True)
@@ -116,8 +121,13 @@ def build_create_payload(
 
         resolved_context = runtime_context(ctx)
         explicit_work_id = payload.work.strip() or None
-        ambient_work_id = (resolved_context.work_id or "").strip() or None
-        if ambient_work_id is None and resolved_context.chat_id:
+        inherit_ambient_work = not _is_exact_continue(payload)
+        ambient_work_id = (
+            (resolved_context.work_id or "").strip() or None
+            if inherit_ambient_work
+            else None
+        )
+        if inherit_ambient_work and ambient_work_id is None and resolved_context.chat_id:
             try:
                 ambient_work_id = (
                     get_session_active_work_id(runtime_root, resolved_context.chat_id) or ""

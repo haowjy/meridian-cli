@@ -128,14 +128,12 @@ def replay_launch_policy_snapshot(
 ) -> ReplayedLaunchPolicySnapshot:
     """Resolve policy fields directly from persisted snapshot data."""
 
-    snapshot_model = snapshot.model.strip()
     snapshot_harness = snapshot.harness.strip()
-    if not snapshot_model:
-        raise ValueError("Launch policy snapshot is missing model.")
     if not snapshot_harness:
         raise ValueError("Launch policy snapshot is missing harness.")
 
     harness_id = HarnessId(snapshot_harness)
+    snapshot_model = snapshot.model.strip()
     adapter = harness_registry.get_subprocess_harness(harness_id)
     snapshot_agent = (snapshot.agent or "").strip() or None
     snapshot_skill_names = (
@@ -157,15 +155,7 @@ def replay_launch_policy_snapshot(
         harness_id=harness_id,
         snapshot_skill_names=snapshot_skill_names,
     )
-    model_selection = ReplayedModelSelection(
-        requested_token=snapshot.model_selection_requested_token or snapshot_model,
-        selected_model_token=snapshot.model_selection_selected_token
-        or snapshot.model_selection_requested_token
-        or snapshot_model,
-        canonical_model_id=snapshot.model_selection_canonical_id or snapshot_model,
-        harness_provenance=snapshot.model_selection_harness_provenance or "snapshot",
-        harness_model_id=snapshot.model_selection_harness_model_id,
-    )
+    model_selection = _snapshot_model_selection(snapshot=snapshot, snapshot_model=snapshot_model)
     terminal_surface_mode = _resolve_snapshot_terminal_mode(
         snapshot=snapshot,
         harness_id=harness_id,
@@ -179,7 +169,7 @@ def replay_launch_policy_snapshot(
         adapter=adapter,
         resolved_skills=resolved_skills,
         routing=ResolvedLaunchRouting(
-            model=model_selection.selected_model_token,
+            model=(model_selection.selected_model_token if model_selection is not None else None),
             harness=harness_id,
             agent=snapshot_agent,
         ),
@@ -191,6 +181,25 @@ def replay_launch_policy_snapshot(
         model_selection=model_selection,
         fallback_chain=snapshot.fallback_chain,
         alias_catalog=alias_catalog,
+    )
+
+
+def _snapshot_model_selection(
+    *,
+    snapshot: LaunchPolicySnapshot,
+    snapshot_model: str,
+) -> ReplayedModelSelection | None:
+    if not snapshot_model:
+        return None
+
+    return ReplayedModelSelection(
+        requested_token=snapshot.model_selection_requested_token or snapshot_model,
+        selected_model_token=snapshot.model_selection_selected_token
+        or snapshot.model_selection_requested_token
+        or snapshot_model,
+        canonical_model_id=snapshot.model_selection_canonical_id or snapshot_model,
+        harness_provenance=snapshot.model_selection_harness_provenance or "snapshot",
+        harness_model_id=snapshot.model_selection_harness_model_id,
     )
 
 

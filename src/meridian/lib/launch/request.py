@@ -61,6 +61,22 @@ class SessionRequest(BaseModel):
     primary_session_mode: str | None = None
 
 
+def is_exact_continue_session(session: SessionRequest) -> bool:
+    """True when a session request represents exact continuation, not fork/fresh."""
+
+    primary_mode = ((session.primary_session_mode or "").strip().lower()) or None
+    return (
+        not session.continue_fork
+        and (
+            primary_mode == "resume"
+            or (
+                ((session.requested_harness_session_id or "").strip() != "")
+                and ((session.continue_source_ref or "").strip() != "")
+            )
+        )
+    )
+
+
 class RequestPromptPayload(BaseModel):
     """Typed managed prompt payload carried across persisted request boundaries."""
 

@@ -12,6 +12,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Fixed
 - `meridian init` now works from an uninitialized directory in human mode instead of failing the pre-init project-root guard.
 - Creation/bootstrap commands (`meridian`, `spawn create`, `work start`, `config init`/`set`, `workspace init`) now auto-initialize an uninitialized cwd instead of failing the project-root guard; read and existing-state commands remain strict.
+- `--continue` now preserves the recorded work/task directory and cache-shaping launch contract for both primary sessions and spawned subagents. Same-session continue rejects work/task-dir overrides, and launch-policy snapshot replay now treats an empty recorded model as the valid “no managed model override; let the harness default” contract instead of failing with “Launch policy snapshot is missing model.”
 
 ## [0.3.20] - 2026-06-25
 

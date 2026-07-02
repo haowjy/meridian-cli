@@ -125,6 +125,7 @@ from .request import (
     LaunchRuntime,
     RequestPromptPayload,
     SpawnRequest,
+    is_exact_continue_session,
 )
 from .resolve import (
     format_missing_skills_warning,
@@ -814,6 +815,10 @@ def normalize_explicit_work_id(
     return (runtime_work_id or "").strip() or (request_work_id_hint or "").strip() or None
 
 
+def _suppresses_ambient_work(request: SpawnRequest) -> bool:
+    return is_exact_continue_session(request.session)
+
+
 def _resolve_active_work_dir(
     *,
     project_paths: ProjectConfigPaths,
@@ -1397,6 +1402,12 @@ def prepare_launch_surface(
     project_paths = prepared_policy.project_paths
     active_work_dir = prepared_policy.active_work_dir
     policies = prepared_policy.resolved_policy
+    if request.agent_opt_out:
+        policies = replace(
+            policies,
+            profile=None,
+            routing=replace(policies.routing, agent=None),
+        )
     profile = policies.profile
     using_policy_snapshot = request.launch_policy_snapshot is not None
     has_profile = profile is not None
@@ -1455,6 +1466,14 @@ def prepare_launch_surface(
     warning = summarize_composition_warnings(composition_warnings)
 
     agent_metadata = dict(request.agent_metadata)
+    if request.agent_opt_out:
+        for metadata_key in (
+            "session_agent",
+            "session_agent_description",
+            "session_agent_profile_body",
+            "session_agent_path",
+        ):
+            agent_metadata.pop(metadata_key, None)
     model_selection_update: dict[str, str | None] = {
         "model_selection_requested_token": None,
         "model_selection_canonical_id": None,
@@ -1466,7 +1485,12 @@ def prepare_launch_surface(
             "model_selection_canonical_id": model_selection.canonical_model_id,
             "model_selection_harness_provenance": model_selection.harness_provenance,
         }
-    resolved_agent_name = profile.name if profile is not None else request.agent
+    if request.agent_opt_out:
+        resolved_agent_name = None
+    elif profile is not None:
+        resolved_agent_name = profile.name
+    else:
+        resolved_agent_name = policies.routing.agent or request.agent
     session_agent_path = resolve_profile_path(profile)
     if resolved_agent_name is not None:
         agent_metadata["session_agent"] = resolved_agent_name
@@ -1542,7 +1566,11 @@ def prepare_launch_surface(
     )
     resolved_request = resolved_request.model_copy(
         update={
-            "launch_policy_snapshot": request.launch_policy_snapshot
+            "launch_policy_snapshot": (
+                None
+                if request.agent_opt_out
+                else request.launch_policy_snapshot
+            )
             or build_launch_policy_snapshot(
                 resolved_request,
                 model_selection=model_selection,
@@ -1959,6 +1987,9 @@ def bind_launch_context(
         work_id=requested_work_id,
         increment_depth=not is_primary_launch,
     )
+    if requested_work_id is None and _suppresses_ambient_work(resolved_request):
+        child_context_env.pop("MERIDIAN_ACTIVE_WORK_ID", None)
+        child_context_env.pop("MERIDIAN_ACTIVE_WORK_DIR", None)
     effective_work_id = (
         child_context_env.get("MERIDIAN_ACTIVE_WORK_ID", "").strip() or requested_work_id
     )

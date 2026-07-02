@@ -207,6 +207,11 @@ def run_primary_launch(
         raise ValueError(
             "--continue does not accept --task-dir. Use --fork --task-dir to diverge."
         )
+    if resume_target is not None and work.strip():
+        raise ValueError(
+            "--continue does not accept --work. "
+            "Use --fork-fresh or a fresh session to change work context."
+        )
     resolved_approval = approval if approval is not None else ("never" if yolo else "default")
 
     fork_resolution = validate_fork_mode(
@@ -244,6 +249,7 @@ def run_primary_launch(
     requested_agent = agent_launch.agent
     agent_opt_out = agent_launch.agent_opt_out
     requested_work_id = work.strip() or None
+    launch_task_dir = normalized_task_dir
     if resume_target is not None:
         if model.strip():
             raise ValueError("Cannot combine --continue with --model.")
@@ -293,6 +299,9 @@ def run_primary_launch(
         source_execution_cwd = resolved_continue.source_execution_cwd
         source_claude_config_dir = resolved_continue.source_claude_config_dir
         source_pi_session_dir = resolved_continue.source_pi_session_dir
+        if requested_work_id is None:
+            requested_work_id = resolved_continue.source_work_id
+        launch_task_dir = resolved_continue.source_execution_cwd
         continue_source_tracked = resolved_continue.tracked
         continue_source_ref = resume_target
         # Replay persisted launch contract so agent/model/skills stay fixed on resume.
@@ -370,7 +379,7 @@ def run_primary_launch(
             agent=requested_agent,
             agent_opt_out=agent_opt_out,
             work_id=requested_work_id,
-            task_dir=normalized_task_dir,
+            task_dir=launch_task_dir,
             passthrough_args=(
                 continue_passthrough_args if resume_target is not None else passthrough
             ),

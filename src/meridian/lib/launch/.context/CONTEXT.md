@@ -53,6 +53,24 @@ These are the only things that differ between the preview bind and the real bind
 The report and `system-prompt.md` paths are derived in `bind_launch_context` from
 `spawn_id` (the spawn log dir), not carried here.
 
+### Exact Continue Replay
+
+Primary `meridian --continue` and subagent `spawn --continue` are exact
+continuations. They replay the source task directory, work attachment, session
+identity, and launch-policy snapshot rather than resolving from the caller's
+current CWD/config/env. The absence of source work is a preserved value: bind must
+suppress inherited `MERIDIAN_ACTIVE_WORK_*` when continuing a source with no work
+item, not attach the caller's ambient work.
+
+Launch-policy snapshot replay preserves cache- and prompt-shaping fields: model,
+harness, agent, skills, loaded skill content, execution policy, tool/MCP grants,
+inventory prompt, and passthrough args. A snapshot with `model=""` and a harness is
+valid; it means "omit Meridian's managed model override and let the harness
+default." Explicit `agent_opt_out` stays authoritative and must not reintroduce a
+configured default agent through routing fallback.
+
+KB: `decisions/launch.md#d-continue-replays-recorded-launch-contract-same-session-continue-is-not-live-policy-recomputation`.
+
 ### Four Driving Adapters
 
 Four paths call into this module — each converges on `build_launch_context()`:
@@ -457,6 +475,7 @@ exception paths. Do not replicate this logic inline.
 
 - `architecture/launch-system.md` — full adapter diagram, prepare/bind split detail, module map
 - `concepts/session-initiation.md` — four-mode initiation semantics, user-turn placement, identity lock, bare-flag inference
+- `decisions/launch.md#d-continue-replays-recorded-launch-contract-same-session-continue-is-not-live-policy-recomputation` — exact continue replay contract
 - `concepts/composition-pipeline.md` — user-turn composition and harness projection details for `TASK_CONTEXT`
 - `concepts/spawn-lifecycle.md` — spawn status machine, crash recovery, authority lattice
 - `architecture/spawn-finalization.md` — finalization policy, per-spawn lock, `CompleteSpawnOutcome`
