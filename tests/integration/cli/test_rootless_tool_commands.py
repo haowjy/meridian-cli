@@ -101,6 +101,20 @@ def test_qi_list_without_project(
 
 
 @pytest.mark.integration
+def test_qi_claude_md_fix_without_project(
+    no_project_workspace: Path,
+    meridian_home: Path,
+) -> None:
+    result = _run_meridian(
+        ["qi", "claude-md-fix", "--dry-run"],
+        cwd=no_project_workspace,
+        meridian_home=meridian_home,
+    )
+    _assert_rootless_success(result)
+    assert "[DRY-RUN] would create CLAUDE.md" in result.stdout
+
+
+@pytest.mark.integration
 def test_mermaid_check_without_project(
     no_project_workspace: Path,
     meridian_home: Path,

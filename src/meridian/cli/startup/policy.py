@@ -9,6 +9,7 @@ class StartupClass(StrEnum):
 
     TRIVIAL = "trivial"
     READ_ROOTLESS = "read_rootless"
+    WRITE_ROOTLESS = "write_rootless"
     READ_PROJECT = "read_project"
     READ_RUNTIME = "read_runtime"
     WRITE_PROJECT = "write_project"

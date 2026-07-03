@@ -27,6 +27,19 @@ _SKIP_DIRS: frozenset[str] = frozenset(
     }
 )
 
+_CLAUDE_MD_FIX_SKIP_DIRS: frozenset[str] = _SKIP_DIRS | frozenset(
+    {
+        ".claude",
+        ".codex",
+        ".cursor",
+        ".mars",
+        ".opencode",
+        ".pi",
+    }
+)
+
+_CLAUDE_MIRROR_CONTENT = "@AGENTS.md\n"
+
 
 class QiKnowledgePoint(BaseModel):
     """One discovered AGENTS.md or .context/CONTEXT.md location."""
@@ -194,6 +207,46 @@ class QiCheckOutput(BaseModel):
         return "\n".join(lines)
 
 
+class QiClaudeMdFixOutput(BaseModel):
+    """Output for ``meridian qi claude-md-fix``."""
+
+    model_config = ConfigDict(frozen=True)
+
+    root: str
+    dry_run: bool
+    created: tuple[str, ...]
+    skipped: tuple[str, ...]
+    conflicts: tuple[str, ...]
+    errors: tuple[str, ...] = ()
+
+    @property
+    def conflict_count(self) -> int:
+        return len(self.conflicts) + len(self.errors)
+
+    @property
+    def has_conflicts(self) -> bool:
+        return self.conflict_count > 0
+
+    def format_text(self, ctx: FormatContext | None = None) -> str:
+        _ = ctx
+        lines: list[str] = []
+        if self.dry_run:
+            lines.extend(f"[DRY-RUN] would create {path}" for path in self.created)
+        if self.conflicts:
+            lines.extend(
+                f"[WARN] {path} exists with different content - skipping"
+                for path in self.conflicts
+            )
+        if self.errors:
+            lines.extend(f"[ERROR] {error}" for error in self.errors)
+        action = "Would create" if self.dry_run else "Created"
+        lines.append(
+            f"{action} {len(self.created)}  skipped {len(self.skipped)}  "
+            f"conflicts {self.conflict_count}"
+        )
+        return "\n".join(lines)
+
+
 def qi_summary_sync(root: Path) -> QiSummaryOutput:
     """Synchronous handler for bare ``meridian qi``."""
     points = discover_knowledge_points(root)
@@ -354,15 +407,74 @@ def qi_check_sync(root: Path) -> QiCheckOutput:
     )
 
 
+def qi_claude_md_fix_sync(root: Path, *, dry_run: bool = False) -> QiClaudeMdFixOutput:
+    """Create ``CLAUDE.md`` mirrors for every ``AGENTS.md`` under *root*."""
+    import os
+
+    created: list[str] = []
+    skipped: list[str] = []
+    conflicts: list[str] = []
+    errors: list[str] = []
+
+    def _rel(p: Path) -> str:
+        try:
+            return p.relative_to(root).as_posix()
+        except ValueError:
+            return p.as_posix()
+
+    for dirpath_str, dirnames, filenames in os.walk(root):
+        dirnames[:] = [d for d in dirnames if d not in _CLAUDE_MD_FIX_SKIP_DIRS]
+
+        if "AGENTS.md" not in filenames:
+            continue
+
+        dirpath = Path(dirpath_str)
+        claude_md = dirpath / "CLAUDE.md"
+        rel = _rel(claude_md)
+
+        if claude_md.is_file():
+            try:
+                content = claude_md.read_text(encoding="utf-8").strip()
+            except OSError as exc:
+                errors.append(f"cannot read {rel}: {exc}")
+                continue
+            if content == "@AGENTS.md":
+                skipped.append(rel)
+                continue
+            conflicts.append(rel)
+            continue
+
+        created.append(rel)
+        if dry_run:
+            continue
+
+        try:
+            claude_md.write_text(_CLAUDE_MIRROR_CONTENT, encoding="utf-8")
+        except OSError as exc:
+            created.pop()
+            errors.append(f"cannot write {rel}: {exc}")
+
+    return QiClaudeMdFixOutput(
+        root=root.as_posix(),
+        dry_run=dry_run,
+        created=tuple(created),
+        skipped=tuple(skipped),
+        conflicts=tuple(conflicts),
+        errors=tuple(errors),
+    )
+
+
 __all__ = [
     "QiCheckFinding",
     "QiCheckOutput",
+    "QiClaudeMdFixOutput",
     "QiKnowledgePoint",
     "QiShowOutput",
     "QiSummaryOutput",
     "discover_knowledge_points",
     "find_boundary",
     "qi_check_sync",
+    "qi_claude_md_fix_sync",
     "qi_show_sync",
     "qi_summary_sync",
 ]

@@ -128,8 +128,37 @@ def cmd_qi_check(
     raise SystemExit(1 if result.has_errors else 0)
 
 
+@qi_app.command(name="claude-md-fix")
+def cmd_qi_claude_md_fix(
+    path: Annotated[
+        Path,
+        Parameter(help="Directory to repair (default: cwd)."),
+    ] = Path("."),
+    *,
+    dry_run: Annotated[
+        bool,
+        Parameter(name="--dry-run", help="Preview CLAUDE.md files that would be created."),
+    ] = False,
+) -> None:
+    """Create CLAUDE.md mirrors for AGENTS.md files."""
+    from meridian.lib.ops.qi import qi_claude_md_fix_sync
+
+    resolved = path.resolve()
+    if not resolved.exists():
+        print(f"Error: path not found: {path}", file=sys.stderr)
+        raise SystemExit(2)
+    if not resolved.is_dir():
+        print(f"Error: not a directory: {path}", file=sys.stderr)
+        raise SystemExit(2)
+
+    result = qi_claude_md_fix_sync(resolved, dry_run=dry_run)
+    print(result.format_text())
+    raise SystemExit(1 if result.has_conflicts else 0)
+
+
 __all__ = [
     "cmd_qi_check",
+    "cmd_qi_claude_md_fix",
     "cmd_qi_graph",
     "cmd_qi_list",
     "cmd_qi_root",

@@ -159,6 +159,8 @@ _GROUP_HELP: dict[str, GroupHelp] = {
     "qi": GroupHelp(
         summary='Inline knowledge navigation: AGENTS.md and .context/ locations.',
         long_help='Inline knowledge navigation: AGENTS.md and .context/ locations.',
+        agent_notes='Use `meridian qi graph <path>` before editing local knowledge files. Run `meridian qi claude-md-fix <path>` after adding or moving AGENTS.md files so Claude sees the same instructions via CLAUDE.md mirrors.',
+        agent_subcommands=('graph', 'list', 'check', 'claude-md-fix'),
     ),
 }
 
