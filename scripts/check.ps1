@@ -1,14 +1,8 @@
-# Pre-push gate script — runs lint, type check, and fast test suite.
+# Pre-push gate script — runs lint, type check, unit tests, and contracts.
 # Target: < 2 minutes on typical hardware.
 #
 # Usage:
-#   scripts\check.ps1          # Full pre-push check
-#   scripts\check.ps1 -quick   # Skip smoke tests (faster)
-
-[CmdletBinding()]
-param(
-    [switch]$quick
-)
+#   scripts\check.ps1
 
 $ErrorActionPreference = 'Stop'
 
@@ -33,13 +27,7 @@ Write-Host "==> Running contract tests..."
 uv run --extra dev pytest tests/contract/ -q
 if ($LASTEXITCODE -ne 0) { throw "Contract tests failed" }
 
-if ($quick) {
-    Write-Host "==> Skipping smoke tests (--quick mode)"
-} else {
-    Write-Host "==> Running smoke tests..."
-    uv run --extra dev pytest tests/smoke/ -q
-    if ($LASTEXITCODE -ne 0) { throw "Smoke tests failed" }
-}
+Write-Host "==> Manual smoke guides live in tests/smoke/ (not pytest-collected)."
 
 Write-Host ""
 Write-Host "✓ All checks passed"

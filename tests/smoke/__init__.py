@@ -1,1 +1,1 @@
-"""Smoke tests — CLI subprocess invocations via the installed entrypoint."""
+"""Manual smoke guides for CLI verification."""

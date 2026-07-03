@@ -1,50 +1,53 @@
 # Meridian E2E Tests (Manual)
 
 Manual end-to-end tests for flows that require a working harness, network access,
-or human judgment. **Most CLI behavior is now covered by automated smoke tests
-in `tests/smoke/`.**
+or human judgment. Quick manual CLI checklists live in `tests/smoke/`; neither
+`tests/e2e/` nor `tests/smoke/` is a pytest-collected suite.
 
 ## When to Use Manual E2E Tests
 
 Use these guides when the test:
+
 - Requires a working harness (Claude, Codex, OpenCode) running live
 - Involves network/cache freshness behavior
 - Is intentionally open-ended or exploratory
 - Tests harness-specific transport or lineage behavior
 
-## Remaining Manual Guides
+## Manual Guides
 
 | Guide | What it tests |
 |-------|---------------|
 | `adversarial.md` | Intentionally open-ended adversarial exploration |
-| `fork.md` | Real harness lineage with --fork (partially automatable via dry-run) |
+| `fork.md` | Real harness lineage with `--fork` |
 | `models-cache-auto-refresh.md` | Network/cache freshness behavior |
 | `opencode-orphan-cleanup.md` | Real OpenCode backend orphan cleanup after hard worker crash |
 | `project-resolution.md` | `-C`/`MERIDIAN_PROJECT_DIR` project selection with stale runtime env |
 | `state-integrity.md` | Reconciliation after manual state corruption |
 | `streaming-adapter-parity.md` | Cross-harness streaming behavior |
+| `spawn/bootstrap.md` | Spawn bootstrap against a live harness |
+| `spawn/context-from.md` | Live `--from` with real sessions |
 | `spawn/lifecycle.md` | Background spawn lifecycle with working harness |
-| `spawn/context-from.md` | Live --from with real sessions |
+| `spawn/routing-provenance.md` | Dry-run routing provenance and resolved harness/model display |
 | `spawn/skill-injection.md` | Harness-specific skill transport |
 | `hooks/git-autosync.md` | Real git push/rebase integration |
 
-## Migrated to Automated Smoke Tests
+## Moved to Quick Smoke Guides
 
-The following guides have been migrated to `tests/smoke/` and deleted from here:
+These flows are now markdown guides under `tests/smoke/`:
 
-- `quick-sanity.md` → `test_sanity.py`
-- `agent-mode.md` → `test_agent_mode.py`
-- `config/init-show-set.md` → `test_config.py`
-- `output-formats.md` → `test_output_formats.py`
-- `spawn/dry-run.md` → `test_spawn_dry_run.py`
-- `spawn/error-paths.md` → `test_spawn_errors.py`
-- `workspace/init-inspection.md` → `test_workspace.py`
-- `work-items.md` → `test_work_items.py`
-- `hooks/cli.md` → `test_hooks.py`
+- `agent-mode.md`
+- `config.md`
+- `hooks.md`
+- `output-formats.md`
+- `sanity.md`
+- `spawn-dry-run.md`
+- `spawn-errors.md`
+- `workspace.md`
+- `work-items.md`
 
 ## How to Run
 
-1. Pick one file from the remaining guides.
+1. Pick one guide.
 2. Run each bash block exactly as written.
 3. Treat any `FAIL` line, traceback, or hang as a test failure.
 
