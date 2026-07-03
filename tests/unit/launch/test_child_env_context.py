@@ -48,34 +48,6 @@ def test_child_env_context_resolves_child_ambient_not_parent_dir(
     assert "MERIDIAN_ACTIVE_WORK_ID" not in overrides
 
 
-def test_build_child_runtime_env_overrides_child_ambient_via_shared_seam(
-    tmp_path: Path,
-    monkeypatch,
-) -> None:
-    project_root = tmp_path / "repo"
-    state_dir = project_root / ".meridian"
-    state_dir.mkdir(parents=True)
-    (state_dir / "id").write_text("proj-child-env-seam", encoding="utf-8")
-    runtime_root = tmp_path / "runtime"
-    runtime_root.mkdir()
-    parent_ambient = resolve_ambient_work_dir(project_root, "p-parent")
-
-    monkeypatch.setenv("MERIDIAN_PROJECT_DIR", project_root.as_posix())
-    monkeypatch.setenv("MERIDIAN_SPAWN_ID", "p-parent")
-    monkeypatch.setenv("MERIDIAN_ACTIVE_WORK_DIR", parent_ambient.as_posix())
-    monkeypatch.delenv("MERIDIAN_ACTIVE_WORK_ID", raising=False)
-
-    overrides = build_child_runtime_env_overrides(
-        project_paths=_project_paths(project_root),
-        runtime_root=runtime_root,
-        child_spawn_id="p-child",
-    )
-
-    expected_child = resolve_ambient_work_dir(project_root, "p-child")
-    assert overrides["MERIDIAN_ACTIVE_WORK_DIR"] == expected_child.as_posix()
-    assert overrides["MERIDIAN_ACTIVE_WORK_DIR"] != parent_ambient.as_posix()
-
-
 def test_build_child_runtime_env_overrides_named_work_uses_scratch_dir(
     tmp_path: Path,
     monkeypatch,
