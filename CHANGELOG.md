@@ -4,6 +4,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+- Bump mars-agents to 0.10.2, which rewrites foreign MCP tokens in map-form tool declarations during lift/import.
+
 ### Fixed
 - Exact continue replay now centralizes launch-contract replay for primary and spawn continuations, uses in-memory `None` for harness-default model replay, rejects agent opt-out as a launch-identity mutation, and suppresses ambient work/task inheritance when the source had none.
 
