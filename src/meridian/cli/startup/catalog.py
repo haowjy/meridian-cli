@@ -146,6 +146,26 @@ def _read_rootless(
     )
 
 
+def _write_rootless(
+    path: tuple[str, ...],
+    summary: str,
+    *,
+    default_output_mode: str = "text",
+    extension_ref: str | None = None,
+) -> CommandDescriptor:
+    """Path- or user-level write commands that do not require a Meridian project."""
+
+    return _descriptor(
+        path,
+        StartupClass.WRITE_ROOTLESS,
+        StateRequirement.NONE,
+        TelemetryMode.NONE,
+        default_output_mode,
+        summary,
+        extension_ref=extension_ref,
+    )
+
+
 def _write_project(
     path: tuple[str, ...],
     summary: str,
@@ -479,6 +499,7 @@ _COMMAND_DESCRIPTORS: tuple[CommandDescriptor, ...] = (
     _read_rootless(("qi",), "Show inline knowledge for current path."),
     _read_rootless(("qi", "list"), "List all inline knowledge locations."),
     _read_rootless(("qi", "check"), "Check inline knowledge health."),
+    _write_rootless(("qi", "claude-md-fix"), "Create CLAUDE.md mirrors for AGENTS.md files."),
     _write_runtime(("streaming", "test"), "Run streaming test."),
     _descriptor(
         ("streaming", "serve"),

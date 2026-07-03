@@ -7,7 +7,12 @@ from pathlib import Path
 
 import pytest
 
-from meridian.lib.ops.qi import discover_knowledge_points, qi_check_sync, qi_show_sync
+from meridian.lib.ops.qi import (
+    discover_knowledge_points,
+    qi_check_sync,
+    qi_claude_md_fix_sync,
+    qi_show_sync,
+)
 
 
 def _make_agents_md(directory: Path, *, body: str = "# Agents\n") -> Path:
@@ -123,3 +128,47 @@ def test_unreadable_file_produces_error_finding(tmp_path: Path) -> None:
 
     findings = [finding for finding in result.findings if finding.category == "unreadable"]
     assert findings and findings[0].severity == "error"
+
+
+def test_claude_md_fix_creates_mirrors_for_agents_md(tmp_path: Path) -> None:
+    sub = tmp_path / "src"
+    sub.mkdir()
+    _make_agents_md(tmp_path)
+    _make_agents_md(sub)
+
+    result = qi_claude_md_fix_sync(tmp_path)
+
+    assert result.created == ("CLAUDE.md", "src/CLAUDE.md")
+    assert (tmp_path / "CLAUDE.md").read_text(encoding="utf-8") == "@AGENTS.md\n"
+    assert (sub / "CLAUDE.md").read_text(encoding="utf-8") == "@AGENTS.md\n"
+    assert not result.has_conflicts
+
+
+def test_claude_md_fix_dry_run_does_not_write(tmp_path: Path) -> None:
+    _make_agents_md(tmp_path)
+
+    result = qi_claude_md_fix_sync(tmp_path, dry_run=True)
+
+    assert result.created == ("CLAUDE.md",)
+    assert not (tmp_path / "CLAUDE.md").exists()
+
+
+def test_claude_md_fix_reports_non_mirror_conflict(tmp_path: Path) -> None:
+    _make_agents_md(tmp_path)
+    (tmp_path / "CLAUDE.md").write_text("# custom\n", encoding="utf-8")
+
+    result = qi_claude_md_fix_sync(tmp_path)
+
+    assert result.conflicts == ("CLAUDE.md",)
+    assert result.has_conflicts
+
+
+def test_claude_md_fix_skips_generated_target_dirs(tmp_path: Path) -> None:
+    generated = tmp_path / ".claude" / "agents"
+    generated.mkdir(parents=True)
+    _make_agents_md(generated)
+
+    result = qi_claude_md_fix_sync(tmp_path)
+
+    assert result.created == ()
+    assert not (generated / "CLAUDE.md").exists()
