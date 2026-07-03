@@ -1,6 +1,10 @@
 import pytest
 
-from meridian.cli.bootstrap import extract_global_options
+from meridian.cli.bootstrap import (
+    _TOP_LEVEL_VALUE_FLAGS,  # pyright: ignore[reportPrivateUsage]
+    extract_global_options,
+    first_positional_token,
+)
 
 
 def _normalize_output_format(requested: str | None, json_mode: bool) -> str:
@@ -55,3 +59,8 @@ def test_extract_global_options_rejects_conflicting_mode_values() -> None:
             ["--mode", "agent", "--mode", "human", "spawn", "list"],
             normalize_output_format=_normalize_output_format,
         )
+
+
+@pytest.mark.parametrize("flag", sorted(_TOP_LEVEL_VALUE_FLAGS))
+def test_root_primary_value_flags_do_not_create_command_positionals(flag: str) -> None:
+    assert first_positional_token([flag, "value", "--dry-run"]) is None
