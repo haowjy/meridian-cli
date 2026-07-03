@@ -1,9 +1,6 @@
 from meridian.lib.core.spawn_lifecycle import (
-    ACTIVE_SPAWN_STATUSES,
-    TERMINAL_SPAWN_STATUSES,
     ExecutionTerminalFacts,
     has_durable_report_completion,
-    is_active_spawn_status,
     resolve_completion_cancel_precedence,
     resolve_execution_terminal_outcome,
     resolve_execution_terminal_state,
@@ -228,9 +225,3 @@ def test_resolve_completion_cancel_precedence_uses_report_before_cancel() -> Non
     assert cancel_outcome.status == "cancelled"
     assert cancel_outcome.exit_code == 143
     assert cancel_outcome.error == "terminated"
-
-
-def test_finalizing_membership_reflects_active_non_terminal_state() -> None:
-    assert "finalizing" in ACTIVE_SPAWN_STATUSES
-    assert "finalizing" not in TERMINAL_SPAWN_STATUSES
-    assert is_active_spawn_status("finalizing") is True

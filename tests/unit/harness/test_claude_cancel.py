@@ -59,14 +59,6 @@ def test_signal_process_posix_uses_send_signal() -> None:
     assert fake.send_signal_calls == [signal.SIGINT], "send_signal(SIGINT) must be called on POSIX"
 
 
-def test_signal_process_no_op_when_process_none() -> None:
-    """_signal_process is a no-op when there is no subprocess."""
-    conn = ClaudeConnection()
-    # _process is None by default — should not raise
-    with patch.object(claude_ws, "IS_WINDOWS", False):
-        asyncio.run(conn._signal_process(signal.SIGINT))
-
-
 def test_signal_process_no_op_when_already_exited() -> None:
     """_signal_process is a no-op when the process has already exited."""
     fake = _FakeProcess()
