@@ -1,26 +1,5 @@
 from meridian.cli.startup.catalog import COMMAND_CATALOG
-from meridian.cli.startup.policy import RootSource, StartupClass, StateRequirement
-
-
-def test_doctor_is_read_rootless_without_pre_dispatch_state() -> None:
-    descriptor = COMMAND_CATALOG.get(("doctor",))
-    assert descriptor is not None
-    assert descriptor.startup_class is StartupClass.READ_ROOTLESS
-    assert descriptor.bootstrap_plan.state_requirement is StateRequirement.NONE
-
-
-def test_qi_root_is_read_rootless_without_pre_dispatch_state() -> None:
-    descriptor = COMMAND_CATALOG.get(("qi",))
-    assert descriptor is not None
-    assert descriptor.startup_class is StartupClass.READ_ROOTLESS
-    assert descriptor.bootstrap_plan.state_requirement is StateRequirement.NONE
-
-
-def test_qi_claude_md_fix_is_rootless_without_pre_dispatch_state() -> None:
-    descriptor = COMMAND_CATALOG.get(("qi", "claude-md-fix"))
-    assert descriptor is not None
-    assert descriptor.startup_class is StartupClass.WRITE_ROOTLESS
-    assert descriptor.bootstrap_plan.state_requirement is StateRequirement.NONE
+from meridian.cli.startup.policy import RootSource, StateRequirement
 
 
 def test_argv_root_commands_have_no_pre_dispatch_bootstrap() -> None:

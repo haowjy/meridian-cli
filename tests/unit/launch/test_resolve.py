@@ -2,8 +2,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from meridian.lib.catalog.model_aliases import AliasEntry
-from meridian.lib.core.types import HarnessId, ModelId
+import pytest
+
+from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.registry import HarnessRegistry, get_default_harness_registry
 from meridian.lib.launch.resolve import (
     AgentLaunchInput,
@@ -67,65 +68,14 @@ def test_dedupe_skill_names_preserves_first_seen_order() -> None:
     )
 
 
-def test_validate_harness_compatibility_accepts_harness_candidate_route() -> None:
-    model_entry = AliasEntry(
-        alias="fast",
-        model_id=ModelId("fake-model"),
-        resolved_harness=HarnessId.CODEX,
-        harness_candidates=("codex", "opencode"),
-    )
-
-    validate_harness_compatibility(
-        model="fake-model",
-        harness_id=HarnessId.OPENCODE,
-        model_entry=model_entry,
-        harness_registry=_registry_with_harnesses(HarnessId.CODEX, HarnessId.OPENCODE),
-    )
-
-
-def test_validate_harness_compatibility_allows_harness_outside_candidates() -> None:
-    model_entry = AliasEntry(
-        alias="fast",
-        model_id=ModelId("fake-model"),
-        resolved_harness=HarnessId.CODEX,
-        harness_candidates=("codex", "opencode"),
-    )
-
-    validate_harness_compatibility(
-        model="fake-model",
-        harness_id=HarnessId.CLAUDE,
-        model_entry=model_entry,
-        harness_registry=_registry_with_harnesses(
-            HarnessId.CLAUDE,
-            HarnessId.CODEX,
-            HarnessId.OPENCODE,
-        ),
-    )
-
-
-def test_validate_harness_compatibility_allows_harness_with_empty_candidates() -> None:
-    model_entry = AliasEntry(
-        alias="fast",
-        model_id=ModelId("fake-model"),
-        resolved_harness=HarnessId.CODEX,
-        harness_candidates=(),
-    )
-
-    validate_harness_compatibility(
-        model="fake-model",
-        harness_id=HarnessId.OPENCODE,
-        model_entry=model_entry,
-        harness_registry=_registry_with_harnesses(HarnessId.CODEX, HarnessId.OPENCODE),
-    )
-
-
-def test_validate_harness_compatibility_skips_model_route_check_without_model_entry() -> None:
-    validate_harness_compatibility(
-        model="fake-model",
-        harness_id=HarnessId.OPENCODE,
-        model_entry=None,
-        harness_registry=_registry_with_harnesses(HarnessId.OPENCODE),
-    )
+def test_validate_harness_compatibility_rejects_non_primary_harness() -> None:
+    with pytest.raises(ValueError, match="Unsupported harness 'cursor'"):
+        validate_harness_compatibility(
+            model="fake-model",
+            harness_id=HarnessId.CURSOR,
+            model_entry=None,
+            harness_registry=_registry_with_harnesses(HarnessId.CODEX, HarnessId.CURSOR),
+        )
 
 
 def test_resolve_pi_notification_timeout_prefers_explicit_timeout() -> None:

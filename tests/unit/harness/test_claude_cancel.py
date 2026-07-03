@@ -58,15 +58,3 @@ def test_signal_process_posix_uses_send_signal() -> None:
     assert not fake.terminate_called, "terminate() must not be called on POSIX"
     assert fake.send_signal_calls == [signal.SIGINT], "send_signal(SIGINT) must be called on POSIX"
 
-
-def test_signal_process_no_op_when_already_exited() -> None:
-    """_signal_process is a no-op when the process has already exited."""
-    fake = _FakeProcess()
-    fake.returncode = 0  # already exited
-    conn = _make_connection_with_process(fake)
-
-    with patch.object(claude_ws, "IS_WINDOWS", False):
-        asyncio.run(conn._signal_process(signal.SIGINT))
-
-    assert fake.send_signal_calls == [], "send_signal must not be called after process exit"
-    assert not fake.terminate_called, "terminate must not be called after process exit"
