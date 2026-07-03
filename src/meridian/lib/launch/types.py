@@ -45,7 +45,7 @@ class LaunchRequest(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    model: str = ""
+    model: str | None = None
     harness: str | None = None
     agent: str | None = None
     agent_opt_out: bool = False

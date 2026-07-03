@@ -116,6 +116,9 @@ def launch_primary(
         runtime_root=runtime_root_for_context,
     )
     inherit_ambient_work = request.session_mode.value != "resume"
+    inherited_task_dir = (
+        None if request.session_mode.value == "resume" else runtime_context.inherited_task_dir
+    )
     ambient_work_id = (
         None
         if explicit_work_id is not None or not inherit_ambient_work
@@ -129,7 +132,7 @@ def launch_primary(
         reference_files=request.reference_files,
         explicit_task_dir=request.task_dir,
         explicit_work_id=explicit_work_id,
-        inherited_task_dir=runtime_context.inherited_task_dir,
+        inherited_task_dir=inherited_task_dir,
         ambient_work_id=ambient_work_id,
         caller_cwd=Path.cwd(),
     )

@@ -124,7 +124,7 @@ class SpawnLaunchOptions(BaseModel):
 class SpawnCreateInput(SpawnLaunchOptions):
     prompt: str = ""
     goal: str | None = None
-    model: str = ""
+    model: str | None = None
     files: tuple[str, ...] = ()
     context_from: tuple[str, ...] = ()
     template_vars: tuple[str, ...] = ()

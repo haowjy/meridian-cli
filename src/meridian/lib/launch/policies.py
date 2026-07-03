@@ -148,7 +148,7 @@ class ResolvedLaunchPolicy:
     """Resolved launch policy shared across launch-like surfaces."""
 
     profile: AgentProfile | None
-    model: str
+    model: str | None
     harness: HarnessId
     adapter: SubprocessHarness
     resolved_skills: ResolvedSkills

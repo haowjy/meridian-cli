@@ -15,9 +15,13 @@ from meridian.lib.core.util import FormatContext
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.launch import LaunchRequest, SessionMode, launch_primary
 from meridian.lib.launch.composition import PromptDocument
+from meridian.lib.launch.continue_replay import (
+    build_continue_replay_contract,
+    continue_replay_source_from_reference,
+)
 from meridian.lib.launch.request import SessionRequest
 from meridian.lib.launch.resolve import resolve_agent_launch_input
-from meridian.lib.ops.reference import resolve_session_reference
+from meridian.lib.ops.reference import ResolvedSessionReference, resolve_session_reference
 from meridian.lib.ops.spawn.models import normalize_goal
 
 
@@ -87,56 +91,15 @@ class PrimaryLaunchOutput(BaseModel):
         return "\n".join(lines)
 
 
-class _ResolvedSessionTarget(BaseModel):
-    model_config = ConfigDict(frozen=True)
-
-    harness_session_id: str | None
-    chat_id: str | None = None
-    harness: str | None
-    source_model: str | None = None
-    source_agent: str | None = None
-    source_work_id: str | None = None
-    source_control_root: str | None = None
-    source_execution_cwd: str | None = None
-    source_claude_config_dir: str | None = None
-    source_pi_session_dir: str | None = None
-    source_launch_policy_snapshot: LaunchPolicySnapshot | None = None
-    tracked: bool = False
-    warning: str | None = None
-
-    @property
-    def missing_harness_session_id(self) -> bool:
-        return self.tracked and self.harness_session_id is None
-
-
-ResolvedSessionTarget = _ResolvedSessionTarget
-
-
 def resolve_session_target(
     *,
     project_root: Path,
     continue_ref: str,
-) -> ResolvedSessionTarget:
+) -> ResolvedSessionReference:
     normalized = continue_ref.strip()
     if not normalized:
         raise ValueError("--continue requires a non-empty session reference.")
-
-    resolved = resolve_session_reference(project_root, normalized)
-    return _ResolvedSessionTarget(
-        harness_session_id=resolved.authoritative_harness_session_id,
-        chat_id=resolved.source_chat_id,
-        harness=resolved.harness,
-        source_model=resolved.source_model,
-        source_agent=resolved.source_agent,
-        source_work_id=resolved.source_work_id,
-        source_control_root=resolved.source_control_root,
-        source_execution_cwd=resolved.source_execution_cwd,
-        source_claude_config_dir=resolved.source_claude_config_dir,
-        source_pi_session_dir=resolved.source_pi_session_dir,
-        source_launch_policy_snapshot=resolved.source_launch_policy_snapshot,
-        tracked=resolved.tracked,
-        warning=resolved.warning,
-    )
+    return resolve_session_reference(project_root, normalized)
 
 
 def run_primary_launch(
@@ -245,16 +208,15 @@ def run_primary_launch(
     session_mode = SessionMode.FRESH
     explicit_harness = harness.strip() if harness is not None and harness.strip() else None
     agent_launch = resolve_agent_launch_input(agent)
-    requested_model = model
-    requested_agent = agent_launch.agent
+    requested_model: str | None = model
+    requested_agent: str | None = agent_launch.agent
     agent_opt_out = agent_launch.agent_opt_out
+    requested_skills: tuple[str, ...] = skills
     requested_work_id = work.strip() or None
     launch_task_dir = normalized_task_dir
     if resume_target is not None:
         if model.strip():
             raise ValueError("Cannot combine --continue with --model.")
-        if agent is not None and agent.strip():
-            raise ValueError("Cannot combine --continue with --agent.")
         if skills:
             raise ValueError("Cannot combine --continue with --skills.")
         if passthrough:
@@ -268,46 +230,38 @@ def run_primary_launch(
                     source_ref=resume_target,
                     project_root=project_root,
                     source_harness=resolved_continue.harness,
-                    source_chat_id=resolved_continue.chat_id,
+                    source_chat_id=resolved_continue.source_chat_id,
                 )
             )
-        source_harness = (
-            resolved_continue.harness.strip()
-            if resolved_continue.harness is not None and resolved_continue.harness.strip()
-            else None
+        continue_contract = build_continue_replay_contract(
+            source=continue_replay_source_from_reference(
+                source_ref=resume_target,
+                resolved_reference=resolved_continue,
+                harness_session_id=resolved_continue.authoritative_harness_session_id,
+            ),
+            explicit_harness=explicit_harness,
+            requested_agent=agent_launch.agent,
+            agent_opt_out=agent_launch.agent_opt_out,
         )
-        if (
-            explicit_harness is not None
-            and source_harness is not None
-            and explicit_harness != source_harness
-        ):
-            raise ValueError(
-                "Cannot continue across harnesses: "
-                f"source is '{source_harness}', target is '{explicit_harness}'."
-            )
-        continue_harness_session_id = resolved_continue.harness_session_id
-        continue_chat_id = resolved_continue.chat_id
-        continue_harness = explicit_harness or source_harness
-        if continue_harness is None:
-            raise ValueError(
-                f"Session '{resolved_continue.harness_session_id or resume_target}' "
-                "not recognized by any harness. "
-                "Use --harness to specify which harness owns this session."
-            )
+        continue_harness_session_id = continue_contract.session.requested_harness_session_id
+        continue_chat_id = continue_contract.session.continue_chat_id
+        continue_harness = continue_contract.harness
         continue_warning = resolved_continue.warning
-        source_control_root = resolved_continue.source_control_root
-        source_execution_cwd = resolved_continue.source_execution_cwd
-        source_claude_config_dir = resolved_continue.source_claude_config_dir
-        source_pi_session_dir = resolved_continue.source_pi_session_dir
+        source_control_root = continue_contract.session.source_control_root
+        source_execution_cwd = continue_contract.session.source_execution_cwd
+        source_claude_config_dir = continue_contract.session.source_claude_config_dir
+        source_pi_session_dir = continue_contract.session.source_pi_session_dir
         if requested_work_id is None:
-            requested_work_id = resolved_continue.source_work_id
-        launch_task_dir = resolved_continue.source_execution_cwd
-        continue_source_tracked = resolved_continue.tracked
-        continue_source_ref = resume_target
-        # Replay persisted launch contract so agent/model/skills stay fixed on resume.
-        continue_launch_policy_snapshot = resolved_continue.source_launch_policy_snapshot
-        if continue_launch_policy_snapshot is not None:
-            continue_passthrough_args = continue_launch_policy_snapshot.extra_args
+            requested_work_id = continue_contract.work_id
+        launch_task_dir = continue_contract.task_dir
+        continue_source_tracked = continue_contract.session.continue_source_tracked
+        continue_source_ref = continue_contract.session.continue_source_ref
+        continue_launch_policy_snapshot = continue_contract.launch_policy_snapshot
+        continue_passthrough_args = continue_contract.passthrough_args
+        requested_model = continue_contract.model
+        requested_agent = continue_contract.agent
+        agent_opt_out = continue_contract.agent_opt_out
+        requested_skills = continue_contract.skills
         session_mode = SessionMode.RESUME
     elif selected_fork_target is not None:
         resolved_fork = resolve_session_target(
@@ -319,7 +273,7 @@ def run_primary_launch(
                     source_ref=selected_fork_target,
                     project_root=project_root,
                     source_harness=resolved_fork.harness,
-                    source_chat_id=resolved_fork.chat_id,
+                    source_chat_id=resolved_fork.source_chat_id,
                 )
             )
 
@@ -338,24 +292,27 @@ def run_primary_launch(
                 f"source is '{source_harness}', target is '{explicit_harness}'."
             )
 
-        continue_harness_session_id = resolved_fork.harness_session_id
+        continue_harness_session_id = resolved_fork.authoritative_harness_session_id
         continue_harness = explicit_harness or source_harness
         if continue_harness is None:
+            missing_session_ref = (
+                resolved_fork.authoritative_harness_session_id or selected_fork_target
+            )
             raise ValueError(
-                f"Session '{resolved_fork.harness_session_id or selected_fork_target}' "
+                f"Session '{missing_session_ref}' "
                 "not recognized by any harness. "
                 "Use --harness to specify which harness owns this session."
             )
         continue_warning = resolved_fork.warning
         continue_fork = True
-        forked_from_chat_id = resolved_fork.chat_id
+        forked_from_chat_id = resolved_fork.source_chat_id
         source_control_root = resolved_fork.source_control_root
         source_execution_cwd = resolved_fork.source_execution_cwd
         source_claude_config_dir = resolved_fork.source_claude_config_dir
         source_pi_session_dir = resolved_fork.source_pi_session_dir
         continue_source_tracked = resolved_fork.tracked
         continue_source_ref = selected_fork_target
-        output_forked_from = resolved_fork.chat_id or selected_fork_target
+        output_forked_from = resolved_fork.source_chat_id or selected_fork_target
         session_mode = SessionMode.FORK
 
         if not model.strip() and resolved_fork.source_model is not None:
@@ -390,7 +347,7 @@ def run_primary_launch(
             context_from=fork_resolution.resolved_context_from,
             reference_files=reference_files,
             prompt=prompt,
-            skills=skills,
+            skills=requested_skills,
             goal=resolved_goal,
             dry_run=dry_run,
             execution_policy=ResolvedExecutionPolicy(

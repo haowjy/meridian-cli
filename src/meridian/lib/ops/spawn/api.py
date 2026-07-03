@@ -18,7 +18,6 @@ from meridian.lib.bootstrap.services import (
 from meridian.lib.config.settings import MeridianConfig, load_config
 from meridian.lib.core.context import RuntimeContext
 from meridian.lib.core.depth import max_depth_reached
-from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
 from meridian.lib.core.sink import NullSink, OutputSink
 from meridian.lib.core.spawn_lifecycle import (
     ACTIVE_SPAWN_STATUSES,
@@ -31,6 +30,10 @@ from meridian.lib.core.spawn_lifecycle import (
 from meridian.lib.core.spawn_service import CancelOutcome
 from meridian.lib.core.telemetry import register_debug_trace_observer
 from meridian.lib.core.types import SpawnId
+from meridian.lib.launch.continue_replay import (
+    build_continue_replay_contract,
+    continue_replay_source_from_reference,
+)
 from meridian.lib.launch.request import SessionRequest
 from meridian.lib.ops.mars import mars_agent_subagents, mars_list_subagents
 from meridian.lib.ops.reference import ResolvedSessionReference, resolve_session_reference
@@ -78,7 +81,6 @@ from .models import (
     SpawnCreateInput,
     SpawnDetailOutput,
     SpawnForkInput,
-    SpawnLaunchOptionUpdates,
     SpawnListEntry,
     SpawnListInput,
     SpawnListOutput,
@@ -1889,24 +1891,14 @@ def _prompt_for_follow_up(
     return existing_prompt
 
 
-def _model_for_follow_up(source_spawn: SpawnRecord, override_model: str) -> str:
-    if override_model.strip():
-        return override_model
-    return (source_spawn.model or "").strip()
-
-
 def _reject_continue_policy_overrides(payload: SpawnContinueInput) -> None:
     """Reject launch-contract changes for exact continuation."""
 
     rejected: list[str] = []
     if payload.model.strip():
         rejected.append("--model")
-    if payload.agent is not None and payload.agent.strip():
-        rejected.append("--agent")
     if payload.skills:
         rejected.append("--skills")
-    if (payload.harness or "").strip():
-        rejected.append("--harness")
     if payload.approval is not None:
         rejected.append("--approval")
     if payload.sandbox is not None:
@@ -1938,104 +1930,51 @@ def _reject_continue_policy_overrides(payload: SpawnContinueInput) -> None:
         )
 
 
-def _continue_launch_options(
-    *,
-    payload: SpawnContinueInput,
-    source_snapshot: LaunchPolicySnapshot | None,
-    source_harness: str | None,
-) -> SpawnLaunchOptionUpdates:
-    launch_options = payload.launch_option_updates()
-    if source_snapshot is None:
-        launch_options["harness"] = source_harness
-        return launch_options
-
-    launch_options.update(
-        {
-            "approval": source_snapshot.execution_policy.approval,
-            "autocompact": source_snapshot.execution_policy.autocompact,
-            "autocompact_pct": source_snapshot.execution_policy.autocompact_pct,
-            "effort": source_snapshot.execution_policy.effort,
-            "sandbox": source_snapshot.execution_policy.sandbox,
-            "harness": source_snapshot.harness,
-            "passthrough_args": source_snapshot.extra_args,
-        }
-    )
-    return launch_options
-
-
 def _build_continue_create_input(
     *,
     payload: SpawnContinueInput,
     source_spawn: SpawnRecord,
     source_spawn_id: str,
     resolved_reference: ResolvedSessionReference,
-    source_harness: str | None,
-    source_snapshot: LaunchPolicySnapshot | None,
 ) -> SpawnCreateInput:
-    launch_options = _continue_launch_options(
-        payload=payload,
-        source_snapshot=source_snapshot,
-        source_harness=source_harness,
+    continue_contract = build_continue_replay_contract(
+        source=continue_replay_source_from_reference(
+            source_spawn_id,
+            resolved_reference,
+            harness_session_id=resolved_reference.authoritative_harness_session_id,
+        ),
+        explicit_harness=(payload.harness or "").strip() or None,
+        requested_agent=payload.agent,
+        agent_opt_out=payload.agent_opt_out,
+        fork=payload.fork,
     )
+    launch_options = payload.launch_option_updates()
+    launch_options.update(
+        {
+            "harness": continue_contract.harness,
+            "passthrough_args": continue_contract.passthrough_args,
+        }
+    )
+
     resolved_goal = payload.goal if payload.goal is not None else source_spawn.goal
     derived_prompt = _prompt_for_follow_up(source_spawn, source_spawn_id, payload.prompt)
+
     return SpawnCreateInput(
         prompt=derived_prompt,
-        model=(
-            source_snapshot.model
-            if source_snapshot is not None
-            else _model_for_follow_up(source_spawn, payload.model)
-        ),
+        model=continue_contract.model,
         files=payload.files,
         template_vars=payload.template_vars,
-        agent=(
-            None
-            if payload.agent_opt_out
-            else (
-                payload.agent
-                if payload.agent is not None
-                else (source_snapshot.agent if source_snapshot is not None else None)
-            )
-        ),
-        agent_opt_out=payload.agent_opt_out,
-        skills=source_snapshot.skills if source_snapshot is not None else payload.skills,
+        agent=continue_contract.agent,
+        agent_opt_out=continue_contract.agent_opt_out,
+        skills=continue_contract.skills,
         goal=resolved_goal,
         desc=payload.desc,
-        work=source_spawn.work_id or "",
-        task_dir=resolved_reference.source_execution_cwd,
+        work=continue_contract.work_id or "",
+        task_dir=continue_contract.task_dir,
         caller_cwd=payload.caller_cwd,
-        launch_policy_snapshot=source_snapshot,
-        session=SessionRequest(
-            requested_harness_session_id=resolved_reference.authoritative_harness_session_id,
-            continue_harness=resolved_reference.harness,
-            continue_source_tracked=resolved_reference.tracked,
-            continue_source_ref=source_spawn_id,
-            continue_fork=payload.fork,
-            continue_chat_id=resolved_reference.source_chat_id,
-            forked_from_chat_id=resolved_reference.source_chat_id if payload.fork else None,
-            source_control_root=resolved_reference.source_control_root,
-            source_execution_cwd=resolved_reference.source_execution_cwd,
-            source_claude_config_dir=resolved_reference.source_claude_config_dir,
-            source_pi_session_dir=resolved_reference.source_pi_session_dir,
-        ),
+        launch_policy_snapshot=continue_contract.launch_policy_snapshot,
+        session=continue_contract.session,
         **launch_options,
-    )
-
-
-def _resolve_continue_target_harness(
-    *,
-    create_input: SpawnCreateInput,
-    source_snapshot: LaunchPolicySnapshot | None,
-    source_harness: str | None,
-    project_root: Path,
-) -> str:
-    if source_snapshot is not None:
-        return source_snapshot.harness
-    if source_harness is not None:
-        return source_harness
-    return _resolve_effective_fork_target_harness(
-        create_input,
-        resolved_project_root=project_root,
     )
 
 
@@ -2241,41 +2180,12 @@ def spawn_continue_sync(
         )
 
     _reject_continue_policy_overrides(payload)
-    source_snapshot = source_spawn.launch_policy_snapshot
-
-    requested_harness = (payload.harness or "").strip() or None
-    source_harness = (resolved_reference.harness or "").strip() or None
-    if (
-        requested_harness is not None
-        and source_harness is not None
-        and requested_harness != source_harness
-    ):
-        raise ValueError(
-            f"Cannot continue spawn '{resolved_spawn_id}' with harness '{requested_harness}'; "
-            f"source spawn uses '{source_harness}'."
-        )
-
     create_input = _build_continue_create_input(
         payload=payload,
         source_spawn=source_spawn,
         source_spawn_id=resolved_spawn_id,
         resolved_reference=resolved_reference,
-        source_harness=source_harness,
-        source_snapshot=source_snapshot,
     )
-    target_harness = _resolve_continue_target_harness(
-        create_input=create_input,
-        source_snapshot=source_snapshot,
-        source_harness=source_harness,
-        project_root=project_root,
-    )
-    if source_harness is not None and source_harness != target_harness:
-        raise ValueError(
-            "Cannot continue across harnesses: "
-            f"source is '{source_harness}', target is '{target_harness}'."
-        )
-
-    create_input = create_input.model_copy(update={"harness": target_harness})
     if prepared is not None:
         result = spawn_create_sync(create_input, ctx=ctx, sink=sink, prepared=prepared)
     else:
