@@ -461,7 +461,27 @@ def test_session_log_rejects_global_without_window_selector(tmp_path: Path) -> N
         )
 
 
-def test_session_log_boundary_hints_include_previous_segment_at_top(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    (
+        "from_ordinal",
+        "previous_command_fragment",
+        "next_command_fragment",
+        "previous_segment_fragment",
+        "next_segment_fragment",
+    ),
+    [
+        (0, None, "--segment 1 --from 2 --limit 2", "--segment 0 --from 1 --limit 2", None),
+        (1, "--segment 1 --from 0 --limit 2", None, None, "--segment 2 --from 0 --limit 2"),
+    ],
+)
+def test_session_log_boundary_hints_include_adjacent_segment_commands(
+    tmp_path: Path,
+    from_ordinal: int,
+    previous_command_fragment: str | None,
+    next_command_fragment: str | None,
+    previous_segment_fragment: str | None,
+    next_segment_fragment: str | None,
+) -> None:
     session_file = tmp_path / "session-three-segments.jsonl"
     _write_three_segment_session_file(session_file)
 
@@ -469,38 +489,22 @@ def test_session_log_boundary_hints_include_previous_segment_at_top(tmp_path: Pa
         SessionLogInput(
             file_path=session_file.as_posix(),
             segment="1",
-            from_ordinal=0,
+            from_ordinal=from_ordinal,
             limit=2,
         )
     )
 
-    assert output.previous_command is None
-    assert output.next_command is not None
-    assert "--segment 1 --from 2 --limit 2" in output.next_command
-    assert output.previous_segment_command is not None
-    assert "--segment 0 --from 1 --limit 2" in output.previous_segment_command
-    assert output.next_segment_command is None
-
-
-def test_session_log_boundary_hints_include_next_segment_at_bottom(tmp_path: Path) -> None:
-    session_file = tmp_path / "session-three-segments.jsonl"
-    _write_three_segment_session_file(session_file)
-
-    output = session_log_sync(
-        SessionLogInput(
-            file_path=session_file.as_posix(),
-            segment="1",
-            from_ordinal=1,
-            limit=2,
-        )
-    )
-
-    assert output.previous_command is not None
-    assert "--segment 1 --from 0 --limit 2" in output.previous_command
-    assert output.next_command is None
-    assert output.previous_segment_command is None
-    assert output.next_segment_command is not None
-    assert "--segment 2 --from 0 --limit 2" in output.next_segment_command
+    for command, fragment in (
+        (output.previous_command, previous_command_fragment),
+        (output.next_command, next_command_fragment),
+        (output.previous_segment_command, previous_segment_fragment),
+        (output.next_segment_command, next_segment_fragment),
+    ):
+        if fragment is None:
+            assert command is None
+        else:
+            assert command is not None
+            assert fragment in command
 
 
 def test_session_log_truncates_oversized_content_by_default(tmp_path: Path) -> None:

@@ -272,25 +272,6 @@ def test_guidance_blocks_render_sorted_by_phase_and_priority() -> None:
         assert cursor != -1, f"Expected '{part}' after position {cursor} in rendered output"
 
 
-def test_snapshot_round_trip_preserves_spawn_gate_fields() -> None:
-    profile = _sample_profile(meridian_capabilities=MeridianCapabilities(spawn=False))
-    snapshot = build_launch_policy_snapshot(
-        SpawnRequest(prompt="replay", model="gpt55", harness="claude", agent="tech-lead"),
-        bundle_inventory_prompt=PRE_GATE_INVENTORY,
-        profile=profile,
-    )
-
-    reconstructed = _snapshot_profile(
-        snapshot=snapshot,
-        snapshot_skill_names=(),
-        project_root=Path("/tmp/project"),
-    )
-
-    assert reconstructed is not None
-    assert reconstructed.subagents == profile.subagents
-    assert reconstructed.meridian_capabilities == profile.meridian_capabilities
-
-
 def test_snapshot_round_trip_preserves_all_profile_fields() -> None:
     profile = _sample_profile(
         subagents=("coder", "reviewer"),

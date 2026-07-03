@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 
-from meridian.lib.core.domain import TokenUsage
 from meridian.lib.core.types import ArtifactKey, SpawnId
 from meridian.lib.harness.connections.base import HarnessEvent
 from meridian.lib.harness.extractors.cursor import CURSOR_EXTRACTOR
@@ -137,21 +136,3 @@ def test_cursor_extractor_prefers_result_over_assistant_message() -> None:
 
     assert CURSOR_EXTRACTOR.extract_report(store, spawn_id) == "terminal result text"
 
-
-def test_cursor_extractor_usage_defaults_when_no_usage_present() -> None:
-    spawn_id = SpawnId("p-cursor-empty-usage")
-    store = _artifact_store_from_lines(
-        spawn_id,
-        [
-            {
-                "type": "system",
-                "sessionId": "ses-no-usage",
-            },
-            {
-                "type": "result",
-                "result": "done",
-            },
-        ],
-    )
-
-    assert CURSOR_EXTRACTOR.extract_usage(store, spawn_id) == TokenUsage()

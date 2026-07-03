@@ -414,48 +414,4 @@ def test_dispatch_pipeline_logs_fail_open_failures_and_completion_metadata(
     assert success_log["hook"] == "runs-after-failure"
     assert success_log["hook_event"] == "spawn.finalized"
     assert isinstance(success_log["duration_ms"], int)
-
-
-def test_dispatch_pipeline_logs_exit_code_on_completion(tmp_path: Path) -> None:
-    project_root = tmp_path / "repo"
-    project_root.mkdir()
-    runtime_root = tmp_path / "state"
-    success_marker = tmp_path / "success.txt"
-    success_script = tmp_path / "success.py"
-    success_script.write_text(
-        "import sys\n"
-        "from pathlib import Path\n"
-        "Path(sys.argv[1]).write_text('ok', encoding='utf-8')\n",
-        encoding="utf-8",
-    )
-
-    hooks = HooksConfig(
-        hooks=(
-            Hook(
-                name="logs-exit-code",
-                event="spawn.finalized",
-                source="project",
-                command=_python_command(success_script, str(success_marker)),
-            ),
-        )
-    )
-    registry = HookRegistry(project_root, hooks_config=hooks)
-    dispatcher = HookDispatcher(project_root, runtime_root, registry=registry)
-
-    _saved_logger = _dispatch_mod.logger
-    with capture_logs() as logs:
-        _dispatch_mod.logger = structlog.get_logger(_dispatch_mod.__name__)
-        try:
-            results = dispatcher.fire(_context())
-        finally:
-            _dispatch_mod.logger = _saved_logger
-
-    assert [result.outcome for result in results] == ["success"]
-    assert success_marker.read_text(encoding="utf-8") == "ok"
-
-    success_log = next(log for log in logs if log["event"] == "hook_execution_finished")
-
-    assert success_log["hook"] == "logs-exit-code"
-    assert success_log["hook_event"] == "spawn.finalized"
-    assert isinstance(success_log["duration_ms"], int)
     assert "exit_code" in success_log

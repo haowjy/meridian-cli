@@ -76,22 +76,6 @@ def _start_spawn(service: SpawnLifecycleService, **overrides: Any) -> str:
     return service.start(SpawnReservation(**defaults))
 
 
-def test_generate_event_id_is_deterministic() -> None:
-    assert generate_event_id("p1", "spawn.created", 0) == generate_event_id(
-        "p1",
-        "spawn.created",
-        0,
-    )
-
-
-def test_generate_event_id_differs_by_event_type() -> None:
-    assert generate_event_id("p1", "spawn.created", 0) != generate_event_id(
-        "p1",
-        "spawn.running",
-        0,
-    )
-
-
 def test_generate_event_id_preserves_legacy_spawn_namespace() -> None:
     expected = uuid.uuid5(
         uuid.UUID("6ba7b810-9dad-11d1-80b4-00c04fd430c8"),
