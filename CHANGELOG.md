@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.3.23-rc.1] - 2026-07-03
+
 ### Added
 - `meridian qi claude-md-fix [path] [--dry-run]` replaces the standalone script for creating `CLAUDE.md` mirrors (`@AGENTS.md`) for every `AGENTS.md` under a tree, skipping generated harness directories and reporting conflicts for non-mirror files.
 
