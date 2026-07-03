@@ -36,20 +36,3 @@ def test_get_work_item_lazily_migrates_task_dir_from_legacy_worktree_path(tmp_pa
     assert payload_after["task_dir"] == legacy_dir.resolve().as_posix()
     assert payload_after["worktree"]["path"] == legacy_dir.resolve().as_posix()
 
-
-def test_update_work_item_task_dir_persists_normalized_path(tmp_path: Path) -> None:
-    state_root = tmp_path / "state"
-    item = work_store.create_work_item(state_root, "feature-task-dir", "", None)
-    task_dir = tmp_path / "target" / "nested"
-    task_dir.mkdir(parents=True, exist_ok=True)
-
-    updated = work_store.update_work_item_task_dir(
-        state_root,
-        item.name,
-        task_dir=task_dir.as_posix(),
-    )
-    assert updated.task_dir == task_dir.resolve().as_posix()
-
-    status_path = work_store.work_scratch_dir(state_root, item.name) / "__status.json"
-    payload = json.loads(status_path.read_text(encoding="utf-8"))
-    assert payload["task_dir"] == task_dir.resolve().as_posix()

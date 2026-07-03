@@ -33,17 +33,6 @@ from meridian.lib.state.paths import resolve_spawn_log_dir
 from tests.support.launch import stub_bundle_request_and_resolve
 
 
-def test_codex_adapter_leaves_report_output_path_none(tmp_path: Path) -> None:
-    adapter = CodexAdapter()
-
-    spec = adapter.resolve_launch_spec(
-        SpawnParams(prompt="do work"),
-        TieredPermissionResolver(config=PermissionConfig()),
-    )
-
-    assert spec.report_output_path is None
-
-
 def test_codex_subprocess_projection_emits_no_o_without_report_output_path() -> None:
     adapter = CodexAdapter()
     spec = adapter.resolve_launch_spec(

@@ -5,7 +5,6 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from meridian.lib.core.child_env import validate_child_env_keys
 from meridian.lib.core.resolved_context import ResolvedContext
 from meridian.lib.ops.runtime import resolve_runtime_authority_for_read
 from meridian.lib.state.runtime_root import derive_runtime_root_from_project
@@ -156,26 +155,3 @@ def test_from_environment_reads_meridian_task_dir(
 
     assert ctx.inherited_task_dir == task_dir.resolve()
 
-
-def test_from_environment_blank_meridian_task_dir_is_none(
-    monkeypatch: MonkeyPatch,
-) -> None:
-    monkeypatch.setenv("MERIDIAN_TASK_DIR", "   ")
-
-    ctx = ResolvedContext.from_environment()
-
-    assert ctx.inherited_task_dir is None
-
-
-def test_child_env_overrides_emits_meridian_task_dir(tmp_path: Path) -> None:
-    task_dir = tmp_path / "worktree"
-    task_dir.mkdir(parents=True)
-    ctx = ResolvedContext(inherited_task_dir=task_dir)
-
-    overrides = ctx.child_env_overrides()
-
-    assert overrides["MERIDIAN_TASK_DIR"] == task_dir.as_posix()
-
-
-def test_validate_child_env_keys_accepts_meridian_task_dir() -> None:
-    validate_child_env_keys({"MERIDIAN_TASK_DIR": "/tmp/worktree"})

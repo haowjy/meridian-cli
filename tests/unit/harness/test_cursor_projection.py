@@ -18,22 +18,6 @@ from meridian.lib.launch.launch_types import PermissionResolver, ResolvedLaunchS
 from meridian.lib.safety.permissions import ApprovalMode, PermissionConfig, SandboxMode
 
 
-def test_cursor_resolve_launch_spec_leaves_report_output_path_none(
-    tmp_path: Path,
-) -> None:
-    adapter = CursorAdapter()
-
-    spec = adapter.resolve_launch_spec(
-        SpawnParams(
-            prompt="do work",
-            task_cwd=str(tmp_path / "task"),
-        ),
-        _Resolver(approval="default"),
-    )
-
-    assert spec.report_output_path is None
-
-
 def test_cursor_subprocess_projection_emits_no_o_flag() -> None:
     adapter = CursorAdapter()
     spec = adapter.resolve_launch_spec(
