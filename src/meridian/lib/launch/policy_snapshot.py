@@ -49,7 +49,7 @@ class ReplayedLaunchPolicySnapshot:
     """Resolved policy fields reconstructed directly from a snapshot."""
 
     profile: AgentProfile | None
-    model: str
+    model: str | None
     harness: HarnessId
     adapter: SubprocessHarness
     resolved_skills: ResolvedSkills
@@ -62,6 +62,18 @@ class ReplayedLaunchPolicySnapshot:
     model_selection: ReplayedModelSelection | None = None
     fallback_chain: tuple[dict[str, object], ...] = ()
     alias_catalog: dict[str, AliasEntry] | None = None
+
+
+def managed_model_override_from_persisted_model(model: str) -> str | None:
+    """Return managed model token from persisted snapshot data.
+
+    Legacy persisted snapshots may store an empty string to mean that Meridian
+    should not pass a managed model override and the harness should choose its
+    default.
+    """
+
+    token = model.strip()
+    return token or None
 
 
 def build_launch_policy_snapshot(
@@ -133,6 +145,7 @@ def replay_launch_policy_snapshot(
         raise ValueError("Launch policy snapshot is missing harness.")
 
     harness_id = HarnessId(snapshot_harness)
+    managed_model = managed_model_override_from_persisted_model(snapshot.model)
     snapshot_model = snapshot.model.strip()
     adapter = harness_registry.get_subprocess_harness(harness_id)
     snapshot_agent = (snapshot.agent or "").strip() or None
@@ -164,7 +177,7 @@ def replay_launch_policy_snapshot(
     )
     return ReplayedLaunchPolicySnapshot(
         profile=profile,
-        model=snapshot_model,
+        model=managed_model,
         harness=harness_id,
         adapter=adapter,
         resolved_skills=resolved_skills,
@@ -306,5 +319,6 @@ __all__ = [
     "ReplayedModelSelection",
     "SnapshotModelSelection",
     "build_launch_policy_snapshot",
+    "managed_model_override_from_persisted_model",
     "replay_launch_policy_snapshot",
 ]

@@ -44,6 +44,13 @@ precedence, `--from` work inheritance, task cwd selection, reference anchoring,
 and `-f` validation. Primary and spawn may differ in prompt/session projection,
 but they should not hand-roll directory or reference resolution.
 
+Exact continue (`meridian --continue`, `spawn --continue`) enters through
+`continue_replay.py`. `ContinueReplayContract` is the launch-owned seam that
+primary and spawn share for replaying source session identity, launch-policy
+snapshot, work, and task directory. Persisted `LaunchPolicySnapshot.model == ""`
+is legacy JSON for harness-default model; replay normalizes it to in-memory
+`None` in `policy_snapshot.py`, not in continue-specific callers.
+
 **Why the split?** The primary CLI path calls `bind_launch_context()` twice: once
 with `dry_run=True` for `--dry-run` display, then again with real spawn ID and paths.
 `prepare_launch_surface()` is expensive and safe to call once. `bind_launch_context()`
@@ -163,9 +170,9 @@ See [.context/CONTEXT.md](.context/CONTEXT.md#why-user-turn-not-system-prompt) f
    injection, reference loading and anchor semantics (`kb:` prefix, `@` unsupported),
    worktree path assignment vs managed ownership separation, workspace projection
    detail, env injection, background worker trust model, MERIDIAN_HARNESS child env
-   behavior, full invariant table, model-policy overlay composition and fallback
-   chain rules, user-turn context threading (`resolve_task_context_inputs()`) and
-   why prior-context goes in the user turn.
+   behavior, exact continue replay contract, full invariant table, model-policy
+   overlay composition and fallback chain rules, user-turn context threading
+   (`resolve_task_context_inputs()`) and why prior-context goes in the user turn.
 
 ## Related
 

@@ -56,18 +56,31 @@ The report and `system-prompt.md` paths are derived in `bind_launch_context` fro
 ### Exact Continue Replay
 
 Primary `meridian --continue` and subagent `spawn --continue` are exact
-continuations. They replay the source task directory, work attachment, session
-identity, and launch-policy snapshot rather than resolving from the caller's
-current CWD/config/env. The absence of source work is a preserved value: bind must
-suppress inherited `MERIDIAN_ACTIVE_WORK_*` when continuing a source with no work
-item, not attach the caller's ambient work.
+continuations. `continue_replay.py` owns the launch-level seam:
+`ContinueReplaySource` normalizes the resolved reference shape, and
+`ContinueReplayContract` carries the launch-ready result consumed by primary and
+spawn continue. Callers pass the authoritative recovered harness session ID into
+the source; recovery policy stays in `ops/reference.py`, not in launch.
+
+The contract replays the source task directory, work attachment, session identity,
+and launch-policy snapshot rather than resolving from the caller's current
+CWD/config/env. The absence of source work is a preserved value: exact continue
+suppresses inherited `MERIDIAN_ACTIVE_WORK_*` and inherited task-dir state when the
+source had none, instead of attaching the caller's ambient work/task context.
 
 Launch-policy snapshot replay preserves cache- and prompt-shaping fields: model,
-harness, agent, skills, loaded skill content, execution policy, tool/MCP grants,
-inventory prompt, and passthrough args. A snapshot with `model=""` and a harness is
-valid; it means "omit Meridian's managed model override and let the harness
-default." Explicit `agent_opt_out` stays authoritative and must not reintroduce a
-configured default agent through routing fallback.
+harness, agent, agent opt-out, agent profile, skills, loaded skill content,
+execution policy, tool/MCP grants, terminal surface mode, matched policy rule,
+fallback chain, inventory prompt, env, and passthrough args. A persisted snapshot
+with `model=""` and a harness is valid legacy JSON; policy snapshot replay
+normalizes it to in-memory `model=None`, meaning "omit Meridian's managed model
+override and let the harness default." This normalization belongs in
+`policy_snapshot.py`, not in continue-specific code.
+
+Exact continue rejects launch-identity, policy, work, and task mutations. That
+includes model, agent, skills, execution policy, passthrough args, env, `--work`,
+`--task-dir`, and agent opt-out (`--agent ''`) because opt-out changes how default
+agent routing behaves. Use a divergent mode instead.
 
 KB: `decisions/launch.md#d-continue-replays-recorded-launch-contract-same-session-continue-is-not-live-policy-recomputation`.
 

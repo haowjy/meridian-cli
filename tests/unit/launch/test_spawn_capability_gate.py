@@ -345,7 +345,7 @@ def test_snapshot_replay_allows_empty_model_for_opencode_without_model_flag(
         resolve_terminal_surface_mode=terminal_surface_mode,
     )
 
-    assert replayed.model == ""
+    assert replayed.model is None
     assert replayed.routing.model is None
     assert replayed.model_selection is None
 

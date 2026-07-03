@@ -94,6 +94,13 @@ harnesses differ, the operation raises `ValueError` — cross-harness continuati
 
 `spawn_fork_sync()` copies `goal` from the source spawn row when no `--goal` is provided.
 
+`spawn_continue_sync()` does not assemble replay policy. It resolves the source spawn/session,
+rejects launch-identity, policy, work, and task-dir mutations
+(`api.py:_reject_continue_policy_overrides`), then delegates exact-continue normalization to
+`launch/continue_replay.py` (`ContinueReplayContract`). Agent opt-out is a launch-identity
+mutation, not a harmless absence. Contract depth:
+[launch/.context/CONTEXT.md#exact-continue-replay](../../../launch/.context/CONTEXT.md#exact-continue-replay).
+
 ## prepare.py — The One REQUIRED Path
 
 `prepare.py` uses `LaunchArgvIntent.REQUIRED` on `LaunchCompositionSurface.SPAWN_PREPARE`. This is

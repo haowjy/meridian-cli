@@ -138,11 +138,15 @@ def build_create_payload(
         spawn_id = (
             str(resolved_context.spawn_id) if resolved_context.spawn_id is not None else None
         )
-        inherited_for_child = derive_inheritable_task_dir(
-            project_root=project_root,
-            project_state_dir=project_state_dir,
-            spawn_id=spawn_id,
-            work_id=ambient_work_id,
+        inherited_for_child = (
+            None
+            if _is_exact_continue(payload)
+            else derive_inheritable_task_dir(
+                project_root=project_root,
+                project_state_dir=project_state_dir,
+                spawn_id=spawn_id,
+                work_id=ambient_work_id,
+            )
         )
         launch_resolution = resolve_launch_inputs(
             authority_root=project_root,

@@ -9,6 +9,7 @@ from unittest.mock import patch
 
 import pytest
 
+import meridian.lib.launch.context as launch_context
 from meridian.cli.primary_launch import run_primary_launch
 from meridian.lib.catalog.catalog_session import CatalogSession
 from meridian.lib.core.domain import SkillContent
@@ -16,7 +17,12 @@ from meridian.lib.core.execution_policy import ResolvedExecutionPolicy
 from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
 from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.registry import get_default_harness_registry
-from meridian.lib.launch import LaunchRequest, LaunchResult, compile_prepared_policy_surface
+from meridian.lib.launch import (
+    LaunchRequest,
+    LaunchResult,
+    compile_prepared_policy_surface,
+    launch_primary,
+)
 from meridian.lib.launch.context import build_launch_context
 from meridian.lib.launch.plan import build_primary_launch_runtime, build_primary_spawn_request
 from meridian.lib.launch.process import ProcessOutcome
@@ -169,9 +175,9 @@ def test_primary_continue_replays_source_launch_policy_snapshot(
     assert request.launch_policy_snapshot.tools == snapshot.tools
     assert request.launch_policy_snapshot.mcp_tools == snapshot.mcp_tools
     assert request.passthrough_args == snapshot.extra_args
-    assert request.agent is None
-    assert request.model == ""
-    assert request.skills == ()
+    assert request.agent == snapshot.agent
+    assert request.model == snapshot.model
+    assert request.skills == snapshot.skills
 
 
 def test_primary_continue_spawn_session_ref_recovers_linked_spawn_snapshot(
@@ -607,6 +613,55 @@ def test_primary_continue_uses_legacy_bundle_resolution_without_snapshot(
     assert request.launch_policy_snapshot is None
 
 
+def test_primary_exact_continue_without_source_task_suppresses_ambient_task_dir(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    _state_root(project_root)
+    ambient_task_dir = tmp_path / "ambient-task"
+    ambient_task_dir.mkdir()
+    monkeypatch.setenv("MERIDIAN_TASK_DIR", ambient_task_dir.as_posix())
+    stub_bundle_request_and_resolve(
+        monkeypatch,
+        model="gpt-5.3-codex",
+        model_token="gpt-5.3-codex",
+        harness=HarnessId.CODEX,
+        harness_model="openai/gpt-5.3-codex",
+    )
+
+    captured_task_cwds: list[str | None] = []
+    real_bind_launch_context = launch_context.bind_launch_context
+
+    def capture_bind_launch_context(*args: Any, **kwargs: Any) -> Any:
+        ctx = real_bind_launch_context(*args, **kwargs)
+        captured_task_cwds.append(ctx.resolved_request.task_cwd)
+        return ctx
+
+    monkeypatch.setattr(launch_context, "bind_launch_context", capture_bind_launch_context)
+
+    launch_primary(
+        project_root=project_root,
+        request=LaunchRequest(
+            model="gpt-5.3-codex",
+            harness="codex",
+            session_mode=SessionMode.RESUME,
+            dry_run=True,
+            session=SessionRequest(
+                requested_harness_session_id="raw-session",
+                continue_harness="codex",
+                continue_source_ref="raw-session",
+                continue_source_tracked=False,
+            ),
+        ),
+        harness_registry=get_default_harness_registry(),
+    )
+
+    assert captured_task_cwds
+    assert captured_task_cwds[0] != ambient_task_dir.as_posix()
+
+
 def test_primary_continue_snapshot_replay_preserves_agent_over_config_default(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -776,7 +831,7 @@ def test_primary_continue_replays_codex_empty_model_snapshot_as_default_model(
     )
 
     assert ctx.resolved_request.launch_policy_snapshot == snapshot
-    assert ctx.resolved_request.model == ""
+    assert ctx.resolved_request.model is None
     assert ctx.resolved_request.harness == "codex"
     assert ctx.resolved_request.agent == "tech-lead"
     assert ctx.model_selection is None

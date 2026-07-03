@@ -48,6 +48,12 @@ Fork and continue operations check that the target spawn's harness matches the
 current harness context. Cross-harness fork/continue is not supported — the guard
 raises before any state is created.
 
+`spawn_continue` does not assemble replay policy itself. It resolves the source
+spawn/session, rejects launch-identity, policy, work, and task-dir mutations, then
+delegates exact-continue normalization to `launch/continue_replay.py`'s
+`ContinueReplayContract`. Agent opt-out is treated as a launch-identity mutation,
+not as a harmless absence.
+
 ## Key Entry Points
 
 - `api.py` — all spawn operations (sync and async variants).
@@ -80,5 +86,6 @@ a real argv — execution paths use `SPEC_ONLY`.
 
 - [../.context/CONTEXT.md](../.context/CONTEXT.md) — ops/ policy layer overview;
   SpawnApplicationService layer diagram; execution path ownership.
-- [../../launch/.context/CONTEXT.md](../../launch/.context/CONTEXT.md) — mechanism
-  layer this drives.
+- [../../launch/.context/CONTEXT.md](../../launch/.context/CONTEXT.md) — launch mechanism
+  this drives; [exact continue replay contract](../../launch/.context/CONTEXT.md#exact-continue-replay)
+  (`ContinueReplayContract`).
