@@ -4,6 +4,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+- Spawn guidance now documents `--skills` flag and deemphasizes `-m` (agent profiles already set the right model).
+
 ## [0.3.23] - 2026-07-03
 
 ### Changed
