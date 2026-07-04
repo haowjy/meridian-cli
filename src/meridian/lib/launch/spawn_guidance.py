@@ -18,7 +18,9 @@ subagent needs, not what you've been thinking about. Front-load the task; \
 the subagent should know its job by line 3.
 
 Pass `--skills skill1,skill2` to load additional skills onto the subagent.
-Agent profiles already set the right model for each role; prefer the defaults. Use `-m <model>` only for deliberate fan-out (e.g. reviewers across models for perspective diversity). Run `meridian mars models list` to see available models with value, intelligence, and taste ratings.
+Agent profiles already set the right model for each role; prefer the \
+defaults. Use `-m <model>` only for deliberate fan-out (e.g. reviewers \
+across models for perspective diversity).
 
 For model-specific prompting guidance:  meridian mars models prompting <agent-or-model>"""
 
