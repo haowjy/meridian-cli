@@ -172,6 +172,9 @@ class ChildEnvContext:
             explicit_runtime_root=resolved_runtime_root,
             context_config=context_config,
         )
+        from meridian.lib.ops.depth import with_record_backed_depth
+
+        resolved = with_record_backed_depth(resolved)
         return cls(resolved=resolved)
 
     @property

@@ -61,6 +61,7 @@ class ResolvedContext:
         explicit_chat_id: str | None = None,
         explicit_project_root: Path | None = None,
         explicit_runtime_root: Path | None = None,
+        explicit_depth: int | None = None,
         backend: ContextBackend | None = None,
         context_config: ContextConfig | None = None,
     ) -> Self:
@@ -100,7 +101,11 @@ class ResolvedContext:
             work_id_raw = os.getenv("MERIDIAN_ACTIVE_WORK_ID", "").strip()
             work_dir_raw = os.getenv("MERIDIAN_ACTIVE_WORK_DIR", "").strip()
 
-        depth = parse_meridian_depth(depth_raw)
+        depth = (
+            max(0, explicit_depth)
+            if explicit_depth is not None
+            else parse_meridian_depth(depth_raw)
+        )
 
         project_root = (
             explicit_project_root

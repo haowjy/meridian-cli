@@ -96,6 +96,7 @@ def launch_primary(
     from meridian.lib.catalog.catalog_session import CatalogSession
     from meridian.lib.config.project_root import resolve_project_root_resolution
     from meridian.lib.core.context import resolve_runtime_context
+    from meridian.lib.ops.depth import with_record_backed_depth
     from meridian.lib.ops.runtime import resolve_runtime_root_for_read
 
     from .context import (
@@ -111,9 +112,11 @@ def launch_primary(
     resolved_project_root = resolve_project_root_resolution(project_root).project_root
     explicit_work_id = _explicit_work_id_for_launch(request)
     runtime_root_for_context = resolve_runtime_root_for_read(resolved_project_root)
-    runtime_context = resolve_runtime_context(
-        project_root=resolved_project_root,
-        runtime_root=runtime_root_for_context,
+    runtime_context = with_record_backed_depth(
+        resolve_runtime_context(
+            project_root=resolved_project_root,
+            runtime_root=runtime_root_for_context,
+        )
     )
     inherit_ambient_work = request.session_mode.value != "resume"
     inherited_task_dir = (

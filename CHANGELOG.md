@@ -4,6 +4,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Security
+- Spawn depth limits use persisted per-record `meridian_depth` so forged `MERIDIAN_DEPTH` cannot bypass `--max-depth`; first concrete piece of coordinator-enforced delegation limits.
+
 ## [0.3.24] - 2026-07-04
 
 ### Changed
