@@ -9,7 +9,10 @@ from collections.abc import Mapping
 from pathlib import Path
 
 from meridian.lib.hooks.types import Hook, HookContext, HookResult
-from meridian.lib.launch.env_sanitize import build_meridian_subprocess_env
+from meridian.lib.launch.env_sanitize import (
+    ChildEnvPolicy,
+    build_meridian_subprocess_env,
+)
 from meridian.lib.platform.process_scope.fallback import terminate_tree_sync
 
 _TAIL_BYTES = 1024
@@ -65,8 +68,14 @@ def _terminate_process_tree(process: subprocess.Popen[bytes], *, grace_secs: flo
 class ExternalHookRunner:
     """Run one external hook command with context transport and timeout handling."""
 
-    def __init__(self, project_root: Path) -> None:
+    def __init__(
+        self,
+        project_root: Path,
+        *,
+        env_policy: ChildEnvPolicy | None = None,
+    ) -> None:
         self._project_root = project_root.expanduser().resolve()
+        self._env_policy = env_policy
 
     def run(self, hook: Hook, context: HookContext, *, timeout_secs: int) -> HookResult:
         """Execute one hook command and return structured result."""
@@ -96,6 +105,7 @@ class ExternalHookRunner:
         env = build_meridian_subprocess_env(
             base_env=os.environ,
             env_overrides=context.to_env(),
+            env_policy=self._env_policy,
         )
         env.pop("MERIDIAN_RUNTIME_DIR", None)
         start = time.monotonic()

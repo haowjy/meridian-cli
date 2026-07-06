@@ -25,6 +25,7 @@ from meridian.lib.hooks.types import (
     HookResult,
     SpawnStatus,
 )
+from meridian.lib.launch.env_sanitize import ChildEnvPolicy, child_env_policy_from_config
 from meridian.plugin_api import Hook as PluginHook
 from meridian.plugin_api import HookContext as PluginHookContext
 
@@ -52,6 +53,22 @@ class _ExternalRunnerLike(Protocol):
 logger = structlog.get_logger(__name__)
 
 
+def _resolve_hook_env_policy(
+    project_root: Path,
+    *,
+    env_policy: ChildEnvPolicy | None = None,
+) -> ChildEnvPolicy | None:
+    if env_policy is not None:
+        return env_policy
+    try:
+        from meridian.lib.config.settings import load_config
+
+        return child_env_policy_from_config(load_config(project_root))
+    except Exception:
+        logger.debug("hook_env_policy_load_failed", project_root=str(project_root))
+        return None
+
+
 class HookDispatcher(LifecycleHook):
     """Coordinate hook execution for lifecycle events."""
 
@@ -65,6 +82,7 @@ class HookDispatcher(LifecycleHook):
         interval_tracker: _IntervalTrackerLike | None = None,
         external_runner: _ExternalRunnerLike | None = None,
         builtin_hooks: Mapping[str, BuiltinHook] | None = None,
+        env_policy: ChildEnvPolicy | None = None,
     ) -> None:
         if authority is not None:
             self._project_root = authority.project_root.expanduser().resolve()
@@ -86,7 +104,14 @@ class HookDispatcher(LifecycleHook):
             authority=self._authority,
         )
         self._interval_tracker = interval_tracker or IntervalTracker(self._runtime_root)
-        self._external_runner = external_runner or ExternalHookRunner(self._project_root)
+        resolved_env_policy = _resolve_hook_env_policy(
+            self._project_root,
+            env_policy=env_policy,
+        )
+        self._external_runner = external_runner or ExternalHookRunner(
+            self._project_root,
+            env_policy=resolved_env_policy,
+        )
         self._builtin_hooks = builtin_hooks or BUILTIN_HOOKS
 
     @classmethod
@@ -98,6 +123,7 @@ class HookDispatcher(LifecycleHook):
         interval_tracker: _IntervalTrackerLike | None = None,
         external_runner: _ExternalRunnerLike | None = None,
         builtin_hooks: Mapping[str, BuiltinHook] | None = None,
+        env_policy: ChildEnvPolicy | None = None,
     ) -> HookDispatcher:
         """Build a dispatcher from shared application context authority."""
 
@@ -120,6 +146,12 @@ class HookDispatcher(LifecycleHook):
             interval_tracker=interval_tracker,
             external_runner=external_runner,
             builtin_hooks=builtin_hooks,
+            env_policy=env_policy
+            or (
+                child_env_policy_from_config(context.config)
+                if context.config is not None
+                else None
+            ),
         )
 
     def on_event(self, event: LifecycleEvent) -> None:

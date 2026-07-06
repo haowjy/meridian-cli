@@ -59,3 +59,54 @@ def test_external_hook_runs_argv_without_shell(
     assert isinstance(env, dict)
     assert "SECRET_API_KEY" not in env
     assert env["PATH"] == "/usr/bin"
+
+
+def test_external_hook_inherit_full_env_restores_ambient_secrets(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    class _FakeProcess:
+        returncode = 0
+
+        def communicate(self, **_kwargs: object) -> tuple[bytes, bytes]:
+            return b"ok", b""
+
+    def _fake_popen(
+        _command: object,
+        *,
+        env: dict[str, str],
+        **_kwargs: object,
+    ) -> _FakeProcess:
+        captured["env"] = env
+        return _FakeProcess()
+
+    monkeypatch.setattr("meridian.lib.hooks.runner.subprocess.Popen", _fake_popen)
+    monkeypatch.setenv("SECRET_API_KEY", "legacy-visible")
+    monkeypatch.setenv("PATH", "/usr/bin")
+
+    hook = Hook(
+        name="legacy-hook",
+        event="spawn.created",
+        source="project",
+        command_argv=("/bin/echo", "hi"),
+    )
+    context = HookContext.from_roots(
+        event_name="spawn.created",
+        event_id=uuid4(),
+        timestamp="2026-01-01T00:00:00Z",
+        project_root=str(tmp_path),
+        runtime_root=str(tmp_path / ".meridian"),
+    )
+    from meridian.lib.launch.env_sanitize import ChildEnvPolicy
+
+    result = ExternalHookRunner(
+        tmp_path,
+        env_policy=ChildEnvPolicy(inherit_full_env=True),
+    ).run(hook, context, timeout_secs=5)
+
+    assert result.success is True
+    env = captured["env"]
+    assert isinstance(env, dict)
+    assert env["SECRET_API_KEY"] == "legacy-visible"
