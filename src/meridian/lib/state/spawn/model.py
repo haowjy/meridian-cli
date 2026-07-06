@@ -54,6 +54,7 @@ class SpawnRecord(BaseModel):
     chat_id: str | None
     owner_chat_id: str | None = None
     parent_id: str | None
+    meridian_depth: int | None = None
     originating_bash_id: str | None = None
     model: str | None
     agent: str | None

@@ -8,6 +8,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Harness and hook child processes now default to sanitized coordinator env: secret-like variables are dropped unless harness-declared, listed in `[spawn].env_passthrough`, or set via `[env]` / `spawn --env`. Opt back into full inheritance with `[spawn].inherit_full_env = true`.
 - Child-env sanitization now keeps OS/network/TLS baseline vars (proxy, cert bundles, Windows process env), harness-declared auth alternatives (`ANTHROPIC_AUTH_TOKEN`, provider base URLs), and Pi/Node runtime prefixes while still dropping undeclared `*_KEY` / `*_TOKEN` / `*_SECRET`.
 - `[spawn].inherit_full_env` and `env_passthrough` now apply to external hook subprocesses, restoring legacy full-env behavior when opted in.
+- Spawn depth limits read persisted `meridian_depth` from spawn records (O(1)) so pruned ancestry cannot undercount depth via forged `MERIDIAN_DEPTH`.
 - External hooks accept argv-array `command = ["/path/to/script", "arg"]` (`shell=False`); string `command` still works but logs a deprecation warning on load.
 - Spawn depth limits derive from coordinator spawn ancestry when `MERIDIAN_SPAWN_ID` resolves in the spawn store (`max(env, records)`), closing env-forged depth bypass.
 

@@ -29,13 +29,19 @@ def depth_from_spawn_ancestry(
     spawn_id: str | SpawnId,
     runtime_root: Path,
 ) -> int | None:
-    """Return spawn depth from persisted parent links, or ``None`` when unknown."""
+    """Return spawn depth from persisted records, or ``None`` when unknown."""
 
     from meridian.lib.state import spawn_store
 
     normalized_spawn_id = str(spawn_id).strip()
     if not normalized_spawn_id:
         return None
+
+    record = spawn_store.get_spawn(runtime_root, normalized_spawn_id)
+    if record is None:
+        return None
+    if record.meridian_depth is not None:
+        return record.meridian_depth
 
     depth = 0
     current_id = normalized_spawn_id
@@ -44,10 +50,12 @@ def depth_from_spawn_ancestry(
         if current_id in visited:
             return None
         visited.add(current_id)
-        record = spawn_store.get_spawn(runtime_root, current_id)
-        if record is None:
-            return None if current_id == normalized_spawn_id else depth
-        parent_id = (record.parent_id or "").strip() or None
+        walk_record = spawn_store.get_spawn(runtime_root, current_id)
+        if walk_record is None:
+            if current_id == normalized_spawn_id:
+                return None
+            return max(depth, record.meridian_depth or 0)
+        parent_id = (walk_record.parent_id or "").strip() or None
         if parent_id is None:
             return depth
         depth += 1

@@ -243,6 +243,26 @@ class FinalizeOutcome(BaseModel):
     snapshot: SpawnRecord | None
 
 
+def _resolve_spawn_meridian_depth(
+    runtime_root: Path,
+    *,
+    parent_id: str | None,
+    kind: str,
+    meridian_depth: int | None,
+) -> int:
+    if meridian_depth is not None:
+        return max(0, meridian_depth)
+    if kind == "primary":
+        return 0
+    if parent_id:
+        parent = get_spawn(runtime_root, parent_id)
+        if parent is not None and parent.meridian_depth is not None:
+            return parent.meridian_depth + 1
+    from meridian.lib.core.depth import child_meridian_depth, current_meridian_depth
+
+    return child_meridian_depth(current_meridian_depth())
+
+
 def start_spawn(
     runtime_root: Path,
     *,
@@ -271,6 +291,7 @@ def start_spawn(
     runner_pid: int | None = None,
     runner_created_at_epoch: float | None = None,
     launch_policy_snapshot: LaunchPolicySnapshot | None = None,
+    meridian_depth: int | None = None,
     status: SpawnStatus = "running",
     started_at: str | None = None,
     clock: Clock | None = None,
@@ -300,6 +321,12 @@ def start_spawn(
     resolved_launch_policy_snapshot = (
         launch_policy_snapshot or start_metadata.launch_policy_snapshot
     )
+    resolved_meridian_depth = _resolve_spawn_meridian_depth(
+        runtime_root,
+        parent_id=parent_id,
+        kind=kind,
+        meridian_depth=meridian_depth,
+    )
 
     with lock_file(paths.spawns_flock):
         if spawn_id is not None:
@@ -316,6 +343,7 @@ def start_spawn(
             chat_id=chat_id,
             owner_chat_id=owner_chat_id,
             parent_id=parent_id,
+            meridian_depth=resolved_meridian_depth,
             originating_bash_id=os.environ.get("MERIDIAN_PI_BASH_ID") or None,
             model=model,
             agent=agent,

@@ -31,6 +31,7 @@ class SpawnReservation:
     prompt: str
     owner_chat_id: str | None = None
     parent_id: str | None = None
+    meridian_depth: int | None = None
     kind: str = "child"
     metadata: SpawnStartMetadata | None = None
     desc: str | None = None

@@ -11,7 +11,7 @@ from pydantic import BaseModel, ConfigDict
 from meridian.lib.bootstrap.services import build_spawn_lifecycle_service_from_roots
 from meridian.lib.config.project_paths import ProjectConfigPaths, resolve_project_config_paths
 from meridian.lib.core.context import RuntimeContext
-from meridian.lib.core.depth import current_meridian_depth, max_depth_reached
+from meridian.lib.core.depth import child_meridian_depth, current_meridian_depth, max_depth_reached
 from meridian.lib.core.domain import Spawn, SpawnStatus
 from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
 from meridian.lib.core.resolved_context import ResolvedContext
@@ -187,6 +187,7 @@ def build_spawn_reservation(
         chat_id=owner_chat_id,
         owner_chat_id=owner_chat_id,
         parent_id=str(resolved_context.spawn_id) if resolved_context.spawn_id else None,
+        meridian_depth=child_meridian_depth(resolved_context.depth),
         session_metadata=spawn_session_metadata,
         kind="child",
         prompt=request.prompt,

@@ -15,11 +15,13 @@ def _record(
     spawn_id: str,
     *,
     parent_id: str | None = None,
+    meridian_depth: int | None = None,
 ) -> SpawnRecord:
     return SpawnRecord(
         id=spawn_id,
         chat_id="chat-1",
         parent_id=parent_id,
+        meridian_depth=meridian_depth,
         model="gpt-5.4",
         agent="coder",
         agent_path=None,
@@ -99,3 +101,29 @@ def test_resolve_effective_meridian_depth_uses_max_of_env_and_records(
 
     env["MERIDIAN_DEPTH"] = "2"
     assert resolve_effective_meridian_depth(env, runtime_root=runtime_root) == 2
+
+
+def test_depth_from_persisted_record_is_o1_when_ancestors_pruned(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    runtime_root = tmp_path / "runtime"
+    records = {
+        "p-deep": _record("p-deep", parent_id="p-missing", meridian_depth=5),
+    }
+
+    def _fake_get_spawn(_runtime_root: Path, spawn_id: str) -> SpawnRecord | None:
+        return records.get(spawn_id)
+
+    monkeypatch.setattr(
+        "meridian.lib.state.spawn_store.get_spawn",
+        _fake_get_spawn,
+    )
+
+    assert depth_from_spawn_ancestry("p-deep", runtime_root) == 5
+
+    env = {
+        "MERIDIAN_SPAWN_ID": "p-deep",
+        "MERIDIAN_DEPTH": "0",
+    }
+    assert resolve_effective_meridian_depth(env, runtime_root=runtime_root) == 5

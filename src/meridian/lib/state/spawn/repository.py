@@ -40,6 +40,7 @@ class StoredSpawnState(BaseModel):
     chat_id: str | None = None
     owner_chat_id: str | None = None
     parent_id: str | None = None
+    meridian_depth: int | None = None
     originating_bash_id: str | None = None
     model: str | None = None
     agent: str | None = None
@@ -114,6 +115,7 @@ def record_to_stored_state(
         chat_id=record.chat_id,
         owner_chat_id=record.owner_chat_id,
         parent_id=record.parent_id,
+        meridian_depth=record.meridian_depth,
         originating_bash_id=record.originating_bash_id,
         model=record.model,
         agent=record.agent,
@@ -171,6 +173,7 @@ def stored_state_to_record(
         chat_id=stored.chat_id,
         owner_chat_id=stored.owner_chat_id,
         parent_id=stored.parent_id,
+        meridian_depth=stored.meridian_depth,
         originating_bash_id=stored.originating_bash_id,
         model=stored.model,
         agent=stored.agent,
