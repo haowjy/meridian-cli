@@ -202,7 +202,9 @@ uv run meridian --help
 
 ## Windows Support
 
-Windows is a supported platform. The CLI and runtime run natively without WSL.
+Windows is a supported platform. Spawn, state, and coordination layers run
+natively on Windows. The primary interactive TUI and PTY-based session capture
+require WSL — see Deferred items below.
 
 ### CI
 
