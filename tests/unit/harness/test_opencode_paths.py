@@ -23,6 +23,9 @@ def test_resolve_opencode_storage_root_uses_localappdata_on_windows(
     monkeypatch.setenv("LOCALAPPDATA", str(local_app_data))
     monkeypatch.delenv("XDG_DATA_HOME", raising=False)
     monkeypatch.delenv("OPENCODE_HOME", raising=False)
+    # Native Windows with no explicit HOME override: LOCALAPPDATA is the default.
+    # (An explicitly-set HOME/XDG wins over it — covered by other tests.)
+    monkeypatch.delenv("HOME", raising=False)
 
     expected_storage = local_app_data / "opencode" / "storage"
     expected_db = local_app_data / "opencode" / "opencode.db"
@@ -61,6 +64,28 @@ def test_resolve_opencode_storage_root_uses_launch_env_home(
     assert resolve_opencode_storage_root(launch_env) == expected_storage
     assert resolve_opencode_home_dir(launch_env) == expected_storage.parent
     assert resolve_opencode_db_path(launch_env) == expected_storage.parent / "opencode.db"
+
+
+def test_resolve_opencode_storage_root_explicit_home_beats_localappdata_on_windows(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    # Regression for the Windows gate: an explicitly-set HOME must win over an
+    # ambient LOCALAPPDATA (the CI runner always has LOCALAPPDATA set). OpenCode
+    # honours HOME, so a spawn with HOME override must resolve under it.
+    child_home = tmp_path / "home"
+    local_app_data = tmp_path / "localappdata"
+
+    monkeypatch.setattr(opencode_storage, "IS_WINDOWS", True)
+    monkeypatch.delenv("XDG_DATA_HOME", raising=False)
+    monkeypatch.delenv("OPENCODE_HOME", raising=False)
+    monkeypatch.setenv("LOCALAPPDATA", str(local_app_data))
+    monkeypatch.setenv("HOME", str(child_home))
+
+    assert (
+        resolve_opencode_storage_root()
+        == child_home / ".local" / "share" / "opencode" / "storage"
+    )
 
 
 def test_resolve_opencode_storage_root_uses_launch_env_localappdata_on_windows(

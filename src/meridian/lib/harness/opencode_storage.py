@@ -9,25 +9,16 @@ from pathlib import Path
 from meridian.lib.platform import IS_WINDOWS, get_home_path
 
 
-def _resolve_default_home(env: Mapping[str, str]) -> Path:
-    """Resolve default home from launch env before parent-process fallback."""
-
-    if IS_WINDOWS:
-        user_profile = env.get("USERPROFILE", "").strip()
-        if user_profile:
-            return Path(user_profile).expanduser()
-
-    home = env.get("HOME", "").strip()
-    if home:
-        return Path(home).expanduser()
-
-    return get_home_path()
-
-
 def resolve_opencode_data_root(launch_env: Mapping[str, str] | None = None) -> Path:
     """Resolve the parent directory of OpenCode's data folder.
 
-    Precedence: ``XDG_DATA_HOME`` → ``%LOCALAPPDATA%`` on Windows → POSIX default.
+    Precedence: ``XDG_DATA_HOME`` → explicit ``HOME`` (``.local/share``, all
+    platforms) → ``%LOCALAPPDATA%`` on native Windows → parent-process home.
+
+    An explicitly provided ``HOME``/``XDG_DATA_HOME`` always wins over the
+    platform default: callers pass a child ``launch_env`` deliberately, and
+    OpenCode itself honours ``HOME`` when set. ``%LOCALAPPDATA%`` is only the
+    default when no explicit home is provided (native Windows).
     """
 
     env = launch_env if launch_env is not None else os.environ
@@ -36,13 +27,19 @@ def resolve_opencode_data_root(launch_env: Mapping[str, str] | None = None) -> P
     if xdg_data_home:
         return Path(xdg_data_home).expanduser()
 
+    home = env.get("HOME", "").strip()
+    if home:
+        return Path(home).expanduser() / ".local" / "share"
+
     if IS_WINDOWS:
         local_app_data = env.get("LOCALAPPDATA", "").strip()
         if local_app_data:
             return Path(local_app_data)
-        return _resolve_default_home(env) / "AppData" / "Local"
+        user_profile = env.get("USERPROFILE", "").strip()
+        if user_profile:
+            return Path(user_profile) / "AppData" / "Local"
 
-    return _resolve_default_home(env) / ".local" / "share"
+    return get_home_path() / ".local" / "share"
 
 
 def resolve_opencode_home_dir(launch_env: Mapping[str, str] | None = None) -> Path:
