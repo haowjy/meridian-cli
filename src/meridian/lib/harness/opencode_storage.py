@@ -6,27 +6,58 @@ import os
 from collections.abc import Iterator, Mapping
 from pathlib import Path
 
-from meridian.lib.platform import get_home_path
+from meridian.lib.platform import IS_WINDOWS, get_home_path
 
 
-def resolve_opencode_storage_root(launch_env: Mapping[str, str] | None = None) -> Path:
-    """Resolve OpenCode storage root from launch env with XDG fallback."""
+def resolve_opencode_data_root(launch_env: Mapping[str, str] | None = None) -> Path:
+    """Resolve the parent directory of OpenCode's data folder.
+
+    Precedence: ``XDG_DATA_HOME`` → explicit ``HOME`` (``.local/share``, all
+    platforms) → ``%LOCALAPPDATA%`` on native Windows → parent-process home.
+
+    An explicitly provided ``HOME``/``XDG_DATA_HOME`` always wins over the
+    platform default: callers pass a child ``launch_env`` deliberately, and
+    OpenCode itself honours ``HOME`` when set. ``%LOCALAPPDATA%`` is only the
+    default when no explicit home is provided (native Windows).
+    """
+
+    env = launch_env if launch_env is not None else os.environ
+
+    xdg_data_home = env.get("XDG_DATA_HOME", "").strip()
+    if xdg_data_home:
+        return Path(xdg_data_home).expanduser()
+
+    home = env.get("HOME", "").strip()
+    if home:
+        return Path(home).expanduser() / ".local" / "share"
+
+    if IS_WINDOWS:
+        local_app_data = env.get("LOCALAPPDATA", "").strip()
+        if local_app_data:
+            return Path(local_app_data)
+        user_profile = env.get("USERPROFILE", "").strip()
+        if user_profile:
+            return Path(user_profile) / "AppData" / "Local"
+
+    return get_home_path() / ".local" / "share"
+
+
+def resolve_opencode_home_dir(launch_env: Mapping[str, str] | None = None) -> Path:
+    """Resolve OpenCode's data directory (``opencode.db``, ``storage/``, ``log/``)."""
 
     env = launch_env if launch_env is not None else os.environ
 
     opencode_home = env.get("OPENCODE_HOME", "").strip()
     if opencode_home:
-        return Path(opencode_home).expanduser() / "storage"
+        return Path(opencode_home).expanduser()
 
-    xdg_data_home = env.get("XDG_DATA_HOME", "").strip()
-    if xdg_data_home:
-        return Path(xdg_data_home).expanduser() / "opencode" / "storage"
+    return resolve_opencode_data_root(launch_env) / "opencode"
 
-    home = env.get("HOME", "").strip()
-    if home:
-        return Path(home).expanduser() / ".local" / "share" / "opencode" / "storage"
 
-    return get_home_path() / ".local" / "share" / "opencode" / "storage"
+def resolve_opencode_storage_root(launch_env: Mapping[str, str] | None = None) -> Path:
+    """Resolve OpenCode storage root from launch env with platform fallback."""
+
+    return resolve_opencode_home_dir(launch_env) / "storage"
 
 
 def iter_opencode_session_files(storage_root: Path) -> Iterator[Path]:
@@ -72,6 +103,8 @@ def resolve_opencode_session_file(
 __all__ = [
     "iter_opencode_session_files",
     "opencode_session_id_from_path",
+    "resolve_opencode_data_root",
+    "resolve_opencode_home_dir",
     "resolve_opencode_session_file",
     "resolve_opencode_storage_root",
 ]

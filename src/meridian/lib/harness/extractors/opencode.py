@@ -27,10 +27,10 @@ from meridian.lib.harness.opencode_report import (
 from meridian.lib.harness.opencode_storage import (
     iter_opencode_session_files,
     opencode_session_id_from_path,
+    resolve_opencode_home_dir,
     resolve_opencode_storage_root,
 )
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
-from meridian.lib.platform import get_home_path
 
 from .base import HarnessExtractor, session_from_mapping_with_keys
 
@@ -64,19 +64,7 @@ def _resolve_logs_root(launch_env: Mapping[str, str]) -> Path:
     if explicit:
         return Path(explicit).expanduser()
 
-    opencode_home = launch_env.get("OPENCODE_HOME", "").strip()
-    if opencode_home:
-        return Path(opencode_home).expanduser() / "log"
-
-    xdg_data_home = launch_env.get("XDG_DATA_HOME", "").strip()
-    if xdg_data_home:
-        return Path(xdg_data_home).expanduser() / "opencode" / "log"
-
-    home = launch_env.get("HOME", "").strip()
-    if home:
-        return Path(home).expanduser() / ".local" / "share" / "opencode" / "log"
-
-    return get_home_path() / ".local" / "share" / "opencode" / "log"
+    return resolve_opencode_home_dir(launch_env) / "log"
 
 
 def _safe_resolve(path: Path) -> Path:

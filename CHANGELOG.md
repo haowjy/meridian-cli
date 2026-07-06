@@ -4,6 +4,14 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+- Doc/code alignment: three launch driving adapters (no REST spawn routes), honest `lib/core` role, accurate Windows/TUI and CI claims, v2 spawn-state references, OpenCode upstream org note (anomalyco/opencode.ai).
+- Platform hygiene: route `Path.home()` and inline `sys.platform` checks through `lib/platform` helpers; centralize OpenCode data-dir resolution (XDG → LOCALAPPDATA → POSIX) across adapter, storage, and transcript paths.
+
+### Fixed
+- Restore `## [Unreleased]` CHANGELOG heading required by release automation.
+- OpenCode storage path resolution: honor child `launch_env["HOME"]` (and Windows `USERPROFILE`) before parent-process home when `XDG_DATA_HOME` / `LOCALAPPDATA` are unset.
+
 ## [0.3.24] - 2026-07-04
 
 ### Changed

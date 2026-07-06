@@ -5,7 +5,6 @@ import logging
 import os
 import re
 import sqlite3
-import sys
 import tempfile
 import time
 from pathlib import Path
@@ -76,7 +75,7 @@ from meridian.lib.launch.constants import (
     PRIMARY_BASE_COMMAND_CODEX,
 )
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec, TerminalSurfaceMode
-from meridian.lib.platform import get_home_path
+from meridian.lib.platform import IS_WINDOWS, get_home_path
 from meridian.lib.safety.permissions import PermissionConfig
 
 logger = logging.getLogger(__name__)
@@ -90,7 +89,7 @@ def _codex_home() -> Path:
 
 
 def _fsync_directory(path: Path) -> None:
-    if sys.platform == "win32":
+    if IS_WINDOWS:
         return
     flags = os.O_RDONLY
     if hasattr(os, "O_DIRECTORY"):

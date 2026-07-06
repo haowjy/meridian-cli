@@ -202,11 +202,13 @@ uv run meridian --help
 
 ## Windows Support
 
-Windows is a supported platform. The CLI and runtime run natively without WSL.
+Windows is a supported platform. Spawn, state, and coordination layers run
+natively on Windows. The primary interactive TUI and PTY-based session capture
+require WSL — see Deferred items below.
 
 ### CI
 
-A `windows-gate` job in `.github/workflows/meridian-ci.yml` runs on `windows-latest` on every push, executing `uv run pytest -n auto -m "not slow"`.
+A `windows-gate` job in `.github/workflows/meridian-ci.yml` runs on `windows-latest` on every push, executing `uv run pytest -n 0 -m "not slow"` serially (xdist worker startup can hang on Windows before pytest emits output).
 
 ### Developer scripts
 

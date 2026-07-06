@@ -84,27 +84,26 @@ agent routing behaves. Use a divergent mode instead.
 
 KB: `decisions/launch.md#d-continue-replays-recorded-launch-contract-same-session-continue-is-not-live-policy-recomputation`.
 
-### Four Driving Adapters
+### Three Driving Adapters
 
-Four paths call into this module — each converges on `build_launch_context()`:
+Three paths enter the launch composition seam:
 
-1. **Primary CLI** (`launch/__init__.py:launch_primary()`): prepare-once/bind-twice.
-   Dry-run preview uses the first bind; `run_harness_process()` rebuilds with real paths.
+1. **Primary CLI** (`launch/__init__.py:launch_primary()`): `prepare_launch_surface()`
+   once, then `bind_launch_context()` twice — dry-run preview uses the first bind;
+   `run_harness_process()` uses the second with real paths.
 
-2. **Spawn subprocess** (`ops/spawn/execute.py`): foreground calls
-   `execute_spawn_blocking()` → `launch_prepared_spawn()` → `execute_with_streaming()`;
-   background persists `BackgroundWorkerLaunchRequest` and detaches a worker subprocess
-   which calls `_execute_existing_spawn()` → `launch_prepared_spawn()`.
-   Both foreground and background converge at `launch_prepared_spawn()`, which owns
-   pre-run failure finalization.
+2. **Spawn subprocess** (`ops/spawn/execute.py`): `compose_spawn_launch_surface()`
+   once per operation, then `bind_spawn_launch_context()` for preview and execute.
+   Foreground calls `execute_spawn_blocking()` → `launch_prepared_spawn()` →
+   `execute_with_streaming()`; background persists `BackgroundWorkerLaunchRequest`
+   and detaches a worker subprocess which calls `_execute_existing_spawn()` →
+   `launch_prepared_spawn()`. Both foreground and background converge at
+   `launch_prepared_spawn()`, which owns pre-run failure finalization.
 
-3. **REST app** (`lib/app/spawn_routes.py`): `SpawnApplicationService.prepare_spawn()`
-   implements resolve-before-persist — `build_launch_context()` runs before any spawn
-   row is created. Row is only created on success (SEAM-1).
-
-4. **CLI streaming-serve** (`cli/streaming_serve.py`): also uses
-   `SpawnApplicationService.prepare_spawn()`, then calls `run_streaming_spawn()`
-   directly from `streaming_runner.py`.
+3. **CLI streaming-serve** (`cli/streaming_serve.py`): `SpawnApplicationService.prepare_spawn()`
+   implements resolve-before-persist — launch composition runs before any spawn
+   row is created. Row is only created on success (SEAM-1), then `run_streaming_spawn()`
+   runs from `streaming_runner.py`.
 
 ### Finalization Ownership Layers
 

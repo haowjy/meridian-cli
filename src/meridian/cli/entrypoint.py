@@ -8,6 +8,7 @@ from meridian.cli.bootstrap import first_positional_token, meridian_managed_env_
 from meridian.cli.mode import extract_forced_render_mode, is_agent_render_mode, resolve_render_mode
 from meridian.cli.startup.catalog import COMMAND_CATALOG
 from meridian.cli.startup.classify import classify_invocation
+from meridian.lib.platform import IS_WINDOWS
 
 
 def _is_root_help_request(argv: Sequence[str]) -> bool:
@@ -36,7 +37,7 @@ def main() -> None:
 def _main_impl() -> None:
     import sys
 
-    if sys.platform == "win32":
+    if IS_WINDOWS:
         for stream in (sys.stdout, sys.stderr):
             if hasattr(stream, "reconfigure"):
                 stream.reconfigure(encoding="utf-8", errors="replace")

@@ -23,6 +23,7 @@ from meridian.lib.harness.common import (
 )
 from meridian.lib.harness.connections.base import HarnessEvent
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
+from meridian.lib.platform import get_home_path
 
 from .base import HarnessExtractor, session_from_mapping_with_keys
 
@@ -33,7 +34,7 @@ def _detect_primary_session_id(  # pyright: ignore[reportUnusedFunction]
     launch_env: Mapping[str, str],
 ) -> str | None:
     home = launch_env.get("HOME", "").strip()
-    home_path = Path(home).expanduser() if home else Path.home()
+    home_path = Path(home).expanduser() if home else get_home_path()
     projects_root = home_path / ".claude" / "projects"
     project_dir = projects_root / project_slug(child_cwd)
     if not project_dir.is_dir():

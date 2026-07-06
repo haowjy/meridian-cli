@@ -7,12 +7,13 @@ Also includes process-group helpers for subprocess lifecycle management
 import asyncio
 import os
 import signal
-import sys
 from collections.abc import Generator
 from contextlib import contextmanager
 from threading import Lock, RLock
 from types import FrameType
 from typing import Final, Self, cast
+
+from meridian.lib.platform import IS_WINDOWS
 
 # ---------------------------------------------------------------------------
 # Process-group helpers (absorbed from exec/process_groups.py)
@@ -38,7 +39,7 @@ def signal_process_group(
     pid = process.pid
 
     try:
-        if sys.platform == "win32":
+        if IS_WINDOWS:
             process.send_signal(signum)
             return
         pgid = os.getpgid(pid)
@@ -62,7 +63,7 @@ def force_kill_process(process: asyncio.subprocess.Process) -> None:
         return
 
     try:
-        if sys.platform == "win32":
+        if IS_WINDOWS:
             process.kill()
             return
         # On POSIX, send SIGKILL to the process group

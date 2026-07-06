@@ -56,18 +56,20 @@ with `dry_run=True` for `--dry-run` display, then again with real spawn ID and p
 `prepare_launch_surface()` is expensive and safe to call once. `bind_launch_context()`
 is cheap and idempotent.
 
-## Four Driving Adapters
+## Three Driving Adapters
 
-Four code paths call `build_launch_context()` — each has a defined entry:
+Three code paths enter the launch composition seam — each has a defined
+prepare/bind entry:
 
-1. **Primary CLI** (`launch/__init__.py:launch_primary()`): prepare-once/bind-twice.
-   First bind for dry-run display, second for `run_harness_process()`.
-2. **Spawn subprocess** (`ops/spawn/execute.py`): foreground and background paths
-   both converge at `launch_prepared_spawn()`.
-3. **REST app** (`lib/app/spawn_routes.py`): resolve-before-persist via
-   `SpawnApplicationService.prepare_spawn()`. Row created only on success.
-4. **CLI streaming-serve** (`cli/streaming_serve.py`): also through
-   `SpawnApplicationService.prepare_spawn()`, then `run_streaming_spawn()`.
+1. **Primary CLI** (`launch/__init__.py:launch_primary()`): `prepare_launch_surface()`
+   once, then `bind_launch_context()` twice — first for dry-run display, second for
+   `run_harness_process()`.
+2. **Spawn subprocess** (`ops/spawn/execute.py`): `compose_spawn_launch_surface()`
+   once per operation, then `bind_spawn_launch_context()` for preview and execute.
+   Foreground and background paths converge at `launch_prepared_spawn()`.
+3. **CLI streaming-serve** (`cli/streaming_serve.py`): resolve-before-persist via
+   `SpawnApplicationService.prepare_spawn()`, then `run_streaming_spawn()`. Row
+   created only on success.
 
 ## Key Types
 

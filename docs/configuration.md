@@ -80,16 +80,20 @@ High-churn runtime state lives outside the repo, keyed by project UUID so the re
 %LOCALAPPDATA%\meridian\           # Windows default
   projects/
     <uuid>/                        # one dir per project
-      spawns.jsonl
       sessions.jsonl
       session-id-counter
       sessions/
       spawns/
         <spawn-id>/
+          state.json                 # authoritative per-spawn state (v2)
       artifacts/
       cache/
       .migrations.json
 ```
+
+Per-spawn `spawns/<spawn-id>/state.json` is the authoritative runtime layout (v2).
+Legacy installations may still have a monolithic `spawns.jsonl` until one-time migration
+runs on first spawn access.
 
 The UUID is stored in `.meridian/id` (committed project identity — tracked in version control). Because state is keyed by UUID rather than path, renaming or moving the repo does not orphan runtime state.
 

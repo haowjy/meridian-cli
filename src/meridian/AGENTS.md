@@ -89,15 +89,16 @@ in the wrong modules.
 **Don't add harness-specific logic to `ops/` or `launch/`.** If something only applies
 to Claude or Codex, it belongs in `harness/`.
 
-**Don't mix composition surfaces.** The four driving adapters (primary CLI, spawn subprocess,
-REST app, streaming-serve) each have a defined entry point into `launch/`. Adding a fifth
-path without understanding how finalization ownership works will produce orphaned spawns.
+**Don't mix composition surfaces.** The three driving adapters (primary CLI, spawn
+subprocess, streaming-serve) each have a defined entry point into `launch/`. Adding a
+fourth path without understanding how finalization ownership works will produce
+orphaned spawns.
 
 ## Related
 
 - `CLAUDE.md` → `AGENTS.md` — safety rules, design constraints, dev commands
 - `.context/CONTEXT.md` — design philosophy, logging, cross-platform paths
-- `lib/launch/AGENTS.md` — composition seam; four driving adapters
+- `lib/launch/AGENTS.md` — composition seam; three driving adapters
 - `lib/harness/AGENTS.md` — translation pipeline; SpawnParams accounting
 - `lib/state/AGENTS.md` — file layout; atomic write invariants
 - `lib/ops/AGENTS.md` — policy layer; what belongs here vs launch/

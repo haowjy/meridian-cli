@@ -31,8 +31,8 @@ def materialize_fork(
 ) -> str:
     """Fork one harness session and record the new session ID on the spawn row.
 
-    Precondition: a spawn row for *spawn_id* must already exist in
-    ``spawns.jsonl``.  Raises ``RuntimeError`` if the row is absent.
+    Precondition: a spawn row for *spawn_id* must already exist in the spawn
+    store (``spawns/<id>/state.json``).  Raises ``RuntimeError`` if the row is absent.
 
     Returns the new (forked) harness session ID.
     """

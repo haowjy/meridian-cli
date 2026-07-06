@@ -7,6 +7,7 @@ from unittest.mock import patch
 
 import pytest
 
+from meridian.lib.launch.process import subprocess_launcher
 from meridian.lib.launch.process.subprocess_launcher import _wait_for_process
 
 
@@ -48,7 +49,7 @@ def test_interrupt_while_running_posix_sends_sigint() -> None:
     """On POSIX, KeyboardInterrupt with live process sends SIGINT, not terminate."""
     process = _FakeProcess(running=True, wait_exit_code=1, raise_interrupt=True)
 
-    with patch("sys.platform", "linux"):
+    with patch.object(subprocess_launcher, "IS_WINDOWS", False):
         result = _wait_for_process(process)  # type: ignore[arg-type]
 
     assert process.send_signal_args == [signal.SIGINT]
@@ -61,7 +62,7 @@ def test_interrupt_while_running_windows_calls_terminate() -> None:
     """On Windows, KeyboardInterrupt with live process calls terminate(), not send_signal."""
     process = _FakeProcess(running=True, wait_exit_code=1, raise_interrupt=True)
 
-    with patch("sys.platform", "win32"):
+    with patch.object(subprocess_launcher, "IS_WINDOWS", True):
         result = _wait_for_process(process)  # type: ignore[arg-type]
 
     assert process.terminate_called is True
