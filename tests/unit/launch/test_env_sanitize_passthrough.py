@@ -109,6 +109,40 @@ def test_codex_openai_base_url_and_azure_prefix_pass() -> None:
     assert "RANDOM_API_KEY" not in sanitized
 
 
+def test_pi_provider_api_key_reaches_spawn_and_drops_unrelated_secrets() -> None:
+    child_env = build_connection_child_env(
+        harness_id=HarnessId.PI,
+        base_env={
+            "PATH": "/usr/bin",
+            "DEEPSEEK_API_KEY": "deepseek-key",
+            "FOO_API_KEY": "drop-me",
+            "MY_SECRET": "drop-me-too",
+        },
+        env_overrides=None,
+    )
+
+    assert child_env["DEEPSEEK_API_KEY"] == "deepseek-key"
+    assert "FOO_API_KEY" not in child_env
+    assert "MY_SECRET" not in child_env
+
+
+def test_opencode_auth_token_reaches_spawn_and_drops_unrelated_secrets() -> None:
+    child_env = build_connection_child_env(
+        harness_id=HarnessId.OPENCODE,
+        base_env={
+            "PATH": "/usr/bin",
+            "ANTHROPIC_AUTH_TOKEN": "token-1",
+            "FOO_API_KEY": "drop-me",
+            "MY_SECRET": "drop-me-too",
+        },
+        env_overrides=None,
+    )
+
+    assert child_env["ANTHROPIC_AUTH_TOKEN"] == "token-1"
+    assert "FOO_API_KEY" not in child_env
+    assert "MY_SECRET" not in child_env
+
+
 def test_pi_node_runtime_prefixes_pass() -> None:
     passthrough = collect_child_env_passthrough(harness_id=HarnessId.PI)
     sanitized = sanitize_child_env(

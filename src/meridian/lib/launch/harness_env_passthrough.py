@@ -10,7 +10,7 @@ from dataclasses import dataclass
 
 from meridian.lib.core.types import HarnessId
 
-_COMMON_PROVIDER_CREDENTIALS = frozenset(
+_PROVIDER_API_KEYS = frozenset(
     {
         "ANTHROPIC_API_KEY",
         "OPENAI_API_KEY",
@@ -22,6 +22,12 @@ _COMMON_PROVIDER_CREDENTIALS = frozenset(
         "COHERE_API_KEY",
         "GROQ_API_KEY",
         "OPENROUTER_API_KEY",
+        "DEEPSEEK_API_KEY",
+        "NVIDIA_API_KEY",
+        "CEREBRAS_API_KEY",
+        "FIREWORKS_API_KEY",
+        "TOGETHER_API_KEY",
+        "AI_GATEWAY_API_KEY",
     }
 )
 
@@ -34,20 +40,54 @@ _CLAUDE_EXACT = frozenset(
     }
 )
 
-_CODEX_EXACT = frozenset(
+_CODEX_EXACT = _PROVIDER_API_KEYS | frozenset(
     {
-        "OPENAI_API_KEY",
         "OPENAI_BASE_URL",
         "OPENAI_API_BASE",
+    }
+)
+
+_PI_PROVIDER_EXACT = frozenset(
+    {
+        "ANTHROPIC_OAUTH_TOKEN",
+        "ANT_LING_API_KEY",
+        "ZAI_API_KEY",
+        "ZAI_CODING_CN_API_KEY",
+        "MINIMAX_API_KEY",
+        "MOONSHOT_API_KEY",
+        "OPENCODE_API_KEY",
+        "KIMI_API_KEY",
+        "CLOUDFLARE_API_KEY",
+        "CLOUDFLARE_ACCOUNT_ID",
+        "CLOUDFLARE_GATEWAY_ID",
+        "XIAOMI_API_KEY",
+        "XIAOMI_TOKEN_PLAN_CN_API_KEY",
+        "XIAOMI_TOKEN_PLAN_AMS_API_KEY",
+        "XIAOMI_TOKEN_PLAN_SGP_API_KEY",
+        "AWS_PROFILE",
+        "AWS_ACCESS_KEY_ID",
+        "AWS_SECRET_ACCESS_KEY",
+        "AWS_BEARER_TOKEN_BEDROCK",
+        "AWS_REGION",
+    }
+)
+
+_PI_EXACT = _PROVIDER_API_KEYS | _PI_PROVIDER_EXACT
+
+_OPENCODE_EXACT = _PROVIDER_API_KEYS | frozenset(
+    {
+        "ANTHROPIC_AUTH_TOKEN",
+        "ANTHROPIC_BASE_URL",
+        "OPENAI_BASE_URL",
     }
 )
 
 _HARNESS_EXACT: dict[HarnessId, frozenset[str]] = {
     HarnessId.CLAUDE: _CLAUDE_EXACT,
     HarnessId.CODEX: _CODEX_EXACT,
-    HarnessId.OPENCODE: _COMMON_PROVIDER_CREDENTIALS,
+    HarnessId.OPENCODE: _OPENCODE_EXACT,
     HarnessId.CURSOR: frozenset(),
-    HarnessId.PI: _COMMON_PROVIDER_CREDENTIALS,
+    HarnessId.PI: _PI_EXACT,
 }
 
 _HARNESS_PREFIXES: dict[HarnessId, tuple[str, ...]] = {
