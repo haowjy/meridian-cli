@@ -1,4 +1,8 @@
-"""Per-harness coordinator env passthrough declarations for child launches."""
+"""Per-harness coordinator env passthrough declarations for child launches.
+
+TODO(P3-bundle-contract): harness-specific env policy belongs under ``harness/``;
+this launch-local data module is interim only to avoid bootstrap import cycles.
+"""
 
 from __future__ import annotations
 
@@ -21,20 +25,37 @@ _COMMON_PROVIDER_CREDENTIALS = frozenset(
     }
 )
 
+_CLAUDE_EXACT = frozenset(
+    {
+        "ANTHROPIC_API_KEY",
+        "ANTHROPIC_AUTH_TOKEN",
+        "ANTHROPIC_BASE_URL",
+        "ANTHROPIC_BEDROCK_BASE_URL",
+    }
+)
+
+_CODEX_EXACT = frozenset(
+    {
+        "OPENAI_API_KEY",
+        "OPENAI_BASE_URL",
+        "OPENAI_API_BASE",
+    }
+)
+
 _HARNESS_EXACT: dict[HarnessId, frozenset[str]] = {
-    HarnessId.CLAUDE: frozenset({"ANTHROPIC_API_KEY"}),
-    HarnessId.CODEX: frozenset({"OPENAI_API_KEY"}),
+    HarnessId.CLAUDE: _CLAUDE_EXACT,
+    HarnessId.CODEX: _CODEX_EXACT,
     HarnessId.OPENCODE: _COMMON_PROVIDER_CREDENTIALS,
     HarnessId.CURSOR: frozenset(),
     HarnessId.PI: _COMMON_PROVIDER_CREDENTIALS,
 }
 
 _HARNESS_PREFIXES: dict[HarnessId, tuple[str, ...]] = {
-    HarnessId.CLAUDE: ("CLAUDE_",),
-    HarnessId.CODEX: ("CODEX_",),
+    HarnessId.CLAUDE: ("CLAUDE_", "CLAUDE_CODE_", "ANTHROPIC_VERTEX_"),
+    HarnessId.CODEX: ("CODEX_", "AZURE_OPENAI_", "OPENAI_ORG"),
     HarnessId.OPENCODE: ("OPENCODE_",),
     HarnessId.CURSOR: ("CURSOR_",),
-    HarnessId.PI: ("PI_",),
+    HarnessId.PI: ("PI_", "AZURE_OPENAI_", "OPENAI_ORG"),
 }
 
 

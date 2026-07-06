@@ -12,6 +12,45 @@ from meridian.lib.launch.harness_env_passthrough import (
 
 from .constants import BLOCKED_CHILD_ENV_VARS
 
+_NETWORK_TLS_ENV_VARS = frozenset(
+    {
+        "HTTP_PROXY",
+        "HTTPS_PROXY",
+        "ALL_PROXY",
+        "NO_PROXY",
+        "SSL_CERT_FILE",
+        "SSL_CERT_DIR",
+        "REQUESTS_CA_BUNDLE",
+        "CURL_CA_BUNDLE",
+        "NODE_EXTRA_CA_CERTS",
+    }
+)
+
+_WINDOWS_BASELINE_ENV_VARS = frozenset(
+    {
+        "USERPROFILE",
+        "APPDATA",
+        "LOCALAPPDATA",
+        "SYSTEMROOT",
+        "SYSTEMDRIVE",
+        "COMSPEC",
+        "PATHEXT",
+        "TEMP",
+        "TMP",
+        "WINDIR",
+        "HOMEDRIVE",
+        "HOMEPATH",
+        "NUMBER_OF_PROCESSORS",
+        "PROCESSOR_ARCHITECTURE",
+    }
+)
+
+_NODE_RUNTIME_ENV_VARS = frozenset(
+    {
+        "PNPM_HOME",
+    }
+)
+
 _CHILD_ENV_ALLOWLIST = frozenset(
     {
         "PATH",
@@ -24,8 +63,8 @@ _CHILD_ENV_ALLOWLIST = frozenset(
         "PYTHONPATH",
         "VIRTUAL_ENV",
     }
-)
-_CHILD_ENV_ALLOWLIST_PREFIXES = ("LC_", "XDG_", "UV_")
+) | _NETWORK_TLS_ENV_VARS | _WINDOWS_BASELINE_ENV_VARS | _NODE_RUNTIME_ENV_VARS
+_CHILD_ENV_ALLOWLIST_PREFIXES = ("LC_", "XDG_", "UV_", "NODE_", "NPM_CONFIG_", "COREPACK_")
 _CHILD_ENV_SECRET_SUFFIXES = ("_TOKEN", "_KEY", "_SECRET")
 
 
