@@ -5,11 +5,7 @@ from dataclasses import dataclass
 from typing import cast
 from urllib.parse import urlsplit, urlunsplit
 
-from meridian.lib.core.types import HarnessId
-from meridian.lib.launch.harness_env_passthrough import (
-    HarnessEnvPassthrough,
-    harness_env_passthrough,
-)
+from meridian.lib.harness.coordinator_env import CoordinatorEnvPassthrough
 
 from .constants import BLOCKED_CHILD_ENV_VARS
 
@@ -119,7 +115,7 @@ def _looks_like_secret_env_var(key: str) -> bool:
     return any(normalized.endswith(suffix) for suffix in _CHILD_ENV_SECRET_SUFFIXES)
 
 
-def _matches_passthrough(key: str, passthrough: HarnessEnvPassthrough) -> bool:
+def _matches_passthrough(key: str, passthrough: CoordinatorEnvPassthrough) -> bool:
     normalized = key.upper()
     if normalized in passthrough.exact:
         return True
@@ -136,19 +132,18 @@ class ChildEnvPolicy:
 
 def collect_child_env_passthrough(
     *,
-    harness_id: HarnessId,
+    harness_passthrough: CoordinatorEnvPassthrough,
     policy: ChildEnvPolicy | None = None,
     explicit_grants: Collection[str] = (),
-) -> HarnessEnvPassthrough:
+) -> CoordinatorEnvPassthrough:
     """Merge harness, config, and explicit env-grant passthrough declarations."""
 
-    harness = harness_env_passthrough(harness_id)
     extra_exact = {name.upper() for name in explicit_grants}
     if policy is not None:
         extra_exact.update(policy.extra_passthrough)
-    return HarnessEnvPassthrough(
-        exact=harness.exact | extra_exact,
-        prefixes=harness.prefixes,
+    return CoordinatorEnvPassthrough(
+        exact=harness_passthrough.exact | extra_exact,
+        prefixes=harness_passthrough.prefixes,
     )
 
 
@@ -177,14 +172,14 @@ def _normalize_meridian_env(env: dict[str, str]) -> None:
 def sanitize_child_env(
     base_env: Mapping[str, str],
     env_overrides: Mapping[str, str] | None,
-    pass_through: Collection[str] | HarnessEnvPassthrough,
+    pass_through: Collection[str] | CoordinatorEnvPassthrough,
 ) -> dict[str, str]:
     """Return a sanitized child environment with explicit pass-through controls."""
 
-    if isinstance(pass_through, HarnessEnvPassthrough):
+    if isinstance(pass_through, CoordinatorEnvPassthrough):
         passthrough = pass_through
     else:
-        passthrough = HarnessEnvPassthrough(
+        passthrough = CoordinatorEnvPassthrough(
             exact=frozenset(name.upper() for name in pass_through),
         )
     sanitized: dict[str, str] = {}
@@ -230,7 +225,7 @@ def inherit_child_env(
 
 def build_connection_child_env(
     *,
-    harness_id: HarnessId,
+    harness_passthrough: CoordinatorEnvPassthrough,
     base_env: Mapping[str, str],
     env_overrides: Mapping[str, str] | None,
     env_policy: ChildEnvPolicy | None = None,
@@ -246,7 +241,7 @@ def build_connection_child_env(
             blocked=blocked,
         )
     passthrough = collect_child_env_passthrough(
-        harness_id=harness_id,
+        harness_passthrough=harness_passthrough,
         policy=env_policy,
         explicit_grants=explicit_env_grants,
     )
@@ -271,7 +266,7 @@ def build_meridian_subprocess_env(
             env_overrides=env_overrides,
             blocked=BLOCKED_CHILD_ENV_VARS,
         )
-    passthrough = HarnessEnvPassthrough(
+    passthrough = CoordinatorEnvPassthrough(
         exact=env_policy.extra_passthrough if env_policy is not None else frozenset(),
     )
     return sanitize_child_env(

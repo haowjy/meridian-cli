@@ -34,6 +34,7 @@ from meridian.lib.harness.bundle import (
     register_harness_bundle,
 )
 from meridian.lib.harness.connections.pi_rpc import PiRpcConnection
+from meridian.lib.harness.coordinator_env import PI_COORDINATOR_ENV
 from meridian.lib.harness.extractors.pi import (
     PI_EXTRACTOR,
     detect_pi_session_id_from_session_files,
@@ -145,6 +146,7 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
                 mode=BootstrapMode.SUBPROCESS_ONLY,
                 fork_materialization=ForkMaterializationMode.NATIVE_CONTINUE_FORK,
             ),
+            coordinator_env_passthrough=PI_COORDINATOR_ENV,
         )
 
     @property

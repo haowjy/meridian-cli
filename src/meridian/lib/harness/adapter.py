@@ -17,6 +17,7 @@ from meridian.lib.harness.connections.base import (
     PrimaryRuntimeEventSurface,
     PrimaryRuntimeRequestPolicy,
 )
+from meridian.lib.harness.coordinator_env import CoordinatorEnvPassthrough
 from meridian.lib.harness.launch_types import SessionSeed
 from meridian.lib.launch.composition import (
     ComposedLaunchContent,
@@ -200,6 +201,9 @@ class HarnessContract(BaseModel):
     extraction: ExtractionContract
     approval: ApprovalContract
     bootstrap: BootstrapContract
+    coordinator_env_passthrough: CoordinatorEnvPassthrough = Field(
+        default_factory=CoordinatorEnvPassthrough
+    )
     capability_limits: tuple[str, ...] = ()
 
 

@@ -30,6 +30,7 @@ from meridian.lib.harness.connections.base import (
     StopResult,
     validate_prompt_size,
 )
+from meridian.lib.harness.coordinator_env import coordinator_env_passthrough_for
 from meridian.lib.harness.errors import HarnessBinaryNotFound
 from meridian.lib.harness.pi_lifecycle_events import (
     PI_CANONICAL_LIFECYCLE_TYPE_PREFIXES,
@@ -443,7 +444,7 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
             base_command=BASE_COMMAND_PI_SUBPROCESS,
         )
         env = build_connection_child_env(
-            harness_id=self.harness_id,
+            harness_passthrough=coordinator_env_passthrough_for(self.harness_id),
             base_env=os.environ,
             env_overrides=config.env_overrides,
             blocked=_BLOCKED_CHILD_ENV_VARS,

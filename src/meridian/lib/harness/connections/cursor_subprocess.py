@@ -25,6 +25,7 @@ from meridian.lib.harness.connections.base import (
     StopResult,
     validate_prompt_size,
 )
+from meridian.lib.harness.coordinator_env import coordinator_env_passthrough_for
 from meridian.lib.harness.extractors.cursor import CURSOR_EXTRACTOR
 from meridian.lib.launch.constants import BASE_COMMAND_CURSOR_SUBPROCESS, BLOCKED_CHILD_ENV_VARS
 from meridian.lib.launch.env_sanitize import build_connection_child_env
@@ -105,7 +106,7 @@ class CursorSubprocessConnection(HarnessConnection[ResolvedLaunchSpec]):
         self._stderr_handle = (spawn_dir / "stderr.log").open("ab")
 
         env = build_connection_child_env(
-            harness_id=self.harness_id,
+            harness_passthrough=coordinator_env_passthrough_for(self.harness_id),
             base_env=os.environ,
             env_overrides=config.env_overrides,
             blocked=BLOCKED_CHILD_ENV_VARS,

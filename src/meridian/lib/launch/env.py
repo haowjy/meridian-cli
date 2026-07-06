@@ -166,7 +166,7 @@ def build_harness_child_env(
             blocked=blocked,
         )
     passthrough = collect_child_env_passthrough(
-        harness_id=adapter.id,
+        harness_passthrough=adapter.contract.coordinator_env_passthrough,
         policy=env_policy,
         explicit_grants=explicit_env_grants,
     )

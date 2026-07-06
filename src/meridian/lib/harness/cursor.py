@@ -34,6 +34,7 @@ from meridian.lib.harness.bundle import (
     register_harness_bundle,
 )
 from meridian.lib.harness.connections.cursor_subprocess import CursorSubprocessConnection
+from meridian.lib.harness.coordinator_env import CURSOR_COORDINATOR_ENV
 from meridian.lib.harness.extractors.cursor import CURSOR_EXTRACTOR
 from meridian.lib.harness.projections.project_cursor import project_cursor_spec_to_cli_args
 from meridian.lib.launch.constants import BASE_COMMAND_CURSOR_SUBPROCESS
@@ -109,6 +110,7 @@ class CursorAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
                 mode=BootstrapMode.SUBPROCESS_ONLY,
                 fork_materialization=ForkMaterializationMode.NATIVE_CONTINUE_FORK,
             ),
+            coordinator_env_passthrough=CURSOR_COORDINATOR_ENV,
         )
 
     @property

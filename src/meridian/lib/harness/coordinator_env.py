@@ -1,12 +1,8 @@
-"""Per-harness coordinator env passthrough declarations for child launches.
-
-TODO(P3-bundle-contract): harness-specific env policy belongs under ``harness/``;
-this launch-local data module is interim only to avoid bootstrap import cycles.
-"""
+"""Per-harness coordinator env passthrough declarations for child launches."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from pydantic import BaseModel, ConfigDict, Field
 
 from meridian.lib.core.types import HarnessId
 
@@ -82,38 +78,53 @@ _OPENCODE_EXACT = _PROVIDER_API_KEYS | frozenset(
     }
 )
 
-_HARNESS_EXACT: dict[HarnessId, frozenset[str]] = {
-    HarnessId.CLAUDE: _CLAUDE_EXACT,
-    HarnessId.CODEX: _CODEX_EXACT,
-    HarnessId.OPENCODE: _OPENCODE_EXACT,
-    HarnessId.CURSOR: frozenset(),
-    HarnessId.PI: _PI_EXACT,
-}
 
-_HARNESS_PREFIXES: dict[HarnessId, tuple[str, ...]] = {
-    HarnessId.CLAUDE: ("CLAUDE_", "CLAUDE_CODE_", "ANTHROPIC_VERTEX_"),
-    HarnessId.CODEX: ("CODEX_", "AZURE_OPENAI_", "OPENAI_ORG"),
-    HarnessId.OPENCODE: ("OPENCODE_",),
-    HarnessId.CURSOR: ("CURSOR_",),
-    HarnessId.PI: ("PI_", "AZURE_OPENAI_", "OPENAI_ORG"),
-}
-
-
-@dataclass(frozen=True)
-class HarnessEnvPassthrough:
+class CoordinatorEnvPassthrough(BaseModel):
     """Coordinator env keys one harness may inherit beyond the default allowlist."""
 
-    exact: frozenset[str] = frozenset()
+    model_config = ConfigDict(frozen=True)
+
+    exact: frozenset[str] = Field(default_factory=frozenset)
     prefixes: tuple[str, ...] = ()
 
 
-def harness_env_passthrough(harness_id: HarnessId) -> HarnessEnvPassthrough:
-    """Return declared passthrough for one harness."""
+CLAUDE_COORDINATOR_ENV = CoordinatorEnvPassthrough(
+    exact=_CLAUDE_EXACT,
+    prefixes=("CLAUDE_", "CLAUDE_CODE_", "ANTHROPIC_VERTEX_"),
+)
 
-    return HarnessEnvPassthrough(
-        exact=_HARNESS_EXACT.get(harness_id, frozenset()),
-        prefixes=_HARNESS_PREFIXES.get(harness_id, ()),
-    )
+CODEX_COORDINATOR_ENV = CoordinatorEnvPassthrough(
+    exact=_CODEX_EXACT,
+    prefixes=("CODEX_", "AZURE_OPENAI_", "OPENAI_ORG"),
+)
+
+OPENCODE_COORDINATOR_ENV = CoordinatorEnvPassthrough(
+    exact=_OPENCODE_EXACT,
+    prefixes=("OPENCODE_",),
+)
+
+CURSOR_COORDINATOR_ENV = CoordinatorEnvPassthrough()
+
+PI_COORDINATOR_ENV = CoordinatorEnvPassthrough(
+    exact=_PI_EXACT,
+    prefixes=("PI_", "AZURE_OPENAI_", "OPENAI_ORG"),
+)
 
 
-__all__ = ["HarnessEnvPassthrough", "harness_env_passthrough"]
+def coordinator_env_passthrough_for(harness_id: HarnessId) -> CoordinatorEnvPassthrough:
+    """Return declared passthrough for one harness from its registered contract."""
+
+    from meridian.lib.harness.bundle import get_harness_bundle
+
+    return get_harness_bundle(harness_id).adapter.contract.coordinator_env_passthrough
+
+
+__all__ = [
+    "CLAUDE_COORDINATOR_ENV",
+    "CODEX_COORDINATOR_ENV",
+    "CURSOR_COORDINATOR_ENV",
+    "OPENCODE_COORDINATOR_ENV",
+    "PI_COORDINATOR_ENV",
+    "CoordinatorEnvPassthrough",
+    "coordinator_env_passthrough_for",
+]

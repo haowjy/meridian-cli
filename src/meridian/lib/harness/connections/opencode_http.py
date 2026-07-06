@@ -51,6 +51,7 @@ from meridian.lib.harness.connections.resident_backend import (
     LivenessResidentBackendControl,
     ResidentBackendControl,
 )
+from meridian.lib.harness.coordinator_env import coordinator_env_passthrough_for
 from meridian.lib.harness.projections.project_opencode_streaming import (
     project_opencode_spec_to_session_payload as _project_opencode_spec_to_session_payload,
 )
@@ -506,7 +507,7 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
             port=port,
         )
         env = build_connection_child_env(
-            harness_id=self.harness_id,
+            harness_passthrough=coordinator_env_passthrough_for(self.harness_id),
             base_env=os.environ,
             env_overrides=config.env_overrides,
         )
@@ -1115,7 +1116,7 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
         if config is None:
             return dict(os.environ)
         return build_connection_child_env(
-            harness_id=self.harness_id,
+            harness_passthrough=coordinator_env_passthrough_for(self.harness_id),
             base_env=os.environ,
             env_overrides=config.env_overrides,
         )

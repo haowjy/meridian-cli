@@ -64,6 +64,7 @@ from meridian.lib.harness.connections.resident_backend import (
     LivenessResidentBackendControl,
     ResidentBackendControl,
 )
+from meridian.lib.harness.coordinator_env import coordinator_env_passthrough_for
 from meridian.lib.harness.semantics import (
     PrimaryEventScope,
     clears_signal,
@@ -370,7 +371,7 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
         ws_url = f"ws://{host}:{port}"
 
         env = build_connection_child_env(
-            harness_id=self.harness_id,
+            harness_passthrough=coordinator_env_passthrough_for(self.harness_id),
             base_env=os.environ,
             env_overrides=config.env_overrides,
         )

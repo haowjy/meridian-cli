@@ -59,6 +59,7 @@ from meridian.lib.harness.common import (
     extract_session_id_from_artifacts_with_patterns,
 )
 from meridian.lib.harness.connections.claude_ws import ClaudeConnection
+from meridian.lib.harness.coordinator_env import CLAUDE_COORDINATOR_ENV
 from meridian.lib.harness.extractors.claude import CLAUDE_EXTRACTOR
 from meridian.lib.harness.launch_types import SessionSeed
 from meridian.lib.harness.projections.project_claude import project_claude_spec_to_cli_args
@@ -228,6 +229,7 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
                 streaming_session_seed_mode=SessionSeedMode.PROJECTED_ARGS,
                 prelaunch_bootstrap_mode=PrelaunchBootstrapMode.ENV_OVERLAY_AND_SESSION_ACCESS,
             ),
+            coordinator_env_passthrough=CLAUDE_COORDINATOR_ENV,
             capability_limits=(
                 "terminal_surface_mode limited to pty_mediated",
                 "no observer/controller backend contract",

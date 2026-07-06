@@ -29,6 +29,7 @@ from meridian.lib.harness.connections.base import (
     StopResult,
     validate_prompt_size,
 )
+from meridian.lib.harness.coordinator_env import coordinator_env_passthrough_for
 from meridian.lib.harness.errors import HarnessBinaryNotFound
 from meridian.lib.harness.semantics import clears_signal
 from meridian.lib.launch.constants import (
@@ -356,7 +357,7 @@ class ClaudeConnection(HarnessConnection[ResolvedLaunchSpec]):
         command = self._build_command(config, spec)
 
         env = build_connection_child_env(
-            harness_id=self.harness_id,
+            harness_passthrough=coordinator_env_passthrough_for(self.harness_id),
             base_env=os.environ,
             env_overrides=config.env_overrides,
             blocked=_BLOCKED_CHILD_ENV_VARS,

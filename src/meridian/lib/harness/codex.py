@@ -54,6 +54,7 @@ from meridian.lib.harness.connections.base import (
     PrimaryRuntimeRequestPolicy,
 )
 from meridian.lib.harness.connections.codex_ws import CodexConnection
+from meridian.lib.harness.coordinator_env import CODEX_COORDINATOR_ENV
 from meridian.lib.harness.extractors.codex import CODEX_EXTRACTOR
 from meridian.lib.harness.projections.project_codex_streaming import (
     project_codex_spec_to_appserver_command,
@@ -328,6 +329,7 @@ class CodexAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
                 primary_attach_failure_policy="raise",
                 observer_controller=observer,
             ),
+            coordinator_env_passthrough=CODEX_COORDINATOR_ENV,
             capability_limits=(
                 "native_inherit declared as contract capability only; policy remains pty_mediated",
             ),

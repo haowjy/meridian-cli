@@ -38,6 +38,7 @@ from meridian.lib.harness.bundle import (
     register_harness_bundle,
 )
 from meridian.lib.harness.connections.opencode_http import OpenCodeConnection
+from meridian.lib.harness.coordinator_env import OPENCODE_COORDINATOR_ENV
 from meridian.lib.harness.extractors.opencode import OPENCODE_EXTRACTOR
 from meridian.lib.harness.launch_types import SessionSeed
 from meridian.lib.harness.opencode_report import (
@@ -391,6 +392,7 @@ class OpenCodeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
                 primary_attach_failure_policy="fallback_to_blackbox",
                 observer_controller=observer,
             ),
+            coordinator_env_passthrough=OPENCODE_COORDINATOR_ENV,
             capability_limits=(
                 "native_inherit declared as contract capability only; policy remains pty_mediated",
             ),

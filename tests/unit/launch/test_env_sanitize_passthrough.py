@@ -5,14 +5,29 @@ from __future__ import annotations
 import pytest
 
 from meridian.lib.core.types import HarnessId
+from meridian.lib.harness.coordinator_env import (
+    CLAUDE_COORDINATOR_ENV,
+    CODEX_COORDINATOR_ENV,
+    CURSOR_COORDINATOR_ENV,
+    OPENCODE_COORDINATOR_ENV,
+    PI_COORDINATOR_ENV,
+    CoordinatorEnvPassthrough,
+)
 from meridian.lib.launch.env_sanitize import (
     build_connection_child_env,
     collect_child_env_passthrough,
     sanitize_child_env,
 )
-from meridian.lib.launch.harness_env_passthrough import harness_env_passthrough
 
 _ALL_HARNESS_IDS = tuple(HarnessId)
+
+_HARNESS_PASSTHROUGH: dict[HarnessId, CoordinatorEnvPassthrough] = {
+    HarnessId.CLAUDE: CLAUDE_COORDINATOR_ENV,
+    HarnessId.CODEX: CODEX_COORDINATOR_ENV,
+    HarnessId.OPENCODE: OPENCODE_COORDINATOR_ENV,
+    HarnessId.CURSOR: CURSOR_COORDINATOR_ENV,
+    HarnessId.PI: PI_COORDINATOR_ENV,
+}
 
 
 def _corporate_proxy_env() -> dict[str, str]:
@@ -37,7 +52,7 @@ def test_claude_spawn_keeps_auth_token_and_drops_unrelated_secrets() -> None:
         "MY_SECRET": "drop-me-too",
     }
     child_env = build_connection_child_env(
-        harness_id=HarnessId.CLAUDE,
+        harness_passthrough=CLAUDE_COORDINATOR_ENV,
         base_env=base_env,
         env_overrides=None,
     )
@@ -52,7 +67,7 @@ def test_claude_spawn_keeps_auth_token_and_drops_unrelated_secrets() -> None:
 @pytest.mark.parametrize("harness_id", _ALL_HARNESS_IDS)
 def test_corporate_proxy_and_cert_vars_reach_every_harness(harness_id: HarnessId) -> None:
     child_env = build_connection_child_env(
-        harness_id=harness_id,
+        harness_passthrough=_HARNESS_PASSTHROUGH[harness_id],
         base_env=_corporate_proxy_env(),
         env_overrides=None,
     )
@@ -79,7 +94,7 @@ def test_windows_baseline_vars_survive_sanitization() -> None:
     sanitized = sanitize_child_env(
         base_env=base_env,
         env_overrides=None,
-        pass_through=harness_env_passthrough(HarnessId.CODEX),
+        pass_through=CODEX_COORDINATOR_ENV,
     )
 
     assert sanitized["USERPROFILE"] == "C:\\Users\\alice"
@@ -90,7 +105,7 @@ def test_windows_baseline_vars_survive_sanitization() -> None:
 
 
 def test_codex_openai_base_url_and_azure_prefix_pass() -> None:
-    passthrough = collect_child_env_passthrough(harness_id=HarnessId.CODEX)
+    passthrough = collect_child_env_passthrough(harness_passthrough=CODEX_COORDINATOR_ENV)
     sanitized = sanitize_child_env(
         base_env={
             "PATH": "/usr/bin",
@@ -111,7 +126,7 @@ def test_codex_openai_base_url_and_azure_prefix_pass() -> None:
 
 def test_pi_provider_api_key_reaches_spawn_and_drops_unrelated_secrets() -> None:
     child_env = build_connection_child_env(
-        harness_id=HarnessId.PI,
+        harness_passthrough=PI_COORDINATOR_ENV,
         base_env={
             "PATH": "/usr/bin",
             "DEEPSEEK_API_KEY": "deepseek-key",
@@ -128,7 +143,7 @@ def test_pi_provider_api_key_reaches_spawn_and_drops_unrelated_secrets() -> None
 
 def test_opencode_auth_token_reaches_spawn_and_drops_unrelated_secrets() -> None:
     child_env = build_connection_child_env(
-        harness_id=HarnessId.OPENCODE,
+        harness_passthrough=OPENCODE_COORDINATOR_ENV,
         base_env={
             "PATH": "/usr/bin",
             "ANTHROPIC_AUTH_TOKEN": "token-1",
@@ -144,7 +159,7 @@ def test_opencode_auth_token_reaches_spawn_and_drops_unrelated_secrets() -> None
 
 
 def test_pi_node_runtime_prefixes_pass() -> None:
-    passthrough = collect_child_env_passthrough(harness_id=HarnessId.PI)
+    passthrough = collect_child_env_passthrough(harness_passthrough=PI_COORDINATOR_ENV)
     sanitized = sanitize_child_env(
         base_env={
             "PATH": "/usr/bin",
@@ -166,7 +181,7 @@ def test_pi_node_runtime_prefixes_pass() -> None:
 
 
 def test_npm_config_password_and_credential_registry_not_propagated() -> None:
-    passthrough = collect_child_env_passthrough(harness_id=HarnessId.PI)
+    passthrough = collect_child_env_passthrough(harness_passthrough=PI_COORDINATOR_ENV)
     sanitized = sanitize_child_env(
         base_env={
             "PATH": "/usr/bin",
@@ -195,7 +210,7 @@ def test_node_and_corepack_broad_prefixes_do_not_leak_password_shaped_vars() -> 
             "COREPACK_PASSWORD": "drop-me-too",
         },
         env_overrides=None,
-        pass_through=harness_env_passthrough(HarnessId.PI),
+        pass_through=PI_COORDINATOR_ENV,
     )
 
     assert sanitized["NODE_OPTIONS"] == "--max-old-space-size=4096"
