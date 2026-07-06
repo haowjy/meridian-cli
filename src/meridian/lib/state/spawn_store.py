@@ -180,10 +180,15 @@ def _resolve_start_metadata(
 # ---------------------------------------------------------------------------
 
 
-def _read_state(spawns_dir: Path, spawn_id: str) -> SpawnRecord | None:
+def _read_state(
+    spawns_dir: Path,
+    spawn_id: str,
+    *,
+    include_prompt: bool = True,
+) -> SpawnRecord | None:
     from meridian.lib.state.spawn.repository import read_state
 
-    return read_state(spawns_dir, spawn_id)
+    return read_state(spawns_dir, spawn_id, include_prompt=include_prompt)
 
 
 def _write_state(
@@ -799,6 +804,34 @@ def _spawn_sort_key(spawn: SpawnRecord) -> tuple[int, str]:
     return (10**9, spawn.id)
 
 
+def _apply_spawn_filters(
+    spawns: list[SpawnRecord],
+    filters: Mapping[str, Any],
+) -> list[SpawnRecord]:
+    filtered: list[SpawnRecord] = []
+    for spawn in spawns:
+        spawn_data = spawn.model_dump()
+        keep = True
+        for key, expected in filters.items():
+            if expected is None:
+                continue
+            if key == "owner_chat_id":
+                from meridian.lib.state.session_identity import spawn_owner_chat_id
+
+                if spawn_owner_chat_id(spawn) != expected:
+                    keep = False
+                    break
+                continue
+            if key not in spawn_data:
+                continue
+            if spawn_data[key] != expected:
+                keep = False
+                break
+        if keep:
+            filtered.append(spawn)
+    return filtered
+
+
 def list_spawns(
     runtime_root: Path,
     filters: Mapping[str, Any] | None = None,
@@ -807,34 +840,14 @@ def list_spawns(
 
     paths = RuntimePaths.from_root_dir(runtime_root)
     spawns = [
-        record.model_copy(update={"prompt": None})
+        record
         for spawn_id in _scan_spawn_ids(paths.spawns_dir)
-        if (record := _read_state(paths.spawns_dir, spawn_id)) is not None
+        if (record := _read_state(paths.spawns_dir, spawn_id, include_prompt=False))
+        is not None
     ]
 
     if filters:
-        filtered: list[SpawnRecord] = []
-        for spawn in spawns:
-            spawn_data = spawn.model_dump()
-            keep = True
-            for key, expected in filters.items():
-                if expected is None:
-                    continue
-                if key == "owner_chat_id":
-                    from meridian.lib.state.session_identity import spawn_owner_chat_id
-
-                    if spawn_owner_chat_id(spawn) != expected:
-                        keep = False
-                        break
-                    continue
-                if key not in spawn_data:
-                    continue
-                if spawn_data[key] != expected:
-                    keep = False
-                    break
-            if keep:
-                filtered.append(spawn)
-        spawns = filtered
+        spawns = _apply_spawn_filters(spawns, filters)
 
     return sorted(spawns, key=_spawn_sort_key)
 
