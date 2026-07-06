@@ -15,6 +15,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Spawn depth limits derive from coordinator spawn ancestry when `MERIDIAN_SPAWN_ID` resolves in the spawn store (`max(env, records)`), closing env-forged depth bypass.
 
 ### Changed
+- Record-backed spawn depth resolution moved from `core/depth.py` to `state/depth_resolution.py`; ops and launch apply `max(env, records)` at their boundaries so core stays free of spawn-store imports.
 - Hook docs now describe `command` as `str | array[str]` with POSIX and Windows argv-array examples.
 
 ## [0.3.24] - 2026-07-04

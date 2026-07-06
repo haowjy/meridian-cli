@@ -20,6 +20,7 @@ from meridian.lib.core.resolved_context import ResolvedContext
 from meridian.lib.core.util import FormatContext
 from meridian.lib.hooks.builtin.autosync_store import read_status
 from meridian.lib.launch.cwd import resolve_effective_task_dir
+from meridian.lib.ops.depth import with_record_backed_depth
 from meridian.lib.ops.runtime import (
     resolve_runtime_authority_for_read,
     resolve_runtime_authority_for_write,
@@ -256,11 +257,12 @@ def _resolve_runtime_context(
     """Resolve context with explicit roots — no env mutation needed."""
 
     normalized_chat_id = (chat_id or "").strip()
-    return ResolvedContext.from_environment(
+    resolved = ResolvedContext.from_environment(
         explicit_project_root=project_root,
         explicit_runtime_root=runtime_root,
         explicit_chat_id=normalized_chat_id or None,
     )
+    return with_record_backed_depth(resolved)
 
 
 def resolve_active_work_scope(

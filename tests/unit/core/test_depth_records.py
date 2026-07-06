@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from meridian.lib.core.depth import (
+from meridian.lib.state.depth_resolution import (
     depth_from_spawn_ancestry,
     resolve_effective_meridian_depth,
 )

@@ -134,9 +134,11 @@ class ResolvedRoots:
 
 
 def runtime_context(ctx: RuntimeContext | None) -> RuntimeContext:
+    from meridian.lib.ops.depth import with_record_backed_runtime_context
+
     if ctx is not None:
-        return ctx
-    return RuntimeContext.from_environment()
+        return with_record_backed_runtime_context(ctx)
+    return with_record_backed_runtime_context(RuntimeContext.from_environment())
 
 
 def resolve_project_authority(
