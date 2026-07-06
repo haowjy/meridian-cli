@@ -31,7 +31,7 @@ from meridian.lib.core.spawn_lifecycle import (
 from meridian.lib.core.spawn_lifecycle import (
     is_terminal_spawn_status as _is_terminal_spawn_status,
 )
-from meridian.lib.core.spawn_start import SpawnStartMetadata
+from meridian.lib.core.spawn_start import SpawnStartMetadata, derive_display_label
 from meridian.lib.core.types import SpawnId
 from meridian.lib.state.atomic import atomic_write_text
 from meridian.lib.state.event_store import lock_file
@@ -336,6 +336,11 @@ def start_spawn(
                 else None
             ),
             goal=normalized_goal,
+            display_label=derive_display_label(
+                goal=normalized_goal,
+                desc=start_metadata.desc,
+                prompt=prompt,
+            ),
             harness_session_id=harness_session_id,
             control_root=control_root,
             task_cwd=task_cwd,

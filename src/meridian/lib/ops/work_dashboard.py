@@ -8,6 +8,7 @@ from pydantic import BaseModel, ConfigDict
 
 from meridian.lib.core.context import RuntimeContext
 from meridian.lib.core.spawn_lifecycle import is_active_spawn_status
+from meridian.lib.core.spawn_start import resolve_spawn_display_label
 from meridian.lib.core.util import FormatContext
 from meridian.lib.ops.runtime import async_from_sync, resolve_roots_for_read, runtime_context
 from meridian.lib.ops.work_sessions import work_session_chat_ids
@@ -30,7 +31,7 @@ def _spawn_id_sort_key(spawn_id: str) -> tuple[int, str]:
 
 def _spawn_label(spawn: SpawnRecord) -> str:
     """Prefer goal over desc for display — goal is the completion contract."""
-    label = (spawn.goal or spawn.desc or "").strip()
+    label = resolve_spawn_display_label(spawn.goal, spawn.desc, spawn.display_label)
     if label:
         return " ".join(label.split())
     if spawn.kind == "primary":

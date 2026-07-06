@@ -28,6 +28,7 @@ from meridian.lib.core.spawn_lifecycle import (
     is_terminal_spawn_status,
 )
 from meridian.lib.core.spawn_service import CancelOutcome
+from meridian.lib.core.spawn_start import resolve_spawn_display_label
 from meridian.lib.core.telemetry import register_debug_trace_observer
 from meridian.lib.core.types import SpawnId
 from meridian.lib.launch.continue_replay import (
@@ -208,28 +209,8 @@ def _surface_primary_activity(status: str, activity: str | None) -> str | None:
     return normalized
 
 
-def _spawn_label_or_prompt_summary(
-    goal: str | None, desc: str | None, prompt: str | None
-) -> str | None:
-    """Prefer goal over desc for display — goal is the completion contract."""
-    label = (goal or desc or "").strip()
-    if label:
-        return label
-    normalized_prompt = (prompt or "").strip()
-    if not normalized_prompt:
-        return None
-    compact_prompt = " ".join(normalized_prompt.split()).strip()
-    if len(compact_prompt) <= 50:
-        return compact_prompt
-    return f"{compact_prompt[:47].rstrip()}..."
-
-
-def _spawn_list_entry_desc(row: SpawnRecord, runtime_root: Path) -> str | None:
-    if (row.goal or row.desc or "").strip():
-        return _spawn_label_or_prompt_summary(row.goal, row.desc, None)
-    hydrated = spawn_store.get_spawn(runtime_root, row.id)
-    prompt = hydrated.prompt if hydrated is not None else None
-    return _spawn_label_or_prompt_summary(row.goal, row.desc, prompt)
+def _spawn_display_label(row: SpawnRecord) -> str | None:
+    return resolve_spawn_display_label(row.goal, row.desc, row.display_label)
 
 
 def _forked_from_output(payload: SpawnCreateInput) -> str | None:
@@ -679,7 +660,7 @@ def spawn_children_sync(
             status=row.status,
             model=row.model or "",
             agent=row.agent or None,
-            desc=_spawn_list_entry_desc(row, runtime_root),
+            desc=_spawn_display_label(row),
             duration_secs=row.duration_secs,
             cost_usd=row.total_cost_usd,
         )
