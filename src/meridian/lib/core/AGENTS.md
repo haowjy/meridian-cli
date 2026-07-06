@@ -1,10 +1,17 @@
 # lib/core/ — Shared Primitives
 
-Foundation layer. Everything else imports from here; core imports nothing from sibling lib packages. If a type, protocol, or utility would be used by more than one lib package, it belongs here.
+Shared primitives and cross-surface spawn orchestration. Most lib packages import
+from here; pure types and utilities stay dependency-light, but `spawn_service.py`
+and related modules intentionally compose `launch/`, `state/`, `harness/`, and
+`streaming/` so every surface shares one spawn application seam.
 
 ## Mental Model
 
-Core provides: typed IDs, config merge semantics, runtime context, output routing, spawn state machine, and process depth tracking. None of these contain business logic — they're the substrate that business logic builds on.
+Core provides: typed IDs, config merge semantics, runtime context, output routing,
+spawn lifecycle state machine, process depth tracking, and `SpawnApplicationService`
+(create/list/cancel/prepare spawns across CLI and streaming-serve). Domain types and
+merge helpers are harness-agnostic substrate; spawn application code is the
+deliberate exception that wires policy surfaces to launch and persistence.
 
 ## Key Rules
 

@@ -1,4 +1,9 @@
-"""OpenCode CLI harness adapter."""
+"""OpenCode CLI harness adapter.
+
+Upstream `opencode-ai/opencode` is archived (development moved to Crush). This
+adapter is maintenance-only — preserve existing behavior; do not add new OpenCode
+features without a concrete need.
+"""
 
 import logging
 import os
@@ -66,7 +71,7 @@ from meridian.lib.launch.constants import (
     PRIMARY_BASE_COMMAND_OPENCODE,
 )
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec, TerminalSurfaceMode
-from meridian.lib.platform import get_home_path
+from meridian.lib.platform import IS_WINDOWS, get_home_path
 from meridian.lib.safety.permissions import PermissionConfig
 
 logger = logging.getLogger(__name__)
@@ -101,6 +106,11 @@ def _opencode_data_root() -> Path:
     xdg_data_home = os.environ.get("XDG_DATA_HOME", "").strip()
     if xdg_data_home:
         return Path(xdg_data_home).expanduser()
+    if IS_WINDOWS:
+        local_app_data = os.environ.get("LOCALAPPDATA", "").strip()
+        if local_app_data:
+            return Path(local_app_data)
+        return get_home_path() / "AppData" / "Local"
     return get_home_path() / ".local" / "share"
 
 

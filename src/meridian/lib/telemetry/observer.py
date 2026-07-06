@@ -13,7 +13,7 @@ if TYPE_CHECKING:
 
 
 # Only these sparse lifecycle events get projected into telemetry. The full
-# lifecycle stream stays in spawns.jsonl.
+# lifecycle stream stays in per-spawn state.json files.
 TERMINAL_TELEMETRY_EVENTS = frozenset(
     {
         "spawn.succeeded",
@@ -33,7 +33,7 @@ class SpawnTelemetryObserver:
 
     Registered as a diagnostic-tier lifecycle observer. Only terminal events
     and ``spawn.process_exited`` are projected; the full lifecycle stream
-    remains in spawns.jsonl.
+    remains in per-spawn state.json files.
     """
 
     def on_event(self, event: LifecycleEvent) -> None:

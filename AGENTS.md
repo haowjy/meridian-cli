@@ -41,7 +41,7 @@ Use `rtk` for noisy commands (`rtk git diff`, `rtk pytest`, `rtk rg "<pattern>"`
 - **Files as authority**: all state is files under `~/.meridian/` (user) or `.meridian/` (project). No databases.
 - **Crash-only**: atomic writes (tmp+rename), truncation-tolerant reads. Recovery IS startup.
 - **Extend through seams**: new harness = one adapter + registration. New command = one module. 10-file edits = wrong abstraction.
-- **Windows first-class**: use `get_user_home()` and `get_home_path()`, never hardcode paths.
+- **Cross-platform spawn/coordination**: use `get_user_home()` and `get_home_path()`, never hardcode paths. Spawn, state, and coordination layers run natively on Windows; the primary interactive TUI (ConPTY passthrough) requires WSL on Windows — see `DEVELOPMENT.md`.
 - **No VCS dependency**: core ops work without git.
 
 Config precedence: CLI flags > ENV vars > YAML profile > Project config > User config > harness default.

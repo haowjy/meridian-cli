@@ -5,6 +5,11 @@ Mechanism side of the policy/mechanism split. Translates harness-agnostic
 domain types. `ops/` and `launch/` work with domain types — harness specifics stay
 here.
 
+**OpenCode upstream status:** The upstream `opencode-ai/opencode` repository is
+archived; active development moved to Crush. The Meridian OpenCode adapter remains
+for existing installs and maintenance-only fixes — do not invest in new OpenCode
+features unless a concrete user need appears.
+
 ## Translation Pipeline
 
 Every spawn goes through four steps:
