@@ -1,8 +1,7 @@
 """OpenCode CLI harness adapter.
 
-Upstream `opencode-ai/opencode` is archived (development moved to Crush). This
-adapter is maintenance-only — preserve existing behavior; do not add new OpenCode
-features without a concrete need.
+Upstream moved from ``opencode-ai/opencode`` to ``anomalyco/opencode`` (opencode.ai).
+The Meridian adapter targets current opencode.ai CLI releases.
 """
 
 import logging
