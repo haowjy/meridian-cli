@@ -70,7 +70,7 @@ def _wait_for_process(process: subprocess.Popen[str] | subprocess.Popen[bytes]) 
         return process.wait()
     except KeyboardInterrupt:
         if process.poll() is None:
-            if sys.platform == "win32":
+            if IS_WINDOWS:
                 process.terminate()
             else:
                 process.send_signal(signal.SIGINT)

@@ -59,7 +59,7 @@ def test_reconfigure_called_for_stdout_and_stderr_on_win32(
     sys.modules["meridian.cli.main"] = fake_main_module
 
     try:
-        monkeypatch.setattr(sys, "platform", "win32")
+        monkeypatch.setattr(entrypoint_module, "IS_WINDOWS", True)
         monkeypatch.setattr(sys, "stdout", fake_stdout)
         monkeypatch.setattr(sys, "stderr", fake_stderr)
         monkeypatch.setattr(sys, "argv", ["meridian", "spawn", "list"])
@@ -88,7 +88,7 @@ def test_reconfigure_not_called_on_posix(
     sys.modules["meridian.cli.main"] = fake_main_module
 
     try:
-        monkeypatch.setattr(sys, "platform", "linux")
+        monkeypatch.setattr(entrypoint_module, "IS_WINDOWS", False)
         monkeypatch.setattr(sys, "stdout", fake_stdout)
         monkeypatch.setattr(sys, "stderr", fake_stderr)
         monkeypatch.setattr(sys, "argv", ["meridian", "spawn", "list"])
@@ -173,7 +173,7 @@ def test_reconfigure_skipped_when_stream_lacks_reconfigure(
     sys.modules["meridian.cli.main"] = fake_main_module
 
     try:
-        monkeypatch.setattr(sys, "platform", "win32")
+        monkeypatch.setattr(entrypoint_module, "IS_WINDOWS", True)
         monkeypatch.setattr(sys, "stdout", fake_stdout)
         monkeypatch.setattr(sys, "stderr", fake_stderr)
         monkeypatch.setattr(sys, "argv", ["meridian", "spawn", "list"])

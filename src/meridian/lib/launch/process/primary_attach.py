@@ -23,6 +23,7 @@ from meridian.lib.harness.connections.base import ConnectionConfig, HarnessConne
 from meridian.lib.harness.connections.errors import PortBindError
 from meridian.lib.harness.semantics import activity_transition
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
+from meridian.lib.platform import IS_WINDOWS
 from meridian.lib.platform.process_scope import terminate_scope_sync
 from meridian.lib.platform.process_scope.base import (
     PROCESS_BIRTH_UNKNOWN_EPOCH,
@@ -57,7 +58,7 @@ def _make_scope_snapshot(
 
     pgid: int | None = None
     containment: str
-    if sys.platform != "win32":
+    if not IS_WINDOWS:
         try:
             pgid = os.getpgid(pid)
             containment = "posix_pgid"

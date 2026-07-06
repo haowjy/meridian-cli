@@ -213,7 +213,7 @@ def test_signal_process_group_degrades_to_process_signal_for_shared_pgid(
     import meridian.lib.launch.signals as signals_module
 
     killpg_calls: list[tuple[int, signal.Signals]] = []
-    monkeypatch.setattr(signals_module.sys, "platform", "linux")
+    monkeypatch.setattr(signals_module, "IS_WINDOWS", False)
     monkeypatch.setattr(signals_module.os, "getpgid", lambda _pid: 999, raising=False)
     monkeypatch.setattr(
         signals_module.os,
@@ -235,7 +235,7 @@ def test_signal_process_group_uses_killpg_for_group_leader(
     import meridian.lib.launch.signals as signals_module
 
     killpg_calls: list[tuple[int, signal.Signals]] = []
-    monkeypatch.setattr(signals_module.sys, "platform", "linux")
+    monkeypatch.setattr(signals_module, "IS_WINDOWS", False)
     monkeypatch.setattr(signals_module.os, "getpgid", lambda _pid: 12345, raising=False)
     monkeypatch.setattr(
         signals_module.os,
@@ -256,7 +256,7 @@ def test_signal_process_group_on_windows_signals_process_only(
 ) -> None:
     import meridian.lib.launch.signals as signals_module
 
-    monkeypatch.setattr(signals_module.sys, "platform", "win32")
+    monkeypatch.setattr(signals_module, "IS_WINDOWS", True)
     monkeypatch.setattr(
         signals_module.os,
         "getpgid",
@@ -282,7 +282,7 @@ def test_force_kill_process_degrades_to_process_kill_for_shared_pgid(
     import meridian.lib.launch.signals as signals_module
 
     killpg_calls: list[tuple[int, signal.Signals]] = []
-    monkeypatch.setattr(signals_module.sys, "platform", "linux")
+    monkeypatch.setattr(signals_module, "IS_WINDOWS", False)
     monkeypatch.setattr(signals_module.os, "getpgid", lambda _pid: 999, raising=False)
     monkeypatch.setattr(
         signals_module.os,
@@ -305,7 +305,7 @@ def test_force_kill_process_uses_killpg_for_group_leader(
     import meridian.lib.launch.signals as signals_module
 
     killpg_calls: list[tuple[int, signal.Signals]] = []
-    monkeypatch.setattr(signals_module.sys, "platform", "linux")
+    monkeypatch.setattr(signals_module, "IS_WINDOWS", False)
     monkeypatch.setattr(signals_module.os, "getpgid", lambda _pid: 12345, raising=False)
     monkeypatch.setattr(
         signals_module.os,
@@ -326,7 +326,7 @@ def test_force_kill_process_on_windows_kills_process_only(
 ) -> None:
     import meridian.lib.launch.signals as signals_module
 
-    monkeypatch.setattr(signals_module.sys, "platform", "win32")
+    monkeypatch.setattr(signals_module, "IS_WINDOWS", True)
     monkeypatch.setattr(
         signals_module.os,
         "getpgid",

@@ -11,6 +11,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from pathlib import Path
 
+from meridian.lib.platform import get_home_path
 from meridian.lib.state.user_paths import get_user_home
 
 _PI_AGENT_DIR_ENV = "PI_CODING_AGENT_DIR"
@@ -27,7 +28,7 @@ def resolve_pi_agent_dir(*, env: Mapping[str, str] | None = None) -> Path:
         override = env.get(_PI_AGENT_DIR_ENV, "").strip()
         if override:
             return Path(override).expanduser()
-    return Path.home() / ".pi" / "agent"
+    return get_home_path() / ".pi" / "agent"
 
 
 def resolve_pi_default_user_extension_dir(*, env: Mapping[str, str] | None = None) -> Path:
