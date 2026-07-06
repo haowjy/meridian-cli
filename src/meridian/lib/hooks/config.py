@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import re
 import tomllib
 from collections import OrderedDict
@@ -40,6 +41,8 @@ _HOOK_NAME_COMPONENT_PATTERN = re.compile(r"[^a-z0-9._-]+")
 _HOOK_NAME_REPEATED_DASH_PATTERN = re.compile(r"-+")
 _KNOWN_FAILURE_POLICIES = frozenset({"fail", "warn", "ignore"})
 _KNOWN_SPAWN_STATUSES = frozenset(get_args(SpawnStatus))
+
+logger = logging.getLogger(__name__)
 
 # Backward-compatible alias; registry remains the single source of truth.
 BUILTIN_HOOK_DEFAULTS = BUILTIN_HOOK_REGISTRY
@@ -202,6 +205,16 @@ def _hook_from_row(
     auto_registered: bool = False,
 ) -> tuple[Hook, ...]:
     command = cast("str | None", row.get("command"))
+    command_argv_raw = row.get("command_argv")
+    command_argv: tuple[str, ...] | None
+    if command_argv_raw is None:
+        command_argv = None
+    elif isinstance(command_argv_raw, tuple):
+        command_argv = cast("tuple[str, ...]", command_argv_raw)
+    else:
+        raise ValueError(
+            f"Invalid hook config '{row_source}': 'command_argv' must be a string array."
+        )
     builtin = cast("str | None", row.get("builtin"))
 
     raw_options = row.get("options")
@@ -224,9 +237,19 @@ def _hook_from_row(
         raise ValueError(
             f"Invalid hook config '{row_source}': 'command' and 'builtin' are mutually exclusive."
         )
-    if command is None and builtin is None:
+    if command_argv is not None and builtin is not None:
         raise ValueError(
-            f"Invalid hook config '{row_source}': expected either 'command' or 'builtin'."
+            f"Invalid hook config '{row_source}': "
+            "'command_argv' and 'builtin' are mutually exclusive."
+        )
+    if command is not None and command_argv is not None:
+        raise ValueError(
+            f"Invalid hook config '{row_source}': "
+            "'command' and 'command_argv' are mutually exclusive."
+        )
+    if command is None and command_argv is None and builtin is None:
+        raise ValueError(
+            f"Invalid hook config '{row_source}': expected 'command', 'command_argv', or 'builtin'."
         )
 
     name = cast("str | None", row.get("name"))
@@ -239,6 +262,13 @@ def _hook_from_row(
             )
         else:
             raise ValueError(f"Invalid hook config '{row_source}': 'name' is required.")
+
+    if command is not None:
+        logger.warning(
+            "Hook '%s' uses deprecated shell-string 'command'; prefer argv-array form: "
+            "command = [\"/path/to/script\", \"arg\"].",
+            name,
+        )
 
     if builtin is not None and builtin not in BUILTIN_HOOK_REGISTRY:
         valid = ", ".join(sorted(BUILTIN_HOOK_REGISTRY.keys()))
@@ -306,6 +336,7 @@ def _hook_from_row(
             event=event,
             source=source,
             command=command,
+            command_argv=command_argv,
             builtin=builtin,
             timeout_secs=timeout_secs,
             interval=interval,

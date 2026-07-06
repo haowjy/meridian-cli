@@ -251,6 +251,25 @@ it with no Claude `agent_copy`:
 harnesses = []
 ```
 
+### Child environment passthrough
+
+Harness launches now default to a sanitized child environment: coordinator
+variables ending in `_TOKEN`, `_KEY`, or `_SECRET` are dropped unless the
+harness declares them, they appear in `[spawn].env_passthrough`, or they are
+set explicitly via `[env]` / `meridian spawn --env`.
+
+```toml
+[spawn]
+# Opt back into full coordinator env inheritance (legacy behavior).
+inherit_full_env = false
+
+# Additional coordinator env vars to pass through to harness children.
+env_passthrough = ["MY_SERVICE_TOKEN"]
+```
+
+`MERIDIAN_*` coordination variables still flow through the launch pipeline as
+before. Hooks use the same sanitized default.
+
 ### Model aliases
 
 Project-local aliases live under `[models.<alias>]`:

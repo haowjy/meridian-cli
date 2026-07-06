@@ -63,13 +63,11 @@ async def _collect_events(connection: CursorSubprocessConnection) -> list[Harnes
     return [event async for event in connection.events()]
 
 
-def _passthrough_child_env(
-    _base: object,
-    overrides: dict[str, str],
-    blocked: object,
-) -> dict[str, str]:
-    _ = blocked
-    return dict(overrides)
+def _passthrough_child_env(**kwargs: object) -> dict[str, str]:
+    overrides = kwargs.get("env_overrides")
+    if isinstance(overrides, dict):
+        return dict(overrides)
+    return {}
 
 
 @pytest.mark.asyncio
@@ -250,7 +248,7 @@ async def _start_fresh_cursor_spawn(
 
     monkeypatch.setattr(
         cursor_subprocess_module,
-        "inherit_child_env",
+        "build_connection_child_env",
         _passthrough_child_env,
     )
     monkeypatch.setattr(
@@ -313,7 +311,7 @@ async def test_cursor_start_mints_chat_id_and_records_observer(
 
     monkeypatch.setattr(
         cursor_subprocess_module,
-        "inherit_child_env",
+        "build_connection_child_env",
         _passthrough_child_env,
     )
     monkeypatch.setattr(
@@ -369,7 +367,7 @@ async def test_cursor_start_reuses_continue_session_id_without_minting(
 
     monkeypatch.setattr(
         cursor_subprocess_module,
-        "inherit_child_env",
+        "build_connection_child_env",
         _passthrough_child_env,
     )
     monkeypatch.setattr(

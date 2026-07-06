@@ -60,7 +60,7 @@ from meridian.lib.harness.semantics import (
     clears_signal,
     opencode_primary_event_scope,
 )
-from meridian.lib.launch.env import inherit_child_env
+from meridian.lib.launch.env_sanitize import build_connection_child_env
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.launch.workspace_projection import OPENCODE_CONFIG_CONTENT_ENV
 from meridian.lib.observability.trace_helpers import (
@@ -505,7 +505,11 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
             host=host,
             port=port,
         )
-        env = inherit_child_env(os.environ, config.env_overrides)
+        env = build_connection_child_env(
+            harness_id=self.harness_id,
+            base_env=os.environ,
+            env_overrides=config.env_overrides,
+        )
         spawn_dir = resolve_spawn_log_dir(config.control_root, config.spawn_id)
         spawn_dir.mkdir(parents=True, exist_ok=True)
         _materialize_system_prompt(spawn_dir, config.system, env)
@@ -1110,7 +1114,11 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
         config = self._config
         if config is None:
             return dict(os.environ)
-        return inherit_child_env(os.environ, config.env_overrides)
+        return build_connection_child_env(
+            harness_id=self.harness_id,
+            base_env=os.environ,
+            env_overrides=config.env_overrides,
+        )
 
     def _read_startup_stderr_excerpt(self) -> str:
         stderr_handle = self._stderr_handle

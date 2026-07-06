@@ -14,6 +14,7 @@ from meridian.lib.core.depth import (
     MERIDIAN_DEPTH_ENV,
     child_meridian_depth,
     parse_meridian_depth,
+    resolve_effective_meridian_depth,
 )
 from meridian.lib.core.types import SpawnId
 from meridian.lib.state import paths as state_paths
@@ -115,6 +116,12 @@ class ResolvedContext:
             runtime_root = derive_runtime_root_from_project(project_root)
         else:
             runtime_root = None
+
+        if runtime_root is not None:
+            depth = resolve_effective_meridian_depth(
+                os.environ,
+                runtime_root=runtime_root,
+            )
 
         # Authoritative work-ID precedence:
         # explicit override > MERIDIAN_ACTIVE_WORK_ID > session attachment.

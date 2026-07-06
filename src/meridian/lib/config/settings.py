@@ -454,6 +454,17 @@ def _normalize_spawn_table(raw_value: object, *, source: str) -> dict[str, objec
         if key == "deny_headless_harnesses":
             values[key] = _parse_toml_list(raw_value=value, source=f"{source}.{key}")
             continue
+        if key == "env_passthrough":
+            values[key] = _parse_toml_list(raw_value=value, source=f"{source}.{key}")
+            continue
+        if key == "inherit_full_env":
+            if not isinstance(value, bool):
+                raise ValueError(
+                    f"Invalid value for '{source}.{key}': expected bool, got "
+                    f"{type(value).__name__} ({value!r})."
+                )
+            values[key] = value
+            continue
         if key not in {"default_wait_yield_seconds", "min_wait_yield_seconds"}:
             logger.warning("Ignoring unknown Meridian config key '%s.%s'.", source, key)
             continue
@@ -522,7 +533,6 @@ def _normalize_hooks_array(raw_value: object, *, source: str) -> tuple[dict[str,
             if key in {
                 "name",
                 "event",
-                "command",
                 "builtin",
                 "interval",
                 "failure_policy",
@@ -535,6 +545,32 @@ def _normalize_hooks_array(raw_value: object, *, source: str) -> tuple[dict[str,
                         f"{type(value).__name__} ({value!r})."
                     )
                 row[key] = _normalize_required_string(value, source=field_source)
+                continue
+
+            if key == "command":
+                if isinstance(value, str):
+                    row[key] = _normalize_required_string(value, source=field_source)
+                elif isinstance(value, list):
+                    argv = _parse_toml_list(raw_value=value, source=field_source)
+                    if not argv:
+                        raise ValueError(
+                            f"Invalid value for '{field_source}': expected non-empty array."
+                        )
+                    row["command_argv"] = argv
+                else:
+                    raise ValueError(
+                        f"Invalid value for '{field_source}': expected str or array, got "
+                        f"{type(value).__name__} ({value!r})."
+                    )
+                continue
+
+            if key == "command_argv":
+                argv = _parse_toml_list(raw_value=value, source=field_source)
+                if not argv:
+                    raise ValueError(
+                        f"Invalid value for '{field_source}': expected non-empty array."
+                    )
+                row[key] = argv
                 continue
 
             if key in {"enabled", "require_serial"}:
@@ -1434,6 +1470,15 @@ class MeridianConfig(BaseSettings):
             file_aliases=(file_alias("spawn", "deny_headless_harnesses"),),
         ),
     ] = ("claude",)
+    env_passthrough: Annotated[
+        tuple[str, ...],
+        config_field(
+            "spawn.env_passthrough",
+            value_kind="str_list",
+            file_aliases=(file_alias("spawn", "env_passthrough"),),
+        ),
+    ] = ()
+    inherit_full_env: bool = False
     harness: HarnessConfig = Field(default_factory=HarnessConfig)
     primary: PrimaryConfig = Field(default_factory=PrimaryConfig)
     output: OutputConfig = Field(default_factory=OutputConfig)

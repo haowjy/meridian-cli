@@ -85,7 +85,7 @@ from .composition import (
 )
 from .constants import DRY_RUN_REPORT_PATH, REPORT_FILENAME, SYSTEM_PROMPT_FILENAME
 from .cwd import LaunchDirectoryContext
-from .env import build_env_plan
+from .env import build_env_plan, child_env_policy_from_config
 from .env import merge_env_overrides as _merge_env_overrides
 from .permissions import (
     CLAUDE_NATIVE_DELEGATION_TOOLS,
@@ -2016,12 +2016,25 @@ def bind_launch_context(
         preflight_overrides=preflight.extra_env,
     )
     bind_env_overrides.update(workspace_projection.env_overrides)
+    launch_config = (
+        MeridianConfig.model_validate(runtime.config_snapshot)
+        if runtime.config_snapshot
+        else load_config(project_paths.project_root)
+    )
+    env_policy = child_env_policy_from_config(launch_config)
+    explicit_env_grants = tuple(
+        key
+        for key in bindings.plan_overrides
+        if key.strip() and not key.upper().startswith("MERIDIAN_")
+    )
     env = build_env_plan(
         base_env=os.environ,
         adapter=harness,
         run_inputs=run_params,
         permission_config=permission_config,
         runtime_env_overrides=bind_env_overrides,
+        env_policy=env_policy,
+        explicit_env_grants=explicit_env_grants,
     )
     environment = ResolvedLaunchEnvironment.build(
         child_context_env=child_context_env,

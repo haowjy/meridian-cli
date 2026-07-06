@@ -63,7 +63,11 @@ async def test_claude_connection_launches_subprocess_from_control_root(
         captured["env"] = dict(env)
         return _FakeProcess()
 
-    monkeypatch.setattr(claude_ws, "inherit_child_env", lambda _base, overrides, blocked: overrides)
+    monkeypatch.setattr(
+        claude_ws,
+        "build_connection_child_env",
+        lambda **_kwargs: _kwargs.get("env_overrides") or {},
+    )
     monkeypatch.setattr(claude_ws.asyncio, "create_subprocess_exec", _fake_create_subprocess_exec)
     connection = ClaudeConnection()
     monkeypatch.setattr(connection, "_build_command", lambda _config, _spec: ["claude", "--test"])
@@ -108,7 +112,11 @@ async def _capture_codex_launch_cwd(
     async def _noop_cleanup(*, mark_stopped: bool) -> None:
         _ = mark_stopped
 
-    monkeypatch.setattr(codex_ws, "inherit_child_env", lambda _base, overrides: overrides)
+    monkeypatch.setattr(
+        codex_ws,
+        "build_connection_child_env",
+        lambda **_kwargs: _kwargs.get("env_overrides") or {},
+    )
     monkeypatch.setattr(
         codex_ws,
         "project_managed_primary_backend_command",

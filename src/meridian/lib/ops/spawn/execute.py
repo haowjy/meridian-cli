@@ -16,6 +16,10 @@ from meridian.lib.config.project_paths import resolve_project_config_paths
 from meridian.lib.core.context import RuntimeContext
 from meridian.lib.launch.context import PreparedLaunchSurface
 from meridian.lib.launch.cwd import resolve_task_cwd
+from meridian.lib.launch.env_sanitize import (
+    build_meridian_subprocess_env,
+    child_env_policy_from_config,
+)
 from meridian.lib.launch.request import LaunchArgvIntent, SpawnRequest
 from meridian.lib.platform import IS_WINDOWS
 from meridian.lib.state import spawn_store
@@ -391,13 +395,14 @@ def execute_spawn_background(
     stdout_path = log_dir / BACKGROUND_STDOUT_FILENAME
     stderr_path = log_dir / BACKGROUND_STDERR_FILENAME
 
-    launch_env = dict(os.environ)
-    launch_env.update(
-        _spawn_background_worker_env(
+    launch_env = build_meridian_subprocess_env(
+        base_env=os.environ,
+        env_overrides=_spawn_background_worker_env(
             project_root=execution_contract.control_root,
             work_id=context.work_id,
             autocompact=request.execution_policy.autocompact,
-        )
+        ),
+        env_policy=child_env_policy_from_config(runtime.config),
     )
     try:
         with (

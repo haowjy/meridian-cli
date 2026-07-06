@@ -9,6 +9,7 @@ from collections.abc import Mapping
 from pathlib import Path
 
 from meridian.lib.hooks.types import Hook, HookContext, HookResult
+from meridian.lib.launch.env_sanitize import build_meridian_subprocess_env
 from meridian.lib.platform.process_scope.fallback import terminate_tree_sync
 
 _TAIL_BYTES = 1024
@@ -83,7 +84,7 @@ class ExternalHookRunner:
         if timeout_secs <= 0:
             raise ValueError("timeout_secs must be > 0.")
 
-        if not hook.command:
+        if not hook.command and not hook.command_argv:
             return HookResult(
                 hook_name=hook.name,
                 event=context.event_name,
@@ -92,21 +93,37 @@ class ExternalHookRunner:
                 error="Hook command is required for external execution.",
             )
 
-        env = {**os.environ, **context.to_env()}
+        env = build_meridian_subprocess_env(
+            base_env=os.environ,
+            env_overrides=context.to_env(),
+        )
         env.pop("MERIDIAN_RUNTIME_DIR", None)
         start = time.monotonic()
         process: subprocess.Popen[bytes] | None = None
 
         try:
-            process = subprocess.Popen(
-                hook.command,
-                shell=True,
-                cwd=self._project_root,
-                env=env,
-                stdin=subprocess.PIPE,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-            )
+            if hook.command_argv:
+                process = subprocess.Popen(
+                    list(hook.command_argv),
+                    shell=False,
+                    cwd=self._project_root,
+                    env=env,
+                    stdin=subprocess.PIPE,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                )
+            elif hook.command is not None:
+                process = subprocess.Popen(
+                    hook.command,
+                    shell=True,
+                    cwd=self._project_root,
+                    env=env,
+                    stdin=subprocess.PIPE,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                )
+            else:
+                raise RuntimeError("hook command resolution failed")
             stdout, stderr = process.communicate(
                 input=context.to_json().encode("utf-8"),
                 timeout=timeout_secs,

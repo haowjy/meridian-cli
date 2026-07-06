@@ -215,12 +215,14 @@ def test_sanitize_child_env_strips_secrets() -> None:
     assert "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE" not in sanitized
 
 
-def test_build_harness_child_env_inherits_allowed_vars_and_blocks_adapter_vars() -> None:
+def test_build_harness_child_env_sanitizes_secrets_and_keeps_harness_credentials() -> None:
     child_env = build_harness_child_env(
         base_env={
             "PATH": "/usr/bin",
-            "UNRELATED_TOKEN": "keep-me",
-            "MISC_VALUE": "keep-too",
+            "FOO_API_KEY": "drop-me",
+            "UNRELATED_TOKEN": "drop-me-too",
+            "MISC_VALUE": "misc",
+            "ANTHROPIC_API_KEY": "allowed-credential",
             "CLAUDECODE": "1",
             "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE": "67",
             "MERIDIAN_PRIMARY_PROMPT": "stale",
@@ -228,15 +230,20 @@ def test_build_harness_child_env_inherits_allowed_vars_and_blocks_adapter_vars()
         adapter=ClaudeAdapter(),
         run_params=SpawnParams(prompt="test", model=ModelId("claude-sonnet-4-6")),
         permission_config=PermissionConfig(),
-        runtime_env_overrides={"MERIDIAN_DEPTH": "2"},
+        runtime_env_overrides={
+            "MERIDIAN_DEPTH": "2",
+            "MERIDIAN_SPAWN_ID": "p-child",
+        },
     )
 
     assert child_env["PATH"] == "/usr/bin"
-    assert child_env["UNRELATED_TOKEN"] == "keep-me"
-    assert child_env["MISC_VALUE"] == "keep-too"
+    assert child_env["ANTHROPIC_API_KEY"] == "allowed-credential"
     assert child_env["MERIDIAN_DEPTH"] == "2"
-    assert child_env["MERIDIAN_PRIMARY_PROMPT"] == "stale"
+    assert child_env["MERIDIAN_SPAWN_ID"] == "p-child"
     assert child_env["CLAUDE_AUTOCOMPACT_PCT_OVERRIDE"] == "67"
+    assert "FOO_API_KEY" not in child_env
+    assert "UNRELATED_TOKEN" not in child_env
+    assert "MISC_VALUE" not in child_env
     assert "CLAUDECODE" not in child_env
 
 

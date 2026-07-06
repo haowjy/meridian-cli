@@ -69,7 +69,7 @@ from meridian.lib.harness.semantics import (
     clears_signal,
     codex_primary_event_scope,
 )
-from meridian.lib.launch.env import inherit_child_env
+from meridian.lib.launch.env_sanitize import build_connection_child_env
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.observability.trace_helpers import (
     trace_parse_error,
@@ -369,7 +369,11 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
         port = config.ws_port if config.ws_port > 0 else _reserve_port(host)
         ws_url = f"ws://{host}:{port}"
 
-        env = inherit_child_env(os.environ, config.env_overrides)
+        env = build_connection_child_env(
+            harness_id=self.harness_id,
+            base_env=os.environ,
+            env_overrides=config.env_overrides,
+        )
         self._codex_home = resolve_codex_home(env)
         effective_cwd = self._effective_project_root()
         spawn_dir = resolve_spawn_log_dir(config.control_root, config.spawn_id)

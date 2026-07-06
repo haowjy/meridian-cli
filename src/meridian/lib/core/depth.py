@@ -3,6 +3,9 @@
 import os
 from collections.abc import Mapping
 from contextlib import suppress
+from pathlib import Path
+
+from meridian.lib.core.types import SpawnId
 
 MERIDIAN_DEPTH_ENV = "MERIDIAN_DEPTH"
 MERIDIAN_SPAWN_ID_ENV = "MERIDIAN_SPAWN_ID"
@@ -20,6 +23,53 @@ def current_meridian_depth(env: Mapping[str, str] | None = None) -> int:
     """Return the current process's normalized Meridian depth."""
     source = os.environ if env is None else env
     return parse_meridian_depth(source.get(MERIDIAN_DEPTH_ENV))
+
+
+def depth_from_spawn_ancestry(
+    spawn_id: str | SpawnId,
+    runtime_root: Path,
+) -> int | None:
+    """Return spawn depth from persisted parent links, or ``None`` when unknown."""
+
+    from meridian.lib.state import spawn_store
+
+    normalized_spawn_id = str(spawn_id).strip()
+    if not normalized_spawn_id:
+        return None
+
+    depth = 0
+    current_id = normalized_spawn_id
+    visited: set[str] = set()
+    while current_id:
+        if current_id in visited:
+            return None
+        visited.add(current_id)
+        record = spawn_store.get_spawn(runtime_root, current_id)
+        if record is None:
+            return None if current_id == normalized_spawn_id else depth
+        parent_id = (record.parent_id or "").strip() or None
+        if parent_id is None:
+            return depth
+        depth += 1
+        current_id = parent_id
+    return depth
+
+
+def resolve_effective_meridian_depth(
+    env: Mapping[str, str],
+    *,
+    runtime_root: Path | None = None,
+) -> int:
+    """Return depth using coordinator records when the caller spawn is known."""
+
+    env_depth = parse_meridian_depth(env.get(MERIDIAN_DEPTH_ENV))
+    spawn_id = (env.get(MERIDIAN_SPAWN_ID_ENV) or "").strip()
+    if not spawn_id or runtime_root is None:
+        return env_depth
+    record_depth = depth_from_spawn_ancestry(spawn_id, runtime_root)
+    if record_depth is None:
+        return env_depth
+    return max(env_depth, record_depth)
 
 
 def has_valid_meridian_depth(env: Mapping[str, str] | None = None) -> bool:
@@ -91,6 +141,7 @@ __all__ = [
     "MERIDIAN_SPAWN_ID_ENV",
     "child_meridian_depth",
     "current_meridian_depth",
+    "depth_from_spawn_ancestry",
     "has_valid_meridian_depth",
     "is_managed_meridian_session",
     "is_nested_meridian_depth",
@@ -98,4 +149,5 @@ __all__ = [
     "is_root_side_effect_process",
     "max_depth_reached",
     "parse_meridian_depth",
+    "resolve_effective_meridian_depth",
 ]

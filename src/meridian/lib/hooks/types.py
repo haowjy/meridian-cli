@@ -70,6 +70,7 @@ class Hook:
     event: HookEventName
     source: str
     command: str | None = None
+    command_argv: tuple[str, ...] | None = None
     builtin: str | None = None
     timeout_secs: int | None = None
     interval: str | None = None

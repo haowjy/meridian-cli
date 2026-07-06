@@ -27,7 +27,7 @@ from meridian.lib.harness.connections.base import (
 )
 from meridian.lib.harness.extractors.cursor import CURSOR_EXTRACTOR
 from meridian.lib.launch.constants import BASE_COMMAND_CURSOR_SUBPROCESS, BLOCKED_CHILD_ENV_VARS
-from meridian.lib.launch.env import inherit_child_env
+from meridian.lib.launch.env_sanitize import build_connection_child_env
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.state.paths import resolve_spawn_log_dir
 
@@ -104,9 +104,10 @@ class CursorSubprocessConnection(HarnessConnection[ResolvedLaunchSpec]):
         spawn_dir.mkdir(parents=True, exist_ok=True)
         self._stderr_handle = (spawn_dir / "stderr.log").open("ab")
 
-        env = inherit_child_env(
-            os.environ,
-            config.env_overrides,
+        env = build_connection_child_env(
+            harness_id=self.harness_id,
+            base_env=os.environ,
+            env_overrides=config.env_overrides,
             blocked=BLOCKED_CHILD_ENV_VARS,
         )
         self._session_id_observer = config.session_id_observer

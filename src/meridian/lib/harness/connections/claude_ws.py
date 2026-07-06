@@ -35,7 +35,7 @@ from meridian.lib.launch.constants import (
     BASE_COMMAND_CLAUDE_STREAMING,
     BLOCKED_CHILD_ENV_VARS,
 )
-from meridian.lib.launch.env import inherit_child_env
+from meridian.lib.launch.env_sanitize import build_connection_child_env
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.observability.trace_helpers import (
     trace_parse_error,
@@ -355,9 +355,10 @@ class ClaudeConnection(HarnessConnection[ResolvedLaunchSpec]):
 
         command = self._build_command(config, spec)
 
-        env = inherit_child_env(
-            os.environ,
-            config.env_overrides,
+        env = build_connection_child_env(
+            harness_id=self.harness_id,
+            base_env=os.environ,
+            env_overrides=config.env_overrides,
             blocked=_BLOCKED_CHILD_ENV_VARS,
         )
 

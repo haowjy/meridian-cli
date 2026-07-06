@@ -43,7 +43,7 @@ from meridian.lib.harness.pi_runtime_resolver import (
     resolve_pi_runtime,
 )
 from meridian.lib.launch.constants import BASE_COMMAND_PI_SUBPROCESS, BLOCKED_CHILD_ENV_VARS
-from meridian.lib.launch.env import inherit_child_env
+from meridian.lib.launch.env_sanitize import build_connection_child_env
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.launch.report import compact_pi_failure_output
 from meridian.lib.observability.trace_helpers import (
@@ -442,9 +442,10 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
             spec,
             base_command=BASE_COMMAND_PI_SUBPROCESS,
         )
-        env = inherit_child_env(
-            os.environ,
-            config.env_overrides,
+        env = build_connection_child_env(
+            harness_id=self.harness_id,
+            base_env=os.environ,
+            env_overrides=config.env_overrides,
             blocked=_BLOCKED_CHILD_ENV_VARS,
         )
         env.update(pi_agent_dir_env_override())

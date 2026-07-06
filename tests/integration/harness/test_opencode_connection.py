@@ -627,10 +627,9 @@ async def test_opencode_launch_process_passes_env_overrides_to_managed_backend(
     fake_process = _FakeProcess()
     captured: dict[str, object] = {}
 
-    def _fake_inherit_child_env(
-        _base_env: Mapping[str, str],
-        overrides: dict[str, str],
-    ) -> dict[str, str]:
+    def _fake_build_connection_child_env(**kwargs: object) -> dict[str, str]:
+        overrides = kwargs.get("env_overrides")
+        assert isinstance(overrides, dict)
         captured["overrides"] = dict(overrides)
         return {"MERIDIAN_INHERIT_CALLED": "1", **overrides}
 
@@ -661,7 +660,11 @@ async def test_opencode_launch_process_passes_env_overrides_to_managed_backend(
         )
 
     monkeypatch.setattr(opencode_http, "_find_free_port", lambda _host="127.0.0.1": 17777)
-    monkeypatch.setattr(opencode_http, "inherit_child_env", _fake_inherit_child_env)
+    monkeypatch.setattr(
+        opencode_http,
+        "build_connection_child_env",
+        _fake_build_connection_child_env,
+    )
     monkeypatch.setattr(opencode_http, "launch_managed_backend", _fake_launch_managed_backend)
 
     await connection._launch_process(config, spec)
