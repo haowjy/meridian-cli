@@ -163,3 +163,42 @@ def test_pi_node_runtime_prefixes_pass() -> None:
     assert sanitized["PNPM_HOME"] == "/home/tester/.local/share/pnpm"
     assert sanitized["COREPACK_ENABLE_DOWNLOAD_PROMPT"] == "0"
     assert "CUSTOM_TOKEN" not in sanitized
+
+
+def test_npm_config_password_and_credential_registry_not_propagated() -> None:
+    passthrough = collect_child_env_passthrough(harness_id=HarnessId.PI)
+    sanitized = sanitize_child_env(
+        base_env={
+            "PATH": "/usr/bin",
+            "NPM_CONFIG_PASSWORD": "npm-secret",
+            "NPM_CONFIG_REGISTRY": "https://user:pass@registry.example.com",
+            "NPM_CONFIG_CACHE": "/home/tester/.npm",
+            "NPM_CONFIG_USERCONFIG": "/home/tester/.npmrc",
+        },
+        env_overrides=None,
+        pass_through=passthrough,
+    )
+
+    assert "NPM_CONFIG_PASSWORD" not in sanitized
+    assert sanitized["NPM_CONFIG_REGISTRY"] == "https://registry.example.com"
+    assert sanitized["NPM_CONFIG_CACHE"] == "/home/tester/.npm"
+    assert sanitized["NPM_CONFIG_USERCONFIG"] == "/home/tester/.npmrc"
+
+
+def test_node_and_corepack_broad_prefixes_do_not_leak_password_shaped_vars() -> None:
+    sanitized = sanitize_child_env(
+        base_env={
+            "PATH": "/usr/bin",
+            "NODE_OPTIONS": "--max-old-space-size=4096",
+            "NODE_PASSWORD": "drop-me",
+            "COREPACK_ENABLE_DOWNLOAD_PROMPT": "0",
+            "COREPACK_PASSWORD": "drop-me-too",
+        },
+        env_overrides=None,
+        pass_through=harness_env_passthrough(HarnessId.PI),
+    )
+
+    assert sanitized["NODE_OPTIONS"] == "--max-old-space-size=4096"
+    assert sanitized["COREPACK_ENABLE_DOWNLOAD_PROMPT"] == "0"
+    assert "NODE_PASSWORD" not in sanitized
+    assert "COREPACK_PASSWORD" not in sanitized

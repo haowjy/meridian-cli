@@ -3,6 +3,7 @@
 from collections.abc import Collection, Mapping
 from dataclasses import dataclass
 from typing import cast
+from urllib.parse import urlsplit, urlunsplit
 
 from meridian.lib.core.types import HarnessId
 from meridian.lib.launch.harness_env_passthrough import (
@@ -45,11 +46,29 @@ _WINDOWS_BASELINE_ENV_VARS = frozenset(
     }
 )
 
+_NPM_CONFIG_ENV_VARS = frozenset(
+    {
+        "NPM_CONFIG_USERCONFIG",
+        "NPM_CONFIG_CACHE",
+        "NPM_CONFIG_PREFIX",
+        "NPM_CONFIG_REGISTRY",
+    }
+)
+
 _NODE_RUNTIME_ENV_VARS = frozenset(
     {
         "PNPM_HOME",
+        "NODE_OPTIONS",
+    }
+) | _NPM_CONFIG_ENV_VARS
+
+_COREPACK_RUNTIME_ENV_VARS = frozenset(
+    {
+        "COREPACK_ENABLE_DOWNLOAD_PROMPT",
     }
 )
+
+_NPM_CONFIG_URL_SCRUB_VARS = frozenset({"NPM_CONFIG_REGISTRY"})
 
 _CHILD_ENV_ALLOWLIST = frozenset(
     {
@@ -63,9 +82,29 @@ _CHILD_ENV_ALLOWLIST = frozenset(
         "PYTHONPATH",
         "VIRTUAL_ENV",
     }
-) | _NETWORK_TLS_ENV_VARS | _WINDOWS_BASELINE_ENV_VARS | _NODE_RUNTIME_ENV_VARS
-_CHILD_ENV_ALLOWLIST_PREFIXES = ("LC_", "XDG_", "UV_", "NODE_", "NPM_CONFIG_", "COREPACK_")
+) | (
+    _NETWORK_TLS_ENV_VARS
+    | _WINDOWS_BASELINE_ENV_VARS
+    | _NODE_RUNTIME_ENV_VARS
+    | _COREPACK_RUNTIME_ENV_VARS
+)
+_CHILD_ENV_ALLOWLIST_PREFIXES = ("LC_", "XDG_", "UV_")
 _CHILD_ENV_SECRET_SUFFIXES = ("_TOKEN", "_KEY", "_SECRET")
+
+
+def _scrub_url_userinfo(value: str) -> str:
+    """Remove embedded HTTP basic-auth credentials from a URL env value."""
+
+    stripped = value.strip()
+    if "://" not in stripped or "@" not in stripped:
+        return value
+    parts = urlsplit(stripped)
+    if parts.username is None and parts.password is None:
+        return value
+    hostname = parts.hostname or ""
+    if parts.port is not None:
+        hostname = f"{hostname}:{parts.port}"
+    return urlunsplit((parts.scheme, hostname, parts.path, parts.query, parts.fragment))
 
 
 def _is_allowlisted_child_env_var(key: str) -> bool:
@@ -161,7 +200,10 @@ def sanitize_child_env(
         if _matches_passthrough(normalized, passthrough) or _is_allowlisted_child_env_var(
             normalized
         ):
-            sanitized[key] = value
+            if normalized in _NPM_CONFIG_URL_SCRUB_VARS:
+                sanitized[key] = _scrub_url_userinfo(value)
+            else:
+                sanitized[key] = value
 
     if env_overrides is not None:
         sanitized.update(env_overrides)
