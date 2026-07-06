@@ -6,7 +6,6 @@ features without a concrete need.
 """
 
 import logging
-import os
 import re
 import sqlite3
 from datetime import datetime
@@ -49,7 +48,10 @@ from meridian.lib.harness.opencode_report import (
     extract_opencode_report,
     extract_opencode_session_id_from_artifacts,
 )
-from meridian.lib.harness.opencode_storage import resolve_opencode_session_file
+from meridian.lib.harness.opencode_storage import (
+    resolve_opencode_home_dir,
+    resolve_opencode_session_file,
+)
 from meridian.lib.harness.projections.project_opencode_streaming import (
     project_opencode_spec_to_serve_command,
     project_opencode_spec_to_session_payload,
@@ -71,7 +73,6 @@ from meridian.lib.launch.constants import (
     PRIMARY_BASE_COMMAND_OPENCODE,
 )
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec, TerminalSurfaceMode
-from meridian.lib.platform import IS_WINDOWS, get_home_path
 from meridian.lib.safety.permissions import PermissionConfig
 
 logger = logging.getLogger(__name__)
@@ -102,24 +103,17 @@ def _normalize_opencode_model(model: str) -> str:
     return f"{provider}/{model_name}"
 
 
-def _opencode_data_root() -> Path:
-    xdg_data_home = os.environ.get("XDG_DATA_HOME", "").strip()
-    if xdg_data_home:
-        return Path(xdg_data_home).expanduser()
-    if IS_WINDOWS:
-        local_app_data = os.environ.get("LOCALAPPDATA", "").strip()
-        if local_app_data:
-            return Path(local_app_data)
-        return get_home_path() / "AppData" / "Local"
-    return get_home_path() / ".local" / "share"
-
-
 def _opencode_db_path() -> Path:
-    return _opencode_data_root() / "opencode" / "opencode.db"
+    return resolve_opencode_home_dir() / "opencode.db"
 
 
 def _opencode_session_diff_path(session_id: str) -> Path:
-    return _opencode_data_root() / "opencode" / "storage" / "session_diff" / f"{session_id}.json"
+    return (
+        resolve_opencode_home_dir()
+        / "storage"
+        / "session_diff"
+        / f"{session_id}.json"
+    )
 
 
 def _directory_matches_project(directory: str, project_root: Path) -> bool:
@@ -193,7 +187,7 @@ def _legacy_detect_primary_session_id(
     started_at_epoch: float,
     started_at_local_iso: str,
 ) -> str | None:
-    logs_root = _opencode_data_root() / "opencode" / "log"
+    logs_root = resolve_opencode_home_dir() / "log"
     if not logs_root.is_dir():
         return None
 
@@ -242,7 +236,7 @@ def _detect_primary_session_id(
             return recent_sessions[0][0]
         return None
 
-    diff_root = _opencode_data_root() / "opencode" / "storage" / "session_diff"
+    diff_root = resolve_opencode_home_dir() / "storage" / "session_diff"
     if diff_root.is_dir():
         diff_matches: list[tuple[float, str]] = []
         for candidate in diff_root.glob("ses_*.json"):
@@ -272,7 +266,7 @@ def project_opencode_spec_to_session_payload_for_project(
 
 
 def _legacy_owns_session(project_root: Path, session_ref: str) -> bool:
-    opencode_logs = _opencode_data_root() / "opencode" / "log"
+    opencode_logs = resolve_opencode_home_dir() / "log"
     if not opencode_logs.is_dir():
         return False
 

@@ -9,13 +9,13 @@ from collections.abc import Callable, Iterator, Mapping
 from pathlib import Path
 from typing import cast
 
-from meridian.lib.harness.opencode_storage import resolve_opencode_storage_root
+from meridian.lib.harness.opencode_storage import resolve_opencode_home_dir
 
 
 def resolve_opencode_db_path(launch_env: Mapping[str, str] | None = None) -> Path:
     """Resolve the OpenCode SQLite database path from the storage root."""
 
-    return resolve_opencode_storage_root(launch_env).parent / "opencode.db"
+    return resolve_opencode_home_dir(launch_env) / "opencode.db"
 
 
 def opencode_db_session_exists(
