@@ -2,6 +2,8 @@
 
 Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [SemVer](https://semver.org/). Versions `0.0.6` through `0.0.25` in git history only — changelog fell stale, resumed at `[Unreleased]`.
 
+## [Unreleased]
+
 ### Changed
 - Doc/code alignment: three launch driving adapters (no REST spawn routes), honest `lib/core` role, accurate Windows/TUI and CI claims, v2 spawn-state references, OpenCode upstream archived note.
 - Platform hygiene: route `Path.home()` and inline `sys.platform` checks through `lib/platform` helpers; Windows-appropriate OpenCode data-dir default.
