@@ -297,6 +297,7 @@ class SpawnLifecycleService:
                 worker_pid=reservation.worker_pid,
                 runner_pid=reservation.runner_pid,
                 launch_policy_snapshot=reservation.launch_policy_snapshot,
+                meridian_depth=reservation.meridian_depth,
                 status=reservation.status,
                 started_at=reservation.started_at,
                 clock=reservation.clock,
