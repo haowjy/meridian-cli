@@ -106,6 +106,36 @@ def test_write_state_locked_applies_mutator_under_per_spawn_lock(tmp_path: Path)
     assert '"revision": 2' in (spawns_dir / "p1" / "state.json").read_text(encoding="utf-8")
 
 
+def test_start_spawn_persists_display_label_when_goal_and_desc_absent(tmp_path: Path) -> None:
+    from meridian.lib.state.paths import RuntimePaths
+    from meridian.lib.state.spawn_store import start_spawn
+
+    runtime_root = tmp_path / "runtime"
+    runtime_root.mkdir()
+    spawn_id = start_spawn(
+        runtime_root,
+        spawn_id="p1",
+        chat_id="c1",
+        model="gpt-5.4",
+        agent="coder",
+        harness="codex",
+        prompt="summarize this task please",
+        desc=None,
+        goal=None,
+    )
+
+    state_text = (
+        RuntimePaths.from_root_dir(runtime_root).spawns_dir / str(spawn_id) / "state.json"
+    ).read_text(encoding="utf-8")
+    assert '"display_label": "summarize this task please"' in state_text
+
+    spawns_dir = RuntimePaths.from_root_dir(runtime_root).spawns_dir
+    restored = read_state(spawns_dir, "p1", include_prompt=False)
+    assert restored is not None
+    assert restored.display_label == "summarize this task please"
+    assert restored.prompt is None
+
+
 def test_read_state_metadata_only_skips_prompt_file(tmp_path: Path) -> None:
     spawns_dir = tmp_path / "spawns"
     write_state(spawns_dir, _record(prompt="hello world"))

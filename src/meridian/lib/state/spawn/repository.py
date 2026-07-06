@@ -51,6 +51,7 @@ class StoredSpawnState(BaseModel):
     desc: str | None = None
     work_id: str | None = None
     goal: str | None = None
+    display_label: str | None = None
     harness_session_id: str | None = None
     control_root: str | None = None
     task_cwd: str | None = None
@@ -125,6 +126,7 @@ def record_to_stored_state(
         desc=record.desc,
         work_id=record.work_id,
         goal=record.goal,
+        display_label=record.display_label,
         harness_session_id=record.harness_session_id,
         control_root=record.control_root,
         task_cwd=record.task_cwd,
@@ -182,6 +184,7 @@ def stored_state_to_record(
         desc=stored.desc,
         work_id=stored.work_id,
         goal=stored.goal,
+        display_label=stored.display_label,
         harness_session_id=stored.harness_session_id,
         control_root=stored.control_root,
         task_cwd=stored.task_cwd,

@@ -18,6 +18,7 @@ from meridian.lib.ops.spawn.models import (
     SpawnActionOutput,
     SpawnCancelAllInput,
     SpawnCancelInput,
+    SpawnChildrenInput,
     SpawnListInput,
     SpawnShowInput,
     SpawnStatsInput,
@@ -434,6 +435,135 @@ def test_spawn_show_and_list_hydrate_primary_and_pi_diagnostics(tmp_path: Path) 
     assert pi_detail.pi_cleanup_status == "escalated"
     assert pi_detail.pi_cleanup_phase == "cleanup_stop_escalated"
     assert pi_detail.pi_cleanup_reason == "abort_grace_expired"
+
+
+def test_spawn_children_uses_persisted_display_label_without_prompt_read(tmp_path: Path) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    runtime_root = _state_root(project_root)
+
+    parent_id = spawn_store.start_spawn(
+        runtime_root,
+        spawn_id="p-parent",
+        chat_id="c-parent",
+        model="gpt-5.4",
+        agent="coder",
+        harness="codex",
+        prompt="parent prompt",
+        goal="parent goal",
+    )
+    child_id = spawn_store.start_spawn(
+        runtime_root,
+        spawn_id="p-child",
+        parent_id=str(parent_id),
+        chat_id="c-child",
+        model="gpt-5.4",
+        agent="coder",
+        harness="codex",
+        prompt="child prompt label",
+        desc=None,
+        goal=None,
+    )
+
+    listed = spawn_store.list_spawns(runtime_root, filters={"parent_id": str(parent_id)})
+    assert len(listed) == 1
+    child_row = listed[0]
+    assert child_row.id == str(child_id)
+    assert child_row.prompt is None
+    assert child_row.display_label == "child prompt label"
+
+    state_path = runtime_root / "spawns" / str(child_id) / "state.json"
+    state_text = state_path.read_text(encoding="utf-8")
+    assert '"display_label": "child prompt label"' in state_text
+
+    output = spawn_api.spawn_children_sync(
+        SpawnChildrenInput(project_root=project_root.as_posix(), spawn_id=str(parent_id))
+    )
+
+    assert len(output.spawns) == 1
+    entry = output.spawns[0]
+    assert entry.spawn_id == str(child_id)
+    assert entry.desc == "child prompt label"
+
+
+def test_spawn_children_prefers_goal_over_display_label(tmp_path: Path) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    runtime_root = _state_root(project_root)
+
+    parent_id = spawn_store.start_spawn(
+        runtime_root,
+        spawn_id="p-parent",
+        chat_id="c-parent",
+        model="gpt-5.4",
+        agent="coder",
+        harness="codex",
+        prompt="parent prompt",
+    )
+    child_id = spawn_store.start_spawn(
+        runtime_root,
+        spawn_id="p-child",
+        parent_id=str(parent_id),
+        chat_id="c-child",
+        model="gpt-5.4",
+        agent="coder",
+        harness="codex",
+        prompt="ignored prompt summary",
+        goal="ship the feature",
+    )
+
+    listed = spawn_store.list_spawns(runtime_root, filters={"parent_id": str(parent_id)})
+    assert listed[0].display_label is None
+
+    output = spawn_api.spawn_children_sync(
+        SpawnChildrenInput(project_root=project_root.as_posix(), spawn_id=str(parent_id))
+    )
+
+    assert output.spawns[0].spawn_id == str(child_id)
+    assert output.spawns[0].desc == "ship the feature"
+
+
+def test_spawn_children_legacy_row_without_display_label_returns_none_desc(tmp_path: Path) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    runtime_root = _state_root(project_root)
+
+    parent_id = spawn_store.start_spawn(
+        runtime_root,
+        spawn_id="p-parent",
+        chat_id="c-parent",
+        model="gpt-5.4",
+        agent="coder",
+        harness="codex",
+        prompt="parent prompt",
+    )
+    child_id = spawn_store.start_spawn(
+        runtime_root,
+        spawn_id="p-child",
+        parent_id=str(parent_id),
+        chat_id="c-child",
+        model="gpt-5.4",
+        agent="coder",
+        harness="codex",
+        prompt="legacy prompt body",
+        desc=None,
+        goal=None,
+    )
+    state_path = runtime_root / "spawns" / str(child_id) / "state.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state.pop("display_label", None)
+    state_path.write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
+
+    listed = spawn_store.list_spawns(runtime_root, filters={"parent_id": str(parent_id)})
+    assert listed[0].prompt is None
+    assert listed[0].display_label is None
+
+    output = spawn_api.spawn_children_sync(
+        SpawnChildrenInput(project_root=project_root.as_posix(), spawn_id=str(parent_id))
+    )
+
+    assert output.spawns[0].desc is None
+
 
 def test_spawn_show_surfaces_persisted_goal_and_distinct_task_dir(tmp_path: Path) -> None:
     project_root = tmp_path / "repo"

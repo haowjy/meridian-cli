@@ -65,6 +65,7 @@ class SpawnRecord(BaseModel):
     desc: str | None
     work_id: str | None
     goal: str | None = None
+    display_label: str | None = None
     harness_session_id: str | None
     control_root: str | None = None
     task_cwd: str | None = None
