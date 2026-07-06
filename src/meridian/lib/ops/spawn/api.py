@@ -224,6 +224,14 @@ def _spawn_label_or_prompt_summary(
     return f"{compact_prompt[:47].rstrip()}..."
 
 
+def _spawn_list_entry_desc(row: SpawnRecord, runtime_root: Path) -> str | None:
+    if (row.goal or row.desc or "").strip():
+        return _spawn_label_or_prompt_summary(row.goal, row.desc, None)
+    hydrated = spawn_store.get_spawn(runtime_root, row.id)
+    prompt = hydrated.prompt if hydrated is not None else None
+    return _spawn_label_or_prompt_summary(row.goal, row.desc, prompt)
+
+
 def _forked_from_output(payload: SpawnCreateInput) -> str | None:
     if not payload.session.continue_fork:
         return None
@@ -671,7 +679,7 @@ def spawn_children_sync(
             status=row.status,
             model=row.model or "",
             agent=row.agent or None,
-            desc=_spawn_label_or_prompt_summary(row.goal, row.desc, row.prompt),
+            desc=_spawn_list_entry_desc(row, runtime_root),
             duration_secs=row.duration_secs,
             cost_usd=row.total_cost_usd,
         )

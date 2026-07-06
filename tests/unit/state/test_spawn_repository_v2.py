@@ -106,6 +106,18 @@ def test_write_state_locked_applies_mutator_under_per_spawn_lock(tmp_path: Path)
     assert '"revision": 2' in (spawns_dir / "p1" / "state.json").read_text(encoding="utf-8")
 
 
+def test_read_state_metadata_only_skips_prompt_file(tmp_path: Path) -> None:
+    spawns_dir = tmp_path / "spawns"
+    write_state(spawns_dir, _record(prompt="hello world"))
+
+    restored = read_state(spawns_dir, "p1", include_prompt=False)
+
+    assert restored is not None
+    assert restored.prompt is None
+    assert restored.id == "p1"
+    assert (spawns_dir / "p1" / "starting-prompt.md").exists() is False
+
+
 def test_write_state_locked_rejects_mutators_that_change_spawn_id(tmp_path: Path) -> None:
     spawns_dir = tmp_path / "spawns"
     write_state(spawns_dir, _record())

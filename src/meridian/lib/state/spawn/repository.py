@@ -235,13 +235,23 @@ def _read_stored_state(spawns_dir: Path, spawn_id: str) -> StoredSpawnState | No
         return None
 
 
-def read_state(spawns_dir: Path, spawn_id: str) -> SpawnRecord | None:
-    """Read ``spawns/<id>/state.json`` and reconstruct a spawn record."""
+def read_state(
+    spawns_dir: Path,
+    spawn_id: str,
+    *,
+    include_prompt: bool = True,
+) -> SpawnRecord | None:
+    """Read ``spawns/<id>/state.json`` and reconstruct a spawn record.
+
+    List and filter paths should pass ``include_prompt=False`` so large
+    ``starting-prompt.md`` bodies are not read unless a caller needs them.
+    """
 
     stored = _read_stored_state(spawns_dir, spawn_id)
     if stored is None:
         return None
-    return stored_state_to_record(stored, prompt=read_prompt(spawns_dir, spawn_id))
+    prompt = read_prompt(spawns_dir, spawn_id) if include_prompt else None
+    return stored_state_to_record(stored, prompt=prompt)
 
 
 def write_state(

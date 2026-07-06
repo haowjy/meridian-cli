@@ -14,6 +14,8 @@ from meridian.lib.harness.transcript import TranscriptMessage
 from meridian.lib.ops.runtime import async_from_sync
 from meridian.lib.ops.session_transcript import read_session_transcript
 from meridian.lib.state import session_identity, session_store, spawn_store
+from meridian.lib.state.paths import RuntimePaths
+from meridian.lib.state.spawn.repository import read_prompt
 
 _TOOL_CALL_RE = re.compile(r"^\[tool:\s*(?P<name>[^\]\s]+)(?:\s+(?P<body>.*))?\]$", re.DOTALL)
 _TOOL_RESULT_PREFIX = "[tool_result]"
@@ -265,8 +267,11 @@ def _spawn_appendices(
         if not report:
             continue
         seen.add(spawn.id)
-        desc_source = spawn.desc or spawn.prompt or ""
-        desc = desc_source.strip().splitlines()[0] if desc_source else ""
+        desc_source = (spawn.desc or "").strip()
+        if not desc_source:
+            paths = RuntimePaths.from_root_dir(runtime_root)
+            desc_source = (read_prompt(paths.spawns_dir, spawn.id) or "").strip()
+        desc = desc_source.splitlines()[0] if desc_source else ""
         suffix = f" — {desc}" if desc else ""
         sections.append("\n".join([f"## Spawn: {spawn.id}{suffix}", "", report]))
     return sections
