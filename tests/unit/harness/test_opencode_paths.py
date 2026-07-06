@@ -42,3 +42,40 @@ def test_resolve_opencode_storage_root_prefers_xdg_data_home(
     monkeypatch.delenv("OPENCODE_HOME", raising=False)
 
     assert resolve_opencode_storage_root() == tmp_path / "opencode" / "storage"
+
+
+def test_resolve_opencode_storage_root_uses_launch_env_home(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    child_home = tmp_path / "opencode-child-home"
+    child_home.mkdir()
+
+    monkeypatch.setattr(opencode_storage, "IS_WINDOWS", False)
+    monkeypatch.delenv("XDG_DATA_HOME", raising=False)
+    monkeypatch.delenv("OPENCODE_HOME", raising=False)
+
+    launch_env = {"HOME": str(child_home)}
+    expected_storage = child_home / ".local" / "share" / "opencode" / "storage"
+
+    assert resolve_opencode_storage_root(launch_env) == expected_storage
+    assert resolve_opencode_home_dir(launch_env) == expected_storage.parent
+    assert resolve_opencode_db_path(launch_env) == expected_storage.parent / "opencode.db"
+
+
+def test_resolve_opencode_storage_root_uses_launch_env_localappdata_on_windows(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    local_app_data = tmp_path / "child-localappdata"
+    local_app_data.mkdir()
+
+    monkeypatch.setattr(opencode_storage, "IS_WINDOWS", True)
+    monkeypatch.delenv("XDG_DATA_HOME", raising=False)
+    monkeypatch.delenv("OPENCODE_HOME", raising=False)
+    monkeypatch.delenv("LOCALAPPDATA", raising=False)
+
+    launch_env = {"LOCALAPPDATA": str(local_app_data)}
+    expected_storage = local_app_data / "opencode" / "storage"
+
+    assert resolve_opencode_storage_root(launch_env) == expected_storage

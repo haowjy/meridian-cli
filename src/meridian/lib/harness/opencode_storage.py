@@ -9,6 +9,21 @@ from pathlib import Path
 from meridian.lib.platform import IS_WINDOWS, get_home_path
 
 
+def _resolve_default_home(env: Mapping[str, str]) -> Path:
+    """Resolve default home from launch env before parent-process fallback."""
+
+    if IS_WINDOWS:
+        user_profile = env.get("USERPROFILE", "").strip()
+        if user_profile:
+            return Path(user_profile).expanduser()
+
+    home = env.get("HOME", "").strip()
+    if home:
+        return Path(home).expanduser()
+
+    return get_home_path()
+
+
 def resolve_opencode_data_root(launch_env: Mapping[str, str] | None = None) -> Path:
     """Resolve the parent directory of OpenCode's data folder.
 
@@ -25,9 +40,9 @@ def resolve_opencode_data_root(launch_env: Mapping[str, str] | None = None) -> P
         local_app_data = env.get("LOCALAPPDATA", "").strip()
         if local_app_data:
             return Path(local_app_data)
-        return get_home_path() / "AppData" / "Local"
+        return _resolve_default_home(env) / "AppData" / "Local"
 
-    return get_home_path() / ".local" / "share"
+    return _resolve_default_home(env) / ".local" / "share"
 
 
 def resolve_opencode_home_dir(launch_env: Mapping[str, str] | None = None) -> Path:
