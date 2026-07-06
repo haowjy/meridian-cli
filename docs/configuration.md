@@ -526,7 +526,7 @@ event   = "spawn.finalized"
 failure_policy = "warn"
 ```
 
-Hook `command` strings run via the platform default shell — `sh -c` on POSIX, `cmd.exe /c` on Windows. Bash syntax in inline commands will not work on Windows; use a `.sh` / `.ps1` / `.bat` script file instead for cross-platform hooks.
+Hook `command` accepts a shell string or an argv array (`command = ["bash", "scripts/check.sh"]`). String form runs via the platform default shell — `sh -c` on POSIX, `cmd.exe /c` on Windows. Array form runs with `shell=False`; on Windows use an explicit interpreter such as `["powershell", "-File", "scripts/check.ps1"]`.
 
 See [hooks.md](hooks.md) for the full hook schema, event names, builtin reference, and cross-platform guidance.
 

@@ -12,6 +12,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - External hooks accept argv-array `command = ["/path/to/script", "arg"]` (`shell=False`); string `command` still works but logs a deprecation warning on load.
 - Spawn depth limits derive from coordinator spawn ancestry when `MERIDIAN_SPAWN_ID` resolves in the spawn store (`max(env, records)`), closing env-forged depth bypass.
 
+### Changed
+- Hook docs now describe `command` as `str | array[str]` with POSIX and Windows argv-array examples.
+
 ## [0.3.24] - 2026-07-04
 
 ### Changed

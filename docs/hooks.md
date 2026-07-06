@@ -67,7 +67,7 @@ event   = "spawn.finalized"
 | ----- | ---- | -------- | ------- | ------- |
 | `name` | str | yes (unless `builtin`) | builtin name or synthesized builtin identity | Unique identifier; used by `hooks run NAME` |
 | `builtin` | str | one of `builtin`/`command` | — | Use a builtin hook |
-| `command` | str | one of `builtin`/`command` | — | Shell command to run |
+| `command` | str \| array[str] | one of `builtin`/`command` | — | Shell command string or argv array (see Shell Behavior) |
 | `event` | str | yes (unless builtin supplies defaults) | builtin default | Event that triggers the hook |
 | `remote` | str | required by `git-autosync` | — | Git remote URL for hooks that operate on a remote repo |
 | `enabled` | bool | no | `true` | Set to `false` to disable without removing |
@@ -87,18 +87,39 @@ If you omit `name` for a builtin hook, Meridian may synthesize a stable name fro
 
 ### Shell Behavior
 
-Hook `command` strings are executed via the platform default shell: `sh -c` on POSIX (Linux/macOS) and `cmd.exe /c` on Windows. This is standard Python `subprocess(shell=True)` behavior. Inline commands that rely on bash syntax — `&&`, `||`, `$()`, `[[`, or POSIX-only tools — will fail on Windows because `cmd.exe` does not understand them.
+Hook `command` accepts either a shell string or an argv array:
 
-For hooks that must run on both platforms, use a script file with an appropriate extension:
+- **String form** runs via the platform default shell: `sh -c` on POSIX (Linux/macOS) and `cmd.exe /c` on Windows. This is standard Python `subprocess(shell=True)` behavior.
+- **Array form** runs with `shell=False`: the first element is the executable and the rest are arguments. Use this when you need injection hardening or explicit interpreter selection.
+
+Inline commands that rely on bash syntax — `&&`, `||`, `$()`, `[[`, or POSIX-only tools — will fail on Windows because `cmd.exe` does not understand them.
+
+For hooks that must run on both platforms, prefer argv arrays that invoke an interpreter explicitly:
 
 ```toml
-# POSIX — shell script
+# POSIX — explicit bash
+[[hooks]]
+name    = "check"
+command = ["bash", "scripts/check.sh"]
+event   = "spawn.finalized"
+
+# Windows — explicit PowerShell
+[[hooks]]
+name    = "check-win"
+command = ["powershell", "-File", "scripts/check.ps1"]
+event   = "spawn.finalized"
+```
+
+String form with script files still works when the platform shell can execute them directly:
+
+```toml
+# POSIX — shell script (string form)
 [[hooks]]
 name    = "check"
 command = "./scripts/check.sh"
 event   = "spawn.finalized"
 
-# Windows — batch file or PowerShell
+# Windows — batch file or PowerShell (string form)
 [[hooks]]
 name    = "check"
 command = "powershell -File scripts/check.ps1"
