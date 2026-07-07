@@ -88,3 +88,10 @@ remote = "git@github.com:haowjy/meridian-cli-kb.git"
 # See docs/configuration.md "Claude Code Skill Leakage" for details.
 [workspace.sibling-repos]
 path = ".."
+
+# -- Environment variables passed to spawned harnesses -----------------------
+# Flat key-value string map. Applied to every spawn from this project.
+# Keys from meridian.local.toml override meridian.toml; project overrides user.
+
+[env]
+OPENCODE_ENABLE_EXA = "1"
