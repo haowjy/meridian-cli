@@ -1,22 +1,30 @@
-# meridian
+# meridian-cli
 
-Orchestrate AI coding agents across Claude Code, Codex, and OpenCode. Each model runs through its native harness — meridian coordinates between them.
+Let coding harnesses call each other. meridian-cli lets agents running in Claude Code, Codex CLI, and OpenCode spawn named specialist agents in the other harnesses, each with the model, cost, and tool environment you configured.
 
-> **Early development.** Meridian is not stable. Expect breaking changes in any release. If you need a stable workflow, this project is not ready for you yet.
+It is for people who already use more than one AI coding CLI and want one team of agents instead of separate chat sessions.
+
+> **Early development.** meridian-cli is not stable. Expect breaking changes in any release. If you need a stable workflow, this project is not ready for you yet.
 
 ## Why
 
-Claude Code is (supposed to be) the best way to run Claude. Codex CLI is often the best way to run GPT. Each provider's harness is optimized for their models — sandboxing, tool use, context handling, everything (supposedly).
+Good agentic coding is an allocation problem. Some tasks need the strongest model you have; some need cheap, parallel throughput; some need a specific harness feature such as sandboxing, tool behavior, context handling, or integrations.
 
-But you can only use one at a time.
+Without meridian-cli, those choices are trapped inside separate CLIs. Switching harnesses means manually copying context between sessions and hoping the next agent understands what happened.
 
-Meridian lets agents spawn other agents across harnesses. The right model for each task, through the right runtime, with clean context per spawn.
+meridian-cli turns that handoff into a command. A caller can delegate to a named specialist, pass only the context that agent needs, and pick up the result from disk. Use the expensive model where judgment matters, use cheaper agents where throughput matters, and keep every agent inside the harness that fits the job.
+
+## One Harness Can Call Another
+
+> **Demo placeholder:** add a short terminal recording or screenshot here showing one coding harness spawning an agent in another harness, then collecting the result with `meridian spawn wait` or `meridian spawn show`.
 
 ## Install
 
 ```bash
 uv tool install meridian-cli
 ```
+
+The package is `meridian-cli`; the command it installs is `meridian`.
 
 <details>
 <summary>Other methods</summary>
@@ -40,7 +48,7 @@ You need at least one harness installed: [Claude Code](https://docs.anthropic.co
 
 ## Set Up a Project
 
-`meridian init` by itself only bootstraps Meridian project config:
+`meridian init` by itself only bootstraps meridian-cli project config:
 
 ```bash
 meridian init
