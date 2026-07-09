@@ -47,3 +47,4 @@ src/meridian/pi_runtime/.meridian/
 
 # Agent coordination scratch
 plan/
+.work-artifacts/
