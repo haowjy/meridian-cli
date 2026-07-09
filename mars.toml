@@ -4,6 +4,9 @@ url = "https://github.com/haowjy/meridian-dev-workflow"
 [dependencies.meridian-prompter]
 url = "https://github.com/haowjy/meridian-prompter"
 
+[dependencies.meridian-base]
+url = "https://github.com/haowjy/meridian-base"
+
 [settings]
 targets = [
     ".claude",
@@ -21,6 +24,5 @@ include_fanout = false
 [settings.meridian.fanout]
 agents = [
     "reviewer",
-#    "browser-prober",
     "prober",
 ]
