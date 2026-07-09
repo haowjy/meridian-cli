@@ -337,10 +337,11 @@ def _spawn_create(
         str | None,
         Parameter(
             name="--task-dir",
-            group=ADVANCED_PARAMS,
             help=(
                 "Override the source-code edit directory for this spawn only. "
-                "Does not modify the work item's task_dir setting. "
+                "Does not modify the work item's task_dir setting "
+                "(check with `meridian task-dir`; rebind with "
+                "`meridian work task-dir <path>`). "
                 "Relative -f paths resolve against this directory."
             ),
         ),

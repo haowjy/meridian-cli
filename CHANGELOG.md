@@ -4,6 +4,10 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+- Injected spawn guidance restructured around composition axes: `# Prompting subagents` now teaches `--skills`, `-m` (fan-out/capability), `--from` (prior-conversation handoff), and `--task-dir` (worktree lanes); the spawn contract drops flag mechanics covered by `spawn -h` (the `--prompt-file` example and the separate wait-tracking bullet) and keeps routing, the adapter lifecycle bullets, and a merged drain contract noting the wait itself may run in native background execution.
+- `spawn --task-dir` promoted from `--advanced` to main `-h`; its param help and both spawn playbook variants now say how to check (`meridian task-dir`) and rebind (`meridian work task-dir <path>`) the work item's task_dir.
+
 ## [0.3.26] - 2026-07-06
 
 ## [0.3.25] - 2026-07-06

@@ -17,10 +17,17 @@ Every spawn starts with fresh context — scope the handoff to what the \
 subagent needs, not what you've been thinking about. Front-load the task; \
 the subagent should know its job by line 3.
 
-Pass `--skills skill1,skill2` to load additional skills onto the subagent.
-Agent profiles already set the right model for each role; prefer the \
-defaults. Use `-m <model>` only for deliberate fan-out (e.g. reviewers \
-across models for perspective diversity).
+Compose the lane at spawn time:
+- `--skills skill1,skill2` attaches focus skills to any agent — prefer a
+  near-fit agent plus an attached skill over a generic agent.
+- `-m <model>` overrides the profile model — for deliberate fan-out (the
+  same task across models) or when the lane needs a capability the
+  default lacks; otherwise prefer the profile default.
+- `--from <spawn-or-chat id>` hands the spawn a prior conversation's
+  context — reach for it when the reasoning matters, not just the
+  artifacts (knowledge capture, reviewing a decision trail).
+- `--task-dir <path>` points the spawn's source edits at another
+  checkout, e.g. a worktree lane that must not collide with others.
 
 For model-specific prompting guidance:  meridian mars models prompting <agent-or-model>"""
 
@@ -57,18 +64,15 @@ def build_spawn_usage_contract(variants: SpawnUsageContractVariants) -> str:
 - Do NOT use the Agent() tool for work that a meridian agent can do.
   Use `meridian spawn -a <agent>` instead — it routes to the right
   model and harness, tracks the work, and produces inspectable artifacts.
-- Launch with --bg; it returns a spawn id without waiting for the work and
-  runs the worker detached:
-      meridian spawn -a <agent> --prompt-file <prompt>.md --bg
 - {variants.double_wrap_bullet}
 - {variants.timeout_bullet}
-- Track with no-arg wait — no id needed; it discovers your pending spawns
-  by session and yields cache-cleanly. Re-invoke to keep waiting:
-      meridian spawn wait
-- Every --bg spawn must be drained with `meridian spawn wait` before you
-  respond to the user, start dependent work, or end your turn; un-waited
-  background spawns are lost.
-- Full reference:  meridian spawn -h"""
+- Drain every --bg spawn with no-arg `meridian spawn wait` before you
+  respond to the user, start dependent work, or end your turn. It finds
+  your pending spawns by session; re-invoke to keep waiting. The wait
+  itself can run in your native background execution to keep working
+  while it blocks — it's the launch, not the wait, that must never be
+  background-wrapped. Un-waited background spawns are lost.
+- Playbook and full flags:  meridian spawn -h"""
 
 
 def has_spawn_capability(profile: AgentProfile | None) -> bool:
