@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.3.29] - 2026-07-10
+
 ### Changed
 - Fresh managed Codex sessions identify the active agent in the visible bootstrap
   message when an agent profile is available.
