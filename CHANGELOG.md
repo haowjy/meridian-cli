@@ -4,6 +4,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+- Bump bundled `mars-agents` to 0.10.4.
+
 ## [0.3.29] - 2026-07-10
 
 ### Changed
