@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.3.31] - 2026-07-10
+
 ### Added
 - `meridian artifact serve <dir>` serves a static directory over Tailscale and
   prints `https://<host>:<port>/<slug>/`. Random high port by default (never 443
