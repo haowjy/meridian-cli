@@ -16,8 +16,12 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `meridian artifact stop <slug|port>` surgically tears down one serve;
   `meridian artifact gc` sweeps expired serves (also runs before every `serve`).
 
-### Changed
-- Bump bundled `mars-agents` to 0.10.4.
+## [0.3.30] - 2026-07-10
+
+### Fixed
+- Bump mars-agents to 0.10.5 so packages with same-named agents install
+  together through collision-driven source suffixes instead of failing with a
+  duplicate-provider error.
 
 ## [0.3.29] - 2026-07-10
 
