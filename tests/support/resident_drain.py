@@ -30,7 +30,7 @@ from meridian.lib.streaming.drain_policy import TURN_BOUNDARY_EVENT_TYPE, DrainP
 from meridian.lib.streaming.resident_drain import ResidentDrainCoordinator
 from meridian.lib.streaming.spawn_manager import SpawnManager
 from tests.support.fakes import FakeClock
-from tests.unit.streaming.pi_quiescence_test_helpers import NoopControlServer
+from tests.support.pi import NoopControlServer
 
 
 class FakeResidentBackendControl:

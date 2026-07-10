@@ -11,11 +11,14 @@ from meridian.lib.harness.connections.base import (
     ConnectionState,
     HarnessConnection,
     HarnessEvent,
+    PiSessionRole,
     StopProgressCallback,
     StopResult,
 )
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
+from meridian.lib.safety.permissions import UnsafeNoOpPermissionResolver
 from meridian.lib.streaming.control_socket import ControlSocketServer
+from meridian.lib.streaming.spawn_manager import SpawnManager
 
 
 class NoopControlServer(ControlSocketServer):
@@ -106,3 +109,45 @@ class FakePiConnection(HarnessConnection[ResolvedLaunchSpec]):
 
 def pi_event(event_type: str, payload: dict[str, object]) -> HarnessEvent:
     return HarnessEvent(event_type=event_type, harness_id="pi", payload=payload)
+
+
+async def start_pi_manager(
+    runtime_root: Path,
+    connection: FakePiConnection,
+    *,
+    spawn_id: SpawnId,
+    session_role: PiSessionRole = "spawned",
+    child_wave_timeout_seconds: float | None = None,
+) -> SpawnManager:
+    """Start a SpawnManager around one scripted Pi connection."""
+
+    async def start_connection(
+        config: ConnectionConfig,
+        spec: ResolvedLaunchSpec,
+    ) -> HarnessConnection[ResolvedLaunchSpec]:
+        await connection.start(config, spec)
+        return connection
+
+    manager = SpawnManager(
+        runtime_root=runtime_root,
+        project_root=runtime_root,
+        start_connection=start_connection,
+        control_server_factory=lambda _spawn_id, _socket_path, _manager: NoopControlServer(),
+    )
+    await manager.start_spawn(
+        ConnectionConfig(
+            spawn_id=spawn_id,
+            harness_id=HarnessId.PI,
+            prompt="hello",
+            control_root=runtime_root,
+            env_overrides={},
+            pi_session_role=session_role,
+            pi_child_wave_timeout_seconds=child_wave_timeout_seconds,
+        ),
+        ResolvedLaunchSpec(
+            harness=HarnessId.PI,
+            prompt="hello",
+            permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
+        ),
+    )
+    return manager

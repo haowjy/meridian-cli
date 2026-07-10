@@ -18,7 +18,7 @@ from meridian.lib.streaming.drain_policy import (
 )
 from tests.support.async_determinism import AsyncDeterminism, assert_still_pending
 from tests.support.fakes import FakeClock
-from tests.unit.streaming.resident_drain_test_helpers import (
+from tests.support.resident_drain import (
     FakeResidentConnection,
     awaiting_done_coordinator,
     coordinator_with_clock,

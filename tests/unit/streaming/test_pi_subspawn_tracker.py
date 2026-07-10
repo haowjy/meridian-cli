@@ -6,7 +6,7 @@ from __future__ import annotations
 import pytest
 
 from meridian.lib.streaming.pi_subspawn_tracker import PiSubspawnTracker
-from tests.unit.streaming.pi_quiescence_test_helpers import pi_event as _pi_event
+from tests.support.pi import pi_event as _pi_event
 
 
 def test_pi_subspawn_tracker_tracks_only_blocking_children_and_notifications() -> None:

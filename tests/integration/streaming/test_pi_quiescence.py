@@ -11,40 +11,52 @@ from typing import Any, cast
 
 import pytest
 
-from meridian.lib.core.types import HarnessId, SpawnId
+from meridian.lib.core.types import SpawnId
 from meridian.lib.harness.connections.base import (
-    ConnectionConfig,
-    HarnessConnection,
     HarnessEvent,
     StopProgressCallback,
     StopResult,
 )
-from meridian.lib.launch.launch_types import ResolvedLaunchSpec
-from meridian.lib.safety.permissions import UnsafeNoOpPermissionResolver
 from meridian.lib.streaming.pi_subspawn_tracker import PiSubspawnTracker
-from meridian.lib.streaming.spawn_manager import SpawnManager
 from tests.support.async_determinism import TaskGate, wait_until
-from tests.unit.streaming.pi_quiescence_test_helpers import (
+from tests.support.pi import (
     FakePiConnection as _FakePiConnection,
 )
-from tests.unit.streaming.pi_quiescence_test_helpers import (
-    NoopControlServer as _NoopControlServer,
-)
-from tests.unit.streaming.pi_quiescence_test_helpers import (
+from tests.support.pi import (
     pi_event as _pi_event,
 )
+from tests.support.pi import (
+    start_pi_manager as _start_pi_manager,
+)
 
 
-def _read_history_phases(history_path: Path) -> list[str]:
-    history = [
+def _read_history(runtime_root: Path, spawn_id: SpawnId) -> list[dict[str, Any]]:
+    history_path = runtime_root / "spawns" / str(spawn_id) / "history.jsonl"
+    return [
         json.loads(line)
         for line in history_path.read_text(encoding="utf-8").splitlines()
         if line
     ]
+
+
+def _read_history_phases(runtime_root: Path, spawn_id: SpawnId) -> list[str]:
     return [
         cast("str", event.get("payload", {}).get("phase"))
-        for event in history
+        for event in _read_history(runtime_root, spawn_id)
         if event.get("event_type") == "meridian.pi.lifecycle.phase"
+    ]
+
+
+def _read_phase_events(
+    runtime_root: Path,
+    spawn_id: SpawnId,
+    phase: str,
+) -> list[dict[str, Any]]:
+    return [
+        event
+        for event in _read_history(runtime_root, spawn_id)
+        if event.get("event_type") == "meridian.pi.lifecycle.phase"
+        and event.get("payload", {}).get("phase") == phase
     ]
 
 
@@ -77,35 +89,11 @@ async def test_spawn_manager_pi_quiescence_stops_spawned_after_notification_comp
     ]
     fake_connection = _FakePiConnection(events)
 
-    async def _start_connection(
-        config: ConnectionConfig,
-        spec: ResolvedLaunchSpec,
-    ) -> HarnessConnection[Any]:
-        await fake_connection.start(config, spec)
-        return fake_connection
-
-    manager = SpawnManager(
-        runtime_root=tmp_path,
-        project_root=tmp_path,
-        start_connection=_start_connection,
-        control_server_factory=lambda _spawn_id, _socket_path, _manager: _NoopControlServer(),
-    )
-
     spawn_id = SpawnId("p-pi-quiescent")
-    await manager.start_spawn(
-        ConnectionConfig(
-            spawn_id=spawn_id,
-            harness_id=HarnessId.PI,
-            prompt="hello",
-            control_root=tmp_path,
-            env_overrides={},
-            pi_session_role="spawned",
-        ),
-        ResolvedLaunchSpec(
-            harness=HarnessId.PI,
-            prompt="hello",
-            permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
-        ),
+    manager = await _start_pi_manager(
+        tmp_path,
+        fake_connection,
+        spawn_id=spawn_id,
     )
 
     try:
@@ -114,24 +102,16 @@ async def test_spawn_manager_pi_quiescence_stops_spawned_after_notification_comp
         assert outcome.status == "succeeded"
         assert outcome.error is None
         assert fake_connection.stop_reasons == []
-        history_path = tmp_path / "spawns" / str(spawn_id) / "history.jsonl"
-        history = [
-            json.loads(line)
-            for line in history_path.read_text(encoding="utf-8").splitlines()
-            if line
-        ]
-        waiting_for_children = [
-            event
-            for event in history
-            if event.get("event_type") == "meridian.pi.lifecycle.phase"
-            and event.get("payload", {}).get("phase") == "waiting_for_tracked_children"
-        ]
-        waiting_for_notifications = [
-            event
-            for event in history
-            if event.get("event_type") == "meridian.pi.lifecycle.phase"
-            and event.get("payload", {}).get("phase") == "waiting_for_notification_completion"
-        ]
+        waiting_for_children = _read_phase_events(
+            tmp_path,
+            spawn_id,
+            "waiting_for_tracked_children",
+        )
+        waiting_for_notifications = _read_phase_events(
+            tmp_path,
+            spawn_id,
+            "waiting_for_notification_completion",
+        )
         assert waiting_for_children
         assert waiting_for_children[-1]["payload"]["active_tracked_count"] == 1
         assert waiting_for_notifications
@@ -184,35 +164,12 @@ async def test_spawn_manager_pi_primary_role_does_not_auto_stop_at_quiescence(
     ]
     fake_connection = _OpenPrimaryPiConnection(events)
 
-    async def _start_connection(
-        config: ConnectionConfig,
-        spec: ResolvedLaunchSpec,
-    ) -> HarnessConnection[Any]:
-        await fake_connection.start(config, spec)
-        return fake_connection
-
-    manager = SpawnManager(
-        runtime_root=tmp_path,
-        project_root=tmp_path,
-        start_connection=_start_connection,
-        control_server_factory=lambda _spawn_id, _socket_path, _manager: _NoopControlServer(),
-    )
-
     spawn_id = SpawnId("p-pi-primary-no-quiescent-stop")
-    await manager.start_spawn(
-        ConnectionConfig(
-            spawn_id=spawn_id,
-            harness_id=HarnessId.PI,
-            prompt="hello",
-            control_root=tmp_path,
-            env_overrides={},
-            pi_session_role="primary",
-        ),
-        ResolvedLaunchSpec(
-            harness=HarnessId.PI,
-            prompt="hello",
-            permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
-        ),
+    manager = await _start_pi_manager(
+        tmp_path,
+        fake_connection,
+        spawn_id=spawn_id,
+        session_role="primary",
     )
 
     try:
@@ -252,35 +209,11 @@ async def test_spawn_manager_pi_cleanup_escalation_does_not_block_terminal_succe
     ]
     fake_connection = _EscalatedButSuccessfulStopConnection(events)
 
-    async def _start_connection(
-        config: ConnectionConfig,
-        spec: ResolvedLaunchSpec,
-    ) -> HarnessConnection[Any]:
-        await fake_connection.start(config, spec)
-        return fake_connection
-
-    manager = SpawnManager(
-        runtime_root=tmp_path,
-        project_root=tmp_path,
-        start_connection=_start_connection,
-        control_server_factory=lambda _spawn_id, _socket_path, _manager: _NoopControlServer(),
-    )
-
     spawn_id = SpawnId("p-pi-quiescent-stop-escalated-success")
-    await manager.start_spawn(
-        ConnectionConfig(
-            spawn_id=spawn_id,
-            harness_id=HarnessId.PI,
-            prompt="hello",
-            control_root=tmp_path,
-            env_overrides={},
-            pi_session_role="spawned",
-        ),
-        ResolvedLaunchSpec(
-            harness=HarnessId.PI,
-            prompt="hello",
-            permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
-        ),
+    manager = await _start_pi_manager(
+        tmp_path,
+        fake_connection,
+        spawn_id=spawn_id,
     )
 
     try:
@@ -290,29 +223,22 @@ async def test_spawn_manager_pi_cleanup_escalation_does_not_block_terminal_succe
         assert outcome.error is None
         assert fake_connection.stop_reasons == []
 
-        history_path = tmp_path / "spawns" / str(spawn_id) / "history.jsonl"
         await wait_until(
             lambda: "cleanup_escalated"
-            in _read_history_phases(history_path),
+            in _read_history_phases(tmp_path, spawn_id),
             description="cleanup_escalated lifecycle phase",
         )
-        history = [
-            json.loads(line)
-            for line in history_path.read_text(encoding="utf-8").splitlines()
-            if line
-        ]
-        cleanup_escalated_phases = [
-            event
-            for event in history
-            if event.get("event_type") == "meridian.pi.lifecycle.phase"
-            and event.get("payload", {}).get("phase") == "cleanup_escalated"
-        ]
-        cleanup_running_phases = [
-            event
-            for event in history
-            if event.get("event_type") == "meridian.pi.lifecycle.phase"
-            and event.get("payload", {}).get("phase") == "cleanup_running"
-        ]
+        history = _read_history(tmp_path, spawn_id)
+        cleanup_escalated_phases = _read_phase_events(
+            tmp_path,
+            spawn_id,
+            "cleanup_escalated",
+        )
+        cleanup_running_phases = _read_phase_events(
+            tmp_path,
+            spawn_id,
+            "cleanup_running",
+        )
         assert cleanup_running_phases
         assert cleanup_escalated_phases
         assert cleanup_escalated_phases[-1]["payload"].get("reason") == "abort_grace_expired"
@@ -339,35 +265,11 @@ async def test_spawn_manager_pi_micro_drain_resolves_with_bounded_timeout(
 
     fake_connection = _OpenAfterTerminalConnection([])
 
-    async def _start_connection(
-        config: ConnectionConfig,
-        spec: ResolvedLaunchSpec,
-    ) -> HarnessConnection[Any]:
-        await fake_connection.start(config, spec)
-        return fake_connection
-
-    manager = SpawnManager(
-        runtime_root=tmp_path,
-        project_root=tmp_path,
-        start_connection=_start_connection,
-        control_server_factory=lambda _spawn_id, _socket_path, _manager: _NoopControlServer(),
-    )
-
     spawn_id = SpawnId("p-pi-micro-drain-bounded-timeout")
-    await manager.start_spawn(
-        ConnectionConfig(
-            spawn_id=spawn_id,
-            harness_id=HarnessId.PI,
-            prompt="hello",
-            control_root=tmp_path,
-            env_overrides={},
-            pi_session_role="spawned",
-        ),
-        ResolvedLaunchSpec(
-            harness=HarnessId.PI,
-            prompt="hello",
-            permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
-        ),
+    manager = await _start_pi_manager(
+        tmp_path,
+        fake_connection,
+        spawn_id=spawn_id,
     )
 
     try:
@@ -376,17 +278,7 @@ async def test_spawn_manager_pi_micro_drain_resolves_with_bounded_timeout(
         assert outcome.status == "succeeded"
         assert outcome.error is None
 
-        history_path = tmp_path / "spawns" / str(spawn_id) / "history.jsonl"
-        history = [
-            json.loads(line)
-            for line in history_path.read_text(encoding="utf-8").splitlines()
-            if line
-        ]
-        phases = [
-            event.get("payload", {}).get("phase")
-            for event in history
-            if event.get("event_type") == "meridian.pi.lifecycle.phase"
-        ]
+        phases = _read_history_phases(tmp_path, spawn_id)
         assert "quiescence_micro_drain_started" in phases
         assert "finalized" in phases
     finally:
@@ -474,35 +366,12 @@ async def _run_pi_child_wave_timeout_with_cleanup_mocks(
         ]
     )
 
-    async def _start_connection(
-        config: ConnectionConfig,
-        spec: ResolvedLaunchSpec,
-    ) -> HarnessConnection[Any]:
-        await fake_connection.start(config, spec)
-        return fake_connection
-
-    manager = SpawnManager(
-        runtime_root=tmp_path,
-        project_root=tmp_path,
-        start_connection=_start_connection,
-        control_server_factory=lambda _spawn_id, _socket_path, _manager: _NoopControlServer(),
-    )
     spawn_id = SpawnId("p-pi-hybrid-reap")
-    await manager.start_spawn(
-        ConnectionConfig(
-            spawn_id=spawn_id,
-            harness_id=HarnessId.PI,
-            prompt="hello",
-            control_root=tmp_path,
-            env_overrides={},
-            pi_session_role="spawned",
-            pi_child_wave_timeout_seconds=0.02,
-        ),
-        ResolvedLaunchSpec(
-            harness=HarnessId.PI,
-            prompt="hello",
-            permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
-        ),
+    manager = await _start_pi_manager(
+        tmp_path,
+        fake_connection,
+        spawn_id=spawn_id,
+        child_wave_timeout_seconds=0.02,
     )
 
     try:
@@ -514,39 +383,28 @@ async def _run_pi_child_wave_timeout_with_cleanup_mocks(
 
 
 @pytest.mark.asyncio
-async def test_spawn_manager_pi_reap_cancels_descendants_before_pgid_fallback(
+@pytest.mark.parametrize(
+    ("cancel_raises", "fallback_pids"),
+    ((False, (8801,)), (True, (7701, 8801))),
+    ids=("descendants-reaped", "descendant-reap-failed"),
+)
+async def test_spawn_manager_pi_reap_falls_back_for_unreaped_children(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    cancel_raises: bool,
+    fallback_pids: tuple[int, ...],
 ) -> None:
     calls, outcome = await _run_pi_child_wave_timeout_with_cleanup_mocks(
         tmp_path,
         monkeypatch,
+        cancel_raises=cancel_raises,
     )
 
     assert outcome.status == "failed"
     assert outcome.error == "pi_child_wave_timeout"
     assert calls == [
         ("cancel_descendants", "p-pi-hybrid-reap"),
-        ("pgid_fallback", "p-pi-hybrid-reap", "pi_child_wave_timeout", (8801,)),
-    ]
-
-
-@pytest.mark.asyncio
-async def test_spawn_manager_pi_reap_runs_pgid_fallback_when_cancel_descendants_fails(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    calls, outcome = await _run_pi_child_wave_timeout_with_cleanup_mocks(
-        tmp_path,
-        monkeypatch,
-        cancel_raises=True,
-    )
-
-    assert outcome.status == "failed"
-    assert outcome.error == "pi_child_wave_timeout"
-    assert calls == [
-        ("cancel_descendants", "p-pi-hybrid-reap"),
-        ("pgid_fallback", "p-pi-hybrid-reap", "pi_child_wave_timeout", (7701, 8801)),
+        ("pgid_fallback", "p-pi-hybrid-reap", "pi_child_wave_timeout", fallback_pids),
     ]
 
 
@@ -579,36 +437,12 @@ async def test_spawn_manager_pi_child_wave_timeout_cleans_tracked_children_and_f
     ]
     fake_connection = _StuckWaveTimeoutConnection(events)
 
-    async def _start_connection(
-        config: ConnectionConfig,
-        spec: ResolvedLaunchSpec,
-    ) -> HarnessConnection[Any]:
-        await fake_connection.start(config, spec)
-        return fake_connection
-
-    manager = SpawnManager(
-        runtime_root=tmp_path,
-        project_root=tmp_path,
-        start_connection=_start_connection,
-        control_server_factory=lambda _spawn_id, _socket_path, _manager: _NoopControlServer(),
-    )
-
     spawn_id = SpawnId("p-pi-child-wave-timeout")
-    await manager.start_spawn(
-        ConnectionConfig(
-            spawn_id=spawn_id,
-            harness_id=HarnessId.PI,
-            prompt="hello",
-            control_root=tmp_path,
-            env_overrides={},
-            pi_session_role="spawned",
-            pi_child_wave_timeout_seconds=0.02,
-        ),
-        ResolvedLaunchSpec(
-            harness=HarnessId.PI,
-            prompt="hello",
-            permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
-        ),
+    manager = await _start_pi_manager(
+        tmp_path,
+        fake_connection,
+        spawn_id=spawn_id,
+        child_wave_timeout_seconds=0.02,
     )
 
     try:
@@ -616,18 +450,11 @@ async def test_spawn_manager_pi_child_wave_timeout_cleans_tracked_children_and_f
         assert outcome is not None
         assert outcome.status == "failed"
         assert outcome.error == "pi_child_wave_timeout"
-        history_path = tmp_path / "spawns" / str(spawn_id) / "history.jsonl"
-        history = [
-            json.loads(line)
-            for line in history_path.read_text(encoding="utf-8").splitlines()
-            if line
-        ]
-        timeout_events = [
-            event
-            for event in history
-            if event.get("event_type") == "meridian.pi.lifecycle.phase"
-            and event.get("payload", {}).get("phase") == "pi_child_wave_timeout"
-        ]
+        timeout_events = _read_phase_events(
+            tmp_path,
+            spawn_id,
+            "pi_child_wave_timeout",
+        )
         assert timeout_events
         assert timeout_events[-1]["payload"].get("active_tracked_count") == 1
     finally:
@@ -679,44 +506,20 @@ async def test_spawn_manager_pi_child_wave_timeout_not_cleared_by_turn_active(
         ]
     )
 
-    async def _start_connection(
-        config: ConnectionConfig,
-        spec: ResolvedLaunchSpec,
-    ) -> HarnessConnection[Any]:
-        await fake_connection.start(config, spec)
-        return fake_connection
-
-    manager = SpawnManager(
-        runtime_root=tmp_path,
-        project_root=tmp_path,
-        start_connection=_start_connection,
-        control_server_factory=lambda _spawn_id, _socket_path, _manager: _NoopControlServer(),
-    )
-
     spawn_id = SpawnId("p-pi-child-wave-timeout-turn-active")
-    await manager.start_spawn(
-        ConnectionConfig(
-            spawn_id=spawn_id,
-            harness_id=HarnessId.PI,
-            prompt="hello",
-            control_root=tmp_path,
-            env_overrides={},
-            pi_session_role="spawned",
-            pi_child_wave_timeout_seconds=0.1,
-        ),
-        ResolvedLaunchSpec(
-            harness=HarnessId.PI,
-            prompt="hello",
-            permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
-        ),
+    manager = await _start_pi_manager(
+        tmp_path,
+        fake_connection,
+        spawn_id=spawn_id,
+        child_wave_timeout_seconds=0.1,
     )
 
     async def _release_late_turn_after_child_wave_timeout() -> None:
         await wait_until(
             lambda: (
-                (history_path := tmp_path / "spawns" / str(spawn_id) / "history.jsonl").exists()
+                (tmp_path / "spawns" / str(spawn_id) / "history.jsonl").exists()
                 and "pi_child_wave_timeout"
-                in _read_history_phases(history_path)
+                in _read_history_phases(tmp_path, spawn_id)
             ),
             description="child-wave timeout phase before late turn_active",
         )
@@ -756,35 +559,11 @@ async def test_spawn_manager_pi_notification_failure_marks_spawn_failed(tmp_path
     ]
     fake_connection = _FakePiConnection(events)
 
-    async def _start_connection(
-        config: ConnectionConfig,
-        spec: ResolvedLaunchSpec,
-    ) -> HarnessConnection[Any]:
-        await fake_connection.start(config, spec)
-        return fake_connection
-
-    manager = SpawnManager(
-        runtime_root=tmp_path,
-        project_root=tmp_path,
-        start_connection=_start_connection,
-        control_server_factory=lambda _spawn_id, _socket_path, _manager: _NoopControlServer(),
-    )
-
     spawn_id = SpawnId("p-pi-notification-fail")
-    await manager.start_spawn(
-        ConnectionConfig(
-            spawn_id=spawn_id,
-            harness_id=HarnessId.PI,
-            prompt="hello",
-            control_root=tmp_path,
-            env_overrides={},
-            pi_session_role="spawned",
-        ),
-        ResolvedLaunchSpec(
-            harness=HarnessId.PI,
-            prompt="hello",
-            permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
-        ),
+    manager = await _start_pi_manager(
+        tmp_path,
+        fake_connection,
+        spawn_id=spawn_id,
     )
 
     try:
@@ -822,35 +601,11 @@ async def test_spawn_manager_pi_parse_error_invalidates_quiescence_and_fails(
     ]
     fake_connection = _FakePiConnection(events)
 
-    async def _start_connection(
-        config: ConnectionConfig,
-        spec: ResolvedLaunchSpec,
-    ) -> HarnessConnection[Any]:
-        await fake_connection.start(config, spec)
-        return fake_connection
-
-    manager = SpawnManager(
-        runtime_root=tmp_path,
-        project_root=tmp_path,
-        start_connection=_start_connection,
-        control_server_factory=lambda _spawn_id, _socket_path, _manager: _NoopControlServer(),
-    )
-
     spawn_id = SpawnId("p-pi-unsupported-schema")
-    await manager.start_spawn(
-        ConnectionConfig(
-            spawn_id=spawn_id,
-            harness_id=HarnessId.PI,
-            prompt="hello",
-            control_root=tmp_path,
-            env_overrides={},
-            pi_session_role="spawned",
-        ),
-        ResolvedLaunchSpec(
-            harness=HarnessId.PI,
-            prompt="hello",
-            permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
-        ),
+    manager = await _start_pi_manager(
+        tmp_path,
+        fake_connection,
+        spawn_id=spawn_id,
     )
 
     try:
@@ -862,12 +617,7 @@ async def test_spawn_manager_pi_parse_error_invalidates_quiescence_and_fails(
             == "pi_lifecycle_tracking_invalidated:unsupported_schema_event:meridian.subspawn.start"
         )
         assert fake_connection.stop_reasons == []
-        history_path = tmp_path / "spawns" / str(spawn_id) / "history.jsonl"
-        history = [
-            json.loads(line)
-            for line in history_path.read_text(encoding="utf-8").splitlines()
-            if line
-        ]
+        history = _read_history(tmp_path, spawn_id)
         assert any(event["event_type"] == "meridian.lifecycle.parse_error" for event in history)
         assert any(event["payload"].get("raw_line") == raw_line for event in history)
     finally:
@@ -875,77 +625,36 @@ async def test_spawn_manager_pi_parse_error_invalidates_quiescence_and_fails(
 
 
 @pytest.mark.asyncio
-async def test_spawn_manager_pi_legacy_lifecycle_event_invalidates_instead_of_finalizing(
-    tmp_path: Path,
-) -> None:
-    events = [
-        _pi_event("session", {"id": "ses-pi"}),
-        _pi_event(
+@pytest.mark.parametrize(
+    ("case", "lifecycle_event", "expected_error"),
+    (
+        (
+            "legacy-event",
+            _pi_event(
+                "meridian_subspawn_started",
+                {"id": "legacy-child", "wait_policy": "tracked", "pid": 4401},
+            ),
+            "pi_lifecycle_tracking_invalidated:unsupported_lifecycle_event:"
             "meridian_subspawn_started",
-            {"id": "legacy-child", "wait_policy": "tracked", "pid": 4401},
         ),
-        _pi_event(
-            "agent_end",
-            {"messages": [{"role": "assistant", "stopReason": "stop"}]},
+        (
+            "missing-id",
+            _pi_event("meridian.subspawn.start", {"wait_policy": "tracked"}),
+            "pi_lifecycle_tracking_invalidated:missing_subspawn_id:"
+            "meridian.subspawn.start",
         ),
-    ]
-    fake_connection = _FakePiConnection(events)
-
-    async def _start_connection(
-        config: ConnectionConfig,
-        spec: ResolvedLaunchSpec,
-    ) -> HarnessConnection[Any]:
-        await fake_connection.start(config, spec)
-        return fake_connection
-
-    manager = SpawnManager(
-        runtime_root=tmp_path,
-        project_root=tmp_path,
-        start_connection=_start_connection,
-        control_server_factory=lambda _spawn_id, _socket_path, _manager: _NoopControlServer(),
-    )
-
-    spawn_id = SpawnId("p-pi-legacy-lifecycle")
-    await manager.start_spawn(
-        ConnectionConfig(
-            spawn_id=spawn_id,
-            harness_id=HarnessId.PI,
-            prompt="hello",
-            control_root=tmp_path,
-            env_overrides={},
-            pi_session_role="spawned",
-        ),
-        ResolvedLaunchSpec(
-            harness=HarnessId.PI,
-            prompt="hello",
-            permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
-        ),
-    )
-
-    try:
-        outcome = await manager.wait_for_completion(spawn_id)
-        assert outcome is not None
-        assert outcome.status == "failed"
-        assert (
-            outcome.error
-            == "pi_lifecycle_tracking_invalidated:unsupported_lifecycle_event:"
-            "meridian_subspawn_started"
-        )
-        assert fake_connection.stop_reasons == []
-    finally:
-        await manager.stop_spawn(spawn_id)
-
-
-@pytest.mark.asyncio
-async def test_spawn_manager_pi_fails_on_canonical_subspawn_without_id_for_quiescence(
+    ),
+    ids=("legacy-event", "missing-id"),
+)
+async def test_spawn_manager_pi_invalid_lifecycle_event_fails_spawn(
     tmp_path: Path,
+    case: str,
+    lifecycle_event: HarnessEvent,
+    expected_error: str,
 ) -> None:
     events = [
         _pi_event("session", {"id": "ses-pi"}),
-        _pi_event(
-            "meridian.subspawn.start",
-            {"wait_policy": "tracked"},
-        ),
+        lifecycle_event,
         _pi_event(
             "agent_end",
             {"messages": [{"role": "assistant", "stopReason": "stop"}]},
@@ -953,45 +662,18 @@ async def test_spawn_manager_pi_fails_on_canonical_subspawn_without_id_for_quies
     ]
     fake_connection = _FakePiConnection(events)
 
-    async def _start_connection(
-        config: ConnectionConfig,
-        spec: ResolvedLaunchSpec,
-    ) -> HarnessConnection[Any]:
-        await fake_connection.start(config, spec)
-        return fake_connection
-
-    manager = SpawnManager(
-        runtime_root=tmp_path,
-        project_root=tmp_path,
-        start_connection=_start_connection,
-        control_server_factory=lambda _spawn_id, _socket_path, _manager: _NoopControlServer(),
-    )
-
-    spawn_id = SpawnId("p-pi-canonical-missing-id")
-    await manager.start_spawn(
-        ConnectionConfig(
-            spawn_id=spawn_id,
-            harness_id=HarnessId.PI,
-            prompt="hello",
-            control_root=tmp_path,
-            env_overrides={},
-            pi_session_role="spawned",
-        ),
-        ResolvedLaunchSpec(
-            harness=HarnessId.PI,
-            prompt="hello",
-            permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
-        ),
+    spawn_id = SpawnId(f"p-pi-{case}")
+    manager = await _start_pi_manager(
+        tmp_path,
+        fake_connection,
+        spawn_id=spawn_id,
     )
 
     try:
         outcome = await manager.wait_for_completion(spawn_id)
         assert outcome is not None
         assert outcome.status == "failed"
-        assert (
-            outcome.error
-            == "pi_lifecycle_tracking_invalidated:missing_subspawn_id:meridian.subspawn.start"
-        )
+        assert outcome.error == expected_error
         assert fake_connection.stop_reasons == []
     finally:
         await manager.stop_spawn(spawn_id)

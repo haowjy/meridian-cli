@@ -25,13 +25,13 @@ from meridian.lib.streaming.pi_drain import PiDrainCoordinator
 from meridian.lib.streaming.pi_subspawn_tracker import PiSubspawnTracker
 from meridian.lib.streaming.spawn_manager import SpawnManager
 from tests.support.async_determinism import AsyncDeterminism, assert_still_pending
-from tests.unit.streaming.pi_quiescence_test_helpers import (
+from tests.support.pi import (
     FakePiConnection as _FakePiConnection,
 )
-from tests.unit.streaming.pi_quiescence_test_helpers import (
+from tests.support.pi import (
     NoopControlServer as _NoopControlServer,
 )
-from tests.unit.streaming.pi_quiescence_test_helpers import (
+from tests.support.pi import (
     pi_event as _pi_event,
 )
 
