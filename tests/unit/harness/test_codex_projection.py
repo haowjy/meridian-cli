@@ -33,6 +33,15 @@ from meridian.lib.state.paths import resolve_spawn_log_dir
 from tests.support.launch import stub_bundle_request_and_resolve
 
 
+def test_codex_resolved_spec_preserves_agent_identity() -> None:
+    spec = CodexAdapter().resolve_launch_spec(
+        SpawnParams(prompt="do work", agent="reviewer"),
+        TieredPermissionResolver(config=PermissionConfig()),
+    )
+
+    assert spec.agent_name == "reviewer"
+
+
 def test_codex_subprocess_projection_emits_no_o_without_report_output_path() -> None:
     adapter = CodexAdapter()
     spec = adapter.resolve_launch_spec(
