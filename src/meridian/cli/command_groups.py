@@ -134,8 +134,9 @@ _GROUP_HELP: dict[str, GroupHelp] = {
     ),
     "artifact": GroupHelp(
         summary='Share static artifacts over Tailscale.',
-        long_help='Serve a local directory through Tailscale with automatic expiry and surgical cleanup.',
+        long_help='Serve a local directory over Tailscale as a temporary, tailnet-scoped URL.',
         examples=(('meridian artifact serve .', ''), ('meridian artifact list', '')),
+        agent_notes='URLs are tailnet-only — the recipient must be on your tailnet; use --funnel for a public URL (rare). Serves expire after 2h by default; --persistent keeps one, stop/gc remove them. Point it at a built structured-artifact directory to share with a human or another agent.',
         agent_subcommands=('serve', 'list', 'stop', 'gc'),
     ),
     "telemetry": GroupHelp(
