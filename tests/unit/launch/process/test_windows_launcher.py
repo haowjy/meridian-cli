@@ -124,38 +124,44 @@ def test_windows_console_launcher_forces_console_inheritance(
     captured: dict[str, object] = {}
     expected = LaunchedProcess(exit_code=12, pid=456)
 
+    class _Running:
+        pid = 456
+
+        def wait(self) -> LaunchedProcess:
+            return expected
+
+        def terminate(self) -> None:
+            return None
+
+        def cancel_wait(self) -> None:
+            return None
+
     class FakeSubprocessProcessLauncher:
-        def launch(
+        def start(
             self,
             *,
             command: tuple[str, ...],
             cwd: Path,
             env: dict[str, str],
             output_log_path: Path | None,
-            on_child_started=None,
-        ) -> LaunchedProcess:
+        ) -> _Running:
             captured["command"] = command
             captured["cwd"] = cwd
             captured["env"] = env
             captured["output_log_path"] = output_log_path
-            if on_child_started is not None:
-                on_child_started(456)
-            return expected
+            return _Running()
 
     monkeypatch.setattr(
         "meridian.lib.launch.process.windows_launcher.SubprocessProcessLauncher",
         FakeSubprocessProcessLauncher,
     )
-    child_started: list[int] = []
-
-    result = WindowsConsoleLauncher().launch(
+    running = WindowsConsoleLauncher().start(
         command=("meridian-harness", "--run"),
         cwd=tmp_path,
         env={"MERIDIAN_TEST": "1"},
         output_log_path=tmp_path / "history.jsonl",
-        on_child_started=child_started.append,
     )
 
     assert captured["output_log_path"] == tmp_path / "history.jsonl"
-    assert child_started == [456]
-    assert result == expected
+    assert running.pid == 456
+    assert running.wait() == expected

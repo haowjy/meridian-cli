@@ -9,17 +9,20 @@ These tests do NOT spin up a real harness process.
 from __future__ import annotations
 
 import os
-
-# pyright: reportPrivateUsage=false
 import sys
+import threading
+import time
 from pathlib import Path
 from typing import Any
+
+import pytest
 
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.adapter import BootstrapMode
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.launch.process import runner as process_runner
+from meridian.lib.launch.process.ports import PRIMARY_STDERR_LOG_PATH_ENV, LaunchedProcess
 from meridian.lib.launch.process.primary_attach import PrimaryAttachError
 from meridian.lib.launch.process.subprocess_launcher import SubprocessProcessLauncher
 from meridian.lib.safety.permissions import UnsafeNoOpPermissionResolver
@@ -27,7 +30,7 @@ from meridian.lib.safety.permissions import UnsafeNoOpPermissionResolver
 
 def test_subprocess_launcher_captures_output_log(tmp_path: Path) -> None:
     output_log_path = tmp_path / "history.jsonl"
-    launched = SubprocessProcessLauncher().launch(
+    running = SubprocessProcessLauncher().start(
         command=(
             sys.executable,
             "-c",
@@ -43,9 +46,41 @@ def test_subprocess_launcher_captures_output_log(tmp_path: Path) -> None:
         env=dict(os.environ),
         output_log_path=output_log_path,
     )
+    launched = running.wait()
 
     assert launched.exit_code == 0
     assert output_log_path.read_text(encoding="utf-8").splitlines() == ["line-1", "line-2"]
+
+
+@pytest.mark.parametrize("capture_output", (False, True))
+def test_subprocess_launcher_cancel_wait_releases_pipe_relays(
+    tmp_path: Path,
+    capture_output: bool,
+) -> None:
+    env = dict(os.environ)
+    output_log_path = tmp_path / "output.log" if capture_output else None
+    if not capture_output:
+        env[PRIMARY_STDERR_LOG_PATH_ENV] = str(tmp_path / "stderr.log")
+    running = SubprocessProcessLauncher().start(
+        command=(sys.executable, "-c", "import time;time.sleep(60)"),
+        cwd=tmp_path,
+        env=env,
+        output_log_path=output_log_path,
+    )
+    results: list[LaunchedProcess] = []
+    wait_thread = threading.Thread(target=lambda: results.append(running.wait()))
+    wait_thread.start()
+    time.sleep(0.05)
+
+    try:
+        running.cancel_wait()
+        wait_thread.join(timeout=0.5)
+
+        assert wait_thread.is_alive() is False
+        assert [result.exit_code for result in results] == [130]
+    finally:
+        running.terminate()
+        running.process.wait(timeout=5.0)
 
 
 def test_execute_primary_process_uses_contract_bootstrap_mode_not_harness_id(

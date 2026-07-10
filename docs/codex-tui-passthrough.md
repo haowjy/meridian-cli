@@ -55,9 +55,10 @@ That keeps Meridian's system content out of the visible TUI prompt on managed pa
 
 Fresh Codex threads are not immediately attachable after `thread/start`. Codex needs at least one rollout materialized before `codex resume --remote ...` can attach.
 
-Meridian handles that by sending a minimal bootstrap turn, then waiting only
-until the Codex rollout file contains a matching `session_meta` entry for the
-project cwd:
+Meridian handles that by sending a minimal bootstrap turn, then waiting until:
+
+1. the Codex rollout file contains a matching `session_meta` entry for the project cwd;
+2. the observer receives `turn/completed` for that bootstrap turn.
 
 `Meridian started`
 
@@ -88,11 +89,15 @@ The important condition is:
 
 `thread is attachable by the Codex TUI`
 
-Today Meridian uses rollout materialization as that condition. It does not wait
-for `turn/completed`, because full bootstrap response completion is not required
-for TUI attach.
+Rollout materialization makes the thread technically resumable. Meridian also waits
+for the bootstrap turn to complete before handing the websocket endpoint to the TUI.
+Attaching during the bootstrap turn can strand the remote TUI in a stale `Working`
+state after the observer connection is displaced, which also prevents normal idle
+Ctrl+C exit behavior.
 
-If Codex exposes an earlier observable signal like "thread attachable", Meridian should switch to that signal instead of:
+If Codex exposes an atomic "completed turn handoff" signal, Meridian should prefer it
+over coordinating the rollout and completion signals separately. It should not improve
+startup time by:
 
 - changing bootstrap wording
 - lowering reasoning effort temporarily

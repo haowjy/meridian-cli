@@ -20,6 +20,15 @@ handles Windows-specific console inheritance. Subprocess is the portable fallbac
 `captures_output_to_artifact` on `ProcessPlatformContract` is authoritative — callers must
 not assume capture based on launcher type alone.
 
+`ProcessLauncher.start()` returns a `RunningProcess` immediately after process birth.
+PID/scope recording happens before `RunningProcess.wait()` begins the blocking terminal
+relay. Keep those phases separate: managed-primary cancellation depends on having a
+concrete process identity before it can wait for exit or terminate the scope.
+`RunningProcess.cancel_wait()` must release its caller-facing wait even when scope
+termination cannot confirm child exit. Managed attach also directly terminates the
+concrete process as a fallback and bridges the synchronous wait through a daemon thread,
+so an uncooperative relay cannot be re-joined by `asyncio.run()` during loop shutdown.
+
 ## Managed Attach vs Black-Box
 
 `_execute_primary_process()` checks `harness_contract.bootstrap.mode`. When mode is

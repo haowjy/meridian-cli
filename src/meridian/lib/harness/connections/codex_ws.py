@@ -76,7 +76,7 @@ from meridian.lib.observability.trace_helpers import (
     trace_state_change,
     trace_wire_send,
 )
-from meridian.lib.platform.detached_process import ParentDeathLink
+from meridian.lib.platform.detached_process import ParentDeathLink, release_parent_death_link
 from meridian.lib.platform.process_scope import (
     ProcessScopeSnapshot,
     ScopedProcessHandle,
@@ -240,6 +240,8 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
         self._current_turn_id: str | None = None
         self._thread_id: str | None = None
         self._main_turn_thread_id: str | None = None
+        self._last_completed_turn_id: str | None = None
+        self._turn_completed_event = asyncio.Event()
         self._tracer: DebugTracer | None = None
         self._cancel_requested = False
         self._signal_in_flight = False
@@ -361,6 +363,8 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
         self._current_turn_id = None
         self._thread_id = None
         self._main_turn_thread_id = None
+        self._last_completed_turn_id = None
+        self._turn_completed_event.clear()
         self._liveness.reset()
         self._cancel_requested = False
         self._signal_in_flight = False
@@ -440,12 +444,6 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
                 # Fresh primary sessions need a bootstrap turn to materialize the
                 # Codex rollout before the TUI can attach. Without this, Codex
                 # cannot resume a fresh thread because no rollout file exists.
-                #
-                # The load-bearing requirement is "thread is attachable", not
-                # "bootstrap response is semantically complete". We gate on
-                # rollout materialization because that is the earliest observed
-                # durable signal that `codex resume --remote` can attach.
-                # Do not optimize this by mutating Codex model/reasoning defaults.
                 self._emit_startup_phase(StartupPhase.INITIALIZING_SESSION)
                 await self._send_bootstrap_turn_and_wait()
 
@@ -847,6 +845,7 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
                 process.kill()
                 await process.wait()
 
+        await asyncio.to_thread(release_parent_death_link, self._parent_death_link)
         self._parent_death_link = None
         self._fail_pending_requests(RuntimeError("Codex connection stopped"))
         await self._clear_stale_hitl_requests(reason="connection_stopped")
@@ -1208,7 +1207,7 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
         attachability gate, not by mutating user-visible Codex defaults.
         """
         thread_id = self._require_thread_id("bootstrap_turn")
-        await self._request(
+        result = await self._request(
             "turn/start",
             {
                 "threadId": thread_id,
@@ -1216,15 +1215,20 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
             },
         )
         await self._wait_for_rollout_materialization()
+        turn_id = (
+            _extract_turn_id(result)
+            or self._current_turn_id
+            or self._last_completed_turn_id
+        )
+        if turn_id is None:
+            raise RuntimeError("Codex bootstrap turn did not provide a turn id")
+        await self._wait_for_turn_completion(turn_id)
 
     async def _wait_for_rollout_materialization(self, timeout_seconds: float = 120.0) -> None:
         """Block until Codex has created an attachable rollout for the thread.
 
-        Fresh primary attach only needs the thread to be resumable by the Codex
-        TUI. The attach-safe signal is a rollout file whose session_meta exists
-        and whose cwd matches this project. We intentionally do not wait for
-        turn/completed and do not change model/effort settings to make bootstrap
-        cheaper.
+        The attach-safe filesystem signal is a rollout file whose session_meta
+        exists and whose cwd matches this project.
         """
         config = self._config
         codex_home = self._codex_home
@@ -1256,6 +1260,31 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
             ws_open = self._ws is not None and _ws_is_open(self._ws)
             if not process_running or not ws_open:
                 raise RuntimeError("Codex connection lost during bootstrap turn")
+
+    async def _wait_for_turn_completion(
+        self,
+        turn_id: str,
+        timeout_seconds: float = 120.0,
+    ) -> None:
+        """Wait until the observer receives completion for the bootstrap turn."""
+
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout_seconds
+        while self._last_completed_turn_id != turn_id:
+            self._turn_completed_event.clear()
+            if self._last_completed_turn_id == turn_id:
+                return
+            remaining = deadline - loop.time()
+            if remaining <= 0:
+                raise RuntimeError(
+                    f"Bootstrap turn timed out after {timeout_seconds}s waiting for completion"
+                )
+            try:
+                await asyncio.wait_for(self._turn_completed_event.wait(), timeout=remaining)
+            except TimeoutError as exc:
+                raise RuntimeError(
+                    f"Bootstrap turn timed out after {timeout_seconds}s waiting for completion"
+                ) from exc
 
     async def _bootstrap_thread(self, spec: ResolvedLaunchSpec) -> dict[str, object]:
         method, payload = self._thread_bootstrap_request(spec)
@@ -1294,7 +1323,9 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
             if thread_id is not None:
                 self._main_turn_thread_id = thread_id
         if clears_signal(event, primary_event_scope=self.primary_event_scope):
+            self._last_completed_turn_id = _extract_turn_id(payload) or self._current_turn_id
             self._end_current_turn()
+            self._turn_completed_event.set()
             self._signal_in_flight = False
             self._liveness.signal_request_resolved("cancel")
             return

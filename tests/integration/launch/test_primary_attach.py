@@ -21,7 +21,7 @@ from meridian.lib.harness.connections.base import (
 from meridian.lib.launch.constants import HISTORY_FILENAME, PRIMARY_META_FILENAME
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.launch.process import primary_attach as primary_attach_module
-from meridian.lib.launch.process.ports import ChildStartedHook, LaunchedProcess, ProcessLauncher
+from meridian.lib.launch.process.ports import LaunchedProcess, ProcessLauncher
 from meridian.lib.launch.process.primary_attach import (
     PortBindError,
     PrimaryAttachError,
@@ -202,15 +202,14 @@ class FakeProcessLauncher(ProcessLauncher):
     output_log_paths: list[Path | None] = field(default_factory=list)
     metadata_seen_at_launch: dict[str, object] | None = None
 
-    def launch(
+    def start(
         self,
         *,
         command: tuple[str, ...],
         cwd: Path,
         env: dict[str, str],
         output_log_path: Path | None,
-        on_child_started: ChildStartedHook | None = None,
-    ) -> LaunchedProcess:
+    ) -> FakeProcessLauncher:
         _ = (cwd, env, output_log_path)
         self.launch_commands.append(command)
         self.output_log_paths.append(output_log_path)
@@ -220,10 +219,17 @@ class FakeProcessLauncher(ProcessLauncher):
             "dict[str, object]",
             json.loads(metadata_path.read_text(encoding="utf-8")),
         )
-        if on_child_started is not None:
-            on_child_started(self.pid)
+        return self
+
+    def wait(self) -> LaunchedProcess:
         time.sleep(self.pause_seconds)
         return LaunchedProcess(exit_code=self.exit_code, pid=self.pid)
+
+    def terminate(self) -> None:
+        return None
+
+    def cancel_wait(self) -> None:
+        return None
 
 
 @dataclass
@@ -232,24 +238,37 @@ class BlockingProcessLauncher(ProcessLauncher):
     pid: int = 5252
     launch_commands: list[tuple[str, ...]] = field(default_factory=list)
     release: threading.Event = field(default_factory=threading.Event)
+    wait_timeout_seconds: float = 5.0
+    terminate_releases: bool = True
+    cancel_wait_releases: bool = True
+    cancel_wait_calls: int = 0
 
-    def launch(
+    def start(
         self,
         *,
         command: tuple[str, ...],
         cwd: Path,
         env: dict[str, str],
         output_log_path: Path | None,
-        on_child_started: ChildStartedHook | None = None,
-    ) -> LaunchedProcess:
+    ) -> BlockingProcessLauncher:
         _ = (cwd, env, output_log_path)
         self.launch_commands.append(command)
         metadata_path = self.spawn_dir / PRIMARY_META_FILENAME
         assert metadata_path.exists()
-        if on_child_started is not None:
-            on_child_started(self.pid)
-        self.release.wait(timeout=5.0)
+        return self
+
+    def wait(self) -> LaunchedProcess:
+        self.release.wait(timeout=self.wait_timeout_seconds)
         return LaunchedProcess(exit_code=143, pid=self.pid)
+
+    def terminate(self) -> None:
+        if self.terminate_releases:
+            self.release.set()
+
+    def cancel_wait(self) -> None:
+        self.cancel_wait_calls += 1
+        if self.cancel_wait_releases:
+            self.release.set()
 
 
 class FailingEventConnection(FakeManagedConnection):
@@ -358,6 +377,106 @@ async def test_primary_attach_event_writer_failure_stops_connection_and_tui(
 
 
 @pytest.mark.asyncio
+async def test_primary_attach_cancellation_stops_blocking_tui_launch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    spawn_dir = tmp_path / "spawns" / "p900-cancel"
+    tui_started = asyncio.Event()
+    connection = FakeManagedConnection(events=[], session_id="sess-cancel")
+    process_launcher = BlockingProcessLauncher(spawn_dir=spawn_dir)
+    terminated_scopes: list[str] = []
+
+    def _terminate_scope(scope: Any, *, grace_seconds: float, reason: str) -> None:
+        _ = grace_seconds
+        terminated_scopes.append(f"{scope.scope_id}:{reason}")
+        process_launcher.release.set()
+        return None
+
+    monkeypatch.setattr(primary_attach_module, "terminate_scope_sync", _terminate_scope)
+    launcher = PrimaryAttachLauncher(
+        spawn_id=SpawnId("p900-cancel"),
+        spawn_dir=spawn_dir,
+        connection=connection,
+        tui_command_builder=lambda session_id: ("codex", "resume", session_id),
+        process_launcher=process_launcher,
+        on_running=lambda _pid: tui_started.set(),
+    )
+
+    run_task = asyncio.create_task(
+        launcher.run(
+            config=_build_config(spawn_id=SpawnId("p900-cancel"), control_root=tmp_path),
+            spec=_build_spec(),
+            cwd=tmp_path,
+            env={},
+        )
+    )
+    await tui_started.wait()
+
+    run_task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await run_task
+
+    assert connection.stop_reasons == [None]
+    assert terminated_scopes == ["tui:primary_attach_shutdown"]
+    assert _read_metadata(spawn_dir)["tui_pid"] == 5252
+
+
+def test_primary_attach_cancellation_does_not_join_uncooperative_wait_thread(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    spawn_dir = tmp_path / "spawns" / "p901-cancel-timeout"
+    tui_started = asyncio.Event()
+    connection = FakeManagedConnection(events=[], session_id="sess-cancel-timeout")
+    process_launcher = BlockingProcessLauncher(
+        spawn_dir=spawn_dir,
+        wait_timeout_seconds=0.3,
+        terminate_releases=False,
+        cancel_wait_releases=False,
+    )
+
+    def _terminate_scope(_scope: Any, *, grace_seconds: float, reason: str) -> None:
+        _ = (grace_seconds, reason)
+
+    monkeypatch.setattr(primary_attach_module, "terminate_scope_sync", _terminate_scope)
+    monkeypatch.setattr(primary_attach_module, "_TUI_LAUNCH_DRAIN_TIMEOUT_SECONDS", 0.05)
+    monkeypatch.setattr(primary_attach_module, "_TUI_WAIT_CANCEL_TIMEOUT_SECONDS", 0.05)
+    launcher = PrimaryAttachLauncher(
+        spawn_id=SpawnId("p901-cancel-timeout"),
+        spawn_dir=spawn_dir,
+        connection=connection,
+        tui_command_builder=lambda session_id: ("codex", "resume", session_id),
+        process_launcher=process_launcher,
+        on_running=lambda _pid: tui_started.set(),
+    )
+
+    async def _cancel_after_tui_start() -> None:
+        run_task = asyncio.create_task(
+            launcher.run(
+                config=_build_config(
+                    spawn_id=SpawnId("p901-cancel-timeout"),
+                    control_root=tmp_path,
+                ),
+                spec=_build_spec(),
+                cwd=tmp_path,
+                env={},
+            )
+        )
+        await tui_started.wait()
+        run_task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await run_task
+
+    started_at = time.monotonic()
+    asyncio.run(_cancel_after_tui_start())
+
+    assert time.monotonic() - started_at < 0.25
+    assert process_launcher.release.is_set() is False
+    assert connection.stop_reasons == [None]
+
+
+@pytest.mark.asyncio
 async def test_primary_attach_codex_event_stream_closure_does_not_stop_backend_or_tui(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -412,6 +531,135 @@ async def test_primary_attach_codex_event_stream_closure_does_not_stop_backend_o
     assert connection.stop_reasons == [None]
     assert terminated_scopes == []
     assert _read_metadata(spawn_dir)["tui_pid"] == 5252
+
+
+def test_primary_attach_cancellation_after_codex_observer_displacement_cleans_tui(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    spawn_dir = tmp_path / "spawns" / "p902-codex-cancel"
+    tui_started = asyncio.Event()
+    stream_closed = asyncio.Event()
+    connection = FailingEventConnection(
+        fail_after_started=tui_started,
+        stream_closed=stream_closed,
+        events=[],
+        session_id="sess-codex-cancel",
+    )
+    process_launcher = BlockingProcessLauncher(spawn_dir=spawn_dir)
+    terminated_scopes: list[str] = []
+
+    def _terminate_scope(scope: Any, *, grace_seconds: float, reason: str) -> None:
+        _ = grace_seconds
+        terminated_scopes.append(f"{scope.scope_id}:{reason}")
+
+    monkeypatch.setattr(primary_attach_module, "terminate_scope_sync", _terminate_scope)
+    monkeypatch.setattr(primary_attach_module, "_TUI_LAUNCH_DRAIN_TIMEOUT_SECONDS", 0.05)
+    launcher = PrimaryAttachLauncher(
+        spawn_id=SpawnId("p902-codex-cancel"),
+        spawn_dir=spawn_dir,
+        connection=connection,
+        tui_command_builder=lambda session_id: ("codex", "resume", session_id),
+        process_launcher=process_launcher,
+        on_running=lambda _pid: tui_started.set(),
+    )
+
+    async def _cancel_after_observer_displacement() -> None:
+        run_task = asyncio.create_task(
+            launcher.run(
+                config=_build_config(
+                    spawn_id=SpawnId("p902-codex-cancel"),
+                    control_root=tmp_path,
+                ),
+                spec=_build_spec(),
+                cwd=tmp_path,
+                env={},
+            )
+        )
+        await stream_closed.wait()
+        async with asyncio.timeout(1.0):
+            while launcher._event_writer_task is not None:
+                await asyncio.sleep(0)
+        run_task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await run_task
+
+    asyncio.run(_cancel_after_observer_displacement())
+
+    assert terminated_scopes == ["tui:primary_attach_shutdown"]
+    assert process_launcher.release.is_set()
+    assert connection.stop_reasons == [None]
+
+
+@pytest.mark.asyncio
+async def test_primary_attach_cancellation_during_opencode_drain_retries_cleanup(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    spawn_dir = tmp_path / "spawns" / "p903-opencode-cancel"
+    tui_started = asyncio.Event()
+    stream_closed = asyncio.Event()
+    drain_started = asyncio.Event()
+    connection = FailingEventConnection(
+        fail_after_started=tui_started,
+        stream_closed=stream_closed,
+        events=[],
+        session_id="sess-opencode-cancel",
+        harness_id=HarnessId.OPENCODE,
+    )
+    process_launcher = BlockingProcessLauncher(
+        spawn_dir=spawn_dir,
+        terminate_releases=False,
+    )
+    terminated_scopes: list[str] = []
+
+    def _terminate_scope(scope: Any, *, grace_seconds: float, reason: str) -> None:
+        _ = grace_seconds
+        terminated_scopes.append(f"{scope.scope_id}:{reason}")
+
+    real_shield = asyncio.shield
+
+    def _shield(awaitable: Any) -> asyncio.Future[Any]:
+        drain_started.set()
+        return real_shield(awaitable)
+
+    monkeypatch.setattr(primary_attach_module, "terminate_scope_sync", _terminate_scope)
+    monkeypatch.setattr(primary_attach_module.asyncio, "shield", _shield)
+    monkeypatch.setattr(primary_attach_module, "_TUI_LAUNCH_DRAIN_TIMEOUT_SECONDS", 0.05)
+    launcher = PrimaryAttachLauncher(
+        spawn_id=SpawnId("p903-opencode-cancel"),
+        spawn_dir=spawn_dir,
+        connection=connection,
+        tui_command_builder=lambda session_id: ("opencode", "attach", session_id),
+        process_launcher=process_launcher,
+        on_running=lambda _pid: tui_started.set(),
+    )
+    run_task = asyncio.create_task(
+        launcher.run(
+            config=_build_config(
+                spawn_id=SpawnId("p903-opencode-cancel"),
+                control_root=tmp_path,
+                harness_id=HarnessId.OPENCODE,
+            ),
+            spec=_build_spec(),
+            cwd=tmp_path,
+            env={},
+        )
+    )
+
+    await stream_closed.wait()
+    await drain_started.wait()
+    run_task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await run_task
+
+    assert terminated_scopes == [
+        "tui:event_stream_closed",
+        "tui:primary_attach_shutdown",
+    ]
+    assert process_launcher.release.is_set()
+    assert process_launcher.cancel_wait_calls == 1
+    assert connection.stop_reasons == ["event_stream_closed", None]
 
 
 @pytest.mark.asyncio

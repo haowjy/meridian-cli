@@ -330,13 +330,20 @@ def run_primary_process_with_capture(
 ) -> tuple[int, int | None]:
     launcher: ProcessLauncher = launcher_selector(output_log_path)
 
-    launched = launcher.launch(
+    running = launcher.start(
         command=command,
         cwd=cwd,
         env=env,
         output_log_path=output_log_path,
-        on_child_started=on_child_started,
     )
+    try:
+        if on_child_started is not None:
+            on_child_started(running.pid)
+    except Exception:
+        running.terminate()
+        running.wait()
+        raise
+    launched = running.wait()
     return launched.exit_code, launched.pid
 
 

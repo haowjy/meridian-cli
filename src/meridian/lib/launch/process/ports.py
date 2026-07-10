@@ -19,9 +19,6 @@ class LaunchedProcess:
     pid: int | None
 
 
-ChildStartedHook = Callable[[int], None]
-
-
 class ProcessBackendId(StrEnum):
     """Named launch backends used for local harness process execution."""
 
@@ -48,6 +45,34 @@ class ProcessPlatformContract:
     platform_family: str
 
 
+class RunningProcess(Protocol):
+    """A started primary process whose blocking exit wait is a separate phase."""
+
+    @property
+    def pid(self) -> int: ...
+
+    def wait(self) -> LaunchedProcess: ...
+
+    def terminate(self) -> None: ...
+
+    def cancel_wait(self) -> None:
+        """Unblock a concurrent wait without assuming the child exited."""
+        ...
+
+
+class ProcessLauncher(Protocol):
+    """Start a primary process and return as soon as its PID is available."""
+
+    def start(
+        self,
+        *,
+        command: tuple[str, ...],
+        cwd: Path,
+        env: dict[str, str],
+        output_log_path: Path | None,
+    ) -> RunningProcess: ...
+
+
 @dataclass(frozen=True)
 class SelectedProcessLauncher:
     """Launcher instance paired with its explicit process/platform contract."""
@@ -56,31 +81,17 @@ class SelectedProcessLauncher:
     contract: ProcessPlatformContract
 
 
-class ProcessLauncher(Protocol):
-    """Protocol for primary process launch strategies."""
-
-    def launch(
-        self,
-        *,
-        command: tuple[str, ...],
-        cwd: Path,
-        env: dict[str, str],
-        output_log_path: Path | None,
-        on_child_started: ChildStartedHook | None = None,
-    ) -> LaunchedProcess: ...
-
-
 ProcessLauncherSelector = Callable[[Path | None], ProcessLauncher]
 
 
 __all__ = [
     "PRIMARY_STDERR_LOG_PATH_ENV",
-    "ChildStartedHook",
     "LaunchedProcess",
     "ProcessBackendId",
     "ProcessLauncher",
     "ProcessLauncherSelector",
     "ProcessPlatformContract",
     "ProcessSurfaceMode",
+    "RunningProcess",
     "SelectedProcessLauncher",
 ]

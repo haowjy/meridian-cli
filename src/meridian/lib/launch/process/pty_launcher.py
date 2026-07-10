@@ -8,12 +8,13 @@ import struct
 import sys
 import threading
 from contextlib import ExitStack, suppress
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, BinaryIO, cast
 
 from meridian.lib.platform import IS_WINDOWS, fcntl, pty, select, termios, tty
 
-from .ports import ChildStartedHook, LaunchedProcess, ProcessLauncher
+from .ports import LaunchedProcess, ProcessLauncher
 
 
 def can_use_pty() -> bool:
@@ -78,6 +79,7 @@ def _copy_primary_pty_output(
     child_pid: int,
     master_fd: int,
     output_log_path: Path | None,
+    wait_cancelled: threading.Event | None = None,
 ) -> int:
     stdin_fd = sys.stdin.fileno()
     stdout_fd = sys.stdout.fileno()
@@ -96,10 +98,12 @@ def _copy_primary_pty_output(
                 output_handle = stack.enter_context(output_log_path.open("wb"))
 
             while True:
+                if wait_cancelled is not None and wait_cancelled.is_set():
+                    return 130
                 fds = [master_fd]
                 if stdin_open:
                     fds.append(stdin_fd)
-                ready, _, _ = select.select(fds, [], [])
+                ready, _, _ = select.select(fds, [], [], 0.1)
 
                 if master_fd in ready:
                     try:
@@ -128,18 +132,45 @@ def _copy_primary_pty_output(
     return os.waitstatus_to_exitcode(status)
 
 
+@dataclass
+class _RunningPtyProcess:
+    pid: int
+    master_fd: int
+    output_log_path: Path | None
+    wait_cancelled: threading.Event = field(default_factory=threading.Event)
+
+    def wait(self) -> LaunchedProcess:
+        try:
+            exit_code = _copy_primary_pty_output(
+                child_pid=self.pid,
+                master_fd=self.master_fd,
+                output_log_path=self.output_log_path,
+                wait_cancelled=self.wait_cancelled,
+            )
+            return LaunchedProcess(exit_code=exit_code, pid=self.pid)
+        finally:
+            with suppress(OSError):
+                os.close(self.master_fd)
+
+    def terminate(self) -> None:
+        with suppress(ProcessLookupError):
+            os.kill(self.pid, signal.SIGTERM)
+
+    def cancel_wait(self) -> None:
+        self.wait_cancelled.set()
+
+
 class PtyProcessLauncher(ProcessLauncher):
     """Unix PTY launcher with optional output capture."""
 
-    def launch(
+    def start(
         self,
         *,
         command: tuple[str, ...],
         cwd: Path,
         env: dict[str, str],
         output_log_path: Path | None,
-        on_child_started: ChildStartedHook | None = None,
-    ) -> LaunchedProcess:
+    ) -> _RunningPtyProcess:
         if IS_WINDOWS:
             raise RuntimeError("PTY launcher is not available on Windows")
 
@@ -159,25 +190,11 @@ class PtyProcessLauncher(ProcessLauncher):
                 os._exit(1)
 
         os.close(slave_fd)
-        try:
-            if on_child_started is not None:
-                try:
-                    on_child_started(child_pid)
-                except Exception:
-                    with suppress(ProcessLookupError):
-                        os.kill(child_pid, signal.SIGTERM)
-                    with suppress(ChildProcessError):
-                        os.waitpid(child_pid, 0)
-                    raise
-            exit_code = _copy_primary_pty_output(
-                child_pid=child_pid,
-                master_fd=master_fd,
-                output_log_path=output_log_path,
-            )
-            return LaunchedProcess(exit_code=exit_code, pid=child_pid)
-        finally:
-            with suppress(OSError):
-                os.close(master_fd)
+        return _RunningPtyProcess(
+            pid=child_pid,
+            master_fd=master_fd,
+            output_log_path=output_log_path,
+        )
 
 
 __all__ = [
