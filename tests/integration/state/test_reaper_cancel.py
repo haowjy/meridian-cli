@@ -26,6 +26,7 @@ from tests.integration.state.conftest import (
     _write_primary_meta,
     fake_managed_primary_birth_liveness,
     fake_reaper_liveness,
+    recording_managed_primary_terminations,
     recording_scope_cleanup,
 )
 
@@ -73,24 +74,7 @@ def test_cancel_orphan_primary_after_passive_reconcile_still_terminates(
     )
     fake_reaper_liveness(monkeypatch, set())
     fake_managed_primary_birth_liveness(monkeypatch, {7302, 7303})
-    # Launcher (7301) is dead -> orphan. Fake the non-birth liveness too so the
-    # managed-primary snapshot read does not fall through to real psutil (whose
-    # pid_exists is platform-dependent for synthetic PIDs; on Windows it reached
-    # _FakeProcess.create_time, which the terminate-only fake does not define).
-    monkeypatch.setattr(
-        "meridian.lib.state.managed_primary.is_process_alive",
-        lambda *_args, **_kwargs: False,
-    )
-    terminated_pids: list[int] = []
-
-    class _FakeProcess:
-        def __init__(self, pid: int) -> None:
-            self.pid = pid
-
-        def terminate(self) -> None:
-            terminated_pids.append(self.pid)
-
-    monkeypatch.setattr("meridian.lib.state.managed_primary.psutil.Process", _FakeProcess)
+    terminated_pids = recording_managed_primary_terminations(monkeypatch)
 
     reconciled = _reconcile(tmp_path, runtime_root, _get_spawn(runtime_root, spawn_id))
 
@@ -193,16 +177,7 @@ def test_spawn_cancel_managed_primary_signals_launcher_first(
     fake_managed_primary_birth_liveness(monkeypatch, {7001, 7002, 7003})
     monkeypatch.setattr("meridian.lib.core.spawn_service._MANAGED_CANCEL_GRACE_SECS", 0.01)
     monkeypatch.setattr("meridian.lib.core.spawn_service._MANAGED_CANCEL_FALLBACK_WAIT_SECS", 0.01)
-    terminated_pids: list[int] = []
-
-    class _FakeProcess:
-        def __init__(self, pid: int) -> None:
-            self.pid = pid
-
-        def terminate(self) -> None:
-            terminated_pids.append(self.pid)
-
-    monkeypatch.setattr("meridian.lib.state.managed_primary.psutil.Process", _FakeProcess)
+    terminated_pids = recording_managed_primary_terminations(monkeypatch)
 
     output = spawn_api.spawn_cancel_sync(
         SpawnCancelInput(
@@ -252,16 +227,7 @@ def test_spawn_cancel_managed_primary_queued_converges_to_terminal(
     fake_managed_primary_birth_liveness(monkeypatch, set())
     monkeypatch.setattr("meridian.lib.core.spawn_service._MANAGED_CANCEL_GRACE_SECS", 0.01)
     monkeypatch.setattr("meridian.lib.core.spawn_service._MANAGED_CANCEL_FALLBACK_WAIT_SECS", 0.01)
-    terminated_pids: list[int] = []
-
-    class _FakeProcess:
-        def __init__(self, pid: int) -> None:
-            self.pid = pid
-
-        def terminate(self) -> None:
-            terminated_pids.append(self.pid)
-
-    monkeypatch.setattr("meridian.lib.state.managed_primary.psutil.Process", _FakeProcess)
+    terminated_pids = recording_managed_primary_terminations(monkeypatch)
 
     output = spawn_api.spawn_cancel_sync(
         SpawnCancelInput(

@@ -27,6 +27,7 @@ from tests.integration.state.conftest import (
     _write_report,
     fake_managed_primary_birth_liveness,
     fake_reaper_liveness,
+    recording_managed_primary_terminations,
     recording_scope_cleanup,
 )
 
@@ -82,16 +83,7 @@ def test_reconcile_active_spawn_managed_primary_dead_launcher_marks_orphan_prima
     record = _get_spawn(runtime_root, spawn_id)
     fake_reaper_liveness(monkeypatch, set())
     fake_managed_primary_birth_liveness(monkeypatch, {8882, 9992})
-    terminated_pids: list[int] = []
-
-    class _FakeProcess:
-        def __init__(self, pid: int) -> None:
-            self.pid = pid
-
-        def terminate(self) -> None:
-            terminated_pids.append(self.pid)
-
-    monkeypatch.setattr("meridian.lib.state.managed_primary.psutil.Process", _FakeProcess)
+    terminated_pids = recording_managed_primary_terminations(monkeypatch)
 
     reconciled = _reconcile(tmp_path, runtime_root, record)
 
@@ -159,16 +151,7 @@ def test_reconcile_active_spawn_managed_primary_finalizing_activity_uses_report_
     record = _get_spawn(runtime_root, spawn_id)
     fake_reaper_liveness(monkeypatch, set())
     fake_managed_primary_birth_liveness(monkeypatch, set())
-    terminated_pids: list[int] = []
-
-    class _FakeProcess:
-        def __init__(self, pid: int) -> None:
-            self.pid = pid
-
-        def terminate(self) -> None:
-            terminated_pids.append(self.pid)
-
-    monkeypatch.setattr("meridian.lib.state.managed_primary.psutil.Process", _FakeProcess)
+    terminated_pids = recording_managed_primary_terminations(monkeypatch)
 
     reconciled = _reconcile(tmp_path, runtime_root, record)
 
@@ -270,9 +253,6 @@ def test_reconcile_managed_primary_finalizing_cancel_intent_cancels(
     )
     record = _get_spawn(runtime_root, spawn_id)
     fake_reaper_liveness(monkeypatch, set())
-    monkeypatch.setattr(
-        "meridian.lib.state.managed_primary.is_process_alive", lambda *_args, **_kwargs: False
-    )
     fake_managed_primary_birth_liveness(monkeypatch, set())
 
     reconciled = _reconcile(tmp_path, runtime_root, record)

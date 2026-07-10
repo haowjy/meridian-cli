@@ -172,19 +172,17 @@ def fake_reaper_liveness(
 ) -> None:
     """Patch runner liveness to a PID allowlist or predicate.
 
-    Both the reaper reconcile path and the nested read-projection path
-    (``query._read_only_nested_staleness_view`` under ``MERIDIAN_DEPTH=1``)
-    consult ``is_process_alive`` via their own module-local bindings. Patch
-    both so a test that exercises either path is fully deterministic — a fake
-    that covered only the reaper binding let the nested read path fall through
-    to the real OS, which is flaky on Windows when the fixture PID happens to
-    be live (e.g. 9301)."""
+    Reaper reconciliation, managed-primary reconciliation, and nested read
+    projection each consult ``is_process_alive`` via module-local bindings.
+    Patch all three so fixture PIDs never fall through to the real OS.
+    """
 
     def _is_alive(pid: int, created_after_epoch: float | None = None) -> bool:
         _ = created_after_epoch
         return live_pids(pid) if callable(live_pids) else pid in live_pids
 
     monkeypatch.setattr("meridian.lib.state.reaper.is_process_alive", _is_alive)
+    monkeypatch.setattr("meridian.lib.state.managed_primary.is_process_alive", _is_alive)
     monkeypatch.setattr("meridian.lib.ops.spawn.query.is_process_alive", _is_alive)
 
 
@@ -202,6 +200,19 @@ def fake_managed_primary_birth_liveness(
         "meridian.lib.state.managed_primary.is_process_alive_with_birth",
         _is_alive,
     )
+
+
+def recording_managed_primary_terminations(monkeypatch) -> list[int]:
+    """Record managed-primary termination attempts without touching real processes."""
+
+    terminated_pids: list[int] = []
+
+    def _terminate(pid: int) -> bool:
+        terminated_pids.append(pid)
+        return True
+
+    monkeypatch.setattr("meridian.lib.state.managed_primary._terminate_pid", _terminate)
+    return terminated_pids
 
 
 def recording_scope_cleanup(monkeypatch, target: str) -> list[int | str]:
