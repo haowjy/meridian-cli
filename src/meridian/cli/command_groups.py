@@ -132,6 +132,13 @@ _GROUP_HELP: dict[str, GroupHelp] = {
         long_help='Mermaid diagram validation: extract and check diagram syntax in\nmarkdown files and standalone .mmd/.mermaid files.',
         examples=(('meridian mermaid check', ''), ('meridian mermaid check docs/', ''), ('meridian mermaid check diagram.mmd', '')),
     ),
+    "artifact": GroupHelp(
+        summary='Share static artifacts over Tailscale.',
+        long_help='Serve a local directory over Tailscale as a temporary, tailnet-scoped URL.',
+        examples=(('meridian artifact serve .', ''), ('meridian artifact list', '')),
+        agent_notes='URLs are tailnet-only — the recipient must be on your tailnet; use --funnel for a public URL (rare). Serves expire after 2h by default; --persistent keeps one, stop/gc remove them. Point it at a built structured-artifact directory to share with a human or another agent.',
+        agent_subcommands=('serve', 'list', 'stop', 'gc'),
+    ),
     "telemetry": GroupHelp(
         summary='Telemetry inspection: tail, query, and status over local segments.',
         long_help='Telemetry inspection: tail, query, and status over local segments.\n\nNote: Rootless MCP stdio server processes write telemetry to stderr only and are not visible in local segment readers.',
@@ -272,6 +279,14 @@ COMMAND_GROUP_SPECS: dict[str, CommandGroupSpec] = {
         help=_GROUP_HELP["mermaid"],
         human_root_order=11,
         registration_bucket='mermaid',
+        has_group_app=True,
+    ),
+    "artifact": CommandGroupSpec(
+        help=_GROUP_HELP["artifact"],
+        agent_root_description='Share a directory as a temporary Tailscale URL for humans or other agents.',
+        agent_root=True,
+        human_root_order=17,
+        registration_bucket='artifact',
         has_group_app=True,
     ),
     "telemetry": CommandGroupSpec(

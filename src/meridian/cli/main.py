@@ -748,6 +748,11 @@ def _register_commands_for_invocation(argv: Sequence[str]) -> None:
 
             _ = _mermaid_cmd
 
+        def _register_artifact() -> None:
+            import meridian.cli.artifact_cmd as _artifact_cmd
+
+            _ = _artifact_cmd
+
         def _register_qi() -> None:
             import meridian.cli.qi_cmd as _qi_cmd
 
@@ -780,6 +785,7 @@ def _register_commands_for_invocation(argv: Sequence[str]) -> None:
             "sync": _register_sync,
             "kg": _register_kg,
             "mermaid": _register_mermaid,
+            "artifact": _register_artifact,
             "qi": _register_qi,
             "report": _register_report,
             "migrate": _register_migrate,
