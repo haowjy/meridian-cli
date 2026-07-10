@@ -4,6 +4,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+- Bump mars-agents to 0.10.3 so Codex hooks install in the current `hooks.json` format instead of the obsolete `codex_hooks.json` format.
+
 ## [0.3.27] - 2026-07-09
 
 ### Changed
