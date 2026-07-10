@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Mapping
 
 import pytest
@@ -17,6 +18,7 @@ from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.safety.permissions import (
     UnsafeNoOpPermissionResolver,
 )
+from tests.support.async_determinism import AsyncDeterminism
 
 
 class _TestableOpenCodeConnection(OpenCodeConnection):
@@ -61,6 +63,35 @@ class _TestableOpenCodeConnection(OpenCodeConnection):
         if isinstance(response, Exception):
             raise response
         return response
+
+
+class _HangingSessionOpenCodeConnection(OpenCodeConnection):
+    async def _create_session(self, spec: ResolvedLaunchSpec) -> str:
+        _ = spec
+        await asyncio.Event().wait()
+        raise AssertionError("unreachable")
+
+
+class _PayloadTimeoutOpenCodeConnection(OpenCodeConnection):
+    def __init__(self) -> None:
+        super().__init__()
+        self.payloads: list[dict[str, object]] = []
+
+    async def _post_json(
+        self,
+        path: str,
+        payload: Mapping[str, object],
+        *,
+        skip_body_on_statuses: frozenset[int] | None = None,
+        tolerate_incomplete_body: bool = False,
+    ) -> tuple[int, object | None, str]:
+        _ = path, skip_body_on_statuses, tolerate_incomplete_body
+        payload_dict = dict(payload)
+        self.payloads.append(payload_dict)
+        if payload_dict:
+            await asyncio.Event().wait()
+            raise AssertionError("unreachable")
+        return 200, {"id": "sess-empty-fallback"}, "application/json"
 
 
 @pytest.mark.asyncio
@@ -152,6 +183,82 @@ async def test_create_session_forwards_mcp_tools_in_payload() -> None:
 
     payload = connection.requests[0][1]
     assert payload["mcp"] == {"servers": ["tool-a=echo a", "tool-b=echo b"]}
+
+
+@pytest.mark.asyncio
+async def test_post_session_message_includes_system_field_when_present() -> None:
+    connection = _TestableOpenCodeConnection(responses=[(204, None, "")])
+    connection._session_id = "sess-system"
+
+    await connection._post_session_message("user turn", system="system prompt")
+
+    assert connection.requests == [
+        (
+            "/session/sess-system/prompt_async",
+            {
+                "parts": [{"type": "text", "text": "user turn"}],
+                "system": "system prompt",
+            },
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_session_creation_falls_back_when_projected_payload_hangs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    determinism = AsyncDeterminism(start=0.0)
+    determinism.install(monkeypatch, monotonic_modules=(opencode_http,))
+    determinism.install_on_running_loop(monkeypatch)
+    connection = _PayloadTimeoutOpenCodeConnection()
+    monkeypatch.setattr(OpenCodeConnection, "_SESSION_CREATE_PAYLOAD_TIMEOUT_SECONDS", 0.01)
+
+    create_task = asyncio.create_task(
+        connection._create_session_with_retry(
+            ResolvedLaunchSpec(
+                model="gpt-5.5",
+                agent_name="prober",
+                permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
+            ),
+            timeout_seconds=1.0,
+        )
+    )
+    while not create_task.done():
+        await determinism.sleep(0.01)
+
+    assert await create_task == "sess-empty-fallback"
+    assert connection.payloads == [
+        {"model": "gpt-5.5", "modelID": "gpt-5.5", "agent": "prober"},
+        {},
+    ]
+
+
+@pytest.mark.asyncio
+async def test_session_startup_timeout_wraps_hung_request(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    determinism = AsyncDeterminism(start=0.0)
+    determinism.install(monkeypatch, monotonic_modules=(opencode_http,))
+    determinism.install_on_running_loop(monkeypatch)
+    connection = _HangingSessionOpenCodeConnection()
+
+    create_task = asyncio.create_task(
+        connection._create_session_with_retry(
+            ResolvedLaunchSpec(
+                permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
+            ),
+            timeout_seconds=0.01,
+        )
+    )
+    while not create_task.done():
+        await determinism.sleep(0.01)
+
+    with pytest.raises(
+        TimeoutError,
+        match="OpenCode session endpoint did not become ready",
+    ) as exc_info:
+        await create_task
+    assert isinstance(exc_info.value.__cause__, TimeoutError)
 
 
 class _FakeAiohttpResponse:
