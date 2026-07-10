@@ -72,7 +72,14 @@ process_scope/
 ```
 
 **POSIX:** `setsid()` at launch; `os.killpg(pgid, SIGTERM)` on teardown. Catches
-reparented descendants that single-PID kill misses.
+reparented descendants that single-PID kill misses. Linux installs
+`PR_SET_PDEATHSIG` before exec when available. POSIX platforms without a native
+parent-death signal (macOS/BSD, or Linux without `prctl`) launch a detached
+watchdog helper after spawn. The helper acknowledges readiness over an inherited
+pipe before containment is recorded, watches the Meridian launcher by
+birth-validated PID, and terminates the full target process group if the launcher
+disappears first. It remains alive while any non-zombie process-group member exists,
+even if the scope root exits before its descendants.
 
 **Windows:** Job Object with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`. When Meridian
 exits, the OS closes the handle and kills all assigned processes automatically.

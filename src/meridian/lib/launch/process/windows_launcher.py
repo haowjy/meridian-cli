@@ -7,7 +7,7 @@ from pathlib import Path
 
 from meridian.lib.platform import IS_WINDOWS
 
-from .ports import ChildStartedHook, LaunchedProcess, ProcessLauncher
+from .ports import ProcessLauncher, RunningProcess
 from .subprocess_launcher import SubprocessProcessLauncher
 
 logger = logging.getLogger(__name__)
@@ -22,22 +22,20 @@ def can_use_windows_console_launcher() -> bool:
 class WindowsConsoleLauncher(ProcessLauncher):
     """Windows fallback launcher that preserves interactive console semantics."""
 
-    def launch(
+    def start(
         self,
         *,
         command: tuple[str, ...],
         cwd: Path,
         env: dict[str, str],
         output_log_path: Path | None,
-        on_child_started: ChildStartedHook | None = None,
-    ) -> LaunchedProcess:
+    ) -> RunningProcess:
         logger.debug("Windows console-inheritance mode (no PTY capture available)")
-        return SubprocessProcessLauncher().launch(
+        return SubprocessProcessLauncher().start(
             command=command,
             cwd=cwd,
             env=env,
             output_log_path=output_log_path,
-            on_child_started=on_child_started,
         )
 
 

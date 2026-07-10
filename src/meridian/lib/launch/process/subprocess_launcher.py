@@ -7,14 +7,15 @@ import subprocess
 import sys
 import threading
 from contextlib import suppress
+from dataclasses import dataclass, field
 from pathlib import Path
+from queue import Empty, Full, Queue
 from typing import BinaryIO
 
 from meridian.lib.platform import IS_WINDOWS
 
 from .ports import (
     PRIMARY_STDERR_LOG_PATH_ENV,
-    ChildStartedHook,
     LaunchedProcess,
     ProcessLauncher,
 )
@@ -53,6 +54,7 @@ def _write_chunk_to_stderr(chunk: bytes) -> None:
 def _read_pipe_to_stderr_log(
     stderr_stream: BinaryIO,
     stderr_log_path: Path,
+    wait_cancelled: threading.Event,
 ) -> None:
     stderr_log_path.parent.mkdir(parents=True, exist_ok=True)
     with stderr_log_path.open("ab") as stderr_handle:
@@ -60,36 +62,164 @@ def _read_pipe_to_stderr_log(
             chunk = stderr_stream.read(4096)
             if not chunk:
                 return
+            if wait_cancelled.is_set():
+                return
             stderr_handle.write(chunk)
             stderr_handle.flush()
             _write_chunk_to_stderr(chunk)
 
 
-def _wait_for_process(process: subprocess.Popen[str] | subprocess.Popen[bytes]) -> int:
+def _read_pipe_to_queue(
+    stream: BinaryIO,
+    chunks: Queue[bytes | None],
+    wait_cancelled: threading.Event,
+) -> None:
     try:
-        return process.wait()
-    except KeyboardInterrupt:
-        if process.poll() is None:
-            if IS_WINDOWS:
-                process.terminate()
-            else:
-                process.send_signal(signal.SIGINT)
-            return process.wait()
-        return 130
+        while True:
+            chunk = stream.read(4096)
+            if not chunk or wait_cancelled.is_set():
+                return
+            while not wait_cancelled.is_set():
+                try:
+                    chunks.put(chunk, timeout=0.1)
+                    break
+                except Full:
+                    continue
+    finally:
+        while not wait_cancelled.is_set():
+            try:
+                chunks.put(None, timeout=0.1)
+                break
+            except Full:
+                continue
+
+
+def _wait_for_process(
+    process: subprocess.Popen[str] | subprocess.Popen[bytes],
+    *,
+    wait_cancelled: threading.Event | None = None,
+) -> int:
+    while True:
+        try:
+            if wait_cancelled is None:
+                return process.wait()
+            return process.wait(timeout=0.1)
+        except subprocess.TimeoutExpired:
+            if wait_cancelled is not None and wait_cancelled.is_set():
+                return process.returncode if process.returncode is not None else 130
+        except KeyboardInterrupt:
+            if process.poll() is None:
+                if IS_WINDOWS:
+                    process.terminate()
+                else:
+                    process.send_signal(signal.SIGINT)
+                return process.wait()
+            return 130
+
+
+@dataclass
+class _RunningSubprocess:
+    process: subprocess.Popen[str] | subprocess.Popen[bytes]
+    output_log_path: Path | None
+    stderr_log_path: Path | None
+    wait_cancelled: threading.Event = field(default_factory=threading.Event)
+
+    @property
+    def pid(self) -> int:
+        return self.process.pid
+
+    def terminate(self) -> None:
+        if self.process.poll() is None:
+            self.process.terminate()
+
+    def cancel_wait(self) -> None:
+        self.wait_cancelled.set()
+
+    def wait(self) -> LaunchedProcess:
+        stderr_thread: threading.Thread | None = None
+        if self.output_log_path is None:
+            try:
+                if self.stderr_log_path is not None and self.process.stderr is not None:
+                    stderr_thread = threading.Thread(
+                        target=_read_pipe_to_stderr_log,
+                        args=(
+                            self.process.stderr,
+                            self.stderr_log_path,
+                            self.wait_cancelled,
+                        ),
+                        daemon=True,
+                    )
+                    stderr_thread.start()
+                return LaunchedProcess(
+                    exit_code=_wait_for_process(
+                        self.process,
+                        wait_cancelled=self.wait_cancelled,
+                    ),
+                    pid=self.process.pid,
+                )
+            finally:
+                if stderr_thread is not None and not self.wait_cancelled.is_set():
+                    stderr_thread.join(timeout=1.0)
+                with suppress(Exception):
+                    if (
+                        self.process.stderr is not None
+                        and (stderr_thread is None or not stderr_thread.is_alive())
+                    ):
+                        self.process.stderr.close()
+
+        stdout_thread: threading.Thread | None = None
+        try:
+            with self.output_log_path.open("wb") as output_handle:
+                stdout_stream = self.process.stdout
+                if stdout_stream is not None:
+                    chunks: Queue[bytes | None] = Queue(maxsize=16)
+                    stdout_thread = threading.Thread(
+                        target=_read_pipe_to_queue,
+                        args=(stdout_stream, chunks, self.wait_cancelled),
+                        daemon=True,
+                    )
+                    stdout_thread.start()
+                    while True:
+                        if self.wait_cancelled.is_set():
+                            return LaunchedProcess(exit_code=130, pid=self.process.pid)
+                        try:
+                            chunk = chunks.get(timeout=0.1)
+                        except Empty:
+                            continue
+                        if chunk is None:
+                            break
+                        output_handle.write(chunk)
+                        output_handle.flush()
+                        _write_chunk_to_stdout(chunk)
+            return LaunchedProcess(
+                exit_code=_wait_for_process(
+                    self.process,
+                    wait_cancelled=self.wait_cancelled,
+                ),
+                pid=self.process.pid,
+            )
+        finally:
+            if stdout_thread is not None and not self.wait_cancelled.is_set():
+                stdout_thread.join(timeout=1.0)
+            with suppress(Exception):
+                if (
+                    self.process.stdout is not None
+                    and (stdout_thread is None or not stdout_thread.is_alive())
+                ):
+                    self.process.stdout.close()
 
 
 class SubprocessProcessLauncher(ProcessLauncher):
     """Portable subprocess launcher used when PTY capture is unavailable."""
 
-    def launch(
+    def start(
         self,
         *,
         command: tuple[str, ...],
         cwd: Path,
         env: dict[str, str],
         output_log_path: Path | None,
-        on_child_started: ChildStartedHook | None = None,
-    ) -> LaunchedProcess:
+    ) -> _RunningSubprocess:
         child_env = dict(env)
         stderr_log_path_raw = child_env.pop(PRIMARY_STDERR_LOG_PATH_ENV, "").strip()
         stderr_log_path = Path(stderr_log_path_raw) if stderr_log_path_raw else None
@@ -113,49 +243,11 @@ class SubprocessProcessLauncher(ProcessLauncher):
                 text=False,
                 start_new_session=not IS_WINDOWS,
             )
-        if on_child_started is not None:
-            try:
-                on_child_started(process.pid)
-            except Exception:
-                if process.poll() is None:
-                    process.terminate()
-                    process.wait()
-                raise
-        stderr_thread: threading.Thread | None = None
-        if output_log_path is None:
-            try:
-                if stderr_log_path is not None and process.stderr is not None:
-                    stderr_thread = threading.Thread(
-                        target=_read_pipe_to_stderr_log,
-                        args=(process.stderr, stderr_log_path),
-                        daemon=True,
-                    )
-                    stderr_thread.start()
-                return LaunchedProcess(exit_code=_wait_for_process(process), pid=process.pid)
-            finally:
-                if stderr_thread is not None:
-                    stderr_thread.join(timeout=1.0)
-                with suppress(Exception):
-                    if process.stderr is not None:
-                        process.stderr.close()
-        try:
-            with output_log_path.open("wb") as output_handle:
-                stdout_stream = process.stdout
-                if stdout_stream is not None:
-                    while True:
-                        chunk = stdout_stream.read(4096)
-                        if not chunk:
-                            break
-                        # text=False guarantees bytes; pyright sees union
-                        chunk_bytes = chunk if isinstance(chunk, bytes) else chunk.encode()
-                        output_handle.write(chunk_bytes)
-                        output_handle.flush()
-                        _write_chunk_to_stdout(chunk_bytes)
-            return LaunchedProcess(exit_code=_wait_for_process(process), pid=process.pid)
-        finally:
-            with suppress(Exception):
-                if process.stdout is not None:
-                    process.stdout.close()
+        return _RunningSubprocess(
+            process=process,
+            output_log_path=output_log_path,
+            stderr_log_path=stderr_log_path,
+        )
 
 
 __all__ = ["SubprocessProcessLauncher"]

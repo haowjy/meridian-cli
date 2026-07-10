@@ -4,6 +4,17 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+- macOS/BSD managed harness backends now get real crash containment via a detached
+  parent-watchdog helper with a readiness handshake and full process-group liveness;
+  Linux `prctl` and Windows Job Object linkage remain unchanged.
+- Fresh managed Codex sessions now finish their bootstrap turn before TUI handoff,
+  preventing the remote TUI from remaining stuck in `Working` after the bootstrap
+  response and restoring normal idle Ctrl+C exit behavior.
+- Primary process launch now separates process birth from its blocking terminal wait,
+  so managed-primary cancellation can terminate and boundedly drain a known TUI scope
+  instead of polling a child-start callback.
+
 ## [0.3.28] - 2026-07-10
 
 ### Fixed

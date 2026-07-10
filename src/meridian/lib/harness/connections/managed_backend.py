@@ -92,7 +92,11 @@ async def launch_managed_backend(
     except (psutil.NoSuchProcess, psutil.AccessDenied):
         birth_time = PROCESS_BIRTH_UNKNOWN_EPOCH
 
-    parent_death_link = link_child_lifetime_to_parent(pid)
+    parent_death_link = (
+        ParentDeathLink(parent_death_linked=False)
+        if subprocess_config.parent_death_linked
+        else link_child_lifetime_to_parent(pid)
+    )
     parent_death_linked = (
         subprocess_config.parent_death_linked or parent_death_link.parent_death_linked
     )

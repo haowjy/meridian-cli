@@ -13,10 +13,11 @@ from collections.abc import Callable
 from contextlib import suppress
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from threading import Lock
+from threading import Lock, Thread
 from typing import Any
 
 import psutil
+import structlog
 
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.connections.base import ConnectionConfig, HarnessConnection, HarnessEvent
@@ -33,10 +34,46 @@ from meridian.lib.state.history import HarnessHistoryWriter
 from meridian.lib.state.primary_meta import ActivityState, PrimaryMetadata, write_primary_metadata
 from meridian.lib.state.process_scope_projection import record_scope
 
-from .ports import ProcessLauncher
+from .ports import LaunchedProcess, ProcessLauncher, RunningProcess
 
 TuiCommandBuilder = Callable[[str], tuple[str, ...]]
 MAX_PORT_RETRY_ATTEMPTS = 3
+_TUI_LAUNCH_DRAIN_TIMEOUT_SECONDS = 1.0
+_TUI_WAIT_CANCEL_TIMEOUT_SECONDS = 1.0
+
+logger = structlog.get_logger(__name__)
+
+
+def _start_process_wait(running_process: RunningProcess) -> asyncio.Future[LaunchedProcess]:
+    """Run a synchronous terminal relay without joining it during loop shutdown."""
+
+    loop = asyncio.get_running_loop()
+    result_future: asyncio.Future[LaunchedProcess] = loop.create_future()
+
+    def _publish_result(result: LaunchedProcess) -> None:
+        if not result_future.done():
+            result_future.set_result(result)
+
+    def _publish_error(error: BaseException) -> None:
+        if not result_future.done():
+            result_future.set_exception(error)
+
+    def _wait() -> None:
+        try:
+            result = running_process.wait()
+        except BaseException as exc:
+            with suppress(RuntimeError):
+                loop.call_soon_threadsafe(_publish_error, exc)
+            return
+        with suppress(RuntimeError):
+            loop.call_soon_threadsafe(_publish_result, result)
+
+    Thread(
+        target=_wait,
+        name=f"meridian-primary-wait-{running_process.pid}",
+        daemon=True,
+    ).start()
+    return result_future
 
 
 def _make_scope_snapshot(
@@ -209,6 +246,9 @@ class PrimaryAttachLauncher:
         self._history_writer = HarnessHistoryWriter(self._spawn_dir / "history.jsonl")
         connection_started = False
         session_id: str | None = None
+        running_process: RunningProcess | None = None
+        launch_task: asyncio.Future[LaunchedProcess] | None = None
+        tui_lifecycle_finished = False
         telemetry = _StartupTelemetry()
 
         try:
@@ -245,7 +285,6 @@ class PrimaryAttachLauncher:
 
             telemetry.update(f"Attaching {self._connection.harness_id.value.capitalize()} TUI...")
             command = tuple(self._tui_command_builder(session_id))
-            loop = asyncio.get_running_loop()
             running_callback = on_running if on_running is not None else self._on_running
 
             def _handle_running(pid: int) -> None:
@@ -254,19 +293,19 @@ class PrimaryAttachLauncher:
                 if running_callback is not None:
                     running_callback(pid)
 
-            def _on_child_started(pid: int) -> None:
-                loop.call_soon_threadsafe(_handle_running, pid)
-
-            launch_task = asyncio.create_task(
-                asyncio.to_thread(
-                    self._process_launcher.launch,
-                    command=command,
-                    cwd=cwd,
-                    env=env,
-                    output_log_path=None,
-                    on_child_started=_on_child_started,
-                )
+            running_process = self._process_launcher.start(
+                command=command,
+                cwd=cwd,
+                env=env,
+                output_log_path=None,
             )
+            try:
+                _handle_running(running_process.pid)
+            except Exception:
+                running_process.terminate()
+                await _start_process_wait(running_process)
+                raise
+            launch_task = _start_process_wait(running_process)
             telemetry.clear()
 
             writer_task = self._event_writer_task
@@ -281,22 +320,28 @@ class PrimaryAttachLauncher:
                 if self._connection.harness_id is HarnessId.CODEX:
                     # Codex TUI takes over the observer endpoint after attach;
                     # the displaced observer stream closing is normal.
-                    launched = await launch_task
+                    launched = await asyncio.shield(launch_task)
+                    tui_lifecycle_finished = True
                     return PrimaryAttachOutcome(
                         exit_code=launched.exit_code,
                         session_id=session_id,
                         tui_pid=launched.pid,
                     )
                 await self._connection.stop(reason="event_stream_closed")
-                await self._terminate_tui_scope()
-                launched = await launch_task
+                await self._stop_tui_launch_task(
+                    running_process,
+                    launch_task,
+                    reason="event_stream_closed",
+                )
+                tui_lifecycle_finished = True
                 return PrimaryAttachOutcome(
                     exit_code=1,
                     session_id=session_id,
-                    tui_pid=launched.pid,
+                    tui_pid=running_process.pid,
                 )
 
-            launched = await launch_task
+            launched = await asyncio.shield(launch_task)
+            tui_lifecycle_finished = True
 
             return PrimaryAttachOutcome(
                 exit_code=launched.exit_code,
@@ -314,6 +359,16 @@ class PrimaryAttachLauncher:
                 writer_task.cancel()
                 with suppress(asyncio.CancelledError):
                     await writer_task
+            if (
+                running_process is not None
+                and launch_task is not None
+                and not tui_lifecycle_finished
+            ):
+                await self._stop_tui_launch_task(
+                    running_process,
+                    launch_task,
+                    reason="primary_attach_shutdown",
+                )
             if connection_started:
                 await self._connection.stop()
 
@@ -449,7 +504,45 @@ class PrimaryAttachLauncher:
         self._tui_scope_snapshot = snapshot
         record_scope(runtime_root, self._spawn_id, snapshot)
 
-    async def _terminate_tui_scope(self) -> None:
+    async def _stop_tui_launch_task(
+        self,
+        running_process: RunningProcess,
+        launch_task: asyncio.Future[LaunchedProcess],
+        *,
+        reason: str,
+    ) -> None:
+        await self._terminate_tui_scope(reason=reason)
+        try:
+            await asyncio.wait_for(
+                asyncio.shield(launch_task),
+                timeout=_TUI_LAUNCH_DRAIN_TIMEOUT_SECONDS,
+            )
+        except TimeoutError:
+            logger.warning(
+                "primary_attach.tui_drain_timeout",
+                spawn_id=str(self._spawn_id),
+            )
+            running_process.terminate()
+            running_process.cancel_wait()
+            try:
+                await asyncio.wait_for(
+                    asyncio.shield(launch_task),
+                    timeout=_TUI_WAIT_CANCEL_TIMEOUT_SECONDS,
+                )
+            except TimeoutError:
+                logger.error(
+                    "primary_attach.tui_wait_cancel_timeout",
+                    spawn_id=str(self._spawn_id),
+                )
+                launch_task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await launch_task
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            pass
+
+    async def _terminate_tui_scope(self, *, reason: str) -> None:
         snapshot = self._tui_scope_snapshot
         if snapshot is None:
             return
@@ -457,7 +550,7 @@ class PrimaryAttachLauncher:
             terminate_scope_sync,
             snapshot,
             grace_seconds=5.0,
-            reason="event_stream_closed",
+            reason=reason,
         )
 
     def _resolve_backend_port(self) -> int | None:

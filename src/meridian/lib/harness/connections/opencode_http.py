@@ -69,7 +69,7 @@ from meridian.lib.observability.trace_helpers import (
     trace_wire_recv,
     trace_wire_send,
 )
-from meridian.lib.platform.detached_process import ParentDeathLink
+from meridian.lib.platform.detached_process import ParentDeathLink, release_parent_death_link
 from meridian.lib.platform.process_scope import (
     ProcessScopeSnapshot,
     ScopedProcessHandle,
@@ -1044,6 +1044,7 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
                 process.kill()
                 await process.wait()
 
+        await asyncio.to_thread(release_parent_death_link, self._parent_death_link)
         self._parent_death_link = None
         self._base_url = None
         self._session_id = None

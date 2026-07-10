@@ -23,21 +23,27 @@ from meridian.lib.state.process_scope_projection import read_scopes_from_disk
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("preexec_linked", "post_spawn_linked"),
+    ((True, False), (False, True)),
+)
 async def test_launch_managed_backend_records_scope_with_parent_death_outcome(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    preexec_linked: bool,
+    post_spawn_linked: bool,
 ) -> None:
     spawn_id = SpawnId("spawn-3")
 
     monkeypatch.setattr(
         managed_backend,
         "detached_subprocess_config",
-        lambda: DetachedSubprocessConfig(kwargs={}, parent_death_linked=True),
+        lambda: DetachedSubprocessConfig(kwargs={}, parent_death_linked=preexec_linked),
     )
     monkeypatch.setattr(
         managed_backend,
         "link_child_lifetime_to_parent",
-        lambda _pid: ParentDeathLink(parent_death_linked=False),
+        lambda _pid: ParentDeathLink(parent_death_linked=post_spawn_linked),
     )
 
     handle = await launch_managed_backend(
