@@ -271,6 +271,7 @@ class CodexAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             "mcp_tools",
             "projected_roots",
             "control_root",
+            "agent",
             "adhoc_agent_payload",
             "appended_system_prompt",
             "user_turn_content",
@@ -279,7 +280,6 @@ class CodexAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
     _EXPLICITLY_IGNORED_FIELDS: ClassVar[frozenset[str]] = frozenset(
         {
             "skills",
-            "agent",
             "context_from_payload",
             "reference_items",
             "task_cwd",
@@ -382,6 +382,7 @@ class CodexAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             interactive=run.interactive,
             mcp_tools=run.mcp_tools,
             projected_roots=run.projected_roots,
+            agent_name=run.agent,
             base_instructions=run.adhoc_agent_payload.strip() or None,
             developer_instructions=run.appended_system_prompt,
             user_turn_content=run.user_turn_content,

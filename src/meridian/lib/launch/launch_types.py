@@ -99,7 +99,7 @@ class ResolvedLaunchSpec(BaseModel):
     # All are optional and default to their zero values so unused adapters
     # don't need to set them.
 
-    # Claude + OpenCode
+    # Harness-level agent identity. Codex also shows it in the managed bootstrap turn.
     agent_name: str | None = None
     appended_system_prompt: str | None = None
 

@@ -60,7 +60,8 @@ Meridian handles that by sending a minimal bootstrap turn, then waiting until:
 1. the Codex rollout file contains a matching `session_meta` entry for the project cwd;
 2. the observer receives `turn/completed` for that bootstrap turn.
 
-`Meridian started`
+`Meridian started (agent: reviewer)` when an agent profile is active, otherwise
+`Meridian started`.
 
 This bootstrap is intentionally small and deterministic. Meridian does **not** temporarily override Codex model/reasoning defaults for the bootstrap turn. The session should preserve Codex's own default or last-used settings.
 

@@ -1,10 +1,41 @@
 from __future__ import annotations
 
 import asyncio
+from unittest.mock import AsyncMock
 
 import pytest
 
 from meridian.lib.harness.connections.codex_ws import CodexConnection
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("agent_name", "expected_prompt"),
+    [
+        ("reviewer", "Meridian started (agent: reviewer)"),
+        (None, "Meridian started"),
+        ("  ", "Meridian started"),
+    ],
+)
+async def test_bootstrap_turn_identifies_agent_when_available(
+    agent_name: str | None,
+    expected_prompt: str,
+) -> None:
+    connection = CodexConnection()
+    connection._thread_id = "thread-1"
+    connection._request = AsyncMock(return_value={"turn": {"id": "turn-1"}})  # type: ignore[method-assign]
+    connection._wait_for_rollout_materialization = AsyncMock()  # type: ignore[method-assign]
+    connection._wait_for_turn_completion = AsyncMock()  # type: ignore[method-assign]
+
+    await connection._send_bootstrap_turn_and_wait(agent_name=agent_name)
+
+    connection._request.assert_awaited_once_with(
+        "turn/start",
+        {
+            "threadId": "thread-1",
+            "input": [{"type": "text", "text": expected_prompt}],
+        },
+    )
 
 
 @pytest.mark.asyncio

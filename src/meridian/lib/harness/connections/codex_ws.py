@@ -445,7 +445,7 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
                 # Codex rollout before the TUI can attach. Without this, Codex
                 # cannot resume a fresh thread because no rollout file exists.
                 self._emit_startup_phase(StartupPhase.INITIALIZING_SESSION)
-                await self._send_bootstrap_turn_and_wait()
+                await self._send_bootstrap_turn_and_wait(agent_name=spec.agent_name)
 
             self._transition("connected")
             self._liveness.mark_activity()
@@ -1197,7 +1197,7 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
             raise RuntimeError("Codex connection config is unavailable")
         return config.control_root
 
-    async def _send_bootstrap_turn_and_wait(self) -> None:
+    async def _send_bootstrap_turn_and_wait(self, *, agent_name: str | None) -> None:
         """Send a minimal bootstrap turn and wait for completion.
 
         This materializes the Codex rollout file so the TUI can later attach
@@ -1207,11 +1207,15 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
         attachability gate, not by mutating user-visible Codex defaults.
         """
         thread_id = self._require_thread_id("bootstrap_turn")
+        normalized_agent = (agent_name or "").strip()
+        prompt = _BOOTSTRAP_TURN_PROMPT
+        if normalized_agent:
+            prompt = f"{prompt} (agent: {normalized_agent})"
         result = await self._request(
             "turn/start",
             {
                 "threadId": thread_id,
-                "input": _build_text_user_input(_BOOTSTRAP_TURN_PROMPT),
+                "input": _build_text_user_input(prompt),
             },
         )
         await self._wait_for_rollout_materialization()

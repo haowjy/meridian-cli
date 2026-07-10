@@ -4,6 +4,10 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+- Fresh managed Codex sessions identify the active agent in the visible bootstrap
+  message when an agent profile is available.
+
 ### Fixed
 - macOS/BSD managed harness backends now get real crash containment via a detached
   parent-watchdog helper with a readiness handshake and full process-group liveness;
