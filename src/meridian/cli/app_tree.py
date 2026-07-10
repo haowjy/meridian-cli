@@ -50,6 +50,7 @@ config_app = _group_app("config")
 workspace_app = _group_app("workspace")
 kg_app = _group_app("kg")
 mermaid_app = _group_app("mermaid")
+artifact_app = _group_app("artifact")
 qi_app = _group_app("qi")
 telemetry_app = _group_app("telemetry")
 completion_app = _group_app("completion")
@@ -69,6 +70,7 @@ app.command(config_app, name="config")
 app.command(workspace_app, name="workspace")
 app.command(kg_app, name="kg")
 app.command(mermaid_app, name="mermaid")
+app.command(artifact_app, name="artifact")
 app.command(qi_app, name="qi")
 app.command(telemetry_app, name="telemetry")
 app.command(completion_app, name="completion")
@@ -88,6 +90,7 @@ for _group_name, _group_app_obj in {
     "workspace": workspace_app,
     "kg": kg_app,
     "mermaid": mermaid_app,
+    "artifact": artifact_app,
     "qi": qi_app,
     "telemetry": telemetry_app,
     "completion": completion_app,
@@ -97,6 +100,7 @@ for _group_name, _group_app_obj in {
 
 __all__ = [
     "app",
+    "artifact_app",
     "completion_app",
     "config_app",
     "context_app",

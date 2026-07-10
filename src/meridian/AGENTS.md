@@ -61,6 +61,7 @@ config entry. If adding a feature requires editing 10 files, the abstraction is 
 | `lib/context/` | Context resolution (KB, strategy, work directories) |
 | `lib/hooks/` | Hook dispatch, config layering, built-in hooks |
 | `lib/extensions/` | Extension command registry |
+| `lib/artifact/` | Detached static-artifact serving over Tailscale (`artifact serve/list/stop/gc`); no daemon — file is authority |
 
 | `lib/observability/` | Spawn-scoped JSONL tracing |
 | `lib/mermaid/` | Mermaid diagram validation |

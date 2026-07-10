@@ -4,6 +4,18 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- `meridian artifact serve <dir>` serves a static directory over Tailscale and
+  prints `https://<host>:<port>/<slug>/`. Random high port by default (never 443
+  or well-known); `--port` chooses one and rejects it if already in use. `--ttl`
+  (default 2h) / `--persistent` control lifetime; `--slug` names the URL path;
+  `--funnel` exposes publicly on port 10000. Server is detached and outlives the
+  CLI; cleanup is TTL plus lazy GC, no daemon.
+- `meridian artifact list` shows active serves (slug, port, age, TTL remaining,
+  URL); `--format json` for machine-readable output.
+- `meridian artifact stop <slug|port>` surgically tears down one serve;
+  `meridian artifact gc` sweeps expired serves (also runs before every `serve`).
+
 ## [0.3.29] - 2026-07-10
 
 ### Changed

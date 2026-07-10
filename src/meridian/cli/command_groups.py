@@ -132,6 +132,12 @@ _GROUP_HELP: dict[str, GroupHelp] = {
         long_help='Mermaid diagram validation: extract and check diagram syntax in\nmarkdown files and standalone .mmd/.mermaid files.',
         examples=(('meridian mermaid check', ''), ('meridian mermaid check docs/', ''), ('meridian mermaid check diagram.mmd', '')),
     ),
+    "artifact": GroupHelp(
+        summary='Share static artifacts over Tailscale.',
+        long_help='Serve a local directory through Tailscale with automatic expiry and surgical cleanup.',
+        examples=(('meridian artifact serve .', ''), ('meridian artifact list', '')),
+        agent_subcommands=('serve', 'list', 'stop', 'gc'),
+    ),
     "telemetry": GroupHelp(
         summary='Telemetry inspection: tail, query, and status over local segments.',
         long_help='Telemetry inspection: tail, query, and status over local segments.\n\nNote: Rootless MCP stdio server processes write telemetry to stderr only and are not visible in local segment readers.',
@@ -272,6 +278,14 @@ COMMAND_GROUP_SPECS: dict[str, CommandGroupSpec] = {
         help=_GROUP_HELP["mermaid"],
         human_root_order=11,
         registration_bucket='mermaid',
+        has_group_app=True,
+    ),
+    "artifact": CommandGroupSpec(
+        help=_GROUP_HELP["artifact"],
+        agent_root_description='Share a directory as a temporary Tailscale URL for humans or other agents.',
+        agent_root=True,
+        human_root_order=17,
+        registration_bucket='artifact',
         has_group_app=True,
     ),
     "telemetry": CommandGroupSpec(
