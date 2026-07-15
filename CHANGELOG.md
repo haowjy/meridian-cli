@@ -10,6 +10,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 - Phase 0 drain characterization now uses observable effects and fake clocks.
+- Resident completion now supplies reconciled-tree evidence, resident precedence/control,
+  and canonical descendant cleanup to the shared coordinator.
 
 ### Fixed
 - Streaming drains no longer dispatch or fan out events whose history write failed.
