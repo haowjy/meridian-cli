@@ -63,6 +63,7 @@ class CompletionCoordinator:
         self._deadline_latched = False
         self._stabilization_at: float | None = None
         self._stabilization_generation: int | None = None
+        self._invalidated_stabilization_at: float | None = None
         self._active_turn = False
         self._cleanup_attempted = False
         self._cleanup_report: CleanupReport | None = None
@@ -141,23 +142,21 @@ class CompletionCoordinator:
     async def observe_event(self, event: HarnessEvent, transition: str | None) -> bool:
         self.note_activity_transition(transition)
         decision = await self._evidence.observe_event(event, transition)
+        if not decision.duplicate_canonical_event and self._evaluate_without_candidate:
+            self._refresh_profile_deadline()
         return decision.duplicate_canonical_event
 
     def note_event_persisted(self, event: HarnessEvent) -> DrainLoopDecision:
         decision = self._evidence.note_event_persisted(event)
         self._latch_evidence_decision(decision)
+        if decision.activity is not None and self._phase == "stabilizing":
+            self._invalidated_stabilization_at = self._stabilization_at
+            self._phase = "waiting"
+            self._stabilization_at = None
+            self._stabilization_generation = None
         if decision.failure is not None:
             return self._evaluate_post_persist_failure()
         return DrainLoopDecision()
-
-    def cancel_stabilization(self) -> None:
-        """Invalidate only the current quiet window while retaining its candidate."""
-
-        if self._phase != "stabilizing":
-            return
-        self._phase = "waiting"
-        self._stabilization_at = None
-        self._stabilization_generation = None
 
     async def handle_terminal_event(
         self,
@@ -168,11 +167,12 @@ class CompletionCoordinator:
         del event
         if self._terminal_published:
             return DrainTerminalDecision()
-        if action.terminate and outcome.status == "succeeded":
+        if outcome.status == "succeeded":
             self._candidate = outcome
             self._active_turn = False
-            self._phase = "assessing"
-            return await self._evaluate_terminal(outcome, action)
+            if action.terminate:
+                self._phase = "assessing"
+                return await self._evaluate_terminal(outcome, action)
         return await self._evaluate_terminal(outcome, action, assess=False)
 
     async def handle_timeout(self) -> DrainLoopDecision:
@@ -306,6 +306,7 @@ class CompletionCoordinator:
     def _clear_pending_evidence_decision(self) -> None:
         self._pending_evidence_activity = None
         self._pending_evidence_failure = None
+        self._invalidated_stabilization_at = None
 
     async def _fresh_assessment(self, trigger: AssessmentTrigger) -> WorkAssessment:
         prior_phase = self._phase
@@ -338,13 +339,25 @@ class CompletionCoordinator:
             return self._publish(outcome)
         if decision.action == "stabilize":
             assessment = self._assessment
-            if not fresh_assessment or assessment is None or assessment.disposition != "ready":
+            preserving = (
+                self._phase == "stabilizing"
+                and self._stabilization_at is not None
+                and not decision.restart_stabilization
+            )
+            if (
+                not fresh_assessment
+                or assessment is None
+                or (assessment.disposition != "ready" and not preserving)
+            ):
                 raise RuntimeError("stabilization requires a fresh ready assessment")
             continuing = (
-                not decision.restart_stabilization
-                and self._phase == "stabilizing"
-                and self._stabilization_generation == assessment.generation
-                and self._stabilization_at is not None
+                preserving
+                or (
+                    not decision.restart_stabilization
+                    and self._phase == "stabilizing"
+                    and self._stabilization_generation == assessment.generation
+                    and self._stabilization_at is not None
+                )
             )
             if not continuing:
                 self._stabilization_generation = assessment.generation
@@ -376,6 +389,7 @@ class CompletionCoordinator:
         self._deadline_at = None
         self._stabilization_at = None
         self._stabilization_generation = None
+        self._invalidated_stabilization_at = None
         assessment = self._assessment or WorkAssessment(
             disposition="unknown",
             blockers=(),
@@ -400,6 +414,7 @@ class CompletionCoordinator:
         self._deadline_at = None
         self._stabilization_at = None
         self._stabilization_generation = None
+        self._invalidated_stabilization_at = None
         return DrainLoopDecision(recorded_outcome=outcome)
 
     def _reset_cycle(self) -> None:
@@ -410,6 +425,7 @@ class CompletionCoordinator:
         self._deadline_latched = False
         self._stabilization_at = None
         self._stabilization_generation = None
+        self._invalidated_stabilization_at = None
         self._active_turn = False
         self._cleanup_attempted = False
         self._cleanup_report = None
@@ -421,7 +437,18 @@ class CompletionCoordinator:
         return self._is_due(self._profile.next_nudge_at(self.state, assessment), now)
 
     def _stabilization_elapsed(self, now: float) -> bool:
-        return self._is_due(self._stabilization_at, now)
+        return self._is_due(
+            self._stabilization_at or self._invalidated_stabilization_at,
+            now,
+        )
+
+    def _refresh_profile_deadline(self) -> None:
+        self._deadline_at = self._profile.deadline_for(
+            ProfileDecision(action="wait"),
+            self._clock(),
+        )
+        if self._deadline_at is not None and self._phase == "running":
+            self._phase = "waiting"
 
     @staticmethod
     def _is_due(due_at: float | None, now: float) -> bool:

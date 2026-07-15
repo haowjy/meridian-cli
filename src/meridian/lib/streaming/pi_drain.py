@@ -9,8 +9,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from pydantic import ValidationError
-
 from meridian.lib.core.domain import SpawnStatus
 from meridian.lib.core.spawn_lifecycle import is_active_spawn_status
 from meridian.lib.core.types import SpawnId
@@ -133,6 +131,9 @@ class _PiCompletionEvidence:
             self.quiescence_tracker.mark_turn_active()
         elif transition == "idle":
             await self.quiescence_tracker.mark_idle()
+        profile = self._profile
+        if profile is not None:
+            profile.after_observed_event(transition)
         return EvidenceEventDecision()
 
     def note_event_persisted(self, event: HarnessEvent) -> EvidenceEventDecision:
@@ -154,14 +155,8 @@ class _PiCompletionEvidence:
             trigger == "timeout" and profile is not None and profile.micro_drain_active
         ):
             await self.quiescence_tracker.refresh_disk_state()
-        store_failure = self._store_read_failure()
-        if store_failure is not None:
-            return WorkAssessment(
-                disposition="unknown",
-                blockers=(),
-                generation=self._next_generation(("unknown", store_failure.detail)),
-                failure=store_failure,
-            )
+        if trigger == "aux_wake" and profile is not None:
+            profile.after_disk_change()
         try:
             blockers = self._blockers()
         except Exception as exc:
@@ -200,6 +195,9 @@ class _PiCompletionEvidence:
     async def handle_due(self) -> EvidenceEventDecision:
         self._next_due_at = None
         await self.quiescence_tracker.refresh_disk_state()
+        profile = self._profile
+        if profile is not None:
+            profile.after_disk_change()
         return EvidenceEventDecision()
 
     def wants_aux_wake(self) -> bool:
@@ -208,9 +206,6 @@ class _PiCompletionEvidence:
 
     async def wait_for_change(self) -> None:
         await self.quiescence_tracker.wait_for_disk_change()
-
-    async def refresh_disk_state(self) -> None:
-        await self.quiescence_tracker.refresh_disk_state()
 
     def is_quiescent(self) -> bool:
         return (
@@ -259,19 +254,6 @@ class _PiCompletionEvidence:
         if not blockers and not self.quiescence_tracker.is_quiescent():
             blockers.append(DiagnosticBlocker(source="profile", code="pi_disk_notification"))
         return tuple(blockers)
-
-    def _store_read_failure(self) -> EvidenceFailure | None:
-        from meridian.lib.state import spawn_store
-
-        try:
-            spawn_store.list_spawns(self.runtime_root)
-        except ValidationError:
-            # Pi's current raw direct-child authority admits partial legacy rows.
-            # Invalid rows therefore remain absent from this health probe in Phase 1.
-            return None
-        except Exception as exc:
-            return EvidenceFailure(code="pi_store_read_failed", detail=str(exc))
-        return None
 
     def _next_generation(self, signature: object) -> int:
         if signature != self._last_signature:
@@ -1026,18 +1008,10 @@ class PiDrainCoordinator:
         return self._coordinator.next_timeout()
 
     async def observe_event(self, event: HarnessEvent, transition: str | None) -> bool:
-        duplicate = await self._coordinator.observe_event(event, transition)
-        if not duplicate:
-            self._profile.after_observed_event(transition)
-            self._sync_profile_deadline()
-        return duplicate
+        return await self._coordinator.observe_event(event, transition)
 
     def note_event_persisted(self, event: HarnessEvent) -> DrainLoopDecision:
-        micro_drain_active = self._profile.micro_drain_active
-        decision = self._coordinator.note_event_persisted(event)
-        if micro_drain_active and decision.recorded_outcome is None:
-            self._coordinator.cancel_stabilization()
-        return decision
+        return self._coordinator.note_event_persisted(event)
 
     async def handle_terminal_event(
         self,
@@ -1046,11 +1020,7 @@ class PiDrainCoordinator:
         action: DrainAction,
     ) -> DrainTerminalDecision:
         self._profile.observe_terminal_event(event, outcome)
-        decision = await self._coordinator.handle_terminal_event(event, outcome, action)
-        if outcome.status == "succeeded" and not action.terminate:
-            self._coordinator.pending_outcome = outcome
-        self._sync_profile_deadline()
-        return decision
+        return await self._coordinator.handle_terminal_event(event, outcome, action)
 
     async def handle_timeout(
         self,
@@ -1074,9 +1044,7 @@ class PiDrainCoordinator:
         if self._coordinator.state.phase == "finalized":
             failure = self._profile.failure_outcome_after_event()
             return DrainLoopDecision(recorded_outcome=failure)
-        decision = await self._coordinator.after_event()
-        self._sync_profile_deadline()
-        return decision
+        return await self._coordinator.after_event()
 
     def wants_aux_wake(self) -> bool:
         return self._coordinator.wants_aux_wake()
@@ -1085,20 +1053,12 @@ class PiDrainCoordinator:
         await self._coordinator.wait_for_aux_wake()
 
     async def handle_aux_wake(self) -> DrainLoopDecision:
-        return await self.reevaluate_after_disk_change()
+        return await self._coordinator.handle_aux_wake()
 
     async def reevaluate_after_disk_change(self) -> DrainLoopDecision:
         if not self._profile.quiescence_enabled:
             return DrainLoopDecision()
-        if self._coordinator.state.phase == "stabilizing":
-            await self._evidence.refresh_disk_state()
-            self._profile.after_disk_change()
-            self._sync_profile_deadline()
-            return DrainLoopDecision()
-        decision = await self._coordinator.handle_aux_wake()
-        self._profile.after_disk_change()
-        self._sync_profile_deadline()
-        return decision
+        return await self._coordinator.handle_aux_wake()
 
     def handle_close(self, *, intentional_stop: bool) -> TerminalEventOutcome | None:
         return self._coordinator.handle_close(intentional_stop=intentional_stop)
@@ -1131,12 +1091,6 @@ class PiDrainCoordinator:
 
     def classify_outstanding_work(self) -> PiOutstandingWork:
         return self._profile.classify_outstanding_work()
-
-    def _sync_profile_deadline(self) -> None:
-        self._coordinator.deadline_monotonic = self._profile.deadline_for(
-            ProfileDecision(action="wait"),
-            time.monotonic(),
-        )
 
 def _pi_notification_timeout_error(
     pending: PiPendingNotification,
