@@ -4,6 +4,10 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- Streaming completion now has shared evidence, profile, cleanup contracts and a
+  profile-driven coordinator for candidate, deadline, stabilization, and cleanup mechanics.
+
 ### Changed
 - Phase 0 drain characterization now uses observable effects and fake clocks.
 
