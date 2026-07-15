@@ -14,7 +14,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from contextlib import suppress
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
 
@@ -30,7 +32,27 @@ from meridian.lib.state import spawn_store
 # writes without per-child tasks.
 _PENDING_DISK_POLL_INTERVAL_SECONDS = 0.25
 
+# Spawn allocation creates the directory immediately before its atomic state write.
+# A newer numeric ID is causal evidence that an unresolved directory could be a
+# child whose state write is still in flight. Bound that uncertainty using the
+# process monotonic clock so a crashed allocation cannot remain pending forever.
+_UNRESOLVED_CHILD_EXPIRY_SECONDS = 30.0
+
 _QuiescenceDiskSnapshot = tuple[int, int, bool, bool, float | None]
+
+
+@dataclass(frozen=True, slots=True)
+class _ConfirmedChild:
+    pass
+
+
+@dataclass(frozen=True, slots=True)
+class _UnresolvedChild:
+    deadline_monotonic: float
+
+
+_CONFIRMED_CHILD = _ConfirmedChild()
+_TrackedChild = _ConfirmedChild | _UnresolvedChild
 
 
 class PiDiskWatcher:
@@ -48,8 +70,9 @@ class PiDiskWatcher:
         self._tracked_bash_bg = False
         self._last_notification_ts: float | None = None
         self._tasks: list[asyncio.Task[None]] = []
-        self._child_spawn_ids: set[str] = set()
-        self._candidate_child_spawn_ids: set[str] = set()
+        # Keeping confirmed children and unresolved candidates in one typed
+        # collection prevents candidate membership and expiry from drifting.
+        self._child_spawns: dict[str, _TrackedChild] = {}
         self._state_changed = asyncio.Event()
         self._change_generation = 0
         self._delivered_change_generation = 0
@@ -89,7 +112,7 @@ class PiDiskWatcher:
             event = self._state_changed
             poll_interval = (
                 _PENDING_DISK_POLL_INTERVAL_SECONDS
-                if self._pending_child_spawns or self._candidate_child_spawn_ids
+                if self._pending_child_spawns or self._has_unresolved_candidates()
                 else None
             )
             if poll_interval is not None:
@@ -114,7 +137,7 @@ class PiDiskWatcher:
     def _quiescence_disk_snapshot(self) -> _QuiescenceDiskSnapshot:
         return (
             self._pending_child_spawn_count,
-            len(self._candidate_child_spawn_ids),
+            self._unresolved_candidate_count(),
             self._pending_child_spawns,
             self._tracked_bash_bg,
             self._last_notification_ts,
@@ -162,20 +185,19 @@ class PiDiskWatcher:
                     path.parent == self._spawns_dir
                     and path.name.startswith("p")
                     and path.name != self._current_spawn_id
-                    and path.name not in self._child_spawn_ids
+                    and path.name not in self._child_spawns
                     and path.is_dir()
                 ):
                     # If state.json isn't written yet, force_rescan() at next idle catches it.
                     state_path = path / "state.json"
                     data = _read_json_object(state_path)
                     if data.get("parent_id") == self._current_spawn_id:
-                        self._candidate_child_spawn_ids.discard(path.name)
-                        self._child_spawn_ids.add(path.name)
+                        self._child_spawns[path.name] = _CONFIRMED_CHILD
                         found_new = True
                     elif spawn_store.is_spawn_id_shape(path.name) and (
                         not state_path.exists() or not data
-                    ):
-                        self._candidate_child_spawn_ids.add(path.name)
+                    ) and self._is_newer_numeric_spawn_id(path.name):
+                        self._admit_unresolved_candidate(path.name)
                         found_new = True
             if found_new:
                 self._refresh_cached_state()
@@ -185,7 +207,7 @@ class PiDiskWatcher:
             self._refresh_cached_state()
 
     def _discover_child_spawns(self) -> None:
-        """Scan spawns/ for children not yet in _child_spawn_ids.
+        """Scan spawns/ for children not yet in _child_spawns.
 
         O(N) on first run, near-free after (skips known children).
         Also called on every force_rescan() to catch directories missed
@@ -198,42 +220,71 @@ class PiDiskWatcher:
                 continue
             if child.name == self._current_spawn_id:
                 continue
-            if child.name in self._child_spawn_ids:
+            if child.name in self._child_spawns:
                 continue
             state_path = child / "state.json"
             data = _read_json_object(state_path)
             parent_id = data.get("parent_id")
             if parent_id == self._current_spawn_id:
-                self._candidate_child_spawn_ids.discard(child.name)
-                self._child_spawn_ids.add(child.name)
+                self._child_spawns[child.name] = _CONFIRMED_CHILD
             elif spawn_store.is_spawn_id_shape(child.name) and (
                 not state_path.exists() or not data
-            ):
-                self._candidate_child_spawn_ids.add(child.name)
+            ) and self._is_newer_numeric_spawn_id(child.name):
+                self._admit_unresolved_candidate(child.name)
 
     def _resolve_candidate_child_spawns(self) -> None:
-        for spawn_id in list(self._candidate_child_spawn_ids):
+        for spawn_id, child in list(self._child_spawns.items()):
+            if isinstance(child, _ConfirmedChild):
+                continue
             state_path = self._spawns_dir / spawn_id / "state.json"
             data = _read_json_object(state_path)
             parent_id = data.get("parent_id")
             if parent_id == self._current_spawn_id:
-                self._candidate_child_spawn_ids.discard(spawn_id)
-                self._child_spawn_ids.add(spawn_id)
+                self._child_spawns[spawn_id] = _CONFIRMED_CHILD
             elif not state_path.parent.exists() or (state_path.exists() and data):
-                self._candidate_child_spawn_ids.discard(spawn_id)
+                del self._child_spawns[spawn_id]
 
     def _scan_pending_child_spawn_count(self) -> int:
         count = 0
-        for spawn_id in list(self._child_spawn_ids):
+        now_monotonic = time.monotonic()
+        for spawn_id, child in list(self._child_spawns.items()):
+            if isinstance(child, _UnresolvedChild):
+                if now_monotonic < child.deadline_monotonic:
+                    count += 1
+                continue
             state_path = self._spawns_dir / spawn_id / "state.json"
             data = _read_json_object(state_path)
             if data.get("parent_id") != self._current_spawn_id:
-                self._child_spawn_ids.discard(spawn_id)
+                del self._child_spawns[spawn_id]
                 continue
             status = data.get("status")
             if not isinstance(status, str) or status not in TERMINAL_SPAWN_STATUSES:
                 count += 1
-        return count + len(self._candidate_child_spawn_ids)
+        return count
+
+    def _is_newer_numeric_spawn_id(self, spawn_id: str) -> bool:
+        if not spawn_store.is_spawn_id_shape(self._current_spawn_id):
+            return False
+        return int(spawn_id[1:]) > int(self._current_spawn_id[1:])
+
+    def _admit_unresolved_candidate(self, spawn_id: str) -> None:
+        self._child_spawns.setdefault(
+            spawn_id,
+            _UnresolvedChild(
+                deadline_monotonic=time.monotonic() + _UNRESOLVED_CHILD_EXPIRY_SECONDS
+            ),
+        )
+
+    def _has_unresolved_candidates(self) -> bool:
+        return self._unresolved_candidate_count() > 0
+
+    def _unresolved_candidate_count(self) -> int:
+        now_monotonic = time.monotonic()
+        return sum(
+            isinstance(child, _UnresolvedChild)
+            and now_monotonic < child.deadline_monotonic
+            for child in self._child_spawns.values()
+        )
 
     def _scan_tracked_bash_bg(self) -> bool:
         data = _read_json_object(self._bash_records_path)

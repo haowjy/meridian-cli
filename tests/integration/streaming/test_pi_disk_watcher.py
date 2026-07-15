@@ -40,7 +40,7 @@ def test_discover_only_finds_own_children(tmp_path: Path) -> None:
     watcher = PiDiskWatcher(tmp_path, parent_id)
     watcher._discover_child_spawns()
 
-    assert watcher._child_spawn_ids == {"p-child"}
+    assert set(watcher._child_spawns) == {"p-child"}
 
 
 def test_discover_skips_terminal_children_in_count(tmp_path: Path) -> None:
@@ -61,7 +61,7 @@ def test_discover_skips_terminal_children_in_count(tmp_path: Path) -> None:
     watcher._discover_child_spawns()
     count = watcher._scan_pending_child_spawn_count()
 
-    assert watcher._child_spawn_ids == {"p-running", "p-done"}
+    assert set(watcher._child_spawns) == {"p-running", "p-done"}
     assert count == 1
 
 
@@ -115,7 +115,7 @@ async def test_wait_for_change_polls_late_child_state_after_directory_event(
         "meridian.lib.streaming.disk_watcher._PENDING_DISK_POLL_INTERVAL_SECONDS",
         0.05,
     )
-    parent_id = SpawnId("p-parent")
+    parent_id = SpawnId("p122")
     child_dir = tmp_path / "spawns" / "p123"
 
     watcher = PiDiskWatcher(tmp_path, parent_id)
@@ -140,7 +140,7 @@ async def test_wait_for_change_polls_late_child_state_after_directory_event(
 async def test_force_rescan_tracks_unresolved_child_directory_as_pending(
     tmp_path: Path,
 ) -> None:
-    parent_id = SpawnId("p-parent")
+    parent_id = SpawnId("p122")
     child_dir = tmp_path / "spawns" / "p123"
 
     watcher = PiDiskWatcher(tmp_path, parent_id)
@@ -164,10 +164,90 @@ async def test_force_rescan_tracks_unresolved_child_directory_as_pending(
 
 
 @pytest.mark.asyncio
+async def test_start_ignores_older_unresolved_dir_but_tracks_newer_child_race(
+    tmp_path: Path,
+) -> None:
+    parent_id = SpawnId("p2984")
+    spawns_dir = tmp_path / "spawns"
+    preexisting_dir = spawns_dir / "p2983"
+    preexisting_dir.mkdir(parents=True)
+    (preexisting_dir / "state.lock").touch()
+
+    watcher = PiDiskWatcher(tmp_path, parent_id)
+    await watcher.start()
+    try:
+        assert watcher.has_pending_child_spawns() is False
+        assert watcher.pending_child_spawn_count() == 0
+
+        new_child_dir = spawns_dir / "p2985"
+        new_child_dir.mkdir()
+        (new_child_dir / "state.lock").touch()
+        await watcher.force_rescan()
+
+        assert watcher.has_pending_child_spawns() is True
+        assert watcher.pending_child_spawn_count() == 1
+
+        _write_json(
+            new_child_dir / "state.json",
+            {"id": "p2985", "parent_id": str(parent_id), "status": "running"},
+        )
+        await watcher.force_rescan()
+
+        assert watcher.has_pending_child_spawns() is True
+        assert watcher.pending_child_spawn_count() == 1
+    finally:
+        await watcher.stop()
+
+
+@pytest.mark.asyncio
+async def test_unresolved_child_candidate_expires(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monotonic_now = [100.0]
+    monkeypatch.setattr(
+        "meridian.lib.streaming.disk_watcher.time.monotonic",
+        lambda: monotonic_now[0],
+    )
+    monkeypatch.setattr(
+        "meridian.lib.streaming.disk_watcher.time.time",
+        lambda: 10_000_000.0,
+    )
+    parent_id = SpawnId("p2984")
+    child_dir = tmp_path / "spawns" / "p2985"
+
+    watcher = PiDiskWatcher(tmp_path, parent_id)
+    await watcher.start()
+    try:
+        child_dir.mkdir()
+        await watcher.force_rescan()
+        assert watcher.pending_child_spawn_count() == 1
+
+        # Wall-clock changes do not affect the candidate's lifetime.
+        monkeypatch.setattr(
+            "meridian.lib.streaming.disk_watcher.time.time",
+            lambda: -10_000_000.0,
+        )
+        await watcher.force_rescan()
+        assert watcher.pending_child_spawn_count() == 1
+
+        monotonic_now[0] = 131.0
+        await watcher.force_rescan()
+        assert watcher.pending_child_spawn_count() == 0
+
+        # An expired directory stays known and is not admitted again on rescan.
+        monotonic_now[0] = 132.0
+        await watcher.force_rescan()
+        assert watcher.pending_child_spawn_count() == 0
+    finally:
+        await watcher.stop()
+
+
+@pytest.mark.asyncio
 async def test_force_rescan_tracks_empty_child_state_as_unresolved(
     tmp_path: Path,
 ) -> None:
-    parent_id = SpawnId("p-parent")
+    parent_id = SpawnId("p122")
     child_state = tmp_path / "spawns" / "p123" / "state.json"
     _write_json(child_state, {})
 
@@ -184,7 +264,7 @@ async def test_force_rescan_tracks_empty_child_state_as_unresolved(
 async def test_candidate_child_directory_deleted_clears_pending(
     tmp_path: Path,
 ) -> None:
-    parent_id = SpawnId("p-parent")
+    parent_id = SpawnId("p122")
     child_dir = tmp_path / "spawns" / "p123"
 
     watcher = PiDiskWatcher(tmp_path, parent_id)
@@ -342,7 +422,7 @@ async def test_no_watcher_tasks_for_non_child_spawns(tmp_path: Path) -> None:
         await watcher.force_rescan()
 
         assert len(watcher._tasks) == baseline_task_count
-        assert watcher._child_spawn_ids == set()
+        assert watcher._child_spawns == {}
         assert watcher.has_pending_child_spawns() is False
     finally:
         await watcher.stop()
@@ -351,15 +431,17 @@ async def test_no_watcher_tasks_for_non_child_spawns(tmp_path: Path) -> None:
 @pytest.mark.asyncio
 async def test_candidate_resolves_to_wrong_parent_is_discarded(tmp_path: Path) -> None:
     """Candidate dir whose state.json resolves to a different parent is discarded, not pending."""
-    parent_id = SpawnId("p-parent")
+    parent_id = SpawnId("p122")
     child_dir = tmp_path / "spawns" / "p123"
-
-    # Directory exists but no state.json yet — numeric name qualifies as a candidate.
-    child_dir.mkdir(parents=True)
 
     watcher = PiDiskWatcher(tmp_path, parent_id)
     await watcher.start()
     try:
+        # A new directory without state.json qualifies as a candidate while its
+        # atomic state write is still pending.
+        child_dir.mkdir(parents=True)
+        await watcher.force_rescan()
+
         # Candidate should be tracked as pending while state is unresolved.
         assert watcher.has_pending_child_spawns() is True
         assert watcher.pending_child_spawn_count() == 1
@@ -374,7 +456,6 @@ async def test_candidate_resolves_to_wrong_parent_is_discarded(tmp_path: Path) -
         # Candidate must be discarded — it belongs to another parent.
         assert watcher.has_pending_child_spawns() is False
         assert watcher.pending_child_spawn_count() == 0
-        assert "p123" not in watcher._candidate_child_spawn_ids
-        assert "p123" not in watcher._child_spawn_ids
+        assert "p123" not in watcher._child_spawns
     finally:
         await watcher.stop()

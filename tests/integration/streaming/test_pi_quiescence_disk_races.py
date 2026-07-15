@@ -174,6 +174,51 @@ async def _noop_terminate(
 
 
 @pytest.mark.asyncio
+async def test_child_wave_timeout_fails_when_cleanup_finishes(tmp_path: Path) -> None:
+    spawn_id = SpawnId("p-child-wave-single-timeout")
+    cleanup_reasons: list[str] = []
+
+    async def _record_cleanup(
+        tracker: PiSubspawnTracker,
+        reason: str,
+    ) -> None:
+        _ = tracker
+        cleanup_reasons.append(reason)
+
+    started = await _started_micro_drain_coordinator(
+        tmp_path,
+        spawn_id=spawn_id,
+        child_wave_timeout_seconds=0.01,
+        start_micro_drain=False,
+    )
+
+    try:
+        await started.coordinator.observe_event(
+            _pi_event(
+                "meridian.subspawn.start",
+                {
+                    "schema_version": 1,
+                    "subspawn_id": "j-stuck-child",
+                    "correlation_id": "j-stuck-child",
+                    "wait_policy": "tracked",
+                },
+            ),
+            None,
+        )
+        await started.coordinator.observe_event(_pi_event("agent_end", {}), "idle")
+        await asyncio.sleep(0.02)
+
+        decision = await started.coordinator.handle_timeout(_record_cleanup)
+
+        assert cleanup_reasons == ["pi_child_wave_timeout"]
+        assert decision.recorded_outcome is not None
+        assert decision.recorded_outcome.status == "failed"
+        assert decision.recorded_outcome.error == "pi_child_wave_timeout"
+    finally:
+        await started.coordinator.stop()
+
+
+@pytest.mark.asyncio
 async def test_pi_non_spawn_background_only_nudges_after_idle_delay(tmp_path: Path) -> None:
     spawn_id = SpawnId("p-non-spawn-nudge")
     sent_messages: list[str] = []
@@ -524,7 +569,7 @@ async def test_micro_drain_recheck_preserves_idle_epoch_for_notifications(
 async def test_micro_drain_cancel_arms_child_wave_for_rescan_discovered_child(
     tmp_path: Path,
 ) -> None:
-    spawn_id = SpawnId("p-micro-drain-child-wave")
+    spawn_id = SpawnId("p122")
     started = await _started_micro_drain_coordinator(
         tmp_path,
         spawn_id=spawn_id,

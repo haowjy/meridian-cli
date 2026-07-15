@@ -42,12 +42,7 @@ if TYPE_CHECKING:
     from meridian.lib.launch.launch_types import ResolvedLaunchSpec
     from meridian.lib.streaming.spawn_session import DrainOutcome
 
-_PI_NOTIFICATION_COMPLETED_EVENTS = pi_lifecycle.PI_NOTIFICATION_COMPLETED_EVENTS
-_PI_NOTIFICATION_DELIVERED_EVENTS = pi_lifecycle.PI_NOTIFICATION_DELIVERED_EVENTS
-_PI_NOTIFICATION_FAILED_EVENTS = pi_lifecycle.PI_NOTIFICATION_FAILED_EVENTS
-_PI_NOTIFICATION_QUEUED_EVENTS = pi_lifecycle.PI_NOTIFICATION_QUEUED_EVENTS
 _PI_PHASE_EVENT_TYPE = pi_lifecycle.PI_PHASE_EVENT_TYPE
-_event_label_candidates = pi_lifecycle.pi_lifecycle_event_label_candidates
 
 PI_MICRO_DRAIN_TIMEOUT_SECONDS: float = 0.05
 PI_DONE_NUDGE_IDLE_DELAY_SECONDS: float = 5.0
@@ -92,9 +87,6 @@ class PiDrainCoordinator:
     waiting_notification_count: int | None = None
     child_wave_deadline_monotonic: float | None = None
     child_wave_started_monotonic: float | None = None
-    child_wave_timed_out: bool = False
-    child_wave_timeout_error: str | None = None
-    child_wave_timeout_followup_deadline: float | None = None
     tracked_cleanup_reason: str | None = None
     terminate_children: TerminatePiChildren | None = None
     send_done_nudge: SendPiDoneNudge | None = None
@@ -166,10 +158,6 @@ class PiDrainCoordinator:
         if done_nudge_remaining is not None:
             next_timeout = _min_timeout(next_timeout, done_nudge_remaining)
 
-        followup_remaining = self._followup_remaining(now_monotonic)
-        if followup_remaining is not None:
-            next_timeout = _min_timeout(next_timeout, followup_remaining)
-
         return next_timeout
 
     async def handle_timeout(
@@ -206,26 +194,19 @@ class PiDrainCoordinator:
             if terminate_children is None:
                 raise RuntimeError("Pi child timeout cleanup is not configured")
             await self._handle_child_wave_timeout(terminate_children, now_monotonic)
-            return DrainLoopDecision()
+            return DrainLoopDecision(
+                _terminal_outcome(
+                    status="failed",
+                    exit_code=1,
+                    error=_pi_child_wave_timeout_error(),
+                )
+            )
 
         if self._done_nudge_due(now_monotonic):
             self.next_done_nudge_monotonic = now_monotonic + self.done_nudge_interval_seconds
             await self._send_done_nudge()
             return DrainLoopDecision()
 
-        if (
-            self.child_wave_timeout_followup_deadline is not None
-            and now_monotonic >= self.child_wave_timeout_followup_deadline
-            and self.child_wave_timed_out
-            and self.child_wave_timeout_error is not None
-        ):
-            return DrainLoopDecision(
-                _terminal_outcome(
-                    status="failed",
-                    exit_code=1,
-                    error=self.child_wave_timeout_error,
-                )
-            )
         return DrainLoopDecision()
 
     async def observe_event(self, event: HarnessEvent, transition: str | None) -> bool:
@@ -252,14 +233,6 @@ class PiDrainCoordinator:
             await self.quiescence_tracker.mark_idle()
             self._update_idle_waiting_state()
 
-        if (
-            self.child_wave_timed_out
-            and self.child_wave_timeout_error is not None
-            and self._is_followup_signal(event)
-        ):
-            self.child_wave_timed_out = False
-            self.child_wave_timeout_error = None
-            self.child_wave_timeout_followup_deadline = None
         if not self.has_pending_children():
             self._clear_child_wave_timer()
         self._refresh_done_nudge_state()
@@ -332,17 +305,6 @@ class PiDrainCoordinator:
                 status="failed",
                 exit_code=1,
                 error=self.tracker.notification_timeout_error,
-            )
-        if (
-            self.child_wave_timed_out
-            and self.child_wave_timeout_error is not None
-            and self.child_wave_timeout_followup_deadline is not None
-            and time.monotonic() >= self.child_wave_timeout_followup_deadline
-        ):
-            return _terminal_outcome(
-                status="failed",
-                exit_code=1,
-                error=self.child_wave_timeout_error,
             )
         return None
 
@@ -420,8 +382,6 @@ class PiDrainCoordinator:
     def fallback_error_without_recorded_outcome(self) -> str | None:
         if self.tracker.notification_failure_error is not None:
             return self.tracker.notification_failure_error
-        if self.child_wave_timeout_error is not None:
-            return self.child_wave_timeout_error
         return None
 
     async def handle_stream_exit(
@@ -677,14 +637,6 @@ class PiDrainCoordinator:
             timeout_seconds=timeout_seconds,
         )
         self._clear_child_wave_timer()
-        self.child_wave_timed_out = True
-        self.child_wave_timeout_error = _pi_child_wave_timeout_error()
-        followup_timeout_seconds = (
-            float(self.child_wave_timeout_seconds)
-            if self.child_wave_timeout_seconds is not None and self.child_wave_timeout_seconds > 0
-            else 300.0
-        )
-        self.child_wave_timeout_followup_deadline = now_monotonic + followup_timeout_seconds
         self.emit_waiting_phases_if_needed()
 
     def _child_wave_remaining(self, now_monotonic: float) -> float | None:
@@ -694,13 +646,6 @@ class PiDrainCoordinator:
             or not self.quiescence_tracker.parent_idle
             or not self.has_pending_children()
         ):
-            return None
-        remaining = deadline - now_monotonic
-        return remaining if remaining > 0 else _PI_TIMEOUT_FLOOR_SECONDS
-
-    def _followup_remaining(self, now_monotonic: float) -> float | None:
-        deadline = self.child_wave_timeout_followup_deadline
-        if deadline is None:
             return None
         remaining = deadline - now_monotonic
         return remaining if remaining > 0 else _PI_TIMEOUT_FLOOR_SECONDS
@@ -716,18 +661,6 @@ class PiDrainCoordinator:
     def _clear_child_wave_timer(self) -> None:
         self.child_wave_deadline_monotonic = None
         self.child_wave_started_monotonic = None
-
-    def _is_followup_signal(self, event: HarnessEvent) -> bool:
-        label_set = set(_event_label_candidates(event))
-        return bool(
-            label_set
-            & (
-                _PI_NOTIFICATION_QUEUED_EVENTS
-                | _PI_NOTIFICATION_DELIVERED_EVENTS
-                | _PI_NOTIFICATION_COMPLETED_EVENTS
-                | _PI_NOTIFICATION_FAILED_EVENTS
-            )
-        )
 
     def _emit(self, phase: str, **payload: object) -> None:
         self.emit_phase(phase=phase, session_role=self.session_role or None, **payload)
