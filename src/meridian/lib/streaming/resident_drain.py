@@ -147,14 +147,15 @@ class _ResidentCompletionProfile:
         self._resident_backend = resident_backend
         self._deadline_seconds = deadline_seconds
         self._clock = clock
-        self._deadline_at: float | None = None
         self._explicit_hold = False
+        self._done_requested = False
         self._awaiting_done = False
         self._next_nudge_at: float | None = None
 
     def consume_directives(self) -> CompletionDirectives:
         signals = consume_resident_signals(self._runtime_root, self._spawn_id)
-        return CompletionDirectives(done=signals.done, rearm=signals.rearm)
+        self._done_requested = self._done_requested or signals.done
+        return CompletionDirectives(done=self._done_requested, rearm=signals.rearm)
 
     def evaluate(self, context: CompletionEvaluation) -> ProfileDecision:
         if context.terminal_action is not None:
@@ -164,9 +165,7 @@ class _ResidentCompletionProfile:
     def deadline_for(self, decision: ProfileDecision, now: float) -> float | None:
         if decision.action not in {"wait", "stabilize"}:
             return None
-        if self._deadline_at is None:
-            self._deadline_at = now + self._deadline_seconds
-        return self._deadline_at
+        return now + self._deadline_seconds
 
     def stabilization_seconds(self) -> float:
         return 0.0
@@ -215,8 +214,8 @@ class _ResidentCompletionProfile:
 
     def clear(self) -> None:
         self.set_awaiting_done(False)
-        self._deadline_at = None
         self._explicit_hold = False
+        self._done_requested = False
         self._next_nudge_at = None
 
     def _evaluate_terminal(self, context: CompletionEvaluation) -> ProfileDecision:
@@ -230,11 +229,18 @@ class _ResidentCompletionProfile:
         if outcome.status != "succeeded":
             self.clear()
             return ProfileDecision(action="fail", outcome=outcome)
+        if context.directives.rearm:
+            self._mark_rearmed(context.now)
+        if context.assessment.disposition == "unknown":
+            self._enter_wait(context.now)
+            return ProfileDecision(
+                action="wait",
+                emit_turn_boundary=True,
+                reset_deadline=context.directives.rearm,
+            )
         if context.directives.done:
             self.clear()
             return ProfileDecision(action="complete", outcome=outcome)
-        if context.directives.rearm:
-            self._mark_rearmed(context.now)
         if context.assessment.disposition != "ready" or self._explicit_hold:
             self._enter_wait(context.now)
             return ProfileDecision(
@@ -248,12 +254,12 @@ class _ResidentCompletionProfile:
     def _evaluate_wait(self, context: CompletionEvaluation) -> ProfileDecision:
         candidate = context.candidate
         assert candidate is not None
-        if context.directives.done:
-            self.clear()
-            return ProfileDecision(action="complete", outcome=candidate)
         rearmed = context.directives.rearm
         if rearmed:
             self._mark_rearmed(context.now)
+        if context.assessment.disposition != "unknown" and context.directives.done:
+            self.clear()
+            return ProfileDecision(action="complete", outcome=candidate)
         if context.deadline_expired and not rearmed:
             self.clear()
             return ProfileDecision(
@@ -270,19 +276,20 @@ class _ResidentCompletionProfile:
         if context.assessment.disposition != "ready":
             return ProfileDecision(action="wait", reset_deadline=rearmed)
         if self._explicit_hold:
-            nudge = self._nudge_urgency(context) if context.profile_timer_due else None
+            nudge = (
+                self._nudge_urgency(context)
+                if context.profile_timer_due and not rearmed
+                else None
+            )
             return ProfileDecision(action="wait", nudge=nudge, reset_deadline=rearmed)
         self.clear()
         return ProfileDecision(action="complete", outcome=candidate)
 
     def _mark_rearmed(self, now: float) -> None:
         self._explicit_hold = True
-        self._deadline_at = now + self._deadline_seconds
         self._next_nudge_at = now + COMPLETION_NUDGE_INTERVAL_SECONDS
 
     def _enter_wait(self, now: float) -> None:
-        if self._deadline_at is None:
-            self._deadline_at = now + self._deadline_seconds
         if self._explicit_hold:
             self._next_nudge_at = now + COMPLETION_NUDGE_INTERVAL_SECONDS
         self.set_awaiting_done(True)
@@ -298,7 +305,8 @@ class _ResidentCompletionProfile:
             return LivenessDecision.BACKEND_DEAD
 
     def _nudge_urgency(self, context: CompletionEvaluation) -> NudgeUrgency:
-        remaining = None if self._deadline_at is None else self._deadline_at - context.now
+        deadline_at = context.state.deadline_at
+        remaining = None if deadline_at is None else deadline_at - context.now
         if remaining is not None and remaining < COMPLETION_NUDGE_INTERVAL_SECONDS:
             return "timeout_soon"
         return "normal"

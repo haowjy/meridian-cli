@@ -253,6 +253,14 @@ class CompletionCoordinator:
         fresh_assessment: bool,
     ) -> DrainLoopDecision:
         now = self._clock()
+        if (
+            decision.action == "complete"
+            and decision.outcome is not None
+            and decision.outcome.status == "succeeded"
+            and self._assessment is not None
+            and self._assessment.disposition == "unknown"
+        ):
+            decision = ProfileDecision(action="wait")
         if decision.action == "clear":
             self._reset_cycle()
             return DrainLoopDecision()
@@ -271,16 +279,24 @@ class CompletionCoordinator:
             assessment = self._assessment
             if not fresh_assessment or assessment is None or assessment.disposition != "ready":
                 raise RuntimeError("stabilization requires a fresh ready assessment")
+            continuing = (
+                self._phase == "stabilizing"
+                and self._stabilization_generation == assessment.generation
+                and self._stabilization_at is not None
+            )
+            if not continuing:
+                self._stabilization_generation = assessment.generation
+                self._stabilization_at = now + self._profile.stabilization_seconds()
             self._phase = "stabilizing"
-            self._stabilization_generation = assessment.generation
-            self._stabilization_at = now + self._profile.stabilization_seconds()
         else:
             self._phase = "waiting"
             self._stabilization_at = None
             self._stabilization_generation = None
         if decision.reset_deadline:
             self._deadline_latched = False
-        self._deadline_at = self._profile.deadline_for(decision, now)
+            self._deadline_at = self._profile.deadline_for(decision, now)
+        elif self._deadline_at is None:
+            self._deadline_at = self._profile.deadline_for(decision, now)
         if decision.nudge is not None:
             try:
                 await self._profile.send_nudge(decision.nudge)
