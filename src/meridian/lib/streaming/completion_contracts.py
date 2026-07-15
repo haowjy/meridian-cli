@@ -79,11 +79,19 @@ class CompletionDirectives:
 
 
 @dataclass(frozen=True)
+class EvidenceActivity:
+    """Opaque completion-relevant activity reported by an evidence source."""
+
+    code: str
+
+
+@dataclass(frozen=True)
 class EvidenceEventDecision:
     """Evidence-source response to an event or source-specific due wake."""
 
     duplicate_canonical_event: bool = False
-    requires_assessment: bool = False
+    activity: EvidenceActivity | None = None
+    failure: EvidenceFailure | None = None
 
 
 @dataclass(frozen=True)
@@ -114,6 +122,8 @@ class CompletionEvaluation:
     candidate: TerminalEventOutcome | None = None
     terminal_outcome: TerminalEventOutcome | None = None
     terminal_action: DrainAction | None = None
+    evidence_activity: EvidenceActivity | None = None
+    evidence_failure: EvidenceFailure | None = None
 
 
 @dataclass(frozen=True)
@@ -209,6 +219,7 @@ __all__ = [
     "CompletionProfile",
     "CompletionState",
     "DiagnosticBlocker",
+    "EvidenceActivity",
     "EvidenceEventDecision",
     "EvidenceFailure",
     "NudgeUrgency",

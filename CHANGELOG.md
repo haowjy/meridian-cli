@@ -20,6 +20,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   one absolute deadline.
 - Resident done signals again complete successful candidates when descendant evidence
   is unavailable.
+- Persisted completion activity now survives a concurrent auxiliary wake, and typed
+  post-persist evidence failures can finalize through profile policy immediately.
 
 ## [0.3.31] - 2026-07-10
 

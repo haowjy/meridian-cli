@@ -81,7 +81,7 @@ class _ResidentCompletionEvidence:
 
     def note_event_persisted(self, event: HarnessEvent) -> EvidenceEventDecision:
         del event
-        return EvidenceEventDecision(requires_assessment=True)
+        return EvidenceEventDecision()
 
     async def assess(self, trigger: AssessmentTrigger) -> WorkAssessment:
         del trigger
@@ -115,7 +115,7 @@ class _ResidentCompletionEvidence:
 
     async def handle_due(self) -> EvidenceEventDecision:
         self._next_due = None
-        return EvidenceEventDecision(requires_assessment=True)
+        return EvidenceEventDecision()
 
     def wants_aux_wake(self) -> bool:
         return False

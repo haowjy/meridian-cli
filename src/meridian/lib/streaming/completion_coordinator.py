@@ -17,6 +17,8 @@ from meridian.lib.streaming.completion_contracts import (
     CompletionPhase,
     CompletionProfile,
     CompletionState,
+    EvidenceActivity,
+    EvidenceEventDecision,
     EvidenceFailure,
     ProfileDecision,
     WorkAssessment,
@@ -63,6 +65,8 @@ class CompletionCoordinator:
         self._cleanup_attempted = False
         self._cleanup_report: CleanupReport | None = None
         self._terminal_published = False
+        self._pending_evidence_activity: EvidenceActivity | None = None
+        self._pending_evidence_failure: EvidenceFailure | None = None
 
     @property
     def state(self) -> CompletionState:
@@ -132,7 +136,10 @@ class CompletionCoordinator:
         return decision.duplicate_canonical_event
 
     def note_event_persisted(self, event: HarnessEvent) -> DrainLoopDecision:
-        self._evidence.note_event_persisted(event)
+        decision = self._evidence.note_event_persisted(event)
+        self._latch_evidence_decision(decision)
+        if decision.failure is not None:
+            return self._evaluate_post_persist_failure()
         return DrainLoopDecision()
 
     async def handle_terminal_event(
@@ -186,6 +193,8 @@ class CompletionCoordinator:
     ) -> DrainTerminalDecision:
         assessment = await self._fresh_assessment("terminal_candidate") if assess else None
         now = self._clock()
+        evidence_activity = self._pending_evidence_activity
+        evidence_failure = self._pending_evidence_failure
         decision = self._profile.evaluate(
             CompletionEvaluation(
                 state=self.state,
@@ -202,8 +211,11 @@ class CompletionCoordinator:
                 candidate=self._candidate,
                 terminal_outcome=outcome,
                 terminal_action=action,
+                evidence_activity=evidence_activity,
+                evidence_failure=evidence_failure,
             )
         )
+        self._clear_pending_evidence_decision()
         loop_decision = await self._apply_decision(decision, fresh_assessment=assess)
         return DrainTerminalDecision(
             recorded_outcome=loop_decision.recorded_outcome,
@@ -216,7 +228,7 @@ class CompletionCoordinator:
         now = self._clock()
         evidence_due = self._is_due(self._evidence.next_due_at(), now)
         if evidence_due:
-            await self._evidence.handle_due()
+            self._latch_evidence_decision(await self._evidence.handle_due())
             trigger = "evidence_due"
         assessment = await self._fresh_assessment(trigger)
         now = self._clock()
@@ -234,9 +246,45 @@ class CompletionCoordinator:
                 profile_timer_due=self._profile_timer_due(now),
                 active_turn=self._active_turn,
                 candidate=self._candidate,
+                evidence_activity=self._pending_evidence_activity,
+                evidence_failure=self._pending_evidence_failure,
             )
         )
+        self._clear_pending_evidence_decision()
         return await self._apply_decision(decision, fresh_assessment=True)
+
+    def _evaluate_post_persist_failure(self) -> DrainLoopDecision:
+        now = self._clock()
+        decision = self._profile.evaluate(
+            CompletionEvaluation(
+                state=self.state,
+                trigger="event",
+                now=now,
+                directives=CompletionDirectives(),
+                assessment=self._assessment or _INITIAL_ASSESSMENT,
+                deadline_expired=self._deadline_latched,
+                stabilization_elapsed=self._stabilization_elapsed(now),
+                profile_timer_due=self._profile_timer_due(now),
+                active_turn=self._active_turn,
+                candidate=self._candidate,
+                evidence_activity=self._pending_evidence_activity,
+                evidence_failure=self._pending_evidence_failure,
+            )
+        )
+        self._clear_pending_evidence_decision()
+        if decision.action != "fail" or decision.outcome is None:
+            raise RuntimeError("post-persist evidence failure must map to terminal failure")
+        return self._publish(decision.outcome)
+
+    def _latch_evidence_decision(self, decision: EvidenceEventDecision) -> None:
+        if decision.activity is not None:
+            self._pending_evidence_activity = decision.activity
+        if decision.failure is not None:
+            self._pending_evidence_failure = decision.failure
+
+    def _clear_pending_evidence_decision(self) -> None:
+        self._pending_evidence_activity = None
+        self._pending_evidence_failure = None
 
     async def _fresh_assessment(self, trigger: AssessmentTrigger) -> WorkAssessment:
         prior_phase = self._phase
@@ -344,6 +392,7 @@ class CompletionCoordinator:
         self._cleanup_attempted = False
         self._cleanup_report = None
         self._terminal_published = False
+        self._clear_pending_evidence_decision()
 
     def _profile_timer_due(self, now: float) -> bool:
         assessment = self._assessment or _INITIAL_ASSESSMENT

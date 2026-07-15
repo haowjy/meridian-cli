@@ -15,6 +15,7 @@ from meridian.lib.streaming.completion_contracts import (
     CompletionEvaluation,
     CompletionState,
     DiagnosticBlocker,
+    EvidenceActivity,
     EvidenceEventDecision,
     EvidenceFailure,
     NudgeUrgency,
@@ -30,6 +31,11 @@ if TYPE_CHECKING:
 
 _SUCCESS = TerminalEventOutcome(status="succeeded", exit_code=0)
 _TIMEOUT = TerminalEventOutcome(status="timed_out", exit_code=1, error="deadline")
+_EVIDENCE_FAILURE = TerminalEventOutcome(
+    status="failed",
+    exit_code=1,
+    error="evidence_failure",
+)
 _TERMINATE = DrainAction(terminate=True, emit_turn_boundary=False)
 
 
@@ -65,6 +71,7 @@ class _Evidence:
         self.assessments = deque(assessments)
         self.last = assessments[-1]
         self.assess_calls: list[AssessmentTrigger] = []
+        self.persisted_decisions: deque[EvidenceEventDecision] = deque()
 
     async def start(self) -> None:
         return
@@ -80,6 +87,8 @@ class _Evidence:
 
     def note_event_persisted(self, event: HarnessEvent) -> EvidenceEventDecision:
         del event
+        if self.persisted_decisions:
+            return self.persisted_decisions.popleft()
         return EvidenceEventDecision()
 
     async def assess(self, trigger: AssessmentTrigger) -> WorkAssessment:
@@ -126,6 +135,8 @@ class _Profile:
         self.evaluations.append(context)
         candidate = context.candidate or context.terminal_outcome
         assert candidate is not None
+        if context.evidence_failure is not None:
+            return ProfileDecision(action="fail", outcome=_EVIDENCE_FAILURE)
         if context.directives.done and context.assessment.disposition != "unknown":
             return ProfileDecision(action="complete", outcome=candidate)
         rearmed = context.directives.rearm
@@ -141,6 +152,8 @@ class _Profile:
         if context.state.phase == "stabilizing":
             if context.assessment.disposition != "ready":
                 return ProfileDecision(action="wait")
+            if context.evidence_activity is not None:
+                return ProfileDecision(action="stabilize", restart_stabilization=True)
             if context.assessment.generation != context.state.stabilization_generation:
                 return ProfileDecision(action="wait")
             if (
@@ -341,18 +354,38 @@ async def test_changed_stabilization_generation_returns_to_waiting() -> None:
 async def test_persisted_event_restarts_same_generation_stabilization_window() -> None:
     clock = FakeClock()
     evidence = _Evidence(_ready(generation=7), _ready(generation=7))
+    evidence.persisted_decisions.append(
+        EvidenceEventDecision(activity=EvidenceActivity(code="persisted_event"))
+    )
     profile = _Profile(stabilization_seconds=2.0)
     coordinator, _ = _coordinator(clock, evidence, profile)
     await coordinator.handle_terminal_event(None, _SUCCESS, _TERMINATE)  # type: ignore[arg-type]
     assert coordinator.state.stabilization_at == 2.0
 
-    clock.advance(1.0)
-    event = await coordinator.after_event()
+    clock.advance(2.0)
+    coordinator.note_event_persisted(None)  # type: ignore[arg-type]
+    event = await coordinator.handle_aux_wake()
 
     assert event.recorded_outcome is None
     assert coordinator.state.phase == "stabilizing"
-    assert coordinator.state.stabilization_at == 3.0
+    assert coordinator.state.stabilization_at == 4.0
     assert coordinator.next_timeout() == pytest.approx(2.0)
+
+
+@pytest.mark.asyncio
+async def test_post_persist_failure_is_mapped_by_profile_synchronously() -> None:
+    clock = FakeClock()
+    failure = EvidenceFailure(code="lifecycle_schema_invalid", detail="version 999")
+    evidence = _Evidence(_ready())
+    evidence.persisted_decisions.append(EvidenceEventDecision(failure=failure))
+    profile = _Profile(stabilization_seconds=2.0)
+    coordinator, _ = _coordinator(clock, evidence, profile)
+    await coordinator.handle_terminal_event(None, _SUCCESS, _TERMINATE)  # type: ignore[arg-type]
+
+    decision = coordinator.note_event_persisted(None)  # type: ignore[arg-type]
+
+    assert decision.recorded_outcome == _EVIDENCE_FAILURE
+    assert profile.evaluations[-1].evidence_failure == failure
 
 
 @pytest.mark.asyncio
