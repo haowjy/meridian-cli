@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator
 from types import SimpleNamespace
 from typing import Any, cast
@@ -12,6 +13,19 @@ import pytest
 from meridian.lib.core.types import SpawnId
 from meridian.lib.harness.connections.base import HarnessConnection, HarnessEvent
 from meridian.lib.state.history import HarnessHistoryWriter, WriteResult
+from meridian.lib.streaming.completion_contracts import (
+    AssessmentTrigger,
+    CleanupReport,
+    CompletionDirectives,
+    CompletionEvaluation,
+    CompletionState,
+    EvidenceActivity,
+    EvidenceEventDecision,
+    NudgeUrgency,
+    ProfileDecision,
+    WorkAssessment,
+)
+from meridian.lib.streaming.completion_coordinator import CompletionCoordinator
 from meridian.lib.streaming.drain_coordinator import (
     DrainCoordinator,
     DrainExitDecision,
@@ -21,6 +35,7 @@ from meridian.lib.streaming.drain_coordinator import (
 from meridian.lib.streaming.event_observers import EventObserverRegistry
 from meridian.lib.streaming.spawn_drain_loop import SpawnDrainLoop
 from meridian.lib.streaming.spawn_session import DrainOutcome, SpawnSession
+from tests.support.fakes import FakeClock
 
 _SPAWN_ID = SpawnId("p-persist-order")
 Call = tuple[str, HarnessEvent]
@@ -78,6 +93,117 @@ class _Coordinator:
 
     async def handle_stream_exit(self, recorded_outcome: Any) -> DrainExitDecision:
         return DrainExitDecision(recorded_outcome=recorded_outcome)
+
+
+class _ConcurrentWakeReceiver:
+    primary_event_scope = None
+
+    def __init__(self, wake: asyncio.Event) -> None:
+        self._wake = wake
+
+    async def events(self) -> AsyncIterator[HarnessEvent]:
+        yield HarnessEvent(event_type="turn/completed", harness_id="codex", payload={})
+        await self._wake.wait()
+        yield HarnessEvent(event_type="message", harness_id="codex", payload={})
+
+
+class _StabilizingEvidence:
+    def __init__(self, wake: asyncio.Event, candidate_started: asyncio.Event) -> None:
+        self._wake = wake
+        self._candidate_started = candidate_started
+        self.aux_waiting = asyncio.Event()
+
+    async def start(self) -> None:
+        return
+
+    async def stop(self) -> None:
+        return
+
+    async def observe_event(
+        self,
+        event: HarnessEvent,
+        transition: str | None,
+    ) -> EvidenceEventDecision:
+        del event, transition
+        return EvidenceEventDecision()
+
+    def note_event_persisted(self, event: HarnessEvent) -> EvidenceEventDecision:
+        if event.event_type == "message":
+            return EvidenceEventDecision(
+                activity=EvidenceActivity(code="persisted_event")
+            )
+        return EvidenceEventDecision()
+
+    async def assess(self, trigger: AssessmentTrigger) -> WorkAssessment:
+        del trigger
+        return WorkAssessment(disposition="ready", blockers=(), generation=1)
+
+    def next_due_at(self) -> float | None:
+        return None
+
+    async def handle_due(self) -> EvidenceEventDecision:
+        return EvidenceEventDecision()
+
+    def wants_aux_wake(self) -> bool:
+        return self._candidate_started.is_set()
+
+    async def wait_for_change(self) -> None:
+        self.aux_waiting.set()
+        await self._wake.wait()
+
+
+class _StabilizingProfile:
+    def __init__(self, candidate_started: asyncio.Event) -> None:
+        self._candidate_started = candidate_started
+        self.evaluations: list[CompletionEvaluation] = []
+
+    def consume_directives(self) -> CompletionDirectives:
+        return CompletionDirectives()
+
+    def evaluate(self, context: CompletionEvaluation) -> ProfileDecision:
+        self.evaluations.append(context)
+        candidate = context.candidate or context.terminal_outcome
+        assert candidate is not None
+        if context.terminal_outcome is not None:
+            self._candidate_started.set()
+        if context.state.phase == "stabilizing":
+            if context.evidence_activity is not None:
+                return ProfileDecision(action="stabilize", restart_stabilization=True)
+            if context.stabilization_elapsed:
+                return ProfileDecision(action="complete", outcome=candidate)
+        return ProfileDecision(action="stabilize")
+
+    def deadline_for(self, decision: ProfileDecision, now: float) -> float | None:
+        del decision, now
+        return None
+
+    def stabilization_seconds(self) -> float:
+        return 2.0
+
+    def close_outcome(
+        self,
+        state: CompletionState,
+        intentional_stop: bool,
+    ) -> None:
+        del state, intentional_stop
+        return None
+
+    def next_nudge_at(
+        self,
+        state: CompletionState,
+        assessment: WorkAssessment,
+    ) -> float | None:
+        del state, assessment
+        return None
+
+    async def send_nudge(self, urgency: NudgeUrgency) -> None:
+        del urgency
+
+
+class _NoopCompletionCleanup:
+    async def cleanup(self, assessment: WorkAssessment, reason: str) -> CleanupReport:
+        del assessment, reason
+        return CleanupReport()
 
 
 async def _run_drain(
@@ -217,3 +343,61 @@ async def test_terminal_frame_history_write_failure_is_not_delivered_or_terminal
         ("fan_out", persisted_after_terminal),
         ("noted", persisted_after_terminal),
     ]
+
+
+@pytest.mark.asyncio
+async def test_persisted_activity_restarts_elapsed_stabilization_before_concurrent_aux(
+) -> None:
+    wake = asyncio.Event()
+    candidate_started = asyncio.Event()
+    clock = FakeClock()
+    evidence = _StabilizingEvidence(wake, candidate_started)
+    profile = _StabilizingProfile(candidate_started)
+    coordinator = CompletionCoordinator(
+        evidence=evidence,
+        profile=profile,
+        cleanup=_NoopCompletionCleanup(),
+        clock=clock.monotonic,
+    )
+    history_writer = _HistoryWriter(
+        [WriteResult(success=True, seq=0), WriteResult(success=True, seq=1)],
+        [],
+    )
+    observers = Mock()
+    loop = SpawnDrainLoop(
+        sessions={},
+        history_writers={_SPAWN_ID: cast("HarnessHistoryWriter", history_writer)},
+        observers=cast("EventObserverRegistry", observers),
+        cleanup_tasks=set(),
+        cleanup_completed_session=AsyncMock(),
+        resolve_completion_future=Mock(),
+        fan_out_event=Mock(),
+        fan_out_turn_boundary=AsyncMock(),
+    )
+    run_task = asyncio.create_task(
+        loop.run(
+            spawn_id=_SPAWN_ID,
+            receiver=cast("HarnessConnection[Any]", _ConcurrentWakeReceiver(wake)),
+            drain_plan=DrainPlan(
+                coordinator=coordinator,
+                aux_wake=coordinator,
+                handle_aux_wake=coordinator.handle_aux_wake,
+            ),
+            tracer=None,
+        )
+    )
+    await asyncio.wait_for(evidence.aux_waiting.wait(), timeout=1.0)
+
+    clock.advance(2.0)
+    wake.set()
+    await asyncio.wait_for(run_task, timeout=1.0)
+
+    aux_evaluation = next(
+        context for context in profile.evaluations if context.trigger == "aux_wake"
+    )
+    assert aux_evaluation.stabilization_elapsed is True
+    assert aux_evaluation.evidence_activity == EvidenceActivity(code="persisted_event")
+    after_event_evaluation = profile.evaluations[-1]
+    assert after_event_evaluation.trigger == "event"
+    assert after_event_evaluation.stabilization_elapsed is False
+    assert after_event_evaluation.state.stabilization_at == 4.0
