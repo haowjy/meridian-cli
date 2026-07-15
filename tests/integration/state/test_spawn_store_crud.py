@@ -334,6 +334,21 @@ def test_list_spawns_filters_v2_rows_and_keeps_listings_promptless(tmp_path: Pat
     assert filtered[0].desc == "desc-2"
 
 
+def test_list_spawns_skips_schema_invalid_row(tmp_path: Path) -> None:
+    runtime_root = _state_root(tmp_path)
+    valid_spawn_id = _start_test_spawn(runtime_root)
+    invalid_spawn_dir = runtime_root / "spawns" / "p999"
+    invalid_spawn_dir.mkdir(parents=True)
+    (invalid_spawn_dir / "state.json").write_text(
+        json.dumps({"id": "p999"}),
+        encoding="utf-8",
+    )
+
+    spawns = list_spawns(runtime_root)
+
+    assert [spawn.id for spawn in spawns] == [valid_spawn_id]
+
+
 def test_spawn_queries_read_v2_state_and_prompt(tmp_path: Path) -> None:
     runtime_root = _state_root(tmp_path)
     p1 = _start_test_spawn(runtime_root)
