@@ -758,10 +758,13 @@ async def test_deadline_returns_timed_out_when_descendant_reap_fails(
     start_row(tmp_path, "p1", HarnessId.CODEX, None)
     connection = FakeResidentConnection(HarnessId.CODEX)
     coordinator = coordinator_with_clock(tmp_path, connection, clock, deadline_seconds=10.0)
+    cleanup_calls = 0
 
     class _FailingService:
         async def cancel_descendants(self, root_id: SpawnId) -> set[str]:
+            nonlocal cleanup_calls
             _ = root_id
+            cleanup_calls += 1
             raise RuntimeError("teardown failed")
 
     monkeypatch.setattr(
@@ -776,6 +779,11 @@ async def test_deadline_returns_timed_out_when_descendant_reap_fails(
     assert decision.recorded_outcome is not None
     assert decision.recorded_outcome.status == "timed_out"
     assert decision.recorded_outcome.error == "resident_deadline_expired"
+    assert cleanup_calls == 1
+
+    later_decision = await coordinator.handle_timeout()
+    assert later_decision.recorded_outcome is None
+    assert cleanup_calls == 1
 
 
 @pytest.mark.asyncio
