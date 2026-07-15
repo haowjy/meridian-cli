@@ -689,11 +689,49 @@ async def test_aux_blocker_cancels_at_original_timeout_then_completion_restarts(
             origin="runner",
         )
         await coordinator.reevaluate_after_disk_change()
+        assert coordinator.handle_close(intentional_stop=False) == _SUCCESS
         started.clock.advance(0.05)
 
         decision = await coordinator.handle_timeout()
 
         assert decision.recorded_outcome == _SUCCESS
+    finally:
+        await coordinator.stop()
+
+
+@pytest.mark.asyncio
+async def test_aux_blocker_that_clears_finalizes_at_original_timeout(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    started = await _start_coordinator(tmp_path, monkeypatch)
+    coordinator = started.coordinator
+    try:
+        await coordinator.observe_event(_AGENT_END, "idle")
+        await coordinator.handle_terminal_event(_AGENT_END, _SUCCESS, _TERMINATE)
+
+        started.clock.advance(0.02)
+        _start_row(tmp_path, "p2", parent_id="p1")
+        await coordinator.reevaluate_after_disk_change()
+        started.clock.advance(0.01)
+        spawn_store.finalize_spawn(
+            tmp_path,
+            SpawnId("p2"),
+            "succeeded",
+            0,
+            origin="runner",
+        )
+        await coordinator.reevaluate_after_disk_change()
+
+        assert coordinator.next_timeout() == pytest.approx(0.02)
+        started.clock.advance(0.02)
+        decision = await coordinator.handle_timeout()
+
+        assert decision.recorded_outcome == _SUCCESS
+        assert not any(
+            phase["phase"] == "quiescence_micro_drain_cancelled"
+            for phase in started.phases
+        )
     finally:
         await coordinator.stop()
 

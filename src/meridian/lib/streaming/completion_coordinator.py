@@ -363,6 +363,8 @@ class CompletionCoordinator:
         if decision.action == "abandon_candidate":
             self._candidate = None
         if decision.action == "stabilize":
+            if decision.candidate is not None:
+                self._candidate = decision.candidate
             assessment = self._assessment
             if not fresh_assessment or assessment is None or assessment.disposition != "ready":
                 raise RuntimeError("stabilization requires a fresh ready assessment")

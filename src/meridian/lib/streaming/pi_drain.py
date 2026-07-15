@@ -356,6 +356,7 @@ class PiDrainCoordinator:
             emit_phase=emit_phase,
             send_done_nudge=send_done_nudge,
             evidence=evidence,
+            stabilization_seconds=PI_MICRO_DRAIN_TIMEOUT_SECONDS,
             clock=clock,
         )
         cleanup = PiCompletionCleanup(

@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol
 
 from meridian.lib.core.domain import SpawnStatus
 from meridian.lib.core.spawn_lifecycle import is_active_spawn_status
@@ -30,15 +30,15 @@ from meridian.lib.streaming.drain_policy import (
     DrainPolicy,
     PiRpcQuiescenceDrainPolicy,
 )
-from meridian.lib.streaming.pi_subspawn_tracker import PiPendingNotification
+from meridian.lib.streaming.pi_quiescence import PiQuiescenceTracker
+from meridian.lib.streaming.pi_subspawn_tracker import (
+    PiPendingNotification,
+    PiSubspawnTracker,
+)
 
 if TYPE_CHECKING:
     from meridian.lib.harness.connections.base import HarnessEvent
     from meridian.lib.harness.semantics import TerminalEventOutcome
-    from meridian.lib.streaming.pi_drain import (
-        PiCompletionCleanup,
-        PiCompletionEvidence,
-    )
     from meridian.lib.streaming.spawn_session import DrainOutcome
 
 PI_MICRO_DRAIN_TIMEOUT_SECONDS: float = 0.05
@@ -63,6 +63,23 @@ class ChildTimeoutTelemetry:
     timeout_seconds: float
 
 
+class PiCompletionEvidenceView(Protocol):
+    tracker: PiSubspawnTracker
+    quiescence_tracker: PiQuiescenceTracker
+    session_seen: bool
+    session_phase_emitted: bool
+
+    def has_pending_children(self) -> bool: ...
+
+    def pending_child_count(self) -> int: ...
+
+
+class PiCompletionCleanupPort(Protocol):
+    terminate_children: Callable[[PiSubspawnTracker, str], Awaitable[None]] | None
+
+    def prepare_child_timeout(self, telemetry: ChildTimeoutTelemetry) -> None: ...
+
+
 class PiCompletionProfile:
     """Own Pi precedence, deadlines, nudges, and lifecycle phases."""
 
@@ -75,7 +92,8 @@ class PiCompletionProfile:
         child_wave_timeout_seconds: float | None,
         emit_phase: EmitPiPhase,
         send_done_nudge: SendPiDoneNudge | None,
-        evidence: PiCompletionEvidence,
+        evidence: PiCompletionEvidenceView,
+        stabilization_seconds: float,
         clock: Callable[[], float],
     ) -> None:
         self.runtime_root = runtime_root
@@ -85,6 +103,7 @@ class PiCompletionProfile:
         self.emit_phase = emit_phase
         self.send_done_nudge_callback = send_done_nudge
         self.evidence = evidence
+        self._stabilization_seconds = stabilization_seconds
         self.tracker = evidence.tracker
         self.quiescence_tracker = evidence.quiescence_tracker
         self._clock = clock
@@ -100,9 +119,9 @@ class PiCompletionProfile:
         self.done_nudge_interval_seconds = COMPLETION_NUDGE_INTERVAL_SECONDS
         self.next_done_nudge_monotonic: float | None = None
         self._done_requested = False
-        self._cleanup: PiCompletionCleanup | None = None
+        self._cleanup: PiCompletionCleanupPort | None = None
 
-    def bind_cleanup(self, cleanup: PiCompletionCleanup) -> None:
+    def bind_cleanup(self, cleanup: PiCompletionCleanupPort) -> None:
         self._cleanup = cleanup
 
     def start(self) -> None:
@@ -170,6 +189,9 @@ class PiCompletionProfile:
             return ProfileDecision(
                 action="stabilize",
                 restart_stabilization=context.evidence_activity is not None,
+                candidate=(
+                    self.last_successful_terminal if context.candidate is None else None
+                ),
             )
         return ProfileDecision(action="wait", reset_deadline=True)
 
@@ -190,10 +212,7 @@ class PiCompletionProfile:
         return min(deadlines) if deadlines else None
 
     def stabilization_seconds(self) -> float:
-        # Keep the compatibility surface's configurable interval authoritative.
-        from meridian.lib.streaming import pi_drain
-
-        return pi_drain.PI_MICRO_DRAIN_TIMEOUT_SECONDS
+        return self._stabilization_seconds
 
     def close_outcome(
         self, state: CompletionState, intentional_stop: bool
@@ -432,10 +451,7 @@ class PiCompletionProfile:
         if context.trigger == "timeout" or (
             context.trigger == "evidence_due" and context.stabilization_elapsed
         ):
-            if (
-                context.assessment.disposition == "ready"
-                and context.assessment.generation == context.state.stabilization_generation
-            ):
+            if context.assessment.disposition == "ready":
                 self.micro_drain_active = False
                 self._clear_done_nudge_timer()
                 return ProfileDecision(action="complete", outcome=candidate)
