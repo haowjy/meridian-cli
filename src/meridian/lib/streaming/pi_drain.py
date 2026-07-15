@@ -357,7 +357,14 @@ class _PiCompletionProfile:
                 return ProfileDecision(action="fail", outcome=failure)
         if context.state.phase == "stabilizing":
             return self._evaluate_stabilizing(context)
-        if context.trigger in {"timeout", "evidence_due"}:
+        if context.trigger == "timeout" or (
+            context.trigger == "evidence_due"
+            and (
+                context.directives.done
+                or context.deadline_expired
+                or context.profile_timer_due
+            )
+        ):
             return self._evaluate_timeout(context)
         if (
             self.quiescence_enabled

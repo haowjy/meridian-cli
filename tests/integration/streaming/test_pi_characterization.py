@@ -576,9 +576,11 @@ async def test_pi_current_direct_child_authority_ignores_live_late_grandchild(
 
 
 @pytest.mark.asyncio
-async def test_transient_child_aux_wakes_restart_stabilization_without_stranding_candidate(
+@pytest.mark.parametrize("completion_wake", ["aux", "poll"])
+async def test_transient_child_wakes_restart_stabilization_without_stranding_candidate(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    completion_wake: str,
 ) -> None:
     started = await _start_coordinator(tmp_path, monkeypatch)
     coordinator = started.coordinator
@@ -595,7 +597,12 @@ async def test_transient_child_aux_wakes_restart_stabilization_without_stranding
             0,
             origin="runner",
         )
-        await coordinator.reevaluate_after_disk_change()
+        if completion_wake == "aux":
+            await coordinator.reevaluate_after_disk_change()
+        else:
+            started.clock.advance(0.25)
+            poll = await coordinator.handle_timeout()
+            assert poll.recorded_outcome is None
         started.clock.advance(0.05)
 
         decision = await coordinator.handle_timeout()
