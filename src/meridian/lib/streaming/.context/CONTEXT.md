@@ -1,7 +1,10 @@
 # lib/streaming/ — Context
 
-Async runtime layer between harness connections and the system. Runs from connection
-start to terminal state. No policy — pure mechanism.
+Async runtime layer between harness connections and the system. It owns the
+event/drain mechanism from connection start to terminal state and provides the
+composition seam for selected completion policy. Harness-specific decisions stay
+behind `DrainPolicy`, `DrainCoordinator`, and their Pi/resident modules rather
+than entering the generic loop or `SpawnManager`.
 
 ## Architecture
 
@@ -52,9 +55,12 @@ Each event flows through three stages in strict order:
 2. **Observe** — `EventObserverRegistry.dispatch(spawn_id, event)` (non-blocking)
 3. **Fan-out** — `subscriber.put_nowait(event)`
 
-Persistence is synchronous and happens before any notification. 10 consecutive
-write failures abort the loop with a `failed` outcome. Do not reorder these stages
-— observers and the subscriber must only see events that are durably written.
+The required contract is that persistence succeeds before any notification. The
+current transient-write path is a known divergence: after a recoverable write
+failure it still fans out the event and calls `note_event_persisted`; the tenth
+failure also fans out before aborting. Do not depend on this behavior. The
+pending correction must gate observer dispatch, fan-out, and
+`note_event_persisted` on a successful history write.
 
 Terminal classification happens after persistence. The drain loop passes
 `connection.primary_event_scope` into the harness semantic helpers when a connection
@@ -194,6 +200,16 @@ unresolved stale candidates to numeric allocated-looking `p*` directories, track
 active child ids, preserves idle epochs across disk wakeups, and marks whether a child
 wave needs re-arming. `PiDrainCoordinator` uses that summarized state to make deadline
 and finalization decisions.
+
+Pi and resident currently use different descendant authority. Resident traverses
+the reconciled transitive persisted tree. `PiDiskWatcher` confirms only rows whose
+raw `parent_id` is the current Pi spawn, so it does not independently see a live
+grandchild beneath a terminal direct child. Before a valid row appears, only a
+numerically newer allocated-looking directory may enter a 30-second unresolved
+state. Expired and wrong-parent candidates become rejected tombstones: they do not
+block and are not reread. This bounded allocation uncertainty covers the current
+`start_spawn()` publication window; it is not evidence that the directory is a
+child.
 
 ### Disk State Authority
 

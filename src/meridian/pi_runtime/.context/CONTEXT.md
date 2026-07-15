@@ -73,7 +73,7 @@ Role-specific behavior is gated by environment, including `MERIDIAN_PI_SESSION_R
 
 ### Disk-State Coordination
 
-The Python streaming layer treats these files as authoritative quiescence inputs:
+The Python streaming layer treats these files as quiescence inputs:
 
 - `runtime_root/spawns/<child>/state.json` — child spawn status and `parent_id`
 - `runtime_root/pi-bash/<parent>/bash-records.json` — tracked/detached bash records
@@ -81,6 +81,12 @@ The Python streaming layer treats these files as authoritative quiescence inputs
 
 Writes must use the shared JSON-file helpers so readers never observe half-written JSON.
 Readers tolerate truncation/missing files and re-check disk before final quiescence.
+
+The current Python watcher confirms only direct child rows whose raw `parent_id`
+matches the Pi spawn. A newer numeric spawn directory without a readable row is
+temporarily allocation uncertainty, not an authoritative child. Resident drain's
+reconciled transitive tree is therefore not yet Pi's descendant source. Keep
+extension notification and bash state independent of persisted descendant state.
 
 ### ExtensionAPI (`types.ts`)
 

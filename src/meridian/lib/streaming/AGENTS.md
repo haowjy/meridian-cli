@@ -44,9 +44,11 @@ fail, or clear signals for the parent.
 inject, interrupt, permission reply, and user-input-reply actions. Calling the
 connection directly breaks this serialization.
 
-**Drain loop ordering is not negotiable: persist → observe → fan-out.** Ten
-consecutive write failures abort the loop with a `failed` outcome. If you add a
-new stage, it goes after persistence.
+**Drain loop ordering is not negotiable: persist → observe → fan-out.** The
+current transient-write path violates this contract by notifying downstream
+consumers after a failed write; do not treat that behavior as intentional or
+build on it. Ten consecutive write failures abort the loop with a `failed`
+outcome. If you add a new stage, it goes after successful persistence.
 
 **Capture `subprocess_pid` and `scope_snapshot` before `connection.stop()`.** Both
 are cleared inside `stop()`. The safety pass that force-kills surviving processes
@@ -97,6 +99,11 @@ means the manager died or the spawn is orphaned.
 - `control_socket.py` — per-spawn inject endpoint
 - `event_observers.py` — `EventObserverRegistry`, `EventObserver`, `CallbackObserver`
 - `types.py` — `InjectResult`, `ControlMessage`
+
+Resident and Pi do not yet share descendant evidence. Resident reads the
+reconciled transitive spawn tree. Pi confirms only direct child rows and also
+uses bounded newer-directory uncertainty to cover the current publication
+window; that uncertainty is a barrier, not child authority.
 
 ## Depth
 

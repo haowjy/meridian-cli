@@ -134,7 +134,7 @@ Edit `meridian.local.toml` if your checkout differs from the committed conventio
 path = "../sibling-repo"
 ```
 
-Existing roots are projected to harness launches automatically — `--add-dir` for Claude Code and Codex, `OPENCODE_CONFIG_CONTENT` for OpenCode. See [configuration.md](configuration.md#workspace) for full schema.
+Existing roots are projected to harness launches automatically — `--add-dir` for Claude Code and Codex, `OPENCODE_CONFIG_CONTENT` for OpenCode. See [configuration.md](configuration/workspace.md) for full schema.
 
 ## Next Steps
 

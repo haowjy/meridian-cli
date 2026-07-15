@@ -137,7 +137,7 @@ CLI flag / ENV var  >  Mars agent overlay  >  model-policies match  >  profile d
 Agent overlays (`[agents.<name>]` in Mars config such as `mars.toml`) prepend
 their `model-policies` rules before profile rules to form one effective ordered
 list. Legacy `[agents]` sections in `meridian.toml` / `meridian.local.toml` are
-unsupported. See [configuration.md — Mars-Owned Routing and Agent Runtime](configuration.md#mars-owned-routing-and-agent-runtime).
+unsupported. See [configuration.md — Mars-Owned Routing and Agent Runtime](configuration/mars.md#model-policies).
 
 ## Implicit Fallback Ordering in `model-policies`
 

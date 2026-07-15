@@ -205,7 +205,7 @@ remote = "git@github.com:team/docs.git"
 path   = "project/strategy"
 ```
 
-See [configuration.md](configuration.md#context) for the full schema.
+See [configuration.md](configuration/context.md) for the full schema.
 
 ## Extensions
 
