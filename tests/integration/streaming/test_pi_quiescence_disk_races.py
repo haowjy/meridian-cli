@@ -260,7 +260,7 @@ async def test_child_wave_timeout_stays_terminal_when_cleanup_raises(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    spawn_id = SpawnId("p-child-wave-cleanup-failure")
+    spawn_id = SpawnId("p122")
     cleanup_reasons: list[str] = []
 
     async def _raise_cleanup(
@@ -284,8 +284,13 @@ async def test_child_wave_timeout_stays_terminal_when_cleanup_raises(
         determinism = AsyncDeterminism(start=100.0)
         determinism.install(monkeypatch, monotonic_modules=(pi_drain_module,))
         await _arm_child_wave(started.coordinator)
-        (tmp_path / "spawns" / "p-late-child").mkdir(parents=True)
+        (tmp_path / "spawns" / "p123").mkdir(parents=True)
         await started.coordinator.reevaluate_after_disk_change()
+        assert any(
+            phase.get("phase") == "waiting_for_tracked_children"
+            and phase.get("active_tracked_count") == 2
+            for phase in started.phases
+        )
         phases_before_timeout = len(started.phases)
         started.phase_errors_enabled.set()
         determinism.advance(0.01)
