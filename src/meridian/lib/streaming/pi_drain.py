@@ -326,7 +326,6 @@ class _PiCompletionProfile:
         self._done_requested = False
         self._consume_done_enabled = False
         self._cleanup: _PiCompletionCleanup | None = None
-        self._terminal_event: HarnessEvent | None = None
 
     def bind_cleanup(self, cleanup: _PiCompletionCleanup) -> None:
         self._cleanup = cleanup
@@ -345,9 +344,6 @@ class _PiCompletionProfile:
 
     def enable_done_consumption(self, enabled: bool) -> None:
         self._consume_done_enabled = enabled
-
-    def set_terminal_event(self, event: HarnessEvent | None) -> None:
-        self._terminal_event = event
 
     def consume_directives(self) -> CompletionDirectives:
         if (
@@ -440,6 +436,20 @@ class _PiCompletionProfile:
             micro_drain_events=self.micro_drain_event_count,
         )
         return EvidenceActivity(code="pi_micro_drain_extended")
+
+    def observe_terminal_event(
+        self,
+        event: HarnessEvent,
+        outcome: TerminalEventOutcome,
+    ) -> None:
+        if outcome.status != "succeeded":
+            return
+        self.last_successful_terminal = outcome
+        completed_notification_id = self.tracker.resolve_notification_on_terminal(event)
+        if completed_notification_id is not None:
+            self._emit("continuation_completed", notification_id=completed_notification_id)
+        self._refresh_done_nudge_state()
+        self.emit_waiting_phases_if_needed()
 
     def after_observed_event(self, transition: str | None) -> None:
         if transition == "turn_active":
@@ -574,17 +584,6 @@ class _PiCompletionProfile:
         outcome = context.terminal_outcome
         assert action is not None
         assert outcome is not None
-        if outcome.status == "succeeded":
-            self.last_successful_terminal = outcome
-            terminal_event = self._terminal_event
-            assert terminal_event is not None
-            completed_notification_id = self.tracker.resolve_notification_on_terminal(
-                terminal_event
-            )
-            if completed_notification_id is not None:
-                self._emit("continuation_completed", notification_id=completed_notification_id)
-            self._refresh_done_nudge_state()
-            self.emit_waiting_phases_if_needed()
         if not action.terminate:
             return ProfileDecision(action="wait", emit_turn_boundary=action.emit_turn_boundary)
         if not self.quiescence_enabled or outcome.status != "succeeded":
@@ -1028,11 +1027,8 @@ class PiDrainCoordinator:
         outcome: TerminalEventOutcome,
         action: DrainAction,
     ) -> DrainTerminalDecision:
-        self._profile.set_terminal_event(event)
-        try:
-            decision = await self._coordinator.handle_terminal_event(event, outcome, action)
-        finally:
-            self._profile.set_terminal_event(None)
+        self._profile.observe_terminal_event(event, outcome)
+        decision = await self._coordinator.handle_terminal_event(event, outcome, action)
         if outcome.status == "succeeded" and not action.terminate:
             self._coordinator.pending_outcome = outcome
         self._sync_profile_deadline()
