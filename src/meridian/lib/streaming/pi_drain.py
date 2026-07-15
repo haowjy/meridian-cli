@@ -707,7 +707,6 @@ class _PiCompletionProfile:
             )
 
     def _done_nudge_due(self, now: float) -> bool:
-        self._refresh_done_nudge_state()
         return (
             self.next_done_nudge_monotonic is not None
             and now >= self.next_done_nudge_monotonic
@@ -1005,6 +1004,8 @@ class PiDrainCoordinator:
     def next_timeout(self) -> float | None:
         if not self._profile.quiescence_enabled:
             return None
+        if self._profile.micro_drain_active:
+            return PI_MICRO_DRAIN_TIMEOUT_SECONDS
         return self._coordinator.next_timeout()
 
     async def observe_event(self, event: HarnessEvent, transition: str | None) -> bool:
