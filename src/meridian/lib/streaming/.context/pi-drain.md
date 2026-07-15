@@ -6,12 +6,13 @@ generic streaming runtime remains in [CONTEXT.md](CONTEXT.md).
 ## Pi RPC Quiescence Drain
 
 Pi spawned sessions complete by quiescence, not by process exit. `SpawnManager` still
-owns the generic event loop (persist → observe → fan-out), but Pi-specific decisions
-live in `pi_drain.py:PiDrainCoordinator`.
+owns the generic event loop (persist → observe → fan-out). `PiDrainCoordinator` is a
+thin plan-wiring wrapper around the shared `CompletionCoordinator`; Pi evidence,
+profile, and cleanup collaborators in `pi_drain.py` retain the Pi-specific decisions.
 
 ### Ownership Boundary
 
-`PiDrainCoordinator` owns:
+The Pi completion composition owns:
 
 - parent idle/active observation
 - disk watcher / quiescence integration (`PiDiskWatcher`, `PiQuiescenceTracker`)
@@ -21,15 +22,16 @@ live in `pi_drain.py:PiDrainCoordinator`.
 - micro-drain candidate state and phase-event emission coordination
 - Pi failure/finalization decisions when the process exits before quiescence
 
-`SpawnManager` should not grow new Pi-specific state-machine branches. Add Pi drain
-behavior to `PiDrainCoordinator` unless the change is purely generic event persistence,
-observer dispatch, subscriber fan-out, heartbeat, or control-socket handling.
+`SpawnManager` should not grow new Pi-specific state-machine branches. Add Pi evidence,
+precedence/phase behavior, or cleanup to the corresponding collaborator in `pi_drain.py`
+unless the change is purely generic event persistence, observer dispatch, subscriber
+fan-out, heartbeat, or control-socket handling.
 
-`PiSubspawnTracker` owns the mutable child-spawn view inside the coordinator. It filters
-unresolved stale candidates to numeric allocated-looking `p*` directories, tracks
-active child ids, preserves idle epochs across disk wakeups, and marks whether a child
-wave needs re-arming. `PiDrainCoordinator` uses that summarized state to make deadline
-and finalization decisions.
+`PiSubspawnTracker` owns lifecycle-observed active child IDs, process handles, and
+notifications. `PiDiskWatcher` owns direct-row confirmation plus bounded unresolved
+numeric `p*` allocation candidates, while `PiQuiescenceTracker` preserves parent-idle
+epochs across disk wakeups. The Pi evidence collaborator combines those unchanged
+views; the profile uses the summary for deadlines and finalization decisions.
 
 Pi and resident currently use different descendant authority. Resident traverses
 the reconciled transitive persisted tree. `PiDiskWatcher` confirms only rows whose

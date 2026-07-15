@@ -49,11 +49,13 @@ class CompletionCoordinator:
         profile: CompletionProfile,
         cleanup: CompletionCleanup,
         clock: Callable[[], float] = time.monotonic,
+        evaluate_without_candidate: bool = False,
     ) -> None:
         self._evidence = evidence
         self._profile = profile
         self._cleanup = cleanup
         self._clock = clock
+        self._evaluate_without_candidate = evaluate_without_candidate
         self._phase: CompletionPhase = "running"
         self._candidate: TerminalEventOutcome | None = None
         self._assessment: WorkAssessment | None = None
@@ -113,7 +115,13 @@ class CompletionCoordinator:
         self._reset_cycle()
 
     def next_timeout(self) -> float | None:
-        if self._candidate is None or self._terminal_published:
+        if (
+            self._terminal_published
+            or (
+                self._candidate is None
+                and not self._evaluate_without_candidate
+            )
+        ):
             return None
         assessment = self._assessment or _INITIAL_ASSESSMENT
         candidates = [
@@ -142,6 +150,15 @@ class CompletionCoordinator:
             return self._evaluate_post_persist_failure()
         return DrainLoopDecision()
 
+    def cancel_stabilization(self) -> None:
+        """Invalidate only the current quiet window while retaining its candidate."""
+
+        if self._phase != "stabilizing":
+            return
+        self._phase = "waiting"
+        self._stabilization_at = None
+        self._stabilization_generation = None
+
     async def handle_terminal_event(
         self,
         event: HarnessEvent,
@@ -165,7 +182,9 @@ class CompletionCoordinator:
         return await self._evaluate_wait("event")
 
     def wants_aux_wake(self) -> bool:
-        return self._candidate is not None and self._evidence.wants_aux_wake()
+        return (
+            self._candidate is not None or self._evaluate_without_candidate
+        ) and self._evidence.wants_aux_wake()
 
     async def wait_for_aux_wake(self) -> None:
         await self._evidence.wait_for_change()
@@ -223,7 +242,9 @@ class CompletionCoordinator:
         )
 
     async def _evaluate_wait(self, trigger: AssessmentTrigger) -> DrainLoopDecision:
-        if self._candidate is None or self._terminal_published:
+        if self._terminal_published or (
+            self._candidate is None and not self._evaluate_without_candidate
+        ):
             return DrainLoopDecision()
         now = self._clock()
         evidence_due = self._is_due(self._evidence.next_due_at(), now)
