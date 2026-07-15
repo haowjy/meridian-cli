@@ -453,9 +453,9 @@ async def test_candidate_resolves_to_wrong_parent_is_discarded(tmp_path: Path) -
         )
         await watcher.force_rescan()
 
-        # Candidate must be discarded — it belongs to another parent.
+        # Candidate must not be pending — it belongs to another parent.
+        # It stays as a rejected tombstone to prevent re-admission.
         assert watcher.has_pending_child_spawns() is False
         assert watcher.pending_child_spawn_count() == 0
-        assert "p123" not in watcher._child_spawns
     finally:
         await watcher.stop()

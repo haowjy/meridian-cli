@@ -51,8 +51,20 @@ class _UnresolvedChild:
     deadline_monotonic: float
 
 
+@dataclass(frozen=True, slots=True)
+class _RejectedChild:
+    """Tombstone: directory was considered and rejected (expired or wrong parent).
+
+    Prevents re-admission by _discover_child_spawns on subsequent scans.
+    Not counted as pending; not checked against disk.
+    """
+
+    pass
+
+
 _CONFIRMED_CHILD = _ConfirmedChild()
-_TrackedChild = _ConfirmedChild | _UnresolvedChild
+_REJECTED_CHILD = _RejectedChild()
+_TrackedChild = _ConfirmedChild | _UnresolvedChild | _RejectedChild
 
 
 class PiDiskWatcher:
@@ -233,8 +245,12 @@ class PiDiskWatcher:
                 self._admit_unresolved_candidate(child.name)
 
     def _resolve_candidate_child_spawns(self) -> None:
+        now_monotonic = time.monotonic()
         for spawn_id, child in list(self._child_spawns.items()):
-            if isinstance(child, _ConfirmedChild):
+            if not isinstance(child, _UnresolvedChild):
+                continue
+            if now_monotonic >= child.deadline_monotonic:
+                self._child_spawns[spawn_id] = _REJECTED_CHILD
                 continue
             state_path = self._spawns_dir / spawn_id / "state.json"
             data = _read_json_object(state_path)
@@ -242,20 +258,22 @@ class PiDiskWatcher:
             if parent_id == self._current_spawn_id:
                 self._child_spawns[spawn_id] = _CONFIRMED_CHILD
             elif not state_path.parent.exists() or (state_path.exists() and data):
-                del self._child_spawns[spawn_id]
+                self._child_spawns[spawn_id] = _REJECTED_CHILD
 
     def _scan_pending_child_spawn_count(self) -> int:
         count = 0
-        now_monotonic = time.monotonic()
         for spawn_id, child in list(self._child_spawns.items()):
+            if isinstance(child, _RejectedChild):
+                continue
             if isinstance(child, _UnresolvedChild):
-                if now_monotonic < child.deadline_monotonic:
-                    count += 1
+                # Expired candidates are already tombstoned by
+                # _resolve_candidate_child_spawns before this method runs.
+                count += 1
                 continue
             state_path = self._spawns_dir / spawn_id / "state.json"
             data = _read_json_object(state_path)
             if data.get("parent_id") != self._current_spawn_id:
-                del self._child_spawns[spawn_id]
+                self._child_spawns[spawn_id] = _REJECTED_CHILD
                 continue
             status = data.get("status")
             if not isinstance(status, str) or status not in TERMINAL_SPAWN_STATUSES:
@@ -276,13 +294,14 @@ class PiDiskWatcher:
         )
 
     def _has_unresolved_candidates(self) -> bool:
-        return self._unresolved_candidate_count() > 0
+        return any(
+            isinstance(child, _UnresolvedChild)
+            for child in self._child_spawns.values()
+        )
 
     def _unresolved_candidate_count(self) -> int:
-        now_monotonic = time.monotonic()
         return sum(
             isinstance(child, _UnresolvedChild)
-            and now_monotonic < child.deadline_monotonic
             for child in self._child_spawns.values()
         )
 
