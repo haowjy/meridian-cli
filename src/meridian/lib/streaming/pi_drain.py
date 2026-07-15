@@ -657,7 +657,6 @@ class PiDrainCoordinator:
             self._emit("pi_child_wave_timeout", **timeout_payload)
         except Exception:
             logger.warning("Failed to emit Pi child-wave timeout phase", exc_info=True)
-        self.emit_waiting_phases_if_needed()
 
     def _child_wave_remaining(self, now_monotonic: float) -> float | None:
         deadline = self.child_wave_deadline_monotonic

@@ -227,7 +227,10 @@ async def test_child_wave_timeout_fails_when_cleanup_finishes(tmp_path: Path) ->
 
 
 @pytest.mark.asyncio
-async def test_child_wave_timeout_stays_terminal_when_cleanup_raises(tmp_path: Path) -> None:
+async def test_child_wave_timeout_stays_terminal_when_cleanup_raises(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     spawn_id = SpawnId("p-child-wave-cleanup-failure")
     cleanup_reasons: list[str] = []
 
@@ -248,6 +251,11 @@ async def test_child_wave_timeout_stays_terminal_when_cleanup_raises(tmp_path: P
 
     try:
         await _expire_child_wave(started.coordinator)
+        monkeypatch.setattr(
+            started.coordinator.quiescence_tracker,
+            "has_pending_child_spawns",
+            lambda: True,
+        )
         record_phase = started.coordinator.emit_phase
 
         def _record_then_raise(
@@ -257,8 +265,7 @@ async def test_child_wave_timeout_stays_terminal_when_cleanup_raises(tmp_path: P
             **payload: object,
         ) -> None:
             record_phase(phase=phase, session_role=session_role, **payload)
-            if phase == "pi_child_wave_timeout":
-                raise RuntimeError("phase emission failed")
+            raise RuntimeError(f"phase emission failed: {phase}")
 
         started.coordinator.emit_phase = _record_then_raise
 
