@@ -238,7 +238,9 @@ class BlockingProcessLauncher(ProcessLauncher):
     pid: int = 5252
     launch_commands: list[tuple[str, ...]] = field(default_factory=list)
     release: threading.Event = field(default_factory=threading.Event)
-    wait_timeout_seconds: float = 5.0
+    wait_started: threading.Event = field(default_factory=threading.Event)
+    wait_finished: threading.Event = field(default_factory=threading.Event)
+    wait_timeout_seconds: float | None = 5.0
     terminate_releases: bool = True
     cancel_wait_releases: bool = True
     cancel_wait_calls: int = 0
@@ -258,8 +260,12 @@ class BlockingProcessLauncher(ProcessLauncher):
         return self
 
     def wait(self) -> LaunchedProcess:
-        self.release.wait(timeout=self.wait_timeout_seconds)
-        return LaunchedProcess(exit_code=143, pid=self.pid)
+        self.wait_started.set()
+        try:
+            self.release.wait(timeout=self.wait_timeout_seconds)
+            return LaunchedProcess(exit_code=143, pid=self.pid)
+        finally:
+            self.wait_finished.set()
 
     def terminate(self) -> None:
         if self.terminate_releases:
@@ -427,11 +433,10 @@ def test_primary_attach_cancellation_does_not_join_uncooperative_wait_thread(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     spawn_dir = tmp_path / "spawns" / "p901-cancel-timeout"
-    tui_started = asyncio.Event()
     connection = FakeManagedConnection(events=[], session_id="sess-cancel-timeout")
     process_launcher = BlockingProcessLauncher(
         spawn_dir=spawn_dir,
-        wait_timeout_seconds=0.3,
+        wait_timeout_seconds=None,
         terminate_releases=False,
         cancel_wait_releases=False,
     )
@@ -448,7 +453,6 @@ def test_primary_attach_cancellation_does_not_join_uncooperative_wait_thread(
         connection=connection,
         tui_command_builder=lambda session_id: ("codex", "resume", session_id),
         process_launcher=process_launcher,
-        on_running=lambda _pid: tui_started.set(),
     )
 
     async def _cancel_after_tui_start() -> None:
@@ -463,17 +467,21 @@ def test_primary_attach_cancellation_does_not_join_uncooperative_wait_thread(
                 env={},
             )
         )
-        await tui_started.wait()
+        while not process_launcher.wait_started.is_set():
+            await asyncio.sleep(0)
         run_task.cancel()
         with pytest.raises(asyncio.CancelledError):
             await run_task
 
-    started_at = time.monotonic()
-    asyncio.run(_cancel_after_tui_start())
+    try:
+        asyncio.run(_cancel_after_tui_start())
 
-    assert time.monotonic() - started_at < 0.25
-    assert process_launcher.release.is_set() is False
-    assert connection.stop_reasons == [None]
+        assert process_launcher.wait_finished.is_set() is False
+        assert process_launcher.cancel_wait_calls == 1
+        assert process_launcher.release.is_set() is False
+        assert connection.stop_reasons == [None]
+    finally:
+        process_launcher.release.set()
 
 
 @pytest.mark.asyncio

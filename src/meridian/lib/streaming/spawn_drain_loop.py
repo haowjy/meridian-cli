@@ -191,8 +191,8 @@ class SpawnDrainLoop:
                             drain_error = RuntimeError(
                                 "Aborted drain loop after repeated output persistence failures"
                             )
-                            self._fan_out_event(spawn_id, event)
                             break
+                        continue
 
                 event_outcome = terminal_outcome(
                     event,

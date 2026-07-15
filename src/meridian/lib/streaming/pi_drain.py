@@ -7,6 +7,7 @@ child-wave timeout, and quiescence micro-drain.
 
 from __future__ import annotations
 
+import logging
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -43,6 +44,7 @@ if TYPE_CHECKING:
     from meridian.lib.streaming.spawn_session import DrainOutcome
 
 _PI_PHASE_EVENT_TYPE = pi_lifecycle.PI_PHASE_EVENT_TYPE
+logger = logging.getLogger(__name__)
 
 PI_MICRO_DRAIN_TIMEOUT_SECONDS: float = 0.05
 PI_DONE_NUDGE_IDLE_DELAY_SECONDS: float = 5.0
@@ -88,6 +90,7 @@ class PiDrainCoordinator:
     child_wave_deadline_monotonic: float | None = None
     child_wave_started_monotonic: float | None = None
     tracked_cleanup_reason: str | None = None
+    tracked_cleanup_error: str | None = None
     terminate_children: TerminatePiChildren | None = None
     send_done_nudge: SendPiDoneNudge | None = None
     done_nudge_idle_delay_seconds: float = PI_DONE_NUDGE_IDLE_DELAY_SECONDS
@@ -610,14 +613,6 @@ class PiDrainCoordinator:
         terminate_children: TerminatePiChildren,
         now_monotonic: float,
     ) -> None:
-        if self.tracked_cleanup_reason is None:
-            await terminate_children(self.tracker, "pi_child_wave_timeout")
-        tracked_count = (
-            self.tracker.clear_tracked_children_after_wave_timeout()
-            + self.quiescence_tracker.pending_child_spawn_count()
-        )
-        self.waiting_child_count = None
-        self.tracked_cleanup_reason = "pi_child_wave_timeout"
         elapsed_seconds = 0.0
         if self.child_wave_started_monotonic is not None:
             elapsed_seconds = max(0.0, now_monotonic - self.child_wave_started_monotonic)
@@ -630,14 +625,38 @@ class PiDrainCoordinator:
                 0.0,
                 self.child_wave_deadline_monotonic - self.child_wave_started_monotonic,
             )
-        self._emit(
-            "pi_child_wave_timeout",
-            active_tracked_count=tracked_count,
-            elapsed_seconds=elapsed_seconds,
-            timeout_seconds=timeout_seconds,
-        )
+
+        cleanup_needed = self.tracked_cleanup_reason is None
+        if cleanup_needed:
+            self.tracked_cleanup_reason = "pi_child_wave_timeout"
         self._clear_child_wave_timer()
-        self.emit_waiting_phases_if_needed()
+        if cleanup_needed:
+            try:
+                await terminate_children(self.tracker, "pi_child_wave_timeout")
+            except Exception as exc:
+                self.tracked_cleanup_error = str(exc)
+            finally:
+                tracked_count = (
+                    self.tracker.clear_tracked_children_after_wave_timeout()
+                    + self.quiescence_tracker.pending_child_spawn_count()
+                )
+                self.waiting_child_count = None
+        else:
+            tracked_count = (
+                self.tracker.clear_tracked_children_after_wave_timeout()
+                + self.quiescence_tracker.pending_child_spawn_count()
+            )
+        timeout_payload: dict[str, object] = {
+            "active_tracked_count": tracked_count,
+            "elapsed_seconds": elapsed_seconds,
+            "timeout_seconds": timeout_seconds,
+        }
+        if self.tracked_cleanup_error is not None:
+            timeout_payload["cleanup_error"] = self.tracked_cleanup_error
+        try:
+            self._emit("pi_child_wave_timeout", **timeout_payload)
+        except Exception:
+            logger.warning("Failed to emit Pi child-wave timeout phase", exc_info=True)
 
     def _child_wave_remaining(self, now_monotonic: float) -> float | None:
         deadline = self.child_wave_deadline_monotonic

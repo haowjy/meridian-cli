@@ -44,11 +44,10 @@ fail, or clear signals for the parent.
 inject, interrupt, permission reply, and user-input-reply actions. Calling the
 connection directly breaks this serialization.
 
-**Drain loop ordering is not negotiable: persist → observe → fan-out.** The
-current transient-write path violates this contract by notifying downstream
-consumers after a failed write; do not treat that behavior as intentional or
-build on it. Ten consecutive write failures abort the loop with a `failed`
-outcome. If you add a new stage, it goes after successful persistence.
+**Drain loop ordering is not negotiable: persist → observe → fan-out.** A failed
+write — including the tenth consecutive failure that aborts the loop with a
+`failed` outcome — is never delivered to the coordinator, observers, or the
+subscriber. If you add a new stage, it goes after successful persistence.
 
 **Capture `subprocess_pid` and `scope_snapshot` before `connection.stop()`.** Both
 are cleared inside `stop()`. The safety pass that force-kills surviving processes
@@ -90,7 +89,6 @@ means the manager died or the spawn is orphaned.
 - `spawn_session.py` — `SpawnSession`, `DrainOutcome`
 - `pi_drain.py` — `PiDrainCoordinator`: Pi spawned-session quiescence policy
 - `resident_drain.py` — `ResidentDrainCoordinator`: resident-backend descendant waiting policy
-- `spawn_drain_loop.py` — default terminal-event finalization for plain streaming harnesses
 - `pi_subspawn_tracker.py` — Pi child-spawn, notification, and wave tracking
 - `disk_watcher.py` / `pi_quiescence.py` — disk-backed Pi background-work state
 - `drain_wait.py` — generic event/timeout/aux-wake arbitration for drain loops
@@ -107,8 +105,9 @@ window; that uncertainty is a barrier, not child authority.
 
 ## Depth
 
-→ [.context/CONTEXT.md](.context/CONTEXT.md) — drain loop ordering, `DrainOutcome`
-priority, teardown paths, control socket inject flow, heartbeat/reaper contract
+→ [.context/CONTEXT.md](.context/CONTEXT.md) — generic drain runtime and lifecycle
+→ [.context/pi-drain.md](.context/pi-drain.md) — Pi quiescence and child-wave behavior
+→ [.context/signal-cancellation.md](.context/signal-cancellation.md) — cancellation dispatch and scope cleanup
 
 ## Related
 
