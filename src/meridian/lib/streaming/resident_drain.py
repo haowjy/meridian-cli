@@ -231,13 +231,6 @@ class _ResidentCompletionProfile:
             return ProfileDecision(action="fail", outcome=outcome)
         if context.directives.rearm:
             self._mark_rearmed(context.now)
-        if context.assessment.disposition == "unknown":
-            self._enter_wait(context.now)
-            return ProfileDecision(
-                action="wait",
-                emit_turn_boundary=True,
-                reset_deadline=context.directives.rearm,
-            )
         if context.directives.done:
             self.clear()
             return ProfileDecision(action="complete", outcome=outcome)
@@ -257,7 +250,7 @@ class _ResidentCompletionProfile:
         rearmed = context.directives.rearm
         if rearmed:
             self._mark_rearmed(context.now)
-        if context.assessment.disposition != "unknown" and context.directives.done:
+        if context.directives.done:
             self.clear()
             return ProfileDecision(action="complete", outcome=candidate)
         if context.deadline_expired and not rearmed:

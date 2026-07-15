@@ -253,14 +253,6 @@ class CompletionCoordinator:
         fresh_assessment: bool,
     ) -> DrainLoopDecision:
         now = self._clock()
-        if (
-            decision.action == "complete"
-            and decision.outcome is not None
-            and decision.outcome.status == "succeeded"
-            and self._assessment is not None
-            and self._assessment.disposition == "unknown"
-        ):
-            decision = ProfileDecision(action="wait")
         if decision.action == "clear":
             self._reset_cycle()
             return DrainLoopDecision()
