@@ -280,7 +280,8 @@ class CompletionCoordinator:
             if not fresh_assessment or assessment is None or assessment.disposition != "ready":
                 raise RuntimeError("stabilization requires a fresh ready assessment")
             continuing = (
-                self._phase == "stabilizing"
+                not decision.restart_stabilization
+                and self._phase == "stabilizing"
                 and self._stabilization_generation == assessment.generation
                 and self._stabilization_at is not None
             )

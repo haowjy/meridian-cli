@@ -126,6 +126,7 @@ class ProfileDecision:
     cleanup_reason: str | None = None
     nudge: NudgeUrgency | None = None
     reset_deadline: bool = False
+    restart_stabilization: bool = False
 
     def __post_init__(self) -> None:
         needs_outcome = self.action in {"complete", "cleanup", "fail"}
@@ -137,6 +138,8 @@ class ProfileDecision:
             raise ValueError("only cleanup decisions may carry a cleanup reason")
         if self.nudge is not None and self.action != "wait":
             raise ValueError("only wait decisions may request a nudge")
+        if self.restart_stabilization and self.action != "stabilize":
+            raise ValueError("only stabilize decisions may restart stabilization")
 
 
 @dataclass(frozen=True)

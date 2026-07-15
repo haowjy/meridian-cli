@@ -147,7 +147,10 @@ class _Profile:
                 context.stabilization_elapsed
             ):
                 return ProfileDecision(action="complete", outcome=candidate)
-            return ProfileDecision(action="stabilize")
+            return ProfileDecision(
+                action="stabilize",
+                restart_stabilization=context.trigger == "event",
+            )
         if context.assessment.disposition != "ready" or self.hold:
             return ProfileDecision(action="wait", reset_deadline=rearmed)
         if self.stabilization > 0:
@@ -332,6 +335,24 @@ async def test_changed_stabilization_generation_returns_to_waiting() -> None:
     assert restarted.recorded_outcome is None
     assert coordinator.state.phase == "stabilizing"
     assert coordinator.state.stabilization_generation == 8
+
+
+@pytest.mark.asyncio
+async def test_persisted_event_restarts_same_generation_stabilization_window() -> None:
+    clock = FakeClock()
+    evidence = _Evidence(_ready(generation=7), _ready(generation=7))
+    profile = _Profile(stabilization_seconds=2.0)
+    coordinator, _ = _coordinator(clock, evidence, profile)
+    await coordinator.handle_terminal_event(None, _SUCCESS, _TERMINATE)  # type: ignore[arg-type]
+    assert coordinator.state.stabilization_at == 2.0
+
+    clock.advance(1.0)
+    event = await coordinator.after_event()
+
+    assert event.recorded_outcome is None
+    assert coordinator.state.phase == "stabilizing"
+    assert coordinator.state.stabilization_at == 3.0
+    assert coordinator.next_timeout() == pytest.approx(2.0)
 
 
 @pytest.mark.asyncio
