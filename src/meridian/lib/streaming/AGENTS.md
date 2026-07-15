@@ -90,7 +90,10 @@ means the manager died or the spawn is orphaned.
 - `completion_contracts.py` — typed evidence, profile, and cleanup collaborator contracts
 - `completion_coordinator.py` — shared candidate/wait/deadline/stabilization state machine
 - `spawn_session.py` — `SpawnSession`, `DrainOutcome`
-- `pi_drain.py` — Pi evidence/profile/cleanup collaborators and thin construction wrapper
+- `pi_completion_profile.py` — Pi precedence, phases, deadlines, nudges, and stream-exit
+  policy
+- `pi_drain.py` — Pi evidence/cleanup collaborators, composition, and thin compatibility
+  wrapper
 - `resident_drain.py` — resident evidence/profile/cleanup adapters and thin construction wrapper
 - `pi_subspawn_tracker.py` — Pi child-spawn, notification, and wave tracking
 - `disk_watcher.py` / `pi_quiescence.py` — disk-backed Pi background-work state

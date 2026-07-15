@@ -7,8 +7,9 @@ generic streaming runtime remains in [CONTEXT.md](CONTEXT.md).
 
 Pi spawned sessions complete by quiescence, not by process exit. `SpawnManager` still
 owns the generic event loop (persist → observe → fan-out). `PiDrainCoordinator` is a
-thin plan-wiring wrapper around the shared `CompletionCoordinator`; Pi evidence,
-profile, and cleanup collaborators in `pi_drain.py` retain the Pi-specific decisions.
+thin compatibility wrapper around the shared `CompletionCoordinator`. `pi_drain.py`
+owns Pi evidence, cleanup, and composition; `pi_completion_profile.py` owns Pi
+precedence, phases, deadlines, nudges, and stream-exit policy.
 
 ### Ownership Boundary
 
@@ -22,10 +23,11 @@ The Pi completion composition owns:
 - micro-drain candidate state and phase-event emission coordination
 - Pi failure/finalization decisions when the process exits before quiescence
 
-`SpawnManager` should not grow new Pi-specific state-machine branches. Add Pi evidence,
-precedence/phase behavior, or cleanup to the corresponding collaborator in `pi_drain.py`
-unless the change is purely generic event persistence, observer dispatch, subscriber
-fan-out, heartbeat, or control-socket handling.
+`SpawnManager` should not grow new Pi-specific state-machine branches. Add Pi evidence
+or cleanup to the corresponding collaborator in `pi_drain.py`; add precedence, phase,
+deadline, nudge, or exit behavior to `pi_completion_profile.py`. The exception is
+purely generic event persistence, observer dispatch, subscriber fan-out, heartbeat,
+or control-socket handling.
 
 `PiSubspawnTracker` owns lifecycle-observed active child IDs, process handles, and
 notifications. `PiDiskWatcher` owns direct-row confirmation plus bounded unresolved
@@ -62,7 +64,7 @@ bash update, or notification marker cannot be missed.
 ### Child Wave Timeout
 
 When the parent agent is idle and disk-backed child/background work is still pending,
-`PiDrainCoordinator` starts the child-wave deadline. If the deadline expires, it fails
+`PiCompletionProfile` starts the child-wave deadline. If the deadline expires, it fails
 with `failed` / `pi_child_wave_timeout` rather than letting Pi wait forever. Timeout
 state is latched and its deadline cleared before the single tracked-child cleanup
 attempt. Ordinary cleanup or timeout-phase emission failures are diagnostic and do
@@ -71,7 +73,7 @@ cancelled, tracker finalization still runs and cancellation propagates.
 
 ### Micro-Drain
 
-When a terminal event arrives but quiescence is not yet confirmed, `PiDrainCoordinator`
+When a terminal event arrives but quiescence is not yet confirmed, `PiCompletionProfile`
 enters micro-drain mode. It gives already-buffered or just-written disk/event activity a
 short chance to arrive before accepting the terminal event as the final outcome. This
 covers races where child state or notification markers land immediately after
@@ -102,9 +104,10 @@ These are written to `history.jsonl` alongside harness events and are visible in
 ### Pi Tracked Child Cleanup
 
 When the Pi process exits with active tracked children (crashed, killed, or otherwise
-terminated before quiescence), `PiDrainCoordinator` coordinates cleanup through the
-tracked child process metadata it has observed. Process cleanup lives in
-`pi_process_cleanup.py` so `SpawnManager` does not own Pi-specific process-tree policy:
+terminated before quiescence), `PiCompletionCleanup` coordinates cleanup through the
+tracked child process metadata observed by the evidence collaborator. Process cleanup
+lives in `pi_process_cleanup.py` so `SpawnManager` does not own Pi-specific process-tree
+policy:
 
 - **POSIX**: iterates captured process group IDs, sends `SIGTERM` via `os.killpg()`,
   waits 250ms, confirms liveness with `os.killpg(pgid, 0)`, then sends `SIGKILL` if
