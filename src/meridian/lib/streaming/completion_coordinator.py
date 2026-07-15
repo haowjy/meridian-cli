@@ -63,6 +63,7 @@ class CompletionCoordinator:
         self._deadline_latched = False
         self._stabilization_at: float | None = None
         self._stabilization_generation: int | None = None
+        # Preserve the original deadline for one evaluation after persisted activity.
         self._invalidated_stabilization_at: float | None = None
         self._active_turn = False
         self._cleanup_attempted = False
@@ -452,10 +453,13 @@ class CompletionCoordinator:
         return self._is_due(self._profile.next_nudge_at(self.state, assessment), now)
 
     def _stabilization_elapsed(self, now: float) -> bool:
-        return self._is_due(
-            self._stabilization_at or self._invalidated_stabilization_at,
-            now,
+        # Use the original deadline for one evaluation after persisted activity.
+        deadline = (
+            self._stabilization_at
+            if self._stabilization_at is not None
+            else self._invalidated_stabilization_at
         )
+        return self._is_due(deadline, now)
 
     def _refresh_profile_deadline(self) -> None:
         self._deadline_at = self._profile.deadline_for(
