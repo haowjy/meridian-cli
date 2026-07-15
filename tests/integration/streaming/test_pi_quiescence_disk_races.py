@@ -19,8 +19,9 @@ from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.safety.permissions import UnsafeNoOpPermissionResolver
 from meridian.lib.state import spawn_store
 from meridian.lib.state.spawn_signals import write_spawn_signal
+from meridian.lib.streaming import pi_drain as pi_drain_module
 from meridian.lib.streaming.completion_nudge import PI_COMPLETION_NUDGE_MESSAGE
-from meridian.lib.streaming.drain_policy import DrainAction
+from meridian.lib.streaming.drain_policy import DrainAction, PiRpcQuiescenceDrainPolicy
 from meridian.lib.streaming.pi_drain import PiDrainCoordinator
 from meridian.lib.streaming.pi_subspawn_tracker import PiSubspawnTracker
 from meridian.lib.streaming.spawn_manager import SpawnManager
@@ -62,6 +63,7 @@ async def _started_pi_coordinator(
     *,
     spawn_id: SpawnId,
     sent_messages: list[str] | None = None,
+    nudge_idle_seconds: float = 0.0,
 ) -> PiDrainCoordinator:
     connection = _FakePiConnection([])
     await connection.start(
@@ -98,17 +100,20 @@ async def _started_pi_coordinator(
         send_done_nudge=_send_done_nudge if sent_messages is not None else None,
     )
     await coordinator.start()
-    coordinator.quiescence_enabled = True
-    coordinator.done_nudge_idle_delay_seconds = 0.0
+    coordinator.set_policy(
+        PiRpcQuiescenceDrainPolicy(quiescence_check=coordinator.is_quiescent)
+    )
+    coordinator.done_nudge_idle_delay_seconds = nudge_idle_seconds
     coordinator.done_nudge_interval_seconds = 0.05
     return coordinator
 
 
 async def _put_pi_parent_idle_after_success(coordinator: PiDrainCoordinator) -> None:
-    await coordinator.quiescence_tracker.mark_idle()
     outcome = TerminalEventOutcome(status="succeeded", exit_code=0, error=None)
+    agent_end = _pi_event("agent_end", {})
+    await coordinator.observe_event(agent_end, "idle")
     await coordinator.handle_terminal_event(
-        _pi_event("agent_end", {}),
+        agent_end,
         outcome,
         DrainAction(terminate=True, emit_turn_boundary=False),
     )
@@ -127,12 +132,15 @@ async def _started_micro_drain_coordinator(
     child_wave_timeout_seconds: float | None = None,
     mark_idle: bool = False,
     start_micro_drain: bool = True,
+    timeout_phase_raises: bool = False,
 ) -> _StartedMicroDrain:
     phases: list[dict[str, object]] = []
 
     def emit_phase(*, phase: str, session_role: str | None, **payload: object) -> None:
         phases.append({"phase": phase, **payload})
         _ = session_role
+        if timeout_phase_raises and phase == "pi_child_wave_timeout":
+            raise RuntimeError(f"phase emission failed: {phase}")
 
     connection = _FakePiConnection([])
     await connection.start(
@@ -160,12 +168,19 @@ async def _started_micro_drain_coordinator(
         emit_phase=emit_phase,
     )
     await coordinator.start()
-    coordinator.quiescence_enabled = True
-    if mark_idle:
-        await coordinator.quiescence_tracker.mark_idle()
+    coordinator.set_policy(
+        PiRpcQuiescenceDrainPolicy(quiescence_check=coordinator.is_quiescent)
+    )
+    agent_end = _pi_event("agent_end", {})
+    if mark_idle or start_micro_drain:
+        await coordinator.observe_event(agent_end, "idle")
     if start_micro_drain:
         terminal = TerminalEventOutcome(status="succeeded", exit_code=0, error=None)
-        coordinator.start_micro_drain(terminal)
+        await coordinator.handle_terminal_event(
+            agent_end,
+            terminal,
+            DrainAction(terminate=True, emit_turn_boundary=False),
+        )
     return _StartedMicroDrain(coordinator=coordinator, phases=phases)
 
 
@@ -176,7 +191,7 @@ async def _noop_terminate(
     _ = tracker, reason
 
 
-async def _expire_child_wave(coordinator: PiDrainCoordinator) -> None:
+async def _arm_child_wave(coordinator: PiDrainCoordinator) -> None:
     await coordinator.observe_event(
         _pi_event(
             "meridian.subspawn.start",
@@ -190,12 +205,15 @@ async def _expire_child_wave(coordinator: PiDrainCoordinator) -> None:
         None,
     )
     await coordinator.observe_event(_pi_event("agent_end", {}), "idle")
-    assert coordinator.child_wave_deadline_monotonic is not None
-    coordinator.child_wave_deadline_monotonic = time.monotonic() - 1.0
 
 
 @pytest.mark.asyncio
-async def test_child_wave_timeout_fails_when_cleanup_finishes(tmp_path: Path) -> None:
+async def test_child_wave_timeout_fails_when_cleanup_finishes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clock = AsyncDeterminism(start=100.0)
+    clock.install(monkeypatch, monotonic_modules=(pi_drain_module,))
     spawn_id = SpawnId("p-child-wave-single-timeout")
     cleanup_reasons: list[str] = []
 
@@ -214,7 +232,13 @@ async def test_child_wave_timeout_fails_when_cleanup_finishes(tmp_path: Path) ->
     )
 
     try:
-        await _expire_child_wave(started.coordinator)
+        await _arm_child_wave(started.coordinator)
+        assert started.coordinator.next_timeout() == pytest.approx(0.01)
+        clock.advance(0.009)
+        before_deadline = await started.coordinator.handle_timeout(_record_cleanup)
+        assert before_deadline.recorded_outcome is None
+        assert cleanup_reasons == []
+        clock.advance(0.001)
 
         decision = await started.coordinator.handle_timeout(_record_cleanup)
 
@@ -249,27 +273,14 @@ async def test_child_wave_timeout_stays_terminal_when_cleanup_raises(
         spawn_id=spawn_id,
         child_wave_timeout_seconds=0.01,
         start_micro_drain=False,
+        timeout_phase_raises=True,
     )
 
     try:
-        await _expire_child_wave(started.coordinator)
-        monkeypatch.setattr(
-            started.coordinator.quiescence_tracker,
-            "has_pending_child_spawns",
-            lambda: True,
-        )
-        record_phase = started.coordinator.emit_phase
-
-        def _record_then_raise(
-            *,
-            phase: str,
-            session_role: str | None,
-            **payload: object,
-        ) -> None:
-            record_phase(phase=phase, session_role=session_role, **payload)
-            raise RuntimeError(f"phase emission failed: {phase}")
-
-        started.coordinator.emit_phase = _record_then_raise
+        determinism = AsyncDeterminism(start=100.0)
+        determinism.install(monkeypatch, monotonic_modules=(pi_drain_module,))
+        await _arm_child_wave(started.coordinator)
+        determinism.advance(0.01)
 
         decision = await started.coordinator.handle_timeout(_raise_cleanup)
         repeated_decision = await started.coordinator.handle_timeout(_raise_cleanup)
@@ -289,7 +300,10 @@ async def test_child_wave_timeout_stays_terminal_when_cleanup_raises(
 
 
 @pytest.mark.asyncio
-async def test_child_wave_timeout_cancellation_clears_latched_wave(tmp_path: Path) -> None:
+async def test_child_wave_timeout_cancellation_clears_latched_wave(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     cleanup_reasons: list[str] = []
 
     async def _cancel_cleanup(tracker: PiSubspawnTracker, reason: str) -> None:
@@ -305,16 +319,16 @@ async def test_child_wave_timeout_cancellation_clears_latched_wave(tmp_path: Pat
     )
 
     try:
-        await _expire_child_wave(started.coordinator)
+        determinism = AsyncDeterminism(start=100.0)
+        determinism.install(monkeypatch, monotonic_modules=(pi_drain_module,))
+        await _arm_child_wave(started.coordinator)
+        determinism.advance(0.01)
 
         with pytest.raises(asyncio.CancelledError):
             await started.coordinator.handle_timeout(_cancel_cleanup)
         repeated_decision = await started.coordinator.handle_timeout(_cancel_cleanup)
 
         assert cleanup_reasons == ["pi_child_wave_timeout"]
-        assert started.coordinator.tracked_cleanup_reason == "pi_child_wave_timeout"
-        assert started.coordinator.child_wave_deadline_monotonic is None
-        assert started.coordinator.tracker.has_pending() is False
         assert repeated_decision.recorded_outcome is None
     finally:
         await started.coordinator.stop()
@@ -352,15 +366,22 @@ async def test_pi_non_spawn_tracked_id_nudges_after_idle_delay(tmp_path: Path) -
         spawn_id=spawn_id,
         sent_messages=sent_messages,
     )
-    coordinator.tracker.active_ids.add("pi-internal-1")
 
     try:
+        await coordinator.observe_event(
+            _pi_event(
+                "meridian.subspawn.start",
+                {
+                    "schema_version": 1,
+                    "subspawn_id": "pi-internal-1",
+                    "correlation_id": "pi-internal-1",
+                    "wait_policy": "tracked",
+                },
+            ),
+            None,
+        )
         await _put_pi_parent_idle_after_success(coordinator)
 
-        classified = coordinator.classify_outstanding_work()
-        assert classified.spawn_children is False
-        assert classified.unknown_spawn_children is False
-        assert classified.non_spawn_processes is True
         await coordinator.handle_timeout()
 
         assert sent_messages == [PI_COMPLETION_NUDGE_MESSAGE]
@@ -434,15 +455,22 @@ async def test_pi_spawn_shaped_tracked_child_without_row_waits_closed_then_waits
         spawn_id=spawn_id,
         sent_messages=sent_messages,
     )
-    coordinator.tracker.active_ids.add(str(child_id))
 
     try:
+        await coordinator.observe_event(
+            _pi_event(
+                "meridian.subspawn.start",
+                {
+                    "schema_version": 1,
+                    "subspawn_id": str(child_id),
+                    "correlation_id": str(child_id),
+                    "wait_policy": "tracked",
+                },
+            ),
+            None,
+        )
         await _put_pi_parent_idle_after_success(coordinator)
 
-        rowless = coordinator.classify_outstanding_work()
-        assert rowless.spawn_children is False
-        assert rowless.unknown_spawn_children is True
-        assert rowless.non_spawn_processes is True
         await coordinator.handle_timeout()
         assert sent_messages == []
 
@@ -458,10 +486,6 @@ async def test_pi_spawn_shaped_tracked_child_without_row_waits_closed_then_waits
             status="running",
         )
 
-        with_row = coordinator.classify_outstanding_work()
-        assert with_row.spawn_children is True
-        assert with_row.unknown_spawn_children is False
-        assert with_row.non_spawn_processes is True
         await coordinator.handle_timeout()
         assert sent_messages == []
     finally:
@@ -471,7 +495,10 @@ async def test_pi_spawn_shaped_tracked_child_without_row_waits_closed_then_waits
 @pytest.mark.asyncio
 async def test_pi_candidate_child_dir_before_row_suppresses_done_nudge_until_terminal(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    determinism = AsyncDeterminism(start=100.0)
+    determinism.install(monkeypatch, monotonic_modules=(pi_drain_module,))
     spawn_id = SpawnId("p1")
     child_id = SpawnId("p123")
     sent_messages: list[str] = []
@@ -490,17 +517,14 @@ async def test_pi_candidate_child_dir_before_row_suppresses_done_nudge_until_ter
         tmp_path,
         spawn_id=spawn_id,
         sent_messages=sent_messages,
+        nudge_idle_seconds=5.0,
     )
 
     try:
         await _put_pi_parent_idle_after_success(coordinator)
         (tmp_path / "spawns" / str(child_id)).mkdir(parents=True)
-        await coordinator.quiescence_tracker.refresh_disk_state()
+        await coordinator.reevaluate_after_disk_change()
 
-        candidate = coordinator.classify_outstanding_work()
-        assert candidate.spawn_children is False
-        assert candidate.unknown_spawn_children is True
-        assert candidate.non_spawn_processes is True
         candidate_wait = await coordinator.handle_timeout()
         assert candidate_wait.recorded_outcome is None
         assert sent_messages == []
@@ -516,15 +540,12 @@ async def test_pi_candidate_child_dir_before_row_suppresses_done_nudge_until_ter
             prompt="child",
             status="succeeded",
         )
-        await coordinator.quiescence_tracker.refresh_disk_state()
+        await coordinator.reevaluate_after_disk_change()
 
-        resolved_terminal = coordinator.classify_outstanding_work()
-        assert resolved_terminal.spawn_children is False
-        assert resolved_terminal.unknown_spawn_children is False
-        assert resolved_terminal.non_spawn_processes is True
         terminal_row_wait = await coordinator.handle_timeout()
         assert terminal_row_wait.recorded_outcome is None
         assert sent_messages == []
+        determinism.advance(5.0)
         nudge = await coordinator.handle_timeout()
         assert nudge.recorded_outcome is None
         assert sent_messages == [PI_COMPLETION_NUDGE_MESSAGE]
@@ -582,7 +603,7 @@ async def test_pi_done_nudge_stops_when_work_drains_or_done_signal_arrives(
     try:
         await _put_pi_parent_idle_after_success(coordinator)
         _write_running_bash_record(tmp_path, spawn_id, running=False)
-        await coordinator.quiescence_tracker.refresh_disk_state()
+        await coordinator.reevaluate_after_disk_change()
 
         await coordinator.handle_timeout()
 
@@ -633,7 +654,6 @@ async def test_micro_drain_timeout_rechecks_disk_before_accepting(tmp_path: Path
     try:
         result = await started.coordinator.handle_timeout(_noop_terminate)
         assert result.recorded_outcome is None
-        assert started.coordinator.quiescence_candidate is None
         assert any(
             phase.get("phase") == "quiescence_micro_drain_cancelled"
             for phase in started.phases
@@ -660,7 +680,6 @@ async def test_micro_drain_recheck_preserves_idle_epoch_for_notifications(
     try:
         result = await started.coordinator.handle_timeout(_noop_terminate)
         assert result.recorded_outcome is None
-        assert started.coordinator.quiescence_candidate is None
         assert any(
             phase.get("phase") == "quiescence_micro_drain_cancelled"
             for phase in started.phases
@@ -685,9 +704,6 @@ async def test_micro_drain_cancel_arms_child_wave_for_rescan_discovered_child(
     try:
         result = await started.coordinator.handle_timeout(_noop_terminate)
         assert result.recorded_outcome is None
-        assert started.coordinator.quiescence_candidate is None
-        assert started.coordinator.child_wave_deadline_monotonic is not None
-        assert started.coordinator.pending_child_count() == 1
         assert any(
             phase.get("phase") == "waiting_for_tracked_children"
             and phase.get("active_tracked_count") == 1
@@ -816,8 +832,6 @@ async def test_disk_change_reevaluation_starts_child_wave_while_parent_idle(
 
     try:
         await started.coordinator.reevaluate_after_disk_change()
-        assert started.coordinator.child_wave_deadline_monotonic is not None
-        assert started.coordinator.pending_child_count() == 1
         assert any(
             phase.get("phase") == "waiting_for_tracked_children"
             and phase.get("active_tracked_count") == 1

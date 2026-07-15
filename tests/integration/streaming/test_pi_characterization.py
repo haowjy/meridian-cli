@@ -99,7 +99,9 @@ async def _start_coordinator(
     coordinator.done_nudge_idle_delay_seconds = nudge_idle_seconds
     coordinator.done_nudge_interval_seconds = 5.0
     await coordinator.start()
-    coordinator.quiescence_enabled = True
+    coordinator.set_policy(
+        PiRpcQuiescenceDrainPolicy(quiescence_check=coordinator.is_quiescent)
+    )
     return _StartedCoordinator(coordinator, clock, phases, nudges, cleanups)
 
 
@@ -324,36 +326,6 @@ async def test_expired_notification_wins_over_expired_child_wave(
         assert not any(
             phase["phase"] == "pi_child_wave_timeout" for phase in started.phases
         )
-    finally:
-        await coordinator.stop()
-
-
-@pytest.mark.asyncio
-async def test_expired_child_wave_cleans_once_and_returns_timeout_failure(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    started = await _start_coordinator(
-        tmp_path,
-        monkeypatch,
-        child_wave_timeout_seconds=5.0,
-    )
-    coordinator = started.coordinator
-    try:
-        await coordinator.observe_event(_tracked_child_start(), None)
-        await coordinator.observe_event(_AGENT_END, "idle")
-        started.clock.advance(5.0)
-
-        decision = await coordinator.handle_timeout()
-        repeated = await coordinator.handle_timeout()
-
-        _assert_failed(decision, "pi_child_wave_timeout")
-        assert repeated.recorded_outcome is None
-        assert started.cleanups == ["pi_child_wave_timeout"]
-        assert [phase["phase"] for phase in started.phases].count(
-            "pi_child_wave_timeout"
-        ) == 1
-        assert started.nudges == []
     finally:
         await coordinator.stop()
 
