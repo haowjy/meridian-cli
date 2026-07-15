@@ -10,6 +10,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 - Phase 0 drain characterization now uses observable effects and fake clocks.
+- Persisted descendant assessment now has one reconciled, transitive evidence projection.
 - Resident completion now supplies reconciled-tree evidence, resident precedence/control,
   and canonical descendant cleanup to the shared coordinator.
 - Pi completion now supplies its existing direct-child/private-work evidence, timeout

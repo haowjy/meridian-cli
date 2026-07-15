@@ -15,7 +15,7 @@ from typing import Any, Literal, cast
 
 import psutil
 import structlog
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, ValidationError
 
 from meridian.lib.core.clock import Clock, RealClock
 from meridian.lib.core.domain import SpawnStatus, TokenUsage
@@ -844,12 +844,14 @@ def list_spawns(
     """List v2 spawn records with optional equality filters."""
 
     paths = RuntimePaths.from_root_dir(runtime_root)
-    spawns = [
-        record
-        for spawn_id in _scan_spawn_ids(paths.spawns_dir)
-        if (record := _read_state(paths.spawns_dir, spawn_id, include_prompt=False))
-        is not None
-    ]
+    spawns: list[SpawnRecord] = []
+    for spawn_id in _scan_spawn_ids(paths.spawns_dir):
+        try:
+            record = _read_state(paths.spawns_dir, spawn_id, include_prompt=False)
+        except ValidationError:
+            continue
+        if record is not None:
+            spawns.append(record)
 
     if filters:
         spawns = _apply_spawn_filters(spawns, filters)

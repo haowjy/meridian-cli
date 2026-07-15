@@ -8,7 +8,6 @@ from typing import TYPE_CHECKING, Any
 
 import structlog
 
-from meridian.lib.core.spawn_lifecycle import is_active_spawn_status
 from meridian.lib.core.types import SpawnId
 from meridian.lib.harness.connections.liveness import LivenessDecision
 from meridian.lib.harness.semantics import TerminalEventOutcome
@@ -33,6 +32,7 @@ from meridian.lib.streaming.completion_nudge import (
     COMPLETION_NUDGE_MESSAGE,
     TIMEOUT_SOON_COMPLETION_NUDGE_MESSAGE,
 )
+from meridian.lib.streaming.descendant_evidence import ReconciledDescendantEvidence
 from meridian.lib.streaming.drain_coordinator import (
     DrainExitDecision,
     DrainLoopDecision,
@@ -60,13 +60,14 @@ class _ResidentCompletionEvidence:
         poll_seconds: float,
         clock: Callable[[], float],
     ) -> None:
-        self._runtime_root = runtime_root
-        self._spawn_id = spawn_id
         self._poll_seconds = poll_seconds
         self._clock = clock
+        self._descendant_evidence = ReconciledDescendantEvidence(
+            runtime_root=runtime_root,
+            root_spawn_id=spawn_id,
+            blocker_reader=lambda: _outstanding_descendant_blockers(runtime_root, spawn_id),
+        )
         self._next_due: float | None = None
-        self._generation = 0
-        self._last_signature: object = None
 
     async def start(self) -> None:
         return
@@ -86,28 +87,7 @@ class _ResidentCompletionEvidence:
 
     async def assess(self, trigger: AssessmentTrigger) -> WorkAssessment:
         del trigger
-        try:
-            blockers = _outstanding_descendant_blockers(self._runtime_root, self._spawn_id)
-        except Exception as exc:
-            failure = EvidenceFailure(code="descendant_evidence_read_failed", detail=str(exc))
-            assessment = WorkAssessment(
-                disposition="unknown",
-                blockers=(),
-                generation=self._next_generation(("unknown", failure.code, failure.detail)),
-                failure=failure,
-            )
-        else:
-            signature = tuple((blocker.code, blocker.identity) for blocker in blockers)
-            generation = self._next_generation(signature)
-            assessment = (
-                WorkAssessment(
-                    disposition="blocked",
-                    blockers=blockers,
-                    generation=generation,
-                )
-                if blockers
-                else WorkAssessment(disposition="ready", blockers=(), generation=generation)
-            )
+        assessment = self._descendant_evidence.assess()
         self._next_due = self._clock() + self._poll_seconds
         return assessment
 
@@ -123,13 +103,6 @@ class _ResidentCompletionEvidence:
 
     async def wait_for_change(self) -> None:
         return
-
-    def _next_generation(self, signature: object) -> int:
-        if signature != self._last_signature:
-            self._generation += 1
-            self._last_signature = signature
-        return self._generation
-
 
 class _ResidentCompletionProfile:
     """Own resident precedence, signals, backend state, deadline, and nudges."""
@@ -493,21 +466,15 @@ def _outstanding_descendant_blockers(
     runtime_root: Path,
     spawn_id: SpawnId,
 ) -> tuple[DiagnosticBlocker, ...]:
-    from meridian.lib.state import spawn_store
-    from meridian.lib.state.reaper import peek_reconciled_active_spawn
-    from meridian.lib.state.spawn_tree import collect_descendants
+    """Compatibility seam for resident failure characterization."""
 
-    rows = [
-        peek_reconciled_active_spawn(runtime_root, row)
-        for row in spawn_store.list_spawns(runtime_root)
-    ]
-    return tuple(
-        DiagnosticBlocker(
-            source="persisted_descendant",
-            code="active_descendant",
-            identity=row.id,
-        )
-        for row in collect_descendants(str(spawn_id), rows)
-        if row.id != str(spawn_id) and is_active_spawn_status(row.status)
-    )
+    assessment = ReconciledDescendantEvidence(
+        runtime_root=runtime_root,
+        root_spawn_id=spawn_id,
+    ).assess()
+    if assessment.failure is not None:
+        raise OSError(assessment.failure.detail)
+    return assessment.blockers
+
+
 __all__ = ["ResidentDrainCoordinator"]
