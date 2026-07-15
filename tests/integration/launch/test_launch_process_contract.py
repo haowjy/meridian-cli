@@ -11,7 +11,6 @@ from __future__ import annotations
 import os
 import sys
 import threading
-import time
 from pathlib import Path
 from typing import Any
 
@@ -68,13 +67,22 @@ def test_subprocess_launcher_cancel_wait_releases_pipe_relays(
         output_log_path=output_log_path,
     )
     results: list[LaunchedProcess] = []
-    wait_thread = threading.Thread(target=lambda: results.append(running.wait()))
+    wait_started = threading.Event()
+    wait_finished = threading.Event()
+
+    def _wait() -> None:
+        wait_started.set()
+        results.append(running.wait())
+        wait_finished.set()
+
+    wait_thread = threading.Thread(target=_wait)
     wait_thread.start()
-    time.sleep(0.05)
+    assert wait_started.wait(timeout=5.0)
 
     try:
         running.cancel_wait()
-        wait_thread.join(timeout=0.5)
+        assert wait_finished.wait(timeout=5.0)
+        wait_thread.join()
 
         assert wait_thread.is_alive() is False
         assert [result.exit_code for result in results] == [130]
