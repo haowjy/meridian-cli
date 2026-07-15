@@ -491,6 +491,23 @@ class _PiCompletionProfile:
     def fallback_error_without_recorded_outcome(self) -> str | None:
         return self.tracker.notification_failure_error
 
+    def stream_exit_decision(
+        self,
+        recorded_outcome: TerminalEventOutcome | None,
+        *,
+        pending_children: bool,
+    ) -> DrainExitDecision:
+        if pending_children and recorded_outcome is None:
+            recorded_outcome = _terminal_outcome(
+                status="failed",
+                exit_code=1,
+                error="pi_process_exited_with_tracked_children",
+            )
+        return DrainExitDecision(
+            recorded_outcome=recorded_outcome,
+            fallback_error=self.fallback_error_without_recorded_outcome(),
+        )
+
     def after_finalized(
         self,
         *,
@@ -1093,15 +1110,9 @@ class PiDrainCoordinator:
         pending_children = self._profile.pending_children_at_exit()
         if pending_children:
             await self._cleanup.cleanup_pending_children_at_exit()
-            if recorded_outcome is None:
-                recorded_outcome = _terminal_outcome(
-                    status="failed",
-                    exit_code=1,
-                    error="pi_process_exited_with_tracked_children",
-                )
-        return DrainExitDecision(
-            recorded_outcome=recorded_outcome,
-            fallback_error=self._profile.fallback_error_without_recorded_outcome(),
+        return self._profile.stream_exit_decision(
+            recorded_outcome,
+            pending_children=pending_children,
         )
 
     def after_finalized(
