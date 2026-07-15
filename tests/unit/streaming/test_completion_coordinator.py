@@ -25,7 +25,6 @@ from meridian.lib.streaming.completion_contracts import (
 )
 from meridian.lib.streaming.completion_coordinator import CompletionCoordinator
 from meridian.lib.streaming.drain_policy import DrainAction
-from tests.support.async_determinism import AsyncDeterminism
 from tests.support.fakes import FakeClock
 
 if TYPE_CHECKING:
@@ -228,19 +227,6 @@ class _RetainingStabilizationProfile(_Profile):
         return super().evaluate(context)
 
 
-class _ZeroDeadlineStabilizationProfile(_Profile):
-    def evaluate(self, context: CompletionEvaluation) -> ProfileDecision:
-        if context.state.phase != "stabilizing":
-            self.evaluations.append(context)
-            return ProfileDecision(action="stabilize")
-        return super().evaluate(context)
-
-
-class _InvalidatedDeadlineCoordinator(CompletionCoordinator):
-    def retain_invalidated_stabilization(self, deadline: float) -> None:
-        self._invalidated_stabilization_at = deadline
-
-
 def _coordinator(
     clock: FakeClock,
     evidence: _Evidence,
@@ -365,29 +351,6 @@ async def test_stabilization_requires_an_unchanged_fresh_ready_recheck() -> None
     completed = await coordinator.handle_timeout()
     assert completed.recorded_outcome == _SUCCESS
     assert evidence.assess_calls == ["terminal_candidate", "aux_wake", "timeout"]
-
-
-@pytest.mark.asyncio
-async def test_zero_stabilization_deadline_precedes_later_invalidated_deadline() -> None:
-    determinism = AsyncDeterminism(start=0.0)
-    evidence = _Evidence(_ready(generation=7), _ready(generation=7))
-    profile = _ZeroDeadlineStabilizationProfile(stabilization_seconds=0.0)
-    coordinator = _InvalidatedDeadlineCoordinator(
-        evidence=evidence,
-        profile=profile,
-        cleanup=_Cleanup(),
-        clock=determinism.clock.monotonic,
-    )
-
-    candidate = await coordinator.handle_terminal_event(None, _SUCCESS, _TERMINATE)  # type: ignore[arg-type]
-    assert candidate.recorded_outcome is None
-    assert coordinator.state.stabilization_at == 0.0
-
-    # Seed the transient overlap without asserting the private elapsed predicate.
-    coordinator.retain_invalidated_stabilization(1.0)
-    completed = await coordinator.handle_timeout()
-
-    assert completed.recorded_outcome == _SUCCESS
 
 
 @pytest.mark.asyncio

@@ -409,7 +409,7 @@ async def test_persisted_activity_restarts_elapsed_stabilization_before_concurre
     aux_evaluation = next(
         context for context in profile.evaluations if context.trigger == "aux_wake"
     )
-    assert aux_evaluation.stabilization_elapsed is True
+    assert aux_evaluation.stabilization_elapsed is False
     assert aux_evaluation.evidence_activity == EvidenceActivity(code="persisted_event")
     after_event_evaluation = profile.evaluations[-1]
     assert after_event_evaluation.trigger == "event"

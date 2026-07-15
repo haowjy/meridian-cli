@@ -28,8 +28,6 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   stabilization timeout, which alone finalizes or emits cancellation.
 - Pi completion now uses watcher-owned disk polling, propagates blocker accessor
   failures, and keeps stream-exit policy inside the shared coordinator.
-- Zero-second completion stabilization deadlines are no longer skipped when an
-  invalidated deadline is retained.
 
 ## [0.3.31] - 2026-07-10
 

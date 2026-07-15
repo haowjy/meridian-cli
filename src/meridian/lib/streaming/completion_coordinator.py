@@ -63,8 +63,6 @@ class CompletionCoordinator:
         self._deadline_latched = False
         self._stabilization_at: float | None = None
         self._stabilization_generation: int | None = None
-        # Preserve the original deadline for one evaluation after persisted activity.
-        self._invalidated_stabilization_at: float | None = None
         self._active_turn = False
         self._cleanup_attempted = False
         self._cleanup_report: CleanupReport | None = None
@@ -151,7 +149,6 @@ class CompletionCoordinator:
         decision = self._evidence.note_event_persisted(event)
         self._latch_evidence_decision(decision)
         if decision.activity is not None and self._phase == "stabilizing":
-            self._invalidated_stabilization_at = self._stabilization_at
             self._phase = "waiting"
             self._stabilization_at = None
             self._stabilization_generation = None
@@ -320,7 +317,6 @@ class CompletionCoordinator:
     def _clear_pending_evidence_decision(self) -> None:
         self._pending_evidence_activity = None
         self._pending_evidence_failure = None
-        self._invalidated_stabilization_at = None
 
     async def _fresh_assessment(self, trigger: AssessmentTrigger) -> WorkAssessment:
         prior_phase = self._phase
@@ -405,7 +401,6 @@ class CompletionCoordinator:
         self._deadline_at = None
         self._stabilization_at = None
         self._stabilization_generation = None
-        self._invalidated_stabilization_at = None
         assessment = self._assessment or WorkAssessment(
             disposition="unknown",
             blockers=(),
@@ -430,7 +425,6 @@ class CompletionCoordinator:
         self._deadline_at = None
         self._stabilization_at = None
         self._stabilization_generation = None
-        self._invalidated_stabilization_at = None
         return DrainLoopDecision(recorded_outcome=outcome)
 
     def _reset_cycle(self) -> None:
@@ -441,7 +435,6 @@ class CompletionCoordinator:
         self._deadline_latched = False
         self._stabilization_at = None
         self._stabilization_generation = None
-        self._invalidated_stabilization_at = None
         self._active_turn = False
         self._cleanup_attempted = False
         self._cleanup_report = None
@@ -453,13 +446,7 @@ class CompletionCoordinator:
         return self._is_due(self._profile.next_nudge_at(self.state, assessment), now)
 
     def _stabilization_elapsed(self, now: float) -> bool:
-        # Use the original deadline for one evaluation after persisted activity.
-        deadline = (
-            self._stabilization_at
-            if self._stabilization_at is not None
-            else self._invalidated_stabilization_at
-        )
-        return self._is_due(deadline, now)
+        return self._is_due(self._stabilization_at, now)
 
     def _refresh_profile_deadline(self) -> None:
         self._deadline_at = self._profile.deadline_for(
