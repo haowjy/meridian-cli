@@ -346,6 +346,7 @@ class CompletionCoordinator:
         return DrainLoopDecision()
 
     async def _run_cleanup_once(self, reason: str) -> None:
+        # SpawnDrainLoop serializes drain callbacks; cleanup cannot overlap here.
         if self._cleanup_attempted:
             return
         self._cleanup_attempted = True
