@@ -310,6 +310,48 @@ async def test_done_signal_at_terminalresident_event_wins_over_outstanding_child
 
 
 @pytest.mark.asyncio
+async def test_terminal_done_completes_when_descendant_evidence_read_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from meridian.lib.state.spawn_signals import write_spawn_signal
+    from meridian.lib.streaming import resident_drain as resident_drain_module
+
+    start_row(tmp_path, "p1", HarnessId.CODEX, None)
+    connection = FakeResidentConnection(HarnessId.CODEX)
+    coordinator = ResidentDrainCoordinator.for_connection(
+        project_root=tmp_path,
+        runtime_root=tmp_path,
+        spawn_id=SpawnId("p1"),
+        receiver=connection,
+        resident_backend=connection.resident_backend,
+        deadline_seconds=30.0,
+        poll_seconds=0.01,
+    )
+    write_spawn_signal(tmp_path, "p1", "done")
+
+    def _raise_evidence_read_failure(*_args: object) -> None:
+        raise OSError("descendant evidence unavailable")
+
+    monkeypatch.setattr(
+        resident_drain_module,
+        "_outstanding_descendant_blockers",
+        _raise_evidence_read_failure,
+    )
+    terminal = TerminalEventOutcome(status="succeeded", exit_code=0)
+
+    decision = await coordinator.handle_terminal_event(
+        resident_event(HarnessId.CODEX, "turn/completed", {}),
+        terminal,
+        DrainAction(terminate=True, emit_turn_boundary=False),
+    )
+
+    assert decision.recorded_outcome == terminal
+    assert decision.emit_turn_boundary is False
+    assert connection.fake_resident_backend.awaiting_done_values == [False]
+
+
+@pytest.mark.asyncio
 async def test_spawn_done_op_releases_resident_wait_via_environment_default(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

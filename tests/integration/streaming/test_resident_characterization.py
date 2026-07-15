@@ -142,30 +142,6 @@ async def test_terminal_done_overrides_rearm_and_persisted_descendant(
 
 
 @pytest.mark.asyncio
-async def test_terminal_done_completes_when_descendant_evidence_read_fails(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    coordinator, connection, _clock = _coordinator(tmp_path, monkeypatch)
-    write_spawn_signal(tmp_path, "p1", "done")
-
-    def _raise_evidence_read_failure(*_args: object) -> None:
-        raise OSError("descendant evidence unavailable")
-
-    monkeypatch.setattr(
-        resident_drain_module,
-        "_outstanding_descendant_blockers",
-        _raise_evidence_read_failure,
-    )
-
-    decision = await coordinator.handle_terminal_event(_EVENT, _SUCCESS, _TERMINATE)
-
-    assert decision.recorded_outcome == _SUCCESS
-    assert decision.emit_turn_boundary is False
-    assert connection.fake_resident_backend.awaiting_done_values == [False]
-
-
-@pytest.mark.asyncio
 async def test_terminal_rearm_resets_deadline_and_holds_ready_tree(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
