@@ -5,10 +5,11 @@ The async backbone between a live harness connection and the rest of the system.
 core mechanism that moves events from the harness outward to persistence, observers,
 and the subscriber queue.
 
-Mostly mechanism. Generic terminal behavior lives in `DrainPolicy`; harness-specific
-completion waiting enters through `DrainPlan`. Plain streaming harnesses intentionally
-run with `coordinator=None`; Pi and resident Codex/OpenCode paths get narrow
-coordinators only when their connection exposes the needed seam. Keep Pi child-wave,
+Mostly mechanism. Generic terminal classification lives in `DrainPolicy`; shared
+candidate/deadline/stabilization mechanics live in `CompletionCoordinator`, behind
+the outer `DrainCoordinator` seam. Plain streaming harnesses intentionally run with
+`coordinator=None`; Pi and resident Codex/OpenCode paths get narrow coordinators only
+when their connection exposes the needed seam. Keep Pi child-wave,
 notification, disk-state, resident-done nudges, and tracked-process cleanup policy
 behind the coordinator/tracker modules instead of growing `SpawnManager`.
 
@@ -86,9 +87,11 @@ means the manager died or the spawn is orphaned.
 - `spawn_dispatch.py` — connection creation/start dispatch
 - `spawn_drain_loop.py` — event drain, persistence/observer/fan-out ordering, outcome priority
 - `drain_coordinator.py` — `DrainCoordinator` protocol seam for harness-specific completion policy
+- `completion_contracts.py` — typed evidence, profile, and cleanup collaborator contracts
+- `completion_coordinator.py` — shared candidate/wait/deadline/stabilization state machine
 - `spawn_session.py` — `SpawnSession`, `DrainOutcome`
 - `pi_drain.py` — `PiDrainCoordinator`: Pi spawned-session quiescence policy
-- `resident_drain.py` — `ResidentDrainCoordinator`: resident-backend descendant waiting policy
+- `resident_drain.py` — resident evidence/profile/cleanup adapters and thin construction wrapper
 - `pi_subspawn_tracker.py` — Pi child-spawn, notification, and wave tracking
 - `disk_watcher.py` / `pi_quiescence.py` — disk-backed Pi background-work state
 - `drain_wait.py` — generic event/timeout/aux-wake arbitration for drain loops
