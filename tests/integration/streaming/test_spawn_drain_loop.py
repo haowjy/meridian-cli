@@ -154,3 +154,35 @@ async def test_tenth_history_write_failure_aborts_without_delivery() -> None:
         for event in events[:10]
         for call in (("pre_persist", event), ("persist", event))
     ]
+
+
+@pytest.mark.asyncio
+async def test_terminal_frame_history_write_failure_is_not_delivered_or_terminal() -> None:
+    failed_terminal = HarnessEvent(
+        event_type="agent_end",
+        harness_id="pi",
+        payload={"messages": [{"role": "assistant", "stopReason": "stop"}]},
+    )
+    persisted_after_terminal = HarnessEvent(
+        event_type="message",
+        harness_id="pi",
+        payload={"id": "after-failed-terminal"},
+    )
+
+    calls = await _run_drain(
+        [failed_terminal, persisted_after_terminal],
+        [
+            WriteResult(success=False, error="terminal write failure"),
+            WriteResult(success=True, seq=0),
+        ],
+    )
+
+    assert calls == [
+        ("pre_persist", failed_terminal),
+        ("persist", failed_terminal),
+        ("pre_persist", persisted_after_terminal),
+        ("persist", persisted_after_terminal),
+        ("observe", persisted_after_terminal),
+        ("fan_out", persisted_after_terminal),
+        ("noted", persisted_after_terminal),
+    ]
