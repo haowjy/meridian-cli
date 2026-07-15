@@ -10,12 +10,15 @@ from meridian.lib.bootstrap.services import prepare_for_runtime_write
 from meridian.lib.core.context import RuntimeContext
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.common import extract_codex_report
+from meridian.lib.harness.semantics import TerminalEventOutcome
 from meridian.lib.ops.spawn.models import SpawnSignalInput
 from meridian.lib.state import spawn_store
 from meridian.lib.state.artifact_store import LocalStore
 from meridian.lib.streaming.drain_policy import (
+    DrainAction,
     PersistentDrainPolicy,
 )
+from meridian.lib.streaming.resident_drain import ResidentDrainCoordinator
 from tests.support.async_determinism import (
     AsyncDeterminism,
     assert_still_pending,
@@ -488,7 +491,12 @@ async def test_child_written_before_terminalresident_event_is_processed_prevents
 @pytest.mark.asyncio
 async def test_resident_stream_close_with_dead_backend_fails_while_child_running(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    from meridian.lib.streaming import resident_drain as resident_drain_module
+
+    determinism = AsyncDeterminism(start=100.0)
+    monkeypatch.setattr(resident_drain_module.time, "monotonic", determinism.clock.monotonic)
     spawn_id = SpawnId("p1")
     start_row(tmp_path, str(spawn_id), HarnessId.OPENCODE, None)
     start_row(tmp_path, "p2", HarnessId.CODEX, str(spawn_id))
@@ -496,17 +504,18 @@ async def test_resident_stream_close_with_dead_backend_fails_while_child_running
     manager = await start_manager(tmp_path, connection, spawn_id=spawn_id)
 
     connection.emit(resident_event(HarnessId.OPENCODE, "session.idle", {}))
+    completion = asyncio.create_task(manager.wait_for_completion(spawn_id))
 
     try:
-        with pytest.raises(asyncio.TimeoutError):
-            await asyncio.wait_for(
-                asyncio.shield(manager.wait_for_completion(spawn_id)),
-                timeout=0.05,
-            )
+        await wait_until(
+            lambda: connection.fake_resident_backend.awaiting_done_values == [True],
+            description="resident awaiting-done state",
+        )
+        await assert_still_pending(completion)
         connection.mark_failed()
         connection.close_stream()
 
-        outcome = await manager.wait_for_completion(spawn_id)
+        outcome = await completion
         assert outcome is not None
         assert outcome.status == "failed"
         assert outcome.error == "backend_dead_while_awaiting_done"
@@ -517,7 +526,12 @@ async def test_resident_stream_close_with_dead_backend_fails_while_child_running
 @pytest.mark.asyncio
 async def test_resident_stream_close_with_stalled_backend_is_not_dead_outcome(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    from meridian.lib.streaming import resident_drain as resident_drain_module
+
+    determinism = AsyncDeterminism(start=100.0)
+    monkeypatch.setattr(resident_drain_module.time, "monotonic", determinism.clock.monotonic)
     spawn_id = SpawnId("p1")
     start_row(tmp_path, str(spawn_id), HarnessId.OPENCODE, None)
     start_row(tmp_path, "p2", HarnessId.CODEX, str(spawn_id))
@@ -525,17 +539,18 @@ async def test_resident_stream_close_with_stalled_backend_is_not_dead_outcome(
     manager = await start_manager(tmp_path, connection, spawn_id=spawn_id)
 
     connection.emit(resident_event(HarnessId.OPENCODE, "session.idle", {}))
+    completion = asyncio.create_task(manager.wait_for_completion(spawn_id))
 
     try:
-        with pytest.raises(asyncio.TimeoutError):
-            await asyncio.wait_for(
-                asyncio.shield(manager.wait_for_completion(spawn_id)),
-                timeout=0.05,
-            )
+        await wait_until(
+            lambda: connection.fake_resident_backend.awaiting_done_values == [True],
+            description="resident awaiting-done state",
+        )
+        await assert_still_pending(completion)
         connection.mark_stalled()
         connection.close_stream()
 
-        outcome = await manager.wait_for_completion(spawn_id)
+        outcome = await completion
         assert outcome is not None
         assert outcome.status == "failed"
         assert outcome.error == "stream_closed_while_awaiting_done"
@@ -654,50 +669,6 @@ async def test_codex_resident_finalization_preserves_artifact_report(tmp_path: P
 
 
 @pytest.mark.asyncio
-async def test_rearm_signal_extends_deadline_and_injects_only_after_cadence(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from meridian.lib.state.spawn_signals import write_spawn_signal
-    from meridian.lib.streaming import resident_drain as resident_drain_module
-
-    clock = FakeClock(start=100.0)
-    monkeypatch.setattr(resident_drain_module.time, "monotonic", clock.monotonic)
-    start_row(tmp_path, "p1", HarnessId.CODEX, None)
-    connection = FakeResidentConnection(HarnessId.CODEX)
-    coordinator = coordinator_with_clock(tmp_path, connection, clock, deadline_seconds=3300.0)
-
-    clock.advance(10.0)
-    write_spawn_signal(tmp_path, "p1", "rearm")
-    old_deadline = coordinator.deadline_monotonic
-    decision = await coordinator.handle_timeout()
-
-    assert decision.recorded_outcome is None
-    assert coordinator.resident_requested is True
-    assert old_deadline is not None
-    assert coordinator.deadline_monotonic is not None
-    assert coordinator.deadline_monotonic > old_deadline
-    assert connection.fake_resident_backend.injected_messages == []
-    assert coordinator.next_timeout() == pytest.approx(5.0)
-
-    clock.advance(270.0)
-    decision = await coordinator.handle_timeout()
-
-    assert decision.recorded_outcome is None
-    assert len(connection.fake_resident_backend.injected_messages) == 1
-    injected = connection.fake_resident_backend.injected_messages[0]
-    assert "meridian spawn done" in injected
-    assert "meridian spawn rearm" in injected
-
-    write_spawn_signal(tmp_path, "p1", "done")
-    decision = await coordinator.handle_timeout()
-
-    assert decision.recorded_outcome is not None
-    assert decision.recorded_outcome.status == "succeeded"
-    assert coordinator.pending_outcome is None
-
-
-@pytest.mark.asyncio
 async def test_active_followup_turn_stays_resident_honors_done_and_defers_poll(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -708,27 +679,50 @@ async def test_active_followup_turn_stays_resident_honors_done_and_defers_poll(
     clock = FakeClock(start=100.0)
     monkeypatch.setattr(resident_drain_module.time, "monotonic", clock.monotonic)
     start_row(tmp_path, "p1", HarnessId.CODEX, None)
+    start_row(tmp_path, "p2", HarnessId.CODEX, "p1")
     connection = FakeResidentConnection(HarnessId.CODEX)
-    coordinator = coordinator_with_clock(tmp_path, connection, clock, deadline_seconds=300.0)
-    coordinator.resident_requested = True
-    coordinator.next_inject_monotonic = clock.monotonic()
+    coordinator = ResidentDrainCoordinator.for_connection(
+        project_root=tmp_path,
+        runtime_root=tmp_path,
+        spawn_id=SpawnId("p1"),
+        receiver=connection,
+        resident_backend=connection.resident_backend,
+        deadline_seconds=3300.0,
+        poll_seconds=5.0,
+    )
+    terminal = TerminalEventOutcome(status="succeeded", exit_code=0)
+    waiting = await coordinator.handle_terminal_event(
+        resident_event(HarnessId.CODEX, "turn/completed", {}),
+        terminal,
+        DrainAction(terminate=True, emit_turn_boundary=False),
+    )
+    assert waiting.emit_turn_boundary is True
+    spawn_store.finalize_spawn(tmp_path, SpawnId("p2"), "succeeded", 0, origin="runner")
+    write_spawn_signal(tmp_path, "p1", "rearm")
+    rearmed = await coordinator.handle_timeout()
+    assert rearmed.recorded_outcome is None
+    assert coordinator.next_timeout() == pytest.approx(5.0)
+    assert connection.fake_resident_backend.injected_messages == []
+
+    clock.advance(270.0)
+    nudged = await coordinator.handle_timeout()
+    assert nudged.recorded_outcome is None
+    assert len(connection.fake_resident_backend.injected_messages) == 1
+    injected = connection.fake_resident_backend.injected_messages[0]
+    assert "meridian spawn done" in injected
+    assert "meridian spawn rearm" in injected
 
     coordinator.observe_activity_transition("turn_active")
 
-    assert coordinator.turn_active is True
-    assert coordinator.pending_outcome is not None
-    assert coordinator.deadline_monotonic is not None
-    assert coordinator.deadline_monotonic > clock.monotonic()
-    assert coordinator.next_inject_monotonic is not None
-    assert coordinator.next_inject_monotonic > clock.monotonic()
     assert coordinator.next_timeout() == pytest.approx(5.0)
+    assert connection.fake_resident_backend.awaiting_done_values == [True, False]
 
     write_spawn_signal(tmp_path, "p1", "done")
     decision = await coordinator.handle_timeout()
 
-    assert decision.recorded_outcome is not None
-    assert decision.recorded_outcome.status == "succeeded"
-    assert coordinator.deadline_monotonic is None
+    assert decision.recorded_outcome == terminal
+    assert coordinator.next_timeout() is None
+    assert connection.fake_resident_backend.awaiting_done_values == [True, False, False]
 
 
 @pytest.mark.asyncio

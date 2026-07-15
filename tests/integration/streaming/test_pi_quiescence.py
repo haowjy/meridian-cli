@@ -366,7 +366,7 @@ async def _run_pi_child_wave_timeout_with_cleanup_mocks(
         async def events(self):  # type: ignore[no-untyped-def]
             for event in self._events:
                 yield event
-            await asyncio.sleep(60)
+            await asyncio.Event().wait()
 
     fake_connection = _StuckWaveTimeoutConnection(
         [
@@ -476,7 +476,7 @@ async def test_spawn_manager_pi_child_wave_timeout_cleans_tracked_children_and_f
         async def events(self):  # type: ignore[no-untyped-def]
             for event in self._events:
                 yield event
-            await asyncio.sleep(60)
+            await asyncio.Event().wait()
 
     events = [
         _pi_event("session", {"id": "ses-pi"}),
