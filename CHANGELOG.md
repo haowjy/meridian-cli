@@ -24,6 +24,10 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   is unavailable.
 - Persisted completion activity now survives a concurrent auxiliary wake, and typed
   post-persist evidence failures can finalize through profile policy immediately.
+- Pi micro-drain candidates now survive auxiliary blockers until the original
+  stabilization timeout, which alone finalizes or emits cancellation.
+- Pi completion now uses watcher-owned disk polling, propagates blocker accessor
+  failures, and keeps stream-exit policy inside the shared coordinator.
 
 ## [0.3.31] - 2026-07-10
 

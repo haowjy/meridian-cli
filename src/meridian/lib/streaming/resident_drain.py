@@ -24,6 +24,7 @@ from meridian.lib.streaming.completion_contracts import (
     EvidenceFailure,
     NudgeUrgency,
     ProfileDecision,
+    ProfileExitDecision,
     WorkAssessment,
 )
 from meridian.lib.streaming.completion_coordinator import CompletionCoordinator
@@ -152,7 +153,12 @@ class _ResidentCompletionProfile:
         self._awaiting_done = False
         self._next_nudge_at: float | None = None
 
-    def consume_directives(self) -> CompletionDirectives:
+    def consume_directives(
+        self,
+        state: CompletionState,
+        trigger: AssessmentTrigger,
+    ) -> CompletionDirectives:
+        del state, trigger
         signals = consume_resident_signals(self._runtime_root, self._spawn_id)
         self._done_requested = self._done_requested or signals.done
         return CompletionDirectives(done=self._done_requested, rearm=signals.rearm)
@@ -205,6 +211,14 @@ class _ResidentCompletionProfile:
             else COMPLETION_NUDGE_MESSAGE
         )
         await self._resident_backend.begin_followup_turn(message)
+
+    def stream_exit_decision(
+        self,
+        state: CompletionState,
+        recorded_outcome: TerminalEventOutcome | None,
+    ) -> ProfileExitDecision:
+        del state
+        return ProfileExitDecision(recorded_outcome=recorded_outcome)
 
     def observe_activity_transition(self, transition: str | None) -> None:
         if transition != "turn_active":

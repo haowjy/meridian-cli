@@ -20,6 +20,7 @@ from meridian.lib.streaming.completion_contracts import (
     EvidenceFailure,
     NudgeUrgency,
     ProfileDecision,
+    ProfileExitDecision,
     WorkAssessment,
 )
 from meridian.lib.streaming.completion_coordinator import CompletionCoordinator
@@ -126,7 +127,12 @@ class _Profile:
         self.directives: deque[CompletionDirectives] = deque()
         self.evaluations: list[CompletionEvaluation] = []
 
-    def consume_directives(self) -> CompletionDirectives:
+    def consume_directives(
+        self,
+        state: CompletionState,
+        trigger: AssessmentTrigger,
+    ) -> CompletionDirectives:
+        del state, trigger
         current = self.directives.popleft() if self.directives else CompletionDirectives()
         self.done_requested = self.done_requested or current.done
         return CompletionDirectives(done=self.done_requested, rearm=current.rearm)
@@ -194,6 +200,14 @@ class _Profile:
     async def send_nudge(self, urgency: NudgeUrgency) -> None:
         del urgency
 
+    def stream_exit_decision(
+        self,
+        state: CompletionState,
+        recorded_outcome: TerminalEventOutcome | None,
+    ) -> ProfileExitDecision:
+        del state
+        return ProfileExitDecision(recorded_outcome=recorded_outcome)
+
 
 class _Cleanup:
     def __init__(self) -> None:
@@ -202,6 +216,15 @@ class _Cleanup:
     async def cleanup(self, assessment: WorkAssessment, reason: str) -> CleanupReport:
         self.calls.append((assessment, reason))
         return CleanupReport(attempted_categories=("fake",))
+
+
+class _RetainingStabilizationProfile(_Profile):
+    def evaluate(self, context: CompletionEvaluation) -> ProfileDecision:
+        if context.state.phase == "stabilizing" and context.trigger == "aux_wake":
+            return ProfileDecision(action="hold_stabilization")
+        if context.state.phase == "stabilizing" and context.trigger == "timeout":
+            return ProfileDecision(action="abandon_candidate")
+        return super().evaluate(context)
 
 
 def _coordinator(
@@ -328,6 +351,30 @@ async def test_stabilization_requires_an_unchanged_fresh_ready_recheck() -> None
     completed = await coordinator.handle_timeout()
     assert completed.recorded_outcome == _SUCCESS
     assert evidence.assess_calls == ["terminal_candidate", "aux_wake", "timeout"]
+
+
+@pytest.mark.asyncio
+async def test_stabilization_can_hold_then_abandon_the_candidate() -> None:
+    clock = FakeClock(start=5.0)
+    evidence = _Evidence(_ready(generation=7), _blocked(generation=8), _blocked(generation=8))
+    profile = _RetainingStabilizationProfile(stabilization_seconds=2.0)
+    coordinator, _ = _coordinator(clock, evidence, profile)
+    await coordinator.handle_terminal_event(None, _SUCCESS, _TERMINATE)  # type: ignore[arg-type]
+    original_deadline = coordinator.state.stabilization_at
+
+    clock.advance(1.0)
+    await coordinator.handle_aux_wake()
+
+    assert coordinator.state.phase == "stabilizing"
+    assert coordinator.pending_outcome == _SUCCESS
+    assert coordinator.state.stabilization_at == original_deadline
+
+    clock.advance(1.0)
+    await coordinator.handle_timeout()
+
+    assert coordinator.state.phase == "waiting"
+    assert coordinator.pending_outcome is None
+    assert coordinator.state.stabilization_at is None
 
 
 @pytest.mark.asyncio

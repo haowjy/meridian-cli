@@ -201,7 +201,18 @@ class CompletionCoordinator:
         self,
         recorded_outcome: TerminalEventOutcome | None,
     ) -> DrainExitDecision:
-        return DrainExitDecision(recorded_outcome=recorded_outcome)
+        decision = self._profile.stream_exit_decision(self.state, recorded_outcome)
+        if decision.cleanup_reason is not None and not self._cleanup_attempted:
+            self._cleanup_attempted = True
+            assessment = self._assessment or _INITIAL_ASSESSMENT
+            self._cleanup_report = await self._cleanup.cleanup(
+                assessment,
+                decision.cleanup_reason,
+            )
+        return DrainExitDecision(
+            recorded_outcome=decision.recorded_outcome,
+            fallback_error=decision.fallback_error,
+        )
 
     async def _evaluate_terminal(
         self,
@@ -220,7 +231,9 @@ class CompletionCoordinator:
                 trigger="terminal_candidate",
                 now=now,
                 directives=(
-                    self._profile.consume_directives() if assess else CompletionDirectives()
+                    self._profile.consume_directives(self.state, "terminal_candidate")
+                    if assess
+                    else CompletionDirectives()
                 ),
                 assessment=assessment or self._assessment or _INITIAL_ASSESSMENT,
                 deadline_expired=self._deadline_latched,
@@ -260,7 +273,7 @@ class CompletionCoordinator:
                 state=self.state,
                 trigger=trigger,
                 now=now,
-                directives=self._profile.consume_directives(),
+                directives=self._profile.consume_directives(self.state, trigger),
                 assessment=assessment,
                 deadline_expired=self._deadline_latched,
                 stabilization_elapsed=self._stabilization_elapsed(now),
@@ -337,6 +350,18 @@ class CompletionCoordinator:
             assert outcome is not None
             await self._run_cleanup_once(decision.cleanup_reason or "completion_deadline")
             return self._publish(outcome)
+        if decision.action == "hold_stabilization":
+            if (
+                self._phase != "stabilizing"
+                or self._candidate is None
+                or self._stabilization_at is None
+            ):
+                raise RuntimeError(
+                    "holding stabilization requires an active candidate and deadline"
+                )
+            return DrainLoopDecision()
+        if decision.action == "abandon_candidate":
+            self._candidate = None
         if decision.action == "stabilize":
             assessment = self._assessment
             if not fresh_assessment or assessment is None or assessment.disposition != "ready":

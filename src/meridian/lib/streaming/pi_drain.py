@@ -26,6 +26,7 @@ from meridian.lib.streaming.completion_contracts import (
     EvidenceFailure,
     NudgeUrgency,
     ProfileDecision,
+    ProfileExitDecision,
     WorkAssessment,
 )
 from meridian.lib.streaming.completion_coordinator import CompletionCoordinator
@@ -53,7 +54,6 @@ if TYPE_CHECKING:
     from meridian.lib.streaming.spawn_session import DrainOutcome
 
 _PI_PHASE_EVENT_TYPE = pi_lifecycle.PI_PHASE_EVENT_TYPE
-_PENDING_DISK_POLL_INTERVAL_SECONDS = 0.25
 logger = logging.getLogger(__name__)
 
 PI_MICRO_DRAIN_TIMEOUT_SECONDS: float = 0.05
@@ -95,7 +95,6 @@ class _PiCompletionEvidence:
         self._profile: _PiCompletionProfile | None = None
         self._generation = 0
         self._last_signature: object = None
-        self._next_due_at: float | None = None
         self.session_seen = False
         self.session_phase_emitted = False
 
@@ -106,7 +105,6 @@ class _PiCompletionEvidence:
         await self.quiescence_tracker.start()
 
     async def stop(self) -> None:
-        self._next_due_at = None
         await self.quiescence_tracker.stop()
 
     async def observe_event(
@@ -157,47 +155,26 @@ class _PiCompletionEvidence:
             await self.quiescence_tracker.refresh_disk_state()
         if trigger == "aux_wake" and profile is not None:
             profile.after_disk_change()
-        try:
-            blockers = self._blockers()
-        except Exception as exc:
-            failure = EvidenceFailure(code="pi_store_read_failed", detail=str(exc))
-            assessment = WorkAssessment(
-                disposition="unknown",
+        blockers = self._blockers()
+        signature = tuple((item.code, item.identity) for item in blockers)
+        return (
+            WorkAssessment(
+                disposition="blocked",
+                blockers=blockers,
+                generation=self._next_generation(signature),
+            )
+            if blockers
+            else WorkAssessment(
+                disposition="ready",
                 blockers=(),
-                generation=self._next_generation(("unknown", failure.detail)),
-                failure=failure,
+                generation=self._next_generation(signature),
             )
-        else:
-            signature = tuple((item.code, item.identity) for item in blockers)
-            assessment = (
-                WorkAssessment(
-                    disposition="blocked",
-                    blockers=blockers,
-                    generation=self._next_generation(signature),
-                )
-                if blockers
-                else WorkAssessment(
-                    disposition="ready",
-                    blockers=(),
-                    generation=self._next_generation(signature),
-                )
-            )
-        self._next_due_at = (
-            self._clock() + _PENDING_DISK_POLL_INTERVAL_SECONDS
-            if self.quiescence_tracker.has_pending_child_spawns()
-            else None
         )
-        return assessment
 
     def next_due_at(self) -> float | None:
-        return self._next_due_at
+        return None
 
     async def handle_due(self) -> EvidenceEventDecision:
-        self._next_due_at = None
-        await self.quiescence_tracker.refresh_disk_state()
-        profile = self._profile
-        if profile is not None:
-            profile.after_disk_change()
         return EvidenceEventDecision()
 
     def wants_aux_wake(self) -> bool:
@@ -306,7 +283,6 @@ class _PiCompletionProfile:
         self.done_nudge_interval_seconds = COMPLETION_NUDGE_INTERVAL_SECONDS
         self.next_done_nudge_monotonic: float | None = None
         self._done_requested = False
-        self._consume_done_enabled = False
         self._cleanup: _PiCompletionCleanup | None = None
 
     def bind_cleanup(self, cleanup: _PiCompletionCleanup) -> None:
@@ -324,12 +300,14 @@ class _PiCompletionProfile:
     def set_policy(self, policy: DrainPolicy) -> None:
         self.quiescence_enabled = isinstance(policy, PiRpcQuiescenceDrainPolicy)
 
-    def enable_done_consumption(self, enabled: bool) -> None:
-        self._consume_done_enabled = enabled
-
-    def consume_directives(self) -> CompletionDirectives:
+    def consume_directives(
+        self,
+        state: CompletionState,
+        trigger: AssessmentTrigger,
+    ) -> CompletionDirectives:
         if (
-            self._consume_done_enabled
+            trigger == "timeout"
+            and state.phase != "stabilizing"
             and self.last_successful_terminal is not None
             and not self._done_requested
         ):
@@ -368,7 +346,7 @@ class _PiCompletionProfile:
             return self._evaluate_timeout(context)
         if (
             self.quiescence_enabled
-            and context.candidate is not None
+            and (context.candidate is not None or self.last_successful_terminal is not None)
             and context.assessment.disposition == "ready"
         ):
             self._start_micro_drain()
@@ -380,7 +358,11 @@ class _PiCompletionProfile:
 
     def deadline_for(self, decision: ProfileDecision, now: float) -> float | None:
         del now
-        if not self.quiescence_enabled or decision.action not in {"wait", "stabilize"}:
+        if not self.quiescence_enabled or decision.action not in {
+            "wait",
+            "stabilize",
+            "abandon_candidate",
+        }:
             return None
         notification_deadline = self._next_notification_deadline()
         deadlines = [
@@ -413,6 +395,27 @@ class _PiCompletionProfile:
                 await self.send_done_nudge_callback(PI_COMPLETION_NUDGE_MESSAGE)
         except Exception:
             return
+
+    def stream_exit_decision(
+        self,
+        state: CompletionState,
+        recorded_outcome: TerminalEventOutcome | None,
+    ) -> ProfileExitDecision:
+        del state
+        pending_children = self.pending_children_at_exit()
+        if pending_children and recorded_outcome is None:
+            recorded_outcome = _terminal_outcome(
+                status="failed",
+                exit_code=1,
+                error="pi_process_exited_with_tracked_children",
+            )
+        return ProfileExitDecision(
+            recorded_outcome=recorded_outcome,
+            fallback_error=self.fallback_error_without_recorded_outcome(),
+            cleanup_reason=(
+                "pi_process_exit_with_tracked_children" if pending_children else None
+            ),
+        )
 
     def note_persisted_activity(self, event: HarnessEvent) -> EvidenceActivity | None:
         if not self.quiescence_enabled or not self.micro_drain_active:
@@ -479,23 +482,6 @@ class _PiCompletionProfile:
 
     def fallback_error_without_recorded_outcome(self) -> str | None:
         return self.tracker.notification_failure_error
-
-    def stream_exit_decision(
-        self,
-        recorded_outcome: TerminalEventOutcome | None,
-        *,
-        pending_children: bool,
-    ) -> DrainExitDecision:
-        if pending_children and recorded_outcome is None:
-            recorded_outcome = _terminal_outcome(
-                status="failed",
-                exit_code=1,
-                error="pi_process_exited_with_tracked_children",
-            )
-        return DrainExitDecision(
-            recorded_outcome=recorded_outcome,
-            fallback_error=self.fallback_error_without_recorded_outcome(),
-        )
 
     def after_finalized(
         self,
@@ -619,13 +605,10 @@ class _PiCompletionProfile:
             self.micro_drain_active = False
             self._update_idle_waiting_state()
             return ProfileDecision(action="wait", reset_deadline=True)
-        if (
-            context.trigger == "aux_wake"
-            and context.assessment.disposition != "ready"
-        ):
-            self.micro_drain_active = False
-            self._update_idle_waiting_state()
-            return ProfileDecision(action="wait", reset_deadline=True)
+        if context.trigger == "aux_wake":
+            if context.assessment.disposition != "ready":
+                self._update_idle_waiting_state()
+            return ProfileDecision(action="hold_stabilization")
         if context.trigger == "timeout" or (
             context.trigger == "evidence_due" and context.stabilization_elapsed
         ):
@@ -639,7 +622,7 @@ class _PiCompletionProfile:
             self.micro_drain_active = False
             self._emit("quiescence_micro_drain_cancelled", reason="disk_state_changed")
             self._update_idle_waiting_state()
-            return ProfileDecision(action="wait", reset_deadline=True)
+            return ProfileDecision(action="abandon_candidate", reset_deadline=True)
         return ProfileDecision(action="stabilize")
 
     def _evaluate_timeout(self, context: CompletionEvaluation) -> ProfileDecision:
@@ -751,6 +734,8 @@ class _PiCompletionProfile:
     def _prepare_child_timeout(self, now: float) -> None:
         cleanup = self._cleanup
         assert cleanup is not None
+        if cleanup.terminate_children is None:
+            raise RuntimeError("Pi child timeout cleanup is not configured")
         elapsed_seconds = 0.0
         if self.child_wave_started_monotonic is not None:
             elapsed_seconds = max(0.0, now - self.child_wave_started_monotonic)
@@ -832,14 +817,27 @@ class _PiCompletionCleanup:
 
     async def cleanup(self, assessment: WorkAssessment, reason: str) -> CleanupReport:
         del assessment
+        if reason == "pi_process_exit_with_tracked_children":
+            if not self.tracker.has_pending() or self.tracked_cleanup_reason is not None:
+                return CleanupReport()
+            callback = self.terminate_children
+            if callback is None:
+                raise RuntimeError("Pi child process-exit cleanup is not configured")
+            handles_attempted = tuple(sorted(self.tracker.active_ids))
+            await callback(self.tracker, reason)
+            self.tracked_cleanup_reason = reason
+            return CleanupReport(
+                attempted_categories=("pi_tracked_children",),
+                handles_attempted=handles_attempted,
+            )
         if reason != "pi_child_wave_timeout":
             return CleanupReport()
         callback = self.terminate_children
+        if callback is None:
+            raise RuntimeError("Pi child timeout cleanup is not configured")
         handles_attempted = tuple(sorted(self.tracker.active_ids))
         failures: tuple[EvidenceFailure, ...] = ()
         try:
-            if callback is None:
-                raise RuntimeError("Pi child timeout cleanup is not configured")
             await callback(self.tracker, reason)
         except Exception as exc:
             self.tracked_cleanup_error = str(exc)
@@ -870,16 +868,6 @@ class _PiCompletionCleanup:
             handles_attempted=handles_attempted,
             failures=failures,
         )
-
-    async def cleanup_pending_children_at_exit(self) -> None:
-        if not self.tracker.has_pending() or self.tracked_cleanup_reason is not None:
-            return
-        callback = self.terminate_children
-        if callback is None:
-            raise RuntimeError("Pi child process-exit cleanup is not configured")
-        await callback(self.tracker, "pi_process_exit_with_tracked_children")
-        self.tracked_cleanup_reason = "pi_process_exit_with_tracked_children"
-
 
 class PiDrainCoordinator:
     """Thin compatibility wrapper constructing the shared completion coordinator."""
@@ -1015,10 +1003,6 @@ class PiDrainCoordinator:
         self._profile.set_policy(policy)
 
     def next_timeout(self) -> float | None:
-        if not self._profile.quiescence_enabled:
-            return None
-        if self._profile.micro_drain_active:
-            return PI_MICRO_DRAIN_TIMEOUT_SECONDS
         return self._coordinator.next_timeout()
 
     async def observe_event(self, event: HarnessEvent, transition: str | None) -> bool:
@@ -1045,19 +1029,12 @@ class PiDrainCoordinator:
         prior_callback = self._cleanup.terminate_children
         if terminate_children is not None:
             self._cleanup.terminate_children = terminate_children
-        self._profile.enable_done_consumption(
-            self._coordinator.state.phase != "stabilizing"
-        )
         try:
             return await self._coordinator.handle_timeout()
         finally:
-            self._profile.enable_done_consumption(False)
             self._cleanup.terminate_children = prior_callback
 
     async def after_event(self) -> DrainLoopDecision:
-        if self._coordinator.state.phase == "finalized":
-            failure = self._profile.failure_outcome_after_event()
-            return DrainLoopDecision(recorded_outcome=failure)
         return await self._coordinator.after_event()
 
     def wants_aux_wake(self) -> bool:
@@ -1081,13 +1058,7 @@ class PiDrainCoordinator:
         self,
         recorded_outcome: TerminalEventOutcome | None,
     ) -> DrainExitDecision:
-        pending_children = self._profile.pending_children_at_exit()
-        if pending_children:
-            await self._cleanup.cleanup_pending_children_at_exit()
-        return self._profile.stream_exit_decision(
-            recorded_outcome,
-            pending_children=pending_children,
-        )
+        return await self._coordinator.handle_stream_exit(recorded_outcome)
 
     def after_finalized(
         self,

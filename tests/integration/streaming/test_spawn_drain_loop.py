@@ -23,6 +23,7 @@ from meridian.lib.streaming.completion_contracts import (
     EvidenceEventDecision,
     NudgeUrgency,
     ProfileDecision,
+    ProfileExitDecision,
     WorkAssessment,
 )
 from meridian.lib.streaming.completion_coordinator import CompletionCoordinator
@@ -157,7 +158,12 @@ class _StabilizingProfile:
         self._candidate_started = candidate_started
         self.evaluations: list[CompletionEvaluation] = []
 
-    def consume_directives(self) -> CompletionDirectives:
+    def consume_directives(
+        self,
+        state: CompletionState,
+        trigger: AssessmentTrigger,
+    ) -> CompletionDirectives:
+        del state, trigger
         return CompletionDirectives()
 
     def evaluate(self, context: CompletionEvaluation) -> ProfileDecision:
@@ -198,6 +204,14 @@ class _StabilizingProfile:
 
     async def send_nudge(self, urgency: NudgeUrgency) -> None:
         del urgency
+
+    def stream_exit_decision(
+        self,
+        state: CompletionState,
+        recorded_outcome: Any,
+    ) -> ProfileExitDecision:
+        del state
+        return ProfileExitDecision(recorded_outcome=recorded_outcome)
 
 
 class _NoopCompletionCleanup:

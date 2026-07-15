@@ -49,6 +49,7 @@ async def _start_coordinator(
     child_wave_timeout_seconds: float | None = None,
     nudge_idle_seconds: float = 5.0,
     nudge_raises: bool = False,
+    cleanup_configured: bool = True,
 ) -> _StartedCoordinator:
     clock = FakeClock(start=100.0)
     monkeypatch.setattr(pi_drain_module.time, "monotonic", clock.monotonic)
@@ -93,7 +94,7 @@ async def _start_coordinator(
         notification_timeout_seconds=notification_timeout_seconds,
         child_wave_timeout_seconds=child_wave_timeout_seconds,
         emit_phase=_emit_phase,
-        terminate_children=_cleanup,
+        terminate_children=_cleanup if cleanup_configured else None,
         send_done_nudge=_nudge,
     )
     coordinator.done_nudge_idle_delay_seconds = nudge_idle_seconds
@@ -395,6 +396,32 @@ async def test_expired_child_wave_wins_over_simultaneous_completion_nudge(
 
 
 @pytest.mark.asyncio
+async def test_child_wave_timeout_without_cleanup_callback_propagates(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    started = await _start_coordinator(
+        tmp_path,
+        monkeypatch,
+        child_wave_timeout_seconds=5.0,
+        cleanup_configured=False,
+    )
+    coordinator = started.coordinator
+    try:
+        await coordinator.observe_event(_tracked_child_start(), None)
+        await coordinator.observe_event(_AGENT_END, "idle")
+        started.clock.advance(5.0)
+
+        with pytest.raises(
+            RuntimeError,
+            match="Pi child timeout cleanup is not configured",
+        ):
+            await coordinator.handle_timeout()
+    finally:
+        await coordinator.stop()
+
+
+@pytest.mark.asyncio
 async def test_completion_nudge_due_is_advisory_and_continues(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -453,6 +480,35 @@ async def test_terminal_with_blockers_emits_quiescence_deferred(
 
 
 @pytest.mark.asyncio
+async def test_pi_blocker_accessor_errors_propagate(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    started = await _start_coordinator(tmp_path, monkeypatch)
+    coordinator = started.coordinator
+
+    def _raise_read_error() -> int:
+        raise RuntimeError("blocker accessor failed")
+
+    try:
+        await coordinator.observe_event(_AGENT_END, "idle")
+        monkeypatch.setattr(
+            coordinator.quiescence_tracker,
+            "pending_child_spawn_count",
+            _raise_read_error,
+        )
+
+        with pytest.raises(RuntimeError, match="blocker accessor failed"):
+            await coordinator.handle_terminal_event(
+                _AGENT_END,
+                _SUCCESS,
+                _TERMINATE,
+            )
+    finally:
+        await coordinator.stop()
+
+
+@pytest.mark.asyncio
 async def test_after_event_notification_failure_prevents_new_stabilization(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -479,7 +535,7 @@ async def test_after_event_notification_failure_prevents_new_stabilization(
 
 
 @pytest.mark.asyncio
-async def test_after_event_notification_failure_wins_over_prior_timeout_and_readiness(
+async def test_after_event_cannot_replace_a_prior_terminal_outcome(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -496,7 +552,10 @@ async def test_after_event_notification_failure_wins_over_prior_timeout_and_read
         await coordinator.observe_event(_notification("meridian.notification.queued"), None)
         started.clock.advance(5.0)
         timeout = await coordinator.handle_timeout()
-        assert timeout.recorded_outcome is not None
+        _assert_failed(
+            timeout,
+            "pi_notification_timeout:id=n1:phase=queued:elapsed=5.000:timeout=5.000",
+        )
         await coordinator.observe_event(
             _notification("meridian.notification.failed", "n2"),
             None,
@@ -504,7 +563,7 @@ async def test_after_event_notification_failure_wins_over_prior_timeout_and_read
 
         decision = await coordinator.after_event()
 
-        _assert_failed(decision, "pi_notification_failed")
+        assert decision.recorded_outcome is None
         assert [phase["phase"] for phase in started.phases].count(
             "quiescence_micro_drain_started"
         ) == 1
@@ -576,11 +635,9 @@ async def test_pi_current_direct_child_authority_ignores_live_late_grandchild(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("completion_wake", ["aux", "poll"])
-async def test_transient_child_wakes_restart_stabilization_without_stranding_candidate(
+async def test_aux_blocker_retains_candidate_until_original_stabilization_timeout(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-    completion_wake: str,
 ) -> None:
     started = await _start_coordinator(tmp_path, monkeypatch)
     coordinator = started.coordinator
@@ -588,8 +645,42 @@ async def test_transient_child_wakes_restart_stabilization_without_stranding_can
         await coordinator.observe_event(_AGENT_END, "idle")
         await coordinator.handle_terminal_event(_AGENT_END, _SUCCESS, _TERMINATE)
 
+        started.clock.advance(0.02)
         _start_row(tmp_path, "p2", parent_id="p1")
         await coordinator.reevaluate_after_disk_change()
+
+        assert coordinator.handle_close(intentional_stop=False) == _SUCCESS
+        assert coordinator.next_timeout() == pytest.approx(0.03)
+    finally:
+        await coordinator.stop()
+
+
+@pytest.mark.asyncio
+async def test_aux_blocker_cancels_at_original_timeout_then_completion_restarts(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    started = await _start_coordinator(tmp_path, monkeypatch)
+    coordinator = started.coordinator
+    try:
+        await coordinator.observe_event(_AGENT_END, "idle")
+        await coordinator.handle_terminal_event(_AGENT_END, _SUCCESS, _TERMINATE)
+
+        started.clock.advance(0.02)
+        _start_row(tmp_path, "p2", parent_id="p1")
+        await coordinator.reevaluate_after_disk_change()
+
+        started.clock.advance(0.03)
+        blocked = await coordinator.handle_timeout()
+
+        assert blocked.recorded_outcome is None
+        assert coordinator.handle_close(intentional_stop=False) is None
+        assert any(
+            phase["phase"] == "quiescence_micro_drain_cancelled"
+            and phase["reason"] == "disk_state_changed"
+            for phase in started.phases
+        )
+
         spawn_store.finalize_spawn(
             tmp_path,
             SpawnId("p2"),
@@ -597,12 +688,7 @@ async def test_transient_child_wakes_restart_stabilization_without_stranding_can
             0,
             origin="runner",
         )
-        if completion_wake == "aux":
-            await coordinator.reevaluate_after_disk_change()
-        else:
-            started.clock.advance(0.25)
-            poll = await coordinator.handle_timeout()
-            assert poll.recorded_outcome is None
+        await coordinator.reevaluate_after_disk_change()
         started.clock.advance(0.05)
 
         decision = await coordinator.handle_timeout()

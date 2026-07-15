@@ -28,7 +28,16 @@ AssessmentTrigger = Literal[
     "evidence_due",
 ]
 NudgeUrgency = Literal["normal", "timeout_soon"]
-ProfileAction = Literal["clear", "complete", "wait", "stabilize", "cleanup", "fail"]
+ProfileAction = Literal[
+    "clear",
+    "complete",
+    "wait",
+    "stabilize",
+    "hold_stabilization",
+    "abandon_candidate",
+    "cleanup",
+    "fail",
+]
 
 
 @dataclass(frozen=True)
@@ -153,6 +162,15 @@ class ProfileDecision:
 
 
 @dataclass(frozen=True)
+class ProfileExitDecision:
+    """Profile-owned stream-exit outcome and optional cleanup request."""
+
+    recorded_outcome: TerminalEventOutcome | None
+    fallback_error: str | None = None
+    cleanup_reason: str | None = None
+
+
+@dataclass(frozen=True)
 class CleanupReport:
     """Diagnostic record of one idempotent cleanup attempt."""
 
@@ -185,7 +203,11 @@ class CompletionEvidence(Protocol):
 
 
 class CompletionProfile(Protocol):
-    def consume_directives(self) -> CompletionDirectives: ...
+    def consume_directives(
+        self,
+        state: CompletionState,
+        trigger: AssessmentTrigger,
+    ) -> CompletionDirectives: ...
 
     def evaluate(self, context: CompletionEvaluation) -> ProfileDecision: ...
 
@@ -202,6 +224,12 @@ class CompletionProfile(Protocol):
     ) -> float | None: ...
 
     async def send_nudge(self, urgency: NudgeUrgency) -> None: ...
+
+    def stream_exit_decision(
+        self,
+        state: CompletionState,
+        recorded_outcome: TerminalEventOutcome | None,
+    ) -> ProfileExitDecision: ...
 
 
 class CompletionCleanup(Protocol):
@@ -225,5 +253,6 @@ __all__ = [
     "NudgeUrgency",
     "ProfileAction",
     "ProfileDecision",
+    "ProfileExitDecision",
     "WorkAssessment",
 ]
