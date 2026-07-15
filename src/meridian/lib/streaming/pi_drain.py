@@ -5,7 +5,6 @@ from __future__ import annotations
 import logging
 import time
 from collections.abc import Awaitable, Callable
-from contextlib import suppress
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -82,6 +81,7 @@ class PiCompletionEvidence:
         self._profile: PiCompletionProfile | None = None
         self._generation = 0
         self._last_signature: object = None
+        self._last_shadow_signature: object = None
         self.session_seen = False
         self.session_phase_emitted = False
 
@@ -221,6 +221,9 @@ class PiCompletionEvidence:
         return tuple(blockers)
 
     def _emit_descendant_evidence_shadow(self, shadow: WorkAssessment) -> None:
+        profile = self._profile
+        if profile is None:
+            return
         watcher_ids = set(self.quiescence_tracker.pending_confirmed_child_ids())
         tree_ids = {
             blocker.identity for blocker in shadow.blockers if blocker.identity is not None
@@ -242,6 +245,16 @@ class PiCompletionEvidence:
             if watcher_only:
                 records.append(("watcher-only", tuple(sorted(watcher_only))))
 
+        signature = (
+            tuple(records),
+            len(watcher_ids),
+            len(tree_ids),
+            shadow.failure,
+        )
+        if signature == self._last_shadow_signature:
+            return
+        self._last_shadow_signature = signature
+
         for category, spawn_ids in records:
             payload: dict[str, object] = {
                 "category": category,
@@ -252,11 +265,10 @@ class PiCompletionEvidence:
             if shadow.failure is not None:
                 payload["error_code"] = shadow.failure.code
                 payload["error_detail"] = shadow.failure.detail
-            with suppress(Exception):
-                logger.info(
-                    "Pi descendant evidence shadow",
-                    extra={"descendant_evidence_shadow": payload},
-                )
+            try:
+                profile.emit("descendant_evidence_shadow", **payload)
+            except Exception:
+                logger.warning("Failed to emit Pi descendant shadow phase", exc_info=True)
 
     def _next_generation(self, signature: object) -> int:
         if signature != self._last_signature:

@@ -37,7 +37,7 @@ views; the profile uses the summary for deadlines and finalization decisions.
 
 Pi and resident currently use different descendant authority. Resident uses the shared
 reconciled transitive persisted-tree evidence. Pi assesses that same tree for structured
-`descendant_evidence_shadow` comparison logs, but still decides completion from
+`descendant_evidence_shadow` comparison phases, but still decides completion from
 `PiDiskWatcher` rows whose raw `parent_id` is the current Pi spawn. It therefore does not
 authoritatively see a live grandchild beneath a terminal direct child. Before a valid row
 appears, only a numerically newer allocated-looking directory may enter a 30-second
@@ -97,6 +97,7 @@ These are written to `history.jsonl` alongside harness events and are visible in
 | `quiescence_micro_drain_started` | Terminal event seen, polling for quiescence |
 | `quiescence_micro_drain_extended` | Additional event during micro-drain |
 | `quiescence_deferred` | Terminal event but still waiting for children/notifications |
+| `descendant_evidence_shadow` | Changed direct-watcher versus reconciled-tree comparison; telemetry only |
 | `continuation_completed` | Notification resolved on terminal event |
 | `cleanup_running` / `cleanup_completed` / `cleanup_escalated` / `cleanup_failed` | Connection cleanup phases |
 | `finalized` | Drain complete; final status/exit_code/error |

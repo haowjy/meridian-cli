@@ -2,10 +2,8 @@
 
 from __future__ import annotations
 
-import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import cast
 
 import pytest
 
@@ -40,11 +38,9 @@ class _StartedPi:
 async def _start_pi(
     runtime_root: Path,
     monkeypatch: pytest.MonkeyPatch,
-    caplog: pytest.LogCaptureFixture,
 ) -> _StartedPi:
     clock = FakeClock(start=100.0)
     monkeypatch.setattr(pi_drain_module.time, "monotonic", clock.monotonic)
-    caplog.set_level(logging.INFO, logger=pi_drain_module.__name__)
     phases: list[dict[str, object]] = []
     connection = FakePiConnection([])
     await connection.start(
@@ -83,17 +79,16 @@ async def _start_pi(
     return _StartedPi(coordinator=coordinator, clock=clock, phases=phases)
 
 
-def _shadow_records(caplog: pytest.LogCaptureFixture) -> list[dict[str, object]]:
-    records: list[dict[str, object]] = []
-    for record in caplog.records:
-        payload = getattr(record, "descendant_evidence_shadow", None)
-        if isinstance(payload, dict):
-            records.append(cast("dict[str, object]", payload))
-    return records
+def _shadow_records(started: _StartedPi) -> list[dict[str, object]]:
+    return [
+        phase
+        for phase in started.phases
+        if phase["phase"] == "descendant_evidence_shadow"
+    ]
 
 
-def _shadow_categories(caplog: pytest.LogCaptureFixture) -> list[object]:
-    return [record["category"] for record in _shadow_records(caplog)]
+def _shadow_categories(started: _StartedPi) -> list[object]:
+    return [record["category"] for record in _shadow_records(started)]
 
 
 async def _assess_terminal(started: _StartedPi) -> DrainTerminalDecision:
@@ -109,17 +104,17 @@ async def _assess_terminal(started: _StartedPi) -> DrainTerminalDecision:
 async def test_pi_shadow_reports_active_direct_child_in_both_sources(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-    caplog: pytest.LogCaptureFixture,
 ) -> None:
     start_row(tmp_path, "p1", HarnessId.PI, None)
     start_row(tmp_path, "p2", HarnessId.CODEX, "p1")
-    started = await _start_pi(tmp_path, monkeypatch, caplog)
+    started = await _start_pi(tmp_path, monkeypatch)
     try:
         decision = await _assess_terminal(started)
 
         assert decision.recorded_outcome is None
-        assert _shadow_categories(caplog) == ["both"]
-        assert _shadow_records(caplog)[0] == {
+        assert _shadow_categories(started) == ["both"]
+        assert _shadow_records(started)[0] == {
+            "phase": "descendant_evidence_shadow",
             "category": "both",
             "spawn_ids": ("p2",),
             "watcher_active_count": 1,
@@ -133,23 +128,22 @@ async def test_pi_shadow_reports_active_direct_child_in_both_sources(
 async def test_pi_shadow_reports_tree_only_grandchild_but_keeps_watcher_authority(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-    caplog: pytest.LogCaptureFixture,
 ) -> None:
     start_row(tmp_path, "p1", HarnessId.PI, None)
     start_row(tmp_path, "p2", HarnessId.CODEX, "p1")
     spawn_store.finalize_spawn(tmp_path, SpawnId("p2"), "succeeded", 0, origin="runner")
     start_row(tmp_path, "p3", HarnessId.CODEX, "p2")
-    started = await _start_pi(tmp_path, monkeypatch, caplog)
+    started = await _start_pi(tmp_path, monkeypatch)
     try:
         terminal = await _assess_terminal(started)
         assert terminal.recorded_outcome is None
-        assert _shadow_categories(caplog) == ["tree-only"]
+        assert _shadow_categories(started) == ["tree-only"]
 
         started.clock.advance(0.05)
         stabilized = await started.coordinator.handle_timeout()
 
         assert stabilized.recorded_outcome == _SUCCESS
-        assert _shadow_categories(caplog) == ["tree-only", "tree-only"]
+        assert _shadow_categories(started) == ["tree-only"]
     finally:
         await started.coordinator.stop()
 
@@ -158,7 +152,6 @@ async def test_pi_shadow_reports_tree_only_grandchild_but_keeps_watcher_authorit
 async def test_pi_shadow_reports_reconciled_terminal_direct_child_as_watcher_only(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-    caplog: pytest.LogCaptureFixture,
 ) -> None:
     start_row(tmp_path, "p1", HarnessId.PI, None)
     start_row(tmp_path, "p2", HarnessId.CODEX, "p1")
@@ -167,14 +160,14 @@ async def test_pi_shadow_reports_reconciled_terminal_direct_child_as_watcher_onl
         "# Report\n\nChild completed.\n",
         encoding="utf-8",
     )
-    started = await _start_pi(tmp_path, monkeypatch, caplog)
+    started = await _start_pi(tmp_path, monkeypatch)
     try:
         decision = await _assess_terminal(started)
 
         assert decision.recorded_outcome is None
-        assert _shadow_categories(caplog) == ["watcher-only"]
-        assert _shadow_records(caplog)[0]["spawn_ids"] == ("p2",)
-        assert _shadow_records(caplog)[0]["tree_active_count"] == 0
+        assert _shadow_categories(started) == ["watcher-only"]
+        assert _shadow_records(started)[0]["spawn_ids"] == ("p2",)
+        assert _shadow_records(started)[0]["tree_active_count"] == 0
     finally:
         await started.coordinator.stop()
 
@@ -183,16 +176,15 @@ async def test_pi_shadow_reports_reconciled_terminal_direct_child_as_watcher_onl
 async def test_pi_shadow_reports_allocation_uncertainty_separately(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-    caplog: pytest.LogCaptureFixture,
 ) -> None:
     start_row(tmp_path, "p1", HarnessId.PI, None)
     (tmp_path / "spawns" / "p2").mkdir()
-    started = await _start_pi(tmp_path, monkeypatch, caplog)
+    started = await _start_pi(tmp_path, monkeypatch)
     try:
         decision = await _assess_terminal(started)
 
         assert decision.recorded_outcome is None
-        assert _shadow_categories(caplog) == ["allocation-uncertainty"]
+        assert _shadow_categories(started) == ["allocation-uncertainty"]
     finally:
         await started.coordinator.stop()
 
@@ -201,10 +193,9 @@ async def test_pi_shadow_reports_allocation_uncertainty_separately(
 async def test_pi_shadow_store_error_does_not_block_authoritative_success(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-    caplog: pytest.LogCaptureFixture,
 ) -> None:
     start_row(tmp_path, "p1", HarnessId.PI, None)
-    started = await _start_pi(tmp_path, monkeypatch, caplog)
+    started = await _start_pi(tmp_path, monkeypatch)
 
     def _fail_list_spawns(_runtime_root: Path) -> object:
         raise OSError("shadow store unavailable")
@@ -217,16 +208,16 @@ async def test_pi_shadow_store_error_does_not_block_authoritative_success(
     try:
         terminal = await _assess_terminal(started)
         assert terminal.recorded_outcome is None
-        assert _shadow_categories(caplog) == ["store-error"]
-        assert _shadow_records(caplog)[0]["error_code"] == (
+        assert _shadow_categories(started) == ["store-error"]
+        assert _shadow_records(started)[0]["error_code"] == (
             "descendant_evidence_read_failed"
         )
-        assert _shadow_records(caplog)[0]["error_detail"] == "shadow store unavailable"
+        assert _shadow_records(started)[0]["error_detail"] == "shadow store unavailable"
 
         started.clock.advance(0.05)
         stabilized = await started.coordinator.handle_timeout()
 
         assert stabilized.recorded_outcome == _SUCCESS
-        assert _shadow_categories(caplog) == ["store-error", "store-error"]
+        assert _shadow_categories(started) == ["store-error"]
     finally:
         await started.coordinator.stop()
