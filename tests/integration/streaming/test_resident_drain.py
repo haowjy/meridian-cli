@@ -16,7 +16,11 @@ from meridian.lib.state.artifact_store import LocalStore
 from meridian.lib.streaming.drain_policy import (
     PersistentDrainPolicy,
 )
-from tests.support.async_determinism import AsyncDeterminism, assert_still_pending
+from tests.support.async_determinism import (
+    AsyncDeterminism,
+    assert_still_pending,
+    wait_until,
+)
 from tests.support.fakes import FakeClock
 from tests.support.resident_drain import (
     FakeResidentConnection,
@@ -399,8 +403,12 @@ async def test_spawn_rearm_op_extends_resident_deadline(
     completion_task = asyncio.create_task(manager.wait_for_completion(spawn_id))
 
     try:
-        while connection.fake_resident_backend.awaiting_done_values != [True]:
-            await determinism.sleep(0.01)
+        await wait_until(
+            lambda: connection.fake_resident_backend.awaiting_done_values == [True],
+            timeout=1.0,
+            on_tick=lambda: determinism.advance(0.01),
+            description="resident awaiting-done state",
+        )
         await assert_still_pending(completion_task)
 
         await determinism.sleep(0.18)
