@@ -19,7 +19,7 @@ from meridian.lib.state.spawn_signals import write_spawn_signal
 from meridian.lib.streaming import pi_drain as pi_drain_module
 from meridian.lib.streaming.completion_nudge import PI_COMPLETION_NUDGE_MESSAGE
 from meridian.lib.streaming.drain_coordinator import DrainExitDecision, DrainLoopDecision
-from meridian.lib.streaming.drain_policy import DrainAction
+from meridian.lib.streaming.drain_policy import DrainAction, PiRpcQuiescenceDrainPolicy
 from meridian.lib.streaming.pi_drain import PiDrainCoordinator
 from meridian.lib.streaming.pi_subspawn_tracker import PiSubspawnTracker
 from tests.support.async_determinism import FakeClock
@@ -48,6 +48,7 @@ async def _start_coordinator(
     notification_timeout_seconds: float | None = None,
     child_wave_timeout_seconds: float | None = None,
     nudge_idle_seconds: float = 5.0,
+    nudge_raises: bool = False,
 ) -> _StartedCoordinator:
     clock = FakeClock(start=100.0)
     monkeypatch.setattr(pi_drain_module.time, "monotonic", clock.monotonic)
@@ -78,6 +79,8 @@ async def _start_coordinator(
 
     async def _nudge(message: str) -> None:
         nudges.append(message)
+        if nudge_raises:
+            raise RuntimeError("advisory nudge failed")
 
     async def _cleanup(_tracker: PiSubspawnTracker, reason: str) -> None:
         cleanups.append(reason)
@@ -244,15 +247,18 @@ async def test_done_override_wins_over_expired_child_wave_with_all_blockers(
         await coordinator.observe_event(_tracked_child_start(), None)
         await coordinator.observe_event(_notification("meridian.notification.queued"), None)
         await coordinator.observe_event(_AGENT_END, "idle")
-        terminal = await coordinator.handle_terminal_event(_AGENT_END, _SUCCESS, _TERMINATE)
+        action = PiRpcQuiescenceDrainPolicy(
+            quiescence_check=coordinator.is_quiescent
+        ).classify(_SUCCESS)
+        terminal = await coordinator.handle_terminal_event(_AGENT_END, _SUCCESS, action)
         write_spawn_signal(tmp_path, "p1", "done")
         started.clock.advance(10.0)
 
         decision = await coordinator.handle_timeout()
 
         assert terminal.recorded_outcome is None
+        assert terminal.emit_turn_boundary is True
         assert decision.recorded_outcome == _SUCCESS
-        assert any(phase["phase"] == "quiescence_deferred" for phase in started.phases)
         assert started.cleanups == []
         assert started.nudges == []
     finally:
@@ -353,20 +359,93 @@ async def test_expired_child_wave_cleans_once_and_returns_timeout_failure(
 
 
 @pytest.mark.asyncio
-async def test_completion_nudge_due_is_advisory_and_continues(
+async def test_expired_notification_wins_over_simultaneous_completion_nudge(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    started = await _start_coordinator(tmp_path, monkeypatch, nudge_idle_seconds=5.0)
+    started = await _start_coordinator(
+        tmp_path,
+        monkeypatch,
+        notification_timeout_seconds=5.0,
+        nudge_idle_seconds=5.0,
+    )
     coordinator = started.coordinator
     _write_running_bash(tmp_path, SpawnId("p1"))
     try:
+        await coordinator.observe_event(_notification("meridian.notification.queued"), None)
         await coordinator.observe_event(_AGENT_END, "idle")
-        await coordinator.handle_terminal_event(_AGENT_END, _SUCCESS, _TERMINATE)
+        action = PiRpcQuiescenceDrainPolicy(
+            quiescence_check=coordinator.is_quiescent
+        ).classify(_SUCCESS)
+        await coordinator.handle_terminal_event(_AGENT_END, _SUCCESS, action)
         started.clock.advance(5.0)
 
         decision = await coordinator.handle_timeout()
 
+        _assert_failed(
+            decision,
+            "pi_notification_timeout:id=n1:phase=queued:elapsed=5.000:timeout=5.000",
+        )
+        assert started.nudges == []
+        assert started.cleanups == []
+    finally:
+        await coordinator.stop()
+
+
+@pytest.mark.asyncio
+async def test_expired_child_wave_wins_over_simultaneous_completion_nudge(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    started = await _start_coordinator(
+        tmp_path,
+        monkeypatch,
+        child_wave_timeout_seconds=5.0,
+        nudge_idle_seconds=5.0,
+    )
+    coordinator = started.coordinator
+    try:
+        await coordinator.observe_event(_tracked_child_start(), None)
+        await coordinator.observe_event(_AGENT_END, "idle")
+        action = PiRpcQuiescenceDrainPolicy(
+            quiescence_check=coordinator.is_quiescent
+        ).classify(_SUCCESS)
+        await coordinator.handle_terminal_event(_AGENT_END, _SUCCESS, action)
+        started.clock.advance(5.0)
+
+        decision = await coordinator.handle_timeout()
+
+        _assert_failed(decision, "pi_child_wave_timeout")
+        assert started.cleanups == ["pi_child_wave_timeout"]
+        assert started.nudges == []
+    finally:
+        await coordinator.stop()
+
+
+@pytest.mark.asyncio
+async def test_completion_nudge_due_is_advisory_and_continues(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    started = await _start_coordinator(
+        tmp_path,
+        monkeypatch,
+        nudge_idle_seconds=5.0,
+        nudge_raises=True,
+    )
+    coordinator = started.coordinator
+    _write_running_bash(tmp_path, SpawnId("p1"))
+    try:
+        await coordinator.observe_event(_AGENT_END, "idle")
+        action = PiRpcQuiescenceDrainPolicy(
+            quiescence_check=coordinator.is_quiescent
+        ).classify(_SUCCESS)
+        terminal = await coordinator.handle_terminal_event(_AGENT_END, _SUCCESS, action)
+        started.clock.advance(5.0)
+
+        decision = await coordinator.handle_timeout()
+
+        assert terminal.emit_turn_boundary is True
         assert decision.recorded_outcome is None
         assert started.nudges == [PI_COMPLETION_NUDGE_MESSAGE]
         assert started.cleanups == []
@@ -397,6 +476,32 @@ async def test_terminal_with_blockers_emits_quiescence_deferred(
             phase["phase"] == "quiescence_micro_drain_started"
             for phase in started.phases
         )
+    finally:
+        await coordinator.stop()
+
+
+@pytest.mark.asyncio
+async def test_after_event_notification_failure_prevents_new_stabilization(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    started = await _start_coordinator(tmp_path, monkeypatch)
+    coordinator = started.coordinator
+    try:
+        await coordinator.observe_event(_AGENT_END, "idle")
+        await coordinator.handle_terminal_event(_AGENT_END, _SUCCESS, _TERMINATE)
+        coordinator.note_event_persisted(pi_event("message", {}))
+        await coordinator.observe_event(
+            _notification("meridian.notification.failed"),
+            None,
+        )
+
+        decision = await coordinator.after_event()
+
+        _assert_failed(decision, "pi_notification_failed")
+        assert [phase["phase"] for phase in started.phases].count(
+            "quiescence_micro_drain_started"
+        ) == 1
     finally:
         await coordinator.stop()
 
@@ -526,6 +631,39 @@ async def test_active_turn_before_expiry_resets_child_wave_deadline(
         assert old_deadline.recorded_outcome is None
         _assert_failed(reset_deadline, "pi_child_wave_timeout")
         assert started.cleanups == ["pi_child_wave_timeout"]
+    finally:
+        await coordinator.stop()
+
+
+@pytest.mark.asyncio
+async def test_activity_observed_after_child_wave_expiry_cannot_start_another_wave(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Once expiry returns terminal, later activity cannot revive a full child wave."""
+    started = await _start_coordinator(
+        tmp_path,
+        monkeypatch,
+        child_wave_timeout_seconds=5.0,
+    )
+    coordinator = started.coordinator
+    try:
+        await coordinator.observe_event(_tracked_child_start(), None)
+        await coordinator.observe_event(_AGENT_END, "idle")
+        started.clock.advance(5.0)
+        expired = await coordinator.handle_timeout()
+
+        await coordinator.observe_event(pi_event("agent_start", {}), "turn_active")
+        await coordinator.observe_event(_AGENT_END, "idle")
+        started.clock.advance(5.0)
+        after_activity = await coordinator.handle_timeout()
+
+        _assert_failed(expired, "pi_child_wave_timeout")
+        assert after_activity.recorded_outcome is None
+        assert started.cleanups == ["pi_child_wave_timeout"]
+        assert [phase["phase"] for phase in started.phases].count(
+            "pi_child_wave_timeout"
+        ) == 1
     finally:
         await coordinator.stop()
 

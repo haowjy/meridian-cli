@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
+from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import AsyncMock, Mock
 
@@ -19,6 +20,7 @@ from meridian.lib.streaming.drain_coordinator import (
 )
 from meridian.lib.streaming.event_observers import EventObserverRegistry
 from meridian.lib.streaming.spawn_drain_loop import SpawnDrainLoop
+from meridian.lib.streaming.spawn_session import DrainOutcome, SpawnSession
 
 _SPAWN_ID = SpawnId("p-persist-order")
 Call = tuple[str, HarnessEvent]
@@ -78,7 +80,12 @@ class _Coordinator:
         return DrainExitDecision(recorded_outcome=recorded_outcome)
 
 
-async def _run_drain(events: list[HarnessEvent], results: list[WriteResult]) -> list[Call]:
+async def _run_drain(
+    events: list[HarnessEvent],
+    results: list[WriteResult],
+    *,
+    outcomes: list[DrainOutcome] | None = None,
+) -> list[Call]:
     calls: list[Call] = []
 
     def record_observer_dispatch(_spawn_id: SpawnId, event: HarnessEvent) -> None:
@@ -86,15 +93,31 @@ async def _run_drain(events: list[HarnessEvent], results: list[WriteResult]) -> 
 
     observers = Mock()
     observers.dispatch.side_effect = record_observer_dispatch
+    sessions: dict[SpawnId, SpawnSession] = {}
+    if outcomes is not None:
+        sessions[_SPAWN_ID] = cast(
+            "SpawnSession",
+            SimpleNamespace(
+                cancel_sent=False,
+                started_monotonic=0.0,
+                subscriber=None,
+            ),
+        )
+
+    def _resolve_outcome(_session: SpawnSession, outcome: DrainOutcome) -> DrainOutcome:
+        assert outcomes is not None
+        outcomes.append(outcome)
+        return outcome
+
     loop = SpawnDrainLoop(
-        sessions={},
+        sessions=sessions,
         history_writers={
             _SPAWN_ID: cast("HarnessHistoryWriter", _HistoryWriter(results, calls))
         },
         observers=cast("EventObserverRegistry", observers),
         cleanup_tasks=set(),
         cleanup_completed_session=AsyncMock(),
-        resolve_completion_future=Mock(),
+        resolve_completion_future=_resolve_outcome if outcomes is not None else Mock(),
         fan_out_event=lambda _spawn_id, event: calls.append(("fan_out", event)),
         fan_out_turn_boundary=AsyncMock(),
     )
@@ -144,9 +167,11 @@ async def test_tenth_history_write_failure_aborts_without_delivery() -> None:
         for index in range(11)
     ]
 
+    outcomes: list[DrainOutcome] = []
     calls = await _run_drain(
         events,
         [WriteResult(success=False, error="write failure") for _ in events],
+        outcomes=outcomes,
     )
 
     assert calls == [
@@ -154,6 +179,12 @@ async def test_tenth_history_write_failure_aborts_without_delivery() -> None:
         for event in events[:10]
         for call in (("pre_persist", event), ("persist", event))
     ]
+    assert len(outcomes) == 1
+    assert outcomes[0].status == "failed"
+    assert outcomes[0].exit_code == 1
+    assert outcomes[0].error == (
+        "Aborted drain loop after repeated output persistence failures"
+    )
 
 
 @pytest.mark.asyncio

@@ -17,6 +17,7 @@ from meridian.lib.harness.connections.base import (
     StopProgressCallback,
     StopResult,
 )
+from meridian.lib.state import spawn_store
 from meridian.lib.streaming.pi_subspawn_tracker import PiSubspawnTracker
 from tests.support.async_determinism import TaskGate, wait_until
 from tests.support.pi import (
@@ -292,13 +293,19 @@ async def _run_pi_child_wave_timeout_with_cleanup_mocks(
     cancel_raises: bool = False,
 ) -> tuple[list[tuple[object, ...]], Any]:
     calls: list[tuple[object, ...]] = []
+    parent_id = SpawnId("p-pi-hybrid-reap")
+    child_id = SpawnId("p-child-hybrid-reap")
 
     class _Service:
         async def cancel_descendants(self, target_spawn_id: SpawnId) -> set[str]:
             calls.append(("cancel_descendants", str(target_spawn_id)))
+            child = spawn_store.get_spawn(tmp_path, child_id)
+            assert child is not None
+            assert child.parent_id == str(parent_id)
+            assert child.status == "running"
             if cancel_raises:
                 raise RuntimeError("cancel failed")
-            return {"j-hybrid-reap"}
+            return {str(child_id)}
 
     def _build_service(project_root: Path, runtime_root: Path) -> _Service:
         assert project_root == tmp_path
@@ -343,8 +350,8 @@ async def _run_pi_child_wave_timeout_with_cleanup_mocks(
                 "meridian.subspawn.start",
                 {
                     "schema_version": 1,
-                    "subspawn_id": "j-hybrid-reap",
-                    "correlation_id": "j-hybrid-reap",
+                    "subspawn_id": str(child_id),
+                    "correlation_id": str(child_id),
                     "wait_policy": "tracked",
                     "pid": 7701,
                 },
@@ -366,18 +373,28 @@ async def _run_pi_child_wave_timeout_with_cleanup_mocks(
         ]
     )
 
-    spawn_id = SpawnId("p-pi-hybrid-reap")
+    spawn_store.start_spawn(
+        tmp_path,
+        spawn_id=child_id,
+        chat_id=str(child_id),
+        parent_id=str(parent_id),
+        model="test-model",
+        agent="test-agent",
+        harness="pi",
+        prompt="child",
+        status="running",
+    )
     manager = await _start_pi_manager(
         tmp_path,
         fake_connection,
-        spawn_id=spawn_id,
+        spawn_id=parent_id,
         child_wave_timeout_seconds=0.02,
     )
 
     try:
-        outcome = await manager.wait_for_completion(spawn_id)
+        outcome = await manager.wait_for_completion(parent_id)
     finally:
-        await manager.stop_spawn(spawn_id)
+        await manager.stop_spawn(parent_id)
     assert outcome is not None
     return calls, outcome
 

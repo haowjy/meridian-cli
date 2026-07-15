@@ -501,9 +501,9 @@ async def test_pi_candidate_child_dir_before_row_suppresses_done_nudge_until_ter
         assert candidate.spawn_children is False
         assert candidate.unknown_spawn_children is True
         assert candidate.non_spawn_processes is True
-        await coordinator.handle_timeout()
+        candidate_wait = await coordinator.handle_timeout()
+        assert candidate_wait.recorded_outcome is None
         assert sent_messages == []
-        assert coordinator.next_done_nudge_monotonic is None
 
         spawn_store.start_spawn(
             tmp_path,
@@ -522,9 +522,11 @@ async def test_pi_candidate_child_dir_before_row_suppresses_done_nudge_until_ter
         assert resolved_terminal.spawn_children is False
         assert resolved_terminal.unknown_spawn_children is False
         assert resolved_terminal.non_spawn_processes is True
-        await coordinator.handle_timeout()
-        assert coordinator.next_done_nudge_monotonic is not None
-        await coordinator.handle_timeout()
+        terminal_row_wait = await coordinator.handle_timeout()
+        assert terminal_row_wait.recorded_outcome is None
+        assert sent_messages == []
+        nudge = await coordinator.handle_timeout()
+        assert nudge.recorded_outcome is None
         assert sent_messages == [PI_COMPLETION_NUDGE_MESSAGE]
     finally:
         await coordinator.stop()
