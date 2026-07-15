@@ -339,25 +339,13 @@ class CompletionCoordinator:
             return self._publish(outcome)
         if decision.action == "stabilize":
             assessment = self._assessment
-            preserving = (
-                self._phase == "stabilizing"
-                and self._stabilization_at is not None
-                and not decision.restart_stabilization
-            )
-            if (
-                not fresh_assessment
-                or assessment is None
-                or (assessment.disposition != "ready" and not preserving)
-            ):
+            if not fresh_assessment or assessment is None or assessment.disposition != "ready":
                 raise RuntimeError("stabilization requires a fresh ready assessment")
             continuing = (
-                preserving
-                or (
-                    not decision.restart_stabilization
-                    and self._phase == "stabilizing"
-                    and self._stabilization_generation == assessment.generation
-                    and self._stabilization_at is not None
-                )
+                not decision.restart_stabilization
+                and self._phase == "stabilizing"
+                and self._stabilization_generation == assessment.generation
+                and self._stabilization_at is not None
             )
             if not continuing:
                 self._stabilization_generation = assessment.generation

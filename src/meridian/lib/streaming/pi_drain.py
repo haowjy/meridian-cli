@@ -612,6 +612,13 @@ class _PiCompletionProfile:
             self.micro_drain_active = False
             self._update_idle_waiting_state()
             return ProfileDecision(action="wait", reset_deadline=True)
+        if (
+            context.trigger == "aux_wake"
+            and context.assessment.disposition != "ready"
+        ):
+            self.micro_drain_active = False
+            self._update_idle_waiting_state()
+            return ProfileDecision(action="wait", reset_deadline=True)
         if context.trigger == "timeout" or (
             context.trigger == "evidence_due" and context.stabilization_elapsed
         ):
