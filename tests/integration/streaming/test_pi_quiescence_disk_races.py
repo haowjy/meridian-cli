@@ -123,6 +123,7 @@ async def _put_pi_parent_idle_after_success(coordinator: PiDrainCoordinator) -> 
 class _StartedMicroDrain:
     coordinator: PiDrainCoordinator
     phases: list[dict[str, object]]
+    phase_errors_enabled: asyncio.Event
 
 
 async def _started_micro_drain_coordinator(
@@ -132,14 +133,14 @@ async def _started_micro_drain_coordinator(
     child_wave_timeout_seconds: float | None = None,
     mark_idle: bool = False,
     start_micro_drain: bool = True,
-    timeout_phase_raises: bool = False,
 ) -> _StartedMicroDrain:
     phases: list[dict[str, object]] = []
+    phase_errors_enabled = asyncio.Event()
 
     def emit_phase(*, phase: str, session_role: str | None, **payload: object) -> None:
         phases.append({"phase": phase, **payload})
         _ = session_role
-        if timeout_phase_raises and phase == "pi_child_wave_timeout":
+        if phase_errors_enabled.is_set():
             raise RuntimeError(f"phase emission failed: {phase}")
 
     connection = _FakePiConnection([])
@@ -181,7 +182,11 @@ async def _started_micro_drain_coordinator(
             terminal,
             DrainAction(terminate=True, emit_turn_boundary=False),
         )
-    return _StartedMicroDrain(coordinator=coordinator, phases=phases)
+    return _StartedMicroDrain(
+        coordinator=coordinator,
+        phases=phases,
+        phase_errors_enabled=phase_errors_enabled,
+    )
 
 
 async def _noop_terminate(
@@ -273,13 +278,16 @@ async def test_child_wave_timeout_stays_terminal_when_cleanup_raises(
         spawn_id=spawn_id,
         child_wave_timeout_seconds=0.01,
         start_micro_drain=False,
-        timeout_phase_raises=True,
     )
 
     try:
         determinism = AsyncDeterminism(start=100.0)
         determinism.install(monkeypatch, monotonic_modules=(pi_drain_module,))
         await _arm_child_wave(started.coordinator)
+        (tmp_path / "spawns" / "p-late-child").mkdir(parents=True)
+        await started.coordinator.reevaluate_after_disk_change()
+        phases_before_timeout = len(started.phases)
+        started.phase_errors_enabled.set()
         determinism.advance(0.01)
 
         decision = await started.coordinator.handle_timeout(_raise_cleanup)
@@ -295,6 +303,9 @@ async def test_child_wave_timeout_stays_terminal_when_cleanup_raises(
             and phase.get("cleanup_error") == "cleanup failed"
             for phase in started.phases
         )
+        assert [phase["phase"] for phase in started.phases[phases_before_timeout:]] == [
+            "pi_child_wave_timeout"
+        ]
     finally:
         await started.coordinator.stop()
 
@@ -327,9 +338,11 @@ async def test_child_wave_timeout_cancellation_clears_latched_wave(
         with pytest.raises(asyncio.CancelledError):
             await started.coordinator.handle_timeout(_cancel_cleanup)
         repeated_decision = await started.coordinator.handle_timeout(_cancel_cleanup)
+        exit_decision = await started.coordinator.handle_stream_exit(None)
 
         assert cleanup_reasons == ["pi_child_wave_timeout"]
         assert repeated_decision.recorded_outcome is None
+        assert exit_decision.recorded_outcome is None
     finally:
         await started.coordinator.stop()
 
