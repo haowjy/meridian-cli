@@ -88,6 +88,7 @@ class PiDrainCoordinator:
     child_wave_deadline_monotonic: float | None = None
     child_wave_started_monotonic: float | None = None
     tracked_cleanup_reason: str | None = None
+    tracked_cleanup_error: str | None = None
     terminate_children: TerminatePiChildren | None = None
     send_done_nudge: SendPiDoneNudge | None = None
     done_nudge_idle_delay_seconds: float = PI_DONE_NUDGE_IDLE_DELAY_SECONDS
@@ -611,13 +612,16 @@ class PiDrainCoordinator:
         now_monotonic: float,
     ) -> None:
         if self.tracked_cleanup_reason is None:
-            await terminate_children(self.tracker, "pi_child_wave_timeout")
+            self.tracked_cleanup_reason = "pi_child_wave_timeout"
+            try:
+                await terminate_children(self.tracker, "pi_child_wave_timeout")
+            except Exception as exc:
+                self.tracked_cleanup_error = str(exc)
         tracked_count = (
             self.tracker.clear_tracked_children_after_wave_timeout()
             + self.quiescence_tracker.pending_child_spawn_count()
         )
         self.waiting_child_count = None
-        self.tracked_cleanup_reason = "pi_child_wave_timeout"
         elapsed_seconds = 0.0
         if self.child_wave_started_monotonic is not None:
             elapsed_seconds = max(0.0, now_monotonic - self.child_wave_started_monotonic)
@@ -630,12 +634,14 @@ class PiDrainCoordinator:
                 0.0,
                 self.child_wave_deadline_monotonic - self.child_wave_started_monotonic,
             )
-        self._emit(
-            "pi_child_wave_timeout",
-            active_tracked_count=tracked_count,
-            elapsed_seconds=elapsed_seconds,
-            timeout_seconds=timeout_seconds,
-        )
+        timeout_payload: dict[str, object] = {
+            "active_tracked_count": tracked_count,
+            "elapsed_seconds": elapsed_seconds,
+            "timeout_seconds": timeout_seconds,
+        }
+        if self.tracked_cleanup_error is not None:
+            timeout_payload["cleanup_error"] = self.tracked_cleanup_error
+        self._emit("pi_child_wave_timeout", **timeout_payload)
         self._clear_child_wave_timer()
         self.emit_waiting_phases_if_needed()
 

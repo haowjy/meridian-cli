@@ -6,6 +6,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 - Streaming drains no longer dispatch or fan out events whose history write failed.
+- Pi child-wave timeouts remain terminal when tracked-child cleanup fails.
 
 ## [0.3.31] - 2026-07-10
 

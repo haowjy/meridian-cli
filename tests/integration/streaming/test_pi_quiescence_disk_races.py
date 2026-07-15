@@ -84,6 +84,9 @@ async def _started_pi_coordinator(
         assert sent_messages is not None
         sent_messages.append(message)
 
+    def _ignore_phase(*, phase: str, session_role: str | None, **payload: object) -> None:
+        _ = phase, session_role, payload
+
     coordinator = PiDrainCoordinator.for_connection(
         runtime_root=tmp_path,
         spawn_id=spawn_id,
@@ -91,7 +94,7 @@ async def _started_pi_coordinator(
         session_role="spawned",
         notification_timeout_seconds=None,
         child_wave_timeout_seconds=None,
-        emit_phase=lambda **_payload: None,
+        emit_phase=_ignore_phase,
         send_done_nudge=_send_done_nudge if sent_messages is not None else None,
     )
     await coordinator.start()
@@ -214,6 +217,62 @@ async def test_child_wave_timeout_fails_when_cleanup_finishes(tmp_path: Path) ->
         assert decision.recorded_outcome is not None
         assert decision.recorded_outcome.status == "failed"
         assert decision.recorded_outcome.error == "pi_child_wave_timeout"
+    finally:
+        await started.coordinator.stop()
+
+
+@pytest.mark.asyncio
+async def test_child_wave_timeout_stays_terminal_when_cleanup_raises(tmp_path: Path) -> None:
+    spawn_id = SpawnId("p-child-wave-cleanup-failure")
+    cleanup_reasons: list[str] = []
+
+    async def _raise_cleanup(
+        tracker: PiSubspawnTracker,
+        reason: str,
+    ) -> None:
+        _ = tracker
+        cleanup_reasons.append(reason)
+        raise RuntimeError("cleanup failed")
+
+    started = await _started_micro_drain_coordinator(
+        tmp_path,
+        spawn_id=spawn_id,
+        child_wave_timeout_seconds=0.01,
+        start_micro_drain=False,
+    )
+
+    try:
+        await started.coordinator.observe_event(
+            _pi_event(
+                "meridian.subspawn.start",
+                {
+                    "schema_version": 1,
+                    "subspawn_id": "j-stuck-child",
+                    "correlation_id": "j-stuck-child",
+                    "wait_policy": "tracked",
+                },
+            ),
+            None,
+        )
+        await started.coordinator.observe_event(_pi_event("agent_end", {}), "idle")
+        await asyncio.sleep(0.02)
+
+        decision = await started.coordinator.handle_timeout(_raise_cleanup)
+        repeated_decision = await started.coordinator.handle_timeout(_raise_cleanup)
+
+        assert cleanup_reasons == ["pi_child_wave_timeout"]
+        assert started.coordinator.tracked_cleanup_reason == "pi_child_wave_timeout"
+        assert started.coordinator.tracked_cleanup_error == "cleanup failed"
+        assert started.coordinator.child_wave_deadline_monotonic is None
+        assert decision.recorded_outcome is not None
+        assert decision.recorded_outcome.status == "failed"
+        assert decision.recorded_outcome.error == "pi_child_wave_timeout"
+        assert repeated_decision.recorded_outcome is None
+        assert any(
+            phase.get("phase") == "pi_child_wave_timeout"
+            and phase.get("cleanup_error") == "cleanup failed"
+            for phase in started.phases
+        )
     finally:
         await started.coordinator.stop()
 
