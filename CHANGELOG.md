@@ -4,6 +4,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+- Streaming drains no longer dispatch or fan out events whose history write failed.
+
 ## [0.3.31] - 2026-07-10
 
 ### Added
