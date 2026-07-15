@@ -89,6 +89,7 @@ means the manager died or the spawn is orphaned.
 - `drain_coordinator.py` — `DrainCoordinator` protocol seam for harness-specific completion policy
 - `completion_contracts.py` — typed evidence, profile, and cleanup collaborator contracts
 - `completion_coordinator.py` — shared candidate/wait/deadline/stabilization state machine
+- `descendant_evidence.py` — shared reconciled, transitive persisted-descendant assessment
 - `spawn_session.py` — `SpawnSession`, `DrainOutcome`
 - `pi_completion_profile.py` — Pi precedence, phases, deadlines, nudges, and stream-exit
   policy
@@ -104,10 +105,11 @@ means the manager died or the spawn is orphaned.
 - `event_observers.py` — `EventObserverRegistry`, `EventObserver`, `CallbackObserver`
 - `types.py` — `InjectResult`, `ControlMessage`
 
-Resident and Pi do not yet share descendant evidence. Resident reads the
-reconciled transitive spawn tree. Pi confirms only direct child rows and also
-uses bounded newer-directory uncertainty to cover the current publication
-window; that uncertainty is a barrier, not child authority.
+Resident completion uses the shared reconciled transitive spawn-tree assessment as
+authority. Pi computes the same assessment only for shadow comparison telemetry; its
+completion authority remains confirmed direct child rows plus bounded newer-directory
+uncertainty for the current publication window. That uncertainty is a barrier, not child
+authority.
 
 ## Depth
 

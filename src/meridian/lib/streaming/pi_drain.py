@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import time
 from collections.abc import Awaitable, Callable
+from contextlib import suppress
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -20,6 +21,7 @@ from meridian.lib.streaming.completion_contracts import (
     WorkAssessment,
 )
 from meridian.lib.streaming.completion_coordinator import CompletionCoordinator
+from meridian.lib.streaming.descendant_evidence import ReconciledDescendantEvidence
 from meridian.lib.streaming.drain_coordinator import (
     DrainExitDecision,
     DrainLoopDecision,
@@ -73,6 +75,10 @@ class PiCompletionEvidence:
         self.quiescence_tracker = quiescence_tracker
         self.notification_timeout_seconds = notification_timeout_seconds
         self._clock = clock
+        self._descendant_evidence = ReconciledDescendantEvidence(
+            runtime_root=runtime_root,
+            root_spawn_id=spawn_id,
+        )
         self._profile: PiCompletionProfile | None = None
         self._generation = 0
         self._last_signature: object = None
@@ -137,6 +143,7 @@ class PiCompletionEvidence:
         if trigger == "aux_wake" and profile is not None:
             profile.after_disk_change()
         blockers = self._blockers()
+        self._emit_descendant_evidence_shadow(self._descendant_evidence.assess())
         signature = tuple((item.code, item.identity) for item in blockers)
         return (
             WorkAssessment(
@@ -212,6 +219,44 @@ class PiCompletionEvidence:
         if not blockers and not self.quiescence_tracker.is_quiescent():
             blockers.append(DiagnosticBlocker(source="profile", code="pi_disk_notification"))
         return tuple(blockers)
+
+    def _emit_descendant_evidence_shadow(self, shadow: WorkAssessment) -> None:
+        watcher_ids = set(self.quiescence_tracker.pending_confirmed_child_ids())
+        tree_ids = {
+            blocker.identity for blocker in shadow.blockers if blocker.identity is not None
+        }
+        records: list[tuple[str, tuple[str, ...]]] = []
+        if shadow.disposition == "unknown":
+            records.append(("store-error", ()))
+        else:
+            unresolved_ids = self.quiescence_tracker.unresolved_child_ids()
+            if unresolved_ids:
+                records.append(("allocation-uncertainty", unresolved_ids))
+            overlap = watcher_ids & tree_ids
+            if overlap:
+                records.append(("both", tuple(sorted(overlap))))
+            tree_only = tree_ids - watcher_ids
+            if tree_only:
+                records.append(("tree-only", tuple(sorted(tree_only))))
+            watcher_only = watcher_ids - tree_ids
+            if watcher_only:
+                records.append(("watcher-only", tuple(sorted(watcher_only))))
+
+        for category, spawn_ids in records:
+            payload: dict[str, object] = {
+                "category": category,
+                "spawn_ids": spawn_ids,
+                "watcher_active_count": len(watcher_ids),
+                "tree_active_count": len(tree_ids),
+            }
+            if shadow.failure is not None:
+                payload["error_code"] = shadow.failure.code
+                payload["error_detail"] = shadow.failure.detail
+            with suppress(Exception):
+                logger.info(
+                    "Pi descendant evidence shadow",
+                    extra={"descendant_evidence_shadow": payload},
+                )
 
     def _next_generation(self, signature: object) -> int:
         if signature != self._last_signature:

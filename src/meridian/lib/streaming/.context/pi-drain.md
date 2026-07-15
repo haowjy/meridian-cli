@@ -35,15 +35,15 @@ numeric `p*` allocation candidates, while `PiQuiescenceTracker` preserves parent
 epochs across disk wakeups. The Pi evidence collaborator combines those unchanged
 views; the profile uses the summary for deadlines and finalization decisions.
 
-Pi and resident currently use different descendant authority. Resident traverses
-the reconciled transitive persisted tree. `PiDiskWatcher` confirms only rows whose
-raw `parent_id` is the current Pi spawn, so it does not independently see a live
-grandchild beneath a terminal direct child. Before a valid row appears, only a
-numerically newer allocated-looking directory may enter a 30-second unresolved
-state. Expired and wrong-parent candidates become rejected tombstones: they do not
-block and are not reread. This bounded allocation uncertainty covers the current
-`start_spawn()` publication window; it is not evidence that the directory is a
-child.
+Pi and resident currently use different descendant authority. Resident uses the shared
+reconciled transitive persisted-tree evidence. Pi assesses that same tree for structured
+`descendant_evidence_shadow` comparison logs, but still decides completion from
+`PiDiskWatcher` rows whose raw `parent_id` is the current Pi spawn. It therefore does not
+authoritatively see a live grandchild beneath a terminal direct child. Before a valid row
+appears, only a numerically newer allocated-looking directory may enter a 30-second
+unresolved state. Expired and wrong-parent candidates become rejected tombstones: they do
+not block and are not reread. This bounded allocation uncertainty covers the current
+`start_spawn()` publication window; it is not evidence that the directory is a child.
 
 ### Disk State Authority
 

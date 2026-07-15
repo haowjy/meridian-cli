@@ -80,6 +80,16 @@ class PiQuiescenceTracker:
             return 0
         return self._disk_watcher.pending_child_spawn_count()
 
+    def pending_confirmed_child_ids(self) -> tuple[str, ...]:
+        if self._disk_watcher is None:
+            return ()
+        return self._disk_watcher.pending_confirmed_child_ids()
+
+    def unresolved_child_ids(self) -> tuple[str, ...]:
+        if self._disk_watcher is None:
+            return ()
+        return self._disk_watcher.unresolved_child_ids()
+
     def is_quiescent(self) -> bool:
         if not self.enabled or not self._parent_idle:
             return False

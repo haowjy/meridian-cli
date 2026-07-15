@@ -7,6 +7,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Added
 - Streaming completion now has shared evidence, profile, cleanup contracts and a
   profile-driven coordinator for candidate, deadline, stabilization, and cleanup mechanics.
+- Pi completion emits reconciled-tree shadow comparisons without changing its direct-child
+  completion authority.
 
 ### Changed
 - Phase 0 drain characterization now uses observable effects and fake clocks.

@@ -79,6 +79,7 @@ class PiDiskWatcher:
         self._notification_marker_path = self._bash_dir / "last-notification.json"
         self._pending_child_spawns = False
         self._pending_child_spawn_count = 0
+        self._pending_confirmed_child_ids: tuple[str, ...] = ()
         self._tracked_bash_bg = False
         self._last_notification_ts: float | None = None
         self._tasks: list[asyncio.Task[None]] = []
@@ -176,6 +177,18 @@ class PiDiskWatcher:
     def pending_child_spawn_count(self) -> int:
         return self._pending_child_spawn_count
 
+    def pending_confirmed_child_ids(self) -> tuple[str, ...]:
+        return self._pending_confirmed_child_ids
+
+    def unresolved_child_ids(self) -> tuple[str, ...]:
+        return tuple(
+            sorted(
+                spawn_id
+                for spawn_id, child in self._child_spawns.items()
+                if isinstance(child, _UnresolvedChild)
+            )
+        )
+
     def has_tracked_bash_bg(self) -> bool:
         return self._tracked_bash_bg
 
@@ -262,6 +275,7 @@ class PiDiskWatcher:
 
     def _scan_pending_child_spawn_count(self) -> int:
         count = 0
+        confirmed_ids: list[str] = []
         for spawn_id, child in list(self._child_spawns.items()):
             if isinstance(child, _RejectedChild):
                 continue
@@ -278,6 +292,8 @@ class PiDiskWatcher:
             status = data.get("status")
             if not isinstance(status, str) or status not in TERMINAL_SPAWN_STATUSES:
                 count += 1
+                confirmed_ids.append(spawn_id)
+        self._pending_confirmed_child_ids = tuple(sorted(confirmed_ids))
         return count
 
     def _is_newer_numeric_spawn_id(self, spawn_id: str) -> bool:
