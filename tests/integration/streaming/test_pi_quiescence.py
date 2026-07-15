@@ -465,6 +465,7 @@ async def test_spawn_manager_pi_child_wave_timeout_cleans_tracked_children_and_f
 async def test_spawn_manager_pi_child_wave_timeout_not_cleared_by_turn_active(
     tmp_path: Path,
 ) -> None:
+    """After expiry is observed, later activity cannot revive the child wave."""
     late_turn_gate = TaskGate()
 
     class _DelayedWaveTimeoutConnection(_FakePiConnection):

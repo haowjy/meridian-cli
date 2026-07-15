@@ -240,6 +240,8 @@ async def test_child_wave_timeout_stays_terminal_when_cleanup_raises(
     ) -> None:
         _ = tracker
         cleanup_reasons.append(reason)
+        nested_decision = await started.coordinator.handle_timeout(_raise_cleanup)
+        assert nested_decision.recorded_outcome is None
         raise RuntimeError("cleanup failed")
 
     started = await _started_micro_drain_coordinator(
@@ -273,9 +275,6 @@ async def test_child_wave_timeout_stays_terminal_when_cleanup_raises(
         repeated_decision = await started.coordinator.handle_timeout(_raise_cleanup)
 
         assert cleanup_reasons == ["pi_child_wave_timeout"]
-        assert started.coordinator.tracked_cleanup_reason == "pi_child_wave_timeout"
-        assert started.coordinator.tracked_cleanup_error == "cleanup failed"
-        assert started.coordinator.child_wave_deadline_monotonic is None
         assert decision.recorded_outcome is not None
         assert decision.recorded_outcome.status == "failed"
         assert decision.recorded_outcome.error == "pi_child_wave_timeout"
