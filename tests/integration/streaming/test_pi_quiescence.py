@@ -18,8 +18,15 @@ from meridian.lib.harness.connections.base import (
     StopResult,
 )
 from meridian.lib.state import spawn_store
+from meridian.lib.streaming import pi_drain as pi_drain_module
 from meridian.lib.streaming.pi_subspawn_tracker import PiSubspawnTracker
-from tests.support.async_determinism import TaskGate, wait_until
+from tests.support.async_determinism import (
+    AsyncDeterminism,
+    TaskGate,
+    assert_still_pending,
+    wait_until,
+    yield_to_loop,
+)
 from tests.support.pi import (
     FakePiConnection as _FakePiConnection,
 )
@@ -46,6 +53,19 @@ def _read_history_phases(runtime_root: Path, spawn_id: SpawnId) -> list[str]:
         for event in _read_history(runtime_root, spawn_id)
         if event.get("event_type") == "meridian.pi.lifecycle.phase"
     ]
+
+
+def _history_has_phase(runtime_root: Path, spawn_id: SpawnId, phase: str) -> bool:
+    history_path = runtime_root / "spawns" / str(spawn_id) / "history.jsonl"
+    return history_path.exists() and phase in _read_history_phases(runtime_root, spawn_id)
+
+
+def _history_has_event(runtime_root: Path, spawn_id: SpawnId, event_type: str) -> bool:
+    history_path = runtime_root / "spawns" / str(spawn_id) / "history.jsonl"
+    return history_path.exists() and any(
+        event.get("event_type") == event_type
+        for event in _read_history(runtime_root, spawn_id)
+    )
 
 
 def _read_phase_events(
@@ -292,6 +312,11 @@ async def _run_pi_child_wave_timeout_with_cleanup_mocks(
     *,
     cancel_raises: bool = False,
 ) -> tuple[list[tuple[object, ...]], Any]:
+    determinism = AsyncDeterminism(start=100.0)
+    monkeypatch.setattr(pi_drain_module.time, "monotonic", determinism.clock.monotonic)
+    loop = asyncio.get_running_loop()
+    real_loop_time = loop.time
+    determinism.install_on_running_loop(monkeypatch)
     calls: list[tuple[object, ...]] = []
     parent_id = SpawnId("p-pi-hybrid-reap")
     child_id = SpawnId("p-child-hybrid-reap")
@@ -391,9 +416,21 @@ async def _run_pi_child_wave_timeout_with_cleanup_mocks(
         child_wave_timeout_seconds=0.02,
     )
 
+    completion = asyncio.create_task(manager.wait_for_completion(parent_id))
     try:
-        outcome = await manager.wait_for_completion(parent_id)
+        await wait_until(
+            lambda: _history_has_event(tmp_path, parent_id, "agent_end"),
+            description="Pi child-wave wait",
+        )
+        await assert_still_pending(completion)
+        determinism.advance(0.019)
+        await yield_to_loop()
+        assert not completion.done()
+        determinism.advance(0.0011)
+        await wait_until(completion.done, description="Pi child-wave timeout")
+        outcome = await completion
     finally:
+        monkeypatch.setattr(loop, "time", real_loop_time)
         await manager.stop_spawn(parent_id)
     assert outcome is not None
     return calls, outcome
@@ -428,7 +465,13 @@ async def test_spawn_manager_pi_reap_falls_back_for_unreaped_children(
 @pytest.mark.asyncio
 async def test_spawn_manager_pi_child_wave_timeout_cleans_tracked_children_and_fails(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    determinism = AsyncDeterminism(start=100.0)
+    monkeypatch.setattr(pi_drain_module.time, "monotonic", determinism.clock.monotonic)
+    loop = asyncio.get_running_loop()
+    real_loop_time = loop.time
+    determinism.install_on_running_loop(monkeypatch)
     class _StuckWaveTimeoutConnection(_FakePiConnection):
         async def events(self):  # type: ignore[no-untyped-def]
             for event in self._events:
@@ -462,8 +505,19 @@ async def test_spawn_manager_pi_child_wave_timeout_cleans_tracked_children_and_f
         child_wave_timeout_seconds=0.02,
     )
 
+    completion = asyncio.create_task(manager.wait_for_completion(spawn_id))
     try:
-        outcome = await manager.wait_for_completion(spawn_id)
+        await wait_until(
+            lambda: _history_has_phase(tmp_path, spawn_id, "quiescence_deferred"),
+            description="Pi child-wave wait",
+        )
+        await assert_still_pending(completion)
+        determinism.advance(0.019)
+        await yield_to_loop()
+        assert not completion.done()
+        determinism.advance(0.0011)
+        await wait_until(completion.done, description="Pi child-wave timeout")
+        outcome = await completion
         assert outcome is not None
         assert outcome.status == "failed"
         assert outcome.error == "pi_child_wave_timeout"
@@ -475,14 +529,21 @@ async def test_spawn_manager_pi_child_wave_timeout_cleans_tracked_children_and_f
         assert timeout_events
         assert timeout_events[-1]["payload"].get("active_tracked_count") == 1
     finally:
+        monkeypatch.setattr(loop, "time", real_loop_time)
         await manager.stop_spawn(spawn_id)
 
 
 @pytest.mark.asyncio
 async def test_spawn_manager_pi_child_wave_timeout_not_cleared_by_turn_active(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """After expiry is observed, later activity cannot revive the child wave."""
+    determinism = AsyncDeterminism(start=100.0)
+    monkeypatch.setattr(pi_drain_module.time, "monotonic", determinism.clock.monotonic)
+    loop = asyncio.get_running_loop()
+    real_loop_time = loop.time
+    determinism.install_on_running_loop(monkeypatch)
     late_turn_gate = TaskGate()
 
     class _DelayedWaveTimeoutConnection(_FakePiConnection):
@@ -544,16 +605,29 @@ async def test_spawn_manager_pi_child_wave_timeout_not_cleared_by_turn_active(
         late_turn_gate.open()
 
     release_task = asyncio.create_task(_release_late_turn_after_child_wave_timeout())
+    completion = asyncio.create_task(manager.wait_for_completion(spawn_id))
 
     try:
-        outcome = await manager.wait_for_completion(spawn_id)
+        await wait_until(
+            lambda: _history_has_phase(tmp_path, spawn_id, "quiescence_deferred"),
+            description="Pi child-wave wait",
+        )
+        await assert_still_pending(completion)
+        determinism.advance(0.099)
+        await yield_to_loop()
+        assert not completion.done()
+        determinism.advance(0.0011)
+        await wait_until(completion.done, description="latched Pi child-wave timeout")
+        outcome = await completion
         assert outcome is not None
         assert outcome.status == "failed"
         assert outcome.error == "pi_child_wave_timeout"
+        assert _read_history_phases(tmp_path, spawn_id).count("pi_child_wave_timeout") == 1
     finally:
         release_task.cancel()
         with suppress(asyncio.CancelledError):
             await release_task
+        monkeypatch.setattr(loop, "time", real_loop_time)
         await manager.stop_spawn(spawn_id)
 
 
