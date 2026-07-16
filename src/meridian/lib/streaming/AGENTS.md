@@ -110,8 +110,9 @@ means the manager died or the spawn is orphaned.
 
 Resident and Pi completion use the shared reconciled transitive spawn-tree assessment as
 persisted-descendant authority. Pi also retains bounded newer-directory uncertainty as a
-publication-race barrier and keeps comparing the tree with its direct-row watcher for
-telemetry. The temporary Pi authority selector can restore confirmed-direct-child
+temporary barrier for manually or externally created partial numeric rows and keeps
+comparing the tree with its direct-row watcher for telemetry. Meridian's own spawn rows
+publish atomically. The temporary Pi authority selector can restore confirmed-direct-child
 assessment during rollback without disabling that comparison.
 
 ## Depth

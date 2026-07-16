@@ -14,6 +14,10 @@ to silently create filesystem state (UUIDs, directories, `.gitignore` entries).
 `resolve_*` helpers. `prepare_for_project_write()` and
 `prepare_for_runtime_write()` call `ensure_*` helpers.
 
+`ensure_runtime_dirs()` also performs crash recovery for spawn publication: under
+`spawns_flock`, it removes only abandoned entries beneath `spawns/.staging/`.
+Runtime-read preparation does not mutate or collect this state.
+
 ## Which Bootstrap Function to Call
 
 Pick based on the `StartupClass` of the command (from `cli/startup/policy.py`):

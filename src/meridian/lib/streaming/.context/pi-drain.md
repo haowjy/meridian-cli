@@ -50,8 +50,9 @@ direct-row watcher, and a temporary selector can restore that old confirmed-chil
 assessment for rollback. Before a valid row appears, only a numerically newer
 allocated-looking directory may enter a 30-second unresolved state. Expired and
 wrong-parent candidates become rejected tombstones: they do not block and are not reread.
-This bounded allocation uncertainty covers the current `start_spawn()` publication
-window; it is not evidence that the directory is a child.
+Meridian's `start_spawn()` publishes complete rows atomically; this bounded uncertainty
+remains for manually or externally created partial numeric directories and is not
+evidence that the directory is a child.
 
 ### Disk State Authority
 
