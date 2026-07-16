@@ -44,6 +44,7 @@ async def _start_pi(
     persisted_descendant_authority: pi_drain_module.PiPersistedDescendantAuthority = (
         "reconciled_tree"
     ),
+    allocation_barrier: bool = True,
 ) -> _StartedPi:
     clock = FakeClock(start=100.0)
     monkeypatch.setattr(pi_drain_module.time, "monotonic", clock.monotonic)
@@ -83,6 +84,7 @@ async def _start_pi(
         emit_phase=_emit_phase,
         terminate_children=_terminate_children,
         persisted_descendant_authority=persisted_descendant_authority,
+        allocation_barrier=allocation_barrier,
     )
     await coordinator.start()
     coordinator.set_policy(
@@ -429,6 +431,26 @@ async def test_pi_shadow_reports_allocation_uncertainty_separately(
 
         assert decision.recorded_outcome is None
         assert stabilized.recorded_outcome is None
+        assert _shadow_categories(started) == ["allocation-uncertainty"]
+    finally:
+        await started.coordinator.stop()
+
+
+@pytest.mark.asyncio
+async def test_pi_allocation_barrier_bypass_still_emits_shadow(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    start_row(tmp_path, "p1", HarnessId.PI, None)
+    (tmp_path / "spawns" / "p2").mkdir()
+    started = await _start_pi(tmp_path, monkeypatch, allocation_barrier=False)
+    try:
+        decision = await _assess_terminal(started)
+        started.clock.advance(0.05)
+        stabilized = await started.coordinator.handle_timeout()
+
+        assert decision.recorded_outcome is None
+        assert stabilized.recorded_outcome == _SUCCESS
         assert _shadow_categories(started) == ["allocation-uncertainty"]
     finally:
         await started.coordinator.stop()

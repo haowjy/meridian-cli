@@ -74,6 +74,7 @@ class PiCompletionEvidence:
         notification_timeout_seconds: float | None,
         clock: Callable[[], float],
         persisted_descendant_authority: PiPersistedDescendantAuthority = "reconciled_tree",
+        allocation_barrier: bool = True,
     ) -> None:
         self.runtime_root = runtime_root
         self.spawn_id = spawn_id
@@ -81,6 +82,7 @@ class PiCompletionEvidence:
         self.quiescence_tracker = quiescence_tracker
         self.notification_timeout_seconds = notification_timeout_seconds
         self.persisted_descendant_authority = persisted_descendant_authority
+        self.allocation_barrier = allocation_barrier
         self._clock = clock
         self._descendant_evidence = ReconciledDescendantEvidence(
             runtime_root=runtime_root,
@@ -263,7 +265,10 @@ class PiCompletionEvidence:
             )
             for blocker in private_work.blockers
             if blocker.kind != "allocation"
-            or self.persisted_descendant_authority == "reconciled_tree"
+            or (
+                self.allocation_barrier
+                and self.persisted_descendant_authority == "reconciled_tree"
+            )
         )
         return tuple(blockers)
 
@@ -435,6 +440,7 @@ class PiDrainCoordinator:
         terminate_children: TerminatePiChildren | None = None,
         send_done_nudge: SendPiDoneNudge | None = None,
         persisted_descendant_authority: PiPersistedDescendantAuthority = "reconciled_tree",
+        allocation_barrier: bool = True,
     ) -> PiDrainCoordinator:
         del receiver
         normalized_role = (session_role or "").strip().lower()
@@ -456,6 +462,7 @@ class PiDrainCoordinator:
             notification_timeout_seconds=notification_timeout_seconds,
             clock=clock,
             persisted_descendant_authority=persisted_descendant_authority,
+            allocation_barrier=allocation_barrier,
         )
         profile = PiCompletionProfile(
             runtime_root=runtime_root,
