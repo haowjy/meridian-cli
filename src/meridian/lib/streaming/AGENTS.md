@@ -105,11 +105,11 @@ means the manager died or the spawn is orphaned.
 - `event_observers.py` — `EventObserverRegistry`, `EventObserver`, `CallbackObserver`
 - `types.py` — `InjectResult`, `ControlMessage`
 
-Resident completion uses the shared reconciled transitive spawn-tree assessment as
-authority. Pi computes the same assessment only for shadow comparison telemetry; its
-completion authority remains confirmed direct child rows plus bounded newer-directory
-uncertainty for the current publication window. That uncertainty is a barrier, not child
-authority.
+Resident and Pi completion use the shared reconciled transitive spawn-tree assessment as
+persisted-descendant authority. Pi also retains bounded newer-directory uncertainty as a
+publication-race barrier and keeps comparing the tree with its direct-row watcher for
+telemetry. The temporary Pi authority selector can restore confirmed-direct-child
+assessment during rollback without disabling that comparison.
 
 ## Depth
 

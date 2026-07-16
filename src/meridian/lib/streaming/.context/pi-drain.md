@@ -17,7 +17,8 @@ The Pi completion composition owns:
 
 - parent idle/active observation
 - disk watcher / quiescence integration (`PiDiskWatcher`, `PiQuiescenceTracker`)
-- active child spawn tracking from disk-backed child rows
+- active persisted-descendant tracking from the reconciled transitive spawn tree
+- bounded allocation uncertainty from disk-backed child directories
 - pending notification / follow-up tracking
 - notification timeout and child-wave timeout decisions
 - micro-drain candidate state and phase-event emission coordination
@@ -30,20 +31,22 @@ purely generic event persistence, observer dispatch, subscriber fan-out, heartbe
 or control-socket handling.
 
 `PiSubspawnTracker` owns lifecycle-observed active child IDs, process handles, and
-notifications. `PiDiskWatcher` owns direct-row confirmation plus bounded unresolved
-numeric `p*` allocation candidates, while `PiQuiescenceTracker` preserves parent-idle
-epochs across disk wakeups. The Pi evidence collaborator combines those unchanged
-views; the profile uses the summary for deadlines and finalization decisions.
+notifications. `PiDiskWatcher` owns direct-row comparison telemetry plus bounded
+unresolved numeric `p*` allocation candidates, while `PiQuiescenceTracker` preserves
+parent-idle epochs across disk wakeups. The Pi evidence collaborator combines those
+Pi-owned blockers with reconciled transitive persisted-descendant evidence; the profile
+uses the summary for deadlines and finalization decisions.
 
-Pi and resident currently use different descendant authority. Resident uses the shared
-reconciled transitive persisted-tree evidence. Pi assesses that same tree for structured
-`descendant_evidence_shadow` comparison phases, but still decides completion from
-`PiDiskWatcher` rows whose raw `parent_id` is the current Pi spawn. It therefore does not
-authoritatively see a live grandchild beneath a terminal direct child. Before a valid row
-appears, only a numerically newer allocated-looking directory may enter a 30-second
-unresolved state. Expired and wrong-parent candidates become rejected tombstones: they do
-not block and are not reread. This bounded allocation uncertainty covers the current
-`start_spawn()` publication window; it is not evidence that the directory is a child.
+Pi and resident use the shared reconciled transitive persisted tree as descendant
+authority. A live grandchild beneath a terminal direct child therefore blocks Pi, while a
+`finalizing` direct child with a durable report is reconciled terminal and does not. Pi
+continues emitting structured `descendant_evidence_shadow` comparison phases against the
+direct-row watcher, and a temporary selector can restore that old confirmed-child
+assessment for rollback. Before a valid row appears, only a numerically newer
+allocated-looking directory may enter a 30-second unresolved state. Expired and
+wrong-parent candidates become rejected tombstones: they do not block and are not reread.
+This bounded allocation uncertainty covers the current `start_spawn()` publication
+window; it is not evidence that the directory is a child.
 
 ### Disk State Authority
 
@@ -97,7 +100,7 @@ These are written to `history.jsonl` alongside harness events and are visible in
 | `quiescence_micro_drain_started` | Terminal event seen, polling for quiescence |
 | `quiescence_micro_drain_extended` | Additional event during micro-drain |
 | `quiescence_deferred` | Terminal event but still waiting for children/notifications |
-| `descendant_evidence_shadow` | Changed direct-watcher versus reconciled-tree comparison; telemetry only |
+| `descendant_evidence_shadow` | Changed direct-watcher versus authoritative reconciled-tree comparison; telemetry only |
 | `continuation_completed` | Notification resolved on terminal event |
 | `cleanup_running` / `cleanup_completed` / `cleanup_escalated` / `cleanup_failed` | Connection cleanup phases |
 | `finalized` | Drain complete; final status/exit_code/error |

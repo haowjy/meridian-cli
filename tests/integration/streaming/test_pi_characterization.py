@@ -96,6 +96,7 @@ async def _start_coordinator(
         emit_phase=_emit_phase,
         terminate_children=_cleanup if cleanup_configured else None,
         send_done_nudge=_nudge,
+        persisted_descendant_authority="confirmed_child",
     )
     coordinator.done_nudge_idle_delay_seconds = nudge_idle_seconds
     coordinator.done_nudge_interval_seconds = 5.0

@@ -90,6 +90,9 @@ class PiQuiescenceTracker:
             return ()
         return self._disk_watcher.unresolved_child_ids()
 
+    def has_pending_disk_notification(self) -> bool:
+        return not self._no_pending_disk_notifications()
+
     def is_quiescent(self) -> bool:
         if not self.enabled or not self._parent_idle:
             return False
@@ -98,7 +101,7 @@ class PiQuiescenceTracker:
         return (
             not self._disk_watcher.has_pending_child_spawns()
             and not self._disk_watcher.has_tracked_bash_bg()
-            and self._no_pending_disk_notifications()
+            and not self.has_pending_disk_notification()
         )
 
     def _no_pending_disk_notifications(self) -> bool:

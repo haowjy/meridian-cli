@@ -35,6 +35,7 @@ from tests.support.pi import (
 from tests.support.pi import (
     pi_event as _pi_event,
 )
+from tests.support.resident_drain import start_row
 
 
 def _write_json(path: Path, payload: object) -> None:
@@ -664,10 +665,7 @@ async def test_micro_drain_timeout_rechecks_disk_before_accepting(tmp_path: Path
         spawn_id=spawn_id,
     )
 
-    _write_json(
-        tmp_path / "spawns" / "p-disk-child" / "state.json",
-        {"id": "p-disk-child", "parent_id": str(spawn_id), "status": "running"},
-    )
+    start_row(tmp_path, "p-disk-child", HarnessId.CODEX, str(spawn_id))
 
     try:
         result = await started.coordinator.handle_timeout(_noop_terminate)
@@ -843,10 +841,7 @@ async def test_disk_change_reevaluation_starts_child_wave_while_parent_idle(
         mark_idle=True,
         start_micro_drain=False,
     )
-    _write_json(
-        tmp_path / "spawns" / "p-late-child" / "state.json",
-        {"id": "p-late-child", "parent_id": str(spawn_id), "status": "running"},
-    )
+    start_row(tmp_path, "p-late-child", HarnessId.CODEX, str(spawn_id))
 
     try:
         await started.coordinator.reevaluate_after_disk_change()

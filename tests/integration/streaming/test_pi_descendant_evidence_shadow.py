@@ -1,7 +1,8 @@
-"""Characterize Pi's reconciled-descendant shadow without changing authority."""
+"""Characterize Pi's reconciled-descendant authority and watcher comparison."""
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -38,6 +39,10 @@ class _StartedPi:
 async def _start_pi(
     runtime_root: Path,
     monkeypatch: pytest.MonkeyPatch,
+    *,
+    persisted_descendant_authority: pi_drain_module.PiPersistedDescendantAuthority = (
+        "reconciled_tree"
+    ),
 ) -> _StartedPi:
     clock = FakeClock(start=100.0)
     monkeypatch.setattr(pi_drain_module.time, "monotonic", clock.monotonic)
@@ -71,6 +76,7 @@ async def _start_pi(
         notification_timeout_seconds=None,
         child_wave_timeout_seconds=None,
         emit_phase=_emit_phase,
+        persisted_descendant_authority=persisted_descendant_authority,
     )
     await coordinator.start()
     coordinator.set_policy(
@@ -133,7 +139,11 @@ async def test_pi_shadow_reports_tree_only_grandchild_but_keeps_watcher_authorit
     start_row(tmp_path, "p2", HarnessId.CODEX, "p1")
     spawn_store.finalize_spawn(tmp_path, SpawnId("p2"), "succeeded", 0, origin="runner")
     start_row(tmp_path, "p3", HarnessId.CODEX, "p2")
-    started = await _start_pi(tmp_path, monkeypatch)
+    started = await _start_pi(
+        tmp_path,
+        monkeypatch,
+        persisted_descendant_authority="confirmed_child",
+    )
     try:
         terminal = await _assess_terminal(started)
         assert terminal.recorded_outcome is None
@@ -144,6 +154,109 @@ async def test_pi_shadow_reports_tree_only_grandchild_but_keeps_watcher_authorit
 
         assert stabilized.recorded_outcome == _SUCCESS
         assert _shadow_categories(started) == ["tree-only"]
+    finally:
+        await started.coordinator.stop()
+
+
+@pytest.mark.asyncio
+async def test_pi_tree_authority_blocks_live_grandchild_beneath_terminal_child(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    start_row(tmp_path, "p1", HarnessId.PI, None)
+    start_row(tmp_path, "p2", HarnessId.CODEX, "p1")
+    spawn_store.finalize_spawn(tmp_path, SpawnId("p2"), "succeeded", 0, origin="runner")
+    start_row(tmp_path, "p3", HarnessId.CODEX, "p2")
+    started = await _start_pi(tmp_path, monkeypatch)
+    try:
+        terminal = await _assess_terminal(started)
+        started.clock.advance(0.05)
+        stabilized = await started.coordinator.handle_timeout()
+
+        assert terminal.recorded_outcome is None
+        assert stabilized.recorded_outcome is None
+    finally:
+        await started.coordinator.stop()
+
+
+@pytest.mark.asyncio
+async def test_pi_tree_authority_still_blocks_on_tracked_bash(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    start_row(tmp_path, "p1", HarnessId.PI, None)
+    bash_state = tmp_path / "pi-bash" / "p1" / "bash-records.json"
+    bash_state.parent.mkdir(parents=True)
+    bash_state.write_text(
+        json.dumps(
+            {
+                "records": {
+                    "b1": {
+                        "bash_id": "b1",
+                        "is_tracked": True,
+                        "is_background": True,
+                        "status": "running",
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    started = await _start_pi(tmp_path, monkeypatch)
+    try:
+        await _assess_terminal(started)
+        started.clock.advance(0.05)
+
+        stabilized = await started.coordinator.handle_timeout()
+
+        assert stabilized.recorded_outcome is None
+    finally:
+        await started.coordinator.stop()
+
+
+@pytest.mark.asyncio
+async def test_pi_tree_authority_still_blocks_on_pending_notification(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    start_row(tmp_path, "p1", HarnessId.PI, None)
+    started = await _start_pi(tmp_path, monkeypatch)
+    try:
+        await started.coordinator.observe_event(
+            pi_event("meridian.notification.queued", {"notification_id": "n1"}),
+            None,
+        )
+        await _assess_terminal(started)
+        started.clock.advance(0.05)
+
+        stabilized = await started.coordinator.handle_timeout()
+
+        assert stabilized.recorded_outcome is None
+    finally:
+        await started.coordinator.stop()
+
+
+@pytest.mark.asyncio
+async def test_pi_tree_authority_still_blocks_on_rowless_internal_subspawn(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    start_row(tmp_path, "p1", HarnessId.PI, None)
+    started = await _start_pi(tmp_path, monkeypatch)
+    try:
+        await started.coordinator.observe_event(
+            pi_event(
+                "meridian.subspawn.start",
+                {"subspawn_id": "pi-internal-1", "wait_policy": "tracked"},
+            ),
+            None,
+        )
+        await _assess_terminal(started)
+        started.clock.advance(0.05)
+
+        stabilized = await started.coordinator.handle_timeout()
+
+        assert stabilized.recorded_outcome is None
     finally:
         await started.coordinator.stop()
 
@@ -163,8 +276,11 @@ async def test_pi_shadow_reports_reconciled_terminal_direct_child_as_watcher_onl
     started = await _start_pi(tmp_path, monkeypatch)
     try:
         decision = await _assess_terminal(started)
+        started.clock.advance(0.05)
+        stabilized = await started.coordinator.handle_timeout()
 
         assert decision.recorded_outcome is None
+        assert stabilized.recorded_outcome == _SUCCESS
         assert _shadow_categories(started) == ["watcher-only"]
         assert _shadow_records(started)[0]["spawn_ids"] == ("p2",)
         assert _shadow_records(started)[0]["tree_active_count"] == 0
@@ -182,15 +298,18 @@ async def test_pi_shadow_reports_allocation_uncertainty_separately(
     started = await _start_pi(tmp_path, monkeypatch)
     try:
         decision = await _assess_terminal(started)
+        started.clock.advance(0.05)
+        stabilized = await started.coordinator.handle_timeout()
 
         assert decision.recorded_outcome is None
+        assert stabilized.recorded_outcome is None
         assert _shadow_categories(started) == ["allocation-uncertainty"]
     finally:
         await started.coordinator.stop()
 
 
 @pytest.mark.asyncio
-async def test_pi_shadow_store_error_does_not_block_authoritative_success(
+async def test_pi_tree_authority_blocks_on_store_error(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -217,7 +336,7 @@ async def test_pi_shadow_store_error_does_not_block_authoritative_success(
         started.clock.advance(0.05)
         stabilized = await started.coordinator.handle_timeout()
 
-        assert stabilized.recorded_outcome == _SUCCESS
+        assert stabilized.recorded_outcome is None
         assert _shadow_categories(started) == ["store-error"]
     finally:
         await started.coordinator.stop()
