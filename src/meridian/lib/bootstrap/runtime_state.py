@@ -48,3 +48,7 @@ def ensure_runtime_dirs(runtime_root: Path) -> None:
         runtime_root / "telemetry",
     ):
         dir_path.mkdir(parents=True, exist_ok=True)
+
+    from meridian.lib.state.spawn_store import gc_abandoned_stages
+
+    gc_abandoned_stages(runtime_root)

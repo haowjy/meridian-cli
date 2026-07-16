@@ -10,16 +10,19 @@ test_spawn_store_finalize.py.
 from __future__ import annotations
 
 import json
+import threading
 from pathlib import Path
 
 import pytest
 
+from meridian.lib.bootstrap.runtime_state import ensure_runtime_dirs
 from meridian.lib.core.domain import SkillContent
 from meridian.lib.core.execution_policy import ResolvedExecutionPolicy
 from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
 from meridian.lib.core.spawn_start import SpawnStartMetadata
+from meridian.lib.state import spawn_store as spawn_store_module
 from meridian.lib.state.paths import RuntimePaths
-from meridian.lib.state.spawn.repository import read_state
+from meridian.lib.state.spawn.repository import read_state, scan_spawn_ids
 from meridian.lib.state.spawn_store import (
     finalize_spawn,
     get_spawn,
@@ -79,6 +82,88 @@ def test_start_and_update_project_fields_round_trip(tmp_path: Path) -> None:
     assert row is not None
     assert row.launch_mode == "foreground"
     assert row.runner_pid == 2222
+
+
+def test_start_spawn_publishes_only_a_complete_readable_row(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime_root = _state_root(tmp_path)
+    paths = RuntimePaths.from_root_dir(runtime_root)
+    spawn_id = "p7"
+    publication_build_started = threading.Event()
+    release_publication_build = threading.Event()
+    created_spawn_ids: list[str] = []
+    errors: list[BaseException] = []
+    original_atomic_write_text = spawn_store_module.atomic_write_text
+
+    def pause_before_prompt_write(path: Path, content: str) -> None:
+        if path.name == "starting-prompt.md":
+            publication_build_started.set()
+            if not release_publication_build.wait(timeout=5):
+                raise TimeoutError("publication build was not released")
+        original_atomic_write_text(path, content)
+
+    monkeypatch.setattr(spawn_store_module, "atomic_write_text", pause_before_prompt_write)
+
+    def create_spawn() -> None:
+        try:
+            created_spawn_ids.append(
+                str(
+                    start_spawn(
+                        runtime_root,
+                        chat_id="c1",
+                        model="gpt-5.4",
+                        agent="coder",
+                        harness="codex",
+                        prompt="hello",
+                        spawn_id=spawn_id,
+                    )
+                )
+            )
+        except BaseException as exc:
+            errors.append(exc)
+
+    publisher = threading.Thread(target=create_spawn)
+    publisher.start()
+    assert publication_build_started.wait(timeout=5)
+
+    try:
+        assert scan_spawn_ids(paths.spawns_dir) == []
+        assert not (paths.spawns_dir / spawn_id).exists()
+    finally:
+        release_publication_build.set()
+        publisher.join(timeout=5)
+
+    assert not publisher.is_alive()
+    assert errors == []
+    assert created_spawn_ids == [spawn_id]
+    assert scan_spawn_ids(paths.spawns_dir) == [spawn_id]
+    assert (paths.spawns_dir / spawn_id / "starting-prompt.md").read_text(
+        encoding="utf-8"
+    ) == "hello"
+    row = read_state(paths.spawns_dir, spawn_id)
+    assert row is not None
+    assert row.id == spawn_id
+    assert row.prompt == "hello"
+
+
+def test_runtime_startup_removes_only_abandoned_stages(tmp_path: Path) -> None:
+    runtime_root = _state_root(tmp_path)
+    paths = RuntimePaths.from_root_dir(runtime_root)
+    final_spawn_dir = paths.spawns_dir / "p1"
+    final_spawn_dir.mkdir(parents=True)
+    (final_spawn_dir / "state.json").write_text("published\n", encoding="utf-8")
+    abandoned_stage = paths.spawns_dir / ".staging" / "p2-1234-deadbeef"
+    abandoned_stage.mkdir(parents=True)
+    (abandoned_stage / "state.json").write_text("abandoned\n", encoding="utf-8")
+    abandoned_file = paths.spawns_dir / ".staging" / "orphan.tmp"
+    abandoned_file.write_text("abandoned\n", encoding="utf-8")
+
+    ensure_runtime_dirs(runtime_root)
+
+    assert (final_spawn_dir / "state.json").read_text(encoding="utf-8") == "published\n"
+    assert list((paths.spawns_dir / ".staging").iterdir()) == []
 
 
 def test_start_spawn_persists_control_root_and_task_cwd(tmp_path: Path) -> None:

@@ -25,6 +25,15 @@ def _fsync_directory(path: Path) -> None:
         os.close(directory_fd)
 
 
+def atomic_publish_dir(stage_dir: Path, dest_dir: Path) -> None:
+    """Publish a complete staged directory and sync its parent entry."""
+
+    if os.path.lexists(dest_dir):
+        raise FileExistsError(f"Refusing to publish over existing destination: {dest_dir}")
+    os.replace(stage_dir, dest_dir)
+    _fsync_directory(dest_dir.parent)
+
+
 def atomic_write_text(path: Path, content: str) -> None:
     """Write text via same-directory temp file + fsync + replace."""
 

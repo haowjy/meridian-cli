@@ -6,6 +6,7 @@ Also includes file-backed ID generation for spawns and sessions.
 from __future__ import annotations
 
 import os
+import secrets
 import shutil
 from collections.abc import Mapping
 from contextlib import suppress
@@ -33,7 +34,7 @@ from meridian.lib.core.spawn_lifecycle import (
 )
 from meridian.lib.core.spawn_start import SpawnStartMetadata, derive_display_label
 from meridian.lib.core.types import SpawnId
-from meridian.lib.state.atomic import atomic_write_text
+from meridian.lib.state.atomic import atomic_publish_dir, atomic_write_text
 from meridian.lib.state.event_store import lock_file
 from meridian.lib.state.paths import RuntimePaths
 from meridian.lib.state.spawn.model import (
@@ -248,6 +249,24 @@ class FinalizeOutcome(BaseModel):
     snapshot: SpawnRecord | None
 
 
+def gc_abandoned_stages(runtime_root: Path) -> None:
+    """Best-effort cleanup of incomplete spawn publication stages."""
+
+    paths = RuntimePaths.from_root_dir(runtime_root)
+    staging_dir = paths.spawns_dir / ".staging"
+    with lock_file(paths.spawns_flock):
+        try:
+            entries = tuple(staging_dir.iterdir())
+        except OSError:
+            return
+        for entry in entries:
+            with suppress(OSError):
+                if entry.is_dir() and not entry.is_symlink():
+                    shutil.rmtree(entry)
+                else:
+                    entry.unlink()
+
+
 def start_spawn(
     runtime_root: Path,
     *,
@@ -375,9 +394,21 @@ def start_spawn(
             launch_policy_snapshot=resolved_launch_policy_snapshot,
         )
         spawn_dir = paths.spawns_dir / str(resolved_spawn_id)
-        spawn_dir.mkdir(parents=True, exist_ok=True)
-        atomic_write_text(spawn_dir / "starting-prompt.md", prompt)
-        _write_state(paths.spawns_dir, record, revision=1)
+        stage_dir = (
+            paths.spawns_dir
+            / ".staging"
+            / f"{resolved_spawn_id}-{os.getpid()}-{secrets.token_hex(4)}"
+        )
+        stage_dir.mkdir(parents=True)
+        atomic_write_text(stage_dir / "starting-prompt.md", prompt)
+        from meridian.lib.state.spawn.repository import record_to_stored_state
+
+        stored_state = record_to_stored_state(record, revision=1)
+        atomic_write_text(
+            stage_dir / "state.json",
+            stored_state.model_dump_json(indent=2) + "\n",
+        )
+        atomic_publish_dir(stage_dir, spawn_dir)
         return resolved_spawn_id
 
 

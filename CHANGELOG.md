@@ -27,6 +27,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   ledger instead of routing through the lifecycle tracker.
 
 ### Fixed
+- Spawn rows now appear only after their initial state and prompt are durably staged.
 - Streaming drains no longer dispatch or fan out events whose history write failed.
 - Pi child-wave timeouts remain terminal when tracked-child cleanup fails.
 - Completion waits now retain stable readiness windows across early wakes and preserve
