@@ -329,6 +329,47 @@ async def test_unresolved_child_candidate_expires(
 
 
 @pytest.mark.asyncio
+async def test_rejected_unresolved_child_clears_stale_read_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monotonic_now = [100.0]
+    monkeypatch.setattr(
+        "meridian.lib.streaming.disk_watcher.time.monotonic",
+        lambda: monotonic_now[0],
+    )
+    parent_id = SpawnId("p2984")
+    state_path = tmp_path / "spawns" / "p2985" / "state.json"
+
+    watcher = PiDiskWatcher(tmp_path, parent_id)
+    await watcher.start()
+    try:
+        state_path.parent.mkdir()
+        await watcher.force_rescan()
+
+        state_path.write_text("{not json", encoding="utf-8")
+        await watcher.force_rescan()
+
+        assert watcher.evidence_failure() == EvidenceFailure(
+            code="pi_private_work_read_failed",
+            detail=f"{state_path}: invalid JSON",
+        )
+
+        monotonic_now[0] = 131.0
+        await watcher.force_rescan()
+        _write_json(
+            state_path,
+            {"id": "p2985", "parent_id": str(parent_id), "status": "succeeded"},
+        )
+        await watcher.force_rescan()
+
+        assert watcher.evidence_failure() is None
+        assert watcher.has_pending_child_spawns() is False
+    finally:
+        await watcher.stop()
+
+
+@pytest.mark.asyncio
 async def test_force_rescan_tracks_empty_child_state_as_unresolved(
     tmp_path: Path,
 ) -> None:

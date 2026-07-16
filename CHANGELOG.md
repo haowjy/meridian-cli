@@ -36,6 +36,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Resident and Pi `done` signals now wait on unreadable completion evidence and fail
   explicitly if it stays unavailable; Pi private-work read failures now enter that typed
   unknown-evidence path.
+- Rejected Pi child candidates no longer retain stale read failures as unknown evidence.
 
 ## [0.3.31] - 2026-07-10
 

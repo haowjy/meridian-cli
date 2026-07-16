@@ -281,6 +281,7 @@ class PiDiskWatcher:
                 continue
             if now_monotonic >= child.deadline_monotonic:
                 self._child_spawns[spawn_id] = _REJECTED_CHILD
+                self._clear_read_failure(self._spawns_dir / spawn_id / "state.json")
                 continue
             state_path = self._spawns_dir / spawn_id / "state.json"
             data = self._read_json_object(state_path)
