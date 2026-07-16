@@ -21,6 +21,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   precedence, phase emission, and cleanup to the shared coordinator.
 - Pi private-work blockers and cleanup handles now have one ledger with immutable,
   categorized snapshots fed by lifecycle and disk observers.
+- Pi production cleanup now reads tracked process handles directly from the private-work
+  ledger instead of routing through the lifecycle tracker.
 
 ### Fixed
 - Streaming drains no longer dispatch or fan out events whose history write failed.

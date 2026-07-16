@@ -56,7 +56,7 @@ if TYPE_CHECKING:
 _PI_PHASE_EVENT_TYPE = pi_lifecycle.PI_PHASE_EVENT_TYPE
 logger = logging.getLogger(__name__)
 
-TerminatePiChildren = Callable[[PiSubspawnTracker, str], Awaitable[None]]
+TerminatePiChildren = Callable[[PiPrivateWorkLedger, str], Awaitable[None]]
 PiPersistedDescendantAuthority = Literal["reconciled_tree", "confirmed_child"]
 _PI_DESCENDANT_POLL_INTERVAL_SECONDS = 0.25
 
@@ -330,13 +330,11 @@ class PiCompletionCleanup:
     def __init__(
         self,
         *,
-        tracker: PiSubspawnTracker,
         ledger: PiPrivateWorkLedger,
         quiescence_tracker: PiQuiescenceTracker,
         terminate_children: TerminatePiChildren | None,
         emit_phase: Callable[..., None],
     ) -> None:
-        self.tracker = tracker
         self._ledger = ledger
         self.quiescence_tracker = quiescence_tracker
         self.terminate_children = terminate_children
@@ -359,7 +357,7 @@ class PiCompletionCleanup:
             if callback is None:
                 raise RuntimeError("Pi child process-exit cleanup is not configured")
             handles_attempted = self._ledger.tracked_subspawn_ids()
-            await callback(self.tracker, reason)
+            await callback(self._ledger, reason)
             self.tracked_cleanup_reason = reason
             return CleanupReport(
                 attempted_categories=("pi_tracked_children",),
@@ -373,7 +371,7 @@ class PiCompletionCleanup:
         handles_attempted = self._ledger.tracked_subspawn_ids()
         failures: tuple[EvidenceFailure, ...] = ()
         try:
-            await callback(self.tracker, reason)
+            await callback(self._ledger, reason)
         except Exception as exc:
             self.tracked_cleanup_error = str(exc)
             failures = (EvidenceFailure(code="pi_child_cleanup_failed", detail=str(exc)),)
@@ -472,7 +470,6 @@ class PiDrainCoordinator:
             clock=clock,
         )
         cleanup = PiCompletionCleanup(
-            tracker=tracker,
             ledger=ledger,
             quiescence_tracker=quiescence_tracker,
             terminate_children=terminate_children,

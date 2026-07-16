@@ -42,7 +42,7 @@ from meridian.lib.streaming.event_observers import (
 from meridian.lib.streaming.heartbeat import heartbeat_loop
 from meridian.lib.streaming.pi_drain import PiDrainCoordinator
 from meridian.lib.streaming.pi_process_cleanup import terminate_pi_tracked_subspawns
-from meridian.lib.streaming.pi_subspawn_tracker import PiSubspawnTracker
+from meridian.lib.streaming.pi_work_ledger import PiPrivateWorkLedger
 from meridian.lib.streaming.resident_drain import ResidentDrainCoordinator
 from meridian.lib.streaming.spawn_dispatch import dispatch_start
 from meridian.lib.streaming.spawn_drain_loop import SpawnDrainLoop
@@ -326,7 +326,7 @@ class SpawnManager:
             )
 
         async def _terminate_tracked_pi_children(
-            tracker: PiSubspawnTracker,
+            ledger: PiPrivateWorkLedger,
             reason: str,
         ) -> None:
             reaped_descendant_ids: set[str] = set()
@@ -351,7 +351,7 @@ class SpawnManager:
                 reaped_descendant_ids = set()
             await terminate_pi_tracked_subspawns(
                 spawn_id,
-                tracker,
+                ledger,
                 reason=reason,
                 exclude_subspawn_ids=reaped_descendant_ids,
             )

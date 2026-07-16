@@ -78,7 +78,7 @@ class PiCompletionEvidenceView(Protocol):
 
 
 class PiCompletionCleanupPort(Protocol):
-    terminate_children: Callable[[PiSubspawnTracker, str], Awaitable[None]] | None
+    terminate_children: Callable[[PiPrivateWorkLedger, str], Awaitable[None]] | None
 
     def prepare_child_timeout(self, telemetry: ChildTimeoutTelemetry) -> None: ...
 
