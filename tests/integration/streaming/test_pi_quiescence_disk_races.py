@@ -548,6 +548,7 @@ async def test_pi_candidate_child_dir_before_row_suppresses_done_nudge_until_ter
         assert candidate_wait.recorded_outcome is None
         assert sent_messages == []
 
+        (tmp_path / "spawns" / str(child_id)).rmdir()
         spawn_store.start_spawn(
             tmp_path,
             spawn_id=child_id,
