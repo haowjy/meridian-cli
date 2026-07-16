@@ -248,6 +248,13 @@ async def test_child_wave_timeout_fails_when_cleanup_finishes(
 
         decision = await started.coordinator.handle_timeout(_record_cleanup)
 
+        assert cleanup_reasons == []
+        exit_decision = await started.coordinator.handle_stream_exit(
+            decision.recorded_outcome
+        )
+        request = exit_decision.post_publication_cleanup
+        assert request is not None
+        await started.coordinator.execute_post_publication_cleanup(request)
         assert cleanup_reasons == ["pi_child_wave_timeout"]
         assert decision.recorded_outcome is not None
         assert decision.recorded_outcome.status == "failed"
@@ -295,6 +302,13 @@ async def test_child_wave_timeout_stays_terminal_when_cleanup_raises(
         determinism.advance(0.01)
 
         decision = await started.coordinator.handle_timeout(_raise_cleanup)
+        assert cleanup_reasons == []
+        exit_decision = await started.coordinator.handle_stream_exit(
+            decision.recorded_outcome
+        )
+        request = exit_decision.post_publication_cleanup
+        assert request is not None
+        await started.coordinator.execute_post_publication_cleanup(request)
         repeated_decision = await started.coordinator.handle_timeout(_raise_cleanup)
 
         assert cleanup_reasons == ["pi_child_wave_timeout"]
@@ -339,8 +353,14 @@ async def test_child_wave_timeout_cancellation_clears_latched_wave(
         await _arm_child_wave(started.coordinator)
         determinism.advance(0.01)
 
+        decision = await started.coordinator.handle_timeout(_cancel_cleanup)
+        exit_decision = await started.coordinator.handle_stream_exit(
+            decision.recorded_outcome
+        )
+        request = exit_decision.post_publication_cleanup
+        assert request is not None
         with pytest.raises(asyncio.CancelledError):
-            await started.coordinator.handle_timeout(_cancel_cleanup)
+            await started.coordinator.execute_post_publication_cleanup(request)
         repeated_decision = await started.coordinator.handle_timeout(_cancel_cleanup)
         exit_decision = await started.coordinator.handle_stream_exit(None)
 

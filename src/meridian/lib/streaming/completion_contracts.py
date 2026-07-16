@@ -174,6 +174,14 @@ class ProfileExitDecision:
 
 
 @dataclass(frozen=True)
+class CompletionCleanupRequest:
+    """One cleanup attempt latched with the assessment that selected it."""
+
+    assessment: WorkAssessment
+    reason: str
+
+
+@dataclass(frozen=True)
 class CleanupReport:
     """Diagnostic record of one idempotent cleanup attempt."""
 
@@ -247,6 +255,7 @@ __all__ = [
     "AssessmentTrigger",
     "CleanupReport",
     "CompletionCleanup",
+    "CompletionCleanupRequest",
     "CompletionDirectives",
     "CompletionEvaluation",
     "CompletionEvidence",

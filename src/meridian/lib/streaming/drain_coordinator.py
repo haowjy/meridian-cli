@@ -6,6 +6,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol
 
+from meridian.lib.streaming.completion_contracts import CompletionCleanupRequest
 from meridian.lib.streaming.drain_policy import DrainAction, DrainPolicy, SingleTurnDrainPolicy
 from meridian.lib.streaming.drain_teardown import (
     DEFAULT_DRAIN_SESSION_TEARDOWN,
@@ -39,6 +40,7 @@ class DrainExitDecision:
 
     recorded_outcome: TerminalEventOutcome | None = None
     fallback_error: str | None = None
+    post_publication_cleanup: CompletionCleanupRequest | None = None
 
 
 class AuxWakeCoordinator(Protocol):
@@ -124,3 +126,8 @@ class DrainCoordinator(Protocol):
         self,
         recorded_outcome: TerminalEventOutcome | None,
     ) -> DrainExitDecision: ...
+
+    async def execute_post_publication_cleanup(
+        self,
+        request: CompletionCleanupRequest,
+    ) -> None: ...

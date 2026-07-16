@@ -15,6 +15,7 @@ from meridian.lib.state.spawn_signals import consume_resident_signals
 from meridian.lib.streaming.completion_contracts import (
     AssessmentTrigger,
     CleanupReport,
+    CompletionCleanupRequest,
     CompletionDirectives,
     CompletionEvaluation,
     CompletionState,
@@ -473,6 +474,12 @@ class ResidentDrainCoordinator:
         recorded_outcome: TerminalEventOutcome | None,
     ) -> DrainExitDecision:
         return await self._coordinator.handle_stream_exit(recorded_outcome)
+
+    async def execute_post_publication_cleanup(
+        self,
+        request: CompletionCleanupRequest,
+    ) -> None:
+        await self._coordinator.execute_post_publication_cleanup(request)
 
     def _set_awaiting_done(self, awaiting_done: bool) -> None:
         """Compatibility seam retained for existing resident test construction."""

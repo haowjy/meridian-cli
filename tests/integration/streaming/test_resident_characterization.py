@@ -68,6 +68,16 @@ def _install_cleanup_recorder(
     )
 
 
+async def _execute_latched_cleanup(
+    coordinator: ResidentDrainCoordinator,
+    outcome: TerminalEventOutcome | None,
+) -> None:
+    exit_decision = await coordinator.handle_stream_exit(outcome)
+    request = exit_decision.post_publication_cleanup
+    assert request is not None
+    await coordinator.execute_post_publication_cleanup(request)
+
+
 @pytest.mark.asyncio
 async def test_terminal_nonterminating_action_wins_and_clears_resident_wait(
     tmp_path: Path,
@@ -178,6 +188,8 @@ async def test_terminal_rearm_resets_deadline_and_holds_ready_tree(
     assert at_reset_deadline.recorded_outcome.status == "timed_out"
     assert at_reset_deadline.recorded_outcome.exit_code == 1
     assert at_reset_deadline.recorded_outcome.error == "resident_deadline_expired"
+    assert cleanup_calls == []
+    await _execute_latched_cleanup(coordinator, at_reset_deadline.recorded_outcome)
     assert cleanup_calls == [SpawnId("p1")]
     assert connection.fake_resident_backend.awaiting_done_values == [True, False, True, False]
 
@@ -263,6 +275,8 @@ async def test_expired_deadline_beats_freshly_ready_tree(
     assert decision.recorded_outcome.status == "timed_out"
     assert decision.recorded_outcome.exit_code == 1
     assert decision.recorded_outcome.error == "resident_deadline_expired"
+    assert cleanup_calls == []
+    await _execute_latched_cleanup(coordinator, decision.recorded_outcome)
     assert cleanup_calls == [SpawnId("p1")]
     assert connection.fake_resident_backend.awaiting_done_values == [True, False]
 
@@ -339,6 +353,8 @@ async def test_plain_terminal_deadline_is_not_reset_by_later_polls(
     assert deadline.recorded_outcome is not None
     assert deadline.recorded_outcome.status == "timed_out"
     assert deadline.recorded_outcome.error == "resident_deadline_expired"
+    assert cleanup_calls == []
+    await _execute_latched_cleanup(coordinator, deadline.recorded_outcome)
     assert cleanup_calls == [SpawnId("p1")]
     assert connection.fake_resident_backend.awaiting_done_values == [True, False]
 
@@ -403,11 +419,14 @@ async def test_deadline_outcome_wins_when_explicit_descendant_cancel_races(
         service.cancel_descendants(SpawnId("p1")),
     )
     await first_cancel_entered.wait()
-    deadline_task = asyncio.create_task(coordinator.handle_timeout())
-    explicitly_cancelled, decision = await asyncio.gather(
-        explicit_cancel_task,
-        deadline_task,
+    decision = await coordinator.handle_timeout()
+    exit_decision = await coordinator.handle_stream_exit(decision.recorded_outcome)
+    request = exit_decision.post_publication_cleanup
+    assert request is not None
+    cleanup_task = asyncio.create_task(
+        coordinator.execute_post_publication_cleanup(request)
     )
+    explicitly_cancelled, _ = await asyncio.gather(explicit_cancel_task, cleanup_task)
 
     assert explicitly_cancelled in ({"p2"}, set())
     child = spawn_store.get_spawn(tmp_path, SpawnId("p2"))

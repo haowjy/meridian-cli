@@ -11,6 +11,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   and tracked-bash counts alongside compatibility aggregates.
 
 ### Changed
+- Failure and cancel terminal outcomes now publish before descendant/process cleanup runs asynchronously and best-effort, so a stuck child cleanup can no longer hang terminal publication.
 - Completed streaming sessions now use plan-owned async connection teardown; Pi cleanup
   lifecycle phases and escalation policy no longer live in the spawn registry.
 - Streaming drain-plan selection now lives behind one plain/resident/Pi composition factory.

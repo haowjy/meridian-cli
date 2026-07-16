@@ -11,6 +11,7 @@ from meridian.lib.streaming.completion_contracts import (
     AssessmentTrigger,
     CleanupReport,
     CompletionCleanup,
+    CompletionCleanupRequest,
     CompletionDirectives,
     CompletionEvaluation,
     CompletionEvidence,
@@ -63,6 +64,8 @@ class CompletionCoordinator:
         self._stabilization_generation: int | None = None
         self._active_turn = False
         self._cleanup_attempted = False
+        self._cleanup_executed = False
+        self._post_publication_cleanup: CompletionCleanupRequest | None = None
         self._cleanup_report: CleanupReport | None = None
         self._terminal_published = False
         self._pending_evidence_activity: EvidenceActivity | None = None
@@ -203,16 +206,34 @@ class CompletionCoordinator:
     ) -> DrainExitDecision:
         decision = self._profile.stream_exit_decision(self.state, recorded_outcome)
         if decision.cleanup_reason is not None and not self._cleanup_attempted:
-            self._cleanup_attempted = True
-            assessment = self._assessment or _INITIAL_ASSESSMENT
-            self._cleanup_report = await self._cleanup.cleanup(
-                assessment,
-                decision.cleanup_reason,
+            self._latch_cleanup_once(
+                assessment=self._assessment or _INITIAL_ASSESSMENT,
+                reason=decision.cleanup_reason,
             )
         return DrainExitDecision(
             recorded_outcome=decision.recorded_outcome,
             fallback_error=decision.fallback_error,
+            post_publication_cleanup=self._take_post_publication_cleanup(),
         )
+
+    async def execute_post_publication_cleanup(
+        self,
+        request: CompletionCleanupRequest,
+    ) -> None:
+        if self._cleanup_executed:
+            return
+        self._cleanup_executed = True
+        try:
+            self._cleanup_report = await self._cleanup.cleanup(
+                request.assessment,
+                request.reason,
+            )
+        except Exception as exc:
+            logger.exception("Completion cleanup failed.")
+            self._cleanup_report = CleanupReport(
+                attempted_categories=(request.reason,),
+                failures=(EvidenceFailure(code="cleanup_exception", detail=str(exc)),),
+            )
 
     async def _evaluate_terminal(
         self,
@@ -348,8 +369,18 @@ class CompletionCoordinator:
         if decision.action == "cleanup":
             outcome = decision.outcome
             assert outcome is not None
-            await self._run_cleanup_once(decision.cleanup_reason or "completion_deadline")
-            return self._publish(outcome)
+            published = self._publish(outcome)
+            self._latch_cleanup_once(
+                assessment=self._assessment
+                or WorkAssessment(
+                    disposition="unknown",
+                    blockers=(),
+                    generation=0,
+                    failure=EvidenceFailure(code="missing_cleanup_assessment"),
+                ),
+                reason=decision.cleanup_reason or "completion_deadline",
+            )
+            return published
         if decision.action == "hold_stabilization":
             if (
                 self._phase != "stabilizing"
@@ -394,30 +425,28 @@ class CompletionCoordinator:
                 logger.exception("Completion nudge failed.")
         return DrainLoopDecision()
 
-    async def _run_cleanup_once(self, reason: str) -> None:
-        # SpawnDrainLoop serializes drain callbacks; cleanup cannot overlap here.
+    def _latch_cleanup_once(
+        self,
+        *,
+        assessment: WorkAssessment,
+        reason: str,
+    ) -> None:
         if self._cleanup_attempted:
             return
         self._cleanup_attempted = True
-        self._phase = "cleaning"
         self._deadline_latched = True
         self._deadline_at = None
         self._stabilization_at = None
         self._stabilization_generation = None
-        assessment = self._assessment or WorkAssessment(
-            disposition="unknown",
-            blockers=(),
-            generation=0,
-            failure=EvidenceFailure(code="missing_cleanup_assessment"),
+        self._post_publication_cleanup = CompletionCleanupRequest(
+            assessment=assessment,
+            reason=reason,
         )
-        try:
-            self._cleanup_report = await self._cleanup.cleanup(assessment, reason)
-        except Exception as exc:
-            logger.exception("Completion cleanup failed.")
-            self._cleanup_report = CleanupReport(
-                attempted_categories=(reason,),
-                failures=(EvidenceFailure(code="cleanup_exception", detail=str(exc)),),
-            )
+
+    def _take_post_publication_cleanup(self) -> CompletionCleanupRequest | None:
+        request = self._post_publication_cleanup
+        self._post_publication_cleanup = None
+        return request
 
     def _publish(self, outcome: TerminalEventOutcome) -> DrainLoopDecision:
         if self._terminal_published:
@@ -440,6 +469,8 @@ class CompletionCoordinator:
         self._stabilization_generation = None
         self._active_turn = False
         self._cleanup_attempted = False
+        self._cleanup_executed = False
+        self._post_publication_cleanup = None
         self._cleanup_report = None
         self._terminal_published = False
         self._clear_pending_evidence_decision()

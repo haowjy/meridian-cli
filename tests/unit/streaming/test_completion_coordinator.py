@@ -510,7 +510,7 @@ async def test_existing_deadline_is_not_replaced_on_an_ordinary_wait() -> None:
 
 
 @pytest.mark.asyncio
-async def test_deadline_cleanup_runs_once_and_timeout_wins_over_fresh_readiness() -> None:
+async def test_deadline_cleanup_latches_once_and_timeout_wins_over_fresh_readiness() -> None:
     clock = FakeClock()
     evidence = _Evidence(_blocked(), _ready(generation=2))
     profile = _Profile()
@@ -523,8 +523,17 @@ async def test_deadline_cleanup_runs_once_and_timeout_wins_over_fresh_readiness(
 
     assert expired.recorded_outcome == _TIMEOUT
     assert repeated.recorded_outcome is None
+    assert cleanup.calls == []
+    exit_decision = await coordinator.handle_stream_exit(expired.recorded_outcome)
+    request = exit_decision.post_publication_cleanup
+    assert request is not None
+    assert request.reason == "deadline"
+    assert request.assessment.disposition == "ready"
+    await coordinator.execute_post_publication_cleanup(request)
+    await coordinator.execute_post_publication_cleanup(request)
     assert len(cleanup.calls) == 1
     assert cleanup.calls[0][0].disposition == "ready"
+    assert (await coordinator.handle_stream_exit(_TIMEOUT)).post_publication_cleanup is None
     assert coordinator.deadline_monotonic is None
     assert coordinator.state.phase == "finalized"
 

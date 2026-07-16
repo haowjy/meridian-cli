@@ -36,6 +36,16 @@ from tests.support.resident_drain import (
 )
 
 
+async def _execute_latched_cleanup(
+    coordinator: ResidentDrainCoordinator,
+    outcome: TerminalEventOutcome | None,
+) -> None:
+    exit_decision = await coordinator.handle_stream_exit(outcome)
+    request = exit_decision.post_publication_cleanup
+    assert request is not None
+    await coordinator.execute_post_publication_cleanup(request)
+
+
 @pytest.mark.asyncio
 async def test_codex_terminal_success_without_live_children_finalizes_immediately(
     tmp_path: Path,
@@ -532,6 +542,10 @@ async def test_spawn_rearm_op_extends_resident_deadline(
         assert outcome is not None
         assert outcome.status == "timed_out"
         assert outcome.error == "resident_deadline_expired"
+        await wait_until(
+            lambda: reaped_spawn_ids == ["p2"],
+            description="resident descendant cleanup",
+        )
         assert reaped_spawn_ids == ["p2"]
     finally:
         await manager.stop_spawn(spawn_id)
@@ -718,6 +732,10 @@ async def test_codex_resident_deadline_waits_then_reaps_live_child(
         assert outcome is not None
         assert outcome.status == "timed_out"
         assert outcome.error == "resident_deadline_expired"
+        await wait_until(
+            lambda: reaped_spawn_ids == ["p2"],
+            description="resident descendant cleanup",
+        )
         assert reaped_spawn_ids == ["p2"]
         child = spawn_store.get_spawn(tmp_path, SpawnId("p2"))
         assert child is not None
@@ -881,6 +899,8 @@ async def test_deadline_returns_timed_out_when_descendant_reap_fails(
     assert decision.recorded_outcome is not None
     assert decision.recorded_outcome.status == "timed_out"
     assert decision.recorded_outcome.error == "resident_deadline_expired"
+    assert cleanup_calls == 0
+    await _execute_latched_cleanup(coordinator, decision.recorded_outcome)
     assert cleanup_calls == 1
 
     later_decision = await coordinator.handle_timeout()
@@ -934,6 +954,8 @@ async def test_deadline_reap_cancels_active_descendant_cli_spawns(
 
     assert decision.recorded_outcome is not None
     assert decision.recorded_outcome.status == "timed_out"
+    assert cancelled == []
+    await _execute_latched_cleanup(coordinator, decision.recorded_outcome)
     assert cancelled == ["p2"]
     child = spawn_store.get_spawn(tmp_path, SpawnId("p2"))
     assert child is not None

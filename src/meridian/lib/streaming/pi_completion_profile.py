@@ -632,8 +632,6 @@ class PiCompletionProfile:
     def _prepare_child_timeout(self, now: float) -> None:
         cleanup = self._cleanup
         assert cleanup is not None
-        if cleanup.terminate_children is None:
-            raise RuntimeError("Pi child timeout cleanup is not configured")
         elapsed_seconds = 0.0
         if self.child_wave_started_monotonic is not None:
             elapsed_seconds = max(0.0, now - self.child_wave_started_monotonic)

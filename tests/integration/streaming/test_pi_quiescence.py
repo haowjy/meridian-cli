@@ -350,6 +350,173 @@ async def test_spawn_manager_pi_cleanup_publishes_terminal_before_async_teardown
 
 
 @pytest.mark.asyncio
+async def test_pi_child_wave_timeout_publishes_while_descendant_cleanup_is_blocked(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cleanup_started = asyncio.Event()
+    allow_cleanup = asyncio.Event()
+    cleanup_finished = asyncio.Event()
+
+    class _GatedCleanupService:
+        async def cancel_descendants(self, target_spawn_id: SpawnId) -> set[str]:
+            assert target_spawn_id == SpawnId("p-pi-gated-child-wave")
+            cleanup_started.set()
+            await allow_cleanup.wait()
+            cleanup_finished.set()
+            return {"j-gated-child-wave"}
+
+    def _build_service(project_root: Path, runtime_root: Path) -> _GatedCleanupService:
+        assert project_root == tmp_path
+        assert runtime_root == tmp_path
+        return _GatedCleanupService()
+
+    async def _noop_process_cleanup(
+        target_spawn_id: SpawnId,
+        tracker: PiSubspawnTracker,
+        *,
+        reason: str,
+        exclude_subspawn_ids: set[str] | None = None,
+    ) -> None:
+        _ = target_spawn_id, tracker, reason, exclude_subspawn_ids
+
+    monkeypatch.setattr(
+        "meridian.lib.bootstrap.services.build_spawn_application_service_from_roots",
+        _build_service,
+    )
+    monkeypatch.setattr(
+        "meridian.lib.streaming.pi_process_cleanup.terminate_pi_tracked_subspawns",
+        _noop_process_cleanup,
+    )
+
+    class _OpenPiConnection(_FakePiConnection):
+        async def events(self):  # type: ignore[no-untyped-def]
+            for event in self._events:
+                yield event
+            await asyncio.Event().wait()
+
+    spawn_id = SpawnId("p-pi-gated-child-wave")
+    connection = _OpenPiConnection(
+        [
+            _pi_event("session", {"id": "ses-pi"}),
+            _pi_event(
+                "meridian.subspawn.start",
+                {
+                    "schema_version": 1,
+                    "subspawn_id": "j-gated-child-wave",
+                    "correlation_id": "j-gated-child-wave",
+                    "wait_policy": "tracked",
+                    "pid": 7701,
+                },
+            ),
+            _pi_event(
+                "agent_end",
+                {"messages": [{"role": "assistant", "stopReason": "stop"}]},
+            ),
+        ]
+    )
+    manager = await _start_pi_manager(
+        tmp_path,
+        connection,
+        spawn_id=spawn_id,
+        child_wave_timeout_seconds=0.01,
+    )
+    completion = asyncio.create_task(manager.wait_for_completion(spawn_id))
+
+    try:
+        await asyncio.wait_for(cleanup_started.wait(), timeout=1.0)
+        done, _ = await asyncio.wait({completion}, timeout=0.05)
+
+        assert completion in done
+        outcome = await completion
+        assert outcome is not None
+        assert outcome.status == "failed"
+        assert outcome.error == "pi_child_wave_timeout"
+        assert not cleanup_finished.is_set()
+    finally:
+        allow_cleanup.set()
+        with suppress(asyncio.CancelledError, TimeoutError):
+            await asyncio.wait_for(completion, timeout=1.0)
+        await manager.stop_spawn(spawn_id)
+
+
+@pytest.mark.asyncio
+async def test_pi_stream_exit_publishes_while_descendant_cleanup_is_blocked(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cleanup_started = asyncio.Event()
+    allow_cleanup = asyncio.Event()
+    cleanup_finished = asyncio.Event()
+
+    class _GatedCleanupService:
+        async def cancel_descendants(self, target_spawn_id: SpawnId) -> set[str]:
+            assert target_spawn_id == SpawnId("p-pi-gated-stream-exit")
+            cleanup_started.set()
+            await allow_cleanup.wait()
+            cleanup_finished.set()
+            return {"j-gated-stream-exit"}
+
+    def _build_service(project_root: Path, runtime_root: Path) -> _GatedCleanupService:
+        assert project_root == tmp_path
+        assert runtime_root == tmp_path
+        return _GatedCleanupService()
+
+    async def _noop_process_cleanup(
+        target_spawn_id: SpawnId,
+        tracker: PiSubspawnTracker,
+        *,
+        reason: str,
+        exclude_subspawn_ids: set[str] | None = None,
+    ) -> None:
+        _ = target_spawn_id, tracker, reason, exclude_subspawn_ids
+
+    monkeypatch.setattr(
+        "meridian.lib.bootstrap.services.build_spawn_application_service_from_roots",
+        _build_service,
+    )
+    monkeypatch.setattr(
+        "meridian.lib.streaming.pi_process_cleanup.terminate_pi_tracked_subspawns",
+        _noop_process_cleanup,
+    )
+
+    spawn_id = SpawnId("p-pi-gated-stream-exit")
+    connection = _FakePiConnection(
+        [
+            _pi_event("session", {"id": "ses-pi"}),
+            _pi_event(
+                "meridian.subspawn.start",
+                {
+                    "schema_version": 1,
+                    "subspawn_id": "j-gated-stream-exit",
+                    "correlation_id": "j-gated-stream-exit",
+                    "wait_policy": "tracked",
+                    "pid": 7702,
+                },
+            ),
+        ]
+    )
+    manager = await _start_pi_manager(tmp_path, connection, spawn_id=spawn_id)
+    completion = asyncio.create_task(manager.wait_for_completion(spawn_id))
+
+    try:
+        await asyncio.wait_for(cleanup_started.wait(), timeout=1.0)
+        done, _ = await asyncio.wait({completion}, timeout=0.05)
+
+        assert completion in done
+        outcome = await completion
+        assert outcome is not None
+        assert outcome.status == "failed"
+        assert outcome.error == "pi_process_exited_with_tracked_children"
+        assert not cleanup_finished.is_set()
+    finally:
+        allow_cleanup.set()
+        with suppress(asyncio.CancelledError, TimeoutError):
+            await asyncio.wait_for(completion, timeout=1.0)
+        await manager.stop_spawn(spawn_id)
+
+
+@pytest.mark.asyncio
 async def test_spawn_manager_pi_micro_drain_resolves_with_bounded_timeout(
     tmp_path: Path,
 ) -> None:

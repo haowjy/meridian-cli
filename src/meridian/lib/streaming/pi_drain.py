@@ -13,6 +13,7 @@ from meridian.lib.harness import pi_lifecycle_events as pi_lifecycle
 from meridian.lib.streaming.completion_contracts import (
     AssessmentTrigger,
     CleanupReport,
+    CompletionCleanupRequest,
     DiagnosticBlocker,
     EvidenceActivity,
     EvidenceEventDecision,
@@ -354,6 +355,7 @@ class PiDrainCoordinator:
         self._evidence = evidence
         self._profile = profile
         self._cleanup = cleanup
+        self._post_publication_terminate_children: TerminatePiChildren | None = None
         self.quiescence_tracker = evidence.quiescence_tracker
         self.tracker = evidence.tracker
 
@@ -503,7 +505,10 @@ class PiDrainCoordinator:
         if terminate_children is not None:
             self._cleanup.terminate_children = terminate_children
         try:
-            return await self._coordinator.handle_timeout()
+            decision = await self._coordinator.handle_timeout()
+            if terminate_children is not None and decision.recorded_outcome is not None:
+                self._post_publication_terminate_children = terminate_children
+            return decision
         finally:
             self._cleanup.terminate_children = prior_callback
 
@@ -532,6 +537,19 @@ class PiDrainCoordinator:
         recorded_outcome: TerminalEventOutcome | None,
     ) -> DrainExitDecision:
         return await self._coordinator.handle_stream_exit(recorded_outcome)
+
+    async def execute_post_publication_cleanup(
+        self,
+        request: CompletionCleanupRequest,
+    ) -> None:
+        prior_callback = self._cleanup.terminate_children
+        if self._post_publication_terminate_children is not None:
+            self._cleanup.terminate_children = self._post_publication_terminate_children
+        try:
+            await self._coordinator.execute_post_publication_cleanup(request)
+        finally:
+            self._cleanup.terminate_children = prior_callback
+            self._post_publication_terminate_children = None
 
     def after_finalized(
         self,

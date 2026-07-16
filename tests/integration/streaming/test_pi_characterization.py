@@ -180,6 +180,16 @@ def _assert_failed(decision: DrainLoopDecision | DrainExitDecision, error: str) 
     assert outcome.error == error
 
 
+async def _execute_latched_cleanup(
+    coordinator: PiDrainCoordinator,
+    outcome: TerminalEventOutcome | None,
+) -> None:
+    exit_decision = await coordinator.handle_stream_exit(outcome)
+    request = exit_decision.post_publication_cleanup
+    assert request is not None
+    await coordinator.execute_post_publication_cleanup(request)
+
+
 @pytest.mark.asyncio
 async def test_terminal_quiescent_starts_micro_drain_then_elapsed_candidate_finalizes(
     tmp_path: Path,
@@ -515,6 +525,8 @@ async def test_expired_child_wave_wins_over_simultaneous_completion_nudge(
         decision = await coordinator.handle_timeout()
 
         _assert_failed(decision, "pi_child_wave_timeout")
+        assert started.cleanups == []
+        await _execute_latched_cleanup(coordinator, decision.recorded_outcome)
         assert started.cleanups == ["pi_child_wave_timeout"]
         assert started.nudges == []
     finally:
@@ -522,7 +534,7 @@ async def test_expired_child_wave_wins_over_simultaneous_completion_nudge(
 
 
 @pytest.mark.asyncio
-async def test_child_wave_timeout_without_cleanup_callback_propagates(
+async def test_child_wave_timeout_without_cleanup_callback_preserves_outcome(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -538,11 +550,11 @@ async def test_child_wave_timeout_without_cleanup_callback_propagates(
         await coordinator.observe_event(_AGENT_END, "idle")
         started.clock.advance(5.0)
 
-        with pytest.raises(
-            RuntimeError,
-            match="Pi child timeout cleanup is not configured",
-        ):
-            await coordinator.handle_timeout()
+        decision = await coordinator.handle_timeout()
+
+        _assert_failed(decision, "pi_child_wave_timeout")
+        await _execute_latched_cleanup(coordinator, decision.recorded_outcome)
+        assert started.cleanups == []
     finally:
         await coordinator.stop()
 
@@ -856,6 +868,8 @@ async def test_active_turn_before_expiry_resets_child_wave_deadline(
 
         assert old_deadline.recorded_outcome is None
         _assert_failed(reset_deadline, "pi_child_wave_timeout")
+        assert started.cleanups == []
+        await _execute_latched_cleanup(coordinator, reset_deadline.recorded_outcome)
         assert started.cleanups == ["pi_child_wave_timeout"]
     finally:
         await coordinator.stop()
@@ -886,6 +900,8 @@ async def test_activity_observed_after_child_wave_expiry_cannot_start_another_wa
 
         _assert_failed(expired, "pi_child_wave_timeout")
         assert after_activity.recorded_outcome is None
+        assert started.cleanups == []
+        await _execute_latched_cleanup(coordinator, expired.recorded_outcome)
         assert started.cleanups == ["pi_child_wave_timeout"]
         assert [phase["phase"] for phase in started.phases].count(
             "pi_child_wave_timeout"
@@ -909,6 +925,10 @@ async def test_stream_exit_with_pending_children_cleans_and_supplies_failure_onc
 
         _assert_failed(first, "pi_process_exited_with_tracked_children")
         assert second.recorded_outcome == _SUCCESS
+        assert started.cleanups == []
+        request = first.post_publication_cleanup
+        assert request is not None
+        await coordinator.execute_post_publication_cleanup(request)
         assert started.cleanups == ["pi_process_exit_with_tracked_children"]
     finally:
         await coordinator.stop()

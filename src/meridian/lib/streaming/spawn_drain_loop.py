@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any, cast
 from meridian.lib.core.types import SpawnId
 from meridian.lib.harness.connections.base import HarnessEvent
 from meridian.lib.state.history import HarnessHistoryWriter
+from meridian.lib.streaming.completion_contracts import CompletionCleanupRequest
 from meridian.lib.streaming.drain_coordinator import (
     DrainCoordinator,
     DrainExitDecision,
@@ -299,7 +300,13 @@ class SpawnDrainLoop:
                     )
                 self._resolve_completion_future(session, outcome)
                 cleanup_task = asyncio.create_task(
-                    self._cleanup_completed_session(spawn_id, session, outcome)
+                    self._run_post_publication_teardown(
+                        coordinator=coordinator,
+                        cleanup_request=exit_decision.post_publication_cleanup,
+                        spawn_id=spawn_id,
+                        session=session,
+                        outcome=outcome,
+                    )
                 )
                 self._cleanup_tasks.add(cleanup_task)
                 cleanup_task.add_done_callback(self._cleanup_tasks.discard)
@@ -313,6 +320,21 @@ class SpawnDrainLoop:
                         with suppress(asyncio.QueueEmpty):
                             session.subscriber.get_nowait()
                         continue
+
+    async def _run_post_publication_teardown(
+        self,
+        *,
+        coordinator: DrainCoordinator | None,
+        cleanup_request: CompletionCleanupRequest | None,
+        spawn_id: SpawnId,
+        session: SpawnSession,
+        outcome: DrainOutcome,
+    ) -> None:
+        try:
+            if coordinator is not None and cleanup_request is not None:
+                await coordinator.execute_post_publication_cleanup(cleanup_request)
+        finally:
+            await self._cleanup_completed_session(spawn_id, session, outcome)
 
 
 class _NoAuxWake:

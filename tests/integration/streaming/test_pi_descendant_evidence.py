@@ -247,6 +247,10 @@ async def test_pi_tree_only_descendant_triggers_process_exit_cleanup(
 
         assert exited.recorded_outcome is not None
         assert exited.recorded_outcome.error == "pi_process_exited_with_tracked_children"
+        assert started.cleanup_reasons == []
+        request = exited.post_publication_cleanup
+        assert request is not None
+        await started.coordinator.execute_post_publication_cleanup(request)
         assert started.cleanup_reasons == ["pi_process_exit_with_tracked_children"]
     finally:
         await started.coordinator.stop()
