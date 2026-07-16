@@ -11,6 +11,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   and tracked-bash counts alongside compatibility aggregates.
 
 ### Changed
+- Drain-plan selection and Pi synthetic phase delivery now have direct regression coverage.
 - Phase 0 drain characterization now uses observable effects and fake clocks.
 - Persisted descendant assessment now has one reconciled, transitive evidence projection.
 - Pi completion now uses reconciled transitive descendants as its sole persisted-work
