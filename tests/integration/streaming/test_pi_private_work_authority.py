@@ -4,6 +4,8 @@ import pytest
 
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.state import spawn_store
+from meridian.lib.streaming.drain_policy import PiRpcQuiescenceDrainPolicy
+from meridian.lib.streaming.pi_completion_profile import PiCompletionProfile
 from meridian.lib.streaming.pi_drain import PiCompletionEvidence
 from meridian.lib.streaming.pi_quiescence import PiQuiescenceTracker
 from meridian.lib.streaming.pi_subspawn_tracker import PiSubspawnTracker
@@ -36,6 +38,21 @@ async def test_persisted_subspawn_liveness_returns_to_tree_authority(
         notification_timeout_seconds=None,
         clock=lambda: 0.0,
     )
+    phases: list[dict[str, object]] = []
+    profile = PiCompletionProfile(
+        runtime_root=tmp_path,
+        spawn_id=root_id,
+        session_role="spawned",
+        child_wave_timeout_seconds=None,
+        emit_phase=lambda **payload: phases.append(payload),
+        send_done_nudge=None,
+        evidence=evidence,
+        private_work_ledger=ledger,
+        stabilization_seconds=0.05,
+        clock=lambda: 0.0,
+    )
+    evidence.bind_profile(profile)
+    profile.set_policy(PiRpcQuiescenceDrainPolicy(quiescence_check=lambda: False))
 
     await evidence.start()
     try:
@@ -55,6 +72,11 @@ async def test_persisted_subspawn_liveness_returns_to_tree_authority(
         assert tuple((item.code, item.identity) for item in active.blockers) == (
             ("active_descendant", "p2"),
         )
+        profile.emit_waiting_phases_if_needed()
+        waiting = [item for item in phases if item["phase"] == "waiting_for_tracked_children"]
+        assert waiting[-1]["persisted_descendant_count"] == 1
+        assert waiting[-1]["rowless_subspawn_count"] == 0
+        assert waiting[-1]["allocation_uncertainty_count"] == 0
 
         spawn_store.finalize_spawn(
             tmp_path,

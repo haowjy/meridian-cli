@@ -463,12 +463,18 @@ class PiCompletionProfile:
             return ProfileDecision(action="stabilize")
         self.micro_drain_active = False
         private_work = self.quiescence_tracker.private_work_snapshot()
+        active_tracked_count = self.evidence.pending_child_count()
+        rowless_count = len(private_work.rowless_subspawn_ids)
+        allocation_count = len(private_work.allocation_uncertainty_ids)
         self._emit(
             "quiescence_deferred",
-            active_tracked_count=self.evidence.pending_child_count(),
+            active_tracked_count=active_tracked_count,
+            persisted_descendant_count=max(
+                0, active_tracked_count - rowless_count - allocation_count
+            ),
             pending_notification_count=len(private_work.pending_notifications),
-            rowless_subspawn_count=len(private_work.rowless_subspawn_ids),
-            allocation_uncertainty_count=len(private_work.allocation_uncertainty_ids),
+            rowless_subspawn_count=rowless_count,
+            allocation_uncertainty_count=allocation_count,
             tracked_bash_count=int(private_work.tracked_bash_bg),
             disk_notification_count=int(private_work.pending_disk_notification),
         )
