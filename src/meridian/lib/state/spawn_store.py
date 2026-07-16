@@ -192,23 +192,6 @@ def _read_state(
     return read_state(spawns_dir, spawn_id, include_prompt=include_prompt)
 
 
-def _write_state(
-    spawns_dir: Path,
-    record: SpawnRecord,
-    *,
-    revision: int | None = None,
-    allow_terminal_overwrite: bool = False,
-) -> int:
-    from meridian.lib.state.spawn.repository import write_state
-
-    return write_state(
-        spawns_dir,
-        record,
-        revision=revision,
-        allow_terminal_overwrite=allow_terminal_overwrite,
-    )
-
-
 def _write_state_locked(
     spawns_dir: Path,
     spawn_id: str,
