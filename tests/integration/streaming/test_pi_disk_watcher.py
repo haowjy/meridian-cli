@@ -56,12 +56,34 @@ async def test_missing_private_work_file_is_not_an_evidence_failure(tmp_path: Pa
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("entry_name", [".staging", ".p2", "spawn-stage"])
+async def test_child_discovery_ignores_non_spawn_row_entries(
+    tmp_path: Path,
+    entry_name: str,
+) -> None:
+    parent_id = SpawnId("p1")
+    _write_json(
+        tmp_path / "spawns" / entry_name / "state.json",
+        {"id": entry_name, "parent_id": str(parent_id), "status": "running"},
+    )
+
+    watcher = PiDiskWatcher(tmp_path, parent_id)
+    await watcher.start()
+    try:
+        assert watcher.has_pending_child_spawns() is False
+        assert watcher.pending_child_spawn_count() == 0
+        assert watcher.pending_confirmed_child_ids() == ()
+    finally:
+        await watcher.stop()
+
+
+@pytest.mark.asyncio
 async def test_child_state_read_failure_recovers_without_losing_child(tmp_path: Path) -> None:
-    parent_id = SpawnId("p-parent")
-    state_path = tmp_path / "spawns" / "p-child" / "state.json"
+    parent_id = SpawnId("p1")
+    state_path = tmp_path / "spawns" / "p2" / "state.json"
     _write_json(
         state_path,
-        {"id": "p-child", "parent_id": str(parent_id), "status": "running"},
+        {"id": "p2", "parent_id": str(parent_id), "status": "running"},
     )
     watcher = PiDiskWatcher(tmp_path, parent_id)
     await watcher.start()
@@ -70,11 +92,11 @@ async def test_child_state_read_failure_recovers_without_losing_child(tmp_path: 
         await watcher.force_rescan()
 
         assert watcher.evidence_failure() is not None
-        assert watcher.pending_confirmed_child_ids() == ("p-child",)
+        assert watcher.pending_confirmed_child_ids() == ("p2",)
 
         _write_json(
             state_path,
-            {"id": "p-child", "parent_id": str(parent_id), "status": "succeeded"},
+            {"id": "p2", "parent_id": str(parent_id), "status": "succeeded"},
         )
         await watcher.force_rescan()
 
@@ -106,47 +128,47 @@ async def test_invalid_utf8_surfaces_typed_failure(tmp_path: Path) -> None:
 
 def test_discover_only_finds_own_children(tmp_path: Path) -> None:
     """_discover_child_spawns skips dirs with wrong or missing parent_id."""
-    parent_id = SpawnId("p-parent")
+    parent_id = SpawnId("p1")
     spawns_dir = tmp_path / "spawns"
 
     _write_json(
-        spawns_dir / "p-child" / "state.json",
-        {"id": "p-child", "parent_id": "p-parent", "status": "running"},
+        spawns_dir / "p2" / "state.json",
+        {"id": "p2", "parent_id": "p1", "status": "running"},
     )
     _write_json(
-        spawns_dir / "p-standalone" / "state.json",
-        {"id": "p-standalone", "status": "running"},
+        spawns_dir / "p3" / "state.json",
+        {"id": "p3", "status": "running"},
     )
     _write_json(
-        spawns_dir / "p-other" / "state.json",
-        {"id": "p-other", "parent_id": "p-other-parent", "status": "running"},
+        spawns_dir / "p4" / "state.json",
+        {"id": "p4", "parent_id": "p9", "status": "running"},
     )
 
     watcher = PiDiskWatcher(tmp_path, parent_id)
     watcher._discover_child_spawns()
 
-    assert set(watcher._child_spawns) == {"p-child"}
+    assert set(watcher._child_spawns) == {"p2"}
 
 
 def test_discover_skips_terminal_children_in_count(tmp_path: Path) -> None:
     """_scan_pending_child_spawn_count excludes terminal children."""
-    parent_id = SpawnId("p-parent")
+    parent_id = SpawnId("p1")
     spawns_dir = tmp_path / "spawns"
 
     _write_json(
-        spawns_dir / "p-running" / "state.json",
-        {"id": "p-running", "parent_id": "p-parent", "status": "running"},
+        spawns_dir / "p2" / "state.json",
+        {"id": "p2", "parent_id": "p1", "status": "running"},
     )
     _write_json(
-        spawns_dir / "p-done" / "state.json",
-        {"id": "p-done", "parent_id": "p-parent", "status": "succeeded"},
+        spawns_dir / "p3" / "state.json",
+        {"id": "p3", "parent_id": "p1", "status": "succeeded"},
     )
 
     watcher = PiDiskWatcher(tmp_path, parent_id)
     watcher._discover_child_spawns()
     count = watcher._scan_pending_child_spawn_count()
 
-    assert set(watcher._child_spawns) == {"p-running", "p-done"}
+    assert set(watcher._child_spawns) == {"p2", "p3"}
     assert count == 1
 
 
@@ -436,11 +458,11 @@ async def test_wait_for_change_wakes_on_child_terminal_without_manual_rescan(
         "meridian.lib.streaming.disk_watcher._PENDING_DISK_POLL_INTERVAL_SECONDS",
         0.05,
     )
-    parent_id = SpawnId("p-parent")
-    child_state = tmp_path / "spawns" / "p-child" / "state.json"
+    parent_id = SpawnId("p1")
+    child_state = tmp_path / "spawns" / "p2" / "state.json"
     _write_json(
         child_state,
-        {"id": "p-child", "parent_id": str(parent_id), "status": "running"},
+        {"id": "p2", "parent_id": str(parent_id), "status": "running"},
     )
 
     watcher = PiDiskWatcher(tmp_path, parent_id)
@@ -452,7 +474,7 @@ async def test_wait_for_change_wakes_on_child_terminal_without_manual_rescan(
         assert not wait_task.done()
         _write_json(
             child_state,
-            {"id": "p-child", "parent_id": str(parent_id), "status": "succeeded"},
+            {"id": "p2", "parent_id": str(parent_id), "status": "succeeded"},
         )
         await wait_task
         assert watcher.has_pending_child_spawns() is False
@@ -462,9 +484,9 @@ async def test_wait_for_change_wakes_on_child_terminal_without_manual_rescan(
 
 @pytest.mark.asyncio
 async def test_pi_disk_watcher_tracks_child_spawn_state_from_disk(tmp_path: Path) -> None:
-    parent_id = SpawnId("p-parent")
-    child_state = tmp_path / "spawns" / "p-child" / "state.json"
-    _write_json(child_state, {"id": "p-child", "parent_id": str(parent_id), "status": "running"})
+    parent_id = SpawnId("p1")
+    child_state = tmp_path / "spawns" / "p2" / "state.json"
+    _write_json(child_state, {"id": "p2", "parent_id": str(parent_id), "status": "running"})
 
     watcher = PiDiskWatcher(tmp_path, parent_id)
     await watcher.start()
@@ -473,7 +495,7 @@ async def test_pi_disk_watcher_tracks_child_spawn_state_from_disk(tmp_path: Path
 
         _write_json(
             child_state,
-            {"id": "p-child", "parent_id": str(parent_id), "status": "succeeded"},
+            {"id": "p2", "parent_id": str(parent_id), "status": "succeeded"},
         )
         await watcher.force_rescan()
 

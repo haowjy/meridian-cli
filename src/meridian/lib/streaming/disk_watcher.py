@@ -34,10 +34,9 @@ from meridian.lib.streaming.pi_work_ledger import PiPrivateWorkLedger
 # writes without per-child tasks.
 _PENDING_DISK_POLL_INTERVAL_SECONDS = 0.25
 
-# Spawn allocation creates the directory immediately before its atomic state write.
-# A newer numeric ID is causal evidence that an unresolved directory could be a
-# child whose state write is still in flight. Bound that uncertainty using the
-# process monotonic clock so a crashed allocation cannot remain pending forever.
+# A newer numeric ID is causal evidence that a manually or externally created
+# unresolved directory could be a child. Bound that uncertainty using the process
+# monotonic clock so an incomplete directory cannot remain pending forever.
 _UNRESOLVED_CHILD_EXPIRY_SECONDS = 30.0
 
 _QuiescenceDiskSnapshot = tuple[int, int, bool, bool, float | None]
@@ -214,7 +213,8 @@ class PiDiskWatcher:
                 path = Path(str(raw_path))
                 if (
                     path.parent == self._spawns_dir
-                    and path.name.startswith("p")
+                    and not path.name.startswith(".")
+                    and spawn_store.is_spawn_id_shape(path.name)
                     and path.name != self._current_spawn_id
                     and path.name not in self._child_spawns
                     and path.is_dir()
@@ -259,6 +259,8 @@ class PiDiskWatcher:
         self._clear_read_failure(self._spawns_dir)
         for child in children:
             if not child.is_dir():
+                continue
+            if child.name.startswith(".") or not spawn_store.is_spawn_id_shape(child.name):
                 continue
             if child.name == self._current_spawn_id:
                 continue

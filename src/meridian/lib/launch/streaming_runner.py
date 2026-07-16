@@ -289,6 +289,12 @@ def _retry_blocked_after_pi_child_started(
     if not spawns_dir.is_dir():
         return False
     for child in spawns_dir.iterdir():
+        if (
+            child.name.startswith(".")
+            or not spawn_store.is_spawn_id_shape(child.name)
+            or not child.is_dir()
+        ):
+            continue
         state_path = child / "state.json"
         if not state_path.is_file():
             continue
