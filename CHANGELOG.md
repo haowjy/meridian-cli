@@ -33,6 +33,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   stabilization timeout, which alone finalizes or emits cancellation.
 - Pi completion now uses watcher-owned disk polling, propagates blocker accessor
   failures, and keeps stream-exit policy inside the shared coordinator.
+- Pi reconciled-tree waits poll through nested descendant/report transitions and invoke
+  canonical descendant cleanup on process exit even without Pi lifecycle handles.
 
 ## [0.3.31] - 2026-07-10
 

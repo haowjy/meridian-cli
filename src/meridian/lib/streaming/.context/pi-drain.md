@@ -64,6 +64,10 @@ changes, and the drain loop re-evaluates quiescence on those wakeups. Terminal-e
 micro-drain re-checks disk before accepting success so a just-written child row,
 bash update, or notification marker cannot be missed.
 
+The direct-row watcher cannot observe nested descendant state or report-file changes.
+After a successful terminal candidate, Pi therefore also polls the reconciled tree on a
+bounded cadence until the candidate completes or the drain ends.
+
 ### Child Wave Timeout
 
 When the parent agent is idle and disk-backed child/background work is still pending,
@@ -120,7 +124,8 @@ policy:
   `meridian.lib.platform.process_scope.fallback`
 
 If no process metadata is available, a warning is logged but no cleanup is attempted —
-the processes are orphaned.
+the processes are orphaned. Canonical persisted-descendant cancellation still runs first,
+including when the tree contains work that has no Pi lifecycle/process handle.
 
 ### Pi Connection Cleanup
 

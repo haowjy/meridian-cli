@@ -54,6 +54,7 @@ logger = logging.getLogger(__name__)
 
 TerminatePiChildren = Callable[[PiSubspawnTracker, str], Awaitable[None]]
 PiPersistedDescendantAuthority = Literal["reconciled_tree", "confirmed_child"]
+_PI_DESCENDANT_POLL_INTERVAL_SECONDS = 0.25
 
 
 class PiCompletionEvidence:
@@ -85,6 +86,7 @@ class PiCompletionEvidence:
         self._generation = 0
         self._last_signature: object = None
         self._last_shadow_signature: object = None
+        self._next_descendant_poll_at: float | None = None
         self.session_seen = False
         self.session_phase_emitted = False
 
@@ -96,6 +98,7 @@ class PiCompletionEvidence:
 
     async def stop(self) -> None:
         await self.quiescence_tracker.stop()
+        self._next_descendant_poll_at = None
 
     async def observe_event(
         self, event: HarnessEvent, transition: str | None
@@ -147,12 +150,17 @@ class PiCompletionEvidence:
             profile.after_disk_change()
         reconciled_descendants = self._descendant_evidence.assess()
         self._emit_descendant_evidence_shadow(reconciled_descendants)
+        if profile is not None and profile.last_successful_terminal is not None:
+            self._next_descendant_poll_at = (
+                self._clock() + _PI_DESCENDANT_POLL_INTERVAL_SECONDS
+            )
         return self._assessment(reconciled_descendants)
 
     def next_due_at(self) -> float | None:
-        return None
+        return self._next_descendant_poll_at
 
     async def handle_due(self) -> EvidenceEventDecision:
+        self._next_descendant_poll_at = None
         return EvidenceEventDecision()
 
     def wants_aux_wake(self) -> bool:
@@ -352,7 +360,7 @@ class PiCompletionCleanup:
     async def cleanup(self, assessment: WorkAssessment, reason: str) -> CleanupReport:
         del assessment
         if reason == "pi_process_exit_with_tracked_children":
-            if not self.tracker.has_pending() or self.tracked_cleanup_reason is not None:
+            if self.tracked_cleanup_reason is not None:
                 return CleanupReport()
             callback = self.terminate_children
             if callback is None:

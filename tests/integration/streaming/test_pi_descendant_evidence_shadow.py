@@ -34,6 +34,7 @@ class _StartedPi:
     coordinator: PiDrainCoordinator
     clock: FakeClock
     phases: list[dict[str, object]]
+    cleanup_reasons: list[str]
 
 
 async def _start_pi(
@@ -47,6 +48,7 @@ async def _start_pi(
     clock = FakeClock(start=100.0)
     monkeypatch.setattr(pi_drain_module.time, "monotonic", clock.monotonic)
     phases: list[dict[str, object]] = []
+    cleanup_reasons: list[str] = []
     connection = FakePiConnection([])
     await connection.start(
         ConnectionConfig(
@@ -68,6 +70,9 @@ async def _start_pi(
         assert session_role == "spawned"
         phases.append({"phase": phase, **payload})
 
+    async def _terminate_children(_tracker: object, reason: str) -> None:
+        cleanup_reasons.append(reason)
+
     coordinator = PiDrainCoordinator.for_connection(
         runtime_root=runtime_root,
         spawn_id=_ROOT_ID,
@@ -76,13 +81,19 @@ async def _start_pi(
         notification_timeout_seconds=None,
         child_wave_timeout_seconds=None,
         emit_phase=_emit_phase,
+        terminate_children=_terminate_children,
         persisted_descendant_authority=persisted_descendant_authority,
     )
     await coordinator.start()
     coordinator.set_policy(
         PiRpcQuiescenceDrainPolicy(quiescence_check=coordinator.is_quiescent)
     )
-    return _StartedPi(coordinator=coordinator, clock=clock, phases=phases)
+    return _StartedPi(
+        coordinator=coordinator,
+        clock=clock,
+        phases=phases,
+        cleanup_reasons=cleanup_reasons,
+    )
 
 
 def _shadow_records(started: _StartedPi) -> list[dict[str, object]]:
@@ -175,6 +186,121 @@ async def test_pi_tree_authority_blocks_live_grandchild_beneath_terminal_child(
 
         assert terminal.recorded_outcome is None
         assert stabilized.recorded_outcome is None
+    finally:
+        await started.coordinator.stop()
+
+
+@pytest.mark.asyncio
+async def test_pi_tree_authority_polls_until_live_grandchild_finishes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    start_row(tmp_path, "p1", HarnessId.PI, None)
+    start_row(tmp_path, "p2", HarnessId.CODEX, "p1")
+    spawn_store.finalize_spawn(tmp_path, SpawnId("p2"), "succeeded", 0, origin="runner")
+    start_row(tmp_path, "p3", HarnessId.CODEX, "p2")
+    started = await _start_pi(tmp_path, monkeypatch)
+    try:
+        await _assess_terminal(started)
+        spawn_store.finalize_spawn(
+            tmp_path,
+            SpawnId("p3"),
+            "succeeded",
+            0,
+            origin="runner",
+        )
+        started.clock.advance(0.25)
+
+        ready = await started.coordinator.handle_timeout()
+        started.clock.advance(0.05)
+        stabilized = await started.coordinator.handle_timeout()
+
+        assert ready.recorded_outcome is None
+        assert stabilized.recorded_outcome == _SUCCESS
+    finally:
+        await started.coordinator.stop()
+
+
+@pytest.mark.asyncio
+async def test_pi_tree_authority_polls_until_finalizing_child_gets_report(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    start_row(tmp_path, "p1", HarnessId.PI, None)
+    start_row(tmp_path, "p2", HarnessId.CODEX, "p1")
+    spawn_store.mark_finalizing(tmp_path, SpawnId("p2"))
+    started = await _start_pi(tmp_path, monkeypatch)
+    try:
+        await _assess_terminal(started)
+        (tmp_path / "spawns" / "p2" / "report.md").write_text(
+            "# Report\n\nChild completed.\n",
+            encoding="utf-8",
+        )
+        started.clock.advance(0.25)
+
+        ready = await started.coordinator.handle_timeout()
+        started.clock.advance(0.05)
+        stabilized = await started.coordinator.handle_timeout()
+
+        assert ready.recorded_outcome is None
+        assert stabilized.recorded_outcome == _SUCCESS
+    finally:
+        await started.coordinator.stop()
+
+
+@pytest.mark.asyncio
+async def test_pi_tree_authority_polls_until_store_recovers(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    start_row(tmp_path, "p1", HarnessId.PI, None)
+    started = await _start_pi(tmp_path, monkeypatch)
+    store_available = False
+    list_spawns = descendant_evidence_module.spawn_store.list_spawns
+
+    def _sometimes_list_spawns(runtime_root: Path) -> object:
+        if not store_available:
+            raise OSError("tree store temporarily unavailable")
+        return list_spawns(runtime_root)
+
+    monkeypatch.setattr(
+        descendant_evidence_module.spawn_store,
+        "list_spawns",
+        _sometimes_list_spawns,
+    )
+    try:
+        await _assess_terminal(started)
+        store_available = True
+        started.clock.advance(0.25)
+
+        ready = await started.coordinator.handle_timeout()
+        started.clock.advance(0.05)
+        stabilized = await started.coordinator.handle_timeout()
+
+        assert ready.recorded_outcome is None
+        assert stabilized.recorded_outcome == _SUCCESS
+    finally:
+        await started.coordinator.stop()
+
+
+@pytest.mark.asyncio
+async def test_pi_tree_only_descendant_triggers_process_exit_cleanup(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    start_row(tmp_path, "p1", HarnessId.PI, None)
+    start_row(tmp_path, "p2", HarnessId.CODEX, "p1")
+    spawn_store.finalize_spawn(tmp_path, SpawnId("p2"), "succeeded", 0, origin="runner")
+    start_row(tmp_path, "p3", HarnessId.CODEX, "p2")
+    started = await _start_pi(tmp_path, monkeypatch)
+    try:
+        await _assess_terminal(started)
+
+        exited = await started.coordinator.handle_stream_exit(None)
+
+        assert exited.recorded_outcome is not None
+        assert exited.recorded_outcome.error == "pi_process_exited_with_tracked_children"
+        assert started.cleanup_reasons == ["pi_process_exit_with_tracked_children"]
     finally:
         await started.coordinator.stop()
 

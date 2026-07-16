@@ -50,6 +50,9 @@ async def _start_coordinator(
     nudge_idle_seconds: float = 5.0,
     nudge_raises: bool = False,
     cleanup_configured: bool = True,
+    persisted_descendant_authority: pi_drain_module.PiPersistedDescendantAuthority = (
+        "reconciled_tree"
+    ),
 ) -> _StartedCoordinator:
     clock = FakeClock(start=100.0)
     monkeypatch.setattr(pi_drain_module.time, "monotonic", clock.monotonic)
@@ -96,7 +99,7 @@ async def _start_coordinator(
         emit_phase=_emit_phase,
         terminate_children=_cleanup if cleanup_configured else None,
         send_done_nudge=_nudge,
-        persisted_descendant_authority="confirmed_child",
+        persisted_descendant_authority=persisted_descendant_authority,
     )
     coordinator.done_nudge_idle_delay_seconds = nudge_idle_seconds
     coordinator.done_nudge_interval_seconds = 5.0
@@ -488,14 +491,14 @@ async def test_pi_blocker_accessor_errors_propagate(
     started = await _start_coordinator(tmp_path, monkeypatch)
     coordinator = started.coordinator
 
-    def _raise_read_error() -> int:
+    def _raise_read_error() -> tuple[str, ...]:
         raise RuntimeError("blocker accessor failed")
 
     try:
         await coordinator.observe_event(_AGENT_END, "idle")
         monkeypatch.setattr(
             coordinator.quiescence_tracker,
-            "pending_child_spawn_count",
+            "unresolved_child_ids",
             _raise_read_error,
         )
 
@@ -614,7 +617,11 @@ async def test_pi_current_direct_child_authority_ignores_live_late_grandchild(
     _start_row(tmp_path, "p1", parent_id=None)
     _start_row(tmp_path, "p2", parent_id="p1", status="succeeded")
     _start_row(tmp_path, "p3", parent_id="p2", status="running")
-    started = await _start_coordinator(tmp_path, monkeypatch)
+    started = await _start_coordinator(
+        tmp_path,
+        monkeypatch,
+        persisted_descendant_authority="confirmed_child",
+    )
     coordinator = started.coordinator
     try:
         await coordinator.observe_event(_AGENT_END, "idle")
