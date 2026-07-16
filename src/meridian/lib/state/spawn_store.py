@@ -333,7 +333,10 @@ def start_spawn(
 
     with lock_file(paths.spawns_flock):
         if spawn_id is not None:
-            resolved_spawn_id = SpawnId(str(spawn_id))
+            explicit_spawn_id = str(spawn_id)
+            if not is_spawn_id_shape(explicit_spawn_id):
+                raise ValueError(f"Invalid spawn ID: {explicit_spawn_id}")
+            resolved_spawn_id = SpawnId(explicit_spawn_id)
         else:
             current = _read_spawn_counter(paths)
             if current == 0 and not _spawn_counter_path(paths).is_file():
@@ -426,7 +429,10 @@ def remove_spawn_events(
     """
 
     paths = RuntimePaths.from_root_dir(runtime_root)
-    spawn_dir = paths.spawns_dir / str(spawn_id)
+    resolved_spawn_id = str(spawn_id)
+    if not is_spawn_id_shape(resolved_spawn_id):
+        raise ValueError(f"Invalid spawn ID: {resolved_spawn_id}")
+    spawn_dir = paths.spawns_dir / resolved_spawn_id
     with suppress(FileNotFoundError):
         shutil.rmtree(spawn_dir)
 

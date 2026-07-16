@@ -1,6 +1,10 @@
 """Filesystem path helpers for file-authoritative Meridian state."""
 
+import hashlib
+import os
+import sys
 import tomllib
+import unicodedata
 from pathlib import Path
 from typing import Self, cast
 
@@ -11,7 +15,11 @@ from meridian.lib.config.project_paths import ProjectConfigPaths
 from meridian.lib.config.project_root import resolve_user_config_path
 from meridian.lib.core.types import SpawnId
 from meridian.lib.state.atomic import atomic_write_text
-from meridian.lib.state.user_paths import get_or_create_project_id, get_project_id
+from meridian.lib.state.user_paths import (
+    get_or_create_project_id,
+    get_project_id,
+    get_user_home,
+)
 
 _MERIDIAN_DIR = ".meridian"
 _GITIGNORE_CONTENT = (
@@ -28,6 +36,16 @@ _REQUIRED_GITIGNORE_LINES = (
     "!.gitignore",
     "!id",
 )
+
+
+def _spawns_flock_path(root_dir: Path) -> Path:
+    canonical_root = root_dir.expanduser().resolve()
+    canonical_text = unicodedata.normalize("NFC", os.path.normcase(str(canonical_root)))
+    if sys.platform == "darwin":
+        canonical_text = canonical_text.casefold()
+    identity = os.fsencode(canonical_text)
+    digest = hashlib.sha256(identity).hexdigest()
+    return get_user_home() / "locks" / "spawns" / f"{digest}.flock"
 
 
 class RuntimePaths(BaseModel):
@@ -81,7 +99,7 @@ class RuntimePaths(BaseModel):
         return cls(
             root_dir=root_dir,
             spawns_jsonl=root_dir / "spawns.jsonl",
-            spawns_flock=root_dir / "spawns.jsonl.flock",
+            spawns_flock=_spawns_flock_path(root_dir),
             sessions_jsonl=root_dir / "sessions.jsonl",
             sessions_flock=root_dir / "sessions.jsonl.flock",
             hook_state_json=root_dir / "hook-state.json",
