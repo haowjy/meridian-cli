@@ -36,7 +36,9 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-CleanupCompletedSession = Callable[[SpawnId, SpawnSession], Coroutine[Any, Any, None]]
+CleanupCompletedSession = Callable[
+    [SpawnId, SpawnSession, DrainOutcome], Coroutine[Any, Any, None]
+]
 ResolveCompletionFuture = Callable[[SpawnSession, DrainOutcome], DrainOutcome]
 FanOutEvent = Callable[[SpawnId, HarnessEvent], None]
 FanOutTurnBoundary = Callable[[SpawnId, "TerminalEventOutcome"], Awaitable[None]]
@@ -297,7 +299,7 @@ class SpawnDrainLoop:
                     )
                 self._resolve_completion_future(session, outcome)
                 cleanup_task = asyncio.create_task(
-                    self._cleanup_completed_session(spawn_id, session)
+                    self._cleanup_completed_session(spawn_id, session, outcome)
                 )
                 self._cleanup_tasks.add(cleanup_task)
                 cleanup_task.add_done_callback(self._cleanup_tasks.discard)

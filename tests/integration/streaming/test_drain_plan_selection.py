@@ -7,11 +7,15 @@ from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, cast
 
 from meridian.lib.core.types import HarnessId, SpawnId
-from meridian.lib.harness.connections.base import HarnessEvent
+from meridian.lib.harness.connections.base import ConnectionConfig, HarnessEvent
 from meridian.lib.streaming.drain_coordinator import DrainPlan
 from meridian.lib.streaming.drain_policy import (
     PiRpcQuiescenceDrainPolicy,
     SingleTurnDrainPolicy,
+)
+from meridian.lib.streaming.drain_teardown import (
+    DefaultDrainSessionTeardown,
+    PiDrainSessionTeardown,
 )
 from meridian.lib.streaming.pi_drain import PiDrainCoordinator
 from meridian.lib.streaming.resident_drain import ResidentDrainCoordinator
@@ -38,11 +42,18 @@ def _select_plan(
     return manager._select_drain_plan(
         spawn_id=SpawnId(f"p-{harness_id}"),
         receiver=receiver,
-        pi_session_role="spawned" if harness_id is HarnessId.PI else None,
-        notification_timeout_seconds=11.0,
-        child_wave_timeout_seconds=12.0,
-        resident_deadline_seconds=13.0,
-        resident_poll_seconds=14.0,
+        config=ConnectionConfig(
+            spawn_id=SpawnId(f"p-{harness_id}"),
+            harness_id=harness_id,
+            prompt="hello",
+            control_root=manager.runtime_root,
+            env_overrides={},
+            pi_session_role="spawned" if harness_id is HarnessId.PI else None,
+            pi_notification_timeout_seconds=11.0,
+            pi_child_wave_timeout_seconds=12.0,
+            resident_deadline_seconds=13.0,
+            resident_poll_seconds=14.0,
+        ),
     )
 
 
@@ -53,6 +64,7 @@ def test_spawn_manager_selects_complete_drain_plan_by_connection_capability(
 
     plain = _select_plan(manager, harness_id=HarnessId.CODEX)
     assert plain == DrainPlan()
+    assert isinstance(plain.teardown, DefaultDrainSessionTeardown)
 
     resident = _select_plan(
         manager,
@@ -66,6 +78,7 @@ def test_spawn_manager_selects_complete_drain_plan_by_connection_capability(
     assert resident.aux_wake is None
     assert resident.handle_aux_wake is None
     assert resident.finalizer is None
+    assert isinstance(resident.teardown, DefaultDrainSessionTeardown)
 
     pi = _select_plan(manager, harness_id=HarnessId.PI)
     assert isinstance(pi.coordinator, PiDrainCoordinator)
@@ -75,9 +88,10 @@ def test_spawn_manager_selects_complete_drain_plan_by_connection_capability(
     assert pi.aux_wake is pi.coordinator
     assert pi.handle_aux_wake == pi.coordinator.handle_aux_wake
     assert pi.finalizer is pi.coordinator
+    assert isinstance(pi.teardown, PiDrainSessionTeardown)
 
 
-def test_spawn_manager_pi_phase_event_shape_and_emission_order(
+def test_spawn_manager_authored_event_emission_order(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -103,10 +117,10 @@ def test_spawn_manager_pi_phase_event_shape_and_emission_order(
             data: dict[str, object],
         ) -> None:
             assert layer == "drain"
-            assert label == "pi_phase"
+            assert label == "meridian_authored"
             event = HarnessEvent(
-                event_type="meridian.pi.lifecycle.phase",
-                harness_id="pi",
+                event_type="meridian.authored",
+                harness_id="meridian",
                 payload=data,
                 raw_text=None,
             )
@@ -125,14 +139,13 @@ def test_spawn_manager_pi_phase_event_shape_and_emission_order(
     monkeypatch.setattr(manager, "_fan_out_event", _fan_out)
     monkeypatch.setattr(manager, "get_tracer", _get_tracer)
 
-    manager._emit_pi_phase_event(
-        spawn_id,
-        cast("Any", SimpleNamespace(harness_id=HarnessId.PI)),
-        phase="waiting_for_tracked_children",
-        session_role="spawned",
-        active_tracked_count=2,
-        ignored=None,
+    authored_event = HarnessEvent(
+        event_type="meridian.authored",
+        harness_id="meridian",
+        payload={"type": "meridian.authored", "spawn_id": "p-pi-phase"},
+        raw_text=None,
     )
+    manager.emit_event(spawn_id, authored_event)
 
     assert [stage for stage, _event in calls] == [
         "persist",
@@ -141,16 +154,9 @@ def test_spawn_manager_pi_phase_event_shape_and_emission_order(
         "trace",
     ]
     expected = HarnessEvent(
-        event_type="meridian.pi.lifecycle.phase",
-        harness_id="pi",
-        payload={
-            "type": "meridian.pi.lifecycle.phase",
-            "phase": "waiting_for_tracked_children",
-            "spawn_id": "p-pi-phase",
-            "schema_version": 1,
-            "session_role": "spawned",
-            "active_tracked_count": 2,
-        },
+        event_type="meridian.authored",
+        harness_id="meridian",
+        payload={"type": "meridian.authored", "spawn_id": "p-pi-phase"},
         raw_text=None,
     )
     assert all(event == expected for _stage, event in calls)

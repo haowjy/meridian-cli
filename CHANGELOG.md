@@ -11,6 +11,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   and tracked-bash counts alongside compatibility aggregates.
 
 ### Changed
+- Completed streaming sessions now use plan-owned async connection teardown; Pi cleanup
+  lifecycle phases and escalation policy no longer live in the spawn registry.
 - Streaming drain-plan selection now lives behind one plain/resident/Pi composition factory.
 - Drain-plan selection and Pi synthetic phase delivery now have direct regression coverage.
 - Phase 0 drain characterization now uses observable effects and fake clocks.

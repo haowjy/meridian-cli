@@ -131,7 +131,7 @@ including when the tree contains work that has no Pi lifecycle/process handle.
 
 ### Pi Connection Cleanup
 
-Pi connections use `quiescent` stop reason from `_cleanup_completed_session()`. The
+Pi connections use the plan-owned `PiDrainSessionTeardown` with a `quiescent` stop reason. The
 Pi process receives an abort message (`{"type": "abort"}`) and has a 5-second grace
 period to exit. If it doesn't exit within that window, the stop is escalated to
 process termination (`SIGTERM` then `SIGKILL`). Cleanup phases are tracked via

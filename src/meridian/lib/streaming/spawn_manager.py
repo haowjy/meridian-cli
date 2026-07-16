@@ -13,13 +13,12 @@ from typing import TYPE_CHECKING, Any, cast
 
 from meridian.lib.core.domain import SpawnStatus
 from meridian.lib.core.spawn_lifecycle import TERMINAL_SPAWN_STATUSES
-from meridian.lib.core.types import HarnessId, SpawnId
+from meridian.lib.core.types import SpawnId
 from meridian.lib.harness.connections.base import HarnessEvent
 from meridian.lib.harness.control_action import (
     ControlActionCoordinator,
     ControlActionType,
 )
-from meridian.lib.harness.pi_lifecycle_events import build_pi_phase_event
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.state import spawn_store
 from meridian.lib.state.atomic import append_text_line
@@ -207,7 +206,6 @@ class SpawnManager:
             raise
 
         resolved_policy = drain_policy
-        pi_session_role = config.pi_session_role
         self._history_writers[spawn_id] = HarnessHistoryWriter(self._history_path(spawn_id))
         if on_event is not None:
             self.register_observer(spawn_id, CallbackObserver(on_event))
@@ -233,11 +231,7 @@ class SpawnManager:
         drain_plan = self._select_drain_plan(
             spawn_id=spawn_id,
             receiver=connection,
-            pi_session_role=pi_session_role,
-            notification_timeout_seconds=config.pi_notification_timeout_seconds,
-            child_wave_timeout_seconds=config.pi_child_wave_timeout_seconds,
-            resident_deadline_seconds=config.resident_deadline_seconds,
-            resident_poll_seconds=config.resident_poll_seconds,
+            config=config,
         )
         if resolved_policy is not None:
             drain_plan = drain_plan.with_policy(resolved_policy)
@@ -258,6 +252,7 @@ class SpawnManager:
             completion_future=completion_future,
             debug_tracer=tracer,
             raw_terminal_frames_authoritative=drain_plan.raw_terminal_frames_authoritative,
+            teardown=drain_plan.teardown,
             control_actions=ControlActionCoordinator(
                 spawn_id=spawn_id,
                 spawn_dir=self._spawn_dir(spawn_id),
@@ -313,11 +308,7 @@ class SpawnManager:
         *,
         spawn_id: SpawnId,
         receiver: HarnessConnection[Any],
-        pi_session_role: str | None,
-        notification_timeout_seconds: float | None,
-        child_wave_timeout_seconds: float | None,
-        resident_deadline_seconds: float | None,
-        resident_poll_seconds: float | None,
+        config: ConnectionConfig,
     ) -> DrainPlan:
         """Choose drain-loop configuration before entering the loop."""
         return build_drain_plan(
@@ -325,11 +316,7 @@ class SpawnManager:
             runtime_root=self._runtime_root,
             spawn_id=spawn_id,
             receiver=receiver,
-            pi_session_role=pi_session_role,
-            notification_timeout_seconds=notification_timeout_seconds,
-            child_wave_timeout_seconds=child_wave_timeout_seconds,
-            resident_deadline_seconds=resident_deadline_seconds,
-            resident_poll_seconds=resident_poll_seconds,
+            config=config,
             emit_event=self.emit_event,
             inject=self.inject,
             build_spawn_application_service=_build_spawn_application_service,
@@ -766,19 +753,6 @@ class SpawnManager:
                 data=event.payload,
             )
 
-    def _emit_pi_phase_event(
-        self,
-        spawn_id: SpawnId,
-        connection: HarnessConnection[Any],
-        *,
-        phase: str,
-        **data: object,
-    ) -> None:
-        self.emit_event(
-            spawn_id,
-            build_pi_phase_event(spawn_id, connection, phase, **data),
-        )
-
     async def shutdown(
         self,
         *,
@@ -876,6 +850,7 @@ class SpawnManager:
         self,
         spawn_id: SpawnId,
         session: SpawnSession,
+        outcome: DrainOutcome,
     ) -> None:
         """Clean up resources after a receiver drain loop exits naturally."""
 
@@ -888,41 +863,8 @@ class SpawnManager:
         if session.drain_task.done() and not session.drain_task.cancelled():
             with suppress(Exception):
                 session.drain_task.result()
-        if session.connection.harness_id is HarnessId.PI:
-            self._emit_pi_phase_event(
-                spawn_id,
-                session.connection,
-                phase="cleanup_running",
-                cleanup_status="running",
-            )
-            try:
-                stop_result = await session.connection.stop(reason="quiescent")
-                cleanup_status = "escalated" if stop_result.escalated else "completed"
-                if stop_result.escalated:
-                    self._emit_pi_phase_event(
-                        spawn_id,
-                        session.connection,
-                        phase="cleanup_escalated",
-                        cleanup_status="escalated",
-                        reason="abort_grace_expired",
-                    )
-                self._emit_pi_phase_event(
-                    spawn_id,
-                    session.connection,
-                    phase="cleanup_completed",
-                    cleanup_status=cleanup_status,
-                )
-            except Exception as exc:
-                self._emit_pi_phase_event(
-                    spawn_id,
-                    session.connection,
-                    phase="cleanup_failed",
-                    cleanup_status="failed",
-                    error=str(exc),
-                )
-        else:
-            with suppress(Exception):
-                await session.connection.stop(reason="quiescent")
+        with suppress(Exception):
+            await session.teardown.stop_connection(session.connection, outcome)
         with suppress(Exception):
             await session.control_server.stop()
         await self._observers.shutdown(spawn_id)

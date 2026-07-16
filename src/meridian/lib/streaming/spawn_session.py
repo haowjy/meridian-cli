@@ -14,6 +14,7 @@ if TYPE_CHECKING:
     from meridian.lib.harness.control_action import ControlActionCoordinator
     from meridian.lib.observability.debug_tracer import DebugTracer
     from meridian.lib.streaming.control_socket import ControlSocketServer
+    from meridian.lib.streaming.drain_teardown import DrainSessionTeardown
 
 
 @dataclass(frozen=True)
@@ -39,6 +40,7 @@ class SpawnSession:
     completion_future: asyncio.Future[DrainOutcome]
     raw_terminal_frames_authoritative: bool
     control_actions: ControlActionCoordinator
+    teardown: DrainSessionTeardown
     debug_tracer: DebugTracer | None = None
     cancel_sent: bool = False
     cancel_event_emitted: bool = False

@@ -19,7 +19,8 @@ DrainPlan
   ├─ coordinator: DrainCoordinator | None
   ├─ policy: DrainPolicy
   ├─ aux_wake / handle_aux_wake
-  └─ finalizer
+  ├─ finalizer
+  └─ teardown: DrainSessionTeardown
 
 SpawnSession
   ├─ connection: HarnessConnection   ← live harness connection
@@ -27,6 +28,7 @@ SpawnSession
   ├─ subscriber: Queue | None        ← single streaming subscriber
   ├─ control_server: ControlSocketServer
   ├─ completion_future: Future[DrainOutcome]
+  ├─ teardown: DrainSessionTeardown
   ├─ cancel_sent: bool               ← double-cancel guard
   └─ control_actions: ControlActionCoordinator
 ```
@@ -38,6 +40,7 @@ The implementation is split by responsibility:
 - `spawn_dispatch.py` — connection creation/start dispatch
 - `spawn_drain_loop.py` — drain loop, persistence/observer/fan-out ordering, outcome priority
 - `drain_coordinator.py` — `DrainPlan` plus the narrow `DrainCoordinator` seam
+- `drain_teardown.py` — plan-owned async connection-stop and cleanup-phase policy
 - `spawn_session.py` — `SpawnSession` and `DrainOutcome` carriers
 - `resident_drain.py` — resident-backend descendant waiting and done-nudge model
 - `pi_drain.py` — Pi spawned-session quiescence coordinator
@@ -112,6 +115,12 @@ One `SpawnManager` lives for the app server lifetime. Spawn CLI paths create a
 short-lived instance per run. Do not share manager instances between runs — the
 session dict is not concurrency-safe across multiple concurrent `start_spawn` calls
 from different event loops.
+
+### Terminal Publication and Recovery
+
+Terminal outcomes publish before plan-owned teardown runs asynchronously and best-effort;
+startup reaper reconciliation recovers incomplete cleanup. Completion deadlines use
+process-local monotonic time and are not persisted or crash-stable.
 
 ## Lifecycle
 

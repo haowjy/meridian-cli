@@ -16,13 +16,17 @@ from meridian.lib.streaming.drain_policy import (
     PiRpcQuiescenceDrainPolicy,
     SingleTurnDrainPolicy,
 )
+from meridian.lib.streaming.drain_teardown import EmitEvent, PiDrainSessionTeardown
 from meridian.lib.streaming.pi_drain import PiDrainCoordinator
 from meridian.lib.streaming.pi_work_ledger import PiPrivateWorkLedger
 from meridian.lib.streaming.resident_drain import ResidentDrainCoordinator
 from meridian.lib.streaming.types import InjectResult
 
 if TYPE_CHECKING:
-    from meridian.lib.harness.connections.base import HarnessConnection, HarnessEvent
+    from meridian.lib.harness.connections.base import (
+        ConnectionConfig,
+        HarnessConnection,
+    )
 
 logger = logging.getLogger(__name__)
 
@@ -46,20 +50,13 @@ class DescendantCancellationService(Protocol):
 
 
 BuildSpawnApplicationService = Callable[[Path, Path], DescendantCancellationService]
-EmitEvent = Callable[[SpawnId, "HarnessEvent"], None]
-
-
 def build_drain_plan(
     *,
     project_root: Path,
     runtime_root: Path,
     spawn_id: SpawnId,
     receiver: HarnessConnection[Any],
-    pi_session_role: str | None,
-    notification_timeout_seconds: float | None,
-    child_wave_timeout_seconds: float | None,
-    resident_deadline_seconds: float | None,
-    resident_poll_seconds: float | None,
+    config: ConnectionConfig,
     emit_event: EmitEvent,
     inject: SerializedInject,
     build_spawn_application_service: BuildSpawnApplicationService,
@@ -116,8 +113,8 @@ def build_drain_plan(
             spawn_id=spawn_id,
             receiver=receiver,
             resident_backend=resident_backend,
-            deadline_seconds=resident_deadline_seconds,
-            poll_seconds=resident_poll_seconds,
+            deadline_seconds=config.resident_deadline_seconds,
+            poll_seconds=config.resident_poll_seconds,
         )
         return DrainPlan(
             coordinator=coordinator,
@@ -130,9 +127,9 @@ def build_drain_plan(
             runtime_root=runtime_root,
             spawn_id=spawn_id,
             receiver=cast("HarnessConnection[ResolvedLaunchSpec]", receiver),
-            session_role=pi_session_role,
-            notification_timeout_seconds=notification_timeout_seconds,
-            child_wave_timeout_seconds=child_wave_timeout_seconds,
+            session_role=config.pi_session_role,
+            notification_timeout_seconds=config.pi_notification_timeout_seconds,
+            child_wave_timeout_seconds=config.pi_child_wave_timeout_seconds,
             emit_phase=_emit_pi_phase,
             terminate_children=_terminate_tracked_pi_children,
             send_done_nudge=_send_pi_done_nudge,
@@ -147,6 +144,10 @@ def build_drain_plan(
             aux_wake=coordinator,
             handle_aux_wake=coordinator.handle_aux_wake,
             finalizer=coordinator,
+            teardown=PiDrainSessionTeardown(
+                spawn_id=spawn_id,
+                emit_event=emit_event,
+            ),
         )
 
     # Plain streaming harnesses use SpawnDrainLoop's single-turn baseline.

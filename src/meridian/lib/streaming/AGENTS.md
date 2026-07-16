@@ -68,7 +68,9 @@ needed to guarantee it gets through — without it, the subscriber hangs forever
 
 ## DrainPlan / DrainPolicy
 
-`DrainPlan` carries the selected coordinator, policy, aux wake, and finalizer for one active spawn. Its `coordinator=None` value is the plain path. `DrainPolicy` governs terminal event behavior:
+`DrainPlan` carries the selected coordinator, policy, aux wake, finalizer, and async
+session teardown for one active spawn. Its `coordinator=None` value is the plain path.
+`DrainPolicy` governs terminal event behavior:
 
 | Policy | On terminal event | Action |
 |---|---|---|
@@ -92,6 +94,7 @@ means the manager died or the spawn is orphaned.
 - `spawn_drain_loop.py` — event drain, persistence/observer/fan-out ordering, outcome priority
 - `drain_coordinator.py` — `DrainCoordinator` protocol seam for harness-specific completion policy
 - `drain_plan_factory.py` — plain/resident/Pi plan selection and capability wiring
+- `drain_teardown.py` — plan-owned connection stop and Pi cleanup-phase policy
 - `completion_contracts.py` — typed evidence, profile, and cleanup collaborator contracts
 - `completion_coordinator.py` — shared candidate/wait/deadline/stabilization state machine
 - `descendant_evidence.py` — shared reconciled, transitive persisted-descendant assessment

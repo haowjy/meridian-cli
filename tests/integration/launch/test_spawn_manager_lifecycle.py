@@ -24,6 +24,7 @@ from meridian.lib.safety.permissions import UnsafeNoOpPermissionResolver
 from meridian.lib.state.paths import resolve_runtime_paths
 from meridian.lib.state.spawn_store import start_spawn
 from meridian.lib.streaming import spawn_manager as spawn_manager_module
+from meridian.lib.streaming.drain_teardown import DEFAULT_DRAIN_SESSION_TEARDOWN
 from meridian.lib.streaming.spawn_manager import SpawnManager, SpawnSession
 from meridian.lib.streaming.types import InjectResult
 from meridian.lib.telemetry import init_telemetry
@@ -247,6 +248,7 @@ async def test_backpressure_drop_emits_runtime_telemetry(tmp_path: Path) -> None
         started_monotonic=time.monotonic(),
         completion_future=completion_future,
         raw_terminal_frames_authoritative=True,
+        teardown=DEFAULT_DRAIN_SESSION_TEARDOWN,
         control_actions=ControlActionCoordinator(
             spawn_id=spawn_id,
             spawn_dir=manager._spawn_dir(spawn_id),
@@ -333,6 +335,7 @@ async def test_stop_spawn_reaps_recorded_scope_when_connection_stop_raises(
         started_monotonic=time.monotonic(),
         completion_future=completion_future,
         raw_terminal_frames_authoritative=True,
+        teardown=DEFAULT_DRAIN_SESSION_TEARDOWN,
         control_actions=ControlActionCoordinator(
             spawn_id=spawn_id,
             spawn_dir=manager._spawn_dir(spawn_id),
