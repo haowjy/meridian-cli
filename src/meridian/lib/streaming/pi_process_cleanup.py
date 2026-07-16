@@ -24,7 +24,7 @@ async def terminate_pi_tracked_subspawns(
         sorted(
             {
                 handle.process_group_id
-                for handle in tracker.ledger.cleanup_handles(
+                for handle in tracker.cleanup_handle_snapshot(
                     exclude_ids=exclude_subspawn_ids
                 )
             }

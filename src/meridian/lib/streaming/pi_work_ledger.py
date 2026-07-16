@@ -52,7 +52,7 @@ class PiPrivateWorkBlocker:
 class PiPrivateWorkSnapshot:
     """Point-in-time, immutable view of Pi-private completion blockers."""
 
-    tracked_subspawn_ids: tuple[str, ...]
+    rowless_subspawn_ids: tuple[str, ...]
     tracked_bash_bg: bool
     pending_notifications: tuple[PiPendingNotification, ...]
     pending_disk_notification: bool
@@ -66,6 +66,7 @@ class PiPrivateWorkLedger:
 
     def __init__(self) -> None:
         self._tracked_subspawn_ids: set[str] = set()
+        self._persisted_subspawn_ids: set[str] = set()
         self._cleanup_handles: dict[str, PiCleanupHandle] = {}
         self._pending_notifications: dict[str, PiPendingNotification] = {}
         self._tracked_bash_bg = False
@@ -88,10 +89,18 @@ class PiPrivateWorkLedger:
 
     def note_subspawn_ended(self, subspawn_id: str) -> None:
         self._tracked_subspawn_ids.discard(subspawn_id)
+        self._persisted_subspawn_ids.discard(subspawn_id)
         self._cleanup_handles.pop(subspawn_id, None)
+
+    def note_persisted_subspawn(self, subspawn_id: str) -> None:
+        """Classify a lifecycle ID as tree-owned without dropping its cleanup handle."""
+        self._persisted_subspawn_ids.add(subspawn_id)
 
     def tracked_subspawn_ids(self) -> tuple[str, ...]:
         return tuple(sorted(self._tracked_subspawn_ids))
+
+    def rowless_subspawn_ids(self) -> tuple[str, ...]:
+        return tuple(sorted(self._tracked_subspawn_ids - self._persisted_subspawn_ids))
 
     def active_tracked_count(self) -> int:
         return len(self._tracked_subspawn_ids)
@@ -118,6 +127,7 @@ class PiPrivateWorkLedger:
     def clear_tracked_subspawns(self) -> int:
         tracked_count = len(self._tracked_subspawn_ids)
         self._tracked_subspawn_ids.clear()
+        self._persisted_subspawn_ids.clear()
         self._cleanup_handles.clear()
         return tracked_count
 
@@ -269,7 +279,7 @@ class PiPrivateWorkLedger:
             and last_notification_ts is not None
             and parent_idle_epoch <= last_notification_ts
         )
-        tracked_subspawn_ids = self.tracked_subspawn_ids()
+        rowless_subspawn_ids = self.rowless_subspawn_ids()
         pending_notifications = self.pending_notifications()
         allocation_uncertainty_ids = self.allocation_uncertainty_ids()
         blockers: list[PiPrivateWorkBlocker] = [
@@ -278,7 +288,7 @@ class PiPrivateWorkLedger:
                 code="pi_tracked_child",
                 identity=subspawn_id,
             )
-            for subspawn_id in tracked_subspawn_ids
+            for subspawn_id in rowless_subspawn_ids
         ]
         blockers.extend(
             PiPrivateWorkBlocker(
@@ -306,7 +316,7 @@ class PiPrivateWorkLedger:
                 )
             )
         return PiPrivateWorkSnapshot(
-            tracked_subspawn_ids=tracked_subspawn_ids,
+            rowless_subspawn_ids=rowless_subspawn_ids,
             tracked_bash_bg=self._tracked_bash_bg,
             pending_notifications=pending_notifications,
             pending_disk_notification=pending_disk_notification,

@@ -28,7 +28,7 @@ def test_blocker_snapshot_is_immutable_point_in_time() -> None:
     )
     ledger.resolve_allocation_uncertainty("p9")
 
-    assert snapshot.tracked_subspawn_ids == ("internal-1",)
+    assert snapshot.rowless_subspawn_ids == ("internal-1",)
     assert snapshot.tracked_bash_bg is True
     assert tuple(item.notification_id for item in snapshot.pending_notifications) == (
         "notification-1",
@@ -54,6 +54,20 @@ def test_cleanup_handles_are_immutable_and_excludable() -> None:
     assert tuple((item.subspawn_id, item.process_group_id) for item in handles) == (
         ("internal-1", 4201),
     )
+
+
+def test_persisted_subspawn_keeps_cleanup_handle_without_private_liveness_blocker() -> None:
+    ledger = PiPrivateWorkLedger()
+    ledger.note_subspawn_started("p2", process_group_id=4202)
+
+    ledger.note_persisted_subspawn("p2")
+
+    snapshot = ledger.blocker_snapshot(parent_idle_epoch=None)
+    assert snapshot.rowless_subspawn_ids == ()
+    assert snapshot.blockers == ()
+    assert tuple(
+        (item.subspawn_id, item.process_group_id) for item in ledger.cleanup_handles()
+    ) == (("p2", 4202),)
 
 
 def test_read_failure_is_exposed_through_snapshot() -> None:

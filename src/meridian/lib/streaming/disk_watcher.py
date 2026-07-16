@@ -225,6 +225,7 @@ class PiDiskWatcher:
                     if data is None:
                         continue
                     if data.get("parent_id") == self._current_spawn_id:
+                        self._ledger.note_persisted_subspawn(path.name)
                         self._child_spawns[path.name] = _CONFIRMED_CHILD
                         found_new = True
                     elif (
@@ -269,6 +270,7 @@ class PiDiskWatcher:
                 continue
             parent_id = data.get("parent_id")
             if parent_id == self._current_spawn_id:
+                self._ledger.note_persisted_subspawn(child.name)
                 self._child_spawns[child.name] = _CONFIRMED_CHILD
             elif (
                 spawn_store.is_spawn_id_shape(child.name)
@@ -297,6 +299,7 @@ class PiDiskWatcher:
                 continue
             parent_id = data.get("parent_id")
             if parent_id == self._current_spawn_id:
+                self._ledger.note_persisted_subspawn(spawn_id)
                 self._child_spawns[spawn_id] = _CONFIRMED_CHILD
                 self._ledger.resolve_allocation_uncertainty(spawn_id)
             elif not state_path.parent.exists() or (state_path.exists() and data):
@@ -323,6 +326,7 @@ class PiDiskWatcher:
             if data.get("parent_id") != self._current_spawn_id:
                 self._child_spawns[spawn_id] = _REJECTED_CHILD
                 continue
+            self._ledger.note_persisted_subspawn(spawn_id)
             status = data.get("status")
             if not isinstance(status, str) or status not in TERMINAL_SPAWN_STATUSES:
                 count += 1

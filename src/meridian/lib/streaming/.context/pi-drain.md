@@ -35,10 +35,12 @@ notifications, managed-bash state, and bounded unresolved numeric `p*` allocatio
 candidates. It exposes categorized immutable blocker snapshots and immutable PID/PGID
 handles. `PiSubspawnTracker` remains the lifecycle parser/deduplicator and feeds that
 ledger; `PiDiskWatcher` feeds disk evidence while retaining direct-row comparison
-telemetry. `PiQuiescenceTracker` preserves parent-idle epochs across disk wakeups and
-wraps the ledger to provide the legacy boolean. The Pi evidence collaborator combines
-private-work snapshots with reconciled transitive persisted-descendant evidence; the
-profile uses the summary for deadlines and finalization decisions.
+telemetry. When it confirms a row for a lifecycle-observed subspawn, the ledger keeps
+the cleanup handle but removes that ID from rowless liveness; the reconciled tree is its
+sole completion authority. `PiQuiescenceTracker` preserves parent-idle epochs across disk
+wakeups and wraps the ledger to provide the legacy boolean. The Pi evidence collaborator
+combines private-work snapshots with reconciled transitive persisted-descendant evidence;
+the profile uses the summary for deadlines and finalization decisions.
 
 Pi and resident use the shared reconciled transitive persisted tree as descendant
 authority. A live grandchild beneath a terminal direct child therefore blocks Pi, while a

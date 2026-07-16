@@ -184,7 +184,7 @@ class PiCompletionEvidence:
         private_work = self.quiescence_tracker.private_work_snapshot()
         return (
             descendant_assessment.disposition != "ready"
-            or bool(private_work.tracked_subspawn_ids)
+            or bool(private_work.rowless_subspawn_ids)
             or bool(private_work.allocation_uncertainty_ids)
         )
 
@@ -200,7 +200,7 @@ class PiCompletionEvidence:
         private_work = self.quiescence_tracker.private_work_snapshot()
         return (
             persisted_count
-            + len(private_work.tracked_subspawn_ids)
+            + len(private_work.rowless_subspawn_ids)
             + len(private_work.allocation_uncertainty_ids)
         )
 
@@ -331,11 +331,13 @@ class PiCompletionCleanup:
         self,
         *,
         tracker: PiSubspawnTracker,
+        ledger: PiPrivateWorkLedger,
         quiescence_tracker: PiQuiescenceTracker,
         terminate_children: TerminatePiChildren | None,
         emit_phase: Callable[..., None],
     ) -> None:
         self.tracker = tracker
+        self._ledger = ledger
         self.quiescence_tracker = quiescence_tracker
         self.terminate_children = terminate_children
         self.emit_phase = emit_phase
@@ -356,7 +358,7 @@ class PiCompletionCleanup:
             callback = self.terminate_children
             if callback is None:
                 raise RuntimeError("Pi child process-exit cleanup is not configured")
-            handles_attempted = self.tracker.ledger.tracked_subspawn_ids()
+            handles_attempted = self._ledger.tracked_subspawn_ids()
             await callback(self.tracker, reason)
             self.tracked_cleanup_reason = reason
             return CleanupReport(
@@ -368,7 +370,7 @@ class PiCompletionCleanup:
         callback = self.terminate_children
         if callback is None:
             raise RuntimeError("Pi child timeout cleanup is not configured")
-        handles_attempted = self.tracker.ledger.tracked_subspawn_ids()
+        handles_attempted = self._ledger.tracked_subspawn_ids()
         failures: tuple[EvidenceFailure, ...] = ()
         try:
             await callback(self.tracker, reason)
@@ -377,7 +379,7 @@ class PiCompletionCleanup:
             failures = (EvidenceFailure(code="pi_child_cleanup_failed", detail=str(exc)),)
         finally:
             tracked_count = (
-                self.tracker.clear_tracked_children_after_wave_timeout()
+                self._ledger.clear_tracked_subspawns()
                 + self.quiescence_tracker.pending_child_spawn_count()
             )
             telemetry = self._child_timeout_telemetry or ChildTimeoutTelemetry(
@@ -465,11 +467,13 @@ class PiDrainCoordinator:
             emit_phase=emit_phase,
             send_done_nudge=send_done_nudge,
             evidence=evidence,
+            private_work_ledger=ledger,
             stabilization_seconds=PI_MICRO_DRAIN_TIMEOUT_SECONDS,
             clock=clock,
         )
         cleanup = PiCompletionCleanup(
             tracker=tracker,
+            ledger=ledger,
             quiescence_tracker=quiescence_tracker,
             terminate_children=terminate_children,
             emit_phase=profile.emit,

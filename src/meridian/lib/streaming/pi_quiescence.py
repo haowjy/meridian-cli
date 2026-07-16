@@ -26,7 +26,7 @@ class PiQuiescenceTracker:
     runtime_root: Path
     spawn_id: SpawnId
     enabled: bool
-    ledger: PiPrivateWorkLedger = field(default_factory=PiPrivateWorkLedger)
+    _ledger: PiPrivateWorkLedger = field(default_factory=PiPrivateWorkLedger)
     _parent_idle: bool = False
     _parent_idle_epoch: float | None = None
     _disk_watcher: PiDiskWatcher | None = None
@@ -46,7 +46,7 @@ class PiQuiescenceTracker:
             runtime_root=runtime_root,
             spawn_id=spawn_id,
             enabled=enabled,
-            ledger=ledger or PiPrivateWorkLedger(),
+            _ledger=ledger or PiPrivateWorkLedger(),
         )
 
     @property
@@ -59,7 +59,7 @@ class PiQuiescenceTracker:
         self._disk_watcher = PiDiskWatcher(
             self.runtime_root,
             self.spawn_id,
-            self.ledger,
+            self._ledger,
         )
         await self._disk_watcher.start()
 
@@ -89,7 +89,7 @@ class PiQuiescenceTracker:
         return bool(self._disk_watcher and self._disk_watcher.has_pending_child_spawns())
 
     def has_tracked_bash_bg(self) -> bool:
-        return self.ledger.tracked_bash_bg()
+        return self._ledger.tracked_bash_bg()
 
     def pending_child_spawn_count(self) -> int:
         if self._disk_watcher is None:
@@ -102,16 +102,16 @@ class PiQuiescenceTracker:
         return self._disk_watcher.pending_confirmed_child_ids()
 
     def unresolved_child_ids(self) -> tuple[str, ...]:
-        return self.ledger.allocation_uncertainty_ids()
+        return self._ledger.allocation_uncertainty_ids()
 
     def has_pending_disk_notification(self) -> bool:
         return not self._no_pending_disk_notifications()
 
     def evidence_failure(self) -> EvidenceFailure | None:
-        return self.ledger.evidence_failure()
+        return self._ledger.evidence_failure()
 
     def private_work_snapshot(self) -> PiPrivateWorkSnapshot:
-        return self.ledger.blocker_snapshot(parent_idle_epoch=self._parent_idle_epoch)
+        return self._ledger.blocker_snapshot(parent_idle_epoch=self._parent_idle_epoch)
 
     def is_quiescent(self) -> bool:
         if not self.enabled or not self._parent_idle:

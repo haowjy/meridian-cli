@@ -10,6 +10,7 @@ from meridian.lib.core.types import HarnessId
 from meridian.lib.harness import pi_lifecycle_events as pi_lifecycle
 from meridian.lib.harness.connections.base import HarnessEvent
 from meridian.lib.streaming.pi_work_ledger import (
+    PiCleanupHandle,
     PiPendingNotification,
     PiPrivateWorkLedger,
 )
@@ -55,17 +56,16 @@ def _is_pi_lifecycle_namespace_label(label: str) -> bool:
 
 @dataclass
 class PiSubspawnTracker:
-    ledger: PiPrivateWorkLedger
+    _ledger: PiPrivateWorkLedger
     canonical_event_keys: set[tuple[str, str, str]]
     resolved_subspawn_ids: set[str]
     notification_failure_error: str | None = None
-    notification_timeout_error: str | None = None
     lifecycle_tracking_invalidated_error: str | None = None
 
     @classmethod
     def empty(cls, ledger: PiPrivateWorkLedger | None = None) -> PiSubspawnTracker:
         return cls(
-            ledger=ledger or PiPrivateWorkLedger(),
+            _ledger=ledger or PiPrivateWorkLedger(),
             canonical_event_keys=set(),
             resolved_subspawn_ids=set(),
         )
@@ -129,7 +129,7 @@ class PiSubspawnTracker:
                 pgid = _pi_subspawn_pgid(event.payload)
                 pid = _pi_subspawn_pid(event.payload)
                 process_group_id = pgid if pgid is not None else pid
-                self.ledger.note_subspawn_started(
+                self._ledger.note_subspawn_started(
                     subspawn_id,
                     process_group_id=process_group_id,
                 )
@@ -157,7 +157,7 @@ class PiSubspawnTracker:
                     )
                     return False
                 self.resolved_subspawn_ids.add(subspawn_id)
-                self.ledger.note_subspawn_ended(subspawn_id)
+                self._ledger.note_subspawn_ended(subspawn_id)
                 return False
             if has_canonical_label:
                 canonical_label = _canonical_lifecycle_label(
@@ -179,7 +179,7 @@ class PiSubspawnTracker:
                 phase = (
                     "delivered" if bool(label_set & _PI_NOTIFICATION_DELIVERED_EVENTS) else "queued"
                 )
-                self.ledger.note_notification_started(
+                self._ledger.note_notification_started(
                     notification_id,
                     phase=phase,
                     observation_monotonic=observation_monotonic,
@@ -201,7 +201,7 @@ class PiSubspawnTracker:
         if is_notification_end:
             notification_id = _pi_notification_id(event.payload)
             if notification_id is not None:
-                self.ledger.note_notification_ended(notification_id)
+                self._ledger.note_notification_ended(notification_id)
             elif label_set & _PI_CANONICAL_NOTIFICATION_EVENTS:
                 canonical_label = _canonical_lifecycle_label(
                     label_set,
@@ -269,14 +269,17 @@ class PiSubspawnTracker:
                 return label
         return None
 
+    # Transitional query wrappers preserve the pre-ledger tracker interface for
+    # rollback callers. Production evidence and cleanup consume ledger snapshots
+    # and handles directly.
     def has_pending(self) -> bool:
-        return self.ledger.active_tracked_count() > 0
+        return self._ledger.active_tracked_count() > 0
 
     def active_tracked_count(self) -> int:
-        return self.ledger.active_tracked_count()
+        return self._ledger.active_tracked_count()
 
     def active_tracked_ids(self) -> tuple[str, ...]:
-        return self.ledger.tracked_subspawn_ids()
+        return self._ledger.tracked_subspawn_ids()
 
     def active_tracked_pgid_candidates(
         self,
@@ -285,27 +288,34 @@ class PiSubspawnTracker:
     ) -> tuple[int, ...]:
         unique = {
             handle.process_group_id
-            for handle in self.ledger.cleanup_handles(exclude_ids=exclude_ids)
+            for handle in self._ledger.cleanup_handles(exclude_ids=exclude_ids)
         }
         return tuple(sorted(unique))
 
+    def cleanup_handle_snapshot(
+        self,
+        *,
+        exclude_ids: set[str] | None = None,
+    ) -> tuple[PiCleanupHandle, ...]:
+        return self._ledger.cleanup_handles(exclude_ids=exclude_ids)
+
     def clear_tracked_children_after_wave_timeout(self) -> int:
-        return self.ledger.clear_tracked_subspawns()
+        return self._ledger.clear_tracked_subspawns()
 
     def has_pending_notifications(self) -> bool:
-        return self.ledger.has_pending_notifications()
+        return self._ledger.has_pending_notifications()
 
     def pending_notification_count(self) -> int:
-        return self.ledger.pending_notification_count()
+        return self._ledger.pending_notification_count()
 
     def notification_snapshot(self) -> tuple[PiPendingNotification, ...]:
-        return self.ledger.pending_notifications()
+        return self._ledger.pending_notifications()
 
     def resolve_notification_on_terminal(self, event: HarnessEvent) -> str | None:
-        return self.ledger.resolve_notification_on_terminal(_pi_notification_id(event.payload))
+        return self._ledger.resolve_notification_on_terminal(_pi_notification_id(event.payload))
 
     def time_until_next_notification_timeout(self, now_monotonic: float) -> float | None:
-        return self.ledger.time_until_next_notification_timeout(now_monotonic)
+        return self._ledger.time_until_next_notification_timeout(now_monotonic)
 
     def pop_expired_notification(self, now_monotonic: float) -> PiPendingNotification | None:
-        return self.ledger.pop_expired_notification(now_monotonic)
+        return self._ledger.pop_expired_notification(now_monotonic)

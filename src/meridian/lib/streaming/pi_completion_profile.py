@@ -32,7 +32,10 @@ from meridian.lib.streaming.drain_policy import (
 )
 from meridian.lib.streaming.pi_quiescence import PiQuiescenceTracker
 from meridian.lib.streaming.pi_subspawn_tracker import PiSubspawnTracker
-from meridian.lib.streaming.pi_work_ledger import PiPendingNotification
+from meridian.lib.streaming.pi_work_ledger import (
+    PiPendingNotification,
+    PiPrivateWorkLedger,
+)
 
 if TYPE_CHECKING:
     from meridian.lib.harness.connections.base import HarnessEvent
@@ -93,6 +96,7 @@ class PiCompletionProfile:
         emit_phase: EmitPiPhase,
         send_done_nudge: SendPiDoneNudge | None,
         evidence: PiCompletionEvidenceView,
+        private_work_ledger: PiPrivateWorkLedger,
         stabilization_seconds: float,
         clock: Callable[[], float],
     ) -> None:
@@ -103,6 +107,7 @@ class PiCompletionProfile:
         self.emit_phase = emit_phase
         self.send_done_nudge_callback = send_done_nudge
         self.evidence = evidence
+        self._private_work_ledger = private_work_ledger
         self._stabilization_seconds = stabilization_seconds
         self.tracker = evidence.tracker
         self.quiescence_tracker = evidence.quiescence_tracker
@@ -111,7 +116,7 @@ class PiCompletionProfile:
         self.last_successful_terminal: TerminalEventOutcome | None = None
         self.micro_drain_active = False
         self.micro_drain_event_count = 0
-        self.waiting_child_count: int | None = None
+        self.waiting_work_signature: tuple[int, int, int] | None = None
         self.waiting_notification_count: int | None = None
         self.child_wave_deadline_monotonic: float | None = None
         self.child_wave_started_monotonic: float | None = None
@@ -120,6 +125,7 @@ class PiCompletionProfile:
         self.next_done_nudge_monotonic: float | None = None
         self._done_requested = False
         self._awaiting_readable_evidence = False
+        self._notification_timeout_error: str | None = None
         self._cleanup: PiCompletionCleanupPort | None = None
 
     def bind_cleanup(self, cleanup: PiCompletionCleanupPort) -> None:
@@ -322,11 +328,11 @@ class PiCompletionProfile:
                 exit_code=1,
                 error=self.tracker.notification_failure_error,
             )
-        if self.tracker.notification_timeout_error is not None:
+        if self._notification_timeout_error is not None:
             return _terminal_outcome(
                 status="failed",
                 exit_code=1,
-                error=self.tracker.notification_timeout_error,
+                error=self._notification_timeout_error,
             )
         return None
 
@@ -370,7 +376,7 @@ class PiCompletionProfile:
             return PiOutstandingWork(
                 spawn_children=True,
                 non_spawn_processes=private_work.tracked_bash_bg
-                or bool(private_work.tracked_subspawn_ids),
+                or bool(private_work.rowless_subspawn_ids),
             )
         by_parent: dict[str | None, list[SpawnRecord]] = {}
         for row in rows:
@@ -381,7 +387,7 @@ class PiCompletionProfile:
             if is_active_spawn_status(child.status)
         }
         rowless_tracked_subspawn_ids = (
-            set(private_work.tracked_subspawn_ids) - active_descendant_ids
+            set(private_work.rowless_subspawn_ids) - active_descendant_ids
         )
         rowless_meridian_spawn_ids = {
             subspawn_id
@@ -404,19 +410,31 @@ class PiCompletionProfile:
     def emit_waiting_phases_if_needed(self) -> None:
         if not self.quiescence_enabled:
             return
+        private_work = self.quiescence_tracker.private_work_snapshot()
         waiting_for_children = self.evidence.has_pending_children()
         child_count = self.evidence.pending_child_count()
+        rowless_count = len(private_work.rowless_subspawn_ids)
+        allocation_count = len(private_work.allocation_uncertainty_ids)
+        waiting_signature = (child_count, rowless_count, allocation_count)
         if waiting_for_children:
-            if child_count != self.waiting_child_count:
-                self._emit("waiting_for_tracked_children", active_tracked_count=child_count)
-            self.waiting_child_count = child_count
+            if waiting_signature != self.waiting_work_signature:
+                self._emit(
+                    "waiting_for_tracked_children",
+                    active_tracked_count=child_count,
+                    persisted_descendant_count=max(
+                        0, child_count - rowless_count - allocation_count
+                    ),
+                    rowless_subspawn_count=rowless_count,
+                    allocation_uncertainty_count=allocation_count,
+                )
+            self.waiting_work_signature = waiting_signature
         else:
-            self.waiting_child_count = None
+            self.waiting_work_signature = None
 
         waiting_for_notifications = (
-            not waiting_for_children and self.tracker.has_pending_notifications()
+            not waiting_for_children and bool(private_work.pending_notifications)
         )
-        notification_count = self.tracker.pending_notification_count()
+        notification_count = len(private_work.pending_notifications)
         if waiting_for_notifications:
             if notification_count != self.waiting_notification_count:
                 self._emit(
@@ -444,10 +462,15 @@ class PiCompletionProfile:
             self._start_micro_drain()
             return ProfileDecision(action="stabilize")
         self.micro_drain_active = False
+        private_work = self.quiescence_tracker.private_work_snapshot()
         self._emit(
             "quiescence_deferred",
             active_tracked_count=self.evidence.pending_child_count(),
-            pending_notification_count=self.tracker.pending_notification_count(),
+            pending_notification_count=len(private_work.pending_notifications),
+            rowless_subspawn_count=len(private_work.rowless_subspawn_ids),
+            allocation_uncertainty_count=len(private_work.allocation_uncertainty_ids),
+            tracked_bash_count=int(private_work.tracked_bash_bg),
+            disk_notification_count=int(private_work.pending_disk_notification),
         )
         return ProfileDecision(action="wait", reset_deadline=True)
 
@@ -483,7 +506,9 @@ class PiCompletionProfile:
         if context.directives.done and candidate is not None:
             return self._evaluate_done(context, candidate)
 
-        expired_notification = self.tracker.pop_expired_notification(context.now)
+        expired_notification = self._private_work_ledger.pop_expired_notification(
+            context.now
+        )
         if expired_notification is not None:
             return ProfileDecision(
                 action="fail",
@@ -591,7 +616,7 @@ class PiCompletionProfile:
             expired_notification,
             now_monotonic=now,
         )
-        self.tracker.notification_timeout_error = timeout_error
+        self._notification_timeout_error = timeout_error
         self._emit(
             "pi_notification_timeout",
             notification_id=expired_notification.notification_id,
@@ -648,7 +673,7 @@ class PiCompletionProfile:
     def _next_notification_deadline(self) -> float | None:
         deadlines = [
             item.deadline_monotonic
-            for item in self.tracker.notification_snapshot()
+            for item in self.quiescence_tracker.private_work_snapshot().pending_notifications
             if item.deadline_monotonic is not None
         ]
         return min(deadlines) if deadlines else None
