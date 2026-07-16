@@ -42,6 +42,10 @@ from meridian.lib.streaming.pi_completion_profile import (
 )
 from meridian.lib.streaming.pi_quiescence import PiQuiescenceTracker
 from meridian.lib.streaming.pi_subspawn_tracker import PiSubspawnTracker
+from meridian.lib.streaming.pi_work_ledger import (
+    PiPrivateWorkLedger,
+    PiPrivateWorkSnapshot,
+)
 
 if TYPE_CHECKING:
     from meridian.lib.harness.connections.base import HarnessConnection, HarnessEvent
@@ -177,10 +181,11 @@ class PiCompletionEvidence:
         descendant_assessment = self._persisted_descendant_assessment(
             self._descendant_evidence.assess()
         )
+        private_work = self.quiescence_tracker.private_work_snapshot()
         return (
             descendant_assessment.disposition != "ready"
-            or self.tracker.has_pending()
-            or bool(self.quiescence_tracker.unresolved_child_ids())
+            or bool(private_work.tracked_subspawn_ids)
+            or bool(private_work.allocation_uncertainty_ids)
         )
 
     def pending_child_count(self) -> int:
@@ -192,15 +197,17 @@ class PiCompletionEvidence:
             if descendant_assessment.disposition == "blocked"
             else int(descendant_assessment.disposition == "unknown")
         )
+        private_work = self.quiescence_tracker.private_work_snapshot()
         return (
             persisted_count
-            + self.tracker.active_tracked_count()
-            + len(self.quiescence_tracker.unresolved_child_ids())
+            + len(private_work.tracked_subspawn_ids)
+            + len(private_work.allocation_uncertainty_ids)
         )
 
     def _assessment(self, reconciled_descendants: WorkAssessment) -> WorkAssessment:
         descendants = self._persisted_descendant_assessment(reconciled_descendants)
-        private_failure = self.quiescence_tracker.evidence_failure()
+        private_work = self.quiescence_tracker.private_work_snapshot()
+        private_failure = private_work.failure
         if descendants.disposition == "unknown" or private_failure is not None:
             failure = descendants.failure or private_failure
             assert failure is not None
@@ -212,7 +219,7 @@ class PiCompletionEvidence:
                 failure=failure,
             )
 
-        blockers = descendants.blockers + self._pi_owned_blockers()
+        blockers = descendants.blockers + self._pi_owned_blockers(private_work)
         signature = tuple((item.code, item.identity) for item in blockers)
         if blockers:
             return WorkAssessment(
@@ -241,40 +248,23 @@ class PiCompletionEvidence:
             generation=0,
         )
 
-    def _pi_owned_blockers(self) -> tuple[DiagnosticBlocker, ...]:
+    def _pi_owned_blockers(
+        self,
+        private_work: PiPrivateWorkSnapshot,
+    ) -> tuple[DiagnosticBlocker, ...]:
         blockers: list[DiagnosticBlocker] = []
         if not self.quiescence_tracker.parent_idle:
             blockers.append(DiagnosticBlocker(source="profile", code="pi_parent_active"))
         blockers.extend(
             DiagnosticBlocker(
-                source="persisted_descendant",
-                code="pi_tracked_child",
-                identity=child_id,
-            )
-            for child_id in sorted(self.tracker.active_ids)
-        )
-        if self.persisted_descendant_authority == "reconciled_tree":
-            blockers.extend(
-                DiagnosticBlocker(
-                    source="profile",
-                    code="pi_allocation_uncertainty",
-                    identity=child_id,
-                )
-                for child_id in self.quiescence_tracker.unresolved_child_ids()
-            )
-        if self.quiescence_tracker.has_tracked_bash_bg():
-            blockers.append(DiagnosticBlocker(source="profile", code="pi_tracked_bash_bg"))
-        pending_notifications = self.tracker.pending_notifications or {}
-        blockers.extend(
-            DiagnosticBlocker(
                 source="profile",
-                code="pi_pending_notification",
-                identity=notification_id,
+                code=blocker.code,
+                identity=blocker.identity,
             )
-            for notification_id in sorted(pending_notifications)
+            for blocker in private_work.blockers
+            if blocker.kind != "allocation"
+            or self.persisted_descendant_authority == "reconciled_tree"
         )
-        if self.quiescence_tracker.has_pending_disk_notification():
-            blockers.append(DiagnosticBlocker(source="profile", code="pi_disk_notification"))
         return tuple(blockers)
 
     def _emit_descendant_evidence_shadow(self, shadow: WorkAssessment) -> None:
@@ -366,7 +356,7 @@ class PiCompletionCleanup:
             callback = self.terminate_children
             if callback is None:
                 raise RuntimeError("Pi child process-exit cleanup is not configured")
-            handles_attempted = tuple(sorted(self.tracker.active_ids))
+            handles_attempted = self.tracker.ledger.tracked_subspawn_ids()
             await callback(self.tracker, reason)
             self.tracked_cleanup_reason = reason
             return CleanupReport(
@@ -378,7 +368,7 @@ class PiCompletionCleanup:
         callback = self.terminate_children
         if callback is None:
             raise RuntimeError("Pi child timeout cleanup is not configured")
-        handles_attempted = tuple(sorted(self.tracker.active_ids))
+        handles_attempted = self.tracker.ledger.tracked_subspawn_ids()
         failures: tuple[EvidenceFailure, ...] = ()
         try:
             await callback(self.tracker, reason)
@@ -411,6 +401,7 @@ class PiCompletionCleanup:
             handles_attempted=handles_attempted,
             failures=failures,
         )
+
 
 class PiDrainCoordinator:
     """Thin compatibility wrapper constructing the shared completion coordinator."""
@@ -448,12 +439,14 @@ class PiDrainCoordinator:
         del receiver
         normalized_role = (session_role or "").strip().lower()
         clock = lambda: time.monotonic()  # noqa: E731 - preserve runtime clock patching
-        tracker = PiSubspawnTracker.empty()
+        ledger = PiPrivateWorkLedger()
+        tracker = PiSubspawnTracker.empty(ledger)
         quiescence_tracker = PiQuiescenceTracker.for_connection(
             runtime_root=runtime_root,
             spawn_id=spawn_id,
             is_pi_connection=True,
             session_role=normalized_role,
+            ledger=ledger,
         )
         evidence = PiCompletionEvidence(
             runtime_root=runtime_root,
@@ -622,7 +615,6 @@ class PiDrainCoordinator:
 
     def classify_outstanding_work(self) -> PiOutstandingWork:
         return self._profile.classify_outstanding_work()
-
 
 
 __all__ = ["PiDrainCoordinator"]

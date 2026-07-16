@@ -19,6 +19,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   and canonical descendant cleanup to the shared coordinator.
 - Pi completion now supplies its persisted-descendant/private-work evidence, timeout
   precedence, phase emission, and cleanup to the shared coordinator.
+- Pi private-work blockers and cleanup handles now have one ledger with immutable,
+  categorized snapshots fed by lifecycle and disk observers.
 
 ### Fixed
 - Streaming drains no longer dispatch or fan out events whose history write failed.

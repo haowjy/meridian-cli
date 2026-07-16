@@ -20,7 +20,16 @@ async def terminate_pi_tracked_subspawns(
     reason: str,
     exclude_subspawn_ids: set[str] | None = None,
 ) -> None:
-    pgids = tracker.active_tracked_pgid_candidates(exclude_ids=exclude_subspawn_ids)
+    pgids = tuple(
+        sorted(
+            {
+                handle.process_group_id
+                for handle in tracker.ledger.cleanup_handles(
+                    exclude_ids=exclude_subspawn_ids
+                )
+            }
+        )
+    )
     if not pgids:
         logger.warning(
             "Pi spawn %s ended with tracked children but no pid/pgid metadata for cleanup",

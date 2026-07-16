@@ -30,12 +30,15 @@ deadline, nudge, or exit behavior to `pi_completion_profile.py`. The exception i
 purely generic event persistence, observer dispatch, subscriber fan-out, heartbeat,
 or control-socket handling.
 
-`PiSubspawnTracker` owns lifecycle-observed active child IDs, process handles, and
-notifications. `PiDiskWatcher` owns direct-row comparison telemetry plus bounded
-unresolved numeric `p*` allocation candidates, while `PiQuiescenceTracker` preserves
-parent-idle epochs across disk wakeups. The Pi evidence collaborator combines those
-Pi-owned blockers with reconciled transitive persisted-descendant evidence; the profile
-uses the summary for deadlines and finalization decisions.
+`PiPrivateWorkLedger` owns lifecycle-observed rowless subspawns, process handles,
+notifications, managed-bash state, and bounded unresolved numeric `p*` allocation
+candidates. It exposes categorized immutable blocker snapshots and immutable PID/PGID
+handles. `PiSubspawnTracker` remains the lifecycle parser/deduplicator and feeds that
+ledger; `PiDiskWatcher` feeds disk evidence while retaining direct-row comparison
+telemetry. `PiQuiescenceTracker` preserves parent-idle epochs across disk wakeups and
+wraps the ledger to provide the legacy boolean. The Pi evidence collaborator combines
+private-work snapshots with reconciled transitive persisted-descendant evidence; the
+profile uses the summary for deadlines and finalization decisions.
 
 Pi and resident use the shared reconciled transitive persisted tree as descendant
 authority. A live grandchild beneath a terminal direct child therefore blocks Pi, while a

@@ -31,10 +31,8 @@ from meridian.lib.streaming.drain_policy import (
     PiRpcQuiescenceDrainPolicy,
 )
 from meridian.lib.streaming.pi_quiescence import PiQuiescenceTracker
-from meridian.lib.streaming.pi_subspawn_tracker import (
-    PiPendingNotification,
-    PiSubspawnTracker,
-)
+from meridian.lib.streaming.pi_subspawn_tracker import PiSubspawnTracker
+from meridian.lib.streaming.pi_work_ledger import PiPendingNotification
 
 if TYPE_CHECKING:
     from meridian.lib.harness.connections.base import HarnessEvent
@@ -47,6 +45,7 @@ PI_DONE_NUDGE_IDLE_DELAY_SECONDS: float = 5.0
 
 EmitPiPhase = Callable[..., None]
 SendPiDoneNudge = Callable[[str], Awaitable[None]]
+
 
 @dataclass(frozen=True)
 class PiOutstandingWork:
@@ -364,13 +363,14 @@ class PiCompletionProfile:
             iter_descendants_from_parent_map,
         )
 
+        private_work = self.quiescence_tracker.private_work_snapshot()
         try:
             rows = spawn_store.list_spawns(self.runtime_root)
         except Exception:
             return PiOutstandingWork(
                 spawn_children=True,
-                non_spawn_processes=self.quiescence_tracker.has_tracked_bash_bg()
-                or self.tracker.has_pending(),
+                non_spawn_processes=private_work.tracked_bash_bg
+                or bool(private_work.tracked_subspawn_ids),
             )
         by_parent: dict[str | None, list[SpawnRecord]] = {}
         for row in rows:
@@ -380,7 +380,9 @@ class PiCompletionProfile:
             for child in iter_descendants_from_parent_map(str(self.spawn_id), by_parent)
             if is_active_spawn_status(child.status)
         }
-        rowless_tracked_subspawn_ids = self.tracker.active_ids - active_descendant_ids
+        rowless_tracked_subspawn_ids = (
+            set(private_work.tracked_subspawn_ids) - active_descendant_ids
+        )
         rowless_meridian_spawn_ids = {
             subspawn_id
             for subspawn_id in rowless_tracked_subspawn_ids
@@ -392,10 +394,10 @@ class PiCompletionProfile:
         return PiOutstandingWork(
             spawn_children=has_outstanding_descendant_work(str(self.spawn_id), rows),
             unknown_spawn_children=bool(rowless_meridian_spawn_ids)
+            or bool(private_work.allocation_uncertainty_ids)
             or self.quiescence_tracker.has_pending_child_spawns(),
             non_spawn_processes=(
-                self.quiescence_tracker.has_tracked_bash_bg()
-                or rowless_pi_internal_subspawns
+                private_work.tracked_bash_bg or rowless_pi_internal_subspawns
             ),
         )
 
@@ -644,10 +646,9 @@ class PiCompletionProfile:
         return deadline is not None and now >= deadline
 
     def _next_notification_deadline(self) -> float | None:
-        pending = self.tracker.pending_notifications or {}
         deadlines = [
             item.deadline_monotonic
-            for item in pending.values()
+            for item in self.tracker.notification_snapshot()
             if item.deadline_monotonic is not None
         ]
         return min(deadlines) if deadlines else None

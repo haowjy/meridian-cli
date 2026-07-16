@@ -26,6 +26,7 @@ from meridian.lib.core.spawn_lifecycle import TERMINAL_SPAWN_STATUSES
 from meridian.lib.core.types import SpawnId
 from meridian.lib.state import spawn_store
 from meridian.lib.streaming.completion_contracts import EvidenceFailure
+from meridian.lib.streaming.pi_work_ledger import PiPrivateWorkLedger
 
 # Bounded poll while known or unresolved children may still be pending. ``awatch``
 # on ``spawns/`` is non-recursive, so ``spawns/<child>/state.json`` updates do
@@ -49,7 +50,7 @@ class _ConfirmedChild:
 
 @dataclass(frozen=True, slots=True)
 class _UnresolvedChild:
-    deadline_monotonic: float
+    pass
 
 
 @dataclass(frozen=True, slots=True)
@@ -64,6 +65,7 @@ class _RejectedChild:
 
 
 _CONFIRMED_CHILD = _ConfirmedChild()
+_UNRESOLVED_CHILD = _UnresolvedChild()
 _REJECTED_CHILD = _RejectedChild()
 _TrackedChild = _ConfirmedChild | _UnresolvedChild | _RejectedChild
 
@@ -71,7 +73,12 @@ _TrackedChild = _ConfirmedChild | _UnresolvedChild | _RejectedChild
 class PiDiskWatcher:
     """Async disk-state observer for one spawned Pi session."""
 
-    def __init__(self, runtime_root: Path, current_spawn_id: SpawnId) -> None:
+    def __init__(
+        self,
+        runtime_root: Path,
+        current_spawn_id: SpawnId,
+        ledger: PiPrivateWorkLedger | None = None,
+    ) -> None:
         self._runtime_root = runtime_root
         self._current_spawn_id = str(current_spawn_id)
         self._spawns_dir = runtime_root / "spawns"
@@ -81,8 +88,7 @@ class PiDiskWatcher:
         self._pending_child_spawns = False
         self._pending_child_spawn_count = 0
         self._pending_confirmed_child_ids: tuple[str, ...] = ()
-        self._tracked_bash_bg = False
-        self._last_notification_ts: float | None = None
+        self._ledger = ledger or PiPrivateWorkLedger()
         self._tasks: list[asyncio.Task[None]] = []
         # Keeping confirmed children and unresolved candidates in one typed
         # collection prevents candidate membership and expiry from drifting.
@@ -90,7 +96,6 @@ class PiDiskWatcher:
         self._state_changed = asyncio.Event()
         self._change_generation = 0
         self._delivered_change_generation = 0
-        self._read_failures: dict[Path, EvidenceFailure] = {}
 
     async def start(self) -> None:
         self._spawns_dir.mkdir(parents=True, exist_ok=True)
@@ -154,8 +159,8 @@ class PiDiskWatcher:
             self._pending_child_spawn_count,
             self._unresolved_candidate_count(),
             self._pending_child_spawns,
-            self._tracked_bash_bg,
-            self._last_notification_ts,
+            self._ledger.tracked_bash_bg(),
+            self._ledger.last_notification_ts(),
         )
 
     def _refresh_cached_state(self, *, discover: bool = False) -> bool:
@@ -165,8 +170,10 @@ class PiDiskWatcher:
         self._resolve_candidate_child_spawns()
         self._pending_child_spawn_count = self._scan_pending_child_spawn_count()
         self._pending_child_spawns = self._pending_child_spawn_count > 0
-        self._tracked_bash_bg = self._scan_tracked_bash_bg()
-        self._last_notification_ts = self._read_last_notification_ts()
+        self._ledger.update_disk_evidence(
+            tracked_bash_bg=self._scan_tracked_bash_bg(),
+            last_notification_ts=self._read_last_notification_ts(),
+        )
         changed = self._quiescence_disk_snapshot() != prior
         if changed:
             self._change_generation += 1
@@ -183,24 +190,16 @@ class PiDiskWatcher:
         return self._pending_confirmed_child_ids
 
     def unresolved_child_ids(self) -> tuple[str, ...]:
-        return tuple(
-            sorted(
-                spawn_id
-                for spawn_id, child in self._child_spawns.items()
-                if isinstance(child, _UnresolvedChild)
-            )
-        )
+        return self._ledger.allocation_uncertainty_ids()
 
     def has_tracked_bash_bg(self) -> bool:
-        return self._tracked_bash_bg
+        return self._ledger.tracked_bash_bg()
 
     def last_notification_ts(self) -> float | None:
-        return self._last_notification_ts
+        return self._ledger.last_notification_ts()
 
     def evidence_failure(self) -> EvidenceFailure | None:
-        if not self._read_failures:
-            return None
-        return self._read_failures[min(self._read_failures, key=str)]
+        return self._ledger.evidence_failure()
 
     async def _watch_spawns_dir(self) -> None:
         """Watch for new child directories under spawns/.
@@ -228,9 +227,11 @@ class PiDiskWatcher:
                     if data.get("parent_id") == self._current_spawn_id:
                         self._child_spawns[path.name] = _CONFIRMED_CHILD
                         found_new = True
-                    elif spawn_store.is_spawn_id_shape(path.name) and (
-                        not state_path.exists() or not data
-                    ) and self._is_newer_numeric_spawn_id(path.name):
+                    elif (
+                        spawn_store.is_spawn_id_shape(path.name)
+                        and (not state_path.exists() or not data)
+                        and self._is_newer_numeric_spawn_id(path.name)
+                    ):
                         self._admit_unresolved_candidate(path.name)
                         found_new = True
             if found_new:
@@ -269,9 +270,11 @@ class PiDiskWatcher:
             parent_id = data.get("parent_id")
             if parent_id == self._current_spawn_id:
                 self._child_spawns[child.name] = _CONFIRMED_CHILD
-            elif spawn_store.is_spawn_id_shape(child.name) and (
-                not state_path.exists() or not data
-            ) and self._is_newer_numeric_spawn_id(child.name):
+            elif (
+                spawn_store.is_spawn_id_shape(child.name)
+                and (not state_path.exists() or not data)
+                and self._is_newer_numeric_spawn_id(child.name)
+            ):
                 self._admit_unresolved_candidate(child.name)
 
     def _resolve_candidate_child_spawns(self) -> None:
@@ -279,8 +282,13 @@ class PiDiskWatcher:
         for spawn_id, child in list(self._child_spawns.items()):
             if not isinstance(child, _UnresolvedChild):
                 continue
-            if now_monotonic >= child.deadline_monotonic:
+            deadline_monotonic = self._ledger.allocation_deadline(spawn_id)
+            if deadline_monotonic is None:
                 self._child_spawns[spawn_id] = _REJECTED_CHILD
+                continue
+            if now_monotonic >= deadline_monotonic:
+                self._child_spawns[spawn_id] = _REJECTED_CHILD
+                self._ledger.resolve_allocation_uncertainty(spawn_id)
                 self._clear_read_failure(self._spawns_dir / spawn_id / "state.json")
                 continue
             state_path = self._spawns_dir / spawn_id / "state.json"
@@ -290,8 +298,10 @@ class PiDiskWatcher:
             parent_id = data.get("parent_id")
             if parent_id == self._current_spawn_id:
                 self._child_spawns[spawn_id] = _CONFIRMED_CHILD
+                self._ledger.resolve_allocation_uncertainty(spawn_id)
             elif not state_path.parent.exists() or (state_path.exists() and data):
                 self._child_spawns[spawn_id] = _REJECTED_CHILD
+                self._ledger.resolve_allocation_uncertainty(spawn_id)
 
     def _scan_pending_child_spawn_count(self) -> int:
         count = 0
@@ -326,24 +336,19 @@ class PiDiskWatcher:
         return int(spawn_id[1:]) > int(self._current_spawn_id[1:])
 
     def _admit_unresolved_candidate(self, spawn_id: str) -> None:
-        self._child_spawns.setdefault(
+        if spawn_id in self._child_spawns:
+            return
+        self._child_spawns[spawn_id] = _UNRESOLVED_CHILD
+        self._ledger.admit_allocation_uncertainty(
             spawn_id,
-            _UnresolvedChild(
-                deadline_monotonic=time.monotonic() + _UNRESOLVED_CHILD_EXPIRY_SECONDS
-            ),
+            deadline_monotonic=time.monotonic() + _UNRESOLVED_CHILD_EXPIRY_SECONDS,
         )
 
     def _has_unresolved_candidates(self) -> bool:
-        return any(
-            isinstance(child, _UnresolvedChild)
-            for child in self._child_spawns.values()
-        )
+        return self._ledger.has_allocation_uncertainty()
 
     def _unresolved_candidate_count(self) -> int:
-        return sum(
-            isinstance(child, _UnresolvedChild)
-            for child in self._child_spawns.values()
-        )
+        return len(self._ledger.allocation_uncertainty_ids())
 
     def _scan_tracked_bash_bg(self) -> bool:
         data = self._read_json_object(self._bash_records_path)
@@ -398,18 +403,13 @@ class PiDiskWatcher:
         return cast("dict[str, Any]", data)
 
     def _record_read_failure(self, path: Path, detail: str) -> None:
-        failure = EvidenceFailure(
-            code="pi_private_work_read_failed",
-            detail=f"{path}: {detail}",
-        )
-        if self._read_failures.get(path) == failure:
+        if not self._ledger.record_read_failure(path, detail):
             return
-        self._read_failures[path] = failure
         self._change_generation += 1
         self._state_changed.set()
 
     def _clear_read_failure(self, path: Path) -> None:
-        if self._read_failures.pop(path, None) is None:
+        if not self._ledger.clear_read_failure(path):
             return
         self._change_generation += 1
         self._state_changed.set()

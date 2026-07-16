@@ -7,12 +7,16 @@ owns the Pi policy that also depends on disk-backed background work state.
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from meridian.lib.core.types import SpawnId
 from meridian.lib.streaming.completion_contracts import EvidenceFailure
 from meridian.lib.streaming.disk_watcher import PiDiskWatcher
+from meridian.lib.streaming.pi_work_ledger import (
+    PiPrivateWorkLedger,
+    PiPrivateWorkSnapshot,
+)
 
 
 @dataclass
@@ -22,6 +26,7 @@ class PiQuiescenceTracker:
     runtime_root: Path
     spawn_id: SpawnId
     enabled: bool
+    ledger: PiPrivateWorkLedger = field(default_factory=PiPrivateWorkLedger)
     _parent_idle: bool = False
     _parent_idle_epoch: float | None = None
     _disk_watcher: PiDiskWatcher | None = None
@@ -34,9 +39,15 @@ class PiQuiescenceTracker:
         spawn_id: SpawnId,
         is_pi_connection: bool,
         session_role: str,
+        ledger: PiPrivateWorkLedger | None = None,
     ) -> PiQuiescenceTracker:
         enabled = is_pi_connection and session_role == "spawned"
-        return cls(runtime_root=runtime_root, spawn_id=spawn_id, enabled=enabled)
+        return cls(
+            runtime_root=runtime_root,
+            spawn_id=spawn_id,
+            enabled=enabled,
+            ledger=ledger or PiPrivateWorkLedger(),
+        )
 
     @property
     def parent_idle(self) -> bool:
@@ -45,7 +56,11 @@ class PiQuiescenceTracker:
     async def start(self) -> None:
         if not self.enabled:
             return
-        self._disk_watcher = PiDiskWatcher(self.runtime_root, self.spawn_id)
+        self._disk_watcher = PiDiskWatcher(
+            self.runtime_root,
+            self.spawn_id,
+            self.ledger,
+        )
         await self._disk_watcher.start()
 
     async def stop(self) -> None:
@@ -74,7 +89,7 @@ class PiQuiescenceTracker:
         return bool(self._disk_watcher and self._disk_watcher.has_pending_child_spawns())
 
     def has_tracked_bash_bg(self) -> bool:
-        return bool(self._disk_watcher and self._disk_watcher.has_tracked_bash_bg())
+        return self.ledger.tracked_bash_bg()
 
     def pending_child_spawn_count(self) -> int:
         if self._disk_watcher is None:
@@ -87,31 +102,26 @@ class PiQuiescenceTracker:
         return self._disk_watcher.pending_confirmed_child_ids()
 
     def unresolved_child_ids(self) -> tuple[str, ...]:
-        if self._disk_watcher is None:
-            return ()
-        return self._disk_watcher.unresolved_child_ids()
+        return self.ledger.allocation_uncertainty_ids()
 
     def has_pending_disk_notification(self) -> bool:
         return not self._no_pending_disk_notifications()
 
     def evidence_failure(self) -> EvidenceFailure | None:
-        if self._disk_watcher is None:
-            return None
-        return self._disk_watcher.evidence_failure()
+        return self.ledger.evidence_failure()
+
+    def private_work_snapshot(self) -> PiPrivateWorkSnapshot:
+        return self.ledger.blocker_snapshot(parent_idle_epoch=self._parent_idle_epoch)
 
     def is_quiescent(self) -> bool:
         if not self.enabled or not self._parent_idle:
             return False
-        if self._disk_watcher is None:
-            return True
+        snapshot = self.private_work_snapshot()
         return (
-            not self._disk_watcher.has_pending_child_spawns()
-            and not self._disk_watcher.has_tracked_bash_bg()
-            and not self.has_pending_disk_notification()
+            not self.has_pending_child_spawns()
+            and not snapshot.tracked_bash_bg
+            and not snapshot.pending_disk_notification
         )
 
     def _no_pending_disk_notifications(self) -> bool:
-        if self._disk_watcher is None or self._parent_idle_epoch is None:
-            return True
-        last_notification_ts = self._disk_watcher.last_notification_ts()
-        return last_notification_ts is None or self._parent_idle_epoch > last_notification_ts
+        return not self.private_work_snapshot().pending_disk_notification

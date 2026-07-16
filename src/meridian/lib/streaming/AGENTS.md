@@ -95,9 +95,12 @@ means the manager died or the spawn is orphaned.
   policy
 - `pi_drain.py` — Pi evidence/cleanup collaborators, composition, and thin compatibility
   wrapper
+- `pi_work_ledger.py` — sole mutable owner of Pi-private blockers and PID/PGID cleanup
+  handles; exposes immutable categorized snapshots
 - `resident_drain.py` — resident evidence/profile/cleanup adapters and thin construction wrapper
-- `pi_subspawn_tracker.py` — Pi child-spawn, notification, and wave tracking
-- `disk_watcher.py` / `pi_quiescence.py` — disk-backed Pi background-work state
+- `pi_subspawn_tracker.py` — Pi lifecycle parsing/deduplication; feeds the private-work ledger
+- `disk_watcher.py` / `pi_quiescence.py` — disk observation and legacy boolean wrapper;
+  disk-backed private evidence feeds the ledger
 - `drain_wait.py` — generic event/timeout/aux-wake arbitration for drain loops
 - `pi_process_cleanup.py` — tracked Pi child process cleanup
 - `drain_policy.py` — `DrainPolicy`, `SingleTurnDrainPolicy`, `PersistentDrainPolicy`
