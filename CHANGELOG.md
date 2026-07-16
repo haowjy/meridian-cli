@@ -48,6 +48,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   failures, and keeps stream-exit policy inside the shared coordinator.
 - Pi reconciled-tree waits poll through nested descendant/report transitions and invoke
   canonical descendant cleanup on process exit even without Pi lifecycle handles.
+- Pi completion nudges no longer treat reconciled-terminal descendants as active work.
 - Resident and Pi `done` signals now wait on unreadable completion evidence and fail
   explicitly if it stays unavailable; Pi private-work read failures now enter that typed
   unknown-evidence path.

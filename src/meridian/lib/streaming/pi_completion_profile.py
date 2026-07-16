@@ -8,7 +8,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Protocol
 
 from meridian.lib.core.domain import SpawnStatus
-from meridian.lib.core.spawn_lifecycle import is_active_spawn_status
 from meridian.lib.core.types import SpawnId
 from meridian.lib.state.spawn_signals import consume_resident_signals
 from meridian.lib.streaming.completion_contracts import (
@@ -75,6 +74,8 @@ class PiCompletionEvidenceView(Protocol):
     def has_pending_children(self) -> bool: ...
 
     def pending_child_count(self) -> int: ...
+
+    def classify_outstanding_work(self) -> PiOutstandingWork: ...
 
 
 class PiCompletionCleanupPort(Protocol):
@@ -365,48 +366,7 @@ class PiCompletionProfile:
         )
 
     def classify_outstanding_work(self) -> PiOutstandingWork:
-        from meridian.lib.state import spawn_store
-        from meridian.lib.state.spawn.model import SpawnRecord
-        from meridian.lib.state.spawn_tree import (
-            has_outstanding_descendant_work,
-            iter_descendants_from_parent_map,
-        )
-
-        private_work = self.quiescence_tracker.private_work_snapshot()
-        try:
-            rows = spawn_store.list_spawns(self.runtime_root)
-        except Exception:
-            return PiOutstandingWork(
-                spawn_children=True,
-                non_spawn_processes=private_work.tracked_bash_bg
-                or bool(private_work.rowless_subspawn_ids),
-            )
-        by_parent: dict[str | None, list[SpawnRecord]] = {}
-        for row in rows:
-            by_parent.setdefault(row.parent_id, []).append(row)
-        active_descendant_ids = {
-            child.id
-            for child in iter_descendants_from_parent_map(str(self.spawn_id), by_parent)
-            if is_active_spawn_status(child.status)
-        }
-        rowless_tracked_subspawn_ids = (
-            set(private_work.rowless_subspawn_ids) - active_descendant_ids
-        )
-        rowless_meridian_spawn_ids = {
-            subspawn_id
-            for subspawn_id in rowless_tracked_subspawn_ids
-            if spawn_store.is_spawn_id_shape(subspawn_id)
-        }
-        rowless_pi_internal_subspawns = bool(
-            rowless_tracked_subspawn_ids - rowless_meridian_spawn_ids
-        )
-        return PiOutstandingWork(
-            spawn_children=has_outstanding_descendant_work(str(self.spawn_id), rows),
-            unknown_spawn_children=bool(rowless_meridian_spawn_ids),
-            non_spawn_processes=(
-                private_work.tracked_bash_bg or rowless_pi_internal_subspawns
-            ),
-        )
+        return self.evidence.classify_outstanding_work()
 
     def emit_waiting_phases_if_needed(self) -> None:
         if not self.quiescence_enabled:

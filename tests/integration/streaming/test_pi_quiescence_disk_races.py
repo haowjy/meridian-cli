@@ -427,6 +427,59 @@ async def test_pi_non_spawn_tracked_id_nudges_after_idle_delay(tmp_path: Path) -
 
 
 @pytest.mark.asyncio
+async def test_pi_reconciled_terminal_child_allows_done_nudge_for_private_work(
+    tmp_path: Path,
+) -> None:
+    spawn_id = SpawnId("p1")
+    child_id = SpawnId("p2")
+    sent_messages: list[str] = []
+    _write_running_bash_record(tmp_path, spawn_id, running=True)
+    spawn_store.start_spawn(
+        tmp_path,
+        spawn_id=spawn_id,
+        chat_id=str(spawn_id),
+        model="test-model",
+        agent="test-agent",
+        harness=HarnessId.PI.value,
+        prompt="parent",
+        status="running",
+    )
+    spawn_store.start_spawn(
+        tmp_path,
+        spawn_id=child_id,
+        chat_id=str(child_id),
+        parent_id=str(spawn_id),
+        model="test-model",
+        agent="test-agent",
+        harness=HarnessId.PI.value,
+        prompt="child",
+        status="running",
+    )
+    spawn_store.mark_finalizing(tmp_path, child_id)
+    (tmp_path / "spawns" / str(child_id) / "report.md").write_text(
+        "# Report\n\nChild completed.\n",
+        encoding="utf-8",
+    )
+    coordinator = await _started_pi_coordinator(
+        tmp_path,
+        spawn_id=spawn_id,
+        sent_messages=sent_messages,
+    )
+
+    try:
+        await _put_pi_parent_idle_after_success(coordinator)
+
+        outstanding = coordinator.classify_outstanding_work()
+        await coordinator.handle_timeout()
+
+        assert outstanding.spawn_children is False
+        assert outstanding.non_spawn_processes is True
+        assert sent_messages == [PI_COMPLETION_NUDGE_MESSAGE]
+    finally:
+        await coordinator.stop()
+
+
+@pytest.mark.asyncio
 async def test_pi_spawn_child_outstanding_waits_without_done_nudge(tmp_path: Path) -> None:
     spawn_id = SpawnId("p1")
     child_id = SpawnId("p2")
@@ -462,8 +515,10 @@ async def test_pi_spawn_child_outstanding_waits_without_done_nudge(tmp_path: Pat
     try:
         await _put_pi_parent_idle_after_success(coordinator)
 
+        outstanding = coordinator.classify_outstanding_work()
         await coordinator.handle_timeout()
 
+        assert outstanding.spawn_children is True
         assert sent_messages == []
     finally:
         await coordinator.stop()

@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 
 from meridian.lib.core.types import SpawnId
 from meridian.lib.harness import pi_lifecycle_events as pi_lifecycle
+from meridian.lib.state import spawn_store
 from meridian.lib.streaming.completion_contracts import (
     AssessmentTrigger,
     CleanupReport,
@@ -196,6 +197,44 @@ class PiCompletionEvidence:
         return (
             persisted_count
             + len(private_work.rowless_subspawn_ids)
+        )
+
+    def classify_outstanding_work(self) -> PiOutstandingWork:
+        reconciled_descendants = self._assess_reconciled_descendants()
+        private_work = self.quiescence_tracker.private_work_snapshot()
+        if reconciled_descendants.disposition == "unknown":
+            return PiOutstandingWork(
+                spawn_children=True,
+                non_spawn_processes=private_work.tracked_bash_bg
+                or bool(private_work.rowless_subspawn_ids),
+            )
+
+        persisted_descendant_ids = set(
+            self._descendant_evidence.persisted_descendant_ids
+        )
+        active_descendant_ids = {
+            blocker.identity
+            for blocker in reconciled_descendants.blockers
+            if blocker.code == "active_descendant"
+            and blocker.identity in persisted_descendant_ids
+        }
+        rowless_tracked_subspawn_ids = (
+            set(private_work.rowless_subspawn_ids) - active_descendant_ids
+        )
+        rowless_meridian_spawn_ids = {
+            subspawn_id
+            for subspawn_id in rowless_tracked_subspawn_ids
+            if spawn_store.is_spawn_id_shape(subspawn_id)
+        }
+        rowless_pi_internal_subspawns = bool(
+            rowless_tracked_subspawn_ids - rowless_meridian_spawn_ids
+        )
+        return PiOutstandingWork(
+            spawn_children=bool(active_descendant_ids),
+            unknown_spawn_children=bool(rowless_meridian_spawn_ids),
+            non_spawn_processes=(
+                private_work.tracked_bash_bg or rowless_pi_internal_subspawns
+            ),
         )
 
     def _assess_reconciled_descendants(self) -> WorkAssessment:

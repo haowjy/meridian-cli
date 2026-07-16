@@ -217,6 +217,10 @@ async def test_pi_tree_authority_polls_until_store_recovers(
     )
     try:
         await _assess_terminal(started)
+        outstanding = started.coordinator.classify_outstanding_work()
+
+        assert outstanding.spawn_children is True
+
         store_available = True
         started.clock.advance(0.25)
 
