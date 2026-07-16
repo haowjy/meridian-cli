@@ -7,18 +7,14 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Added
 - Streaming completion now has shared evidence, profile, cleanup contracts and a
   profile-driven coordinator for candidate, deadline, stabilization, and cleanup mechanics.
-- Pi completion emits direct-watcher versus reconciled-tree comparison telemetry.
-- Pi completion can bypass allocation-uncertainty blockers while retaining comparison
-  telemetry.
 - Pi deferred lifecycle telemetry exposes categorized persisted-descendant, rowless,
-  allocation-uncertainty, and tracked-bash counts alongside compatibility aggregates.
+  and tracked-bash counts alongside compatibility aggregates.
 
 ### Changed
 - Phase 0 drain characterization now uses observable effects and fake clocks.
 - Persisted descendant assessment now has one reconciled, transitive evidence projection.
-- Pi completion now uses reconciled transitive descendants as authority while retaining
-  allocation uncertainty, private-work blockers, and a temporary direct-child rollback
-  selector.
+- Pi completion now uses reconciled transitive descendants as its sole persisted-work
+  authority and watches disk only for Pi-private bash and notification evidence.
 - Resident completion now supplies reconciled-tree evidence, resident precedence/control,
   and canonical descendant cleanup to the shared coordinator.
 - Pi completion now supplies its persisted-descendant/private-work evidence, timeout

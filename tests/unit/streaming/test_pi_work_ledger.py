@@ -16,7 +16,6 @@ def test_blocker_snapshot_is_immutable_point_in_time() -> None:
         tracked_bash_bg=True,
         last_notification_ts=20.0,
     )
-    ledger.admit_allocation_uncertainty("p9", deadline_monotonic=30.0)
 
     snapshot = ledger.blocker_snapshot(parent_idle_epoch=20.0)
 
@@ -26,7 +25,6 @@ def test_blocker_snapshot_is_immutable_point_in_time() -> None:
         tracked_bash_bg=False,
         last_notification_ts=None,
     )
-    ledger.resolve_allocation_uncertainty("p9")
 
     assert snapshot.rowless_subspawn_ids == ("internal-1",)
     assert snapshot.tracked_bash_bg is True
@@ -34,10 +32,8 @@ def test_blocker_snapshot_is_immutable_point_in_time() -> None:
         "notification-1",
     )
     assert snapshot.pending_disk_notification is True
-    assert snapshot.allocation_uncertainty_ids == ("p9",)
     assert tuple((item.kind, item.code) for item in snapshot.blockers) == (
         ("rowless_subspawn", "pi_tracked_child"),
-        ("allocation", "pi_allocation_uncertainty"),
         ("tracked_bash", "pi_tracked_bash_bg"),
         ("notification", "pi_pending_notification"),
         ("disk_notification", "pi_disk_notification"),

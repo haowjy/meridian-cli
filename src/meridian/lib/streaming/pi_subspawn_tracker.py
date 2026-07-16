@@ -70,6 +70,11 @@ class PiSubspawnTracker:
             resolved_subspawn_ids=set(),
         )
 
+    def note_persisted_subspawns(self, subspawn_ids: tuple[str, ...]) -> None:
+        """Move lifecycle-observed IDs with descendant rows to tree-owned liveness."""
+        for subspawn_id in subspawn_ids:
+            self._ledger.note_persisted_subspawn(subspawn_id)
+
     def observe(
         self,
         event: HarnessEvent,

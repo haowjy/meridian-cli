@@ -3,7 +3,7 @@
 Persisted Meridian descendants belong to the reconciled spawn tree. This ledger
 owns the remaining Pi-specific work that can block completion or require process
 cleanup: lifecycle-observed subspawns, managed bash, implicit-wait notifications,
-and unresolved allocation candidates.
+and private-ledger read failures.
 """
 
 from __future__ import annotations
@@ -42,7 +42,6 @@ class PiPrivateWorkBlocker:
         "tracked_bash",
         "notification",
         "disk_notification",
-        "allocation",
     ]
     code: str
     identity: str | None = None
@@ -56,7 +55,6 @@ class PiPrivateWorkSnapshot:
     tracked_bash_bg: bool
     pending_notifications: tuple[PiPendingNotification, ...]
     pending_disk_notification: bool
-    allocation_uncertainty_ids: tuple[str, ...]
     blockers: tuple[PiPrivateWorkBlocker, ...]
     failure: EvidenceFailure | None
 
@@ -71,7 +69,6 @@ class PiPrivateWorkLedger:
         self._pending_notifications: dict[str, PiPendingNotification] = {}
         self._tracked_bash_bg = False
         self._last_notification_ts: float | None = None
-        self._allocation_deadlines: dict[str, float] = {}
         self._read_failures: dict[Path, EvidenceFailure] = {}
 
     def note_subspawn_started(
@@ -245,26 +242,6 @@ class PiPrivateWorkLedger:
     def last_notification_ts(self) -> float | None:
         return self._last_notification_ts
 
-    def admit_allocation_uncertainty(
-        self,
-        spawn_id: str,
-        *,
-        deadline_monotonic: float,
-    ) -> None:
-        self._allocation_deadlines.setdefault(spawn_id, deadline_monotonic)
-
-    def allocation_deadline(self, spawn_id: str) -> float | None:
-        return self._allocation_deadlines.get(spawn_id)
-
-    def resolve_allocation_uncertainty(self, spawn_id: str) -> None:
-        self._allocation_deadlines.pop(spawn_id, None)
-
-    def allocation_uncertainty_ids(self) -> tuple[str, ...]:
-        return tuple(sorted(self._allocation_deadlines))
-
-    def has_allocation_uncertainty(self) -> bool:
-        return bool(self._allocation_deadlines)
-
     def record_read_failure(self, path: Path, detail: str) -> bool:
         failure = EvidenceFailure(
             code="pi_private_work_read_failed",
@@ -296,7 +273,6 @@ class PiPrivateWorkLedger:
         )
         rowless_subspawn_ids = self.rowless_subspawn_ids()
         pending_notifications = self.pending_notifications()
-        allocation_uncertainty_ids = self.allocation_uncertainty_ids()
         blockers: list[PiPrivateWorkBlocker] = [
             PiPrivateWorkBlocker(
                 kind="rowless_subspawn",
@@ -305,14 +281,6 @@ class PiPrivateWorkLedger:
             )
             for subspawn_id in rowless_subspawn_ids
         ]
-        blockers.extend(
-            PiPrivateWorkBlocker(
-                kind="allocation",
-                code="pi_allocation_uncertainty",
-                identity=spawn_id,
-            )
-            for spawn_id in allocation_uncertainty_ids
-        )
         if self._tracked_bash_bg:
             blockers.append(PiPrivateWorkBlocker(kind="tracked_bash", code="pi_tracked_bash_bg"))
         blockers.extend(
@@ -335,7 +303,6 @@ class PiPrivateWorkLedger:
             tracked_bash_bg=self._tracked_bash_bg,
             pending_notifications=pending_notifications,
             pending_disk_notification=pending_disk_notification,
-            allocation_uncertainty_ids=allocation_uncertainty_ids,
             blockers=tuple(blockers),
             failure=self.evidence_failure(),
         )

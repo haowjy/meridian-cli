@@ -28,10 +28,11 @@ def test_reconciled_descendant_evidence_is_transitive_and_reconciled(
         origin="runner",
     )
 
-    assessment = ReconciledDescendantEvidence(
+    evidence = ReconciledDescendantEvidence(
         runtime_root=tmp_path,
         root_spawn_id=SpawnId("p1"),
-    ).assess()
+    )
+    assessment = evidence.assess()
 
     assert assessment.disposition == "blocked"
     assert assessment.blockers == (
@@ -41,6 +42,7 @@ def test_reconciled_descendant_evidence_is_transitive_and_reconciled(
             identity="p3",
         ),
     )
+    assert evidence.persisted_descendant_ids == ("p2", "p3")
 
 
 def test_reconciled_descendant_evidence_ignores_invalid_and_wrong_parent_rows(

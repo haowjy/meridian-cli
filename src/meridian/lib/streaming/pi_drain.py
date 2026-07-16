@@ -6,7 +6,7 @@ import logging
 import time
 from collections.abc import Awaitable, Callable
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING
 
 from meridian.lib.core.types import SpawnId
 from meridian.lib.harness import pi_lifecycle_events as pi_lifecycle
@@ -57,7 +57,6 @@ _PI_PHASE_EVENT_TYPE = pi_lifecycle.PI_PHASE_EVENT_TYPE
 logger = logging.getLogger(__name__)
 
 TerminatePiChildren = Callable[[PiPrivateWorkLedger, str], Awaitable[None]]
-PiPersistedDescendantAuthority = Literal["reconciled_tree", "confirmed_child"]
 _PI_DESCENDANT_POLL_INTERVAL_SECONDS = 0.25
 
 
@@ -73,16 +72,12 @@ class PiCompletionEvidence:
         quiescence_tracker: PiQuiescenceTracker,
         notification_timeout_seconds: float | None,
         clock: Callable[[], float],
-        persisted_descendant_authority: PiPersistedDescendantAuthority = "reconciled_tree",
-        allocation_barrier: bool = True,
     ) -> None:
         self.runtime_root = runtime_root
         self.spawn_id = spawn_id
         self.tracker = tracker
         self.quiescence_tracker = quiescence_tracker
         self.notification_timeout_seconds = notification_timeout_seconds
-        self.persisted_descendant_authority = persisted_descendant_authority
-        self.allocation_barrier = allocation_barrier
         self._clock = clock
         self._descendant_evidence = ReconciledDescendantEvidence(
             runtime_root=runtime_root,
@@ -91,7 +86,6 @@ class PiCompletionEvidence:
         self._profile: PiCompletionProfile | None = None
         self._generation = 0
         self._last_signature: object = None
-        self._last_shadow_signature: object = None
         self._next_descendant_poll_at: float | None = None
         self.session_seen = False
         self.session_phase_emitted = False
@@ -154,8 +148,7 @@ class PiCompletionEvidence:
             await self.quiescence_tracker.refresh_disk_state()
         if trigger == "aux_wake" and profile is not None:
             profile.after_disk_change()
-        reconciled_descendants = self._descendant_evidence.assess()
-        self._emit_descendant_evidence_shadow(reconciled_descendants)
+        reconciled_descendants = self._assess_reconciled_descendants()
         if profile is not None and profile.last_successful_terminal is not None:
             self._next_descendant_poll_at = (
                 self._clock() + _PI_DESCENDANT_POLL_INTERVAL_SECONDS
@@ -177,22 +170,21 @@ class PiCompletionEvidence:
         await self.quiescence_tracker.wait_for_disk_change()
 
     def is_quiescent(self) -> bool:
-        return self._assessment(self._descendant_evidence.assess()).disposition == "ready"
+        return self._assessment(self._assess_reconciled_descendants()).disposition == "ready"
 
     def has_pending_children(self) -> bool:
         descendant_assessment = self._persisted_descendant_assessment(
-            self._descendant_evidence.assess()
+            self._assess_reconciled_descendants()
         )
         private_work = self.quiescence_tracker.private_work_snapshot()
         return (
             descendant_assessment.disposition != "ready"
             or bool(private_work.rowless_subspawn_ids)
-            or bool(private_work.allocation_uncertainty_ids)
         )
 
     def pending_child_count(self) -> int:
         descendant_assessment = self._persisted_descendant_assessment(
-            self._descendant_evidence.assess()
+            self._assess_reconciled_descendants()
         )
         persisted_count = (
             len(descendant_assessment.blockers)
@@ -203,8 +195,15 @@ class PiCompletionEvidence:
         return (
             persisted_count
             + len(private_work.rowless_subspawn_ids)
-            + len(private_work.allocation_uncertainty_ids)
         )
+
+    def _assess_reconciled_descendants(self) -> WorkAssessment:
+        assessment = self._descendant_evidence.assess()
+        if assessment.disposition != "unknown":
+            self.tracker.note_persisted_subspawns(
+                self._descendant_evidence.persisted_descendant_ids
+            )
+        return assessment
 
     def _assessment(self, reconciled_descendants: WorkAssessment) -> WorkAssessment:
         descendants = self._persisted_descendant_assessment(reconciled_descendants)
@@ -238,17 +237,7 @@ class PiCompletionEvidence:
     def _persisted_descendant_assessment(
         self, reconciled_descendants: WorkAssessment
     ) -> WorkAssessment:
-        if self.persisted_descendant_authority == "reconciled_tree":
-            return reconciled_descendants
-        blockers = tuple(
-            DiagnosticBlocker(source="persisted_descendant", code="pi_direct_child")
-            for _ in range(self.quiescence_tracker.pending_child_spawn_count())
-        )
-        return WorkAssessment(
-            disposition="blocked" if blockers else "ready",
-            blockers=blockers,
-            generation=0,
-        )
+        return reconciled_descendants
 
     def _pi_owned_blockers(
         self,
@@ -264,63 +253,8 @@ class PiCompletionEvidence:
                 identity=blocker.identity,
             )
             for blocker in private_work.blockers
-            if blocker.kind != "allocation"
-            or (
-                self.allocation_barrier
-                and self.persisted_descendant_authority == "reconciled_tree"
-            )
         )
         return tuple(blockers)
-
-    def _emit_descendant_evidence_shadow(self, shadow: WorkAssessment) -> None:
-        profile = self._profile
-        if profile is None:
-            return
-        watcher_ids = set(self.quiescence_tracker.pending_confirmed_child_ids())
-        tree_ids = {
-            blocker.identity for blocker in shadow.blockers if blocker.identity is not None
-        }
-        records: list[tuple[str, tuple[str, ...]]] = []
-        if shadow.disposition == "unknown":
-            records.append(("store-error", ()))
-        else:
-            unresolved_ids = self.quiescence_tracker.unresolved_child_ids()
-            if unresolved_ids:
-                records.append(("allocation-uncertainty", unresolved_ids))
-            overlap = watcher_ids & tree_ids
-            if overlap:
-                records.append(("both", tuple(sorted(overlap))))
-            tree_only = tree_ids - watcher_ids
-            if tree_only:
-                records.append(("tree-only", tuple(sorted(tree_only))))
-            watcher_only = watcher_ids - tree_ids
-            if watcher_only:
-                records.append(("watcher-only", tuple(sorted(watcher_only))))
-
-        signature = (
-            tuple(records),
-            len(watcher_ids),
-            len(tree_ids),
-            shadow.failure,
-        )
-        if signature == self._last_shadow_signature:
-            return
-        self._last_shadow_signature = signature
-
-        for category, spawn_ids in records:
-            payload: dict[str, object] = {
-                "category": category,
-                "spawn_ids": spawn_ids,
-                "watcher_active_count": len(watcher_ids),
-                "tree_active_count": len(tree_ids),
-            }
-            if shadow.failure is not None:
-                payload["error_code"] = shadow.failure.code
-                payload["error_detail"] = shadow.failure.detail
-            try:
-                profile.emit("descendant_evidence_shadow", **payload)
-            except Exception:
-                logger.warning("Failed to emit Pi descendant shadow phase", exc_info=True)
 
     def _next_generation(self, signature: object) -> int:
         if signature != self._last_signature:
@@ -381,10 +315,7 @@ class PiCompletionCleanup:
             self.tracked_cleanup_error = str(exc)
             failures = (EvidenceFailure(code="pi_child_cleanup_failed", detail=str(exc)),)
         finally:
-            tracked_count = (
-                self._ledger.clear_tracked_subspawns()
-                + self.quiescence_tracker.pending_child_spawn_count()
-            )
+            tracked_count = self._ledger.clear_tracked_subspawns()
             telemetry = self._child_timeout_telemetry or ChildTimeoutTelemetry(
                 active_tracked_count=tracked_count,
                 elapsed_seconds=0.0,
@@ -439,8 +370,6 @@ class PiDrainCoordinator:
         emit_phase: EmitPiPhase,
         terminate_children: TerminatePiChildren | None = None,
         send_done_nudge: SendPiDoneNudge | None = None,
-        persisted_descendant_authority: PiPersistedDescendantAuthority = "reconciled_tree",
-        allocation_barrier: bool = True,
     ) -> PiDrainCoordinator:
         del receiver
         normalized_role = (session_role or "").strip().lower()
@@ -461,8 +390,6 @@ class PiDrainCoordinator:
             quiescence_tracker=quiescence_tracker,
             notification_timeout_seconds=notification_timeout_seconds,
             clock=clock,
-            persisted_descendant_authority=persisted_descendant_authority,
-            allocation_barrier=allocation_barrier,
         )
         profile = PiCompletionProfile(
             runtime_root=runtime_root,

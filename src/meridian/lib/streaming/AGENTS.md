@@ -99,8 +99,8 @@ means the manager died or the spawn is orphaned.
   handles; exposes immutable categorized snapshots
 - `resident_drain.py` — resident evidence/profile/cleanup adapters and thin construction wrapper
 - `pi_subspawn_tracker.py` — Pi lifecycle parsing/deduplication; feeds the private-work ledger
-- `disk_watcher.py` / `pi_quiescence.py` — disk observation and legacy boolean wrapper;
-  disk-backed private evidence feeds the ledger
+- `disk_watcher.py` / `pi_quiescence.py` — Pi-private bash/notification disk
+  observation and parent-idle epochs; disk-backed private evidence feeds the ledger
 - `drain_wait.py` — generic event/timeout/aux-wake arbitration for drain loops
 - `pi_process_cleanup.py` — tracked Pi child process cleanup
 - `drain_policy.py` — `DrainPolicy`, `SingleTurnDrainPolicy`, `PersistentDrainPolicy`
@@ -109,11 +109,10 @@ means the manager died or the spawn is orphaned.
 - `types.py` — `InjectResult`, `ControlMessage`
 
 Resident and Pi completion use the shared reconciled transitive spawn-tree assessment as
-persisted-descendant authority. Pi also retains bounded newer-directory uncertainty as a
-temporary barrier for manually or externally created partial numeric rows and keeps
-comparing the tree with its direct-row watcher for telemetry. Meridian's own spawn rows
-publish atomically. The temporary Pi authority selector can restore confirmed-direct-child
-assessment during rollback without disabling that comparison.
+their sole persisted-descendant authority. Pi's disk watcher observes only private bash
+and notification files; incomplete or wrong-parent spawn directories are not descendant
+evidence. Meridian's own spawn rows publish atomically, and the reconciled tree polls
+valid parent-linked rows while a successful terminal candidate is pending.
 
 ## Depth
 

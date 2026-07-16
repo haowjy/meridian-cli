@@ -32,6 +32,12 @@ class ReconciledDescendantEvidence:
         self._blocker_reader = blocker_reader or self._read_blockers
         self._generation = 0
         self._last_signature: object = None
+        self._persisted_descendant_ids: tuple[str, ...] = ()
+
+    @property
+    def persisted_descendant_ids(self) -> tuple[str, ...]:
+        """Return descendant row IDs from the latest successful assessment."""
+        return self._persisted_descendant_ids
 
     def assess(self) -> WorkAssessment:
         """Return a fresh blocker assessment, or typed unknown on a hard read failure."""
@@ -62,13 +68,17 @@ class ReconciledDescendantEvidence:
             peek_reconciled_active_spawn(self._runtime_root, row)
             for row in spawn_store.list_spawns(self._runtime_root)
         ]
+        descendants = tuple(collect_descendants(str(self._root_spawn_id), rows))
+        self._persisted_descendant_ids = tuple(
+            sorted(row.id for row in descendants if row.id != str(self._root_spawn_id))
+        )
         return tuple(
             DiagnosticBlocker(
                 source="persisted_descendant",
                 code="active_descendant",
                 identity=row.id,
             )
-            for row in collect_descendants(str(self._root_spawn_id), rows)
+            for row in descendants
             if row.id != str(self._root_spawn_id) and is_active_spawn_status(row.status)
         )
 

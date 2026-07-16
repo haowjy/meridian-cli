@@ -394,7 +394,7 @@ class SpawnManager:
             return DrainPlan(
                 coordinator=coordinator,
                 policy=PiRpcQuiescenceDrainPolicy(
-                    quiescence_check=coordinator.quiescence_tracker.is_quiescent,
+                    quiescence_check=coordinator.is_quiescent,
                 ),
                 raw_terminal_frames_authoritative=False,
                 on_policy_selected=coordinator.set_policy,

@@ -508,7 +508,18 @@ async def test_spawn_manager_pi_child_wave_timeout_cleans_tracked_children_and_f
     completion = asyncio.create_task(manager.wait_for_completion(spawn_id))
     try:
         await wait_until(
-            lambda: _history_has_phase(tmp_path, spawn_id, "quiescence_deferred"),
+            lambda: (
+                _history_has_phase(
+                    tmp_path,
+                    spawn_id,
+                    "waiting_for_tracked_children",
+                )
+                and _history_has_event(
+                    tmp_path,
+                    spawn_id,
+                    "meridian/turn_completed",
+                )
+            ),
             description="Pi child-wave wait",
         )
         await assert_still_pending(completion)
@@ -609,7 +620,18 @@ async def test_spawn_manager_pi_child_wave_timeout_not_cleared_by_turn_active(
 
     try:
         await wait_until(
-            lambda: _history_has_phase(tmp_path, spawn_id, "quiescence_deferred"),
+            lambda: (
+                _history_has_phase(
+                    tmp_path,
+                    spawn_id,
+                    "waiting_for_tracked_children",
+                )
+                and _history_has_event(
+                    tmp_path,
+                    spawn_id,
+                    "meridian/turn_completed",
+                )
+            ),
             description="Pi child-wave wait",
         )
         await assert_still_pending(completion)

@@ -116,7 +116,7 @@ class PiCompletionProfile:
         self.last_successful_terminal: TerminalEventOutcome | None = None
         self.micro_drain_active = False
         self.micro_drain_event_count = 0
-        self.waiting_work_signature: tuple[int, int, int] | None = None
+        self.waiting_work_signature: tuple[int, int] | None = None
         self.waiting_notification_count: int | None = None
         self.child_wave_deadline_monotonic: float | None = None
         self.child_wave_started_monotonic: float | None = None
@@ -399,9 +399,7 @@ class PiCompletionProfile:
         )
         return PiOutstandingWork(
             spawn_children=has_outstanding_descendant_work(str(self.spawn_id), rows),
-            unknown_spawn_children=bool(rowless_meridian_spawn_ids)
-            or bool(private_work.allocation_uncertainty_ids)
-            or self.quiescence_tracker.has_pending_child_spawns(),
+            unknown_spawn_children=bool(rowless_meridian_spawn_ids),
             non_spawn_processes=(
                 private_work.tracked_bash_bg or rowless_pi_internal_subspawns
             ),
@@ -414,18 +412,14 @@ class PiCompletionProfile:
         waiting_for_children = self.evidence.has_pending_children()
         child_count = self.evidence.pending_child_count()
         rowless_count = len(private_work.rowless_subspawn_ids)
-        allocation_count = len(private_work.allocation_uncertainty_ids)
-        waiting_signature = (child_count, rowless_count, allocation_count)
+        waiting_signature = (child_count, rowless_count)
         if waiting_for_children:
             if waiting_signature != self.waiting_work_signature:
                 self._emit(
                     "waiting_for_tracked_children",
                     active_tracked_count=child_count,
-                    persisted_descendant_count=max(
-                        0, child_count - rowless_count - allocation_count
-                    ),
+                    persisted_descendant_count=max(0, child_count - rowless_count),
                     rowless_subspawn_count=rowless_count,
-                    allocation_uncertainty_count=allocation_count,
                 )
             self.waiting_work_signature = waiting_signature
         else:
@@ -465,16 +459,12 @@ class PiCompletionProfile:
         private_work = self.quiescence_tracker.private_work_snapshot()
         active_tracked_count = self.evidence.pending_child_count()
         rowless_count = len(private_work.rowless_subspawn_ids)
-        allocation_count = len(private_work.allocation_uncertainty_ids)
         self._emit(
             "quiescence_deferred",
             active_tracked_count=active_tracked_count,
-            persisted_descendant_count=max(
-                0, active_tracked_count - rowless_count - allocation_count
-            ),
+            persisted_descendant_count=max(0, active_tracked_count - rowless_count),
             pending_notification_count=len(private_work.pending_notifications),
             rowless_subspawn_count=rowless_count,
-            allocation_uncertainty_count=allocation_count,
             tracked_bash_count=int(private_work.tracked_bash_bg),
             disk_notification_count=int(private_work.pending_disk_notification),
         )

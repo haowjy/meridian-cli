@@ -1,4 +1,4 @@
-"""Characterize Pi's reconciled-descendant authority and watcher comparison."""
+"""Characterize Pi's reconciled-descendant and private-work authority."""
 
 from __future__ import annotations
 
@@ -40,11 +40,6 @@ class _StartedPi:
 async def _start_pi(
     runtime_root: Path,
     monkeypatch: pytest.MonkeyPatch,
-    *,
-    persisted_descendant_authority: pi_drain_module.PiPersistedDescendantAuthority = (
-        "reconciled_tree"
-    ),
-    allocation_barrier: bool = True,
 ) -> _StartedPi:
     clock = FakeClock(start=100.0)
     monkeypatch.setattr(pi_drain_module.time, "monotonic", clock.monotonic)
@@ -83,8 +78,6 @@ async def _start_pi(
         child_wave_timeout_seconds=None,
         emit_phase=_emit_phase,
         terminate_children=_terminate_children,
-        persisted_descendant_authority=persisted_descendant_authority,
-        allocation_barrier=allocation_barrier,
     )
     await coordinator.start()
     coordinator.set_policy(
@@ -98,18 +91,6 @@ async def _start_pi(
     )
 
 
-def _shadow_records(started: _StartedPi) -> list[dict[str, object]]:
-    return [
-        phase
-        for phase in started.phases
-        if phase["phase"] == "descendant_evidence_shadow"
-    ]
-
-
-def _shadow_categories(started: _StartedPi) -> list[object]:
-    return [record["category"] for record in _shadow_records(started)]
-
-
 async def _assess_terminal(started: _StartedPi) -> DrainTerminalDecision:
     await started.coordinator.observe_event(_AGENT_END, "idle")
     return await started.coordinator.handle_terminal_event(
@@ -120,7 +101,7 @@ async def _assess_terminal(started: _StartedPi) -> DrainTerminalDecision:
 
 
 @pytest.mark.asyncio
-async def test_pi_shadow_reports_active_direct_child_in_both_sources(
+async def test_pi_tree_authority_blocks_active_direct_child(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -131,42 +112,6 @@ async def test_pi_shadow_reports_active_direct_child_in_both_sources(
         decision = await _assess_terminal(started)
 
         assert decision.recorded_outcome is None
-        assert _shadow_categories(started) == ["both"]
-        assert _shadow_records(started)[0] == {
-            "phase": "descendant_evidence_shadow",
-            "category": "both",
-            "spawn_ids": ("p2",),
-            "watcher_active_count": 1,
-            "tree_active_count": 1,
-        }
-    finally:
-        await started.coordinator.stop()
-
-
-@pytest.mark.asyncio
-async def test_pi_shadow_reports_tree_only_grandchild_but_keeps_watcher_authority(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    start_row(tmp_path, "p1", HarnessId.PI, None)
-    start_row(tmp_path, "p2", HarnessId.CODEX, "p1")
-    spawn_store.finalize_spawn(tmp_path, SpawnId("p2"), "succeeded", 0, origin="runner")
-    start_row(tmp_path, "p3", HarnessId.CODEX, "p2")
-    started = await _start_pi(
-        tmp_path,
-        monkeypatch,
-        persisted_descendant_authority="confirmed_child",
-    )
-    try:
-        terminal = await _assess_terminal(started)
-        assert terminal.recorded_outcome is None
-        assert _shadow_categories(started) == ["tree-only"]
-
-        started.clock.advance(0.05)
-        stabilized = await started.coordinator.handle_timeout()
-
-        assert stabilized.recorded_outcome == _SUCCESS
-        assert _shadow_categories(started) == ["tree-only"]
     finally:
         await started.coordinator.stop()
 
@@ -390,73 +335,6 @@ async def test_pi_tree_authority_still_blocks_on_rowless_internal_subspawn(
 
 
 @pytest.mark.asyncio
-async def test_pi_shadow_reports_reconciled_terminal_direct_child_as_watcher_only(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    start_row(tmp_path, "p1", HarnessId.PI, None)
-    start_row(tmp_path, "p2", HarnessId.CODEX, "p1")
-    spawn_store.mark_finalizing(tmp_path, SpawnId("p2"))
-    (tmp_path / "spawns" / "p2" / "report.md").write_text(
-        "# Report\n\nChild completed.\n",
-        encoding="utf-8",
-    )
-    started = await _start_pi(tmp_path, monkeypatch)
-    try:
-        decision = await _assess_terminal(started)
-        started.clock.advance(0.05)
-        stabilized = await started.coordinator.handle_timeout()
-
-        assert decision.recorded_outcome is None
-        assert stabilized.recorded_outcome == _SUCCESS
-        assert _shadow_categories(started) == ["watcher-only"]
-        assert _shadow_records(started)[0]["spawn_ids"] == ("p2",)
-        assert _shadow_records(started)[0]["tree_active_count"] == 0
-    finally:
-        await started.coordinator.stop()
-
-
-@pytest.mark.asyncio
-async def test_pi_shadow_reports_allocation_uncertainty_separately(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    start_row(tmp_path, "p1", HarnessId.PI, None)
-    (tmp_path / "spawns" / "p2").mkdir()
-    started = await _start_pi(tmp_path, monkeypatch)
-    try:
-        decision = await _assess_terminal(started)
-        started.clock.advance(0.05)
-        stabilized = await started.coordinator.handle_timeout()
-
-        assert decision.recorded_outcome is None
-        assert stabilized.recorded_outcome is None
-        assert _shadow_categories(started) == ["allocation-uncertainty"]
-    finally:
-        await started.coordinator.stop()
-
-
-@pytest.mark.asyncio
-async def test_pi_allocation_barrier_bypass_still_emits_shadow(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    start_row(tmp_path, "p1", HarnessId.PI, None)
-    (tmp_path / "spawns" / "p2").mkdir()
-    started = await _start_pi(tmp_path, monkeypatch, allocation_barrier=False)
-    try:
-        decision = await _assess_terminal(started)
-        started.clock.advance(0.05)
-        stabilized = await started.coordinator.handle_timeout()
-
-        assert decision.recorded_outcome is None
-        assert stabilized.recorded_outcome == _SUCCESS
-        assert _shadow_categories(started) == ["allocation-uncertainty"]
-    finally:
-        await started.coordinator.stop()
-
-
-@pytest.mark.asyncio
 async def test_pi_tree_authority_blocks_on_store_error(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -465,7 +343,7 @@ async def test_pi_tree_authority_blocks_on_store_error(
     started = await _start_pi(tmp_path, monkeypatch)
 
     def _fail_list_spawns(_runtime_root: Path) -> object:
-        raise OSError("shadow store unavailable")
+        raise OSError("tree store unavailable")
 
     monkeypatch.setattr(
         descendant_evidence_module.spawn_store,
@@ -475,16 +353,10 @@ async def test_pi_tree_authority_blocks_on_store_error(
     try:
         terminal = await _assess_terminal(started)
         assert terminal.recorded_outcome is None
-        assert _shadow_categories(started) == ["store-error"]
-        assert _shadow_records(started)[0]["error_code"] == (
-            "descendant_evidence_read_failed"
-        )
-        assert _shadow_records(started)[0]["error_detail"] == "shadow store unavailable"
 
         started.clock.advance(0.05)
         stabilized = await started.coordinator.handle_timeout()
 
         assert stabilized.recorded_outcome is None
-        assert _shadow_categories(started) == ["store-error"]
     finally:
         await started.coordinator.stop()

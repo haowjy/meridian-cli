@@ -285,11 +285,9 @@ async def test_child_wave_timeout_stays_terminal_when_cleanup_raises(
         determinism = AsyncDeterminism(start=100.0)
         determinism.install(monkeypatch, monotonic_modules=(pi_drain_module,))
         await _arm_child_wave(started.coordinator)
-        (tmp_path / "spawns" / "p123").mkdir(parents=True)
-        await started.coordinator.reevaluate_after_disk_change()
         assert any(
             phase.get("phase") == "waiting_for_tracked_children"
-            and phase.get("active_tracked_count") == 2
+            and phase.get("active_tracked_count") == 1
             for phase in started.phases
         )
         phases_before_timeout = len(started.phases)
@@ -512,68 +510,6 @@ async def test_pi_spawn_shaped_tracked_child_without_row_waits_closed_then_waits
 
 
 @pytest.mark.asyncio
-async def test_pi_candidate_child_dir_before_row_suppresses_done_nudge_until_terminal(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    determinism = AsyncDeterminism(start=100.0)
-    determinism.install(monkeypatch, monotonic_modules=(pi_drain_module,))
-    spawn_id = SpawnId("p1")
-    child_id = SpawnId("p123")
-    sent_messages: list[str] = []
-    _write_running_bash_record(tmp_path, spawn_id, running=True)
-    spawn_store.start_spawn(
-        tmp_path,
-        spawn_id=spawn_id,
-        chat_id=str(spawn_id),
-        model="test-model",
-        agent="test-agent",
-        harness=HarnessId.PI.value,
-        prompt="parent",
-        status="running",
-    )
-    coordinator = await _started_pi_coordinator(
-        tmp_path,
-        spawn_id=spawn_id,
-        sent_messages=sent_messages,
-        nudge_idle_seconds=5.0,
-    )
-
-    try:
-        await _put_pi_parent_idle_after_success(coordinator)
-        (tmp_path / "spawns" / str(child_id)).mkdir(parents=True)
-        await coordinator.reevaluate_after_disk_change()
-
-        candidate_wait = await coordinator.handle_timeout()
-        assert candidate_wait.recorded_outcome is None
-        assert sent_messages == []
-
-        (tmp_path / "spawns" / str(child_id)).rmdir()
-        spawn_store.start_spawn(
-            tmp_path,
-            spawn_id=child_id,
-            chat_id=str(child_id),
-            parent_id=str(spawn_id),
-            model="test-model",
-            agent="test-agent",
-            harness=HarnessId.PI.value,
-            prompt="child",
-            status="succeeded",
-        )
-        await coordinator.reevaluate_after_disk_change()
-
-        terminal_row_wait = await coordinator.handle_timeout()
-        assert terminal_row_wait.recorded_outcome is None
-        assert sent_messages == []
-        determinism.advance(5.0)
-        nudge = await coordinator.handle_timeout()
-        assert nudge.recorded_outcome is None
-        assert sent_messages == [PI_COMPLETION_NUDGE_MESSAGE]
-    finally:
-        await coordinator.stop()
-
-
-@pytest.mark.asyncio
 async def test_pi_done_nudge_repeats_on_bounded_cadence(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -704,30 +640,6 @@ async def test_micro_drain_recheck_preserves_idle_epoch_for_notifications(
     finally:
         await started.coordinator.stop()
 
-
-@pytest.mark.asyncio
-async def test_micro_drain_cancel_arms_child_wave_for_rescan_discovered_child(
-    tmp_path: Path,
-) -> None:
-    spawn_id = SpawnId("p122")
-    started = await _started_micro_drain_coordinator(
-        tmp_path,
-        spawn_id=spawn_id,
-        child_wave_timeout_seconds=1.0,
-        mark_idle=True,
-    )
-    (tmp_path / "spawns" / "p123").mkdir(parents=True)
-
-    try:
-        result = await started.coordinator.handle_timeout(_noop_terminate)
-        assert result.recorded_outcome is None
-        assert any(
-            phase.get("phase") == "waiting_for_tracked_children"
-            and phase.get("active_tracked_count") == 1
-            for phase in started.phases
-        )
-    finally:
-        await started.coordinator.stop()
 
 @pytest.mark.asyncio
 async def test_spawn_manager_pi_drain_loop_reevaluates_on_disk_wakeup(

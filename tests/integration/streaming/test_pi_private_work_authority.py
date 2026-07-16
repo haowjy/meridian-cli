@@ -76,7 +76,6 @@ async def test_persisted_subspawn_liveness_returns_to_tree_authority(
         waiting = [item for item in phases if item["phase"] == "waiting_for_tracked_children"]
         assert waiting[-1]["persisted_descendant_count"] == 1
         assert waiting[-1]["rowless_subspawn_count"] == 0
-        assert waiting[-1]["allocation_uncertainty_count"] == 0
 
         spawn_store.finalize_spawn(
             tmp_path,

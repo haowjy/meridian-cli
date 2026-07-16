@@ -85,24 +85,8 @@ class PiQuiescenceTracker:
         if self._disk_watcher is not None:
             await self._disk_watcher.wait_for_change()
 
-    def has_pending_child_spawns(self) -> bool:
-        return bool(self._disk_watcher and self._disk_watcher.has_pending_child_spawns())
-
     def has_tracked_bash_bg(self) -> bool:
         return self._ledger.tracked_bash_bg()
-
-    def pending_child_spawn_count(self) -> int:
-        if self._disk_watcher is None:
-            return 0
-        return self._disk_watcher.pending_child_spawn_count()
-
-    def pending_confirmed_child_ids(self) -> tuple[str, ...]:
-        if self._disk_watcher is None:
-            return ()
-        return self._disk_watcher.pending_confirmed_child_ids()
-
-    def unresolved_child_ids(self) -> tuple[str, ...]:
-        return self._ledger.allocation_uncertainty_ids()
 
     def has_pending_disk_notification(self) -> bool:
         return not self._no_pending_disk_notifications()
@@ -112,16 +96,6 @@ class PiQuiescenceTracker:
 
     def private_work_snapshot(self) -> PiPrivateWorkSnapshot:
         return self._ledger.blocker_snapshot(parent_idle_epoch=self._parent_idle_epoch)
-
-    def is_quiescent(self) -> bool:
-        if not self.enabled or not self._parent_idle:
-            return False
-        snapshot = self.private_work_snapshot()
-        return (
-            not self.has_pending_child_spawns()
-            and not snapshot.tracked_bash_bg
-            and not snapshot.pending_disk_notification
-        )
 
     def _no_pending_disk_notifications(self) -> bool:
         return not self.private_work_snapshot().pending_disk_notification
