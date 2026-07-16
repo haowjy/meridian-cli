@@ -245,9 +245,8 @@ async def test_spawn_manager_pi_cleanup_escalation_does_not_block_terminal_succe
         assert fake_connection.stop_reasons == []
 
         await wait_until(
-            lambda: "cleanup_escalated"
-            in _read_history_phases(tmp_path, spawn_id),
-            description="cleanup_escalated lifecycle phase",
+            lambda: "cleanup_completed" in _read_history_phases(tmp_path, spawn_id),
+            description="cleanup_completed lifecycle phase",
         )
         history = _read_history(tmp_path, spawn_id)
         cleanup_escalated_phases = _read_phase_events(
@@ -263,10 +262,90 @@ async def test_spawn_manager_pi_cleanup_escalation_does_not_block_terminal_succe
         assert cleanup_running_phases
         assert cleanup_escalated_phases
         assert cleanup_escalated_phases[-1]["payload"].get("reason") == "abort_grace_expired"
-        assert history.index(cleanup_running_phases[-1]) < history.index(
-            cleanup_escalated_phases[-1]
-        )
+        cleanup_phases = [
+            event["payload"]["phase"]
+            for event in history
+            if event["event_type"] == "meridian.pi.lifecycle.phase"
+            and str(event["payload"]["phase"]).startswith("cleanup_")
+        ]
+        assert cleanup_phases == [
+            "cleanup_running",
+            "cleanup_escalated",
+            "cleanup_completed",
+        ]
     finally:
+        await manager.stop_spawn(spawn_id)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("stop_error", "expected_phases"),
+    [
+        (None, ["cleanup_running", "cleanup_completed"]),
+        ("stop failed", ["cleanup_running", "cleanup_failed"]),
+    ],
+)
+async def test_spawn_manager_pi_cleanup_publishes_terminal_before_async_teardown(
+    tmp_path: Path,
+    stop_error: str | None,
+    expected_phases: list[str],
+) -> None:
+    stop_started = asyncio.Event()
+    allow_stop = asyncio.Event()
+
+    class _GatedStopConnection(_FakePiConnection):
+        async def stop(
+            self,
+            *,
+            reason: str | None = None,
+            progress: StopProgressCallback | None = None,
+        ) -> StopResult:
+            _ = progress
+            self.stop_reasons.append(reason)
+            stop_started.set()
+            await allow_stop.wait()
+            if stop_error is not None:
+                raise RuntimeError(stop_error)
+            self._state = "stopped"
+            return StopResult()
+
+    fake_connection = _GatedStopConnection(
+        [
+            _pi_event("session", {"id": "ses-pi"}),
+            _pi_event(
+                "agent_end",
+                {"messages": [{"role": "assistant", "stopReason": "stop"}]},
+            ),
+        ]
+    )
+    spawn_id = SpawnId(f"p-pi-cleanup-{'failed' if stop_error else 'completed'}")
+    manager = await _start_pi_manager(tmp_path, fake_connection, spawn_id=spawn_id)
+
+    try:
+        outcome = await manager.wait_for_completion(spawn_id)
+        assert outcome is not None
+        assert outcome.status == "succeeded"
+        await asyncio.wait_for(stop_started.wait(), timeout=1.0)
+        assert fake_connection.stop_reasons == ["quiescent"]
+
+        allow_stop.set()
+        final_phase = expected_phases[-1]
+        await wait_until(
+            lambda: final_phase in _read_history_phases(tmp_path, spawn_id),
+            description=f"{final_phase} lifecycle phase",
+        )
+        history = _read_history(tmp_path, spawn_id)
+        cleanup_events = [
+            event
+            for event in history
+            if event["event_type"] == "meridian.pi.lifecycle.phase"
+            and str(event["payload"]["phase"]).startswith("cleanup_")
+        ]
+        assert [event["payload"]["phase"] for event in cleanup_events] == expected_phases
+        if stop_error is not None:
+            assert cleanup_events[-1]["payload"]["error"] == stop_error
+    finally:
+        allow_stop.set()
         await manager.stop_spawn(spawn_id)
 
 
