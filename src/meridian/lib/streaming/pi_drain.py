@@ -200,8 +200,9 @@ class PiCompletionEvidence:
 
     def _assessment(self, reconciled_descendants: WorkAssessment) -> WorkAssessment:
         descendants = self._persisted_descendant_assessment(reconciled_descendants)
-        if descendants.disposition == "unknown":
-            failure = descendants.failure
+        private_failure = self.quiescence_tracker.evidence_failure()
+        if descendants.disposition == "unknown" or private_failure is not None:
+            failure = descendants.failure or private_failure
             assert failure is not None
             signature = ("unknown", failure.code, failure.detail)
             return WorkAssessment(

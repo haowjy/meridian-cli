@@ -16,6 +16,8 @@ from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.safety.permissions import UnsafeNoOpPermissionResolver
 from meridian.lib.state import spawn_store
 from meridian.lib.state.spawn_signals import write_spawn_signal
+from meridian.lib.streaming import descendant_evidence as descendant_evidence_module
+from meridian.lib.streaming import pi_completion_profile as pi_completion_profile_module
 from meridian.lib.streaming import pi_drain as pi_drain_module
 from meridian.lib.streaming.completion_nudge import PI_COMPLETION_NUDGE_MESSAGE
 from meridian.lib.streaming.drain_coordinator import DrainExitDecision, DrainLoopDecision
@@ -268,6 +270,129 @@ async def test_done_override_wins_over_expired_child_wave_with_all_blockers(
         assert decision.recorded_outcome == _SUCCESS
         assert started.cleanups == []
         assert started.nudges == []
+    finally:
+        await coordinator.stop()
+
+
+@pytest.mark.asyncio
+async def test_done_fails_closed_when_pi_descendant_evidence_stays_unreadable(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    started = await _start_coordinator(
+        tmp_path,
+        monkeypatch,
+    )
+    coordinator = started.coordinator
+    monkeypatch.setattr(
+        pi_completion_profile_module,
+        "PI_EVIDENCE_UNREADABLE_TIMEOUT_SECONDS",
+        5.0,
+    )
+
+    def _fail_list_spawns(_runtime_root: Path) -> object:
+        raise OSError("tree store unavailable")
+
+    monkeypatch.setattr(
+        descendant_evidence_module.spawn_store,
+        "list_spawns",
+        _fail_list_spawns,
+    )
+    try:
+        await coordinator.observe_event(_AGENT_END, "idle")
+        terminal = await coordinator.handle_terminal_event(
+            _AGENT_END,
+            _SUCCESS,
+            _TERMINATE,
+        )
+        write_spawn_signal(tmp_path, "p1", "done")
+
+        waiting = await coordinator.handle_timeout()
+
+        assert terminal.recorded_outcome is None
+        assert waiting.recorded_outcome is None
+        assert coordinator.deadline_monotonic == 105.0
+
+        started.clock.advance(5.0)
+        expired = await coordinator.handle_timeout()
+
+        _assert_failed(expired, "pi_evidence_unreadable")
+        assert started.cleanups == []
+    finally:
+        await coordinator.stop()
+
+
+@pytest.mark.asyncio
+async def test_done_completes_when_pi_descendant_evidence_recovers(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    started = await _start_coordinator(
+        tmp_path,
+        monkeypatch,
+        child_wave_timeout_seconds=5.0,
+    )
+    coordinator = started.coordinator
+    store_available = False
+    list_spawns = descendant_evidence_module.spawn_store.list_spawns
+
+    def _sometimes_list_spawns(runtime_root: Path) -> object:
+        if not store_available:
+            raise OSError("tree store unavailable")
+        return list_spawns(runtime_root)
+
+    monkeypatch.setattr(
+        descendant_evidence_module.spawn_store,
+        "list_spawns",
+        _sometimes_list_spawns,
+    )
+    try:
+        await coordinator.observe_event(_AGENT_END, "idle")
+        await coordinator.handle_terminal_event(_AGENT_END, _SUCCESS, _TERMINATE)
+        write_spawn_signal(tmp_path, "p1", "done")
+        waiting = await coordinator.handle_timeout()
+
+        store_available = True
+        started.clock.advance(0.25)
+        recovered = await coordinator.handle_timeout()
+
+        assert waiting.recorded_outcome is None
+        assert recovered.recorded_outcome == _SUCCESS
+    finally:
+        await coordinator.stop()
+
+
+@pytest.mark.asyncio
+async def test_done_fails_closed_on_pi_private_work_read_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    started = await _start_coordinator(
+        tmp_path,
+        monkeypatch,
+        child_wave_timeout_seconds=5.0,
+    )
+    coordinator = started.coordinator
+    records_path = tmp_path / "pi-bash" / "p1" / "bash-records.json"
+    records_path.write_text("{not json", encoding="utf-8")
+    try:
+        await coordinator.observe_event(_AGENT_END, "idle")
+        terminal = await coordinator.handle_terminal_event(
+            _AGENT_END,
+            _SUCCESS,
+            _TERMINATE,
+        )
+        write_spawn_signal(tmp_path, "p1", "done")
+        waiting = await coordinator.handle_timeout()
+
+        assert terminal.recorded_outcome is None
+        assert waiting.recorded_outcome is None
+
+        started.clock.advance(5.0)
+        expired = await coordinator.handle_timeout()
+
+        _assert_failed(expired, "pi_evidence_unreadable")
+        assert started.cleanups == []
     finally:
         await coordinator.stop()
 

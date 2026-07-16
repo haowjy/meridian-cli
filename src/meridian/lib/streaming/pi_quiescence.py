@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from meridian.lib.core.types import SpawnId
+from meridian.lib.streaming.completion_contracts import EvidenceFailure
 from meridian.lib.streaming.disk_watcher import PiDiskWatcher
 
 
@@ -92,6 +93,11 @@ class PiQuiescenceTracker:
 
     def has_pending_disk_notification(self) -> bool:
         return not self._no_pending_disk_notifications()
+
+    def evidence_failure(self) -> EvidenceFailure | None:
+        if self._disk_watcher is None:
+            return None
+        return self._disk_watcher.evidence_failure()
 
     def is_quiescent(self) -> bool:
         if not self.enabled or not self._parent_idle:

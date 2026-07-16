@@ -310,7 +310,7 @@ async def test_done_signal_at_terminalresident_event_wins_over_outstanding_child
 
 
 @pytest.mark.asyncio
-async def test_terminal_done_completes_when_descendant_evidence_read_fails(
+async def test_terminal_done_fails_closed_when_descendant_evidence_unreadable(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -318,6 +318,8 @@ async def test_terminal_done_completes_when_descendant_evidence_read_fails(
     from meridian.lib.streaming import resident_drain as resident_drain_module
 
     start_row(tmp_path, "p1", HarnessId.CODEX, None)
+    clock = FakeClock(start=100.0)
+    monkeypatch.setattr(resident_drain_module.time, "monotonic", clock.monotonic)
     connection = FakeResidentConnection(HarnessId.CODEX)
     coordinator = ResidentDrainCoordinator.for_connection(
         project_root=tmp_path,
@@ -346,9 +348,65 @@ async def test_terminal_done_completes_when_descendant_evidence_read_fails(
         DrainAction(terminate=True, emit_turn_boundary=False),
     )
 
-    assert decision.recorded_outcome == terminal
-    assert decision.emit_turn_boundary is False
-    assert connection.fake_resident_backend.awaiting_done_values == [False]
+    assert decision.recorded_outcome is None
+    assert decision.emit_turn_boundary is True
+    assert connection.fake_resident_backend.awaiting_done_values == [True]
+
+    clock.advance(30.0)
+    expired = await coordinator.handle_timeout()
+
+    assert expired.recorded_outcome is not None
+    assert expired.recorded_outcome.status == "failed"
+    assert expired.recorded_outcome.exit_code == 1
+    assert expired.recorded_outcome.error == "resident_evidence_unreadable"
+
+
+@pytest.mark.asyncio
+async def test_terminal_done_completes_when_descendant_evidence_recovers(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from meridian.lib.state.spawn_signals import write_spawn_signal
+    from meridian.lib.streaming import resident_drain as resident_drain_module
+
+    clock = FakeClock(start=100.0)
+    monkeypatch.setattr(resident_drain_module.time, "monotonic", clock.monotonic)
+    start_row(tmp_path, "p1", HarnessId.CODEX, None)
+    connection = FakeResidentConnection(HarnessId.CODEX)
+    coordinator = ResidentDrainCoordinator.for_connection(
+        project_root=tmp_path,
+        runtime_root=tmp_path,
+        spawn_id=SpawnId("p1"),
+        receiver=connection,
+        resident_backend=connection.resident_backend,
+        deadline_seconds=30.0,
+        poll_seconds=0.01,
+    )
+    evidence_readable = False
+
+    def _read_descendant_blockers(*_args: object) -> tuple[()]:
+        if not evidence_readable:
+            raise OSError("descendant evidence unavailable")
+        return ()
+
+    monkeypatch.setattr(
+        resident_drain_module,
+        "_outstanding_descendant_blockers",
+        _read_descendant_blockers,
+    )
+    write_spawn_signal(tmp_path, "p1", "done")
+    terminal = TerminalEventOutcome(status="succeeded", exit_code=0)
+
+    waiting = await coordinator.handle_terminal_event(
+        resident_event(HarnessId.CODEX, "turn/completed", {}),
+        terminal,
+        DrainAction(terminate=True, emit_turn_boundary=False),
+    )
+    evidence_readable = True
+    recovered = await coordinator.handle_timeout()
+
+    assert waiting.recorded_outcome is None
+    assert recovered.recorded_outcome == terminal
 
 
 @pytest.mark.asyncio

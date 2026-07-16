@@ -25,8 +25,6 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Pi child-wave timeouts remain terminal when tracked-child cleanup fails.
 - Completion waits now retain stable readiness windows across early wakes and preserve
   one absolute deadline.
-- Resident done signals again complete successful candidates when descendant evidence
-  is unavailable.
 - Persisted completion activity now survives a concurrent auxiliary wake, and typed
   post-persist evidence failures can finalize through profile policy immediately.
 - Pi micro-drain candidates now survive auxiliary blockers until the original
@@ -35,6 +33,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   failures, and keeps stream-exit policy inside the shared coordinator.
 - Pi reconciled-tree waits poll through nested descendant/report transitions and invoke
   canonical descendant cleanup on process exit even without Pi lifecycle handles.
+- Resident and Pi `done` signals now wait on unreadable completion evidence and fail
+  explicitly if it stays unavailable; Pi private-work read failures now enter that typed
+  unknown-evidence path.
 
 ## [0.3.31] - 2026-07-10
 

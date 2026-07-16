@@ -42,6 +42,7 @@ if TYPE_CHECKING:
     from meridian.lib.streaming.spawn_session import DrainOutcome
 
 PI_MICRO_DRAIN_TIMEOUT_SECONDS: float = 0.05
+PI_EVIDENCE_UNREADABLE_TIMEOUT_SECONDS: float = 300.0
 PI_DONE_NUDGE_IDLE_DELAY_SECONDS: float = 5.0
 
 EmitPiPhase = Callable[..., None]
@@ -119,6 +120,7 @@ class PiCompletionProfile:
         self.done_nudge_interval_seconds = COMPLETION_NUDGE_INTERVAL_SECONDS
         self.next_done_nudge_monotonic: float | None = None
         self._done_requested = False
+        self._awaiting_readable_evidence = False
         self._cleanup: PiCompletionCleanupPort | None = None
 
     def bind_cleanup(self, cleanup: PiCompletionCleanupPort) -> None:
@@ -129,6 +131,7 @@ class PiCompletionProfile:
 
     def stop(self) -> None:
         self._clear_done_nudge_timer()
+        self._awaiting_readable_evidence = False
 
     def emit(self, phase: str, **payload: object) -> None:
         self._emit(phase, **payload)
@@ -180,6 +183,9 @@ class PiCompletionProfile:
             )
         ):
             return self._evaluate_timeout(context)
+        candidate = context.candidate or self.last_successful_terminal
+        if context.directives.done and candidate is not None:
+            return self._evaluate_done(context, candidate)
         if (
             self.quiescence_enabled
             and (context.candidate is not None or self.last_successful_terminal is not None)
@@ -196,17 +202,26 @@ class PiCompletionProfile:
         return ProfileDecision(action="wait", reset_deadline=True)
 
     def deadline_for(self, decision: ProfileDecision, now: float) -> float | None:
-        del now
         if not self.quiescence_enabled or decision.action not in {
             "wait",
             "stabilize",
             "abandon_candidate",
         }:
             return None
+        unreadable_deadline = None
+        if self._awaiting_readable_evidence and decision.action == "wait":
+            timeout_seconds = self.child_wave_timeout_seconds
+            if timeout_seconds is None or timeout_seconds <= 0:
+                timeout_seconds = PI_EVIDENCE_UNREADABLE_TIMEOUT_SECONDS
+            unreadable_deadline = now + timeout_seconds
         notification_deadline = self._next_notification_deadline()
         deadlines = [
             deadline
-            for deadline in (notification_deadline, self._active_child_wave_deadline())
+            for deadline in (
+                unreadable_deadline,
+                notification_deadline,
+                self._active_child_wave_deadline(),
+            )
             if deadline is not None
         ]
         return min(deadlines) if deadlines else None
@@ -464,8 +479,7 @@ class PiCompletionProfile:
     def _evaluate_timeout(self, context: CompletionEvaluation) -> ProfileDecision:
         candidate = context.candidate or self.last_successful_terminal
         if context.directives.done and candidate is not None:
-            self._clear_done_nudge_timer()
-            return ProfileDecision(action="complete", outcome=candidate)
+            return self._evaluate_done(context, candidate)
 
         expired_notification = self.tracker.pop_expired_notification(context.now)
         if expired_notification is not None:
@@ -492,6 +506,28 @@ class PiCompletionProfile:
             )
             return ProfileDecision(action="wait", nudge="normal", reset_deadline=True)
         return ProfileDecision(action="wait", reset_deadline=True)
+
+    def _evaluate_done(
+        self,
+        context: CompletionEvaluation,
+        candidate: TerminalEventOutcome,
+    ) -> ProfileDecision:
+        self._clear_done_nudge_timer()
+        if context.assessment.disposition != "unknown":
+            self._awaiting_readable_evidence = False
+            return ProfileDecision(action="complete", outcome=candidate)
+        if context.deadline_expired:
+            self._awaiting_readable_evidence = False
+            return ProfileDecision(
+                action="fail",
+                outcome=_terminal_outcome(
+                    status="failed",
+                    exit_code=1,
+                    error="pi_evidence_unreadable",
+                ),
+            )
+        self._awaiting_readable_evidence = True
+        return ProfileDecision(action="wait")
 
     def _start_micro_drain(self) -> None:
         self.micro_drain_active = True

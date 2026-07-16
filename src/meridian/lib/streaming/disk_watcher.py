@@ -25,6 +25,7 @@ from watchfiles import awatch  # pyright: ignore[reportUnknownVariableType]
 from meridian.lib.core.spawn_lifecycle import TERMINAL_SPAWN_STATUSES
 from meridian.lib.core.types import SpawnId
 from meridian.lib.state import spawn_store
+from meridian.lib.streaming.completion_contracts import EvidenceFailure
 
 # Bounded poll while known or unresolved children may still be pending. ``awatch``
 # on ``spawns/`` is non-recursive, so ``spawns/<child>/state.json`` updates do
@@ -89,6 +90,7 @@ class PiDiskWatcher:
         self._state_changed = asyncio.Event()
         self._change_generation = 0
         self._delivered_change_generation = 0
+        self._read_failures: dict[Path, EvidenceFailure] = {}
 
     async def start(self) -> None:
         self._spawns_dir.mkdir(parents=True, exist_ok=True)
@@ -195,6 +197,11 @@ class PiDiskWatcher:
     def last_notification_ts(self) -> float | None:
         return self._last_notification_ts
 
+    def evidence_failure(self) -> EvidenceFailure | None:
+        if not self._read_failures:
+            return None
+        return self._read_failures[min(self._read_failures, key=str)]
+
     async def _watch_spawns_dir(self) -> None:
         """Watch for new child directories under spawns/.
 
@@ -215,7 +222,7 @@ class PiDiskWatcher:
                 ):
                     # If state.json isn't written yet, force_rescan() at next idle catches it.
                     state_path = path / "state.json"
-                    data = _read_json_object(state_path)
+                    data = self._read_json_object(state_path)
                     if data.get("parent_id") == self._current_spawn_id:
                         self._child_spawns[path.name] = _CONFIRMED_CHILD
                         found_new = True
@@ -238,9 +245,15 @@ class PiDiskWatcher:
         Also called on every force_rescan() to catch directories missed
         by the inotify watcher (e.g. state.json not yet written).
         """
-        if not self._spawns_dir.is_dir():
+        if not self._spawns_dir.exists():
             return
-        for child in self._spawns_dir.iterdir():
+        try:
+            children = tuple(self._spawns_dir.iterdir())
+        except OSError as exc:
+            self._record_read_failure(self._spawns_dir, str(exc))
+            return
+        self._clear_read_failure(self._spawns_dir)
+        for child in children:
             if not child.is_dir():
                 continue
             if child.name == self._current_spawn_id:
@@ -248,7 +261,7 @@ class PiDiskWatcher:
             if child.name in self._child_spawns:
                 continue
             state_path = child / "state.json"
-            data = _read_json_object(state_path)
+            data = self._read_json_object(state_path)
             parent_id = data.get("parent_id")
             if parent_id == self._current_spawn_id:
                 self._child_spawns[child.name] = _CONFIRMED_CHILD
@@ -266,7 +279,7 @@ class PiDiskWatcher:
                 self._child_spawns[spawn_id] = _REJECTED_CHILD
                 continue
             state_path = self._spawns_dir / spawn_id / "state.json"
-            data = _read_json_object(state_path)
+            data = self._read_json_object(state_path)
             parent_id = data.get("parent_id")
             if parent_id == self._current_spawn_id:
                 self._child_spawns[spawn_id] = _CONFIRMED_CHILD
@@ -285,7 +298,7 @@ class PiDiskWatcher:
                 count += 1
                 continue
             state_path = self._spawns_dir / spawn_id / "state.json"
-            data = _read_json_object(state_path)
+            data = self._read_json_object(state_path)
             if data.get("parent_id") != self._current_spawn_id:
                 self._child_spawns[spawn_id] = _REJECTED_CHILD
                 continue
@@ -322,7 +335,7 @@ class PiDiskWatcher:
         )
 
     def _scan_tracked_bash_bg(self) -> bool:
-        data = _read_json_object(self._bash_records_path)
+        data = self._read_json_object(self._bash_records_path)
         records_raw = data.get("records")
         if not isinstance(records_raw, dict):
             return False
@@ -340,21 +353,50 @@ class PiDiskWatcher:
         return False
 
     def _read_last_notification_ts(self) -> float | None:
-        data = _read_json_object(self._notification_marker_path)
+        data = self._read_json_object(self._notification_marker_path)
         raw = data.get("ts_epoch_secs")
         if isinstance(raw, int | float):
             return float(raw)
         return None
 
+    def _read_json_object(self, path: Path) -> dict[str, Any]:
+        try:
+            raw = path.read_text(encoding="utf-8")
+        except FileNotFoundError:
+            self._clear_read_failure(path)
+            return {}
+        except OSError as exc:
+            self._record_read_failure(path, str(exc))
+            return {}
+        try:
+            data = json.loads(raw)
+        except json.JSONDecodeError:
+            self._record_read_failure(path, "invalid JSON")
+            return {}
+        if not isinstance(data, dict):
+            self._record_read_failure(path, "expected JSON object")
+            return {}
+        self._clear_read_failure(path)
+        return cast("dict[str, Any]", data)
+
+    def _record_read_failure(self, path: Path, detail: str) -> None:
+        failure = EvidenceFailure(
+            code="pi_private_work_read_failed",
+            detail=f"{path}: {detail}",
+        )
+        if self._read_failures.get(path) == failure:
+            return
+        self._read_failures[path] = failure
+        self._change_generation += 1
+        self._state_changed.set()
+
+    def _clear_read_failure(self, path: Path) -> None:
+        if self._read_failures.pop(path, None) is None:
+            return
+        self._change_generation += 1
+        self._state_changed.set()
+
 
 def _consume_task_result(task: asyncio.Task[None]) -> None:
     with suppress(asyncio.CancelledError, Exception):
         task.result()
-
-
-def _read_json_object(path: Path) -> dict[str, Any]:
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return {}
-    return cast("dict[str, Any]", data) if isinstance(data, dict) else {}

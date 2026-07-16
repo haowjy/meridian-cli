@@ -64,6 +64,11 @@ changes, and the drain loop re-evaluates quiescence on those wakeups. Terminal-e
 micro-drain re-checks disk before accepting success so a just-written child row,
 bash update, or notification marker cannot be missed.
 
+An absent private-work file means no blocker. A file that exists but cannot be read or
+parsed produces typed unknown evidence instead of an empty snapshot. `done` waits for
+that evidence to recover and fails explicitly if it remains unknown through the single
+completion deadline.
+
 The direct-row watcher cannot observe nested descendant state or report-file changes.
 After a successful terminal candidate, Pi therefore also polls the reconciled tree on a
 bounded cadence until the candidate completes or the drain ends.

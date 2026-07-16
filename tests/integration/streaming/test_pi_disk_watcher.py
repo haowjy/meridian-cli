@@ -11,12 +11,48 @@ from pathlib import Path
 import pytest
 
 from meridian.lib.core.types import SpawnId
+from meridian.lib.streaming.completion_contracts import EvidenceFailure
 from meridian.lib.streaming.disk_watcher import PiDiskWatcher
 
 
 def _write_json(path: Path, payload: object) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload), encoding="utf-8")
+
+
+@pytest.mark.asyncio
+async def test_hard_private_work_read_error_surfaces_typed_failure(tmp_path: Path) -> None:
+    parent_id = SpawnId("p-parent")
+    records_path = tmp_path / "pi-bash" / str(parent_id) / "bash-records.json"
+    records_path.parent.mkdir(parents=True)
+    records_path.write_text("{not json", encoding="utf-8")
+
+    watcher = PiDiskWatcher(tmp_path, parent_id)
+    await watcher.start()
+    try:
+        failure = watcher.evidence_failure()
+
+        assert failure == EvidenceFailure(
+            code="pi_private_work_read_failed",
+            detail=f"{records_path}: invalid JSON",
+        )
+
+        _write_json(records_path, {"records": {}})
+        await watcher.force_rescan()
+
+        assert watcher.evidence_failure() is None
+    finally:
+        await watcher.stop()
+
+
+@pytest.mark.asyncio
+async def test_missing_private_work_file_is_not_an_evidence_failure(tmp_path: Path) -> None:
+    watcher = PiDiskWatcher(tmp_path, SpawnId("p-parent"))
+    await watcher.start()
+    try:
+        assert watcher.evidence_failure() is None
+    finally:
+        await watcher.stop()
 
 
 def test_discover_only_finds_own_children(tmp_path: Path) -> None:
