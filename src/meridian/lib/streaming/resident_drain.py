@@ -126,6 +126,9 @@ class _ResidentCompletionProfile:
         self._awaiting_done = False
         self._next_nudge_at: float | None = None
 
+    def allows_evaluation_without_candidate(self) -> bool:
+        return False
+
     def consume_directives(
         self,
         state: CompletionState,

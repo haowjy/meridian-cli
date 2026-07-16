@@ -68,11 +68,18 @@ def _unknown(generation: int = 1) -> WorkAssessment:
 
 
 class _Evidence:
-    def __init__(self, *assessments: WorkAssessment) -> None:
+    def __init__(
+        self,
+        *assessments: WorkAssessment,
+        due_at: float | None = None,
+        wants_aux_wake: bool = False,
+    ) -> None:
         self.assessments = deque(assessments)
         self.last = assessments[-1]
         self.assess_calls: list[AssessmentTrigger] = []
         self.persisted_decisions: deque[EvidenceEventDecision] = deque()
+        self.due_at = due_at
+        self.aux_wake = wants_aux_wake
 
     async def start(self) -> None:
         return
@@ -99,13 +106,14 @@ class _Evidence:
         return self.last
 
     def next_due_at(self) -> float | None:
-        return None
+        return self.due_at
 
     async def handle_due(self) -> EvidenceEventDecision:
+        self.due_at = None
         return EvidenceEventDecision()
 
     def wants_aux_wake(self) -> bool:
-        return False
+        return self.aux_wake
 
     async def wait_for_change(self) -> None:
         return
@@ -118,14 +126,19 @@ class _Profile:
         deadline_seconds: float = 10.0,
         stabilization_seconds: float = 0.0,
         hold: bool = False,
+        allows_without_candidate: bool = False,
     ) -> None:
         self.deadline_seconds = deadline_seconds
         self.stabilization = stabilization_seconds
         self.hold = hold
+        self.allows_without_candidate = allows_without_candidate
         self.deadline_at: float | None = None
         self.done_requested = False
         self.directives: deque[CompletionDirectives] = deque()
         self.evaluations: list[CompletionEvaluation] = []
+
+    def allows_evaluation_without_candidate(self) -> bool:
+        return self.allows_without_candidate
 
     def consume_directives(
         self,
@@ -140,6 +153,8 @@ class _Profile:
     def evaluate(self, context: CompletionEvaluation) -> ProfileDecision:
         self.evaluations.append(context)
         candidate = context.candidate or context.terminal_outcome
+        if candidate is None:
+            return ProfileDecision(action="wait")
         assert candidate is not None
         if context.evidence_failure is not None:
             return ProfileDecision(action="fail", outcome=_EVIDENCE_FAILURE)
@@ -243,6 +258,49 @@ def _coordinator(
         ),
         selected_cleanup,
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    (
+        "allows_without_candidate",
+        "expected_timeout",
+        "expected_aux_wake",
+        "expected_phase",
+        "expected_deadline",
+    ),
+    [
+        (False, None, False, "running", None),
+        (True, 5.0, True, "waiting", 10.0),
+    ],
+)
+async def test_profile_policy_controls_candidate_free_evaluation(
+    allows_without_candidate: bool,
+    expected_timeout: float | None,
+    expected_aux_wake: bool,
+    expected_phase: str,
+    expected_deadline: float | None,
+) -> None:
+    clock = FakeClock()
+    evidence = _Evidence(
+        _ready(),
+        due_at=5.0,
+        wants_aux_wake=True,
+    )
+    coordinator, _ = _coordinator(
+        clock,
+        evidence,
+        _Profile(allows_without_candidate=allows_without_candidate),
+    )
+
+    assert coordinator.next_timeout() == expected_timeout
+    assert coordinator.wants_aux_wake() is expected_aux_wake
+
+    decision = await coordinator.handle_timeout()
+
+    assert decision.recorded_outcome is None
+    assert coordinator.state.phase == expected_phase
+    assert coordinator.deadline_monotonic == expected_deadline
 
 
 @pytest.mark.asyncio

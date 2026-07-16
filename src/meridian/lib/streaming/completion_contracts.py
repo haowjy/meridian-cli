@@ -206,6 +206,10 @@ class CompletionEvidence(Protocol):
 
 
 class CompletionProfile(Protocol):
+    def allows_evaluation_without_candidate(self) -> bool:
+        """Return policy that is pure and stable for the coordinator's lifetime."""
+        ...
+
     def consume_directives(
         self,
         state: CompletionState,

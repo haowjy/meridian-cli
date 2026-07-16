@@ -49,13 +49,11 @@ class CompletionCoordinator:
         profile: CompletionProfile,
         cleanup: CompletionCleanup,
         clock: Callable[[], float] = time.monotonic,
-        evaluate_without_candidate: bool = False,
     ) -> None:
         self._evidence = evidence
         self._profile = profile
         self._cleanup = cleanup
         self._clock = clock
-        self._evaluate_without_candidate = evaluate_without_candidate
         self._phase: CompletionPhase = "running"
         self._candidate: TerminalEventOutcome | None = None
         self._assessment: WorkAssessment | None = None
@@ -119,7 +117,7 @@ class CompletionCoordinator:
             self._terminal_published
             or (
                 self._candidate is None
-                and not self._evaluate_without_candidate
+                and not self._profile.allows_evaluation_without_candidate()
             )
         ):
             return None
@@ -141,7 +139,10 @@ class CompletionCoordinator:
     async def observe_event(self, event: HarnessEvent, transition: str | None) -> bool:
         self.note_activity_transition(transition)
         decision = await self._evidence.observe_event(event, transition)
-        if not decision.duplicate_canonical_event and self._evaluate_without_candidate:
+        if (
+            not decision.duplicate_canonical_event
+            and self._profile.allows_evaluation_without_candidate()
+        ):
             self._refresh_profile_deadline()
         return decision.duplicate_canonical_event
 
@@ -181,7 +182,8 @@ class CompletionCoordinator:
 
     def wants_aux_wake(self) -> bool:
         return (
-            self._candidate is not None or self._evaluate_without_candidate
+            self._candidate is not None
+            or self._profile.allows_evaluation_without_candidate()
         ) and self._evidence.wants_aux_wake()
 
     async def wait_for_aux_wake(self) -> None:
@@ -254,7 +256,8 @@ class CompletionCoordinator:
 
     async def _evaluate_wait(self, trigger: AssessmentTrigger) -> DrainLoopDecision:
         if self._terminal_published or (
-            self._candidate is None and not self._evaluate_without_candidate
+            self._candidate is None
+            and not self._profile.allows_evaluation_without_candidate()
         ):
             return DrainLoopDecision()
         now = self._clock()

@@ -416,7 +416,6 @@ class PiDrainCoordinator:
             profile=profile,
             cleanup=cleanup,
             clock=clock,
-            evaluate_without_candidate=True,
         )
         return cls(
             coordinator=coordinator,

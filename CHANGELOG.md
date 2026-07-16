@@ -23,6 +23,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   categorized snapshots fed by lifecycle and disk observers.
 - Pi production cleanup now reads tracked process handles directly from the private-work
   ledger instead of routing through the lifecycle tracker.
+- Completion profiles now own whether the coordinator evaluates without a terminal
+  candidate.
 
 ### Fixed
 - Spawn rows now appear only after their initial state and prompt are durably staged.

@@ -128,6 +128,9 @@ class PiCompletionProfile:
         self._notification_timeout_error: str | None = None
         self._cleanup: PiCompletionCleanupPort | None = None
 
+    def allows_evaluation_without_candidate(self) -> bool:
+        return True
+
     def bind_cleanup(self, cleanup: PiCompletionCleanupPort) -> None:
         self._cleanup = cleanup
 
