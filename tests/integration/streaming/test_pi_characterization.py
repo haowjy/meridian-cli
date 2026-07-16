@@ -610,6 +610,33 @@ async def test_terminal_with_blockers_emits_quiescence_deferred(
 
 
 @pytest.mark.asyncio
+async def test_quiescence_deferred_categorizes_child_and_bash_blockers(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _start_row(tmp_path, "p1", parent_id=None)
+    _start_row(tmp_path, "p2", parent_id="p1")
+    _write_running_bash(tmp_path, _SPAWN_ID)
+    started = await _start_coordinator(tmp_path, monkeypatch)
+    coordinator = started.coordinator
+    try:
+        await coordinator.observe_event(_tracked_child_start(), None)
+        await coordinator.observe_event(_AGENT_END, "idle")
+
+        await coordinator.handle_terminal_event(_AGENT_END, _SUCCESS, _TERMINATE)
+
+        deferred = [
+            phase for phase in started.phases if phase["phase"] == "quiescence_deferred"
+        ]
+        assert deferred[-1]["persisted_descendant_count"] == 1
+        assert deferred[-1]["rowless_subspawn_count"] == 1
+        assert deferred[-1]["allocation_uncertainty_count"] == 0
+        assert deferred[-1]["tracked_bash_count"] == 1
+    finally:
+        await coordinator.stop()
+
+
+@pytest.mark.asyncio
 async def test_pi_blocker_accessor_errors_propagate(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

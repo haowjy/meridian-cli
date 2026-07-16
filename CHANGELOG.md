@@ -8,6 +8,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Streaming completion now has shared evidence, profile, cleanup contracts and a
   profile-driven coordinator for candidate, deadline, stabilization, and cleanup mechanics.
 - Pi completion emits direct-watcher versus reconciled-tree comparison telemetry.
+- Pi deferred lifecycle telemetry exposes categorized persisted-descendant, rowless,
+  allocation-uncertainty, and tracked-bash counts alongside compatibility aggregates.
 
 ### Changed
 - Phase 0 drain characterization now uses observable effects and fake clocks.
