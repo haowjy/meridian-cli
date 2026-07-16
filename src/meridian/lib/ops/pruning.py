@@ -231,16 +231,8 @@ def prune_orphan_project_dirs(orphans: list[OrphanProjectDir]) -> int:
 
     removed = 0
     for orphan in orphans:
-        runtime_root = Path(orphan.path)
-        paths = RuntimePaths.from_root_dir(runtime_root)
-        with lock_file(paths.spawns_flock):
-            if any(
-                is_active_spawn_status(spawn.status)
-                for spawn in spawn_store.list_spawns(runtime_root)
-            ):
-                continue
-            if _prune_dir(runtime_root):
-                removed += 1
+        if _prune_dir(Path(orphan.path)):
+            removed += 1
     return removed
 
 

@@ -1,0 +1,2 @@
+prune_orphan_project_dirs deletes an entire runtime root that may contain the in-root spawns.jsonl.flock; a concurrent spawn operation could see the lock inode deleted. Pre-existing, out of P4a scope.
+If addressed, design an external/stable lock identity via refactor-by-design (do not relocate spawns_flock ad hoc).
