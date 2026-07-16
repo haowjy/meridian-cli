@@ -145,7 +145,7 @@ class PiCompletionProfile:
         trigger: AssessmentTrigger,
     ) -> CompletionDirectives:
         if (
-            trigger == "timeout"
+            trigger in {"timeout", "evidence_due"}
             and state.phase != "stabilizing"
             and self.last_successful_terminal is not None
             and not self._done_requested

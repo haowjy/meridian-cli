@@ -223,6 +223,8 @@ class PiDiskWatcher:
                     # If state.json isn't written yet, force_rescan() at next idle catches it.
                     state_path = path / "state.json"
                     data = self._read_json_object(state_path)
+                    if data is None:
+                        continue
                     if data.get("parent_id") == self._current_spawn_id:
                         self._child_spawns[path.name] = _CONFIRMED_CHILD
                         found_new = True
@@ -262,6 +264,8 @@ class PiDiskWatcher:
                 continue
             state_path = child / "state.json"
             data = self._read_json_object(state_path)
+            if data is None:
+                continue
             parent_id = data.get("parent_id")
             if parent_id == self._current_spawn_id:
                 self._child_spawns[child.name] = _CONFIRMED_CHILD
@@ -280,6 +284,8 @@ class PiDiskWatcher:
                 continue
             state_path = self._spawns_dir / spawn_id / "state.json"
             data = self._read_json_object(state_path)
+            if data is None:
+                continue
             parent_id = data.get("parent_id")
             if parent_id == self._current_spawn_id:
                 self._child_spawns[spawn_id] = _CONFIRMED_CHILD
@@ -299,6 +305,10 @@ class PiDiskWatcher:
                 continue
             state_path = self._spawns_dir / spawn_id / "state.json"
             data = self._read_json_object(state_path)
+            if data is None:
+                count += 1
+                confirmed_ids.append(spawn_id)
+                continue
             if data.get("parent_id") != self._current_spawn_id:
                 self._child_spawns[spawn_id] = _REJECTED_CHILD
                 continue
@@ -336,6 +346,8 @@ class PiDiskWatcher:
 
     def _scan_tracked_bash_bg(self) -> bool:
         data = self._read_json_object(self._bash_records_path)
+        if data is None:
+            return False
         records_raw = data.get("records")
         if not isinstance(records_raw, dict):
             return False
@@ -354,12 +366,14 @@ class PiDiskWatcher:
 
     def _read_last_notification_ts(self) -> float | None:
         data = self._read_json_object(self._notification_marker_path)
+        if data is None:
+            return None
         raw = data.get("ts_epoch_secs")
         if isinstance(raw, int | float):
             return float(raw)
         return None
 
-    def _read_json_object(self, path: Path) -> dict[str, Any]:
+    def _read_json_object(self, path: Path) -> dict[str, Any] | None:
         try:
             raw = path.read_text(encoding="utf-8")
         except FileNotFoundError:
@@ -367,15 +381,18 @@ class PiDiskWatcher:
             return {}
         except OSError as exc:
             self._record_read_failure(path, str(exc))
-            return {}
+            return None
+        except UnicodeError as exc:
+            self._record_read_failure(path, str(exc))
+            return None
         try:
             data = json.loads(raw)
         except json.JSONDecodeError:
             self._record_read_failure(path, "invalid JSON")
-            return {}
+            return None
         if not isinstance(data, dict):
             self._record_read_failure(path, "expected JSON object")
-            return {}
+            return None
         self._clear_read_failure(path)
         return cast("dict[str, Any]", data)
 

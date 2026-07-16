@@ -307,11 +307,12 @@ async def test_done_fails_closed_when_pi_descendant_evidence_stays_unreadable(
         )
         write_spawn_signal(tmp_path, "p1", "done")
 
+        started.clock.advance(0.25)
         waiting = await coordinator.handle_timeout()
 
         assert terminal.recorded_outcome is None
         assert waiting.recorded_outcome is None
-        assert coordinator.deadline_monotonic == 105.0
+        assert coordinator.deadline_monotonic == 105.25
 
         started.clock.advance(5.0)
         expired = await coordinator.handle_timeout()

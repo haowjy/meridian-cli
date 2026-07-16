@@ -55,6 +55,55 @@ async def test_missing_private_work_file_is_not_an_evidence_failure(tmp_path: Pa
         await watcher.stop()
 
 
+@pytest.mark.asyncio
+async def test_child_state_read_failure_recovers_without_losing_child(tmp_path: Path) -> None:
+    parent_id = SpawnId("p-parent")
+    state_path = tmp_path / "spawns" / "p-child" / "state.json"
+    _write_json(
+        state_path,
+        {"id": "p-child", "parent_id": str(parent_id), "status": "running"},
+    )
+    watcher = PiDiskWatcher(tmp_path, parent_id)
+    await watcher.start()
+    try:
+        state_path.write_text("{not json", encoding="utf-8")
+        await watcher.force_rescan()
+
+        assert watcher.evidence_failure() is not None
+        assert watcher.pending_confirmed_child_ids() == ("p-child",)
+
+        _write_json(
+            state_path,
+            {"id": "p-child", "parent_id": str(parent_id), "status": "succeeded"},
+        )
+        await watcher.force_rescan()
+
+        assert watcher.evidence_failure() is None
+        assert watcher.has_pending_child_spawns() is False
+    finally:
+        await watcher.stop()
+
+
+@pytest.mark.asyncio
+async def test_invalid_utf8_surfaces_typed_failure(tmp_path: Path) -> None:
+    parent_id = SpawnId("p-parent")
+    records_path = tmp_path / "pi-bash" / str(parent_id) / "bash-records.json"
+    records_path.parent.mkdir(parents=True)
+    records_path.write_bytes(b"\xff")
+
+    watcher = PiDiskWatcher(tmp_path, parent_id)
+    await watcher.start()
+    try:
+        failure = watcher.evidence_failure()
+
+        assert failure is not None
+        assert failure.code == "pi_private_work_read_failed"
+        assert failure.detail is not None
+        assert str(records_path) in failure.detail
+    finally:
+        await watcher.stop()
+
+
 def test_discover_only_finds_own_children(tmp_path: Path) -> None:
     """_discover_child_spawns skips dirs with wrong or missing parent_id."""
     parent_id = SpawnId("p-parent")
