@@ -8,8 +8,9 @@ generic streaming runtime remains in [CONTEXT.md](CONTEXT.md).
 Pi spawned sessions complete by quiescence, not by process exit. `SpawnManager` still
 owns the generic event loop (persist → observe → fan-out). `PiDrainCoordinator` is a
 thin compatibility wrapper around the shared `CompletionCoordinator`. `pi_drain.py`
-owns Pi evidence, cleanup, and composition; `pi_completion_profile.py` owns Pi
+owns Pi evidence and cleanup collaborators; `pi_completion_profile.py` owns Pi
 precedence, phases, deadlines, nudges, and stream-exit policy.
+`drain_plan_factory.py` is the composition root for the full Pi drain plan.
 
 ### Ownership Boundary
 
@@ -77,10 +78,11 @@ until the candidate completes or the drain ends.
 When the parent agent is idle and descendant or Pi-private work is still pending,
 `PiCompletionProfile` starts the child-wave deadline. If the deadline expires, it fails
 with `failed` / `pi_child_wave_timeout` rather than letting Pi wait forever. Timeout
-state is latched and its deadline cleared before the single tracked-child cleanup
-attempt. Ordinary cleanup or timeout-phase emission failures are diagnostic and do
-not replace that outcome or restart waiting-phase emission. If the cleanup await is
-cancelled, tracker finalization still runs and cancellation propagates.
+state is latched and its deadline cleared before the outcome publishes. The
+single tracked-work cleanup then runs asynchronously and best-effort. Ordinary
+cleanup or timeout-phase emission failures are diagnostic and do not replace
+that outcome or restart waiting-phase emission. Startup reaper reconciliation
+recovers cleanup interrupted by a crash.
 
 ### Micro-Drain
 

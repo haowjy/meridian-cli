@@ -73,20 +73,21 @@ Role-specific behavior is gated by environment, including `MERIDIAN_PI_SESSION_R
 
 ### Disk-State Coordination
 
-The Python streaming layer treats these files as quiescence inputs:
+The Python streaming layer separates persisted-descendant and Pi-private
+quiescence inputs:
 
-- `runtime_root/spawns/<child>/state.json` — child spawn status and `parent_id`
+- valid rows under `runtime_root/spawns/` — read through the shared reconciled
+  transitive descendant evidence
 - `runtime_root/pi-bash/<parent>/bash-records.json` — tracked/detached bash records
 - `runtime_root/pi-bash/<parent>/last-notification.json` — last implicit-wait notification marker
 
 Writes must use the shared JSON-file helpers so readers never observe half-written JSON.
 Readers tolerate truncation/missing files and re-check disk before final quiescence.
 
-The current Python watcher confirms only direct child rows whose raw `parent_id`
-matches the Pi spawn. A newer numeric spawn directory without a readable row is
-temporarily allocation uncertainty, not an authoritative child. Resident drain's
-reconciled transitive tree is therefore not yet Pi's descendant source. Keep
-extension notification and bash state independent of persisted descendant state.
+`PiDiskWatcher` reads only bash and notification files. It does not scan spawn
+directories or infer descendants from newer IDs. Both Pi and resident drains use
+the shared reconciled transitive tree; keep extension notification and bash state
+independent of persisted descendant state.
 
 ### ExtensionAPI (`types.ts`)
 
@@ -139,9 +140,10 @@ policy. In-process extensions can override tools, observe session events, and ca
 
 Current Pi coordination is state-based:
 
-- extension writes durable task/spawn/notification state;
-- `PiDiskWatcher` wakes the Python drain loop on changes;
-- `PiQuiescenceTracker` evaluates current state before finalization.
+- spawn creation atomically publishes complete persisted rows;
+- extensions write durable private bash/notification state;
+- `PiDiskWatcher` wakes the Python drain loop on private-file changes;
+- bounded polling reassesses the reconciled tree before finalization.
 
 State files survive crashes and work for nested `uv run meridian ... spawn` commands
 without the parent needing to parse command strings or receive every event in order.

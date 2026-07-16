@@ -18,8 +18,10 @@ stream-json --output-format stream-json` flags select this mode.
 
 **`pi_rpc.py` is transport-only.** It reads Pi stdout JSONL, writes prompt/abort JSON,
 normalizes startup/error/session events, and emits Meridian phase diagnostics. It does
-not tail a separate lifecycle event file. Pi background-work authority lives in disk files written
-by Pi extensions and consumed by `lib/streaming/` (`PiDiskWatcher` / `PiQuiescenceTracker`).
+not tail a separate lifecycle event file. Pi-private background-work authority
+lives in disk files written by Pi extensions and consumed by `lib/streaming/`
+(`PiDiskWatcher` / `PiQuiescenceTracker`); persisted-descendant authority is the
+shared reconciled transitive spawn tree.
 If a canonical Pi lifecycle event appears on stdout, `PiRpcConnection` logs and drops it;
 stdout is not the quiescence authority.
 
