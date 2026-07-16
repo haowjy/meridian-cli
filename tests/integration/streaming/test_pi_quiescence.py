@@ -358,7 +358,7 @@ async def _run_pi_child_wave_timeout_with_cleanup_mocks(
         _build_service,
     )
     monkeypatch.setattr(
-        "meridian.lib.streaming.spawn_manager.terminate_pi_tracked_subspawns",
+        "meridian.lib.streaming.pi_process_cleanup.terminate_pi_tracked_subspawns",
         _fallback_cleanup,
     )
 

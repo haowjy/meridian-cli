@@ -14,12 +14,12 @@ from typing import TYPE_CHECKING, Any, cast
 from meridian.lib.core.domain import SpawnStatus
 from meridian.lib.core.spawn_lifecycle import TERMINAL_SPAWN_STATUSES
 from meridian.lib.core.types import HarnessId, SpawnId
-from meridian.lib.harness import pi_lifecycle_events as pi_lifecycle
 from meridian.lib.harness.connections.base import HarnessEvent
 from meridian.lib.harness.control_action import (
     ControlActionCoordinator,
     ControlActionType,
 )
+from meridian.lib.harness.pi_lifecycle_events import build_pi_phase_event
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.state import spawn_store
 from meridian.lib.state.atomic import append_text_line
@@ -27,11 +27,10 @@ from meridian.lib.state.history import HarnessHistoryWriter
 from meridian.lib.state.spawn_tree import terminate_recorded_spawn_scope
 from meridian.lib.streaming.control_socket import ControlSocketServer
 from meridian.lib.streaming.drain_coordinator import DrainPlan
+from meridian.lib.streaming.drain_plan_factory import build_drain_plan
 from meridian.lib.streaming.drain_policy import (
     TURN_BOUNDARY_EVENT_TYPE,
     DrainPolicy,
-    PiRpcQuiescenceDrainPolicy,
-    SingleTurnDrainPolicy,
 )
 from meridian.lib.streaming.event_observers import (
     CallbackObserver,
@@ -40,10 +39,6 @@ from meridian.lib.streaming.event_observers import (
     HarnessEventCallback,
 )
 from meridian.lib.streaming.heartbeat import heartbeat_loop
-from meridian.lib.streaming.pi_drain import PiDrainCoordinator
-from meridian.lib.streaming.pi_process_cleanup import terminate_pi_tracked_subspawns
-from meridian.lib.streaming.pi_work_ledger import PiPrivateWorkLedger
-from meridian.lib.streaming.resident_drain import ResidentDrainCoordinator
 from meridian.lib.streaming.spawn_dispatch import dispatch_start
 from meridian.lib.streaming.spawn_drain_loop import SpawnDrainLoop
 from meridian.lib.streaming.spawn_session import DrainOutcome, SpawnSession
@@ -57,6 +52,7 @@ ControlServerFactory = Callable[[SpawnId, Path, "SpawnManager"], ControlSocketSe
 
 
 if TYPE_CHECKING:
+    from meridian.lib.core.spawn_service import SpawnApplicationService
     from meridian.lib.harness.connections.base import (
         ConnectionConfig,
         HarnessConnection,
@@ -78,6 +74,15 @@ def _default_control_server_factory(
         socket_path=socket_path,
         manager=manager,
     )
+
+
+def _build_spawn_application_service(
+    project_root: Path,
+    runtime_root: Path,
+) -> SpawnApplicationService:
+    from meridian.lib.bootstrap.services import build_spawn_application_service_from_roots
+
+    return build_spawn_application_service_from_roots(project_root, runtime_root)
 
 
 class SpawnManager:
@@ -315,96 +320,20 @@ class SpawnManager:
         resident_poll_seconds: float | None,
     ) -> DrainPlan:
         """Choose drain-loop configuration before entering the loop."""
-
-        def _emit_pi_phase(*, phase: str, session_role: str | None, **payload: object) -> None:
-            self._emit_pi_phase_event(
-                spawn_id,
-                receiver,
-                phase=phase,
-                session_role=session_role,
-                **payload,
-            )
-
-        async def _terminate_tracked_pi_children(
-            ledger: PiPrivateWorkLedger,
-            reason: str,
-        ) -> None:
-            reaped_descendant_ids: set[str] = set()
-            try:
-                from meridian.lib.bootstrap.services import (
-                    build_spawn_application_service_from_roots,
-                )
-
-                service = build_spawn_application_service_from_roots(
-                    self._project_root,
-                    self._runtime_root,
-                )
-                reaped_descendant_ids = await service.cancel_descendants(spawn_id)
-            except Exception:
-                logger.exception(
-                    "Failed to cancel Pi descendant spawns before tracked child cleanup.",
-                    extra={"spawn_id": str(spawn_id), "reason": reason},
-                )
-                # Intentional: if canonical descendant cancellation fails, fall
-                # back to the full ledger cleanup-handle set so Pi-internal cleanup is not
-                # skipped because we could not prove which ids were reaped.
-                reaped_descendant_ids = set()
-            await terminate_pi_tracked_subspawns(
-                spawn_id,
-                ledger,
-                reason=reason,
-                exclude_subspawn_ids=reaped_descendant_ids,
-            )
-
-        async def _send_pi_done_nudge(message: str) -> None:
-            await self.inject(spawn_id, message, source="pi_done_nudge")
-
-        resident_backend = receiver.resident_backend
-        if resident_backend is not None:
-            # TODO(phase-4): resident waiting and Pi quiescence share the same
-            # "terminal candidate plus descendant work" shape; fold once Pi's
-            # lifecycle inference machinery is removed.
-            coordinator = ResidentDrainCoordinator.for_connection(
-                project_root=self._project_root,
-                runtime_root=self._runtime_root,
-                spawn_id=spawn_id,
-                receiver=receiver,
-                resident_backend=resident_backend,
-                deadline_seconds=resident_deadline_seconds,
-                poll_seconds=resident_poll_seconds,
-            )
-            return DrainPlan(
-                coordinator=coordinator,
-                policy=SingleTurnDrainPolicy(),
-                raw_terminal_frames_authoritative=False,
-            )
-
-        if receiver.harness_id is HarnessId.PI:
-            coordinator = PiDrainCoordinator.for_connection(
-                runtime_root=self._runtime_root,
-                spawn_id=spawn_id,
-                receiver=cast("HarnessConnection[ResolvedLaunchSpec]", receiver),
-                session_role=pi_session_role,
-                notification_timeout_seconds=notification_timeout_seconds,
-                child_wave_timeout_seconds=child_wave_timeout_seconds,
-                emit_phase=_emit_pi_phase,
-                terminate_children=_terminate_tracked_pi_children,
-                send_done_nudge=_send_pi_done_nudge,
-            )
-            return DrainPlan(
-                coordinator=coordinator,
-                policy=PiRpcQuiescenceDrainPolicy(
-                    quiescence_check=coordinator.is_quiescent,
-                ),
-                raw_terminal_frames_authoritative=False,
-                on_policy_selected=coordinator.set_policy,
-                aux_wake=coordinator,
-                handle_aux_wake=coordinator.handle_aux_wake,
-                finalizer=coordinator,
-            )
-
-        # Plain streaming harnesses use SpawnDrainLoop's single-turn baseline.
-        return DrainPlan()
+        return build_drain_plan(
+            project_root=self._project_root,
+            runtime_root=self._runtime_root,
+            spawn_id=spawn_id,
+            receiver=receiver,
+            pi_session_role=pi_session_role,
+            notification_timeout_seconds=notification_timeout_seconds,
+            child_wave_timeout_seconds=child_wave_timeout_seconds,
+            resident_deadline_seconds=resident_deadline_seconds,
+            resident_poll_seconds=resident_poll_seconds,
+            emit_event=self.emit_event,
+            inject=self.inject,
+            build_spawn_application_service=_build_spawn_application_service,
+        )
 
     def raw_terminal_frames_are_authoritative(self, spawn_id: SpawnId) -> bool:
         """Return whether raw harness terminal frames may finalize this spawn.
@@ -812,6 +741,31 @@ class SpawnManager:
                 )
         self._fan_out_event(spawn_id, synthetic)
 
+    def emit_event(self, spawn_id: SpawnId, event: HarnessEvent) -> None:
+        """Persist and publish one manager-authored harness event."""
+
+        history_writer = self._history_writers.get(spawn_id)
+        if history_writer is not None:
+            try:
+                history_writer.write(event)
+                self._observers.dispatch(spawn_id, event)
+            except Exception as persist_exc:
+                logger.warning(
+                    "Failed to persist event %s for spawn %s: %s",
+                    event.event_type,
+                    spawn_id,
+                    persist_exc,
+                )
+        self._fan_out_event(spawn_id, event)
+        tracer = self.get_tracer(spawn_id)
+        if tracer is not None:
+            trace_event = f"{event.harness_id}_{event.event_type.rsplit('.', 1)[-1]}"
+            tracer.emit(
+                "drain",
+                trace_event,
+                data=event.payload,
+            )
+
     def _emit_pi_phase_event(
         self,
         spawn_id: SpawnId,
@@ -820,41 +774,10 @@ class SpawnManager:
         phase: str,
         **data: object,
     ) -> None:
-        payload: dict[str, object] = {
-            "type": pi_lifecycle.PI_PHASE_EVENT_TYPE,
-            "phase": phase,
-            "spawn_id": str(spawn_id),
-            "schema_version": pi_lifecycle.PI_SUPPORTED_LIFECYCLE_SCHEMA_VERSION,
-        }
-        for key, value in data.items():
-            if value is not None:
-                payload[key] = value
-
-        event = HarnessEvent(
-            event_type=pi_lifecycle.PI_PHASE_EVENT_TYPE,
-            harness_id=connection.harness_id.value,
-            payload=payload,
-            raw_text=None,
+        self.emit_event(
+            spawn_id,
+            build_pi_phase_event(spawn_id, connection, phase, **data),
         )
-        history_writer = self._history_writers.get(spawn_id)
-        if history_writer is not None:
-            try:
-                history_writer.write(event)
-                self._observers.dispatch(spawn_id, event)
-            except Exception as persist_exc:
-                logger.warning(
-                    "Failed to persist Pi phase event for spawn %s: %s",
-                    spawn_id,
-                    persist_exc,
-                )
-        self._fan_out_event(spawn_id, event)
-        tracer = self.get_tracer(spawn_id)
-        if tracer is not None:
-            tracer.emit(
-                "drain",
-                "pi_phase",
-                data=payload,
-            )
 
     async def shutdown(
         self,

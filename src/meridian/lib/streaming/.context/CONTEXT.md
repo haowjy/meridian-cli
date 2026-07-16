@@ -34,6 +34,7 @@ SpawnSession
 The implementation is split by responsibility:
 
 - `spawn_manager.py` — public registry/control API and generic live-spawn lifecycle
+- `drain_plan_factory.py` — plain/resident/Pi plan selection and capability wiring
 - `spawn_dispatch.py` — connection creation/start dispatch
 - `spawn_drain_loop.py` — drain loop, persistence/observer/fan-out ordering, outcome priority
 - `drain_coordinator.py` — `DrainPlan` plus the narrow `DrainCoordinator` seam
@@ -71,11 +72,13 @@ drive parent activity transitions.
 
 ### DrainPlan Selection
 
-`SpawnManager._select_drain_plan()` returns the whole drain-loop configuration for
-one active spawn. Codex/OpenCode resident backends get a `ResidentDrainCoordinator`;
-Pi RPC gets `PiDrainCoordinator` plus disk-watcher aux wakes; plain streaming
-harnesses intentionally run with `DrainPlan(coordinator=None)`. There is no public
-no-op coordinator class — absence of a coordinator is the plain path.
+`drain_plan_factory.build_drain_plan()` returns the whole drain-loop configuration
+for one active spawn. `SpawnManager._select_drain_plan()` only supplies manager-owned
+capabilities and delegates to it. Codex/OpenCode resident backends get a
+`ResidentDrainCoordinator`; Pi RPC gets `PiDrainCoordinator` plus disk-watcher aux
+wakes; plain streaming harnesses intentionally run with
+`DrainPlan(coordinator=None)`. There is no public no-op coordinator class — absence
+of a coordinator is the plain path.
 
 `DrainCoordinator` stays narrow: it observes events, handles terminal events,
 provides timeouts, classifies stream close, and handles stream exit. Constant

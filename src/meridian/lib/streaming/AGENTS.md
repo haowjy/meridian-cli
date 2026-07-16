@@ -13,6 +13,10 @@ when their connection exposes the needed seam. Keep Pi child-wave,
 notification, disk-state, resident-done nudges, and tracked-process cleanup policy
 behind the coordinator/tracker modules instead of growing `SpawnManager`.
 
+`drain_plan_factory.py` is the composition root for plan selection. It owns the
+plain/resident/Pi choice and receives manager capabilities for event emission,
+serialized injection, and application-service descendant cleanup.
+
 Resident drain selection is capability-driven: a connection participates in the
 resident descendant-wait path only when `connection.resident_backend` is present.
 Do not key resident behavior off harness ids.
@@ -87,6 +91,7 @@ means the manager died or the spawn is orphaned.
 - `spawn_dispatch.py` — connection creation/start dispatch
 - `spawn_drain_loop.py` — event drain, persistence/observer/fan-out ordering, outcome priority
 - `drain_coordinator.py` — `DrainCoordinator` protocol seam for harness-specific completion policy
+- `drain_plan_factory.py` — plain/resident/Pi plan selection and capability wiring
 - `completion_contracts.py` — typed evidence, profile, and cleanup collaborator contracts
 - `completion_coordinator.py` — shared candidate/wait/deadline/stabilization state machine
 - `descendant_evidence.py` — shared reconciled, transitive persisted-descendant assessment

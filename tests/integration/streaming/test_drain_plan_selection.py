@@ -118,8 +118,12 @@ def test_spawn_manager_pi_phase_event_shape_and_emission_order(
         assert target_spawn_id == spawn_id
         calls.append(("fan_out", cast("HarnessEvent", event)))
 
+    def _get_tracer(target_spawn_id: SpawnId) -> _Tracer:
+        assert target_spawn_id == spawn_id
+        return _Tracer()
+
     monkeypatch.setattr(manager, "_fan_out_event", _fan_out)
-    monkeypatch.setattr(manager, "get_tracer", lambda target_spawn_id: _Tracer())
+    monkeypatch.setattr(manager, "get_tracer", _get_tracer)
 
     manager._emit_pi_phase_event(
         spawn_id,
