@@ -505,8 +505,15 @@ class PiDrainCoordinator:
         if terminate_children is not None:
             self._cleanup.terminate_children = terminate_children
         try:
+            had_pending_cleanup = (
+                self._coordinator.has_pending_post_publication_cleanup()
+            )
             decision = await self._coordinator.handle_timeout()
-            if terminate_children is not None and decision.recorded_outcome is not None:
+            if (
+                terminate_children is not None
+                and not had_pending_cleanup
+                and self._coordinator.has_pending_post_publication_cleanup()
+            ):
                 self._post_publication_terminate_children = terminate_children
             return decision
         finally:

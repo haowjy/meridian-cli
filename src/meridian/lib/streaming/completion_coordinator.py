@@ -104,6 +104,9 @@ class CompletionCoordinator:
     def cleanup_report(self) -> CleanupReport | None:
         return self._cleanup_report
 
+    def has_pending_post_publication_cleanup(self) -> bool:
+        return self._post_publication_cleanup is not None
+
     def note_activity_transition(self, transition: str | None) -> None:
         if transition == "turn_active":
             self._active_turn = True

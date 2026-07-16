@@ -468,6 +468,46 @@ async def test_expired_notification_wins_over_expired_child_wave(
 
 
 @pytest.mark.asyncio
+async def test_notification_timeout_does_not_replace_stream_exit_cleanup_callback(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    started = await _start_coordinator(
+        tmp_path,
+        monkeypatch,
+        notification_timeout_seconds=5.0,
+    )
+    coordinator = started.coordinator
+    temporary_cleanups: list[str] = []
+
+    async def _temporary_cleanup(
+        _tracker: PiSubspawnTracker,
+        reason: str,
+    ) -> None:
+        temporary_cleanups.append(reason)
+
+    try:
+        await coordinator.observe_event(_notification("meridian.notification.queued"), None)
+        await coordinator.observe_event(_tracked_child_start(), None)
+        started.clock.advance(5.0)
+
+        timeout = await coordinator.handle_timeout(_temporary_cleanup)
+        exit_decision = await coordinator.handle_stream_exit(timeout.recorded_outcome)
+        request = exit_decision.post_publication_cleanup
+        assert request is not None
+        await coordinator.execute_post_publication_cleanup(request)
+
+        _assert_failed(
+            timeout,
+            "pi_notification_timeout:id=n1:phase=queued:elapsed=5.000:timeout=5.000",
+        )
+        assert temporary_cleanups == []
+        assert started.cleanups == ["pi_process_exit_with_tracked_children"]
+    finally:
+        await coordinator.stop()
+
+
+@pytest.mark.asyncio
 async def test_expired_notification_wins_over_simultaneous_completion_nudge(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
