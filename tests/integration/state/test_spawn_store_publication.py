@@ -242,7 +242,7 @@ def test_pruning_ignores_in_progress_publication_stage(
 
 @pytest.mark.parametrize(
     "invalid_spawn_id",
-    ["../escaped", "/absolute", ".staging", "p\u0661", "p"],
+    ["../escaped", "/absolute", ".staging", "..", "nested/child"],
 )
 def test_start_spawn_rejects_explicit_id_outside_spawn_namespace(
     tmp_path: Path,
@@ -257,6 +257,16 @@ def test_start_spawn_rejects_explicit_id_outside_spawn_namespace(
     assert scan_spawn_ids(paths.spawns_dir) == []
     assert not (runtime_root / "escaped").exists()
     assert not (paths.spawns_dir / ".staging").exists()
+
+
+def test_start_spawn_accepts_path_safe_symbolic_id(tmp_path: Path) -> None:
+    runtime_root = _state_root(tmp_path)
+    paths = RuntimePaths.from_root_dir(runtime_root)
+
+    spawn_id = _start_test_spawn(runtime_root, spawn_id="dry-run")
+
+    assert spawn_id == "dry-run"
+    assert (paths.spawns_dir / spawn_id / "state.json").is_file()
 
 
 def test_start_spawn_explicit_id_collision_preserves_existing_row(tmp_path: Path) -> None:

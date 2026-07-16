@@ -84,6 +84,19 @@ def is_spawn_id_shape(spawn_id: SpawnId | str) -> bool:
     return len(value) > 1 and value[0] == "p" and suffix.isascii() and suffix.isdigit()
 
 
+def _is_safe_spawn_dir_name(name: str) -> bool:
+    """Return whether a spawn ID is one non-hidden path component."""
+
+    separators = {"/", "\\", os.sep}
+    if os.altsep is not None:
+        separators.add(os.altsep)
+    return (
+        bool(name)
+        and not name.startswith(".")
+        and not any(separator in name for separator in separators)
+    )
+
+
 def _spawn_counter_path(paths: RuntimePaths) -> Path:
     return paths.root_dir / "spawn-id-counter"
 
@@ -334,7 +347,7 @@ def start_spawn(
     with lock_file(paths.spawns_flock):
         if spawn_id is not None:
             explicit_spawn_id = str(spawn_id)
-            if not is_spawn_id_shape(explicit_spawn_id):
+            if not _is_safe_spawn_dir_name(explicit_spawn_id):
                 raise ValueError(f"Invalid spawn ID: {explicit_spawn_id}")
             resolved_spawn_id = SpawnId(explicit_spawn_id)
         else:
@@ -430,7 +443,7 @@ def remove_spawn_events(
 
     paths = RuntimePaths.from_root_dir(runtime_root)
     resolved_spawn_id = str(spawn_id)
-    if not is_spawn_id_shape(resolved_spawn_id):
+    if not _is_safe_spawn_dir_name(resolved_spawn_id):
         raise ValueError(f"Invalid spawn ID: {resolved_spawn_id}")
     spawn_dir = paths.spawns_dir / resolved_spawn_id
     with suppress(FileNotFoundError):

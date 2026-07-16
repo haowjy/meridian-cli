@@ -29,7 +29,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Fixed
 - Spawn rows now appear only after their initial state and prompt are durably staged.
 - Retention pruning no longer deletes in-progress or newly published spawn rows.
-- Explicit spawn IDs now reject values outside the ASCII `pN` namespace.
+- Explicit spawn IDs now reject path-unsafe values while allowing symbolic IDs.
 - Spawn recovery no longer follows staging-container symlinks or lookalike numeric IDs.
 - Streaming drains no longer dispatch or fan out events whose history write failed.
 - Pi child-wave timeouts remain terminal when tracked-child cleanup fails.
