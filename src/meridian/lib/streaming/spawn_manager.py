@@ -346,7 +346,7 @@ class SpawnManager:
                     extra={"spawn_id": str(spawn_id), "reason": reason},
                 )
                 # Intentional: if canonical descendant cancellation fails, fall
-                # back to the full tracker set so Pi-internal cleanup is not
+                # back to the full ledger cleanup-handle set so Pi-internal cleanup is not
                 # skipped because we could not prove which ids were reaped.
                 reaped_descendant_ids = set()
             await terminate_pi_tracked_subspawns(
