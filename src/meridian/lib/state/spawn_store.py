@@ -80,7 +80,8 @@ def is_spawn_id_shape(spawn_id: SpawnId | str) -> bool:
     """Return whether *spawn_id* has Meridian's persisted spawn ID shape."""
 
     value = str(spawn_id)
-    return len(value) > 1 and value[0] == "p" and value[1:].isdigit()
+    suffix = value[1:]
+    return len(value) > 1 and value[0] == "p" and suffix.isascii() and suffix.isdigit()
 
 
 def _spawn_counter_path(paths: RuntimePaths) -> Path:
@@ -232,19 +233,41 @@ class FinalizeOutcome(BaseModel):
     snapshot: SpawnRecord | None
 
 
+def _ensure_staging_dir(paths: RuntimePaths) -> Path:
+    staging_dir = paths.spawns_dir / ".staging"
+    if os.path.lexists(staging_dir) and (
+        staging_dir.is_symlink() or not staging_dir.is_dir()
+    ):
+        raise NotADirectoryError(
+            f"Spawn staging container must be a real directory: {staging_dir}"
+        )
+    staging_dir.mkdir(parents=True, exist_ok=True)
+    if staging_dir.is_symlink() or not staging_dir.is_dir():
+        raise NotADirectoryError(
+            f"Spawn staging container must be a real directory: {staging_dir}"
+        )
+    return staging_dir
+
+
 def gc_abandoned_stages(runtime_root: Path) -> None:
     """Best-effort cleanup of incomplete spawn publication stages."""
 
     paths = RuntimePaths.from_root_dir(runtime_root)
     staging_dir = paths.spawns_dir / ".staging"
     with lock_file(paths.spawns_flock):
+        if staging_dir.is_symlink():
+            with suppress(OSError):
+                staging_dir.unlink()
+            return
+        if not staging_dir.is_dir():
+            return
         try:
             entries = tuple(staging_dir.iterdir())
         except OSError:
             return
         for entry in entries:
             with suppress(OSError):
-                if entry.is_dir() and not entry.is_symlink():
+                if not entry.is_symlink() and entry.is_dir():
                     shutil.rmtree(entry)
                 else:
                     entry.unlink()
@@ -377,12 +400,9 @@ def start_spawn(
             launch_policy_snapshot=resolved_launch_policy_snapshot,
         )
         spawn_dir = paths.spawns_dir / str(resolved_spawn_id)
-        stage_dir = (
-            paths.spawns_dir
-            / ".staging"
-            / f"{resolved_spawn_id}-{os.getpid()}-{secrets.token_hex(4)}"
-        )
-        stage_dir.mkdir(parents=True)
+        staging_dir = _ensure_staging_dir(paths)
+        stage_dir = staging_dir / f"{resolved_spawn_id}-{os.getpid()}-{secrets.token_hex(4)}"
+        stage_dir.mkdir()
         atomic_write_text(stage_dir / "starting-prompt.md", prompt)
         from meridian.lib.state.spawn.repository import record_to_stored_state
 

@@ -71,7 +71,7 @@ def test_retry_blocked_after_pi_child_started_detects_disk_child_state(
     )
 
 
-@pytest.mark.parametrize("entry_name", [".staging", ".p2", "spawn-stage"])
+@pytest.mark.parametrize("entry_name", [".staging", ".p2", "spawn-stage", "p²"])
 def test_retry_scan_ignores_non_spawn_row_entries(
     tmp_path: Path,
     entry_name: str,

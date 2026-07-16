@@ -35,6 +35,7 @@ from meridian.lib.state.spawn_store import (
     start_spawn,
     update_spawn,
 )
+from tests.conftest import posix_only
 
 
 def _state_root(tmp_path: Path) -> Path:
@@ -95,16 +96,17 @@ def test_start_spawn_publishes_only_a_complete_readable_row(
     release_publication_build = threading.Event()
     created_spawn_ids: list[str] = []
     errors: list[BaseException] = []
-    original_atomic_write_text = spawn_store_module.atomic_write_text
+    staged_dirs: list[Path] = []
+    original_atomic_publish_dir = spawn_store_module.atomic_publish_dir
 
-    def pause_before_prompt_write(path: Path, content: str) -> None:
-        if path.name == "starting-prompt.md":
-            publication_build_started.set()
-            if not release_publication_build.wait(timeout=5):
-                raise TimeoutError("publication build was not released")
-        original_atomic_write_text(path, content)
+    def pause_before_publish(stage_dir: Path, dest_dir: Path) -> None:
+        staged_dirs.append(stage_dir)
+        publication_build_started.set()
+        if not release_publication_build.wait(timeout=5):
+            raise TimeoutError("publication build was not released")
+        original_atomic_publish_dir(stage_dir, dest_dir)
 
-    monkeypatch.setattr(spawn_store_module, "atomic_write_text", pause_before_prompt_write)
+    monkeypatch.setattr(spawn_store_module, "atomic_publish_dir", pause_before_publish)
 
     def create_spawn() -> None:
         try:
@@ -126,11 +128,19 @@ def test_start_spawn_publishes_only_a_complete_readable_row(
 
     publisher = threading.Thread(target=create_spawn)
     publisher.start()
-    assert publication_build_started.wait(timeout=5)
 
     try:
+        assert publication_build_started.wait(timeout=5)
         assert scan_spawn_ids(paths.spawns_dir) == []
         assert not (paths.spawns_dir / spawn_id).exists()
+        assert len(staged_dirs) == 1
+        stage_dir = staged_dirs[0]
+        assert stage_dir.parent == paths.spawns_dir / ".staging"
+        assert (stage_dir / "starting-prompt.md").read_text(encoding="utf-8") == "hello"
+        staged_row = read_state(stage_dir.parent, stage_dir.name)
+        assert staged_row is not None
+        assert staged_row.id == spawn_id
+        assert staged_row.prompt == "hello"
     finally:
         release_publication_build.set()
         publisher.join(timeout=5)
@@ -164,6 +174,44 @@ def test_runtime_startup_removes_only_abandoned_stages(tmp_path: Path) -> None:
 
     assert (final_spawn_dir / "state.json").read_text(encoding="utf-8") == "published\n"
     assert list((paths.spawns_dir / ".staging").iterdir()) == []
+
+
+@posix_only
+def test_runtime_startup_does_not_follow_symlinked_staging_container(
+    tmp_path: Path,
+) -> None:
+    runtime_root = _state_root(tmp_path)
+    paths = RuntimePaths.from_root_dir(runtime_root)
+    paths.spawns_dir.mkdir()
+    outside_dir = tmp_path / "outside"
+    outside_dir.mkdir()
+    victim = outside_dir / "keep.txt"
+    victim.write_text("keep\n", encoding="utf-8")
+    staging_dir = paths.spawns_dir / ".staging"
+    staging_dir.symlink_to(outside_dir, target_is_directory=True)
+
+    ensure_runtime_dirs(runtime_root)
+
+    assert victim.read_text(encoding="utf-8") == "keep\n"
+    assert not staging_dir.is_symlink()
+
+
+@posix_only
+def test_start_spawn_rejects_symlinked_staging_container(tmp_path: Path) -> None:
+    runtime_root = _state_root(tmp_path)
+    paths = RuntimePaths.from_root_dir(runtime_root)
+    paths.spawns_dir.mkdir()
+    outside_dir = tmp_path / "outside"
+    outside_dir.mkdir()
+    victim = outside_dir / "keep.txt"
+    victim.write_text("keep\n", encoding="utf-8")
+    (paths.spawns_dir / ".staging").symlink_to(outside_dir, target_is_directory=True)
+
+    with pytest.raises(NotADirectoryError, match="staging container must be a real directory"):
+        _start_test_spawn(runtime_root, spawn_id="p1")
+
+    assert victim.read_text(encoding="utf-8") == "keep\n"
+    assert not (paths.spawns_dir / "p1").exists()
 
 
 def test_start_spawn_persists_control_root_and_task_cwd(tmp_path: Path) -> None:

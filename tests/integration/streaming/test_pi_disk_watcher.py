@@ -56,7 +56,7 @@ async def test_missing_private_work_file_is_not_an_evidence_failure(tmp_path: Pa
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("entry_name", [".staging", ".p2", "spawn-stage"])
+@pytest.mark.parametrize("entry_name", [".staging", ".p2", "spawn-stage", "p²"])
 async def test_child_discovery_ignores_non_spawn_row_entries(
     tmp_path: Path,
     entry_name: str,
