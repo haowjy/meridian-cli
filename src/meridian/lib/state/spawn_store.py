@@ -492,7 +492,12 @@ def update_spawn(
         elif runner_created_at_epoch is not None:
             updates["runner_created_at_epoch"] = runner_created_at_epoch
         if resident_rearm_count is not None:
-            updates["resident_rearm_count"] = resident_rearm_count
+            # Rearm grants are spawn-scoped, so a stale attempt must never lower
+            # the authoritative count written by an earlier attempt.
+            updates["resident_rearm_count"] = max(
+                current.resident_rearm_count,
+                resident_rearm_count,
+            )
         if harness_session_id is not None:
             updates["harness_session_id"] = harness_session_id
         if control_root is not None:

@@ -10,6 +10,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   and budget exhaustion reports a distinct timeout outcome. (#373)
 
 ### Changed
+- Resident rearm budgets now apply across all retry attempts for a spawn instead of
+  resetting for each fresh streaming drain coordinator. (#373)
 - Re-tiered and updated the Pi RPC quiescence smoke guide for the current drain,
   timeout, terminal-publication, and asynchronous teardown model. (#241)
 - Documented Pi descendant-quiescence completion as intentionally unbounded by default

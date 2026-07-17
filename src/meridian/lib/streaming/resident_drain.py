@@ -124,7 +124,8 @@ class _ResidentCompletionProfile:
         self._resident_backend = resident_backend
         self._deadline_seconds = deadline_seconds
         self._rearm_budget = rearm_budget
-        self._rearm_count = 0
+        spawn = spawn_store.get_spawn(runtime_root, spawn_id)
+        self._rearm_count = spawn.resident_rearm_count if spawn is not None else 0
         self._clock = clock
         self._explicit_hold = False
         self._done_requested = False

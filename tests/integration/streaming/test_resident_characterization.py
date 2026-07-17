@@ -236,6 +236,50 @@ async def test_resident_rearm_budget_exhaustion_ignores_signal_and_times_out_dis
 
 
 @pytest.mark.asyncio
+async def test_resident_rearm_budget_is_spawn_scoped_across_retry_attempts(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    first_attempt, _connection, _clock = _coordinator(
+        tmp_path,
+        monkeypatch,
+        rearm_budget=1,
+    )
+    start_row(tmp_path, "p2", HarnessId.CODEX, "p1")
+    await first_attempt.handle_terminal_event(_EVENT, _SUCCESS, _TERMINATE)
+    spawn_store.finalize_spawn(tmp_path, "p2", "succeeded", 0, origin="runner")
+    write_spawn_signal(tmp_path, "p1", "rearm")
+
+    granted = await first_attempt.handle_terminal_event(_EVENT, _SUCCESS, _TERMINATE)
+
+    assert granted.recorded_outcome is None
+    row = spawn_store.get_spawn(tmp_path, SpawnId("p1"))
+    assert row is not None
+    assert row.resident_rearm_count == 1
+    await first_attempt.stop()
+
+    retry_connection = FakeResidentConnection(HarnessId.CODEX)
+    retry_attempt = ResidentDrainCoordinator.for_connection(
+        runtime_root=tmp_path,
+        spawn_id=SpawnId("p1"),
+        receiver=retry_connection,
+        resident_backend=retry_connection.resident_backend,
+        deadline_seconds=10.0,
+        poll_seconds=1.0,
+        rearm_budget=1,
+        cancel_descendants=descendant_cancellation_from_roots(tmp_path, tmp_path),
+    )
+    write_spawn_signal(tmp_path, "p1", "rearm")
+
+    denied = await retry_attempt.handle_terminal_event(_EVENT, _SUCCESS, _TERMINATE)
+
+    assert denied.recorded_outcome == _SUCCESS
+    row = spawn_store.get_spawn(tmp_path, SpawnId("p1"))
+    assert row is not None
+    assert row.resident_rearm_count == 1
+
+
+@pytest.mark.asyncio
 async def test_zero_resident_rearm_budget_expires_without_grant(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
