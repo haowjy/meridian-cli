@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
@@ -222,12 +223,14 @@ class _BypassIntervalTracker:
     def __init__(self, delegate: IntervalTracker) -> None:
         self._delegate = delegate
 
-    def should_run(self, hook_name: str, interval: str) -> bool:
-        _ = (hook_name, interval)
-        return True
-
-    def mark_run(self, hook_name: str) -> None:
-        self._delegate.mark_run(hook_name)
+    def run_if_due(
+        self,
+        hook_name: str,
+        interval: str,
+        fn: Callable[[], HookResult],
+    ) -> HookResult | None:
+        _ = interval
+        return self._delegate.run_if_due(hook_name, None, fn)
 
 
 def _hook_type(hook: Hook) -> str:
