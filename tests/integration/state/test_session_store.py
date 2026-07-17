@@ -102,7 +102,7 @@ def test_start_session_does_not_append_start_event_when_lock_acquire_fails(
             "matching-generation",
             ("c8",),
             ("claude",),
-            False,
+            True,
             False,
             1,
             id="stops-and-cleans-when-generation-matches",
@@ -198,7 +198,7 @@ def test_cleanup_stale_primary_session_with_dead_pid_is_cleaned(
     cleanup = session_store.cleanup_stale_sessions(runtime_root)
     assert cleanup.cleaned_ids == (chat_id,)
     assert cleanup.materialized_scopes == ("claude",)
-    assert not lock_path.exists()
+    assert lock_path.exists()
     assert not lease_path.exists()
 
     rows = [

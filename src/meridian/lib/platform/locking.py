@@ -7,120 +7,172 @@ import os
 import threading
 import time
 from collections.abc import Generator
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager, suppress
 from pathlib import Path
-from typing import IO, Any, cast
+from typing import IO, Any, Literal, cast
 
 from meridian.lib.platform import IS_WINDOWS, fcntl
 
+type LockMode = Literal["exclusive", "shared"]
+type _HeldLock = tuple[IO[bytes], int, LockMode]
+
 _THREAD_LOCAL = threading.local()
+_LOCK_POLL_INTERVAL_SECONDS = 0.05
 
 
-def _held_locks() -> dict[Path, tuple[IO[bytes], int]]:
-    """Return thread-local map of lock path -> (handle, reentrant depth)."""
-    held = cast("dict[Path, tuple[IO[bytes], int]] | None", getattr(_THREAD_LOCAL, "held", None))
+def _held_locks() -> dict[Path, _HeldLock]:
+    """Return the thread-local map of reentrant locks."""
+    held = cast("dict[Path, _HeldLock] | None", getattr(_THREAD_LOCAL, "held", None))
     if held is None:
         held = {}
         _THREAD_LOCAL.held = held
     return held
 
 
-@contextmanager
-def lock_file(lock_path: Path) -> Generator[IO[bytes], None, None]:
-    """Acquire an exclusive file lock with thread-local reentrancy support."""
-    key = lock_path.resolve()
-    held = _held_locks()
-    existing = held.get(key)
-    if existing is not None:
-        handle, depth = existing
-        held[key] = (handle, depth + 1)
-        try:
-            yield handle
-        finally:
-            current_handle, current_depth = held[key]
-            if current_depth <= 1:
-                held.pop(key, None)
-            else:
-                held[key] = (current_handle, current_depth - 1)
-        return
-
-    lock_path.parent.mkdir(parents=True, exist_ok=True)
-    with lock_path.open("a+b") as handle:
-        if IS_WINDOWS:
-            _acquire_windows_lock(handle)
-        else:
-            _acquire_posix_lock(handle)
-        held[key] = (handle, 1)
-        try:
-            yield handle
-        finally:
-            held.pop(key, None)
-            if IS_WINDOWS:
-                _release_windows_lock(handle)
-            else:
-                _release_posix_lock(handle)
+def _mode_satisfies(held_mode: LockMode, requested_mode: LockMode) -> bool:
+    return held_mode == "exclusive" or requested_mode == "shared"
 
 
 @contextmanager
-def try_lock_file(lock_path: Path) -> Generator[IO[bytes] | None, None, None]:
-    """Attempt exclusive file lock, non-blocking. Yields None if already held."""
+def lock_file(
+    lock_path: Path,
+    *,
+    timeout: float | None = None,
+    mode: LockMode = "exclusive",
+    reentrant: bool = True,
+) -> Generator[IO[bytes], None, None]:
+    """Acquire a file lock whose path must keep a stable inode.
+
+    ``timeout=None`` waits indefinitely; zero makes one non-blocking attempt.
+    Reentrancy is thread-local and may be disabled for callers that need an
+    independent acquisition. A held shared lock cannot be upgraded in place.
+    """
     key = lock_path.resolve()
     held = _held_locks()
-    existing = held.get(key)
+    existing = held.get(key) if reentrant else None
     if existing is not None:
-        handle, depth = existing
-        held[key] = (handle, depth + 1)
+        handle, depth, held_mode = existing
+        if not _mode_satisfies(held_mode, mode):
+            raise ValueError(f"Cannot upgrade reentrant shared lock to exclusive: {lock_path}")
+        held[key] = (handle, depth + 1, held_mode)
         try:
             yield handle
         finally:
-            current_handle, current_depth = held[key]
+            current_handle, current_depth, current_mode = held[key]
             if current_depth <= 1:
                 held.pop(key, None)
             else:
-                held[key] = (current_handle, current_depth - 1)
+                held[key] = (current_handle, current_depth - 1, current_mode)
         return
 
-    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    handle = acquire_file_lock(lock_path, timeout=timeout, mode=mode)
+    if reentrant:
+        held[key] = (handle, 1, mode)
     try:
-        handle = lock_path.open("a+b")
-    except OSError:
+        yield handle
+    finally:
+        if reentrant:
+            held.pop(key, None)
+        release_file_lock(handle)
+
+
+@contextmanager
+def try_lock_file(
+    lock_path: Path,
+    *,
+    mode: LockMode = "exclusive",
+    reentrant: bool = True,
+) -> Generator[IO[bytes] | None, None, None]:
+    """Attempt a file lock without blocking; yield ``None`` on contention."""
+    stack = ExitStack()
+    try:
+        handle = stack.enter_context(
+            lock_file(lock_path, timeout=0, mode=mode, reentrant=reentrant)
+        )
+    except (OSError, TimeoutError):
         yield None
         return
+    with stack:
+        yield handle
 
-    try:
-        if not _try_acquire_lock(handle):
-            yield None
-            return
-        held[key] = (handle, 1)
+
+def acquire_file_lock(
+    lock_path: Path,
+    *,
+    timeout: float | None = None,
+    mode: LockMode = "exclusive",
+) -> IO[bytes]:
+    """Acquire and return a lock handle, retrying if the path inode changed."""
+    if timeout is not None and timeout < 0:
+        raise ValueError("timeout must be non-negative or None")
+
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    deadline = None if timeout is None else time.monotonic() + timeout
+    while True:
+        handle = lock_path.open("a+b")
         try:
-            yield handle
-        finally:
-            held.pop(key, None)
-            if IS_WINDOWS:
-                _release_windows_lock(handle)
-            else:
-                _release_posix_lock(handle)
+            acquired = _acquire_lock(handle, mode=mode, deadline=deadline)
+            if acquired:
+                try:
+                    path_stat = lock_path.stat()
+                except FileNotFoundError:
+                    path_stat = None
+                handle_stat = os.fstat(handle.fileno())
+                if path_stat is not None and (
+                    handle_stat.st_ino == path_stat.st_ino
+                    and handle_stat.st_dev == path_stat.st_dev
+                ):
+                    return handle
+                _release_lock(handle)
+        except BaseException:
+            handle.close()
+            raise
+        handle.close()
+
+        if deadline is not None and time.monotonic() >= deadline:
+            raise _timeout_error(lock_path, timeout, mode)
+
+
+def release_file_lock(handle: IO[bytes]) -> None:
+    """Release and close a handle returned by :func:`acquire_file_lock`."""
+    try:
+        _release_lock(handle)
     finally:
         handle.close()
 
 
-def _acquire_posix_lock(handle: IO[bytes]) -> None:
-    fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+def _timeout_error(lock_path: Path, timeout: float | None, mode: LockMode) -> TimeoutError:
+    return TimeoutError(f"Could not acquire {mode} lock within {timeout}s: {lock_path}")
 
 
-def _release_posix_lock(handle: IO[bytes]) -> None:
-    fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+def _acquire_lock(handle: IO[bytes], *, mode: LockMode, deadline: float | None) -> bool:
+    if deadline is None:
+        _acquire_blocking(handle, mode)
+        return True
+
+    while True:
+        if _try_acquire_lock(handle, mode):
+            return True
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(min(_LOCK_POLL_INTERVAL_SECONDS, max(0.0, deadline - time.monotonic())))
 
 
-def _try_acquire_lock(handle: IO[bytes]) -> bool:
+def _acquire_blocking(handle: IO[bytes], mode: LockMode) -> None:
     if IS_WINDOWS:
-        return _try_acquire_windows_lock(handle)
-    return _try_acquire_posix_lock(handle)
+        while not _try_acquire_windows_lock(handle, mode):
+            time.sleep(_LOCK_POLL_INTERVAL_SECONDS)
+        return
+    flock_mode = fcntl.LOCK_EX if mode == "exclusive" else fcntl.LOCK_SH
+    fcntl.flock(handle.fileno(), flock_mode)
 
 
-def _try_acquire_posix_lock(handle: IO[bytes]) -> bool:
+def _try_acquire_lock(handle: IO[bytes], mode: LockMode) -> bool:
+    if IS_WINDOWS:
+        return _try_acquire_windows_lock(handle, mode)
+    flock_mode = fcntl.LOCK_EX if mode == "exclusive" else fcntl.LOCK_SH
     try:
-        fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        fcntl.flock(handle.fileno(), flock_mode | fcntl.LOCK_NB)
         return True
     except BlockingIOError:
         return False
@@ -130,51 +182,44 @@ def _try_acquire_posix_lock(handle: IO[bytes]) -> bool:
         raise
 
 
-def _acquire_windows_lock(handle: IO[bytes]) -> None:
-    import msvcrt as _msvcrt
-
-    msvcrt = cast("Any", _msvcrt)
-
-    # msvcrt locks byte ranges, so pin a 1-byte region at offset 0.
+def _ensure_windows_lock_region(handle: IO[bytes]) -> None:
     handle.seek(0, os.SEEK_END)
     if handle.tell() == 0:
         handle.write(b"\0")
         handle.flush()
         os.fsync(handle.fileno())
     handle.seek(0)
-    while True:
-        try:
-            msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
-            return
-        except OSError:
-            time.sleep(0.05)
 
 
-def _try_acquire_windows_lock(handle: IO[bytes]) -> bool:
+def _try_acquire_windows_lock(handle: IO[bytes], mode: LockMode) -> bool:
     import msvcrt as _msvcrt
 
     msvcrt = cast("Any", _msvcrt)
-
-    handle.seek(0, os.SEEK_END)
-    if handle.tell() == 0:
-        handle.write(b"\0")
-        handle.flush()
-        os.fsync(handle.fileno())
-    handle.seek(0)
+    _ensure_windows_lock_region(handle)
+    flag = msvcrt.LK_NBLCK if mode == "exclusive" else msvcrt.LK_NBRLCK
     try:
-        msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+        msvcrt.locking(handle.fileno(), flag, 1)
         return True
     except OSError:
         return False
 
 
-def _release_windows_lock(handle: IO[bytes]) -> None:
-    import msvcrt as _msvcrt
+def _release_lock(handle: IO[bytes]) -> None:
+    if IS_WINDOWS:
+        import msvcrt as _msvcrt
 
-    msvcrt = cast("Any", _msvcrt)
+        msvcrt = cast("Any", _msvcrt)
+        handle.seek(0)
+        with suppress(OSError):
+            msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+        return
+    fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
-    handle.seek(0)
-    msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
 
-
-__all__ = ["lock_file", "try_lock_file"]
+__all__ = [
+    "LockMode",
+    "acquire_file_lock",
+    "lock_file",
+    "release_file_lock",
+    "try_lock_file",
+]

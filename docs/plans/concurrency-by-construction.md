@@ -68,6 +68,9 @@ absorbs `session_store`'s private copy (deleted) and `plugin_api/fs.py:15-92` (d
 the primitive must grow timeout + shared mode; `fs.py:12` already imports `lib.platform`, so
 no new boundary breach).
 
+Windows calibration (2026-07-17): keep the existing branches working, but optimize the
+protocol for the supported POSIX platforms; do not add Windows-specific machinery or tests.
+
 **One atomic-replace primitive; fix live drift** `[48]` + `[66]` drift half
 `autosync_store._atomic_write_text` (`autosync_store.py:443-446`) is fixed-tmp-name,
 no-fsync — protecting exactly the conflict/sync-state records whose loss silently reopens the

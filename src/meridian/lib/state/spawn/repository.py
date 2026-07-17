@@ -99,7 +99,7 @@ def _prompt_path(spawns_dir: Path, spawn_id: str) -> Path:
 
 
 def _lock_path(spawns_dir: Path, spawn_id: str) -> Path:
-    return _spawn_dir(spawns_dir, spawn_id) / "state.lock"
+    return spawns_dir.parent / "locks" / "spawns" / f"{spawn_id}.lock"
 
 
 def record_to_stored_state(

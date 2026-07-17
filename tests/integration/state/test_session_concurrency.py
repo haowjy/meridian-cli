@@ -13,6 +13,7 @@ from pathlib import Path
 
 import pytest
 
+from meridian.lib.platform.locking import try_lock_file
 from meridian.lib.state import session_store
 from tests.support.process_race import run_spawn_race_or_skip
 
@@ -30,13 +31,8 @@ def _reserve_chat_id_worker(state_root_str: str) -> str:
 
 def _can_acquire_lock_nonblocking_worker(lock_path_str: str) -> bool:
     lock_path = Path(lock_path_str)
-    lock_path.parent.mkdir(parents=True, exist_ok=True)
-    with lock_path.open("a+b") as handle:
-        locked = session_store._try_lock_nonblocking(handle)
-        if not locked:
-            return False
-        session_store._release_session_lock_handle(handle)
-        return True
+    with try_lock_file(lock_path, reentrant=False) as handle:
+        return handle is not None
 
 
 def test_reserve_chat_id_is_safe_under_concurrency(tmp_path: Path) -> None:

@@ -12,10 +12,11 @@ from pathlib import Path
 import pytest
 
 from meridian.lib.ops.pruning import (
+    StaleSpawnArtifact,
     prune_stale_spawn_artifacts,
     scan_stale_spawn_artifacts,
 )
-from meridian.lib.platform.locking import try_lock_file
+from meridian.lib.platform.locking import lock_file, try_lock_file
 from meridian.lib.state import spawn_store as spawn_store_module
 from meridian.lib.state.paths import RuntimePaths
 from meridian.lib.state.spawn import repository as spawn_repository
@@ -238,6 +239,43 @@ def test_pruning_ignores_in_progress_publication_stage(
     row = read_state(paths.spawns_dir, spawn_id)
     assert row is not None
     assert row.id == spawn_id
+
+
+def test_pruning_does_not_split_spawn_lock_identity(tmp_path: Path) -> None:
+    """A pruned artifact must not let a second writer lock a new inode."""
+    # Pre-fix failure: ``assert [True] == [False]`` — the contender acquired
+    # the recreated path while this thread still held the unlinked old inode.
+    runtime_root = _state_root(tmp_path)
+    paths = RuntimePaths.from_root_dir(runtime_root)
+    spawn_id = "p7"
+    artifact_path = paths.spawns_dir / spawn_id
+    artifact_path.mkdir(parents=True)
+    lock_path = spawn_repository._lock_path(paths.spawns_dir, spawn_id)
+    second_writer_acquired: list[bool] = []
+
+    stale = [
+        StaleSpawnArtifact(
+            spawn_id=spawn_id,
+            project_uuid="project",
+            path=str(artifact_path),
+            size_bytes=0,
+            last_activity="2026-01-01T00:00:00+00:00",
+        )
+    ]
+
+    with lock_file(lock_path):
+        assert prune_stale_spawn_artifacts(stale) == 1
+
+        def try_second_writer() -> None:
+            with try_lock_file(lock_path) as handle:
+                second_writer_acquired.append(handle is not None)
+
+        contender = threading.Thread(target=try_second_writer)
+        contender.start()
+        contender.join(timeout=5)
+
+    assert not contender.is_alive()
+    assert second_writer_acquired == [False]
 
 
 @pytest.mark.parametrize(

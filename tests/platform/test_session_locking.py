@@ -1,16 +1,12 @@
-"""POSIX session-lock acquisition semantics.
-
-Cross-process session-lock exclusivity is covered in
-``tests/integration/state/test_session_concurrency.py``. This module holds
-platform-specific retry behavior for lock-path replacement.
-"""
+"""POSIX lock-inode identity revalidation."""
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from meridian.lib.state import session_store
+from meridian.lib.platform.locking import acquire_file_lock, release_file_lock
 from tests.conftest import posix_only
 
 if TYPE_CHECKING:
@@ -18,7 +14,7 @@ if TYPE_CHECKING:
 
 
 @posix_only
-def test_posix_acquire_session_lock_retries_when_lock_path_is_replaced(
+def test_acquire_file_lock_retries_when_lock_path_is_replaced(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     lock_path = tmp_path / "sessions" / "c123.lock"
@@ -36,10 +32,11 @@ def test_posix_acquire_session_lock_retries_when_lock_path_is_replaced(
 
     monkeypatch.setattr(Path, "open", _open_and_replace)
 
-    handle = session_store._posix_acquire_session_lock(lock_path)
+    handle = acquire_file_lock(lock_path)
     try:
         assert replaced["done"] is True
-        assert session_store._lock_handle_matches_path(handle, lock_path)
+        handle_stat = os.fstat(handle.fileno())
+        path_stat = lock_path.stat()
+        assert (handle_stat.st_dev, handle_stat.st_ino) == (path_stat.st_dev, path_stat.st_ino)
     finally:
-        session_store._posix_release_session_lock(handle)
-        handle.close()
+        release_file_lock(handle)
