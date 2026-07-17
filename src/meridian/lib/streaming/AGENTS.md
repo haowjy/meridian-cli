@@ -22,6 +22,24 @@ Resident drain selection is capability-driven: a connection participates in the
 resident descendant-wait path only when `connection.resident_backend` is present.
 Do not key resident behavior off harness ids.
 
+## Completion and Absolute Timeout Models
+
+Resident Codex/OpenCode completion uses an absolute deadline per arm. Only an explicit
+`rearm.signal` can grant a new window; ordinary harness or descendant activity cannot.
+Rearm grants are unlimited by default. `--resident-rearm-budget`,
+`MERIDIAN_RESIDENT_REARM_BUDGET`, profile `resident-rearm-budget`, or
+`timeouts.resident_rearm_budget` opts into a maximum number of granted extensions.
+The running grant count is persisted as `state.json`'s `resident_rearm_count`.
+
+Pi completion is descendant-quiescence-driven and intentionally has no default total
+wall-clock bound. Notification and child-wave windows are anchored to each notification
+or child wave, not slid by ordinary activity; successive legitimate waves may establish
+new windows. This unbounded-while-descendants-live behavior is by design.
+
+For either profile, `--timeout` / `MERIDIAN_TIMEOUT` is the shared opt-in absolute
+ceiling. It arms the non-renewing outer attempt timer in `streaming_runner.py` and
+defaults to `None`; resident rearms and Pi waves cannot reset it.
+
 ## Mental Model
 
 ```

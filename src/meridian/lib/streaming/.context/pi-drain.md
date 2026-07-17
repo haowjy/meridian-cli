@@ -84,6 +84,15 @@ cleanup or timeout-phase emission failures are diagnostic and do not replace
 that outcome or restart waiting-phase emission. Startup reaper reconciliation
 recovers cleanup interrupted by a crash.
 
+These child-wave and notification windows are anchored when their corresponding wave
+or notification begins; ordinary descendant disk evidence does not slide them. Pi has
+no default total wall-clock ceiling: descendant quiescence may require successive waves,
+each with its own anchored window, and that unbounded total duration is intentional.
+Operators who need an absolute bound use the shared `--timeout` /
+`MERIDIAN_TIMEOUT` outer attempt timer, which is non-renewing and defaults to `None`.
+Resident completion uses the same outer ceiling but otherwise follows its separate
+signal-gated deadline/rearm model documented in [AGENTS.md](../AGENTS.md).
+
 ### Micro-Drain
 
 When a terminal event arrives but quiescence is not yet confirmed, `PiCompletionProfile`
