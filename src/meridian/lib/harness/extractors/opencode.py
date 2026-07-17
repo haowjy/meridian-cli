@@ -389,7 +389,7 @@ def _extract_opencode_usage(artifacts: ArtifactStore, spawn_id: SpawnId) -> Toke
             .strip()
             .lower()
         )
-        if event_type not in {"session.idle", "message.updated", "response.completed"}:
+        if event_type not in {"session.idle", "message.updated"}:
             continue
         usage = _try_parse_opencode_usage(payload)
         if usage is not None:
