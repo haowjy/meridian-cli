@@ -562,6 +562,33 @@ def heal_work_item(runtime_root: Path, work_id: str) -> WorkItem:
     return heal(runtime_root, work_id)
 
 
+def work_item_needs_healing(runtime_root: Path, work_id: str) -> bool:
+    """Return whether an existing item's persisted metadata is non-canonical."""
+
+    paths = _project_paths_for_work_store(runtime_root)
+    active_dir, archived_dir = _locate_dirs(paths, work_id)
+    _warn_both_locations(work_id, active_dir, archived_dir)
+    work_dir = active_dir or archived_dir
+    if work_dir is None:
+        return False
+    item = _work_item_from_dir(work_dir, archived=active_dir is None)
+    expected = _serialize_status(
+        _status_payload(
+            status=item.status,
+            description=item.description,
+            goal=item.goal,
+            created_at=item.created_at,
+            archived_at=item.archived_at,
+            task_dir=item.task_dir,
+            worktree=item.worktree,
+        )
+    )
+    try:
+        return _status_path(work_dir).read_text(encoding="utf-8") != expected
+    except OSError:
+        return True
+
+
 
 def get_work_item(runtime_root: Path, work_id: str) -> WorkItem | None:
     """Load one work item from active or archived directories."""

@@ -5,6 +5,7 @@ Warning code regression tests live in test_diag_warnings.py.
 """
 
 import multiprocessing
+import json
 import os
 from pathlib import Path
 
@@ -19,7 +20,7 @@ from meridian.lib.ops.pruning import (
     scan_orphan_project_dirs,
 )
 from meridian.lib.platform.locking import try_lock_file
-from meridian.lib.state import session_store
+from meridian.lib.state import session_store, work_store
 
 
 def _create_project_root(tmp_path: Path) -> Path:
@@ -104,6 +105,28 @@ def _seed_pruning_layout(
     _set_path_mtime(other_root, 1_900_000_000.0)
 
     return project_root, current_spawn, orphan_root, other_spawn
+
+
+def test_doctor_heals_legacy_work_item_metadata(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root, _, _, _ = _seed_pruning_layout(tmp_path, monkeypatch)
+    runtime_root = tmp_path / "user-home" / "projects" / "current-project-uuid"
+    item = work_store.create_work_item(runtime_root, "legacy-item")
+    legacy_task_dir = tmp_path / "legacy-task-dir"
+    legacy_task_dir.mkdir()
+    status_path = work_store.work_scratch_dir(runtime_root, item.name) / "__status.json"
+    payload = json.loads(status_path.read_text(encoding="utf-8"))
+    payload["task_dir"] = None
+    payload["worktree"]["path"] = legacy_task_dir.as_posix()
+    status_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+
+    result = doctor_sync(DoctorInput(project_root=project_root.as_posix()))
+
+    healed = json.loads(status_path.read_text(encoding="utf-8"))
+    assert healed["task_dir"] == legacy_task_dir.resolve().as_posix()
+    assert "work_item_metadata" in result.repaired
 
 
 def test_doctor_prune_only_prunes_current_project_artifacts(
