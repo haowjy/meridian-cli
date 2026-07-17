@@ -85,6 +85,19 @@ async def test_cancel_task_retrieves_closed_stream_exception() -> None:
         loop.set_exception_handler(previous_handler)
 
 
+@pytest.mark.asyncio
+async def test_cancel_task_logs_unexpected_completed_task_failure(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    pending_event = asyncio.get_running_loop().create_future()
+    pending_event.set_exception(RuntimeError("event source broke during close"))
+
+    with caplog.at_level("WARNING"):
+        await _cancel_task(pending_event)
+
+    assert "event source broke during close" in caplog.text
+
+
 class _Receiver:
     primary_event_scope = None
 
@@ -287,11 +300,16 @@ async def _run_drain(
                 cancel_sent=False,
                 started_monotonic=0.0,
                 subscriber=None,
-                preferred_stop_outcome=None,
+                authoritative_stop_outcome=None,
             ),
         )
 
-    def _resolve_outcome(_session: SpawnSession, outcome: DrainOutcome) -> DrainOutcome:
+    def _publish_terminal(
+        _spawn_id: SpawnId,
+        _session: SpawnSession,
+        outcome: DrainOutcome,
+        _cleanup_request: object,
+    ) -> DrainOutcome:
         assert outcomes is not None
         outcomes.append(outcome)
         return outcome
@@ -302,9 +320,7 @@ async def _run_drain(
             _SPAWN_ID: cast("HarnessHistoryWriter", _HistoryWriter(results, calls))
         },
         observers=cast("EventObserverRegistry", observers),
-        cleanup_tasks=set(),
-        cleanup_completed_session=AsyncMock(),
-        resolve_completion_future=_resolve_outcome if outcomes is not None else Mock(),
+        publish_terminal=_publish_terminal if outcomes is not None else Mock(),
         fan_out_event=lambda _spawn_id, event: calls.append(("fan_out", event)),
         fan_out_turn_boundary=AsyncMock(),
     )
@@ -429,9 +445,7 @@ async def test_persisted_activity_restarts_elapsed_stabilization_before_concurre
         sessions={},
         history_writers={_SPAWN_ID: cast("HarnessHistoryWriter", history_writer)},
         observers=cast("EventObserverRegistry", observers),
-        cleanup_tasks=set(),
-        cleanup_completed_session=AsyncMock(),
-        resolve_completion_future=Mock(),
+        publish_terminal=Mock(),
         fan_out_event=Mock(),
         fan_out_turn_boundary=AsyncMock(),
     )

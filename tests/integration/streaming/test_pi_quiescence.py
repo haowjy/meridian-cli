@@ -90,7 +90,6 @@ async def test_spawn_manager_pi_attempt_timeout_keeps_terminal_truth_through_cle
         status="timed_out",
         exit_code=3,
         error="timeout",
-        prefer_drain_outcome=True,
     )
 
     assert outcome is not None

@@ -17,8 +17,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   lifecycle history, retain post-finalization cleanup diagnostics, and consume
   aborted-stream exhaustion without leaking `StopAsyncIteration` warnings. (#432)
 - Pi RPC injects now queue as follow-up turns, wait for Pi's acknowledgement before
-  reporting delivery, and keep prompt rejections scoped to the inject instead of
-  failing an otherwise healthy spawn. (#434)
+  reporting delivery, wait through normal background startup for the control endpoint,
+  and keep prompt rejections scoped to the inject instead of failing an otherwise
+  healthy spawn. (#434)
 
 ## [0.3.34] - 2026-07-17
 

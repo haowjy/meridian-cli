@@ -783,7 +783,6 @@ async def _run_streaming_attempt(
                 status="timed_out",
                 exit_code=3,
                 error="timeout",
-                prefer_drain_outcome=True,
             )
             drain_exit_code = 3
         elif decision.trigger == TriggerKind.WATCHDOG:

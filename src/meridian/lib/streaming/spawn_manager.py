@@ -24,6 +24,7 @@ from meridian.lib.state import spawn_store
 from meridian.lib.state.atomic import append_text_line
 from meridian.lib.state.history import HarnessHistoryWriter
 from meridian.lib.state.spawn_tree import terminate_recorded_spawn_scope
+from meridian.lib.streaming.completion_contracts import CompletionCleanupRequest
 from meridian.lib.streaming.control_socket import ControlSocketServer
 from meridian.lib.streaming.drain_coordinator import DrainPlan
 from meridian.lib.streaming.drain_plan_factory import build_drain_plan
@@ -39,7 +40,10 @@ from meridian.lib.streaming.event_observers import (
 )
 from meridian.lib.streaming.heartbeat import heartbeat_loop
 from meridian.lib.streaming.spawn_dispatch import dispatch_start
-from meridian.lib.streaming.spawn_drain_loop import SpawnDrainLoop
+from meridian.lib.streaming.spawn_drain_loop import (
+    SpawnDrainLoop,
+    resolve_terminal_outcome,
+)
 from meridian.lib.streaming.spawn_session import DrainOutcome, SpawnSession
 from meridian.lib.streaming.types import InjectResult
 
@@ -107,7 +111,7 @@ class SpawnManager:
         self._control_server_factory = control_server_factory or _default_control_server_factory
         self._sessions: dict[SpawnId, SpawnSession] = {}
         self._completion_futures: dict[SpawnId, asyncio.Future[DrainOutcome]] = {}
-        self._cleanup_tasks: set[asyncio.Task[None]] = set()
+        self._cleanup_tasks: dict[SpawnId, asyncio.Task[None]] = {}
         self._heartbeat_tasks: dict[SpawnId, asyncio.Task[None]] = {}
         self._history_writers: dict[SpawnId, HarnessHistoryWriter] = {}
         self._observers = EventObserverRegistry()
@@ -253,6 +257,7 @@ class SpawnManager:
             debug_tracer=tracer,
             raw_terminal_frames_authoritative=drain_plan.raw_terminal_frames_authoritative,
             teardown=drain_plan.teardown,
+            drain_plan=drain_plan,
             control_actions=ControlActionCoordinator(
                 spawn_id=spawn_id,
                 spawn_dir=self._spawn_dir(spawn_id),
@@ -275,7 +280,7 @@ class SpawnManager:
         """Return the current platform-aware control endpoint for one active spawn."""
 
         session = self._sessions.get(spawn_id)
-        if session is None:
+        if session is None or session.terminal_published:
             return None
         return session.control_server.endpoint
 
@@ -290,9 +295,7 @@ class SpawnManager:
             sessions=self._sessions,
             history_writers=self._history_writers,
             observers=self._observers,
-            cleanup_tasks=self._cleanup_tasks,
-            cleanup_completed_session=self._cleanup_completed_session,
-            resolve_completion_future=self._resolve_completion_future,
+            publish_terminal=self._publish_terminal,
             fan_out_event=self._fan_out_event,
             fan_out_turn_boundary=self._fan_out_turn_boundary,
         )
@@ -379,7 +382,7 @@ class SpawnManager:
             return result
 
         session = self._sessions.get(spawn_id)
-        if session is None:
+        if session is None or session.terminal_published:
             result = InjectResult(
                 success=False,
                 error=f"Spawn {spawn_id} is not active",
@@ -557,7 +560,7 @@ class SpawnManager:
         """Return the active connection for one spawn, if present."""
 
         session = self._sessions.get(spawn_id)
-        if session is None:
+        if session is None or session.terminal_published:
             return None
         return session.connection
 
@@ -582,7 +585,6 @@ class SpawnManager:
         status: SpawnStatus = "cancelled",
         exit_code: int = 1,
         error: str | None = None,
-        prefer_drain_outcome: bool = False,
     ) -> DrainOutcome | None:
         """Stop one managed spawn and clean up all associated resources."""
 
@@ -590,6 +592,13 @@ class SpawnManager:
         if session is None:
             await self._stop_heartbeat(spawn_id)
             await self._observers.shutdown(spawn_id)
+            return None
+        if session.terminal_published:
+            cleanup_task = self._cleanup_tasks.get(spawn_id)
+            if cleanup_task is not None:
+                await asyncio.gather(cleanup_task, return_exceptions=True)
+            if session.completion_future.done() and not session.completion_future.cancelled():
+                return session.completion_future.result()
             return None
 
         if status == "cancelled" and not session.cancel_sent:
@@ -611,13 +620,8 @@ class SpawnManager:
             error=error,
             duration_secs=max(0.0, time.monotonic() - session.started_monotonic),
         )
-        if prefer_drain_outcome:
-            session.preferred_stop_outcome = fallback_outcome
-        outcome = (
-            self._resolve_completion_future(session, fallback_outcome)
-            if not prefer_drain_outcome
-            else fallback_outcome
-        )
+        session.authoritative_stop_outcome = fallback_outcome
+        outcome = fallback_outcome
 
         if session.debug_tracer is not None:
             session.debug_tracer.close()
@@ -633,18 +637,29 @@ class SpawnManager:
         try:
             await asyncio.wait_for(asyncio.shield(session.drain_task), timeout=2.0)
         except (TimeoutError, asyncio.CancelledError, Exception):
-            if prefer_drain_outcome:
-                self._resolve_completion_future(session, fallback_outcome)
             session.drain_task.cancel()
+            # Terminal publication is owned by stop_spawn(), not by the
+            # cancellable tail of the drain task.
+            outcome = self._publish_terminal(
+                spawn_id,
+                session,
+                fallback_outcome,
+                None,
+            )
             with suppress(asyncio.CancelledError, Exception):
                 await session.drain_task
         if session.drain_task.done() and not session.drain_task.cancelled():
             with suppress(Exception):
                 session.drain_task.result()
-        if prefer_drain_outcome:
-            outcome = self._resolve_completion_future(session, fallback_outcome)
-        if self._cleanup_tasks:
-            await asyncio.gather(*tuple(self._cleanup_tasks), return_exceptions=True)
+        outcome = self._publish_terminal(
+            spawn_id,
+            session,
+            fallback_outcome,
+            None,
+        )
+        cleanup_task = self._cleanup_tasks.get(spawn_id)
+        if cleanup_task is not None:
+            await asyncio.gather(cleanup_task, return_exceptions=True)
         await self._observers.shutdown(spawn_id)
 
         with suppress(Exception):
@@ -656,6 +671,73 @@ class SpawnManager:
         self._completion_futures.pop(spawn_id, None)
         self._history_writers.pop(spawn_id, None)
         return outcome
+
+    def _publish_terminal(
+        self,
+        spawn_id: SpawnId,
+        session: SpawnSession,
+        drain_outcome: DrainOutcome,
+        cleanup_request: CompletionCleanupRequest | None,
+    ) -> DrainOutcome:
+        """Publish one terminal lifecycle exactly once, independent of drain cancellation."""
+
+        if session.terminal_published:
+            return self._resolve_completion_future(session, drain_outcome)
+
+        outcome = resolve_terminal_outcome(
+            drain_outcome,
+            session.authoritative_stop_outcome,
+        )
+        session.terminal_published = True
+        finalizer = session.drain_plan.finalizer
+        if finalizer is not None:
+            try:
+                finalizer.after_finalized(
+                    connection_session_id=_safe_connection_session_id(session.connection),
+                    outcome=outcome,
+                )
+            except Exception:
+                logger.exception("Terminal finalizer failed for spawn %s", spawn_id)
+        self._resolve_completion_future(session, outcome)
+        self._observers.complete(spawn_id)
+        self._fan_out_event(spawn_id, None)
+        cleanup_task = asyncio.create_task(
+            self._run_post_publication_teardown(
+                cleanup_request=cleanup_request,
+                spawn_id=spawn_id,
+                session=session,
+                outcome=outcome,
+            )
+        )
+        session.cleanup_task = cleanup_task
+        self._cleanup_tasks[spawn_id] = cleanup_task
+        cleanup_task.add_done_callback(
+            lambda done, sid=spawn_id: self._drop_cleanup_task(sid, done)
+        )
+        return outcome
+
+    def _drop_cleanup_task(
+        self,
+        spawn_id: SpawnId,
+        task: asyncio.Task[None],
+    ) -> None:
+        if self._cleanup_tasks.get(spawn_id) is task:
+            self._cleanup_tasks.pop(spawn_id, None)
+
+    async def _run_post_publication_teardown(
+        self,
+        *,
+        cleanup_request: CompletionCleanupRequest | None,
+        spawn_id: SpawnId,
+        session: SpawnSession,
+        outcome: DrainOutcome,
+    ) -> None:
+        try:
+            coordinator = session.drain_plan.coordinator
+            if coordinator is not None and cleanup_request is not None:
+                await coordinator.execute_post_publication_cleanup(cleanup_request)
+        finally:
+            await self._cleanup_completed_session(spawn_id, session, outcome)
 
     def _terminate_recorded_spawn_scope_backstop(self, spawn_id: SpawnId) -> None:
         """Best-effort recorded scope reap after transport stop attempts."""
@@ -766,7 +848,12 @@ class SpawnManager:
     ) -> None:
         """Stop every active spawn and clear the session registry."""
 
-        for spawn_id in list(self._sessions):
+        active_spawn_ids = [
+            spawn_id
+            for spawn_id, session in self._sessions.items()
+            if not session.terminal_published
+        ]
+        for spawn_id in active_spawn_ids:
             await self.stop_spawn(
                 spawn_id,
                 status=status,
@@ -777,13 +864,22 @@ class SpawnManager:
             await self._stop_heartbeat(spawn_id)
         for spawn_id in list(self._completion_futures):
             await self._observers.shutdown(spawn_id)
+        if self._cleanup_tasks:
+            await asyncio.gather(
+                *tuple(self._cleanup_tasks.values()),
+                return_exceptions=True,
+            )
         self._completion_futures.clear()
         self._history_writers.clear()
 
     def list_spawns(self) -> list[SpawnId]:
         """List active spawn IDs."""
 
-        return list(self._sessions)
+        return [
+            spawn_id
+            for spawn_id, session in self._sessions.items()
+            if not session.terminal_published
+        ]
 
     async def _append_jsonl(self, path: Path, payload: dict[str, Any]) -> None:
         """Append one JSON line to a JSONL file (used for inbound control log)."""
@@ -873,6 +969,8 @@ class SpawnManager:
             await session.control_server.stop()
         await self._observers.shutdown(spawn_id)
         self._history_writers.pop(spawn_id, None)
+        if self._sessions.get(spawn_id) is session:
+            self._sessions.pop(spawn_id, None)
 
     def _resolve_completion_future(
         self,
@@ -885,6 +983,16 @@ class SpawnManager:
         if session.completion_future.done() and not session.completion_future.cancelled():
             return session.completion_future.result()
         return outcome
+
+
+def _safe_connection_session_id(connection: object) -> str | None:
+    """Read optional connection session id without assuming a concrete adapter."""
+
+    try:
+        session_id = cast("Any", connection).session_id
+    except Exception:
+        return None
+    return session_id if isinstance(session_id, str) and session_id.strip() else None
 
 
 __all__ = ["DrainOutcome", "SpawnManager", "SpawnSession", "dispatch_start"]

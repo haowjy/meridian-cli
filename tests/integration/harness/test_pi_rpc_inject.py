@@ -2,17 +2,29 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
+import shutil
 import sys
+import tempfile
 from pathlib import Path
 
 import pytest
 
+from meridian.cli import spawn_inject as spawn_inject_module
+from meridian.lib.config.settings import load_config
 from meridian.lib.core.types import HarnessId, SpawnId
-from meridian.lib.harness.connections.base import ConnectionConfig
+from meridian.lib.harness.connections.base import ConnectionConfig, HarnessEvent, StopResult
 from meridian.lib.harness.connections.pi_rpc import PiRpcConnection
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
+from meridian.lib.launch.request import SpawnRequest
+from meridian.lib.ops.runtime import (
+    build_runtime_from_root_and_config,
+    resolve_runtime_authority_for_write,
+)
+from meridian.lib.ops.spawn import execute as spawn_execute_module
+from meridian.lib.ops.spawn.models import SpawnCreateInput
 from meridian.lib.safety.permissions import UnsafeNoOpPermissionResolver
 from meridian.lib.streaming.spawn_manager import SpawnManager
 
@@ -39,7 +51,9 @@ class _NoopControlServer:
 
 
 def _configure_pi_runtime(
-    monkeypatch: pytest.MonkeyPatch, root: Path, error: str | None
+    monkeypatch: pytest.MonkeyPatch,
+    root: Path,
+    error: str | None,
 ) -> Path:
     source_root = root / "dist" / "extensions"
     for extension_name in ("managed-bash", "meridian-spawn-watch"):
@@ -85,6 +99,145 @@ def _configure_pi_runtime(
     monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
     monkeypatch.setenv("PI_RPC_INBOUND_LOG", str(inbound_log))
     return inbound_log
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(sys.platform == "win32", reason="uses a POSIX control socket")
+async def test_immediate_background_inject_waits_for_real_control_endpoint(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    runtime_root = Path(tempfile.mkdtemp(prefix="meridian-inject-", dir="/tmp"))
+    received_messages: list[str] = []
+
+    class _DelayedBackgroundConnection:
+        harness_id = HarnessId.CODEX
+        primary_event_scope = None
+        resident_backend = None
+        subprocess_pid = None
+        session_id = "delayed-background"
+
+        def __init__(self) -> None:
+            self._events: asyncio.Queue[HarnessEvent | None] = asyncio.Queue()
+
+        async def events(self):  # type: ignore[no-untyped-def]
+            while True:
+                event = await self._events.get()
+                if event is None:
+                    return
+                yield event
+
+        async def send_user_message(self, message: str) -> None:
+            received_messages.append(message)
+            await self._events.put(
+                HarnessEvent(
+                    event_type="turn/completed",
+                    harness_id="codex",
+                    payload={"status": "succeeded", "exit_code": 0},
+                )
+            )
+
+        async def send_cancel(self) -> None:
+            return None
+
+        async def stop(self, **_kwargs: object) -> StopResult:
+            await self._events.put(None)
+            return StopResult()
+
+    connection = _DelayedBackgroundConnection()
+
+    async def _delayed_background_start(
+        _config: ConnectionConfig,
+        _spec: ResolvedLaunchSpec,
+    ) -> _DelayedBackgroundConnection:
+        await asyncio.sleep(3.5)
+        return connection
+
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    monkeypatch.setenv("MERIDIAN_HOME", str(runtime_root / "home"))
+    authority = resolve_runtime_authority_for_write(project_root)
+    assert authority.runtime_root is not None
+    runtime = build_runtime_from_root_and_config(
+        project_root,
+        load_config(project_root, authority=authority),
+        authority=authority,
+    )
+
+    class _FakePopen:
+        pid = 42424
+
+    monkeypatch.setattr(spawn_execute_module.subprocess, "Popen", lambda *_a, **_kw: _FakePopen())
+    launch = spawn_execute_module.execute_spawn_background(
+        payload=SpawnCreateInput(prompt="FIRST", background=True),
+        request=SpawnRequest(
+            prompt="FIRST",
+            model="pi-test-model",
+            harness=HarnessId.CODEX.value,
+        ),
+        runtime=runtime,
+    )
+    assert launch.status == "running"
+    assert launch.spawn_id is not None
+    spawn_id = SpawnId(launch.spawn_id)
+    control_root = authority.runtime_root
+    manager = SpawnManager(
+        runtime_root=control_root,
+        project_root=project_root,
+        start_connection=_delayed_background_start,
+    )
+    monkeypatch.setattr(
+        spawn_inject_module,
+        "resolve_runtime_root_and_config",
+        lambda _root: (project_root, object()),
+    )
+    monkeypatch.setattr(
+        spawn_inject_module,
+        "resolve_runtime_root",
+        lambda _root: control_root,
+    )
+
+    launch_task = asyncio.create_task(
+        manager.start_spawn(
+            ConnectionConfig(
+                spawn_id=spawn_id,
+                harness_id=HarnessId.CODEX,
+                prompt="FIRST",
+                control_root=project_root,
+                env_overrides={},
+            ),
+            ResolvedLaunchSpec(
+                harness=HarnessId.CODEX,
+                prompt="FIRST",
+                permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
+            ),
+        )
+    )
+
+    try:
+        await asyncio.wait_for(
+            spawn_inject_module.inject_message(str(spawn_id), "SECOND"),
+            timeout=10.0,
+        )
+        await asyncio.wait_for(launch_task, timeout=5.0)
+        outcome = await asyncio.wait_for(
+            manager.wait_for_completion(spawn_id),
+            timeout=5.0,
+        )
+
+        assert outcome is not None
+        assert outcome.status == "succeeded"
+        assert "Message delivered" in capsys.readouterr().out
+        assert received_messages == ["SECOND"]
+    finally:
+        if not launch_task.done():
+            launch_task.cancel()
+        cleanup_task = manager._cleanup_tasks.get(spawn_id)
+        if cleanup_task is not None:
+            await asyncio.wait_for(cleanup_task, timeout=5.0)
+        await manager.shutdown()
+        shutil.rmtree(runtime_root, ignore_errors=True)
 
 
 async def _start_pi_connection(

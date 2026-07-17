@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import AsyncIterator
-from contextlib import suppress
 from dataclasses import dataclass
 from typing import Any
 
 from meridian.lib.harness.connections.base import HarnessEvent
 from meridian.lib.streaming.drain_coordinator import AuxWakeCoordinator
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -43,9 +45,12 @@ class DrainInputWaiter:
         self,
         events_iter: AsyncIterator[HarnessEvent],
         aux_wake: AuxWakeCoordinator,
+        *,
+        task_context: str = "drain input",
     ) -> None:
         self._events_iter = events_iter
         self._aux_wake = aux_wake
+        self._task_context = task_context
         self._pending_event_task: asyncio.Future[HarnessEvent] | None = None
         self._pending_disk_task: asyncio.Task[None] | None = None
 
@@ -98,7 +103,7 @@ class DrainInputWaiter:
             self._pending_event_task = None
             return DrainClosedWake()
         finally:
-            await _cancel_task(timeout_task)
+            await _cancel_task(timeout_task, task_context=f"{self._task_context} timeout")
 
     def _consume_ready_disk_change(self) -> bool:
         if self._pending_disk_task is None or not self._pending_disk_task.done():
@@ -108,18 +113,47 @@ class DrainInputWaiter:
         return True
 
     async def close(self) -> None:
-        await _cancel_task(self._pending_event_task)
-        await _cancel_task(self._pending_disk_task)
+        await _cancel_task(
+            self._pending_event_task,
+            task_context=f"{self._task_context} event source",
+        )
+        await _cancel_task(
+            self._pending_disk_task,
+            task_context=f"{self._task_context} auxiliary wake",
+        )
 
 
-async def _cancel_task(task: asyncio.Future[Any] | None) -> None:
+async def _cancel_task(
+    task: asyncio.Future[Any] | None,
+    *,
+    task_context: str = "drain task",
+) -> None:
     if task is None:
         return
     if task.done():
-        if not task.cancelled():
-            with suppress(StopAsyncIteration, Exception):
-                task.result()
+        if task.cancelled():
+            return
+        try:
+            task.result()
+        except (StopAsyncIteration, asyncio.CancelledError):
+            pass
+        except Exception as exc:
+            logger.warning(
+                "Unexpected %s failure while closing: %s",
+                task_context,
+                exc,
+                exc_info=True,
+            )
         return
     task.cancel()
-    with suppress(asyncio.CancelledError):
+    try:
         await task
+    except (StopAsyncIteration, asyncio.CancelledError):
+        pass
+    except Exception as exc:
+        logger.warning(
+            "Unexpected %s failure while closing: %s",
+            task_context,
+            exc,
+            exc_info=True,
+        )
