@@ -6,8 +6,8 @@ generic streaming runtime remains in [CONTEXT.md](CONTEXT.md).
 ## Pi RPC Quiescence Drain
 
 Pi spawned sessions complete by quiescence, not by process exit. `SpawnManager` still
-owns the generic event loop (persist → observe → fan-out). `PiDrainCoordinator` is a
-thin compatibility wrapper around the shared `CompletionCoordinator`. `pi_drain.py`
+owns the generic event loop (persist → observe → fan-out). `PiDrainCoordinator` adapts
+the Pi collaborators to the shared `CompletionCoordinator`. `pi_drain.py`
 owns Pi evidence and cleanup collaborators; `pi_completion_profile.py` owns Pi
 precedence, phases, deadlines, nudges, and stream-exit policy.
 `drain_plan_factory.py` is the composition root for the full Pi drain plan.

@@ -19,7 +19,7 @@ from meridian.lib.harness.connections.base import (
 )
 from meridian.lib.state import spawn_store
 from meridian.lib.streaming import pi_drain as pi_drain_module
-from meridian.lib.streaming.pi_subspawn_tracker import PiSubspawnTracker
+from meridian.lib.streaming.pi_work_ledger import PiPrivateWorkLedger
 from tests.support.async_determinism import (
     AsyncDeterminism,
     TaskGate,
@@ -387,12 +387,12 @@ async def test_pi_child_wave_timeout_publishes_while_descendant_cleanup_is_block
 
     async def _noop_process_cleanup(
         target_spawn_id: SpawnId,
-        tracker: PiSubspawnTracker,
+        ledger: PiPrivateWorkLedger,
         *,
         reason: str,
         exclude_subspawn_ids: set[str] | None = None,
     ) -> None:
-        _ = target_spawn_id, tracker, reason, exclude_subspawn_ids
+        _ = target_spawn_id, ledger, reason, exclude_subspawn_ids
 
     monkeypatch.setattr(
         "meridian.lib.bootstrap.services.build_spawn_application_service_from_roots",
@@ -478,12 +478,12 @@ async def test_pi_stream_exit_publishes_while_descendant_cleanup_is_blocked(
 
     async def _noop_process_cleanup(
         target_spawn_id: SpawnId,
-        tracker: PiSubspawnTracker,
+        ledger: PiPrivateWorkLedger,
         *,
         reason: str,
         exclude_subspawn_ids: set[str] | None = None,
     ) -> None:
-        _ = target_spawn_id, tracker, reason, exclude_subspawn_ids
+        _ = target_spawn_id, ledger, reason, exclude_subspawn_ids
 
     monkeypatch.setattr(
         "meridian.lib.bootstrap.services.build_spawn_application_service_from_roots",
@@ -600,7 +600,7 @@ async def _run_pi_child_wave_timeout_with_cleanup_mocks(
 
     async def _fallback_cleanup(
         target_spawn_id: SpawnId,
-        tracker: PiSubspawnTracker,
+        ledger: PiPrivateWorkLedger,
         *,
         reason: str,
         exclude_subspawn_ids: set[str] | None = None,
@@ -610,7 +610,12 @@ async def _run_pi_child_wave_timeout_with_cleanup_mocks(
                 "pgid_fallback",
                 str(target_spawn_id),
                 reason,
-                tracker.active_tracked_pgid_candidates(exclude_ids=exclude_subspawn_ids),
+                tuple(
+                    handle.process_group_id
+                    for handle in ledger.cleanup_handles(
+                        exclude_ids=exclude_subspawn_ids
+                    )
+                ),
             )
         )
 

@@ -101,11 +101,10 @@ means the manager died or the spawn is orphaned.
 - `spawn_session.py` — `SpawnSession`, `DrainOutcome`
 - `pi_completion_profile.py` — Pi precedence, phases, deadlines, nudges, and stream-exit
   policy
-- `pi_drain.py` — Pi evidence/cleanup collaborators, composition, and thin compatibility
-  wrapper
+- `pi_drain.py` — Pi evidence/cleanup collaborators and drain-protocol adapter
 - `pi_work_ledger.py` — sole mutable owner of Pi-private blockers and PID/PGID cleanup
   handles; exposes immutable categorized snapshots
-- `resident_drain.py` — resident evidence/profile/cleanup adapters and thin construction wrapper
+- `resident_drain.py` — resident evidence/profile/cleanup and drain-protocol adapter
 - `pi_subspawn_tracker.py` — Pi lifecycle parsing/deduplication; feeds the private-work ledger
 - `disk_watcher.py` / `pi_quiescence.py` — Pi-private bash/notification disk
   observation and parent-idle epochs; disk-backed private evidence feeds the ledger

@@ -23,7 +23,7 @@ from meridian.lib.streaming.completion_nudge import PI_COMPLETION_NUDGE_MESSAGE
 from meridian.lib.streaming.drain_coordinator import DrainExitDecision, DrainLoopDecision
 from meridian.lib.streaming.drain_policy import DrainAction, PiRpcQuiescenceDrainPolicy
 from meridian.lib.streaming.pi_drain import PiDrainCoordinator
-from meridian.lib.streaming.pi_subspawn_tracker import PiSubspawnTracker
+from meridian.lib.streaming.pi_work_ledger import PiPrivateWorkLedger
 from tests.support.async_determinism import FakeClock
 from tests.support.pi import FakePiConnection, pi_event
 
@@ -55,6 +55,16 @@ async def _start_coordinator(
 ) -> _StartedCoordinator:
     clock = FakeClock(start=100.0)
     monkeypatch.setattr(pi_drain_module.time, "monotonic", clock.monotonic)
+    monkeypatch.setattr(
+        pi_completion_profile_module,
+        "PI_DONE_NUDGE_IDLE_DELAY_SECONDS",
+        nudge_idle_seconds,
+    )
+    monkeypatch.setattr(
+        pi_completion_profile_module,
+        "COMPLETION_NUDGE_INTERVAL_SECONDS",
+        5.0,
+    )
     phases: list[dict[str, object]] = []
     nudges: list[str] = []
     cleanups: list[str] = []
@@ -85,7 +95,7 @@ async def _start_coordinator(
         if nudge_raises:
             raise RuntimeError("advisory nudge failed")
 
-    async def _cleanup(_tracker: PiSubspawnTracker, reason: str) -> None:
+    async def _cleanup(_ledger: PiPrivateWorkLedger, reason: str) -> None:
         cleanups.append(reason)
 
     coordinator = PiDrainCoordinator.for_connection(
@@ -99,8 +109,6 @@ async def _start_coordinator(
         terminate_children=_cleanup if cleanup_configured else None,
         send_done_nudge=_nudge,
     )
-    coordinator.done_nudge_idle_delay_seconds = nudge_idle_seconds
-    coordinator.done_nudge_interval_seconds = 5.0
     await coordinator.start()
     coordinator.set_policy(
         PiRpcQuiescenceDrainPolicy(quiescence_check=coordinator.is_quiescent)
@@ -318,7 +326,6 @@ async def test_done_fails_closed_when_pi_descendant_evidence_stays_unreadable(
 
         assert terminal.recorded_outcome is None
         assert waiting.recorded_outcome is None
-        assert coordinator.deadline_monotonic == 105.25
 
         started.clock.advance(5.0)
         expired = await coordinator.handle_timeout()
@@ -468,7 +475,7 @@ async def test_expired_notification_wins_over_expired_child_wave(
 
 
 @pytest.mark.asyncio
-async def test_notification_timeout_does_not_replace_stream_exit_cleanup_callback(
+async def test_notification_timeout_preserves_configured_stream_exit_cleanup(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -478,20 +485,12 @@ async def test_notification_timeout_does_not_replace_stream_exit_cleanup_callbac
         notification_timeout_seconds=5.0,
     )
     coordinator = started.coordinator
-    temporary_cleanups: list[str] = []
-
-    async def _temporary_cleanup(
-        _tracker: PiSubspawnTracker,
-        reason: str,
-    ) -> None:
-        temporary_cleanups.append(reason)
-
     try:
         await coordinator.observe_event(_notification("meridian.notification.queued"), None)
         await coordinator.observe_event(_tracked_child_start(), None)
         started.clock.advance(5.0)
 
-        timeout = await coordinator.handle_timeout(_temporary_cleanup)
+        timeout = await coordinator.handle_timeout()
         exit_decision = await coordinator.handle_stream_exit(timeout.recorded_outcome)
         request = exit_decision.post_publication_cleanup
         assert request is not None
@@ -501,7 +500,6 @@ async def test_notification_timeout_does_not_replace_stream_exit_cleanup_callbac
             timeout,
             "pi_notification_timeout:id=n1:phase=queued:elapsed=5.000:timeout=5.000",
         )
-        assert temporary_cleanups == []
         assert started.cleanups == ["pi_process_exit_with_tracked_children"]
     finally:
         await coordinator.stop()

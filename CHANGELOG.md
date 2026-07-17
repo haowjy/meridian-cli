@@ -5,6 +5,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Changed
+- Removed completed streaming-migration tracker/ledger façades and coordinator
+  mutation ports; completion tests now establish state through events and signals. (#371)
 - Spawn reconciliation completion/cancel precedence now lives behind a shared
   state-layer decision seam instead of a private reaper import. (#322)
 

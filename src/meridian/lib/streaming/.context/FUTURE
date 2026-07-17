@@ -14,16 +14,6 @@ convergence-quality improvement.
   is, instead of `resident_drain.py` building
   `build_spawn_application_service_from_roots()` internally (`resident_drain.py:322-330`).
 
-- **Remove completed-migration compatibility scaffolding.** Production-unused
-  tracker/ledger façades and test-only coordinator mutation ports remain; convert
-  the tests that need them to behavioral setup and delete the seams
-  (`pi_subspawn_tracker.py:277-326`, `pi_work_ledger.py:124-137`,
-  `pi_drain.py:429-467,534-537`, `resident_drain.py:409-423`,
-  `completion_contracts.py:15-22`, `completion_coordinator.py:454-463`). Resolve
-  the residual `Cleaning`-phase remnant vs the post-publication async teardown
-  model (the completion cycle now publishes before cleaning), and delete the
-  stale phase-4 fold TODO in `drain_plan_factory.py`'s resident branch.
-
 - **Consolidate migration characterization test debt.** `test_pi_characterization.py`,
   `test_pi_quiescence.py`, `test_pi_quiescence_disk_races.py`,
   `test_pi_descendant_evidence.py`, and `test_resident_drain.py` separately

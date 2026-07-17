@@ -104,9 +104,6 @@ def build_drain_plan(
 
     resident_backend = receiver.resident_backend
     if resident_backend is not None:
-        # TODO(phase-4): resident waiting and Pi quiescence share the same
-        # "terminal candidate plus descendant work" shape; fold once Pi's
-        # lifecycle inference machinery is removed.
         coordinator = ResidentDrainCoordinator.for_connection(
             project_root=project_root,
             runtime_root=runtime_root,

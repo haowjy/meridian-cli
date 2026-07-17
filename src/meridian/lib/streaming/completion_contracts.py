@@ -17,7 +17,6 @@ CompletionPhase = Literal[
     "assessing",
     "waiting",
     "stabilizing",
-    "cleaning",
     "finalized",
 ]
 AssessmentTrigger = Literal[

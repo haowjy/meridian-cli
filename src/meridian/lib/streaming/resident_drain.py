@@ -344,7 +344,7 @@ class _ResidentCompletionCleanup:
 
 
 class ResidentDrainCoordinator:
-    """Thin compatibility wrapper constructing the shared completion coordinator."""
+    """Construct and adapt resident collaborators to the drain coordinator protocol."""
 
     def __init__(
         self,
@@ -406,22 +406,6 @@ class ResidentDrainCoordinator:
             poll_seconds=resolved_poll,
         )
 
-    @property
-    def pending_outcome(self) -> TerminalEventOutcome | None:
-        return self._coordinator.pending_outcome
-
-    @pending_outcome.setter
-    def pending_outcome(self, value: TerminalEventOutcome | None) -> None:
-        self._coordinator.pending_outcome = value
-
-    @property
-    def deadline_monotonic(self) -> float | None:
-        return self._coordinator.deadline_monotonic
-
-    @deadline_monotonic.setter
-    def deadline_monotonic(self, value: float | None) -> None:
-        self._coordinator.deadline_monotonic = value
-
     async def start(self) -> None:
         await self._coordinator.start()
 
@@ -480,12 +464,6 @@ class ResidentDrainCoordinator:
         request: CompletionCleanupRequest,
     ) -> None:
         await self._coordinator.execute_post_publication_cleanup(request)
-
-    def _set_awaiting_done(self, awaiting_done: bool) -> None:
-        """Compatibility seam retained for existing resident test construction."""
-
-        self._profile.set_awaiting_done(awaiting_done)
-
 
 def _outstanding_descendant_blockers(
     runtime_root: Path,

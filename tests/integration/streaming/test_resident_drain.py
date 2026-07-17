@@ -854,7 +854,7 @@ async def test_active_followup_turn_still_enforces_deadline(
     monkeypatch.setattr(resident_drain_module.time, "monotonic", clock.monotonic)
     start_row(tmp_path, "p1", HarnessId.CODEX, None)
     connection = FakeResidentConnection(HarnessId.CODEX)
-    coordinator = coordinator_with_clock(tmp_path, connection, clock, deadline_seconds=10.0)
+    coordinator = await coordinator_with_clock(tmp_path, connection, clock, deadline_seconds=10.0)
     coordinator.observe_activity_transition("turn_active")
 
     clock.advance(10.0)
@@ -877,7 +877,7 @@ async def test_deadline_returns_timed_out_when_descendant_reap_fails(
     monkeypatch.setattr(resident_drain_module.time, "monotonic", clock.monotonic)
     start_row(tmp_path, "p1", HarnessId.CODEX, None)
     connection = FakeResidentConnection(HarnessId.CODEX)
-    coordinator = coordinator_with_clock(tmp_path, connection, clock, deadline_seconds=10.0)
+    coordinator = await coordinator_with_clock(tmp_path, connection, clock, deadline_seconds=10.0)
     cleanup_calls = 0
 
     class _FailingService:
@@ -924,7 +924,7 @@ async def test_deadline_reap_cancels_active_descendant_cli_spawns(
     start_row(tmp_path, "p3", HarnessId.OPENCODE, "p1")
     spawn_store.finalize_spawn(tmp_path, SpawnId("p3"), "succeeded", 0, origin="runner")
     connection = FakeResidentConnection(HarnessId.CODEX)
-    coordinator = coordinator_with_clock(tmp_path, connection, clock, deadline_seconds=10.0)
+    coordinator = await coordinator_with_clock(tmp_path, connection, clock, deadline_seconds=10.0)
     cancelled: list[str] = []
 
     class _FakeService:
@@ -974,7 +974,7 @@ async def test_done_signal_is_honored_with_tracked_child_outstanding(
     start_row(tmp_path, "p1", HarnessId.OPENCODE, None)
     start_row(tmp_path, "p2", HarnessId.CODEX, "p1")
     connection = FakeResidentConnection(HarnessId.OPENCODE)
-    coordinator = awaiting_done_coordinator(tmp_path, connection)
+    coordinator = await awaiting_done_coordinator(tmp_path, connection)
 
     write_spawn_signal(tmp_path, "p1", "done")
     decision = await coordinator.handle_timeout()

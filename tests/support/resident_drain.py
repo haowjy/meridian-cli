@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import time
 from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
@@ -26,7 +25,12 @@ from meridian.lib.harness.semantics import (
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.safety.permissions import UnsafeNoOpPermissionResolver
 from meridian.lib.state import spawn_store
-from meridian.lib.streaming.drain_policy import TURN_BOUNDARY_EVENT_TYPE, DrainPolicy
+from meridian.lib.state.spawn_signals import write_spawn_signal
+from meridian.lib.streaming.drain_policy import (
+    TURN_BOUNDARY_EVENT_TYPE,
+    DrainAction,
+    DrainPolicy,
+)
 from meridian.lib.streaming.resident_drain import ResidentDrainCoordinator
 from meridian.lib.streaming.spawn_manager import SpawnManager
 from tests.support.fakes import FakeClock
@@ -151,7 +155,7 @@ class FakeResidentConnection(HarnessConnection[ResolvedLaunchSpec]):
         self._resident_backend.status = LivenessDecision.STREAM_STALLED
 
 
-def awaiting_done_coordinator(
+async def awaiting_done_coordinator(
     tmp_path: Path,
     connection: HarnessConnection[Any],
 ) -> ResidentDrainCoordinator:
@@ -166,8 +170,14 @@ def awaiting_done_coordinator(
         deadline_seconds=30.0,
         poll_seconds=0.01,
     )
-    coordinator.pending_outcome = TerminalEventOutcome(status="succeeded", exit_code=0)
-    coordinator.deadline_monotonic = time.monotonic() + coordinator.deadline_seconds
+    write_spawn_signal(tmp_path, "p1", "rearm")
+    terminal_event = resident_event(connection.harness_id, "agent_end", {})
+    await coordinator.observe_event(terminal_event, "idle")
+    await coordinator.handle_terminal_event(
+        terminal_event,
+        TerminalEventOutcome(status="succeeded", exit_code=0),
+        DrainAction(terminate=True, emit_turn_boundary=False),
+    )
     return coordinator
 
 
@@ -257,7 +267,7 @@ async def start_manager(
     return manager
 
 
-def coordinator_with_clock(
+async def coordinator_with_clock(
     tmp_path: Path,
     connection: FakeResidentConnection,
     clock: FakeClock,
@@ -274,8 +284,12 @@ def coordinator_with_clock(
         deadline_seconds=deadline_seconds,
         poll_seconds=poll_seconds,
     )
-    coordinator.pending_outcome = TerminalEventOutcome(status="succeeded", exit_code=0)
-    coordinator.deadline_monotonic = clock.monotonic() + deadline_seconds
-    coordinator._set_awaiting_done(True)
+    write_spawn_signal(tmp_path, "p1", "rearm")
+    terminal_event = resident_event(connection.harness_id, "agent_end", {})
+    await coordinator.observe_event(terminal_event, "idle")
+    await coordinator.handle_terminal_event(
+        terminal_event,
+        TerminalEventOutcome(status="succeeded", exit_code=0),
+        DrainAction(terminate=True, emit_turn_boundary=False),
+    )
     return coordinator
-
