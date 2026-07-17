@@ -80,7 +80,7 @@ def _snapshot_to_dict(snapshot: ProcessScopeSnapshot) -> dict[str, object]:
 
 
 def scope_projection_lock_path(runtime_root: Path, spawn_id: SpawnId | str) -> Path:
-    """Return the stable, never-unlinked lock for one scope sidecar."""
+    """Return the stable lock for one scope sidecar."""
     return runtime_root / "locks" / "process-scopes" / f"{spawn_id}.lock"
 
 

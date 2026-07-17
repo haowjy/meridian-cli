@@ -19,6 +19,11 @@ State splits across distinct roots — understand which goes where before writin
   locks/spawns/<spawn_id>.lock      — stable per-spawn external-writer lock
   locks/process-scopes/<spawn_id>.lock
                                     — stable process-scope sidecar mutation lock
+  locks/reaper-cleanup/<spawn_id>.lock
+                                    — stable reaper cleanup lock
+  locks/launch-boundary/<spawn_id>.lock
+                                    — stable launch-boundary append lock
+  locks/gc.lock                     — lock-GC pass serialization
   spawns/.staging/<unique>/         — complete row build before atomic publication
   spawns/<spawn_id>/
     state.json                      — authoritative spawn state (v2)
@@ -34,7 +39,7 @@ State splits across distinct roots — understand which goes where before writin
 
 The project UUID in `.meridian/id` keys into `~/.meridian/projects/<id>/`. Projects
 can move or be renamed without losing runtime history. Project lifetime gates sit outside
-the deletable project root and, like every coordination lock identity, are never unlinked.
+the deletable project root and are never unlinked.
 
 Work items live under the `[context.work]` root (default
 `{user_home}/context/<id>/work/<slug>/`), resolved by `work_scope.py` /
@@ -50,8 +55,9 @@ not a global event log, so status reads stay O(1) instead of replaying O(n) even
 
 Every update to a published spawn calls `write_state_locked()`. It acquires
 `locks/spawns/<id>.lock`, re-reads current state, applies a pure mutator, and writes
-atomically. The lock identity is outside the artifact directory it protects and is
-never unlinked, so all contenders coordinate through the same stable inode.
+atomically. The lock identity is outside the artifact directory it protects and remains
+stable while the spawn exists. Orphaned identities are unlinked only through lock GC's
+validated-exclusive, unlink-before-release seam.
 
 Process-scope registration and release markers route through the locked sidecar
 mutation seam. When both locks are needed, acquire the spawn-state lock before the
@@ -135,9 +141,15 @@ validation and miss `SpawnRecord` reconstruction from `starting-prompt.md`.
 
 **Don't write state files with `open()`** — use `atomic_write_text()` or `append_text_line()`.
 
+**Don't unlink coordination locks outside the GC seam** — `lock_gc.py` and cleaned
+session handling may call `unlink_validated_lock()` only under a fresh, non-reentrant,
+validated exclusive acquisition, immediately before release. Never unlink at ordinary
+release time or inside a reentrant context: leaving any lock held on the orphaned inode
+lets another contender validate against a recreated inode and causes split-brain.
+
 **Don't acquire `spawns_flock` for per-spawn mutations** — the global lock serializes
 spawn ID allocation, initial row publication, and abandoned-stage GC. Later mutations
-use `write_state_locked()` (`locks/spawns/<id>.lock`, which is never unlinked).
+use `write_state_locked()` (`locks/spawns/<id>.lock`, stable until orphan lock GC).
 Published-row deletion uses `delete_published_spawn()` under that same stable lock;
 when deletion also takes the process-scope projection lock, the order is spawn lock
 then projection lock. This composition belongs in `spawn_store.py`, not either leaf

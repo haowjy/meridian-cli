@@ -18,6 +18,10 @@ State splits across two roots:
   sessions/                         — per-session lock + lease files
   spawn-id-counter                  — monotonic p1, p2, …
   locks/spawns/<id>.lock            — stable per-spawn mutation lock
+  locks/process-scopes/<id>.lock    — stable process-scope projection lock
+  locks/reaper-cleanup/<id>.lock    — stable reaper cleanup lock
+  locks/launch-boundary/<id>.lock   — stable launch-boundary append lock
+  locks/gc.lock                     — lock-GC pass serialization
   spawns/
     .staging/<unique>/              — complete unpublished spawn row
     <id>/
@@ -167,6 +171,13 @@ Use `platform.locking.lock_file(path)` for all cross-process locking:
 Thread-local reentrancy: a thread that already holds the lock can re-enter on the
 same path without deadlocking. Do not use `threading.Lock` or `fcntl` directly —
 the platform module handles both OS and thread-reentrancy.
+
+Per-spawn lock paths stay stable while their spawn exists. `lock_gc.py` may unlink an
+orphan only under a fresh, non-reentrant validated exclusive acquisition, and cleaned
+session locks use the same unlink-before-release primitive. No other release or delete
+path may unlink coordination locks. In particular, unlinking while a reentrant outer
+frame remains locked strands that frame on an orphaned inode and permits split-brain on
+a recreated path.
 
 `work_scope.py` resolves each work directory. `work_store.py` provides pure read
 projections and compatibility facades; `work_repository.py` serializes all status
