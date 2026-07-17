@@ -14,6 +14,7 @@ from meridian.lib.harness.semantics import TerminalEventOutcome
 from meridian.lib.ops.spawn.models import SpawnSignalInput
 from meridian.lib.state import spawn_store
 from meridian.lib.state.artifact_store import LocalStore
+from meridian.lib.streaming import descendant_evidence as descendant_evidence_module
 from meridian.lib.streaming.drain_policy import (
     DrainAction,
     PersistentDrainPolicy,
@@ -25,6 +26,7 @@ from tests.support.async_determinism import (
     wait_until,
 )
 from tests.support.fakes import FakeClock
+from tests.support.pi import start_row
 from tests.support.resident_drain import (
     FakeResidentConnection,
     awaiting_done_coordinator,
@@ -33,7 +35,6 @@ from tests.support.resident_drain import (
     next_turn_boundary,
     resident_event,
     start_manager,
-    start_row,
 )
 
 
@@ -347,8 +348,8 @@ async def test_terminal_done_fails_closed_when_descendant_evidence_unreadable(
         raise OSError("descendant evidence unavailable")
 
     monkeypatch.setattr(
-        resident_drain_module,
-        "_outstanding_descendant_blockers",
+        descendant_evidence_module.spawn_store,
+        "list_spawns",
         _raise_evidence_read_failure,
     )
     terminal = TerminalEventOutcome(status="succeeded", exit_code=0)
@@ -394,16 +395,17 @@ async def test_terminal_done_completes_when_descendant_evidence_recovers(
         cancel_descendants=descendant_cancellation_from_roots(tmp_path, tmp_path),
     )
     evidence_readable = False
+    list_spawns = descendant_evidence_module.spawn_store.list_spawns
 
-    def _read_descendant_blockers(*_args: object) -> tuple[()]:
+    def _read_descendants(runtime_root: Path) -> object:
         if not evidence_readable:
             raise OSError("descendant evidence unavailable")
-        return ()
+        return list_spawns(runtime_root)
 
     monkeypatch.setattr(
-        resident_drain_module,
-        "_outstanding_descendant_blockers",
-        _read_descendant_blockers,
+        descendant_evidence_module.spawn_store,
+        "list_spawns",
+        _read_descendants,
     )
     write_spawn_signal(tmp_path, "p1", "done")
     terminal = TerminalEventOutcome(status="succeeded", exit_code=0)
@@ -744,6 +746,7 @@ async def test_codex_resident_deadline_waits_then_reaps_live_child(
     finally:
         await manager.stop_spawn(spawn_id)
 
+
 @pytest.mark.asyncio
 async def test_codex_resident_finalization_preserves_artifact_report(tmp_path: Path) -> None:
     spawn_id = SpawnId("p1")
@@ -783,8 +786,6 @@ async def test_codex_resident_finalization_preserves_artifact_report(tmp_path: P
         )
     finally:
         await manager.stop_spawn(spawn_id)
-
-
 
 
 @pytest.mark.asyncio

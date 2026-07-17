@@ -5,6 +5,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Changed
+- Consolidated Pi drain characterization behind one behavioral scenario builder and a
+  compact timeout-priority table. (#372)
 - Split the neutral drain teardown contract from Pi cleanup policy and moved resident
   descendant cancellation wiring into the drain-plan composition root. (#370)
 - Removed completed streaming-migration tracker/ledger façades and coordinator

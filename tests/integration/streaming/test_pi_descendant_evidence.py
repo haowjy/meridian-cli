@@ -3,101 +3,29 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
 
 from meridian.lib.core.types import HarnessId, SpawnId
-from meridian.lib.harness.connections.base import ConnectionConfig
 from meridian.lib.harness.semantics import TerminalEventOutcome
-from meridian.lib.launch.launch_types import ResolvedLaunchSpec
-from meridian.lib.safety.permissions import UnsafeNoOpPermissionResolver
 from meridian.lib.state import spawn_store
 from meridian.lib.streaming import descendant_evidence as descendant_evidence_module
-from meridian.lib.streaming import pi_drain as pi_drain_module
 from meridian.lib.streaming.drain_coordinator import DrainTerminalDecision
-from meridian.lib.streaming.drain_policy import DrainAction, PiRpcQuiescenceDrainPolicy
-from meridian.lib.streaming.pi_drain import PiDrainCoordinator
-from tests.support.async_determinism import FakeClock
-from tests.support.pi import FakePiConnection, pi_event
+from meridian.lib.streaming.drain_policy import DrainAction
+from tests.support.pi import PiDrainScenario, pi_event
 from tests.support.resident_drain import start_row
 
 _ROOT_ID = SpawnId("p1")
-_AGENT_END = pi_event("agent_end", {})
+_AGENT_END = pi_event("agent_end")
 _SUCCESS = TerminalEventOutcome(status="succeeded", exit_code=0)
 _TERMINATE = DrainAction(terminate=True, emit_turn_boundary=False)
+_start_pi = PiDrainScenario.start
 
 
-@dataclass
-class _StartedPi:
-    coordinator: PiDrainCoordinator
-    clock: FakeClock
-    phases: list[dict[str, object]]
-    cleanup_reasons: list[str]
-
-
-async def _start_pi(
-    runtime_root: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> _StartedPi:
-    clock = FakeClock(start=100.0)
-    monkeypatch.setattr(pi_drain_module.time, "monotonic", clock.monotonic)
-    phases: list[dict[str, object]] = []
-    cleanup_reasons: list[str] = []
-    connection = FakePiConnection([])
-    await connection.start(
-        ConnectionConfig(
-            spawn_id=_ROOT_ID,
-            harness_id=HarnessId.PI,
-            prompt="hello",
-            control_root=runtime_root,
-            env_overrides={},
-            pi_session_role="spawned",
-        ),
-        ResolvedLaunchSpec(
-            harness=HarnessId.PI,
-            prompt="hello",
-            permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
-        ),
-    )
-
-    def _emit_phase(*, phase: str, session_role: str | None, **payload: object) -> None:
-        assert session_role == "spawned"
-        phases.append({"phase": phase, **payload})
-
-    async def _terminate_children(_tracker: object, reason: str) -> None:
-        cleanup_reasons.append(reason)
-
-    coordinator = PiDrainCoordinator.for_connection(
-        runtime_root=runtime_root,
-        spawn_id=_ROOT_ID,
-        receiver=connection,
-        session_role="spawned",
-        notification_timeout_seconds=None,
-        child_wave_timeout_seconds=None,
-        emit_phase=_emit_phase,
-        terminate_children=_terminate_children,
-    )
-    await coordinator.start()
-    coordinator.set_policy(
-        PiRpcQuiescenceDrainPolicy(quiescence_check=coordinator.is_quiescent)
-    )
-    return _StartedPi(
-        coordinator=coordinator,
-        clock=clock,
-        phases=phases,
-        cleanup_reasons=cleanup_reasons,
-    )
-
-
-async def _assess_terminal(started: _StartedPi) -> DrainTerminalDecision:
+async def _assess_terminal(started: PiDrainScenario) -> DrainTerminalDecision:
     await started.coordinator.observe_event(_AGENT_END, "idle")
-    return await started.coordinator.handle_terminal_event(
-        _AGENT_END,
-        _SUCCESS,
-        _TERMINATE,
-    )
+    return await started.coordinator.handle_terminal_event(_AGENT_END, _SUCCESS, _TERMINATE)
 
 
 @pytest.mark.asyncio
@@ -251,11 +179,11 @@ async def test_pi_tree_only_descendant_triggers_process_exit_cleanup(
 
         assert exited.recorded_outcome is not None
         assert exited.recorded_outcome.error == "pi_process_exited_with_tracked_children"
-        assert started.cleanup_reasons == []
+        assert started.cleanups == []
         request = exited.post_publication_cleanup
         assert request is not None
         await started.coordinator.execute_post_publication_cleanup(request)
-        assert started.cleanup_reasons == ["pi_process_exit_with_tracked_children"]
+        assert started.cleanups == ["pi_process_exit_with_tracked_children"]
     finally:
         await started.coordinator.stop()
 

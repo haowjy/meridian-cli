@@ -4,10 +4,9 @@
 from __future__ import annotations
 
 import asyncio
-import json
 from contextlib import suppress
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 import pytest
 
@@ -31,69 +30,26 @@ from tests.support.pi import (
     FakePiConnection as _FakePiConnection,
 )
 from tests.support.pi import (
+    history_has_event,
+    history_has_phase,
+    read_history,
+    read_history_phases,
+    read_phase_events,
+    wait_for_history_phase,
+)
+from tests.support.pi import (
     pi_event as _pi_event,
 )
 from tests.support.pi import (
     start_pi_manager as _start_pi_manager,
 )
 
-
-def _read_history(runtime_root: Path, spawn_id: SpawnId) -> list[dict[str, Any]]:
-    history_path = runtime_root / "spawns" / str(spawn_id) / "history.jsonl"
-    return [
-        json.loads(line)
-        for line in history_path.read_text(encoding="utf-8").splitlines()
-        if line
-    ]
-
-
-def _read_history_phases(runtime_root: Path, spawn_id: SpawnId) -> list[str]:
-    return [
-        cast("str", event.get("payload", {}).get("phase"))
-        for event in _read_history(runtime_root, spawn_id)
-        if event.get("event_type") == "meridian.pi.lifecycle.phase"
-    ]
-
-
-async def _wait_for_history_phase(
-    runtime_root: Path,
-    spawn_id: SpawnId,
-    phase: str,
-    *,
-    count: int = 1,
-) -> list[str]:
-    await wait_until(
-        lambda: _read_history_phases(runtime_root, spawn_id).count(phase) >= count,
-        timeout=5.0,
-        description=f"{phase} lifecycle phase",
-    )
-    return _read_history_phases(runtime_root, spawn_id)
-
-
-def _history_has_phase(runtime_root: Path, spawn_id: SpawnId, phase: str) -> bool:
-    history_path = runtime_root / "spawns" / str(spawn_id) / "history.jsonl"
-    return history_path.exists() and phase in _read_history_phases(runtime_root, spawn_id)
-
-
-def _history_has_event(runtime_root: Path, spawn_id: SpawnId, event_type: str) -> bool:
-    history_path = runtime_root / "spawns" / str(spawn_id) / "history.jsonl"
-    return history_path.exists() and any(
-        event.get("event_type") == event_type
-        for event in _read_history(runtime_root, spawn_id)
-    )
-
-
-def _read_phase_events(
-    runtime_root: Path,
-    spawn_id: SpawnId,
-    phase: str,
-) -> list[dict[str, Any]]:
-    return [
-        event
-        for event in _read_history(runtime_root, spawn_id)
-        if event.get("event_type") == "meridian.pi.lifecycle.phase"
-        and event.get("payload", {}).get("phase") == phase
-    ]
+_read_history = read_history
+_read_history_phases = read_history_phases
+_wait_for_history_phase = wait_for_history_phase
+_history_has_phase = history_has_phase
+_history_has_event = history_has_event
+_read_phase_events = read_phase_events
 
 
 @pytest.mark.asyncio
@@ -612,9 +568,7 @@ async def _run_pi_child_wave_timeout_with_cleanup_mocks(
                 reason,
                 tuple(
                     handle.process_group_id
-                    for handle in ledger.cleanup_handles(
-                        exclude_ids=exclude_subspawn_ids
-                    )
+                    for handle in ledger.cleanup_handles(exclude_ids=exclude_subspawn_ids)
                 ),
             )
         )
@@ -738,6 +692,7 @@ async def test_spawn_manager_pi_child_wave_timeout_cleans_tracked_children_and_f
     loop = asyncio.get_running_loop()
     real_loop_time = loop.time
     determinism.install_on_running_loop(monkeypatch)
+
     class _StuckWaveTimeoutConnection(_FakePiConnection):
         async def events(self):  # type: ignore[no-untyped-def]
             for event in self._events:
@@ -889,8 +844,7 @@ async def test_spawn_manager_pi_child_wave_timeout_not_cleared_by_turn_active(
         await wait_until(
             lambda: (
                 (tmp_path / "spawns" / str(spawn_id) / "history.jsonl").exists()
-                and "pi_child_wave_timeout"
-                in _read_history_phases(tmp_path, spawn_id)
+                and "pi_child_wave_timeout" in _read_history_phases(tmp_path, spawn_id)
             ),
             description="child-wave timeout phase before late turn_active",
         )
@@ -1044,8 +998,7 @@ async def test_spawn_manager_pi_parse_error_invalidates_quiescence_and_fails(
         (
             "missing-id",
             _pi_event("meridian.subspawn.start", {"wait_policy": "tracked"}),
-            "pi_lifecycle_tracking_invalidated:missing_subspawn_id:"
-            "meridian.subspawn.start",
+            "pi_lifecycle_tracking_invalidated:missing_subspawn_id:meridian.subspawn.start",
         ),
     ),
     ids=("legacy-event", "missing-id"),
