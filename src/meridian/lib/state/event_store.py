@@ -11,7 +11,7 @@ from typing import Any, TypeVar, cast
 from pydantic import BaseModel, ValidationError
 
 from meridian.lib.platform.locking import lock_file
-from meridian.lib.state.atomic import append_text_line
+from meridian.lib.state.atomic import append_durable_jsonl_line
 
 T = TypeVar("T")
 
@@ -30,7 +30,7 @@ def append_event(
     payload = event.model_dump(exclude_none=exclude_none)
     line = json.dumps(payload, separators=(",", ":"), sort_keys=True) + "\n"
     with lock_file(lock_path):
-        append_text_line(data_path, line)
+        append_durable_jsonl_line(data_path, line)
 
 
 def read_events(

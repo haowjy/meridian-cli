@@ -11,7 +11,6 @@ from pydantic import BaseModel, ConfigDict
 from meridian.lib.state.event_store import append_event, read_events, utc_now_iso
 
 LAUNCH_BOUNDARY_FILENAME = "launch-boundary.jsonl"
-LAUNCH_BOUNDARY_LOCK_FILENAME = "launch-boundary.jsonl.flock"
 
 EVENT_PARENT_LAUNCH_ATTEMPT = "parent_launch_attempt"
 EVENT_PARENT_LAUNCH_SPAWNED = "parent_launch_spawned"
@@ -61,7 +60,7 @@ def launch_boundary_path(runtime_root: Path, spawn_id: str) -> Path:
 
 
 def launch_boundary_lock_path(runtime_root: Path, spawn_id: str) -> Path:
-    return runtime_root / "spawns" / spawn_id / LAUNCH_BOUNDARY_LOCK_FILENAME
+    return runtime_root / "locks" / "launch-boundary" / f"{spawn_id}.lock"
 
 
 def record_launch_boundary_event(
@@ -152,7 +151,6 @@ __all__ = [
     "EVENT_WORKER_REQUEST_LOADED",
     "EVENT_WORKER_TAKEOVER_STARTED",
     "LAUNCH_BOUNDARY_FILENAME",
-    "LAUNCH_BOUNDARY_LOCK_FILENAME",
     "LaunchBoundaryEvent",
     "LaunchBoundarySummary",
     "launch_boundary_lock_path",

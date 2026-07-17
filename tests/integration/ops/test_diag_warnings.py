@@ -12,6 +12,7 @@ from meridian.lib.ops import mars as mars_ops
 from meridian.lib.ops.diag import DoctorInput, doctor_sync
 from meridian.lib.state import spawn_store
 from meridian.lib.state.paths import resolve_project_runtime_root_for_write
+from tests.conftest import posix_only
 
 
 def _create_project_root(tmp_path: Path) -> Path:
@@ -186,6 +187,33 @@ def test_doctor_prune_preserves_v2_state_dir_after_same_run_reconcile(
     assert result.pruned_spawn_artifacts == 0
     assert stale_artifact_dir.exists()
     assert spawn_store.get_spawn(runtime_root, stale_spawn_id) is not None
+
+
+@posix_only
+def test_doctor_reports_locks_removed_by_post_prune_gc(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = _create_project_root(tmp_path)
+    _create_agent_skill_dirs(project_root)
+    runtime_root = resolve_project_runtime_root_for_write(project_root)
+    artifact_dir = runtime_root / "spawns" / "p7"
+    _write_text(artifact_dir / "report.md", "done\n")
+    _set_tree_mtime(artifact_dir, 1_600_000_000.0)
+    lock_path = runtime_root / "locks" / "spawns" / "p7.lock"
+    _write_text(lock_path, "")
+    monkeypatch.setattr(
+        diag,
+        "check_upgrade_availability",
+        lambda *_args, **_kwargs: mars_ops.UpgradeAvailability(),
+    )
+
+    result = doctor_sync(DoctorInput(project_root=project_root.as_posix(), prune=True))
+
+    assert result.pruned_spawn_artifacts == 1
+    assert not lock_path.exists()
+    assert result.lock_gc.files_removed > 0
+    assert "orphaned_locks" in result.repaired
 
 
 def test_doctor_reports_outdated_dependency_warning(

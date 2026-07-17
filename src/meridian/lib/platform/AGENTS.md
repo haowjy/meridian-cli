@@ -51,6 +51,12 @@ legacy Windows branch enforces exclusive locks but its shared mode is advisory-o
 POSIX enforces shared mode. Windows exclusive locking writes a guard byte and fsyncs
 before the first lock attempt; this behavior is untested.
 
+Coordination lock paths are unlinked only through `unlink_validated_lock()`, while a
+fresh, non-reentrant exclusive acquisition still validates against the linked inode,
+immediately before release. Never unlink at ordinary release time or while a reentrant
+outer frame can keep the orphaned inode locked; a recreated path would then admit a
+second holder on a different inode.
+
 **Legacy Windows signal branches are untested.** Their intended behavior is:
 - `os.kill(pid, SIGINT)` is unreliable — use `process.terminate()` instead.
 - `loop.add_signal_handler()` is a no-op on ProactorEventLoop — use `signal.signal()` + `loop.call_soon_threadsafe()`.
@@ -72,7 +78,7 @@ Existing callers work unchanged; new code should use `ScopedProcessHandle`.
 ## Entry Points
 
 - `__init__.py` — `IS_WINDOWS`, `IS_POSIX`, `get_home_path()`, deferred POSIX proxies
-- `locking.py` — `lock_file()`, `try_lock_file()`: advisory exclusive file locking
+- `locking.py` — advisory file locking plus validated lock-GC unlink primitive
 - `process_scope/` — `ScopedProcessHandle`, `ProcessScopeSnapshot`, platform backends
 
 ## Depth

@@ -10,11 +10,48 @@ update flows.  Cross-process lock safety lives in test_session_concurrency.py.
 from __future__ import annotations
 
 import json
+import multiprocessing
+import os
+import signal
 from pathlib import Path
 
 import pytest
 
 from meridian.lib.state import session_store
+from tests.conftest import posix_only
+
+
+def _crash_session_cleanup(runtime_root: Path, crash_stage: str) -> None:
+    original_unlink = session_store.unlink_validated_lock
+
+    def crash_at_unlink(lock_path: Path, handle: object) -> bool:
+        if crash_stage == "before_unlink":
+            os.kill(os.getpid(), signal.SIGKILL)
+        removed = original_unlink(lock_path, handle)  # type: ignore[arg-type]
+        os.kill(os.getpid(), signal.SIGKILL)
+        return removed
+
+    session_store.unlink_validated_lock = crash_at_unlink  # type: ignore[assignment]
+    session_store.cleanup_stale_sessions(runtime_root)
+
+
+def _crash_session_cleanup_during_append(runtime_root: Path) -> None:
+    def append_partial_then_crash(
+        data_path: Path,
+        _lock_path: Path,
+        _event: object,
+        *,
+        exclude_none: bool = False,
+    ) -> None:
+        del exclude_none
+        with data_path.open("ab") as handle:
+            handle.write(b'{"event":"stop","session_instance_id"')
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.kill(os.getpid(), signal.SIGKILL)
+
+    session_store.append_event = append_partial_then_crash  # type: ignore[assignment]
+    session_store.cleanup_stale_sessions(runtime_root)
 
 
 def _state_root(tmp_path: Path) -> Path:
@@ -102,9 +139,10 @@ def test_start_session_does_not_append_start_event_when_lock_acquire_fails(
             "matching-generation",
             ("c8",),
             ("claude",),
-            True,
+            False,
             False,
             1,
+            marks=posix_only,
             id="stops-and-cleans-when-generation-matches",
         ),
     ],
@@ -164,6 +202,7 @@ def test_cleanup_stale_sessions_handles_generation_rules(
         assert stop_rows[0]["session_instance_id"] == start_generation
 
 
+@posix_only
 def test_cleanup_stale_primary_session_with_dead_pid_is_cleaned(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -198,7 +237,7 @@ def test_cleanup_stale_primary_session_with_dead_pid_is_cleaned(
     cleanup = session_store.cleanup_stale_sessions(runtime_root)
     assert cleanup.cleaned_ids == (chat_id,)
     assert cleanup.materialized_scopes == ("claude",)
-    assert lock_path.exists()
+    assert not lock_path.exists()
     assert not lease_path.exists()
 
     rows = [
@@ -211,6 +250,189 @@ def test_cleanup_stale_primary_session_with_dead_pid_is_cleaned(
     ]
     assert len(stop_rows) == 1
     assert stop_rows[0]["session_instance_id"] == session_generation
+
+
+def test_cleanup_stale_sessions_releases_handles_when_event_append_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runtime_root = _state_root(tmp_path)
+    chat_id = "c-cleanup-fault"
+    _write_session_start(
+        runtime_root=runtime_root,
+        chat_id=chat_id,
+        session_instance_id="fault-generation",
+    )
+    lock_path = runtime_root / "sessions" / f"{chat_id}.lock"
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    lock_path.touch()
+
+    def fail_append(*_args: object, **_kwargs: object) -> None:
+        raise RuntimeError("injected append failure")
+
+    monkeypatch.setattr(session_store, "append_event", fail_append)
+
+    with pytest.raises(RuntimeError, match="injected append failure"):
+        session_store.cleanup_stale_sessions(runtime_root)
+
+    with session_store.lock_file(lock_path, timeout=0, reentrant=False):
+        pass
+
+
+@posix_only
+def test_cleanup_cannot_delete_concurrently_restarted_session(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runtime_root = _state_root(tmp_path)
+    chat_id = "c10"
+    old_generation = "old-generation"
+    _write_session_start(
+        runtime_root=runtime_root,
+        chat_id=chat_id,
+        session_instance_id=old_generation,
+    )
+    sessions_dir = runtime_root / "sessions"
+    sessions_dir.mkdir(parents=True)
+    (sessions_dir / f"{chat_id}.lock").touch()
+    (sessions_dir / f"{chat_id}.lease.json").write_text(
+        json.dumps(
+            {
+                "chat_id": chat_id,
+                "owner_pid": 999_999,
+                "session_instance_id": old_generation,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    original_unlink = session_store.unlink_validated_lock
+    restarted: list[session_store._SessionLockHandles] = []
+
+    def restart_after_unlink(lock_path: Path, handle: object) -> bool:
+        removed = original_unlink(lock_path, handle)  # type: ignore[arg-type]
+        session_store.start_session(
+            runtime_root,
+            harness="codex",
+            harness_session_id="new-thread",
+            model="gpt-5.4",
+            chat_id=chat_id,
+        )
+        restarted.append(
+            session_store._SESSION_LOCK_HANDLES[
+                session_store._session_lock_key(runtime_root, chat_id)
+            ]
+        )
+        return removed
+
+    monkeypatch.setattr(session_store, "unlink_validated_lock", restart_after_unlink)
+    cleanup = session_store.cleanup_stale_sessions(runtime_root)
+
+    registry_key = session_store._session_lock_key(runtime_root, chat_id)
+    try:
+        assert cleanup.cleaned_ids == (chat_id,)
+        assert session_store._SESSION_LOCK_HANDLES.get(registry_key) is restarted[0]
+        lease_exists, lease_generation, _owner_pid = session_store._read_session_lease_data(
+            session_store.RuntimePaths.from_root_dir(runtime_root), chat_id
+        )
+        assert lease_exists
+        assert lease_generation == restarted[0].session_instance_id
+    finally:
+        session_store._SESSION_LOCK_HANDLES.pop(registry_key, None)
+        session_store.release_file_lock(restarted[0].session)
+        session_store.release_file_lock(restarted[0].project_lifetime)
+
+
+@pytest.mark.skipif(os.name != "posix", reason="requires a POSIX subprocess and SIGKILL")
+@pytest.mark.parametrize("crash_stage", ["before_unlink", "after_unlink"])
+def test_cleanup_crash_remains_recoverable(
+    tmp_path: Path,
+    crash_stage: str,
+) -> None:
+    runtime_root = _state_root(tmp_path)
+    chat_id = "c11"
+    generation = "crashed-generation"
+    _write_session_start(
+        runtime_root=runtime_root,
+        chat_id=chat_id,
+        session_instance_id=generation,
+    )
+    sessions_dir = runtime_root / "sessions"
+    sessions_dir.mkdir(parents=True)
+    lock_path = sessions_dir / f"{chat_id}.lock"
+    lock_path.touch()
+    lease_path = sessions_dir / f"{chat_id}.lease.json"
+    lease_path.write_text(
+        json.dumps(
+            {
+                "chat_id": chat_id,
+                "owner_pid": 999_999,
+                "session_instance_id": generation,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    process = multiprocessing.get_context("spawn").Process(
+        target=_crash_session_cleanup,
+        args=(runtime_root, crash_stage),
+    )
+    process.start()
+    process.join(timeout=5)
+    assert process.exitcode == -signal.SIGKILL
+
+    session_store.cleanup_stale_sessions(runtime_root)
+
+    assert not lock_path.exists()
+    assert not lease_path.exists()
+
+
+@pytest.mark.skipif(os.name != "posix", reason="requires a POSIX subprocess and SIGKILL")
+def test_cleanup_repairs_torn_event_tail_before_retrying_stop(tmp_path: Path) -> None:
+    runtime_root = _state_root(tmp_path)
+    chat_id = "c-torn"
+    generation = "torn-generation"
+    _write_session_start(
+        runtime_root=runtime_root,
+        chat_id=chat_id,
+        session_instance_id=generation,
+    )
+    sessions_dir = runtime_root / "sessions"
+    sessions_dir.mkdir(parents=True)
+    lock_path = sessions_dir / f"{chat_id}.lock"
+    lock_path.touch()
+    lease_path = sessions_dir / f"{chat_id}.lease.json"
+    lease_path.write_text(
+        json.dumps(
+            {
+                "chat_id": chat_id,
+                "owner_pid": 999_999,
+                "session_instance_id": generation,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    process = multiprocessing.get_context("spawn").Process(
+        target=_crash_session_cleanup_during_append,
+        args=(runtime_root,),
+    )
+    process.start()
+    process.join(timeout=5)
+    assert process.exitcode == -signal.SIGKILL
+    assert (
+        (runtime_root / "sessions.jsonl")
+        .read_bytes()
+        .endswith(b'{"event":"stop","session_instance_id"')
+    )
+
+    session_store.cleanup_stale_sessions(runtime_root)
+
+    record = session_store.get_session_record(runtime_root, chat_id)
+    assert record is not None
+    assert record.stopped_at is not None
+    assert not lock_path.exists()
+    assert not lease_path.exists()
+
+
 def test_empty_harness_session_id_flows_through_start_update_and_record(tmp_path: Path) -> None:
     runtime_root = _state_root(tmp_path)
     chat_id = session_store.start_session(
@@ -287,6 +509,52 @@ def test_cleanup_stale_primary_session_with_live_pid_is_not_cleaned(
         row for row in rows if row.get("event") == "stop" and row.get("chat_id") == chat_id
     ]
     assert stop_rows == []
+
+
+@posix_only
+def test_cleanup_unlinks_cleaned_session_locks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runtime_root = _state_root(tmp_path)
+    crashed_chat_id = "c11"
+    live_chat_id = "c12"
+    _write_session_start(
+        runtime_root=runtime_root,
+        chat_id=crashed_chat_id,
+        session_instance_id="crashed-generation",
+    )
+    _write_session_start(
+        runtime_root=runtime_root,
+        chat_id=live_chat_id,
+        session_instance_id="live-generation",
+        kind="primary",
+    )
+
+    sessions_dir = runtime_root / "sessions"
+    sessions_dir.mkdir(parents=True, exist_ok=True)
+    crashed_lock = sessions_dir / f"{crashed_chat_id}.lock"
+    live_lock = sessions_dir / f"{live_chat_id}.lock"
+    crashed_lock.touch()
+    live_lock.touch()
+    (sessions_dir / f"{live_chat_id}.lease.json").write_text(
+        json.dumps(
+            {
+                "chat_id": live_chat_id,
+                "owner_pid": 54321,
+                "session_instance_id": "live-generation",
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(session_store, "is_process_alive", lambda _pid: True)
+
+    cleanup = session_store.cleanup_stale_sessions(runtime_root)
+
+    assert cleanup.cleaned_ids == (crashed_chat_id,)
+    assert not crashed_lock.exists()
+    assert live_lock.exists()
+    assert session_store.cleanup_stale_sessions(runtime_root).cleaned_ids == ()
+    assert tuple(sessions_dir.glob("*.lock")) == (live_lock,)
 
 
 def test_records_by_session_ignores_mismatched_generation_stop_and_update(tmp_path: Path) -> None:

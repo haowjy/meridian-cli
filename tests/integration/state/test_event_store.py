@@ -3,7 +3,8 @@ from typing import Any
 
 from pydantic import BaseModel
 
-from meridian.lib.state.event_store import append_event, lock_file, read_events
+from meridian.lib.platform.locking import lock_file
+from meridian.lib.state.event_store import append_event, read_events
 
 
 class _ReadEvent(BaseModel):

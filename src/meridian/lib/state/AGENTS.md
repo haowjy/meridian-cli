@@ -19,6 +19,11 @@ State splits across distinct roots — understand which goes where before writin
   locks/spawns/<spawn_id>.lock      — stable per-spawn external-writer lock
   locks/process-scopes/<spawn_id>.lock
                                     — stable process-scope sidecar mutation lock
+  locks/reaper-cleanup/<spawn_id>.lock
+                                    — stable reaper cleanup lock
+  locks/launch-boundary/<spawn_id>.lock
+                                    — stable launch-boundary append lock
+  locks/gc.lock                     — lock-GC pass serialization
   spawns/.staging/<unique>/         — complete row build before atomic publication
   spawns/<spawn_id>/
     state.json                      — authoritative spawn state (v2)
@@ -34,7 +39,7 @@ State splits across distinct roots — understand which goes where before writin
 
 The project UUID in `.meridian/id` keys into `~/.meridian/projects/<id>/`. Projects
 can move or be renamed without losing runtime history. Project lifetime gates sit outside
-the deletable project root and, like every coordination lock identity, are never unlinked.
+the deletable project root and are never unlinked.
 
 Work items live under the `[context.work]` root (default
 `{user_home}/context/<id>/work/<slug>/`), resolved by `work_scope.py` /
@@ -50,13 +55,19 @@ not a global event log, so status reads stay O(1) instead of replaying O(n) even
 
 Every update to a published spawn calls `write_state_locked()`. It acquires
 `locks/spawns/<id>.lock`, re-reads current state, applies a pure mutator, and writes
-atomically. The lock identity is outside the artifact directory it protects and is
-never unlinked, so all contenders coordinate through the same stable inode.
+atomically. The lock identity is outside the artifact directory it protects and remains
+stable while the spawn exists. Orphaned identities are unlinked only through lock GC's
+validated-exclusive, unlink-before-release seam.
 
 Process-scope registration and release markers route through the locked sidecar
 mutation seam. When both locks are needed, acquire the spawn-state lock before the
 scope-sidecar lock. Registration is refused after the spawn becomes terminal or a
 cleanup claim exists, so a process scope cannot appear after cleanup targets are fixed.
+The spawn repository and process-scope projection are persistence leaves with a
+one-way dependency: the projection may use repository reads and lock paths, while
+the repository never imports the projection. Cross-leaf operations belong in the aggregate `spawn_aggregate.py`; in particular, published-spawn deletion owns the lock
+order above. Reaper claims consume one immutable projection snapshot containing
+both scopes and released IDs, read under a single projection-lock acquisition.
 
 ## Atomic Write Contract
 
@@ -107,6 +118,7 @@ Both paths share liveness rules in `reaper.py` and completion/cancel precedence 
 - `user_paths.py` — `get_user_home()`. Start here for any new user-level storage.
 - `paths.py` — `RuntimePaths`, read vs write root resolvers.
 - `spawn_store.py` — `SpawnStore`. Main interface for listing, creating, updating spawns.
+- `spawn_aggregate.py` — cross-leaf spawn mutations (published-row deletion).
 - `work_store.py` / `work_repository.py` — pure work-item reads and the single locked
   mutation repository, respectively.
 - `session_store.py` — Session event log.
@@ -129,12 +141,19 @@ validation and miss `SpawnRecord` reconstruction from `starting-prompt.md`.
 
 **Don't write state files with `open()`** — use `atomic_write_text()` or `append_text_line()`.
 
+**Don't unlink coordination locks outside the GC seam** — `lock_gc.py` and cleaned
+session handling may call `unlink_validated_lock()` only under a fresh, non-reentrant,
+validated exclusive acquisition, immediately before release. Never unlink at ordinary
+release time or inside a reentrant context: leaving any lock held on the orphaned inode
+lets another contender validate against a recreated inode and causes split-brain.
+
 **Don't acquire `spawns_flock` for per-spawn mutations** — the global lock serializes
 spawn ID allocation, initial row publication, and abandoned-stage GC. Later mutations
-use `write_state_locked()` (`locks/spawns/<id>.lock`, which is never unlinked).
+use `write_state_locked()` (`locks/spawns/<id>.lock`, stable until orphan lock GC).
 Published-row deletion uses `delete_published_spawn()` under that same stable lock;
 when deletion also takes the process-scope projection lock, the order is spawn lock
-then projection lock. Pruning acquires `spawns_flock` first. Pending reaper cleanup
+then projection lock. This composition belongs in `spawn_aggregate.py`, not either leaf
+repository. Pruning acquires `spawns_flock` first. Pending reaper cleanup
 claims block deletion so durable cleanup intent is never discarded.
 
 **Don't hardcode `~/.meridian/`** — use `get_user_home()` from `user_paths.py`.
