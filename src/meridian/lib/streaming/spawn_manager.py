@@ -22,6 +22,7 @@ from meridian.lib.harness.control_action import (
     ControlActionCoordinator,
     ControlActionType,
 )
+from meridian.lib.launch.constants import LAST_OBSERVED_EVENT_FILENAME
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.state import spawn_store
 from meridian.lib.state.atomic import append_text_line
@@ -230,7 +231,12 @@ class SpawnManager:
         try:
             connection = await self._start_connection(config, spec)
             resolved_policy = drain_policy
-            self._history_writers[spawn_id] = HarnessHistoryWriter(self._history_path(spawn_id))
+            self._history_writers[spawn_id] = HarnessHistoryWriter(
+                self._history_path(spawn_id),
+                last_observed_event_path=(
+                    self._spawn_dir(spawn_id) / LAST_OBSERVED_EVENT_FILENAME
+                ),
+            )
             if on_event is not None:
                 self.register_observer(spawn_id, CallbackObserver(on_event))
             control_server = self._control_server_factory(

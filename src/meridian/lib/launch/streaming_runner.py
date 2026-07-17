@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import atexit
 import json
 import os
 import signal
@@ -38,10 +39,12 @@ from meridian.lib.launch.constants import (
     CURSOR_INACTIVITY_TIMEOUT_SECONDS,
     DEFAULT_INFRA_EXIT_CODE,
     HISTORY_FILENAME,
+    LAST_OBSERVED_EVENT_FILENAME,
     OUTPUT_FILENAME,
     REPORT_FILENAME,
     REPORT_WATCHDOG_GRACE_SECONDS,
     REPORT_WATCHDOG_POLL_SECONDS,
+    RUNNER_LIFECYCLE_FILENAME,
     STDERR_FILENAME,
     SUBPROCESS_REPORT_WATCHDOG_POLL_SECONDS,
     TOKENS_FILENAME,
@@ -91,7 +94,7 @@ from meridian.lib.safety.redaction import SecretSpec, redact_secret_bytes
 from meridian.lib.state import paths as state_paths
 from meridian.lib.state import spawn_store
 from meridian.lib.state.artifact_store import ArtifactStore, make_artifact_key
-from meridian.lib.state.atomic import atomic_write_bytes
+from meridian.lib.state.atomic import append_text_line, atomic_write_bytes
 from meridian.lib.state.paths import resolve_spawn_log_dir
 from meridian.lib.state.spawn.model import (
     BACKGROUND_LAUNCH_MODE,
@@ -209,6 +212,7 @@ def _install_signal_handlers(
     loop: asyncio.AbstractEventLoop,
     shutdown_event: asyncio.Event,
     received_signal: list[signal.Signals | None],
+    on_signal: Callable[[signal.Signals], None] | None = None,
 ) -> Callable[[], None] | None:
     """Install portable signal handlers that set the shutdown event.
 
@@ -228,6 +232,9 @@ def _install_signal_handlers(
     def _handle(signum: int, frame: object) -> None:
         if received_signal[0] is None:
             received_signal[0] = signal.Signals(signum)
+            if on_signal is not None:
+                with suppress(Exception):
+                    on_signal(received_signal[0])
         loop.call_soon_threadsafe(shutdown_event.set)
 
     for signum in (signal.SIGINT, signal.SIGTERM):
@@ -243,6 +250,32 @@ def _install_signal_handlers(
                 signal.signal(signal.Signals(signum_int), prev)
 
     return _cleanup
+
+
+def _append_runner_lifecycle_event(
+    path: Path,
+    *,
+    clock: Clock,
+    event: str,
+    phase: str,
+    **details: object,
+) -> None:
+    """Best-effort append of runner-owned crash diagnostics."""
+
+    payload = {
+        "event": event,
+        "timestamp": clock.utc_now_iso(),
+        "pid": os.getpid(),
+        "phase": phase,
+        **details,
+    }
+    try:
+        append_text_line(
+            path,
+            json.dumps(payload, separators=(",", ":"), sort_keys=True) + "\n",
+        )
+    except Exception:
+        logger.warning("Failed to append runner lifecycle evidence.", exc_info=True)
 
 
 def _preserve_attempt_artifacts(
@@ -272,6 +305,8 @@ def _preserve_attempt_artifacts(
     attempt_dir = log_dir / attempt_prefix
     for name in (
         HISTORY_FILENAME,
+        LAST_OBSERVED_EVENT_FILENAME,
+        RUNNER_LIFECYCLE_FILENAME,
         STDERR_FILENAME,
         TOKENS_FILENAME,
         REPORT_FILENAME,
@@ -703,6 +738,7 @@ async def _run_streaming_attempt(
     event_observer: Callable[[StreamEvent], None] | None,
     stream_stdout_to_terminal: bool,
     lifecycle_service: SpawnLifecycleService,
+    runner_phase: list[str] | None = None,
 ) -> _AttemptRuntime:
     completion_task: asyncio.Task[DrainOutcome | None] | None = None
     timeout_task: asyncio.Task[None] | None = None
@@ -731,6 +767,8 @@ async def _run_streaming_attempt(
     terminal_outcome: TerminalEventOutcome | None = None
     authoritative_terminal_status: SpawnStatus | None = None
     try:
+        if runner_phase is not None:
+            runner_phase[0] = "starting_harness"
         try:
             async with asyncio.timeout(startup_timeout_seconds):
                 connection = await manager.start_spawn(config, run_spec)
@@ -758,6 +796,8 @@ async def _run_streaming_attempt(
         if subscriber is None:
             raise RuntimeError("failed to subscribe to spawn stream")
 
+        if runner_phase is not None:
+            runner_phase[0] = "consuming_events"
         completion_task = asyncio.create_task(manager.wait_for_completion(run.spawn_id))
         completion_task.add_done_callback(lambda _: completion_event.set())
         consume_task = asyncio.create_task(
@@ -979,11 +1019,35 @@ async def execute_with_streaming(
     signal_cleanup: Callable[[], None] | None = None
     loop: asyncio.AbstractEventLoop | None = None
     received_signal: list[signal.Signals | None] = [None]
+    runner_phase = ["setup"]
+    lifecycle_path: Path | None = None
+    lifecycle_active = [False]
+    atexit_callback: Callable[[], None] | None = None
 
     try:
         log_dir = resolve_spawn_log_dir(project_root, run.spawn_id)
+        lifecycle_path = log_dir / RUNNER_LIFECYCLE_FILENAME
         output_log_path = log_dir / HISTORY_FILENAME
         report_path = log_dir / REPORT_FILENAME
+
+        def _record_lifecycle(event: str, **details: object) -> None:
+            assert lifecycle_path is not None
+            _append_runner_lifecycle_event(
+                lifecycle_path,
+                clock=resolved_clock,
+                event=event,
+                phase=runner_phase[0],
+                **details,
+            )
+
+        def _record_atexit() -> None:
+            if lifecycle_active[0]:
+                _record_lifecycle("atexit")
+
+        atexit_callback = _record_atexit
+        lifecycle_active[0] = True
+        atexit.register(atexit_callback)
+        _record_lifecycle("runner_started")
 
         timeout_seconds = minutes_to_seconds(request.execution_policy.timeout)
         startup_timeout_seconds = resolve_startup_timeout_seconds(
@@ -1140,7 +1204,16 @@ async def execute_with_streaming(
 
         loop = asyncio.get_running_loop()
         shutdown_event = asyncio.Event()
-        signal_cleanup = _install_signal_handlers(loop, shutdown_event, received_signal)
+        signal_cleanup = _install_signal_handlers(
+            loop,
+            shutdown_event,
+            received_signal,
+            on_signal=lambda received: _record_lifecycle(
+                "signal_received",
+                signal=received.name,
+                signal_number=received.value,
+            ),
+        )
 
         try:
             while True:
@@ -1159,6 +1232,8 @@ async def execute_with_streaming(
                         log_dir=log_dir,
                         completed_attempt=attempt_number - 1,
                     )
+                runner_phase[0] = "starting_attempt"
+                _record_lifecycle("attempt_started", attempt=attempt_number)
                 reset_finalize_attempt_artifacts(
                     artifacts=artifacts,
                     spawn_id=run.spawn_id,
@@ -1187,7 +1262,9 @@ async def execute_with_streaming(
                     event_observer=event_observer,
                     stream_stdout_to_terminal=stream_stdout_to_terminal,
                     lifecycle_service=lifecycle_service,
+                    runner_phase=runner_phase,
                 )
+                runner_phase[0] = "processing_attempt"
                 conclusion.absorb_attempt(attempt)
                 if attempt.start_error is not None:
                     logger.info(
@@ -1495,9 +1572,15 @@ async def execute_with_streaming(
                         )
                         break
         except asyncio.CancelledError:
+            _record_lifecycle("task_cancelled")
             conclusion.exit_code = 130
             conclusion.failure_reason = "cancelled"
-        except Exception:
+        except Exception as exc:
+            _record_lifecycle(
+                "exception",
+                exception_type=type(exc).__name__,
+                exception=str(exc),
+            )
             logger.exception(
                 "Streaming spawn execution failed with infrastructure error.",
                 spawn_id=str(run.spawn_id),
@@ -1505,7 +1588,16 @@ async def execute_with_streaming(
             )
             conclusion.exit_code = DEFAULT_INFRA_EXIT_CODE
             conclusion.failure_reason = "infrastructure_error"
-    except Exception:
+    except Exception as exc:
+        if lifecycle_path is not None:
+            _append_runner_lifecycle_event(
+                lifecycle_path,
+                clock=resolved_clock,
+                event="exception",
+                phase=runner_phase[0],
+                exception_type=type(exc).__name__,
+                exception=str(exc),
+            )
         conclusion.exit_code = DEFAULT_INFRA_EXIT_CODE
         conclusion.failure_reason = "infrastructure_error"
         logger.exception(
@@ -1514,6 +1606,14 @@ async def execute_with_streaming(
             harness_id=str(launch_context.harness.id),
         )
     finally:
+        runner_phase[0] = "finalizing"
+        if lifecycle_path is not None:
+            _append_runner_lifecycle_event(
+                lifecycle_path,
+                clock=resolved_clock,
+                event="finalizing",
+                phase=runner_phase[0],
+            )
         if signal_cleanup is not None:
             signal_cleanup()
         if manager is not None:
@@ -1564,6 +1664,19 @@ async def execute_with_streaming(
                     spawn_id=str(run.spawn_id),
                     harness_id=str(launch_context.harness.id),
                 )
+
+        runner_phase[0] = "completed"
+        lifecycle_active[0] = False
+        if lifecycle_path is not None:
+            _append_runner_lifecycle_event(
+                lifecycle_path,
+                clock=resolved_clock,
+                event="runner_completed",
+                phase=runner_phase[0],
+                exit_code=conclusion.exit_code,
+            )
+        if atexit_callback is not None:
+            atexit.unregister(atexit_callback)
 
     return conclusion.exit_code
 

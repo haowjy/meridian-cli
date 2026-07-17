@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -10,8 +11,10 @@ from typing import Any, cast
 
 from meridian.lib.core.clock import Clock, RealClock
 from meridian.lib.harness.connections.base import HarnessEvent
-from meridian.lib.state.atomic import append_text_line
+from meridian.lib.state.atomic import append_text_line, atomic_write_text
 from meridian.lib.state.managed_primary import ManagedPrimaryCausalTracker
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -28,6 +31,7 @@ class HarnessHistoryWriter:
     """Append-only writer for seq-enveloped raw harness events."""
 
     history_path: Path
+    last_observed_event_path: Path | None = None
     clock: Clock = field(default_factory=RealClock)
     _seq: int = field(default=0, init=False)
     _byte_offset: int = field(default=0, init=False)
@@ -35,6 +39,7 @@ class HarnessHistoryWriter:
         default_factory=ManagedPrimaryCausalTracker,
         init=False,
     )
+    _event_counts: dict[str, int] = field(default_factory=dict, init=False)
 
     def __post_init__(self) -> None:
         if not self.history_path.exists():
@@ -43,7 +48,7 @@ class HarnessHistoryWriter:
         last_complete_line_end = content.rfind(b"\n") + 1
         self._byte_offset = last_complete_line_end
         self._seq = content[:last_complete_line_end].count(b"\n")
-        self._rehydrate_causal_tracker(content[:last_complete_line_end])
+        self._rehydrate_history_state(content[:last_complete_line_end])
         if last_complete_line_end < len(content):
             with self.history_path.open("r+b") as handle:
                 handle.truncate(last_complete_line_end)
@@ -59,10 +64,11 @@ class HarnessHistoryWriter:
         """Write one event and return write success metadata."""
 
         causal = self._causal_tracker.derive(event)
+        timestamp = self.clock.utc_now_iso()
         envelope = {
             "seq": self._seq,
             "byte_offset": self._byte_offset,
-            "timestamp": self.clock.utc_now_iso(),
+            "timestamp": timestamp,
             "turn_id": causal.turn_id,
             "item_id": causal.item_id,
             "request_id": causal.request_id,
@@ -83,9 +89,41 @@ class HarnessHistoryWriter:
         assigned_seq = self._seq
         self._seq += 1
         self._byte_offset += len(line.encode("utf-8"))
+        self._record_last_observed_event(event, timestamp=timestamp, seq=assigned_seq)
         return WriteResult(success=True, seq=assigned_seq)
 
-    def _rehydrate_causal_tracker(self, content: bytes) -> None:
+    def _record_last_observed_event(
+        self,
+        event: HarnessEvent,
+        *,
+        timestamp: str,
+        seq: int,
+    ) -> None:
+        event_kind = event.event_type.lower().replace(".", "/")
+        if event_kind in {"turn/started", "turn/completed", "item/started", "item/completed"}:
+            self._event_counts[event_kind] = self._event_counts.get(event_kind, 0) + 1
+        if self.last_observed_event_path is None:
+            return
+        marker = {
+            "event_kind": event.event_type,
+            "timestamp": timestamp,
+            "seq": seq,
+            "turn_started": self._event_counts.get("turn/started", 0),
+            "turn_completed": self._event_counts.get("turn/completed", 0),
+            "item_started": self._event_counts.get("item/started", 0),
+            "item_completed": self._event_counts.get("item/completed", 0),
+        }
+        try:
+            atomic_write_text(
+                self.last_observed_event_path,
+                json.dumps(marker, separators=(",", ":"), sort_keys=True) + "\n",
+            )
+        except Exception:
+            # History remains authoritative. Diagnostic marker loss must not stop
+            # event consumption or cause the already-appended event to be replayed.
+            logger.warning("Failed to update last-observed-event marker", exc_info=True)
+
+    def _rehydrate_history_state(self, content: bytes) -> None:
         for line in content.decode("utf-8", errors="ignore").splitlines():
             stripped = line.strip()
             if not stripped:
@@ -108,6 +146,17 @@ class HarnessHistoryWriter:
                 or not harness_id.strip()
             ):
                 continue
+
+            normalized_event_type = event_type.lower().replace(".", "/")
+            if normalized_event_type in {
+                "turn/started",
+                "turn/completed",
+                "item/started",
+                "item/completed",
+            }:
+                self._event_counts[normalized_event_type] = (
+                    self._event_counts.get(normalized_event_type, 0) + 1
+                )
 
             replay_payload: dict[str, object] = dict(cast("dict[str, object]", payload))
             for causal_key in (

@@ -40,6 +40,36 @@ def test_writer_assigns_seq_and_last_seq(tmp_path: Path) -> None:
     assert third.seq == 2
 
 
+def test_writer_atomically_updates_last_observed_event_marker(tmp_path: Path) -> None:
+    history_path = tmp_path / "history.jsonl"
+    marker_path = tmp_path / "last-observed-event.json"
+    writer = HarnessHistoryWriter(history_path, last_observed_event_path=marker_path)
+
+    for event_type in (
+        "turn/started",
+        "item/started",
+        "item/completed",
+        "item/started",
+    ):
+        result = writer.write(
+            HarnessEvent(event_type=event_type, payload={}, harness_id="codex")
+        )
+        assert result.success is True
+
+    marker = json.loads(marker_path.read_text(encoding="utf-8"))
+    assert marker == {
+        "event_kind": "item/started",
+        "timestamp": marker["timestamp"],
+        "seq": 3,
+        "turn_started": 1,
+        "turn_completed": 0,
+        "item_started": 2,
+        "item_completed": 1,
+    }
+    assert marker["timestamp"].endswith("Z")
+    assert len(history_path.read_text(encoding="utf-8").splitlines()) == 4
+
+
 def test_writer_resume_discards_truncated_tail_before_append(tmp_path: Path) -> None:
     history_path = tmp_path / "history.jsonl"
     writer = HarnessHistoryWriter(history_path)

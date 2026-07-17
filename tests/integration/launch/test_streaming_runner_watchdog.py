@@ -39,16 +39,22 @@ def test_retry_preserves_completed_attempt_artifacts(tmp_path: Path) -> None:
     spawn_id = SpawnId("r-truncate")
     attempt_files = (
         launch_constants.HISTORY_FILENAME,
+        launch_constants.LAST_OBSERVED_EVENT_FILENAME,
+        launch_constants.RUNNER_LIFECYCLE_FILENAME,
         launch_constants.STDERR_FILENAME,
         launch_constants.TOKENS_FILENAME,
         launch_constants.REPORT_FILENAME,
     )
     for name in attempt_files:
         (log_dir / name).write_text("attempt data\n", encoding="utf-8")
-        artifacts.put(
-            make_artifact_key(spawn_id, name),
-            b"persisted attempt data\n",
-        )
+        if name not in {
+            launch_constants.LAST_OBSERVED_EVENT_FILENAME,
+            launch_constants.RUNNER_LIFECYCLE_FILENAME,
+        }:
+            artifacts.put(
+                make_artifact_key(spawn_id, name),
+                b"persisted attempt data\n",
+            )
     durable_path = log_dir / "durable.json"
     durable_path.write_text("durable data\n", encoding="utf-8")
 
@@ -62,9 +68,13 @@ def test_retry_preserves_completed_attempt_artifacts(tmp_path: Path) -> None:
     for name in attempt_files:
         assert not (log_dir / name).exists()
         assert (log_dir / "attempt-1" / name).read_text(encoding="utf-8") == "attempt data\n"
-        assert artifacts.get(make_artifact_key(spawn_id, f"attempt-1/{name}")) == (
-            b"persisted attempt data\n"
-        )
+        if name not in {
+            launch_constants.LAST_OBSERVED_EVENT_FILENAME,
+            launch_constants.RUNNER_LIFECYCLE_FILENAME,
+        }:
+            assert artifacts.get(make_artifact_key(spawn_id, f"attempt-1/{name}")) == (
+                b"persisted attempt data\n"
+            )
     assert durable_path.exists()
 
 
