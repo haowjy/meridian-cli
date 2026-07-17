@@ -131,8 +131,9 @@ validation and miss `SpawnRecord` reconstruction from `starting-prompt.md`.
 spawn ID allocation, initial row publication, and abandoned-stage GC. Later mutations
 use `write_state_locked()` (`locks/spawns/<id>.lock`, which is never unlinked).
 Published-row deletion uses `delete_published_spawn()` under that same stable lock;
-pruning acquires `spawns_flock` first. Pending reaper cleanup claims block deletion so
-durable cleanup intent is never discarded.
+when deletion also takes the process-scope projection lock, the order is spawn lock
+then projection lock. Pruning acquires `spawns_flock` first. Pending reaper cleanup
+claims block deletion so durable cleanup intent is never discarded.
 
 **Don't hardcode `~/.meridian/`** — use `get_user_home()` from `user_paths.py`.
 It handles `MERIDIAN_HOME`, Windows `%LOCALAPPDATA%`, and POSIX `~` correctly.
