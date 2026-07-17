@@ -2,49 +2,52 @@
 
 from __future__ import annotations
 
-import multiprocessing
+import threading
 from pathlib import Path
-from typing import TYPE_CHECKING
-
 from meridian.lib.spawn import archive as archive_module
-from tests.conftest import posix_only
-
-if TYPE_CHECKING:
-    import pytest
 
 
-def _archive(runtime_root: Path, spawn_id: str) -> None:
-    archive_module.archive_spawn(runtime_root, spawn_id)
-
-
-@posix_only
 def test_concurrent_archives_preserve_both_spawn_ids(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Two processes must not overwrite each other's archive insertion."""
-    context = multiprocessing.get_context("fork")
-    both_reads_finished = context.Barrier(2)
-    original_read = archive_module.read_archived_spawns
+    """A second mutator cannot read until the first releases the archive lock."""
+    first_holds_lock = threading.Event()
+    allow_first = threading.Event()
+    second_started = threading.Event()
+    second_entered_mutator = threading.Event()
 
-    def pause_after_read(runtime_root: Path) -> set[str]:
-        archived = original_read(runtime_root)
-        both_reads_finished.wait(timeout=5)
-        return archived
+    def first_mutator(archived: set[str]) -> bool:
+        first_holds_lock.set()
+        assert allow_first.wait(timeout=5)
+        archived.add("p1")
+        return True
 
-    monkeypatch.setattr(archive_module, "read_archived_spawns", pause_after_read)
+    def second_mutator(archived: set[str]) -> bool:
+        second_entered_mutator.set()
+        archived.add("p2")
+        return True
 
-    processes = [
-        context.Process(target=_archive, args=(tmp_path, spawn_id))
-        for spawn_id in ("p1", "p2")
-    ]
-    for process in processes:
-        process.start()
-    for process in processes:
-        process.join(5)
-        if process.is_alive():
-            process.terminate()
-            process.join(5)
-        assert process.exitcode == 0
+    first = threading.Thread(
+        target=archive_module.mutate_archived_spawns,
+        args=(tmp_path, first_mutator),
+    )
 
-    assert original_read(tmp_path) == {"p1", "p2"}
+    def run_second() -> None:
+        second_started.set()
+        archive_module.mutate_archived_spawns(tmp_path, second_mutator)
+
+    second = threading.Thread(target=run_second)
+    first.start()
+    assert first_holds_lock.wait(timeout=5)
+    second.start()
+    assert second_started.wait(timeout=5)
+    assert not second_entered_mutator.wait(timeout=0.2)
+
+    allow_first.set()
+    first.join(timeout=5)
+    second.join(timeout=5)
+
+    assert not first.is_alive()
+    assert not second.is_alive()
+    assert second_entered_mutator.is_set()
+    assert archive_module.read_archived_spawns(tmp_path) == {"p1", "p2"}
