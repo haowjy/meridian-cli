@@ -210,6 +210,7 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
         self._startup_emitter: StartupPhaseEmitter | None = None
         self._scope_handle: ScopedProcessHandle | None = None
         self._parent_death_link: ParentDeathLink | None = None
+        self._stop_lock = asyncio.Lock()
 
     @property
     def state(self) -> ConnectionState:
@@ -315,12 +316,16 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
                 await self._post_session_message(config.prompt, system=config.system)
         except BaseException:
             self._set_failed()
-            await reap_on_ownership_transfer_failure(self._cleanup_runtime)
+            await reap_on_ownership_transfer_failure(self._cleanup_start_failure)
             raise
 
         self._transition("connected")
         self._emit_startup_phase(StartupPhase.HARNESS_READY)
         self._last_health_ok = True
+
+    async def _cleanup_start_failure(self) -> None:
+        async with self._stop_lock:
+            await self._cleanup_runtime()
 
     async def start_observer(
         self,
@@ -339,6 +344,10 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
         progress: StopProgressCallback | None = None,
     ) -> StopResult:
         _ = reason, progress
+        async with self._stop_lock:
+            return await self._stop_unlocked()
+
+    async def _stop_unlocked(self) -> StopResult:
         if self._state == "stopped":
             return StopResult()
         self._primary_observer_mode = False

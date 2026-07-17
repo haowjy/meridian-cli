@@ -572,6 +572,22 @@ async def _inactivity_watchdog(
     return True
 
 
+async def _start_spawn_with_timeout(
+    *,
+    manager: SpawnManager,
+    config: ConnectionConfig,
+    run_spec: ResolvedLaunchSpec,
+    timeout_seconds: float,
+) -> HarnessConnection[Any]:
+    """Start a managed connection within the shared startup-phase bound."""
+
+    try:
+        async with asyncio.timeout(timeout_seconds):
+            return await manager.start_spawn(config, run_spec)
+    except TimeoutError as exc:
+        raise StartupPhaseTimeout(timeout_seconds) from exc
+
+
 async def run_streaming_spawn(
     *,
     config: ConnectionConfig,
@@ -624,7 +640,12 @@ async def run_streaming_spawn(
         runtime_root,
     )
     try:
-        connection = await manager.start_spawn(config, run_spec)
+        connection = await _start_spawn_with_timeout(
+            manager=manager,
+            config=config,
+            run_spec=run_spec,
+            timeout_seconds=resolve_startup_timeout_seconds(config_snapshot=None),
+        )
         if on_control_endpoint_ready is not None:
             endpoint = manager.control_endpoint(spawn_id)
             if endpoint is not None:
@@ -769,11 +790,12 @@ async def _run_streaming_attempt(
     try:
         if runner_phase is not None:
             runner_phase[0] = "starting_harness"
-        try:
-            async with asyncio.timeout(startup_timeout_seconds):
-                connection = await manager.start_spawn(config, run_spec)
-        except TimeoutError as exc:
-            raise StartupPhaseTimeout(startup_timeout_seconds) from exc
+        connection = await _start_spawn_with_timeout(
+            manager=manager,
+            config=config,
+            run_spec=run_spec,
+            timeout_seconds=startup_timeout_seconds,
+        )
         terminal_event_capture = (
             terminal_event_future
             if manager.raw_terminal_frames_are_authoritative(run.spawn_id)

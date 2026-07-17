@@ -147,6 +147,7 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
         self._events_stream_active = False
         self._prompt_command_seq = 0
         self._pending_prompt_acks: dict[str, asyncio.Future[None]] = {}
+        self._stop_lock = asyncio.Lock()
 
     @property
     def state(self) -> ConnectionState:
@@ -239,16 +240,27 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
                 )
         except BaseException:
             self._mark_failed("Pi RPC connection startup failed.")
-            await reap_on_ownership_transfer_failure(
-                lambda: self._cleanup_resources(terminate_process=True)
-            )
+            await reap_on_ownership_transfer_failure(self._cleanup_start_failure)
             raise
+
+    async def _cleanup_start_failure(self) -> None:
+        async with self._stop_lock:
+            await self._cleanup_resources(terminate_process=True)
 
     async def stop(
         self,
         *,
         reason: str | None = None,
         progress: StopProgressCallback | None = None,
+    ) -> StopResult:
+        async with self._stop_lock:
+            return await self._stop_unlocked(reason=reason, progress=progress)
+
+    async def _stop_unlocked(
+        self,
+        *,
+        reason: str | None,
+        progress: StopProgressCallback | None,
     ) -> StopResult:
         quiescent_stop = reason == "quiescent"
         if self._state == "stopped":

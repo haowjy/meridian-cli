@@ -183,10 +183,12 @@ class ClaudeConnection(HarnessConnection[ResolvedLaunchSpec]):
             self._set_state("connected")
         except BaseException:
             self._mark_failed("Claude connection startup failed.")
-            await reap_on_ownership_transfer_failure(
-                lambda: self._cleanup_resources(terminate_process=True)
-            )
+            await reap_on_ownership_transfer_failure(self._cleanup_start_failure)
             raise
+
+    async def _cleanup_start_failure(self) -> None:
+        async with self._stop_lock:
+            await self._cleanup_resources(terminate_process=True)
 
     async def stop(
         self,

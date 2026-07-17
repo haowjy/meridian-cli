@@ -12,8 +12,10 @@ from meridian.lib.core.types import HarnessId, ModelId, SpawnId
 from meridian.lib.harness.connections.base import ConnectionConfig, HarnessEvent
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.launch.streaming_runner import (
+    StartupPhaseTimeout,
     _inactivity_watchdog,
     _run_streaming_attempt,
+    run_streaming_spawn,
 )
 from meridian.lib.safety.permissions import UnsafeNoOpPermissionResolver
 from meridian.lib.state.spawn.model import FOREGROUND_LAUNCH_MODE
@@ -133,6 +135,72 @@ async def test_startup_watchdog_reports_phase_and_cancels_start(
     assert start_entered.is_set()
     assert attempt.start_error == "startup phase timeout after 0.010s"
     assert child_stopped.is_set()
+
+
+@pytest.mark.asyncio
+async def test_run_streaming_spawn_bounds_hanging_startup(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    start_cancelled = asyncio.Event()
+
+    class HangingStartupManager:
+        def __init__(self, **_kwargs: object) -> None:
+            pass
+
+        async def start_spawn(
+            self,
+            _config: ConnectionConfig,
+            _spec: ResolvedLaunchSpec,
+        ) -> _FakeConnection:
+            try:
+                await asyncio.Event().wait()
+            finally:
+                start_cancelled.set()
+            raise AssertionError("unreachable")
+
+        async def shutdown(self, **_kwargs: object) -> None:
+            return None
+
+    monkeypatch.setattr(
+        "meridian.lib.launch.streaming_runner.SpawnManager", HangingStartupManager
+    )
+    monkeypatch.setattr(
+        "meridian.lib.launch.streaming_runner.resolve_startup_timeout_seconds",
+        lambda *, config_snapshot: 0.01,
+    )
+    monkeypatch.setattr(
+        "meridian.lib.launch.streaming_runner.spawn_store.update_spawn",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        "meridian.lib.launch.streaming_runner._install_signal_handlers",
+        lambda *_args, **_kwargs: None,
+    )
+
+    spawn_id = SpawnId("p-direct-startup-timeout")
+    config = ConnectionConfig(
+        spawn_id=spawn_id,
+        harness_id=HarnessId.CODEX,
+        prompt="hello",
+        control_root=tmp_path,
+        env_overrides={},
+    )
+    with pytest.raises(StartupPhaseTimeout, match=r"startup phase timeout after 0\.010s"):
+        await run_streaming_spawn(
+            config=config,
+            spec=ResolvedLaunchSpec(
+                model="gpt-5.3-codex",
+                harness=HarnessId.CODEX,
+                permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
+            ),
+            runtime_root=tmp_path,
+            project_root=tmp_path,
+            spawn_id=spawn_id,
+            lifecycle_service=_FakeLifecycleService(),  # type: ignore[arg-type]
+        )
+
+    assert start_cancelled.is_set()
 
 
 @pytest.mark.asyncio

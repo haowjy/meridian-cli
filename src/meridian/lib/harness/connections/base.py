@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator, Awaitable, Callable
-from contextlib import suppress
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
@@ -101,8 +100,11 @@ async def reap_on_ownership_transfer_failure(
         cleanup_task = asyncio.ensure_future(cleanup())
     except BaseException:
         return
-    with suppress(BaseException):
-        await asyncio.shield(cleanup_task)
+    while not cleanup_task.done():
+        try:
+            await asyncio.shield(cleanup_task)
+        except BaseException:  # cleanup must outlive repeated cancellation
+            continue
 
 
 @dataclass(frozen=True)

@@ -80,6 +80,8 @@ async def test_start_spawn_cancellation_during_registration_stops_connection(
     """Cancellation cannot strand a connection before manager registration."""
 
     connection_stopped = asyncio.Event()
+    cleanup_started = asyncio.Event()
+    release_cleanup = asyncio.Event()
     control_start_entered = asyncio.Event()
     release_control_start = asyncio.Event()
 
@@ -99,6 +101,8 @@ async def test_start_spawn_cancellation_during_registration_stops_connection(
             progress: Any = None,
         ) -> StopResult:
             _ = reason, progress
+            cleanup_started.set()
+            await release_cleanup.wait()
             connection_stopped.set()
             return StopResult()
 
@@ -131,10 +135,16 @@ async def test_start_spawn_cancellation_during_registration_stops_connection(
 
     await control_start_entered.wait()
     start_task.cancel()
+    await cleanup_started.wait()
+    start_task.cancel()
+    await asyncio.sleep(0)
+    assert not start_task.done()
+    assert not connection_stopped.is_set()
+
+    release_cleanup.set()
     with pytest.raises(asyncio.CancelledError):
         await start_task
 
-    release_control_start.set()
     assert connection_stopped.is_set()
     assert manager.get_connection(spawn_id) is None
 
