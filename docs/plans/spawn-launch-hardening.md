@@ -39,3 +39,43 @@ Plan doc committed at `docs/plans/spawn-launch-hardening.md`. Triage evidence li
 
 - p5268, p5269 (terra explorers) — issue triage lanes C/D
 - two native sonnet reviewer lanes — issue triage lanes A/B
+
+# Extension for PR #377 plan doc (`docs/plans/spawn-launch-hardening.md`)
+
+Append as a new section after **Changes**; add the new member issue to **Summary** and the Closes list.
+
+---
+
+## Audit finding (thermo-nuclear audit #389): cancellation-safe startup ownership
+
+The audit found (finding [31], narrowed by both verification passes) a cancellation-safety
+gap at the launch path's ownership-transfer seams:
+
+- Every adapter `start()` guards cleanup with `except Exception:`, which does not catch
+  `asyncio.CancelledError` (`connections/codex_ws.py:453`, `claude_ws.py:168`,
+  `opencode_http.py:312`, `pi_rpc.py:213`, `cursor_subprocess.py:143`). Claude, Codex,
+  OpenCode, and Pi all await after storing the subprocess handle and before `start()`
+  returns, so cancellation can bypass their cleanup. **Cursor differs**: no await between
+  `create_subprocess_exec()` returning and `start()` returning; asyncio's transport handles
+  cancellation inside the exec itself.
+- A **universal** window sits above the adapters: in `SpawnManager.start_spawn()`,
+  cancellation during `control_server.start()` (`spawn_manager.py:218-229`) bypasses the
+  `except Exception:` cleanup while the connection is not yet in `_sessions` — manager
+  shutdown can never find it. A runtime probe reproduced exactly this
+  (`connection_stopped: False, registered_sessions: 0`).
+
+Scoping (why this is narrower than the finder claimed): managed backends (Codex/OpenCode)
+record a `spawn_owned` scope sidecar synchronously after exec (`managed_backend.py:104-119`),
+the reaper kills recorded orphan scopes (`reaper.py:594-609`), and Linux applies
+`PR_SET_PDEATHSIG` (`platform/detached_process.py:54-78`) — and the primary runner path
+never cancels `start()` at all (signals are arbitrated after it returns,
+`streaming_runner.py:600-619`). The exposure is external task cancellation (server-mode
+disconnect, loop teardown) hitting the stdio children and the manager registration window.
+
+Remedy: one ownership-transfer guard covering every seam — adapter startup, dispatch, and
+manager registration through `_sessions` insertion — that catches `BaseException`,
+best-effort kills, shields the reap, and re-raises. A single `base.py` helper replacing the
+five adapter blocks is insufficient on its own (the manager window remains); conversely,
+extending disk scope recording to stdio children closes their residue by construction,
+consistent with crash-only recovery. This is the same pre-connect window #235's watchdog
+bounds — the guard is what makes the watchdog's cancellation path leak-free.
