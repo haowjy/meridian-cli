@@ -2,15 +2,15 @@
 
 from __future__ import annotations
 
-import os
 import multiprocessing
+import os
 import threading
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from meridian.lib.platform.locking import acquire_file_lock, release_file_lock
 from meridian.lib.platform import locking
+from meridian.lib.platform.locking import acquire_file_lock, release_file_lock
 from tests.conftest import posix_only
 
 if TYPE_CHECKING:

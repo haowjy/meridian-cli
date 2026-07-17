@@ -280,6 +280,26 @@ def test_pruning_does_not_split_spawn_lock_identity(tmp_path: Path) -> None:
     assert second_writer_acquired == [False]
 
 
+def test_pruning_preserves_spawn_with_pending_cleanup_claim(tmp_path: Path) -> None:
+    runtime_root = _state_root(tmp_path)
+    paths = RuntimePaths.from_root_dir(runtime_root)
+    spawn_id = _start_test_spawn(runtime_root, spawn_id="p7", status="succeeded")
+    claim_path = paths.spawns_dir / spawn_id / "reaper_cleanup_claim.json"
+    claim_path.write_text('{"v":1,"scopes":[]}\n', encoding="utf-8")
+    stale = [
+        StaleSpawnArtifact(
+            spawn_id=spawn_id,
+            project_uuid="project",
+            path=str(paths.spawns_dir / spawn_id),
+            size_bytes=0,
+            last_activity="2026-01-01T00:00:00+00:00",
+        )
+    ]
+
+    assert prune_stale_spawn_artifacts(stale) == 0
+    assert claim_path.is_file()
+
+
 @pytest.mark.parametrize(
     "invalid_spawn_id",
     ["../escaped", "/absolute", ".staging", "..", "nested/child"],

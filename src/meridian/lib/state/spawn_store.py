@@ -53,8 +53,8 @@ from meridian.lib.state.spawn.model import (
 from meridian.lib.state.spawn.model import (
     TerminalSpawnStatus as TerminalSpawnStatus,
 )
-from meridian.lib.state.spawn.terminal_policy import decide_terminal_write
 from meridian.lib.state.spawn.repository import spawn_lock_path
+from meridian.lib.state.spawn.terminal_policy import decide_terminal_write
 from meridian.lib.state.spawn.transitions import (
     apply_cancel_intent,
     apply_finalize,

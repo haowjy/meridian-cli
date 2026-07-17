@@ -4,8 +4,8 @@
 Warning code regression tests live in test_diag_warnings.py.
 """
 
-import multiprocessing
 import json
+import multiprocessing
 import os
 from pathlib import Path
 
