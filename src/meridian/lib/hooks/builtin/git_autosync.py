@@ -26,6 +26,7 @@ from meridian.lib.hooks.builtin.autosync_store import (
     has_unresolved_conflict,
     transaction,
 )
+from meridian.lib.platform.atomic import atomic_write_text
 from meridian.plugin_api import (
     Hook,
     HookContext,
@@ -544,21 +545,14 @@ class GitAutosync:
             new_content += "\n"
         new_content += "\n".join(missing_patterns) + "\n"
 
-        tmp_path = exclude_path.with_suffix(exclude_path.suffix + ".tmp")
         try:
-            tmp_path.write_text(new_content, encoding="utf-8")
-            tmp_path.replace(exclude_path)
+            atomic_write_text(exclude_path, new_content)
         except OSError as exc:
             logger.warning(
                 "git_autosync_default_ignores_write_failed",
                 clone_path=clone_path,
                 error=str(exc),
             )
-            try:
-                if tmp_path.exists():
-                    tmp_path.unlink()
-            except OSError:
-                pass
 
     def _get_current_branch(self, clone_path: str) -> str | None:
         result = self._run_git(clone_path, ["branch", "--show-current"], timeout=5)
