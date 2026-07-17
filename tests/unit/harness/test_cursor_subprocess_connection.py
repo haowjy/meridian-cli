@@ -14,6 +14,7 @@ from meridian.lib.harness.connections.base import ConnectionConfig, HarnessEvent
 from meridian.lib.harness.connections.cursor_subprocess import CursorSubprocessConnection
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.safety.permissions import UnsafeNoOpPermissionResolver
+from meridian.lib.state.paths import resolve_spawn_log_dir
 
 
 class _FakeStdout:
@@ -268,6 +269,7 @@ async def _start_fresh_cursor_spawn(
         env_overrides={},
         session_id_observer=observed.append,
     )
+    resolve_spawn_log_dir(tmp_path, config.spawn_id).mkdir(parents=True)
     spec = ResolvedLaunchSpec(
         harness=HarnessId.CURSOR,
         prompt="hello",
@@ -331,6 +333,7 @@ async def test_cursor_start_mints_chat_id_and_records_observer(
         env_overrides={},
         session_id_observer=observed.append,
     )
+    resolve_spawn_log_dir(tmp_path, config.spawn_id).mkdir(parents=True)
     spec = ResolvedLaunchSpec(
         harness=HarnessId.CURSOR,
         prompt="hello",
@@ -387,6 +390,7 @@ async def test_cursor_start_reuses_continue_session_id_without_minting(
         env_overrides={},
         session_id_observer=observed.append,
     )
+    resolve_spawn_log_dir(tmp_path, config.spawn_id).mkdir(parents=True)
     spec = ResolvedLaunchSpec(
         harness=HarnessId.CURSOR,
         prompt="hello",

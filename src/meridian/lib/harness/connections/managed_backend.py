@@ -64,7 +64,6 @@ async def register_spawn_owned_process(
     """Persist crash-recovery ownership for an already launched child process."""
 
     spawn_dir = resolve_spawn_log_dir(control_root, spawn_id)
-    spawn_dir.mkdir(parents=True, exist_ok=True)
     resolved_runtime_root = runtime_root or spawn_dir.parent.parent
     pid = process.pid
     pgid: int | None = None
@@ -112,8 +111,6 @@ async def launch_managed_backend(
 ) -> ManagedBackendHandle:
     """Launch subprocess, build scope snapshot, link parent death, record scope."""
 
-    spawn_dir = resolve_spawn_log_dir(config.control_root, config.spawn_id)
-    spawn_dir.mkdir(parents=True, exist_ok=True)
     subprocess_config = detached_subprocess_config()
 
     try:

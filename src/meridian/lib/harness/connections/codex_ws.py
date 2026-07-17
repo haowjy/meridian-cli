@@ -379,7 +379,6 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
         self._codex_home = resolve_codex_home(env)
         effective_cwd = self._effective_project_root()
         spawn_dir = resolve_spawn_log_dir(config.control_root, config.spawn_id)
-        spawn_dir.mkdir(parents=True, exist_ok=True)
         self._stderr_log_path = spawn_dir / "stderr.log"
         self._stderr_handle = self._stderr_log_path.open("ab")
         self._stderr_read_offset = self._stderr_handle.tell()

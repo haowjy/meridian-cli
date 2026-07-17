@@ -371,7 +371,6 @@ class ClaudeConnection(HarnessConnection[ResolvedLaunchSpec]):
 
     async def _start_subprocess(self, config: ConnectionConfig, spec: ResolvedLaunchSpec) -> None:
         spawn_dir = resolve_spawn_log_dir(config.control_root, config.spawn_id)
-        spawn_dir.mkdir(parents=True, exist_ok=True)
 
         stderr_path = spawn_dir / "stderr.log"
         self._stderr_log_path = stderr_path

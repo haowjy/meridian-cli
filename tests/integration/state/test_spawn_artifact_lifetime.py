@@ -1,6 +1,7 @@
 """Spawn-owned artifacts cannot outlive their published row."""
 
 import asyncio
+import os
 import shutil
 import threading
 import time
@@ -12,9 +13,12 @@ import pytest
 from meridian.lib.core.clock import RealClock
 from meridian.lib.core.domain import SpawnStatus
 from meridian.lib.core.types import SpawnId
+from meridian.lib.harness.connections import managed_backend as managed_backend_module
 from meridian.lib.harness.connections.base import HarnessConnection, HarnessEvent, HarnessRequest
+from meridian.lib.harness.connections.managed_backend import register_spawn_owned_process
 from meridian.lib.harness.control_action import ControlActionCoordinator, ControlActionType
 from meridian.lib.harness.permission_broker import PermissionBroker
+from meridian.lib.launch.process.runner import _write_native_primary_metadata
 from meridian.lib.launch.streaming.heartbeat import FileHeartbeat
 from meridian.lib.launch.streaming_runner import _append_runner_lifecycle_event
 from meridian.lib.state import history as history_module
@@ -452,3 +456,89 @@ def test_reaper_evidence_refuses_terminal_spawn(tmp_path: Path) -> None:
     _record_orphan_finalize_evidence(runtime_root, record, snapshot, now)
 
     assert not evidence_path.exists()
+
+
+def test_late_native_primary_metadata_does_not_recreate_deleted_spawn(
+    tmp_path: Path,
+) -> None:
+    runtime_root = tmp_path / "runtime"
+    spawn_id = SpawnId("p1")
+    spawn_dir = runtime_root / "spawns" / str(spawn_id)
+    metadata_path = spawn_dir / "primary_meta.json"
+    _start_test_spawn(runtime_root, str(spawn_id), status="running")
+
+    def _write() -> None:
+        _write_native_primary_metadata(
+            runtime_root=runtime_root,
+            spawn_id=spawn_id,
+            spawn_dir=spawn_dir,
+            command=("pi",),
+            launch_cwd=tmp_path,
+            launcher_pid=os.getpid(),
+            tui_pid=None,
+            activity="finalizing",
+            started_at_epoch=time.time(),
+            ended_at_epoch=time.time(),
+            exit_code=0,
+            harness_session_id="session-1",
+        )
+
+    _write()
+    assert metadata_path.is_file()
+    assert delete_published_spawn(
+        runtime_root,
+        spawn_id,
+        can_delete=lambda row: row is not None,
+    )
+
+    _write()
+
+    assert not spawn_dir.exists()
+
+
+@pytest.mark.asyncio
+async def test_process_adoption_does_not_recreate_deleted_spawn(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime_root = tmp_path / "runtime"
+    project_root = tmp_path / "repo"
+    spawn_id = SpawnId("p1")
+    spawn_dir = runtime_root / "spawns" / str(spawn_id)
+    _start_test_spawn(runtime_root, str(spawn_id), status="running")
+    assert delete_published_spawn(
+        runtime_root,
+        spawn_id,
+        can_delete=lambda row: row is not None,
+    )
+    terminated: list[str] = []
+
+    async def _record_termination(
+        _handle: object,
+        *,
+        reason: str,
+        **_kwargs: object,
+    ) -> None:
+        terminated.append(reason)
+
+    monkeypatch.setattr(
+        managed_backend_module.ScopedProcessHandle,
+        "terminate",
+        _record_termination,
+    )
+
+    class _FakeProcess:
+        pid = os.getpid()
+
+    with pytest.raises(ValueError, match="spawn does not exist"):
+        await register_spawn_owned_process(
+            spawn_id=spawn_id,
+            control_root=project_root,
+            runtime_root=runtime_root,
+            process=cast("Any", _FakeProcess()),
+            scope_id="backend",
+            role="harness_backend",
+        )
+
+    assert terminated == ["scope_registration_failed"]
+    assert not spawn_dir.exists()

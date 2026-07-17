@@ -412,7 +412,12 @@ class PrimaryAttachLauncher:
 
         with self._metadata_lock:
             metadata = self._metadata.to_primary_metadata()
-        write_primary_metadata(self._spawn_dir, metadata)
+        write_primary_metadata(
+            self._spawn_dir,
+            metadata,
+            runtime_root=self._runtime_root,
+            spawn_id=str(self._spawn_id) if self._runtime_root is not None else None,
+        )
 
     async def _run_event_writer(self) -> None:
         """Stream connection events to history.jsonl."""
