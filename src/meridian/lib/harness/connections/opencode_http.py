@@ -402,6 +402,11 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
         sse_data_lines: list[str] = []
 
         while self._state in ("connected", "stopping"):
+            if self._process_exited():
+                event = self._process_exit_event()
+                if event is not None:
+                    yield event
+                return
             if self._liveness.evaluate() in (
                 LivenessDecision.BACKEND_DEAD,
                 LivenessDecision.STREAM_STALLED,
@@ -412,14 +417,16 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
                 )
                 self._set_failed()
                 return
-            if self._process_exited():
-                self._set_failed()
-                return
 
             self._liveness.mark_activity_if_idle()
             try:
                 response = await self._liveness.wait_for_activity(self._open_event_stream())
             except EventStreamLivenessTimeout:
+                if self._process_exited():
+                    event = self._process_exit_event()
+                    if event is not None:
+                        yield event
+                    return
                 logger.warning(
                     "OpenCode event stream liveness timeout after %.1fs without events",
                     self._LIVENESS_TIMEOUT_SECONDS,
@@ -430,7 +437,9 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
                 if self._state in ("stopping", "stopped"):
                     return
                 if self._process_exited():
-                    self._set_failed()
+                    event = self._process_exit_event()
+                    if event is not None:
+                        yield event
                     return
                 logger.warning("OpenCode event stream dropped; reconnecting: %s", exc)
                 await asyncio.sleep(self._EVENT_RETRY_DELAY_SECONDS)
@@ -444,6 +453,11 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
                             response.content.read(4096)
                         )
                     except EventStreamLivenessTimeout:
+                        if self._process_exited():
+                            event = self._process_exit_event()
+                            if event is not None:
+                                yield event
+                            return
                         logger.warning(
                             "OpenCode event stream liveness timeout after %.1fs without events",
                             self._LIVENESS_TIMEOUT_SECONDS,
@@ -1076,6 +1090,24 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
         if process is None:
             return False
         return process.returncode is not None
+
+    def _process_exit_event(self) -> HarnessEvent | None:
+        if self._state in {"stopping", "stopped"}:
+            return None
+        process = self._process
+        return_code = process.returncode if process is not None else None
+        if return_code is None:
+            raise RuntimeError("OpenCode process-exit event requested before process exit")
+        detail = f"OpenCode subprocess exited with code {return_code}."
+        stderr_excerpt = self._read_startup_stderr_excerpt()
+        if stderr_excerpt:
+            detail = f"{detail}\n\nOpenCode subprocess stderr:\n{stderr_excerpt}"
+        self._set_failed()
+        return HarnessEvent(
+            event_type="error/connectionClosed",
+            payload={"type": "error/connectionClosed", "message": detail},
+            harness_id=self.harness_id.value,
+        )
 
     def _set_failed(self) -> None:
         if self._state == "failed":

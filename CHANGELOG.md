@@ -6,6 +6,10 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [0.3.36] - 2026-07-17
 - Retire dead Pi notification/subspawn lifecycle machinery: the real Pi runtime never emits `meridian.notification.*` / `meridian.subspawn.*` events, so the pending-notification ledger and `pi_notification_timeout` gating are removed. Tracked-work wake continues via persisted-descendant discovery, the direct `meridian-spawn-watch` follow-up turn, and `last-notification.json` epoch gating. (#440)
+- Codex resident spawns: a resolved terminal outcome (including a succeeded turn) is no longer overwritten by a late generic connection-close when the backend dies; backend death with tracked children now reports `backend_dead_while_awaiting_done` instead of the raw WebSocket-close message.
+- OpenCode process death now preserves the subprocess exit code and stderr in the terminal outcome instead of collapsing to a generic `connection_closed_without_terminal_event`.
+- Claude connection death now emits a canonical `error/connectionClosed` event carrying exit code and stderr, so death diagnostics survive terminal classification.
+- OpenCode `response.completed` removed from the accepted event taxonomy — the real runtime never emits it.
 
 ## [0.3.35] - 2026-07-17
 
