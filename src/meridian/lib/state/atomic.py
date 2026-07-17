@@ -32,8 +32,28 @@ def atomic_write_bytes(path: Path, data: bytes) -> None:
         handle.write(data)
 
 
+def _jsonl_tail_needs_repair(path: Path) -> bool:
+    """Return True when an existing JSONL file lacks a trailing newline."""
+
+    try:
+        with path.open("rb") as handle:
+            handle.seek(0, os.SEEK_END)
+            end = handle.tell()
+            if end == 0:
+                return False
+            handle.seek(-1, os.SEEK_END)
+            return handle.read(1) != b"\n"
+    except FileNotFoundError:
+        return False
+
+
 def _repaired_jsonl_bytes(content: bytes) -> bytes | None:
-    """Return repaired JSONL bytes, or None when no repair is needed."""
+    """Return repaired JSONL bytes, or None when no repair is needed.
+
+    Callers write JSON object rows only (events, permission transitions,
+    control actions). A complete tail must parse as a JSON object; torn tails are
+    dropped to the last newline.
+    """
 
     if not content or content.endswith(b"\n"):
         return None
@@ -59,17 +79,15 @@ def _repaired_jsonl_bytes(content: bytes) -> bytes | None:
 def repair_jsonl_tail(path: Path) -> None:
     """Repair a torn or delimiter-less JSONL tail via atomic inode replacement."""
 
-    try:
-        content = path.read_bytes()
-    except FileNotFoundError:
+    if not _jsonl_tail_needs_repair(path):
         return
 
+    content = path.read_bytes()
     repaired = _repaired_jsonl_bytes(content)
     if repaired is None:
         return
 
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with atomic_replace(path, mode="wb", encoding=None, permissions=0o600) as handle:
+    with atomic_replace(path, mode="wb", encoding=None, permissions="preserve") as handle:
         handle.write(repaired)
 
 
