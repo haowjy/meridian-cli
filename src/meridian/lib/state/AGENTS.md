@@ -21,6 +21,8 @@ State splits across distinct roots — understand which goes where before writin
   spawns/<spawn_id>/
     state.json                      — authoritative spawn state (v2)
     history.jsonl                   — primary output artifact
+    process_scopes.json             — durable process identities + release markers
+    reaper_cleanup_claim.json       — pending finalize-first cleanup targets
     heartbeat · report.md · stderr.log · params.json · tokens.json
 
 <context.work root>/<slug>/         ← context-resolved, NOT repo-local
@@ -85,8 +87,11 @@ a read-only projection of stale active rows. It may return an in-memory terminal
 status but never persists state or terminates processes, and it is safe at any depth.
 
 `reconcile_active_spawn()` is the side-effectful repair path. It runs from doctor
-background repair, fails closed outside root depth, cleans recorded orphan process
-scopes, and persists the terminal outcome through the locked external-writer path.
+background repair and fails closed outside root depth. It snapshots a cleanup claim
+under the spawn lock, persists the terminal outcome through the locked external-writer
+path, then terminates the claimed, birth-validated scopes. A separate stable cleanup
+lock prevents concurrent reapers from double-signalling; terminal rows retain failed
+claims for the next doctor pass.
 Both paths share the liveness and completion decision rules in `reaper.py`.
 
 ## Entry Points
