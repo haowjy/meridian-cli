@@ -49,6 +49,12 @@ if TYPE_CHECKING:
 
 logger = structlog.get_logger()
 
+_BACKEND_DEAD_WHILE_AWAITING_DONE = TerminalEventOutcome(
+    status="failed",
+    exit_code=1,
+    error="backend_dead_while_awaiting_done",
+)
+
 
 class _ResidentCompletionEvidence:
     """Assess the reconciled, transitive persisted descendant tree."""
@@ -167,11 +173,7 @@ class _ResidentCompletionProfile:
         if intentional_stop:
             return state.candidate
         if self._resident_health_status() == LivenessDecision.BACKEND_DEAD:
-            return TerminalEventOutcome(
-                status="failed",
-                exit_code=1,
-                error="backend_dead_while_awaiting_done",
-            )
+            return _BACKEND_DEAD_WHILE_AWAITING_DONE
         return TerminalEventOutcome(
             status="failed",
             exit_code=1,
@@ -225,6 +227,15 @@ class _ResidentCompletionProfile:
             return ProfileDecision(action="clear", emit_turn_boundary=action.emit_turn_boundary)
         if outcome.status != "succeeded":
             self.clear()
+            if (
+                context.candidate is not None
+                and outcome.generic_connection_close
+                and self._resident_health_status() == LivenessDecision.BACKEND_DEAD
+            ):
+                return ProfileDecision(
+                    action="fail",
+                    outcome=_BACKEND_DEAD_WHILE_AWAITING_DONE,
+                )
             return ProfileDecision(action="fail", outcome=outcome)
         if context.directives.rearm:
             self._mark_rearmed(context.now)

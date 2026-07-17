@@ -23,6 +23,7 @@ class TerminalEventOutcome:
     status: SpawnStatus
     exit_code: int
     error: str | None = None
+    generic_connection_close: bool = False
 
 
 @dataclass(frozen=True)
@@ -125,6 +126,7 @@ def terminal_outcome(
             status="failed",
             exit_code=1,
             error=error,
+            generic_connection_close=True,
         )
 
     if event.harness_id == HarnessId.CLAUDE.value and event.event_type == "result":

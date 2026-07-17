@@ -120,6 +120,13 @@ otherwise an authoritative stop outcome (from `stop_spawn()`) wins; otherwise th
 drain classification stands. Publication is idempotent — `terminal_published` on
 `SpawnSession` guards against double publication.
 
+Resident completion also resolves transport death before that publication barrier.
+When a successful turn is being held for persisted descendant work and the backend
+then emits a generic `error/connectionClosed`, the resident profile publishes
+`backend_dead_while_awaiting_done` rather than the transport's incidental close
+message. Harness-specific terminal failures remain authoritative. A success already
+recorded for publication is still protected by the generic success-first barrier.
+
 ### Subscriber Queue Backpressure
 
 The subscriber queue (`maxsize=1000`) drops non-sentinel events on `QueueFull`

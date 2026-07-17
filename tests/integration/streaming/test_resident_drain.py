@@ -68,6 +68,31 @@ async def test_codex_terminal_success_without_live_children_finalizes_immediatel
 
 
 @pytest.mark.asyncio
+async def test_codex_backend_death_with_pending_success_preserves_resident_reason(
+    tmp_path: Path,
+) -> None:
+    spawn_id = SpawnId("p1")
+    start_row(tmp_path, str(spawn_id), HarnessId.CODEX, None)
+    start_row(tmp_path, "p2", HarnessId.CODEX, str(spawn_id))
+    connection = FakeResidentConnection(HarnessId.CODEX)
+    manager = await start_manager(tmp_path, connection, spawn_id=spawn_id)
+    subscriber = manager.subscribe(spawn_id)
+    assert subscriber is not None
+
+    connection.emit(resident_event(HarnessId.CODEX, "turn/completed", {}))
+    await next_turn_boundary(subscriber)
+    connection.fail_backend("no close frame received or sent")
+
+    try:
+        outcome = await manager.wait_for_completion(spawn_id)
+        assert outcome is not None
+        assert outcome.status == "failed"
+        assert outcome.error == "backend_dead_while_awaiting_done"
+    finally:
+        await manager.stop_spawn(spawn_id)
+
+
+@pytest.mark.asyncio
 async def test_opencode_terminal_success_without_live_children_finalizes_immediately(
     tmp_path: Path,
 ) -> None:
