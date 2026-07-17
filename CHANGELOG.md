@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.3.38] - 2026-07-17
+
 ### Changed
 - Launch-boundary append locks now live outside destructible spawn directories.
 - Doctor and spawn pruning remove orphaned per-spawn lock files under validated
