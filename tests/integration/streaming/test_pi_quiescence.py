@@ -54,6 +54,57 @@ _read_phase_events = read_phase_events
 
 
 @pytest.mark.asyncio
+async def test_spawn_manager_pi_attempt_timeout_keeps_terminal_truth_through_cleanup(
+    tmp_path: Path,
+) -> None:
+    stream_closed = asyncio.Event()
+
+    class _TimeoutStopConnection(_FakePiConnection):
+        async def stop(
+            self,
+            *,
+            reason: str | None = None,
+            progress: StopProgressCallback | None = None,
+        ) -> StopResult:
+            _ = progress
+            self.stop_reasons.append(reason)
+            stream_closed.set()
+            self._state = "stopped"
+            return StopResult()
+
+        async def events(self):  # type: ignore[no-untyped-def]
+            await stream_closed.wait()
+            yield _pi_event(
+                "agent_end",
+                {"messages": [{"role": "assistant", "stopReason": "aborted"}]},
+            )
+
+    spawn_id = SpawnId("p-pi-attempt-timeout-cleanup")
+    connection = _TimeoutStopConnection([])
+    manager = await _start_pi_manager(tmp_path, connection, spawn_id=spawn_id)
+
+    outcome = await manager.stop_spawn(
+        spawn_id,
+        status="timed_out",
+        exit_code=3,
+        error="timeout",
+        prefer_drain_outcome=True,
+    )
+
+    assert outcome is not None
+    assert (outcome.status, outcome.exit_code, outcome.error) == ("timed_out", 3, "timeout")
+    finalized = _read_phase_events(tmp_path, spawn_id, "finalized")
+    assert finalized[-1]["payload"]["status"] == "timed_out"
+    assert finalized[-1]["payload"]["exit_code"] == 3
+    assert finalized[-1]["payload"]["error"] == "timeout"
+    assert connection.stop_reasons == ["stop_spawn", "quiescent"]
+    assert _read_history_phases(tmp_path, spawn_id)[-2:] == [
+        "cleanup_running",
+        "cleanup_completed",
+    ]
+
+
+@pytest.mark.asyncio
 async def test_spawn_manager_pi_quiescence_stops_spawned_after_notification_completion(
     tmp_path: Path,
 ) -> None:

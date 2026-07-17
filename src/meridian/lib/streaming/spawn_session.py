@@ -44,3 +44,4 @@ class SpawnSession:
     debug_tracer: DebugTracer | None = None
     cancel_sent: bool = False
     cancel_event_emitted: bool = False
+    preferred_stop_outcome: DrainOutcome | None = None

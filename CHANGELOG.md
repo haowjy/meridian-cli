@@ -4,6 +4,15 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- Lifecycle history rows now carry sub-second wall-clock timestamps, and terminal
+  spawn state records the sub-second `published_at` time of its atomic publication.
+
+### Fixed
+- Attempt timeouts now report `timed_out` consistently in spawn reports and Pi
+  lifecycle history, retain post-finalization cleanup diagnostics, and consume
+  aborted-stream exhaustion without leaking `StopAsyncIteration` warnings.
+
 ## [0.3.34] - 2026-07-17
 
 ### Added

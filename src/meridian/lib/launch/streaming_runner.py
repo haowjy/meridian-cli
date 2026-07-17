@@ -780,7 +780,7 @@ async def _run_streaming_attempt(
             timed_out = True
             await manager.stop_spawn(
                 run.spawn_id,
-                status="failed",
+                status="timed_out",
                 exit_code=3,
                 error="timeout",
                 prefer_drain_outcome=True,

@@ -5,6 +5,8 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import re
 from pathlib import Path
 
 import pytest
@@ -128,6 +130,38 @@ async def test_execute_with_streaming_attempt_timeout_survives_pi_abort(
     assert row.status == "timed_out"
     assert row.exit_code == 3
     assert row.error == "timeout"
+    history_path = runtime_root / "spawns" / str(run.spawn_id) / "history.jsonl"
+    history = [json.loads(line) for line in history_path.read_text().splitlines()]
+    finalized = [
+        event
+        for event in history
+        if event["event_type"] == "meridian.pi.lifecycle.phase"
+        and event["payload"].get("phase") == "finalized"
+    ]
+    assert finalized[-1]["payload"]["status"] == "timed_out"
+    assert finalized[-1]["payload"]["exit_code"] == 3
+    assert finalized[-1]["payload"]["error"] == "timeout"
+    report = (runtime_root / "spawns" / str(run.spawn_id) / "report.md").read_text()
+    assert report == "# Spawn failed\n\ntimeout\n"
+    cleanup_phases = [
+        event["payload"]["phase"]
+        for event in history
+        if event["event_type"] == "meridian.pi.lifecycle.phase"
+        and str(event["payload"].get("phase", "")).startswith("cleanup_")
+    ]
+    assert cleanup_phases == ["cleanup_running", "cleanup_completed"]
+    assert all(
+        re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3,6}Z", event["timestamp"])
+        for event in history
+    )
+
+    state = json.loads(
+        (runtime_root / "spawns" / str(run.spawn_id) / "state.json").read_text()
+    )
+    assert re.fullmatch(
+        r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3,6}Z",
+        state["published_at"],
+    )
 
 @pytest.mark.asyncio
 async def test_execute_with_streaming_finalizes_resident_deadline_without_retry(

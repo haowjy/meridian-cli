@@ -113,7 +113,12 @@ class DrainInputWaiter:
 
 
 async def _cancel_task(task: asyncio.Future[Any] | None) -> None:
-    if task is None or task.done():
+    if task is None:
+        return
+    if task.done():
+        if not task.cancelled():
+            with suppress(StopAsyncIteration, Exception):
+                task.result()
         return
     task.cancel()
     with suppress(asyncio.CancelledError):

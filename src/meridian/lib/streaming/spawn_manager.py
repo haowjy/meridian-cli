@@ -611,6 +611,8 @@ class SpawnManager:
             error=error,
             duration_secs=max(0.0, time.monotonic() - session.started_monotonic),
         )
+        if prefer_drain_outcome:
+            session.preferred_stop_outcome = fallback_outcome
         outcome = (
             self._resolve_completion_future(session, fallback_outcome)
             if not prefer_drain_outcome
@@ -641,6 +643,8 @@ class SpawnManager:
                 session.drain_task.result()
         if prefer_drain_outcome:
             outcome = self._resolve_completion_future(session, fallback_outcome)
+        if self._cleanup_tasks:
+            await asyncio.gather(*tuple(self._cleanup_tasks), return_exceptions=True)
         await self._observers.shutdown(spawn_id)
 
         with suppress(Exception):

@@ -99,6 +99,7 @@ class SpawnRecord(BaseModel):
     error: str | None
     terminal_origin: SpawnOrigin | None
     launch_policy_snapshot: LaunchPolicySnapshot | None = None
+    published_at: str | None = None
 
 
 __all__ = [

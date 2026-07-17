@@ -293,6 +293,8 @@ class SpawnDrainLoop:
                         error="connection_closed_without_terminal_event",
                         duration_secs=max(0.0, time.monotonic() - session.started_monotonic),
                     )
+                if session.preferred_stop_outcome is not None and outcome.status != "succeeded":
+                    outcome = session.preferred_stop_outcome
                 if drain_plan.finalizer is not None:
                     drain_plan.finalizer.after_finalized(
                         connection_session_id=_safe_connection_session_id(receiver),
