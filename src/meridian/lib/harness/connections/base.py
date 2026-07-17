@@ -224,6 +224,7 @@ class ConnectionConfig:
     pi_child_wave_timeout_seconds: float | None = None
     resident_deadline_seconds: float | None = None
     resident_poll_seconds: float | None = None
+    resident_rearm_budget: int | None = None
     pi_task_ping_interval_seconds: float | None = None
     pi_task_ping_reset_on_activity: bool | None = None
     ws_bind_host: str = "127.0.0.1"

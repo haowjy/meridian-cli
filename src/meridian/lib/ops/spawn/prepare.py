@@ -180,6 +180,7 @@ def build_create_payload(
                 autocompact=payload.autocompact,
                 autocompact_pct=payload.autocompact_pct,
                 effort=payload.effort,
+                resident_rearm_budget=payload.resident_rearm_budget,
             ),
             retry=RetryPolicy(
                 max_attempts=max(1, config.max_retries + 1),

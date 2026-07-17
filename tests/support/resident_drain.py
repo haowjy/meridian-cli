@@ -185,6 +185,7 @@ async def awaiting_done_coordinator(
         resident_backend=resident_backend,
         deadline_seconds=30.0,
         poll_seconds=0.01,
+        rearm_budget=None,
         cancel_descendants=descendant_cancellation_from_roots(tmp_path, tmp_path),
     )
     write_spawn_signal(tmp_path, "p1", "rearm")
@@ -299,6 +300,7 @@ async def coordinator_with_clock(
         resident_backend=connection.resident_backend,
         deadline_seconds=deadline_seconds,
         poll_seconds=poll_seconds,
+        rearm_budget=None,
         cancel_descendants=descendant_cancellation_from_roots(tmp_path, tmp_path),
     )
     write_spawn_signal(tmp_path, "p1", "rearm")

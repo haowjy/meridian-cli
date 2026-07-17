@@ -63,6 +63,7 @@ class SpawnLaunchOptionUpdates(TypedDict):
     background: bool
     project_root: str | None
     timeout: float | None
+    resident_rearm_budget: int | None
     approval: str | None
     autocompact: int | None
     autocompact_pct: NotRequired[int | None]
@@ -86,6 +87,7 @@ class SpawnLaunchOptions(BaseModel):
     background: bool = False
     project_root: str | None = None
     timeout: float | None = None
+    resident_rearm_budget: int | None = None
     approval: str | None = None
     autocompact: int | None = None
     autocompact_pct: int | None = None
@@ -107,6 +109,7 @@ class SpawnLaunchOptions(BaseModel):
             "background": self.background,
             "project_root": self.project_root,
             "timeout": self.timeout,
+            "resident_rearm_budget": self.resident_rearm_budget,
             "approval": self.approval,
             "autocompact": self.autocompact,
             "autocompact_pct": self.autocompact_pct,

@@ -117,6 +117,7 @@ def build_drain_plan(
             resident_backend=resident_backend,
             deadline_seconds=config.resident_deadline_seconds,
             poll_seconds=config.resident_poll_seconds,
+            rearm_budget=config.resident_rearm_budget,
             cancel_descendants=_cancel_descendants,
         )
         return DrainPlan(

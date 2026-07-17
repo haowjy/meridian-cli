@@ -11,6 +11,7 @@ import structlog
 from meridian.lib.core.types import SpawnId
 from meridian.lib.harness.connections.liveness import LivenessDecision
 from meridian.lib.harness.semantics import TerminalEventOutcome
+from meridian.lib.state import spawn_store
 from meridian.lib.state.spawn_signals import consume_resident_signals
 from meridian.lib.streaming.completion_contracts import (
     AssessmentTrigger,
@@ -115,12 +116,15 @@ class _ResidentCompletionProfile:
         spawn_id: SpawnId,
         resident_backend: ResidentBackendControl,
         deadline_seconds: float,
+        rearm_budget: int | None,
         clock: Callable[[], float],
     ) -> None:
         self._runtime_root = runtime_root
         self._spawn_id = spawn_id
         self._resident_backend = resident_backend
         self._deadline_seconds = deadline_seconds
+        self._rearm_budget = rearm_budget
+        self._rearm_count = 0
         self._clock = clock
         self._explicit_hold = False
         self._done_requested = False
@@ -138,7 +142,10 @@ class _ResidentCompletionProfile:
         del state, trigger
         signals = consume_resident_signals(self._runtime_root, self._spawn_id)
         self._done_requested = self._done_requested or signals.done
-        return CompletionDirectives(done=self._done_requested, rearm=signals.rearm)
+        return CompletionDirectives(
+            done=self._done_requested,
+            rearm=self._grant_rearm(signals.rearm),
+        )
 
     def evaluate(self, context: CompletionEvaluation) -> ProfileDecision:
         if context.terminal_action is not None:
@@ -260,15 +267,21 @@ class _ResidentCompletionProfile:
             self.clear()
             return ProfileDecision(action="complete", outcome=candidate)
         if context.deadline_expired and not rearmed:
+            error = (
+                "resident_rearm_budget_exhausted"
+                if self._rearm_budget is not None
+                and self._rearm_count >= self._rearm_budget
+                else "resident_deadline_expired"
+            )
             self.clear()
             return ProfileDecision(
                 action="cleanup",
                 outcome=TerminalEventOutcome(
                     status="timed_out",
                     exit_code=1,
-                    error="resident_deadline_expired",
+                    error=error,
                 ),
-                cleanup_reason="resident_deadline_expired",
+                cleanup_reason=error,
             )
         if context.active_turn:
             return ProfileDecision(action="wait", reset_deadline=rearmed)
@@ -287,6 +300,19 @@ class _ResidentCompletionProfile:
     def _mark_rearmed(self, now: float) -> None:
         self._explicit_hold = True
         self._next_nudge_at = now + COMPLETION_NUDGE_INTERVAL_SECONDS
+
+    def _grant_rearm(self, signaled: bool) -> bool:
+        if not signaled:
+            return False
+        if self._rearm_budget is not None and self._rearm_count >= self._rearm_budget:
+            return False
+        self._rearm_count += 1
+        spawn_store.update_spawn(
+            self._runtime_root,
+            self._spawn_id,
+            resident_rearm_count=self._rearm_count,
+        )
+        return True
 
     def _enter_wait(self, now: float) -> None:
         if self._explicit_hold:
@@ -368,6 +394,7 @@ class ResidentDrainCoordinator:
         resident_backend: ResidentBackendControl,
         deadline_seconds: float | None,
         poll_seconds: float | None,
+        rearm_budget: int | None,
         cancel_descendants: Callable[[SpawnId], Awaitable[set[str]]],
     ) -> ResidentDrainCoordinator:
         del receiver
@@ -381,6 +408,7 @@ class ResidentDrainCoordinator:
             spawn_id=spawn_id,
             resident_backend=resident_backend,
             deadline_seconds=resolved_deadline,
+            rearm_budget=rearm_budget,
             clock=clock,
         )
         coordinator = CompletionCoordinator(

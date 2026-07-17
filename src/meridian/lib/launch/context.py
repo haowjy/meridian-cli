@@ -995,6 +995,7 @@ def compile_prepared_policy_surface(
         autocompact=request.execution_policy.autocompact,
         autocompact_pct=request.execution_policy.autocompact_pct,
         timeout=request.execution_policy.timeout,
+        resident_rearm_budget=request.execution_policy.resident_rearm_budget,
     )
     env_overrides = (
         runtime.resolved_runtime_overrides

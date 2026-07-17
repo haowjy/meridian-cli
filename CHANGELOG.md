@@ -4,7 +4,15 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- Resident spawns can opt into a rearm-count budget through CLI, environment,
+  agent profile, or config; granted rearm counts are persisted for observability,
+  and budget exhaustion reports a distinct timeout outcome. (#373)
+
 ### Changed
+- Documented Pi descendant-quiescence completion as intentionally unbounded by default
+  and `--timeout` / `MERIDIAN_TIMEOUT` as the shared opt-in absolute ceiling for Pi
+  and resident profiles. (#374)
 - Consolidated Pi drain characterization behind one behavioral scenario builder and a
   compact timeout-priority table. (#372)
 - Split the neutral drain teardown contract from Pi cleanup policy and moved resident

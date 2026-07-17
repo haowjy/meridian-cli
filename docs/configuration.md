@@ -116,6 +116,7 @@ Canonical keys accepted by `meridian config set/get/reset`:
 | `timeouts.guardrail_minutes` | float | Guardrail timeout (minutes) |
 | `timeouts.wait_minutes` | float | Default `spawn wait` timeout (minutes) |
 | `timeouts.pi_child_wave_timeout_seconds` | float | Pi spawn-watch tracked-child wave timeout (seconds; default 300 when unset) |
+| `timeouts.resident_rearm_budget` | int | Maximum resident deadline extensions (nonnegative; unlimited when unset) |
 | `timeouts.pi_task_ping_interval_seconds` | float | Pi background-task ping interval (seconds; extension default when unset) |
 | `harness.claude` | str | Default model for Claude harness |
 | `harness.codex` | str | Default model for Codex harness |
