@@ -292,7 +292,7 @@ def test_cleanup_cannot_delete_concurrently_restarted_session(
         session_store.release_file_lock(restarted[0].project_lifetime)
 
 
-@pytest.mark.skipif(os.name != "posix", reason="requires POSIX fork and SIGKILL")
+@pytest.mark.skipif(os.name != "posix", reason="requires a POSIX subprocess and SIGKILL")
 @pytest.mark.parametrize("crash_stage", ["before_unlink", "after_unlink"])
 def test_cleanup_crash_remains_recoverable(
     tmp_path: Path,
@@ -334,6 +334,8 @@ def test_cleanup_crash_remains_recoverable(
 
     assert not lock_path.exists()
     assert not lease_path.exists()
+
+
 def test_empty_harness_session_id_flows_through_start_update_and_record(tmp_path: Path) -> None:
     runtime_root = _state_root(tmp_path)
     chat_id = session_store.start_session(
