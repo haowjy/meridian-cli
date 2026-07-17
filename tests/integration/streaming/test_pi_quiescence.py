@@ -55,6 +55,21 @@ def _read_history_phases(runtime_root: Path, spawn_id: SpawnId) -> list[str]:
     ]
 
 
+async def _wait_for_history_phase(
+    runtime_root: Path,
+    spawn_id: SpawnId,
+    phase: str,
+    *,
+    count: int = 1,
+) -> list[str]:
+    await wait_until(
+        lambda: _read_history_phases(runtime_root, spawn_id).count(phase) >= count,
+        timeout=5.0,
+        description=f"{phase} lifecycle phase",
+    )
+    return _read_history_phases(runtime_root, spawn_id)
+
+
 def _history_has_phase(runtime_root: Path, spawn_id: SpawnId, phase: str) -> bool:
     history_path = runtime_root / "spawns" / str(spawn_id) / "history.jsonl"
     return history_path.exists() and phase in _read_history_phases(runtime_root, spawn_id)
@@ -123,6 +138,11 @@ async def test_spawn_manager_pi_quiescence_stops_spawned_after_notification_comp
         assert outcome.status == "succeeded"
         assert outcome.error is None
         assert fake_connection.stop_reasons == []
+        await _wait_for_history_phase(
+            tmp_path,
+            spawn_id,
+            "waiting_for_notification_completion",
+        )
         waiting_for_children = _read_phase_events(
             tmp_path,
             spawn_id,
@@ -244,10 +264,7 @@ async def test_spawn_manager_pi_cleanup_escalation_does_not_block_terminal_succe
         assert outcome.error is None
         assert fake_connection.stop_reasons == []
 
-        await wait_until(
-            lambda: "cleanup_completed" in _read_history_phases(tmp_path, spawn_id),
-            description="cleanup_completed lifecycle phase",
-        )
+        await _wait_for_history_phase(tmp_path, spawn_id, "cleanup_completed")
         history = _read_history(tmp_path, spawn_id)
         cleanup_escalated_phases = _read_phase_events(
             tmp_path,
@@ -330,10 +347,7 @@ async def test_spawn_manager_pi_cleanup_publishes_terminal_before_async_teardown
 
         allow_stop.set()
         final_phase = expected_phases[-1]
-        await wait_until(
-            lambda: final_phase in _read_history_phases(tmp_path, spawn_id),
-            description=f"{final_phase} lifecycle phase",
-        )
+        await _wait_for_history_phase(tmp_path, spawn_id, final_phase)
         history = _read_history(tmp_path, spawn_id)
         cleanup_events = [
             event
@@ -545,6 +559,7 @@ async def test_spawn_manager_pi_micro_drain_resolves_with_bounded_timeout(
         assert outcome.status == "succeeded"
         assert outcome.error is None
 
+        await _wait_for_history_phase(tmp_path, spawn_id, "finalized")
         phases = _read_history_phases(tmp_path, spawn_id)
         assert "quiescence_micro_drain_started" in phases
         assert "finalized" in phases
@@ -778,6 +793,7 @@ async def test_spawn_manager_pi_child_wave_timeout_cleans_tracked_children_and_f
         assert outcome is not None
         assert outcome.status == "failed"
         assert outcome.error == "pi_child_wave_timeout"
+        await _wait_for_history_phase(tmp_path, spawn_id, "pi_child_wave_timeout")
         timeout_events = _read_phase_events(
             tmp_path,
             spawn_id,
@@ -802,6 +818,20 @@ async def test_spawn_manager_pi_child_wave_timeout_not_cleared_by_turn_active(
     real_loop_time = loop.time
     determinism.install_on_running_loop(monkeypatch)
     late_turn_gate = TaskGate()
+    telemetry_gate = TaskGate()
+    telemetry_started = asyncio.Event()
+
+    class _GatedCleanupService:
+        async def cancel_descendants(self, target_spawn_id: SpawnId) -> set[str]:
+            assert target_spawn_id == SpawnId("p-pi-child-wave-timeout-turn-active")
+            telemetry_started.set()
+            await telemetry_gate.wait_open()
+            return set()
+
+    monkeypatch.setattr(
+        "meridian.lib.bootstrap.services.build_spawn_application_service_from_roots",
+        lambda _project_root, _runtime_root: _GatedCleanupService(),
+    )
 
     class _DelayedWaveTimeoutConnection(_FakePiConnection):
         def __init__(self, delayed_events: list[tuple[float, HarnessEvent]]) -> None:
@@ -890,8 +920,17 @@ async def test_spawn_manager_pi_child_wave_timeout_not_cleared_by_turn_active(
         assert outcome is not None
         assert outcome.status == "failed"
         assert outcome.error == "pi_child_wave_timeout"
-        assert _read_history_phases(tmp_path, spawn_id).count("pi_child_wave_timeout") == 1
+        await asyncio.wait_for(telemetry_started.wait(), timeout=1.0)
+        assert _read_history_phases(tmp_path, spawn_id).count("pi_child_wave_timeout") == 0
+        phase_wait = asyncio.create_task(
+            _wait_for_history_phase(tmp_path, spawn_id, "pi_child_wave_timeout")
+        )
+        await assert_still_pending(phase_wait)
+        telemetry_gate.open()
+        phases = await phase_wait
+        assert phases.count("pi_child_wave_timeout") == 1
     finally:
+        telemetry_gate.open()
         release_task.cancel()
         with suppress(asyncio.CancelledError):
             await release_task

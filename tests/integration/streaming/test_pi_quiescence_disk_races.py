@@ -25,7 +25,7 @@ from meridian.lib.streaming.drain_policy import DrainAction, PiRpcQuiescenceDrai
 from meridian.lib.streaming.pi_drain import PiDrainCoordinator
 from meridian.lib.streaming.pi_subspawn_tracker import PiSubspawnTracker
 from meridian.lib.streaming.spawn_manager import SpawnManager
-from tests.support.async_determinism import AsyncDeterminism, assert_still_pending
+from tests.support.async_determinism import AsyncDeterminism, assert_still_pending, wait_until
 from tests.support.pi import (
     FakePiConnection as _FakePiConnection,
 )
@@ -802,6 +802,20 @@ async def test_spawn_manager_pi_drain_loop_reevaluates_on_disk_wakeup(
         assert outcome is not None
         assert outcome.status == "succeeded"
         history_path = tmp_path / "spawns" / str(spawn_id) / "history.jsonl"
+
+        def _history_has_micro_drain_phase() -> bool:
+            return history_path.exists() and any(
+                json.loads(line).get("payload", {}).get("phase")
+                == "quiescence_micro_drain_started"
+                for line in history_path.read_text(encoding="utf-8").splitlines()
+                if line
+            )
+
+        await wait_until(
+            _history_has_micro_drain_phase,
+            timeout=5.0,
+            description="quiescence_micro_drain_started lifecycle phase",
+        )
         history = [
             json.loads(line)
             for line in history_path.read_text(encoding="utf-8").splitlines()

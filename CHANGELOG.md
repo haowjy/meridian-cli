@@ -34,6 +34,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   candidate.
 
 ### Fixed
+- Streaming history-phase assertions now wait for post-publication telemetry with a
+  bounded deadline, eliminating the terminal-publication race from issue #369.
 - Spawn rows now appear only after their initial state and prompt are durably staged.
 - Retention pruning no longer deletes in-progress or newly published spawn rows.
 - Explicit spawn IDs now reject path-unsafe values while allowing symbolic IDs.
