@@ -14,6 +14,7 @@ Planning draft. Scope, per issue:
 - **Closes #168** — bound `control.sock` path length (hash/shorten under long runtime roots) in `spawn_manager.py`; absorbs closed #174.
 - **Closes #201** — close the `_find_free_port` bind-close-reuse TOCTOU in the OpenCode launch path (bind-and-hold or retry-on-EADDRINUSE as the contract).
 - **Closes #37** — make Codex runner mid-turn loss diagnosable: persist enough runner/backend evidence that an `orphan_run` reconciliation can say *why* (depends on #235's preserved diagnostics).
+- **Closes #419** — cancellation-safe startup ownership: one ownership-transfer guard across adapter startup, dispatch, and manager registration (audit finding [31]; see the audit section below).
 
 ## Resulting Behavior
 
@@ -22,29 +23,7 @@ A spawn that cannot launch fails fast with intact first-attempt evidence instead
 ## Changes
 
 #235 is the keystone; #37 consumes it. #168/#201 are independent, small, first-mergeable.
-
-## Work Item
-
-issue-triage-sweep
-
-## Verification
-
-None yet — this is a planning draft (scoping commit only: `docs/plans/spawn-launch-hardening.md`). Implementation on this branch will carry its own tests per `tests/AGENTS.md` and a CHANGELOG entry.
-
-## Knowledge Updates
-
-Plan doc committed at `docs/plans/spawn-launch-hardening.md`. Triage evidence lives in the docs repo under `work/issue-triage-sweep/`.
-
-## Spawn Trace
-
-- p5268, p5269 (terra explorers) — issue triage lanes C/D
-- two native sonnet reviewer lanes — issue triage lanes A/B
-
-# Extension for PR #377 plan doc (`docs/plans/spawn-launch-hardening.md`)
-
-Append as a new section after **Changes**; add the new member issue to **Summary** and the Closes list.
-
----
+#419 shares #235's pre-connect window — implement the guard alongside the watchdog.
 
 ## Audit finding (thermo-nuclear audit #389): cancellation-safe startup ownership
 
@@ -79,3 +58,20 @@ five adapter blocks is insufficient on its own (the manager window remains); con
 extending disk scope recording to stdio children closes their residue by construction,
 consistent with crash-only recovery. This is the same pre-connect window #235's watchdog
 bounds — the guard is what makes the watchdog's cancellation path leak-free.
+
+## Work Item
+
+issue-triage-sweep
+
+## Verification
+
+None yet — this is a planning draft (scoping commit only: `docs/plans/spawn-launch-hardening.md`). Implementation on this branch will carry its own tests per `tests/AGENTS.md` and a CHANGELOG entry.
+
+## Knowledge Updates
+
+Plan doc committed at `docs/plans/spawn-launch-hardening.md`. Triage evidence lives in the docs repo under `work/issue-triage-sweep/`.
+
+## Spawn Trace
+
+- p5268, p5269 (terra explorers) — issue triage lanes C/D
+- two native sonnet reviewer lanes — issue triage lanes A/B
