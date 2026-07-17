@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
-import json
+import hashlib
 import re
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import cast
+from typing import Protocol, TypeVar
 
+from meridian.lib.platform.locking import lock_file
 from meridian.lib.state.atomic import atomic_write_text
 from meridian.lib.state.paths import RuntimePaths
 
@@ -18,6 +20,14 @@ _INTERVAL_UNITS = {
     "h": timedelta(hours=1),
     "d": timedelta(days=1),
 }
+
+
+class _HookRunResult(Protocol):
+    success: bool
+    skipped: bool
+
+
+_ResultT = TypeVar("_ResultT", bound=_HookRunResult)
 
 
 def parse_interval(interval: str) -> timedelta:
@@ -32,59 +42,55 @@ def parse_interval(interval: str) -> timedelta:
     return value * _INTERVAL_UNITS[unit]
 
 
+def _hook_key(hook_name: str) -> str:
+    """Map an arbitrary configured hook name to one fixed-size safe filename."""
+
+    return hashlib.sha256(hook_name.encode("utf-8")).hexdigest()
+
+
 class IntervalTracker:
-    """Track and persist last successful hook execution timestamps."""
+    """Serialize interval decisions and successful executions per hook name."""
 
     def __init__(self, runtime_root: Path) -> None:
-        self._state_path = RuntimePaths.from_root_dir(runtime_root).hook_state_json
-        self._state = self._load_state()
+        paths = RuntimePaths.from_root_dir(runtime_root)
+        self._last_run_dir = paths.hooks_last_run_dir
+        self._locks_dir = paths.hook_locks_dir
 
-    @property
-    def state_path(self) -> Path:
-        """Return the backing persistence path for interval state."""
+    def run_if_due(
+        self,
+        hook_name: str,
+        interval: str | None,
+        fn: Callable[[], _ResultT],
+    ) -> _ResultT | None:
+        """Run ``fn`` once when due and persist its successful completion.
 
-        return self._state_path
+        The lock is deliberately non-reentrant: nesting the same hook execution would
+        otherwise let an inner run invalidate the outer run's interval decision.
+        An ``interval`` of ``None`` forces a serialized run for the explicit manual-run
+        path. A ``None`` return means the hook was throttled and ``fn`` was not called.
+        """
 
-    def _load_state(self) -> dict[str, str]:
-        try:
-            payload = json.loads(self._state_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            return {}
+        key = _hook_key(hook_name)
+        state_path = self._last_run_dir / key
+        lock_path = self._locks_dir / f"{key}.lock"
+        with lock_file(lock_path, reentrant=False):
+            if not self._is_due(state_path, interval):
+                return None
 
-        if not isinstance(payload, dict):
-            return {}
+            result = fn()
+            if result.success and not result.skipped:
+                atomic_write_text(state_path, datetime.now(UTC).isoformat() + "\n")
+            return result
 
-        payload_dict = cast("dict[str, object]", payload)
-        result: dict[str, str] = {}
-        for key, value in payload_dict.items():
-            if isinstance(value, str):
-                result[key] = value
-        return result
-
-    def _save_state(self) -> None:
-        atomic_write_text(
-            self._state_path,
-            json.dumps(self._state, indent=2, sort_keys=True) + "\n",
-        )
-
-    def should_run(self, hook_name: str, interval: str) -> bool:
-        """Return True when the hook should run for the current event."""
-
-        last_success_raw = self._state.get(hook_name)
-        if last_success_raw is None:
+    @staticmethod
+    def _is_due(state_path: Path, interval: str | None) -> bool:
+        if interval is None:
             return True
-
         try:
+            last_success_raw = state_path.read_text(encoding="utf-8").strip()
             last_success = datetime.fromisoformat(last_success_raw)
             if last_success.tzinfo is None:
                 last_success = last_success.replace(tzinfo=UTC)
-            elapsed = datetime.now(UTC) - last_success
-            return elapsed >= parse_interval(interval)
-        except (TypeError, ValueError):
+            return datetime.now(UTC) - last_success >= parse_interval(interval)
+        except (OSError, TypeError, ValueError):
             return True
-
-    def mark_run(self, hook_name: str) -> None:
-        """Persist the current time as last successful run for a hook."""
-
-        self._state[hook_name] = datetime.now(UTC).isoformat()
-        self._save_state()
