@@ -1,10 +1,10 @@
 ## Why
 
-PR #320 bounded the post-connect event stream (BackendLivenessPolicy), but the pre-connect window — subprocess start through handshake — is still unbounded, retry attempts still erase first-attempt diagnostics, and two concrete launch-path defects remain (AF_UNIX socket path length, port-selection TOCTOU). #37's mid-turn Codex orphan case needs the preserved diagnostics to be diagnosable at all.
+PR #320 bounded the post-connect event stream (BackendLivenessPolicy), but the pre-connect window — subprocess start through handshake — is still unbounded, retry attempts still erase first-attempt diagnostics, and two concrete launch-path defects remain (AF_UNIX socket path length, port-selection TOCTOU). #37's mid-turn Codex orphan case needs the preserved diagnostics to be diagnosable at all. And upstream of all of it, the launcher itself can hang forever *before reservation*: an implicit untimed `sys.stdin.read()` in prompt resolution (#441) wedges `meridian spawn` on any open-but-silent non-TTY stdin — no spawn ID, no artifacts, no trace.
 
 ## Goal
 
-Every phase of a streaming spawn launch is bounded and diagnosable: a startup watchdog covers the pre-connect phase, failed-attempt artifacts survive retries, and known launch-path defects are closed.
+Every phase of a spawn launch — from CLI submission through handshake — is bounded and diagnosable: the launcher never blocks on implicit stdin, a startup watchdog covers the pre-connect phase, failed-attempt artifacts survive retries, and known launch-path defects are closed.
 
 ## Summary
 
@@ -15,6 +15,7 @@ Planning draft. Scope, per issue:
 - **Closes #201** — close the `_find_free_port` bind-close-reuse TOCTOU in the OpenCode launch path (bind-and-hold or retry-on-EADDRINUSE as the contract).
 - **Closes #37** — make Codex runner mid-turn loss diagnosable: persist enough runner/backend evidence that an `orphan_run` reconciliation can say *why* (depends on #235's preserved diagnostics).
 - **Closes #419** — cancellation-safe startup ownership: one ownership-transfer guard across adapter startup, dispatch, and manager registration (audit finding [31]; see the audit section below).
+- **Closes #441** — never read stdin implicitly: prompt resolution (`cli/spawn.py:180-186`) falls through to an untimed `sys.stdin.read()` on non-TTY stdin even when a reference file (`-f`) makes an empty prompt valid, hanging submission pre-registration under harness/pipeline stdin. Fix by **deleting** the implicit-stdin fallback — stdin is read only via explicit `--prompt-file -`; reference/continue commands with no prompt source resolve to an empty prompt. Ride-alongs: regression test (fd 0 held open and silent → submission must not block; deterministic repro in the issue), help/error copy distinguishing `-f` (reference) from `--prompt-file` (prompt), and launcher-scoped telemetry across prompt resolution → bootstrap → composition → reservation → Popen (pre-registration observability currently ends exactly where these hangs live).
 
 ## Resulting Behavior
 
@@ -22,8 +23,11 @@ A spawn that cannot launch fails fast with intact first-attempt evidence instead
 
 ## Changes
 
-#235 is the keystone; #37 consumes it. #168/#201 are independent, small, first-mergeable.
+#235 is the keystone; #37 consumes it. #168/#201/#441 are independent, small, first-mergeable.
 #419 shares #235's pre-connect window — implement the guard alongside the watchdog.
+#441 sits upstream of every other member (pre-reservation, in the CLI launcher) — its fix is
+**deletion of stdin inference**, not a timeout wrapper, and explicitly NOT a decomposition of
+`cli/spawn.py` (that structural note belongs to #424 / the planned rewrite, out of lane scope).
 
 ## Audit finding (thermo-nuclear audit #389): cancellation-safe startup ownership
 
