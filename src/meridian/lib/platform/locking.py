@@ -1,4 +1,8 @@
-"""Cross-platform file locking primitives for Meridian state stores."""
+"""Cross-platform file locking primitives for Meridian state stores.
+
+POSIX enforces exclusive and shared locks. The legacy Windows branch enforces
+exclusive locks only; shared locks are advisory handles that take no OS lock.
+"""
 
 from __future__ import annotations
 
@@ -163,7 +167,9 @@ def acquire_file_lock(
     deadline = None if timeout is None else time.monotonic() + timeout
     while True:
         handle = lock_path.open("a+b")
-        _track_process_lock_handle(handle)
+        windows_advisory = IS_WINDOWS and mode == "shared"
+        if not windows_advisory:
+            _track_process_lock_handle(handle)
         try:
             acquired = _acquire_lock(handle, mode=mode, deadline=deadline)
             if acquired:
@@ -177,7 +183,8 @@ def acquire_file_lock(
                     and handle_stat.st_dev == path_stat.st_dev
                 ):
                     return handle
-                _release_lock(handle)
+                if not windows_advisory:
+                    _release_lock(handle)
         except BaseException:
             _close_process_lock_handle(handle)
             raise
@@ -211,6 +218,8 @@ def _acquire_lock(handle: IO[bytes], *, mode: LockMode, deadline: float | None) 
 
 def _acquire_blocking(handle: IO[bytes], mode: LockMode) -> None:
     if IS_WINDOWS:
+        if mode == "shared":
+            return
         while not _try_acquire_windows_lock(handle, mode):
             time.sleep(_LOCK_POLL_INTERVAL_SECONDS)
         return
@@ -220,6 +229,8 @@ def _acquire_blocking(handle: IO[bytes], mode: LockMode) -> None:
 
 def _try_acquire_lock(handle: IO[bytes], mode: LockMode) -> bool:
     if IS_WINDOWS:
+        if mode == "shared":
+            return True
         return _try_acquire_windows_lock(handle, mode)
     flock_mode = fcntl.LOCK_EX if mode == "exclusive" else fcntl.LOCK_SH
     try:

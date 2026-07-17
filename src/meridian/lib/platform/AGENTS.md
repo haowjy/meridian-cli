@@ -47,8 +47,9 @@ reentrant). The OS lock releases only when the outermost `__exit__` runs. Acquir
 handles are tracked process-wide so a fork child closes every inherited descriptor
 without explicitly unlocking the parent's open-file-description lock. Shared mode
 uses `LOCK_SH`; a held shared lock cannot be upgraded to exclusive in place. The
-legacy Windows branch writes a guard byte and fsyncs before the first lock attempt;
-this behavior is untested.
+legacy Windows branch enforces exclusive locks but its shared mode is advisory-only;
+POSIX enforces shared mode. Windows exclusive locking writes a guard byte and fsyncs
+before the first lock attempt; this behavior is untested.
 
 **Legacy Windows signal branches are untested.** Their intended behavior is:
 - `os.kill(pid, SIGINT)` is unreliable — use `process.terminate()` instead.
