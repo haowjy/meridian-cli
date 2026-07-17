@@ -25,7 +25,7 @@ from meridian.lib.state.atomic import append_text_line
 from meridian.lib.state.history import HarnessHistoryWriter
 from meridian.lib.state.spawn_tree import terminate_recorded_spawn_scope
 from meridian.lib.streaming.completion_contracts import CompletionCleanupRequest
-from meridian.lib.streaming.control_socket import ControlSocketServer
+from meridian.lib.streaming.control_socket import ControlSocketServer, control_socket_path
 from meridian.lib.streaming.drain_coordinator import DrainPlan
 from meridian.lib.streaming.drain_plan_factory import build_drain_plan
 from meridian.lib.streaming.drain_policy import (
@@ -192,6 +192,7 @@ class SpawnManager:
 
         started_monotonic = time.monotonic()
         completion_future: asyncio.Future[DrainOutcome] = asyncio.get_running_loop().create_future()
+        socket_path = control_socket_path(self._runtime_root, spawn_id)
 
         tracer = config.debug_tracer
         if tracer is None and self._debug:
@@ -215,7 +216,7 @@ class SpawnManager:
             self.register_observer(spawn_id, CallbackObserver(on_event))
         control_server = self._control_server_factory(
             spawn_id,
-            self._spawn_dir(spawn_id) / "control.sock",
+            socket_path,
             self,
         )
 
