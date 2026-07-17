@@ -23,6 +23,7 @@ from meridian.lib.ops.pruning import (
 )
 from meridian.lib.ops.runtime import resolve_project_authority, resolve_runtime_authority_for_write
 from meridian.lib.state import spawn_store, work_store
+from meridian.lib.state.lock_gc import LockGcStats, gc_orphaned_locks
 from meridian.lib.state.session_store import cleanup_stale_sessions
 from meridian.lib.state.user_paths import get_user_home
 from meridian.lib.telemetry.retention import (
@@ -69,6 +70,7 @@ class DoctorOutput(BaseModel):
     stale_spawn_artifacts: tuple[StaleSpawnArtifact, ...] = ()
     pruned_orphan_dirs: int = 0
     pruned_spawn_artifacts: int = 0
+    lock_gc: LockGcStats = LockGcStats()
     telemetry_cleanup: TelemetryCleanupStats | None = None
     warnings: tuple["DoctorWarning", ...] = ()
     repaired: tuple[str, ...] = ()
@@ -92,6 +94,9 @@ class DoctorOutput(BaseModel):
             ("stale_spawn_artifacts", str(len(self.stale_spawn_artifacts))),
             ("pruned_orphan_dirs", str(self.pruned_orphan_dirs)),
             ("pruned_spawn_artifacts", str(self.pruned_spawn_artifacts)),
+            ("orphan_locks_seen", str(self.lock_gc.files_seen)),
+            ("orphan_locks_removed", str(self.lock_gc.files_removed)),
+            ("orphan_locks_contended", str(self.lock_gc.files_contended)),
             ("killed_orphan_spawns", ", ".join(self.killed_orphan_spawns) or "none"),
             ("repaired", ", ".join(self.repaired) if self.repaired else "none"),
         ]
@@ -219,6 +224,7 @@ def schedule_background_repairs(project_root: Path) -> None:
 
         with suppress(Exception):
             _repair_stale_session_locks(project_root, runtime_root=runtime_root)
+            gc_orphaned_locks(runtime_root)
             _repair_orphan_runs(project_root, runtime_root=runtime_root)
 
     threading.Thread(
@@ -245,6 +251,9 @@ def doctor_sync(payload: DoctorInput) -> DoctorOutput:
     stale_locks = _repair_stale_session_locks(project_root)
     if stale_locks > 0:
         repaired.append("stale_session_locks")
+    lock_gc = gc_orphaned_locks(runtime_root)
+    if lock_gc.files_removed > 0:
+        repaired.append("orphaned_locks")
 
     project_state_dir = runtime_authority.project_state_dir
     active_work_items, _ = work_store.list_work_items(project_state_dir)
@@ -458,6 +467,7 @@ def doctor_sync(payload: DoctorInput) -> DoctorOutput:
         stale_spawn_artifacts=tuple(stale_spawn_artifacts),
         pruned_orphan_dirs=pruned_orphan_dirs,
         pruned_spawn_artifacts=pruned_spawn_artifacts,
+        lock_gc=lock_gc,
         telemetry_cleanup=telemetry_cleanup,
         warnings=tuple(warnings),
         repaired=tuple(sorted(set(repaired))),

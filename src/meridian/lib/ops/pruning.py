@@ -15,6 +15,7 @@ from pydantic import BaseModel, ConfigDict
 from meridian.lib.core.spawn_lifecycle import is_active_spawn_status
 from meridian.lib.platform.locking import lock_file, try_lock_file
 from meridian.lib.state import session_store, spawn_store
+from meridian.lib.state.lock_gc import gc_orphaned_locks
 from meridian.lib.state.paths import RuntimePaths
 
 _SECONDS_PER_DAY = 24 * 60 * 60
@@ -270,6 +271,7 @@ def prune_stale_spawn_artifacts(stale: list[StaleSpawnArtifact]) -> int:
     """Delete stale spawn artifact directories. Returns the number removed."""
 
     removed = 0
+    runtime_roots: set[Path] = set()
     for artifact in stale:
         artifact_path = Path(artifact.path)
         if (
@@ -279,6 +281,7 @@ def prune_stale_spawn_artifacts(stale: list[StaleSpawnArtifact]) -> int:
         ):
             continue
         runtime_root = artifact_path.parent.parent
+        runtime_roots.add(runtime_root)
         paths = RuntimePaths.from_root_dir(runtime_root)
         with lock_file(paths.spawns_flock):
             if spawn_store.delete_published_spawn(
@@ -288,6 +291,8 @@ def prune_stale_spawn_artifacts(stale: list[StaleSpawnArtifact]) -> int:
                 or not is_active_spawn_status(record.status),
             ):
                 removed += 1
+    for runtime_root in runtime_roots:
+        gc_orphaned_locks(runtime_root)
     return removed
 
 
