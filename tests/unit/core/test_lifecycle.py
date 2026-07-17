@@ -102,7 +102,9 @@ def test_failure_sentinel_write_failure_does_not_block_finalize(
     def fail_write_text(*_args: object, **_kwargs: object) -> int:
         raise OSError("sentinel blocked")
 
-    monkeypatch.setattr(Path, "write_text", fail_write_text)
+    monkeypatch.setattr(
+        "meridian.lib.state.failure_sentinel.atomic_write_text", fail_write_text
+    )
 
     outcome = service.finalize(spawn_id, "failed", 1, origin="launcher")
 

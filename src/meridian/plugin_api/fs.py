@@ -10,6 +10,14 @@ from pathlib import Path
 from typing import IO, Any, Literal, cast
 
 from meridian.lib.platform import IS_WINDOWS, fcntl
+from meridian.lib.platform.atomic import atomic_replace
+
+
+def atomic_write_text(path: Path, content: str, *, durable: bool = True) -> None:
+    """Atomically replace a text file through the dependency-neutral platform seam."""
+
+    with atomic_replace(path, durable=durable) as handle:
+        handle.write(content)
 
 
 @contextmanager

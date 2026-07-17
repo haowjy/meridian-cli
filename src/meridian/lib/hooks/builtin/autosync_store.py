@@ -4,7 +4,8 @@ Single owner of the .meridian/autosync/ file layout. All reads and writes
 go through this module. No other module should construct paths into
 .meridian/autosync/ or parse its JSON directly.
 
-Dependencies: stdlib only. No meridian imports.
+Dependencies: stdlib plus plugin_api only, preserving standalone extraction by
+keeping Meridian internals behind the public plugin boundary.
 """
 
 from __future__ import annotations
@@ -13,11 +14,12 @@ import hashlib
 import json
 import re
 import time
-from contextlib import suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
+
+from meridian.plugin_api.fs import atomic_write_text
 
 AUTOSYNC_IGNORE_PATTERNS: tuple[str, ...] = (".git", "**/.git", ".meridian/autosync/")
 
@@ -219,7 +221,7 @@ def write_conflict(sync_root: Path, record: ConflictRecord) -> None:
         payload["resolved_at"] = record.resolved_at
 
     target = target_dir / f"{record.id}.json"
-    _atomic_write_text(target, json.dumps(payload, indent=2))
+    atomic_write_text(target, json.dumps(payload, indent=2))
 
 
 def write_sync_state(
@@ -238,7 +240,7 @@ def write_sync_state(
         "outcome": outcome,
         "conflict_id": conflict_id,
     }
-    _atomic_write_text(state_file(sync_root), json.dumps(payload, indent=2))
+    atomic_write_text(state_file(sync_root), json.dumps(payload, indent=2))
 
 
 def mark_resolved(sync_root: Path, conflict_id: str) -> bool:
@@ -254,7 +256,7 @@ def mark_resolved(sync_root: Path, conflict_id: str) -> bool:
     data["resolved"] = True
     data["resolved_at"] = datetime.now(UTC).isoformat()
     try:
-        _atomic_write_text(target, json.dumps(data, indent=2))
+        atomic_write_text(target, json.dumps(data, indent=2))
     except OSError:
         return False
     return True
@@ -305,9 +307,8 @@ def append_conflict_notice(
         new_content = content.rstrip("\n") + "\n" + section
 
     try:
-        _atomic_write_text(agents_md, new_content)
+        atomic_write_text(agents_md, new_content)
     except OSError:
-        _cleanup_tmp_file(agents_md)
         return False
     return True
 
@@ -352,7 +353,7 @@ def strip_conflict_notice(sync_root: Path, conflict_id: str) -> bool:
 
     new_content = new_content.rstrip("\n") + "\n" if new_content.strip() else ""
     try:
-        _atomic_write_text(agents_md, new_content)
+        atomic_write_text(agents_md, new_content)
     except OSError:
         return False
     return True
@@ -438,17 +439,6 @@ def _find_conflict_file(
         if str(data.get("id", file_path.stem)) == conflict_id:
             return file_path, data
     return None, None
-
-
-def _atomic_write_text(target: Path, content: str) -> None:
-    tmp = target.with_suffix(target.suffix + ".tmp")
-    tmp.write_text(content, encoding="utf-8")
-    tmp.replace(target)
-
-
-def _cleanup_tmp_file(target: Path) -> None:
-    with suppress(OSError):
-        target.with_suffix(target.suffix + ".tmp").unlink()
 
 
 __all__ = [

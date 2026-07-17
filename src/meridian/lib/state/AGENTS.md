@@ -53,7 +53,8 @@ with the owner's unlocked writes.
 
 ## Atomic Write Contract
 
-All state writes go through `atomic.py`. Never write state files with plain `open()`.
+State-facing writes go through `atomic.py`, which delegates file replacement to the
+dependency-neutral `lib/platform/atomic.py`. Never write state files with plain `open()`.
 
 - `atomic_write_text()` / `atomic_write_bytes()` — write to same-directory temp,
   `os.fsync()`, then `os.replace()` (atomic rename). Either the old or new file
