@@ -49,10 +49,9 @@ The implementation is split by responsibility:
 - `spawn_session.py` — `SpawnSession` and `DrainOutcome` carriers
 - `resident_drain.py` — resident-backend descendant waiting and done-nudge model
 - `pi_drain.py` — Pi spawned-session quiescence coordinator
-- `pi_subspawn_tracker.py` — Pi child-spawn and notification tracking
+- `pi_lifecycle_tracker.py` — validation for produced Pi lifecycle events
 - `disk_watcher.py` / `pi_quiescence.py` — disk-backed Pi quiescence inputs
 - `drain_wait.py` — bounded wait helpers for drain/cleanup paths
-- `pi_process_cleanup.py` — tracked Pi child process cleanup
 
 ## Contracts
 
@@ -120,6 +119,13 @@ After classification, `SpawnManager._publish_terminal()` applies
 otherwise an authoritative stop outcome (from `stop_spawn()`) wins; otherwise the
 drain classification stands. Publication is idempotent — `terminal_published` on
 `SpawnSession` guards against double publication.
+
+Resident completion also resolves transport death before that publication barrier.
+When a successful turn is being held for persisted descendant work and the backend
+then emits a generic `error/connectionClosed`, the resident profile publishes
+`backend_dead_while_awaiting_done` rather than the transport's incidental close
+message. Harness-specific terminal failures remain authoritative. A success already
+recorded for publication is still protected by the generic success-first barrier.
 
 ### Subscriber Queue Backpressure
 

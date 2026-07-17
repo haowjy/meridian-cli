@@ -10,7 +10,7 @@ import structlog
 
 from meridian.lib.core.types import SpawnId
 from meridian.lib.harness.connections.liveness import LivenessDecision
-from meridian.lib.harness.semantics import TerminalEventOutcome
+from meridian.lib.harness.semantics import TerminalEventOutcome, TerminalOutcomeCause
 from meridian.lib.state import spawn_store
 from meridian.lib.state.spawn_signals import consume_resident_signals
 from meridian.lib.streaming.completion_contracts import (
@@ -48,6 +48,12 @@ if TYPE_CHECKING:
     from meridian.lib.streaming.drain_policy import DrainAction
 
 logger = structlog.get_logger()
+
+_BACKEND_DEAD_WHILE_AWAITING_DONE = TerminalEventOutcome(
+    status="failed",
+    exit_code=1,
+    error="backend_dead_while_awaiting_done",
+)
 
 
 class _ResidentCompletionEvidence:
@@ -167,11 +173,7 @@ class _ResidentCompletionProfile:
         if intentional_stop:
             return state.candidate
         if self._resident_health_status() == LivenessDecision.BACKEND_DEAD:
-            return TerminalEventOutcome(
-                status="failed",
-                exit_code=1,
-                error="backend_dead_while_awaiting_done",
-            )
+            return _BACKEND_DEAD_WHILE_AWAITING_DONE
         return TerminalEventOutcome(
             status="failed",
             exit_code=1,
@@ -225,6 +227,15 @@ class _ResidentCompletionProfile:
             return ProfileDecision(action="clear", emit_turn_boundary=action.emit_turn_boundary)
         if outcome.status != "succeeded":
             self.clear()
+            if (
+                context.candidate is not None
+                and outcome.cause is TerminalOutcomeCause.REPLACEABLE_TRANSPORT_CLOSE
+                and self._resident_health_status() == LivenessDecision.BACKEND_DEAD
+            ):
+                return ProfileDecision(
+                    action="fail",
+                    outcome=_BACKEND_DEAD_WHILE_AWAITING_DONE,
+                )
             return ProfileDecision(action="fail", outcome=outcome)
         if context.directives.rearm:
             self._mark_rearmed(context.now)

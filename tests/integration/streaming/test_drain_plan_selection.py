@@ -49,7 +49,6 @@ def _select_plan(
             control_root=manager.runtime_root,
             env_overrides={},
             pi_session_role="spawned" if harness_id is HarnessId.PI else None,
-            pi_notification_timeout_seconds=11.0,
             pi_child_wave_timeout_seconds=12.0,
             resident_deadline_seconds=13.0,
             resident_poll_seconds=14.0,

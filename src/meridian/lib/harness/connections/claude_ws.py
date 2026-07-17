@@ -10,6 +10,7 @@ import signal
 from asyncio.subprocess import PIPE, Process
 from collections.abc import AsyncIterator
 from io import BufferedWriter
+from pathlib import Path
 from typing import TYPE_CHECKING, Final, cast
 
 if TYPE_CHECKING:
@@ -51,6 +52,7 @@ logger = logging.getLogger(__name__)
 _PROCESS_KILL_GRACE_SECONDS: Final[float] = 10.0
 _STDOUT_READLINE_LIMIT: Final[int] = 128 * 1024 * 1024  # 128 MiB
 _VERSION_CHECK_TIMEOUT_SECONDS: Final[float] = 5.0
+_STDERR_MAX_BYTES: Final[int] = 16 * 1024
 _TESTED_VERSION_PREFIXES: Final[tuple[str, ...]] = ("1.", "2.")
 _HARNESS_NAME: Final[str] = HarnessId.CLAUDE.value
 _BLOCKED_CHILD_ENV_VARS: Final[frozenset[str]] = frozenset(
@@ -104,6 +106,7 @@ class ClaudeConnection(HarnessConnection[ResolvedLaunchSpec]):
         self._send_lock = asyncio.Lock()
         self._stop_lock = asyncio.Lock()
         self._stderr_handle: BufferedWriter | None = None
+        self._stderr_log_path: Path | None = None
         self._protocol_validated = False
         self._event_stream_started = False
         self._tracer: DebugTracer | None = None
@@ -245,6 +248,9 @@ class ClaudeConnection(HarnessConnection[ResolvedLaunchSpec]):
                         return_code = await process.wait()
                     if return_code != 0 and self._state not in {"stopping", "stopped"}:
                         detail = f"Claude subprocess exited with code {return_code}."
+                        stderr_excerpt = self._read_stderr_excerpt()
+                        if stderr_excerpt:
+                            detail = f"{detail}\n\nClaude subprocess stderr:\n{stderr_excerpt}"
                         self._mark_failed(detail)
                         yield self._error_event(detail)
                     return
@@ -351,6 +357,7 @@ class ClaudeConnection(HarnessConnection[ResolvedLaunchSpec]):
         spawn_dir.mkdir(parents=True, exist_ok=True)
 
         stderr_path = spawn_dir / "stderr.log"
+        self._stderr_log_path = stderr_path
         self._stderr_handle = stderr_path.open("ab")
 
         command = self._build_command(config, spec)
@@ -447,6 +454,20 @@ class ClaudeConnection(HarnessConnection[ResolvedLaunchSpec]):
         if self._stderr_handle is not None:
             self._stderr_handle.close()
             self._stderr_handle = None
+        self._stderr_log_path = None
+
+    def _read_stderr_excerpt(self) -> str:
+        if self._stderr_handle is not None:
+            self._stderr_handle.flush()
+        path = self._stderr_log_path
+        if path is None or not path.exists():
+            return ""
+        with path.open("rb") as handle:
+            handle.seek(0, os.SEEK_END)
+            end_offset = handle.tell()
+            handle.seek(max(0, end_offset - _STDERR_MAX_BYTES), os.SEEK_SET)
+            data = handle.read()
+        return data.decode("utf-8", errors="replace").strip()
 
     def _parse_stdout_line(self, line: str) -> list[HarnessEvent]:
         """Parse one line of NDJSON from Claude stdout into HarnessEvent objects."""
@@ -484,9 +505,12 @@ class ClaudeConnection(HarnessConnection[ResolvedLaunchSpec]):
         ]
 
     def _error_event(self, message: str, raw_text: str | None = None) -> HarnessEvent:
-        payload: dict[str, object] = {"type": "error", "message": message}
+        payload: dict[str, object] = {
+            "type": "error/connectionClosed",
+            "message": message,
+        }
         return HarnessEvent(
-            event_type="error",
+            event_type="error/connectionClosed",
             payload=payload,
             harness_id=_HARNESS_NAME,
             raw_text=raw_text,

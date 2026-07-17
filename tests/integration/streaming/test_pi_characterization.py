@@ -2,14 +2,18 @@
 
 from __future__ import annotations
 
+import time
+from dataclasses import fields
 from pathlib import Path
 
 import pytest
 
 from meridian.lib.core.domain import SpawnStatus
 from meridian.lib.core.types import HarnessId, SpawnId
-from meridian.lib.harness.connections.base import HarnessEvent
+from meridian.lib.harness.connections.base import ConnectionConfig, HarnessEvent
+from meridian.lib.harness.pi_lifecycle_events import PI_LIFECYCLE_EVENT_ALLOWLIST
 from meridian.lib.harness.semantics import TerminalEventOutcome
+from meridian.lib.state import spawn_store
 from meridian.lib.state.spawn_signals import write_spawn_signal
 from meridian.lib.streaming import descendant_evidence as descendant_evidence_module
 from meridian.lib.streaming import pi_completion_profile as pi_completion_profile_module
@@ -17,37 +21,13 @@ from meridian.lib.streaming.completion_nudge import PI_COMPLETION_NUDGE_MESSAGE
 from meridian.lib.streaming.drain_coordinator import DrainExitDecision, DrainLoopDecision
 from meridian.lib.streaming.drain_policy import DrainAction, PiRpcQuiescenceDrainPolicy
 from meridian.lib.streaming.pi_drain import PiDrainCoordinator
-from tests.support.pi import PiDrainScenario, pi_event, start_row
+from tests.support.pi import PiDrainScenario, pi_event, start_row, write_json
 
 _SPAWN_ID = SpawnId("p1")
 _SUCCESS = TerminalEventOutcome(status="succeeded", exit_code=0)
 _TERMINATE = DrainAction(terminate=True, emit_turn_boundary=False)
 _AGENT_END = pi_event("agent_end")
 _start_coordinator = PiDrainScenario.start
-
-
-def _tracked_child_start(child_id: str = "j-child") -> HarnessEvent:
-    return pi_event(
-        "meridian.subspawn.start",
-        {
-            "schema_version": 1,
-            "subspawn_id": child_id,
-            "correlation_id": child_id,
-            "wait_policy": "tracked",
-            "pid": 7701,
-        },
-    )
-
-
-def _notification(event_type: str, notification_id: str = "n1") -> HarnessEvent:
-    return pi_event(
-        event_type,
-        {
-            "schema_version": 1,
-            "notification_id": notification_id,
-            "correlation_id": notification_id,
-        },
-    )
 
 
 def _write_running_bash(runtime_root: Path, spawn_id: SpawnId) -> None:
@@ -81,6 +61,94 @@ async def _execute_latched_cleanup(
     request = exit_decision.post_publication_cleanup
     assert request is not None
     await coordinator.execute_post_publication_cleanup(request)
+
+
+@pytest.mark.asyncio
+async def test_real_pi_tracked_child_followup_has_no_canonical_lifecycle_dependency(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Pin the Pi 0.80.7 child wake shape observed in the #440 runtime probe."""
+    started = await _start_coordinator(tmp_path, monkeypatch)
+    coordinator = started.coordinator
+    child_id = "p2"
+    _start_row(tmp_path, child_id, parent_id=str(_SPAWN_ID))
+    observed_event_types: list[str] = []
+
+    async def observe(event: HarnessEvent, transition: str | None = None) -> None:
+        observed_event_types.append(event.event_type)
+        await coordinator.observe_event(event, transition)
+
+    try:
+        await observe(_AGENT_END, "idle")
+        first_turn = await coordinator.handle_terminal_event(
+            _AGENT_END,
+            _SUCCESS,
+            _TERMINATE,
+        )
+        assert first_turn.recorded_outcome is None
+
+        spawn_store.finalize_spawn(
+            tmp_path,
+            SpawnId(child_id),
+            "succeeded",
+            0,
+            origin="runner",
+        )
+        write_json(
+            tmp_path / "pi-bash" / str(_SPAWN_ID) / "last-notification.json",
+            {
+                "ts_epoch_secs": time.time(),
+                "notified_spawn_ids": [child_id],
+            },
+        )
+        disk_wake = await coordinator.handle_aux_wake()
+        assert disk_wake.recorded_outcome is None
+
+        await observe(
+            pi_event(
+                "message_start",
+                {
+                    "role": "custom",
+                    "customType": "meridian-spawn-watch",
+                    "details": {"ids": [child_id]},
+                },
+            ),
+            "turn_active",
+        )
+        await observe(_AGENT_END, "idle")
+        followup = await coordinator.handle_terminal_event(
+            _AGENT_END,
+            _SUCCESS,
+            _TERMINATE,
+        )
+        assert followup.recorded_outcome is None
+
+        completed = await coordinator.handle_timeout()
+
+        assert completed.recorded_outcome == _SUCCESS
+        assert not any(
+            event_type.startswith(("meridian.notification.", "meridian.subspawn."))
+            for event_type in observed_event_types
+        )
+        assert not any(
+            event_type.startswith(("meridian.notification.", "meridian.subspawn."))
+            for event_type in PI_LIFECYCLE_EVENT_ALLOWLIST
+        )
+        assert "pi_notification_timeout_seconds" not in {
+            field.name for field in fields(ConnectionConfig)
+        }
+        assert not any(
+            phase["phase"]
+            in {
+                "waiting_for_notification_completion",
+                "pi_notification_timeout",
+                "continuation_completed",
+            }
+            for phase in started.phases
+        )
+    finally:
+        await coordinator.stop()
 
 
 @pytest.mark.asyncio
@@ -211,69 +279,8 @@ async def test_done_fails_closed_on_pi_private_work_read_error(
         await coordinator.stop()
 
 
-@pytest.mark.asyncio
-async def test_expired_notification_returns_existing_failure(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    started = await _start_coordinator(
-        tmp_path,
-        monkeypatch,
-        notification_timeout_seconds=5.0,
-    )
-    coordinator = started.coordinator
-    try:
-        await coordinator.observe_event(_notification("meridian.notification.delivered"), None)
-        started.clock.advance(5.0)
-
-        decision = await coordinator.handle_timeout()
-
-        _assert_failed(
-            decision,
-            "pi_notification_timeout:id=n1:phase=delivered:elapsed=5.000:timeout=5.000",
-        )
-        assert any(
-            phase["phase"] == "pi_notification_timeout" and phase["notification_id"] == "n1"
-            for phase in started.phases
-        )
-        assert started.cleanups == []
-    finally:
-        await coordinator.stop()
 
 
-@pytest.mark.asyncio
-async def test_notification_timeout_preserves_configured_stream_exit_cleanup(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    started = await _start_coordinator(
-        tmp_path,
-        monkeypatch,
-        notification_timeout_seconds=5.0,
-    )
-    coordinator = started.coordinator
-    try:
-        await coordinator.observe_event(_notification("meridian.notification.queued"), None)
-        await coordinator.observe_event(_tracked_child_start(), None)
-        started.clock.advance(5.0)
-
-        timeout = await coordinator.handle_timeout()
-        exit_decision = await coordinator.handle_stream_exit(timeout.recorded_outcome)
-        _assert_failed(
-            exit_decision,
-            "pi_notification_timeout:id=n1:phase=queued:elapsed=5.000:timeout=5.000",
-        )
-        request = exit_decision.post_publication_cleanup
-        assert request is not None
-        await coordinator.execute_post_publication_cleanup(request)
-
-        _assert_failed(
-            timeout,
-            "pi_notification_timeout:id=n1:phase=queued:elapsed=5.000:timeout=5.000",
-        )
-        assert started.cleanups == ["pi_process_exit_with_tracked_children"]
-    finally:
-        await coordinator.stop()
 
 
 @pytest.mark.asyncio
@@ -288,8 +295,8 @@ async def test_child_wave_timeout_without_cleanup_callback_preserves_outcome(
         cleanup_configured=False,
     )
     coordinator = started.coordinator
+    _start_row(tmp_path, "p-child-timeout", parent_id=str(_SPAWN_ID))
     try:
-        await coordinator.observe_event(_tracked_child_start(), None)
         await coordinator.observe_event(_AGENT_END, "idle")
         started.clock.advance(5.0)
 
@@ -333,100 +340,10 @@ async def test_completion_nudge_due_is_advisory_and_continues(
         await coordinator.stop()
 
 
-@pytest.mark.asyncio
-async def test_after_event_notification_failure_prevents_new_stabilization(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    started = await _start_coordinator(tmp_path, monkeypatch)
-    coordinator = started.coordinator
-    try:
-        await coordinator.observe_event(_AGENT_END, "idle")
-        await coordinator.handle_terminal_event(_AGENT_END, _SUCCESS, _TERMINATE)
-        coordinator.note_event_persisted(pi_event("message", {}))
-        await coordinator.observe_event(
-            _notification("meridian.notification.failed"),
-            None,
-        )
-
-        decision = await coordinator.after_event()
-
-        _assert_failed(decision, "pi_notification_failed")
-        assert [phase["phase"] for phase in started.phases].count(
-            "quiescence_micro_drain_started"
-        ) == 1
-    finally:
-        await coordinator.stop()
 
 
-@pytest.mark.asyncio
-async def test_after_event_cannot_replace_a_prior_terminal_outcome(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    started = await _start_coordinator(
-        tmp_path,
-        monkeypatch,
-        notification_timeout_seconds=5.0,
-    )
-    coordinator = started.coordinator
-    try:
-        await coordinator.observe_event(_AGENT_END, "idle")
-        await coordinator.handle_terminal_event(_AGENT_END, _SUCCESS, _TERMINATE)
-        coordinator.note_event_persisted(pi_event("message", {}))
-        await coordinator.observe_event(_notification("meridian.notification.queued"), None)
-        started.clock.advance(5.0)
-        timeout = await coordinator.handle_timeout()
-        _assert_failed(
-            timeout,
-            "pi_notification_timeout:id=n1:phase=queued:elapsed=5.000:timeout=5.000",
-        )
-        await coordinator.observe_event(
-            _notification("meridian.notification.failed", "n2"),
-            None,
-        )
-
-        decision = await coordinator.after_event()
-
-        assert decision.recorded_outcome is None
-        assert [phase["phase"] for phase in started.phases].count(
-            "quiescence_micro_drain_started"
-        ) == 1
-    finally:
-        await coordinator.stop()
 
 
-@pytest.mark.asyncio
-async def test_note_event_persisted_extends_micro_drain_then_returns_lifecycle_error(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    started = await _start_coordinator(tmp_path, monkeypatch)
-    coordinator = started.coordinator
-    persisted = pi_event("message", {})
-    invalid = pi_event(
-        "meridian.subspawn.start",
-        {"schema_version": 999, "subspawn_id": "j-bad", "wait_policy": "tracked"},
-    )
-    try:
-        await coordinator.observe_event(_AGENT_END, "idle")
-        await coordinator.handle_terminal_event(_AGENT_END, _SUCCESS, _TERMINATE)
-        await coordinator.observe_event(invalid, None)
-
-        decision = coordinator.note_event_persisted(persisted)
-
-        _assert_failed(
-            decision,
-            "pi_lifecycle_tracking_invalidated:unsupported_schema_version:999",
-        )
-        assert any(
-            phase["phase"] == "quiescence_micro_drain_extended"
-            and phase["event_type"] == "message"
-            and phase["micro_drain_events"] == 1
-            for phase in started.phases
-        )
-    finally:
-        await coordinator.stop()
 
 
 @pytest.mark.asyncio
@@ -436,9 +353,8 @@ async def test_stream_exit_with_pending_children_cleans_and_supplies_failure_onc
 ) -> None:
     started = await _start_coordinator(tmp_path, monkeypatch)
     coordinator = started.coordinator
+    _start_row(tmp_path, "p-child-exit", parent_id=str(_SPAWN_ID))
     try:
-        await coordinator.observe_event(_tracked_child_start(), None)
-
         first = await coordinator.handle_stream_exit(None)
         second = await coordinator.handle_stream_exit(_SUCCESS)
 

@@ -31,7 +31,6 @@ from meridian.lib.streaming import pi_drain as drain_module
 from meridian.lib.streaming.control_socket import ControlSocketServer
 from meridian.lib.streaming.drain_policy import DrainAction, PiRpcQuiescenceDrainPolicy
 from meridian.lib.streaming.pi_drain import PiDrainCoordinator
-from meridian.lib.streaming.pi_work_ledger import PiPrivateWorkLedger
 from meridian.lib.streaming.spawn_manager import SpawnManager
 from tests.support.async_determinism import FakeClock, wait_until
 
@@ -183,7 +182,6 @@ class PiDrainScenario:
         monkeypatch: pytest.MonkeyPatch,
         *,
         spawn_id: SpawnId = _DEFAULT_SPAWN_ID,
-        notification_timeout_seconds: float | None = None,
         child_wave_timeout_seconds: float | None = None,
         nudge_idle_seconds: float = 5.0,
         nudge_interval_seconds: float = 5.0,
@@ -192,7 +190,7 @@ class PiDrainScenario:
         cleanup_configured: bool = True,
         start_micro_drain: bool = False,
         mark_idle: bool = False,
-        terminate_children: Any = None,
+        cancel_descendants: Any = None,
         patch_clock: bool = True,
     ) -> PiDrainScenario:
         clock = FakeClock(start=100.0)
@@ -220,10 +218,10 @@ class PiDrainScenario:
             if nudge_raises:
                 raise RuntimeError("advisory nudge failed")
 
-        async def cleanup(_ledger: PiPrivateWorkLedger, reason: str) -> None:
+        async def cleanup(reason: str) -> None:
             cleanups.append(reason)
 
-        cleanup_callback = terminate_children
+        cleanup_callback = cancel_descendants
         if cleanup_callback is None and cleanup_configured:
             cleanup_callback = cleanup
         coordinator = PiDrainCoordinator.for_connection(
@@ -231,10 +229,9 @@ class PiDrainScenario:
             spawn_id=spawn_id,
             receiver=connection,
             session_role="spawned",
-            notification_timeout_seconds=notification_timeout_seconds,
             child_wave_timeout_seconds=child_wave_timeout_seconds,
             emit_phase=emit_phase,
-            terminate_children=cleanup_callback,
+            cancel_descendants=cleanup_callback,
             send_done_nudge=nudge,
         )
         await coordinator.start()
@@ -283,28 +280,6 @@ class PiDrainScenario:
     async def timeout(self, seconds: float = 0.0):  # type: ignore[no-untyped-def]
         self.clock.advance(seconds)
         return await self.coordinator.handle_timeout()
-
-    async def tracked_child(self, child_id: str = "j-child") -> None:
-        await self.observe(
-            "meridian.subspawn.start",
-            {
-                "schema_version": 1,
-                "subspawn_id": child_id,
-                "correlation_id": child_id,
-                "wait_policy": "tracked",
-                "pid": 7701,
-            },
-        )
-
-    async def notification(self, event_type: str, notification_id: str = "n1") -> None:
-        await self.observe(
-            event_type,
-            {
-                "schema_version": 1,
-                "notification_id": notification_id,
-                "correlation_id": notification_id,
-            },
-        )
 
     def row(
         self,

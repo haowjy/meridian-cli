@@ -6,7 +6,10 @@ import json
 from pathlib import Path
 
 from meridian.lib.core.types import ArtifactKey, SpawnId
-from meridian.lib.harness.extractors.opencode import OPENCODE_EXTRACTOR
+from meridian.lib.harness.extractors.opencode import (
+    OPENCODE_EXTRACTOR,
+    _extract_opencode_usage,
+)
 from meridian.lib.harness.opencode_report import extract_opencode_report
 from meridian.lib.harness.opencode_storage import resolve_opencode_storage_root
 from meridian.lib.launch.constants import HISTORY_FILENAME
@@ -30,6 +33,20 @@ def _artifact_store_from_history_lines(
 ) -> _MemoryArtifactStore:
     encoded = "\n".join(json.dumps(line) for line in lines).encode("utf-8")
     return _MemoryArtifactStore({f"{spawn_id}/{HISTORY_FILENAME}": encoded})
+
+
+def test_opencode_usage_ignores_unproduced_response_completed_event() -> None:
+    spawn_id = SpawnId("p-opencode-phantom-event")
+    encoded = json.dumps(
+        {
+            "type": "response.completed",
+            "usage": {"input_tokens": 123, "output_tokens": 45},
+        }
+    ).encode("utf-8")
+    store = _MemoryArtifactStore({f"{spawn_id}/output.jsonl": encoded})
+
+    assert _extract_opencode_usage(store, spawn_id).input_tokens is None
+    assert _extract_opencode_usage(store, spawn_id).output_tokens is None
 
 
 def test_extract_opencode_report_reads_last_assistant_text_from_wrapped_history() -> None:

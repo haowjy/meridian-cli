@@ -147,6 +147,19 @@ class FakeResidentConnection(HarnessConnection[ResolvedLaunchSpec]):
     def close_stream(self) -> None:
         self.resident_events.put_nowait(None)
 
+    def fail_backend(self, message: str) -> None:
+        """Reproduce a resident transport failure before iterator exhaustion."""
+
+        self.mark_failed()
+        self.emit(
+            HarnessEvent(
+                event_type="error/connectionClosed",
+                payload={"message": message},
+                harness_id=self.harness_id.value,
+            )
+        )
+        self.close_stream()
+
     def mark_failed(self) -> None:
         self._state = "failed"
         self._resident_backend.status = LivenessDecision.BACKEND_DEAD
