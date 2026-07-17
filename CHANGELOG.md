@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.3.34] - 2026-07-17
+
 ### Added
 - One atomic-replace context manager in a dependency-neutral platform layer
   (`lib/platform/atomic.py`); state, plugin-API, autosync, and Codex rollout
