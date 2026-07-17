@@ -20,6 +20,7 @@ from meridian.lib.harness.connections.base import (
     StopProgressCallback,
     StopResult,
 )
+from meridian.lib.harness.connections.pi_rpc import pi_subprocess_exit_error
 from meridian.lib.harness.semantics import TerminalEventOutcome
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.safety.permissions import UnsafeNoOpPermissionResolver
@@ -128,6 +129,37 @@ class FakePiConnection(HarnessConnection[ResolvedLaunchSpec]):
 
 def pi_event(event_type: str, payload: dict[str, object] | None = None) -> HarnessEvent:
     return HarnessEvent(event_type=event_type, harness_id="pi", payload=payload or {})
+
+
+def pi_process_exit_event(return_code: int) -> HarnessEvent:
+    """Model the connection-close event emitted when the Pi process exits non-zero."""
+    return pi_event(
+        "error/connectionClosed",
+        {
+            "type": "error/connectionClosed",
+            "message": pi_subprocess_exit_error(return_code),
+        },
+    )
+
+
+def write_pi_bash_record(
+    runtime_root: Path, spawn_id: SpawnId, *, running: bool = True
+) -> None:
+    """Write the managed-bash disk evidence used by the Pi extension."""
+    path = runtime_root / "pi-bash" / str(spawn_id) / "bash-records.json"
+    write_json(
+        path,
+        {
+            "records": {
+                "b1": {
+                    "bash_id": "b1",
+                    "is_tracked": True,
+                    "is_background": True,
+                    "status": "running" if running else "exited",
+                }
+            }
+        },
+    )
 
 
 @dataclass
@@ -285,20 +317,7 @@ class PiDrainScenario:
         start_row(self.runtime_root, spawn_id, harness, parent_id, status=status)
 
     def running_bash(self, *, running: bool = True) -> None:
-        path = self.runtime_root / "pi-bash" / str(self.spawn_id) / "bash-records.json"
-        write_json(
-            path,
-            {
-                "records": {
-                    "b1": {
-                        "bash_id": "b1",
-                        "is_tracked": True,
-                        "is_background": True,
-                        "status": "running" if running else "exited",
-                    }
-                }
-            },
-        )
+        write_pi_bash_record(self.runtime_root, self.spawn_id, running=running)
 
     def done(self) -> None:
         write_spawn_signal(self.runtime_root, self.spawn_id, "done")

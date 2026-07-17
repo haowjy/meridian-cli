@@ -6,13 +6,20 @@ import asyncio
 import errno
 import json
 import sys
+import time
 from typing import cast
 
+from meridian.lib.core.spawn_lifecycle import ACTIVE_SPAWN_STATUSES
 from meridian.lib.ops.runtime import (
     resolve_runtime_root,
     resolve_runtime_root_and_config,
 )
 from meridian.lib.platform import IS_WINDOWS
+from meridian.lib.state import spawn_store
+
+_INJECT_RESPONSE_TIMEOUT_SECONDS = 30.0
+_ENDPOINT_DISCOVERY_TIMEOUT_SECONDS = 30.0
+_ENDPOINT_DISCOVERY_POLL_SECONDS = 0.1
 
 
 def _fail(message: str) -> None:
@@ -55,7 +62,9 @@ async def _send_and_receive(
     try:
         writer.write((json.dumps(request, separators=(",", ":")) + "\n").encode("utf-8"))
         await writer.drain()
-        return await asyncio.wait_for(reader.readline(), timeout=10.0)
+        return await asyncio.wait_for(
+            reader.readline(), timeout=_INJECT_RESPONSE_TIMEOUT_SECONDS
+        )
     finally:
         writer.close()
         await writer.wait_closed()
@@ -87,19 +96,18 @@ async def inject_message(
     if not normalized_message:
         _fail("message is required")
 
-    # The control socket/port may not be visible immediately after spawn start.
-    # Retry briefly to tolerate the startup race.
-    _SOCKET_WAIT_ATTEMPTS = 3
-    _SOCKET_WAIT_INTERVAL = 1.0
-
     discovery_path = port_file if IS_WINDOWS else socket_path
-    for _attempt in range(_SOCKET_WAIT_ATTEMPTS):
+    discovery_deadline = time.monotonic() + _ENDPOINT_DISCOVERY_TIMEOUT_SECONDS
+    while True:
+        record = spawn_store.get_spawn(runtime_root, normalized_spawn_id)
+        if record is None or record.status not in ACTIVE_SPAWN_STATUSES:
+            _fail(f"spawn not running: {normalized_spawn_id} has no control endpoint")
         if discovery_path.exists():
             break
-        if _attempt < _SOCKET_WAIT_ATTEMPTS - 1:
-            await asyncio.sleep(_SOCKET_WAIT_INTERVAL)
-    else:
-        _fail(f"spawn not running: {normalized_spawn_id} has no control endpoint")
+        remaining = discovery_deadline - time.monotonic()
+        if remaining <= 0:
+            _fail(f"spawn not running: {normalized_spawn_id} has no control endpoint")
+        await asyncio.sleep(min(_ENDPOINT_DISCOVERY_POLL_SECONDS, remaining))
 
     request: dict[str, str] = {"type": "user_message", "text": normalized_message}
 

@@ -1,6 +1,6 @@
 # qa-validated: pi-rpc-quiescence
 
-# Pi RPC quiescence smoke and diagnostics (S1-S36)
+# Pi RPC quiescence smoke and diagnostics (S1-S40)
 
 Manual checks for Pi RPC quiescence. All scenarios use a **real** installed `pi`
 binary—never a stub, shim, or fake runtime. Run the short gate in
@@ -42,16 +42,20 @@ waves. `--timeout` (in minutes) or `MERIDIAN_TIMEOUT` is the opt-in, non-renewin
 absolute ceiling for the whole attempt. Child-wave and notification deadlines are
 separate, wave-local safety bounds.
 
-Terminal state is published before best-effort descendant/process cleanup and
-connection teardown. The completion state machine goes from publication to
-`finalized`; there is no `cleaning` completion phase. Cleanup lifecycle events
-(`cleanup_running`, `cleanup_completed`, `cleanup_escalated`, or `cleanup_failed`) are
-post-publication diagnostics and may arrive later. They come from Pi's
+The completion state machine reaches `finalized`; there is no `cleaning` phase.
+Cleanup lifecycle rows (`cleanup_running`, `cleanup_completed`, `cleanup_escalated`,
+or `cleanup_failed`) are best-effort diagnostics. They come from Pi's
 `pi_drain_teardown.py`; `drain_teardown.py` is the harness-neutral teardown contract.
+History orders `finalized` before cleanup, although store-level `published_at` can
+currently trail cleanup rows (#431).
 
-**Phase inspection rule:** after `spawn wait`, `state.json`, or another command first
-shows a terminal outcome, poll `history.jsonl` with a bounded wait before asserting on
-`finalized` or cleanup phases. Never require those phase rows to exist immediately.
+**Phase inspection rule:** after any surface first shows a terminal outcome, poll
+`history.jsonl` for a bounded interval before asserting on `finalized` or cleanup rows.
+
+**Prompt-steering validity rule:** if the transcript shows that the model bypassed the
+seam under test—for example, by waiting or polling in the same turn, or by using the OS
+`timeout` command instead of the bash tool's timeout parameter—the scenario was not
+exercised. Rerun it; do not record a verdict from that attempt.
 
 ---
 
@@ -66,8 +70,8 @@ automated coverage; inspect them rather than corrupting a real Pi installation.
 uv run meridian spawn --harness pi -m <pi-model> -p "Reply OK and run no commands"
 ```
 
-Expect a normal reply and terminal status `succeeded`, with no wait on nonexistent
-child work. With the bounded phase wait above, history reaches `finalized`.
+Expect a normal reply, terminal status `succeeded`, no wait on nonexistent child work,
+and a `finalized` history row.
 
 ## S2: Managed bash blocking command
 
@@ -87,24 +91,24 @@ A short blocking command does not emit `meridian.subspawn.start`.
 Prompt:
 
 ```text
-Run `sleep 5 && echo done` with bash using timeout 1000ms, then report the job id.
+Run `sleep 5 && echo done` with the bash tool, setting the bash tool's timeout parameter to 1000ms. Do not wrap the command in the `timeout` program. Report the job id and end your turn immediately — do not wait for or poll the job.
 ```
 
-Expect the tool call to return `state: "running"` and a `job_id`. History contains a
-`meridian.subspawn.start` with `wait_policy: "tracked"`, then a matching
-`meridian.subspawn.end`. This bash-tool timeout does **not** set Meridian's absolute
-attempt timeout: the parent remains active until the tracked job and its continuation
-drain, then succeeds.
+Expect the tool call to return `state: "running"` and a `job_id`. The disk-backed bash
+record moves from running to exited with stdout `done`. This bash-tool timeout does
+**not** set Meridian's absolute attempt timeout: the parent remains active through the
+follow-up turn, then succeeds after that turn quiesces. Managed bash does not currently
+emit `meridian.subspawn.*` telemetry in the real runtime (#440).
 
 ## S4: Detached job does not block quiescence
 
 Prompt:
 
 ```text
-Start `sleep 30` in the background with wait_policy detached, then say DETACHED.
+Start `sleep 30` in the background with wait_policy detached, then say DETACHED and end your turn immediately. Do not wait for the job.
 ```
 
-Expect the start event to use `wait_policy: "detached"` and the session to quiesce
+Expect the bash record to use `wait_policy: "detached"` and the session to quiesce
 without waiting 30 seconds. Detached work is user-owned and is not killed by Pi
 quiescence cleanup.
 
@@ -116,34 +120,39 @@ uv run meridian spawn inject <spawn-id> "Reply SECOND."
 uv run meridian spawn wait <spawn-id>
 ```
 
-Expect one spawned Pi process to handle both turns and complete after the second turn
-reaches quiescence.
+Issue the inject immediately, while the first turn is busy. Expect the CLI to wait for
+the live spawn's control endpoint, Pi to queue the message as a follow-up turn, and one
+Pi process to complete after the second turn quiesces. Injection into a terminal spawn
+must instead fail with an honest not-running/connection-refused error.
 
 ## S6: Tracked child completion wakes the parent
+
+Append this instruction to both S6 prompts: `End your first turn immediately without
+waiting for or polling the job. When completion wakes you, summarize the result.` The
+transcript must show a later follow-up turn that handles the result.
 
 Prompt:
 
 ```text
-Start `sleep 3 && echo child-done` as tracked background work. When it completes, summarize the result.
+Start `sleep 3 && echo child-done` as tracked background work.
 ```
 
-Expect the parent to idle while the child runs, then history to contain
-`meridian.notification.queued` and `meridian.notification.delivered`. The disk-backed
-bash record at `<runtime-root>/pi-bash/<spawn-id>/bash-records.json` moves through
-start/end state, a follow-up turn reports the result, and completion occurs only after
-that turn quiesces.
+Expect the disk-backed record at
+`<runtime-root>/pi-bash/<spawn-id>/bash-records.json` to move from running to exited
+with stdout `child-done`, a follow-up turn in transcript/history to report the result,
+and completion only after that turn quiesces. The wake works, but the real runtime does
+not currently emit `meridian.notification.queued`/`.delivered` telemetry (#440).
 
 ### S6b: Fast tracked completion still triggers a follow-up
 
 Prompt:
 
 ```text
-Start `sleep 0.1 && echo fast-done` as tracked background work. Continue immediately, then summarize when background work completes.
+Start `sleep 0.1 && echo fast-done` as tracked background work.
 ```
 
-The child may start and end before the first `agent_end`. Even then, expect queued and
-delivered notification events, a follow-up that reports `fast-done`, and completion
-only after that follow-up.
+The record may reach exited before the first `agent_end`. Even then, expect stdout
+`fast-done`, a follow-up that reports it, and completion only after that follow-up.
 
 ### S6c: Nested stale detection is bounded and read-only
 
@@ -192,12 +201,13 @@ quiescence stop to the primary session.
 Prompt:
 
 ```text
-Start `sh -c 'sleep 1; exit 7'` as tracked background work. Handle the result.
+Start `sh -c 'sleep 1; exit 7'` as tracked background work, then end your turn immediately. Do not wait for or poll it in this turn. Handle the result when its notification wakes you.
 ```
 
-Expect the end event to show `success: false` and `exit_code: 7`, followed by a failure
-notification turn. The final spawn outcome reflects what the parent does with that
-failure; handling it can still produce a successful parent outcome.
+Expect the bash record to reach exited with exit code 7, then a follow-up turn to handle
+the failure. Completion waits for that turn to quiesce; handling the failure can still
+produce a successful parent outcome. Do not require notification lifecycle telemetry
+from the real runtime (#440).
 
 ## S9: Notification delivery failure fails instead of hanging
 
@@ -205,24 +215,24 @@ Do not inject shims into this real-runtime guide. The contract is covered by
 `tests/integration/streaming/test_pi_quiescence.py` and
 `tests/integration/streaming/test_pi_characterization.py`.
 
-If a real delivery failure occurs, expect terminal `failed` after tracked descendants
-drain, not a permanent pending-notification wait. History can contain
-`meridian.notification.queued` followed by `meridian.notification.failed`.
+The covered contract is terminal `failed` after tracked descendants drain, not a
+permanent pending-notification wait. The production telemetry question is tracked in
+#440; do not require `meridian.notification.*` rows in a real-runtime run.
 
 ## S10: Pi exits with tracked work pending
 
 ```bash
 uv run meridian spawn --harness pi -m <pi-model> --bg -p "Start tracked background work: sleep 30."
-# After meridian.subspawn.start appears:
+# After the managed-bash disk record shows the tracked job running:
 kill <pi-process-pid>
 uv run meridian spawn wait <spawn-id>
 ```
 
 Expect terminal `failed` with `pi_process_exited_with_tracked_children`, rather than
-success from an earlier `agent_end`. After publication, best-effort cleanup first
-cancels persisted descendants and then terminates tracked process groups when PID/PGID
-metadata exists. Detached work is not killed. Use the bounded phase wait if checking
-cleanup telemetry.
+success from an earlier `agent_end`. Best-effort cleanup cancels persisted descendants
+and terminates tracked process groups when PID/PGID metadata exists; detached work is
+not killed. The dead spawn's private bash record may remain `running` post-mortem and is
+not authoritative.
 
 ## S11: Malformed coordination state fails closed
 
@@ -234,19 +244,24 @@ The contract is typed unknown evidence—not an empty/no-work snapshot. A comple
 candidate waits for the single relevant completion deadline and fails explicitly if
 the evidence remains unreadable.
 
-## S12: Opt-in absolute attempt timeout
+## S12: Opt-in absolute attempt timeout — both carriers
 
-Use a deliberately long tracked job and a short **minutes-valued** attempt ceiling:
+Use a deliberately long tracked job and a short **minutes-valued** attempt ceiling.
+Run the scenario **twice**, once per carrier:
 
 ```bash
 uv run meridian spawn --harness pi -m <pi-model> --timeout 0.05 \
   -p "Start tracked background work: sleep 9999."
+MERIDIAN_TIMEOUT=0.05 uv run meridian spawn --harness pi -m <pi-model> \
+  -p "Start tracked background work: sleep 9999."
 ```
 
-Expect the session to remain active only until the roughly three-second absolute
-ceiling, then terminal status `timed_out`. Visible terminal publication may lag by
-roughly six seconds while Pi synchronously completes abort grace and process cleanup;
-making that cleanup post-publication is tracked in #431. Detached jobs remain user-owned.
+For **each** carrier expect the resolved policy snapshot, `state.json`, CLI report, and
+history `finalized` row to agree on `timed_out`, exit code 3, and error `timeout`, never
+Pi's induced `cancelled`/130. Cleanup rows follow `finalized`. Visible terminal
+publication lagged 19-26 seconds in the verification pass; shortening it remains #431.
+With a three-second ceiling the model may not start `sleep 9999`, so check for an
+orphan only when the bash record says it started. Detached jobs remain user-owned.
 Without `--timeout` or `MERIDIAN_TIMEOUT`, Pi has no equivalent total wall-clock ceiling
 while legitimate descendant waves continue.
 
@@ -254,8 +269,7 @@ while legitimate descendant waves continue.
 
 # Tier 2 — deep diagnostics appendix
 
-Run the cluster that matches the failure or code being changed. Phase assertions still
-follow the bounded-wait rule near the top of this guide.
+Run the cluster that matches the failure or code being changed.
 
 ## Runtime and phase diagnostics (S13-S19)
 
@@ -316,11 +330,11 @@ Run one primary and one spawned launch using default `PATH` resolution, then rep
 
 ### S19: Phase diagnostics distinguish completion from teardown
 
-For a successful spawned RPC launch, inspect verbose status and `history.jsonl` during
-startup, waiting, terminal publication, and teardown. Expect completion to publish and
-the completion state to reach `finalized`, with no `cleaning` phase. Any
-`cleanup_running`/`cleanup_completed`/`cleanup_escalated`/`cleanup_failed` events belong
-to asynchronous `PiDrainSessionTeardown`, not terminal-state gating.
+For a successful spawned RPC launch, inspect verbose status and `history.jsonl` through
+startup, waiting, and terminal/teardown convergence. Expect `finalized`, no `cleaning`
+phase, and then any `cleanup_running`/`cleanup_completed`/
+`cleanup_escalated`/`cleanup_failed` rows from `PiDrainSessionTeardown`; those rows do
+not gate the terminal outcome.
 
 ## Disk and internal lifecycle mechanics (S20-S28)
 
@@ -369,16 +383,17 @@ and their notification, never for the detached jobs.
 
 ### S26: Notification deadline is anchored
 
-If a notification remains queued or delivered without completing, its own anchored
-deadline yields terminal `failed` with `pi_notification_timeout`. Ordinary activity
-does not slide that deadline. Exercise fault timing with
-`tests/integration/streaming/test_pi_characterization.py` rather than a shimmed manual
-runtime.
+If the follow-up notification contract does not complete, its anchored deadline yields
+terminal `failed` with `pi_notification_timeout`; ordinary activity does not slide the
+deadline. Verify the disk work state, lack of a completed follow-up turn, and terminal
+outcome rather than requiring notification lifecycle rows (#440). Exercise fault timing
+with `tests/integration/streaming/test_pi_characterization.py` rather than a shimmed
+manual runtime.
 
 ### S27: Child-wave deadline is not the absolute attempt timeout
 
 A parent that is idle with tracked work past the configured child-wave deadline fails
-with `pi_child_wave_timeout`; cleanup is latched once and runs after publication. This
+with `pi_child_wave_timeout`; cleanup is latched once and follows `finalized`. This
 per-wave safety bound is distinct from `--timeout`/`MERIDIAN_TIMEOUT`, which caps the
 entire attempt and produces `timed_out`.
 
@@ -447,7 +462,61 @@ If Pi created no session, continue/fork fails with a "no Pi session was created"
 diagnostic. If candidate files exist but cannot be matched or parsed, expect a distinct
 session-discovery diagnostic rather than silently choosing an unrelated session.
 
+## Timeout ceiling, teardown ordering, and store composition (S37-S40)
+
+Run this cluster when changing attempt-timeout plumbing (`streaming_runner.py`,
+execution policy resolution), teardown (`drain_teardown.py`/`pi_drain_teardown.py`),
+or the state store/locking layer under the drain.
+
+### S37: Ceiling does not misfire on fast completions
+
+```bash
+uv run meridian spawn --harness pi -m <pi-model> --timeout 2 \
+  -p "Reply OK and run no commands."
+```
+
+A run finishing well under its armed ceiling must terminate `succeeded`, never
+`timed_out`; two minutes leaves headroom above the observed 20-30-second trivial-run
+baseline.
+
+### S38: Detached work survives the attempt timeout
+
+```bash
+uv run meridian spawn --harness pi -m <pi-model> --timeout 1 \
+  -p "Immediately start 'sleep 300' in the background with wait_policy detached, then immediately start tracked background work: sleep 9999. End your turn as soon as both are started; do not wait for either."
+```
+
+Use one minute so the model can start both jobs before the ceiling. Verify from
+`pi-bash/<spawn-id>/bash-records.json` that both jobs started, then expect the
+parent to reach `timed_out`, the **tracked** `sleep 9999` to
+be cleaned up, and the **detached** `sleep 300` to still be alive in the
+process table after completion. Kill the detached sleep afterwards.
+
+### S39: Finalization and cleanup ordering, on disk
+
+For one successful S1-style run and one S12 timed-out run, read
+`spawns/<spawn-id>/history.jsonl` and `state.json`. Assert that every row has a
+sub-second `timestamp`, terminal state has sub-second `published_at`, and each cleanup
+row has both a higher `seq` and later `timestamp` than `finalized`. Both runs must have
+`finalized` and cleanup rows, and neither may contain a `cleaning` completion phase.
+Store-level `published_at` can trail drain cleanup rows; fixing that ordering remains
+#431.
+
+### S40: Drain under concurrent read-path load
+
+```bash
+uv run meridian spawn --harness pi -m <pi-model> --bg -p "Start tracked background work: sleep 5. Summarize when done."
+uv run meridian spawn --harness pi -m <pi-model> --bg -p "Start tracked background work: sleep 5. Summarize when done."
+```
+
+While both drain, poll `uv run meridian spawn show <spawn-id>` and
+`uv run meridian spawn list` against both IDs roughly every second until terminal.
+Expect no lock errors, no hangs, no torn or unparseable `state.json` reads, both
+spawns reaching clean terminal states, and `spawn wait` returning for each. The
+drain's write path and the CLI read path cross the store's locking seams — this
+scenario exercises that composition, which neither layer's own tests see.
+
 ## Retired scenarios
 
-None. All S1-S36 coverage remains represented; obsolete expectations were rewritten to
+None. All S1-S40 coverage remains represented; obsolete expectations were rewritten to
 the current completion, timeout, and teardown model.

@@ -686,12 +686,14 @@ def finalize_spawn(
             )
             raise _FinalizeRejected(current)
         was_active = is_active_spawn_status(current.status)
+        published_at = resolved_clock.utc_now_iso()
         return apply_finalize(
             current,
             status,
             exit_code,
             origin=origin,
-            finished_at=finished_at or resolved_clock.utc_now_iso(),
+            finished_at=finished_at or published_at,
+            published_at=published_at,
             duration_secs=duration_secs,
             usage=usage,
             error=error,

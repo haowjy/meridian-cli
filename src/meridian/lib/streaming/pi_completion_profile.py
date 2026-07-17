@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Protocol
 
 from meridian.lib.core.domain import SpawnStatus
 from meridian.lib.core.types import SpawnId
+from meridian.lib.harness.connections.pi_rpc import is_pi_subprocess_exit_error
 from meridian.lib.harness.pi_lifecycle_events import pi_notification_id
 from meridian.lib.state.spawn_signals import consume_resident_signals
 from meridian.lib.streaming.completion_contracts import (
@@ -266,8 +267,15 @@ class PiCompletionProfile:
         recorded_outcome: TerminalEventOutcome | None,
     ) -> ProfileExitDecision:
         del state
-        pending_children = self.pending_children_at_exit()
-        if pending_children and recorded_outcome is None:
+        pending_tracked_work = self.pending_children_at_exit()
+        if pending_tracked_work and (
+            recorded_outcome is None
+            or (
+                recorded_outcome.status == "failed"
+                and recorded_outcome.exit_code == 1
+                and is_pi_subprocess_exit_error(recorded_outcome.error)
+            )
+        ):
             recorded_outcome = _terminal_outcome(
                 status="failed",
                 exit_code=1,
@@ -277,7 +285,9 @@ class PiCompletionProfile:
             recorded_outcome=recorded_outcome,
             fallback_error=self.fallback_error_without_recorded_outcome(),
             cleanup_reason=(
-                "pi_process_exit_with_tracked_children" if pending_children else None
+                "pi_process_exit_with_tracked_children"
+                if pending_tracked_work
+                else None
             ),
         )
 
@@ -344,7 +354,14 @@ class PiCompletionProfile:
         return None
 
     def pending_children_at_exit(self) -> bool:
-        return self.quiescence_enabled and self.evidence.has_pending_children()
+        if not self.quiescence_enabled:
+            return False
+        work = self.evidence.classify_outstanding_work()
+        return (
+            work.spawn_children
+            or work.unknown_spawn_children
+            or work.non_spawn_processes
+        )
 
     def fallback_error_without_recorded_outcome(self) -> str | None:
         return self.tracker.notification_failure_error

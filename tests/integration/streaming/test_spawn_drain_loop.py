@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import gc
 from collections.abc import AsyncIterator
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import AsyncMock, Mock
@@ -12,7 +14,7 @@ import pytest
 
 from meridian.lib.core.types import SpawnId
 from meridian.lib.harness.connections.base import HarnessConnection, HarnessEvent
-from meridian.lib.state.history import HarnessHistoryWriter, WriteResult
+from meridian.lib.state.history import HarnessHistoryWriter, WriteResult, read_history_range
 from meridian.lib.streaming.completion_contracts import (
     AssessmentTrigger,
     CleanupReport,
@@ -33,6 +35,7 @@ from meridian.lib.streaming.drain_coordinator import (
     DrainLoopDecision,
     DrainPlan,
 )
+from meridian.lib.streaming.drain_wait import _cancel_task
 from meridian.lib.streaming.event_observers import EventObserverRegistry
 from meridian.lib.streaming.spawn_drain_loop import SpawnDrainLoop
 from meridian.lib.streaming.spawn_session import DrainOutcome, SpawnSession
@@ -40,6 +43,59 @@ from tests.support.fakes import FakeClock
 
 _SPAWN_ID = SpawnId("p-persist-order")
 Call = tuple[str, HarnessEvent]
+
+
+def test_history_writer_stamps_lifecycle_rows_with_subsecond_wall_clock(tmp_path: Path) -> None:
+    class _SubsecondClock(FakeClock):
+        def utc_now_iso(self) -> str:
+            return "2026-07-17T13:14:15.123Z"
+
+    history_path = tmp_path / "history.jsonl"
+    writer = HarnessHistoryWriter(history_path, clock=_SubsecondClock())
+
+    result = writer.write(
+        HarnessEvent(
+            event_type="meridian.pi.lifecycle.phase",
+            harness_id="pi",
+            payload={"phase": "finalized"},
+        )
+    )
+
+    assert result.success is True
+    assert read_history_range(history_path)[0]["timestamp"] == "2026-07-17T13:14:15.123Z"
+
+
+@pytest.mark.asyncio
+async def test_cancel_task_retrieves_closed_stream_exception() -> None:
+    loop = asyncio.get_running_loop()
+    leaked: list[dict[str, object]] = []
+    previous_handler = loop.get_exception_handler()
+    loop.set_exception_handler(lambda _loop, context: leaked.append(context))
+    try:
+        pending_event = loop.create_future()
+        pending_event.set_exception(StopAsyncIteration())
+
+        await _cancel_task(pending_event)
+        del pending_event
+        gc.collect()
+        await asyncio.sleep(0)
+
+        assert leaked == []
+    finally:
+        loop.set_exception_handler(previous_handler)
+
+
+@pytest.mark.asyncio
+async def test_cancel_task_logs_unexpected_completed_task_failure(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    pending_event = asyncio.get_running_loop().create_future()
+    pending_event.set_exception(RuntimeError("event source broke during close"))
+
+    with caplog.at_level("WARNING"):
+        await _cancel_task(pending_event)
+
+    assert "event source broke during close" in caplog.text
 
 
 class _Receiver:
@@ -244,10 +300,16 @@ async def _run_drain(
                 cancel_sent=False,
                 started_monotonic=0.0,
                 subscriber=None,
+                authoritative_stop_outcome=None,
             ),
         )
 
-    def _resolve_outcome(_session: SpawnSession, outcome: DrainOutcome) -> DrainOutcome:
+    def _publish_terminal(
+        _spawn_id: SpawnId,
+        _session: SpawnSession,
+        outcome: DrainOutcome,
+        _cleanup_request: object,
+    ) -> DrainOutcome:
         assert outcomes is not None
         outcomes.append(outcome)
         return outcome
@@ -258,9 +320,7 @@ async def _run_drain(
             _SPAWN_ID: cast("HarnessHistoryWriter", _HistoryWriter(results, calls))
         },
         observers=cast("EventObserverRegistry", observers),
-        cleanup_tasks=set(),
-        cleanup_completed_session=AsyncMock(),
-        resolve_completion_future=_resolve_outcome if outcomes is not None else Mock(),
+        publish_terminal=_publish_terminal if outcomes is not None else Mock(),
         fan_out_event=lambda _spawn_id, event: calls.append(("fan_out", event)),
         fan_out_turn_boundary=AsyncMock(),
     )
@@ -385,9 +445,7 @@ async def test_persisted_activity_restarts_elapsed_stabilization_before_concurre
         sessions={},
         history_writers={_SPAWN_ID: cast("HarnessHistoryWriter", history_writer)},
         observers=cast("EventObserverRegistry", observers),
-        cleanup_tasks=set(),
-        cleanup_completed_session=AsyncMock(),
-        resolve_completion_future=Mock(),
+        publish_terminal=Mock(),
         fan_out_event=Mock(),
         fan_out_turn_boundary=AsyncMock(),
     )

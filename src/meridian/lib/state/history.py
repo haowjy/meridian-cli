@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, cast
 
+from meridian.lib.core.clock import Clock, RealClock
 from meridian.lib.harness.connections.base import HarnessEvent
 from meridian.lib.state.atomic import append_text_line
 from meridian.lib.state.managed_primary import ManagedPrimaryCausalTracker
@@ -27,6 +28,7 @@ class HarnessHistoryWriter:
     """Append-only writer for seq-enveloped raw harness events."""
 
     history_path: Path
+    clock: Clock = field(default_factory=RealClock)
     _seq: int = field(default=0, init=False)
     _byte_offset: int = field(default=0, init=False)
     _causal_tracker: ManagedPrimaryCausalTracker = field(
@@ -60,6 +62,7 @@ class HarnessHistoryWriter:
         envelope = {
             "seq": self._seq,
             "byte_offset": self._byte_offset,
+            "timestamp": self.clock.utc_now_iso(),
             "turn_id": causal.turn_id,
             "item_id": causal.item_id,
             "request_id": causal.request_id,
@@ -211,6 +214,7 @@ def strip_seq_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
         not in (
             "seq",
             "byte_offset",
+            "timestamp",
             "turn_id",
             "item_id",
             "request_id",

@@ -5,6 +5,8 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import re
 from pathlib import Path
 
 import pytest
@@ -23,6 +25,7 @@ from meridian.lib.ops.spawn.prepare import build_create_payload
 from meridian.lib.state import spawn_store
 from meridian.lib.state.artifact_store import LocalStore
 from meridian.lib.state.paths import resolve_project_runtime_root
+from meridian.lib.streaming import pi_drain as pi_drain_module
 from meridian.lib.streaming import spawn_manager as spawn_manager_module
 from tests.integration.launch.streaming_runner_support import (
     _build_opencode_request,
@@ -49,10 +52,20 @@ async def test_execute_with_streaming_attempt_timeout_survives_pi_abort(
     monkeypatch: pytest.MonkeyPatch,
     timeout_source: str,
 ) -> None:
+    async def _abort_tail_exit_failure(
+        _coordinator: object, _recorded_outcome: object
+    ) -> object:
+        raise RuntimeError("Pi abort tail failed while classifying stream exit")
+
     runtime_root = resolve_project_runtime_root(tmp_path)
     artifacts = LocalStore(root_dir=tmp_path / ".artifacts")
     registry = HarnessRegistry.with_defaults()
     monkeypatch.setattr(spawn_manager_module, "ControlSocketServer", _FakeControlSocketServer)
+    monkeypatch.setattr(
+        pi_drain_module.PiDrainCoordinator,
+        "handle_stream_exit",
+        _abort_tail_exit_failure,
+    )
     monkeypatch.setattr(
         "meridian.lib.harness.connections.get_connection_class",
         lambda _harness_id, _transport_id=TransportId.STREAMING: _TimeoutAbortPiConnection,
@@ -119,7 +132,7 @@ async def test_execute_with_streaming_attempt_timeout_survives_pi_abort(
             artifacts=artifacts,
             registry=registry,
         ),
-        timeout=3.0,
+        timeout=6.0,
     )
 
     row = spawn_store.get_spawn(runtime_root, run.spawn_id)
@@ -128,6 +141,38 @@ async def test_execute_with_streaming_attempt_timeout_survives_pi_abort(
     assert row.status == "timed_out"
     assert row.exit_code == 3
     assert row.error == "timeout"
+    history_path = runtime_root / "spawns" / str(run.spawn_id) / "history.jsonl"
+    history = [json.loads(line) for line in history_path.read_text().splitlines()]
+    finalized = [
+        event
+        for event in history
+        if event["event_type"] == "meridian.pi.lifecycle.phase"
+        and event["payload"].get("phase") == "finalized"
+    ]
+    assert finalized[-1]["payload"]["status"] == "timed_out"
+    assert finalized[-1]["payload"]["exit_code"] == 3
+    assert finalized[-1]["payload"]["error"] == "timeout"
+    report = (runtime_root / "spawns" / str(run.spawn_id) / "report.md").read_text()
+    assert report == "# Spawn failed\n\ntimeout\n"
+    cleanup_phases = [
+        event["payload"]["phase"]
+        for event in history
+        if event["event_type"] == "meridian.pi.lifecycle.phase"
+        and str(event["payload"].get("phase", "")).startswith("cleanup_")
+    ]
+    assert cleanup_phases == ["cleanup_running", "cleanup_completed"]
+    assert all(
+        re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3,6}Z", event["timestamp"])
+        for event in history
+    )
+
+    state = json.loads(
+        (runtime_root / "spawns" / str(run.spawn_id) / "state.json").read_text()
+    )
+    assert re.fullmatch(
+        r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3,6}Z",
+        state["published_at"],
+    )
 
 @pytest.mark.asyncio
 async def test_execute_with_streaming_finalizes_resident_deadline_without_retry(

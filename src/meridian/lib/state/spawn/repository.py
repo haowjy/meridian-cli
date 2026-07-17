@@ -70,6 +70,7 @@ class StoredSpawnState(BaseModel):
     runner_exit_at: str | None = None
     cancel_intent: CancelIntent | None = None
     finished_at: str | None = None
+    published_at: str | None = None
     exit_code: int | None = None
     duration_secs: float | None = None
     total_cost_usd: float | None = None
@@ -145,6 +146,7 @@ def record_to_stored_state(
         runner_exit_at=record.runner_exit_at,
         cancel_intent=record.cancel_intent,
         finished_at=record.finished_at,
+        published_at=record.published_at,
         exit_code=record.exit_code,
         duration_secs=record.duration_secs,
         total_cost_usd=record.total_cost_usd,
@@ -205,6 +207,7 @@ def stored_state_to_record(
         runner_exit_at=stored.runner_exit_at,
         cancel_intent=stored.cancel_intent,
         finished_at=stored.finished_at,
+        published_at=stored.published_at,
         exit_code=stored.exit_code,
         duration_secs=stored.duration_secs,
         total_cost_usd=stored.total_cost_usd,

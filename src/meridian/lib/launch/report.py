@@ -203,7 +203,8 @@ def _pi_failure_from_payload(payload: dict[str, object]) -> str | None:
     event_type = _event_name(payload)
     if event_type == "response":
         command = str(payload.get("command", "")).strip().lower()
-        if command == "prompt" and payload.get("success") is False:
+        is_inject_response = payload.get("meridian_control_action") == "inject"
+        if command == "prompt" and payload.get("success") is False and not is_inject_response:
             error = _text_from_value(payload.get("error"))
             return error or "pi_prompt_rejected"
     if event_type == _PI_LIFECYCLE_PHASE_EVENT:
