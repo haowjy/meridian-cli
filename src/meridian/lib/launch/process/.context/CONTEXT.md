@@ -10,12 +10,14 @@ Selection order when output capture is requested (`output_log_path` is set):
 2. `SubprocessProcessLauncher` (PIPE_CAPTURE, captures to artifact) — fallback
 
 Selection order when no capture is needed (`output_log_path` is None):
-1. `WindowsConsoleLauncher` (NATIVE_INHERIT, no capture) — if `can_use_windows_console_launcher()`
+1. `WindowsConsoleLauncher` (NATIVE_INHERIT, no capture) — legacy, untested;
+   selected if `can_use_windows_console_launcher()`
 2. `PtyProcessLauncher` (PTY_MEDIATED, no capture) — elif `can_use_pty()`
 3. `SubprocessProcessLauncher` (NATIVE_INHERIT, no capture) — fallback
 
-The PTY launcher is preferred for POSIX interactive TUI harnesses. Windows console launcher
-handles Windows-specific console inheritance. Subprocess is the portable fallback.
+The PTY launcher is preferred for POSIX interactive TUI harnesses. The legacy
+Windows console launcher attempts native console inheritance; the subprocess
+launcher is the fallback.
 
 `captures_output_to_artifact` on `ProcessPlatformContract` is authoritative — callers must
 not assume capture based on launcher type alone.

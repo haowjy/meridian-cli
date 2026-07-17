@@ -146,13 +146,15 @@ Inject flows through the control socket:
 
 ```
 meridian spawn inject <id> --message "..."
-  → control.sock (POSIX) or control.sock.port (Windows)
+  → control.sock
   → ControlSocketServer._handle_client()
   → SpawnManager.inject()
     → ControlActionCoordinator.run_action()  — serializes concurrent actions
     → _record_inbound()                       — appends to inbound.jsonl
     → connection.send_user_message(message)
 ```
+
+The legacy native-Windows branch uses `control.sock.port` and is untested.
 
 All control actions (inject, interrupt, permission reply, user input reply) are
 serialized through `ControlActionCoordinator`. Concurrent actions queue behind it —

@@ -32,9 +32,10 @@ in-memory handle between commands.
 - **`tailscale serve --set-path` forwards the full path.** `_serve_dir.py` strips
   the `/<slug>` prefix in `translate_path` so root-serving backends resolve. Strip
   in path translation, not URL rewriting, so directory redirects keep the prefix.
-- **No parent-death linkage.** `launch_http_server` uses `start_new_session=True`
-  (POSIX) / `DETACHED_PROCESS` (Windows) with no `pdeathsig`. Adding linkage breaks
-  the feature: TTL + lazy GC *is* the cleanup mechanism.
+- **No parent-death linkage.** `launch_http_server` uses
+  `start_new_session=True`. The legacy native-Windows branch requests
+  `DETACHED_PROCESS` and is untested. Adding linkage breaks the feature: TTL +
+  lazy GC *is* the cleanup mechanism.
 - **Validate the slug at every trust boundary** before any Tailscale subprocess.
   A malformed/empty slug would produce `--set-path=/ off` and clobber a root
   handler. `is_valid_slug` runs at registration, teardown, URL build, and load.

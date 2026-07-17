@@ -213,7 +213,9 @@ If multi-repo filesystem access is required, use a harness that supports workspa
 
 ## Spawn artifacts
 
-Each spawn writes artifacts to the user-level runtime directory, under `~/.meridian/projects/<uuid>/spawns/<spawn_id>/` on POSIX (or `%LOCALAPPDATA%\meridian\projects\<uuid>\spawns\<spawn_id>\` on Windows). Use `meridian spawn show ID` to read them without navigating the path directly.
+Each spawn writes artifacts under
+`~/.meridian/projects/<uuid>/spawns/<spawn_id>/`. Use `meridian spawn show ID`
+to read them without navigating the path directly.
 
 | File | Contents |
 | ---- | -------- |

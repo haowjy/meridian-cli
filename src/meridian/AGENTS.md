@@ -99,7 +99,7 @@ orphaned spawns.
 ## Related
 
 - `CLAUDE.md` → `AGENTS.md` — safety rules, design constraints, dev commands
-- `.context/CONTEXT.md` — design philosophy, logging, cross-platform paths
+- `.context/CONTEXT.md` — design philosophy, logging, path handling
 - `lib/launch/AGENTS.md` — composition seam; three driving adapters
 - `lib/harness/AGENTS.md` — translation pipeline; SpawnParams accounting
 - `lib/state/AGENTS.md` — file layout; atomic write invariants

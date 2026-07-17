@@ -124,8 +124,8 @@ policy:
 - **POSIX**: iterates captured process group IDs, sends `SIGTERM` via `os.killpg()`,
   waits 250ms, confirms liveness with `os.killpg(pgid, 0)`, then sends `SIGKILL` if
   still alive
-- **Windows/fallback**: uses `terminate_tree_sync()` from
-  `meridian.lib.platform.process_scope.fallback`
+- **Legacy native-Windows branch (untested) / fallback**: uses
+  `terminate_tree_sync()` from `meridian.lib.platform.process_scope.fallback`
 
 If no process metadata is available, a warning is logged but no cleanup is attempted —
 the processes are orphaned. Canonical persisted-descendant cancellation still runs first,

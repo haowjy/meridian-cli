@@ -15,7 +15,7 @@ Meridian is a coordination layer — it needs at least one harness installed to 
 
 **Cursor** runs as a subprocess harness via `cursor agent`. Models are checked at spawn time — run `meridian mars models list --live` to confirm which cursor models are runnable on your installation.
 
-**Platform**: macOS, Linux, Windows, WSL.
+**Platform**: macOS, Linux, and Linux under WSL. Native Windows is not supported.
 
 ## Performance Tip: Keep Prompt Cache Warm
 

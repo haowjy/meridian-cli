@@ -6,6 +6,9 @@ Single-PID kill is not enough — reparented children escape it.
 
 Three backends behind one API seam (`ScopedProcessHandle.terminate()`):
 
+The Windows backend is legacy, untested code retained behind the platform seam;
+do not extend it as product support.
+
 | `containment` | Backend | Mechanism |
 |---|---|---|
 | `posix_pgid` | `posix.py` | `os.killpg()` — kills the entire process group |
@@ -39,7 +42,7 @@ that have reparented to PID 1. `SIGTERM` to the root PID only reaches the root �
 it's already dead, reparented children escape entirely. Use POSIX containment when
 available; psutil fallback is accepted as degraded.
 
-## Windows Job Object Handle Lifetime
+## Legacy Windows Job Object Handle Lifetime
 
 `assign_to_new_job(pid)` returns `(job_name, job_handle)`. The handle must stay alive —
 `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` kills all job members when the handle is garbage

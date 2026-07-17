@@ -33,7 +33,7 @@ resolved logical task cwd; it is not inherited.
 | `MERIDIAN_TASK_DIR` | Inherited source-edit directory; set/clear via `meridian task-dir` |
 | `MERIDIAN_TASK_CWD` | Bind-time alias for the child's resolved task cwd (not inherited) |
 | `MERIDIAN_CONFIG` | User config overlay path |
-| `MERIDIAN_HOME` | Override user state root (default `~/.meridian/` on Unix/macOS, `%LOCALAPPDATA%\meridian\` on Windows) |
+| `MERIDIAN_HOME` | Override user state root (default `~/.meridian/`) |
 | `MERIDIAN_RUNTIME_DIR` | Override the runtime state root. Absolute path = use as-is; relative path = resolve relative to repo root. Repo-owned default paths (`kb/`, `work/`, `archive/work/`) always stay in `.meridian/` regardless of this setting. |
 | `MERIDIAN_FS_DIR` | Resolved shared filesystem path for the current repo state root |
 | `MERIDIAN_ACTIVE_WORK_ID` | Active attached work item slug, when one exists |

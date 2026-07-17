@@ -12,7 +12,7 @@ External plugins follow the same rule: import `Hook`, `HookContext`, etc. from `
 
 - `types.py` — `Hook`, `HookContext`, `HookResult`, `HookEventName`, `HookOutcome`, `FailurePolicy` — the hook contract types
 - `state.py` — `get_project_home()`, `get_user_home()` — state root access
-- `fs.py` — `file_lock()` — cross-platform file locking for plugins
+- `fs.py` — `file_lock()` — advisory file locking for plugins
 - `git.py` — `resolve_clone_path()` — git clone path helpers
 - `config.py` — `get_user_config()` — user config access
 
