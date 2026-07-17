@@ -36,6 +36,7 @@ from meridian.lib.platform.process_scope import ProcessScopeSnapshot
 from meridian.lib.platform.process_scope import fallback as process_scope_fallback
 from meridian.lib.state.artifact_store import LocalStore
 from meridian.lib.state.paths import resolve_spawn_log_dir
+from meridian.lib.state.spawn_signals import write_spawn_signal
 from tests.support.fakes import FakeClock
 from tests.support.pi_extensions import configure_pi_extension_projection
 
@@ -375,6 +376,43 @@ class _ResidentDeadlineConnection:
         )
         while True:
             await asyncio.sleep(3600)
+
+
+class _ResidentRearmRetryConnection(_ResidentDeadlineConnection):
+    runtime_root = Path()
+
+    @classmethod
+    def reset(cls, runtime_root: Path) -> None:
+        cls.starts = 0
+        cls.runtime_root = runtime_root
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._attempt_index = 0
+        self._project_root: Path | None = None
+
+    async def start(self, config: ConnectionConfig, spec: ResolvedLaunchSpec) -> None:
+        await super().start(config, spec)
+        self._attempt_index = type(self).starts
+        self._project_root = config.control_root
+
+    async def events(self):  # type: ignore[no-untyped-def]
+        project_root = self._project_root
+        assert project_root is not None
+        spawn_dir = resolve_spawn_log_dir(project_root, self._spawn_id)
+        spawn_dir.mkdir(parents=True, exist_ok=True)
+        (spawn_dir / "report.md").write_text(
+            "# Done\n\nResident retry completed.\n",
+            encoding="utf-8",
+        )
+        write_spawn_signal(type(self).runtime_root, self._spawn_id, "rearm")
+        if self._attempt_index == 1:
+            write_spawn_signal(type(self).runtime_root, self._spawn_id, "done")
+        yield HarnessEvent(
+            event_type="turn/completed",
+            harness_id="codex",
+            payload={"threadId": self._session_id, "turnId": f"turn-{self._attempt_index}"},
+        )
 
 
 class _ScriptedRetryOpenCodeConnection:

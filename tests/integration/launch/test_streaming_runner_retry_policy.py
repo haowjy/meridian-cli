@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 
 from meridian.lib.core.domain import Spawn
+from meridian.lib.core.execution_policy import ResolvedExecutionPolicy
 from meridian.lib.core.types import HarnessId, ModelId, SpawnId, TransportId
 from meridian.lib.harness.connections.base import HarnessEvent
 from meridian.lib.harness.registry import HarnessRegistry
@@ -25,6 +26,7 @@ from tests.integration.launch.streaming_runner_support import (
     _FakeControlSocketServer,
     _pi_extension_projection_fixture,
     _ResidentDeadlineConnection,
+    _ResidentRearmRetryConnection,
     _ScriptedRetryOpenCodeConnection,
     streaming_runner_module,
 )
@@ -117,6 +119,81 @@ async def test_execute_with_streaming_finalizes_resident_deadline_without_retry(
     assert row.status == "timed_out"
     assert row.exit_code == 1
     assert row.error == "resident_deadline_expired"
+
+
+@pytest.mark.asyncio
+async def test_execute_with_streaming_keeps_resident_rearm_budget_across_retry(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime_root = resolve_project_runtime_root(tmp_path)
+    artifacts = LocalStore(root_dir=tmp_path / ".artifacts")
+    registry = HarnessRegistry.with_defaults()
+    fake_clock = FakeClock(start=1_000.0)
+    fake_heartbeat = FakeHeartbeat()
+    fake_heartbeat.set_clock(fake_clock)
+    _ResidentRearmRetryConnection.reset(runtime_root)
+    monkeypatch.setattr(spawn_manager_module, "ControlSocketServer", _FakeControlSocketServer)
+    monkeypatch.setattr(
+        "meridian.lib.harness.connections.get_connection_class",
+        lambda _harness_id, _transport_id=TransportId.STREAMING: (
+            _ResidentRearmRetryConnection
+        ),
+    )
+
+    run = Spawn(
+        spawn_id=SpawnId("r-resident-rearm-retry"),
+        prompt="hello",
+        model=ModelId("gpt-5.3-codex"),
+        status="queued",
+    )
+    spawn_store.start_spawn(
+        runtime_root,
+        chat_id="test-chat-resident-rearm-retry",
+        model=str(run.model),
+        agent="",
+        harness=HarnessId.CODEX.value,
+        kind="streaming",
+        prompt=run.prompt,
+        spawn_id=run.spawn_id,
+        launch_mode="foreground",
+        status="queued",
+    )
+    request = _build_request().model_copy(
+        update={
+            "execution_policy": ResolvedExecutionPolicy(resident_rearm_budget=1),
+            "retry": RetryPolicy(max_attempts=2, backoff_secs=0.0),
+        }
+    )
+    guardrail = tmp_path / "retry-once.sh"
+    marker = tmp_path / "guardrail-passed-once"
+    guardrail.write_text(
+        f'if [ ! -e "{marker}" ]; then touch "{marker}"; exit 1; fi\n',
+        encoding="utf-8",
+    )
+
+    exit_code = await asyncio.wait_for(
+        _execute_with_context(
+            run,
+            request=request,
+            project_root=tmp_path,
+            runtime_root=runtime_root,
+            artifacts=artifacts,
+            registry=registry,
+            clock=fake_clock,
+            heartbeat_touch=fake_heartbeat.touch,
+            heartbeat_interval_secs=0.001,
+            guardrails=(guardrail,),
+        ),
+        timeout=15.0,
+    )
+
+    row = spawn_store.get_spawn(runtime_root, run.spawn_id)
+    assert exit_code == 0
+    assert _ResidentRearmRetryConnection.starts == 2
+    assert row is not None
+    assert row.status == "succeeded"
+    assert row.resident_rearm_count == 1
 
 
 
@@ -263,4 +340,3 @@ async def test_execute_with_streaming_retries_single_turn_close_without_terminal
     assert row is not None
     assert row.status == "succeeded"
     assert row.exit_code == 0
-
