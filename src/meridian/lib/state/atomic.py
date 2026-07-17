@@ -77,18 +77,28 @@ def _repaired_jsonl_bytes(content: bytes) -> bytes | None:
 
 
 def repair_jsonl_tail(path: Path) -> None:
-    """Repair a torn or delimiter-less JSONL tail via atomic inode replacement."""
+    """Repair a torn or delimiter-less JSONL tail via atomic inode replacement.
 
-    if not _jsonl_tail_needs_repair(path):
+    Repair is best-effort: on Windows, ``os.replace`` raises when another handle
+    keeps the target open, and ``read_bytes`` can fail on sharing violations. Failing
+    the caller's append because repair could not run would be strictly worse than
+    the pre-repair status quo (append onto the torn tail). Skipping repair restores
+    that status quo; POSIX is unaffected because replace of open files succeeds there.
+    """
+
+    try:
+        if not _jsonl_tail_needs_repair(path):
+            return
+
+        content = path.read_bytes()
+        repaired = _repaired_jsonl_bytes(content)
+        if repaired is None:
+            return
+
+        with atomic_replace(path, mode="wb", encoding=None, permissions="preserve") as handle:
+            handle.write(repaired)
+    except OSError:
         return
-
-    content = path.read_bytes()
-    repaired = _repaired_jsonl_bytes(content)
-    if repaired is None:
-        return
-
-    with atomic_replace(path, mode="wb", encoding=None, permissions="preserve") as handle:
-        handle.write(repaired)
 
 
 def append_text_line(path: Path, line: str) -> None:

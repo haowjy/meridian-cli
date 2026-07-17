@@ -4,12 +4,16 @@ import json
 import os
 import threading
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-import pytest
 from pydantic import BaseModel
 
 from meridian.lib.state.atomic import append_text_line
 from meridian.lib.state.event_store import append_event, read_events
+from tests.conftest import posix_only
+
+if TYPE_CHECKING:
+    from pytest import MonkeyPatch
 
 _TAIL_SCAN_CHUNK_SIZE = 8192
 
@@ -77,9 +81,9 @@ def test_append_event_preserves_complete_row_missing_trailing_newline(tmp_path: 
     ]
 
 
-def test_repair_crash_before_replace_preserves_original_row(
+def test_append_event_succeeds_when_repair_replace_fails(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: MonkeyPatch,
 ) -> None:
     data_path = tmp_path / "events.jsonl"
     lock_path = tmp_path / "events.lock"
@@ -93,13 +97,12 @@ def test_repair_crash_before_replace_preserves_original_row(
 
     monkeypatch.setattr(platform_atomic.os, "replace", _abort_before_replace)
 
-    with pytest.raises(OSError, match="simulated crash"):
-        append_event(data_path, lock_path, _Event(id=2, kind="new"))
+    append_event(data_path, lock_path, _Event(id=2, kind="new"))
 
-    assert data_path.read_bytes() == original
-    assert read_events(data_path, _Event.model_validate) == [_Event(id=1, kind="complete")]
+    assert data_path.read_bytes() == original + b'{"id":2,"kind":"new"}\n'
 
 
+@posix_only
 def test_legacy_inplace_repair_can_fabricate_hybrid_event(tmp_path: Path) -> None:
     data_path = tmp_path / "events.jsonl"
     prefix_line = '{"id":1,"kind":"start"}\n'
@@ -135,6 +138,7 @@ def test_legacy_inplace_repair_can_fabricate_hybrid_event(tmp_path: Path) -> Non
     assert 2 in parsed_ids
 
 
+@posix_only
 def test_append_event_repair_does_not_fabricate_hybrid_event(tmp_path: Path) -> None:
     data_path = tmp_path / "events.jsonl"
     lock_path = tmp_path / "events.lock"
