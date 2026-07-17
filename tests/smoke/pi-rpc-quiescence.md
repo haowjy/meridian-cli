@@ -244,10 +244,11 @@ uv run meridian spawn --harness pi -m <pi-model> --timeout 0.05 \
 ```
 
 Expect the session to remain active only until the roughly three-second absolute
-ceiling, then terminal status `timed_out`. Terminal publication does not wait for
-descendant/process cleanup. Cleanup continues asynchronously and best-effort; detached
-jobs remain user-owned. Without `--timeout` or `MERIDIAN_TIMEOUT`, Pi has no equivalent
-total wall-clock ceiling while legitimate descendant waves continue.
+ceiling, then terminal status `timed_out`. Visible terminal publication may lag by
+roughly six seconds while Pi synchronously completes abort grace and process cleanup;
+making that cleanup post-publication is tracked in #431. Detached jobs remain user-owned.
+Without `--timeout` or `MERIDIAN_TIMEOUT`, Pi has no equivalent total wall-clock ceiling
+while legitimate descendant waves continue.
 
 ---
 

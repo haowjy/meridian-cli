@@ -38,6 +38,7 @@ from meridian.lib.state.artifact_store import LocalStore
 from meridian.lib.state.paths import resolve_spawn_log_dir
 from meridian.lib.state.spawn_signals import write_spawn_signal
 from tests.support.fakes import FakeClock
+from tests.support.pi import FakePiConnection, pi_event
 from tests.support.pi_extensions import configure_pi_extension_projection
 
 streaming_runner_module = importlib.import_module("meridian.lib.launch.streaming_runner")
@@ -519,6 +520,34 @@ class _EndMonotonicFailsClock(FakeClock):
         if self._monotonic_reads >= 2:
             raise RuntimeError("end monotonic unavailable")
         return super().monotonic()
+
+
+class _TimeoutAbortPiConnection(FakePiConnection):
+    """Idle Pi fake whose synchronous stop publishes the induced abort frame."""
+
+    def __init__(self) -> None:
+        super().__init__([])
+        self._stopping = asyncio.Event()
+
+    @property
+    def subprocess_pid(self) -> None:
+        return None
+
+    async def stop(
+        self,
+        *,
+        reason: str | None = None,
+        progress: StopProgressCallback | None = None,
+    ) -> StopResult:
+        self._stopping.set()
+        return await super().stop(reason=reason, progress=progress)
+
+    async def events(self):  # type: ignore[no-untyped-def]
+        await self._stopping.wait()
+        yield pi_event(
+            "agent_end",
+            {"messages": [{"role": "assistant", "stopReason": "aborted"}]},
+        )
 
 
 

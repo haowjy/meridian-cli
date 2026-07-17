@@ -9,12 +9,17 @@ from pathlib import Path
 
 import pytest
 
+from meridian.lib.config.settings import load_config
 from meridian.lib.core.domain import Spawn
 from meridian.lib.core.execution_policy import ResolvedExecutionPolicy
 from meridian.lib.core.types import HarnessId, ModelId, SpawnId, TransportId
 from meridian.lib.harness.connections.base import HarnessEvent
 from meridian.lib.harness.registry import HarnessRegistry
+from meridian.lib.launch import bundle_adapter
 from meridian.lib.launch.request import RetryPolicy
+from meridian.lib.ops.runtime import build_runtime_from_root_and_config
+from meridian.lib.ops.spawn.models import SpawnCreateInput
+from meridian.lib.ops.spawn.prepare import build_create_payload
 from meridian.lib.state import spawn_store
 from meridian.lib.state.artifact_store import LocalStore
 from meridian.lib.state.paths import resolve_project_runtime_root
@@ -28,11 +33,101 @@ from tests.integration.launch.streaming_runner_support import (
     _ResidentDeadlineConnection,
     _ResidentRearmRetryConnection,
     _ScriptedRetryOpenCodeConnection,
+    _TimeoutAbortPiConnection,
     streaming_runner_module,
 )
 from tests.support.fakes import FakeClock, FakeHeartbeat
+from tests.support.launch import FakeBundleResult
 
 _pi_extension_projection_fixture = _pi_extension_projection_fixture
+
+
+@pytest.mark.parametrize("timeout_source", ["cli", "env"])
+@pytest.mark.asyncio
+async def test_execute_with_streaming_attempt_timeout_survives_pi_abort(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    timeout_source: str,
+) -> None:
+    runtime_root = resolve_project_runtime_root(tmp_path)
+    artifacts = LocalStore(root_dir=tmp_path / ".artifacts")
+    registry = HarnessRegistry.with_defaults()
+    monkeypatch.setattr(spawn_manager_module, "ControlSocketServer", _FakeControlSocketServer)
+    monkeypatch.setattr(
+        "meridian.lib.harness.connections.get_connection_class",
+        lambda _harness_id, _transport_id=TransportId.STREAMING: _TimeoutAbortPiConnection,
+    )
+    monkeypatch.setattr(
+        bundle_adapter,
+        "request_and_resolve",
+        lambda request, *, harness_registry: FakeBundleResult(
+            model="pi-test-model",
+            model_token="pi-test-model",
+            harness=HarnessId.PI,
+            harness_model="pi-test-model",
+            execution_policy=ResolvedExecutionPolicy(),
+            provenance={"model_source": "bundle", "harness_source": "cli"},
+        ),
+    )
+    (tmp_path / "mars.toml").write_text(
+        '[settings]\ntargets = [".claude", ".codex", ".opencode"]\n',
+        encoding="utf-8",
+    )
+    monkeypatch.delenv("MERIDIAN_TIMEOUT", raising=False)
+    if timeout_source == "env":
+        monkeypatch.setenv("MERIDIAN_TIMEOUT", "0.001")
+    else:
+        monkeypatch.setenv("MERIDIAN_TIMEOUT", "0.002")
+    request = build_create_payload(
+        SpawnCreateInput(
+            prompt="wait forever",
+            model="pi-test-model",
+            harness=HarnessId.PI.value,
+            project_root=tmp_path.as_posix(),
+            timeout=0.001 if timeout_source == "cli" else None,
+        ),
+        runtime=build_runtime_from_root_and_config(tmp_path, load_config(tmp_path)),
+    ).request
+    assert request.execution_policy.timeout == 0.001
+    assert request.launch_policy_snapshot is not None
+    assert request.launch_policy_snapshot.execution_policy.timeout == 0.001
+
+    run = Spawn(
+        spawn_id=SpawnId("r-attempt-timeout-pi-abort"),
+        prompt="wait forever",
+        model=ModelId("pi-test-model"),
+        status="queued",
+    )
+    spawn_store.start_spawn(
+        runtime_root,
+        chat_id="test-chat-attempt-timeout-pi-abort",
+        model=str(run.model),
+        agent="",
+        harness=HarnessId.PI.value,
+        kind="streaming",
+        prompt=run.prompt,
+        spawn_id=run.spawn_id,
+        launch_mode="foreground",
+        status="queued",
+    )
+    exit_code = await asyncio.wait_for(
+        _execute_with_context(
+            run,
+            request=request,
+            project_root=tmp_path,
+            runtime_root=runtime_root,
+            artifacts=artifacts,
+            registry=registry,
+        ),
+        timeout=3.0,
+    )
+
+    row = spawn_store.get_spawn(runtime_root, run.spawn_id)
+    assert exit_code == 3
+    assert row is not None
+    assert row.status == "timed_out"
+    assert row.exit_code == 3
+    assert row.error == "timeout"
 
 @pytest.mark.asyncio
 async def test_execute_with_streaming_finalizes_resident_deadline_without_retry(

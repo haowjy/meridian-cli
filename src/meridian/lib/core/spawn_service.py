@@ -59,6 +59,7 @@ from meridian.lib.state.spawn.model import APP_LAUNCH_MODE, LaunchMode, SpawnOri
 from meridian.lib.state.spawn_report import spawn_report_has_durable_completion
 from meridian.lib.state.timestamps import iso_timestamp_to_epoch
 from meridian.lib.streaming.signal_canceller import CancelOutcome as SignalCancelOutcome
+from meridian.lib.utils.time import minutes_to_seconds
 
 if TYPE_CHECKING:
     from meridian.lib.core.lifecycle import TerminalStatus
@@ -93,12 +94,12 @@ def _config_snapshot_env(config_snapshot: dict[str, object]) -> dict[str, str]:
 def _resolve_explicit_timeout_seconds(resolved_request: object) -> float | None:
     """Extract explicit timeout seconds from resolved request-like objects."""
 
-    budget = getattr(resolved_request, "budget", None)
-    timeout_secs = getattr(budget, "timeout_secs", None)
-    if timeout_secs is None:
+    execution_policy = getattr(resolved_request, "execution_policy", None)
+    timeout_minutes = getattr(execution_policy, "timeout", None)
+    if timeout_minutes is None:
         return None
     try:
-        return float(timeout_secs)
+        return minutes_to_seconds(float(timeout_minutes))
     except (TypeError, ValueError):
         return None
 

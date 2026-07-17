@@ -26,6 +26,12 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Spawn reconciliation completion/cancel precedence now lives behind a shared
   state-layer decision seam instead of a private reaper import. (#322)
 
+### Fixed
+- Unified the attempt timeout on the resolved execution policy so both `--timeout`
+  and `MERIDIAN_TIMEOUT` arm the timer and persist in launch snapshots, and preserved
+  `timed_out` when timer-induced abort cleanup reports cancellation. Both defects
+  predated this release.
+
 ## [0.3.32] - 2026-07-17
 
 ### Added
