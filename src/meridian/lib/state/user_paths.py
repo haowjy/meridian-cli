@@ -6,8 +6,8 @@ import os
 from pathlib import Path
 
 from meridian.lib.platform import IS_WINDOWS, get_home_path
+from meridian.lib.platform.atomic import atomic_write_text
 from meridian.lib.platform.locking import lock_file
-from meridian.lib.state.atomic import atomic_write_text
 from meridian.lib.state.wordgen import generate_project_id
 
 

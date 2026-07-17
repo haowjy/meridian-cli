@@ -128,4 +128,16 @@ def atomic_replace(
         tmp_path.unlink(missing_ok=True)
 
 
-__all__ = ["AtomicReplaceDurabilityError", "atomic_replace", "fsync_directory"]
+def atomic_write_text(path: Path, content: str, *, durable: bool = True) -> None:
+    """Atomically replace user-owned text while preserving an existing mode."""
+
+    with atomic_replace(path, durable=durable) as handle:
+        handle.write(content)
+
+
+__all__ = [
+    "AtomicReplaceDurabilityError",
+    "atomic_replace",
+    "atomic_write_text",
+    "fsync_directory",
+]

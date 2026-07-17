@@ -10,7 +10,7 @@ from pydantic import BaseModel, ConfigDict
 
 from meridian.lib.core.util import FormatContext
 from meridian.lib.ops.runtime import async_from_sync, resolve_project_authority
-from meridian.lib.state.atomic import atomic_write_text
+from meridian.lib.platform.atomic import atomic_write_text
 
 _WORKSPACE_TEMPLATE = """# Workspace topology — local path overrides and additions.
 # Override committed [workspace] paths for your local checkout.

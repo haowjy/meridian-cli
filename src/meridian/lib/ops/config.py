@@ -42,7 +42,7 @@ from meridian.lib.ops.runtime import (
     async_from_sync,
     resolve_runtime_authority_for_read,
 )
-from meridian.lib.state.atomic import atomic_write_text
+from meridian.lib.platform.atomic import atomic_write_text
 from meridian.lib.state.paths import (
     RuntimePaths,
     ensure_gitignore,
