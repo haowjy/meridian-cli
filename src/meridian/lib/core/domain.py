@@ -1,7 +1,7 @@
 """Core frozen domain models."""
 
 from datetime import UTC, datetime
-from typing import Literal
+from typing import Literal, get_args
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -14,6 +14,17 @@ from meridian.lib.core.util import FormatContext
 SpawnStatus = Literal[
     "queued", "running", "finalizing", "succeeded", "failed", "cancelled", "timed_out"
 ]
+
+# Lifecycle order is part of this authority: active states precede terminal states.
+# Consumers derive their sets from these members rather than repeating the vocabulary.
+_ACTIVE_SPAWN_STATUS_COUNT = 3
+ALL_SPAWN_STATUSES: frozenset[SpawnStatus] = frozenset(get_args(SpawnStatus))
+ACTIVE_SPAWN_STATUSES: frozenset[SpawnStatus] = frozenset(
+    get_args(SpawnStatus)[:_ACTIVE_SPAWN_STATUS_COUNT]
+)
+TERMINAL_SPAWN_STATUSES: frozenset[SpawnStatus] = (
+    ALL_SPAWN_STATUSES - ACTIVE_SPAWN_STATUSES
+)
 
 
 class TokenUsage(BaseModel):

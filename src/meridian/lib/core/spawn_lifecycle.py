@@ -12,7 +12,12 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import TYPE_CHECKING, cast
 
-from meridian.lib.core.domain import SpawnStatus
+from meridian.lib.core.domain import (
+    ACTIVE_SPAWN_STATUSES,
+    ALL_SPAWN_STATUSES,
+    TERMINAL_SPAWN_STATUSES,
+    SpawnStatus,
+)
 from meridian.lib.core.spawn_start import SpawnStartMetadata
 
 if TYPE_CHECKING:
@@ -49,14 +54,6 @@ class SpawnReservation:
     started_at: str | None = None
     clock: Clock | None = None
 
-# TODO(status-authority): SpawnStatus Literal in core/domain.py duplicates these sets.
-ALL_SPAWN_STATUSES: frozenset[str] = frozenset(
-    {"queued", "running", "finalizing", "succeeded", "failed", "cancelled", "timed_out"}
-)
-ACTIVE_SPAWN_STATUSES: frozenset[str] = frozenset({"queued", "running", "finalizing"})
-TERMINAL_SPAWN_STATUSES: frozenset[str] = frozenset(
-    {"succeeded", "failed", "cancelled", "timed_out"}
-)
 FAILURE_SPAWN_STATUSES: frozenset[str] = frozenset({"failed", "timed_out"})
 
 _ALLOWED_TRANSITIONS: dict[str, frozenset[str]] = {
