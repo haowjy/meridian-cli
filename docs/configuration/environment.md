@@ -33,7 +33,7 @@ resolved logical task cwd; it is not inherited.
 | `MERIDIAN_TASK_DIR` | Inherited source-edit directory; set/clear via `meridian task-dir` |
 | `MERIDIAN_TASK_CWD` | Bind-time alias for the child's resolved task cwd (not inherited) |
 | `MERIDIAN_CONFIG` | User config overlay path |
-| `MERIDIAN_HOME` | Override user state root (default `~/.meridian/` on Unix/macOS, `%LOCALAPPDATA%\meridian\` on Windows) |
+| `MERIDIAN_HOME` | Override user state root (default `~/.meridian/`) |
 | `MERIDIAN_RUNTIME_DIR` | Override the runtime state root. Absolute path = use as-is; relative path = resolve relative to repo root. Repo-owned default paths (`kb/`, `work/`, `archive/work/`) always stay in `.meridian/` regardless of this setting. |
 | `MERIDIAN_FS_DIR` | Resolved shared filesystem path for the current repo state root |
 | `MERIDIAN_ACTIVE_WORK_ID` | Active attached work item slug, when one exists |
@@ -56,6 +56,7 @@ These override spawn-level runtime policy. They sit above project config but bel
 | `MERIDIAN_SANDBOX` | Sandbox level |
 | `MERIDIAN_AUTOCOMPACT` | Context compaction threshold (int 1–100) |
 | `MERIDIAN_TIMEOUT` | Spawn timeout in minutes (float > 0) |
+| `MERIDIAN_RESIDENT_REARM_BUDGET` | Maximum resident deadline extensions (int >= 0; unset is unlimited) |
 
 ## Config Overrides
 
@@ -64,6 +65,7 @@ These override spawn-level runtime policy. They sit above project config but bel
 - `MERIDIAN_KILL_GRACE_MINUTES`
 - `MERIDIAN_GUARDRAIL_TIMEOUT_MINUTES`
 - `MERIDIAN_WAIT_TIMEOUT_MINUTES`
+- `MERIDIAN_RESIDENT_REARM_BUDGET`
 - `MERIDIAN_HARNESS_MODEL_CLAUDE`
 - `MERIDIAN_HARNESS_MODEL_CODEX`
 - `MERIDIAN_HARNESS_MODEL_OPENCODE`

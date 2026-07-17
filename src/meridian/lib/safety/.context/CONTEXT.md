@@ -40,7 +40,8 @@ Injected env vars available to guardrail scripts:
 - `MERIDIAN_GUARDRAIL_REPORT_PATH` — optional report path
 
 **Command resolution:**
-- Windows: `.cmd`/`.bat` → `cmd.exe /d /c`; `.ps1` → `powershell.exe -NoProfile -NonInteractive -File`
+- Legacy native-Windows branch (untested): `.cmd`/`.bat` → `cmd.exe /d /c`;
+  `.ps1` → `powershell.exe -NoProfile -NonInteractive -File`
 - POSIX: executable bit → direct; else `bash <script>`; fallback on `OSError` → retry with `bash`
 
 Exit code conventions: non-zero → `GuardrailFailure`; timeout → 124; `OSError` → 127.

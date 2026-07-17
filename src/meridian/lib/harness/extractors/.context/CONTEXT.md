@@ -57,15 +57,15 @@ files and matches against `child_cwd`:
 - **Pi**: scans `~/.meridian/meridian-pi/sessions/` for `*.jsonl` files whose first line
   is a `session` event with matching `cwd`. The Pi session directory is configurable via
   `PI_CODING_AGENT_SESSION_DIR` env var. Session files use `--` as path separator
-  (e.g., `home--jimyao--gitrepos--myproject--.jsonl`). On Windows, cwd matching is
-  case-insensitive.
+  (e.g., `home--jimyao--gitrepos--myproject--.jsonl`). The legacy native-Windows
+  branch uses case-insensitive cwd matching and is untested.
 
 ### Pi Session CWD Encoding
 
 Pi session files encode the cwd as a slugified path: `/` replaced with `--`, with a
 trailing `--`. The extractor normalizes both the launch cwd and the file-derived cwd
 through `_safe_resolve()` → `replace("\\", "/")` → `rstrip("/")` before comparison.
-This ensures path identity comparison works on both POSIX and Windows.
+This keeps persisted path identity comparisons separator-stable.
 
 This path is inherently racy — it relies on the harness having written files by the
 time this runs. The 15-minute window for OpenCode and the mtime-sorted scan for Claude/

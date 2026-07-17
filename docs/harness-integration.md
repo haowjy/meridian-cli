@@ -406,13 +406,8 @@ for structured data — it's diagnostic only.
 **cwd**: Launch in `config.task_cwd` (the agent's working directory) when provided,
 falling back to `config.control_root`.
 
-**Process cancellation**: On `send_cancel()`, send SIGINT (POSIX) or
-`process.terminate()` (Windows). Wait up to 5 seconds for graceful shutdown,
-then SIGKILL/`process.kill()`.
-
-**Windows**: Use `asyncio.create_subprocess_exec()` with `PIPE` for stdin/stdout.
-On Windows, `signal.SIGINT` is not supported — use `process.terminate()` instead.
-Check `IS_WINDOWS` from `meridian.lib.platform`.
+**Process cancellation**: On `send_cancel()`, send SIGINT. Wait up to 5 seconds
+for graceful shutdown, then SIGKILL/`process.kill()`.
 
 **Env propagation**: Inherit parent env, apply adapter env overrides, block
 `MERIDIAN_ACTIVE_WORK_ID` and `MERIDIAN_ACTIVE_WORK_DIR` from child scope.

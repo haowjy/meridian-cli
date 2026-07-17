@@ -50,6 +50,36 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Test suite no longer false-fails when external tools (VS Code) touch the
   shared `.git/config` during worktree operations.
 
+## [0.3.33] - 2026-07-17
+
+### Added
+- Resident spawns can opt into a rearm-count budget through CLI, environment,
+  agent profile, or config; granted rearm counts are persisted for observability,
+  and budget exhaustion reports a distinct timeout outcome. (#373)
+
+### Changed
+- Resident rearm budgets now apply across all retry attempts for a spawn instead of
+  resetting for each fresh streaming drain coordinator. (#373)
+- Re-tiered and updated the Pi RPC quiescence smoke guide for the current drain,
+  timeout, terminal-publication, and asynchronous teardown model. (#241)
+- Documented Pi descendant-quiescence completion as intentionally unbounded by default
+  and `--timeout` / `MERIDIAN_TIMEOUT` as the shared opt-in absolute ceiling for Pi
+  and resident profiles. (#374)
+- Consolidated Pi drain characterization behind one behavioral scenario builder and a
+  compact timeout-priority table. (#372)
+- Split the neutral drain teardown contract from Pi cleanup policy and moved resident
+  descendant cancellation wiring into the drain-plan composition root. (#370)
+- Removed completed streaming-migration tracker/ledger façades and coordinator
+  mutation ports; completion tests now establish state through events and signals. (#371)
+- Spawn reconciliation completion/cancel precedence now lives behind a shared
+  state-layer decision seam instead of a private reaper import. (#322)
+
+### Fixed
+- Unified the attempt timeout on the resolved execution policy so both `--timeout`
+  and `MERIDIAN_TIMEOUT` arm the timer and persist in launch snapshots, and preserved
+  `timed_out` when timer-induced abort cleanup reports cancellation. Both defects
+  predated this release.
+
 ## [0.3.32] - 2026-07-17
 
 ### Added
@@ -80,6 +110,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   candidate.
 
 ### Fixed
+- Streaming history-phase assertions now wait for post-publication telemetry with a
+  bounded deadline, eliminating the terminal-publication race from issue #369.
 - Spawn rows now appear only after their initial state and prompt are durably staged.
 - Retention pruning no longer deletes in-progress or newly published spawn rows.
 - Explicit spawn IDs now reject path-unsafe values while allowing symbolic IDs.

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, field_validator
 
 from meridian.lib.core.overrides import (
     AutocompactPctValue,
@@ -29,6 +29,16 @@ class ResolvedExecutionPolicy(BaseModel):
     autocompact: AutocompactValue = None
     autocompact_pct: AutocompactPctValue = None
     timeout: float | None = None
+    resident_rearm_budget: int | None = None
+
+    @field_validator("resident_rearm_budget")
+    @classmethod
+    def _validate_resident_rearm_budget(cls, value: int | None) -> int | None:
+        if value is None:
+            return None
+        if isinstance(value, bool) or value < 0:
+            raise ValueError(f"expected int >= 0, got {value!r}")
+        return value
 
     def as_overrides(
         self,
@@ -48,6 +58,7 @@ class ResolvedExecutionPolicy(BaseModel):
             "autocompact": self.autocompact,
             "autocompact_pct": self.autocompact_pct,
             "timeout": self.timeout,
+            "resident_rearm_budget": self.resident_rearm_budget,
         }
         if allowed_fields is not None:
             values = {

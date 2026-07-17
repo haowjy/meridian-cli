@@ -6,8 +6,8 @@ generic streaming runtime remains in [CONTEXT.md](CONTEXT.md).
 ## Pi RPC Quiescence Drain
 
 Pi spawned sessions complete by quiescence, not by process exit. `SpawnManager` still
-owns the generic event loop (persist → observe → fan-out). `PiDrainCoordinator` is a
-thin compatibility wrapper around the shared `CompletionCoordinator`. `pi_drain.py`
+owns the generic event loop (persist → observe → fan-out). `PiDrainCoordinator` adapts
+the Pi collaborators to the shared `CompletionCoordinator`. `pi_drain.py`
 owns Pi evidence and cleanup collaborators; `pi_completion_profile.py` owns Pi
 precedence, phases, deadlines, nudges, and stream-exit policy.
 `drain_plan_factory.py` is the composition root for the full Pi drain plan.
@@ -84,6 +84,15 @@ cleanup or timeout-phase emission failures are diagnostic and do not replace
 that outcome or restart waiting-phase emission. Startup reaper reconciliation
 recovers cleanup interrupted by a crash.
 
+These child-wave and notification windows are anchored when their corresponding wave
+or notification begins; ordinary descendant disk evidence does not slide them. Pi has
+no default total wall-clock ceiling: descendant quiescence may require successive waves,
+each with its own anchored window, and that unbounded total duration is intentional.
+Operators who need an absolute bound use the shared `--timeout` /
+`MERIDIAN_TIMEOUT` outer attempt timer, which is non-renewing and defaults to `None`.
+Resident completion uses the same outer ceiling but otherwise follows its separate
+signal-gated deadline/rearm model documented in [AGENTS.md](../AGENTS.md).
+
 ### Micro-Drain
 
 When a terminal event arrives but quiescence is not yet confirmed, `PiCompletionProfile`
@@ -124,8 +133,8 @@ policy:
 - **POSIX**: iterates captured process group IDs, sends `SIGTERM` via `os.killpg()`,
   waits 250ms, confirms liveness with `os.killpg(pgid, 0)`, then sends `SIGKILL` if
   still alive
-- **Windows/fallback**: uses `terminate_tree_sync()` from
-  `meridian.lib.platform.process_scope.fallback`
+- **Legacy native-Windows branch (untested) / fallback**: uses
+  `terminate_tree_sync()` from `meridian.lib.platform.process_scope.fallback`
 
 If no process metadata is available, a warning is logged but no cleanup is attempted —
 the processes are orphaned. Canonical persisted-descendant cancellation still runs first,

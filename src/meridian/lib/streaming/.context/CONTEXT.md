@@ -40,7 +40,8 @@ The implementation is split by responsibility:
 - `spawn_dispatch.py` — connection creation/start dispatch
 - `spawn_drain_loop.py` — drain loop, persistence/observer/fan-out ordering, outcome priority
 - `drain_coordinator.py` — `DrainPlan` plus the narrow `DrainCoordinator` seam
-- `drain_teardown.py` — plan-owned async connection-stop and cleanup-phase policy
+- `drain_teardown.py` — harness-neutral plan-owned async connection-stop contract
+- `pi_drain_teardown.py` — Pi cleanup-phase connection-stop policy
 - `spawn_session.py` — `SpawnSession` and `DrainOutcome` carriers
 - `resident_drain.py` — resident-backend descendant waiting and done-nudge model
 - `pi_drain.py` — Pi spawned-session quiescence coordinator
@@ -82,6 +83,10 @@ capabilities and delegates to it. Codex/OpenCode resident backends get a
 wakes; plain streaming harnesses intentionally run with
 `DrainPlan(coordinator=None)`. There is no public no-op coordinator class — absence
 of a coordinator is the plain path.
+
+The factory also owns application-service construction for descendant cancellation
+and injects that capability into both resident and Pi cleanup. Harness-policy modules
+must remain consumers of the capability rather than importing bootstrap builders.
 
 `DrainCoordinator` stays narrow: it observes events, handles terminal events,
 provides timeouts, classifies stream close, and handles stream exit. Constant
@@ -146,13 +151,15 @@ Inject flows through the control socket:
 
 ```
 meridian spawn inject <id> --message "..."
-  → control.sock (POSIX) or control.sock.port (Windows)
+  → control.sock
   → ControlSocketServer._handle_client()
   → SpawnManager.inject()
     → ControlActionCoordinator.run_action()  — serializes concurrent actions
     → _record_inbound()                       — appends to inbound.jsonl
     → connection.send_user_message(message)
 ```
+
+The legacy native-Windows branch uses `control.sock.port` and is untested.
 
 All control actions (inject, interrupt, permission reply, user input reply) are
 serialized through `ControlActionCoordinator`. Concurrent actions queue behind it —

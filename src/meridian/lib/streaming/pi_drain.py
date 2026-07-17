@@ -380,7 +380,7 @@ class PiCompletionCleanup:
 
 
 class PiDrainCoordinator:
-    """Thin compatibility wrapper constructing the shared completion coordinator."""
+    """Construct and adapt Pi collaborators to the drain coordinator protocol."""
 
     def __init__(
         self,
@@ -388,15 +388,10 @@ class PiDrainCoordinator:
         coordinator: CompletionCoordinator,
         evidence: PiCompletionEvidence,
         profile: PiCompletionProfile,
-        cleanup: PiCompletionCleanup,
     ) -> None:
         self._coordinator = coordinator
         self._evidence = evidence
         self._profile = profile
-        self._cleanup = cleanup
-        self._post_publication_terminate_children: TerminatePiChildren | None = None
-        self.quiescence_tracker = evidence.quiescence_tracker
-        self.tracker = evidence.tracker
 
     @classmethod
     def for_connection(
@@ -462,48 +457,7 @@ class PiDrainCoordinator:
             coordinator=coordinator,
             evidence=evidence,
             profile=profile,
-            cleanup=cleanup,
         )
-
-    @property
-    def done_nudge_idle_delay_seconds(self) -> float:
-        return self._profile.done_nudge_idle_delay_seconds
-
-    @done_nudge_idle_delay_seconds.setter
-    def done_nudge_idle_delay_seconds(self, value: float) -> None:
-        self._profile.done_nudge_idle_delay_seconds = value
-
-    @property
-    def done_nudge_interval_seconds(self) -> float:
-        return self._profile.done_nudge_interval_seconds
-
-    @done_nudge_interval_seconds.setter
-    def done_nudge_interval_seconds(self, value: float) -> None:
-        self._profile.done_nudge_interval_seconds = value
-
-    @property
-    def last_successful_terminal(self) -> TerminalEventOutcome | None:
-        return self._profile.last_successful_terminal
-
-    @property
-    def quiescence_candidate(self) -> TerminalEventOutcome | None:
-        return self._coordinator.pending_outcome if self._profile.micro_drain_active else None
-
-    @property
-    def pending_outcome(self) -> TerminalEventOutcome | None:
-        return self._coordinator.pending_outcome
-
-    @pending_outcome.setter
-    def pending_outcome(self, value: TerminalEventOutcome | None) -> None:
-        self._coordinator.pending_outcome = value
-
-    @property
-    def deadline_monotonic(self) -> float | None:
-        return self._coordinator.deadline_monotonic
-
-    @deadline_monotonic.setter
-    def deadline_monotonic(self, value: float | None) -> None:
-        self._coordinator.deadline_monotonic = value
 
     async def start(self) -> None:
         await self._coordinator.start()
@@ -534,29 +488,10 @@ class PiDrainCoordinator:
         self._profile.observe_terminal_event(event, outcome)
         return await self._coordinator.handle_terminal_event(event, outcome, action)
 
-    async def handle_timeout(
-        self,
-        terminate_children: TerminatePiChildren | None = None,
-    ) -> DrainLoopDecision:
+    async def handle_timeout(self) -> DrainLoopDecision:
         if not self._profile.quiescence_enabled:
             raise TimeoutError
-        prior_callback = self._cleanup.terminate_children
-        if terminate_children is not None:
-            self._cleanup.terminate_children = terminate_children
-        try:
-            had_pending_cleanup = (
-                self._coordinator.has_pending_post_publication_cleanup()
-            )
-            decision = await self._coordinator.handle_timeout()
-            if (
-                terminate_children is not None
-                and not had_pending_cleanup
-                and self._coordinator.has_pending_post_publication_cleanup()
-            ):
-                self._post_publication_terminate_children = terminate_children
-            return decision
-        finally:
-            self._cleanup.terminate_children = prior_callback
+        return await self._coordinator.handle_timeout()
 
     async def after_event(self) -> DrainLoopDecision:
         return await self._coordinator.after_event()
@@ -588,14 +523,7 @@ class PiDrainCoordinator:
         self,
         request: CompletionCleanupRequest,
     ) -> None:
-        prior_callback = self._cleanup.terminate_children
-        if self._post_publication_terminate_children is not None:
-            self._cleanup.terminate_children = self._post_publication_terminate_children
-        try:
-            await self._coordinator.execute_post_publication_cleanup(request)
-        finally:
-            self._cleanup.terminate_children = prior_callback
-            self._post_publication_terminate_children = None
+        await self._coordinator.execute_post_publication_cleanup(request)
 
     def after_finalized(
         self,

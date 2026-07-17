@@ -1,8 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from pathlib import Path
 from typing import Any
 
@@ -26,7 +25,12 @@ from meridian.lib.harness.semantics import (
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.safety.permissions import UnsafeNoOpPermissionResolver
 from meridian.lib.state import spawn_store
-from meridian.lib.streaming.drain_policy import TURN_BOUNDARY_EVENT_TYPE, DrainPolicy
+from meridian.lib.state.spawn_signals import write_spawn_signal
+from meridian.lib.streaming.drain_policy import (
+    TURN_BOUNDARY_EVENT_TYPE,
+    DrainAction,
+    DrainPolicy,
+)
 from meridian.lib.streaming.resident_drain import ResidentDrainCoordinator
 from meridian.lib.streaming.spawn_manager import SpawnManager
 from tests.support.fakes import FakeClock
@@ -151,23 +155,47 @@ class FakeResidentConnection(HarnessConnection[ResolvedLaunchSpec]):
         self._resident_backend.status = LivenessDecision.STREAM_STALLED
 
 
-def awaiting_done_coordinator(
+def descendant_cancellation_from_roots(
+    project_root: Path,
+    runtime_root: Path,
+) -> Callable[[SpawnId], Awaitable[set[str]]]:
+    """Build the same late-bound cancellation capability as the composition root."""
+
+    async def _cancel_descendants(root_id: SpawnId) -> set[str]:
+        from meridian.lib.bootstrap.services import (
+            build_spawn_application_service_from_roots,
+        )
+
+        service = build_spawn_application_service_from_roots(project_root, runtime_root)
+        return await service.cancel_descendants(root_id)
+
+    return _cancel_descendants
+
+
+async def awaiting_done_coordinator(
     tmp_path: Path,
     connection: HarnessConnection[Any],
 ) -> ResidentDrainCoordinator:
     resident_backend = connection.resident_backend
     assert resident_backend is not None
     coordinator = ResidentDrainCoordinator.for_connection(
-        project_root=tmp_path,
         runtime_root=tmp_path,
         spawn_id=SpawnId("p1"),
         receiver=connection,
         resident_backend=resident_backend,
         deadline_seconds=30.0,
         poll_seconds=0.01,
+        rearm_budget=None,
+        cancel_descendants=descendant_cancellation_from_roots(tmp_path, tmp_path),
     )
-    coordinator.pending_outcome = TerminalEventOutcome(status="succeeded", exit_code=0)
-    coordinator.deadline_monotonic = time.monotonic() + coordinator.deadline_seconds
+    write_spawn_signal(tmp_path, "p1", "rearm")
+    terminal_event = resident_event(connection.harness_id, "agent_end", {})
+    await coordinator.observe_event(terminal_event, "idle")
+    await coordinator.handle_terminal_event(
+        terminal_event,
+        TerminalEventOutcome(status="succeeded", exit_code=0),
+        DrainAction(terminate=True, emit_turn_boundary=False),
+    )
     return coordinator
 
 
@@ -257,7 +285,7 @@ async def start_manager(
     return manager
 
 
-def coordinator_with_clock(
+async def coordinator_with_clock(
     tmp_path: Path,
     connection: FakeResidentConnection,
     clock: FakeClock,
@@ -266,16 +294,21 @@ def coordinator_with_clock(
     poll_seconds: float = 5.0,
 ) -> ResidentDrainCoordinator:
     coordinator = ResidentDrainCoordinator.for_connection(
-        project_root=tmp_path,
         runtime_root=tmp_path,
         spawn_id=SpawnId("p1"),
         receiver=connection,
         resident_backend=connection.resident_backend,
         deadline_seconds=deadline_seconds,
         poll_seconds=poll_seconds,
+        rearm_budget=None,
+        cancel_descendants=descendant_cancellation_from_roots(tmp_path, tmp_path),
     )
-    coordinator.pending_outcome = TerminalEventOutcome(status="succeeded", exit_code=0)
-    coordinator.deadline_monotonic = clock.monotonic() + deadline_seconds
-    coordinator._set_awaiting_done(True)
+    write_spawn_signal(tmp_path, "p1", "rearm")
+    terminal_event = resident_event(connection.harness_id, "agent_end", {})
+    await coordinator.observe_event(terminal_event, "idle")
+    await coordinator.handle_terminal_event(
+        terminal_event,
+        TerminalEventOutcome(status="succeeded", exit_code=0),
+        DrainAction(terminate=True, emit_turn_boundary=False),
+    )
     return coordinator
-

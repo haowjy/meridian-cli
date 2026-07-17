@@ -76,8 +76,7 @@ Read-only commands (`meridian spawn list`, `meridian config show`, etc.) do not 
 High-churn runtime state lives outside the repo, keyed by project UUID so the repo can be moved or renamed without losing history.
 
 ```text
-~/.meridian/                       # Unix/macOS default (see MERIDIAN_HOME)
-%LOCALAPPDATA%\meridian\           # Windows default
+~/.meridian/                       # Linux/macOS default (see MERIDIAN_HOME)
   projects/
     <uuid>/                        # one dir per project
       sessions.jsonl
@@ -116,6 +115,7 @@ Canonical keys accepted by `meridian config set/get/reset`:
 | `timeouts.guardrail_minutes` | float | Guardrail timeout (minutes) |
 | `timeouts.wait_minutes` | float | Default `spawn wait` timeout (minutes) |
 | `timeouts.pi_child_wave_timeout_seconds` | float | Pi spawn-watch tracked-child wave timeout (seconds; default 300 when unset) |
+| `timeouts.resident_rearm_budget` | int | Maximum resident deadline extensions (nonnegative; unlimited when unset) |
 | `timeouts.pi_task_ping_interval_seconds` | float | Pi background-task ping interval (seconds; extension default when unset) |
 | `harness.claude` | str | Default model for Claude harness |
 | `harness.codex` | str | Default model for Codex harness |
@@ -191,7 +191,7 @@ Workspace config defines filesystem roots projected into harness launches. See
 ## Hooks
 
 Hooks are configured in any Meridian config file. See [hooks.md](hooks.md) for
-schema, event names, builtins, and cross-platform guidance.
+schema, event names, builtins, and shell behavior guidance.
 
 ## Context
 

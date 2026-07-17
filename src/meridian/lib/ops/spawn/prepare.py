@@ -15,7 +15,6 @@ from meridian.lib.launch.context import PreparedLaunchSurface, RuntimeBindings
 from meridian.lib.launch.plan import build_spawn_mars_runtime
 from meridian.lib.launch.reference import parse_template_assignments
 from meridian.lib.launch.request import (
-    ExecutionBudget,
     LaunchArgvIntent,
     RetryPolicy,
     SessionRequest,
@@ -27,7 +26,6 @@ from meridian.lib.launch.resolve import parse_duration_seconds
 from meridian.lib.state.paths import resolve_project_paths
 from meridian.lib.state.session_store import get_session_active_work_id
 from meridian.lib.state.spawn.model import BACKGROUND_LAUNCH_MODE, FOREGROUND_LAUNCH_MODE
-from meridian.lib.utils.time import minutes_to_seconds
 
 from ..runtime import (
     OperationRuntime,
@@ -160,9 +158,6 @@ def build_create_payload(
             caller_cwd=payload.caller_cwd,
         )
         parsed_template_vars = parse_template_assignments(payload.template_vars)
-        timeout_secs = minutes_to_seconds(payload.timeout)
-        kill_grace_secs = minutes_to_seconds(config.kill_grace_minutes) or 0.0
-
         resolved_work_id_hint = launch_resolution.effective_work_id
 
         raw_request = SpawnRequest(
@@ -180,14 +175,12 @@ def build_create_payload(
                 autocompact=payload.autocompact,
                 autocompact_pct=payload.autocompact_pct,
                 effort=payload.effort,
+                timeout=payload.timeout,
+                resident_rearm_budget=payload.resident_rearm_budget,
             ),
             retry=RetryPolicy(
                 max_attempts=max(1, config.max_retries + 1),
                 backoff_secs=config.retry_backoff_seconds,
-            ),
-            budget=ExecutionBudget(
-                timeout_secs=int(timeout_secs) if timeout_secs is not None else None,
-                kill_grace_secs=int(kill_grace_secs),
             ),
             session=SessionRequest(
                 continue_chat_id=payload.session.continue_chat_id,

@@ -284,6 +284,7 @@ _EXECUTION_POLICY_PROVENANCE_KEYS: dict[ExecutionPolicyField, str] = {
     "autocompact": "autocompact_source",
     "autocompact_pct": "autocompact_pct_source",
     "timeout": "timeout_source",
+    "resident_rearm_budget": "resident_rearm_budget_source",
 }
 
 # Routing precedence for the bundle path. Only explicit user overrides are
@@ -497,6 +498,7 @@ def _resolve_policy_from_bundle(surface: SurfacePolicyInput) -> ResolvedLaunchPo
         autocompact=resolved_execution_policy_overrides.autocompact,
         autocompact_pct=resolved_execution_policy_overrides.autocompact_pct,
         timeout=resolved_execution_policy_overrides.timeout,
+        resident_rearm_budget=resolved_execution_policy_overrides.resident_rearm_budget,
     )
 
     resolved_skills = _build_resolved_skills_from_bundle(

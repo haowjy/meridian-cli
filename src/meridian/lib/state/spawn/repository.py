@@ -64,6 +64,7 @@ class StoredSpawnState(BaseModel):
     worker_pid: int | None = None
     runner_pid: int | None = None
     runner_created_at_epoch: float | None = None
+    resident_rearm_count: int = 0
     status: str = "unknown"
     started_at: str | None = None
     last_attempt_exited_at: str | None = None
@@ -138,6 +139,7 @@ def record_to_stored_state(
         worker_pid=record.worker_pid,
         runner_pid=record.runner_pid,
         runner_created_at_epoch=record.runner_created_at_epoch,
+        resident_rearm_count=record.resident_rearm_count,
         status=record.status,
         started_at=record.started_at,
         last_attempt_exited_at=record.last_attempt_exited_at,
@@ -196,6 +198,7 @@ def stored_state_to_record(
         worker_pid=stored.worker_pid,
         runner_pid=stored.runner_pid,
         runner_created_at_epoch=stored.runner_created_at_epoch,
+        resident_rearm_count=stored.resident_rearm_count,
         status=cast('SpawnStatus | Literal["unknown"]', stored.status),
         prompt=prompt,
         started_at=stored.started_at,

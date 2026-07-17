@@ -14,12 +14,31 @@ notification, disk-state, resident-done nudges, and tracked-process cleanup poli
 behind the coordinator/tracker modules instead of growing `SpawnManager`.
 
 `drain_plan_factory.py` is the composition root for plan selection. It owns the
-plain/resident/Pi choice and receives manager capabilities for event emission,
-serialized injection, and application-service descendant cleanup.
+plain/resident/Pi choice and injects manager capabilities for event emission,
+serialized injection, and application-service descendant cleanup into both Pi and
+resident policy. Drain collaborators must not construct application services.
 
 Resident drain selection is capability-driven: a connection participates in the
 resident descendant-wait path only when `connection.resident_backend` is present.
 Do not key resident behavior off harness ids.
+
+## Completion and Absolute Timeout Models
+
+Resident Codex/OpenCode completion uses an absolute deadline per arm. Only an explicit
+`rearm.signal` can grant a new window; ordinary harness or descendant activity cannot.
+Rearm grants are unlimited by default. `--resident-rearm-budget`,
+`MERIDIAN_RESIDENT_REARM_BUDGET`, profile `resident-rearm-budget`, or
+`timeouts.resident_rearm_budget` opts into a maximum number of granted extensions.
+The running grant count is persisted as `state.json`'s `resident_rearm_count`.
+
+Pi completion is descendant-quiescence-driven and intentionally has no default total
+wall-clock bound. Notification and child-wave windows are anchored to each notification
+or child wave, not slid by ordinary activity; successive legitimate waves may establish
+new windows. This unbounded-while-descendants-live behavior is by design.
+
+For either profile, `--timeout` / `MERIDIAN_TIMEOUT` is the shared opt-in absolute
+ceiling. It arms the non-renewing outer attempt timer in `streaming_runner.py` and
+defaults to `None`; resident rearms and Pi waves cannot reset it.
 
 ## Mental Model
 
@@ -94,18 +113,18 @@ means the manager died or the spawn is orphaned.
 - `spawn_drain_loop.py` — event drain, persistence/observer/fan-out ordering, outcome priority
 - `drain_coordinator.py` — `DrainCoordinator` protocol seam for harness-specific completion policy
 - `drain_plan_factory.py` — plain/resident/Pi plan selection and capability wiring
-- `drain_teardown.py` — plan-owned connection stop and Pi cleanup-phase policy
+- `drain_teardown.py` — harness-neutral plan-owned connection-stop contract and default
+- `pi_drain_teardown.py` — Pi connection-stop cleanup-phase policy
 - `completion_contracts.py` — typed evidence, profile, and cleanup collaborator contracts
 - `completion_coordinator.py` — shared candidate/wait/deadline/stabilization state machine
 - `descendant_evidence.py` — shared reconciled, transitive persisted-descendant assessment
 - `spawn_session.py` — `SpawnSession`, `DrainOutcome`
 - `pi_completion_profile.py` — Pi precedence, phases, deadlines, nudges, and stream-exit
   policy
-- `pi_drain.py` — Pi evidence/cleanup collaborators, composition, and thin compatibility
-  wrapper
+- `pi_drain.py` — Pi evidence/cleanup collaborators and drain-protocol adapter
 - `pi_work_ledger.py` — sole mutable owner of Pi-private blockers and PID/PGID cleanup
   handles; exposes immutable categorized snapshots
-- `resident_drain.py` — resident evidence/profile/cleanup adapters and thin construction wrapper
+- `resident_drain.py` — resident evidence/profile/cleanup and drain-protocol adapter
 - `pi_subspawn_tracker.py` — Pi lifecycle parsing/deduplication; feeds the private-work ledger
 - `disk_watcher.py` / `pi_quiescence.py` — Pi-private bash/notification disk
   observation and parent-idle epochs; disk-backed private evidence feeds the ledger

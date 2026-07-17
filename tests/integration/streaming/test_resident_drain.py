@@ -14,6 +14,7 @@ from meridian.lib.harness.semantics import TerminalEventOutcome
 from meridian.lib.ops.spawn.models import SpawnSignalInput
 from meridian.lib.state import spawn_store
 from meridian.lib.state.artifact_store import LocalStore
+from meridian.lib.streaming import descendant_evidence as descendant_evidence_module
 from meridian.lib.streaming.drain_policy import (
     DrainAction,
     PersistentDrainPolicy,
@@ -25,14 +26,15 @@ from tests.support.async_determinism import (
     wait_until,
 )
 from tests.support.fakes import FakeClock
+from tests.support.pi import start_row
 from tests.support.resident_drain import (
     FakeResidentConnection,
     awaiting_done_coordinator,
     coordinator_with_clock,
+    descendant_cancellation_from_roots,
     next_turn_boundary,
     resident_event,
     start_manager,
-    start_row,
 )
 
 
@@ -332,13 +334,14 @@ async def test_terminal_done_fails_closed_when_descendant_evidence_unreadable(
     monkeypatch.setattr(resident_drain_module.time, "monotonic", clock.monotonic)
     connection = FakeResidentConnection(HarnessId.CODEX)
     coordinator = ResidentDrainCoordinator.for_connection(
-        project_root=tmp_path,
         runtime_root=tmp_path,
         spawn_id=SpawnId("p1"),
         receiver=connection,
         resident_backend=connection.resident_backend,
         deadline_seconds=30.0,
         poll_seconds=0.01,
+        rearm_budget=None,
+        cancel_descendants=descendant_cancellation_from_roots(tmp_path, tmp_path),
     )
     write_spawn_signal(tmp_path, "p1", "done")
 
@@ -346,8 +349,8 @@ async def test_terminal_done_fails_closed_when_descendant_evidence_unreadable(
         raise OSError("descendant evidence unavailable")
 
     monkeypatch.setattr(
-        resident_drain_module,
-        "_outstanding_descendant_blockers",
+        descendant_evidence_module.spawn_store,
+        "list_spawns",
         _raise_evidence_read_failure,
     )
     terminal = TerminalEventOutcome(status="succeeded", exit_code=0)
@@ -384,25 +387,27 @@ async def test_terminal_done_completes_when_descendant_evidence_recovers(
     start_row(tmp_path, "p1", HarnessId.CODEX, None)
     connection = FakeResidentConnection(HarnessId.CODEX)
     coordinator = ResidentDrainCoordinator.for_connection(
-        project_root=tmp_path,
         runtime_root=tmp_path,
         spawn_id=SpawnId("p1"),
         receiver=connection,
         resident_backend=connection.resident_backend,
         deadline_seconds=30.0,
         poll_seconds=0.01,
+        rearm_budget=None,
+        cancel_descendants=descendant_cancellation_from_roots(tmp_path, tmp_path),
     )
     evidence_readable = False
+    list_spawns = descendant_evidence_module.spawn_store.list_spawns
 
-    def _read_descendant_blockers(*_args: object) -> tuple[()]:
+    def _read_descendants(runtime_root: Path) -> object:
         if not evidence_readable:
             raise OSError("descendant evidence unavailable")
-        return ()
+        return list_spawns(runtime_root)
 
     monkeypatch.setattr(
-        resident_drain_module,
-        "_outstanding_descendant_blockers",
-        _read_descendant_blockers,
+        descendant_evidence_module.spawn_store,
+        "list_spawns",
+        _read_descendants,
     )
     write_spawn_signal(tmp_path, "p1", "done")
     terminal = TerminalEventOutcome(status="succeeded", exit_code=0)
@@ -743,6 +748,7 @@ async def test_codex_resident_deadline_waits_then_reaps_live_child(
     finally:
         await manager.stop_spawn(spawn_id)
 
+
 @pytest.mark.asyncio
 async def test_codex_resident_finalization_preserves_artifact_report(tmp_path: Path) -> None:
     spawn_id = SpawnId("p1")
@@ -784,8 +790,6 @@ async def test_codex_resident_finalization_preserves_artifact_report(tmp_path: P
         await manager.stop_spawn(spawn_id)
 
 
-
-
 @pytest.mark.asyncio
 async def test_active_followup_turn_stays_resident_honors_done_and_defers_poll(
     tmp_path: Path,
@@ -800,13 +804,14 @@ async def test_active_followup_turn_stays_resident_honors_done_and_defers_poll(
     start_row(tmp_path, "p2", HarnessId.CODEX, "p1")
     connection = FakeResidentConnection(HarnessId.CODEX)
     coordinator = ResidentDrainCoordinator.for_connection(
-        project_root=tmp_path,
         runtime_root=tmp_path,
         spawn_id=SpawnId("p1"),
         receiver=connection,
         resident_backend=connection.resident_backend,
         deadline_seconds=3300.0,
         poll_seconds=5.0,
+        rearm_budget=None,
+        cancel_descendants=descendant_cancellation_from_roots(tmp_path, tmp_path),
     )
     terminal = TerminalEventOutcome(status="succeeded", exit_code=0)
     waiting = await coordinator.handle_terminal_event(
@@ -854,7 +859,7 @@ async def test_active_followup_turn_still_enforces_deadline(
     monkeypatch.setattr(resident_drain_module.time, "monotonic", clock.monotonic)
     start_row(tmp_path, "p1", HarnessId.CODEX, None)
     connection = FakeResidentConnection(HarnessId.CODEX)
-    coordinator = coordinator_with_clock(tmp_path, connection, clock, deadline_seconds=10.0)
+    coordinator = await coordinator_with_clock(tmp_path, connection, clock, deadline_seconds=10.0)
     coordinator.observe_activity_transition("turn_active")
 
     clock.advance(10.0)
@@ -877,7 +882,7 @@ async def test_deadline_returns_timed_out_when_descendant_reap_fails(
     monkeypatch.setattr(resident_drain_module.time, "monotonic", clock.monotonic)
     start_row(tmp_path, "p1", HarnessId.CODEX, None)
     connection = FakeResidentConnection(HarnessId.CODEX)
-    coordinator = coordinator_with_clock(tmp_path, connection, clock, deadline_seconds=10.0)
+    coordinator = await coordinator_with_clock(tmp_path, connection, clock, deadline_seconds=10.0)
     cleanup_calls = 0
 
     class _FailingService:
@@ -924,7 +929,7 @@ async def test_deadline_reap_cancels_active_descendant_cli_spawns(
     start_row(tmp_path, "p3", HarnessId.OPENCODE, "p1")
     spawn_store.finalize_spawn(tmp_path, SpawnId("p3"), "succeeded", 0, origin="runner")
     connection = FakeResidentConnection(HarnessId.CODEX)
-    coordinator = coordinator_with_clock(tmp_path, connection, clock, deadline_seconds=10.0)
+    coordinator = await coordinator_with_clock(tmp_path, connection, clock, deadline_seconds=10.0)
     cancelled: list[str] = []
 
     class _FakeService:
@@ -974,7 +979,7 @@ async def test_done_signal_is_honored_with_tracked_child_outstanding(
     start_row(tmp_path, "p1", HarnessId.OPENCODE, None)
     start_row(tmp_path, "p2", HarnessId.CODEX, "p1")
     connection = FakeResidentConnection(HarnessId.OPENCODE)
-    coordinator = awaiting_done_coordinator(tmp_path, connection)
+    coordinator = await awaiting_done_coordinator(tmp_path, connection)
 
     write_spawn_signal(tmp_path, "p1", "done")
     decision = await coordinator.handle_timeout()

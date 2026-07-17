@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Protocol
 
 from meridian.lib.core.domain import SpawnStatus
 from meridian.lib.core.types import SpawnId
+from meridian.lib.harness.pi_lifecycle_events import pi_notification_id
 from meridian.lib.state.spawn_signals import consume_resident_signals
 from meridian.lib.streaming.completion_contracts import (
     AssessmentTrigger,
@@ -300,7 +301,9 @@ class PiCompletionProfile:
         if outcome.status != "succeeded":
             return
         self.last_successful_terminal = outcome
-        completed_notification_id = self.tracker.resolve_notification_on_terminal(event)
+        completed_notification_id = self._private_work_ledger.resolve_notification_on_terminal(
+            pi_notification_id(event.payload)
+        )
         if completed_notification_id is not None:
             self._emit("continuation_completed", notification_id=completed_notification_id)
         self._refresh_done_nudge_state()

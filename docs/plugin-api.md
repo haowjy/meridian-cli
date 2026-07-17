@@ -56,7 +56,7 @@ from meridian.plugin_api import get_project_home, get_user_home
 # Resolve the per-machine state root for the current project
 runtime_root = get_project_home()
 
-# Resolve the user-level Meridian state root (~/.meridian or %LOCALAPPDATA%\meridian)
+# Resolve the user-level Meridian state root (~/.meridian by default)
 user_root = get_user_home()
 ```
 
@@ -110,7 +110,8 @@ command = "notify-send 'spawn done'"
 event   = "spawn.finalized"
 ```
 
-**Shell behavior:** The `command` string is passed to the platform default shell — `sh -c` on POSIX and `cmd.exe /c` on Windows. Inline bash syntax will not work on Windows. For cross-platform hooks, point `command` at a script file (`.sh`, `.ps1`, or `.bat`) rather than embedding shell syntax inline.
+**Shell behavior:** The `command` string is passed to `sh -c`. For non-trivial
+shell logic, point `command` at a script file rather than embedding it inline.
 
 A Python builtin-style hook using the plugin API (for hooks distributed as packages):
 

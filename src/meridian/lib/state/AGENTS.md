@@ -69,8 +69,8 @@ dependency-neutral `lib/platform/atomic.py`. Never write state files with plain 
   and context work-item metadata use the preserve-mode platform atomic writer instead.
 - `atomic_publish_dir()` — rename a complete same-volume stage into a destination
   that must not exist, then fsync the publication parent.
-- `append_text_line()` — binary mode so `\n` is never translated to `\r\n` on
-  Windows. JSONL byte offsets must be stable across platforms.
+- `append_text_line()` — binary mode so JSONL newline encoding and byte offsets
+  remain stable.
 
 A crash in the middle of a plain `open()` write leaves a partial file; partial
 `state.json` fails Pydantic validation on next read.
@@ -99,7 +99,8 @@ under the spawn lock, persists the terminal outcome through the locked external-
 path, then terminates the claimed, birth-validated scopes. A separate stable cleanup
 lock prevents concurrent reapers from double-signalling; terminal rows retain failed
 claims for the next doctor pass.
-Both paths share the liveness and completion decision rules in `reaper.py`.
+Both paths share liveness rules in `reaper.py` and completion/cancel precedence in
+`reconciliation.py`.
 
 ## Entry Points
 
@@ -112,6 +113,7 @@ Both paths share the liveness and completion decision rules in `reaper.py`.
 - `atomic.py` — atomic write primitives. All state writes use these.
 - `reaper.py` — read-only `reconcile_spawns()` projection and root-only
   `reconcile_active_spawn()` repair.
+- `reconciliation.py` — shared reconciliation decisions and completion/cancel precedence.
 
 ## Spawn Subpackage
 
@@ -136,7 +138,7 @@ then projection lock. Pruning acquires `spawns_flock` first. Pending reaper clea
 claims block deletion so durable cleanup intent is never discarded.
 
 **Don't hardcode `~/.meridian/`** — use `get_user_home()` from `user_paths.py`.
-It handles `MERIDIAN_HOME`, Windows `%LOCALAPPDATA%`, and POSIX `~` correctly.
+It honors `MERIDIAN_HOME` and centralizes home resolution.
 
 ## Depth
 

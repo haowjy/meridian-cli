@@ -160,9 +160,8 @@ lock_split_brain true    # holder kept the old inode locked; second process lock
 Three divergent lock implementations exist; `session_store.py:307-343` privately
 implements the correct fstat-vs-stat revalidation loop, proving the codebase
 already pays for the fix. Corrected remedy (both panels): revalidation alone is
-insufficient and "only unlink while held" is not portable to Windows — give
-locks stable identities outside destructible directories (or never unlink lock
-files), then consolidate all three implementations into one parameterized
+insufficient — give locks stable identities outside destructible directories (or
+never unlink lock files), then consolidate all three implementations into one parameterized
 primitive preserving plugin timeout/shared-mode semantics. Deleting a lock file
 then degrades to a retry instead of a mutual-exclusion breach, regardless of
 caller discipline. The atomic-write half of the cluster ([48]/[65]/[66]) is the

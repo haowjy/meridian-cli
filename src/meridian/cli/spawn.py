@@ -198,6 +198,7 @@ def _shared_launch_input_kwargs(
     background: bool,
     project_root: str | None,
     timeout: float | None,
+    resident_rearm_budget: int | None,
     approval: str | None,
     autocompact: int | None,
     autocompact_pct: int | None,
@@ -218,6 +219,7 @@ def _shared_launch_input_kwargs(
         "background": background,
         "project_root": project_root,
         "timeout": timeout,
+        "resident_rearm_budget": resident_rearm_budget,
         "approval": approval,
         "autocompact": autocompact,
         "autocompact_pct": autocompact_pct,
@@ -407,6 +409,14 @@ def _spawn_create(
             help="Maximum runtime in minutes before spawn timeout.",
         ),
     ] = None,
+    resident_rearm_budget: Annotated[
+        int | None,
+        Parameter(
+            name="--resident-rearm-budget",
+            group=ADVANCED_PARAMS,
+            help="Maximum resident deadline extensions; unlimited when omitted.",
+        ),
+    ] = None,
     approval: Annotated[
         str | None,
         Parameter(
@@ -565,6 +575,7 @@ def _spawn_create(
         background=background,
         project_root=None,
         timeout=timeout,
+        resident_rearm_budget=resident_rearm_budget,
         approval=resolved_approval,
         autocompact=autocompact,
         autocompact_pct=autocompact_pct,

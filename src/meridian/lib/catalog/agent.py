@@ -28,6 +28,7 @@ class AgentProfile(BaseModel):
     subagents: tuple[str, ...] = ()
     meridian_capabilities: MeridianCapabilities | None = None
     model_invocable: bool = True
+    resident_rearm_budget: int | None = None
     body: str
     path: Path
     raw_content: str
@@ -70,6 +71,7 @@ def parse_agent_profile(path: Path) -> AgentProfile:
     description_value = frontmatter.get("description")
     mode_value = frontmatter.get("mode")
     model_invocable_value = frontmatter.get("model-invocable")
+    resident_rearm_budget_value = frontmatter.get("resident-rearm-budget")
 
     profile_name = str(name_value).strip() if name_value is not None else path.stem
     model_invocable = (
@@ -89,6 +91,12 @@ def parse_agent_profile(path: Path) -> AgentProfile:
             frontmatter.get("meridian-capabilities")
         ),
         model_invocable=model_invocable,
+        resident_rearm_budget=(
+            resident_rearm_budget_value
+            if isinstance(resident_rearm_budget_value, int)
+            and not isinstance(resident_rearm_budget_value, bool)
+            else None
+        ),
         body=body,
         path=path.resolve(),
         raw_content=markdown,

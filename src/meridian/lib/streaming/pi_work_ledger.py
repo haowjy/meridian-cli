@@ -121,21 +121,6 @@ class PiPrivateWorkLedger:
             )
         )
 
-    def active_tracked_pgid_candidates(
-        self,
-        *,
-        exclude_ids: set[str] | None = None,
-    ) -> tuple[int, ...]:
-        """Preserve the legacy cleanup callback port during ledger cutover."""
-        return tuple(
-            sorted(
-                {
-                    handle.process_group_id
-                    for handle in self.cleanup_handles(exclude_ids=exclude_ids)
-                }
-            )
-        )
-
     def clear_tracked_subspawns(self) -> int:
         tracked_count = len(self._tracked_subspawn_ids)
         self._tracked_subspawn_ids.clear()

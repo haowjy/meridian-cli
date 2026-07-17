@@ -33,15 +33,6 @@ class RetryPolicy(BaseModel):
     backoff_secs: float = 2.0
 
 
-class ExecutionBudget(BaseModel):
-    """Resource limits for spawn execution."""
-
-    model_config = ConfigDict(frozen=True)
-
-    timeout_secs: int | None = None
-    kill_grace_secs: int = 30
-
-
 class SessionRequest(BaseModel):
     """Session continuation options carried across prepare/execute boundaries."""
 
@@ -114,7 +105,6 @@ class SpawnRequest(BaseModel):
 
     # Execution policy (nested)
     retry: RetryPolicy = Field(default_factory=RetryPolicy)
-    budget: ExecutionBudget = Field(default_factory=ExecutionBudget)
 
     # Session intent (nested)
     session: SessionRequest = Field(default_factory=SessionRequest)
@@ -226,7 +216,6 @@ class LaunchRuntime(BaseModel):
 
 
 __all__ = [
-    "ExecutionBudget",
     "LaunchArgvIntent",
     "LaunchCompositionSurface",
     "LaunchPolicySnapshot",

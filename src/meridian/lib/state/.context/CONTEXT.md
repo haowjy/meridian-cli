@@ -68,8 +68,8 @@ All state files are written through `atomic.py`:
   write.
 - `atomic_publish_dir()`: require a nonexistent destination, rename a complete
   same-volume directory into place, then fsync the destination parent.
-- `append_text_line()`: opens in binary mode so `\n` is never translated to `\r\n`
-  on Windows. JSONL byte offsets must be stable across platforms.
+- `append_text_line()`: opens in binary mode so JSONL newline encoding and byte
+  offsets remain stable.
 
 Never write state files with plain `open()` + `write()`. Crash in the middle of a
 plain write leaves a partial file; partial state.json will fail Pydantic validation
@@ -161,7 +161,8 @@ supersedes reconciler cleanup intent.
 
 Use `platform.locking.lock_file(path)` for all cross-process locking:
 - POSIX: `fcntl.flock(LOCK_EX)` — advisory, kernel-backed
-- Windows: `msvcrt.locking()` with retry loop (50 ms sleep)
+- Legacy native-Windows branch (untested): `msvcrt.locking()` with retry loop
+  (50 ms sleep)
 
 Thread-local reentrancy: a thread that already holds the lock can re-enter on the
 same path without deadlocking. Do not use `threading.Lock` or `fcntl` directly —
@@ -183,15 +184,14 @@ worktrees. Archiving or reopening a work item clears `pending`.
 **Path separator normalization**: `WorktreeMetadata.path` and `.repo_path` normalize
 backslash separators to POSIX (forward slash) at the Pydantic validation boundary via
 `@field_validator(..., mode="before")`. The coercion function `_coerce_worktree_metadata()`
-also detects separator normalization and marks legacy records for rewrite. This ensures
-stored metadata is stable when written on Windows and read elsewhere.
+also detects separator normalization and marks legacy records for rewrite. This keeps
+stored metadata separator-stable.
 
 ### User-Level Storage for New Features
 
 New features that need user-level storage (git clones, cache, custom data) go under
 `get_user_home()` from `user_paths.py`. Do not hardcode `~/.meridian/` or introduce
-new `LOCALAPPDATA` / `XDG_DATA_HOME` branches. `get_user_home()` handles all
-platform variants correctly.
+new OS-specific home-directory branches.
 
 ### Anti-Patterns
 
