@@ -9,6 +9,11 @@ No real users, no backwards compatibility. Change the schema to get it right.
 
 NEVER REVERT CHANGES — always assume it's someone else's work.
 
+**NEVER merge a PR into `main` without explicit human approval in the current
+conversation.** Stop at draft→ready with a `release:*` label. Approval to merge
+one PR does not carry to the next. Merging lanes into a task branch is fine —
+the gate is `main`.
+
 **NEVER use `--no-verify` on git push** unless explicitly instructed.
 
 **NEVER manually create or push `v*` tags.** Tags are CI-owned.
