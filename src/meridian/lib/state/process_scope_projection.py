@@ -24,6 +24,7 @@ from meridian.lib.platform.locking import lock_file
 from meridian.lib.platform.process_scope import ProcessScopeSnapshot
 from meridian.lib.platform.process_scope.base import process_scope_release_id
 from meridian.lib.state.atomic import atomic_write_text
+from meridian.lib.state.spawn.repository import read_state, spawn_lock_path
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +35,14 @@ _CLEANUP_CLAIM_FILENAME = "reaper_cleanup_claim.json"
 class ScopeProjection(TypedDict):
     scopes: list[object]
     released: list[object]
+
+
+@dataclasses.dataclass(frozen=True)
+class ScopeProjectionSnapshot:
+    """Immutable typed view of one scope projection read under one lock."""
+
+    scopes: tuple[ProcessScopeSnapshot, ...]
+    released_ids: frozenset[str]
 
 # ---------------------------------------------------------------------------
 # Internal helpers
@@ -75,7 +84,7 @@ def scope_projection_lock_path(runtime_root: Path, spawn_id: SpawnId | str) -> P
     return runtime_root / "locks" / "process-scopes" / f"{spawn_id}.lock"
 
 
-def mutate_scope_projection(
+def _mutate_scope_projection(
     runtime_root: Path,
     spawn_id: SpawnId,
     mutator: Callable[[ScopeProjection], ScopeProjection],
@@ -134,8 +143,6 @@ def record_scope(
     ownership can be upgraded without leaving duplicate cleanup targets. Distinct
     concrete releases with the same human label are preserved.
     """
-    from meridian.lib.state.spawn.repository import read_state, spawn_lock_path
-
     spawns_dir = runtime_root / "spawns"
     # Global order when both locks are needed: spawn state, then scope projection.
     # This makes cleanup-claim snapshots and registration mutually exclusive.
@@ -173,7 +180,7 @@ def record_scope(
             payload["scopes"] = scopes
             return payload
 
-        mutate_scope_projection(runtime_root, spawn_id, upsert)
+        _mutate_scope_projection(runtime_root, spawn_id, upsert)
 
 
 def mark_scope_released(
@@ -187,8 +194,6 @@ def mark_scope_released(
     Idempotent — safe to call multiple times for the same release_id.
     Does nothing after the published spawn has been deleted.
     """
-    from meridian.lib.state.spawn.repository import read_state, spawn_lock_path
-
     def mark_released(payload: ScopeProjection) -> ScopeProjection:
         if release_id not in payload["released"]:
             payload["released"].append(release_id)
@@ -199,7 +204,30 @@ def mark_scope_released(
     with lock_file(spawn_lock_path(spawns_dir, str(spawn_id)), reentrant=False):
         if read_state(spawns_dir, str(spawn_id), include_prompt=False) is None:
             return
-        mutate_scope_projection(runtime_root, spawn_id, mark_released)
+        _mutate_scope_projection(runtime_root, spawn_id, mark_released)
+
+
+def read_scope_projection(
+    runtime_root: Path,
+    spawn_id: SpawnId,
+) -> ScopeProjectionSnapshot:
+    """Read scopes and release markers together under one lock acquisition."""
+
+    path = _sidecar_path(runtime_root, spawn_id)
+    with lock_file(scope_projection_lock_path(runtime_root, spawn_id), reentrant=False):
+        payload = _read_raw(path)
+
+    scopes: list[ProcessScopeSnapshot] = []
+    for entry in payload["scopes"]:
+        if not isinstance(entry, dict):
+            continue
+        snapshot = scope_snapshot_from_dict(cast("dict[str, object]", entry))
+        if snapshot is not None:
+            scopes.append(snapshot)
+    released_ids = frozenset(
+        entry for entry in payload["released"] if isinstance(entry, str)
+    )
+    return ScopeProjectionSnapshot(scopes=tuple(scopes), released_ids=released_ids)
 
 
 def is_scope_released(
@@ -211,12 +239,7 @@ def is_scope_released(
 
     Returns False on any read error so callers fail open (attempt cleanup).
     """
-    path = _sidecar_path(runtime_root, spawn_id)
-    if not path.exists():
-        return False
-    with lock_file(scope_projection_lock_path(runtime_root, spawn_id), reentrant=False):
-        payload = _read_raw(path)
-    return release_id in payload["released"]
+    return release_id in read_scope_projection(runtime_root, spawn_id).released_ids
 
 
 def read_scopes_from_disk(
@@ -229,25 +252,14 @@ def read_scopes_from_disk(
     error.  Use when the spawn record may not have been refreshed yet (e.g.
     immediately after ``record_scope`` in the same process).
     """
-    path = _sidecar_path(runtime_root, spawn_id)
-    if not path.exists():
-        return []
-    with lock_file(scope_projection_lock_path(runtime_root, spawn_id), reentrant=False):
-        payload = _read_raw(path)
-    snapshots: list[ProcessScopeSnapshot] = []
-    for entry in payload["scopes"]:
-        if not isinstance(entry, dict):
-            continue
-        snap = scope_snapshot_from_dict(cast("dict[str, object]", entry))
-        if snap is not None:
-            snapshots.append(snap)
-    return snapshots
+    return list(read_scope_projection(runtime_root, spawn_id).scopes)
 
 
 __all__ = [
+    "ScopeProjectionSnapshot",
     "is_scope_released",
     "mark_scope_released",
-    "mutate_scope_projection",
+    "read_scope_projection",
     "read_scopes_from_disk",
     "record_scope",
     "scope_projection_lock_path",

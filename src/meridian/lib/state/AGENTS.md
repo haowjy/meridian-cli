@@ -57,6 +57,12 @@ Process-scope registration and release markers route through the locked sidecar
 mutation seam. When both locks are needed, acquire the spawn-state lock before the
 scope-sidecar lock. Registration is refused after the spawn becomes terminal or a
 cleanup claim exists, so a process scope cannot appear after cleanup targets are fixed.
+The spawn repository and process-scope projection are persistence leaves with a
+one-way dependency: the projection may use repository reads and lock paths, while
+the repository never imports the projection. Cross-leaf operations belong in the
+aggregate `spawn_store.py`; in particular, published-spawn deletion owns the lock
+order above. Reaper claims consume one immutable projection snapshot containing
+both scopes and released IDs, read under a single projection-lock acquisition.
 
 ## Atomic Write Contract
 
@@ -134,7 +140,8 @@ spawn ID allocation, initial row publication, and abandoned-stage GC. Later muta
 use `write_state_locked()` (`locks/spawns/<id>.lock`, which is never unlinked).
 Published-row deletion uses `delete_published_spawn()` under that same stable lock;
 when deletion also takes the process-scope projection lock, the order is spawn lock
-then projection lock. Pruning acquires `spawns_flock` first. Pending reaper cleanup
+then projection lock. This composition belongs in `spawn_store.py`, not either leaf
+repository. Pruning acquires `spawns_flock` first. Pending reaper cleanup
 claims block deletion so durable cleanup intent is never discarded.
 
 **Don't hardcode `~/.meridian/`** — use `get_user_home()` from `user_paths.py`.

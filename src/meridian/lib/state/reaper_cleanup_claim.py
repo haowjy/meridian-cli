@@ -15,8 +15,7 @@ from meridian.lib.platform.locking import lock_file
 from meridian.lib.platform.process_scope.base import ProcessScopeSnapshot
 from meridian.lib.state.atomic import atomic_write_text
 from meridian.lib.state.process_scope_projection import (
-    is_scope_released,
-    read_scopes_from_disk,
+    read_scope_projection,
     scope_snapshot_from_dict,
 )
 from meridian.lib.state.spawn.repository import read_state, spawn_lock_path
@@ -91,11 +90,12 @@ def claim_active_spawn_scopes(
         if current is None or not is_active_spawn_status(current.status):
             return read_cleanup_claim(runtime_root, spawn_id)
         existing = read_cleanup_claim(runtime_root, spawn_id)
+        projection = read_scope_projection(runtime_root, SpawnId(spawn_id_text))
         candidates = [
             scope
-            for scope in read_scopes_from_disk(runtime_root, SpawnId(spawn_id_text))
+            for scope in projection.scopes
             if scope.owner_policy == "spawn_owned"
-            and not is_scope_released(runtime_root, SpawnId(spawn_id_text), scope.release_id)
+            and scope.release_id not in projection.released_ids
         ]
         by_release_id = {
             scope.release_id: scope for scope in (*existing, *candidates, *extra_scopes)
