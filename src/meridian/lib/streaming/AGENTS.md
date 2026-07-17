@@ -68,9 +68,9 @@ fail, or clear signals for the parent.
 inject, interrupt, permission reply, and user-input-reply actions. Calling the
 connection directly breaks this serialization.
 
-**Spawn-owned journals share the spawn row's lifetime.** Permission and control-action
-writes route through `mutate_published_spawn_artifact()` at write time, including after
-awaited dispatches. Never append directly after an async boundary.
+**Spawn-owned journals share the spawn row's lifetime.** Permission, control-action,
+and inbound-control writes route through `mutate_published_spawn_artifact()` at write
+time, including after awaited dispatches. Never append directly after an async boundary.
 
 **Terminal publication belongs to `SpawnManager`.** The drain loop supplies its
 classification, but `stop_spawn()` must still publish the finalized lifecycle row,
