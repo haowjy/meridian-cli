@@ -72,14 +72,16 @@ until the candidate completes or the drain ends.
 
 ### Child Wave Timeout
 
-When the parent agent is idle and descendant or Pi-private work is still pending,
+When the parent agent is idle and reconciled descendants are still pending,
 `PiCompletionProfile` starts the child-wave deadline. If the deadline expires, it fails
-with `failed` / `pi_child_wave_timeout` rather than letting Pi wait forever. Timeout
-state is latched and its deadline cleared before the outcome publishes. The
-single tracked-work cleanup then runs asynchronously and best-effort. Ordinary
-cleanup or timeout-phase emission failures are diagnostic and do not replace
-that outcome or restart waiting-phase emission. Startup reaper reconciliation
-recovers cleanup interrupted by a crash.
+with `failed` / `pi_child_wave_timeout` rather than letting Pi wait forever. Pi-private
+bash and notification-marker work does not start this deadline; it relies on direct
+follow-up/nudge handling and the opt-in outer attempt timeout. Child-wave timeout state
+is latched and its deadline cleared before the outcome publishes. The single
+descendant cleanup then runs asynchronously and best-effort. Ordinary cleanup or
+timeout-phase emission failures are diagnostic and do not replace that outcome or
+restart waiting-phase emission. Startup reaper reconciliation recovers cleanup
+interrupted by a crash.
 
 Child-wave windows are anchored when their corresponding wave begins; ordinary
 descendant disk evidence does not slide them. Pi has no default total wall-clock

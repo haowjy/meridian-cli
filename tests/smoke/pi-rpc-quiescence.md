@@ -214,7 +214,9 @@ Canonical notification/subspawn lifecycle rows remain absent.
 ## S9: Follow-up completion has no canonical-event timeout dependency
 
 Do not inject shims into this real-runtime guide. The contract is covered by
-`tests/integration/streaming/test_pi_quiescence.py` and
+the SpawnManager/drain-loop regression in
+`tests/integration/streaming/test_pi_manager_retained_paths.py`; the lower-level
+row/marker/idle-epoch assertions remain in
 `tests/integration/streaming/test_pi_characterization.py`.
 
 The covered contract is the real runtime shape: a persisted child becomes terminal,
@@ -391,8 +393,9 @@ completion candidate from finalizing. The direct `meridian-spawn-watch` custom m
 starts a follow-up turn; its later idle epoch is newer than the marker, so completion may
 proceed. There is no canonical-event deadline and no `pi_notification_timeout` outcome.
 Exercise the persisted child → terminal row → marker → custom follow-up sequence with
-`test_real_pi_tracked_child_followup_has_no_canonical_lifecycle_dependency` rather than
-a shimmed manual runtime.
+`test_spawn_manager_derives_direct_followup_transitions_from_pi_events`; use
+`test_real_pi_tracked_child_followup_has_no_canonical_lifecycle_dependency` for the
+lower-level row/marker/idle-epoch contract rather than a shimmed manual runtime.
 
 ### S27: Child-wave deadline is not the absolute attempt timeout
 
