@@ -1,3 +1,5 @@
+import os
+import stat
 from pathlib import Path
 
 import pytest
@@ -146,6 +148,31 @@ def test_atomic_replace_exception_preserves_old_content(tmp_path: Path) -> None:
 
     assert target.read_text(encoding="utf-8") == "before\n"
     assert _tmp_candidates(target) == []
+
+
+@posix_only
+def test_atomic_replace_preserves_existing_target_mode(tmp_path: Path) -> None:
+    target = tmp_path / "AGENTS.md"
+    target.write_text("before\n", encoding="utf-8")
+    target.chmod(0o644)
+
+    with platform_atomic.atomic_replace(target) as handle:
+        handle.write("after\n")
+
+    assert stat.S_IMODE(target.stat().st_mode) == 0o644
+
+
+@posix_only
+def test_atomic_replace_new_file_mode_honors_umask(tmp_path: Path) -> None:
+    target = tmp_path / "new.txt"
+    previous_umask = os.umask(0o027)
+    try:
+        with platform_atomic.atomic_replace(target) as handle:
+            handle.write("new\n")
+    finally:
+        os.umask(previous_umask)
+
+    assert stat.S_IMODE(target.stat().st_mode) == 0o640
 
 
 @posix_only
