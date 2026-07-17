@@ -30,6 +30,7 @@ logger = logging.getLogger(__name__)
 
 _SIDECAR_FILENAME = "process_scopes.json"
 _CLEANUP_CLAIM_FILENAME = "reaper_cleanup_claim.json"
+_FIRST_WRITER_WAIT_SECONDS = 2.0
 
 
 class ScopeProjection(TypedDict):
@@ -211,10 +212,28 @@ def read_scope_projection(
     runtime_root: Path,
     spawn_id: SpawnId,
 ) -> ScopeProjectionSnapshot:
-    """Read scopes and release markers together under one lock acquisition."""
+    """Read scopes and release markers from one projection snapshot.
+
+    A lock path without a sidecar can mean the first writer is publishing. Wait
+    briefly for that normal case, but do not let a wedged writer make cleanup
+    reads block forever. Atomic replacement makes the timeout fallback safe to
+    read without the lock: it observes either no sidecar or one complete
+    snapshot.
+    """
 
     path = _sidecar_path(runtime_root, spawn_id)
-    with lock_file(scope_projection_lock_path(runtime_root, spawn_id), reentrant=False):
+    lock_path = scope_projection_lock_path(runtime_root, spawn_id)
+    if not path.is_file() and not lock_path.exists():
+        return ScopeProjectionSnapshot(scopes=(), released_ids=frozenset())
+
+    try:
+        with lock_file(
+            lock_path,
+            timeout=_FIRST_WRITER_WAIT_SECONDS,
+            reentrant=False,
+        ):
+            payload = _read_raw(path)
+    except TimeoutError:
         payload = _read_raw(path)
 
     scopes: list[ProcessScopeSnapshot] = []
@@ -239,10 +258,6 @@ def is_scope_released(
 
     Returns False on any read error so callers fail open (attempt cleanup).
     """
-    sidecar_path = _sidecar_path(runtime_root, spawn_id)
-    lock_path = scope_projection_lock_path(runtime_root, spawn_id)
-    if not sidecar_path.is_file() and not lock_path.exists():
-        return False
     return release_id in read_scope_projection(runtime_root, spawn_id).released_ids
 
 
@@ -256,10 +271,6 @@ def read_scopes_from_disk(
     error.  Use when the spawn record may not have been refreshed yet (e.g.
     immediately after ``record_scope`` in the same process).
     """
-    sidecar_path = _sidecar_path(runtime_root, spawn_id)
-    lock_path = scope_projection_lock_path(runtime_root, spawn_id)
-    if not sidecar_path.is_file() and not lock_path.exists():
-        return []
     return list(read_scope_projection(runtime_root, spawn_id).scopes)
 
 
