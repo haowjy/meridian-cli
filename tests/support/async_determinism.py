@@ -35,6 +35,7 @@ if TYPE_CHECKING:
 from tests.support.fakes import FakeClock
 
 _real_asyncio_sleep = asyncio.sleep
+_real_monotonic = time.monotonic
 
 
 async def yield_to_loop() -> None:
@@ -50,8 +51,8 @@ async def wait_until(
     description: str = "condition",
 ) -> None:
     """Wait until *predicate* returns true, yielding between polls."""
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
+    deadline = _real_monotonic() + timeout
+    while _real_monotonic() < deadline:
         if predicate():
             return
         if on_tick is not None:

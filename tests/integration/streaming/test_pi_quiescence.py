@@ -30,6 +30,7 @@ from tests.support.pi import (
     FakePiConnection as _FakePiConnection,
 )
 from tests.support.pi import (
+    PiDrainScenario,
     history_has_event,
     history_has_phase,
     read_history,
@@ -767,17 +768,15 @@ async def test_spawn_manager_pi_child_wave_timeout_cleans_tracked_children_and_f
 
 
 @pytest.mark.asyncio
-async def test_spawn_manager_pi_child_wave_timeout_not_cleared_by_turn_active(
+async def test_spawn_manager_pi_child_wave_timeout_publishes_before_timeout_telemetry(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """After expiry is observed, later activity cannot revive the child wave."""
     determinism = AsyncDeterminism(start=100.0)
     monkeypatch.setattr(pi_drain_module.time, "monotonic", determinism.clock.monotonic)
     loop = asyncio.get_running_loop()
     real_loop_time = loop.time
     determinism.install_on_running_loop(monkeypatch)
-    late_turn_gate = TaskGate()
     telemetry_gate = TaskGate()
     telemetry_started = asyncio.Event()
 
@@ -793,42 +792,29 @@ async def test_spawn_manager_pi_child_wave_timeout_not_cleared_by_turn_active(
         lambda _project_root, _runtime_root: _GatedCleanupService(),
     )
 
-    class _DelayedWaveTimeoutConnection(_FakePiConnection):
-        def __init__(self, delayed_events: list[tuple[float, HarnessEvent]]) -> None:
-            super().__init__([])
-            self._delayed_events = delayed_events
-
+    class _OpenPiConnection(_FakePiConnection):
         async def events(self):  # type: ignore[no-untyped-def]
-            for delay, event in self._delayed_events:
-                if delay > 0:
-                    await late_turn_gate.wait_open()
+            for event in self._events:
                 yield event
             await asyncio.Event().wait()
 
-    fake_connection = _DelayedWaveTimeoutConnection(
+    fake_connection = _OpenPiConnection(
         [
-            (0.0, _pi_event("session", {"id": "ses-pi"})),
-            (
-                0.0,
-                _pi_event(
-                    "meridian.subspawn.start",
-                    {
-                        "schema_version": 1,
-                        "subspawn_id": "j-wave-timeout-latch",
-                        "correlation_id": "corr-wave-timeout-latch",
-                        "wait_policy": "tracked",
-                        "pid": 8801,
-                    },
-                ),
+            _pi_event("session", {"id": "ses-pi"}),
+            _pi_event(
+                "meridian.subspawn.start",
+                {
+                    "schema_version": 1,
+                    "subspawn_id": "j-wave-timeout-latch",
+                    "correlation_id": "corr-wave-timeout-latch",
+                    "wait_policy": "tracked",
+                    "pid": 8801,
+                },
             ),
-            (
-                0.0,
-                _pi_event(
-                    "agent_end",
-                    {"messages": [{"role": "assistant", "stopReason": "stop"}]},
-                ),
+            _pi_event(
+                "agent_end",
+                {"messages": [{"role": "assistant", "stopReason": "stop"}]},
             ),
-            (0.15, _pi_event("agent_start", {})),
         ]
     )
 
@@ -840,17 +826,6 @@ async def test_spawn_manager_pi_child_wave_timeout_not_cleared_by_turn_active(
         child_wave_timeout_seconds=0.1,
     )
 
-    async def _release_late_turn_after_child_wave_timeout() -> None:
-        await wait_until(
-            lambda: (
-                (tmp_path / "spawns" / str(spawn_id) / "history.jsonl").exists()
-                and "pi_child_wave_timeout" in _read_history_phases(tmp_path, spawn_id)
-            ),
-            description="child-wave timeout phase before late turn_active",
-        )
-        late_turn_gate.open()
-
-    release_task = asyncio.create_task(_release_late_turn_after_child_wave_timeout())
     completion = asyncio.create_task(manager.wait_for_completion(spawn_id))
 
     try:
@@ -890,11 +865,47 @@ async def test_spawn_manager_pi_child_wave_timeout_not_cleared_by_turn_active(
         assert phases.count("pi_child_wave_timeout") == 1
     finally:
         telemetry_gate.open()
-        release_task.cancel()
-        with suppress(asyncio.CancelledError):
-            await release_task
         monkeypatch.setattr(loop, "time", real_loop_time)
         await manager.stop_spawn(spawn_id)
+
+
+@pytest.mark.asyncio
+async def test_pi_child_wave_timeout_latch_survives_observed_turn_active(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    scenario = await PiDrainScenario.start(
+        tmp_path,
+        monkeypatch,
+        child_wave_timeout_seconds=0.1,
+    )
+    activity_observed = asyncio.Event()
+
+    async def _observe_late_activity() -> None:
+        await scenario.observe("agent_start", transition="turn_active")
+        activity_observed.set()
+
+    try:
+        await scenario.tracked_child("j-wave-timeout-latch")
+        await scenario.idle()
+        await scenario.terminal()
+        timed_out = await scenario.timeout(0.1001)
+        assert timed_out.recorded_outcome is not None
+        assert timed_out.recorded_outcome.error == "pi_child_wave_timeout"
+
+        activity_task = asyncio.create_task(_observe_late_activity())
+        await asyncio.wait_for(activity_observed.wait(), timeout=1.0)
+        await activity_task
+        exit_decision = await scenario.coordinator.handle_stream_exit(
+            timed_out.recorded_outcome
+        )
+
+        assert exit_decision.recorded_outcome is not None
+        assert exit_decision.recorded_outcome.error == "pi_child_wave_timeout"
+        assert exit_decision.post_publication_cleanup is not None
+        assert exit_decision.post_publication_cleanup.reason == "pi_child_wave_timeout"
+    finally:
+        await scenario.stop()
 
 
 @pytest.mark.asyncio
