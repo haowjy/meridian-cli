@@ -38,7 +38,6 @@ _PI_LIFECYCLE_NOISE_PHASES = frozenset(
         "session_event_absent",
         "quiescence_micro_drain_started",
         "waiting_for_tracked_children",
-        "waiting_for_notification_completion",
     }
 )
 

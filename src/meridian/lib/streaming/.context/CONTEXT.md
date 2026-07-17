@@ -49,7 +49,7 @@ The implementation is split by responsibility:
 - `spawn_session.py` — `SpawnSession` and `DrainOutcome` carriers
 - `resident_drain.py` — resident-backend descendant waiting and done-nudge model
 - `pi_drain.py` — Pi spawned-session quiescence coordinator
-- `pi_subspawn_tracker.py` — Pi child-spawn and notification tracking
+- `pi_lifecycle_tracker.py` — validation for produced Pi lifecycle events
 - `disk_watcher.py` / `pi_quiescence.py` — disk-backed Pi quiescence inputs
 - `drain_wait.py` — bounded wait helpers for drain/cleanup paths
 - `pi_process_cleanup.py` — tracked Pi child process cleanup

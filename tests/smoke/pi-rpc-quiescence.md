@@ -39,8 +39,8 @@ branch under test.
 Pi spawned completion is descendant-quiescence driven and has **no default total
 wall-clock ceiling**. A session may legitimately remain active through successive child
 waves. `--timeout` (in minutes) or `MERIDIAN_TIMEOUT` is the opt-in, non-renewing
-absolute ceiling for the whole attempt. Child-wave and notification deadlines are
-separate, wave-local safety bounds.
+absolute ceiling for the whole attempt. The child-wave deadline is a separate,
+wave-local safety bound.
 
 The completion state machine reaches `finalized`; there is no `cleaning` phase.
 Cleanup lifecycle rows (`cleanup_running`, `cleanup_completed`, `cleanup_escalated`,
@@ -84,7 +84,7 @@ Run `printf hello` with bash and report the output.
 Expect the `tool_execution_end` result to contain `result.details.exit_code: 0`,
 `result.details.stdout` containing `hello`, and an empty
 `result.details.stderr`. Blocking-command results do not include a `state` field.
-A short blocking command does not emit `meridian.subspawn.start`.
+A short blocking command creates no tracked descendant or follow-up work.
 
 ## S3: Bash-tool timeout becomes tracked work and drains
 
@@ -97,8 +97,8 @@ Run `sleep 5 && echo done` with the bash tool, setting the bash tool's timeout p
 Expect the tool call to return `state: "running"` and a `job_id`. The disk-backed bash
 record moves from running to exited with stdout `done`. This bash-tool timeout does
 **not** set Meridian's absolute attempt timeout: the parent remains active through the
-follow-up turn, then succeeds after that turn quiesces. Managed bash does not currently
-emit `meridian.subspawn.*` telemetry in the real runtime (#440).
+follow-up turn, then succeeds after that turn quiesces. Canonical
+`meridian.subspawn.*` telemetry is not part of the runtime contract.
 
 ## S4: Detached job does not block quiescence
 
@@ -139,9 +139,10 @@ Start `sleep 3 && echo child-done` as tracked background work.
 
 Expect the disk-backed record at
 `<runtime-root>/pi-bash/<spawn-id>/bash-records.json` to move from running to exited
-with stdout `child-done`, a follow-up turn in transcript/history to report the result,
-and completion only after that turn quiesces. The wake works, but the real runtime does
-not currently emit `meridian.notification.queued`/`.delivered` telemetry (#440).
+with stdout `child-done`; expect `last-notification.json` to name the completed work,
+a `message_start`/`message_end` pair with `customType: meridian-spawn-watch`, and a
+follow-up turn that reports the result. Completion waits for that turn to quiesce.
+Do not expect canonical `meridian.notification.*` or `meridian.subspawn.*` rows.
 
 ### S6b: Fast tracked completion still triggers a follow-up
 
@@ -205,19 +206,23 @@ Start `sh -c 'sleep 1; exit 7'` as tracked background work, then end your turn i
 ```
 
 Expect the bash record to reach exited with exit code 7, then a follow-up turn to handle
-the failure. Completion waits for that turn to quiesce; handling the failure can still
-produce a successful parent outcome. Do not require notification lifecycle telemetry
-from the real runtime (#440).
+the failure. `last-notification.json` names the completed work and the direct
+`meridian-spawn-watch` custom message starts the follow-up. Completion waits for that
+turn to quiesce; handling the failure can still produce a successful parent outcome.
+Canonical notification/subspawn lifecycle rows remain absent.
 
-## S9: Notification delivery failure fails instead of hanging
+## S9: Follow-up completion has no canonical-event timeout dependency
 
 Do not inject shims into this real-runtime guide. The contract is covered by
 `tests/integration/streaming/test_pi_quiescence.py` and
 `tests/integration/streaming/test_pi_characterization.py`.
 
-The covered contract is terminal `failed` after tracked descendants drain, not a
-permanent pending-notification wait. The production telemetry question is tracked in
-#440; do not require `meridian.notification.*` rows in a real-runtime run.
+The covered contract is the real runtime shape: a persisted child becomes terminal,
+`last-notification.json` advances, a direct `meridian-spawn-watch` custom message starts
+the follow-up turn, and the parent completes after that turn without canonical
+notification/subspawn lifecycle rows. There is no `pi_notification_timeout` branch.
+If the direct follow-up never arrives, use the outer attempt timeout to bound the run;
+the outcome is `timed_out`, not a synthetic canonical-notification failure.
 
 ## S10: Pi exits with tracked work pending
 
@@ -229,10 +234,9 @@ uv run meridian spawn wait <spawn-id>
 ```
 
 Expect terminal `failed` with `pi_process_exited_with_tracked_children`, rather than
-success from an earlier `agent_end`. Best-effort cleanup cancels persisted descendants
-and terminates tracked process groups when PID/PGID metadata exists; detached work is
-not killed. The dead spawn's private bash record may remain `running` post-mortem and is
-not authoritative.
+success from an earlier `agent_end`. Best-effort cleanup cancels persisted descendants;
+it does not depend on lifecycle PID/PGID telemetry. Detached work is not killed. The
+dead spawn's private bash record may remain `running` post-mortem and is not authoritative.
 
 ## S11: Malformed coordination state fails closed
 
@@ -318,9 +322,8 @@ uv run meridian spawn show <spawn-id> --verbose
 
 Expect `Pi phase:` while running or after the bounded post-terminal history wait. Useful
 current phases include `waiting_for_first_pi_event_after_prompt`,
-`waiting_for_tracked_children`, `waiting_for_notification_completion`,
-`quiescence_micro_drain_started`, `pi_child_wave_timeout`,
-`pi_notification_timeout`, `finalized`, and the asynchronous `cleanup_*` diagnostics.
+`waiting_for_tracked_children`, `quiescence_micro_drain_started`,
+`pi_child_wave_timeout`, `finalized`, and the asynchronous `cleanup_*` diagnostics.
 
 ### S18: PATH and override select the same real runtime
 
@@ -358,11 +361,11 @@ spawn directories do not become descendants, while a valid live grandchild benea
 terminal direct child still blocks completion. Use the integration coverage under
 `tests/integration/streaming/` for destructive race and parse-error injection.
 
-### S22: Stderr and duplicate lifecycle input are non-authoritative
+### S22: Stderr and retired lifecycle input are non-authoritative
 
-Incidental Pi stderr remains in stderr logs and cannot drive quiescence. Lifecycle
-messages can supply rowless child and process-handle evidence, but cannot override the
-reconciled persisted descendant tree; duplicate transitions are deduplicated.
+Incidental Pi stderr remains in stderr logs and cannot drive quiescence. Retired
+notification/subspawn lifecycle-shaped messages cannot supply child or process-handle
+evidence. The reconciled persisted descendant tree remains the sole child authority.
 
 ### S23: A completed child wave produces an aggregate continuation
 
@@ -379,16 +382,17 @@ intentionally unbounded unless the outer attempt timeout is opted in.
 ### S25: Detached work stays outside the blocker set
 
 Mix tracked and detached jobs. Completion waits for tracked descendants/private work
-and their notification, never for the detached jobs.
+and the direct follow-up turn, never for the detached jobs.
 
-### S26: Notification deadline is anchored
+### S26: Notification marker is an epoch gate, not a deadline
 
-If the follow-up notification contract does not complete, its anchored deadline yields
-terminal `failed` with `pi_notification_timeout`; ordinary activity does not slide the
-deadline. Verify the disk work state, lack of a completed follow-up turn, and terminal
-outcome rather than requiring notification lifecycle rows (#440). Exercise fault timing
-with `tests/integration/streaming/test_pi_characterization.py` rather than a shimmed
-manual runtime.
+After the parent goes idle, a newer `last-notification.json` marker keeps the current
+completion candidate from finalizing. The direct `meridian-spawn-watch` custom message
+starts a follow-up turn; its later idle epoch is newer than the marker, so completion may
+proceed. There is no canonical-event deadline and no `pi_notification_timeout` outcome.
+Exercise the persisted child → terminal row → marker → custom follow-up sequence with
+`test_real_pi_tracked_child_followup_has_no_canonical_lifecycle_dependency` rather than
+a shimmed manual runtime.
 
 ### S27: Child-wave deadline is not the absolute attempt timeout
 
@@ -399,8 +403,8 @@ entire attempt and produces `timed_out`.
 
 ### S28: Mixed-wave cleanup preserves the terminal reason
 
-Combine successful, failing, and detached children. A child-wave or notification
-timeout remains the terminal reason even if asynchronous cleanup later fails. Cleanup
+Combine successful, failing, and detached children. A child-wave timeout remains the
+terminal reason even if asynchronous cleanup later fails. Cleanup
 failure is diagnostic and does not restart waiting phases or replace the published
 outcome.
 
@@ -424,8 +428,8 @@ spawned RPC quiescence does not auto-stop it.
 
 ### S31: Coordination stays out of the visible TUI
 
-Disk-backed Pi files carry coordination. Raw fields and events such as `parent_id`,
-`originating_bash_id`, notification markers, and `meridian.notification.*` must not
+Disk-backed Pi files carry coordination. Raw fields such as `parent_id`,
+`originating_bash_id`, and notification markers must not
 appear as user-visible TUI output.
 
 ### S32: Primary diagnostics do not drive spawned quiescence

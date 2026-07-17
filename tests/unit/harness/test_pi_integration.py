@@ -411,9 +411,9 @@ async def test_pi_rpc_connection_ignores_non_lifecycle_stderr_lines_but_logs_the
     plain_stderr = "warning from stderr"
     non_allowlisted_json = '{"type":"pi.runtime.warn","message":"ignore-me"}'
     lifecycle_stderr = (
-        '{"type":"meridian.subspawn.start","schema_version":1,'
-        '"parent_spawn_id":"p-pi-stderr-ignore","correlation_id":"j-stderr",'
-        '"subspawn_id":"j-stderr","emitted_at_ms":1760000000000}'
+        '{"type":"meridian.quiescence.ready","schema_version":1,'
+        '"parent_spawn_id":"p-pi-stderr-ignore","correlation_id":"q-stderr",'
+        '"emitted_at_ms":1760000000000}'
     )
 
     bin_dir = tmp_path / "bin"
@@ -472,7 +472,7 @@ async def test_pi_rpc_connection_ignores_non_lifecycle_stderr_lines_but_logs_the
     )
 
     assert not any(event.event_type == "pi.runtime.warn" for event in non_phase_events)
-    assert not any(event.event_type == "meridian.subspawn.start" for event in non_phase_events)
+    assert not any(event.event_type == "meridian.quiescence.ready" for event in non_phase_events)
     assert not any(
         event.event_type == "meridian.lifecycle.parse_error"
         for event in non_phase_events
