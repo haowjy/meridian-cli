@@ -1,6 +1,7 @@
 # qa-validated: reaper-escape-fix-test-cleanup
 from __future__ import annotations
 
+import dataclasses
 import json
 import threading
 from contextlib import suppress
@@ -93,6 +94,41 @@ def test_missing_scope_sidecar_reads_do_not_create_lock_tree(
         assert is_scope_released(runtime_root, SpawnId("p1"), "missing") is False
 
     assert not runtime_root.exists()
+
+
+def test_missing_scope_sidecar_read_waits_for_first_writer_publish(tmp_path: Path) -> None:
+    runtime_root, spawn_id = _create_primary_spawn(tmp_path)
+    snapshot = _scope(
+        spawn_id,
+        scope_id="backend",
+        owner_policy="session_owned",
+        owner_id="c1",
+        root_pid=501,
+    )
+    lock_path = process_scope_projection.scope_projection_lock_path(runtime_root, spawn_id)
+    sidecar_path = runtime_root / "spawns" / spawn_id / "process_scopes.json"
+    result: list[list[ProcessScopeSnapshot]] = []
+
+    with lock_file(lock_path, reentrant=False):
+        reader = threading.Thread(
+            target=lambda: result.append(read_scopes_from_disk(runtime_root, SpawnId(spawn_id)))
+        )
+        reader.start()
+        reader.join(timeout=0.2)
+        assert reader.is_alive()
+        sidecar_path.write_text(
+            json.dumps(
+                {
+                    "scopes": [dataclasses.asdict(snapshot)],
+                    "released": [],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+    reader.join(timeout=2)
+    assert not reader.is_alive()
+    assert result == [[snapshot]]
 
 
 def test_concurrent_scope_releases_preserve_every_marker(
