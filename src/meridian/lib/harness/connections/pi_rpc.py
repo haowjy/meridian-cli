@@ -126,6 +126,8 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
         self._launch_cwd: str | None = None
         self._launch_session_role: str | None = None
         self._events_stream_active = False
+        self._prompt_command_seq = 0
+        self._pending_prompt_acks: dict[str, asyncio.Future[None]] = {}
 
     @property
     def state(self) -> ConnectionState:
@@ -250,11 +252,28 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
         return self._state == "connected"
 
     async def send_user_message(self, text: str) -> None:
+        await self._send_prompt(text, wait_for_ack=True)
+
+    async def _send_prompt(self, text: str, *, wait_for_ack: bool) -> None:
+        command_id = f"meridian-prompt-{self._prompt_command_seq}"
+        self._prompt_command_seq += 1
         payload: dict[str, object] = {
+            "id": command_id,
             "type": "prompt",
             "message": text,
+            "streamingBehavior": "followUp",
         }
-        await self._send_rpc_message(payload, event="prompt")
+        if not wait_for_ack:
+            await self._send_rpc_message(payload, event="prompt")
+            return
+
+        ack = asyncio.get_running_loop().create_future()
+        self._pending_prompt_acks[command_id] = ack
+        try:
+            await self._send_rpc_message(payload, event="prompt")
+            await ack
+        finally:
+            self._pending_prompt_acks.pop(command_id, None)
 
     async def send_steer(self, text: str) -> None:
         payload: dict[str, object] = {
@@ -622,12 +641,37 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
                 raw_line=payload_text,
             )
 
+        if normalized_type == "response" and self._resolve_prompt_ack(payload):
+            payload = dict(payload)
+            payload["meridian_control_action"] = "inject"
+
         return HarnessEvent(
             event_type=normalized_type,
             payload=payload,
             harness_id=_HARNESS_NAME,
             raw_text=line,
         )
+
+    def _resolve_prompt_ack(self, payload: dict[str, object]) -> bool:
+        if str(payload.get("command", "")).strip().lower() != "prompt":
+            return False
+        command_id = payload.get("id")
+        if not isinstance(command_id, str):
+            return False
+        pending = self._pending_prompt_acks.get(command_id)
+        if pending is None or pending.done():
+            return False
+        if payload.get("success") is True:
+            pending.set_result(None)
+        else:
+            error = payload.get("error")
+            detail = (
+                error.strip()
+                if isinstance(error, str) and error.strip()
+                else "pi_prompt_rejected"
+            )
+            pending.set_exception(RuntimeError(detail))
+        return True
 
     def _has_unsupported_lifecycle_schema_version(
         self,
@@ -713,7 +757,7 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
         if not prompt.strip():
             self._initial_prompt_sent = True
             return False
-        await self.send_user_message(prompt)
+        await self._send_prompt(prompt, wait_for_ack=False)
         self._initial_prompt_sent = True
         return True
 
@@ -785,12 +829,22 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
         )
 
     async def _cleanup_resources(self, *, terminate_process: bool) -> bool:
+        self._fail_pending_prompt_acks()
         stop_escalated = False
         if terminate_process:
             stop_escalated = await self._terminate_process()
         if not self._events_stream_active:
             self._close_log_handles()
         return stop_escalated
+
+    def _fail_pending_prompt_acks(self) -> None:
+        for pending in self._pending_prompt_acks.values():
+            if not pending.done():
+                pending.set_exception(
+                    ConnectionNotReady(
+                        "Pi RPC connection closed before prompt acknowledgement."
+                    )
+                )
 
     async def _terminate_process(self) -> bool:
         process = self._process

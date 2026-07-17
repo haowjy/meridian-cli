@@ -14,6 +14,8 @@ from meridian.lib.ops.runtime import (
 )
 from meridian.lib.platform import IS_WINDOWS
 
+_INJECT_RESPONSE_TIMEOUT_SECONDS = 30.0
+
 
 def _fail(message: str) -> None:
     print(f"Error: {message}", file=sys.stderr)
@@ -55,7 +57,9 @@ async def _send_and_receive(
     try:
         writer.write((json.dumps(request, separators=(",", ":")) + "\n").encode("utf-8"))
         await writer.drain()
-        return await asyncio.wait_for(reader.readline(), timeout=10.0)
+        return await asyncio.wait_for(
+            reader.readline(), timeout=_INJECT_RESPONSE_TIMEOUT_SECONDS
+        )
     finally:
         writer.close()
         await writer.wait_closed()

@@ -218,7 +218,8 @@ def terminal_outcome(
 
     if event.harness_id == HarnessId.PI.value and event.event_type == "response":
         command = str(event.payload.get("command", "")).strip().lower()
-        if command == "prompt" and event.payload.get("success") is False:
+        is_inject_response = event.payload.get("meridian_control_action") == "inject"
+        if command == "prompt" and event.payload.get("success") is False and not is_inject_response:
             error = _stringify_terminal_error(event.payload.get("error")) or "pi_prompt_rejected"
             return TerminalEventOutcome(status="failed", exit_code=1, error=error)
 

@@ -31,6 +31,13 @@ connection validates this (`_validate_initial_prompt_requirement()`) and enforce
 30-second timeout for the first stdout event after the prompt
 (`_FIRST_STDOUT_AFTER_INITIAL_PROMPT_TIMEOUT_SECONDS`).
 
+**Pi injected prompts are acknowledged commands.** Every prompt carries an RPC `id`
+and `streamingBehavior: "followUp"`; the field is valid whether Pi is busy or idle.
+Injected prompts wait for the matching `response` before `send_user_message()` returns.
+A rejected inject is annotated as control-action response evidence, persisted, and
+reported to the injector without becoming a terminal event for the running spawn.
+Initial-prompt rejection remains spawn-fatal.
+
 **`opencode_http.py` imports `OPENCODE_CONFIG_CONTENT_ENV` from
 `meridian.lib.launch.workspace_projection`** to preserve the required bootstrap
 dependency direction; see [launch context](../../../launch/.context/CONTEXT.md).
