@@ -20,6 +20,16 @@ _THREAD_LOCAL = threading.local()
 _LOCK_POLL_INTERVAL_SECONDS = 0.05
 
 
+def _clear_reentrant_registry_after_fork() -> None:
+    """Discard reentrancy state copied from the parent process."""
+
+    _THREAD_LOCAL.held = {}
+
+
+if not IS_WINDOWS and hasattr(os, "register_at_fork"):
+    os.register_at_fork(after_in_child=_clear_reentrant_registry_after_fork)
+
+
 def _held_locks() -> dict[Path, _HeldLock]:
     """Return the thread-local map of reentrant locks."""
     held = cast("dict[Path, _HeldLock] | None", getattr(_THREAD_LOCAL, "held", None))

@@ -14,6 +14,7 @@ from pathlib import Path
 import pytest
 
 from meridian.lib.platform.locking import lock_file, try_lock_file
+from tests.conftest import posix_only
 
 
 def _hold_lock(
@@ -24,6 +25,11 @@ def _hold_lock(
     with lock_file(lock_path):
         ready.set()
         release.wait(5)
+
+
+def _try_in_forked_child(lock_path: Path, result: multiprocessing.Queue[bool]) -> None:
+    with try_lock_file(lock_path) as handle:
+        result.put(handle is not None)
 
 
 def test_try_lock_file_acquires_lock(tmp_path: Path) -> None:
@@ -88,3 +94,20 @@ def test_try_lock_file_does_not_swallow_body_oserror(tmp_path: Path) -> None:
         try_lock_file(tmp_path / "state.lock"),
     ):
         raise OSError("body failure")
+
+
+@posix_only
+def test_reentrant_registry_is_cleared_after_fork(tmp_path: Path) -> None:
+    context = multiprocessing.get_context("fork")
+    lock_path = tmp_path / "state.lock"
+    result = context.Queue()
+
+    with lock_file(lock_path):
+        process = context.Process(target=_try_in_forked_child, args=(lock_path, result))
+        process.start()
+        process.join(5)
+        if process.is_alive():
+            process.terminate()
+            process.join(5)
+        assert process.exitcode == 0
+        assert result.get(timeout=1) is False
