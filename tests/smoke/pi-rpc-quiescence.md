@@ -77,8 +77,10 @@ Prompt:
 Run `printf hello` with bash and report the output.
 ```
 
-Expect `bash` to return `state: "exited"`, `exit_code: 0`, and output containing
-`hello`. A short blocking command does not emit `meridian.subspawn.start`.
+Expect the `tool_execution_end` result to contain `result.details.exit_code: 0`,
+`result.details.stdout` containing `hello`, and an empty
+`result.details.stderr`. Blocking-command results do not include a `state` field.
+A short blocking command does not emit `meridian.subspawn.start`.
 
 ## S3: Bash-tool timeout becomes tracked work and drains
 

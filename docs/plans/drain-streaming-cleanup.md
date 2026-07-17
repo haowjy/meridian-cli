@@ -14,7 +14,9 @@ Implemented. Scope, per issue:
 - **Closes #370** — finish inverting the composition root: split `drain_teardown.py` into neutral contract vs Pi policy; inject descendant cancellation into resident cleanup via `drain_plan_factory.py`.
 - **Closes #371** — delete completed-migration scaffolding (tracker/ledger façades, test-only coordinator mutation ports); resolve the residual Cleaning-phase remnant; drop the stale phase-4 TODO.
 - **Closes #372** — consolidate the five overlapping Pi drain characterization test files behind one `tests/support/` scenario builder; table-ize pure priority cases; delete Phase-0 duplicates.
-- **Closes #322** — remaining live item: `state/managed_primary.py` imports private `reaper._completion_or_cancel_decision`; re-audit the old seam asks against the new coordinator/factory layer (items 1–2 are superseded, item 4 partially done).
+- **Closes #322** — moved completion/cancel precedence behind shared state
+  reconciliation and re-audited the old seam requests against the coordinator/factory
+  layer. The two verified-deferred residuals are tracked explicitly in #430.
 - **Closes #373** — resident rearm-count budget: bound resident lifetime by number of explicit rearm extensions, composing with the existing 1800s hard cap.
 - **Closes #374** — decide the Pi absolute-ceiling question (status quo / non-rearming ceiling / shared bounded-extension model) and implement or document the outcome.
 - **Closes #241** — re-author the pi-rpc-quiescence smoke guide against the new drain layer, then tier it must-run vs deep diagnostics.
@@ -42,10 +44,9 @@ Policy decisions (user, 2026-07-17): rearm budget defaults unlimited (legit
 24h+ resident sessions exist); Pi stays unbounded-while-children-live by
 design; windows-gate is informational only.
 
-#322 residuals deliberately deferred to the future completion-profile redesign:
-resident nudges still call the resident capability directly (not the
-`SerializedInject` seam); residual `manager._sessions` seeding in launch
-lifecycle tests.
+#322 residuals are tracked in #430: resident nudges still call the resident
+capability directly rather than the `SerializedInject` seam, and launch lifecycle
+tests still seed `manager._sessions` privately.
 
 ## Work Item
 
