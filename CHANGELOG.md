@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.3.33] - 2026-07-17
+
 ### Added
 - Resident spawns can opt into a rearm-count budget through CLI, environment,
   agent profile, or config; granted rearm counts are persisted for observability,
