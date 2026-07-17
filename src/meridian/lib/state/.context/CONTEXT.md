@@ -177,8 +177,11 @@ Thread-local reentrancy: a thread that already holds the lock can re-enter on th
 same path without deadlocking. Do not use `threading.Lock` or `fcntl` directly —
 the platform module handles both OS and thread-reentrancy.
 
-`work_scope.py` resolves each work directory; `work_store.py` stores its mutable
-metadata atomically in `<context.work root>/<slug>/__status.json`.
+`work_scope.py` resolves each work directory. `work_store.py` provides pure read
+projections and compatibility facades; `work_repository.py` serializes all status
+and directory-namespace mutations behind the stable project-level
+`work-store.flock`. Mutable metadata lives in
+`<context.work root>/<slug>/__status.json`; there is no separate rename-intent file.
 
 ### WorktreeMetadata
 
