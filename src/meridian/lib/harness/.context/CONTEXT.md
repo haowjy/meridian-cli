@@ -166,6 +166,40 @@ The drain loop persists all child events before classification; scope filtering 
 decides whether an event can end the parent turn, clear a pending signal, update the
 parent activity state, or contribute to the parent report.
 
+### Connection Death Shape
+
+A connection must deliver its most diagnostic terminal evidence before iterator EOF.
+If a harness has a specific terminal classification and a later generic close event,
+the specific classification wins; generic transport failure must not shadow more
+specific evidence already recorded.
+
+| Harness | Unexpected death delivered to the drain |
+|---|---|
+| Claude | Non-zero subprocess exit at stdout EOF yields `error/connectionClosed` with the exit code and captured stderr excerpt when present, then the iterator ends. Stdout reader failure yields the same event with the read error. |
+| Codex | Unexpected WebSocket reader failure or liveness timeout queues `error/connectionClosed`, then queue EOF. A clean WebSocket close queues EOF without a terminal event. Startup process exit is raised before draining and includes exit code plus the captured stderr excerpt when present. |
+| OpenCode | A detected backend process exit yields `error/connectionClosed` with the exit code and captured stderr excerpt when present, then the SSE iterator ends. SSE liveness failure without a detected process exit currently ends without a terminal event. |
+| Cursor | Non-zero subprocess exit at stdout EOF yields `error/connectionClosed` with the exit code, then the iterator ends. Exit code zero is the success boundary and ends without a terminal event. |
+| Pi | Non-zero subprocess exit yields `error/connectionClosed` with the exit code and captured stderr when present, then the iterator ends. Pi completion remains subject to its quiescence profile rather than raw EOF. |
+
+Tests for death classification must preserve that ordering: process exit and its code
+become observable before fake iterator exhaustion. Clean EOF is a different contract.
+
+### Inject Acknowledgment
+
+`send_user_message()` success is a transport-level delivery claim, not proof that the
+model observed or executed the message.
+
+| Harness | What a successful return means |
+|---|---|
+| Claude | The NDJSON user frame was written to subprocess stdin and `drain()` completed. Claude sends no correlated acknowledgment; busy-turn acceptance remains an open runtime question. |
+| Codex | The app-server returned a successful JSON-RPC result for `turn/steer` or `turn/start`. A JSON-RPC error raises instead of becoming a harness terminal event. |
+| OpenCode | A session-message HTTP endpoint returned an accepted success status. This does not prove that an assistant turn was scheduled or executed. |
+| Cursor | Unsupported; `send_user_message()` raises. |
+| Pi | The matching prompt-command RPC response reported success. Initial prompt delivery is intentionally not acknowledgment-blocking. |
+
+The generic control endpoint acknowledges only after the applicable connection method
+returns. Do not describe that acknowledgment as semantic execution evidence.
+
 Codex keeps a conservative unscoped fallback: if a `turn/completed` event has no
 thread ID, it still counts as terminal for the parent. OpenCode does not use that
 fallback once the parent session is known, because its global SSE stream can emit

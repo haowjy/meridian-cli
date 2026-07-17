@@ -21,7 +21,6 @@ from meridian.lib.streaming.pi_completion_profile import (
     PiCompletionEvidenceView,
     PiCompletionProfile,
 )
-from meridian.lib.streaming.pi_work_ledger import PiPrivateWorkLedger
 
 _SUCCESS = TerminalEventOutcome(status="succeeded", exit_code=0)
 _READY = WorkAssessment(disposition="ready", blockers=(), generation=1)
@@ -32,16 +31,10 @@ _BLOCKED = WorkAssessment(
 )
 
 
-def _profile(tmp_path: Any, *, notification: bool, child: bool, nudge: bool) -> PiCompletionProfile:
-    ledger = PiPrivateWorkLedger()
-    if notification:
-        ledger.note_notification_started(
-            "n1", phase="queued", observation_monotonic=0.0, notification_timeout_seconds=5.0
-        )
+def _profile(tmp_path: Any, *, child: bool, nudge: bool) -> PiCompletionProfile:
     evidence = cast(
         "PiCompletionEvidenceView",
         SimpleNamespace(
-            tracker=SimpleNamespace(notification_failure_error=None),
             quiescence_tracker=SimpleNamespace(parent_idle=True),
             session_seen=False,
             session_phase_emitted=False,
@@ -57,7 +50,6 @@ def _profile(tmp_path: Any, *, notification: bool, child: bool, nudge: bool) -> 
         emit_phase=lambda **_payload: None,
         send_done_nudge=None,
         evidence=evidence,
-        private_work_ledger=ledger,
         stabilization_seconds=0.05,
         clock=lambda: 5.0,
     )
@@ -74,34 +66,24 @@ def _profile(tmp_path: Any, *, notification: bool, child: bool, nudge: bool) -> 
 
 
 @pytest.mark.parametrize(
-    ("done", "notification", "child", "nudge", "action", "error"),
+    ("done", "child", "nudge", "action", "error"),
     [
-        pytest.param(True, True, True, True, "complete", None, id="done-before-all-timeouts"),
+        pytest.param(True, True, True, "complete", None, id="done-before-timeouts"),
         pytest.param(
-            False,
-            True,
-            True,
-            True,
-            "fail",
-            "pi_notification_timeout",
-            id="notification-before-child-and-nudge",
+            False, True, True, "cleanup", "pi_child_wave_timeout", id="child-before-nudge"
         ),
-        pytest.param(
-            False, False, True, True, "cleanup", "pi_child_wave_timeout", id="child-before-nudge"
-        ),
-        pytest.param(False, False, False, True, "wait", None, id="nudge-when-no-terminal-priority"),
+        pytest.param(False, False, True, "wait", None, id="nudge-without-terminal-priority"),
     ],
 )
 def test_timeout_priority(
     tmp_path: Any,
     done: bool,
-    notification: bool,
     child: bool,
     nudge: bool,
     action: str,
     error: str | None,
 ) -> None:
-    profile = _profile(tmp_path, notification=notification, child=child, nudge=nudge)
+    profile = _profile(tmp_path, child=child, nudge=nudge)
     assessment = _BLOCKED if child else _READY
     decision = profile.evaluate(
         CompletionEvaluation(
@@ -121,5 +103,4 @@ def test_timeout_priority(
         assert decision.outcome is None or decision.outcome == _SUCCESS
     else:
         assert decision.outcome is not None
-        assert decision.outcome.error is not None
-        assert decision.outcome.error.startswith(error)
+        assert decision.outcome.error == error

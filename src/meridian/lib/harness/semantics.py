@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
+from enum import StrEnum
 from typing import TYPE_CHECKING, Literal, cast
 
 from meridian.lib.core.domain import SpawnStatus
@@ -18,11 +19,18 @@ if TYPE_CHECKING:
 ActivityState = Literal["turn_active", "idle"]
 
 
+class TerminalOutcomeCause(StrEnum):
+    """Typed cause used only when completion policy may refine an outcome."""
+
+    REPLACEABLE_TRANSPORT_CLOSE = "replaceable_transport_close"
+
+
 @dataclass(frozen=True)
 class TerminalEventOutcome:
     status: SpawnStatus
     exit_code: int
     error: str | None = None
+    cause: TerminalOutcomeCause | None = None
 
 
 @dataclass(frozen=True)
@@ -121,10 +129,16 @@ def terminal_outcome(
 
     if event.event_type == "error/connectionClosed":
         error = _stringify_terminal_error(event.payload.get("message")) or "connection_closed"
+        cause = (
+            TerminalOutcomeCause.REPLACEABLE_TRANSPORT_CLOSE
+            if event.harness_id == HarnessId.CODEX.value
+            else None
+        )
         return TerminalEventOutcome(
             status="failed",
             exit_code=1,
             error=error,
+            cause=cause,
         )
 
     if event.harness_id == HarnessId.CLAUDE.value and event.event_type == "result":

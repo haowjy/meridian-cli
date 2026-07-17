@@ -46,7 +46,6 @@ from meridian.lib.launch.env import resolve_pi_session_role
 from meridian.lib.launch.request import LaunchRuntime, SpawnRequest
 from meridian.lib.launch.resolve import (
     resolve_pi_child_wave_timeout_seconds,
-    resolve_pi_notification_timeout_seconds,
     resolve_pi_task_ping_interval_seconds,
     resolve_resident_deadline_seconds,
     resolve_resident_poll_seconds,
@@ -59,7 +58,6 @@ from meridian.lib.state.spawn.model import APP_LAUNCH_MODE, LaunchMode, SpawnOri
 from meridian.lib.state.spawn_report import spawn_report_has_durable_completion
 from meridian.lib.state.timestamps import iso_timestamp_to_epoch
 from meridian.lib.streaming.signal_canceller import CancelOutcome as SignalCancelOutcome
-from meridian.lib.utils.time import minutes_to_seconds
 
 if TYPE_CHECKING:
     from meridian.lib.core.lifecycle import TerminalStatus
@@ -89,19 +87,6 @@ def _config_snapshot_env(config_snapshot: dict[str, object]) -> dict[str, str]:
             result[k] = v
         return result
     return {}
-
-
-def _resolve_explicit_timeout_seconds(resolved_request: object) -> float | None:
-    """Extract explicit timeout seconds from resolved request-like objects."""
-
-    execution_policy = getattr(resolved_request, "execution_policy", None)
-    timeout_minutes = getattr(execution_policy, "timeout", None)
-    if timeout_minutes is None:
-        return None
-    try:
-        return minutes_to_seconds(float(timeout_minutes))
-    except (TypeError, ValueError):
-        return None
 
 
 def _resolve_config_snapshot(
@@ -456,10 +441,6 @@ class SpawnApplicationService:
             runtime_root=launch_ctx.runtime_root,
             task_cwd=connection_task_cwd,
             system=launch_ctx.binding.run_params.appended_system_prompt,
-            pi_notification_timeout_seconds=resolve_pi_notification_timeout_seconds(
-                explicit_timeout_seconds=_resolve_explicit_timeout_seconds(resolved_request),
-                config_snapshot=launch_config_snapshot,
-            ),
             pi_child_wave_timeout_seconds=resolve_pi_child_wave_timeout_seconds(
                 explicit_timeout_seconds=None,
                 config_snapshot=launch_config_snapshot,

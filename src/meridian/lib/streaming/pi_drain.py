@@ -10,13 +10,11 @@ from typing import TYPE_CHECKING
 
 from meridian.lib.core.types import SpawnId
 from meridian.lib.harness import pi_lifecycle_events as pi_lifecycle
-from meridian.lib.state import spawn_store
 from meridian.lib.streaming.completion_contracts import (
     AssessmentTrigger,
     CleanupReport,
     CompletionCleanupRequest,
     DiagnosticBlocker,
-    EvidenceActivity,
     EvidenceEventDecision,
     EvidenceFailure,
     WorkAssessment,
@@ -42,8 +40,8 @@ from meridian.lib.streaming.pi_completion_profile import (
     PiOutstandingWork,
     SendPiDoneNudge,
 )
+from meridian.lib.streaming.pi_lifecycle_tracker import PiLifecycleTracker
 from meridian.lib.streaming.pi_quiescence import PiQuiescenceTracker
-from meridian.lib.streaming.pi_subspawn_tracker import PiSubspawnTracker
 from meridian.lib.streaming.pi_work_ledger import (
     PiPrivateWorkLedger,
     PiPrivateWorkSnapshot,
@@ -58,7 +56,7 @@ if TYPE_CHECKING:
 _PI_PHASE_EVENT_TYPE = pi_lifecycle.PI_PHASE_EVENT_TYPE
 logger = logging.getLogger(__name__)
 
-TerminatePiChildren = Callable[[PiPrivateWorkLedger, str], Awaitable[None]]
+CancelPiDescendants = Callable[[str], Awaitable[None]]
 _PI_DESCENDANT_POLL_INTERVAL_SECONDS = 0.25
 
 
@@ -70,16 +68,14 @@ class PiCompletionEvidence:
         *,
         runtime_root: Path,
         spawn_id: SpawnId,
-        tracker: PiSubspawnTracker,
+        lifecycle_tracker: PiLifecycleTracker,
         quiescence_tracker: PiQuiescenceTracker,
-        notification_timeout_seconds: float | None,
         clock: Callable[[], float],
     ) -> None:
         self.runtime_root = runtime_root
         self.spawn_id = spawn_id
-        self.tracker = tracker
+        self.lifecycle_tracker = lifecycle_tracker
         self.quiescence_tracker = quiescence_tracker
-        self.notification_timeout_seconds = notification_timeout_seconds
         self._clock = clock
         self._descendant_evidence = ReconciledDescendantEvidence(
             runtime_root=runtime_root,
@@ -105,11 +101,7 @@ class PiCompletionEvidence:
     async def observe_event(
         self, event: HarnessEvent, transition: str | None
     ) -> EvidenceEventDecision:
-        duplicate = self.tracker.observe(
-            event,
-            now_monotonic=self._clock(),
-            notification_timeout_seconds=self.notification_timeout_seconds,
-        )
+        duplicate = self.lifecycle_tracker.observe(event)
         if duplicate:
             return EvidenceEventDecision(duplicate_canonical_event=True)
         if event.event_type == "session":
@@ -132,14 +124,12 @@ class PiCompletionEvidence:
     def note_event_persisted(self, event: HarnessEvent) -> EvidenceEventDecision:
         profile = self._profile
         activity = profile.note_persisted_activity(event) if profile is not None else None
-        lifecycle_error = self.tracker.lifecycle_tracking_invalidated_error
+        lifecycle_error = self.lifecycle_tracker.lifecycle_tracking_invalidated_error
         failure = (
             EvidenceFailure(code="pi_lifecycle_tracking_invalidated", detail=lifecycle_error)
             if lifecycle_error is not None
             else None
         )
-        if activity is None and self.tracker.notification_failure_error is not None:
-            activity = EvidenceActivity(code="pi_notification_failure")
         return EvidenceEventDecision(activity=activity, failure=failure)
 
     async def assess(self, trigger: AssessmentTrigger) -> WorkAssessment:
@@ -178,11 +168,7 @@ class PiCompletionEvidence:
         descendant_assessment = self._persisted_descendant_assessment(
             self._assess_reconciled_descendants()
         )
-        private_work = self.quiescence_tracker.private_work_snapshot()
-        return (
-            descendant_assessment.disposition != "ready"
-            or bool(private_work.rowless_subspawn_ids)
-        )
+        return descendant_assessment.disposition != "ready"
 
     def pending_child_count(self) -> int:
         descendant_assessment = self._persisted_descendant_assessment(
@@ -193,11 +179,7 @@ class PiCompletionEvidence:
             if descendant_assessment.disposition == "blocked"
             else int(descendant_assessment.disposition == "unknown")
         )
-        private_work = self.quiescence_tracker.private_work_snapshot()
-        return (
-            persisted_count
-            + len(private_work.rowless_subspawn_ids)
-        )
+        return persisted_count
 
     def classify_outstanding_work(self) -> PiOutstandingWork:
         reconciled_descendants = self._assess_reconciled_descendants()
@@ -205,45 +187,16 @@ class PiCompletionEvidence:
         if reconciled_descendants.disposition == "unknown":
             return PiOutstandingWork(
                 spawn_children=True,
-                non_spawn_processes=private_work.tracked_bash_bg
-                or bool(private_work.rowless_subspawn_ids),
+                non_spawn_processes=private_work.tracked_bash_bg,
             )
 
-        persisted_descendant_ids = set(
-            self._descendant_evidence.persisted_descendant_ids
-        )
-        active_descendant_ids = {
-            blocker.identity
-            for blocker in reconciled_descendants.blockers
-            if blocker.code == "active_descendant"
-            and blocker.identity in persisted_descendant_ids
-        }
-        rowless_tracked_subspawn_ids = (
-            set(private_work.rowless_subspawn_ids) - active_descendant_ids
-        )
-        rowless_meridian_spawn_ids = {
-            subspawn_id
-            for subspawn_id in rowless_tracked_subspawn_ids
-            if spawn_store.is_spawn_id_shape(subspawn_id)
-        }
-        rowless_pi_internal_subspawns = bool(
-            rowless_tracked_subspawn_ids - rowless_meridian_spawn_ids
-        )
         return PiOutstandingWork(
-            spawn_children=bool(active_descendant_ids),
-            unknown_spawn_children=bool(rowless_meridian_spawn_ids),
-            non_spawn_processes=(
-                private_work.tracked_bash_bg or rowless_pi_internal_subspawns
-            ),
+            spawn_children=bool(reconciled_descendants.blockers),
+            non_spawn_processes=private_work.tracked_bash_bg,
         )
 
     def _assess_reconciled_descendants(self) -> WorkAssessment:
-        assessment = self._descendant_evidence.assess()
-        if assessment.disposition != "unknown":
-            self.tracker.note_persisted_subspawns(
-                self._descendant_evidence.persisted_descendant_ids
-            )
-        return assessment
+        return self._descendant_evidence.assess()
 
     def _assessment(self, reconciled_descendants: WorkAssessment) -> WorkAssessment:
         descendants = self._persisted_descendant_assessment(reconciled_descendants)
@@ -290,7 +243,6 @@ class PiCompletionEvidence:
             DiagnosticBlocker(
                 source="profile",
                 code=blocker.code,
-                identity=blocker.identity,
             )
             for blocker in private_work.blockers
         )
@@ -304,19 +256,17 @@ class PiCompletionEvidence:
 
 
 class PiCompletionCleanup:
-    """Terminate Pi-owned cleanup handles through the plan's canonical callback."""
+    """Cancel persisted Pi descendants through the plan's injected callback."""
 
     def __init__(
         self,
         *,
-        ledger: PiPrivateWorkLedger,
         quiescence_tracker: PiQuiescenceTracker,
-        terminate_children: TerminatePiChildren | None,
+        cancel_descendants: CancelPiDescendants | None,
         emit_phase: Callable[..., None],
     ) -> None:
-        self._ledger = ledger
         self.quiescence_tracker = quiescence_tracker
-        self.terminate_children = terminate_children
+        self.cancel_descendants = cancel_descendants
         self.emit_phase = emit_phase
         self.tracked_cleanup_reason: str | None = None
         self.tracked_cleanup_error: str | None = None
@@ -332,37 +282,33 @@ class PiCompletionCleanup:
         if reason == "pi_process_exit_with_tracked_children":
             if self.tracked_cleanup_reason is not None:
                 return CleanupReport()
-            callback = self.terminate_children
+            callback = self.cancel_descendants
             if callback is None:
                 raise RuntimeError("Pi child process-exit cleanup is not configured")
-            handles_attempted = self._ledger.tracked_subspawn_ids()
-            await callback(self._ledger, reason)
+            await callback(reason)
             self.tracked_cleanup_reason = reason
             return CleanupReport(
                 attempted_categories=("pi_tracked_children",),
-                handles_attempted=handles_attempted,
             )
         if reason != "pi_child_wave_timeout":
             return CleanupReport()
-        callback = self.terminate_children
+        callback = self.cancel_descendants
         if callback is None:
             raise RuntimeError("Pi child timeout cleanup is not configured")
-        handles_attempted = self._ledger.tracked_subspawn_ids()
         failures: tuple[EvidenceFailure, ...] = ()
         try:
-            await callback(self._ledger, reason)
+            await callback(reason)
         except Exception as exc:
             self.tracked_cleanup_error = str(exc)
             failures = (EvidenceFailure(code="pi_child_cleanup_failed", detail=str(exc)),)
         finally:
-            tracked_count = self._ledger.clear_tracked_subspawns()
             telemetry = self._child_timeout_telemetry or ChildTimeoutTelemetry(
-                active_tracked_count=tracked_count,
+                active_tracked_count=0,
                 elapsed_seconds=0.0,
                 timeout_seconds=0.0,
             )
             payload: dict[str, object] = {
-                "active_tracked_count": tracked_count,
+                "active_tracked_count": telemetry.active_tracked_count,
                 "elapsed_seconds": telemetry.elapsed_seconds,
                 "timeout_seconds": telemetry.timeout_seconds,
             }
@@ -374,7 +320,6 @@ class PiCompletionCleanup:
                 logger.warning("Failed to emit Pi child-wave timeout phase", exc_info=True)
         return CleanupReport(
             attempted_categories=("pi_tracked_children",),
-            handles_attempted=handles_attempted,
             failures=failures,
         )
 
@@ -401,17 +346,16 @@ class PiDrainCoordinator:
         spawn_id: SpawnId,
         receiver: HarnessConnection[ResolvedLaunchSpec],
         session_role: str | None,
-        notification_timeout_seconds: float | None,
         child_wave_timeout_seconds: float | None,
         emit_phase: EmitPiPhase,
-        terminate_children: TerminatePiChildren | None = None,
+        cancel_descendants: CancelPiDescendants | None = None,
         send_done_nudge: SendPiDoneNudge | None = None,
     ) -> PiDrainCoordinator:
         del receiver
         normalized_role = (session_role or "").strip().lower()
         clock = lambda: time.monotonic()  # noqa: E731 - preserve runtime clock patching
         ledger = PiPrivateWorkLedger()
-        tracker = PiSubspawnTracker.empty(ledger)
+        lifecycle_tracker = PiLifecycleTracker.empty()
         quiescence_tracker = PiQuiescenceTracker.for_connection(
             runtime_root=runtime_root,
             spawn_id=spawn_id,
@@ -422,9 +366,8 @@ class PiDrainCoordinator:
         evidence = PiCompletionEvidence(
             runtime_root=runtime_root,
             spawn_id=spawn_id,
-            tracker=tracker,
+            lifecycle_tracker=lifecycle_tracker,
             quiescence_tracker=quiescence_tracker,
-            notification_timeout_seconds=notification_timeout_seconds,
             clock=clock,
         )
         profile = PiCompletionProfile(
@@ -435,14 +378,12 @@ class PiDrainCoordinator:
             emit_phase=emit_phase,
             send_done_nudge=send_done_nudge,
             evidence=evidence,
-            private_work_ledger=ledger,
             stabilization_seconds=PI_MICRO_DRAIN_TIMEOUT_SECONDS,
             clock=clock,
         )
         cleanup = PiCompletionCleanup(
-            ledger=ledger,
             quiescence_tracker=quiescence_tracker,
-            terminate_children=terminate_children,
+            cancel_descendants=cancel_descendants,
             emit_phase=profile.emit,
         )
         evidence.bind_profile(profile)
