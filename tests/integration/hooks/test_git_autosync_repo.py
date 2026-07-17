@@ -3,13 +3,20 @@ from __future__ import annotations
 import json
 import shutil
 import subprocess
+import threading
+from collections.abc import Generator
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from pathlib import Path
 from typing import cast
 from uuid import uuid4
 
 import pytest
 
+from meridian.lib.hooks.builtin import autosync_store
+from meridian.lib.hooks.builtin.autosync_store import AutosyncTransaction
 from meridian.lib.hooks.builtin.git_autosync import GitAutosync
+from meridian.lib.ops import sync_conflicts
 from meridian.plugin_api import Hook, HookContext
 from tests.support.git import isolated_git_env
 
@@ -342,6 +349,66 @@ def test_git_autosync_merge_conflict_does_not_rewrite_agents_md(
 
     subjects = _git("log", "--pretty=%s", cwd=work, env=git_env).stdout.splitlines()
     assert not any(subject.startswith("autosync: conflict notice") for subject in subjects)
+
+
+def test_conflict_resolution_waits_for_complete_hook_transaction(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    git_env = isolated_git_env(global_config_path=tmp_path / "gitconfig")
+    remote, work = _seed_remote(tmp_path, env=git_env)
+    _configure_clone_override(tmp_path, monkeypatch, repo_url=str(remote), clone_path=work)
+
+    other = _clone_remote(remote, tmp_path / "other", env=git_env)
+    (other / "shared.txt").write_text("remote change\n", encoding="utf-8")
+    _git("add", "-A", cwd=other, env=git_env)
+    _git("commit", "-m", "remote change", cwd=other, env=git_env)
+    _git("push", "origin", "HEAD", cwd=other, env=git_env)
+    (work / "shared.txt").write_text("local change\n", encoding="utf-8")
+
+    record_written = threading.Event()
+    release_hook = threading.Event()
+    resolution_started = threading.Event()
+    original_write_conflict = AutosyncTransaction.write_conflict
+    original_transaction = autosync_store.transaction
+
+    def delayed_write_conflict(
+        autosync_tx: AutosyncTransaction,
+        record: autosync_store.ConflictRecord,
+    ) -> None:
+        original_write_conflict(autosync_tx, record)
+        record_written.set()
+        assert release_hook.wait(timeout=5)
+
+    @contextmanager
+    def observed_resolution_transaction(
+        sync_root: Path,
+        *,
+        timeout: float | None = 60.0,
+    ) -> Generator[AutosyncTransaction, None, None]:
+        resolution_started.set()
+        with original_transaction(sync_root, timeout=timeout) as autosync_tx:
+            yield autosync_tx
+
+    monkeypatch.setattr(AutosyncTransaction, "write_conflict", delayed_write_conflict)
+    monkeypatch.setattr(sync_conflicts, "_find_sync_roots", lambda: [work])
+    monkeypatch.setattr(sync_conflicts, "transaction", observed_resolution_transaction)
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        hook = executor.submit(GitAutosync().execute, _context(work), _hook(remote=str(remote)))
+        assert record_written.wait(timeout=5)
+        [record] = _read_conflicts(work)
+        conflict_id = cast("str", record["id"])
+        resolve = executor.submit(sync_conflicts.resolve_conflict_sync, conflict_id)
+        assert resolution_started.wait(timeout=5)
+        release_hook.set()
+        hook_result = hook.result()
+        resolve_result = resolve.result()
+
+    assert hook_result.skip_reason == "conflict_detected"
+    assert resolve_result.resolved is True
+    [stored] = _read_conflicts(work)
+    assert stored["resolved"] is True
 
 
 def test_git_autosync_merge_conflict_skips_notice_when_no_agents_md(
