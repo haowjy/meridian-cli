@@ -68,6 +68,10 @@ fail, or clear signals for the parent.
 inject, interrupt, permission reply, and user-input-reply actions. Calling the
 connection directly breaks this serialization.
 
+**Terminal publication belongs to `SpawnManager`.** The drain loop supplies its
+classification, but `stop_spawn()` must still publish the finalized lifecycle row,
+resolve completion, and start that spawn's cleanup when a bounded drain is cancelled.
+
 **Drain loop ordering is not negotiable: persist → observe → fan-out.** A failed
 write — including the tenth consecutive failure that aborts the loop with a
 `failed` outcome — is never delivered to the coordinator, observers, or the
@@ -110,7 +114,7 @@ means the manager died or the spawn is orphaned.
 
 - `spawn_manager.py` — `SpawnManager`: public live-spawn registry/control API
 - `spawn_dispatch.py` — connection creation/start dispatch
-- `spawn_drain_loop.py` — event drain, persistence/observer/fan-out ordering, outcome priority
+- `spawn_drain_loop.py` — event drain, persistence/observer/fan-out ordering, outcome classification, `resolve_terminal_outcome` priority resolver
 - `drain_coordinator.py` — `DrainCoordinator` protocol seam for harness-specific completion policy
 - `drain_plan_factory.py` — plain/resident/Pi plan selection and capability wiring
 - `drain_teardown.py` — harness-neutral plan-owned connection-stop contract and default

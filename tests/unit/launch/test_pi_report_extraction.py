@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from meridian.lib.core.types import SpawnId
@@ -27,6 +28,24 @@ def _store_from_fixture(name: str, spawn_id: SpawnId) -> _MemoryArtifactStore:
 def test_extract_pi_failure_from_prompt_rejection_fixture() -> None:
     history = (_FIXTURES / "history_prompt_rejection.jsonl").read_text(encoding="utf-8")
     assert extract_pi_failure_from_history(history) == "No API key configured"
+
+
+def test_extract_pi_failure_ignores_inject_rejection() -> None:
+    history = json.dumps(
+        {
+            "event_type": "response",
+            "harness_id": "pi",
+            "payload": {
+                "type": "response",
+                "command": "prompt",
+                "success": False,
+                "error": "Future Pi prompt rejection",
+                "meridian_control_action": "inject",
+            },
+        }
+    )
+
+    assert extract_pi_failure_from_history(history) is None
 
 
 def test_compact_pi_failure_output_strips_extension_js_stack() -> None:

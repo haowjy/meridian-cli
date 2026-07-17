@@ -5,9 +5,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from collections.abc import Awaitable, Callable, Coroutine
-from contextlib import suppress
-from typing import TYPE_CHECKING, Any, cast
+from collections.abc import Awaitable, Callable
+from typing import TYPE_CHECKING, Any
 
 from meridian.lib.core.types import SpawnId
 from meridian.lib.harness.connections.base import HarnessEvent
@@ -37,10 +36,9 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-CleanupCompletedSession = Callable[
-    [SpawnId, SpawnSession, DrainOutcome], Coroutine[Any, Any, None]
+PublishTerminal = Callable[
+    [SpawnId, SpawnSession, DrainOutcome, CompletionCleanupRequest | None], DrainOutcome
 ]
-ResolveCompletionFuture = Callable[[SpawnSession, DrainOutcome], DrainOutcome]
 FanOutEvent = Callable[[SpawnId, HarnessEvent], None]
 FanOutTurnBoundary = Callable[[SpawnId, "TerminalEventOutcome"], Awaitable[None]]
 
@@ -54,18 +52,14 @@ class SpawnDrainLoop:
         sessions: dict[SpawnId, SpawnSession],
         history_writers: dict[SpawnId, HarnessHistoryWriter],
         observers: EventObserverRegistry,
-        cleanup_tasks: set[asyncio.Task[None]],
-        cleanup_completed_session: CleanupCompletedSession,
-        resolve_completion_future: ResolveCompletionFuture,
+        publish_terminal: PublishTerminal,
         fan_out_event: FanOutEvent,
         fan_out_turn_boundary: FanOutTurnBoundary,
     ) -> None:
         self._sessions = sessions
         self._history_writers = history_writers
         self._observers = observers
-        self._cleanup_tasks = cleanup_tasks
-        self._cleanup_completed_session = cleanup_completed_session
-        self._resolve_completion_future = resolve_completion_future
+        self._publish_terminal = publish_terminal
         self._fan_out_event = fan_out_event
         self._fan_out_turn_boundary = fan_out_turn_boundary
 
@@ -96,7 +90,11 @@ class SpawnDrainLoop:
             await coordinator.start()
 
         events_iter = receiver.events().__aiter__()
-        drain_waiter = DrainInputWaiter(events_iter, drain_plan.aux_wake or _NoAuxWake())
+        drain_waiter = DrainInputWaiter(
+            events_iter,
+            drain_plan.aux_wake or _NoAuxWake(),
+            task_context=f"spawn {spawn_id}",
+        )
         try:
             while True:
                 wake = await drain_waiter.wait(_next_timeout(coordinator))
@@ -246,10 +244,26 @@ class SpawnDrainLoop:
                 if coordinator is not None:
                     await coordinator.stop()
             recorded_terminal_outcome = exit_decision.recorded_outcome
-            session = self._sessions.pop(spawn_id, None)
+            session = self._sessions.get(spawn_id)
             if session is not None:
                 fallback_error = exit_decision.fallback_error
-                if drain_cancelled:
+                if (
+                    recorded_terminal_outcome is not None
+                    and recorded_terminal_outcome.status == "succeeded"
+                ):
+                    outcome = DrainOutcome(
+                        status="succeeded",
+                        exit_code=recorded_terminal_outcome.exit_code,
+                        error=recorded_terminal_outcome.error,
+                        duration_secs=max(
+                            0.0,
+                            time.monotonic() - session.started_monotonic,
+                        ),
+                        authoritative=(
+                            not drain_plan.raw_terminal_frames_authoritative
+                        ),
+                    )
+                elif drain_cancelled:
                     outcome = DrainOutcome(
                         status="cancelled",
                         exit_code=1,
@@ -293,48 +307,25 @@ class SpawnDrainLoop:
                         error="connection_closed_without_terminal_event",
                         duration_secs=max(0.0, time.monotonic() - session.started_monotonic),
                     )
-                if drain_plan.finalizer is not None:
-                    drain_plan.finalizer.after_finalized(
-                        connection_session_id=_safe_connection_session_id(receiver),
-                        outcome=outcome,
-                    )
-                self._resolve_completion_future(session, outcome)
-                cleanup_task = asyncio.create_task(
-                    self._run_post_publication_teardown(
-                        coordinator=coordinator,
-                        cleanup_request=exit_decision.post_publication_cleanup,
-                        spawn_id=spawn_id,
-                        session=session,
-                        outcome=outcome,
-                    )
+                self._publish_terminal(
+                    spawn_id,
+                    session,
+                    outcome,
+                    exit_decision.post_publication_cleanup,
                 )
-                self._cleanup_tasks.add(cleanup_task)
-                cleanup_task.add_done_callback(self._cleanup_tasks.discard)
-            self._observers.complete(spawn_id)
-            if session is not None and session.subscriber is not None:
-                while True:
-                    try:
-                        session.subscriber.put_nowait(None)
-                        break
-                    except asyncio.QueueFull:
-                        with suppress(asyncio.QueueEmpty):
-                            session.subscriber.get_nowait()
-                        continue
 
-    async def _run_post_publication_teardown(
-        self,
-        *,
-        coordinator: DrainCoordinator | None,
-        cleanup_request: CompletionCleanupRequest | None,
-        spawn_id: SpawnId,
-        session: SpawnSession,
-        outcome: DrainOutcome,
-    ) -> None:
-        try:
-            if coordinator is not None and cleanup_request is not None:
-                await coordinator.execute_post_publication_cleanup(cleanup_request)
-        finally:
-            await self._cleanup_completed_session(spawn_id, session, outcome)
+
+def resolve_terminal_outcome(
+    drain_outcome: DrainOutcome,
+    authoritative_stop_outcome: DrainOutcome | None,
+) -> DrainOutcome:
+    """Resolve competing terminal sources in their explicit priority order."""
+
+    if drain_outcome.status == "succeeded":
+        return drain_outcome
+    if authoritative_stop_outcome is not None:
+        return authoritative_stop_outcome
+    return drain_outcome
 
 
 class _NoAuxWake:
@@ -411,13 +402,3 @@ async def _handle_stream_exit(
     if coordinator is None:
         return DrainExitDecision(recorded_outcome=recorded_outcome)
     return await coordinator.handle_stream_exit(recorded_outcome)
-
-
-def _safe_connection_session_id(connection: object) -> str | None:
-    """Read optional connection session_id without assuming full HarnessConnection shape."""
-
-    try:
-        session_id = cast("Any", connection).session_id
-    except Exception:
-        return None
-    return session_id if isinstance(session_id, str) and session_id.strip() else None

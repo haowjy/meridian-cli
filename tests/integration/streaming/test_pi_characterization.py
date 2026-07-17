@@ -259,6 +259,10 @@ async def test_notification_timeout_preserves_configured_stream_exit_cleanup(
 
         timeout = await coordinator.handle_timeout()
         exit_decision = await coordinator.handle_stream_exit(timeout.recorded_outcome)
+        _assert_failed(
+            exit_decision,
+            "pi_notification_timeout:id=n1:phase=queued:elapsed=5.000:timeout=5.000",
+        )
         request = exit_decision.post_publication_cleanup
         assert request is not None
         await coordinator.execute_post_publication_cleanup(request)

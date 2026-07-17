@@ -4,6 +4,23 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- Lifecycle history rows now carry sub-second wall-clock timestamps, and terminal
+  spawn state records the sub-second `published_at` time of its atomic publication.
+  (#435)
+
+### Fixed
+- Pi process exits with tracked child work now report the tracked-work-specific
+  terminal reason for both lifecycle children and managed background bash work.
+  (#433)
+- Attempt timeouts now report `timed_out` consistently in spawn reports and Pi
+  lifecycle history, retain post-finalization cleanup diagnostics, and consume
+  aborted-stream exhaustion without leaking `StopAsyncIteration` warnings. (#432)
+- Pi RPC injects now queue as follow-up turns, wait for Pi's acknowledgement before
+  reporting delivery, wait through normal background startup for the control endpoint,
+  and keep prompt rejections scoped to the inject instead of failing an otherwise
+  healthy spawn. (#434)
+
 ## [0.3.34] - 2026-07-17
 
 ### Added

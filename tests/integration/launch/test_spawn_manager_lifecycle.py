@@ -7,6 +7,7 @@ import asyncio
 import json
 import time
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
@@ -24,8 +25,9 @@ from meridian.lib.safety.permissions import UnsafeNoOpPermissionResolver
 from meridian.lib.state.paths import resolve_runtime_paths
 from meridian.lib.state.spawn_store import start_spawn
 from meridian.lib.streaming import spawn_manager as spawn_manager_module
+from meridian.lib.streaming.drain_coordinator import DrainPlan
 from meridian.lib.streaming.drain_teardown import DEFAULT_DRAIN_SESSION_TEARDOWN
-from meridian.lib.streaming.spawn_manager import SpawnManager, SpawnSession
+from meridian.lib.streaming.spawn_manager import DrainOutcome, SpawnManager, SpawnSession
 from meridian.lib.streaming.types import InjectResult
 from meridian.lib.telemetry import init_telemetry
 from tests.support.async_determinism import assert_still_pending
@@ -249,6 +251,7 @@ async def test_backpressure_drop_emits_runtime_telemetry(tmp_path: Path) -> None
         completion_future=completion_future,
         raw_terminal_frames_authoritative=True,
         teardown=DEFAULT_DRAIN_SESSION_TEARDOWN,
+        drain_plan=DrainPlan(),
         control_actions=ControlActionCoordinator(
             spawn_id=spawn_id,
             spawn_dir=manager._spawn_dir(spawn_id),
@@ -336,6 +339,7 @@ async def test_stop_spawn_reaps_recorded_scope_when_connection_stop_raises(
         completion_future=completion_future,
         raw_terminal_frames_authoritative=True,
         teardown=DEFAULT_DRAIN_SESSION_TEARDOWN,
+        drain_plan=DrainPlan(),
         control_actions=ControlActionCoordinator(
             spawn_id=spawn_id,
             spawn_dir=manager._spawn_dir(spawn_id),
@@ -346,6 +350,43 @@ async def test_stop_spawn_reaps_recorded_scope_when_connection_stop_raises(
 
     assert outcome is not None
     assert reaped == [(str(spawn_id), "stop_spawn")]
+
+
+@pytest.mark.asyncio
+async def test_stop_awaits_only_its_cleanup_and_shutdown_drains_the_rest(
+    tmp_path: Path,
+) -> None:
+    manager = SpawnManager(runtime_root=tmp_path, project_root=tmp_path)
+    own_spawn = SpawnId("p-own-cleanup")
+    other_spawn = SpawnId("p-other-cleanup")
+    own_done = asyncio.Event()
+    release_other = asyncio.Event()
+    other_done = asyncio.Event()
+
+    async def _own_cleanup() -> None:
+        own_done.set()
+
+    async def _other_cleanup() -> None:
+        await release_other.wait()
+        other_done.set()
+
+    completion: asyncio.Future[DrainOutcome] = asyncio.get_running_loop().create_future()
+    outcome = DrainOutcome(status="succeeded", exit_code=0)
+    completion.set_result(outcome)
+    manager._sessions[own_spawn] = cast(
+        "Any",
+        SimpleNamespace(terminal_published=True, completion_future=completion),
+    )
+    manager._cleanup_tasks[own_spawn] = asyncio.create_task(_own_cleanup())
+    manager._cleanup_tasks[other_spawn] = asyncio.create_task(_other_cleanup())
+
+    assert await manager.stop_spawn(own_spawn) is outcome
+    assert own_done.is_set()
+    assert not other_done.is_set()
+
+    release_other.set()
+    await manager.shutdown()
+    assert other_done.is_set()
 
 
 @pytest.mark.asyncio

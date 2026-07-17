@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import sys
@@ -174,6 +175,14 @@ async def test_pi_rpc_connection_supports_multi_turn_injection_and_abort(
         "  printf '%s\\n' \"$line\" >> \"$PI_RPC_INBOUND_LOG\"\n"
         "  case \"$line\" in\n"
         "    *'\"type\":\"prompt\"'*)\n"
+        "      case \"$line\" in\n"
+        "        *'\"message\":\"FIRST\"'*) printf '%s\\n' "
+        "'{\"id\":\"meridian-prompt-1\",\"type\":\"response\","
+        "\"command\":\"prompt\",\"success\":true}' ;;\n"
+        "        *'\"message\":\"SECOND\"'*) printf '%s\\n' "
+        "'{\"id\":\"meridian-prompt-2\",\"type\":\"response\","
+        "\"command\":\"prompt\",\"success\":true}' ;;\n"
+        "      esac\n"
         "      printf '%s\\n' '{\"type\":\"agent_start\"}'\n"
         "      printf '%s\\n' "
         "'{\"type\":\"agent_end\",\"messages\":[{\"role\":\"assistant\",\"stopReason\":\"stop\"}]}'\n"
@@ -215,11 +224,15 @@ async def test_pi_rpc_connection_supports_multi_turn_injection_and_abort(
     assert (await _next_non_phase_event(event_iter)).event_type == "agent_start"
     assert (await _next_non_phase_event(event_iter)).event_type == "agent_end"
 
-    await connection.send_user_message("FIRST")
+    first_send = asyncio.create_task(connection.send_user_message("FIRST"))
+    assert (await _next_non_phase_event(event_iter)).event_type == "response"
+    await first_send
     assert (await _next_non_phase_event(event_iter)).event_type == "agent_start"
     assert (await _next_non_phase_event(event_iter)).event_type == "agent_end"
 
-    await connection.send_user_message("SECOND")
+    second_send = asyncio.create_task(connection.send_user_message("SECOND"))
+    assert (await _next_non_phase_event(event_iter)).event_type == "response"
+    await second_send
     assert (await _next_non_phase_event(event_iter)).event_type == "agent_start"
     assert (await _next_non_phase_event(event_iter)).event_type == "agent_end"
 

@@ -29,8 +29,12 @@ SpawnSession
   ├─ control_server: ControlSocketServer
   ├─ completion_future: Future[DrainOutcome]
   ├─ teardown: DrainSessionTeardown
+  ├─ drain_plan: DrainPlan           ← full plan for terminal publication
   ├─ cancel_sent: bool               ← double-cancel guard
-  └─ control_actions: ControlActionCoordinator
+  ├─ control_actions: ControlActionCoordinator
+  ├─ authoritative_stop_outcome: DrainOutcome | None  ← explicit stop intent
+  ├─ terminal_published: bool        ← idempotent publication guard
+  └─ cleanup_task: Task | None       ← per-spawn post-publication teardown
 ```
 
 The implementation is split by responsibility:
@@ -98,15 +102,24 @@ so resident and plain drain paths never see it as a parent completion candidate.
 `PrimaryEventScope` is the only scope contract passed through the drain stack; do
 not preserve or add compatibility side channels such as a Codex-only thread-id path.
 
-### DrainOutcome Priority
+### DrainOutcome Classification
 
-When the drain loop exits, the outcome is determined in this order:
+The drain loop classifies its outcome, but does not own publication.
+Classification order:
 
-1. `asyncio.CancelledError` raised → `cancelled`
-2. Unhandled exception → `failed`
-3. `session.cancel_sent` is True → `cancelled` (exit code 143)
-4. `recorded_terminal_outcome` from harness → use its status/exit_code/error
-5. Connection closed without a terminal event → `failed` with `connection_closed_without_terminal_event`
+1. `recorded_terminal_outcome` with `status == "succeeded"` → `succeeded`
+   (success takes priority over cancellation)
+2. `asyncio.CancelledError` raised → `cancelled`
+3. Unhandled exception → `failed`
+4. `session.cancel_sent` is True → `cancelled` (exit code 143)
+5. Non-success `recorded_terminal_outcome` from harness → use its status/exit_code/error
+6. Connection closed without a terminal event → `failed` with `connection_closed_without_terminal_event`
+
+After classification, `SpawnManager._publish_terminal()` applies
+`resolve_terminal_outcome()` which resolves competing sources: success wins;
+otherwise an authoritative stop outcome (from `stop_spawn()`) wins; otherwise the
+drain classification stands. Publication is idempotent — `terminal_published` on
+`SpawnSession` guards against double publication.
 
 ### Subscriber Queue Backpressure
 
@@ -121,6 +134,18 @@ instances between runs — the session dict is not concurrency-safe across multi
 concurrent `start_spawn` calls from different event loops.
 
 ### Terminal Publication and Recovery
+
+`SpawnManager._publish_terminal()` is the idempotent barrier that owns terminal
+lifecycle publication. It resolves competing terminal sources via
+`resolve_terminal_outcome()` (success > authoritative stop > drain classification),
+runs the plan finalizer, resolves the completion future, notifies observers, and
+starts one per-spawn cleanup task. Both the drain loop's natural exit path and
+`stop_spawn()` call it; the `terminal_published` guard ensures exactly one publication.
+
+Cleanup tasks are keyed per spawn (`_cleanup_tasks: dict[SpawnId, Task]`).
+`stop_spawn()` awaits only its own spawn's cleanup. `shutdown()` drains all
+remaining cleanup tasks. This prevents cross-spawn coupling where stopping one
+spawn would block on another's unrelated cleanup.
 
 Terminal outcomes publish before plan-owned teardown runs asynchronously and best-effort;
 startup reaper reconciliation recovers incomplete cleanup. Completion deadlines use

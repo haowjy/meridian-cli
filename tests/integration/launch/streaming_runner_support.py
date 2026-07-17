@@ -523,7 +523,7 @@ class _EndMonotonicFailsClock(FakeClock):
 
 
 class _TimeoutAbortPiConnection(FakePiConnection):
-    """Idle Pi fake whose synchronous stop publishes the induced abort frame."""
+    """Idle Pi fake whose slow multi-frame abort tail outlives bounded drain."""
 
     def __init__(self) -> None:
         super().__init__([])
@@ -548,6 +548,9 @@ class _TimeoutAbortPiConnection(FakePiConnection):
             "agent_end",
             {"messages": [{"role": "assistant", "stopReason": "aborted"}]},
         )
+        for index in range(3):
+            await asyncio.sleep(0.8)
+            yield pi_event("message_update", {"abort_tail_frame": index})
 
 
 
