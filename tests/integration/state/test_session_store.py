@@ -34,6 +34,25 @@ def _crash_session_cleanup(runtime_root: Path, crash_stage: str) -> None:
     session_store.cleanup_stale_sessions(runtime_root)
 
 
+def _crash_session_cleanup_during_append(runtime_root: Path) -> None:
+    def append_partial_then_crash(
+        data_path: Path,
+        _lock_path: Path,
+        _event: object,
+        *,
+        exclude_none: bool = False,
+    ) -> None:
+        del exclude_none
+        with data_path.open("ab") as handle:
+            handle.write(b'{"event":"stop","session_instance_id"')
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.kill(os.getpid(), signal.SIGKILL)
+
+    session_store.append_event = append_partial_then_crash  # type: ignore[assignment]
+    session_store.cleanup_stale_sessions(runtime_root)
+
+
 def _state_root(tmp_path: Path) -> Path:
     state_dir = tmp_path / ".meridian"
     state_dir.mkdir(parents=True, exist_ok=True)
@@ -332,6 +351,54 @@ def test_cleanup_crash_remains_recoverable(
 
     session_store.cleanup_stale_sessions(runtime_root)
 
+    assert not lock_path.exists()
+    assert not lease_path.exists()
+
+
+@pytest.mark.skipif(os.name != "posix", reason="requires a POSIX subprocess and SIGKILL")
+def test_cleanup_repairs_torn_event_tail_before_retrying_stop(tmp_path: Path) -> None:
+    runtime_root = _state_root(tmp_path)
+    chat_id = "c-torn"
+    generation = "torn-generation"
+    _write_session_start(
+        runtime_root=runtime_root,
+        chat_id=chat_id,
+        session_instance_id=generation,
+    )
+    sessions_dir = runtime_root / "sessions"
+    sessions_dir.mkdir(parents=True)
+    lock_path = sessions_dir / f"{chat_id}.lock"
+    lock_path.touch()
+    lease_path = sessions_dir / f"{chat_id}.lease.json"
+    lease_path.write_text(
+        json.dumps(
+            {
+                "chat_id": chat_id,
+                "owner_pid": 999_999,
+                "session_instance_id": generation,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    process = multiprocessing.get_context("spawn").Process(
+        target=_crash_session_cleanup_during_append,
+        args=(runtime_root,),
+    )
+    process.start()
+    process.join(timeout=5)
+    assert process.exitcode == -signal.SIGKILL
+    assert (
+        (runtime_root / "sessions.jsonl")
+        .read_bytes()
+        .endswith(b'{"event":"stop","session_instance_id"')
+    )
+
+    session_store.cleanup_stale_sessions(runtime_root)
+
+    record = session_store.get_session_record(runtime_root, chat_id)
+    assert record is not None
+    assert record.stopped_at is not None
     assert not lock_path.exists()
     assert not lease_path.exists()
 
