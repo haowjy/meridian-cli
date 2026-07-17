@@ -8,9 +8,8 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict
 
-from meridian.lib.platform.locking import lock_file
 from meridian.lib.state.event_store import append_event, read_events, utc_now_iso
-from meridian.lib.state.spawn.repository import read_state, spawn_lock_path
+from meridian.lib.state.spawn_aggregate import mutate_published_spawn_artifact
 
 LAUNCH_BOUNDARY_FILENAME = "launch-boundary.jsonl"
 
@@ -81,11 +80,9 @@ def record_launch_boundary_event(
     exception_type: str | None = None,
     details: dict[str, Any] | None = None,
 ) -> None:
-    spawns_dir = runtime_root / "spawns"
     data_path = launch_boundary_path(runtime_root, spawn_id)
-    with lock_file(spawn_lock_path(spawns_dir, spawn_id), reentrant=False):
-        if read_state(spawns_dir, spawn_id, include_prompt=False) is None:
-            return
+
+    def append_observation() -> None:
         append_event(
             data_path,
             launch_boundary_lock_path(runtime_root, spawn_id),
@@ -105,6 +102,8 @@ def record_launch_boundary_event(
             ),
             exclude_none=True,
         )
+
+    mutate_published_spawn_artifact(runtime_root, spawn_id, append_observation)
 
 
 def read_launch_boundary_events(

@@ -5,11 +5,13 @@ from pathlib import Path
 
 import pytest
 
+from meridian.lib.platform.locking import try_lock_file
 from meridian.lib.state import launch_boundary as launch_boundary_module
 from meridian.lib.state.launch_boundary import (
     launch_boundary_lock_path,
     record_launch_boundary_event,
 )
+from meridian.lib.state.spawn.repository import spawn_lock_path
 from meridian.lib.state.spawn_aggregate import delete_published_spawn
 from meridian.lib.state.spawn_store import start_spawn
 
@@ -112,6 +114,11 @@ def test_launch_observation_and_spawn_deletion_are_serialized(
     deleter = threading.Thread(target=delete_spawn)
     writer.start()
     assert append_started.wait(timeout=5)
+    with try_lock_file(
+        spawn_lock_path(runtime_root / "spawns", spawn_id),
+        reentrant=False,
+    ) as handle:
+        assert handle is None
     deleter.start()
     try:
         assert not deletion_finished.wait(timeout=0.2)

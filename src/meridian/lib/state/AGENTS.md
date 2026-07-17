@@ -68,8 +68,10 @@ mutation seam. When both locks are needed, acquire the spawn-state lock before t
 scope-sidecar lock. Registration is refused after the spawn becomes terminal or a
 cleanup claim exists, so a process scope cannot appear after cleanup targets are fixed.
 Any writer into a destructible `spawns/<id>/` directory that can outlive deletion must
-also take the spawn-state lock and refuse a missing published row. Launch-boundary
-observations follow this rule so a straggler cannot recreate a deleted spawn directory.
+not recreate its owner. Parent-creating mutations take the spawn-state lock and refuse
+a missing published row through `mutate_published_spawn_artifact()`; launch-boundary
+observations and failure sentinels use this seam. Heartbeats never create a missing
+parent directory, so a late touch fails closed after deletion.
 The spawn repository and process-scope projection are persistence leaves with a
 one-way dependency: the projection may use repository reads and lock paths, while
 the repository never imports the projection. Cross-leaf operations belong in the aggregate `spawn_aggregate.py`; in particular, published-spawn deletion owns the lock
@@ -125,7 +127,7 @@ Both paths share liveness rules in `reaper.py` and completion/cancel precedence 
 - `user_paths.py` — `get_user_home()`. Start here for any new user-level storage.
 - `paths.py` — `RuntimePaths`, read vs write root resolvers.
 - `spawn_store.py` — `SpawnStore`. Main interface for listing, creating, updating spawns.
-- `spawn_aggregate.py` — cross-leaf spawn mutations (published-row deletion).
+- `spawn_aggregate.py` — published-row deletion and spawn-owned artifact lifetime guard.
 - `work_store.py` / `work_repository.py` — pure work-item reads and the single locked
   mutation repository, respectively.
 - `session_store.py` — Session event log.

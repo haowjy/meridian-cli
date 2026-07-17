@@ -5,7 +5,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Fixed
-- Late launch-boundary observations no longer recreate deleted spawn directories.
+- Late launch-boundary, failure-sentinel, and heartbeat writes no longer recreate
+  deleted spawn directories.
 
 ## [0.3.39] - 2026-07-17
 
