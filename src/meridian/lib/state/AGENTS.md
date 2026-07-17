@@ -13,10 +13,10 @@ State splits across distinct roots — understand which goes where before writin
 
 ~/.meridian/projects/<id>/          ← user runtime, never committed
   sessions.jsonl                    — session events (append-only)
+  locks/spawns/<spawn_id>.lock      — stable per-spawn external-writer lock
   spawns/.staging/<unique>/         — complete row build before atomic publication
   spawns/<spawn_id>/
     state.json                      — authoritative spawn state (v2)
-    state.lock                      — per-spawn lock for external writers
     history.jsonl                   — primary output artifact
     heartbeat · report.md · stderr.log · params.json · tokens.json
 
@@ -47,9 +47,11 @@ already-terminal record unless `allow_terminal_overwrite=True`.
 
 **Tier 2 — External writes (per-spawn lock):**
 The reaper, cancel command, or any other process mutating a spawn it doesn't own
-calls `write_state_locked()`. This acquires `spawns/<id>/state.lock`, reads current
-state, applies a mutator function, and writes atomically. Skipping the lock races
-with the owner's unlocked writes.
+calls `write_state_locked()`. This acquires `locks/spawns/<id>.lock`, reads current
+state, applies a mutator function, and writes atomically. The lock identity is outside
+the artifact directory it protects. Lock files are
+never unlinked: contenders must always coordinate through the same inode. Skipping
+the lock races with the owner's unlocked writes.
 
 ## Atomic Write Contract
 
@@ -116,7 +118,7 @@ validation and miss `SpawnRecord` reconstruction from `starting-prompt.md`.
 
 **Don't acquire `spawns_flock` for per-spawn mutations** — the global lock serializes
 spawn ID allocation, initial row publication, and abandoned-stage GC. Later mutations
-use `write_state_locked()` (`state.lock`).
+use `write_state_locked()` (`locks/spawns/<id>.lock`, which is never unlinked).
 
 **Don't hardcode `~/.meridian/`** — use `get_user_home()` from `user_paths.py`.
 It handles `MERIDIAN_HOME`, Windows `%LOCALAPPDATA%`, and POSIX `~` correctly.
