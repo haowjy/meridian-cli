@@ -202,7 +202,7 @@ def test_pruning_revalidates_stale_active_snapshot_after_publication(
         now=0.0,
     )
     assert [artifact.spawn_id for artifact in stale] == [spawn_id]
-    assert prune_stale_spawn_artifacts(stale) == 0
+    assert prune_stale_spawn_artifacts(stale).removed == 0
     assert scan_spawn_ids(paths.spawns_dir) == [spawn_id]
     row = read_state(paths.spawns_dir, spawn_id)
     assert row is not None
@@ -233,7 +233,7 @@ def test_pruning_ignores_in_progress_publication_stage(
             now=0.0,
         )
         assert stale == []
-        assert prune_stale_spawn_artifacts(stale) == 0
+        assert prune_stale_spawn_artifacts(stale).removed == 0
         assert len(list((paths.spawns_dir / ".staging").iterdir())) == 1
         assert lookalike_marker.read_text(encoding="utf-8") == "keep\n"
 
@@ -266,7 +266,7 @@ def test_pruning_does_not_split_spawn_lock_identity(tmp_path: Path) -> None:
     ]
 
     with lock_file(lock_path):
-        assert prune_stale_spawn_artifacts(stale) == 1
+        assert prune_stale_spawn_artifacts(stale).removed == 1
 
         def try_second_writer() -> None:
             with try_lock_file(lock_path) as handle:
@@ -296,7 +296,7 @@ def test_pruning_preserves_spawn_with_pending_cleanup_claim(tmp_path: Path) -> N
         )
     ]
 
-    assert prune_stale_spawn_artifacts(stale) == 0
+    assert prune_stale_spawn_artifacts(stale).removed == 0
     assert claim_path.is_file()
 
 

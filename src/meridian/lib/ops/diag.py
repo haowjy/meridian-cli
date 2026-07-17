@@ -252,8 +252,6 @@ def doctor_sync(payload: DoctorInput) -> DoctorOutput:
     if stale_locks > 0:
         repaired.append("stale_session_locks")
     lock_gc = gc_orphaned_locks(runtime_root)
-    if lock_gc.files_removed > 0:
-        repaired.append("orphaned_locks")
 
     project_state_dir = runtime_authority.project_state_dir
     active_work_items, _ = work_store.list_work_items(project_state_dir)
@@ -294,11 +292,15 @@ def doctor_sync(payload: DoctorInput) -> DoctorOutput:
     pruned_spawn_artifacts = 0
     if payload.prune:
         pruned_orphan_dirs = prune_orphan_project_dirs(orphan_project_dirs)
-        pruned_spawn_artifacts = prune_stale_spawn_artifacts(stale_spawn_artifacts)
+        spawn_prune = prune_stale_spawn_artifacts(stale_spawn_artifacts)
+        pruned_spawn_artifacts = spawn_prune.removed
+        lock_gc = lock_gc.combine(spawn_prune.lock_gc)
         if pruned_orphan_dirs > 0:
             repaired.append("orphan_project_dirs")
         if pruned_spawn_artifacts > 0:
             repaired.append("spawn_artifacts")
+    if lock_gc.files_removed > 0:
+        repaired.append("orphaned_locks")
 
     telemetry_dir = runtime_root / "telemetry"
     telemetry_retention = (

@@ -25,6 +25,16 @@ class LockGcStats:
     files_contended: int = 0
     pass_skipped: bool = False
 
+    def combine(self, other: LockGcStats) -> LockGcStats:
+        """Aggregate counts from independently triggered GC passes."""
+
+        return LockGcStats(
+            files_seen=self.files_seen + other.files_seen,
+            files_removed=self.files_removed + other.files_removed,
+            files_contended=self.files_contended + other.files_contended,
+            pass_skipped=self.pass_skipped or other.pass_skipped,
+        )
+
 
 def gc_orphaned_locks(runtime_root: Path) -> LockGcStats:
     """Remove orphaned per-spawn locks under validated exclusive acquisitions."""

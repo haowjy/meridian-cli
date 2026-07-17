@@ -7,6 +7,7 @@ import shutil
 import stat
 from collections.abc import Callable
 from contextlib import suppress
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -15,7 +16,7 @@ from pydantic import BaseModel, ConfigDict
 from meridian.lib.core.spawn_lifecycle import is_active_spawn_status
 from meridian.lib.platform.locking import lock_file, try_lock_file
 from meridian.lib.state import session_store, spawn_store
-from meridian.lib.state.lock_gc import gc_orphaned_locks
+from meridian.lib.state.lock_gc import LockGcStats, gc_orphaned_locks
 from meridian.lib.state.paths import RuntimePaths
 
 _SECONDS_PER_DAY = 24 * 60 * 60
@@ -43,6 +44,14 @@ class StaleSpawnArtifact(BaseModel):
     path: str
     size_bytes: int
     last_activity: str
+
+
+@dataclass(frozen=True)
+class SpawnArtifactPruneResult:
+    """Artifact deletions and the lock cleanup they made possible."""
+
+    removed: int
+    lock_gc: LockGcStats
 
 
 def _iso_from_mtime(mtime: float) -> str:
@@ -267,8 +276,8 @@ def prune_orphan_project_dirs(orphans: list[OrphanProjectDir]) -> int:
     return removed
 
 
-def prune_stale_spawn_artifacts(stale: list[StaleSpawnArtifact]) -> int:
-    """Delete stale spawn artifact directories. Returns the number removed."""
+def prune_stale_spawn_artifacts(stale: list[StaleSpawnArtifact]) -> SpawnArtifactPruneResult:
+    """Delete stale spawn artifacts and collect their newly orphaned locks."""
 
     removed = 0
     runtime_roots: set[Path] = set()
@@ -291,13 +300,15 @@ def prune_stale_spawn_artifacts(stale: list[StaleSpawnArtifact]) -> int:
                 or not is_active_spawn_status(record.status),
             ):
                 removed += 1
+    lock_gc = LockGcStats()
     for runtime_root in runtime_roots:
-        gc_orphaned_locks(runtime_root)
-    return removed
+        lock_gc = lock_gc.combine(gc_orphaned_locks(runtime_root))
+    return SpawnArtifactPruneResult(removed=removed, lock_gc=lock_gc)
 
 
 __all__ = [
     "OrphanProjectDir",
+    "SpawnArtifactPruneResult",
     "StaleSpawnArtifact",
     "prune_orphan_project_dirs",
     "prune_stale_spawn_artifacts",
