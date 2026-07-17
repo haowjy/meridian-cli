@@ -59,6 +59,12 @@ class RuntimePaths(BaseModel):
 
         return self.root_dir / "chats"
 
+    @property
+    def project_lifetime_flock(self) -> Path:
+        """Return the stable gate coordinating use and deletion of this root."""
+
+        return self.root_dir.parent / ".locks" / f"{self.root_dir.name}.lock"
+
     def chat_history_path(self, c_id: str) -> Path:
         """Return history.jsonl path for a chat."""
 

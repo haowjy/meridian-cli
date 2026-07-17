@@ -19,7 +19,14 @@ from meridian.lib.state.event_store import append_event, read_events, utc_now_is
 from meridian.lib.state.liveness import is_process_alive
 from meridian.lib.state.paths import RuntimePaths
 
-_SESSION_LOCK_HANDLES: dict[tuple[Path, str], tuple[IO[bytes], str]] = {}
+
+class _SessionLockHandles(NamedTuple):
+    session: IO[bytes]
+    project_lifetime: IO[bytes]
+    session_instance_id: str
+
+
+_SESSION_LOCK_HANDLES: dict[tuple[Path, str], _SessionLockHandles] = {}
 
 
 class SessionRecord(BaseModel):
@@ -201,8 +208,7 @@ def _write_session_lease(paths: RuntimePaths, chat_id: str, session_instance_id:
 def _session_instance_for_event(paths: RuntimePaths, runtime_root: Path, chat_id: str) -> str:
     held = _SESSION_LOCK_HANDLES.get(_session_lock_key(runtime_root, chat_id))
     if held is not None:
-        _, session_instance_id = held
-        return session_instance_id
+        return held.session_instance_id
 
     _, lease_session_instance_id = _read_session_lease(paths, chat_id)
     if lease_session_instance_id.strip():
@@ -306,8 +312,8 @@ def _release_session_lock(runtime_root: Path, chat_id: str) -> None:
     lock_data = _SESSION_LOCK_HANDLES.pop(_session_lock_key(runtime_root, chat_id), None)
     if lock_data is None:
         return
-    handle, _ = lock_data
-    release_file_lock(handle)
+    release_file_lock(lock_data.session)
+    release_file_lock(lock_data.project_lifetime)
 
 
 def start_session(
@@ -332,15 +338,16 @@ def start_session(
     """Append a session start event and acquire a lifetime session lock."""
 
     paths = RuntimePaths.from_root_dir(runtime_root)
-    started_at = utc_now_iso()
+    project_lifetime_handle = acquire_file_lock(paths.project_lifetime_flock, mode="shared")
     resolved_chat_id = chat_id.strip() if chat_id is not None else ""
-    if not resolved_chat_id:
-        resolved_chat_id = reserve_chat_id(runtime_root)
-
-    lock_path = paths.sessions_dir / f"{resolved_chat_id}.lock"
-    handle = acquire_file_lock(lock_path)
+    handle: IO[bytes] | None = None
     session_instance_id = uuid.uuid4().hex
     try:
+        started_at = utc_now_iso()
+        if not resolved_chat_id:
+            resolved_chat_id = reserve_chat_id(runtime_root)
+        lock_path = paths.sessions_dir / f"{resolved_chat_id}.lock"
+        handle = acquire_file_lock(lock_path)
         event = SessionStartEvent(
             chat_id=resolved_chat_id,
             kind=kind,
@@ -365,12 +372,15 @@ def start_session(
             append_event(paths.sessions_jsonl, paths.sessions_flock, event)
             _write_session_lease(paths, resolved_chat_id, session_instance_id)
     except Exception:
-        release_file_lock(handle)
+        if handle is not None:
+            release_file_lock(handle)
+        release_file_lock(project_lifetime_handle)
         raise
 
-    _SESSION_LOCK_HANDLES[_session_lock_key(runtime_root, resolved_chat_id)] = (
-        handle,
-        session_instance_id,
+    _SESSION_LOCK_HANDLES[_session_lock_key(runtime_root, resolved_chat_id)] = _SessionLockHandles(
+        session=handle,
+        project_lifetime=project_lifetime_handle,
+        session_instance_id=session_instance_id,
     )
     return resolved_chat_id
 
@@ -468,6 +478,20 @@ def list_active_sessions(runtime_root: Path) -> list[str]:
             if handle is None:
                 active.append(chat_id)
     return sorted(active, key=_session_sort_key)
+
+
+def has_live_session_leases(runtime_root: Path) -> bool:
+    """Return whether any session lease names a currently live owner process."""
+
+    paths = RuntimePaths.from_root_dir(runtime_root)
+    if not paths.sessions_dir.exists():
+        return False
+    for lease_path in paths.sessions_dir.glob("*.lease.json"):
+        chat_id = lease_path.name.removesuffix(".lease.json")
+        _exists, _generation, owner_pid = _read_session_lease_data(paths, chat_id)
+        if owner_pid is not None and is_process_alive(owner_pid):
+            return True
+    return False
 
 
 def list_active_session_records(runtime_root: Path) -> list[SessionRecord]:

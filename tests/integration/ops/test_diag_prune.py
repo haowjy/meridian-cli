@@ -4,6 +4,7 @@
 Warning code regression tests live in test_diag_warnings.py.
 """
 
+import multiprocessing
 import os
 from pathlib import Path
 
@@ -12,6 +13,13 @@ import pytest
 from meridian.lib.ops import diag
 from meridian.lib.ops import mars as mars_ops
 from meridian.lib.ops.diag import DoctorInput, doctor_sync
+from meridian.lib.ops.pruning import (
+    OrphanProjectDir,
+    prune_orphan_project_dirs,
+    scan_orphan_project_dirs,
+)
+from meridian.lib.platform.locking import try_lock_file
+from meridian.lib.state import session_store
 
 
 def _create_project_root(tmp_path: Path) -> Path:
@@ -37,6 +45,23 @@ def _set_path_mtime(path: Path, mtime: float) -> None:
 def _write_text(path: Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding="utf-8")
+
+
+def _hold_session(
+    runtime_root: Path,
+    ready: multiprocessing.Event,
+    release: multiprocessing.Event,
+) -> None:
+    chat_id = session_store.start_session(
+        runtime_root,
+        harness="test",
+        harness_session_id="h1",
+        model="test",
+        kind="primary",
+    )
+    ready.set()
+    release.wait(5)
+    session_store.stop_session(runtime_root, chat_id)
 
 
 def _seed_pruning_layout(
@@ -178,3 +203,34 @@ def test_doctor_global_requires_root_side_effect_process(
     assert current_spawn.exists()
     assert orphan_root.exists()
     assert other_spawn.exists()
+
+
+def test_global_prune_cannot_unlink_live_session_lock_inode(tmp_path: Path) -> None:
+    user_home = tmp_path / "user-home"
+    runtime_root = user_home / "projects" / "project-uuid"
+    runtime_root.mkdir(parents=True)
+    ready = multiprocessing.Event()
+    release = multiprocessing.Event()
+    process = multiprocessing.Process(target=_hold_session, args=(runtime_root, ready, release))
+    process.start()
+    try:
+        assert ready.wait(5)
+        assert scan_orphan_project_dirs(user_home, retention_days=0, now=2_000_000_000.0) == []
+
+        orphan = OrphanProjectDir(
+            uuid=runtime_root.name,
+            path=runtime_root.as_posix(),
+            size_bytes=0,
+            last_activity="1970-01-01T00:00:00+00:00",
+            reason="stale",
+        )
+        assert prune_orphan_project_dirs([orphan]) == 0
+        assert runtime_root.exists()
+        with try_lock_file(runtime_root / "sessions" / "c1.lock", reentrant=False) as handle:
+            assert handle is None
+    finally:
+        release.set()
+        process.join(5)
+        if process.is_alive():
+            process.terminate()
+            process.join(5)
