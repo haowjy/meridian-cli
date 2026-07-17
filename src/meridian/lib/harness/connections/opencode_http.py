@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import errno
 import importlib
 import json
 import logging
@@ -1095,7 +1096,7 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
         process = self._process
         exit_code = process.returncode if process is not None else None
         stderr_excerpt = self._read_startup_stderr_excerpt()
-        if _looks_like_address_in_use(stderr_excerpt):
+        if _looks_like_address_in_use(stderr_excerpt) or self._startup_port_is_claimed():
             return PortBindError(
                 "OpenCode backend failed to bind HTTP port "
                 f"(exit={exit_code}): {stderr_excerpt or '<no stderr>'}"
@@ -1106,6 +1107,21 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
             env=self._startup_child_env(),
         )
         return RuntimeError(message)
+
+    def _startup_port_is_claimed(self) -> bool:
+        """Detect OpenCode's generic ServeError when another process won the port."""
+
+        if self._base_url is None:
+            return False
+        endpoint = urlparse(self._base_url)
+        if endpoint.hostname is None or endpoint.port is None:
+            return False
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            try:
+                sock.bind((endpoint.hostname, endpoint.port))
+            except OSError as exc:
+                return exc.errno == errno.EADDRINUSE
+        return False
 
     def _startup_child_env(self) -> dict[str, str]:
         config = self._config
