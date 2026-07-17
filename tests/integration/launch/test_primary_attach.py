@@ -31,8 +31,22 @@ from meridian.lib.platform.process_scope import ProcessScopeSnapshot
 from meridian.lib.platform.process_scope.base import PROCESS_BIRTH_UNKNOWN_EPOCH
 from meridian.lib.safety.permissions import UnsafeNoOpPermissionResolver
 from meridian.lib.state.process_scope_projection import read_scopes_from_disk, record_scope
+from meridian.lib.state.spawn_store import start_spawn
 
 _BACKEND_SCOPE_EPOCH = 12_345.0
+
+
+def _publish_spawn(spawn_dir: Path) -> None:
+    start_spawn(
+        spawn_dir.parent.parent,
+        spawn_id=spawn_dir.name,
+        chat_id="chat-1",
+        model="gpt-5.4",
+        agent="tester",
+        harness="codex",
+        prompt="test",
+        status="running",
+    )
 
 
 def _build_config(
@@ -202,6 +216,9 @@ class FakeProcessLauncher(ProcessLauncher):
     output_log_paths: list[Path | None] = field(default_factory=list)
     metadata_seen_at_launch: dict[str, object] | None = None
 
+    def __post_init__(self) -> None:
+        _publish_spawn(self.spawn_dir)
+
     def start(
         self,
         *,
@@ -244,6 +261,9 @@ class BlockingProcessLauncher(ProcessLauncher):
     terminate_releases: bool = True
     cancel_wait_releases: bool = True
     cancel_wait_calls: int = 0
+
+    def __post_init__(self) -> None:
+        _publish_spawn(self.spawn_dir)
 
     def start(
         self,
