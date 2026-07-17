@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 
@@ -31,6 +32,47 @@ def atomic_write_bytes(path: Path, data: bytes) -> None:
         handle.write(data)
 
 
+def _repaired_jsonl_bytes(content: bytes) -> bytes | None:
+    """Return repaired JSONL bytes, or None when no repair is needed."""
+
+    if not content or content.endswith(b"\n"):
+        return None
+
+    last_newline = content.rfind(b"\n")
+    if last_newline < 0:
+        prefix = b""
+        tail = content
+    else:
+        prefix = content[: last_newline + 1]
+        tail = content[last_newline + 1 :]
+
+    try:
+        parsed = json.loads(tail.decode("utf-8"))
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        parsed = None
+
+    if isinstance(parsed, dict):
+        return prefix + tail + b"\n"
+    return prefix
+
+
+def repair_jsonl_tail(path: Path) -> None:
+    """Repair a torn or delimiter-less JSONL tail via atomic inode replacement."""
+
+    try:
+        content = path.read_bytes()
+    except FileNotFoundError:
+        return
+
+    repaired = _repaired_jsonl_bytes(content)
+    if repaired is None:
+        return
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with atomic_replace(path, mode="wb", encoding=None, permissions=0o600) as handle:
+        handle.write(repaired)
+
+
 def append_text_line(path: Path, line: str) -> None:
     """Append one line and fsync before returning.
 
@@ -46,3 +88,10 @@ def append_text_line(path: Path, line: str) -> None:
         os.fsync(handle.fileno())
     if not file_existed:
         fsync_directory(path.parent)
+
+
+def append_durable_jsonl_line(path: Path, line: str) -> None:
+    """Repair a torn JSONL tail, then append one durable line."""
+
+    repair_jsonl_tail(path)
+    append_text_line(path, line)
