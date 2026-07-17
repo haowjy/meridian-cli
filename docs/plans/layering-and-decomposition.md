@@ -367,3 +367,17 @@ downstream of bootstrap consumes the invocation snapshot or doesn't compile agai
 ## Closes
 
 Closes #406 Closes #407 Closes #408 Closes #409 Closes #410 Closes #411 Closes #412 Closes #413 Closes #414 Closes #415
+
+### Sweep additions (workstream-roadmap review, 2026-07-16)
+
+Two verified-live dedups folded in from the dissolved future-bucket containers:
+
+- **#240** Pi projector dedup (`projections/project_pi_native_tui.py` /
+  `project_pi_rpc.py`, 240/287 lines) — scope has shrunk since filing: the
+  projectors already share `_guards` and `permission_flags`; extract the
+  remaining common flag-alias/collision/assembly core.
+- **#139** telemetry reader JSONL parsing duplicated between `read_events`
+  and the `tail_events` path (`lib/telemetry/reader.py`) — one tolerant
+  line-parse helper.
+
+Closes #240 Closes #139
