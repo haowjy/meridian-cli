@@ -245,7 +245,7 @@ class PiPrivateWorkLedger:
     def record_read_failure(self, path: Path, detail: str) -> bool:
         failure = EvidenceFailure(
             code="pi_private_work_read_failed",
-            detail=f"{path}: {detail}",
+            detail=f"{path.as_posix()}: {detail}",
         )
         if self._read_failures.get(path) == failure:
             return False
