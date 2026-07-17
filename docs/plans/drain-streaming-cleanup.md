@@ -8,7 +8,7 @@ The streaming/drain layer reaches its intended end-state: no migration scaffoldi
 
 ## Summary
 
-Planning draft. Scope, per issue:
+Implemented. Scope, per issue:
 
 - **Closes #369** — fix the Windows flake: poll `_read_history_phases` with a bounded deadline instead of a single immediate read; audit sibling tests for the same publish-before-async-telemetry read race; verify the phase is late, not dropped.
 - **Closes #370** — finish inverting the composition root: split `drain_teardown.py` into neutral contract vs Pi policy; inject descendant cancellation into resident cleanup via `drain_plan_factory.py`.
@@ -25,7 +25,27 @@ Importing the drain contract no longer pulls in Pi policy; the test suite for th
 
 ## Changes
 
-Suggested sequencing: #369 first (unblocks CI trust), then #371 → #370 (scaffolding out before inversion), #372 riding the same test pass as #369, then #373/#374 (policy), #322 and #241 last.
+Delivered in sequence: #369 (deterministic race repro + bounded history-phase
+polls; windows-gate CI demoted to non-blocking per POSIX-first decision) →
+#322 item 3 (shared `state/reconciliation.py`, parallel lane) → #371
+(scaffolding deletion, net -178 production LOC; unreachable `cleaning` phase
+literal removed) → #370 (neutral `drain_teardown.py` vs `pi_drain_teardown.py`
+split, factory-injected resident descendant cancellation, import isolation
+verified) → #372 (Pi drain scenario builder in `tests/support/pi.py`, net -444
+LOC across the five characterization files) → #373 (opt-in resident rearm-count
+budget, default unlimited, `resident_rearm_count` telemetry,
+`resident_rearm_budget_exhausted` outcome) + #374 (decision: status quo,
+documented — `--timeout`/`MERIDIAN_TIMEOUT` is the shared opt-in absolute
+ceiling) → #241 (smoke guide re-authored and tiered).
+
+Policy decisions (user, 2026-07-17): rearm budget defaults unlimited (legit
+24h+ resident sessions exist); Pi stays unbounded-while-children-live by
+design; windows-gate is informational only.
+
+#322 residuals deliberately deferred to the future completion-profile redesign:
+resident nudges still call the resident capability directly (not the
+`SerializedInject` seam); residual `manager._sessions` seeding in launch
+lifecycle tests.
 
 ## Work Item
 
@@ -33,7 +53,14 @@ issue-triage-sweep
 
 ## Verification
 
-None yet — this is a planning draft (scoping commit only: `docs/plans/drain-streaming-cleanup.md`). Implementation on this branch will carry its own tests per `tests/AGENTS.md` and a CHANGELOG entry.
+Per-increment and post-merge gates, all green: `uv run ruff check .`,
+`uv run pytest-llm` (1526 passed, 2 skipped at final integration verify),
+`uv run --extra dev python -m pyright` (0 errors). #369's fix carries a
+deterministic pre-fix repro (gated async-cleanup service proving
+publish-before-telemetry ordering). Increment review (G2) found no production
+defects; its three test-side findings were fixed on-branch (79f4c80c). Final
+whole-change review + runtime probe (G4) results recorded before draft→ready.
+CHANGELOG entries per issue.
 
 ## Knowledge Updates
 
