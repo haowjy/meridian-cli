@@ -81,7 +81,6 @@ def _active_task_dir_for_item(
     item = work_store.get_active_work_item(
         project_state_dir,
         work_id,
-        create_project_uuid=False,
     )
     if item is None or item.task_dir is None:
         return None

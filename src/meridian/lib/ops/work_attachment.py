@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from meridian.lib.state import session_store, work_store
+from meridian.lib.state import session_store, work_repository, work_store
 
 
 def session_exists(runtime_root: Path, chat_id: str) -> bool:
@@ -30,7 +30,7 @@ def set_session_work_attachment(
 def ensure_explicit_work_item(runtime_root: Path, work_id: str) -> str:
     """Create-or-attach an explicitly named work item and return its slug."""
 
-    return work_store.ensure_work_item_metadata(runtime_root, work_id).name
+    return work_repository.ensure_work_item_metadata(runtime_root, work_id).name
 
 
 def materialize_launch_work_id(

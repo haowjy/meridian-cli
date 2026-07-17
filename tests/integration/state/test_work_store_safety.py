@@ -1,11 +1,42 @@
 from __future__ import annotations
 
 import json
+import multiprocessing
 from concurrent.futures import ThreadPoolExecutor
 from functools import partial
 from pathlib import Path
 
 import meridian.lib.state.work_store as work_store
+
+
+def _update_work_field(
+    runtime_root: Path,
+    barrier: multiprocessing.synchronize.Barrier,
+    field: str,
+) -> None:
+    original_write = getattr(work_store, "atomic_write_text", None)
+
+    if original_write is None:
+        if field == "description":
+            work_store.update_work_item(
+                runtime_root, "shared-task", description="new description"
+            )
+        else:
+            work_store.update_work_item_task_dir(
+                runtime_root, "shared-task", task_dir="/new/task-dir"
+            )
+        return
+
+    def synchronized_write(path: Path, content: str) -> None:
+        if path.name == "__status.json":
+            barrier.wait(timeout=5)
+        original_write(path, content)
+
+    work_store.__dict__["atomic_write_text"] = synchronized_write
+    if field == "description":
+        work_store.update_work_item(runtime_root, "shared-task", description="new description")
+    else:
+        work_store.update_work_item_task_dir(runtime_root, "shared-task", task_dir="/new/task-dir")
 
 
 def _state_root(tmp_path: Path) -> Path:
@@ -33,7 +64,31 @@ def test_ensure_work_item_metadata_with_concurrent_calls(tmp_path: Path) -> None
     assert len(names) == total
     assert set(names) == {"shared-task"}
     assert (runtime_root / "work" / "shared-task" / "__status.json").exists()
-def test_get_work_item_auto_recreates_malformed_status_file(tmp_path: Path) -> None:
+
+
+def test_concurrent_field_updates_do_not_lose_each_other(tmp_path: Path) -> None:
+    runtime_root = _state_root(tmp_path)
+    work_store.create_work_item(runtime_root, "shared-task")
+    context = multiprocessing.get_context("fork")
+    barrier = context.Barrier(2)
+    processes = [
+        context.Process(target=_update_work_field, args=(runtime_root, barrier, field))
+        for field in ("description", "task_dir")
+    ]
+
+    for process in processes:
+        process.start()
+    for process in processes:
+        process.join(timeout=10)
+
+    assert [process.exitcode for process in processes] == [0, 0]
+    item = work_store.get_work_item(runtime_root, "shared-task")
+    assert item is not None
+    assert item.description == "new description"
+    assert item.task_dir == "/new/task-dir"
+
+
+def test_get_work_item_is_pure_and_explicit_heal_repairs_malformed_status(tmp_path: Path) -> None:
     runtime_root = _state_root(tmp_path)
     item = work_store.create_work_item(runtime_root, "repair-malformed")
 
@@ -44,7 +99,9 @@ def test_get_work_item_auto_recreates_malformed_status_file(tmp_path: Path) -> N
     assert loaded is not None
     assert loaded.name == item.name
     assert loaded.status == "open"
+    assert status_path.read_text(encoding="utf-8") == "not json"
 
+    work_store.heal_work_item(runtime_root, item.name)
     payload = json.loads(status_path.read_text(encoding="utf-8"))
     assert payload["status"] == "open"
     assert payload["created_at"]

@@ -101,6 +101,8 @@ Both paths share the liveness and completion decision rules in `reaper.py`.
 - `user_paths.py` — `get_user_home()`. Start here for any new user-level storage.
 - `paths.py` — `RuntimePaths`, read vs write root resolvers.
 - `spawn_store.py` — `SpawnStore`. Main interface for listing, creating, updating spawns.
+- `work_store.py` / `work_repository.py` — pure work-item reads and the single locked
+  mutation repository, respectively.
 - `session_store.py` — Session event log.
 - `atomic.py` — atomic write primitives. All state writes use these.
 - `reaper.py` — read-only `reconcile_spawns()` projection and root-only
