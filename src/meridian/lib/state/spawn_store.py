@@ -53,12 +53,6 @@ from meridian.lib.state.spawn.model import (
     TerminalSpawnStatus as TerminalSpawnStatus,
 )
 from meridian.lib.state.spawn.repository import (
-    SpawnDeletionPrecondition as SpawnDeletionPrecondition,
-)
-from meridian.lib.state.spawn.repository import (
-    delete_published_spawn as delete_published_spawn,
-)
-from meridian.lib.state.spawn.repository import (
     is_safe_spawn_dir_name as _is_safe_spawn_dir_name,
 )
 from meridian.lib.state.spawn.repository import read_state as _read_state
@@ -74,6 +68,7 @@ from meridian.lib.state.spawn.transitions import (
     apply_record_exited,
     apply_runner_exit,
 )
+from meridian.lib.state.spawn_aggregate import delete_published_spawn
 
 logger = structlog.get_logger(__name__)
 

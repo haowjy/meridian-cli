@@ -199,6 +199,28 @@ def release_file_lock(handle: IO[bytes]) -> None:
     _close_process_lock_handle(handle, unlock=True)
 
 
+def unlink_validated_lock(lock_path: Path, handle: IO[bytes]) -> bool:
+    """Unlink ``lock_path`` only when it still names ``handle``'s inode.
+
+    The caller must hold a fresh, non-reentrant exclusive lock and release the
+    handle immediately after this call. Any identity race or filesystem error
+    is a conservative no-op.
+    """
+
+    try:
+        handle_stat = os.fstat(handle.fileno())
+        path_stat = lock_path.stat()
+        if (handle_stat.st_dev, handle_stat.st_ino) != (
+            path_stat.st_dev,
+            path_stat.st_ino,
+        ):
+            return False
+        os.unlink(lock_path)
+    except OSError:
+        return False
+    return True
+
+
 def _timeout_error(lock_path: Path, timeout: float | None, mode: LockMode) -> TimeoutError:
     return TimeoutError(f"Could not acquire {mode} lock within {timeout}s: {lock_path}")
 

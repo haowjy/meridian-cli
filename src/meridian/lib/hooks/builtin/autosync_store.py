@@ -18,7 +18,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Protocol, cast
 
 from meridian.lib.platform.locking import lock_file
 from meridian.plugin_api.fs import AtomicReplaceDurabilityError, atomic_write_text
@@ -91,9 +91,24 @@ def autosync_lock_path(sync_root: Path) -> Path:
     return get_user_home() / "locks" / f"clone-{root_hash}.lock"
 
 
+class AutosyncMutation(Protocol):
+    """Autosync mutations available only inside :func:`transaction`."""
+
+    def write_conflict(self, record: ConflictRecord) -> None: ...
+
+    def write_sync_state(
+        self,
+        *,
+        outcome: str,
+        conflict_id: str | None = None,
+    ) -> None: ...
+
+    def mark_resolved(self, conflict_id: str) -> bool: ...
+
+
 @dataclass(frozen=True)
-class AutosyncTransaction:
-    """Mutation capability held while a sync root's lock is acquired."""
+class _LockedAutosyncTransaction:
+    """Concrete mutation capability constructed only while its lock is held."""
 
     sync_root: Path
 
@@ -123,7 +138,7 @@ def transaction(
     sync_root: Path,
     *,
     timeout: float | None = _DEFAULT_LOCK_TIMEOUT_SECONDS,
-) -> Generator[AutosyncTransaction, None, None]:
+) -> Generator[AutosyncMutation, None, None]:
     """Hold the canonical sync-root lock and yield its mutation capability."""
 
     canonical_root = sync_root.expanduser().resolve()
@@ -132,7 +147,7 @@ def transaction(
         timeout=timeout,
         reentrant=True,
     ):
-        yield AutosyncTransaction(canonical_root)
+        yield _LockedAutosyncTransaction(canonical_root)
 
 
 def read_sync_state(sync_root: Path) -> SyncState | None:
@@ -383,7 +398,7 @@ def _find_conflict_file(
 
 __all__ = [
     "AUTOSYNC_IGNORE_PATTERNS",
-    "AutosyncTransaction",
+    "AutosyncMutation",
     "ConflictRecord",
     "SyncRootStatus",
     "SyncState",

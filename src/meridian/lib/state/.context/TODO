@@ -6,3 +6,7 @@
   helpers from work_store and work_store lazily imports repository
   wrappers — bounded debt accepted at PR #422 gate 2; it will rot on the
   first schema change. (Also clears the pyright private-usage warnings.)
+- process_scope_projection.py callers in spawn_service.py and process_cleanup.py:
+  move synchronous projection reads off the async event-loop thread with
+  `asyncio.to_thread()`. Reads now have a bounded lock wait, but can still block
+  the loop for up to that bound when a projection writer is wedged.

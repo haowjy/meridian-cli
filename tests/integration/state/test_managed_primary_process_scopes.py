@@ -1,6 +1,7 @@
 # qa-validated: reaper-escape-fix-test-cleanup
 from __future__ import annotations
 
+import dataclasses
 import json
 import threading
 from contextlib import suppress
@@ -13,15 +14,17 @@ from meridian.lib.core.types import SpawnId
 from meridian.lib.platform.locking import lock_file
 from meridian.lib.platform.process_scope.base import CleanupResult, ProcessScopeSnapshot
 from meridian.lib.state import process_scope_projection, spawn_store
+from meridian.lib.state.atomic import atomic_write_text
 from meridian.lib.state.paths import resolve_runtime_paths
 from meridian.lib.state.process_scope_projection import (
     is_scope_released,
     mark_scope_released,
+    read_scopes_from_disk,
     record_scope,
 )
 from meridian.lib.state.reaper import reconcile_active_spawn
 from meridian.lib.state.spawn.model import SpawnRecord
-from meridian.lib.state.spawn.repository import delete_published_spawn
+from meridian.lib.state.spawn_store import delete_published_spawn
 
 _OLD_STARTED_AT = "2000-01-01T00:00:00Z"
 
@@ -77,6 +80,102 @@ def _scope(
         job_name=None,
         degraded_reason=None,
     )
+
+
+@pytest.mark.parametrize("read_api", ["scopes", "released"])
+def test_missing_scope_sidecar_reads_do_not_create_lock_tree(
+    tmp_path: Path,
+    read_api: str,
+) -> None:
+    runtime_root = tmp_path / "runtime"
+
+    if read_api == "scopes":
+        assert read_scopes_from_disk(runtime_root, SpawnId("p1")) == []
+    else:
+        assert is_scope_released(runtime_root, SpawnId("p1"), "missing") is False
+
+    assert not runtime_root.exists()
+
+
+def test_missing_scope_sidecar_read_waits_for_first_writer_publish(tmp_path: Path) -> None:
+    runtime_root, spawn_id = _create_primary_spawn(tmp_path)
+    snapshot = _scope(
+        spawn_id,
+        scope_id="backend",
+        owner_policy="session_owned",
+        owner_id="c1",
+        root_pid=501,
+    )
+    lock_path = process_scope_projection.scope_projection_lock_path(runtime_root, spawn_id)
+    sidecar_path = runtime_root / "spawns" / spawn_id / "process_scopes.json"
+    result: list[list[ProcessScopeSnapshot]] = []
+
+    with lock_file(lock_path, reentrant=False):
+        reader = threading.Thread(
+            target=lambda: result.append(read_scopes_from_disk(runtime_root, SpawnId(spawn_id)))
+        )
+        reader.start()
+        reader.join(timeout=0.2)
+        assert reader.is_alive()
+        atomic_write_text(
+            sidecar_path,
+            json.dumps(
+                {
+                    "scopes": [dataclasses.asdict(snapshot)],
+                    "released": [],
+                }
+            ),
+        )
+
+    reader.join(timeout=2)
+    assert not reader.is_alive()
+    assert result == [[snapshot]]
+
+
+def test_missing_scope_sidecar_read_has_bounded_first_writer_wait(tmp_path: Path) -> None:
+    runtime_root, spawn_id = _create_primary_spawn(tmp_path)
+    lock_path = process_scope_projection.scope_projection_lock_path(runtime_root, spawn_id)
+    result: list[list[ProcessScopeSnapshot]] = []
+
+    with lock_file(lock_path, reentrant=False):
+        reader = threading.Thread(
+            target=lambda: result.append(read_scopes_from_disk(runtime_root, SpawnId(spawn_id)))
+        )
+        reader.start()
+        reader.join(timeout=2.5)
+        assert not reader.is_alive()
+
+    assert result == [[]]
+
+
+def test_timed_out_scope_read_uses_atomically_published_sidecar(tmp_path: Path) -> None:
+    runtime_root, spawn_id = _create_primary_spawn(tmp_path)
+    snapshot = _scope(
+        spawn_id,
+        scope_id="backend",
+        owner_policy="session_owned",
+        owner_id="c1",
+        root_pid=502,
+    )
+    lock_path = process_scope_projection.scope_projection_lock_path(runtime_root, spawn_id)
+    sidecar_path = runtime_root / "spawns" / spawn_id / "process_scopes.json"
+    result: list[list[ProcessScopeSnapshot]] = []
+
+    with lock_file(lock_path, reentrant=False):
+        reader = threading.Thread(
+            target=lambda: result.append(read_scopes_from_disk(runtime_root, SpawnId(spawn_id)))
+        )
+        reader.start()
+        reader.join(timeout=0.2)
+        assert reader.is_alive()
+        atomic_write_text(
+            sidecar_path,
+            json.dumps({"scopes": [dataclasses.asdict(snapshot)], "released": []}),
+        )
+        reader.join(timeout=2.5)
+        assert not reader.is_alive()
+
+    assert result == [[snapshot]]
 
 
 def test_concurrent_scope_releases_preserve_every_marker(

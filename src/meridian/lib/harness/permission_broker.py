@@ -17,7 +17,7 @@ from meridian.lib.harness.connections.base import (
     HarnessRequest,
     ServerRequestHandler,
 )
-from meridian.lib.state.atomic import append_text_line, atomic_write_text
+from meridian.lib.state.atomic import append_durable_jsonl_line, atomic_write_text
 
 PermissionRequestType = Literal["approval", "user_input"]
 PermissionRequestStatus = Literal["pending", "resolved", "failed", "cancelled"]
@@ -309,7 +309,7 @@ class PermissionBroker(ServerRequestHandler):
             timestamp=_utc_now_iso(),
         )
         line = json.dumps(_transition_to_json(transition), sort_keys=True, separators=(",", ":"))
-        append_text_line(self._journal_path, line + "\n")
+        append_durable_jsonl_line(self._journal_path, line + "\n")
         self._transitions.append(transition)
         self._apply_transition(transition)
         return transition

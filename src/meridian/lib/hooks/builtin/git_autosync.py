@@ -20,7 +20,7 @@ import structlog
 
 from meridian.lib.hooks.builtin.autosync_store import (
     AUTOSYNC_IGNORE_PATTERNS,
-    AutosyncTransaction,
+    AutosyncMutation,
     ConflictRecord,
     generate_conflict_id,
     has_unresolved_conflict,
@@ -214,7 +214,7 @@ class GitAutosync:
         config: Hook,
         clone_path: Path,
         start: float,
-        autosync_tx: AutosyncTransaction,
+        autosync_tx: AutosyncMutation,
     ) -> HookResult:
         """Execute sync workflow while holding the clone lock."""
 
@@ -725,7 +725,7 @@ class GitAutosync:
         local_only: bool = False,
         context: HookContext | None = None,
         *,
-        autosync_tx: AutosyncTransaction,
+        autosync_tx: AutosyncMutation,
     ) -> _SyncOutcome:
         """Execute commit-first merge-based sync workflow."""
 
