@@ -41,7 +41,7 @@ from meridian.lib.streaming.drain_coordinator import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Awaitable, Callable
 
     from meridian.lib.harness.connections.base import HarnessConnection, HarnessEvent
     from meridian.lib.harness.connections.resident_backend import ResidentBackendControl
@@ -314,20 +314,19 @@ class _ResidentCompletionProfile:
 class _ResidentCompletionCleanup:
     """Cancel resident descendants through the canonical application service."""
 
-    def __init__(self, *, project_root: Path, runtime_root: Path, spawn_id: SpawnId) -> None:
-        self._project_root = project_root
-        self._runtime_root = runtime_root
+    def __init__(
+        self,
+        *,
+        spawn_id: SpawnId,
+        cancel_descendants: Callable[[SpawnId], Awaitable[set[str]]],
+    ) -> None:
         self._spawn_id = spawn_id
+        self._cancel_descendants = cancel_descendants
 
     async def cleanup(self, assessment: WorkAssessment, reason: str) -> CleanupReport:
         del assessment
-        from meridian.lib.bootstrap.services import build_spawn_application_service_from_roots
-
         try:
-            service = build_spawn_application_service_from_roots(
-                self._project_root, self._runtime_root
-            )
-            cancelled = await service.cancel_descendants(self._spawn_id)
+            cancelled = await self._cancel_descendants(self._spawn_id)
         except Exception as exc:
             logger.exception(
                 "Failed to terminate resident descendant spawns after deadline expiry.",
@@ -363,13 +362,13 @@ class ResidentDrainCoordinator:
     def for_connection(
         cls,
         *,
-        project_root: Path,
         runtime_root: Path,
         spawn_id: SpawnId,
         receiver: HarnessConnection[Any],
         resident_backend: ResidentBackendControl,
         deadline_seconds: float | None,
         poll_seconds: float | None,
+        cancel_descendants: Callable[[SpawnId], Awaitable[set[str]]],
     ) -> ResidentDrainCoordinator:
         del receiver
         resolved_deadline = (
@@ -393,9 +392,8 @@ class ResidentDrainCoordinator:
             ),
             profile=profile,
             cleanup=_ResidentCompletionCleanup(
-                project_root=project_root,
-                runtime_root=runtime_root,
                 spawn_id=spawn_id,
+                cancel_descendants=cancel_descendants,
             ),
             clock=clock,
         )

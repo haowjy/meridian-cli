@@ -29,6 +29,7 @@ from tests.support.resident_drain import (
     FakeResidentConnection,
     awaiting_done_coordinator,
     coordinator_with_clock,
+    descendant_cancellation_from_roots,
     next_turn_boundary,
     resident_event,
     start_manager,
@@ -332,13 +333,13 @@ async def test_terminal_done_fails_closed_when_descendant_evidence_unreadable(
     monkeypatch.setattr(resident_drain_module.time, "monotonic", clock.monotonic)
     connection = FakeResidentConnection(HarnessId.CODEX)
     coordinator = ResidentDrainCoordinator.for_connection(
-        project_root=tmp_path,
         runtime_root=tmp_path,
         spawn_id=SpawnId("p1"),
         receiver=connection,
         resident_backend=connection.resident_backend,
         deadline_seconds=30.0,
         poll_seconds=0.01,
+        cancel_descendants=descendant_cancellation_from_roots(tmp_path, tmp_path),
     )
     write_spawn_signal(tmp_path, "p1", "done")
 
@@ -384,13 +385,13 @@ async def test_terminal_done_completes_when_descendant_evidence_recovers(
     start_row(tmp_path, "p1", HarnessId.CODEX, None)
     connection = FakeResidentConnection(HarnessId.CODEX)
     coordinator = ResidentDrainCoordinator.for_connection(
-        project_root=tmp_path,
         runtime_root=tmp_path,
         spawn_id=SpawnId("p1"),
         receiver=connection,
         resident_backend=connection.resident_backend,
         deadline_seconds=30.0,
         poll_seconds=0.01,
+        cancel_descendants=descendant_cancellation_from_roots(tmp_path, tmp_path),
     )
     evidence_readable = False
 
@@ -800,13 +801,13 @@ async def test_active_followup_turn_stays_resident_honors_done_and_defers_poll(
     start_row(tmp_path, "p2", HarnessId.CODEX, "p1")
     connection = FakeResidentConnection(HarnessId.CODEX)
     coordinator = ResidentDrainCoordinator.for_connection(
-        project_root=tmp_path,
         runtime_root=tmp_path,
         spawn_id=SpawnId("p1"),
         receiver=connection,
         resident_backend=connection.resident_backend,
         deadline_seconds=3300.0,
         poll_seconds=5.0,
+        cancel_descendants=descendant_cancellation_from_roots(tmp_path, tmp_path),
     )
     terminal = TerminalEventOutcome(status="succeeded", exit_code=0)
     waiting = await coordinator.handle_terminal_event(

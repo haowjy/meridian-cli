@@ -15,9 +15,9 @@ from meridian.lib.streaming.drain_policy import (
 )
 from meridian.lib.streaming.drain_teardown import (
     DefaultDrainSessionTeardown,
-    PiDrainSessionTeardown,
 )
 from meridian.lib.streaming.pi_drain import PiDrainCoordinator
+from meridian.lib.streaming.pi_drain_teardown import PiDrainSessionTeardown
 from meridian.lib.streaming.resident_drain import ResidentDrainCoordinator
 from meridian.lib.streaming.spawn_manager import SpawnManager
 from tests.support.resident_drain import FakeResidentBackendControl

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from pathlib import Path
 from typing import Any
 
@@ -155,6 +155,23 @@ class FakeResidentConnection(HarnessConnection[ResolvedLaunchSpec]):
         self._resident_backend.status = LivenessDecision.STREAM_STALLED
 
 
+def descendant_cancellation_from_roots(
+    project_root: Path,
+    runtime_root: Path,
+) -> Callable[[SpawnId], Awaitable[set[str]]]:
+    """Build the same late-bound cancellation capability as the composition root."""
+
+    async def _cancel_descendants(root_id: SpawnId) -> set[str]:
+        from meridian.lib.bootstrap.services import (
+            build_spawn_application_service_from_roots,
+        )
+
+        service = build_spawn_application_service_from_roots(project_root, runtime_root)
+        return await service.cancel_descendants(root_id)
+
+    return _cancel_descendants
+
+
 async def awaiting_done_coordinator(
     tmp_path: Path,
     connection: HarnessConnection[Any],
@@ -162,13 +179,13 @@ async def awaiting_done_coordinator(
     resident_backend = connection.resident_backend
     assert resident_backend is not None
     coordinator = ResidentDrainCoordinator.for_connection(
-        project_root=tmp_path,
         runtime_root=tmp_path,
         spawn_id=SpawnId("p1"),
         receiver=connection,
         resident_backend=resident_backend,
         deadline_seconds=30.0,
         poll_seconds=0.01,
+        cancel_descendants=descendant_cancellation_from_roots(tmp_path, tmp_path),
     )
     write_spawn_signal(tmp_path, "p1", "rearm")
     terminal_event = resident_event(connection.harness_id, "agent_end", {})
@@ -276,13 +293,13 @@ async def coordinator_with_clock(
     poll_seconds: float = 5.0,
 ) -> ResidentDrainCoordinator:
     coordinator = ResidentDrainCoordinator.for_connection(
-        project_root=tmp_path,
         runtime_root=tmp_path,
         spawn_id=SpawnId("p1"),
         receiver=connection,
         resident_backend=connection.resident_backend,
         deadline_seconds=deadline_seconds,
         poll_seconds=poll_seconds,
+        cancel_descendants=descendant_cancellation_from_roots(tmp_path, tmp_path),
     )
     write_spawn_signal(tmp_path, "p1", "rearm")
     terminal_event = resident_event(connection.harness_id, "agent_end", {})

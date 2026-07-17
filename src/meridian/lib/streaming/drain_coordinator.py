@@ -6,7 +6,6 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol
 
-from meridian.lib.streaming.completion_contracts import CompletionCleanupRequest
 from meridian.lib.streaming.drain_policy import DrainAction, DrainPolicy, SingleTurnDrainPolicy
 from meridian.lib.streaming.drain_teardown import (
     DEFAULT_DRAIN_SESSION_TEARDOWN,
@@ -16,6 +15,7 @@ from meridian.lib.streaming.drain_teardown import (
 if TYPE_CHECKING:
     from meridian.lib.harness.connections.base import HarnessEvent
     from meridian.lib.harness.semantics import TerminalEventOutcome
+    from meridian.lib.streaming.completion_contracts import CompletionCleanupRequest
     from meridian.lib.streaming.spawn_session import DrainOutcome
 
 

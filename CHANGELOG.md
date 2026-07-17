@@ -5,6 +5,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Changed
+- Split the neutral drain teardown contract from Pi cleanup policy and moved resident
+  descendant cancellation wiring into the drain-plan composition root. (#370)
 - Removed completed streaming-migration tracker/ledger façades and coordinator
   mutation ports; completion tests now establish state through events and signals. (#371)
 - Spawn reconciliation completion/cancel precedence now lives behind a shared

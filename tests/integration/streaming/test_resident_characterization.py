@@ -15,7 +15,12 @@ from meridian.lib.streaming import resident_drain as resident_drain_module
 from meridian.lib.streaming.drain_policy import DrainAction
 from meridian.lib.streaming.resident_drain import ResidentDrainCoordinator
 from tests.support.async_determinism import FakeClock, TaskGate
-from tests.support.resident_drain import FakeResidentConnection, resident_event, start_row
+from tests.support.resident_drain import (
+    FakeResidentConnection,
+    descendant_cancellation_from_roots,
+    resident_event,
+    start_row,
+)
 
 _SUCCESS = TerminalEventOutcome(status="succeeded", exit_code=0)
 _TERMINATE = DrainAction(terminate=True, emit_turn_boundary=False)
@@ -33,13 +38,13 @@ def _coordinator(
     start_row(tmp_path, "p1", HarnessId.CODEX, None)
     connection = FakeResidentConnection(HarnessId.CODEX)
     coordinator = ResidentDrainCoordinator.for_connection(
-        project_root=tmp_path,
         runtime_root=tmp_path,
         spawn_id=SpawnId("p1"),
         receiver=connection,
         resident_backend=connection.resident_backend,
         deadline_seconds=deadline_seconds,
         poll_seconds=1.0,
+        cancel_descendants=descendant_cancellation_from_roots(tmp_path, tmp_path),
     )
     return coordinator, connection, clock
 

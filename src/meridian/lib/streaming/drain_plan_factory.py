@@ -16,8 +16,8 @@ from meridian.lib.streaming.drain_policy import (
     PiRpcQuiescenceDrainPolicy,
     SingleTurnDrainPolicy,
 )
-from meridian.lib.streaming.drain_teardown import EmitEvent, PiDrainSessionTeardown
 from meridian.lib.streaming.pi_drain import PiDrainCoordinator
+from meridian.lib.streaming.pi_drain_teardown import EmitEvent, PiDrainSessionTeardown
 from meridian.lib.streaming.pi_work_ledger import PiPrivateWorkLedger
 from meridian.lib.streaming.resident_drain import ResidentDrainCoordinator
 from meridian.lib.streaming.types import InjectResult
@@ -50,6 +50,8 @@ class DescendantCancellationService(Protocol):
 
 
 BuildSpawnApplicationService = Callable[[Path, Path], DescendantCancellationService]
+
+
 def build_drain_plan(
     *,
     project_root: Path,
@@ -102,16 +104,20 @@ def build_drain_plan(
     async def _send_pi_done_nudge(message: str) -> None:
         await inject(spawn_id, message, source="pi_done_nudge")
 
+    async def _cancel_descendants(root_id: SpawnId) -> set[str]:
+        service = build_spawn_application_service(project_root, runtime_root)
+        return await service.cancel_descendants(root_id)
+
     resident_backend = receiver.resident_backend
     if resident_backend is not None:
         coordinator = ResidentDrainCoordinator.for_connection(
-            project_root=project_root,
             runtime_root=runtime_root,
             spawn_id=spawn_id,
             receiver=receiver,
             resident_backend=resident_backend,
             deadline_seconds=config.resident_deadline_seconds,
             poll_seconds=config.resident_poll_seconds,
+            cancel_descendants=_cancel_descendants,
         )
         return DrainPlan(
             coordinator=coordinator,

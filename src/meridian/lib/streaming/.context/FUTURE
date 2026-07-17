@@ -1,18 +1,7 @@
 # Streaming — deferred nice-to-have cleanup
 
-Non-blocking follow-ups from the drain-convergence final convergence review
-(2026-07-16). None block shipping the migration; each is an isolated
-convergence-quality improvement.
-
-- **Finish inverting the composition root.** `drain_coordinator.py` imports
-  `drain_teardown.py`, which mixes the generic `DrainSessionTeardown` protocol +
-  default with the Pi-specific `PiDrainSessionTeardown`, so importing the stable
-  drain contract pulls in Pi policy. Split: keep `DrainSessionTeardown` /
-  `TeardownReport` / `DefaultDrainSessionTeardown` in a neutral module; move
-  `PiDrainSessionTeardown` to a Pi-specific module. Also inject descendant
-  cancellation into resident cleanup through `drain_plan_factory.py` as Pi already
-  is, instead of `resident_drain.py` building
-  `build_spawn_application_service_from_roots()` internally (`resident_drain.py:322-330`).
+Non-blocking follow-up from the drain-convergence final convergence review
+(2026-07-16). It does not block shipping the migration.
 
 - **Consolidate migration characterization test debt.** `test_pi_characterization.py`,
   `test_pi_quiescence.py`, `test_pi_quiescence_disk_races.py`,
