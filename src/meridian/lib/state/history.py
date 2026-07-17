@@ -13,6 +13,7 @@ from meridian.lib.core.clock import Clock, RealClock
 from meridian.lib.harness.connections.base import HarnessEvent
 from meridian.lib.state.atomic import append_text_line, atomic_write_text
 from meridian.lib.state.managed_primary import ManagedPrimaryCausalTracker
+from meridian.lib.state.spawn_aggregate import mutate_published_spawn_artifact
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +36,8 @@ class HarnessHistoryWriter:
     history_path: Path
     last_observed_event_path: Path | None = None
     clock: Clock = field(default_factory=RealClock)
+    runtime_root: Path | None = None
+    spawn_id: str | None = None
     _seq: int = field(default=0, init=False)
     _byte_offset: int = field(default=0, init=False)
     _causal_tracker: ManagedPrimaryCausalTracker = field(
@@ -45,6 +48,8 @@ class HarnessHistoryWriter:
     _last_marker_checkpoint_monotonic: float | None = field(default=None, init=False)
 
     def __post_init__(self) -> None:
+        if (self.runtime_root is None) is not (self.spawn_id is None):
+            raise ValueError("runtime_root and spawn_id must be provided together")
         if not self.history_path.exists():
             return
         content = self.history_path.read_bytes()
@@ -84,15 +89,26 @@ class HarnessHistoryWriter:
         }
         line = json.dumps(envelope, separators=(",", ":"), sort_keys=True) + "\n"
 
-        try:
+        assigned_seq = self._seq
+
+        def _write_artifacts() -> None:
             append_text_line(self.history_path, line)
+            self._seq += 1
+            self._byte_offset += len(line.encode("utf-8"))
+            self._record_last_observed_event(event, timestamp=timestamp, seq=assigned_seq)
+
+        try:
+            if self.runtime_root is None or self.spawn_id is None:
+                _write_artifacts()
+            elif not mutate_published_spawn_artifact(
+                self.runtime_root,
+                self.spawn_id,
+                _write_artifacts,
+            ):
+                return WriteResult(success=False, error="spawn no longer published")
         except Exception as exc:  # pragma: no cover - return-path tested
             return WriteResult(success=False, error=str(exc))
 
-        assigned_seq = self._seq
-        self._seq += 1
-        self._byte_offset += len(line.encode("utf-8"))
-        self._record_last_observed_event(event, timestamp=timestamp, seq=assigned_seq)
         return WriteResult(success=True, seq=assigned_seq)
 
     def _record_last_observed_event(

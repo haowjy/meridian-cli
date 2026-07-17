@@ -70,8 +70,8 @@ cleanup claim exists, so a process scope cannot appear after cleanup targets are
 Any writer into a destructible `spawns/<id>/` directory that can outlive deletion must
 not recreate its owner. Parent-creating mutations take the spawn-state lock and refuse
 a missing published row through `mutate_published_spawn_artifact()`; signals, scope,
-launch observations, failure sentinels, and harness journals use this seam. Heartbeats
-never create a missing parent directory and stop after deletion.
+history, launch/reaper diagnostics, failure sentinels, and harness journals use this
+seam. Heartbeats never create a missing parent directory and stop after deletion.
 The spawn repository and process-scope projection are persistence leaves with a
 one-way dependency: the projection may use repository reads and lock paths, while
 the repository never imports the projection. Cross-leaf operations belong in the aggregate `spawn_aggregate.py`; in particular, published-spawn deletion owns the lock

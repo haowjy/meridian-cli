@@ -237,6 +237,8 @@ class SpawnManager:
                 last_observed_event_path=(
                     self._spawn_dir(spawn_id) / LAST_OBSERVED_EVENT_FILENAME
                 ),
+                runtime_root=self._runtime_root,
+                spawn_id=str(spawn_id),
             )
             if on_event is not None:
                 self.register_observer(spawn_id, CallbackObserver(on_event))

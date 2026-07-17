@@ -789,6 +789,7 @@ async def _run_primary_attach(
             connection=connection,
             tui_command_builder=passthrough.build_tui_command(connection, spec),
             process_launcher=process_launcher,
+            runtime_root=spawn_dir.parent.parent,
             on_running=on_running,
         )
         return await launcher.run(
