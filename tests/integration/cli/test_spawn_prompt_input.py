@@ -10,11 +10,15 @@ from pathlib import Path
 import pytest
 
 from tests.conftest import posix_only
+from tests.support.executables import prepend_fake_executables
 
 
 @pytest.mark.integration
 @posix_only
-def test_spawn_with_reference_does_not_read_silent_open_stdin(tmp_path: Path) -> None:
+def test_spawn_with_reference_does_not_read_silent_open_stdin(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     project_root = tmp_path / "project"
     (project_root / ".meridian").mkdir(parents=True)
     (project_root / ".meridian" / "id").write_text("prompt-input-test", encoding="utf-8")
@@ -25,6 +29,9 @@ def test_spawn_with_reference_does_not_read_silent_open_stdin(tmp_path: Path) ->
     reference = project_root / "reference.md"
     reference.write_text("Reference context.\n", encoding="utf-8")
 
+    # CI runners have no real harness binaries; Mars validates harness
+    # installation even for --dry-run, so a stub codex must be on PATH.
+    prepend_fake_executables(monkeypatch, tmp_path, "codex")
     env = os.environ.copy()
     env["MERIDIAN_HOME"] = (tmp_path / "home").as_posix()
     process = subprocess.Popen(

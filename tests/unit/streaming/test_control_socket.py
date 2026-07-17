@@ -10,8 +10,10 @@ from meridian.lib.streaming.control_socket import (
     UNIX_SOCKET_PATH_MAX_BYTES,
     control_socket_path,
 )
+from tests.conftest import posix_only
 
 
+@posix_only
 def test_control_socket_path_is_bounded_and_unique_for_long_runtime_root() -> None:
     runtime_root = Path.cwd() / ("pathologically-long-runtime-root-" * 10)
 
@@ -24,6 +26,7 @@ def test_control_socket_path_is_bounded_and_unique_for_long_runtime_root() -> No
     assert first != second
 
 
+@posix_only
 def test_control_socket_path_rejects_overlong_temp_root(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
