@@ -68,12 +68,23 @@ _PI_SPAWNED_PROMPT_REQUIRED_REASON: Final[str] = "pi_rpc_spawned_prompt_required
 _FIRST_STDOUT_AFTER_INITIAL_PROMPT_TIMEOUT_SECONDS: Final[float] = 30.0
 _BLOCKED_CHILD_ENV_VARS: Final[frozenset[str]] = BLOCKED_CHILD_ENV_VARS
 _PI_SESSION_DIR_FLAG: Final[str] = "--session-dir"
+PI_SUBPROCESS_EXIT_ERROR_PREFIX: Final[str] = "Pi subprocess exited with code "
 _PI_CHILD_WAVE_TIMEOUT_MS_ENV: Final[str] = "MERIDIAN_PI_CHILD_WAVE_TIMEOUT_MS"
 _PI_TASK_PING_INTERVAL_MS_ENV: Final[str] = "MERIDIAN_PI_TASK_PING_INTERVAL_MS"
 _PI_TASK_PING_RESET_ON_ACTIVITY_ENV: Final[str] = "MERIDIAN_PI_TASK_PING_RESET_ON_ACTIVITY"
 _STREAM_LINE_KIND: Final[Literal["line"]] = "line"
 _STREAM_EOF_KIND: Final[Literal["eof"]] = "eof"
 _STREAM_ERROR_KIND: Final[Literal["error"]] = "error"
+
+
+def pi_subprocess_exit_error(return_code: int) -> str:
+    """Return the canonical failure emitted for a non-zero Pi process exit."""
+    return f"{PI_SUBPROCESS_EXIT_ERROR_PREFIX}{return_code}."
+
+
+def is_pi_subprocess_exit_error(error: str | None) -> bool:
+    """Whether an error originated from the canonical Pi process-exit failure."""
+    return error is not None and error.startswith(PI_SUBPROCESS_EXIT_ERROR_PREFIX)
 
 
 class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
@@ -381,7 +392,7 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
                         break
                     if return_code != 0 and self._state not in {"stopping", "stopped"}:
                         detail = self._failure_detail_with_stderr(
-                            f"Pi subprocess exited with code {return_code}."
+                            pi_subprocess_exit_error(return_code)
                         )
                         self._mark_failed(detail)
                         yield self._error_event(detail)

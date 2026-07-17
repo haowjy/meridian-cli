@@ -33,10 +33,12 @@ from tests.support.pi import (
     PiDrainScenario,
     history_has_event,
     history_has_phase,
+    pi_process_exit_event,
     read_history,
     read_history_phases,
     read_phase_events,
     wait_for_history_phase,
+    write_pi_bash_record,
 )
 from tests.support.pi import (
     pi_event as _pi_event,
@@ -516,6 +518,7 @@ async def test_pi_stream_exit_publishes_while_descendant_cleanup_is_blocked(
                     "pid": 7702,
                 },
             ),
+            pi_process_exit_event(143),
         ]
     )
     manager = await _start_pi_manager(tmp_path, connection, spawn_id=spawn_id)
@@ -530,6 +533,78 @@ async def test_pi_stream_exit_publishes_while_descendant_cleanup_is_blocked(
         assert outcome is not None
         assert outcome.status == "failed"
         assert outcome.error == "pi_process_exited_with_tracked_children"
+        assert not cleanup_finished.is_set()
+    finally:
+        allow_cleanup.set()
+        with suppress(asyncio.CancelledError, TimeoutError):
+            await asyncio.wait_for(completion, timeout=1.0)
+        await manager.stop_spawn(spawn_id)
+
+
+@pytest.mark.asyncio
+async def test_pi_process_exit_with_managed_bash_publishes_before_cleanup_finishes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cleanup_started = asyncio.Event()
+    allow_cleanup = asyncio.Event()
+    cleanup_finished = asyncio.Event()
+    cleanup_reasons: list[str] = []
+
+    class _NoopCleanupService:
+        async def cancel_descendants(self, target_spawn_id: SpawnId) -> set[str]:
+            assert target_spawn_id == SpawnId("p-pi-managed-bash-exit")
+            return set()
+
+    def _build_service(project_root: Path, runtime_root: Path) -> _NoopCleanupService:
+        assert project_root == tmp_path
+        assert runtime_root == tmp_path
+        return _NoopCleanupService()
+
+    async def _gated_process_cleanup(
+        target_spawn_id: SpawnId,
+        ledger: PiPrivateWorkLedger,
+        *,
+        reason: str,
+        exclude_subspawn_ids: set[str] | None = None,
+    ) -> None:
+        _ = ledger, exclude_subspawn_ids
+        assert target_spawn_id == SpawnId("p-pi-managed-bash-exit")
+        cleanup_reasons.append(reason)
+        cleanup_started.set()
+        await allow_cleanup.wait()
+        cleanup_finished.set()
+
+    monkeypatch.setattr(
+        "meridian.lib.bootstrap.services.build_spawn_application_service_from_roots",
+        _build_service,
+    )
+    monkeypatch.setattr(
+        "meridian.lib.streaming.pi_process_cleanup.terminate_pi_tracked_subspawns",
+        _gated_process_cleanup,
+    )
+
+    spawn_id = SpawnId("p-pi-managed-bash-exit")
+    write_pi_bash_record(tmp_path, spawn_id)
+    connection = _FakePiConnection(
+        [
+            _pi_event("session", {"id": "ses-pi"}),
+            pi_process_exit_event(143),
+        ]
+    )
+    manager = await _start_pi_manager(tmp_path, connection, spawn_id=spawn_id)
+    completion = asyncio.create_task(manager.wait_for_completion(spawn_id))
+
+    try:
+        await asyncio.wait_for(cleanup_started.wait(), timeout=1.0)
+        done, _ = await asyncio.wait({completion}, timeout=0.05)
+
+        assert completion in done
+        outcome = await completion
+        assert outcome is not None
+        assert outcome.status == "failed"
+        assert outcome.error == "pi_process_exited_with_tracked_children"
+        assert cleanup_reasons == ["pi_process_exit_with_tracked_children"]
         assert not cleanup_finished.is_set()
     finally:
         allow_cleanup.set()

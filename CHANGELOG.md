@@ -9,6 +9,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   spawn state records the sub-second `published_at` time of its atomic publication.
 
 ### Fixed
+- Pi process exits with tracked child work now report the tracked-work-specific
+  terminal reason for both lifecycle children and managed background bash work.
 - Attempt timeouts now report `timed_out` consistently in spawn reports and Pi
   lifecycle history, retain post-finalization cleanup diagnostics, and consume
   aborted-stream exhaustion without leaking `StopAsyncIteration` warnings.
