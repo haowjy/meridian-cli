@@ -16,6 +16,8 @@ from meridian.lib.state.managed_primary import ManagedPrimaryCausalTracker
 
 logger = logging.getLogger(__name__)
 
+_LAST_OBSERVED_EVENT_CHECKPOINT_INTERVAL_SECONDS = 1.0
+
 
 @dataclass(frozen=True)
 class WriteResult:
@@ -40,6 +42,7 @@ class HarnessHistoryWriter:
         init=False,
     )
     _event_counts: dict[str, int] = field(default_factory=dict, init=False)
+    _last_marker_checkpoint_monotonic: float | None = field(default=None, init=False)
 
     def __post_init__(self) -> None:
         if not self.history_path.exists():
@@ -113,6 +116,12 @@ class HarnessHistoryWriter:
             "item_started": self._event_counts.get("item/started", 0),
             "item_completed": self._event_counts.get("item/completed", 0),
         }
+        now = self.clock.monotonic()
+        last_checkpoint = self._last_marker_checkpoint_monotonic
+        if last_checkpoint is not None and (
+            now - last_checkpoint
+        ) < _LAST_OBSERVED_EVENT_CHECKPOINT_INTERVAL_SECONDS:
+            return
         try:
             atomic_write_text(
                 self.last_observed_event_path,
@@ -122,6 +131,8 @@ class HarnessHistoryWriter:
             # History remains authoritative. Diagnostic marker loss must not stop
             # event consumption or cause the already-appended event to be replayed.
             logger.warning("Failed to update last-observed-event marker", exc_info=True)
+            return
+        self._last_marker_checkpoint_monotonic = now
 
     def _rehydrate_history_state(self, content: bytes) -> None:
         for line in content.decode("utf-8", errors="ignore").splitlines():

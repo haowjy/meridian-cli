@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
@@ -24,6 +25,11 @@ MAX_HARNESS_MESSAGE_BYTES: Final[int] = 10 * 1024 * 1024
 
 # Uniform initial-prompt cap across adapters; fail loudly if the prompt is too large.
 MAX_INITIAL_PROMPT_BYTES: Final[int] = 10 * 1024 * 1024
+
+# Foreground ownership-transfer cleanup bound; residue is owned by durable scopes.
+OWNERSHIP_TRANSFER_REAP_TIMEOUT_SECONDS: Final[float] = 30.0
+
+logger = logging.getLogger(__name__)
 
 
 def _empty_startup_phases() -> frozenset[str]:
@@ -87,22 +93,46 @@ StopProgressCallback = Callable[[str, dict[str, object]], Awaitable[None]]
 
 async def reap_on_ownership_transfer_failure(
     cleanup: Callable[[], Awaitable[object]],
+    *,
+    deadline_seconds: float = OWNERSHIP_TRANSFER_REAP_TIMEOUT_SECONDS,
 ) -> None:
     """Best-effort, cancellation-shielded cleanup before ownership transfers.
 
     Startup callers use this after catching ``BaseException`` so external task
     cancellation cannot strand a child between adapter, dispatch, and manager
-    ownership.  A task is used deliberately: ``shield`` keeps the reap alive if
-    the surrounding startup task receives another cancellation request.
+    ownership. Foreground reap is bounded by ``deadline_seconds`` (default
+    30s). The loop uses ``shield`` so repeated cancellation of the surrounding
+    startup task does not abort an in-flight cleanup until the deadline.
+
+    On expiry, logs a warning that foreground cleanup is abandoned and returns.
+    Durable ``spawn_owned`` process scopes recorded on disk plus the reaper own
+    any surviving child processes by construction.
     """
 
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + deadline_seconds
     try:
         cleanup_task = asyncio.ensure_future(cleanup())
     except BaseException:
         return
     while not cleanup_task.done():
+        remaining = deadline - loop.time()
+        if remaining <= 0:
+            logger.warning(
+                "Abandoning foreground ownership-transfer cleanup after %.1fs; "
+                "durable spawn_owned scopes and reaper own any residue",
+                deadline_seconds,
+            )
+            return
         try:
-            await asyncio.shield(cleanup_task)
+            await asyncio.wait_for(asyncio.shield(cleanup_task), timeout=remaining)
+        except TimeoutError:
+            logger.warning(
+                "Abandoning foreground ownership-transfer cleanup after %.1fs; "
+                "durable spawn_owned scopes and reaper own any residue",
+                deadline_seconds,
+            )
+            return
         except BaseException:  # cleanup must outlive repeated cancellation
             continue
 

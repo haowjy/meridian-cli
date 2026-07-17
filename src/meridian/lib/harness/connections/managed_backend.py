@@ -50,9 +50,10 @@ class ManagedBackendHandle:
 
 
 async def register_spawn_owned_process(
-    config: ManagedBackendConfig,
-    process: asyncio.subprocess.Process,
     *,
+    spawn_id: SpawnId,
+    control_root: Path,
+    process: asyncio.subprocess.Process,
     scope_id: str,
     role: str,
     parent_death_linked: bool = False,
@@ -62,7 +63,7 @@ async def register_spawn_owned_process(
 ) -> ScopedProcessHandle:
     """Persist crash-recovery ownership for an already launched child process."""
 
-    spawn_dir = resolve_spawn_log_dir(config.control_root, config.spawn_id)
+    spawn_dir = resolve_spawn_log_dir(control_root, spawn_id)
     spawn_dir.mkdir(parents=True, exist_ok=True)
     resolved_runtime_root = runtime_root or spawn_dir.parent.parent
     pid = process.pid
@@ -85,7 +86,7 @@ async def register_spawn_owned_process(
     snapshot = ProcessScopeSnapshot(
         scope_id=scope_id,
         owner_policy="spawn_owned",
-        owner_id=str(config.spawn_id),
+        owner_id=str(spawn_id),
         role=role,
         containment=containment,
         root_pid=pid,
@@ -98,7 +99,7 @@ async def register_spawn_owned_process(
     scope_handle = ScopedProcessHandle(process=process, snapshot=snapshot)
     try:
         if persist:
-            record_scope(resolved_runtime_root, config.spawn_id, snapshot)
+            record_scope(resolved_runtime_root, spawn_id, snapshot)
     except BaseException:
         await scope_handle.terminate(reason="scope_registration_failed")
         raise
@@ -143,8 +144,9 @@ async def launch_managed_backend(
 
     try:
         scope_handle = await register_spawn_owned_process(
-            config,
-            process,
+            spawn_id=config.spawn_id,
+            control_root=config.control_root,
+            process=process,
             scope_id="backend",
             role="harness_backend",
             parent_death_linked=parent_death_linked,

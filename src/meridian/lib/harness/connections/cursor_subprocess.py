@@ -26,10 +26,7 @@ from meridian.lib.harness.connections.base import (
     reap_on_ownership_transfer_failure,
     validate_prompt_size,
 )
-from meridian.lib.harness.connections.managed_backend import (
-    ManagedBackendConfig,
-    register_spawn_owned_process,
-)
+from meridian.lib.harness.connections.managed_backend import register_spawn_owned_process
 from meridian.lib.harness.extractors.cursor import CURSOR_EXTRACTOR
 from meridian.lib.launch.constants import BASE_COMMAND_CURSOR_SUBPROCESS, BLOCKED_CHILD_ENV_VARS
 from meridian.lib.launch.env import inherit_child_env
@@ -152,15 +149,9 @@ class CursorSubprocessConnection(HarnessConnection[ResolvedLaunchSpec]):
                 limit=_STDOUT_READLINE_LIMIT,
             )
             self._scope_handle = await register_spawn_owned_process(
-                ManagedBackendConfig(
-                    spawn_id=config.spawn_id,
-                    harness_id=self.harness_id,
-                    command=tuple(command),
-                    cwd=config.control_root,
-                    env=env,
-                    control_root=config.control_root,
-                ),
-                self._process,
+                spawn_id=config.spawn_id,
+                control_root=config.control_root,
+                process=self._process,
                 scope_id="stdio",
                 role="harness_stdio",
                 runtime_root=config.runtime_root,

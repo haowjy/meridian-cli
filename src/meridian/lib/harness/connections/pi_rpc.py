@@ -31,10 +31,7 @@ from meridian.lib.harness.connections.base import (
     reap_on_ownership_transfer_failure,
     validate_prompt_size,
 )
-from meridian.lib.harness.connections.managed_backend import (
-    ManagedBackendConfig,
-    register_spawn_owned_process,
-)
+from meridian.lib.harness.connections.managed_backend import register_spawn_owned_process
 from meridian.lib.harness.errors import HarnessBinaryNotFound
 from meridian.lib.harness.pi_lifecycle_events import (
     PI_CANONICAL_LIFECYCLE_TYPE_PREFIXES,
@@ -542,15 +539,9 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
                 start_new_session=not IS_WINDOWS,
             )
             self._scope_handle = await register_spawn_owned_process(
-                ManagedBackendConfig(
-                    spawn_id=config.spawn_id,
-                    harness_id=self.harness_id,
-                    command=tuple(command),
-                    cwd=config.control_root,
-                    env=env,
-                    control_root=config.control_root,
-                ),
-                self._process,
+                spawn_id=config.spawn_id,
+                control_root=config.control_root,
+                process=self._process,
                 scope_id="stdio",
                 role="harness_stdio",
                 runtime_root=config.runtime_root,
