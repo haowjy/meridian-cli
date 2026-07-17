@@ -11,10 +11,11 @@ from pathlib import Path
 
 import pytest
 
-from meridian.lib.core.domain import Spawn
+from meridian.lib.core.domain import Spawn, TokenUsage
 from meridian.lib.core.types import HarnessId, ModelId, SpawnId, TransportId
 from meridian.lib.harness.registry import HarnessRegistry
 from meridian.lib.launch import constants as launch_constants
+from meridian.lib.launch.extract import enrich_finalize, reset_finalize_attempt_artifacts
 from meridian.lib.state import spawn_store
 from meridian.lib.state.artifact_store import LocalStore, make_artifact_key
 from meridian.lib.state.paths import resolve_project_runtime_root
@@ -32,29 +33,49 @@ from tests.support.fakes import FakeClock, FakeHeartbeat
 
 _pi_extension_projection_fixture = _pi_extension_projection_fixture
 
+_STORE_ATTEMPT_FILES = (
+    launch_constants.HISTORY_FILENAME,
+    launch_constants.OUTPUT_FILENAME,
+    launch_constants.STDERR_FILENAME,
+    launch_constants.TOKENS_FILENAME,
+    launch_constants.REPORT_FILENAME,
+)
+_DISK_ATTEMPT_FILES = (
+    launch_constants.HISTORY_FILENAME,
+    launch_constants.LAST_OBSERVED_EVENT_FILENAME,
+    launch_constants.RUNNER_LIFECYCLE_FILENAME,
+    launch_constants.STDERR_FILENAME,
+    launch_constants.TOKENS_FILENAME,
+    launch_constants.REPORT_FILENAME,
+)
+
+
+class _NoReportExtractor:
+    def extract_usage(self, artifacts: object, spawn_id: SpawnId) -> TokenUsage:
+        _ = artifacts, spawn_id
+        return TokenUsage()
+
+    def extract_session_id(self, artifacts: object, spawn_id: SpawnId) -> str | None:
+        _ = artifacts, spawn_id
+        return None
+
+    def extract_report(self, artifacts: object, spawn_id: SpawnId) -> str | None:
+        _ = artifacts, spawn_id
+        return None
+
+
 def test_retry_preserves_completed_attempt_artifacts(tmp_path: Path) -> None:
     log_dir = tmp_path / "spawns" / "r-truncate"
     log_dir.mkdir(parents=True, exist_ok=True)
     artifacts = LocalStore(root_dir=tmp_path / ".artifacts")
     spawn_id = SpawnId("r-truncate")
-    attempt_files = (
-        launch_constants.HISTORY_FILENAME,
-        launch_constants.LAST_OBSERVED_EVENT_FILENAME,
-        launch_constants.RUNNER_LIFECYCLE_FILENAME,
-        launch_constants.STDERR_FILENAME,
-        launch_constants.TOKENS_FILENAME,
-        launch_constants.REPORT_FILENAME,
-    )
-    for name in attempt_files:
+    for name in _DISK_ATTEMPT_FILES:
         (log_dir / name).write_text("attempt data\n", encoding="utf-8")
-        if name not in {
-            launch_constants.LAST_OBSERVED_EVENT_FILENAME,
-            launch_constants.RUNNER_LIFECYCLE_FILENAME,
-        }:
-            artifacts.put(
-                make_artifact_key(spawn_id, name),
-                b"persisted attempt data\n",
-            )
+    for name in _STORE_ATTEMPT_FILES:
+        artifacts.put(
+            make_artifact_key(spawn_id, name),
+            b"persisted attempt data\n",
+        )
     durable_path = log_dir / "durable.json"
     durable_path.write_text("durable data\n", encoding="utf-8")
 
@@ -65,17 +86,141 @@ def test_retry_preserves_completed_attempt_artifacts(tmp_path: Path) -> None:
         completed_attempt=1,
     )
 
-    for name in attempt_files:
+    for name in _DISK_ATTEMPT_FILES:
         assert not (log_dir / name).exists()
         assert (log_dir / "attempt-1" / name).read_text(encoding="utf-8") == "attempt data\n"
-        if name not in {
-            launch_constants.LAST_OBSERVED_EVENT_FILENAME,
-            launch_constants.RUNNER_LIFECYCLE_FILENAME,
-        }:
-            assert artifacts.get(make_artifact_key(spawn_id, f"attempt-1/{name}")) == (
-                b"persisted attempt data\n"
-            )
+    for name in _STORE_ATTEMPT_FILES:
+        assert not artifacts.exists(make_artifact_key(spawn_id, name))
+        assert artifacts.get(make_artifact_key(spawn_id, f"attempt-1/{name}")) == (
+            b"persisted attempt data\n"
+        )
     assert durable_path.exists()
+    assert not (log_dir / "attempt-1.tmp").exists()
+
+
+def test_preserve_clears_active_history_before_retry_extraction(tmp_path: Path) -> None:
+    log_dir = tmp_path / "spawns" / "r-stale-history"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    artifacts = LocalStore(root_dir=tmp_path / ".artifacts")
+    spawn_id = SpawnId("r-stale-history")
+    attempt_one_history = (
+        b'{"role":"assistant","content":"attempt 1 durable completion report text"}\n'
+    )
+    attempt_one_report = b"# Report\n\nattempt 1 durable completion\n"
+    history_key = make_artifact_key(spawn_id, launch_constants.HISTORY_FILENAME)
+    report_key = make_artifact_key(spawn_id, launch_constants.REPORT_FILENAME)
+    artifacts.put(history_key, attempt_one_history)
+    artifacts.put(report_key, attempt_one_report)
+    (log_dir / launch_constants.HISTORY_FILENAME).write_bytes(attempt_one_history)
+    (log_dir / launch_constants.REPORT_FILENAME).write_bytes(attempt_one_report)
+
+    streaming_runner_module._preserve_attempt_artifacts(
+        artifacts=artifacts,
+        spawn_id=spawn_id,
+        log_dir=log_dir,
+        completed_attempt=1,
+    )
+
+    assert not artifacts.exists(history_key)
+    attempt_one_history_key = make_artifact_key(spawn_id, "attempt-1/history.jsonl")
+    assert artifacts.get(attempt_one_history_key) == attempt_one_history
+
+    reset_finalize_attempt_artifacts(
+        artifacts=artifacts,
+        spawn_id=spawn_id,
+        log_dir=log_dir,
+    )
+
+    extraction = enrich_finalize(
+        artifacts=artifacts,
+        extractor=_NoReportExtractor(),
+        spawn_id=spawn_id,
+        log_dir=log_dir,
+        failure_reason="adapter startup failed",
+    )
+
+    assert extraction.durable_report_completion is False
+    assert extraction.report.content == "adapter startup failed"
+    assert extraction.report.source == "failure_reason"
+    assert not artifacts.exists(history_key)
+
+
+def test_preserve_recovers_interrupted_rotation(tmp_path: Path) -> None:
+    log_dir = tmp_path / "spawns" / "r-interrupted"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    artifacts = LocalStore(root_dir=tmp_path / ".artifacts")
+    spawn_id = SpawnId("r-interrupted")
+    staging_dir = log_dir / "attempt-1.tmp"
+    staging_dir.mkdir(parents=True)
+    (staging_dir / launch_constants.HISTORY_FILENAME).write_text(
+        "staged history\n",
+        encoding="utf-8",
+    )
+    (log_dir / launch_constants.STDERR_FILENAME).write_text(
+        "late stderr\n",
+        encoding="utf-8",
+    )
+    artifacts.put(
+        make_artifact_key(spawn_id, launch_constants.HISTORY_FILENAME),
+        b"active history\n",
+    )
+
+    streaming_runner_module._preserve_attempt_artifacts(
+        artifacts=artifacts,
+        spawn_id=spawn_id,
+        log_dir=log_dir,
+        completed_attempt=1,
+    )
+
+    assert not staging_dir.exists()
+    assert (log_dir / "attempt-1" / launch_constants.HISTORY_FILENAME).read_text(
+        encoding="utf-8",
+    ) == "staged history\n"
+    assert (log_dir / "attempt-1" / launch_constants.STDERR_FILENAME).read_text(
+        encoding="utf-8",
+    ) == "late stderr\n"
+    history_key = make_artifact_key(spawn_id, launch_constants.HISTORY_FILENAME)
+    attempt_one_history_key = make_artifact_key(spawn_id, "attempt-1/history.jsonl")
+    assert not artifacts.exists(history_key)
+    assert artifacts.get(attempt_one_history_key) == b"active history\n"
+
+
+def test_preserve_discards_stale_staging_when_attempt_dir_exists(tmp_path: Path) -> None:
+    log_dir = tmp_path / "spawns" / "r-stale-staging"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    artifacts = LocalStore(root_dir=tmp_path / ".artifacts")
+    spawn_id = SpawnId("r-stale-staging")
+    attempt_dir = log_dir / "attempt-1"
+    attempt_dir.mkdir(parents=True)
+    (attempt_dir / launch_constants.HISTORY_FILENAME).write_text(
+        "committed history\n",
+        encoding="utf-8",
+    )
+    staging_dir = log_dir / "attempt-1.tmp"
+    staging_dir.mkdir(parents=True)
+    (staging_dir / launch_constants.STDERR_FILENAME).write_text(
+        "stale staging\n",
+        encoding="utf-8",
+    )
+    (log_dir / launch_constants.STDERR_FILENAME).write_text(
+        "live stderr\n",
+        encoding="utf-8",
+    )
+
+    streaming_runner_module._preserve_attempt_artifacts(
+        artifacts=artifacts,
+        spawn_id=spawn_id,
+        log_dir=log_dir,
+        completed_attempt=1,
+    )
+
+    assert not staging_dir.exists()
+    assert (attempt_dir / launch_constants.HISTORY_FILENAME).read_text(
+        encoding="utf-8",
+    ) == "committed history\n"
+    assert (attempt_dir / launch_constants.STDERR_FILENAME).read_text(
+        encoding="utf-8",
+    ) == "live stderr\n"
 
 
 def test_retry_blocked_after_pi_child_started_detects_disk_child_state(
