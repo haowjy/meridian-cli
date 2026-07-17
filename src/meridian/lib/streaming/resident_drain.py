@@ -10,7 +10,7 @@ import structlog
 
 from meridian.lib.core.types import SpawnId
 from meridian.lib.harness.connections.liveness import LivenessDecision
-from meridian.lib.harness.semantics import TerminalEventOutcome
+from meridian.lib.harness.semantics import TerminalEventOutcome, TerminalOutcomeCause
 from meridian.lib.state import spawn_store
 from meridian.lib.state.spawn_signals import consume_resident_signals
 from meridian.lib.streaming.completion_contracts import (
@@ -229,7 +229,7 @@ class _ResidentCompletionProfile:
             self.clear()
             if (
                 context.candidate is not None
-                and outcome.generic_connection_close
+                and outcome.cause is TerminalOutcomeCause.REPLACEABLE_TRANSPORT_CLOSE
                 and self._resident_health_status() == LivenessDecision.BACKEND_DEAD
             ):
                 return ProfileDecision(
