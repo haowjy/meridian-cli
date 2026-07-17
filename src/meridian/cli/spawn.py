@@ -1,12 +1,14 @@
 """CLI command handlers for spawn.* operations."""
 
 import asyncio
+import os
 import sys
 from collections.abc import Callable
 from functools import partial
 from pathlib import Path
 from typing import Annotated, Any, cast, get_args
 
+import structlog
 from cyclopts import App, Parameter
 
 from meridian.cli.argv_normalization import validate_fork_mode
@@ -64,6 +66,7 @@ from meridian.lib.ops.spawn.api import (
 from meridian.lib.ops.spawn.models import SpawnLaunchOptionUpdates, normalize_goal
 
 Emitter = Callable[[Any], None]
+logger = structlog.get_logger(__name__)
 _SPAWN_STATUS_VALUES: tuple[SpawnStatus, ...] = cast(
     "tuple[SpawnStatus, ...]", get_args(SpawnStatus)
 )
@@ -108,7 +111,14 @@ def _prepare_spawn_runtime_read() -> RuntimeReadContext:
 
 
 def _prepare_spawn_runtime_write() -> RuntimeWriteContext:
-    return prepare_for_runtime_write(require_established_project_root())
+    logger.debug("spawn_launcher_phase", phase="bootstrap", launcher_pid=os.getpid())
+    prepared = prepare_for_runtime_write(require_established_project_root())
+    logger.debug(
+        "spawn_launcher_phase",
+        phase="bootstrap_complete",
+        launcher_pid=os.getpid(),
+    )
+    return prepared
 
 
 def _foreground_spawn_id_notifier(*, quiet: bool) -> Callable[[str], None] | None:
@@ -133,16 +143,14 @@ def _spawn_create_exit_code(result: SpawnActionOutput) -> int:
     return 1
 
 
-def _read_prompt_from_stdin(*, explicit_prompt_file_stdin: bool, allow_empty: bool = False) -> str:
+def _read_prompt_from_stdin() -> str:
     if sys.stdin.isatty():
-        if explicit_prompt_file_stdin:
-            raise ValueError("--prompt-file - requires stdin to be piped or redirected")
-        raise ValueError("prompt required: pass --prompt-file, -p, or pipe stdin")
+        raise ValueError("--prompt-file - requires stdin to be piped or redirected")
     try:
         prompt_text = sys.stdin.read()
     except UnicodeDecodeError as exc:
         raise ValueError("prompt stdin is not valid UTF-8") from exc
-    if not prompt_text and not allow_empty:
+    if not prompt_text:
         raise ValueError("prompt stdin is empty")
     return prompt_text
 
@@ -175,18 +183,11 @@ def _resolve_spawn_prompt(
         return prompt
     if prompt_file is not None:
         if prompt_file == "-":
-            return _read_prompt_from_stdin(explicit_prompt_file_stdin=True)
+            return _read_prompt_from_stdin()
         return _read_prompt_from_file(prompt_file)
-    if not sys.stdin.isatty():
-        prompt_text = _read_prompt_from_stdin(explicit_prompt_file_stdin=False, allow_empty=True)
-        if prompt_text:
-            return prompt_text
-        if has_files or is_continue:
-            return ""
-        raise ValueError("prompt stdin is empty")
     if has_files or is_continue:
         return ""
-    raise ValueError("prompt required: pass --prompt-file, -p, or pipe stdin")
+    raise ValueError("prompt required: pass -p/--prompt or --prompt-file")
 
 
 def _shared_launch_input_kwargs(
@@ -247,9 +248,7 @@ def _spawn_create(
         str | None,
         Parameter(
             name="--prompt-file",
-            help=(
-                "Read prompt from a file. Preferred for delegation. Use '-' to read stdin."
-            ),
+            help=("Read prompt text from a file. Preferred for delegation. Use '-' to read stdin."),
             allow_leading_hyphen=True,
         ),
     ] = None,
@@ -277,7 +276,7 @@ def _spawn_create(
         tuple[str, ...],
         Parameter(
             name=["--file", "-f"],
-            help="Reference files to include in prompt context (repeatable).",
+            help=("Attach reference files to the spawn (repeatable). Does not supply prompt text."),
             negative_iterable=(),
         ),
     ] = (),
@@ -588,11 +587,21 @@ def _spawn_create(
         debug=debug,
         env=env,
     )
+    logger.debug(
+        "spawn_launcher_phase",
+        phase="prompt_resolution",
+        launcher_pid=os.getpid(),
+    )
     resolved_prompt = _resolve_spawn_prompt(
         prompt,
         prompt_file,
         has_files=bool(references),
         is_continue=resolved_continue_from is not None,
+    )
+    logger.debug(
+        "spawn_launcher_phase",
+        phase="prompt_resolution_complete",
+        launcher_pid=os.getpid(),
     )
     normalized_task_dir = (task_dir or "").strip() or None
     if resolved_continue_from is not None and normalized_task_dir is not None:

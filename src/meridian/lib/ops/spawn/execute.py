@@ -239,10 +239,17 @@ def _reserve_then_prepare(
         launch_policy_snapshot=request.launch_policy_snapshot,
         ctx=resolved_context,
     )
+    logger.debug("spawn_launcher_phase", phase="reservation", launcher_pid=os.getpid())
     context = _reserve_spawn(
         reservation=reservation,
         runtime=runtime,
         ctx=resolved_context,
+    )
+    logger.debug(
+        "spawn_launcher_phase",
+        phase="reservation_complete",
+        launcher_pid=os.getpid(),
+        spawn_id=str(context.spawn.spawn_id),
     )
     preparation = _prepare_spawn_execution(
         payload=payload,
@@ -400,6 +407,12 @@ def execute_spawn_background(
         )
     )
     try:
+        logger.debug(
+            "spawn_launcher_phase",
+            phase="popen",
+            launcher_pid=os.getpid(),
+            spawn_id=spawn_id_text,
+        )
         with (
             stdout_path.open("ab") as stdout_handle,
             stderr_path.open("ab") as stderr_handle,
@@ -413,6 +426,13 @@ def execute_spawn_background(
                 stderr=stderr_handle,
                 **_build_detached_popen_kwargs(),
             )
+        logger.debug(
+            "spawn_launcher_phase",
+            phase="popen_complete",
+            launcher_pid=os.getpid(),
+            spawn_id=spawn_id_text,
+            worker_pid=process.pid,
+        )
     except OSError as exc:
         _record_launch_boundary_observation(
             context.runtime_root,
