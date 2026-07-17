@@ -15,6 +15,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from meridian.lib.platform.process_scope.base import CleanupResult, ProcessScopeSnapshot
 from meridian.lib.state import spawn_store
 from tests.integration.state.conftest import (
     _OLD_STARTED_AT,
@@ -27,12 +28,37 @@ from tests.integration.state.conftest import (
     _write_report,
     fake_managed_primary_birth_liveness,
     fake_reaper_liveness,
-    recording_managed_primary_terminations,
-    recording_scope_cleanup,
 )
 
 if TYPE_CHECKING:
     import pytest
+
+
+def _record_claimed_scope_terminations(
+    monkeypatch: pytest.MonkeyPatch,
+) -> list[int]:
+    terminated: list[int] = []
+
+    def terminate(
+        scope: ProcessScopeSnapshot,
+        *,
+        grace_seconds: float,
+        reason: str,
+    ) -> CleanupResult:
+        terminated.append(scope.root_pid)
+        return CleanupResult(
+            scope_id=scope.scope_id,
+            root_pid=scope.root_pid,
+            descendant_count=0,
+            reason=reason,
+            grace_seconds=grace_seconds,
+            kill_escalated=False,
+            degraded_fallback=scope.degraded_reason is not None,
+            skip_reason=None,
+        )
+
+    monkeypatch.setattr("meridian.lib.core.process_cleanup.terminate_scope_sync", terminate)
+    return terminated
 
 
 def test_reconcile_active_spawn_managed_primary_idle_launcher_alive_skips(
@@ -83,7 +109,7 @@ def test_reconcile_active_spawn_managed_primary_dead_launcher_marks_orphan_prima
     record = _get_spawn(runtime_root, spawn_id)
     fake_reaper_liveness(monkeypatch, set())
     fake_managed_primary_birth_liveness(monkeypatch, {8882, 9992})
-    terminated_pids = recording_managed_primary_terminations(monkeypatch)
+    terminated_pids = _record_claimed_scope_terminations(monkeypatch)
 
     reconciled = _reconcile(tmp_path, runtime_root, record)
 
@@ -114,10 +140,7 @@ def test_reconcile_active_spawn_managed_primary_candidate_unreadable_metadata_ki
     record = _get_spawn(runtime_root, spawn_id)
 
     fake_reaper_liveness(monkeypatch, {worker_pid})
-    terminated_pids = recording_scope_cleanup(
-        monkeypatch,
-        "meridian.lib.core.process_cleanup.terminate_tree_sync",
-    )
+    terminated_pids = _record_claimed_scope_terminations(monkeypatch)
 
     reconciled = _reconcile(tmp_path, runtime_root, record)
 
@@ -151,7 +174,7 @@ def test_reconcile_active_spawn_managed_primary_finalizing_activity_uses_report_
     record = _get_spawn(runtime_root, spawn_id)
     fake_reaper_liveness(monkeypatch, set())
     fake_managed_primary_birth_liveness(monkeypatch, set())
-    terminated_pids = recording_managed_primary_terminations(monkeypatch)
+    terminated_pids = _record_claimed_scope_terminations(monkeypatch)
 
     reconciled = _reconcile(tmp_path, runtime_root, record)
 
@@ -217,10 +240,7 @@ def test_reconcile_active_spawn_child_orphan_terminates_worker_process_group(
     )
     record = _get_spawn(runtime_root, spawn_id)
     fake_reaper_liveness(monkeypatch, {worker_pid})
-    terminated_pids = recording_scope_cleanup(
-        monkeypatch,
-        "meridian.lib.core.process_cleanup.terminate_tree_sync",
-    )
+    terminated_pids = _record_claimed_scope_terminations(monkeypatch)
 
     reconciled = _reconcile(tmp_path, runtime_root, record)
 

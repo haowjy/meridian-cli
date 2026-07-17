@@ -20,6 +20,8 @@ from meridian.lib.core.spawn_lifecycle import (
 )
 from meridian.lib.core.types import SpawnId
 from meridian.lib.launch.constants import HISTORY_FILENAME, OUTPUT_FILENAME
+from meridian.lib.platform.locking import lock_file
+from meridian.lib.platform.process_scope.base import ProcessScopeSnapshot
 from meridian.lib.state.launch_boundary import LaunchBoundarySummary, read_launch_boundary_summary
 from meridian.lib.state.liveness import is_process_alive
 from meridian.lib.state.managed_primary import (
@@ -27,7 +29,13 @@ from meridian.lib.state.managed_primary import (
     ManagedPrimarySnapshot,
     ReconciliationContext,
     read_managed_primary_snapshot,
-    terminate_managed_primary_processes,
+)
+from meridian.lib.state.process_scope_projection import mark_scope_released, read_scopes_from_disk
+from meridian.lib.state.reaper_cleanup_claim import (
+    claim_active_spawn_scopes,
+    cleanup_lock_path,
+    read_cleanup_claim,
+    replace_cleanup_claim,
 )
 from meridian.lib.state.spawn.model import SpawnRecord
 from meridian.lib.state.spawn_report import spawn_report_has_durable_completion
@@ -591,56 +599,101 @@ def peek_reconciled_active_spawn(
     )
 
 
-def _cleanup_orphan_scope_processes(
+def _fallback_cleanup_scopes(
     runtime_root: Path,
     record: SpawnRecord,
-    generic_snapshot: ArtifactSnapshot,
     managed_snapshot: ManagedPrimarySnapshot | None,
-) -> None:
-    """Terminate recorded orphan process scopes from the root reconcile path."""
-
-    from meridian.lib.state.spawn_tree import terminate_recorded_spawn_scope
-
-    terminate_recorded_spawn_scope(
-        runtime_root,
-        record,
-        reason="reaper",
-        grace_seconds=5.0,
-    )
+) -> tuple[ProcessScopeSnapshot, ...]:
+    if read_scopes_from_disk(runtime_root, SpawnId(record.id)):
+        return ()
     if managed_snapshot is not None:
-        signaled = terminate_managed_primary_processes(
-            managed_snapshot.metadata,
-            include_launcher=True,
-            include_runtime_children=True,
-        )
-        if signaled:
-            logger.debug(
-                "Terminated managed primary tracked processes during orphan reconciliation.",
-                spawn_id=record.id,
-                signaled_pids=signaled,
-            )
-    elif _is_potential_managed_primary(record):
-        from meridian.lib.state.primary_meta import read_primary_metadata
-
-        metadata = read_primary_metadata(runtime_root, record.id)
-        if metadata is not None:
-            signaled = terminate_managed_primary_processes(
-                metadata,
-                include_launcher=True,
-                include_runtime_children=True,
-            )
-            if signaled:
-                logger.debug(
-                    "Terminated managed primary processes during orphan reconciliation.",
-                    spawn_id=record.id,
-                    signaled_pids=signaled,
-                    metadata_source="late_read",
+        metadata = managed_snapshot.metadata
+        scopes: list[ProcessScopeSnapshot] = []
+        for scope_id, pid, birth_epoch in (
+            ("managed-backend", metadata.backend_pid, metadata.backend_birth_epoch),
+            ("managed-tui", metadata.tui_pid, metadata.tui_birth_epoch),
+        ):
+            if pid is None:
+                continue
+            scopes.append(
+                ProcessScopeSnapshot(
+                    scope_id=scope_id,
+                    owner_policy="spawn_owned",
+                    owner_id=record.id,
+                    role="harness_backend",
+                    containment="pid_tree_fallback",
+                    root_pid=pid,
+                    root_created_at_epoch=birth_epoch or 0.0,
+                    pgid=None,
+                    job_name=None,
+                    degraded_reason="managed_primary_metadata_fallback",
                 )
-        else:
-            logger.warning(
-                "Managed primary orphaned; metadata unreadable, zombie processes may remain.",
-                spawn_id=record.id,
             )
+        return tuple(scopes)
+    if record.worker_pid is None or record.worker_pid <= 0:
+        return ()
+    return (
+        ProcessScopeSnapshot(
+            scope_id="legacy-worker",
+            owner_policy="spawn_owned",
+            owner_id=record.id,
+            role="tool_worker",
+            containment="pid_tree_fallback",
+            root_pid=record.worker_pid,
+            root_created_at_epoch=0.0,
+            pgid=None,
+            job_name=None,
+            degraded_reason="legacy_worker_fallback",
+        ),
+    )
+
+
+def _claim_reaper_cleanup(
+    runtime_root: Path,
+    record: SpawnRecord,
+    managed_snapshot: ManagedPrimarySnapshot | None = None,
+    *,
+    include_fallback: bool = False,
+) -> None:
+    """Persist exact cleanup targets before attempting the terminal CAS."""
+    claim_active_spawn_scopes(
+        runtime_root,
+        SpawnId(record.id),
+        extra_scopes=(
+            _fallback_cleanup_scopes(runtime_root, record, managed_snapshot)
+            if include_fallback
+            else ()
+        ),
+    )
+
+
+def _cleanup_claimed_scopes(runtime_root: Path, record: SpawnRecord) -> None:
+    """Resolve a durable claim once, retaining failed targets for a later pass."""
+    spawn_id = SpawnId(record.id)
+    with lock_file(cleanup_lock_path(runtime_root, spawn_id), reentrant=False):
+        claimed = read_cleanup_claim(runtime_root, spawn_id)
+        if not claimed:
+            return
+        if record.terminal_origin != "reconciler":
+            replace_cleanup_claim(runtime_root, spawn_id, [])
+            return
+
+        from meridian.lib.core.process_cleanup import terminate_scope_sync
+
+        unresolved: list[ProcessScopeSnapshot] = []
+        for scope in claimed:
+            result = terminate_scope_sync(scope, grace_seconds=5.0, reason="reaper")
+            if result.skip_reason == "termination_exception":
+                unresolved.append(scope)
+                continue
+            mark_scope_released(runtime_root, spawn_id, scope.release_id)
+        replace_cleanup_claim(runtime_root, spawn_id, unresolved)
+
+
+def _cleanup_after_finalize(runtime_root: Path, record: SpawnRecord) -> SpawnRecord:
+    if is_terminal_spawn_status(record.status):
+        _cleanup_claimed_scopes(runtime_root, record)
+    return record
 
 
 def reconcile_active_spawn(
@@ -650,6 +703,8 @@ def reconcile_active_spawn(
 ) -> SpawnRecord:
     """Reconcile one active spawn. Is the responsible process alive?"""
     if not is_active_spawn_status(record.status):
+        if is_root_side_effect_process() and is_terminal_spawn_status(record.status):
+            _cleanup_claimed_scopes(runtime_root, record)
         return record
 
     now = time.time()
@@ -664,36 +719,50 @@ def reconcile_active_spawn(
     decision = decide_reconciliation(record, generic_snapshot, managed_snapshot, now)
     if isinstance(decision, Skip):
         return record
+    _claim_reaper_cleanup(
+        runtime_root,
+        record,
+        managed_snapshot if isinstance(decision, FinalizeFailed) else None,
+        include_fallback=isinstance(decision, FinalizeFailed),
+    )
     if isinstance(decision, FinalizeSucceededFromReport):
-        return _finalize_completed_report(
-            project_root,
+        return _cleanup_after_finalize(
             runtime_root,
-            record,
-            generic_snapshot,
-            now,
+            _finalize_completed_report(
+                project_root,
+                runtime_root,
+                record,
+                generic_snapshot,
+                now,
+            ),
         )
     if isinstance(decision, FinalizeFromRunnerExit):
-        return _finalize_from_runner_exit(
-            project_root,
+        return _cleanup_after_finalize(
             runtime_root,
-            record,
-            decision,
-            generic_snapshot,
-            now,
+            _finalize_from_runner_exit(
+                project_root,
+                runtime_root,
+                record,
+                decision,
+                generic_snapshot,
+                now,
+            ),
         )
     if decision.error == "orphan_primary" and (
         managed_snapshot is not None or _is_potential_managed_primary(record)
     ):
         _log_orphan_primary_diagnostics(record, generic_snapshot, managed_snapshot)
-    _cleanup_orphan_scope_processes(runtime_root, record, generic_snapshot, managed_snapshot)
-    return _finalize_failed(
-        project_root,
+    return _cleanup_after_finalize(
         runtime_root,
-        record,
-        decision.error,
-        generic_snapshot,
-        now,
-        exit_code=decision.exit_code,
+        _finalize_failed(
+            project_root,
+            runtime_root,
+            record,
+            decision.error,
+            generic_snapshot,
+            now,
+            exit_code=decision.exit_code,
+        ),
     )
 
 

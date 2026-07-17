@@ -185,13 +185,10 @@ def _repair_orphan_runs(
         raise ValueError("Doctor orphan-run repair requires a runtime root.")
     spawns = spawn_store.list_spawns(resolved_runtime_root)
     running_before = {s.id for s in spawns if is_active_spawn_status(s.status)}
+    # Terminal rows may carry a durable reaper cleanup claim left by a crash
+    # after finalization. The reconciler is a no-op for other terminal rows.
     reconciled = [
-        (
-            reconcile_active_spawn(project_root, resolved_runtime_root, spawn)
-            if is_active_spawn_status(spawn.status)
-            else spawn
-        )
-        for spawn in spawns
+        reconcile_active_spawn(project_root, resolved_runtime_root, spawn) for spawn in spawns
     ]
     running_after = {s.id for s in reconciled if is_active_spawn_status(s.status)}
     reconciled_orphans = tuple(sorted(running_before - running_after))

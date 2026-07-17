@@ -96,7 +96,8 @@ def _prompt_path(spawns_dir: Path, spawn_id: str) -> Path:
     return _spawn_dir(spawns_dir, spawn_id) / "starting-prompt.md"
 
 
-def _lock_path(spawns_dir: Path, spawn_id: str) -> Path:
+def spawn_lock_path(spawns_dir: Path, spawn_id: str) -> Path:
+    """Return the stable external-writer lock for one published spawn."""
     return spawns_dir.parent / "locks" / "spawns" / f"{spawn_id}.lock"
 
 
@@ -276,7 +277,7 @@ def write_state_locked(
     second snapshot and then be clobbered by the outer mutation's stale result.
     """
 
-    with lock_file(_lock_path(spawns_dir, spawn_id), reentrant=False):
+    with lock_file(spawn_lock_path(spawns_dir, spawn_id), reentrant=False):
         current = read_state(spawns_dir, spawn_id)
         if current is None:
             raise FileNotFoundError(_state_path(spawns_dir, spawn_id))
@@ -311,6 +312,7 @@ __all__ = [
     "read_state",
     "record_to_stored_state",
     "scan_spawn_ids",
+    "spawn_lock_path",
     "stored_state_to_record",
     "write_state_locked",
 ]

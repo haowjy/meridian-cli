@@ -248,7 +248,7 @@ def test_pruning_does_not_split_spawn_lock_identity(tmp_path: Path) -> None:
     spawn_id = "p7"
     artifact_path = paths.spawns_dir / spawn_id
     artifact_path.mkdir(parents=True)
-    lock_path = spawn_repository._lock_path(paths.spawns_dir, spawn_id)
+    lock_path = spawn_repository.spawn_lock_path(paths.spawns_dir, spawn_id)
     second_writer_acquired: list[bool] = []
 
     stale = [
