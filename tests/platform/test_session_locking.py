@@ -90,7 +90,9 @@ def test_fork_during_release_does_not_inherit_lock(
     os.close(stop_read)
     try:
         assert os.read(ready_read, 5) == b"ready"
-        worker.join(timeout=5)
+        deadline = time.monotonic() + 5
+        while worker.exitcode is None and time.monotonic() < deadline:
+            time.sleep(0.01)
         assert worker.exitcode == 0
         contender = acquire_file_lock(lock_path, timeout=0)
         release_file_lock(contender)
@@ -98,6 +100,7 @@ def test_fork_during_release_does_not_inherit_lock(
         os.close(ready_read)
         os.write(stop_write, b"x")
         os.close(stop_write)
-        if worker.is_alive():
+        worker.join(timeout=5)
+        if worker.exitcode is None:
             worker.terminate()
             worker.join(timeout=5)
