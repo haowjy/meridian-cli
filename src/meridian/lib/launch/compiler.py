@@ -64,6 +64,7 @@ class FieldProvenance:
     autocompact_source: ProvenanceLevel = ProvenanceLevel.UNSET
     autocompact_pct_source: ProvenanceLevel = ProvenanceLevel.UNSET
     timeout_source: ProvenanceLevel = ProvenanceLevel.UNSET
+    resident_rearm_budget_source: ProvenanceLevel = ProvenanceLevel.UNSET
 
 
 @dataclass(frozen=True)
@@ -148,6 +149,7 @@ def render_provenance(provenance: FieldProvenance) -> dict[str, str]:
         "autocompact",
         "autocompact_pct",
         "timeout",
+        "resident_rearm_budget",
     ):
         source_attr = f"{field_name}_source"
         level = getattr(provenance, source_attr)
@@ -172,6 +174,7 @@ def compiler_result_to_dry_run_dict(result: CompilerResult) -> dict[str, object]
         "autocompact",
         "autocompact_pct",
         "timeout",
+        "resident_rearm_budget",
     ):
         value = getattr(result.execution_policy, field_name)
         if value is not None:
@@ -286,6 +289,22 @@ def compile_launch_params(request: CompilerRequest) -> CompilerResult:
         (request.config_defaults.timeout, ProvenanceLevel.CONFIG_DEFAULT),
         (None, ProvenanceLevel.ALIAS_DEFAULT),  # Alias timeout defaults are not supported.
     )
+    resident_rearm_budget, resident_rearm_budget_source = _resolve_execution_policy_field(
+        request,
+        "resident_rearm_budget",
+        (request.cli_overrides.resident_rearm_budget, ProvenanceLevel.CLI),
+        (request.env_overrides.resident_rearm_budget, ProvenanceLevel.ENV),
+        (
+            matched_policy_overrides.resident_rearm_budget,
+            policy_source if matched_policy is not None else ProvenanceLevel.UNSET,
+        ),
+        (
+            request.profile_policy_defaults.resident_rearm_budget,
+            ProvenanceLevel.PROFILE_DEFAULT,
+        ),
+        (request.config_defaults.resident_rearm_budget, ProvenanceLevel.CONFIG_DEFAULT),
+        (None, ProvenanceLevel.ALIAS_DEFAULT),
+    )
 
     model = canonical_model_id
     requested_token = model_token or model
@@ -302,6 +321,7 @@ def compile_launch_params(request: CompilerRequest) -> CompilerResult:
             autocompact=autocompact,
             autocompact_pct=autocompact_pct,
             timeout=timeout,
+            resident_rearm_budget=resident_rearm_budget,
         ),
         skill_names=request.profile_skills,
         model_selection_requested_token=requested_token,
@@ -316,6 +336,7 @@ def compile_launch_params(request: CompilerRequest) -> CompilerResult:
             autocompact_source=autocompact_source,
             autocompact_pct_source=autocompact_pct_source,
             timeout_source=timeout_source,
+            resident_rearm_budget_source=resident_rearm_budget_source,
         ),
         warnings=tuple(warnings),
         model_policy_source=policy_source,

@@ -15,7 +15,6 @@ from meridian.lib.core.domain import SpawnStatus
 from meridian.lib.core.spawn_lifecycle import (
     is_active_spawn_status,
     is_terminal_spawn_status,
-    resolve_completion_cancel_precedence,
     resolve_reconciled_terminal_state,
 )
 from meridian.lib.core.types import SpawnId
@@ -28,6 +27,14 @@ from meridian.lib.state.managed_primary import (
     ReconciliationContext,
     read_managed_primary_snapshot,
     terminate_managed_primary_processes,
+)
+from meridian.lib.state.reconciliation import (
+    FinalizeFailed,
+    FinalizeFromRunnerExit,
+    FinalizeSucceededFromReport,
+    ReconciliationDecision,
+    Skip,
+    completion_or_cancel_decision,
 )
 from meridian.lib.state.spawn.model import SpawnRecord
 from meridian.lib.state.spawn_report import spawn_report_has_durable_completion
@@ -56,34 +63,6 @@ class ArtifactSnapshot:
     durable_report_completion: bool
     runner_pid_alive: bool
     launch_boundary: LaunchBoundarySummary
-
-
-@dataclass(frozen=True)
-class Skip:
-    reason: str
-
-
-@dataclass(frozen=True)
-class FinalizeFailed:
-    error: str
-    exit_code: int = 1
-
-
-@dataclass(frozen=True)
-class FinalizeSucceededFromReport:
-    pass
-
-
-@dataclass(frozen=True)
-class FinalizeFromRunnerExit:
-    status: SpawnStatus
-    exit_code: int
-    error: str | None
-
-
-type ReconciliationDecision = (
-    Skip | FinalizeFailed | FinalizeSucceededFromReport | FinalizeFromRunnerExit
-)
 
 
 def _runner_exit_at_epoch(runner_exit_at: str | None) -> float | None:
@@ -219,28 +198,6 @@ def _finalize_from_runner_exit_decision(record: SpawnRecord) -> FinalizeFromRunn
     )
 
 
-def _completion_or_cancel_decision(
-    record: SpawnRecord,
-    snapshot: ArtifactSnapshot,
-) -> ReconciliationDecision | None:
-    intent = record.cancel_intent
-    resolved = resolve_completion_cancel_precedence(
-        durable_report_completion=snapshot.durable_report_completion,
-        cancel_requested=intent is not None,
-        cancel_exit_code=intent.exit_code if intent is not None else 130,
-        cancel_error=intent.error if intent is not None else "cancelled",
-    )
-    if resolved is None:
-        return None
-    if resolved.status == "succeeded":
-        return FinalizeSucceededFromReport()
-    return FinalizeFromRunnerExit(
-        status=resolved.status,
-        exit_code=resolved.exit_code,
-        error=resolved.error,
-    )
-
-
 def decide_generic_reconciliation(
     record: SpawnRecord,
     snapshot: ArtifactSnapshot,
@@ -248,7 +205,7 @@ def decide_generic_reconciliation(
 ) -> ReconciliationDecision:
     if record.status == "finalizing":
         if snapshot.durable_report_completion:
-            decision = _completion_or_cancel_decision(record, snapshot)
+            decision = completion_or_cancel_decision(record, snapshot.durable_report_completion)
             if decision is not None:
                 return decision
         if _has_recent_activity(snapshot):
@@ -256,14 +213,14 @@ def decide_generic_reconciliation(
         if record.runner_exit_status is not None:
             return _finalize_from_runner_exit_decision(record)
         if record.cancel_intent is not None:
-            decision = _completion_or_cancel_decision(record, snapshot)
+            decision = completion_or_cancel_decision(record, snapshot.durable_report_completion)
             if decision is not None:
                 return decision
         return FinalizeFailed(error="orphan_finalization")
 
     if record.runner_exit_status is not None:
         if snapshot.durable_report_completion:
-            decision = _completion_or_cancel_decision(record, snapshot)
+            decision = completion_or_cancel_decision(record, snapshot.durable_report_completion)
             if decision is not None:
                 return decision
         if _in_post_runner_exit_finalization_grace(record, now):
@@ -272,7 +229,7 @@ def decide_generic_reconciliation(
 
     if _is_pre_worker_launch_boundary_ghost(record, snapshot, now):
         if snapshot.durable_report_completion:
-            decision = _completion_or_cancel_decision(record, snapshot)
+            decision = completion_or_cancel_decision(record, snapshot.durable_report_completion)
             if decision is not None:
                 return decision
         return FinalizeFailed(error="launch_boundary_no_takeover")
@@ -280,7 +237,7 @@ def decide_generic_reconciliation(
     runner_pid = record.runner_pid
     if runner_pid is None or runner_pid <= 0:
         if snapshot.durable_report_completion:
-            decision = _completion_or_cancel_decision(record, snapshot)
+            decision = completion_or_cancel_decision(record, snapshot.durable_report_completion)
             if decision is not None:
                 return decision
         if _has_recent_activity(snapshot):
@@ -288,7 +245,7 @@ def decide_generic_reconciliation(
         if _in_startup_grace(snapshot.started_epoch, now):
             return Skip(reason="startup_grace")
         if record.cancel_intent is not None:
-            decision = _completion_or_cancel_decision(record, snapshot)
+            decision = completion_or_cancel_decision(record, snapshot.durable_report_completion)
             if decision is not None:
                 return decision
         return FinalizeFailed(error="missing_runner_pid")
@@ -299,14 +256,14 @@ def decide_generic_reconciliation(
         return Skip(reason="runner_alive")
 
     if snapshot.durable_report_completion:
-        decision = _completion_or_cancel_decision(record, snapshot)
+        decision = completion_or_cancel_decision(record, snapshot.durable_report_completion)
         if decision is not None:
             return decision
 
     if _in_startup_grace(snapshot.started_epoch, now):
         return Skip(reason="startup_grace")
     if record.cancel_intent is not None:
-        decision = _completion_or_cancel_decision(record, snapshot)
+        decision = completion_or_cancel_decision(record, snapshot.durable_report_completion)
         if decision is not None:
             return decision
     return FinalizeFailed(

@@ -459,6 +459,7 @@ def update_spawn(
     worker_pid: int | None = None,
     runner_pid: int | None = None,
     runner_created_at_epoch: float | None = None,
+    resident_rearm_count: int | None = None,
     harness_session_id: str | None = None,
     control_root: str | None = None,
     task_cwd: str | None = None,
@@ -490,6 +491,13 @@ def update_spawn(
             updates["runner_created_at_epoch"] = resolved_runner_created_at_epoch
         elif runner_created_at_epoch is not None:
             updates["runner_created_at_epoch"] = runner_created_at_epoch
+        if resident_rearm_count is not None:
+            # Rearm grants are spawn-scoped, so a stale attempt must never lower
+            # the authoritative count written by an earlier attempt.
+            updates["resident_rearm_count"] = max(
+                current.resident_rearm_count,
+                resident_rearm_count,
+            )
         if harness_session_id is not None:
             updates["harness_session_id"] = harness_session_id
         if control_root is not None:

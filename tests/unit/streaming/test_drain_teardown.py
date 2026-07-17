@@ -8,10 +8,8 @@ import pytest
 
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.connections.base import HarnessEvent, StopResult
-from meridian.lib.streaming.drain_teardown import (
-    DefaultDrainSessionTeardown,
-    PiDrainSessionTeardown,
-)
+from meridian.lib.streaming.drain_teardown import DefaultDrainSessionTeardown
+from meridian.lib.streaming.pi_drain_teardown import PiDrainSessionTeardown
 from meridian.lib.streaming.spawn_session import DrainOutcome
 
 

@@ -97,6 +97,7 @@ from meridian.lib.state.spawn.model import (
     LaunchMode,
 )
 from meridian.lib.streaming.spawn_manager import DrainOutcome, SpawnManager
+from meridian.lib.utils.time import minutes_to_seconds
 
 if TYPE_CHECKING:
     from meridian.lib.core.lifecycle import SpawnLifecycleService
@@ -807,10 +808,15 @@ async def _run_streaming_attempt(
 
         drain_outcome = await completion_task
         if drain_outcome is not None and terminal_outcome is None:
-            drain_exit_code = drain_outcome.exit_code
-            drain_error = drain_outcome.error
-            if drain_outcome.authoritative and drain_outcome.status != "succeeded":
-                authoritative_terminal_status = drain_outcome.status
+            if timed_out and drain_outcome.status != "succeeded":
+                authoritative_terminal_status = "timed_out"
+                drain_exit_code = 3
+                drain_error = "timeout"
+            else:
+                drain_exit_code = drain_outcome.exit_code
+                drain_error = drain_outcome.error
+                if drain_outcome.authoritative and drain_outcome.status != "succeeded":
+                    authoritative_terminal_status = drain_outcome.status
             if timed_out and drain_outcome.status == "succeeded":
                 timed_out = False
             if drain_outcome.error == "report_watchdog":
@@ -941,9 +947,7 @@ async def execute_with_streaming(
         output_log_path = log_dir / HISTORY_FILENAME
         report_path = log_dir / REPORT_FILENAME
 
-        timeout_seconds = (
-            float(request.budget.timeout_secs) if request.budget.timeout_secs is not None else None
-        )
+        timeout_seconds = minutes_to_seconds(request.execution_policy.timeout)
         pi_notification_timeout_seconds = resolve_pi_notification_timeout_seconds(
             explicit_timeout_seconds=timeout_seconds,
             config_snapshot=launch_context.runtime.config_snapshot,
@@ -1037,6 +1041,7 @@ async def execute_with_streaming(
             pi_child_wave_timeout_seconds=pi_child_wave_timeout_seconds,
             resident_deadline_seconds=resident_deadline_seconds,
             resident_poll_seconds=resident_poll_seconds,
+            resident_rearm_budget=request.execution_policy.resident_rearm_budget,
             pi_task_ping_interval_seconds=pi_task_ping_interval_seconds,
             pi_task_ping_reset_on_activity=request.pi_task_ping_reset_on_activity,
             pi_session_role=pi_session_role,

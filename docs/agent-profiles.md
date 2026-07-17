@@ -62,6 +62,7 @@ The frontmatter controls Meridian's routing and policy behavior. The markdown bo
 | `approval` | str | — | Approval mode (`default`, `confirm`, `auto`, `yolo`) |
 | `autocompact` | int | — | Compaction percentage threshold |
 | `timeout` | int | — | Spawn timeout in seconds |
+| `resident-rearm-budget` | int | — | Maximum resident deadline extensions; omitted means unlimited |
 | `model-policies` | list | `[]` | Per-model override rules (see below) |
 
 ## `mode`
@@ -125,6 +126,10 @@ launchable on older Meridian versions.
 Scalar overrides in `override:` accept these runtime keys:
 
 `harness`, `sandbox`, `approval`, `effort`, `autocompact`, `autocompact_pct`, `timeout`
+
+`resident-rearm-budget` is a top-level profile default, not a model-policy
+override. The Mars launch-bundle schema does not currently expose a per-model
+resident rearm budget.
 
 ### Precedence
 

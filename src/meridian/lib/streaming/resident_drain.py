@@ -11,6 +11,7 @@ import structlog
 from meridian.lib.core.types import SpawnId
 from meridian.lib.harness.connections.liveness import LivenessDecision
 from meridian.lib.harness.semantics import TerminalEventOutcome
+from meridian.lib.state import spawn_store
 from meridian.lib.state.spawn_signals import consume_resident_signals
 from meridian.lib.streaming.completion_contracts import (
     AssessmentTrigger,
@@ -19,7 +20,6 @@ from meridian.lib.streaming.completion_contracts import (
     CompletionDirectives,
     CompletionEvaluation,
     CompletionState,
-    DiagnosticBlocker,
     EvidenceEventDecision,
     EvidenceFailure,
     NudgeUrgency,
@@ -41,7 +41,7 @@ from meridian.lib.streaming.drain_coordinator import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Awaitable, Callable
 
     from meridian.lib.harness.connections.base import HarnessConnection, HarnessEvent
     from meridian.lib.harness.connections.resident_backend import ResidentBackendControl
@@ -66,7 +66,6 @@ class _ResidentCompletionEvidence:
         self._descendant_evidence = ReconciledDescendantEvidence(
             runtime_root=runtime_root,
             root_spawn_id=spawn_id,
-            blocker_reader=lambda: _outstanding_descendant_blockers(runtime_root, spawn_id),
         )
         self._next_due: float | None = None
 
@@ -115,12 +114,16 @@ class _ResidentCompletionProfile:
         spawn_id: SpawnId,
         resident_backend: ResidentBackendControl,
         deadline_seconds: float,
+        rearm_budget: int | None,
         clock: Callable[[], float],
     ) -> None:
         self._runtime_root = runtime_root
         self._spawn_id = spawn_id
         self._resident_backend = resident_backend
         self._deadline_seconds = deadline_seconds
+        self._rearm_budget = rearm_budget
+        spawn = spawn_store.get_spawn(runtime_root, spawn_id)
+        self._rearm_count = spawn.resident_rearm_count if spawn is not None else 0
         self._clock = clock
         self._explicit_hold = False
         self._done_requested = False
@@ -138,7 +141,10 @@ class _ResidentCompletionProfile:
         del state, trigger
         signals = consume_resident_signals(self._runtime_root, self._spawn_id)
         self._done_requested = self._done_requested or signals.done
-        return CompletionDirectives(done=self._done_requested, rearm=signals.rearm)
+        return CompletionDirectives(
+            done=self._done_requested,
+            rearm=self._grant_rearm(signals.rearm),
+        )
 
     def evaluate(self, context: CompletionEvaluation) -> ProfileDecision:
         if context.terminal_action is not None:
@@ -260,15 +266,21 @@ class _ResidentCompletionProfile:
             self.clear()
             return ProfileDecision(action="complete", outcome=candidate)
         if context.deadline_expired and not rearmed:
+            error = (
+                "resident_rearm_budget_exhausted"
+                if self._rearm_budget is not None
+                and self._rearm_count >= self._rearm_budget
+                else "resident_deadline_expired"
+            )
             self.clear()
             return ProfileDecision(
                 action="cleanup",
                 outcome=TerminalEventOutcome(
                     status="timed_out",
                     exit_code=1,
-                    error="resident_deadline_expired",
+                    error=error,
                 ),
-                cleanup_reason="resident_deadline_expired",
+                cleanup_reason=error,
             )
         if context.active_turn:
             return ProfileDecision(action="wait", reset_deadline=rearmed)
@@ -287,6 +299,19 @@ class _ResidentCompletionProfile:
     def _mark_rearmed(self, now: float) -> None:
         self._explicit_hold = True
         self._next_nudge_at = now + COMPLETION_NUDGE_INTERVAL_SECONDS
+
+    def _grant_rearm(self, signaled: bool) -> bool:
+        if not signaled:
+            return False
+        if self._rearm_budget is not None and self._rearm_count >= self._rearm_budget:
+            return False
+        self._rearm_count += 1
+        spawn_store.update_spawn(
+            self._runtime_root,
+            self._spawn_id,
+            resident_rearm_count=self._rearm_count,
+        )
+        return True
 
     def _enter_wait(self, now: float) -> None:
         if self._explicit_hold:
@@ -314,20 +339,19 @@ class _ResidentCompletionProfile:
 class _ResidentCompletionCleanup:
     """Cancel resident descendants through the canonical application service."""
 
-    def __init__(self, *, project_root: Path, runtime_root: Path, spawn_id: SpawnId) -> None:
-        self._project_root = project_root
-        self._runtime_root = runtime_root
+    def __init__(
+        self,
+        *,
+        spawn_id: SpawnId,
+        cancel_descendants: Callable[[SpawnId], Awaitable[set[str]]],
+    ) -> None:
         self._spawn_id = spawn_id
+        self._cancel_descendants = cancel_descendants
 
     async def cleanup(self, assessment: WorkAssessment, reason: str) -> CleanupReport:
         del assessment
-        from meridian.lib.bootstrap.services import build_spawn_application_service_from_roots
-
         try:
-            service = build_spawn_application_service_from_roots(
-                self._project_root, self._runtime_root
-            )
-            cancelled = await service.cancel_descendants(self._spawn_id)
+            cancelled = await self._cancel_descendants(self._spawn_id)
         except Exception as exc:
             logger.exception(
                 "Failed to terminate resident descendant spawns after deadline expiry.",
@@ -344,7 +368,7 @@ class _ResidentCompletionCleanup:
 
 
 class ResidentDrainCoordinator:
-    """Thin compatibility wrapper constructing the shared completion coordinator."""
+    """Construct and adapt resident collaborators to the drain coordinator protocol."""
 
     def __init__(
         self,
@@ -363,13 +387,14 @@ class ResidentDrainCoordinator:
     def for_connection(
         cls,
         *,
-        project_root: Path,
         runtime_root: Path,
         spawn_id: SpawnId,
         receiver: HarnessConnection[Any],
         resident_backend: ResidentBackendControl,
         deadline_seconds: float | None,
         poll_seconds: float | None,
+        rearm_budget: int | None,
+        cancel_descendants: Callable[[SpawnId], Awaitable[set[str]]],
     ) -> ResidentDrainCoordinator:
         del receiver
         resolved_deadline = (
@@ -382,6 +407,7 @@ class ResidentDrainCoordinator:
             spawn_id=spawn_id,
             resident_backend=resident_backend,
             deadline_seconds=resolved_deadline,
+            rearm_budget=rearm_budget,
             clock=clock,
         )
         coordinator = CompletionCoordinator(
@@ -393,9 +419,8 @@ class ResidentDrainCoordinator:
             ),
             profile=profile,
             cleanup=_ResidentCompletionCleanup(
-                project_root=project_root,
-                runtime_root=runtime_root,
                 spawn_id=spawn_id,
+                cancel_descendants=cancel_descendants,
             ),
             clock=clock,
         )
@@ -405,22 +430,6 @@ class ResidentDrainCoordinator:
             deadline_seconds=resolved_deadline,
             poll_seconds=resolved_poll,
         )
-
-    @property
-    def pending_outcome(self) -> TerminalEventOutcome | None:
-        return self._coordinator.pending_outcome
-
-    @pending_outcome.setter
-    def pending_outcome(self, value: TerminalEventOutcome | None) -> None:
-        self._coordinator.pending_outcome = value
-
-    @property
-    def deadline_monotonic(self) -> float | None:
-        return self._coordinator.deadline_monotonic
-
-    @deadline_monotonic.setter
-    def deadline_monotonic(self, value: float | None) -> None:
-        self._coordinator.deadline_monotonic = value
 
     async def start(self) -> None:
         await self._coordinator.start()
@@ -480,26 +489,4 @@ class ResidentDrainCoordinator:
         request: CompletionCleanupRequest,
     ) -> None:
         await self._coordinator.execute_post_publication_cleanup(request)
-
-    def _set_awaiting_done(self, awaiting_done: bool) -> None:
-        """Compatibility seam retained for existing resident test construction."""
-
-        self._profile.set_awaiting_done(awaiting_done)
-
-
-def _outstanding_descendant_blockers(
-    runtime_root: Path,
-    spawn_id: SpawnId,
-) -> tuple[DiagnosticBlocker, ...]:
-    """Compatibility seam for resident failure characterization."""
-
-    assessment = ReconciledDescendantEvidence(
-        runtime_root=runtime_root,
-        root_spawn_id=spawn_id,
-    ).assess()
-    if assessment.failure is not None:
-        raise OSError(assessment.failure.detail)
-    return assessment.blockers
-
-
 __all__ = ["ResidentDrainCoordinator"]

@@ -6,11 +6,13 @@ from __future__ import annotations
 import pytest
 
 from meridian.lib.streaming.pi_subspawn_tracker import PiSubspawnTracker
+from meridian.lib.streaming.pi_work_ledger import PiPrivateWorkLedger
 from tests.support.pi import pi_event as _pi_event
 
 
 def test_pi_subspawn_tracker_tracks_only_blocking_children_and_notifications() -> None:
-    tracker = PiSubspawnTracker.empty()
+    ledger = PiPrivateWorkLedger()
+    tracker = PiSubspawnTracker.empty(ledger)
 
     tracker.observe(
         _pi_event(
@@ -18,7 +20,7 @@ def test_pi_subspawn_tracker_tracks_only_blocking_children_and_notifications() -
             {"subspawn_id": "detached-1", "wait_policy": "detached"},
         )
     )
-    assert tracker.has_pending() is False
+    assert ledger.tracked_subspawn_ids() == ()
 
     tracker.observe(
         _pi_event(
@@ -26,14 +28,14 @@ def test_pi_subspawn_tracker_tracks_only_blocking_children_and_notifications() -
             {"subspawn_id": "tracked-1", "wait_policy": "tracked", "pid": 4401},
         )
     )
-    assert tracker.has_pending() is True
-    assert tracker.active_tracked_pgid_candidates() == (4401,)
+    assert ledger.tracked_subspawn_ids() == ("tracked-1",)
+    assert tuple(handle.process_group_id for handle in ledger.cleanup_handles()) == (4401,)
 
     tracker.observe(_pi_event("meridian.notification.queued", {"notification_id": "n-1"}))
-    assert tracker.has_pending_notifications() is True
+    assert tuple(item.notification_id for item in ledger.pending_notifications()) == ("n-1",)
 
     tracker.observe(_pi_event("meridian.notification.completed", {"notification_id": "n-1"}))
-    assert tracker.has_pending_notifications() is False
+    assert ledger.pending_notifications() == ()
 
     tracker.observe(
         _pi_event(
@@ -46,8 +48,8 @@ def test_pi_subspawn_tracker_tracks_only_blocking_children_and_notifications() -
     tracker.observe(
         _pi_event("meridian.subspawn.end", {"subspawn_id": "tracked-1", "wait_policy": "tracked"})
     )
-    assert tracker.has_pending() is False
-    assert tracker.active_tracked_pgid_candidates() == ()
+    assert ledger.tracked_subspawn_ids() == ()
+    assert ledger.cleanup_handles() == ()
 
 
 @pytest.mark.parametrize(
@@ -82,17 +84,19 @@ def test_pi_subspawn_tracker_invalidates_malformed_canonical_lifecycle(
     payload: dict[str, object],
     expected_error: str,
 ) -> None:
-    tracker = PiSubspawnTracker.empty()
+    ledger = PiPrivateWorkLedger()
+    tracker = PiSubspawnTracker.empty(ledger)
 
     tracker.observe(_pi_event(event_type, payload))
 
-    assert tracker.has_pending() is False
-    assert tracker.has_pending_notifications() is False
+    assert ledger.tracked_subspawn_ids() == ()
+    assert ledger.pending_notifications() == ()
     assert tracker.lifecycle_tracking_invalidated_error == expected_error
 
 
 def test_pi_subspawn_tracker_ignores_noncanonical_parse_diagnostics() -> None:
-    tracker = PiSubspawnTracker.empty()
+    ledger = PiPrivateWorkLedger()
+    tracker = PiSubspawnTracker.empty(ledger)
 
     tracker.observe(
         _pi_event(
@@ -105,14 +109,15 @@ def test_pi_subspawn_tracker_ignores_noncanonical_parse_diagnostics() -> None:
         )
     )
 
-    assert tracker.has_pending() is False
-    assert tracker.has_pending_notifications() is False
+    assert ledger.tracked_subspawn_ids() == ()
+    assert ledger.pending_notifications() == ()
     assert tracker.notification_failure_error is None
     assert tracker.lifecycle_tracking_invalidated_error is None
 
 
 def test_pi_subspawn_tracker_invalidates_unknown_pi_lifecycle_namespace_events() -> None:
-    tracker = PiSubspawnTracker.empty()
+    ledger = PiPrivateWorkLedger()
+    tracker = PiSubspawnTracker.empty(ledger)
 
     tracker.observe(
         _pi_event(
@@ -121,8 +126,8 @@ def test_pi_subspawn_tracker_invalidates_unknown_pi_lifecycle_namespace_events()
         )
     )
 
-    assert tracker.has_pending() is False
-    assert tracker.has_pending_notifications() is False
+    assert ledger.tracked_subspawn_ids() == ()
+    assert ledger.pending_notifications() == ()
     assert (
         tracker.lifecycle_tracking_invalidated_error
         == "pi_lifecycle_tracking_invalidated:unsupported_lifecycle_event:"
@@ -131,18 +136,20 @@ def test_pi_subspawn_tracker_invalidates_unknown_pi_lifecycle_namespace_events()
 
 
 def test_pi_subspawn_tracker_leaves_ordinary_harness_events_unaffected() -> None:
-    tracker = PiSubspawnTracker.empty()
+    ledger = PiPrivateWorkLedger()
+    tracker = PiSubspawnTracker.empty(ledger)
 
     tracker.observe(_pi_event("agent_progress", {"message": "ordinary output"}))
 
-    assert tracker.has_pending() is False
-    assert tracker.has_pending_notifications() is False
+    assert ledger.tracked_subspawn_ids() == ()
+    assert ledger.pending_notifications() == ()
     assert tracker.notification_failure_error is None
     assert tracker.lifecycle_tracking_invalidated_error is None
 
 
 def test_pi_subspawn_tracker_deduplicates_canonical_events() -> None:
-    tracker = PiSubspawnTracker.empty()
+    ledger = PiPrivateWorkLedger()
+    tracker = PiSubspawnTracker.empty(ledger)
 
     start = _pi_event(
         "meridian.subspawn.start",
@@ -176,10 +183,9 @@ def test_pi_subspawn_tracker_deduplicates_canonical_events() -> None:
 
     assert tracker.observe(start) is False
     assert tracker.observe(duplicate_start) is True
-    assert tracker.active_tracked_count() == 1
-    assert tracker.active_tracked_pgid_candidates() == (4401,)
+    assert ledger.tracked_subspawn_ids() == ("j-dup",)
+    assert tuple(handle.process_group_id for handle in ledger.cleanup_handles()) == (4401,)
     assert tracker.observe(end) is False
     assert tracker.observe(end) is True
-    assert tracker.has_pending() is False
-    assert tracker.active_tracked_pgid_candidates() == ()
-
+    assert ledger.tracked_subspawn_ids() == ()
+    assert ledger.cleanup_handles() == ()

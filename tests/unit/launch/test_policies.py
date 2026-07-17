@@ -73,6 +73,12 @@ def test_resolve_policy_fields_resolves_per_field_precedence() -> None:
     assert resolved.autocompact == 70000
 
 
+def test_resident_rearm_budget_reads_environment(monkeypatch) -> None:
+    monkeypatch.setenv("MERIDIAN_RESIDENT_REARM_BUDGET", "7")
+
+    assert RuntimeOverrides.from_env().resident_rearm_budget == 7
+
+
 def test_resolve_policy_fields_model_policy_scope_strips_routing_fields() -> None:
     resolved = resolve_policy_fields(
         RuntimeOverrides(

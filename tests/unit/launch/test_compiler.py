@@ -216,6 +216,46 @@ def test_compile_launch_params_ignores_unsupported_execution_fields() -> None:
     assert result.execution_policy.approval == "confirm"
 
 
+def test_resident_rearm_budget_resolves_cli_env_profile_config_precedence() -> None:
+    supported = ("resident_rearm_budget",)
+    profile = ResolvedExecutionPolicy(resident_rearm_budget=3)
+    config = RuntimeOverrides(resident_rearm_budget=4)
+
+    config_only = compile_launch_params(
+        _request(config=config, supported_execution_policy_fields=supported)
+    )
+    profile_wins = compile_launch_params(
+        _request(
+            config=config,
+            profile_policy_defaults=profile,
+            supported_execution_policy_fields=supported,
+        )
+    )
+    env_wins = compile_launch_params(
+        _request(
+            env=RuntimeOverrides(resident_rearm_budget=2),
+            config=config,
+            profile_policy_defaults=profile,
+            supported_execution_policy_fields=supported,
+        )
+    )
+    cli_wins = compile_launch_params(
+        _request(
+            cli=RuntimeOverrides(resident_rearm_budget=1),
+            env=RuntimeOverrides(resident_rearm_budget=2),
+            config=config,
+            profile_policy_defaults=profile,
+            supported_execution_policy_fields=supported,
+        )
+    )
+
+    assert config_only.execution_policy.resident_rearm_budget == 4
+    assert profile_wins.execution_policy.resident_rearm_budget == 3
+    assert env_wins.execution_policy.resident_rearm_budget == 2
+    assert cli_wins.execution_policy.resident_rearm_budget == 1
+    assert ResolvedExecutionPolicy().resident_rearm_budget is None
+
+
 def test_compile_launch_params_harness_prefers_model_derived_over_profile() -> None:
     alias = _alias_entry()
     request = _request(

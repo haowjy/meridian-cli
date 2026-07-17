@@ -499,8 +499,7 @@ async def test_existing_deadline_is_not_replaced_on_an_ordinary_wait() -> None:
     evidence = _Evidence(_blocked())
     profile = _Profile()
     coordinator, _ = _coordinator(clock, evidence, profile)
-    coordinator.pending_outcome = _SUCCESS
-    coordinator.deadline_monotonic = 10.0
+    await coordinator.handle_terminal_event(None, _SUCCESS, _TERMINATE)  # type: ignore[arg-type]
 
     clock.advance(5.0)
     decision = await coordinator.handle_timeout()

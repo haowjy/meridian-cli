@@ -56,6 +56,7 @@ These override spawn-level runtime policy. They sit above project config but bel
 | `MERIDIAN_SANDBOX` | Sandbox level |
 | `MERIDIAN_AUTOCOMPACT` | Context compaction threshold (int 1–100) |
 | `MERIDIAN_TIMEOUT` | Spawn timeout in minutes (float > 0) |
+| `MERIDIAN_RESIDENT_REARM_BUDGET` | Maximum resident deadline extensions (int >= 0; unset is unlimited) |
 
 ## Config Overrides
 
@@ -64,6 +65,7 @@ These override spawn-level runtime policy. They sit above project config but bel
 - `MERIDIAN_KILL_GRACE_MINUTES`
 - `MERIDIAN_GUARDRAIL_TIMEOUT_MINUTES`
 - `MERIDIAN_WAIT_TIMEOUT_MINUTES`
+- `MERIDIAN_RESIDENT_REARM_BUDGET`
 - `MERIDIAN_HARNESS_MODEL_CLAUDE`
 - `MERIDIAN_HARNESS_MODEL_CODEX`
 - `MERIDIAN_HARNESS_MODEL_OPENCODE`

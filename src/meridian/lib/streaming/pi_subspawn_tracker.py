@@ -9,11 +9,7 @@ from dataclasses import dataclass
 from meridian.lib.core.types import HarnessId
 from meridian.lib.harness import pi_lifecycle_events as pi_lifecycle
 from meridian.lib.harness.connections.base import HarnessEvent
-from meridian.lib.streaming.pi_work_ledger import (
-    PiCleanupHandle,
-    PiPendingNotification,
-    PiPrivateWorkLedger,
-)
+from meridian.lib.streaming.pi_work_ledger import PiPrivateWorkLedger
 
 logger = logging.getLogger(__name__)
 
@@ -273,54 +269,3 @@ class PiSubspawnTracker:
             if _is_pi_lifecycle_namespace_label(label):
                 return label
         return None
-
-    # Transitional query wrappers preserve the pre-ledger tracker interface for
-    # rollback callers. Production evidence and cleanup consume ledger snapshots
-    # and handles directly.
-    def has_pending(self) -> bool:
-        return self._ledger.active_tracked_count() > 0
-
-    def active_tracked_count(self) -> int:
-        return self._ledger.active_tracked_count()
-
-    def active_tracked_ids(self) -> tuple[str, ...]:
-        return self._ledger.tracked_subspawn_ids()
-
-    def active_tracked_pgid_candidates(
-        self,
-        *,
-        exclude_ids: set[str] | None = None,
-    ) -> tuple[int, ...]:
-        unique = {
-            handle.process_group_id
-            for handle in self._ledger.cleanup_handles(exclude_ids=exclude_ids)
-        }
-        return tuple(sorted(unique))
-
-    def cleanup_handle_snapshot(
-        self,
-        *,
-        exclude_ids: set[str] | None = None,
-    ) -> tuple[PiCleanupHandle, ...]:
-        return self._ledger.cleanup_handles(exclude_ids=exclude_ids)
-
-    def clear_tracked_children_after_wave_timeout(self) -> int:
-        return self._ledger.clear_tracked_subspawns()
-
-    def has_pending_notifications(self) -> bool:
-        return self._ledger.has_pending_notifications()
-
-    def pending_notification_count(self) -> int:
-        return self._ledger.pending_notification_count()
-
-    def notification_snapshot(self) -> tuple[PiPendingNotification, ...]:
-        return self._ledger.pending_notifications()
-
-    def resolve_notification_on_terminal(self, event: HarnessEvent) -> str | None:
-        return self._ledger.resolve_notification_on_terminal(_pi_notification_id(event.payload))
-
-    def time_until_next_notification_timeout(self, now_monotonic: float) -> float | None:
-        return self._ledger.time_until_next_notification_timeout(now_monotonic)
-
-    def pop_expired_notification(self, now_monotonic: float) -> PiPendingNotification | None:
-        return self._ledger.pop_expired_notification(now_monotonic)

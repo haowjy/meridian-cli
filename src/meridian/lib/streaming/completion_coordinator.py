@@ -86,26 +86,13 @@ class CompletionCoordinator:
     def deadline_monotonic(self) -> float | None:
         return self._deadline_at
 
-    @deadline_monotonic.setter
-    def deadline_monotonic(self, value: float | None) -> None:
-        self._deadline_at = value
-        if value is not None and self._phase == "running":
-            self._phase = "waiting"
-
     @property
     def pending_outcome(self) -> TerminalEventOutcome | None:
         return self._candidate
 
-    @pending_outcome.setter
-    def pending_outcome(self, value: TerminalEventOutcome | None) -> None:
-        self._candidate = value
-
     @property
     def cleanup_report(self) -> CleanupReport | None:
         return self._cleanup_report
-
-    def has_pending_post_publication_cleanup(self) -> bool:
-        return self._post_publication_cleanup is not None
 
     def note_activity_transition(self, transition: str | None) -> None:
         if transition == "turn_active":

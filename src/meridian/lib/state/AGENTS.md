@@ -87,7 +87,8 @@ status but never persists state or terminates processes, and it is safe at any d
 `reconcile_active_spawn()` is the side-effectful repair path. It runs from doctor
 background repair, fails closed outside root depth, cleans recorded orphan process
 scopes, and persists the terminal outcome through the locked external-writer path.
-Both paths share the liveness and completion decision rules in `reaper.py`.
+Both paths share liveness rules in `reaper.py` and completion/cancel precedence in
+`reconciliation.py`.
 
 ## Entry Points
 
@@ -98,6 +99,7 @@ Both paths share the liveness and completion decision rules in `reaper.py`.
 - `atomic.py` — atomic write primitives. All state writes use these.
 - `reaper.py` — read-only `reconcile_spawns()` projection and root-only
   `reconcile_active_spawn()` repair.
+- `reconciliation.py` — shared reconciliation decisions and completion/cancel precedence.
 
 ## Spawn Subpackage
 
