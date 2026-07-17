@@ -4,6 +4,52 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- One atomic-replace context manager in a dependency-neutral platform layer
+  (`lib/platform/atomic.py`); state, plugin-API, autosync, and Codex rollout
+  writers all delegate. Preserves existing file permissions by default; new
+  `AtomicReplaceDurabilityError` distinguishes committed-but-not-durable
+  replacements.
+- AST conformance test making raw writes (`.write_text`, `.write_bytes`,
+  `json.dump`) to authoritative state unmergeable, with a documented
+  allowlist and stale-entry detection.
+- Reaper cleanup claims (`reaper_cleanup_claim.json`): crash-recoverable,
+  at-least-once, birth-validated process cleanup, retried by doctor.
+- Work-item metadata healing wired into doctor (`work_item_metadata`).
+
+### Changed
+- Every store mutation now runs under its store's lock through one mutation
+  seam: spawn record (`write_state_locked` only — unlocked `write_state`
+  removed), archived-spawns set (`mutate_archived_spawns`), work items (new
+  `work_repository` module; reads are pure), hook interval state (per-hook
+  `run_if_due` with per-name locks).
+- Lock files are stable, never-unlinked inodes outside destructible
+  directories (`locks/spawns/`, `locks/hooks/`, `projects/.locks/`); one
+  parameterized lock primitive (timeout, shared mode, reentrancy) with
+  post-acquire inode revalidation replaces three implementations.
+- Reaper finalizes terminal state before any kill; kills only
+  birth-validated recorded scopes after the terminal write.
+- Autosync runs remote, local-only, and conflict resolution inside one
+  store-owned transaction with a canonical lock path; per-conflict rewrites
+  of user-owned AGENTS.md removed (conflict records remain the signal).
+- Project pruning revalidates live sessions and leases under a
+  project-lifetime gate before deleting runtime roots; published-spawn
+  deletion (rollback, pruning) routes through one locked seam that respects
+  cleanup claims.
+
+### Fixed
+- Reproduced cross-process data-loss bugs, each now a regression test:
+  spawn metadata clobber, archived-spawns lost update, work-item field
+  loss, hook interval timestamp loss and duplicate hook execution, POSIX
+  lock split-brain via unlinked lock files, autosync shared-temp collision
+  and user AGENTS.md edit loss.
+- `fork()` children no longer inherit or prolong the parent's file locks.
+- Atomic replacement no longer flips user-owned files (configs, `mars.toml`,
+  work `__status.json`) to mode 0600; Codex forked rollouts keep the source
+  file's mode.
+- Test suite no longer false-fails when external tools (VS Code) touch the
+  shared `.git/config` during worktree operations.
+
 ## [0.3.32] - 2026-07-17
 
 ### Added
