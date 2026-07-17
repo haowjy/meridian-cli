@@ -10,6 +10,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   exclusive locks; cleaned crashed-session locks are removed by the same safe seam.
 
 ### Fixed
+- Shared JSONL tail repair now preserves complete delimiter-less rows, repairs torn
+  tails via atomic inode replacement, and covers permission/control journals.
 - Legacy process-scope projection reads now bound their first-writer lock wait
   and fall back to an atomic lockless snapshot instead of blocking indefinitely.
 
