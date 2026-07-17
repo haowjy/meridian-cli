@@ -10,6 +10,7 @@ from typing import Any
 
 import meridian.lib.state.work_store as work_store
 from meridian.lib.state import work_repository
+from tests.conftest import posix_only
 
 
 def _update_work_field(
@@ -57,6 +58,7 @@ def test_ensure_work_item_metadata_with_concurrent_calls(tmp_path: Path) -> None
     assert (runtime_root / "work" / "shared-task" / "__status.json").exists()
 
 
+@posix_only
 def test_concurrent_field_updates_do_not_lose_each_other(tmp_path: Path) -> None:
     runtime_root = _state_root(tmp_path)
     work_store.create_work_item(runtime_root, "shared-task")

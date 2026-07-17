@@ -16,6 +16,7 @@ from pathlib import Path
 
 import pytest
 
+from meridian.lib.platform import IS_WINDOWS
 from meridian.lib.platform.locking import lock_file, try_lock_file
 from tests.conftest import posix_only
 
@@ -113,6 +114,10 @@ def test_try_lock_file_yields_none_when_other_process_holds_lock(tmp_path: Path)
             process.join(5)
 
 
+@pytest.mark.skipif(
+    IS_WINDOWS,
+    reason="shared locks are advisory-only on Windows and do not exclude writers",
+)
 def test_shared_locks_coexist_but_exclude_independent_writer(tmp_path: Path) -> None:
     lock_path = tmp_path / "state.lock"
 

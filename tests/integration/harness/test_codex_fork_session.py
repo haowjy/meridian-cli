@@ -11,6 +11,7 @@ from uuid import UUID
 import pytest
 
 from meridian.lib.harness.codex import CodexAdapter
+from meridian.lib.platform import IS_WINDOWS
 
 
 def _setup_codex_state(
@@ -154,7 +155,8 @@ def test_codex_fork_session_copies_rollout_and_inserts_thread(
     forked_rollout_path = Path(forked_row[0])
     assert forked_rollout_path != source_rollout_path
     assert forked_rollout_path.is_file()
-    assert stat.S_IMODE(forked_rollout_path.stat().st_mode) == 0o600
+    if not IS_WINDOWS:
+        assert stat.S_IMODE(forked_rollout_path.stat().st_mode) == 0o600
 
     source_lines = source_rollout_path.read_text(encoding="utf-8").splitlines()
     forked_lines = forked_rollout_path.read_text(encoding="utf-8").splitlines()
