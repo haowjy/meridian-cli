@@ -15,7 +15,10 @@ from meridian.lib.core.domain import SpawnStatus
 from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.launch.request import LaunchArgvIntent, SpawnRequest
-from meridian.lib.launch.resolve import resolve_agent_launch_input
+from meridian.lib.launch.resolve import (
+    resolve_agent_launch_input,
+    resolve_startup_timeout_seconds,
+)
 from meridian.lib.launch.streaming_runner import run_streaming_spawn, signal_coordinator
 from meridian.lib.ops.runtime import OperationRuntime
 from meridian.lib.ops.spawn.execute_init import build_spawn_mars_runtime
@@ -123,6 +126,9 @@ async def streaming_serve(
             runtime_root=runtime_root,
             project_root=project_root,
             spawn_id=spawn_id,
+            startup_timeout_seconds=resolve_startup_timeout_seconds(
+                config_snapshot=launch_ctx.runtime.config_snapshot,
+            ),
             lifecycle_service=lifecycle_service,
             on_control_endpoint_ready=_report_control_endpoint,
         )

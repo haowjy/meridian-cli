@@ -638,6 +638,7 @@ async def run_streaming_spawn(
     runtime_root: Path,
     project_root: Path,
     spawn_id: SpawnId,
+    startup_timeout_seconds: float,
     stream_to_terminal: bool = False,
     heartbeat_touch: HeartbeatTouch | None = None,
     heartbeat_interval_secs: float = _HEARTBEAT_INTERVAL_SECS,
@@ -687,7 +688,7 @@ async def run_streaming_spawn(
             manager=manager,
             config=config,
             run_spec=run_spec,
-            timeout_seconds=resolve_startup_timeout_seconds(config_snapshot=None),
+            timeout_seconds=startup_timeout_seconds,
         )
         if on_control_endpoint_ready is not None:
             endpoint = manager.control_endpoint(spawn_id)

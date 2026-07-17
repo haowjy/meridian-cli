@@ -9,6 +9,7 @@ import pytest
 from meridian.cli import streaming_serve as streaming_serve_module
 from meridian.lib.core.types import HarnessId
 from meridian.lib.launch.launch_types import ResolvedExecutionPolicy
+from meridian.lib.launch.resolve import resolve_startup_timeout_seconds
 from meridian.lib.ops.runtime import resolve_runtime_root
 from meridian.lib.state.spawn_store import get_spawn
 from meridian.lib.streaming.spawn_manager import DrainOutcome
@@ -32,6 +33,7 @@ def _fake_launch_context(
     child_cwd: Path,
     prompt: str = "projected prompt",
     system: str | None = None,
+    config_snapshot: dict[str, object] | None = None,
 ) -> SimpleNamespace:
     return SimpleNamespace(
         resolved_request=SimpleNamespace(
@@ -55,6 +57,7 @@ def _fake_launch_context(
         control_root=project_root,
         task_cwd=child_cwd if child_cwd.resolve() != project_root.resolve() else None,
         runtime_root=resolve_runtime_root(project_root),
+        runtime=SimpleNamespace(config_snapshot=config_snapshot),
         work_id=None,
         binding=SimpleNamespace(
             child_cwd=child_cwd,
@@ -130,6 +133,7 @@ async def test_streaming_serve_debug_keeps_projected_connection_config(
     child_cwd = tmp_path / "child-cwd"
     child_cwd.mkdir()
     runner_calls: list[dict[str, object]] = []
+    config_snapshot = {"timeouts": {"startup_timeout_minutes": 7.5}}
 
     def _bind_spawn_launch_context(**kwargs: object) -> SimpleNamespace:
         bindings = kwargs["bindings"]
@@ -138,6 +142,7 @@ async def test_streaming_serve_debug_keeps_projected_connection_config(
             project_root=tmp_path,
             child_cwd=child_cwd,
             system="SYSTEM: projected",
+            config_snapshot=config_snapshot,
         )
 
     async def _run_streaming_spawn(**kwargs: object) -> DrainOutcome:
@@ -172,6 +177,9 @@ async def test_streaming_serve_debug_keeps_projected_connection_config(
     assert config.env_overrides["MERIDIAN_PARENT_SPAWN_ID"] == "p-parent"
     assert config.env_overrides["EXTRA_ENV"] == "present"
     assert config.debug_tracer is not None
+    assert runner_call["startup_timeout_seconds"] == resolve_startup_timeout_seconds(
+        config_snapshot=config_snapshot,
+    )
 
     row = get_spawn(runtime_root, "p1")
     assert row is not None

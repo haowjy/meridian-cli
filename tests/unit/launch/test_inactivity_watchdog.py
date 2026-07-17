@@ -166,10 +166,6 @@ async def test_run_streaming_spawn_bounds_hanging_startup(
         "meridian.lib.launch.streaming_runner.SpawnManager", HangingStartupManager
     )
     monkeypatch.setattr(
-        "meridian.lib.launch.streaming_runner.resolve_startup_timeout_seconds",
-        lambda *, config_snapshot: 0.01,
-    )
-    monkeypatch.setattr(
         "meridian.lib.launch.streaming_runner.spawn_store.update_spawn",
         lambda *_args, **_kwargs: None,
     )
@@ -197,10 +193,85 @@ async def test_run_streaming_spawn_bounds_hanging_startup(
             runtime_root=tmp_path,
             project_root=tmp_path,
             spawn_id=spawn_id,
+            startup_timeout_seconds=0.01,
             lifecycle_service=_FakeLifecycleService(),  # type: ignore[arg-type]
         )
 
     assert start_cancelled.is_set()
+
+
+@pytest.mark.asyncio
+async def test_run_streaming_spawn_honors_explicit_startup_timeout_over_default(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Configured startup_timeout_seconds must reach the watchdog, not the 300s default."""
+
+    observed_timeout: list[float] = []
+
+    class TimeoutCapturingManager:
+        def __init__(self, **_kwargs: object) -> None:
+            pass
+
+        async def start_spawn(
+            self,
+            _config: ConnectionConfig,
+            _spec: ResolvedLaunchSpec,
+        ) -> _FakeConnection:
+            await asyncio.Event().wait()
+            raise AssertionError("unreachable")
+
+        async def shutdown(self, **_kwargs: object) -> None:
+            return None
+
+    async def _capture_start_timeout(**kwargs: object) -> _FakeConnection:
+        observed_timeout.append(float(kwargs["timeout_seconds"]))
+        raise StartupPhaseTimeout(float(kwargs["timeout_seconds"]))
+
+    monkeypatch.setattr(
+        "meridian.lib.launch.streaming_runner.SpawnManager", TimeoutCapturingManager
+    )
+    monkeypatch.setattr(
+        "meridian.lib.launch.streaming_runner._start_spawn_with_timeout",
+        _capture_start_timeout,
+    )
+    monkeypatch.setattr(
+        "meridian.lib.launch.streaming_runner.spawn_store.update_spawn",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        "meridian.lib.launch.streaming_runner._install_signal_handlers",
+        lambda *_args, **_kwargs: None,
+    )
+
+    spawn_id = SpawnId("p-explicit-startup-timeout")
+    configured_seconds = 0.01
+    with pytest.raises(
+        StartupPhaseTimeout,
+        match=rf"startup phase timeout after {configured_seconds:.3f}s",
+    ):
+        await run_streaming_spawn(
+            config=ConnectionConfig(
+                spawn_id=spawn_id,
+                harness_id=HarnessId.CODEX,
+                prompt="hello",
+                control_root=tmp_path,
+                env_overrides={},
+            ),
+            spec=ResolvedLaunchSpec(
+                model="gpt-5.3-codex",
+                harness=HarnessId.CODEX,
+                permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
+            ),
+            runtime_root=tmp_path,
+            project_root=tmp_path,
+            spawn_id=spawn_id,
+            startup_timeout_seconds=configured_seconds,
+            lifecycle_service=_FakeLifecycleService(),  # type: ignore[arg-type]
+        )
+
+    assert observed_timeout == [configured_seconds]
+    assert observed_timeout[0] != 300.0
 
 
 @pytest.mark.asyncio
