@@ -167,6 +167,8 @@ async def test_launch_managed_backend_cleans_up_when_terminal_spawn_rejects_scop
             )
 
         assert len(launched) == 1
+        # psutil can observe exit before asyncio's child watcher sets returncode.
+        await asyncio.wait_for(launched[0].wait(), timeout=1.0)
         assert launched[0].returncode is not None
         assert len(released) == 1
     finally:
