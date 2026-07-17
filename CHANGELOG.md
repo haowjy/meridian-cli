@@ -10,6 +10,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   and budget exhaustion reports a distinct timeout outcome. (#373)
 
 ### Changed
+- Re-tiered and updated the Pi RPC quiescence smoke guide for the current drain,
+  timeout, terminal-publication, and asynchronous teardown model. (#241)
 - Documented Pi descendant-quiescence completion as intentionally unbounded by default
   and `--timeout` / `MERIDIAN_TIMEOUT` as the shared opt-in absolute ceiling for Pi
   and resident profiles. (#374)
