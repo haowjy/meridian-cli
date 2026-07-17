@@ -5,6 +5,7 @@ import logging
 import os
 import re
 import sqlite3
+import stat
 import time
 from pathlib import Path
 from typing import ClassVar, cast
@@ -107,16 +108,15 @@ def _rewrite_forked_session_meta(line: str, new_session_id: str) -> str:
 
 
 def _copy_rollout_atomic(*, source_path: Path, target_path: Path, new_session_id: str) -> None:
-    with (
-        atomic_replace(target_path) as target_handle,
-        source_path.open("r", encoding="utf-8") as source_handle,
-    ):
-        first_line = source_handle.readline()
-        if not first_line:
-            raise RuntimeError(f"Codex rollout file is empty: {source_path}")
-        target_handle.write(_rewrite_forked_session_meta(first_line, new_session_id))
-        for line in source_handle:
-            target_handle.write(line)
+    with source_path.open("r", encoding="utf-8") as source_handle:
+        source_mode = stat.S_IMODE(os.fstat(source_handle.fileno()).st_mode)
+        with atomic_replace(target_path, permissions=source_mode) as target_handle:
+            first_line = source_handle.readline()
+            if not first_line:
+                raise RuntimeError(f"Codex rollout file is empty: {source_path}")
+            target_handle.write(_rewrite_forked_session_meta(first_line, new_session_id))
+            for line in source_handle:
+                target_handle.write(line)
 
 
 def _fork_rollout_path(*, source_path: Path, source_session_id: str, new_session_id: str) -> Path:
