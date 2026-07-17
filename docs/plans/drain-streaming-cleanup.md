@@ -43,3 +43,27 @@ Plan doc committed at `docs/plans/drain-streaming-cleanup.md`. Triage evidence l
 
 - p5268, p5269 (terra explorers) — issue triage lanes C/D
 - two native sonnet reviewer lanes — issue triage lanes A/B
+
+# Note for PR #375 (post-drain-convergence streaming cleanup)
+
+No new issue. Audit findings [33]/[41] (thermo-nuclear audit #389) re-derive #373
+(resident rearm-count budget) and #374 (Pi absolute deadline ceiling — open decision)
+independently from the omnigent/peer corpus. Attach the panel's corrections to those
+issues before implementation:
+
+- **Resident rearm is not activity-driven.** `reset_deadline` fires only on an explicit
+  agent signal file (`resident_drain.py:139-141,236,274-283` via `consume_resident_signals`);
+  evidence refresh does NOT extend the deadline. The window (default 3300 s) is absolute per
+  arm. #373's gap is solely an uncapped *count* of deliberate rearms — and since rearm is
+  user/agent-directed, the budget value is a product decision, not an arbitrary counter.
+- **Pi windows are anchored, not sliding.** `reset_deadline=True` recomputes `min()` over
+  windows anchored per notification (`pi_work_ledger.py:146-168`) and once per child wave
+  (`pi_completion_profile.py:524-535`); ordinary descendant disk evidence does not postpone
+  an armed window. Unboundedness comes from *successive* waves/notifications re-anchoring
+  new windows (parent `turn_active` clears the timer at `pi_completion_profile.py:309-315`).
+  #374's ceiling must be a separately modeled total-lifetime clock — do not overload the
+  notification/child-wave deadlines.
+- **An absolute ceiling already exists, opt-in.** `--timeout`/`MERIDIAN_TIMEOUT` arms a
+  non-renewing outer attempt timer once (`streaming_runner.py:739-786`); default `None`.
+  Both issues are about the *default* being single-layered, and #374's decision can be
+  framed as "what default for the existing budget mechanism," not new machinery.
