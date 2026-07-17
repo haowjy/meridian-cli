@@ -13,9 +13,8 @@ from meridian.lib.hooks.builtin.autosync_store import (
     ConflictRecord,
     find_conflict_by_id,
     has_autosync_state,
-    mark_resolved,
     read_unresolved_conflicts,
-    strip_conflict_notice,
+    transaction,
 )
 from meridian.lib.ops.runtime import resolve_runtime_authority_for_read
 from meridian.lib.state.paths import load_context_config
@@ -101,17 +100,13 @@ class ConflictResolveOutput(BaseModel):
 
     conflict_id: str
     resolved: bool
-    notice_removed: bool = False
     error: str | None = None
 
     def format_text(self, ctx: FormatContext | None = None) -> str:
         _ = ctx
         if self.error:
             return f"Error resolving {self.conflict_id}: {self.error}"
-        parts = [f"Resolved {self.conflict_id}."]
-        if self.notice_removed:
-            parts.append("AGENTS.md notice removed.")
-        return " ".join(parts)
+        return f"Resolved {self.conflict_id}."
 
 
 def _to_entry(record: ConflictRecord) -> ConflictEntry:
@@ -174,7 +169,7 @@ def show_conflict_sync(conflict_id: str) -> ConflictShowOutput:
 
 
 def resolve_conflict_sync(conflict_id: str) -> ConflictResolveOutput:
-    """Mark a conflict as resolved and remove managed notices."""
+    """Mark a conflict as resolved within its autosync transaction."""
 
     roots = _find_sync_roots()
     sync_root, record = find_conflict_by_id(roots, conflict_id)
@@ -189,20 +184,25 @@ def resolve_conflict_sync(conflict_id: str) -> ConflictResolveOutput:
             error="Could not find sync root for conflict.",
         )
 
-    notice_removed = strip_conflict_notice(sync_root, conflict_id)
-    resolved = mark_resolved(sync_root, conflict_id)
+    try:
+        with transaction(sync_root) as autosync_tx:
+            resolved = autosync_tx.mark_resolved(conflict_id)
+    except (OSError, TimeoutError) as exc:
+        return ConflictResolveOutput(
+            conflict_id=conflict_id,
+            resolved=False,
+            error=f"Failed to acquire autosync transaction: {exc}",
+        )
     if not resolved:
         return ConflictResolveOutput(
             conflict_id=conflict_id,
             resolved=False,
-            notice_removed=notice_removed,
             error=f"Failed to mark conflict {conflict_id} as resolved.",
         )
 
     return ConflictResolveOutput(
         conflict_id=conflict_id,
         resolved=True,
-        notice_removed=notice_removed,
     )
 
 

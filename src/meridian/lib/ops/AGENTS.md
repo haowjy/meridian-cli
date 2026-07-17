@@ -52,7 +52,7 @@ spawn. The reaper also reads `MERIDIAN_DEPTH` and skips reaping when nested.
 **Sync and conflicts:** `sync_conflicts.py` — CLI-facing conflict management
 (`list_conflicts_sync`, `show_conflict_sync`, `resolve_conflict_sync`). Resolves
 which directories are sync roots via context config; delegates all artifact
-access (read, mark-resolved, AGENTS.md notice removal) to
+access (read and transaction-scoped mark-resolved) to
 `hooks/builtin/autosync_store`. Does not construct paths into `.meridian/autosync/`
 or parse conflict JSON. `context.py:_sync_status_for_context()` calls
 `autosync_store.read_status()` → `SyncRootStatus` to add sync summary lines to
