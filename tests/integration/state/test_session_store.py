@@ -102,7 +102,7 @@ def test_start_session_does_not_append_start_event_when_lock_acquire_fails(
             "matching-generation",
             ("c8",),
             ("claude",),
-            True,
+            False,
             False,
             1,
             id="stops-and-cleans-when-generation-matches",
@@ -198,7 +198,7 @@ def test_cleanup_stale_primary_session_with_dead_pid_is_cleaned(
     cleanup = session_store.cleanup_stale_sessions(runtime_root)
     assert cleanup.cleaned_ids == (chat_id,)
     assert cleanup.materialized_scopes == ("claude",)
-    assert lock_path.exists()
+    assert not lock_path.exists()
     assert not lease_path.exists()
 
     rows = [
@@ -287,6 +287,51 @@ def test_cleanup_stale_primary_session_with_live_pid_is_not_cleaned(
         row for row in rows if row.get("event") == "stop" and row.get("chat_id") == chat_id
     ]
     assert stop_rows == []
+
+
+def test_cleanup_unlinks_cleaned_session_locks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runtime_root = _state_root(tmp_path)
+    crashed_chat_id = "c11"
+    live_chat_id = "c12"
+    _write_session_start(
+        runtime_root=runtime_root,
+        chat_id=crashed_chat_id,
+        session_instance_id="crashed-generation",
+    )
+    _write_session_start(
+        runtime_root=runtime_root,
+        chat_id=live_chat_id,
+        session_instance_id="live-generation",
+        kind="primary",
+    )
+
+    sessions_dir = runtime_root / "sessions"
+    sessions_dir.mkdir(parents=True, exist_ok=True)
+    crashed_lock = sessions_dir / f"{crashed_chat_id}.lock"
+    live_lock = sessions_dir / f"{live_chat_id}.lock"
+    crashed_lock.touch()
+    live_lock.touch()
+    (sessions_dir / f"{live_chat_id}.lease.json").write_text(
+        json.dumps(
+            {
+                "chat_id": live_chat_id,
+                "owner_pid": 54321,
+                "session_instance_id": "live-generation",
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(session_store, "is_process_alive", lambda _pid: True)
+
+    cleanup = session_store.cleanup_stale_sessions(runtime_root)
+
+    assert cleanup.cleaned_ids == (crashed_chat_id,)
+    assert not crashed_lock.exists()
+    assert live_lock.exists()
+    assert session_store.cleanup_stale_sessions(runtime_root).cleaned_ids == ()
+    assert tuple(sessions_dir.glob("*.lock")) == (live_lock,)
 
 
 def test_records_by_session_ignores_mismatched_generation_stop_and_update(tmp_path: Path) -> None:

@@ -13,6 +13,7 @@ from meridian.lib.platform.locking import (
     lock_file,
     release_file_lock,
     try_lock_file,
+    unlink_validated_lock,
 )
 from meridian.lib.state.atomic import atomic_write_text
 from meridian.lib.state.event_store import append_event, read_events, utc_now_iso
@@ -728,14 +729,16 @@ def cleanup_stale_sessions(runtime_root: Path) -> StaleSessionCleanup:
                 stale_cleanup_scopes.append(existing.harness.strip())
             cleaned_ids.append(chat_id)
 
-    # Lock paths are stable coordination identities and are never removed.
-    for chat_id, _lock_path, handle in stale:
+    cleaned_id_set = frozenset(cleaned_ids)
+    for chat_id, lock_path, handle in stale:
+        if chat_id in cleaned_id_set:
+            unlink_validated_lock(lock_path, handle)
         release_file_lock(handle)
-        if chat_id in cleaned_ids:
+        if chat_id in cleaned_id_set:
             _SESSION_LOCK_HANDLES.pop(_session_lock_key(runtime_root, chat_id), None)
 
     for chat_id, _lock_path, _ in stale:
-        if chat_id in cleaned_ids:
+        if chat_id in cleaned_id_set:
             _session_lease_path(paths, chat_id).unlink(missing_ok=True)
 
     return StaleSessionCleanup(
