@@ -16,7 +16,6 @@ from meridian.lib.config.settings import MeridianConfig
 from meridian.lib.core.domain import SkillContent
 from meridian.lib.core.types import HarnessId, ModelId
 from meridian.lib.harness.registry import HarnessRegistry
-from meridian.lib.utils.time import minutes_to_seconds
 
 
 def dedupe_skill_names(names: Iterable[str]) -> tuple[str, ...]:
@@ -346,32 +345,6 @@ def _resolve_timeout_field_from_config_snapshot(
     return None
 
 
-def resolve_pi_notification_timeout_seconds(
-    *,
-    explicit_timeout_seconds: float | None,
-    config_snapshot: dict[str, object] | None,
-) -> float | None:
-    """Resolve Pi continuation-notification timeout from spawn wait semantics.
-
-    Preference order:
-    1) Explicit spawn execution timeout (when provided)
-    2) Configured wait timeout minutes from the launch config snapshot
-    """
-
-    if explicit_timeout_seconds is not None and explicit_timeout_seconds > 0:
-        return float(explicit_timeout_seconds)
-    if not config_snapshot:
-        return None
-    try:
-        config = MeridianConfig.model_validate(config_snapshot)
-    except Exception:
-        return None
-    wait_timeout_seconds = minutes_to_seconds(config.wait_timeout_minutes)
-    if wait_timeout_seconds is None or wait_timeout_seconds <= 0:
-        return None
-    return float(wait_timeout_seconds)
-
-
 def parse_duration_seconds(value: str | None) -> float | None:
     """Parse a duration token such as ``90m``, ``1h``, or ``3300`` (seconds)."""
 
@@ -512,7 +485,6 @@ __all__ = [
     "resolve_agent_launch_input",
     "resolve_harness",
     "resolve_pi_child_wave_timeout_seconds",
-    "resolve_pi_notification_timeout_seconds",
     "resolve_pi_task_ping_interval_seconds",
     "resolve_profile_path",
     "resolve_resident_deadline_seconds",

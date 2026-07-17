@@ -57,7 +57,6 @@ from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.launch.request import SpawnRequest
 from meridian.lib.launch.resolve import (
     resolve_pi_child_wave_timeout_seconds,
-    resolve_pi_notification_timeout_seconds,
     resolve_pi_task_ping_interval_seconds,
     resolve_resident_deadline_seconds,
     resolve_resident_poll_seconds,
@@ -947,10 +946,6 @@ async def execute_with_streaming(
         report_path = log_dir / REPORT_FILENAME
 
         timeout_seconds = minutes_to_seconds(request.execution_policy.timeout)
-        pi_notification_timeout_seconds = resolve_pi_notification_timeout_seconds(
-            explicit_timeout_seconds=timeout_seconds,
-            config_snapshot=launch_context.runtime.config_snapshot,
-        )
         pi_child_wave_timeout_seconds = resolve_pi_child_wave_timeout_seconds(
             explicit_timeout_seconds=None,
             config_snapshot=launch_context.runtime.config_snapshot,
@@ -1036,7 +1031,6 @@ async def execute_with_streaming(
             task_cwd=child_cwd if child_cwd.resolve() != control_root.resolve() else None,
             system=getattr(spec, "appended_system_prompt", None),
             timeout_seconds=timeout_seconds,
-            pi_notification_timeout_seconds=pi_notification_timeout_seconds,
             pi_child_wave_timeout_seconds=pi_child_wave_timeout_seconds,
             resident_deadline_seconds=resident_deadline_seconds,
             resident_poll_seconds=resident_poll_seconds,

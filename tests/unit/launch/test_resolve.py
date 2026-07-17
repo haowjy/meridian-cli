@@ -13,7 +13,6 @@ from meridian.lib.launch.resolve import (
     parse_duration_seconds,
     resolve_agent_launch_input,
     resolve_pi_child_wave_timeout_seconds,
-    resolve_pi_notification_timeout_seconds,
     resolve_pi_task_ping_interval_seconds,
     validate_harness_compatibility,
 )
@@ -78,24 +77,8 @@ def test_validate_harness_compatibility_rejects_non_primary_harness() -> None:
         )
 
 
-def test_resolve_pi_notification_timeout_prefers_explicit_timeout() -> None:
-    assert (
-        resolve_pi_notification_timeout_seconds(
-            explicit_timeout_seconds=42.0,
-            config_snapshot={"wait_timeout_minutes": 30.0},
-        )
-        == 42.0
-    )
 
 
-def test_resolve_pi_notification_timeout_uses_config_wait_timeout_default() -> None:
-    assert (
-        resolve_pi_notification_timeout_seconds(
-            explicit_timeout_seconds=None,
-            config_snapshot={"wait_timeout_minutes": 30.0},
-        )
-        == 1800.0
-    )
 
 
 def test_resolve_pi_child_wave_timeout_defaults_to_five_minutes() -> None:

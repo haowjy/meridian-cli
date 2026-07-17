@@ -10,7 +10,6 @@ from typing import TYPE_CHECKING, Protocol
 from meridian.lib.core.domain import SpawnStatus
 from meridian.lib.core.types import SpawnId
 from meridian.lib.harness.connections.pi_rpc import is_pi_subprocess_exit_error
-from meridian.lib.harness.pi_lifecycle_events import pi_notification_id
 from meridian.lib.state.spawn_signals import consume_resident_signals
 from meridian.lib.streaming.completion_contracts import (
     AssessmentTrigger,
@@ -32,11 +31,6 @@ from meridian.lib.streaming.drain_policy import (
     PiRpcQuiescenceDrainPolicy,
 )
 from meridian.lib.streaming.pi_quiescence import PiQuiescenceTracker
-from meridian.lib.streaming.pi_subspawn_tracker import PiSubspawnTracker
-from meridian.lib.streaming.pi_work_ledger import (
-    PiPendingNotification,
-    PiPrivateWorkLedger,
-)
 
 if TYPE_CHECKING:
     from meridian.lib.harness.connections.base import HarnessEvent
@@ -57,7 +51,6 @@ class PiOutstandingWork:
 
     spawn_children: bool
     non_spawn_processes: bool
-    unknown_spawn_children: bool = False
 
 
 @dataclass(frozen=True)
@@ -68,7 +61,6 @@ class ChildTimeoutTelemetry:
 
 
 class PiCompletionEvidenceView(Protocol):
-    tracker: PiSubspawnTracker
     quiescence_tracker: PiQuiescenceTracker
     session_seen: bool
     session_phase_emitted: bool
@@ -81,7 +73,7 @@ class PiCompletionEvidenceView(Protocol):
 
 
 class PiCompletionCleanupPort(Protocol):
-    terminate_children: Callable[[PiPrivateWorkLedger, str], Awaitable[None]] | None
+    cancel_descendants: Callable[[str], Awaitable[None]] | None
 
     def prepare_child_timeout(self, telemetry: ChildTimeoutTelemetry) -> None: ...
 
@@ -99,7 +91,6 @@ class PiCompletionProfile:
         emit_phase: EmitPiPhase,
         send_done_nudge: SendPiDoneNudge | None,
         evidence: PiCompletionEvidenceView,
-        private_work_ledger: PiPrivateWorkLedger,
         stabilization_seconds: float,
         clock: Callable[[], float],
     ) -> None:
@@ -110,17 +101,14 @@ class PiCompletionProfile:
         self.emit_phase = emit_phase
         self.send_done_nudge_callback = send_done_nudge
         self.evidence = evidence
-        self._private_work_ledger = private_work_ledger
         self._stabilization_seconds = stabilization_seconds
-        self.tracker = evidence.tracker
         self.quiescence_tracker = evidence.quiescence_tracker
         self._clock = clock
         self.quiescence_enabled = False
         self.last_successful_terminal: TerminalEventOutcome | None = None
         self.micro_drain_active = False
         self.micro_drain_event_count = 0
-        self.waiting_work_signature: tuple[int, int] | None = None
-        self.waiting_notification_count: int | None = None
+        self.waiting_child_count: int | None = None
         self.child_wave_deadline_monotonic: float | None = None
         self.child_wave_started_monotonic: float | None = None
         self.done_nudge_idle_delay_seconds = PI_DONE_NUDGE_IDLE_DELAY_SECONDS
@@ -128,7 +116,6 @@ class PiCompletionProfile:
         self.next_done_nudge_monotonic: float | None = None
         self._done_requested = False
         self._awaiting_readable_evidence = False
-        self._notification_timeout_error: str | None = None
         self._cleanup: PiCompletionCleanupPort | None = None
 
     def allows_evaluation_without_candidate(self) -> bool:
@@ -179,10 +166,6 @@ class PiCompletionProfile:
             )
         if context.terminal_action is not None:
             return self._evaluate_terminal(context)
-        if context.trigger == "event":
-            failure = self.failure_outcome_after_event()
-            if failure is not None:
-                return ProfileDecision(action="fail", outcome=failure)
         if context.state.phase == "stabilizing":
             return self._evaluate_stabilizing(context)
         if context.trigger == "timeout" or (
@@ -225,12 +208,10 @@ class PiCompletionProfile:
             if timeout_seconds is None or timeout_seconds <= 0:
                 timeout_seconds = PI_EVIDENCE_UNREADABLE_TIMEOUT_SECONDS
             unreadable_deadline = now + timeout_seconds
-        notification_deadline = self._next_notification_deadline()
         deadlines = [
             deadline
             for deadline in (
                 unreadable_deadline,
-                notification_deadline,
                 self._active_child_wave_deadline(),
             )
             if deadline is not None
@@ -308,14 +289,10 @@ class PiCompletionProfile:
         event: HarnessEvent,
         outcome: TerminalEventOutcome,
     ) -> None:
+        del event
         if outcome.status != "succeeded":
             return
         self.last_successful_terminal = outcome
-        completed_notification_id = self._private_work_ledger.resolve_notification_on_terminal(
-            pi_notification_id(event.payload)
-        )
-        if completed_notification_id is not None:
-            self._emit("continuation_completed", notification_id=completed_notification_id)
         self._refresh_done_nudge_state()
         self.emit_waiting_phases_if_needed()
 
@@ -334,37 +311,17 @@ class PiCompletionProfile:
             return
         self._update_idle_waiting_state()
 
-    def failure_outcome_after_event(self) -> TerminalEventOutcome | None:
-        if (
-            self.tracker.notification_failure_error is not None
-            and self.quiescence_tracker.parent_idle
-            and not self.evidence.has_pending_children()
-        ):
-            return _terminal_outcome(
-                status="failed",
-                exit_code=1,
-                error=self.tracker.notification_failure_error,
-            )
-        if self._notification_timeout_error is not None:
-            return _terminal_outcome(
-                status="failed",
-                exit_code=1,
-                error=self._notification_timeout_error,
-            )
-        return None
-
     def pending_children_at_exit(self) -> bool:
         if not self.quiescence_enabled:
             return False
         work = self.evidence.classify_outstanding_work()
         return (
             work.spawn_children
-            or work.unknown_spawn_children
             or work.non_spawn_processes
         )
 
     def fallback_error_without_recorded_outcome(self) -> str | None:
-        return self.tracker.notification_failure_error
+        return None
 
     def after_finalized(
         self,
@@ -391,36 +348,18 @@ class PiCompletionProfile:
     def emit_waiting_phases_if_needed(self) -> None:
         if not self.quiescence_enabled:
             return
-        private_work = self.quiescence_tracker.private_work_snapshot()
         waiting_for_children = self.evidence.has_pending_children()
         child_count = self.evidence.pending_child_count()
-        rowless_count = len(private_work.rowless_subspawn_ids)
-        waiting_signature = (child_count, rowless_count)
         if waiting_for_children:
-            if waiting_signature != self.waiting_work_signature:
+            if child_count != self.waiting_child_count:
                 self._emit(
                     "waiting_for_tracked_children",
                     active_tracked_count=child_count,
-                    persisted_descendant_count=max(0, child_count - rowless_count),
-                    rowless_subspawn_count=rowless_count,
+                    persisted_descendant_count=child_count,
                 )
-            self.waiting_work_signature = waiting_signature
+            self.waiting_child_count = child_count
         else:
-            self.waiting_work_signature = None
-
-        waiting_for_notifications = (
-            not waiting_for_children and bool(private_work.pending_notifications)
-        )
-        notification_count = len(private_work.pending_notifications)
-        if waiting_for_notifications:
-            if notification_count != self.waiting_notification_count:
-                self._emit(
-                    "waiting_for_notification_completion",
-                    pending_notification_count=notification_count,
-                )
-            self.waiting_notification_count = notification_count
-        else:
-            self.waiting_notification_count = None
+            self.waiting_child_count = None
 
     def _evaluate_terminal(self, context: CompletionEvaluation) -> ProfileDecision:
         action = context.terminal_action
@@ -441,13 +380,10 @@ class PiCompletionProfile:
         self.micro_drain_active = False
         private_work = self.quiescence_tracker.private_work_snapshot()
         active_tracked_count = self.evidence.pending_child_count()
-        rowless_count = len(private_work.rowless_subspawn_ids)
         self._emit(
             "quiescence_deferred",
             active_tracked_count=active_tracked_count,
-            persisted_descendant_count=max(0, active_tracked_count - rowless_count),
-            pending_notification_count=len(private_work.pending_notifications),
-            rowless_subspawn_count=rowless_count,
+            persisted_descendant_count=active_tracked_count,
             tracked_bash_count=int(private_work.tracked_bash_bg),
             disk_notification_count=int(private_work.pending_disk_notification),
         )
@@ -484,15 +420,6 @@ class PiCompletionProfile:
         candidate = context.candidate or self.last_successful_terminal
         if context.directives.done and candidate is not None:
             return self._evaluate_done(context, candidate)
-
-        expired_notification = self._private_work_ledger.pop_expired_notification(
-            context.now
-        )
-        if expired_notification is not None:
-            return ProfileDecision(
-                action="fail",
-                outcome=self._notification_timeout_outcome(expired_notification, context.now),
-            )
 
         if self._child_wave_timed_out(context.now):
             self._prepare_child_timeout(context.now)
@@ -570,7 +497,6 @@ class PiCompletionProfile:
         outstanding = self.classify_outstanding_work()
         if (
             outstanding.spawn_children
-            or outstanding.unknown_spawn_children
             or not outstanding.non_spawn_processes
         ):
             self._clear_done_nudge_timer()
@@ -585,29 +511,6 @@ class PiCompletionProfile:
             self.next_done_nudge_monotonic is not None
             and now >= self.next_done_nudge_monotonic
         )
-
-    def _notification_timeout_outcome(
-        self,
-        expired_notification: PiPendingNotification,
-        now: float,
-    ) -> TerminalEventOutcome:
-        timeout_error = _pi_notification_timeout_error(
-            expired_notification,
-            now_monotonic=now,
-        )
-        self._notification_timeout_error = timeout_error
-        self._emit(
-            "pi_notification_timeout",
-            notification_id=expired_notification.notification_id,
-            notification_phase=expired_notification.phase,
-            timeout_seconds=(
-                expired_notification.deadline_monotonic
-                - expired_notification.started_monotonic
-                if expired_notification.deadline_monotonic is not None
-                else None
-            ),
-        )
-        return _terminal_outcome(status="failed", exit_code=1, error=timeout_error)
 
     def _prepare_child_timeout(self, now: float) -> None:
         cleanup = self._cleanup
@@ -647,14 +550,6 @@ class PiCompletionProfile:
         deadline = self._active_child_wave_deadline()
         return deadline is not None and now >= deadline
 
-    def _next_notification_deadline(self) -> float | None:
-        deadlines = [
-            item.deadline_monotonic
-            for item in self.quiescence_tracker.private_work_snapshot().pending_notifications
-            if item.deadline_monotonic is not None
-        ]
-        return min(deadlines) if deadlines else None
-
     def _clear_child_wave_timer(self) -> None:
         self.child_wave_deadline_monotonic = None
         self.child_wave_started_monotonic = None
@@ -665,24 +560,6 @@ class PiCompletionProfile:
     def _emit(self, phase: str, **payload: object) -> None:
         self.emit_phase(phase=phase, session_role=self.session_role or None, **payload)
 
-
-
-def _pi_notification_timeout_error(
-    pending: PiPendingNotification,
-    *,
-    now_monotonic: float,
-) -> str:
-    timeout_seconds = 0.0
-    if pending.deadline_monotonic is not None:
-        timeout_seconds = max(0.0, pending.deadline_monotonic - pending.started_monotonic)
-    elapsed_seconds = max(0.0, now_monotonic - pending.started_monotonic)
-    return (
-        "pi_notification_timeout:"
-        f"id={pending.notification_id}:"
-        f"phase={pending.phase}:"
-        f"elapsed={elapsed_seconds:.3f}:"
-        f"timeout={timeout_seconds:.3f}"
-    )
 
 
 def _pi_child_wave_timeout_error() -> str:

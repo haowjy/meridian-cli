@@ -19,8 +19,7 @@ The Pi completion composition owns:
 - parent idle/active observation
 - disk watcher / quiescence integration (`PiDiskWatcher`, `PiQuiescenceTracker`)
 - active persisted-descendant tracking from the reconciled transitive spawn tree
-- pending notification / follow-up tracking
-- notification timeout and child-wave timeout decisions
+- direct follow-up marker gating and child-wave timeout decisions
 - micro-drain candidate state and phase-event emission coordination
 - Pi failure/finalization decisions when the process exits before quiescence
 
@@ -30,15 +29,14 @@ deadline, nudge, or exit behavior to `pi_completion_profile.py`. The exception i
 purely generic event persistence, observer dispatch, subscriber fan-out, heartbeat,
 or control-socket handling.
 
-`PiPrivateWorkLedger` owns lifecycle-observed rowless subspawns, process handles,
-notifications, managed-bash state, and private-file read failures. It exposes categorized
-immutable blocker snapshots and immutable PID/PGID handles. `PiSubspawnTracker` remains
-the lifecycle parser/deduplicator and feeds that ledger; `PiDiskWatcher` reads and watches
-only bash and notification files. When reconciled descendant evidence finds a row for a
-lifecycle-observed subspawn, the ledger keeps the cleanup handle but removes that ID from
-rowless liveness. `PiQuiescenceTracker` preserves parent-idle epochs across private-disk
-wakeups. The Pi evidence collaborator combines private-work snapshots with reconciled
-transitive persisted-descendant evidence; the profile uses the summary for deadlines and
+`PiPrivateWorkLedger` owns managed-bash state, the direct follow-up marker, and
+private-file read failures. It exposes categorized immutable blocker snapshots.
+`PiDiskWatcher` reads and watches the bash and notification-marker files, while
+`PiLifecycleTracker` validates the produced quiescence lifecycle event. Canonical
+notification and subspawn events are not part of the Pi runtime contract.
+`PiQuiescenceTracker` preserves parent-idle epochs across private-disk wakeups. The Pi
+evidence collaborator combines private-work snapshots with reconciled transitive
+persisted-descendant evidence; the profile uses the summary for deadlines and
 finalization decisions.
 
 Pi and resident use the shared reconciled transitive persisted tree as descendant
@@ -57,8 +55,7 @@ Pi extensions coordinate private work with Python through disk files:
 
 Persisted descendant state comes independently from valid rows under
 `runtime_root/spawns/` through `ReconciledDescendantEvidence`. Stdout lifecycle-like
-messages provide rowless-subspawn/process-handle evidence; they are not persisted-
-descendant authority.
+subspawn messages are not descendant evidence.
 
 Private-disk changes are not passive. `PiDiskWatcher` wakes the drain loop when a bash
 or notification file changes, and the drain loop re-evaluates quiescence on those
@@ -75,19 +72,21 @@ until the candidate completes or the drain ends.
 
 ### Child Wave Timeout
 
-When the parent agent is idle and descendant or Pi-private work is still pending,
+When the parent agent is idle and reconciled descendants are still pending,
 `PiCompletionProfile` starts the child-wave deadline. If the deadline expires, it fails
-with `failed` / `pi_child_wave_timeout` rather than letting Pi wait forever. Timeout
-state is latched and its deadline cleared before the outcome publishes. The
-single tracked-work cleanup then runs asynchronously and best-effort. Ordinary
-cleanup or timeout-phase emission failures are diagnostic and do not replace
-that outcome or restart waiting-phase emission. Startup reaper reconciliation
-recovers cleanup interrupted by a crash.
+with `failed` / `pi_child_wave_timeout` rather than letting Pi wait forever. Pi-private
+bash and notification-marker work does not start this deadline; it relies on direct
+follow-up/nudge handling and the opt-in outer attempt timeout. Child-wave timeout state
+is latched and its deadline cleared before the outcome publishes. The single
+descendant cleanup then runs asynchronously and best-effort. Ordinary cleanup or
+timeout-phase emission failures are diagnostic and do not replace that outcome or
+restart waiting-phase emission. Startup reaper reconciliation recovers cleanup
+interrupted by a crash.
 
-These child-wave and notification windows are anchored when their corresponding wave
-or notification begins; ordinary descendant disk evidence does not slide them. Pi has
-no default total wall-clock ceiling: descendant quiescence may require successive waves,
-each with its own anchored window, and that unbounded total duration is intentional.
+Child-wave windows are anchored when their corresponding wave begins; ordinary
+descendant disk evidence does not slide them. Pi has no default total wall-clock
+ceiling: descendant quiescence may require successive waves, each with its own anchored
+window, and that unbounded total duration is intentional.
 Operators who need an absolute bound use the shared `--timeout` /
 `MERIDIAN_TIMEOUT` outer attempt timer, which is non-renewing and defaults to `None`.
 Resident completion uses the same outer ceiling but otherwise follows its separate
@@ -112,33 +111,19 @@ These are written to `history.jsonl` alongside harness events and are visible in
 | `drain_started` | Drain loop begins |
 | `session_event_seen` / `session_event_absent` | Pi session event observed (or not) |
 | `waiting_for_tracked_children` | Parent idle, children still running |
-| `waiting_for_notification_completion` | Children done, notifications pending |
 | `pi_child_wave_timeout` | Wave deadline expired |
-| `pi_notification_timeout` | Notification deadline expired |
 | `quiescence_micro_drain_started` | Terminal event seen, polling for quiescence |
 | `quiescence_micro_drain_extended` | Additional event during micro-drain |
-| `quiescence_deferred` | Terminal event but still waiting for children/notifications |
-| `continuation_completed` | Notification resolved on terminal event |
+| `quiescence_deferred` | Terminal event but still waiting for children/private disk evidence |
 | `cleanup_running` / `cleanup_completed` / `cleanup_escalated` / `cleanup_failed` | Connection cleanup phases |
 | `finalized` | Drain complete; final status/exit_code/error |
 
 ### Pi Tracked Child Cleanup
 
-When the Pi process exits with active tracked children (crashed, killed, or otherwise
-terminated before quiescence), `PiCompletionCleanup` coordinates cleanup through the
-tracked child process metadata observed by the evidence collaborator. Process cleanup
-lives in `pi_process_cleanup.py` so `SpawnManager` does not own Pi-specific process-tree
-policy:
-
-- **POSIX**: iterates captured process group IDs, sends `SIGTERM` via `os.killpg()`,
-  waits 250ms, confirms liveness with `os.killpg(pgid, 0)`, then sends `SIGKILL` if
-  still alive
-- **Legacy native-Windows branch (untested) / fallback**: uses
-  `terminate_tree_sync()` from `meridian.lib.platform.process_scope.fallback`
-
-If no process metadata is available, a warning is logged but no cleanup is attempted —
-the processes are orphaned. Canonical persisted-descendant cancellation still runs first,
-including when the tree contains work that has no Pi lifecycle/process handle.
+When the Pi process exits with active tracked descendants (crashed, killed, or otherwise
+terminated before quiescence), `PiCompletionCleanup` invokes the injected descendant
+cancellation service. Persisted spawn rows are the sole child authority; cleanup does
+not depend on unproduced lifecycle PID/PGID telemetry.
 
 ### Pi Connection Cleanup
 

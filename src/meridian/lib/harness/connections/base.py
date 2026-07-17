@@ -220,7 +220,6 @@ class ConnectionConfig:
     task_cwd: Path | None = None
     system: str | None = None
     timeout_seconds: float | None = None
-    pi_notification_timeout_seconds: float | None = None
     pi_child_wave_timeout_seconds: float | None = None
     resident_deadline_seconds: float | None = None
     resident_poll_seconds: float | None = None

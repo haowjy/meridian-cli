@@ -23,7 +23,6 @@ from meridian.lib.streaming.completion_nudge import PI_COMPLETION_NUDGE_MESSAGE
 from meridian.lib.streaming.drain_policy import DrainAction
 from meridian.lib.streaming.pi_drain import PiDrainCoordinator
 from meridian.lib.streaming.pi_quiescence import PiQuiescenceTracker
-from meridian.lib.streaming.pi_work_ledger import PiPrivateWorkLedger
 from meridian.lib.streaming.spawn_manager import SpawnManager
 from tests.support.async_determinism import AsyncDeterminism, assert_still_pending, wait_until
 from tests.support.pi import FakePiConnection as _FakePiConnection
@@ -91,7 +90,7 @@ async def _started_micro_drain_coordinator(
     child_wave_timeout_seconds: float | None = None,
     mark_idle: bool = False,
     start_micro_drain: bool = True,
-    terminate_children: Any = None,
+    cancel_descendants: Any = None,
     monkeypatch: pytest.MonkeyPatch | None = None,
 ) -> PiDrainScenario:
     assert monkeypatch is not None
@@ -102,25 +101,14 @@ async def _started_micro_drain_coordinator(
         child_wave_timeout_seconds=child_wave_timeout_seconds,
         mark_idle=mark_idle,
         start_micro_drain=start_micro_drain,
-        terminate_children=terminate_children,
+        cancel_descendants=cancel_descendants,
         patch_clock=False,
     )
 
 
-async def _arm_child_wave(coordinator: PiDrainCoordinator) -> None:
-    await coordinator.observe_event(
-        _pi_event(
-            "meridian.subspawn.start",
-            {
-                "schema_version": 1,
-                "subspawn_id": "j-stuck-child",
-                "correlation_id": "j-stuck-child",
-                "wait_policy": "tracked",
-            },
-        ),
-        None,
-    )
-    await coordinator.observe_event(_pi_event("agent_end"), "idle")
+async def _arm_child_wave(started: PiDrainScenario) -> None:
+    started.row("p-stuck-child", parent_id=str(started.spawn_id))
+    await started.coordinator.observe_event(_pi_event("agent_end"), "idle")
 
 
 @pytest.mark.asyncio
@@ -133,11 +121,7 @@ async def test_child_wave_timeout_fails_when_cleanup_finishes(
     spawn_id = SpawnId("p-child-wave-single-timeout")
     cleanup_reasons: list[str] = []
 
-    async def _record_cleanup(
-        ledger: PiPrivateWorkLedger,
-        reason: str,
-    ) -> None:
-        _ = ledger
+    async def _record_cleanup(reason: str) -> None:
         cleanup_reasons.append(reason)
 
     started = await _started_micro_drain_coordinator(
@@ -146,11 +130,11 @@ async def test_child_wave_timeout_fails_when_cleanup_finishes(
         spawn_id=spawn_id,
         child_wave_timeout_seconds=0.01,
         start_micro_drain=False,
-        terminate_children=_record_cleanup,
+        cancel_descendants=_record_cleanup,
     )
 
     try:
-        await _arm_child_wave(started.coordinator)
+        await _arm_child_wave(started)
         assert started.coordinator.next_timeout() == pytest.approx(0.01)
         clock.advance(0.009)
         before_deadline = await started.coordinator.handle_timeout()
@@ -181,11 +165,7 @@ async def test_child_wave_timeout_stays_terminal_when_cleanup_raises(
     spawn_id = SpawnId("p122")
     cleanup_reasons: list[str] = []
 
-    async def _raise_cleanup(
-        ledger: PiPrivateWorkLedger,
-        reason: str,
-    ) -> None:
-        _ = ledger
+    async def _raise_cleanup(reason: str) -> None:
         cleanup_reasons.append(reason)
         nested_decision = await started.coordinator.handle_timeout()
         assert nested_decision.recorded_outcome is None
@@ -197,13 +177,13 @@ async def test_child_wave_timeout_stays_terminal_when_cleanup_raises(
         spawn_id=spawn_id,
         child_wave_timeout_seconds=0.01,
         start_micro_drain=False,
-        terminate_children=_raise_cleanup,
+        cancel_descendants=_raise_cleanup,
     )
 
     try:
         determinism = AsyncDeterminism(start=100.0)
         determinism.install(monkeypatch, monotonic_modules=(pi_drain_module,))
-        await _arm_child_wave(started.coordinator)
+        await _arm_child_wave(started)
         assert any(
             phase.get("phase") == "waiting_for_tracked_children"
             and phase.get("active_tracked_count") == 1
@@ -239,14 +219,13 @@ async def test_child_wave_timeout_stays_terminal_when_cleanup_raises(
 
 
 @pytest.mark.asyncio
-async def test_child_wave_timeout_cancellation_clears_latched_wave(
+async def test_child_wave_timeout_cleanup_cancellation_keeps_descendant_evidence(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     cleanup_reasons: list[str] = []
 
-    async def _cancel_cleanup(ledger: PiPrivateWorkLedger, reason: str) -> None:
-        _ = ledger
+    async def _cancel_cleanup(reason: str) -> None:
         cleanup_reasons.append(reason)
         raise asyncio.CancelledError
 
@@ -256,13 +235,13 @@ async def test_child_wave_timeout_cancellation_clears_latched_wave(
         spawn_id=SpawnId("p-child-wave-cleanup-cancelled"),
         child_wave_timeout_seconds=0.01,
         start_micro_drain=False,
-        terminate_children=_cancel_cleanup,
+        cancel_descendants=_cancel_cleanup,
     )
 
     try:
         determinism = AsyncDeterminism(start=100.0)
         determinism.install(monkeypatch, monotonic_modules=(pi_drain_module,))
-        await _arm_child_wave(started.coordinator)
+        await _arm_child_wave(started)
         determinism.advance(0.01)
 
         decision = await started.coordinator.handle_timeout()
@@ -276,7 +255,8 @@ async def test_child_wave_timeout_cancellation_clears_latched_wave(
 
         assert cleanup_reasons == ["pi_child_wave_timeout"]
         assert repeated_decision.recorded_outcome is None
-        assert exit_decision.recorded_outcome is None
+        assert exit_decision.recorded_outcome is not None
+        assert exit_decision.recorded_outcome.error == "pi_process_exited_with_tracked_children"
     finally:
         await started.coordinator.stop()
 
@@ -307,39 +287,6 @@ async def test_pi_non_spawn_background_only_nudges_after_idle_delay(
         await coordinator.stop()
 
 
-@pytest.mark.asyncio
-async def test_pi_non_spawn_tracked_id_nudges_after_idle_delay(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    spawn_id = SpawnId("p1")
-    sent_messages: list[str] = []
-    coordinator = await _started_pi_coordinator(
-        tmp_path,
-        monkeypatch=monkeypatch,
-        spawn_id=spawn_id,
-        sent_messages=sent_messages,
-    )
-
-    try:
-        await coordinator.observe_event(
-            _pi_event(
-                "meridian.subspawn.start",
-                {
-                    "schema_version": 1,
-                    "subspawn_id": "pi-internal-1",
-                    "correlation_id": "pi-internal-1",
-                    "wait_policy": "tracked",
-                },
-            ),
-            None,
-        )
-        await _put_pi_parent_idle_after_success(coordinator)
-
-        await coordinator.handle_timeout()
-
-        assert sent_messages == [PI_COMPLETION_NUDGE_MESSAGE]
-    finally:
-        await coordinator.stop()
 
 
 @pytest.mark.asyncio
@@ -444,65 +391,6 @@ async def test_pi_spawn_child_outstanding_waits_without_done_nudge(
         await coordinator.stop()
 
 
-@pytest.mark.asyncio
-async def test_pi_spawn_shaped_tracked_child_without_row_waits_closed_then_waits_on_row(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    spawn_id = SpawnId("p1")
-    child_id = SpawnId("p123")
-    sent_messages: list[str] = []
-    _write_running_bash_record(tmp_path, spawn_id, running=True)
-    spawn_store.start_spawn(
-        tmp_path,
-        spawn_id=spawn_id,
-        chat_id=str(spawn_id),
-        model="test-model",
-        agent="test-agent",
-        harness=HarnessId.PI.value,
-        prompt="parent",
-        status="running",
-    )
-    coordinator = await _started_pi_coordinator(
-        tmp_path,
-        monkeypatch=monkeypatch,
-        spawn_id=spawn_id,
-        sent_messages=sent_messages,
-    )
-
-    try:
-        await coordinator.observe_event(
-            _pi_event(
-                "meridian.subspawn.start",
-                {
-                    "schema_version": 1,
-                    "subspawn_id": str(child_id),
-                    "correlation_id": str(child_id),
-                    "wait_policy": "tracked",
-                },
-            ),
-            None,
-        )
-        await _put_pi_parent_idle_after_success(coordinator)
-
-        await coordinator.handle_timeout()
-        assert sent_messages == []
-
-        spawn_store.start_spawn(
-            tmp_path,
-            spawn_id=child_id,
-            chat_id=str(child_id),
-            parent_id=str(spawn_id),
-            model="test-model",
-            agent="test-agent",
-            harness=HarnessId.PI.value,
-            prompt="child",
-            status="running",
-        )
-
-        await coordinator.handle_timeout()
-        assert sent_messages == []
-    finally:
-        await coordinator.stop()
 
 
 @pytest.mark.asyncio

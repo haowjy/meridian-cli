@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import logging
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol, cast
@@ -10,7 +9,6 @@ from typing import TYPE_CHECKING, Any, Protocol, cast
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.pi_lifecycle_events import build_pi_phase_event
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
-from meridian.lib.streaming import pi_process_cleanup
 from meridian.lib.streaming.drain_coordinator import DrainPlan
 from meridian.lib.streaming.drain_policy import (
     PiRpcQuiescenceDrainPolicy,
@@ -18,7 +16,6 @@ from meridian.lib.streaming.drain_policy import (
 )
 from meridian.lib.streaming.pi_drain import PiDrainCoordinator
 from meridian.lib.streaming.pi_drain_teardown import EmitEvent, PiDrainSessionTeardown
-from meridian.lib.streaming.pi_work_ledger import PiPrivateWorkLedger
 from meridian.lib.streaming.resident_drain import ResidentDrainCoordinator
 from meridian.lib.streaming.types import InjectResult
 
@@ -27,9 +24,6 @@ if TYPE_CHECKING:
         ConnectionConfig,
         HarnessConnection,
     )
-
-logger = logging.getLogger(__name__)
-
 
 class SerializedInject(Protocol):
     """Manager-owned serialized injection capability."""
@@ -77,29 +71,12 @@ def build_drain_plan(
             ),
         )
 
-    async def _terminate_tracked_pi_children(
-        ledger: PiPrivateWorkLedger,
+    async def _cancel_pi_descendants(
         reason: str,
     ) -> None:
-        reaped_descendant_ids: set[str] = set()
-        try:
-            service = build_spawn_application_service(project_root, runtime_root)
-            reaped_descendant_ids = await service.cancel_descendants(spawn_id)
-        except Exception:
-            logger.exception(
-                "Failed to cancel Pi descendant spawns before tracked child cleanup.",
-                extra={"spawn_id": str(spawn_id), "reason": reason},
-            )
-            # Intentional: if canonical descendant cancellation fails, fall
-            # back to the full ledger cleanup-handle set so Pi-internal cleanup is not
-            # skipped because we could not prove which ids were reaped.
-            reaped_descendant_ids = set()
-        await pi_process_cleanup.terminate_pi_tracked_subspawns(
-            spawn_id,
-            ledger,
-            reason=reason,
-            exclude_subspawn_ids=reaped_descendant_ids,
-        )
+        del reason
+        service = build_spawn_application_service(project_root, runtime_root)
+        await service.cancel_descendants(spawn_id)
 
     async def _send_pi_done_nudge(message: str) -> None:
         await inject(spawn_id, message, source="pi_done_nudge")
@@ -132,10 +109,9 @@ def build_drain_plan(
             spawn_id=spawn_id,
             receiver=cast("HarnessConnection[ResolvedLaunchSpec]", receiver),
             session_role=config.pi_session_role,
-            notification_timeout_seconds=config.pi_notification_timeout_seconds,
             child_wave_timeout_seconds=config.pi_child_wave_timeout_seconds,
             emit_phase=_emit_pi_phase,
-            terminate_children=_terminate_tracked_pi_children,
+            cancel_descendants=_cancel_pi_descendants,
             send_done_nudge=_send_pi_done_nudge,
         )
         return DrainPlan(

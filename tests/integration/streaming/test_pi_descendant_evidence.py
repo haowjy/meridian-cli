@@ -223,51 +223,8 @@ async def test_pi_tree_authority_still_blocks_on_tracked_bash(
         await started.coordinator.stop()
 
 
-@pytest.mark.asyncio
-async def test_pi_tree_authority_still_blocks_on_pending_notification(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    start_row(tmp_path, "p1", HarnessId.PI, None)
-    started = await _start_pi(tmp_path, monkeypatch)
-    try:
-        await started.coordinator.observe_event(
-            pi_event("meridian.notification.queued", {"notification_id": "n1"}),
-            None,
-        )
-        await _assess_terminal(started)
-        started.clock.advance(0.05)
-
-        stabilized = await started.coordinator.handle_timeout()
-
-        assert stabilized.recorded_outcome is None
-    finally:
-        await started.coordinator.stop()
 
 
-@pytest.mark.asyncio
-async def test_pi_tree_authority_still_blocks_on_rowless_internal_subspawn(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    start_row(tmp_path, "p1", HarnessId.PI, None)
-    started = await _start_pi(tmp_path, monkeypatch)
-    try:
-        await started.coordinator.observe_event(
-            pi_event(
-                "meridian.subspawn.start",
-                {"subspawn_id": "pi-internal-1", "wait_policy": "tracked"},
-            ),
-            None,
-        )
-        await _assess_terminal(started)
-        started.clock.advance(0.05)
-
-        stabilized = await started.coordinator.handle_timeout()
-
-        assert stabilized.recorded_outcome is None
-    finally:
-        await started.coordinator.stop()
 
 
 @pytest.mark.asyncio
