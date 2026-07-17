@@ -1,0 +1,8 @@
+# state/ — must-do follow-ups
+
+- work_repository.py / work_store.py: extract shared work-item models,
+  codecs, and path helpers into a neutral module BEFORE the next
+  metadata-field change. work_repository currently imports ~15 private
+  helpers from work_store and work_store lazily imports repository
+  wrappers — bounded debt accepted at PR #422 gate 2; it will rot on the
+  first schema change. (Also clears the pyright private-usage warnings.)

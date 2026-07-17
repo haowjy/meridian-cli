@@ -1,0 +1,7 @@
+# hooks/builtin — nice-to-have follow-ups
+
+- git_autosync.py (~:420-443): the direct git invocation path passes raw
+  os.environ, unlike _run_git() (~:1220-1235) which sanitizes. Not causal
+  in any known bug (verified during PR #422's git-config investigation,
+  spawn p5328); unify on the sanitized runner when next touching this
+  file.
