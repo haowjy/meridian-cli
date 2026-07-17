@@ -55,7 +55,7 @@ the function still attempts `os.killpg()`. If the group has also dissolved
 (`ProcessLookupError`), a secondary full-table scan by PGID runs to catch orphaned
 processes that stayed in the group after reparenting (PROC-004 sweep).
 
-### Windows: Job Object Handle Lifetime
+### Legacy Windows Branch (Untested): Job Object Handle Lifetime
 
 `assign_to_new_job(pid)` returns `(job_name, job_handle)`. The handle **must
 stay alive** until the scope should be released — `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`

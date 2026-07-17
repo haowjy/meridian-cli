@@ -186,10 +186,10 @@ assistant text while building `report.md`. Child task text remains visible throu
 ### Claude: PTY Capture for Primary Session ID
 
 Claude's TUI emits its session ID to stdout only when stdout is a TTY. Meridian
-uses `pty.openpty()` (POSIX) to observe this output without the harness knowing
-it's captured. This is the minimum-intrusive mechanism for an otherwise unobservable
-value. Windows does not support PTY — Claude primary uses a fallback detection path
-(`session_detection.py`) on Windows.
+uses `pty.openpty()` to observe this output without the harness knowing it's
+captured. This is the minimum-intrusive mechanism for an otherwise unobservable
+value. The legacy native-Windows branch attempts a fallback detection path
+(`session_detection.py`) and is untested.
 
 ### Claude: Native Agent Routing Boundary
 

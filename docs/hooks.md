@@ -87,25 +87,17 @@ If you omit `name` for a builtin hook, Meridian may synthesize a stable name fro
 
 ### Shell Behavior
 
-Hook `command` strings are executed via the platform default shell: `sh -c` on POSIX (Linux/macOS) and `cmd.exe /c` on Windows. This is standard Python `subprocess(shell=True)` behavior. Inline commands that rely on bash syntax — `&&`, `||`, `$()`, `[[`, or POSIX-only tools — will fail on Windows because `cmd.exe` does not understand them.
-
-For hooks that must run on both platforms, use a script file with an appropriate extension:
+Hook `command` strings are executed via `sh -c`. For non-trivial shell logic,
+use a script file instead of embedding it in TOML:
 
 ```toml
-# POSIX — shell script
 [[hooks]]
 name    = "check"
 command = "./scripts/check.sh"
 event   = "spawn.finalized"
-
-# Windows — batch file or PowerShell
-[[hooks]]
-name    = "check"
-command = "powershell -File scripts/check.ps1"
-event   = "spawn.finalized"
 ```
 
-If you only target one platform, inline commands are fine. If portability matters, point `command` at a script file rather than embedding shell syntax in TOML.
+Inline commands are fine when they remain short and readable.
 
 ### `repo` → `remote` Migration
 

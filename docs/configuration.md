@@ -76,8 +76,7 @@ Read-only commands (`meridian spawn list`, `meridian config show`, etc.) do not 
 High-churn runtime state lives outside the repo, keyed by project UUID so the repo can be moved or renamed without losing history.
 
 ```text
-~/.meridian/                       # Unix/macOS default (see MERIDIAN_HOME)
-%LOCALAPPDATA%\meridian\           # Windows default
+~/.meridian/                       # Linux/macOS default (see MERIDIAN_HOME)
   projects/
     <uuid>/                        # one dir per project
       sessions.jsonl
@@ -191,7 +190,7 @@ Workspace config defines filesystem roots projected into harness launches. See
 ## Hooks
 
 Hooks are configured in any Meridian config file. See [hooks.md](hooks.md) for
-schema, event names, builtins, and cross-platform guidance.
+schema, event names, builtins, and shell behavior guidance.
 
 ## Context
 

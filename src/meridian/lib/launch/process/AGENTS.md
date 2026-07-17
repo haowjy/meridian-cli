@@ -14,7 +14,7 @@ run_harness_process()
     │
     ├── session_scope()            ← open/close session store entry
     ├── lifecycle_service.start()  ← create spawn row
-    ├── select_process_backend()   ← pick {PTY, subprocess, Windows console}
+    ├── select_process_backend()   ← pick {PTY, subprocess, legacy Windows console}
     │
     ├── _execute_via_managed_attach()   ← PrimaryAttachLauncher path
     │       └── fallback on PrimaryAttachError → _execute_via_blackbox()
@@ -25,7 +25,7 @@ run_harness_process()
 ```
 
 **Backend selection rules:**
-- Windows: `WindowsConsoleLauncher`
+- Legacy native-Windows branch (untested): `WindowsConsoleLauncher`
 - POSIX + TTY available: `PtyProcessLauncher`
 - POSIX + no TTY (CI, piped): `SubprocessProcessLauncher`
 

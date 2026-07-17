@@ -60,8 +60,8 @@ All state writes go through `atomic.py`. Never write state files with plain `ope
   exists — never a partial write.
 - `atomic_publish_dir()` — rename a complete same-volume stage into a destination
   that must not exist, then fsync the publication parent.
-- `append_text_line()` — binary mode so `\n` is never translated to `\r\n` on
-  Windows. JSONL byte offsets must be stable across platforms.
+- `append_text_line()` — binary mode so JSONL newline encoding and byte offsets
+  remain stable.
 
 A crash in the middle of a plain `open()` write leaves a partial file; partial
 `state.json` fails Pydantic validation on next read.
@@ -118,7 +118,7 @@ spawn ID allocation, initial row publication, and abandoned-stage GC. Later muta
 use `write_state_locked()` (`state.lock`).
 
 **Don't hardcode `~/.meridian/`** — use `get_user_home()` from `user_paths.py`.
-It handles `MERIDIAN_HOME`, Windows `%LOCALAPPDATA%`, and POSIX `~` correctly.
+It honors `MERIDIAN_HOME` and centralizes home resolution.
 
 ## Depth
 

@@ -6,7 +6,7 @@
 git clone https://github.com/haowjy/meridian-cli.git
 cd meridian-cli
 uv sync --extra dev
-scripts/setup-hooks.sh        # Windows: scripts/setup-hooks.ps1
+scripts/setup-hooks.sh
 ```
 
 `setup-hooks` sets `core.hooksPath = .githooks`. Git cannot install hooks on
@@ -104,33 +104,20 @@ When this matters:
 For the full local preflight used by pre-push and release preparation:
 
 ```bash
-# macOS / Linux
 scripts/preflight.sh
-
-# Windows (PowerShell)
-scripts\preflight.ps1
 ```
 
 Fast mode (lint only):
 
 ```bash
-# macOS / Linux
 scripts/preflight.sh fast
-
-# Windows (PowerShell)
-scripts\preflight.ps1 fast
 ```
 
 Pre-push gate (lint + type check + all tests, with optional `--quick` to skip smoke tests):
 
 ```bash
-# macOS / Linux
 scripts/check.sh
 scripts/check.sh --quick
-
-# Windows (PowerShell)
-scripts\check.ps1
-scripts\check.ps1 -quick
 ```
 
 Individual checks:
@@ -200,33 +187,11 @@ scripts/prune-worktrees.sh --yes        # execute
 uv run meridian --help
 ```
 
-## Windows Support
+## Platform Support
 
-Windows is a supported platform. Spawn, state, and coordination layers run
-natively on Windows. The primary interactive TUI and PTY-based session capture
-require WSL — see Deferred items below.
-
-### CI
-
-A `windows-gate` job in `.github/workflows/meridian-ci.yml` runs on `windows-latest` on every push, executing `uv run pytest -n 0 -m "not slow"` serially (xdist worker startup can hang on Windows before pytest emits output).
-
-### Developer scripts
-
-PowerShell mirrors exist for the standard developer workflow:
-
-| Task | POSIX | Windows |
-|------|-------|---------|
-| Setup git hooks | `scripts/setup-hooks.sh` | `scripts\setup-hooks.ps1` |
-| Pre-push gate | `scripts/check.sh` | `scripts\check.ps1` |
-| Full preflight | `scripts/preflight.sh` | `scripts\preflight.ps1` |
-| Prune worktrees | `scripts/prune-worktrees.sh` | `scripts\prune-worktrees.ps1` |
-
-### Deferred items
-
-The following are explicitly out of scope and not implemented:
-
-- **ConPTY / terminal passthrough**: Primary-session TUI capture for Claude Code and Codex session-ID extraction relies on PTY semantics. Windows ConPTY support is not implemented — harness features that depend on PTY capture may not work correctly natively on Windows. WSL is the supported path for primary-session use on Windows.
-- **Full bash script parity**: Only the scripts listed above have PowerShell mirrors. `scripts/quality-issues.sh` and other helpers remain POSIX-only.
+Linux and macOS are supported. WSL is supported as a Linux environment. Native
+Windows was never made to work and is not planned; existing Windows branches and
+scripts are untested, best-effort legacy code.
 
 ## Workspace conventions
 
