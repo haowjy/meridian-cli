@@ -468,11 +468,7 @@ class SpawnApplicationService:
             resident_poll_seconds=resolve_resident_poll_seconds(
                 config_snapshot=launch_config_snapshot,
             ),
-            resident_rearm_budget=getattr(
-                getattr(resolved_request, "execution_policy", None),
-                "resident_rearm_budget",
-                None,
-            ),
+            resident_rearm_budget=resolved_request.execution_policy.resident_rearm_budget,
             pi_task_ping_interval_seconds=resolve_pi_task_ping_interval_seconds(
                 explicit_interval_seconds=resolved_request.pi_task_ping_interval_seconds,
                 config_snapshot=launch_config_snapshot,
