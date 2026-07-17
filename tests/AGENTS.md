@@ -28,18 +28,21 @@ tests/smoke/        Markdown guides for manual CLI verification.
 For spawn state, prefer v2 state helpers (`create_lifecycle_service`,
 `spawn_store.get_spawn`) or direct `state.json` assertions.
 
-### Pi Fake Fidelity
+### Fake Fidelity
 
-`tests/support/pi.py` provides `FakePiConnection` and `PiDrainScenario`. Real Pi
-RPC connections emit an `error/connectionClosed` event with the Pi subprocess exit
-code before the event iterator reaches EOF. Test fakes must model this when testing
-exit classification. Use the fidelity helpers:
+When exit classification depends on event ordering, fakes must reproduce the real
+connection's pre-EOF death shape. A non-zero subprocess exit is not clean iterator
+exhaustion: the exit code becomes an `error/connectionClosed` event before the
+iterator ends. This invariant applies to every adapter that synthesizes such an
+event. Do not replace it with direct `handle_stream_exit(None)` calls; that skips the
+precedence path where a generic process-exit failure is recorded before stream exit.
 
-- `pi_process_exit_event(return_code)` — builds the `error/connectionClosed`
-  event with the canonical `Pi subprocess exited with code <N>.` message.
-- `write_pi_bash_record(runtime_root, spawn_id)` — writes managed-bash disk
-  evidence for Pi private work that is not a Meridian spawn row.
+Worked helpers:
 
-Do not test Pi exit classification using only clean iterator exhaustion or direct
-`handle_stream_exit(None)` — that shape avoids the real precedence path where the
-generic process-exit failure arrives before stream exit.
+- `tests/support/pi.py`: `pi_process_exit_event(return_code)` builds Pi's canonical
+  close event, and `write_pi_bash_record(...)` supplies managed-bash disk evidence.
+- `tests/support/opencode.py`: `FakeOpenCodeProcess.exit(return_code)` makes backend
+  death observable while the OpenCode event iterator is still active.
+
+Add fidelity only for a real behavior under test. Do not pre-build alternate close,
+timeout, or reader-error scenarios without a contract they protect.

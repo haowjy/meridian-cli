@@ -18,6 +18,7 @@ from meridian.lib.harness.connections.base import (
     HarnessEvent,
 )
 from meridian.lib.harness.connections.opencode_http import OpenCodeConnection
+from meridian.lib.harness.semantics import terminal_outcome
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.platform.detached_process import ParentDeathLink
 from meridian.lib.platform.process_scope import ProcessScopeSnapshot, ScopedProcessHandle
@@ -27,26 +28,10 @@ from meridian.lib.safety.permissions import (
 from meridian.lib.state.paths import resolve_spawn_log_dir
 from tests.support.async_determinism import AsyncDeterminism
 from tests.support.fakes import FakeClock
+from tests.support.opencode import FakeOpenCodeProcess
 
 OPENCODE_ACTIVITY_IDLE_EVENT = "session.idle"
 OPENCODE_ACTIVITY_ERROR_EVENT = "session.error"
-
-
-class _FakeProcess:
-    def __init__(self) -> None:
-        self.pid = 9001
-        self.returncode: int | None = None
-
-    def terminate(self) -> None:
-        self.returncode = 0
-
-    def kill(self) -> None:
-        self.returncode = -9
-
-    async def wait(self) -> int:
-        if self.returncode is None:
-            self.returncode = 0
-        return self.returncode
 
 
 class _StartProbeOpenCodeConnection(OpenCodeConnection):
@@ -80,7 +65,7 @@ class _StartProbeOpenCodeConnection(OpenCodeConnection):
     async def _launch_process(self, config: ConnectionConfig, spec: ResolvedLaunchSpec) -> None:
         _ = config, spec
         self.startup_events.append("launch")
-        self._process = _FakeProcess()
+        self._process = FakeOpenCodeProcess()
 
     async def _wait_for_ready(self, *, timeout_seconds: float) -> None:
         if self._get_responses is not None:
@@ -143,17 +128,39 @@ class _SseResponse:
         self.closed = True
 
 
+class _ProcessDeathSseContent:
+    def __init__(self, process: FakeOpenCodeProcess, return_code: int) -> None:
+        self._process = process
+        self._return_code = return_code
+        self._sent_event = False
+
+    async def read(self, _size: int) -> bytes:
+        if not self._sent_event:
+            self._sent_event = True
+            return b'{"type":"session.updated","sessionID":"sess-liveness"}\n'
+        self._process.exit(self._return_code)
+        return b""
+
+
+class _ProcessDeathSseResponse:
+    def __init__(self, process: FakeOpenCodeProcess, return_code: int) -> None:
+        self.content = _ProcessDeathSseContent(process, return_code)
+
+    def close(self) -> None:
+        return None
+
+
 class _LivenessProbeOpenCodeConnection(OpenCodeConnection):
     def __init__(
         self,
-        responses: list[_SseResponse | Exception],
+        responses: list[_SseResponse | _ProcessDeathSseResponse | Exception],
         *,
         block_open: bool = False,
     ) -> None:
         super().__init__()
         self._state = "connected"
         self._session_id = "sess-liveness"
-        self._process = _FakeProcess()
+        self._process = FakeOpenCodeProcess()
         self._responses = iter(responses)
         self._block_open = block_open
         self.open_count = 0
@@ -233,6 +240,40 @@ async def test_opencode_events_fail_after_liveness_timeout_without_events(
     assert events == []
     assert connection.open_count > 1
     assert connection.state == "failed"
+
+
+@pytest.mark.asyncio
+async def test_opencode_process_death_emits_terminal_outcome_with_exit_diagnostics(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    process = FakeOpenCodeProcess()
+    response = _ProcessDeathSseResponse(process, return_code=17)
+    connection = _LivenessProbeOpenCodeConnection(responses=[response])
+    connection._process = process
+    connection._stderr_log_path = tmp_path / "stderr.log"
+    connection._stderr_log_path.write_text("fatal backend detail\n", encoding="utf-8")
+    connection._stderr_read_offset = 0
+
+    monkeypatch.setattr(OpenCodeConnection, "_EVENT_RETRY_DELAY_SECONDS", 0.0)
+
+    events = await _collect_opencode_events(connection)
+
+    assert [event.event_type for event in events] == [
+        "session.updated",
+        "error/connectionClosed",
+    ]
+    outcome = terminal_outcome(
+        events[-1],
+        primary_event_scope=connection.primary_event_scope,
+    )
+    assert outcome is not None
+    assert outcome.status == "failed"
+    assert outcome.error == (
+        "OpenCode subprocess exited with code 17.\n\n"
+        "OpenCode subprocess stderr:\n"
+        "fatal backend detail"
+    )
 
 
 @pytest.mark.asyncio
@@ -324,7 +365,7 @@ def test_opencode_health_fails_when_event_liveness_expires(
 ) -> None:
     connection = OpenCodeConnection()
     connection._state = "connected"
-    connection._process = _FakeProcess()
+    connection._process = FakeOpenCodeProcess()
     connection._last_health_ok = True
 
     monkeypatch.setattr(OpenCodeConnection, "_LIVENESS_TIMEOUT_SECONDS", 1.0)
@@ -432,7 +473,7 @@ async def test_opencode_launch_process_passes_env_overrides_to_managed_backend(
     spec = ResolvedLaunchSpec(
         permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
     )
-    fake_process = _FakeProcess()
+    fake_process = FakeOpenCodeProcess()
     captured: dict[str, object] = {}
 
     def _fake_inherit_child_env(
@@ -493,7 +534,7 @@ def _set_startup_failure(
     connection._stderr_log_path = spawn_dir / "stderr.log"
     connection._stderr_log_path.write_text(text, encoding="utf-8")
     connection._stderr_read_offset = 0
-    connection._process = _FakeProcess()
+    connection._process = FakeOpenCodeProcess()
     connection._process.returncode = 1
     connection._config = config
 
