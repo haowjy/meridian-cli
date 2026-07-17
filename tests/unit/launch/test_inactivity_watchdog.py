@@ -10,13 +10,8 @@ import pytest
 from meridian.lib.core.domain import Spawn
 from meridian.lib.core.types import HarnessId, ModelId, SpawnId
 from meridian.lib.harness.connections.base import ConnectionConfig, HarnessEvent
+from meridian.lib.launch import streaming_runner as _sr_mod
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
-from meridian.lib.launch.streaming_runner import (
-    StartupPhaseTimeout,
-    _inactivity_watchdog,
-    _run_streaming_attempt,
-    run_streaming_spawn,
-)
 from meridian.lib.safety.permissions import UnsafeNoOpPermissionResolver
 from meridian.lib.state.spawn.model import FOREGROUND_LAUNCH_MODE
 from meridian.lib.streaming.spawn_session import DrainOutcome
@@ -110,7 +105,7 @@ async def test_startup_watchdog_reports_phase_and_cancels_start(
         env_overrides={},
     )
 
-    attempt = await _run_streaming_attempt(
+    attempt = await _sr_mod._run_streaming_attempt(
         run=run,
         runtime_root=tmp_path,
         launch_mode=FOREGROUND_LAUNCH_MODE,
@@ -182,8 +177,8 @@ async def test_run_streaming_spawn_bounds_hanging_startup(
         control_root=tmp_path,
         env_overrides={},
     )
-    with pytest.raises(StartupPhaseTimeout, match=r"startup phase timeout after 0\.010s"):
-        await run_streaming_spawn(
+    with pytest.raises(_sr_mod.StartupPhaseTimeout, match=r"startup phase timeout after 0\.010s"):
+        await _sr_mod.run_streaming_spawn(
             config=config,
             spec=ResolvedLaunchSpec(
                 model="gpt-5.3-codex",
@@ -226,7 +221,7 @@ async def test_run_streaming_spawn_honors_explicit_startup_timeout_over_default(
 
     async def _capture_start_timeout(**kwargs: object) -> _FakeConnection:
         observed_timeout.append(float(kwargs["timeout_seconds"]))
-        raise StartupPhaseTimeout(float(kwargs["timeout_seconds"]))
+        raise _sr_mod.StartupPhaseTimeout(float(kwargs["timeout_seconds"]))
 
     monkeypatch.setattr(
         "meridian.lib.launch.streaming_runner.SpawnManager", TimeoutCapturingManager
@@ -247,10 +242,10 @@ async def test_run_streaming_spawn_honors_explicit_startup_timeout_over_default(
     spawn_id = SpawnId("p-explicit-startup-timeout")
     configured_seconds = 0.01
     with pytest.raises(
-        StartupPhaseTimeout,
+        _sr_mod.StartupPhaseTimeout,
         match=rf"startup phase timeout after {configured_seconds:.3f}s",
     ):
-        await run_streaming_spawn(
+        await _sr_mod.run_streaming_spawn(
             config=ConnectionConfig(
                 spawn_id=spawn_id,
                 harness_id=HarnessId.CODEX,
@@ -281,7 +276,7 @@ async def test_inactivity_watchdog_stops_stale_spawn() -> None:
     loop = asyncio.get_running_loop()
     last_event_at = [loop.time() - 1.0]
 
-    stopped = await _inactivity_watchdog(
+    stopped = await _sr_mod._inactivity_watchdog(
         last_event_at=last_event_at,
         completion_event=completion_event,
         manager=manager,
@@ -304,7 +299,7 @@ async def test_inactivity_watchdog_noop_when_completion_event_set_first() -> Non
     completion_event.set()
     last_event_at = [asyncio.get_running_loop().time() - 100.0]
 
-    stopped = await _inactivity_watchdog(
+    stopped = await _sr_mod._inactivity_watchdog(
         last_event_at=last_event_at,
         completion_event=completion_event,
         manager=manager,
@@ -336,7 +331,7 @@ async def test_inactivity_watchdog_noop_while_events_keep_arriving() -> None:
     refresh_task = asyncio.create_task(_refresh_activity())
     complete_task = asyncio.create_task(_complete_soon())
     try:
-        stopped = await _inactivity_watchdog(
+        stopped = await _sr_mod._inactivity_watchdog(
             last_event_at=last_event_at,
             completion_event=completion_event,
             manager=manager,
@@ -390,7 +385,7 @@ async def test_non_cursor_harness_skips_inactivity_watchdog(
         env_overrides={},
     )
 
-    await _run_streaming_attempt(
+    await _sr_mod._run_streaming_attempt(
         run=run,
         runtime_root=tmp_path,
         launch_mode=FOREGROUND_LAUNCH_MODE,
@@ -453,7 +448,7 @@ async def test_cursor_harness_arms_inactivity_watchdog(
         env_overrides={},
     )
 
-    await _run_streaming_attempt(
+    await _sr_mod._run_streaming_attempt(
         run=run,
         runtime_root=tmp_path,
         launch_mode=FOREGROUND_LAUNCH_MODE,
