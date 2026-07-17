@@ -34,4 +34,4 @@ The four helper functions (`trace_wire_recv`, `trace_wire_send`, `trace_state_ch
 - `../core/logging.py` — `configure_logging()` controls structlog (separate from tracer)
 
 → [.context/CONTEXT.md](.context/CONTEXT.md) — disable-on-failure contract, output routing, truncation limits
-→ [KB: codebase/observability.md](/home/jimyao/.meridian/git/meridian-flow-docs/kb/codebase/observability.md)
+→ KB: `$MERIDIAN_CONTEXT_KB_DIR/codebase/observability.md` (see `meridian context kb`)

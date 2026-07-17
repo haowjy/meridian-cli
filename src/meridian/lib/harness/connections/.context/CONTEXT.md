@@ -32,10 +32,8 @@ connection validates this (`_validate_initial_prompt_requirement()`) and enforce
 (`_FIRST_STDOUT_AFTER_INITIAL_PROMPT_TIMEOUT_SECONDS`).
 
 **`opencode_http.py` imports `OPENCODE_CONFIG_CONTENT_ENV` from
-`meridian.lib.launch.workspace_projection`** — a cross-layer dependency on `launch/`
-rather than `harness/`. This is intentional: `workspace_projection.py` was moved to
-`launch/` to break a circular bootstrap dependency. Connections modules may import
-shared constants from `launch/` when those constants live there by architecture necessity.
+`meridian.lib.launch.workspace_projection`** to preserve the required bootstrap
+dependency direction; see [launch context](../../../launch/.context/CONTEXT.md).
 
 ## Contracts
 

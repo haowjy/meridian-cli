@@ -180,5 +180,5 @@ See [.context/CONTEXT.md](.context/CONTEXT.md#why-user-turn-not-system-prompt) f
 
 - `../ops/spawn/AGENTS.md` — policy layer that drives this layer
 - `../harness/AGENTS.md` — mechanism layer this calls for `project_content()`, `build_launch_argv()`
-- KB `architecture/launch-system.md` — full four-adapter diagram
+- KB `architecture/launch-system.md` — launch adapter architecture
 - KB `concepts/spawn-lifecycle.md` — spawn status machine, crash recovery

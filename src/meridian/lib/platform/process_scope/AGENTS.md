@@ -64,4 +64,4 @@ POSIX orphan sweep (PROC-004), Windows handle threading status, fallback snapsho
 
 ## Related
 
-- KB: [architecture/process-scope.md](/home/jimyao/.meridian/git/meridian-flow-docs/kb/architecture/process-scope.md)
+- KB: `$MERIDIAN_CONTEXT_KB_DIR/architecture/process-scope.md` (see `meridian context kb`)

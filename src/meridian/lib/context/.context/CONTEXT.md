@@ -10,7 +10,7 @@ other named context directories.
 
 `_resolve_path()` supports two placeholders:
 
-- `{project}` — replaced by the project's stable ID (from `.meridian/project_id`).
+- `{project}` — replaced by the project's stable ID (from `.meridian/id`).
   Returns `None` if `{project}` is present but no project ID is available (fresh
   project). Callers must handle `None` — `resolve_context_paths()` falls back to
   `.meridian/work` or `.meridian/kb`.
@@ -63,4 +63,4 @@ includes paths even when env vars are already set.
 
 ## Related KB
 
-- [KB: Context Resolution](../../../../../../../../.meridian/git/meridian-flow-docs/kb/concepts/context-resolution.md) — cross-cutting context design
+- `$MERIDIAN_CONTEXT_KB_DIR/concepts/context-resolution.md` — cross-cutting context design (see `meridian context kb`)

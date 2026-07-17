@@ -30,17 +30,13 @@ can move or be renamed without losing runtime history.
 
 Work items live under the `[context.work]` root (default
 `{user_home}/context/<id>/work/<slug>/`), resolved by `work_scope.py` /
-`work_store.py` — **never** the project repo. The legacy
-`.meridian/work-items/<slug>.json` layout is gone; see `docs/configuration.md`
-for context-path resolution.
+`work_store.py` — **never** the project repo. See `docs/configuration.md` for
+context-path resolution.
 
 ## Spawn State: V2 Per-Spawn Files
 
 Spawn state lives in individual `state.json` files (`spawns/<id>/state.json`),
-not a global event log. The legacy `spawns.jsonl` grew to 189 MB / 35,000 events;
-every status read was O(n) replay. Per-spawn `state.json` makes reads O(1). All
-active installations use v2 — the global log path still exists in `RuntimePaths`
-but is unused.
+not a global event log, so status reads stay O(1) instead of replaying O(n) events.
 
 ## Two Write Tiers
 
@@ -82,18 +78,16 @@ Use the correct resolver — they have different side effects:
 Using `*_for_write()` on a read path creates `.meridian/id` in untouched checkouts,
 triggering project setup side effects in CI.
 
-## Reaper Behavior
+## Reconciliation Behavior
 
-`reaper.py:reap_spawns()` runs on every read path but only at root depth
-(`MERIDIAN_DEPTH` absent or `"0"`). Nested processes skip reaping — no side effects.
+`reaper.py:reconcile_spawns()` gives list, stats, reference, and dashboard callers
+a read-only projection of stale active rows. It may return an in-memory terminal
+status but never persists state or terminates processes, and it is safe at any depth.
 
-Liveness sequence per active spawn:
-1. Skip if already terminal.
-2. Skip if heartbeat age < 120s.
-3. `finalizing` with durable report → mark succeeded.
-4. `finalizing` without durable report or recorded runner terminal tuple → mark failed (`orphan_finalization`).
-5. `running`/`queued` with dead PID (checked with start-time reuse guard) → mark failed (`orphan_run`).
-6. Timeouts are terminal `timed_out`, a failure class distinct from generic `failed`.
+`reconcile_active_spawn()` is the side-effectful repair path. It runs from doctor
+background repair, fails closed outside root depth, cleans recorded orphan process
+scopes, and persists the terminal outcome through the locked external-writer path.
+Both paths share the liveness and completion decision rules in `reaper.py`.
 
 ## Entry Points
 
@@ -102,7 +96,8 @@ Liveness sequence per active spawn:
 - `spawn_store.py` — `SpawnStore`. Main interface for listing, creating, updating spawns.
 - `session_store.py` — Session event log.
 - `atomic.py` — atomic write primitives. All state writes use these.
-- `reaper.py` — `reap_spawns()`. Orphan detection on read paths.
+- `reaper.py` — read-only `reconcile_spawns()` projection and root-only
+  `reconcile_active_spawn()` repair.
 
 ## Spawn Subpackage
 
@@ -127,8 +122,8 @@ It handles `MERIDIAN_HOME`, Windows `%LOCALAPPDATA%`, and POSIX `~` correctly.
 
 ## Depth
 
-→ [.context/CONTEXT.md](.context/CONTEXT.md) — full dual-root layout, v2 state format,
-   monotonic ID generation, terminal write authority lattice, work item crash-safe rename.
+→ [.context/CONTEXT.md](.context/CONTEXT.md) — full dual-root layout, per-spawn state,
+   monotonic ID generation, terminal write authority lattice, and worktree metadata.
 
 ## Related
 

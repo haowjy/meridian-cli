@@ -63,7 +63,7 @@ the distinction is whether Meridian controls the turn or just observes.
 
 ## Related
 
-- [../.context/CONTEXT.md](../.context/CONTEXT.md) — launch/ layer; four driving adapters;
+- [../.context/CONTEXT.md](../.context/CONTEXT.md) — launch/ layer; three driving adapters;
   invariants I-1 through I-13.
 - [../streaming/.context/CONTEXT.md](../streaming/.context/CONTEXT.md) — streaming spawn
   path; sibling to this package.

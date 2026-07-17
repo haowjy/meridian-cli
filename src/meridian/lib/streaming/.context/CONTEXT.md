@@ -109,12 +109,11 @@ The subscriber queue (`maxsize=1000`) drops non-sentinel events on `QueueFull`
 with telemetry. The terminal `None` sentinel is **never dropped** — on full queue,
 the implementation evicts one item to force the sentinel through.
 
-### SpawnManager Singleton Pattern
+### SpawnManager Lifetime
 
-One `SpawnManager` lives for the app server lifetime. Spawn CLI paths create a
-short-lived instance per run. Do not share manager instances between runs — the
-session dict is not concurrency-safe across multiple concurrent `start_spawn` calls
-from different event loops.
+Each streaming run creates a short-lived `SpawnManager`. Do not share manager
+instances between runs — the session dict is not concurrency-safe across multiple
+concurrent `start_spawn` calls from different event loops.
 
 ### Terminal Publication and Recovery
 

@@ -72,7 +72,7 @@ not as a harmless absence.
 
 **Don't create spawn rows before calling `build_launch_context()` on new code paths.**
 The existing subprocess path does this (known gap); don't replicate the pattern. New
-paths should use resolve-before-persist (REST/streaming model).
+paths should use the resolve-before-persist streaming-serve model.
 
 **Don't set `LaunchArgvIntent.REQUIRED` on execution paths.** Only `prepare.py` gets
 a real argv — execution paths use `SPEC_ONLY`.

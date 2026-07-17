@@ -49,4 +49,4 @@ for ops/launch/harness modules, `logging.getLogger(__name__)` for catalog/config
 
 ## Related KB
 
-→ [KB: codebase/observability.md](/home/jimyao/.meridian/git/meridian-flow-docs/kb/codebase/observability.md)
+→ KB: `$MERIDIAN_CONTEXT_KB_DIR/codebase/observability.md` (see `meridian context kb`)

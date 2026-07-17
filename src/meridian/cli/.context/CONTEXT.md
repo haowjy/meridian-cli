@@ -51,14 +51,13 @@ Four independent mechanisms reduce startup latency:
 4. **Heavy module deferral** — `primary_launch` and `mars_passthrough` imported
    inside handler functions, not at module scope.
 
-**Measured impact:** `main.py` module-import time 460ms → 156ms; root
-`--help` latency 140ms → 54ms.
+Together these mechanisms keep startup and help paths from importing command
+implementations they do not need.
 
 ## Help Profile Selection
 
 Human vs agent mode selects a `HelpProfile` at app-build time from the
-command catalog — no runtime mutation of shared `App` objects. Do not call
-`apply_agent_help_supplements()` (archived pattern).
+command catalog — no runtime mutation of shared `App` objects.
 
 ## Project Root Resolution
 
@@ -96,16 +95,8 @@ This flag belongs on creation/bootstrap commands (`meridian`, `spawn create`,
   established. Used by config/inspection commands that degrade gracefully.
 - `exit_no_established_project()` — the single CLI-edge `SystemExit(1)`.
 
-### Footgun killed
-
-Before #338, `require_established_project_root()` raised `SystemExit` (a
-`BaseException`) directly. `maybe_bootstrap_runtime_state()` in `bootstrap.py`
-wrapped bootstrap in `except Exception`, which silently swallowed the
-`SystemExit` — causing confusing downstream crashes instead of the intended
-"No Meridian project found" message.
-
-The fix: `resolve_cli_project_root()` never raises. The no-project exit is an
-explicit decision *outside* the `except Exception` guard.
+`resolve_cli_project_root()` never raises. The no-project exit is an explicit
+decision outside any `except Exception` guard.
 
 ## `to_cli_output()` Dispatch
 
@@ -124,10 +115,8 @@ the small protocol to produce its wire-shaped output.
 - **Bare `meridian init`** (no flags) → calls `config_init_sync` directly to
   bootstrap the project config only.
 
-There is no passthrough path in this command. `resolve_init_link_mars_command`
-was deleted when `init_ops` took over the `--link` case — do not recreate it.
-Auto-link is the default behavior; there are no confirmation prompts in the init
-flow, so `--yes` has no meaning here and was removed.
+There is no passthrough path in this command; do not add one. Auto-link is the
+default behavior, and the init flow has no confirmation prompts or `--yes` option.
 
 ## Session Initiation Argument Handling
 
@@ -220,10 +209,12 @@ argv
 
 ## Related KB
 
-→ [concepts/session-initiation.md](../../../../../../../.meridian/git/haowjy-meridian-cli-kb/kb/concepts/session-initiation.md) — four-mode session initiation semantics, identity lock, bare flag inference, and `--from` placement
-→ [decisions/launch.md](../../../../../../../.meridian/git/haowjy-meridian-cli-kb/kb/decisions/launch.md) — rationale for the launch-mode split and argv normalization
+KB lives at `$MERIDIAN_CONTEXT_KB_DIR` (see `meridian context kb`):
 
-## Spawn Output Mode Changes (spawn-return-report)
+- `$MERIDIAN_CONTEXT_KB_DIR/concepts/session-initiation.md` — four-mode session initiation semantics, identity lock, bare flag inference, and `--from` placement
+- `$MERIDIAN_CONTEXT_KB_DIR/decisions/launch.md` — rationale for the launch-mode split and argv normalization
+
+## Spawn Output Contract
 
 ### Catalog default_output_mode for spawn
 
@@ -233,7 +224,7 @@ Rule: if you add a new spawn subcommand, default to `"json"` unless it surfaces 
 
 ### `--metadata` flag
 
-Added to `_spawn_create` and `_spawn_wait` handlers. In text mode, shows detailed inline accounting (model, harness, exit code, duration, cost, tokens, report path) while still including report body and transcript pointer.
+`_spawn_create` and `_spawn_wait` accept `--metadata`. In text mode it shows detailed inline accounting (model, harness, exit code, duration, cost, tokens, report path) while still including report body and transcript pointer.
 
 Pattern: compact default → `--metadata` inline accounting → `spawn show` full record.
 

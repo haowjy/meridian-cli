@@ -74,4 +74,4 @@ RuntimeWriteContext(RuntimeReadContext)
 - `../lib/ops/runtime.py` — `RuntimeAuthoritySnapshot`
 
 → [.context/CONTEXT.md](.context/CONTEXT.md) — resolve/ensure split detail, context hierarchy, entrypoint shapes, post-parse bootstrap pattern
-→ [KB: architecture/startup-pipeline.md](/home/jimyao/.meridian/git/meridian-flow-docs/kb/architecture/startup-pipeline.md)
+→ KB: `$MERIDIAN_CONTEXT_KB_DIR/architecture/startup-pipeline.md` (see `meridian context kb`)

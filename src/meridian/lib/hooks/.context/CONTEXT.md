@@ -69,4 +69,4 @@ Within an event, hooks are sorted by:
 
 ## Related KB
 
-→ [KB: concepts/hooks-and-plugins.md](/home/jimyao/.meridian/git/meridian-flow-docs/kb/concepts/hooks-and-plugins.md)
+→ KB: `$MERIDIAN_CONTEXT_KB_DIR/concepts/hooks-and-plugins.md` (see `meridian context kb`)

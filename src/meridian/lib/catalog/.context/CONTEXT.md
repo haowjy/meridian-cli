@@ -107,4 +107,4 @@ aliases resolve correctly from the file; auto-resolve aliases are skipped.
 
 ## Related KB
 
-- [KB: Model Resolution](../../../../../../../../.meridian/git/meridian-flow-docs/kb/concepts/model-resolution/overview.md) — full resolution pipeline design
+- `$MERIDIAN_CONTEXT_KB_DIR/concepts/model-resolution/overview.md` — full resolution pipeline design (see `meridian context kb`)

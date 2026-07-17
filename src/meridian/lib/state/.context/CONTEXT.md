@@ -10,8 +10,6 @@ State splits across two roots:
 .meridian/                          ← repo-local, committed scaffolding
   id                                — project UUID / three-word ID
   id.lock                           — exclusive lock for UUID generation
-  work-items/<slug>.json            — mutable JSON per work item
-  work-items.rename.intent.json     — crash-safe rename intent (transient)
 
 ~/.meridian/projects/<id>/          ← user runtime, never committed
   sessions.jsonl                    — all session events, append-only
@@ -21,7 +19,6 @@ State splits across two roots:
   spawn-id-counter                  — monotonic p1, p2, …
   spawns/
     .staging/<unique>/              — complete unpublished spawn row
-    v2-format.json                  — v2 migration marker
     <id>/
       state.json                    — authoritative spawn state (v2)
       state.lock                    — per-spawn exclusive lock for external writers
@@ -31,8 +28,10 @@ State splits across two roots:
       inbound.jsonl                 — injected user messages
       control.sock                  — active-session control socket
   artifacts/                        — LocalStore blob store
-  worktree-temp/                    — session-scoped temporary worktree records
-    <safe-key>.json                 — TemporaryWorktreeRecord per session context
+
+<context.work root>/<slug>/         ← context-resolved, not repo-local
+  __status.json                     — mutable per-work-item metadata
+  prompts/ handoffs/ …              — work artifacts
 ```
 
 The project ID in `.meridian/id` is the key that maps to
@@ -41,16 +40,8 @@ runtime history.
 
 ### Spawn State: V2 Per-Spawn Files
 
-Since 2026-05, spawn state lives in individual `state.json` files under
-`spawns/<id>/`, not a global `spawns.jsonl` event log.
-
-Why: the global log had grown to 189 MB / 35,000 events. Every status read was
-O(n) replay of the entire file. Primary launch had degraded to 12–13 seconds.
-Per-spawn `state.json` makes reads O(1). After migration: 0.67s launch time.
-
-Migration from the legacy global `spawns.jsonl` to per-spawn `state.json` is complete.
-All active installations use v2. The `spawns.jsonl` path still exists in `RuntimePaths`
-as a field but is unused by the spawn store.
+Spawn state lives in individual `spawns/<id>/state.json` files so status reads are
+O(1) instead of replaying an O(n) global event log.
 
 ### Session State
 
@@ -137,25 +128,22 @@ on the same spawn. Terminal statuses are `succeeded`, `failed`, `cancelled`, and
 `failed`. The reaper checks authority before finalizing — it will not overwrite a
 spawn that the runner already terminated with a higher-authority origin.
 
-### Reaper Behavior
+### Reconciliation Behavior
 
-`reaper.py:reap_spawns()` runs on every read path (list, show, wait, dashboard) but
-only when `MERIDIAN_DEPTH` is absent, empty, or `"0"`. Nested processes and
-malformed depth values fail closed (no reap side effects).
+`reaper.py:reconcile_spawns()` is a read-only batch projection used by list, stats,
+reference-discovery, and dashboard callers. For each active row it calls
+`peek_reconciled_active_spawn()`, which may return an in-memory terminal view but
+does not persist state, terminate process scopes, or check process depth.
 
-Liveness check sequence per active spawn:
-1. Skip if status is already terminal.
-2. Skip if not a root-side-effect process (`is_root_side_effect_process()`).
-3. Skip if heartbeat age < 120s (recently alive).
-4. If status = `finalizing`: prefer durable report / cancel precedence and recorded
-   `runner_exit_status`; if neither proves a terminal outcome and activity is stale,
-   mark failed (`orphan_finalization`).
-5. If `runner_exit_status` is already recorded outside `finalizing`, preserve the
-   runner's terminal tuple after the short post-runner-exit grace.
-6. If status = `running` or `queued`: check if `runner_pid` is alive (using
-   `liveness.py:is_process_alive()` with PID reuse guard via recorded start time).
-   If dead, check completion/cancel precedence, recent activity, startup grace, and
-   finally mark failed (`orphan_run` or `missing_runner_pid`).
+`reconcile_active_spawn()` is the mutating repair operation used by doctor orphan-run
+repair. It fails closed unless `is_root_side_effect_process()` is true, applies the
+same reconciliation decision rules, cleans recorded orphan scopes, and persists a
+terminal result through the locked external-writer path.
+
+Shared liveness decisions skip recent activity and live runner PIDs; prefer durable
+report completion, cancel precedence, and recorded runner terminal tuples; and
+otherwise classify stale active rows as orphan failures after startup/finalization
+grace periods. PID checks use the recorded creation time to guard against reuse.
 
 `spawn_report_has_durable_completion(runtime_root, spawn_id)` reads `report.md` and returns True
 for non-empty report content that is not a terminal control frame (`cancelled`/`error`
@@ -165,9 +153,8 @@ and cancel convergence paths.
 `_completion_or_cancel_decision()` centralizes durable-completion-vs-cancel precedence
 for the reaper: if a durable report exists, the spawn resolves `succeeded` regardless
 of cancel intent; otherwise pending cancel intent resolves `cancelled` with the intent's
-exit code and error. This replaces the earlier pattern of returning
-`FinalizeSucceededFromReport` or `_finalize_from_cancel_intent_decision()` directly —
-violating the rule can let a late cancel downgrade a completed spawn.
+exit code and error. Call this helper rather than branching on completion and cancel
+independently; a late cancel must not downgrade a completed spawn.
 
 **Managed-primary orphan cleanup:**
 
@@ -202,50 +189,15 @@ Thread-local reentrancy: a thread that already holds the lock can re-enter on th
 same path without deadlocking. Do not use `threading.Lock` or `fcntl` directly —
 the platform module handles both OS and thread-reentrancy.
 
-### Work Item Store Pattern
+`work_scope.py` resolves each work directory; `work_store.py` stores its mutable
+metadata atomically in `<context.work root>/<slug>/__status.json`.
 
-Work items use a different pattern from spawns: **one mutable JSON file per item**
-under `work-items/<slug>.json`. Mutable JSON is appropriate here because work items
-are correlated with a directory that moves on rename — event-sourcing would add
-complexity without benefit.
+### WorktreeMetadata
 
-Rename is crash-safe: `work-items.rename.intent.json` is written before any rename
-begins. Leftover intent is replayed on startup/reconciliation.
-
-### Temporary Worktree Store Pattern
-
-`temp_worktree_store.py` stores session-scoped managed worktree records keyed by
-spawn_id or chat_id. Path: `~/.meridian/projects/<uuid>/worktree-temp/<safe-key>.json`.
-
-`TemporaryWorktreeRecord` fields: key, repo_path, worktree_name, worktree_path, branch,
-status (pending|ready), managed, updated_at. Status field supports crash recovery:
-`pending` means provisioning was interrupted; `ready` means available.
-`get_temporary_worktree_status()` in `ops/worktree_ensure.py` heals pending-but-dir-exists
-records by updating status to ready.
-
-API: `get_temporary_worktree()`, `put_temporary_worktree()`, `clear_temporary_worktree()`.
-All writes use `atomic_write_text()`.
-
-### WorktreeMetadata: Path Assignment vs Managed Ownership
-
-`WorktreeMetadata` in `work_store.py` separates **path assignment** from **managed
-git-worktree ownership** via the `managed` flag:
-
-- **`managed=True`**: worktree was provisioned by `work start` through
-  `provision_for_start()`. The lifecycle layer (`ops/worktree_lifecycle.py`) owns
-  cleanup on done/delete, rename, and restore on reopen.
-- **`managed=False`**: path was set manually via `work set-worktree`. Lifecycle
-  operations skip it — `cleanup_for_done()`, `cleanup_for_delete()`, and
-  `rename_worktree()` all return `skipped_manual` for unmanaged worktrees.
-
-This separation prevents destructive lifecycle operations from removing or moving
-directories that the user explicitly pointed a work item at. Shared worktree
-references (multiple items referencing the same path) also block cleanup via the
-`shared_with` guard in `cleanup_for_done()` and `cleanup_for_delete()`.
-
-The `pending` flag supports crash recovery: set before `git worktree add`, cleared
-after. `recover_pending()` in `worktree_lifecycle.py` heals or clears interrupted
-provisions.
+`WorktreeMetadata` in `work_store.py` preserves path, branch, repository, name,
+pending, and managed fields in work-item status. Current code reads the path and
+pending flag for dashboard display but does not provision, rename, or clean up git
+worktrees. Archiving or reopening a work item clears `pending`.
 
 **Path separator normalization**: `WorktreeMetadata.path` and `.repo_path` normalize
 backslash separators to POSIX (forward slash) at the Pydantic validation boundary via
@@ -281,7 +233,7 @@ later individual mutations creates unnecessary contention. Use `write_state_lock
 > KB lives at `$MERIDIAN_CONTEXT_KB_DIR` (see `meridian context kb`).
 
 - `$MERIDIAN_CONTEXT_KB_DIR/architecture/state-system.md` — full dual-root layout,
-  v2 migration rationale, session state, work item store, read vs write resolution
+  per-spawn state, session state, work item storage, and read vs write resolution
 - `$MERIDIAN_CONTEXT_KB_DIR/architecture/spawn-finalization.md` — terminal write
   authority lattice, how finalization interacts with the reaper
 ## Related .context/

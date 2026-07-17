@@ -82,5 +82,5 @@ primary CLI's prepare-once/bind-twice optimization path.
 
 ## Lateral Links
 
-→ [../../.context/CONTEXT.md](../../.context/CONTEXT.md) — composition seam, four driving adapters, invariants I-1/I-4/I-10
+→ [../../.context/CONTEXT.md](../../.context/CONTEXT.md) — composition seam, three driving adapters, invariants I-1/I-4/I-10
 → [../../streaming/.context/CONTEXT.md](../../streaming/.context/CONTEXT.md) — streaming spawn execution (sibling path)

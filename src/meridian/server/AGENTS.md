@@ -8,7 +8,8 @@ The server exposes two MCP tools:
 - `extension_list_commands` — lists available extension commands
 - `extension_invoke` — invokes a command by fqid
 
-Invocations route through the same `ExtensionCommandDispatcher` used by CLI and HTTP. Surface checks in the dispatcher enforce what's callable via MCP.
+Invocations route through the same `ExtensionCommandDispatcher` used by CLI.
+Surface checks in the dispatcher enforce what's callable via MCP.
 
 ## Key Behaviors
 

@@ -108,7 +108,7 @@ the **only** execution path that builds a real argv — used for `--dry-run` dis
 `cli_command` in `SpawnActionOutput`. All actual execution paths use `SPEC_ONLY`. Do not add
 `REQUIRED` elsewhere.
 
-## Compose-once handoff (foreground + REST)
+## Compose-once handoff (foreground + streaming-serve)
 
 `prepare.py` returns `SpawnCreateArtifacts(request, prepared)` after `compose_spawn_launch_surface`.
 Blocking CLI execute passes `prepared` into `launch_prepared_spawn` for **bind-only** when session/fork
@@ -116,8 +116,9 @@ did not change policy inputs (`_spawn_request_needs_recompose`). Full re-compose
 mutation. Dry-run create uses `dry_run=True` on compose; real spawns use `dry_run=False` (not CLI
 `--dry-run` alone).
 
-REST `SpawnApplicationService.prepare` composes once, reserves `spawn_id`, then bind-only with final
-`MERIDIAN_SPAWN_ID` overrides. `streaming_serve` reuses `PreparedSpawn.launch_context` — no third compose.
+`SpawnApplicationService.prepare_spawn()` composes once for streaming-serve,
+reserves `spawn_id`, then binds with final `MERIDIAN_SPAWN_ID` overrides.
+`streaming_serve` reuses `PreparedSpawn.launch_context` — no third compose.
 
 ## Background Spawn Trust Model (Phase 3A)
 

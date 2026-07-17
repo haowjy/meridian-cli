@@ -38,4 +38,4 @@ The `style/` submodule is a separate concern from syntax validation. It checks s
 
 ## Related KB
 
-→ [KB: codebase/tools.md](/home/jimyao/.meridian/git/meridian-flow-docs/kb/codebase/tools.md)
+→ KB: `$MERIDIAN_CONTEXT_KB_DIR/codebase/tools.md` (see `meridian context kb`)

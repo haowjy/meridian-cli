@@ -90,7 +90,3 @@ The dependency graph must remain:
 
 Do not add direct top-level imports between these modules and `harness.*` or `launch.*`.
 The lazy import in `extract_cost_usd_from_json_line` is load-bearing.
-
-## Related KB
-
-- [KB: Safety Subsystem](../../../../../../../../.meridian/git/meridian-flow-docs/kb/codebase/safety-subsystem.md) — cross-cutting safety design

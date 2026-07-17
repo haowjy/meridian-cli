@@ -6,7 +6,7 @@ their work.
 
 ## Layered Architecture
 
-The package is structured in concentric layers. Surfaces (CLI, MCP server, REST)
+The package is structured in concentric layers. Active surfaces (CLI and MCP server)
 call into policy (`ops/`), which drives mechanism (`launch/`, `harness/`),
 which reads/writes state (`state/`). Data flows inward; nothing from mechanism
 calls back into surfaces.
@@ -49,7 +49,7 @@ config entry. If adding a feature requires editing 10 files, the abstraction is 
 |---|---|
 | `lib/ops/` | Policy: spawn lifecycle, session, work, config operations |
 | `lib/launch/` | Composition seam: `SpawnRequest` → `LaunchContext` → process |
-| `lib/harness/` | Per-harness adapters: Claude, Codex, OpenCode |
+| `lib/harness/` | Per-harness adapters: Claude, Codex, Cursor, OpenCode, Pi |
 | `lib/state/` | All disk I/O: spawn store, session store, atomic writes |
 | `lib/core/` | Domain types, spawn lifecycle state machine |
 | `lib/platform/` | OS abstractions: locking, process scope, signals |
@@ -62,12 +62,13 @@ config entry. If adding a feature requires editing 10 files, the abstraction is 
 | `lib/hooks/` | Hook dispatch, config layering, built-in hooks |
 | `lib/extensions/` | Extension command registry |
 | `lib/artifact/` | Detached static-artifact serving over Tailscale (`artifact serve/list/stop/gc`); no daemon — file is authority |
-
 | `lib/observability/` | Spawn-scoped JSONL tracing |
-| `lib/mermaid/` | Mermaid diagram validation |
-| `lib/kg/` | Markdown link checking |
+| `lib/telemetry/` | Process telemetry routing, sinks, lifecycle correlation, and retention |
+| `lib/mermaid/` | Mermaid syntax validation and style checks |
+| `lib/kg/` | KB document-graph analysis (links, conflicts, flags) |
 | `lib/bootstrap/` | Startup preparation stages |
 | `lib/markdown/` | Markdown parsing utilities |
+| `lib/utils/` | Dependency-free shared utility helpers |
 
 ## Entry Points
 
