@@ -101,7 +101,7 @@ def _session_discovery_result_from_session_files(
         return PiSessionDiscoveryResult(
             session_id=None,
             discovery="never_created",
-            detail=f"session_dir_missing: {root}",
+            detail=f"session_dir_missing: {root.as_posix()}",
         )
 
     session_files = list(root.glob("*.jsonl"))
@@ -109,7 +109,7 @@ def _session_discovery_result_from_session_files(
         return PiSessionDiscoveryResult(
             session_id=None,
             discovery="never_created",
-            detail=f"no_session_files_in_dir: {root}",
+            detail=f"no_session_files_in_dir: {root.as_posix()}",
         )
 
     candidates: list[tuple[float, str]] = []
@@ -120,7 +120,7 @@ def _session_discovery_result_from_session_files(
         return PiSessionDiscoveryResult(
             session_id=None,
             discovery="discovery_failed",
-            detail=f"no_matching_session: cwd={child_cwd} after={no_match_after}",
+            detail=f"no_matching_session: cwd={child_cwd.as_posix()} after={no_match_after}",
         )
 
     recent_threshold = started_at_epoch - 2.0 if started_at_epoch is not None else None

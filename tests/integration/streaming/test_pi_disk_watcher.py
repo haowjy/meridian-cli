@@ -34,7 +34,7 @@ async def test_hard_private_work_read_error_surfaces_typed_failure(tmp_path: Pat
 
         assert failure == EvidenceFailure(
             code="pi_private_work_read_failed",
-            detail=f"{records_path}: invalid JSON",
+            detail=f"{records_path.as_posix()}: invalid JSON",
         )
 
         _write_json(records_path, {"records": {}})
@@ -70,7 +70,7 @@ async def test_invalid_utf8_surfaces_typed_failure(tmp_path: Path) -> None:
         assert failure is not None
         assert failure.code == "pi_private_work_read_failed"
         assert failure.detail is not None
-        assert str(records_path) in failure.detail
+        assert records_path.as_posix() in failure.detail
     finally:
         await watcher.stop()
 
