@@ -17,28 +17,28 @@ type LockMode = Literal["exclusive", "shared"]
 type _HeldLock = tuple[IO[bytes], int, LockMode]
 
 _THREAD_LOCAL = threading.local()
-_PROCESS_LOCK_HANDLES: set[IO[bytes]] = set()
-_PROCESS_LOCK_HANDLES_GUARD = threading.Lock()
+_process_lock_handles: set[IO[bytes]] = set()
+_process_lock_handles_guard = threading.Lock()
 _LOCK_POLL_INTERVAL_SECONDS = 0.05
 
 
 def _prepare_lock_registry_for_fork() -> None:
-    _PROCESS_LOCK_HANDLES_GUARD.acquire()
+    _process_lock_handles_guard.acquire()
 
 
 def _restore_lock_registry_after_fork() -> None:
-    _PROCESS_LOCK_HANDLES_GUARD.release()
+    _process_lock_handles_guard.release()
 
 
 def _clear_reentrant_registry_after_fork() -> None:
     """Close inherited lock descriptors without unlocking the parent's locks."""
 
-    global _PROCESS_LOCK_HANDLES, _PROCESS_LOCK_HANDLES_GUARD
+    global _process_lock_handles, _process_lock_handles_guard
 
     _THREAD_LOCAL.held = {}
-    inherited_handles = _PROCESS_LOCK_HANDLES
-    _PROCESS_LOCK_HANDLES = set()
-    _PROCESS_LOCK_HANDLES_GUARD = threading.Lock()
+    inherited_handles = _process_lock_handles
+    _process_lock_handles = set()
+    _process_lock_handles_guard = threading.Lock()
     for handle in inherited_handles:
         with suppress(OSError):
             handle.close()
@@ -53,15 +53,15 @@ if not IS_WINDOWS and hasattr(os, "register_at_fork"):
 
 
 def _track_process_lock_handle(handle: IO[bytes]) -> None:
-    with _PROCESS_LOCK_HANDLES_GUARD:
-        _PROCESS_LOCK_HANDLES.add(handle)
+    with _process_lock_handles_guard:
+        _process_lock_handles.add(handle)
 
 
 def _forget_process_lock_handle(handle: IO[bytes]) -> bool:
-    with _PROCESS_LOCK_HANDLES_GUARD:
-        if handle not in _PROCESS_LOCK_HANDLES:
+    with _process_lock_handles_guard:
+        if handle not in _process_lock_handles:
             return False
-        _PROCESS_LOCK_HANDLES.remove(handle)
+        _process_lock_handles.remove(handle)
         return True
 
 
