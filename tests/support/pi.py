@@ -308,6 +308,9 @@ async def start_pi_manager(
 ) -> SpawnManager:
     """Start a SpawnManager around one scripted Pi connection."""
 
+    if spawn_store.get_spawn(runtime_root, spawn_id) is None:
+        start_row(runtime_root, str(spawn_id), HarnessId.PI, None)
+
     async def start_connection(
         config: ConnectionConfig, spec: ResolvedLaunchSpec
     ) -> HarnessConnection[ResolvedLaunchSpec]:
