@@ -249,6 +249,32 @@ def test_cleanup_stale_primary_session_with_dead_pid_is_cleaned(
     assert stop_rows[0]["session_instance_id"] == session_generation
 
 
+def test_cleanup_stale_sessions_releases_handles_when_event_append_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runtime_root = _state_root(tmp_path)
+    chat_id = "c-cleanup-fault"
+    _write_session_start(
+        runtime_root=runtime_root,
+        chat_id=chat_id,
+        session_instance_id="fault-generation",
+    )
+    lock_path = runtime_root / "sessions" / f"{chat_id}.lock"
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    lock_path.touch()
+
+    def fail_append(*_args: object, **_kwargs: object) -> None:
+        raise RuntimeError("injected append failure")
+
+    monkeypatch.setattr(session_store, "append_event", fail_append)
+
+    with pytest.raises(RuntimeError, match="injected append failure"):
+        session_store.cleanup_stale_sessions(runtime_root)
+
+    with session_store.lock_file(lock_path, timeout=0, reentrant=False):
+        pass
+
+
 def test_cleanup_cannot_delete_concurrently_restarted_session(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
