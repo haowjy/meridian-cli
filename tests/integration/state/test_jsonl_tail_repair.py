@@ -1,13 +1,19 @@
 from __future__ import annotations
 
 import json
+import os
+import stat
 from pathlib import Path
 
 import pytest
 
 from meridian.lib.harness.control_action import ControlActionCoordinator, ControlActionType
 from meridian.lib.harness.permission_broker import PermissionBroker
-from meridian.lib.state.atomic import append_durable_jsonl_line
+from meridian.lib.state.atomic import (
+    _jsonl_tail_needs_repair,
+    append_durable_jsonl_line,
+    repair_jsonl_tail,
+)
 
 
 def test_permission_journal_repairs_torn_tail_before_append(tmp_path: Path) -> None:
@@ -130,3 +136,60 @@ def test_append_durable_jsonl_line_preserves_complete_row_missing_newline(tmp_pa
 
     rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
     assert rows == [{"id": 1, "kind": "complete"}, {"id": 2, "kind": "new"}]
+
+
+def test_jsonl_tail_needs_repair_is_false_for_clean_tail(tmp_path: Path) -> None:
+    path = tmp_path / "journal.jsonl"
+    path.write_bytes(b'{"id":1,"kind":"x"}\n')
+
+    assert _jsonl_tail_needs_repair(path) is False
+
+
+def test_jsonl_tail_needs_repair_is_false_for_missing_file(tmp_path: Path) -> None:
+    path = tmp_path / "journal.jsonl"
+
+    assert _jsonl_tail_needs_repair(path) is False
+
+
+def test_append_durable_jsonl_line_avoids_full_read_on_clean_tail(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = tmp_path / "journal.jsonl"
+    row = b'{"id":1,"kind":"x"}\n'
+    path.write_bytes(row * 100_000)
+
+    read_calls = 0
+    original_read_bytes = Path.read_bytes
+
+    def counting_read_bytes(self: Path) -> bytes:
+        nonlocal read_calls
+        if self == path:
+            read_calls += 1
+        return original_read_bytes(self)
+
+    monkeypatch.setattr(Path, "read_bytes", counting_read_bytes)
+
+    append_durable_jsonl_line(path, '{"id":2,"kind":"y"}\n')
+
+    assert read_calls == 0
+
+
+def test_repair_jsonl_tail_preserves_existing_permissions(tmp_path: Path) -> None:
+    path = tmp_path / "spawn" / "permission_requests.jsonl"
+    path.parent.mkdir()
+    path.write_bytes(b'{"seq":0,"request_id":"req-1","status":"pending"}')
+    os.chmod(path, 0o640)
+
+    repair_jsonl_tail(path)
+
+    assert stat.S_IMODE(path.stat().st_mode) == 0o640
+    assert path.read_bytes().endswith(b"\n")
+
+
+def test_repair_jsonl_tail_does_not_create_parent_dir(tmp_path: Path) -> None:
+    path = tmp_path / "spawn" / "launch-boundary.jsonl"
+
+    repair_jsonl_tail(path)
+
+    assert not path.parent.exists()
