@@ -15,6 +15,8 @@ from meridian.lib.harness.connections.claude_ws import ClaudeConnection
 from meridian.lib.harness.connections.codex_ws import CodexConnection
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.safety.permissions import UnsafeNoOpPermissionResolver
+from meridian.lib.state.paths import resolve_project_runtime_root
+from meridian.lib.state.spawn_store import start_spawn
 
 
 class _FakeProcess:
@@ -119,8 +121,19 @@ async def _capture_codex_launch_cwd(
     connection = CodexConnection()
     monkeypatch.setattr(connection, "_connect_with_retry", _fake_connect_with_retry)
     monkeypatch.setattr(connection, "_cleanup_resources", _noop_cleanup)
+    spawn_id = SpawnId(f"p-codex-{ws_port}")
+    start_spawn(
+        resolve_project_runtime_root(control_root),
+        spawn_id=spawn_id,
+        chat_id="chat-1",
+        model="gpt-5.4",
+        agent="tester",
+        harness="codex",
+        prompt="test",
+        status="running",
+    )
     config = ConnectionConfig(
-        spawn_id=SpawnId(f"p-codex-{ws_port}"),
+        spawn_id=spawn_id,
         harness_id=HarnessId.CODEX,
         prompt="hi",
         control_root=control_root,
