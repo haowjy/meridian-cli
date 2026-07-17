@@ -1,0 +1,4 @@
+- Stale hashed control sockets under /tmp/meridian-<uid>/ after hard-killed
+  runners: spawn-dir GC doesn't know the external endpoint. Tracked in
+  GitHub issue #445 (derive control_socket_path during reaper
+  reconciliation / spawn-dir pruning and unlink for terminal spawns).

@@ -1,0 +1,9 @@
+- streaming_runner.py runner_phase/lifecycle_active list-cells + atexit
+  breadcrumb registration: coarse diagnostic labeling only, NOT a lifecycle
+  state machine. #424 should keep the breadcrumb sink separate from
+  execution/finalization (explicit callbacks or a small runner-owned
+  diagnostic context) rather than promoting these cells into state.
+- HarnessHistoryWriter's last-observed-event marker (throttled projection,
+  state/history.py) should not be carried into #424 as a projection API —
+  rewrite-era design should derive orphan evidence from authoritative
+  history or an explicitly-owned diagnostics sink.
