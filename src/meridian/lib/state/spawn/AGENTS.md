@@ -15,7 +15,7 @@ prompt text (read separately from `starting-prompt.md`, not stored in `state.jso
 helpers. `StoredSpawnState` is Pydantic and excludes the prompt body — prompts can
 be large and are stored in a separate file to keep `state.json` lean.
 It is a persistence leaf and does not compose process-scope projection operations;
-cross-leaf spawn aggregate operations live in the parent `spawn_store.py`.
+cross-leaf spawn aggregate operations live in the parent `spawn_aggregate.py`.
 
 **`transitions.py`** — pure status mutator functions: `apply_mark_running()`,
 `apply_mark_finalizing()`, `apply_finalize()`, `apply_record_exited()`. No I/O,
