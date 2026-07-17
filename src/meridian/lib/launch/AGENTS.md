@@ -137,11 +137,43 @@ when a policy rule caused the primary harness selection.
 Source: `compiler.py:effective_model_policies()`, `policies.py:_fallback_candidates_from_policies()`.
 Detail: [.context/CONTEXT.md](.context/CONTEXT.md#model-policy-overlay-composition-policiespy).
 
+## Startup Watchdog
+
+`_start_spawn_with_timeout()` in `streaming_runner.py` wraps the entire pre-connect
+span — backend boot, connection, and session handshake — with an outer
+`asyncio.timeout`. Default bound is 5 minutes, configured via
+`timeouts.startup_minutes` or `MERIDIAN_STARTUP_TIMEOUT_MINUTES`. Both the spawn
+path (`execute_with_streaming`) and the streaming-serve path (`run_streaming_spawn`)
+use the same helper. Exceeding the bound raises `StartupPhaseTimeout`, which the
+runner treats as a non-retryable terminal failure.
+
+Rationale: before the watchdog, the pre-connect span was unbounded by accident. The
+recorded worst case was a spawn that wedged for 2h18m before any liveness signal.
+
+## Attempt Evidence Preservation
+
+On retry, `_preserve_attempt_artifacts()` in `streaming_runner.py` moves the
+completed attempt's disk artifacts (`history.jsonl`, `stderr.log`, `report.md`,
+`runner-lifecycle.jsonl`, `last-observed-event.json`) into `attempt-N/` under the
+spawn log directory. The commit point is a single `os.replace(staging_dir,
+attempt_dir)` — crash-atomic via tmp dir staging. After the filesystem commit,
+artifact-store copies are made and active-attempt keys are deleted so the next
+attempt starts clean.
+
+## Prompt Source
+
+Stdin prompt reading requires explicit `--prompt-file -`. The implicit stdin
+fallback (the old `sys.stdin.read()` path) was deleted because it caused spawns to
+hang indefinitely when fd 0 was held open without data. Empty prompt is valid for
+`--continue` / reference-only launches.
+
 ## Key Entry Points
 
 - `context.py` — `prepare_launch_surface()`, `bind_launch_context()` — the seam
 - `__init__.py` — `launch_primary()` for the interactive primary path
-- `streaming_runner.py` — `execute_with_streaming()` for spawn/streaming paths
+- `streaming_runner.py` — `execute_with_streaming()` for spawn/streaming paths;
+  `_start_spawn_with_timeout()` for the startup watchdog;
+  `_preserve_attempt_artifacts()` for retry evidence rotation
 - `process/` — `run_harness_process()` for the PTY/pipe primary executor
 
 ## Anti-Patterns

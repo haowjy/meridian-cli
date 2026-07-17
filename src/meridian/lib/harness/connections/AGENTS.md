@@ -40,19 +40,31 @@ turn-injection or managed-backend shims. Codex/OpenCode return a
 activity, active turns, active requests, backend pid, and birth time; callers consume
 its structured decisions instead of inventing per-adapter alive checks.
 
+**Ownership-transfer guard: `reap_on_ownership_transfer_failure()`.** When external
+cancellation hits during adapter startup, dispatch, or manager registration, a
+child process can be stranded between owners. `reap_on_ownership_transfer_failure()`
+in `base.py` catches `BaseException`, shields cleanup from repeated cancellation
+deliveries in a while-not-done loop, and bounds foreground cleanup to 30 seconds.
+Durable `spawn_owned` process scopes and the reaper own any residue beyond that
+bound. The rejected alternative (`with suppress` single-shot) did not survive
+repeated cancellation.
+
 ## Entry Points
 
 - `base.py` — `HarnessConnection` ABC, `HarnessEvent`, `ConnectionCapabilities`,
-  `ConnectionConfig`, `ServerRequestHandler` protocol, size constants.
+  `ConnectionConfig`, `ServerRequestHandler` protocol, size constants,
+  `reap_on_ownership_transfer_failure()`.
 - `resident_backend.py` — explicit resident-backend control seam used by
   `ResidentDrainCoordinator` for structured liveness, awaiting-done signaling,
   and follow-up turns. This seam's presence, not the harness id, selects the
   resident drain coordinator.
 - `liveness.py` — `BackendLivenessPolicy`, the shared managed-backend liveness
   classifier for Codex/OpenCode.
-- `managed_backend.py` — single helper for launching managed backend subprocesses,
-  building `ProcessScopeSnapshot`, linking parent-death behavior when possible,
-  and recording `process_scopes.json`.
+- `managed_backend.py` — managed backend subprocess launch helper and
+  `register_spawn_owned_process()` for durable scope recording. The generic
+  `register_spawn_owned_process` helper also serves stdio children (Claude, Pi,
+  Cursor) — its placement here is accepted naming debt ahead of #424's layering
+  split.
 - `__init__.py` — `get_connection_class(harness_id, transport_id)`.
 
 ## Depth

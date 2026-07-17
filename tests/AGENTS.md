@@ -46,3 +46,19 @@ Worked helpers:
 
 Add fidelity only for a real behavior under test. Do not pre-build alternate close,
 timeout, or reader-error scenarios without a contract they protect.
+
+## CI Environment
+
+Tests that spawn the real CLI (e.g. `test_spawn_prompt_input.py`) need a stub
+harness binary on `PATH`. Mars validates harness installation even for `--dry-run`,
+so the test fails with `pre_init_failed` on CI runners that have no harness binaries.
+Use `tests/support/executables.prepend_fake_executables` to inject stubs.
+
+## Module Reload and Class Identity
+
+Integration tests that call `importlib.reload()` on a module create a new class
+object for every class defined in that module. If a unit test sharing the same
+xdist worker imported the class at collection time, `isinstance` and
+`pytest.raises` compare against the stale class object and fail. Reference
+symbols through the live module object instead of binding at import time. See
+`tests/unit/launch/test_inactivity_watchdog.py` for the pattern.

@@ -135,6 +135,28 @@ injected `ServerRequestHandler`:
 
 The handler is injected; `HarnessConnection` implementations must not embed policy.
 
+### Ownership-Transfer Guard
+
+`reap_on_ownership_transfer_failure(cleanup, *, deadline_seconds=30.0)` in `base.py`
+is the shared guard for the window between adapter `start()`, dispatch, and
+`SpawnManager` registration. All adapters, `spawn_dispatch.py`, and
+`SpawnManager.start_spawn()` invoke it after catching `BaseException` so that
+external task cancellation cannot strand a child process.
+
+The guard wraps the cleanup callable in `asyncio.shield()` inside a while-not-done
+loop: each `BaseException` (including repeated `CancelledError` from the surrounding
+startup task) restarts the wait rather than escaping. On deadline expiry (30s), the
+guard logs a warning and returns; durable `spawn_owned` process scopes plus the reaper
+own any surviving processes. The stop lock on each adapter serializes the guard's
+cleanup with the connection's public `stop()` so they do not race.
+
+Each adapter that holds a backend subprocess or stdio child calls
+`reap_on_ownership_transfer_failure(lambda: self.stop())` in its `start()` method's
+`except BaseException` path. `spawn_dispatch.dispatch_start()` wraps the adapter call
+with the same guard. `SpawnManager.start_spawn()` has its own guard around the
+registration window after dispatch returns. These three layers form concentric
+ownership boundaries; any one of them suffices to prevent an orphan.
+
 ### Size Constants
 
 Both are 10 MiB uniform across adapters:
