@@ -182,6 +182,9 @@ jobs:
 
   windows-gate:
     runs-on: windows-latest
+    # POSIX-first (root AGENTS.md): native Windows is not a supported platform.
+    # This lane is informational drift signal only — never merge-blocking.
+    continue-on-error: true
     permissions:
       contents: read
     steps:
