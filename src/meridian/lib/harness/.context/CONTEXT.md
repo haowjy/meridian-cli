@@ -175,7 +175,7 @@ specific evidence already recorded.
 
 | Harness | Unexpected death delivered to the drain |
 |---|---|
-| Claude | Non-zero subprocess exit at stdout EOF yields `error/connectionClosed` with the exit code in `message`, then the iterator ends. Stdout reader failure yields the same event with the read error. Stderr remains in `stderr.log`; it is not copied into the event. |
+| Claude | Non-zero subprocess exit at stdout EOF yields `error/connectionClosed` with the exit code and captured stderr excerpt when present, then the iterator ends. Stdout reader failure yields the same event with the read error. |
 | Codex | Unexpected WebSocket reader failure or liveness timeout queues `error/connectionClosed`, then queue EOF. A clean WebSocket close queues EOF without a terminal event. Startup process exit is raised before draining and includes exit code plus the captured stderr excerpt when present. |
 | OpenCode | A detected backend process exit yields `error/connectionClosed` with the exit code and captured stderr excerpt when present, then the SSE iterator ends. SSE liveness failure without a detected process exit currently ends without a terminal event. |
 | Cursor | Non-zero subprocess exit at stdout EOF yields `error/connectionClosed` with the exit code, then the iterator ends. Exit code zero is the success boundary and ends without a terminal event. |
