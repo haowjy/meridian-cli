@@ -1396,6 +1396,30 @@ class MeridianConfig(BaseSettings):
             env_vars=("MERIDIAN_RESIDENT_POLL_SECONDS",),
         ),
     ] = None
+    resident_rearm_budget: Annotated[
+        int | None,
+        config_field(
+            "timeouts.resident_rearm_budget",
+            value_kind="int",
+            file_aliases=(
+                file_alias("timeouts", "resident_rearm_budget"),
+                file_alias(None, "resident_rearm_budget"),
+            ),
+            env_vars=("MERIDIAN_RESIDENT_REARM_BUDGET",),
+        ),
+    ] = None
+
+    @field_validator("resident_rearm_budget")
+    @classmethod
+    def _validate_resident_rearm_budget(cls, value: int | None) -> int | None:
+        if value is None:
+            return None
+        if isinstance(value, bool) or value < 0:
+            raise ValueError(
+                "Invalid value for 'timeouts.resident_rearm_budget': "
+                f"expected int >= 0, got {value!r}."
+            )
+        return value
     pi_task_ping_interval_seconds: Annotated[
         float | None,
         config_field(

@@ -1037,6 +1037,7 @@ async def execute_with_streaming(
             pi_child_wave_timeout_seconds=pi_child_wave_timeout_seconds,
             resident_deadline_seconds=resident_deadline_seconds,
             resident_poll_seconds=resident_poll_seconds,
+            resident_rearm_budget=request.execution_policy.resident_rearm_budget,
             pi_task_ping_interval_seconds=pi_task_ping_interval_seconds,
             pi_task_ping_reset_on_activity=request.pi_task_ping_reset_on_activity,
             pi_session_role=pi_session_role,

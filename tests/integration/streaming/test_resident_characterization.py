@@ -32,6 +32,7 @@ def _coordinator(
     monkeypatch: pytest.MonkeyPatch,
     *,
     deadline_seconds: float = 10.0,
+    rearm_budget: int | None = None,
 ) -> tuple[ResidentDrainCoordinator, FakeResidentConnection, FakeClock]:
     clock = FakeClock(start=100.0)
     monkeypatch.setattr(resident_drain_module.time, "monotonic", clock.monotonic)
@@ -44,6 +45,7 @@ def _coordinator(
         resident_backend=connection.resident_backend,
         deadline_seconds=deadline_seconds,
         poll_seconds=1.0,
+        rearm_budget=rearm_budget,
         cancel_descendants=descendant_cancellation_from_roots(tmp_path, tmp_path),
     )
     return coordinator, connection, clock
@@ -180,6 +182,9 @@ async def test_terminal_rearm_resets_deadline_and_holds_ready_tree(
     rearmed = await coordinator.handle_terminal_event(_EVENT, _SUCCESS, _TERMINATE)
     assert rearmed.recorded_outcome is None
     assert rearmed.emit_turn_boundary is True
+    row = spawn_store.get_spawn(tmp_path, SpawnId("p1"))
+    assert row is not None
+    assert row.resident_rearm_count == 1
 
     clock.advance(5.0)
     at_old_deadline = await coordinator.handle_timeout()
@@ -197,6 +202,62 @@ async def test_terminal_rearm_resets_deadline_and_holds_ready_tree(
     await _execute_latched_cleanup(coordinator, at_reset_deadline.recorded_outcome)
     assert cleanup_calls == [SpawnId("p1")]
     assert connection.fake_resident_backend.awaiting_done_values == [True, False, True, False]
+
+
+@pytest.mark.asyncio
+async def test_resident_rearm_budget_exhaustion_ignores_signal_and_times_out_distinctly(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    coordinator, _connection, clock = _coordinator(
+        tmp_path,
+        monkeypatch,
+        rearm_budget=1,
+    )
+    start_row(tmp_path, "p2", HarnessId.CODEX, "p1")
+    await coordinator.handle_terminal_event(_EVENT, _SUCCESS, _TERMINATE)
+
+    clock.advance(5.0)
+    coordinator.observe_activity_transition("turn_active")
+    spawn_store.finalize_spawn(tmp_path, "p2", "succeeded", 0, origin="runner")
+    write_spawn_signal(tmp_path, "p1", "rearm")
+    await coordinator.handle_terminal_event(_EVENT, _SUCCESS, _TERMINATE)
+
+    clock.advance(10.0)
+    write_spawn_signal(tmp_path, "p1", "rearm")
+    expired = await coordinator.handle_timeout()
+
+    assert expired.recorded_outcome is not None
+    assert expired.recorded_outcome.status == "timed_out"
+    assert expired.recorded_outcome.error == "resident_rearm_budget_exhausted"
+    row = spawn_store.get_spawn(tmp_path, SpawnId("p1"))
+    assert row is not None
+    assert row.resident_rearm_count == 1
+
+
+@pytest.mark.asyncio
+async def test_zero_resident_rearm_budget_expires_without_grant(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    coordinator, _connection, clock = _coordinator(
+        tmp_path,
+        monkeypatch,
+        rearm_budget=0,
+    )
+    start_row(tmp_path, "p2", HarnessId.CODEX, "p1")
+    write_spawn_signal(tmp_path, "p1", "rearm")
+    await coordinator.handle_terminal_event(_EVENT, _SUCCESS, _TERMINATE)
+
+    clock.advance(10.0)
+    expired = await coordinator.handle_timeout()
+
+    assert expired.recorded_outcome is not None
+    assert expired.recorded_outcome.status == "timed_out"
+    assert expired.recorded_outcome.error == "resident_rearm_budget_exhausted"
+    row = spawn_store.get_spawn(tmp_path, SpawnId("p1"))
+    assert row is not None
+    assert row.resident_rearm_count == 0
 
 
 @pytest.mark.asyncio

@@ -340,6 +340,7 @@ async def test_terminal_done_fails_closed_when_descendant_evidence_unreadable(
         resident_backend=connection.resident_backend,
         deadline_seconds=30.0,
         poll_seconds=0.01,
+        rearm_budget=None,
         cancel_descendants=descendant_cancellation_from_roots(tmp_path, tmp_path),
     )
     write_spawn_signal(tmp_path, "p1", "done")
@@ -392,6 +393,7 @@ async def test_terminal_done_completes_when_descendant_evidence_recovers(
         resident_backend=connection.resident_backend,
         deadline_seconds=30.0,
         poll_seconds=0.01,
+        rearm_budget=None,
         cancel_descendants=descendant_cancellation_from_roots(tmp_path, tmp_path),
     )
     evidence_readable = False
@@ -808,6 +810,7 @@ async def test_active_followup_turn_stays_resident_honors_done_and_defers_poll(
         resident_backend=connection.resident_backend,
         deadline_seconds=3300.0,
         poll_seconds=5.0,
+        rearm_budget=None,
         cancel_descendants=descendant_cancellation_from_roots(tmp_path, tmp_path),
     )
     terminal = TerminalEventOutcome(status="succeeded", exit_code=0)

@@ -75,6 +75,7 @@ class SpawnRecord(BaseModel):
     worker_pid: int | None
     runner_pid: int | None
     runner_created_at_epoch: float | None
+    resident_rearm_count: int = 0
     status: SpawnStatus | Literal["unknown"]
     prompt: str | None
     started_at: str | None

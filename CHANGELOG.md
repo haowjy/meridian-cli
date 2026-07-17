@@ -4,6 +4,11 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- Resident spawns can opt into a rearm-count budget through CLI, environment,
+  agent profile, or config; granted rearm counts are persisted for observability,
+  and budget exhaustion reports a distinct timeout outcome. (#373)
+
 ### Changed
 - Consolidated Pi drain characterization behind one behavioral scenario builder and a
   compact timeout-priority table. (#372)

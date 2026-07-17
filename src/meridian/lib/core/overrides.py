@@ -19,7 +19,13 @@ _AUTOCOMPACT_PCT_MIN = 1
 _AUTOCOMPACT_PCT_MAX = 100
 _ROUTING_OVERRIDE_FIELDS = frozenset({"model", "harness", "agent"})
 type ExecutionPolicyField = Literal[
-    "effort", "sandbox", "approval", "autocompact", "autocompact_pct", "timeout"
+    "effort",
+    "sandbox",
+    "approval",
+    "autocompact",
+    "autocompact_pct",
+    "timeout",
+    "resident_rearm_budget",
 ]
 EXECUTION_POLICY_FIELDS: tuple[ExecutionPolicyField, ...] = (
     "effort",
@@ -28,6 +34,7 @@ EXECUTION_POLICY_FIELDS: tuple[ExecutionPolicyField, ...] = (
     "autocompact",
     "autocompact_pct",
     "timeout",
+    "resident_rearm_budget",
 )
 _EXECUTION_POLICY_FIELD_SET = frozenset(EXECUTION_POLICY_FIELDS)
 
@@ -113,6 +120,7 @@ RUNTIME_OVERRIDE_ENV_BY_FIELD: dict[str, str] = {
     "autocompact": "MERIDIAN_AUTOCOMPACT",
     "autocompact_pct": "MERIDIAN_AUTOCOMPACT_PCT",
     "timeout": "MERIDIAN_TIMEOUT",
+    "resident_rearm_budget": "MERIDIAN_RESIDENT_REARM_BUDGET",
 }
 RUNTIME_OVERRIDE_ENV_VARS = frozenset(RUNTIME_OVERRIDE_ENV_BY_FIELD.values())
 
@@ -197,6 +205,7 @@ class RuntimeOverrides(BaseModel):
     autocompact: AutocompactValue = None
     autocompact_pct: AutocompactPctValue = None
     timeout: float | None = None
+    resident_rearm_budget: int | None = None
 
     def routing_scope(self) -> RuntimeOverrides:
         """Return only routing fields used to select model, harness, and agent."""
@@ -256,11 +265,24 @@ class RuntimeOverrides(BaseModel):
             )
         return value
 
+    @field_validator("resident_rearm_budget")
+    @classmethod
+    def _validate_nonnegative_int(cls, value: int | None, info: object) -> int | None:
+        if value is None:
+            return None
+        if isinstance(value, bool) or value < 0:
+            field_name = getattr(info, "field_name", "value")
+            raise ValueError(
+                f"Invalid runtime override '{field_name}': expected int >= 0, got {value!r}."
+            )
+        return value
+
     @classmethod
     def from_env(cls) -> RuntimeOverrides:
         autocompact_raw = _read_env_string("MERIDIAN_AUTOCOMPACT")
         autocompact_pct_raw = _read_env_string("MERIDIAN_AUTOCOMPACT_PCT")
         timeout_raw = _read_env_string("MERIDIAN_TIMEOUT")
+        rearm_budget_raw = _read_env_string("MERIDIAN_RESIDENT_REARM_BUDGET")
         return cls(
             model=_read_env_string("MERIDIAN_MODEL"),
             harness=None,
@@ -283,12 +305,23 @@ class RuntimeOverrides(BaseModel):
                 if timeout_raw is not None
                 else None
             ),
+            resident_rearm_budget=(
+                _parse_env_int(
+                    rearm_budget_raw,
+                    env_name="MERIDIAN_RESIDENT_REARM_BUDGET",
+                )
+                if rearm_budget_raw is not None
+                else None
+            ),
         )
 
     @classmethod
     def from_agent_profile(cls, profile: AgentProfile | None) -> RuntimeOverrides:
-        _ = profile
-        return cls()
+        return cls(
+            resident_rearm_budget=(
+                None if profile is None else profile.resident_rearm_budget
+            )
+        )
 
     @classmethod
     def from_alias_entry(cls, alias_entry: AliasEntry | None) -> RuntimeOverrides:
@@ -316,6 +349,7 @@ class RuntimeOverrides(BaseModel):
             autocompact=primary.autocompact,
             autocompact_pct=primary.autocompact_pct,
             timeout=primary.timeout,
+            resident_rearm_budget=config.resident_rearm_budget,
         )
 
     @classmethod
@@ -324,7 +358,7 @@ class RuntimeOverrides(BaseModel):
 
         if config is None:
             return cls()
-        return cls()
+        return cls(resident_rearm_budget=config.resident_rearm_budget)
 
     @classmethod
     def from_spawn_input(cls, payload: SpawnCreateInput) -> RuntimeOverrides:
@@ -338,6 +372,7 @@ class RuntimeOverrides(BaseModel):
             autocompact=payload.autocompact,
             autocompact_pct=payload.autocompact_pct,
             timeout=payload.timeout,
+            resident_rearm_budget=payload.resident_rearm_budget,
         )
 
 
