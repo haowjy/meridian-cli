@@ -11,6 +11,9 @@ State splits across distinct roots — understand which goes where before writin
 .meridian/                          ← repo-local, committed scaffolding
   id                                — project UUID / three-word ID
 
+~/.meridian/projects/.locks/<id>.lock
+                                    — shared session-lifetime / exclusive deletion gate
+
 ~/.meridian/projects/<id>/          ← user runtime, never committed
   sessions.jsonl                    — session events (append-only)
   locks/spawns/<spawn_id>.lock      — stable per-spawn external-writer lock
@@ -26,7 +29,8 @@ State splits across distinct roots — understand which goes where before writin
 ```
 
 The project UUID in `.meridian/id` keys into `~/.meridian/projects/<id>/`. Projects
-can move or be renamed without losing runtime history.
+can move or be renamed without losing runtime history. Project lifetime gates sit outside
+the deletable project root and, like every coordination lock identity, are never unlinked.
 
 Work items live under the `[context.work]` root (default
 `{user_home}/context/<id>/work/<slug>/`), resolved by `work_scope.py` /
