@@ -266,12 +266,10 @@ def archive_work_item(
                 "worktree": current.worktree.model_copy(update={"pending": False}),
             }
         )
-        # Persist before the location-first authority change. A crash before the
-        # rename leaves a healable active item; a crash after it is archived.
-        _write_item(active_dir, archived_item)
         destination = _archived_dir(paths, work_id)
         destination.parent.mkdir(parents=True, exist_ok=True)
         active_dir.rename(destination)
+        _write_item(destination, archived_item)
         return archived_item
 
     return _mutate_item(runtime_root, work_id, archive)
