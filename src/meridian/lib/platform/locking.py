@@ -17,17 +17,52 @@ type LockMode = Literal["exclusive", "shared"]
 type _HeldLock = tuple[IO[bytes], int, LockMode]
 
 _THREAD_LOCAL = threading.local()
+_process_lock_handles: set[IO[bytes]] = set()
+_process_lock_handles_guard = threading.Lock()
 _LOCK_POLL_INTERVAL_SECONDS = 0.05
 
 
+def _prepare_lock_registry_for_fork() -> None:
+    _process_lock_handles_guard.acquire()
+
+
+def _restore_lock_registry_after_fork() -> None:
+    _process_lock_handles_guard.release()
+
+
 def _clear_reentrant_registry_after_fork() -> None:
-    """Discard reentrancy state copied from the parent process."""
+    """Close inherited lock descriptors without unlocking the parent's locks."""
+
+    global _process_lock_handles, _process_lock_handles_guard
 
     _THREAD_LOCAL.held = {}
+    inherited_handles = _process_lock_handles
+    _process_lock_handles = set()
+    _process_lock_handles_guard = threading.Lock()
+    for handle in inherited_handles:
+        with suppress(OSError):
+            handle.close()
 
 
 if not IS_WINDOWS and hasattr(os, "register_at_fork"):
-    os.register_at_fork(after_in_child=_clear_reentrant_registry_after_fork)
+    os.register_at_fork(
+        before=_prepare_lock_registry_for_fork,
+        after_in_parent=_restore_lock_registry_after_fork,
+        after_in_child=_clear_reentrant_registry_after_fork,
+    )
+
+
+def _track_process_lock_handle(handle: IO[bytes]) -> None:
+    with _process_lock_handles_guard:
+        _process_lock_handles.add(handle)
+
+
+def _forget_process_lock_handle(handle: IO[bytes]) -> bool:
+    with _process_lock_handles_guard:
+        if handle not in _process_lock_handles:
+            return False
+        _process_lock_handles.remove(handle)
+        return True
 
 
 def _held_locks() -> dict[Path, _HeldLock]:
@@ -120,6 +155,7 @@ def acquire_file_lock(
     deadline = None if timeout is None else time.monotonic() + timeout
     while True:
         handle = lock_path.open("a+b")
+        _track_process_lock_handle(handle)
         try:
             acquired = _acquire_lock(handle, mode=mode, deadline=deadline)
             if acquired:
@@ -135,8 +171,10 @@ def acquire_file_lock(
                     return handle
                 _release_lock(handle)
         except BaseException:
+            _forget_process_lock_handle(handle)
             handle.close()
             raise
+        _forget_process_lock_handle(handle)
         handle.close()
 
         if deadline is not None and time.monotonic() >= deadline:
@@ -145,6 +183,10 @@ def acquire_file_lock(
 
 def release_file_lock(handle: IO[bytes]) -> None:
     """Release and close a handle returned by :func:`acquire_file_lock`."""
+    if not _forget_process_lock_handle(handle):
+        if not handle.closed:
+            handle.close()
+        return
     try:
         _release_lock(handle)
     finally:

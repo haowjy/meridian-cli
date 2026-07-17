@@ -7,7 +7,7 @@ import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
-from meridian.lib.state.atomic import atomic_write_text
+from meridian.lib.platform.atomic import atomic_write_text
 from meridian.lib.state.user_paths import (
     get_project_home,
     get_project_id,

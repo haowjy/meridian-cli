@@ -12,8 +12,8 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import TypeVar
 
+from meridian.lib.platform.atomic import atomic_write_text
 from meridian.lib.platform.locking import lock_file
-from meridian.lib.state.atomic import atomic_write_text
 from meridian.lib.state.event_store import utc_now_iso
 from meridian.lib.state.paths import ProjectPaths
 from meridian.lib.state.work_store import (

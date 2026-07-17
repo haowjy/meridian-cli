@@ -234,3 +234,18 @@ def test_global_prune_cannot_unlink_live_session_lock_inode(tmp_path: Path) -> N
         if process.is_alive():
             process.terminate()
             process.join(5)
+
+
+def test_global_prune_rejects_lock_directory_supplied_directly(tmp_path: Path) -> None:
+    lock_dir = tmp_path / "user-home" / "projects" / ".locks"
+    lock_dir.mkdir(parents=True)
+    orphan = OrphanProjectDir(
+        uuid=".locks",
+        path=lock_dir.as_posix(),
+        size_bytes=0,
+        last_activity="1970-01-01T00:00:00+00:00",
+        reason="stale",
+    )
+
+    assert prune_orphan_project_dirs([orphan]) == 0
+    assert lock_dir.is_dir()

@@ -55,8 +55,9 @@ State-facing writes go through `atomic.py`, which delegates file replacement to 
 dependency-neutral `lib/platform/atomic.py`. Never write state files with plain `open()`.
 
 - `atomic_write_text()` / `atomic_write_bytes()` — write to same-directory temp,
-  `os.fsync()`, then `os.replace()` (atomic rename). Either the old or new file
-  exists — never a partial write.
+  force runtime-state mode `0600`, `os.fsync()`, then `os.replace()` (atomic rename).
+  Either the old or new file exists — never a partial write. User-owned project files
+  and context work-item metadata use the preserve-mode platform atomic writer instead.
 - `atomic_publish_dir()` — rename a complete same-volume stage into a destination
   that must not exist, then fsync the publication parent.
 - `append_text_line()` — binary mode so `\n` is never translated to `\r\n` on

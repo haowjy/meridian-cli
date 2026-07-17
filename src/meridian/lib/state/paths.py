@@ -10,7 +10,7 @@ from meridian.lib.config.context_config import ContextConfig
 from meridian.lib.config.project_paths import ProjectConfigPaths
 from meridian.lib.config.project_root import resolve_user_config_path
 from meridian.lib.core.types import SpawnId
-from meridian.lib.state.atomic import atomic_write_text
+from meridian.lib.platform.atomic import atomic_write_text
 from meridian.lib.state.user_paths import get_or_create_project_id, get_project_id
 
 _MERIDIAN_DIR = ".meridian"

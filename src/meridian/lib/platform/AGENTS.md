@@ -41,6 +41,8 @@ the `HOME` env var and queries Windows APIs, breaking test isolation.
 
 **File locking (`locking.py`) has reentrancy semantics.** A thread that already holds
 the lock re-enters safely. The OS lock releases only when the outermost `__exit__` runs.
+Acquired handles are also tracked process-wide so a fork child closes every inherited
+descriptor without explicitly unlocking the parent's open-file-description lock.
 On Windows, the implementation writes a guard byte and fsyncs before the first lock
 attempt — the file must be non-zero-length.
 

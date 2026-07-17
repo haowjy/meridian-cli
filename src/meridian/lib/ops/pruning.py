@@ -20,6 +20,10 @@ from meridian.lib.state.paths import RuntimePaths
 _SECONDS_PER_DAY = 24 * 60 * 60
 
 
+def _is_project_dir_name(name: str) -> bool:
+    return bool(name) and not name.startswith(".")
+
+
 class OrphanProjectDir(BaseModel):
     model_config = ConfigDict(frozen=True)
 
@@ -113,7 +117,7 @@ def scan_orphan_project_dirs(
 
     results: list[OrphanProjectDir] = []
     for project_dir in sorted(projects_root.iterdir(), key=lambda path: path.name):
-        if project_dir.name == ".locks" or not project_dir.is_dir():
+        if not _is_project_dir_name(project_dir.name) or not project_dir.is_dir():
             continue
 
         size_bytes, latest_mtime = _tree_activity(project_dir)
@@ -236,7 +240,11 @@ def prune_orphan_project_dirs(orphans: list[OrphanProjectDir]) -> int:
     removed = 0
     for orphan in orphans:
         runtime_root = Path(orphan.path)
-        if runtime_root.name != orphan.uuid or runtime_root.parent.name != "projects":
+        if (
+            not _is_project_dir_name(orphan.uuid)
+            or runtime_root.name != orphan.uuid
+            or runtime_root.parent.name != "projects"
+        ):
             continue
         paths = RuntimePaths.from_root_dir(runtime_root)
         with try_lock_file(paths.project_lifetime_flock, reentrant=False) as lifetime_handle:

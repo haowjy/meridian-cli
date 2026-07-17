@@ -180,7 +180,7 @@ def maybe_set_primary_agent(
 
     from meridian.lib.config.preserving_edit import set_scalar_option
     from meridian.lib.config.settings import OPTION_CATALOG
-    from meridian.lib.state.atomic import atomic_write_text
+    from meridian.lib.platform.atomic import atomic_write_text
 
     option = OPTION_CATALOG.resolve_key("primary.agent")
     edit_result = set_scalar_option(content, option=option, value=declared_primary_agent)
@@ -240,7 +240,7 @@ def maybe_scaffold_claude_agent_copy(project_root: Path, targets: list[str]) -> 
     agent_copy["include_fanout"] = False
     meridian["agent_copy"] = agent_copy
 
-    from meridian.lib.state.atomic import atomic_write_text
+    from meridian.lib.platform.atomic import atomic_write_text
 
     content: str = tomlkit.dumps(doc)  # pyright: ignore[reportUnknownMemberType]
     atomic_write_text(mars_toml, content)
