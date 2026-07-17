@@ -12,6 +12,7 @@ from meridian.lib.ops import mars as mars_ops
 from meridian.lib.ops.diag import DoctorInput, doctor_sync
 from meridian.lib.state import spawn_store
 from meridian.lib.state.paths import resolve_project_runtime_root_for_write
+from tests.conftest import posix_only
 
 
 def _create_project_root(tmp_path: Path) -> Path:
@@ -188,6 +189,7 @@ def test_doctor_prune_preserves_v2_state_dir_after_same_run_reconcile(
     assert spawn_store.get_spawn(runtime_root, stale_spawn_id) is not None
 
 
+@posix_only
 def test_doctor_reports_locks_removed_by_post_prune_gc(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

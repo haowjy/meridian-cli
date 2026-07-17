@@ -7,6 +7,7 @@ from pathlib import Path
 from meridian.lib.platform.locking import acquire_file_lock, release_file_lock
 from meridian.lib.state import spawn_store
 from meridian.lib.state.lock_gc import gc_orphaned_locks
+from tests.conftest import posix_only
 
 _LOCK_CLASSES = ("spawns", "process-scopes", "reaper-cleanup", "launch-boundary")
 
@@ -24,6 +25,7 @@ def _start_spawn(runtime_root: Path, spawn_id: str) -> None:
     )
 
 
+@posix_only
 def test_sweeper_removes_orphaned_spawn_lock_classes(tmp_path: Path) -> None:
     runtime_root = tmp_path / "runtime"
     spawn_id = "p1"
@@ -49,6 +51,7 @@ def test_sweeper_removes_orphaned_spawn_lock_classes(tmp_path: Path) -> None:
     assert stats.files_removed == 4
 
 
+@posix_only
 def test_sweeper_skips_held_lock(tmp_path: Path) -> None:
     runtime_root = tmp_path / "runtime"
     held_lock = runtime_root / "locks" / "spawns" / "p-held.lock"

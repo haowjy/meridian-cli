@@ -14,6 +14,7 @@ from meridian.lib.state.atomic import (
     append_durable_jsonl_line,
     repair_jsonl_tail,
 )
+from tests.conftest import posix_only
 
 
 def test_permission_journal_repairs_torn_tail_before_append(tmp_path: Path) -> None:
@@ -175,6 +176,7 @@ def test_append_durable_jsonl_line_avoids_full_read_on_clean_tail(
     assert read_calls == 0
 
 
+@posix_only
 def test_repair_jsonl_tail_preserves_existing_permissions(tmp_path: Path) -> None:
     path = tmp_path / "spawn" / "permission_requests.jsonl"
     path.parent.mkdir()

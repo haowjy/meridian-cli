@@ -18,6 +18,7 @@ from pathlib import Path
 import pytest
 
 from meridian.lib.state import session_store
+from tests.conftest import posix_only
 
 
 def _crash_session_cleanup(runtime_root: Path, crash_stage: str) -> None:
@@ -141,6 +142,7 @@ def test_start_session_does_not_append_start_event_when_lock_acquire_fails(
             False,
             False,
             1,
+            marks=posix_only,
             id="stops-and-cleans-when-generation-matches",
         ),
     ],
@@ -200,6 +202,7 @@ def test_cleanup_stale_sessions_handles_generation_rules(
         assert stop_rows[0]["session_instance_id"] == start_generation
 
 
+@posix_only
 def test_cleanup_stale_primary_session_with_dead_pid_is_cleaned(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -275,6 +278,7 @@ def test_cleanup_stale_sessions_releases_handles_when_event_append_fails(
         pass
 
 
+@posix_only
 def test_cleanup_cannot_delete_concurrently_restarted_session(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -507,6 +511,7 @@ def test_cleanup_stale_primary_session_with_live_pid_is_not_cleaned(
     assert stop_rows == []
 
 
+@posix_only
 def test_cleanup_unlinks_cleaned_session_locks(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
