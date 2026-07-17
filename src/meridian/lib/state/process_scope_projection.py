@@ -142,10 +142,11 @@ def record_scope(
     with lock_file(spawn_lock_path(spawns_dir, str(spawn_id)), reentrant=False):
         current = read_state(spawns_dir, str(spawn_id), include_prompt=False)
         claim_path = spawns_dir / str(spawn_id) / _CLEANUP_CLAIM_FILENAME
-        if (
-            (current is not None and is_terminal_spawn_status(current.status))
-            or claim_path.exists()
-        ):
+        if current is None:
+            raise ValueError(
+                f"Refusing process-scope registration: spawn does not exist: {spawn_id}"
+            )
+        if is_terminal_spawn_status(current.status) or claim_path.exists():
             raise ValueError(
                 f"Refusing process-scope registration after cleanup began: {spawn_id}"
             )
@@ -184,13 +185,21 @@ def mark_scope_released(
 
     Prevents double-cleanup when the reaper runs again after process exit.
     Idempotent — safe to call multiple times for the same release_id.
+    Does nothing after the published spawn has been deleted.
     """
+    from meridian.lib.state.spawn.repository import read_state, spawn_lock_path
+
     def mark_released(payload: ScopeProjection) -> ScopeProjection:
         if release_id not in payload["released"]:
             payload["released"].append(release_id)
         return payload
 
-    mutate_scope_projection(runtime_root, spawn_id, mark_released)
+    spawns_dir = runtime_root / "spawns"
+    # Global order when both locks are needed: spawn state, then scope projection.
+    with lock_file(spawn_lock_path(spawns_dir, str(spawn_id)), reentrant=False):
+        if read_state(spawns_dir, str(spawn_id), include_prompt=False) is None:
+            return
+        mutate_scope_projection(runtime_root, spawn_id, mark_released)
 
 
 def is_scope_released(

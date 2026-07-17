@@ -343,18 +343,22 @@ def delete_published_spawn(
     spawn_dir = paths.spawns_dir / resolved_spawn_id
 
     with lock_file(spawn_lock_path(paths.spawns_dir, resolved_spawn_id)):
-        claim_path = spawn_dir / "reaper_cleanup_claim.json"
-        if claim_path.exists() or not can_delete(
-            read_state(paths.spawns_dir, resolved_spawn_id, include_prompt=False)
-        ):
-            return False
-        if not spawn_dir.exists():
-            return False
-        try:
-            shutil.rmtree(spawn_dir, onexc=_restore_spawn_artifact_permissions)
-        except OSError:
-            return False
-        return True
+        from meridian.lib.state.process_scope_projection import scope_projection_lock_path
+
+        # Global order: spawn state, then process-scope projection.
+        with lock_file(scope_projection_lock_path(runtime_root, resolved_spawn_id)):
+            claim_path = spawn_dir / "reaper_cleanup_claim.json"
+            if claim_path.exists() or not can_delete(
+                read_state(paths.spawns_dir, resolved_spawn_id, include_prompt=False)
+            ):
+                return False
+            if not spawn_dir.exists():
+                return False
+            try:
+                shutil.rmtree(spawn_dir, onexc=_restore_spawn_artifact_permissions)
+            except OSError:
+                return False
+            return True
 
 
 def scan_spawn_ids(spawns_dir: Path) -> list[str]:

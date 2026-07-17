@@ -6,10 +6,11 @@ import threading
 from contextlib import suppress
 from pathlib import Path
 
-import pytest  # noqa: TC002
+import pytest
 
 from meridian.lib.core.process_cleanup import reclaim_session_owned_scopes_for_chat
 from meridian.lib.core.types import SpawnId
+from meridian.lib.platform.locking import lock_file
 from meridian.lib.platform.process_scope.base import CleanupResult, ProcessScopeSnapshot
 from meridian.lib.state import process_scope_projection, spawn_store
 from meridian.lib.state.paths import resolve_runtime_paths
@@ -20,6 +21,7 @@ from meridian.lib.state.process_scope_projection import (
 )
 from meridian.lib.state.reaper import reconcile_active_spawn
 from meridian.lib.state.spawn.model import SpawnRecord
+from meridian.lib.state.spawn.repository import delete_published_spawn
 
 _OLD_STARTED_AT = "2000-01-01T00:00:00Z"
 
@@ -129,6 +131,38 @@ def test_concurrent_scope_releases_preserve_every_marker(
         )
     )
     assert set(payload["released"]) == {scope_a.release_id, scope_b.release_id}
+
+
+def test_deleted_spawn_cannot_grow_ghost_scope_sidecar(tmp_path: Path) -> None:
+    runtime_root, spawn_id = _create_primary_spawn(tmp_path)
+    scope = _scope(
+        spawn_id,
+        scope_id="backend",
+        owner_policy="spawn_owned",
+        owner_id=spawn_id,
+        root_pid=301,
+    )
+    record_scope(runtime_root, SpawnId(spawn_id), scope)
+    spawn_dir = runtime_root / "spawns" / spawn_id
+
+    deletion = threading.Thread(
+        target=delete_published_spawn,
+        args=(runtime_root, spawn_id),
+        kwargs={"can_delete": lambda record: record is not None},
+    )
+    with lock_file(process_scope_projection.scope_projection_lock_path(runtime_root, spawn_id)):
+        deletion.start()
+        deletion.join(timeout=0.2)
+        assert deletion.is_alive(), "deletion must wait for the projection lock"
+    deletion.join(timeout=5)
+    assert not deletion.is_alive()
+    assert not spawn_dir.exists()
+
+    mark_scope_released(runtime_root, SpawnId(spawn_id), scope.release_id)
+    with pytest.raises(ValueError, match="spawn does not exist"):
+        record_scope(runtime_root, SpawnId(spawn_id), scope)
+
+    assert not spawn_dir.exists()
 
 
 def test_reclaim_session_owned_scopes_for_chat_reclaims_all_matching_spawns(
