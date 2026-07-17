@@ -14,7 +14,7 @@ from uuid import uuid4
 import pytest
 
 from meridian.lib.hooks.builtin import autosync_store
-from meridian.lib.hooks.builtin.autosync_store import AutosyncTransaction
+from meridian.lib.hooks.builtin.autosync_store import AutosyncMutation
 from meridian.lib.hooks.builtin.git_autosync import GitAutosync
 from meridian.lib.ops import sync_conflicts
 from meridian.plugin_api import Hook, HookContext
@@ -369,14 +369,14 @@ def test_conflict_resolution_waits_for_complete_hook_transaction(
     record_written = threading.Event()
     release_hook = threading.Event()
     resolution_started = threading.Event()
-    original_write_conflict = AutosyncTransaction.write_conflict
+    original_write_conflict = autosync_store._write_conflict
     original_transaction = autosync_store.transaction
 
     def delayed_write_conflict(
-        autosync_tx: AutosyncTransaction,
+        sync_root: Path,
         record: autosync_store.ConflictRecord,
     ) -> None:
-        original_write_conflict(autosync_tx, record)
+        original_write_conflict(sync_root, record)
         record_written.set()
         assert release_hook.wait(timeout=5)
 
@@ -385,12 +385,12 @@ def test_conflict_resolution_waits_for_complete_hook_transaction(
         sync_root: Path,
         *,
         timeout: float | None = 60.0,
-    ) -> Generator[AutosyncTransaction, None, None]:
+    ) -> Generator[AutosyncMutation, None, None]:
         resolution_started.set()
         with original_transaction(sync_root, timeout=timeout) as autosync_tx:
             yield autosync_tx
 
-    monkeypatch.setattr(AutosyncTransaction, "write_conflict", delayed_write_conflict)
+    monkeypatch.setattr(autosync_store, "_write_conflict", delayed_write_conflict)
     monkeypatch.setattr(sync_conflicts, "_find_sync_roots", lambda: [work])
     monkeypatch.setattr(sync_conflicts, "transaction", observed_resolution_transaction)
 
