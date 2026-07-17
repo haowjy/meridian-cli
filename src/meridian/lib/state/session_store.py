@@ -317,6 +317,23 @@ def _release_session_lock(runtime_root: Path, chat_id: str) -> None:
     release_file_lock(lock_data.project_lifetime)
 
 
+def _discard_expected_session_lock(
+    runtime_root: Path,
+    chat_id: str,
+    expected_generation: str,
+) -> None:
+    """Discard only the registry entry for the session generation being cleaned."""
+
+    key = _session_lock_key(runtime_root, chat_id)
+    expected = _SESSION_LOCK_HANDLES.get(key)
+    if expected is None or not _generation_matches(
+        expected.session_instance_id, expected_generation
+    ):
+        return
+    if _SESSION_LOCK_HANDLES.get(key) is expected:
+        del _SESSION_LOCK_HANDLES[key]
+
+
 def start_session(
     runtime_root: Path,
     harness: str,
@@ -728,18 +745,23 @@ def cleanup_stale_sessions(runtime_root: Path) -> StaleSessionCleanup:
             if existing is not None and existing.harness.strip():
                 stale_cleanup_scopes.append(existing.harness.strip())
             cleaned_ids.append(chat_id)
+            cleaned_generation = (
+                lease_session_instance_id
+                if lease_exists
+                else existing.session_instance_id
+                if existing is not None
+                else ""
+            )
+            _discard_expected_session_lock(runtime_root, chat_id, cleaned_generation)
+            _session_lease_path(paths, chat_id).unlink(missing_ok=True)
 
     cleaned_id_set = frozenset(cleaned_ids)
     for chat_id, lock_path, handle in stale:
-        if chat_id in cleaned_id_set:
-            unlink_validated_lock(lock_path, handle)
+        if chat_id not in cleaned_id_set:
+            release_file_lock(handle)
+            continue
+        unlink_validated_lock(lock_path, handle)
         release_file_lock(handle)
-        if chat_id in cleaned_id_set:
-            _SESSION_LOCK_HANDLES.pop(_session_lock_key(runtime_root, chat_id), None)
-
-    for chat_id, _lock_path, _ in stale:
-        if chat_id in cleaned_id_set:
-            _session_lease_path(paths, chat_id).unlink(missing_ok=True)
 
     return StaleSessionCleanup(
         cleaned_ids=tuple(sorted(cleaned_ids, key=_session_sort_key)),
