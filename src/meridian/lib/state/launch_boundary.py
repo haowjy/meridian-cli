@@ -8,7 +8,9 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict
 
+from meridian.lib.platform.locking import lock_file
 from meridian.lib.state.event_store import append_event, read_events, utc_now_iso
+from meridian.lib.state.spawn.repository import read_state, spawn_lock_path
 
 LAUNCH_BOUNDARY_FILENAME = "launch-boundary.jsonl"
 
@@ -79,27 +81,30 @@ def record_launch_boundary_event(
     exception_type: str | None = None,
     details: dict[str, Any] | None = None,
 ) -> None:
+    spawns_dir = runtime_root / "spawns"
     data_path = launch_boundary_path(runtime_root, spawn_id)
-    data_path.parent.mkdir(parents=True, exist_ok=True)
-    append_event(
-        data_path,
-        launch_boundary_lock_path(runtime_root, spawn_id),
-        LaunchBoundaryEvent(
-            ts=utc_now_iso(),
-            event=event,
-            stage=stage,
-            parent_pid=parent_pid,
-            launcher_pid=launcher_pid,
-            worker_pid=worker_pid,
-            harness_session_id=harness_session_id,
-            command=command,
-            cwd=cwd,
-            error=error,
-            exception_type=exception_type,
-            details=details,
-        ),
-        exclude_none=True,
-    )
+    with lock_file(spawn_lock_path(spawns_dir, spawn_id), reentrant=False):
+        if read_state(spawns_dir, spawn_id, include_prompt=False) is None:
+            return
+        append_event(
+            data_path,
+            launch_boundary_lock_path(runtime_root, spawn_id),
+            LaunchBoundaryEvent(
+                ts=utc_now_iso(),
+                event=event,
+                stage=stage,
+                parent_pid=parent_pid,
+                launcher_pid=launcher_pid,
+                worker_pid=worker_pid,
+                harness_session_id=harness_session_id,
+                command=command,
+                cwd=cwd,
+                error=error,
+                exception_type=exception_type,
+                details=details,
+            ),
+            exclude_none=True,
+        )
 
 
 def read_launch_boundary_events(

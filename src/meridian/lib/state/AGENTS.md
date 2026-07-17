@@ -67,6 +67,9 @@ Process-scope registration and release markers route through the locked sidecar
 mutation seam. When both locks are needed, acquire the spawn-state lock before the
 scope-sidecar lock. Registration is refused after the spawn becomes terminal or a
 cleanup claim exists, so a process scope cannot appear after cleanup targets are fixed.
+Any writer into a destructible `spawns/<id>/` directory that can outlive deletion must
+also take the spawn-state lock and refuse a missing published row. Launch-boundary
+observations follow this rule so a straggler cannot recreate a deleted spawn directory.
 The spawn repository and process-scope projection are persistence leaves with a
 one-way dependency: the projection may use repository reads and lock paths, while
 the repository never imports the projection. Cross-leaf operations belong in the aggregate `spawn_aggregate.py`; in particular, published-spawn deletion owns the lock
