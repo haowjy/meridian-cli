@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.3.32] - 2026-07-17
+
 ### Added
 - Streaming completion now has shared evidence, profile, cleanup contracts and a
   profile-driven coordinator for candidate, deadline, stabilization, and cleanup mechanics.
