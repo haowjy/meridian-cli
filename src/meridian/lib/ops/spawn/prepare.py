@@ -1,6 +1,9 @@
 """Spawn create-input validation and payload preparation helpers."""
 
+import os
 from dataclasses import dataclass
+
+import structlog
 
 from meridian.lib.config.settings import load_config
 from meridian.lib.core.context import RuntimeContext
@@ -36,6 +39,8 @@ from ..runtime import (
 )
 from .models import SpawnCreateInput
 from .task_dir import derive_inheritable_task_dir
+
+logger = structlog.get_logger(__name__)
 
 
 def _parse_env_assignments(raw: tuple[str, ...]) -> dict[str, str]:
@@ -81,7 +86,7 @@ def validate_create_input(payload: SpawnCreateInput) -> tuple[SpawnCreateInput, 
 
     with capture_library_diagnostics():
         if not payload.prompt.strip() and not payload.files:
-            raise ValueError("prompt required: use --prompt/-p or attach at least one --file/-f.")
+            raise ValueError("prompt required: pass -p/--prompt or --prompt-file")
         return payload, None
 
 
@@ -233,6 +238,11 @@ def build_create_payload(
                 else LaunchArgvIntent.SPEC_ONLY
             ),
         )
+        logger.debug(
+            "spawn_launcher_phase",
+            phase="composition",
+            launcher_pid=os.getpid(),
+        )
         prepared_surface = compose_spawn_launch_surface(
             request=raw_request,
             runtime=preview_runtime,
@@ -241,6 +251,11 @@ def build_create_payload(
             launch_mode=(
                 BACKGROUND_LAUNCH_MODE if payload.background else FOREGROUND_LAUNCH_MODE
             ),
+        )
+        logger.debug(
+            "spawn_launcher_phase",
+            phase="composition_complete",
+            launcher_pid=os.getpid(),
         )
         if composition_dry_run:
             plan_overrides = dict(config.env)
