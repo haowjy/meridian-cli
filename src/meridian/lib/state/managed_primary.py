@@ -13,10 +13,16 @@ import psutil
 from meridian.lib.harness.connections.base import HarnessEvent
 from meridian.lib.state.liveness import is_process_alive, is_process_alive_with_birth
 from meridian.lib.state.primary_meta import PrimaryMetadata, read_primary_metadata
+from meridian.lib.state.reconciliation import (
+    FinalizeFailed,
+    ReconciliationDecision,
+    Skip,
+    completion_or_cancel_decision,
+)
 from meridian.lib.state.spawn.model import SpawnRecord
 
 if TYPE_CHECKING:
-    from meridian.lib.state.reaper import ArtifactSnapshot, ReconciliationDecision
+    from meridian.lib.state.reaper import ArtifactSnapshot
 
 
 NESTED_SCOPE_KEYS = ("item", "request", "turn", "params", "data", "message", "payload")
@@ -178,13 +184,6 @@ class ManagedPrimaryReconciliationStrategy:
     ) -> ReconciliationDecision:
         """Decide reconciliation outcome for a managed primary."""
 
-        # Import here to avoid circular dependency.
-        from meridian.lib.state.reaper import (
-            FinalizeFailed,
-            Skip,
-            _completion_or_cancel_decision,  # pyright: ignore[reportPrivateUsage]
-        )
-
         managed = context.managed_snapshot
 
         if managed.launcher_pid_alive:
@@ -193,7 +192,10 @@ class ManagedPrimaryReconciliationStrategy:
         if managed.metadata.activity == "finalizing" and has_recent_activity:
             return Skip(reason="recent_activity")
 
-        decision = _completion_or_cancel_decision(context.record, context.artifact_snapshot)
+        decision = completion_or_cancel_decision(
+            context.record,
+            context.artifact_snapshot.durable_report_completion,
+        )
         if decision is not None:
             return decision
 
