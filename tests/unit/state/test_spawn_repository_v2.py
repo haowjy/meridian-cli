@@ -6,7 +6,7 @@ from meridian.lib.state.spawn.model import SpawnRecord
 from meridian.lib.state.spawn.repository import (
     read_prompt,
     read_state,
-    write_state,
+    record_to_stored_state,
     write_state_locked,
 )
 
@@ -63,15 +63,23 @@ def _record(
     )
 
 
+def _seed_state(spawns_dir: Path, record: SpawnRecord) -> None:
+    spawn_dir = spawns_dir / record.id
+    spawn_dir.mkdir(parents=True)
+    stored = record_to_stored_state(record)
+    (spawn_dir / "state.json").write_text(
+        stored.model_dump_json(indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+
 def test_v2_state_round_trips_without_prompt_body(tmp_path: Path) -> None:
     spawns_dir = tmp_path / "spawns"
     record = _record(prompt="hello world")
 
-    revision = write_state(spawns_dir, record)
+    _seed_state(spawns_dir, record)
 
-    assert revision == 1
     state_text = (spawns_dir / "p1" / "state.json").read_text(encoding="utf-8")
-    assert '"revision": 1' in state_text
     assert '"prompt_length": 11' in state_text
     assert "hello world" not in state_text
 
@@ -81,19 +89,23 @@ def test_v2_state_round_trips_without_prompt_body(tmp_path: Path) -> None:
 
     assert restored == record
     assert read_prompt(spawns_dir, "p1") == "hello world"
-def test_write_state_refuses_to_overwrite_terminal_state(tmp_path: Path) -> None:
+def test_write_state_locked_refuses_to_overwrite_terminal_state(tmp_path: Path) -> None:
     spawns_dir = tmp_path / "spawns"
-    write_state(spawns_dir, _record(status="succeeded"))
+    _seed_state(spawns_dir, _record(status="succeeded"))
 
     with pytest.raises(ValueError, match="terminal spawn state"):
-        write_state(spawns_dir, _record(status="running"))
+        write_state_locked(
+            spawns_dir,
+            "p1",
+            lambda current: current.model_copy(update={"status": "running"}),
+        )
 
     assert read_state(spawns_dir, "p1").status == "succeeded"  # type: ignore[union-attr]
 
 
 def test_write_state_locked_applies_mutator_under_per_spawn_lock(tmp_path: Path) -> None:
     spawns_dir = tmp_path / "spawns"
-    write_state(spawns_dir, _record())
+    _seed_state(spawns_dir, _record())
 
     committed = write_state_locked(
         spawns_dir,
@@ -103,7 +115,6 @@ def test_write_state_locked_applies_mutator_under_per_spawn_lock(tmp_path: Path)
 
     assert committed.runner_pid == 789
     assert committed.desc == "updated"
-    assert '"revision": 2' in (spawns_dir / "p1" / "state.json").read_text(encoding="utf-8")
 
 
 def test_start_spawn_persists_display_label_when_goal_and_desc_absent(tmp_path: Path) -> None:
@@ -138,7 +149,7 @@ def test_start_spawn_persists_display_label_when_goal_and_desc_absent(tmp_path: 
 
 def test_read_state_metadata_only_skips_prompt_file(tmp_path: Path) -> None:
     spawns_dir = tmp_path / "spawns"
-    write_state(spawns_dir, _record(prompt="hello world"))
+    _seed_state(spawns_dir, _record(prompt="hello world"))
 
     restored = read_state(spawns_dir, "p1", include_prompt=False)
 
@@ -150,7 +161,7 @@ def test_read_state_metadata_only_skips_prompt_file(tmp_path: Path) -> None:
 
 def test_write_state_locked_rejects_mutators_that_change_spawn_id(tmp_path: Path) -> None:
     spawns_dir = tmp_path / "spawns"
-    write_state(spawns_dir, _record())
+    _seed_state(spawns_dir, _record())
 
     with pytest.raises(ValueError, match="must not change spawn id"):
         write_state_locked(

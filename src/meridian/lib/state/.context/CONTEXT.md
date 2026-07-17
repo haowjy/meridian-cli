@@ -17,11 +17,11 @@ State splits across two roots:
   session-id-counter                — monotonic c1, c2, …
   sessions/                         — per-session lock + lease files
   spawn-id-counter                  — monotonic p1, p2, …
+  locks/spawns/<id>.lock            — stable per-spawn mutation lock
   spawns/
     .staging/<unique>/              — complete unpublished spawn row
     <id>/
       state.json                    — authoritative spawn state (v2)
-      state.lock                    — per-spawn exclusive lock for external writers
       starting-prompt.md            — prompt body (written once)
       history.jsonl                 — primary output artifact (seq-enveloped events)
       heartbeat · report.md · stderr.log · params.json · tokens.json
@@ -51,24 +51,12 @@ performance problem. No v2 migration for sessions.
 
 ## Contracts
 
-### Two-Tier Write Model
+### Locked Spawn Mutation
 
-Two write tiers based on who holds the lock:
-
-**Tier 1 — Owner writes (unlocked, write-through):**
-The spawn's own runner calls `write_state()` without acquiring the per-spawn lock.
-It is the sole writer while active; no contention. `write_state()` performs a
-best-effort terminal monotonicity guard (reads current state before writing; refuses
-to overwrite an already-terminal record unless `allow_terminal_overwrite=True`).
-
-**Tier 2 — External writes (per-spawn `state.lock`, read-merge-write):**
-The reaper, cancel command, and any other process that needs to mutate a spawn it
-doesn't own calls `write_state_locked()`. This acquires `spawns/<id>/state.lock`,
-reads current `state.json`, applies a mutator function, and writes atomically.
-The pattern prevents torn writes when multiple processes compete on the same spawn.
-
-The distinction is enforced by convention, not runtime enforcement. If an external
-writer skips `state.lock`, it races with the owner's unlocked writes.
+Every mutation of a published spawn calls `write_state_locked()`. It acquires the
+stable per-spawn lock, re-reads `state.json`, applies a pure mutator, and writes the
+result atomically. Lifecycle-owned in-memory records are read hints, never write
+snapshots.
 
 ### Atomic Write Contract
 

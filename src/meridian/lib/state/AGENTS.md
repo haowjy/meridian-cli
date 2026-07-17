@@ -42,20 +42,12 @@ context-path resolution.
 Spawn state lives in individual `state.json` files (`spawns/<id>/state.json`),
 not a global event log, so status reads stay O(1) instead of replaying O(n) events.
 
-## Two Write Tiers
+## Spawn Mutation Seam
 
-**Tier 1 — Owner writes (unlocked):**
-The spawn's own runner calls `write_state()` directly. It is the sole writer while
-active. Includes a best-effort terminal monotonicity guard — will not overwrite an
-already-terminal record unless `allow_terminal_overwrite=True`.
-
-**Tier 2 — External writes (per-spawn lock):**
-The reaper, cancel command, or any other process mutating a spawn it doesn't own
-calls `write_state_locked()`. This acquires `locks/spawns/<id>.lock`, reads current
-state, applies a mutator function, and writes atomically. The lock identity is outside
-the artifact directory it protects. Lock files are
-never unlinked: contenders must always coordinate through the same inode. Skipping
-the lock races with the owner's unlocked writes.
+Every update to a published spawn calls `write_state_locked()`. It acquires
+`locks/spawns/<id>.lock`, re-reads current state, applies a pure mutator, and writes
+atomically. The lock identity is outside the artifact directory it protects and is
+never unlinked, so all contenders coordinate through the same stable inode.
 
 ## Atomic Write Contract
 

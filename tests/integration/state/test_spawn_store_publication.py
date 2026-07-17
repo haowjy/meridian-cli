@@ -63,13 +63,11 @@ def _paused_initial_publication(
 
     def pause_before_state_serialization(
         record: SpawnRecord,
-        *,
-        revision: int,
     ) -> StoredSpawnState:
         state_serialization_reached.set()
         if not release_state_serialization.wait(timeout=5):
             raise TimeoutError("initial state serialization was not released")
-        return original_record_to_stored_state(record, revision=revision)
+        return original_record_to_stored_state(record)
 
     monkeypatch.setattr(
         spawn_repository,

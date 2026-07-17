@@ -24,17 +24,11 @@ field writes. A runner-origin terminal write supersedes a reconciler-origin writ
 The reaper calls this before finalizing — it will not overwrite a spawn the runner
 already terminated with higher authority.
 
-## Two-Tier Write Model
+## Locked Mutation Model
 
-**Tier 1 (owner, unlocked):** The spawn's runner calls `write_state()`. It is the
-sole writer while active. Best-effort terminal monotonicity guard — refuses to
-overwrite already-terminal state unless `allow_terminal_overwrite=True`.
-
-**Tier 2 (external, locked):** Reaper, cancel, and other external writers call
-`write_state_locked()`. Acquires `spawns/<id>/state.lock`, reads current state,
-applies a mutator, writes atomically. Skipping the lock races with the owner.
-
-The distinction is convention, not runtime enforcement.
+All published-state mutations call `write_state_locked()`. The repository acquires
+the stable per-spawn lock, re-reads the authoritative record, applies the caller's
+pure transition, and atomically persists the result.
 
 ## Key Rules
 
@@ -50,8 +44,7 @@ returns the action to take; callers must not skip this check.
 ## Entry Points
 
 - `read_state(spawns_dir, spawn_id)` → `SpawnRecord | None`
-- `write_state(spawns_dir, record)` — owner hot path, no lock
-- `write_state_locked(spawns_dir, spawn_id, mutator)` — external writers
+- `write_state_locked(spawns_dir, spawn_id, mutator)` — all published-state mutations
 - `scan_spawn_ids(spawns_dir)` — list spawns with a `state.json`
 - `decide_terminal_write(current_status, current_origin, incoming_origin)`
 
@@ -62,5 +55,5 @@ returns the action to take; callers must not skip this check.
 
 ## Related
 
-- Parent `../.context/CONTEXT.md` — the two-tier write model is described there
+- Parent `../.context/CONTEXT.md` — the locked mutation model is described there
   in full; this subpackage implements the mechanism.
