@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import asyncio
+import socket
 from collections.abc import Mapping
 from dataclasses import replace
 from pathlib import Path
@@ -17,6 +18,7 @@ from meridian.lib.harness.connections.base import (
     ConnectionConfig,
     HarnessEvent,
 )
+from meridian.lib.harness.connections.errors import PortBindError
 from meridian.lib.harness.connections.opencode_http import OpenCodeConnection
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.platform.detached_process import ParentDeathLink
@@ -535,6 +537,45 @@ async def test_opencode_startup_exit_surfaces_stderr_and_xdg_hint(
     assert "EACCES: permission denied" in message
     assert "Hint:" in message
     assert "XDG_DATA_HOME (/root/meridian-probe-opencode-no-access)" in message
+    assert connection.state == "failed"
+
+
+@pytest.mark.asyncio
+async def test_opencode_startup_exit_with_claimed_port_is_retryable(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    connection = OpenCodeConnection()
+    config = _build_connection_config(tmp_path)
+    competing_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+
+    async def launch_with_port_race(
+        launch_config: ConnectionConfig,
+        _spec: ResolvedLaunchSpec,
+    ) -> None:
+        port = opencode_http._find_free_port()
+        competing_socket.bind(("127.0.0.1", port))
+        competing_socket.listen()
+        connection._base_url = f"http://127.0.0.1:{port}"
+        _set_startup_failure(
+            connection,
+            launch_config,
+            "Error: Unexpected error\n\nServeError\n",
+        )
+
+    monkeypatch.setattr(connection, "_launch_process", launch_with_port_race)
+
+    try:
+        with pytest.raises(PortBindError):
+            await connection.start(
+                config,
+                ResolvedLaunchSpec(
+                    permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
+                ),
+            )
+    finally:
+        competing_socket.close()
+
     assert connection.state == "failed"
 
 
