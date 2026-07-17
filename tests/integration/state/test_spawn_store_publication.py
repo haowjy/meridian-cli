@@ -11,6 +11,7 @@ from pathlib import Path
 
 import pytest
 
+from meridian.lib.core.domain import SpawnStatus
 from meridian.lib.ops.pruning import (
     StaleSpawnArtifact,
     prune_stale_spawn_artifacts,
@@ -35,7 +36,9 @@ def _state_root(tmp_path: Path) -> Path:
     return state_dir
 
 
-def _start_test_spawn(runtime_root: Path, *, spawn_id: str) -> str:
+def _start_test_spawn(
+    runtime_root: Path, *, spawn_id: str, status: SpawnStatus = "running"
+) -> str:
     return str(
         start_spawn(
             runtime_root,
@@ -45,6 +48,7 @@ def _start_test_spawn(runtime_root: Path, *, spawn_id: str) -> str:
             harness="codex",
             prompt="hello",
             spawn_id=spawn_id,
+            status=status,
         )
     )
 
@@ -353,3 +357,35 @@ def test_remove_spawn_events_rejects_staging_container(tmp_path: Path) -> None:
         remove_spawn_events(runtime_root, ".staging")
 
     assert staged_state.read_text(encoding="utf-8") == "in progress\n"
+
+
+def test_remove_spawn_events_cannot_leave_writer_ghost_row(tmp_path: Path) -> None:
+    """Rollback deletion must coordinate with an in-flight spawn writer."""
+    runtime_root = _state_root(tmp_path)
+    paths = RuntimePaths.from_root_dir(runtime_root)
+    spawn_id = str(_start_test_spawn(runtime_root, spawn_id="p7", status="queued"))
+    writer_holds_lock = threading.Event()
+    allow_writer = threading.Event()
+
+    def pause_writer(record: SpawnRecord) -> SpawnRecord:
+        writer_holds_lock.set()
+        assert allow_writer.wait(timeout=5)
+        return record.model_copy(update={"desc": "writer completed"})
+
+    writer = threading.Thread(
+        target=spawn_repository.write_state_locked,
+        args=(paths.spawns_dir, spawn_id, pause_writer),
+    )
+    writer.start()
+    assert writer_holds_lock.wait(timeout=5)
+
+    deletion = threading.Thread(target=remove_spawn_events, args=(runtime_root, spawn_id))
+    deletion.start()
+    deletion.join(timeout=0.2)
+    allow_writer.set()
+    writer.join(timeout=5)
+    deletion.join(timeout=5)
+
+    assert not writer.is_alive()
+    assert not deletion.is_alive()
+    assert not (paths.spawns_dir / spawn_id).exists()

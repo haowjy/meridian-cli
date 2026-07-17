@@ -281,10 +281,12 @@ def prune_stale_spawn_artifacts(stale: list[StaleSpawnArtifact]) -> int:
         runtime_root = artifact_path.parent.parent
         paths = RuntimePaths.from_root_dir(runtime_root)
         with lock_file(paths.spawns_flock):
-            record = spawn_store.get_spawn(runtime_root, artifact.spawn_id)
-            if record is not None and is_active_spawn_status(record.status):
-                continue
-            if _prune_dir(artifact_path):
+            if spawn_store.delete_published_spawn(
+                runtime_root,
+                artifact.spawn_id,
+                can_delete=lambda record: record is None
+                or not is_active_spawn_status(record.status),
+            ):
                 removed += 1
     return removed
 

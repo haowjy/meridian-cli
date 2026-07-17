@@ -8,7 +8,8 @@ from __future__ import annotations
 import os
 import secrets
 import shutil
-from collections.abc import Mapping
+import stat
+from collections.abc import Callable, Mapping
 from contextlib import suppress
 from datetime import UTC, datetime
 from pathlib import Path
@@ -53,6 +54,7 @@ from meridian.lib.state.spawn.model import (
     TerminalSpawnStatus as TerminalSpawnStatus,
 )
 from meridian.lib.state.spawn.terminal_policy import decide_terminal_write
+from meridian.lib.state.spawn.repository import spawn_lock_path
 from meridian.lib.state.spawn.transitions import (
     apply_cancel_intent,
     apply_finalize,
@@ -431,6 +433,59 @@ def start_spawn(
         return resolved_spawn_id
 
 
+type SpawnDeletionPrecondition = Callable[[SpawnRecord | None], bool]
+
+
+def _restore_spawn_artifact_permissions(
+    func: Callable[[str], object],
+    path: str,
+    exc_info: BaseException,
+) -> None:
+    if isinstance(exc_info, FileNotFoundError):
+        return
+    with suppress(OSError):
+        os.chmod(path, stat.S_IWRITE)
+    try:
+        func(path)
+    except OSError as error:
+        raise exc_info from error
+
+
+def delete_published_spawn(
+    runtime_root: Path,
+    spawn_id: SpawnId | str,
+    *,
+    can_delete: SpawnDeletionPrecondition,
+) -> bool:
+    """Delete one published spawn when its locked projection permits it.
+
+    Every published-row deletion routes through this seam. A cleanup claim
+    prevents deletion because it is durable at-least-once intent: the reaper
+    must finish or clear the claim before artifact retention may remove it.
+    Callers that also need ``spawns_flock`` must acquire it first.
+    """
+
+    paths = RuntimePaths.from_root_dir(runtime_root)
+    resolved_spawn_id = str(spawn_id)
+    if not _is_safe_spawn_dir_name(resolved_spawn_id):
+        raise ValueError(f"Invalid spawn ID: {resolved_spawn_id}")
+    spawn_dir = paths.spawns_dir / resolved_spawn_id
+
+    with lock_file(spawn_lock_path(paths.spawns_dir, resolved_spawn_id)):
+        claim_path = spawn_dir / "reaper_cleanup_claim.json"
+        if claim_path.exists() or not can_delete(
+            _read_state(paths.spawns_dir, resolved_spawn_id, include_prompt=False)
+        ):
+            return False
+        if not spawn_dir.exists():
+            return False
+        try:
+            shutil.rmtree(spawn_dir, onexc=_restore_spawn_artifact_permissions)
+        except OSError:
+            return False
+        return True
+
+
 def remove_spawn_events(
     runtime_root: Path,
     spawn_id: SpawnId | str,
@@ -441,13 +496,11 @@ def remove_spawn_events(
     can observe or act on the row. It is not a user-facing delete/archive path.
     """
 
-    paths = RuntimePaths.from_root_dir(runtime_root)
-    resolved_spawn_id = str(spawn_id)
-    if not _is_safe_spawn_dir_name(resolved_spawn_id):
-        raise ValueError(f"Invalid spawn ID: {resolved_spawn_id}")
-    spawn_dir = paths.spawns_dir / resolved_spawn_id
-    with suppress(FileNotFoundError):
-        shutil.rmtree(spawn_dir)
+    delete_published_spawn(
+        runtime_root,
+        spawn_id,
+        can_delete=lambda record: record is not None and record.status == "queued",
+    )
 
 
 def update_spawn(
