@@ -18,16 +18,16 @@ the set. This is intentional — visibility suppression is permanent.
 
 ## Locking Contract
 
-Both `read_archived_spawns()` and `write_archived_spawns()` acquire
-`archived_spawns.flock` before reading or writing. Do not access
-`archived_spawns.json` without holding this lock. The write path uses
-`atomic_write_text()` (tmp+rename) inside the flock. `archive_spawn()` is idempotent
-— calling it twice for the same ID leaves the file unchanged.
+`read_archived_spawns()` takes a shared lock. All writes go through
+`mutate_archived_spawns()`, which holds an exclusive, non-reentrant lock across the
+complete read-modify-write and publishes with `atomic_write_text()`. The stable lock
+inode lives under `<runtime_root>/locks/`, outside the app data directory.
+`archive_spawn()` is idempotent and reports whether it newly inserted the ID.
 
 ## Entry Points
 
-- `archive.py` — `archive_spawn()`, `read_archived_spawns()`,
-  `write_archived_spawns()`, `is_spawn_archived()`.
+- `archive.py` — `archive_spawn()`, `read_archived_spawns()`, and the sole write
+  seam `mutate_archived_spawns()`.
 
 ## Depth
 
