@@ -26,9 +26,9 @@ from meridian.lib.state.work_store import (
     _normalize_goal,
     _normalize_task_dir_path,
     _project_paths_for_work_store,
-    _serialize_status,
+    _serialize_state,
     _status_path,
-    _status_payload,
+    _stored_state_from_item,
     _validate_exact_slug,
     _warn_both_locations,
     _work_item_from_dir,
@@ -57,17 +57,7 @@ def _mutate_item(runtime_root: Path, work_id: str, mutation: _NamespaceMutation[
 def _write_item(work_dir: Path, item: WorkItem) -> None:
     atomic_write_text(
         _status_path(work_dir),
-        _serialize_status(
-            _status_payload(
-                status=item.status,
-                description=item.description,
-                goal=item.goal,
-                created_at=item.created_at,
-                archived_at=item.archived_at,
-                task_dir=item.task_dir,
-                worktree=item.worktree,
-            )
-        ),
+        _serialize_state(_stored_state_from_item(item)),
     )
 
 

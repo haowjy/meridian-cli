@@ -9,14 +9,12 @@ Each work directory stores mutable metadata in ``__status.json``.
 
 from __future__ import annotations
 
-import json
 import re
 from datetime import UTC, datetime
 from pathlib import Path, PurePath
-from typing import Any, cast
 
 import structlog
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from meridian.lib.state.paths import (
     ProjectPaths,
@@ -44,7 +42,7 @@ def _normalize_worktree_path_text(path: str) -> str:
 
 
 class WorktreeMetadata(BaseModel):
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
     path: str | None = None
     branch: str | None = None
@@ -100,6 +98,27 @@ class WorkItem(BaseModel):
         return self.worktree.managed
 
 
+class StoredWorkItemState(BaseModel):
+    """The sole codec for the contents of ``__status.json``."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    status: str
+    description: str
+    goal: str | None
+    created_at: str
+    archived_at: str | None
+    task_dir: str | None
+    worktree: WorktreeMetadata
+
+    @field_validator("status")
+    @classmethod
+    def _status_is_not_empty(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("Work item status must not be empty.")
+        return value
+
+
 def slugify(label: str) -> str:
     """Return a normalized work-item slug."""
 
@@ -150,134 +169,30 @@ def _dir_mtime_iso(work_dir: Path) -> str:
     return _format_ts(work_dir.stat().st_mtime)
 
 
-def _serialize_status(payload: dict[str, Any]) -> str:
-    return json.dumps(payload, indent=2, sort_keys=True) + "\n"
+def _serialize_state(state: StoredWorkItemState) -> str:
+    return state.model_dump_json(indent=2) + "\n"
 
 
-def _read_json_object(path: Path) -> dict[str, Any] | None:
+def _read_stored_state(path: Path) -> StoredWorkItemState | None:
     try:
-        loaded = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+        return StoredWorkItemState.model_validate_json(path.read_text(encoding="utf-8"))
+    except (OSError, ValidationError):
         return None
-    return cast("dict[str, Any]", loaded) if isinstance(loaded, dict) else None
 
 
-def _worktree_payload(metadata: WorktreeMetadata | None = None) -> dict[str, Any]:
-    worktree = metadata or WorktreeMetadata()
-    return {
-        "path": worktree.path,
-        "branch": worktree.branch,
-        "repo_path": worktree.repo_path,
-        "name": worktree.name,
-        "pending": worktree.pending,
-        "managed": worktree.managed,
-    }
-
-
-def _coerce_worktree_metadata(
-    raw: dict[str, Any],
-    *,
-    default: WorktreeMetadata | None = None,
-) -> tuple[WorktreeMetadata, bool]:
-    changed = False
-    fallback = default or WorktreeMetadata()
-
-    nested = raw.get("worktree")
-    if isinstance(nested, dict):
-        nested_dict = cast("dict[str, object]", nested)
-        path_value = nested_dict.get("path")
-        branch_value = nested_dict.get("branch")
-        repo_path_value = nested_dict.get("repo_path")
-        name_value = nested_dict.get("name", nested_dict.get("worktree_name"))
-        pending_value = nested_dict.get("pending")
-        managed_value = nested_dict.get("managed")
-        has_managed_key = "managed" in nested_dict
-    else:
-        path_value = raw.get("worktree_path")
-        branch_value = raw.get("worktree_branch")
-        repo_path_value = raw.get("worktree_repo_path")
-        name_value = raw.get("worktree_name")
-        pending_value = raw.get("worktree_pending")
-        managed_value = raw.get("worktree_managed")
-        has_managed_key = "worktree_managed" in raw
-        legacy_keys = (
-            "worktree_path",
-            "worktree_branch",
-            "worktree_repo_path",
-            "worktree_name",
-            "worktree_pending",
-            "worktree_managed",
-        )
-        if nested is not None or any(key in raw for key in legacy_keys):
-            changed = True
-
-    if isinstance(path_value, str) and path_value:
-        path = _normalize_worktree_path_text(path_value)
-        if path != path_value:
-            changed = True
-    else:
-        path = fallback.path
-    if path_value not in (None, "") and not isinstance(path_value, str):
-        changed = True
-
-    branch = branch_value if isinstance(branch_value, str) and branch_value else fallback.branch
-    if branch_value not in (None, "") and not isinstance(branch_value, str):
-        changed = True
-
-    if isinstance(repo_path_value, str) and repo_path_value:
-        repo_path = _normalize_worktree_path_text(repo_path_value)
-        if repo_path != repo_path_value:
-            changed = True
-    else:
-        repo_path = fallback.repo_path
-    if repo_path_value not in (None, "") and not isinstance(repo_path_value, str):
-        changed = True
-
-    name = name_value if isinstance(name_value, str) and name_value else fallback.name
-    if name_value not in (None, "") and not isinstance(name_value, str):
-        changed = True
-
-    if isinstance(pending_value, bool):
-        pending = pending_value
-    else:
-        pending = fallback.pending
-        if pending_value is not None:
-            changed = True
-
-    if isinstance(managed_value, bool):
-        managed = managed_value
-    elif (
-        not has_managed_key
-        and (
-            (isinstance(path_value, str) and bool(path_value))
-            or (isinstance(branch_value, str) and bool(branch_value))
-            or pending_value is not None
-        )
-    ):
-        # Compatibility inference for pre-managed records:
-        # when worktree metadata exists but no `managed` flag was persisted,
-        # treat it as a managed/provisioned worktree.
-        managed = True
-        changed = True
-    else:
-        managed = fallback.managed
-        if managed_value is not None:
-            changed = True
-
-    return (
-        WorktreeMetadata(
-            path=path,
-            branch=branch,
-            repo_path=repo_path,
-            name=name,
-            pending=pending,
-            managed=managed,
-        ),
-        changed,
+def _stored_state_from_item(item: WorkItem) -> StoredWorkItemState:
+    return StoredWorkItemState(
+        status=item.status,
+        description=item.description,
+        goal=item.goal,
+        created_at=item.created_at,
+        archived_at=item.archived_at,
+        task_dir=item.task_dir,
+        worktree=item.worktree,
     )
 
 
-def _read_or_initialize_status(
+def _default_stored_state(
     work_dir: Path,
     *,
     archived: bool,
@@ -288,106 +203,22 @@ def _read_or_initialize_status(
     default_archived_at: str | None = None,
     default_task_dir: str | None = None,
     default_worktree: WorktreeMetadata | None = None,
-) -> dict[str, Any]:
-    status_file = _status_path(work_dir)
+) -> StoredWorkItemState:
     created_fallback = default_created_at or _dir_mtime_iso(work_dir)
     archived_fallback = (
         default_archived_at
         if default_archived_at is not None
         else (_dir_mtime_iso(work_dir) if archived else None)
     )
-    default_payload: dict[str, Any] = {
-        "status": "done" if archived else default_status,
-        "description": default_description,
-        "goal": default_goal,
-        "created_at": created_fallback,
-        "archived_at": archived_fallback if archived else None,
-        "task_dir": default_task_dir,
-        "worktree": _worktree_payload(default_worktree),
-    }
-
-    raw = _read_json_object(status_file)
-    if raw is None:
-        return default_payload
-
-    changed = False
-    payload = dict(default_payload)
-
-    status_value = raw.get("status")
-    if isinstance(status_value, str) and status_value:
-        payload["status"] = status_value
-    else:
-        changed = True
-
-    description_value = raw.get("description")
-    if isinstance(description_value, str):
-        payload["description"] = description_value
-    else:
-        payload["description"] = ""
-        changed = True
-
-    goal_value = raw.get("goal")
-    if isinstance(goal_value, str):
-        normalized_goal = _normalize_goal(goal_value)
-        payload["goal"] = normalized_goal
-        if normalized_goal != goal_value:
-            changed = True
-    elif goal_value is None:
-        payload["goal"] = None
-    else:
-        payload["goal"] = None
-        changed = True
-
-    created_value = raw.get("created_at")
-    if isinstance(created_value, str) and created_value:
-        payload["created_at"] = created_value
-    else:
-        changed = True
-
-    archived_value = raw.get("archived_at")
-    if archived:
-        if isinstance(archived_value, str) and archived_value:
-            payload["archived_at"] = archived_value
-        else:
-            payload["archived_at"] = _dir_mtime_iso(work_dir)
-            changed = True
-        if payload["status"] != "done":
-            payload["status"] = "done"
-            changed = True
-    else:
-        if archived_value is not None:
-            changed = True
-        payload["archived_at"] = None
-        if payload["status"] == "done":
-            payload["status"] = default_status
-            changed = True
-
-    worktree, worktree_changed = _coerce_worktree_metadata(raw, default=default_worktree)
-    payload["worktree"] = _worktree_payload(worktree)
-    changed = changed or worktree_changed
-
-    task_dir_value = raw.get("task_dir")
-    if isinstance(task_dir_value, str):
-        normalized_task_dir = task_dir_value.strip()
-        if normalized_task_dir:
-            normalized_task_dir = _normalize_task_dir_path(normalized_task_dir)
-            payload["task_dir"] = normalized_task_dir
-            if normalized_task_dir != task_dir_value:
-                changed = True
-        else:
-            payload["task_dir"] = None
-            changed = True
-    elif task_dir_value is None:
-        if worktree.path is not None:
-            payload["task_dir"] = _normalize_task_dir_path(worktree.path)
-            changed = True
-        else:
-            payload["task_dir"] = None
-    else:
-        payload["task_dir"] = None
-        changed = True
-
-    return payload
+    return StoredWorkItemState(
+        status="done" if archived else default_status,
+        description=default_description,
+        goal=default_goal,
+        created_at=created_fallback,
+        archived_at=archived_fallback if archived else None,
+        task_dir=default_task_dir,
+        worktree=default_worktree or WorktreeMetadata(),
+    )
 
 
 def _work_item_from_dir(
@@ -402,7 +233,7 @@ def _work_item_from_dir(
     default_task_dir: str | None = None,
     default_worktree: WorktreeMetadata | None = None,
 ) -> WorkItem:
-    payload = _read_or_initialize_status(
+    fallback = _default_stored_state(
         work_dir,
         archived=archived,
         default_status=default_status,
@@ -413,21 +244,18 @@ def _work_item_from_dir(
         default_task_dir=default_task_dir,
         default_worktree=default_worktree,
     )
-    worktree_payload = payload.get("worktree")
-    worktree = (
-        WorktreeMetadata.model_validate(worktree_payload)
-        if isinstance(worktree_payload, dict)
-        else WorktreeMetadata()
-    )
+    stored = _read_stored_state(_status_path(work_dir)) or fallback
     return WorkItem(
         name=work_dir.name,
-        description=str(payload["description"]),
-        goal=payload["goal"] if isinstance(payload["goal"], str) else None,
-        status=str(payload["status"]),
-        created_at=str(payload["created_at"]),
-        archived_at=payload["archived_at"] if isinstance(payload["archived_at"], str) else None,
-        task_dir=payload["task_dir"] if isinstance(payload.get("task_dir"), str) else None,
-        worktree=worktree,
+        description=stored.description,
+        goal=stored.goal,
+        status=(
+            "done" if archived else (default_status if stored.status == "done" else stored.status)
+        ),
+        created_at=stored.created_at,
+        archived_at=(stored.archived_at or fallback.archived_at) if archived else None,
+        task_dir=stored.task_dir,
+        worktree=stored.worktree,
     )
 
 
@@ -466,27 +294,6 @@ def _list_work_item_dirs(root_dir: Path) -> list[Path]:
         for child in root_dir.iterdir()
         if child.is_dir() and _is_valid_work_slug(child.name)
     ]
-
-
-def _status_payload(
-    *,
-    status: str,
-    description: str,
-    goal: str | None = None,
-    created_at: str,
-    archived_at: str | None,
-    task_dir: str | None,
-    worktree: WorktreeMetadata | None = None,
-) -> dict[str, Any]:
-    return {
-        "status": status,
-        "description": description,
-        "goal": goal,
-        "created_at": created_at,
-        "archived_at": archived_at,
-        "task_dir": task_dir,
-        "worktree": _worktree_payload(worktree),
-    }
 
 
 def _has_artifacts(work_dir: Path) -> bool:
@@ -572,17 +379,7 @@ def work_item_needs_healing(runtime_root: Path, work_id: str) -> bool:
     if work_dir is None:
         return False
     item = _work_item_from_dir(work_dir, archived=active_dir is None)
-    expected = _serialize_status(
-        _status_payload(
-            status=item.status,
-            description=item.description,
-            goal=item.goal,
-            created_at=item.created_at,
-            archived_at=item.archived_at,
-            task_dir=item.task_dir,
-            worktree=item.worktree,
-        )
-    )
+    expected = _serialize_state(_stored_state_from_item(item))
     try:
         return _status_path(work_dir).read_text(encoding="utf-8") != expected
     except OSError:
