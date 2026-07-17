@@ -48,20 +48,34 @@ design; windows-gate is informational only.
 capability directly rather than the `SerializedInject` seam, and launch lifecycle
 tests still seed `manager._sessions` privately.
 
+Rider fix (found by this PR's G4 runtime probe, pre-existing on main): the
+opt-in attempt timeout had split carriers — `--timeout` armed the timer but
+vanished from the policy snapshot, `MERIDIAN_TIMEOUT` appeared in the snapshot
+but never armed the timer — and a fired timer published `cancelled` instead of
+`timed_out`. Unified on `execution_policy.timeout` (minutes; converted at the
+runner edge), `timed_out`/exit 3 now survives the induced abort, late-success
+precedence retained. The larger publish-at-deadline redesign (terminal
+publication currently waits ~6s of synchronous Pi abort cleanup) is tracked
+in #431. The rearm-count budget is spawn-scoped: it persists across streaming
+retry attempts rather than resetting per drain coordinator.
+
 ## Work Item
 
-issue-triage-sweep
+drain-streaming-cleanup (implementation; planning under issue-triage-sweep)
 
 ## Verification
 
 Per-increment and post-merge gates, all green: `uv run ruff check .`,
-`uv run pytest-llm` (1526 passed, 2 skipped at final integration verify),
+`uv run pytest-llm` (1530 passed, 2 skipped on the final tree),
 `uv run --extra dev python -m pyright` (0 errors). #369's fix carries a
 deterministic pre-fix repro (gated async-cleanup service proving
 publish-before-telemetry ordering). Increment review (G2) found no production
 defects; its three test-side findings were fixed on-branch (79f4c80c). Final
-whole-change review + runtime probe (G4) results recorded before draft→ready.
-CHANGELOG entries per issue.
+whole-change review + runtime probe against a real Pi harness (G4) surfaced
+one blocking finding (rearm budget attempt-vs-spawn scope) and the pre-existing
+timeout defects — all fixed on-branch with pre-fix-failing regression tests;
+follow-ups #430/#431 filed for verified-deferred items. CHANGELOG entries per
+issue.
 
 ## Knowledge Updates
 
@@ -69,8 +83,21 @@ Plan doc committed at `docs/plans/drain-streaming-cleanup.md`. Triage evidence l
 
 ## Spawn Trace
 
+Planning (issue-triage-sweep):
 - p5268, p5269 (terra explorers) — issue triage lanes C/D
 - two native sonnet reviewer lanes — issue triage lanes A/B
+
+Implementation (drain-streaming-cleanup, tech-lead c5246):
+- p5309 coder — #369 flake fix + deterministic race repro
+- p5310 coder — #322 item 3 reconciliation seam (parallel lane)
+- p5315 coder — #371 scaffolding removal
+- p5324 coder — #370 composition-root inversion
+- p5326 reviewer — G2 increment review; p5327 coder — #372 consolidation
+- p5335 coder — G2 fixes; p5336 coder — #373/#374 policy (parallel lane)
+- p5337 coder — #241 smoke-guide tiering
+- p5339 reviewer (thermo-nuclear) + p5340 prober — G4 whole-change gate
+- p5344 coder — G4 fixes; p5345 investigator — timeout root cause
+- p5349 coder — attempt-timeout carrier/classification fix
 
 # Note for PR #375 (post-drain-convergence streaming cleanup)
 
