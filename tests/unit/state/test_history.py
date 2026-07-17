@@ -40,6 +40,91 @@ def test_writer_assigns_seq_and_last_seq(tmp_path: Path) -> None:
     assert third.seq == 2
 
 
+def test_writer_atomically_updates_last_observed_event_marker(tmp_path: Path) -> None:
+    from tests.support.fakes import FakeClock
+
+    history_path = tmp_path / "history.jsonl"
+    marker_path = tmp_path / "last-observed-event.json"
+    clock = FakeClock()
+    writer = HarnessHistoryWriter(
+        history_path,
+        last_observed_event_path=marker_path,
+        clock=clock,
+    )
+
+    for event_type in (
+        "turn/started",
+        "item/started",
+        "item/completed",
+        "item/started",
+    ):
+        result = writer.write(
+            HarnessEvent(event_type=event_type, payload={}, harness_id="codex")
+        )
+        assert result.success is True
+        clock.advance(1.0)
+
+    marker = json.loads(marker_path.read_text(encoding="utf-8"))
+    assert marker == {
+        "event_kind": "item/started",
+        "timestamp": marker["timestamp"],
+        "seq": 3,
+        "turn_started": 1,
+        "turn_completed": 0,
+        "item_started": 2,
+        "item_completed": 1,
+    }
+    assert marker["timestamp"].endswith("Z")
+    assert len(history_path.read_text(encoding="utf-8").splitlines()) == 4
+
+
+def test_writer_throttles_last_observed_event_marker_checkpoints(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tests.support.fakes import FakeClock
+
+    history_path = tmp_path / "history.jsonl"
+    marker_path = tmp_path / "last-observed-event.json"
+    clock = FakeClock()
+    writer = HarnessHistoryWriter(
+        history_path,
+        last_observed_event_path=marker_path,
+        clock=clock,
+    )
+    write_calls = 0
+    original_atomic_write_text = history_mod.atomic_write_text
+
+    def _counting_atomic_write_text(path: Path, content: str) -> None:
+        nonlocal write_calls
+        if path == marker_path:
+            write_calls += 1
+        original_atomic_write_text(path, content)
+
+    monkeypatch.setattr(history_mod, "atomic_write_text", _counting_atomic_write_text)
+
+    writer.write(HarnessEvent(event_type="turn/started", payload={}, harness_id="codex"))
+    assert write_calls == 1
+
+    for index in range(3):
+        writer.write(
+            HarnessEvent(
+                event_type="item/started",
+                payload={"index": index},
+                harness_id="codex",
+            )
+        )
+    assert write_calls == 1
+
+    clock.advance(1.0)
+    writer.write(HarnessEvent(event_type="item/completed", payload={}, harness_id="codex"))
+    assert write_calls == 2
+
+    marker = json.loads(marker_path.read_text(encoding="utf-8"))
+    assert marker["event_kind"] == "item/completed"
+    assert marker["seq"] == 4
+
+
 def test_writer_resume_discards_truncated_tail_before_append(tmp_path: Path) -> None:
     history_path = tmp_path / "history.jsonl"
     writer = HarnessHistoryWriter(history_path)

@@ -6,6 +6,9 @@ from typing import Final
 
 OUTPUT_FILENAME: Final[str] = "output.jsonl"
 HISTORY_FILENAME: Final[str] = "history.jsonl"
+LAST_OBSERVED_EVENT_FILENAME: Final[str] = "last-observed-event.json"
+RUNNER_LIFECYCLE_FILENAME: Final[str] = "runner-lifecycle.jsonl"
+FINALIZE_EVIDENCE_FILENAME: Final[str] = "finalize-evidence.json"
 PRIMARY_META_FILENAME: Final[str] = "primary_meta.json"
 PI_RUNTIME_META_FILENAME: Final[str] = "pi_runtime_meta.json"
 STDERR_FILENAME: Final[str] = "stderr.log"
@@ -81,7 +84,9 @@ __all__ = [
     "CURSOR_INACTIVITY_TIMEOUT_SECONDS",
     "DEFAULT_INFRA_EXIT_CODE",
     "DRY_RUN_REPORT_PATH",
+    "FINALIZE_EVIDENCE_FILENAME",
     "HISTORY_FILENAME",
+    "LAST_OBSERVED_EVENT_FILENAME",
     "OUTPUT_FILENAME",
     "PI_RUNTIME_META_FILENAME",
     "POST_EXIT_PIPE_DRAIN_TIMEOUT_SECONDS",
@@ -93,6 +98,7 @@ __all__ = [
     "REPORT_FILENAME",
     "REPORT_WATCHDOG_GRACE_SECONDS",
     "REPORT_WATCHDOG_POLL_SECONDS",
+    "RUNNER_LIFECYCLE_FILENAME",
     "STDERR_FILENAME",
     "SUBPROCESS_REPORT_WATCHDOG_POLL_SECONDS",
     "SYSTEM_PROMPT_FILENAME",

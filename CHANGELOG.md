@@ -29,11 +29,39 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [0.3.35] - 2026-07-17
 
 ### Added
+- Startup-phase watchdog for streaming spawns: backend boot, connection, and
+  session handshake are now bounded by `timeouts.startup_minutes` (default 5,
+  `MERIDIAN_STARTUP_TIMEOUT_MINUTES`); expiry fails the attempt fast with a
+  startup-phase failure reason instead of wedging indefinitely. (#235)
+- Retries preserve the completed attempt's evidence under `attempt-N/`
+  (history, stderr, tokens, report, diagnostics) with a crash-atomic
+  rotation, instead of truncating it — the exact stuck sub-step survives
+  the retry. (#235)
+- Durable mid-turn loss diagnostics: a last-observed-event marker with
+  turn/item counters, a runner lifecycle journal (signals, exceptions,
+  atexit, finalization), and orphan finalize evidence recording the
+  runner-vs-worker-vs-child liveness split the reaper saw. (#37)
 - Lifecycle history rows now carry sub-second wall-clock timestamps, and terminal
   spawn state records the sub-second `published_at` time of its atomic publication.
   (#435)
 
 ### Fixed
+- `meridian spawn` no longer reads stdin implicitly: an open-but-silent
+  non-TTY stdin (agent harnesses, CI pipelines) can no longer hang
+  submission before reservation. Stdin is read only via explicit
+  `--prompt-file -`; reference/continue submissions without a prompt
+  resolve to an empty prompt. (#441)
+- Streaming control sockets moved to bounded per-user temp paths
+  (`/tmp/meridian-<uid>/control-<hash>.sock`), so long runtime/project
+  roots can no longer fail spawns with `AF_UNIX path too long`. (#168)
+- OpenCode launches now classify the backend's generic startup failure as a
+  retryable port-bind race when the chosen port is actually claimed, feeding
+  the existing fresh-port retry instead of a generic launch error. (#201)
+- Task cancellation during connection startup or manager registration can no
+  longer strand a live harness child: ownership-transfer guards catch
+  `BaseException` with a reap that survives repeated cancellation, and
+  Claude/Pi/Cursor stdio children now record `spawn_owned` process scopes
+  for crash-only reaper recovery. (#419)
 - Pi process exits with tracked child work now report the tracked-work-specific
   terminal reason for both lifecycle children and managed background bash work.
   (#433)

@@ -13,6 +13,7 @@ from meridian.lib.harness.connections.base import (
     HarnessEvent,
 )
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
+from meridian.lib.launch.resolve import resolve_startup_timeout_seconds
 from meridian.lib.launch.signals import (
     SignalCoordinator,
     SignalForwarder,
@@ -163,6 +164,7 @@ async def test_streaming_runner_signal_cancel_invokes_send_cancel_once(
         runtime_root=runtime_root,
         project_root=tmp_path,
         spawn_id=SpawnId("p-signal"),
+        startup_timeout_seconds=resolve_startup_timeout_seconds(config_snapshot=None),
     )
 
     assert outcome.status == "cancelled"

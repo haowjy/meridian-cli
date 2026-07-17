@@ -7,7 +7,10 @@ from typing import TYPE_CHECKING, Any, cast
 
 from meridian.lib.core.types import HarnessId, TransportId
 from meridian.lib.harness.bundle import get_harness_bundle
-from meridian.lib.harness.connections.base import HarnessEvent
+from meridian.lib.harness.connections.base import (
+    HarnessEvent,
+    reap_on_ownership_transfer_failure,
+)
 from meridian.lib.harness.errors import HarnessBinaryNotFound
 from meridian.lib.harness.permission_broker import PermissionBroker
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
@@ -74,10 +77,14 @@ async def dispatch_start(
     try:
         await connection.start(config, spec)
     except (FileNotFoundError, NotADirectoryError) as exc:
+        await reap_on_ownership_transfer_failure(connection.stop)
         raise HarnessBinaryNotFound.from_os_error(
             harness_id=config.harness_id,
             error=exc,
         ) from exc
+    except BaseException:
+        await reap_on_ownership_transfer_failure(connection.stop)
+        raise
     return connection
 
 

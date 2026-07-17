@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import time
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
+from typing import cast
 
 import structlog
 
@@ -18,9 +21,15 @@ from meridian.lib.core.spawn_lifecycle import (
     resolve_reconciled_terminal_state,
 )
 from meridian.lib.core.types import SpawnId
-from meridian.lib.launch.constants import HISTORY_FILENAME, OUTPUT_FILENAME
+from meridian.lib.launch.constants import (
+    FINALIZE_EVIDENCE_FILENAME,
+    HISTORY_FILENAME,
+    LAST_OBSERVED_EVENT_FILENAME,
+    OUTPUT_FILENAME,
+)
 from meridian.lib.platform.locking import lock_file
 from meridian.lib.platform.process_scope.base import ProcessScopeSnapshot
+from meridian.lib.state.atomic import atomic_write_text
 from meridian.lib.state.launch_boundary import LaunchBoundarySummary, read_launch_boundary_summary
 from meridian.lib.state.liveness import is_process_alive
 from meridian.lib.state.managed_primary import (
@@ -372,6 +381,100 @@ def _log_orphan_primary_diagnostics(
     )
 
 
+def _read_last_observed_event(runtime_root: Path, spawn_id: str) -> dict[str, object] | None:
+    marker_path = (
+        runtime_root / "spawns" / spawn_id / LAST_OBSERVED_EVENT_FILENAME
+    )
+    try:
+        parsed: object = json.loads(marker_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(parsed, dict):
+        return None
+    return cast("dict[str, object]", parsed)
+
+
+def _record_orphan_finalize_evidence(
+    runtime_root: Path,
+    record: SpawnRecord,
+    snapshot: ArtifactSnapshot,
+    now: float,
+) -> None:
+    """Persist the liveness facts observed immediately before orphan cleanup."""
+
+    spawn_id = SpawnId(record.id)
+    scopes = [
+        scope
+        for scope in read_scopes_from_disk(runtime_root, spawn_id)
+        if scope.owner_policy == "spawn_owned"
+    ]
+    child_processes: list[dict[str, object]] = []
+    for scope in scopes:
+        child_processes.append(
+            {
+                "scope_id": scope.scope_id,
+                "role": scope.role,
+                "pid": scope.root_pid,
+                "alive": is_process_alive(
+                    scope.root_pid,
+                    created_after_epoch=(scope.root_created_at_epoch or None),
+                ),
+            }
+        )
+
+    worker_alive: bool | None = None
+    if record.worker_pid is not None and record.worker_pid > 0:
+        matching_scope = next(
+            (item for item in child_processes if item["pid"] == record.worker_pid),
+            None,
+        )
+        worker_alive = (
+            bool(matching_scope["alive"])
+            if matching_scope is not None
+            else is_process_alive(record.worker_pid, created_after_epoch=snapshot.started_epoch)
+        )
+
+    heartbeat_epoch = _artifact_mtime_epoch(
+        runtime_root / "spawns" / record.id / "heartbeat"
+    )
+    evidence = {
+        "reason": "orphan_run",
+        "timestamp": datetime.fromtimestamp(now, UTC).isoformat().replace("+00:00", "Z"),
+        "runner": {
+            "pid": record.runner_pid,
+            "alive": snapshot.runner_pid_alive,
+        },
+        "worker": {
+            "pid": record.worker_pid,
+            "alive": worker_alive,
+        },
+        "child_processes": child_processes,
+        "worker_or_backend_alive": worker_alive is True
+        or any(bool(item["alive"]) for item in child_processes),
+        "heartbeat_age_secs": (
+            max(0.0, now - heartbeat_epoch) if heartbeat_epoch is not None else None
+        ),
+        "last_activity_age_secs": (
+            max(0.0, now - snapshot.last_activity_epoch)
+            if snapshot.last_activity_epoch is not None
+            else None
+        ),
+        "last_observed_event": _read_last_observed_event(runtime_root, record.id),
+    }
+    evidence_path = runtime_root / "spawns" / record.id / FINALIZE_EVIDENCE_FILENAME
+    try:
+        atomic_write_text(
+            evidence_path,
+            json.dumps(evidence, separators=(",", ":"), sort_keys=True) + "\n",
+        )
+    except Exception:
+        logger.warning(
+            "Failed to persist orphan finalize evidence.",
+            spawn_id=record.id,
+            exc_info=True,
+        )
+
+
 def _finalize_and_log(
     project_root: Path,
     runtime_root: Path,
@@ -676,6 +779,13 @@ def reconcile_active_spawn(
     decision = decide_reconciliation(record, generic_snapshot, managed_snapshot, now)
     if isinstance(decision, Skip):
         return record
+    if isinstance(decision, FinalizeFailed) and decision.error == "orphan_run":
+        _record_orphan_finalize_evidence(
+            runtime_root,
+            record,
+            generic_snapshot,
+            now,
+        )
     _claim_reaper_cleanup(
         runtime_root,
         record,

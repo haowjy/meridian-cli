@@ -97,6 +97,7 @@ def _fake_launch_context_builder(child_cwd: Path) -> Any:
             project_root=child_cwd.parent,
             control_root=child_cwd.parent,
             task_cwd=child_cwd,
+            runtime_root=Path(runtime.runtime_root),
             runtime=runtime,
             work_id=None,
             binding=SimpleNamespace(

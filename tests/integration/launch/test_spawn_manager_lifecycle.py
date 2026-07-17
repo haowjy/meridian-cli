@@ -74,6 +74,82 @@ def _read_output_event_types(runtime_root: Path, spawn_id: SpawnId) -> list[str]
 
 
 @pytest.mark.asyncio
+async def test_start_spawn_cancellation_during_registration_stops_connection(
+    tmp_path: Path,
+) -> None:
+    """Cancellation cannot strand a connection before manager registration."""
+
+    connection_stopped = asyncio.Event()
+    cleanup_started = asyncio.Event()
+    release_cleanup = asyncio.Event()
+    control_start_entered = asyncio.Event()
+    release_control_start = asyncio.Event()
+
+    class FakeConnection:
+        @property
+        def harness_id(self) -> HarnessId:
+            return HarnessId.CODEX
+
+        @property
+        def resident_backend(self) -> None:
+            return None
+
+        async def stop(
+            self,
+            *,
+            reason: str | None = None,
+            progress: Any = None,
+        ) -> StopResult:
+            _ = reason, progress
+            cleanup_started.set()
+            await release_cleanup.wait()
+            connection_stopped.set()
+            return StopResult()
+
+    connection = FakeConnection()
+
+    async def start_connection(
+        _config: ConnectionConfig,
+        _spec: ResolvedLaunchSpec,
+    ) -> Any:
+        return connection
+
+    class BlockingControlServer:
+        async def start(self) -> None:
+            control_start_entered.set()
+            await release_control_start.wait()
+
+        async def stop(self) -> None:
+            return None
+
+    manager = SpawnManager(
+        runtime_root=tmp_path,
+        project_root=tmp_path,
+        start_connection=start_connection,
+        control_server_factory=lambda *_args: cast("Any", BlockingControlServer()),
+    )
+    spawn_id = SpawnId("p-registration-cancel")
+    start_task = asyncio.create_task(
+        manager.start_spawn(_build_config(spawn_id, tmp_path), _build_spec())
+    )
+
+    await control_start_entered.wait()
+    start_task.cancel()
+    await cleanup_started.wait()
+    start_task.cancel()
+    await asyncio.sleep(0)
+    assert not start_task.done()
+    assert not connection_stopped.is_set()
+
+    release_cleanup.set()
+    with pytest.raises(asyncio.CancelledError):
+        await start_task
+
+    assert connection_stopped.is_set()
+    assert manager.get_connection(spawn_id) is None
+
+
+@pytest.mark.asyncio
 async def test_wait_for_completion_survives_cleanup_without_private_hooks(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

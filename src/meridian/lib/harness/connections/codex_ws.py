@@ -49,6 +49,7 @@ from meridian.lib.harness.connections.base import (
     ServerRequestHandler,
     StopProgressCallback,
     StopResult,
+    reap_on_ownership_transfer_failure,
     validate_prompt_size,
 )
 from meridian.lib.harness.connections.errors import PortBindError
@@ -219,6 +220,7 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
         self._ws: Any | None = None
         self._reader_task: asyncio.Task[None] | None = None
         self._send_lock = asyncio.Lock()
+        self._stop_lock = asyncio.Lock()
         self._stderr_handle: BufferedWriter | None = None
         self._stderr_log_path: Path | None = None
         self._stderr_read_offset = 0
@@ -450,11 +452,15 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
             self._transition("connected")
             self._liveness.mark_activity()
             self._emit_startup_phase(StartupPhase.HARNESS_READY)
-        except Exception:
+        except BaseException:
             self._emit_startup_phase(StartupPhase.HARNESS_FAILED)
             self._transition("failed")
-            await self._cleanup_resources(mark_stopped=False)
+            await reap_on_ownership_transfer_failure(self._cleanup_start_failure)
             raise
+
+    async def _cleanup_start_failure(self) -> None:
+        async with self._stop_lock:
+            await self._cleanup_resources(mark_stopped=False)
 
     async def start_observer(
         self,
@@ -499,6 +505,10 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
         progress: StopProgressCallback | None = None,
     ) -> StopResult:
         _ = reason, progress
+        async with self._stop_lock:
+            return await self._stop_unlocked()
+
+    async def _stop_unlocked(self) -> StopResult:
         if self._state in {"stopped"}:
             return StopResult()
         self._primary_observer_mode = False

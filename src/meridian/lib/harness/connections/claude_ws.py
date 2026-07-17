@@ -28,8 +28,10 @@ from meridian.lib.harness.connections.base import (
     HarnessEvent,
     StopProgressCallback,
     StopResult,
+    reap_on_ownership_transfer_failure,
     validate_prompt_size,
 )
+from meridian.lib.harness.connections.managed_backend import register_spawn_owned_process
 from meridian.lib.harness.errors import HarnessBinaryNotFound
 from meridian.lib.harness.semantics import clears_signal
 from meridian.lib.launch.constants import (
@@ -45,6 +47,7 @@ from meridian.lib.observability.trace_helpers import (
     trace_wire_send,
 )
 from meridian.lib.platform import IS_WINDOWS
+from meridian.lib.platform.process_scope import ProcessScopeSnapshot, ScopedProcessHandle
 from meridian.lib.state.paths import resolve_spawn_log_dir
 
 logger = logging.getLogger(__name__)
@@ -84,7 +87,9 @@ class ClaudeConnection(HarnessConnection[ResolvedLaunchSpec]):
         supported_startup_phases=frozenset(
             phase.value
             for phase in (
+                StartupPhase.LAUNCHING_SUBPROCESS,
                 StartupPhase.WAITING_FOR_CONNECTION,
+                StartupPhase.SENDING_PROMPT,
                 StartupPhase.HARNESS_READY,
             )
         ),
@@ -103,6 +108,7 @@ class ClaudeConnection(HarnessConnection[ResolvedLaunchSpec]):
         self._spawn_id: SpawnId = SpawnId("")
         self._config: ConnectionConfig | None = None
         self._process: Process | None = None
+        self._scope_handle: ScopedProcessHandle | None = None
         self._send_lock = asyncio.Lock()
         self._stop_lock = asyncio.Lock()
         self._stderr_handle: BufferedWriter | None = None
@@ -141,6 +147,11 @@ class ClaudeConnection(HarnessConnection[ResolvedLaunchSpec]):
             return None
         return process.pid
 
+    @property
+    def scope_snapshot(self) -> ProcessScopeSnapshot | None:
+        handle = self._scope_handle
+        return None if handle is None else handle.snapshot
+
     async def start(self, config: ConnectionConfig, spec: ResolvedLaunchSpec) -> None:
         """Launch Claude subprocess and send the initial user prompt via stdin."""
 
@@ -164,14 +175,20 @@ class ClaudeConnection(HarnessConnection[ResolvedLaunchSpec]):
 
         try:
             await self._check_claude_version()
+            self._emit_startup_phase(StartupPhase.LAUNCHING_SUBPROCESS)
             await self._start_subprocess(config, spec)
             self._emit_startup_phase(StartupPhase.WAITING_FOR_CONNECTION)
+            self._emit_startup_phase(StartupPhase.SENDING_PROMPT)
             await self._send_user_turn(config.prompt)
             self._set_state("connected")
-        except Exception:
+        except BaseException:
             self._mark_failed("Claude connection startup failed.")
-            await self._cleanup_resources(terminate_process=True)
+            await reap_on_ownership_transfer_failure(self._cleanup_start_failure)
             raise
+
+    async def _cleanup_start_failure(self) -> None:
+        async with self._stop_lock:
+            await self._cleanup_resources(terminate_process=True)
 
     async def stop(
         self,
@@ -379,6 +396,15 @@ class ClaudeConnection(HarnessConnection[ResolvedLaunchSpec]):
                 limit=_STDOUT_READLINE_LIMIT,
                 start_new_session=not IS_WINDOWS,
             )
+            self._scope_handle = await register_spawn_owned_process(
+                spawn_id=config.spawn_id,
+                control_root=config.control_root,
+                process=self._process,
+                scope_id="stdio",
+                role="harness_stdio",
+                runtime_root=config.runtime_root,
+                persist=config.runtime_root is not None,
+            )
         except (FileNotFoundError, NotADirectoryError) as exc:
             raise HarnessBinaryNotFound.from_os_error(
                 harness_id=self.harness_id,
@@ -434,6 +460,15 @@ class ClaudeConnection(HarnessConnection[ResolvedLaunchSpec]):
     async def _terminate_process(self) -> None:
         process = self._process
         if process is None:
+            return
+        scope_handle = self._scope_handle
+        self._scope_handle = None
+        if scope_handle is not None and process.returncode is None:
+            await scope_handle.terminate(
+                grace_seconds=_PROCESS_KILL_GRACE_SECONDS,
+                reason="claude_connection_stop",
+            )
+            self._process = None
             return
         if process.returncode is None:
             # Close stdin to signal no more input; then terminate if needed.

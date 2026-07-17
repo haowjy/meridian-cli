@@ -16,6 +16,7 @@ from meridian.lib.ops.runtime import (
 )
 from meridian.lib.platform import IS_WINDOWS
 from meridian.lib.state import spawn_store
+from meridian.lib.streaming.control_socket import control_socket_path
 
 _INJECT_RESPONSE_TIMEOUT_SECONDS = 30.0
 _ENDPOINT_DISCOVERY_TIMEOUT_SECONDS = 30.0
@@ -86,7 +87,7 @@ async def inject_message(
     project_root, _ = resolve_runtime_root_and_config(None)
     runtime_root = resolve_runtime_root(project_root)
     spawn_dir = runtime_root / "spawns" / normalized_spawn_id
-    socket_path = spawn_dir / "control.sock"
+    socket_path = control_socket_path(runtime_root, normalized_spawn_id)
     port_file = spawn_dir / "control.port"
 
     if not spawn_dir.exists():

@@ -113,6 +113,7 @@ Canonical keys accepted by `meridian config set/get/reset`:
 | `defaults.retry_backoff_seconds` | float | Retry backoff multiplier |
 | `timeouts.kill_grace_minutes` | float | Grace before force-kill (minutes) |
 | `timeouts.guardrail_minutes` | float | Guardrail timeout (minutes) |
+| `timeouts.startup_minutes` | float | Startup-phase timeout for backend boot, connection, and session handshake (minutes) |
 | `timeouts.wait_minutes` | float | Default `spawn wait` timeout (minutes) |
 | `timeouts.pi_child_wave_timeout_seconds` | float | Pi spawn-watch tracked-child wave timeout (seconds; default 300 when unset) |
 | `timeouts.resident_rearm_budget` | int | Maximum resident deadline extensions (nonnegative; unlimited when unset) |

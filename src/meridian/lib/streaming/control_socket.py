@@ -3,7 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
+import os
+import stat
+import sys
+import tempfile
 from contextlib import suppress
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
@@ -15,6 +20,42 @@ from meridian.lib.streaming.types import InjectResult
 
 if TYPE_CHECKING:
     from meridian.lib.streaming.spawn_manager import SpawnManager
+
+
+# sockaddr_un.sun_path includes the trailing NUL. Use the pathname capacity so
+# callers can validate before asyncio reaches the less actionable bind error.
+UNIX_SOCKET_PATH_MAX_BYTES = 103 if sys.platform == "darwin" else 107
+
+
+def control_socket_path(runtime_root: Path, spawn_id: SpawnId | str) -> Path:
+    """Return the deterministic, bounded control endpoint for a spawn."""
+
+    if IS_WINDOWS:
+        return runtime_root / "spawns" / str(spawn_id) / "control.sock"
+
+    uid = os.getuid()
+    identity = os.fsencode(runtime_root.resolve()) + b"\0" + str(spawn_id).encode("utf-8")
+    digest = hashlib.sha256(identity).hexdigest()[:32]
+    path = Path(tempfile.gettempdir()) / f"meridian-{uid}" / f"control-{digest}.sock"
+    path_length = len(os.fsencode(path))
+    if path_length > UNIX_SOCKET_PATH_MAX_BYTES:
+        msg = (
+            f"control socket path is {path_length} bytes, exceeding the platform "
+            f"limit of {UNIX_SOCKET_PATH_MAX_BYTES}: {path}"
+        )
+        raise ValueError(msg)
+    return path
+
+
+def _prepare_socket_directory(path: Path) -> None:
+    """Create a private per-user socket directory under the shared temp root."""
+
+    path.mkdir(mode=0o700, parents=True, exist_ok=True)
+    directory_stat = path.lstat()
+    if not stat.S_ISDIR(directory_stat.st_mode) or directory_stat.st_uid != os.getuid():
+        msg = f"control socket directory is not owned by the current user: {path}"
+        raise PermissionError(msg)
+    path.chmod(0o700)
 
 
 class ControlSocketServer:
@@ -51,8 +92,8 @@ class ControlSocketServer:
     async def start(self) -> None:
         """Create and bind the per-spawn control endpoint."""
 
-        self._socket_path.parent.mkdir(parents=True, exist_ok=True)
         if IS_WINDOWS:
+            self._socket_path.parent.mkdir(parents=True, exist_ok=True)
             self._port_file.unlink(missing_ok=True)
             self._server = await asyncio.start_server(
                 self._handle_client,
@@ -75,6 +116,7 @@ class ControlSocketServer:
                 handle.write(f"{port_value}\n")
             return
 
+        _prepare_socket_directory(self._socket_path.parent)
         self._socket_path.unlink(missing_ok=True)
         self._server = await asyncio.start_unix_server(
             self._handle_client, path=str(self._socket_path)
@@ -212,4 +254,8 @@ class ControlSocketServer:
         self._socket_path.unlink(missing_ok=True)
 
 
-__all__ = ["ControlSocketServer"]
+__all__ = [
+    "UNIX_SOCKET_PATH_MAX_BYTES",
+    "ControlSocketServer",
+    "control_socket_path",
+]

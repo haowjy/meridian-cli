@@ -28,6 +28,10 @@ State splits across distinct roots — understand which goes where before writin
   spawns/<spawn_id>/
     state.json                      — authoritative spawn state (v2)
     history.jsonl                   — primary output artifact
+    attempt-N/                      — preserved retry evidence from prior attempts
+    last-observed-event.json        — diagnostic marker for last harness event + counters
+    runner-lifecycle.jsonl          — runner breadcrumb journal (signals, phases, atexit)
+    finalize-evidence.json          — orphan-time liveness snapshot before reaper cleanup
     process_scopes.json             — durable process identities + release markers
     reaper_cleanup_claim.json       — pending finalize-first cleanup targets
     heartbeat · report.md · stderr.log · params.json · tokens.json

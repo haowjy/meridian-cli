@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import errno
 import importlib
 import json
 import logging
@@ -35,6 +36,7 @@ from meridian.lib.harness.connections.base import (
     ObserverEndpoint,
     StopProgressCallback,
     StopResult,
+    reap_on_ownership_transfer_failure,
     validate_prompt_size,
 )
 from meridian.lib.harness.connections.errors import PortBindError
@@ -134,6 +136,7 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
         supported_startup_phases=frozenset(
             phase.value
             for phase in (
+                StartupPhase.LAUNCHING_SUBPROCESS,
                 StartupPhase.WAITING_FOR_CONNECTION,
                 StartupPhase.INITIALIZING_SESSION,
                 StartupPhase.HARNESS_READY,
@@ -207,6 +210,7 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
         self._startup_emitter: StartupPhaseEmitter | None = None
         self._scope_handle: ScopedProcessHandle | None = None
         self._parent_death_link: ParentDeathLink | None = None
+        self._stop_lock = asyncio.Lock()
 
     @property
     def state(self) -> ConnectionState:
@@ -298,6 +302,7 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
         )
 
         try:
+            self._emit_startup_phase(StartupPhase.LAUNCHING_SUBPROCESS)
             await self._launch_process(config, spec)
             self._emit_startup_phase(StartupPhase.WAITING_FOR_CONNECTION)
             await self._wait_for_ready(timeout_seconds=readiness_timeout)
@@ -309,14 +314,18 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
                 config.session_id_observer(self._session_id)
             if not self._primary_observer_mode:
                 await self._post_session_message(config.prompt, system=config.system)
-        except Exception:
+        except BaseException:
             self._set_failed()
-            await self._cleanup_runtime()
+            await reap_on_ownership_transfer_failure(self._cleanup_start_failure)
             raise
 
         self._transition("connected")
         self._emit_startup_phase(StartupPhase.HARNESS_READY)
         self._last_health_ok = True
+
+    async def _cleanup_start_failure(self) -> None:
+        async with self._stop_lock:
+            await self._cleanup_runtime()
 
     async def start_observer(
         self,
@@ -335,6 +344,10 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
         progress: StopProgressCallback | None = None,
     ) -> StopResult:
         _ = reason, progress
+        async with self._stop_lock:
+            return await self._stop_unlocked()
+
+    async def _stop_unlocked(self) -> StopResult:
         if self._state == "stopped":
             return StopResult()
         self._primary_observer_mode = False
@@ -1127,7 +1140,7 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
         process = self._process
         exit_code = process.returncode if process is not None else None
         stderr_excerpt = self._read_startup_stderr_excerpt()
-        if _looks_like_address_in_use(stderr_excerpt):
+        if _looks_like_address_in_use(stderr_excerpt) or self._startup_port_is_claimed():
             return PortBindError(
                 "OpenCode backend failed to bind HTTP port "
                 f"(exit={exit_code}): {stderr_excerpt or '<no stderr>'}"
@@ -1138,6 +1151,21 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
             env=self._startup_child_env(),
         )
         return RuntimeError(message)
+
+    def _startup_port_is_claimed(self) -> bool:
+        """Detect OpenCode's generic ServeError when another process won the port."""
+
+        if self._base_url is None:
+            return False
+        endpoint = urlparse(self._base_url)
+        if endpoint.hostname is None or endpoint.port is None:
+            return False
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            try:
+                sock.bind((endpoint.hostname, endpoint.port))
+            except OSError as exc:
+                return exc.errno == errno.EADDRINUSE
+        return False
 
     def _startup_child_env(self) -> dict[str, str]:
         config = self._config

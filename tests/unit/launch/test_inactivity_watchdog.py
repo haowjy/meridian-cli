@@ -10,11 +10,8 @@ import pytest
 from meridian.lib.core.domain import Spawn
 from meridian.lib.core.types import HarnessId, ModelId, SpawnId
 from meridian.lib.harness.connections.base import ConnectionConfig, HarnessEvent
+from meridian.lib.launch import streaming_runner as _sr_mod
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
-from meridian.lib.launch.streaming_runner import (
-    _inactivity_watchdog,
-    _run_streaming_attempt,
-)
 from meridian.lib.safety.permissions import UnsafeNoOpPermissionResolver
 from meridian.lib.state.spawn.model import FOREGROUND_LAUNCH_MODE
 from meridian.lib.streaming.spawn_session import DrainOutcome
@@ -74,13 +71,212 @@ class _FakeManager:
 
 
 @pytest.mark.asyncio
+async def test_startup_watchdog_reports_phase_and_cancels_start(
+    tmp_path: Path,
+) -> None:
+    child_stopped = asyncio.Event()
+    start_entered = asyncio.Event()
+
+    class HangingStartupManager(_FakeManager):
+        async def start_spawn(
+            self,
+            _config: ConnectionConfig,
+            _spec: ResolvedLaunchSpec,
+        ) -> _FakeConnection:
+            start_entered.set()
+            try:
+                await asyncio.Event().wait()
+            finally:
+                child_stopped.set()
+            raise AssertionError("unreachable")
+
+    manager = HangingStartupManager()
+    run = Spawn(
+        spawn_id=SpawnId("p-startup-timeout"),
+        prompt="hello",
+        model=ModelId("gpt-5.3-codex"),
+        status="running",
+    )
+    config = ConnectionConfig(
+        spawn_id=run.spawn_id,
+        harness_id=HarnessId.CODEX,
+        prompt=run.prompt,
+        control_root=tmp_path,
+        env_overrides={},
+    )
+
+    attempt = await _sr_mod._run_streaming_attempt(
+        run=run,
+        runtime_root=tmp_path,
+        launch_mode=FOREGROUND_LAUNCH_MODE,
+        log_dir=tmp_path / "logs",
+        manager=manager,
+        config=config,
+        run_spec=ResolvedLaunchSpec(
+            model="gpt-5.3-codex",
+            harness=HarnessId.CODEX,
+            permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
+        ),
+        budget_tracker=None,
+        signal_event=asyncio.Event(),
+        received_signal=[None],
+        timeout_seconds=None,
+        startup_timeout_seconds=0.01,
+        event_observer=None,
+        stream_stdout_to_terminal=False,
+        lifecycle_service=_FakeLifecycleService(),  # type: ignore[arg-type]
+    )
+
+    assert start_entered.is_set()
+    assert attempt.start_error == "startup phase timeout after 0.010s"
+    assert child_stopped.is_set()
+
+
+@pytest.mark.asyncio
+async def test_run_streaming_spawn_bounds_hanging_startup(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    start_cancelled = asyncio.Event()
+
+    class HangingStartupManager:
+        def __init__(self, **_kwargs: object) -> None:
+            pass
+
+        async def start_spawn(
+            self,
+            _config: ConnectionConfig,
+            _spec: ResolvedLaunchSpec,
+        ) -> _FakeConnection:
+            try:
+                await asyncio.Event().wait()
+            finally:
+                start_cancelled.set()
+            raise AssertionError("unreachable")
+
+        async def shutdown(self, **_kwargs: object) -> None:
+            return None
+
+    monkeypatch.setattr(
+        "meridian.lib.launch.streaming_runner.SpawnManager", HangingStartupManager
+    )
+    monkeypatch.setattr(
+        "meridian.lib.launch.streaming_runner.spawn_store.update_spawn",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        "meridian.lib.launch.streaming_runner._install_signal_handlers",
+        lambda *_args, **_kwargs: None,
+    )
+
+    spawn_id = SpawnId("p-direct-startup-timeout")
+    config = ConnectionConfig(
+        spawn_id=spawn_id,
+        harness_id=HarnessId.CODEX,
+        prompt="hello",
+        control_root=tmp_path,
+        env_overrides={},
+    )
+    with pytest.raises(_sr_mod.StartupPhaseTimeout, match=r"startup phase timeout after 0\.010s"):
+        await _sr_mod.run_streaming_spawn(
+            config=config,
+            spec=ResolvedLaunchSpec(
+                model="gpt-5.3-codex",
+                harness=HarnessId.CODEX,
+                permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
+            ),
+            runtime_root=tmp_path,
+            project_root=tmp_path,
+            spawn_id=spawn_id,
+            startup_timeout_seconds=0.01,
+            lifecycle_service=_FakeLifecycleService(),  # type: ignore[arg-type]
+        )
+
+    assert start_cancelled.is_set()
+
+
+@pytest.mark.asyncio
+async def test_run_streaming_spawn_honors_explicit_startup_timeout_over_default(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Configured startup_timeout_seconds must reach the watchdog, not the 300s default."""
+
+    observed_timeout: list[float] = []
+
+    class TimeoutCapturingManager:
+        def __init__(self, **_kwargs: object) -> None:
+            pass
+
+        async def start_spawn(
+            self,
+            _config: ConnectionConfig,
+            _spec: ResolvedLaunchSpec,
+        ) -> _FakeConnection:
+            await asyncio.Event().wait()
+            raise AssertionError("unreachable")
+
+        async def shutdown(self, **_kwargs: object) -> None:
+            return None
+
+    async def _capture_start_timeout(**kwargs: object) -> _FakeConnection:
+        observed_timeout.append(float(kwargs["timeout_seconds"]))
+        raise _sr_mod.StartupPhaseTimeout(float(kwargs["timeout_seconds"]))
+
+    monkeypatch.setattr(
+        "meridian.lib.launch.streaming_runner.SpawnManager", TimeoutCapturingManager
+    )
+    monkeypatch.setattr(
+        "meridian.lib.launch.streaming_runner._start_spawn_with_timeout",
+        _capture_start_timeout,
+    )
+    monkeypatch.setattr(
+        "meridian.lib.launch.streaming_runner.spawn_store.update_spawn",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        "meridian.lib.launch.streaming_runner._install_signal_handlers",
+        lambda *_args, **_kwargs: None,
+    )
+
+    spawn_id = SpawnId("p-explicit-startup-timeout")
+    configured_seconds = 0.01
+    with pytest.raises(
+        _sr_mod.StartupPhaseTimeout,
+        match=rf"startup phase timeout after {configured_seconds:.3f}s",
+    ):
+        await _sr_mod.run_streaming_spawn(
+            config=ConnectionConfig(
+                spawn_id=spawn_id,
+                harness_id=HarnessId.CODEX,
+                prompt="hello",
+                control_root=tmp_path,
+                env_overrides={},
+            ),
+            spec=ResolvedLaunchSpec(
+                model="gpt-5.3-codex",
+                harness=HarnessId.CODEX,
+                permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
+            ),
+            runtime_root=tmp_path,
+            project_root=tmp_path,
+            spawn_id=spawn_id,
+            startup_timeout_seconds=configured_seconds,
+            lifecycle_service=_FakeLifecycleService(),  # type: ignore[arg-type]
+        )
+
+    assert observed_timeout == [configured_seconds]
+    assert observed_timeout[0] != 300.0
+
+
+@pytest.mark.asyncio
 async def test_inactivity_watchdog_stops_stale_spawn() -> None:
     manager = _FakeManager()
     completion_event = asyncio.Event()
     loop = asyncio.get_running_loop()
     last_event_at = [loop.time() - 1.0]
 
-    stopped = await _inactivity_watchdog(
+    stopped = await _sr_mod._inactivity_watchdog(
         last_event_at=last_event_at,
         completion_event=completion_event,
         manager=manager,
@@ -103,7 +299,7 @@ async def test_inactivity_watchdog_noop_when_completion_event_set_first() -> Non
     completion_event.set()
     last_event_at = [asyncio.get_running_loop().time() - 100.0]
 
-    stopped = await _inactivity_watchdog(
+    stopped = await _sr_mod._inactivity_watchdog(
         last_event_at=last_event_at,
         completion_event=completion_event,
         manager=manager,
@@ -135,7 +331,7 @@ async def test_inactivity_watchdog_noop_while_events_keep_arriving() -> None:
     refresh_task = asyncio.create_task(_refresh_activity())
     complete_task = asyncio.create_task(_complete_soon())
     try:
-        stopped = await _inactivity_watchdog(
+        stopped = await _sr_mod._inactivity_watchdog(
             last_event_at=last_event_at,
             completion_event=completion_event,
             manager=manager,
@@ -189,7 +385,7 @@ async def test_non_cursor_harness_skips_inactivity_watchdog(
         env_overrides={},
     )
 
-    await _run_streaming_attempt(
+    await _sr_mod._run_streaming_attempt(
         run=run,
         runtime_root=tmp_path,
         launch_mode=FOREGROUND_LAUNCH_MODE,
@@ -252,7 +448,7 @@ async def test_cursor_harness_arms_inactivity_watchdog(
         env_overrides={},
     )
 
-    await _run_streaming_attempt(
+    await _sr_mod._run_streaming_attempt(
         run=run,
         runtime_root=tmp_path,
         launch_mode=FOREGROUND_LAUNCH_MODE,
