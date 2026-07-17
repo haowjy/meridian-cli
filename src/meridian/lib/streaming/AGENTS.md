@@ -114,7 +114,7 @@ means the manager died or the spawn is orphaned.
 
 - `spawn_manager.py` — `SpawnManager`: public live-spawn registry/control API
 - `spawn_dispatch.py` — connection creation/start dispatch
-- `spawn_drain_loop.py` — event drain, persistence/observer/fan-out ordering, outcome classification
+- `spawn_drain_loop.py` — event drain, persistence/observer/fan-out ordering, outcome classification, `resolve_terminal_outcome` priority resolver
 - `drain_coordinator.py` — `DrainCoordinator` protocol seam for harness-specific completion policy
 - `drain_plan_factory.py` — plain/resident/Pi plan selection and capability wiring
 - `drain_teardown.py` — harness-neutral plan-owned connection-stop contract and default
