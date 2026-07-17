@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Final
+from typing import Any, Final
 
-from meridian.lib.harness.connections.base import HarnessEvent
+from meridian.lib.core.types import SpawnId
+from meridian.lib.harness.connections.base import HarnessConnection, HarnessEvent
 
 PI_SUPPORTED_LIFECYCLE_SCHEMA_VERSION: Final[int] = 1
 PI_CANONICAL_LIFECYCLE_TYPE_PREFIXES: Final[tuple[str, ...]] = (
@@ -75,6 +76,29 @@ _SECRET_FLAG_SEGMENTS: Final[frozenset[str]] = frozenset(
         "auth",
     }
 )
+
+
+def build_pi_phase_event(
+    spawn_id: SpawnId,
+    connection: HarnessConnection[Any],
+    phase: str,
+    **data: object,
+) -> HarnessEvent:
+    """Build one Meridian-authored Pi lifecycle phase event."""
+
+    payload: dict[str, object] = {
+        "type": PI_PHASE_EVENT_TYPE,
+        "phase": phase,
+        "spawn_id": str(spawn_id),
+        "schema_version": PI_SUPPORTED_LIFECYCLE_SCHEMA_VERSION,
+    }
+    payload.update((key, value) for key, value in data.items() if value is not None)
+    return HarnessEvent(
+        event_type=PI_PHASE_EVENT_TYPE,
+        harness_id=connection.harness_id.value,
+        payload=payload,
+        raw_text=None,
+    )
 
 
 def _coerce_int(value: object) -> int | None:
@@ -290,6 +314,7 @@ __all__ = [
     "PI_SUBSPAWN_END_EVENTS",
     "PI_SUBSPAWN_START_EVENTS",
     "PI_SUPPORTED_LIFECYCLE_SCHEMA_VERSION",
+    "build_pi_phase_event",
     "canonical_pi_lifecycle_label",
     "has_unsupported_pi_lifecycle_schema_version",
     "normalize_pi_lifecycle_label",

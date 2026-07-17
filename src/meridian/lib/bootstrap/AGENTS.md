@@ -25,6 +25,10 @@ This is the central invariant. Violating it causes read-only command paths to si
 
 `prepare_for_project_read()` and `prepare_for_runtime_read()` call only `resolve_*`. The `prepare_for_*_write()` functions call `ensure_*`.
 
+Runtime-write preparation also recovers incomplete spawn publication by removing
+abandoned `spawns/.staging/*` entries under the spawn allocation/publication lock.
+Read-only preparation never runs this GC.
+
 ## Key Rules
 
 - **Don't instantiate `SpawnApplicationService` directly.** Use `build_spawn_application_service(runtime_write_ctx)`. It's the correct factory.

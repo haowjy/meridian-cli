@@ -13,7 +13,9 @@ from pathlib import Path
 from pydantic import BaseModel, ConfigDict
 
 from meridian.lib.core.spawn_lifecycle import is_active_spawn_status
+from meridian.lib.platform.locking import lock_file
 from meridian.lib.state import spawn_store
+from meridian.lib.state.paths import RuntimePaths
 
 _SECONDS_PER_DAY = 24 * 60 * 60
 
@@ -175,6 +177,8 @@ def _scan_stale_spawn_artifacts(
         if not spawn_dir.is_dir():
             continue
         spawn_id = spawn_dir.name
+        if not spawn_store.is_spawn_id_shape(spawn_id):
+            continue
         if spawn_id in active_spawn_ids:
             continue
 
@@ -237,8 +241,21 @@ def prune_stale_spawn_artifacts(stale: list[StaleSpawnArtifact]) -> int:
 
     removed = 0
     for artifact in stale:
-        if _prune_dir(Path(artifact.path)):
-            removed += 1
+        artifact_path = Path(artifact.path)
+        if (
+            not spawn_store.is_spawn_id_shape(artifact.spawn_id)
+            or artifact_path.name != artifact.spawn_id
+            or artifact_path.parent.name != "spawns"
+        ):
+            continue
+        runtime_root = artifact_path.parent.parent
+        paths = RuntimePaths.from_root_dir(runtime_root)
+        with lock_file(paths.spawns_flock):
+            record = spawn_store.get_spawn(runtime_root, artifact.spawn_id)
+            if record is not None and is_active_spawn_status(record.status):
+                continue
+            if _prune_dir(artifact_path):
+                removed += 1
     return removed
 
 

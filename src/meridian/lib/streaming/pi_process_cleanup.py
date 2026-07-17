@@ -8,19 +8,28 @@ import os
 import signal
 
 from meridian.lib.core.types import SpawnId
-from meridian.lib.streaming.pi_subspawn_tracker import PiSubspawnTracker
+from meridian.lib.streaming.pi_work_ledger import PiPrivateWorkLedger
 
 logger = logging.getLogger(__name__)
 
 
 async def terminate_pi_tracked_subspawns(
     spawn_id: SpawnId,
-    tracker: PiSubspawnTracker,
+    ledger: PiPrivateWorkLedger,
     *,
     reason: str,
     exclude_subspawn_ids: set[str] | None = None,
 ) -> None:
-    pgids = tracker.active_tracked_pgid_candidates(exclude_ids=exclude_subspawn_ids)
+    pgids = tuple(
+        sorted(
+            {
+                handle.process_group_id
+                for handle in ledger.cleanup_handles(
+                    exclude_ids=exclude_subspawn_ids
+                )
+            }
+        )
+    )
     if not pgids:
         logger.warning(
             "Pi spawn %s ended with tracked children but no pid/pgid metadata for cleanup",

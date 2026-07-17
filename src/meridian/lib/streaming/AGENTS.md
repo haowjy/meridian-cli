@@ -5,12 +5,17 @@ The async backbone between a live harness connection and the rest of the system.
 core mechanism that moves events from the harness outward to persistence, observers,
 and the subscriber queue.
 
-Mostly mechanism. Generic terminal behavior lives in `DrainPolicy`; harness-specific
-completion waiting enters through `DrainPlan`. Plain streaming harnesses intentionally
-run with `coordinator=None`; Pi and resident Codex/OpenCode paths get narrow
-coordinators only when their connection exposes the needed seam. Keep Pi child-wave,
+Mostly mechanism. Generic terminal classification lives in `DrainPolicy`; shared
+candidate/deadline/stabilization mechanics live in `CompletionCoordinator`, behind
+the outer `DrainCoordinator` seam. Plain streaming harnesses intentionally run with
+`coordinator=None`; Pi and resident Codex/OpenCode paths get narrow coordinators only
+when their connection exposes the needed seam. Keep Pi child-wave,
 notification, disk-state, resident-done nudges, and tracked-process cleanup policy
 behind the coordinator/tracker modules instead of growing `SpawnManager`.
+
+`drain_plan_factory.py` is the composition root for plan selection. It owns the
+plain/resident/Pi choice and receives manager capabilities for event emission,
+serialized injection, and application-service descendant cleanup.
 
 Resident drain selection is capability-driven: a connection participates in the
 resident descendant-wait path only when `connection.resident_backend` is present.
@@ -63,7 +68,9 @@ needed to guarantee it gets through — without it, the subscriber hangs forever
 
 ## DrainPlan / DrainPolicy
 
-`DrainPlan` carries the selected coordinator, policy, aux wake, and finalizer for one active spawn. Its `coordinator=None` value is the plain path. `DrainPolicy` governs terminal event behavior:
+`DrainPlan` carries the selected coordinator, policy, aux wake, finalizer, and async
+session teardown for one active spawn. Its `coordinator=None` value is the plain path.
+`DrainPolicy` governs terminal event behavior:
 
 | Policy | On terminal event | Action |
 |---|---|---|
@@ -86,11 +93,22 @@ means the manager died or the spawn is orphaned.
 - `spawn_dispatch.py` — connection creation/start dispatch
 - `spawn_drain_loop.py` — event drain, persistence/observer/fan-out ordering, outcome priority
 - `drain_coordinator.py` — `DrainCoordinator` protocol seam for harness-specific completion policy
+- `drain_plan_factory.py` — plain/resident/Pi plan selection and capability wiring
+- `drain_teardown.py` — plan-owned connection stop and Pi cleanup-phase policy
+- `completion_contracts.py` — typed evidence, profile, and cleanup collaborator contracts
+- `completion_coordinator.py` — shared candidate/wait/deadline/stabilization state machine
+- `descendant_evidence.py` — shared reconciled, transitive persisted-descendant assessment
 - `spawn_session.py` — `SpawnSession`, `DrainOutcome`
-- `pi_drain.py` — `PiDrainCoordinator`: Pi spawned-session quiescence policy
-- `resident_drain.py` — `ResidentDrainCoordinator`: resident-backend descendant waiting policy
-- `pi_subspawn_tracker.py` — Pi child-spawn, notification, and wave tracking
-- `disk_watcher.py` / `pi_quiescence.py` — disk-backed Pi background-work state
+- `pi_completion_profile.py` — Pi precedence, phases, deadlines, nudges, and stream-exit
+  policy
+- `pi_drain.py` — Pi evidence/cleanup collaborators, composition, and thin compatibility
+  wrapper
+- `pi_work_ledger.py` — sole mutable owner of Pi-private blockers and PID/PGID cleanup
+  handles; exposes immutable categorized snapshots
+- `resident_drain.py` — resident evidence/profile/cleanup adapters and thin construction wrapper
+- `pi_subspawn_tracker.py` — Pi lifecycle parsing/deduplication; feeds the private-work ledger
+- `disk_watcher.py` / `pi_quiescence.py` — Pi-private bash/notification disk
+  observation and parent-idle epochs; disk-backed private evidence feeds the ledger
 - `drain_wait.py` — generic event/timeout/aux-wake arbitration for drain loops
 - `pi_process_cleanup.py` — tracked Pi child process cleanup
 - `drain_policy.py` — `DrainPolicy`, `SingleTurnDrainPolicy`, `PersistentDrainPolicy`
@@ -98,10 +116,11 @@ means the manager died or the spawn is orphaned.
 - `event_observers.py` — `EventObserverRegistry`, `EventObserver`, `CallbackObserver`
 - `types.py` — `InjectResult`, `ControlMessage`
 
-Resident and Pi do not yet share descendant evidence. Resident reads the
-reconciled transitive spawn tree. Pi confirms only direct child rows and also
-uses bounded newer-directory uncertainty to cover the current publication
-window; that uncertainty is a barrier, not child authority.
+Resident and Pi completion use the shared reconciled transitive spawn-tree assessment as
+their sole persisted-descendant authority. Pi's disk watcher observes only private bash
+and notification files; incomplete or wrong-parent spawn directories are not descendant
+evidence. Meridian's own spawn rows publish atomically, and the reconciled tree polls
+valid parent-linked rows while a successful terminal candidate is pending.
 
 ## Depth
 

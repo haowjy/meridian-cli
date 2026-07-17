@@ -50,52 +50,8 @@ Per-harness mapping:
 - Cursor subprocess: `cursor agent <prompt>` (stdout NDJSON, no connection path — subprocess-only)
 - Pi subprocess/connection: `pi --mode rpc` (JSON-RPC stdio); Pi has no subprocess-only path — the RPC mode is the connection
 
-### Pi: Extension-Based Architecture
-
-Pi is the first harness with in-process TypeScript extensions rather than an opaque
-subprocess. Meridian-owned extensions now split by concern:
-
-- **managed-bash** — task registry, `bash` / `bash_manage`, bash bridge, `/ps*` UI, bash record writes.
-  See `src/meridian/pi_runtime/extensions/managed-bash/`.
-- **meridian-spawn-watch** — spawn discovery, implicit-wait notification dispatch, `/spawn*` UI, and disk observation.
-  See `src/meridian/pi_runtime/extensions/meridian-spawn-watch/`.
-
-Shared helpers under `src/meridian/pi_runtime/extensions/shared/` are UI/path/schema/json/id helpers only;
-they are not the runtime authority boundary. The coordination boundary is the disk state the extensions
-write and the Python side observes.
-
-Extensions are TypeScript, built with `pnpm run build:extensions`, and loaded via stable
-`-e` paths from `pi_paths.resolve_meridian_pi_extension_root()` (`~/.meridian/pi/extensions/`
-or packaged `dist/extensions`). `[harness.pi]` toggles and `load_all_pi_extensions` are
-resolved from the launch config snapshot in `bind_launch_context()` → `SpawnParams.pi_harness_profile`
-→ `PiAdapter.resolve_launch_spec()` (not ambient CWD config reload).
-
-The runtime itself is resolved by `pi_runtime_resolver.py` — it probes the installed
-`pi` binary for compatibility (required `--help` surface tokens differ between primary
-and spawned roles) and returns a `PiRuntimeResolution`.
-
-### Pi: Completion Model (Quiescence, Not Process Exit)
-
-Pi spawned sessions do not exit on task completion — they stay alive to track child
-spawns and deliver wave notifications. Completion is gated on **quiescence**: the
-parent agent is idle, all tracked children have finished, and all pending notifications
-have been delivered and acknowledged. The Python drain loop delegates Pi-specific completion policy to
-`lib/streaming/pi_drain.py:PiDrainCoordinator`, which reads disk-backed coordination
-state through `PiQuiescenceTracker` and `PiDiskWatcher`. `SpawnManager` remains the
-generic persistence/observer/fan-out loop; Pi child-wave, notification, micro-drain,
-and cleanup decisions stay behind the coordinator boundary.
-
-### Pi: Disk-Backed Coordination State
-
-Pi extensions coordinate through disk files, not a separate lifecycle transport:
-
-- child spawn records under `runtime_root/spawns/<child>/state.json`
-- bash state under `runtime_root/pi-bash/<parent>/bash-records.json`
-- notification marker under `runtime_root/pi-bash/<parent>/last-notification.json`
-
-`meridian-spawn-watch` owns the disk observation and notification boundary. The Python
-side consumes those files as authoritative quiescence inputs. If a spawn lifecycle event
-appears on stdout, it is treated as diagnostic noise, not the state authority.
+Pi-specific extension, runtime, and quiescence details live in
+[Pi integration](pi-integration.md).
 
 ### Bootstrap Sequence
 
@@ -329,11 +285,12 @@ MVP scope exclusions (enforced by `_assert_supported_for_mvp()`): per-spawn
 ### Pi: Quiescence Instead of Process Exit
 
 Pi spawned sessions don't exit when a task completes — they stay alive to track
-child spawn completion and deliver wave notifications. This means process exit is
-not a valid completion signal. Instead, Meridian reads disk-backed coordination
-state (child spawn rows, bash records, notification markers). The drain loop delegates
-this policy to `PiDrainCoordinator`, which only lets an `agent_end` success candidate
-finalize after the quiescence check passes.
+child spawn completion and deliver wave notifications. This means process exit
+is not a valid completion signal. Instead, Meridian reads the reconciled
+transitive spawn tree plus disk-backed private state (bash records and
+notification markers). The drain loop delegates this policy to
+`PiDrainCoordinator`, which only lets an `agent_end` success candidate finalize
+after the quiescence check passes.
 
 This is the first harness where "done" is not synonymous with "process exited."
 All other harnesses (Claude, Codex, OpenCode) use process exit or an explicit
@@ -368,63 +325,8 @@ spawn history is the authoritative session-log source for Meridian-owned Pi spaw
 
 ## Session Read Path
 
-`transcript.py` is the cross-harness read path for session data. It is entirely
-independent of the spawn/write paths — it only reads JSONL event files that harnesses
-have already written.
-
-### ToolCall and _normalize_tool()
-
-`ToolCall` is the canonical harness-agnostic representation of a tool invocation:
-
-```python
-class ToolCall(NamedTuple):
-    name: str   # Canonical lowercase: bash, read, write, edit, grep, stdin, tool
-    body: str   # Meaningful payload: command string, file path, pattern, etc.
-```
-
-`_normalize_tool(name, body) → ToolCall` maps raw harness-specific tool names onto
-this canonical form. Downstream consumers (session log rendering) work from
-`ToolCall.name` and `ToolCall.body` without knowing which harness produced the event.
-
-Normalization table:
-
-| Raw harness name(s) | Canonical `name` | `body` |
-|---|---|---|
-| `bash` | `bash` | command string |
-| `exec_command`, `shell`, `terminal`, `run_command` | `bash` | extracts `cmd` field from Codex JSON body, falls back to raw body |
-| `write_stdin` | `stdin` | `""` (stdin interaction marker — no meaningful body) |
-| `read`, `write`, `edit`, `grep` | same (lowercase) | path / pattern / description |
-| anything else | lowercased name, or `"tool"` if empty | raw body |
-
-### TranscriptMessage
-
-`TranscriptMessage` carries a tool invocation when `tool_call` is set, and marks
-tool results with `is_tool_result=True`. Text-only messages leave both at their
-defaults (`None` / `False`). These fields are the typed surface callers use to
-distinguish conversation content from tool use — do not re-parse `content` to
-recover tool information when `tool_call` is available.
-
-### Providers
-
-Three providers handle different on-disk layouts. `transcript.py` selects the
-correct one based on path:
-
-| Provider | When selected | What it reads |
-|---|---|---|
-| `HistoryJsonlTranscriptProvider` | `path.name == HISTORY_FILENAME` | Crash-tolerant history via `iter_history_events()` |
-| `OpenCodeStorageTranscriptProvider` | OpenCode storage paths | OpenCode SQLite/JSONL layout |
-| `JsonlTranscriptProvider` | everything else | Raw JSONL, one event per line |
-
-Callers use `iter_transcript_events(path)` or `parse_transcript_file(path)` — they
-never select a provider directly.
-
-### TranscriptParseResult
-
-`segment_setups` holds the setup/handoff text for each compaction segment (one slot
-per segment, `None` if absent). `consumed_setup_event_indexes` identifies which raw
-event indexes were consumed by setup extraction — callers that iterate the raw event
-list alongside parsed segments use this to skip those events and avoid double-counting
-them in the message stream.
+The cross-harness transcript contract is in
+[session transcripts](session-transcripts.md).
 
 ## Patterns
 
@@ -477,3 +379,5 @@ accounting invariant treats any uncovered field as a bug, not a warning.
 - [../../state/.context/CONTEXT.md](../../state/.context/CONTEXT.md) — artifact store that `SpawnExtractor` reads from; atomic write primitives
 - [../../launch/.context/CONTEXT.md](../../launch/.context/CONTEXT.md) — composition seam, four driving adapters, prepare/bind split, invariants
 - [../../../pi_runtime/.context/CONTEXT.md](../../../pi_runtime/.context/CONTEXT.md) — Pi TypeScript extensions, build pipeline, managed-bash / meridian-spawn-watch split
+- [Pi integration](pi-integration.md) — Pi adapter, runtime, and quiescence details
+- [Session transcripts](session-transcripts.md) — harness-neutral transcript normalization and providers

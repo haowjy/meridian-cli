@@ -13,6 +13,7 @@ State splits across distinct roots — understand which goes where before writin
 
 ~/.meridian/projects/<id>/          ← user runtime, never committed
   sessions.jsonl                    — session events (append-only)
+  spawns/.staging/<unique>/         — complete row build before atomic publication
   spawns/<spawn_id>/
     state.json                      — authoritative spawn state (v2)
     state.lock                      — per-spawn lock for external writers
@@ -61,6 +62,8 @@ All state writes go through `atomic.py`. Never write state files with plain `ope
 - `atomic_write_text()` / `atomic_write_bytes()` — write to same-directory temp,
   `os.fsync()`, then `os.replace()` (atomic rename). Either the old or new file
   exists — never a partial write.
+- `atomic_publish_dir()` — rename a complete same-volume stage into a destination
+  that must not exist, then fsync the publication parent.
 - `append_text_line()` — binary mode so `\n` is never translated to `\r\n` on
   Windows. JSONL byte offsets must be stable across platforms.
 
@@ -115,8 +118,9 @@ validation and miss `SpawnRecord` reconstruction from `starting-prompt.md`.
 
 **Don't write state files with `open()`** — use `atomic_write_text()` or `append_text_line()`.
 
-**Don't acquire `spawns_flock` for per-spawn mutations** — the global lock is only for
-spawn ID reservation. Per-spawn mutations use `write_state_locked()` (`state.lock`).
+**Don't acquire `spawns_flock` for per-spawn mutations** — the global lock serializes
+spawn ID allocation, initial row publication, and abandoned-stage GC. Later mutations
+use `write_state_locked()` (`state.lock`).
 
 **Don't hardcode `~/.meridian/`** — use `get_user_home()` from `user_paths.py`.
 It handles `MERIDIAN_HOME`, Windows `%LOCALAPPDATA%`, and POSIX `~` correctly.

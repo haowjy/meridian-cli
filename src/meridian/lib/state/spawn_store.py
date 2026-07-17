@@ -6,6 +6,7 @@ Also includes file-backed ID generation for spawns and sessions.
 from __future__ import annotations
 
 import os
+import secrets
 import shutil
 from collections.abc import Mapping
 from contextlib import suppress
@@ -15,7 +16,7 @@ from typing import Any, Literal, cast
 
 import psutil
 import structlog
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, ValidationError
 
 from meridian.lib.core.clock import Clock, RealClock
 from meridian.lib.core.domain import SpawnStatus, TokenUsage
@@ -33,7 +34,7 @@ from meridian.lib.core.spawn_lifecycle import (
 )
 from meridian.lib.core.spawn_start import SpawnStartMetadata, derive_display_label
 from meridian.lib.core.types import SpawnId
-from meridian.lib.state.atomic import atomic_write_text
+from meridian.lib.state.atomic import atomic_publish_dir, atomic_write_text
 from meridian.lib.state.event_store import lock_file
 from meridian.lib.state.paths import RuntimePaths
 from meridian.lib.state.spawn.model import (
@@ -79,7 +80,21 @@ def is_spawn_id_shape(spawn_id: SpawnId | str) -> bool:
     """Return whether *spawn_id* has Meridian's persisted spawn ID shape."""
 
     value = str(spawn_id)
-    return len(value) > 1 and value[0] == "p" and value[1:].isdigit()
+    suffix = value[1:]
+    return len(value) > 1 and value[0] == "p" and suffix.isascii() and suffix.isdigit()
+
+
+def _is_safe_spawn_dir_name(name: str) -> bool:
+    """Return whether a spawn ID is one non-hidden path component."""
+
+    separators = {"/", "\\", os.sep}
+    if os.altsep is not None:
+        separators.add(os.altsep)
+    return (
+        bool(name)
+        and not name.startswith(".")
+        and not any(separator in name for separator in separators)
+    )
 
 
 def _spawn_counter_path(paths: RuntimePaths) -> Path:
@@ -191,23 +206,6 @@ def _read_state(
     return read_state(spawns_dir, spawn_id, include_prompt=include_prompt)
 
 
-def _write_state(
-    spawns_dir: Path,
-    record: SpawnRecord,
-    *,
-    revision: int | None = None,
-    allow_terminal_overwrite: bool = False,
-) -> int:
-    from meridian.lib.state.spawn.repository import write_state
-
-    return write_state(
-        spawns_dir,
-        record,
-        revision=revision,
-        allow_terminal_overwrite=allow_terminal_overwrite,
-    )
-
-
 def _write_state_locked(
     spawns_dir: Path,
     spawn_id: str,
@@ -246,6 +244,46 @@ class FinalizeOutcome(BaseModel):
     transitioned: bool
     wrote: bool
     snapshot: SpawnRecord | None
+
+
+def _ensure_staging_dir(paths: RuntimePaths) -> Path:
+    staging_dir = paths.spawns_dir / ".staging"
+    if os.path.lexists(staging_dir) and (
+        staging_dir.is_symlink() or not staging_dir.is_dir()
+    ):
+        raise NotADirectoryError(
+            f"Spawn staging container must be a real directory: {staging_dir}"
+        )
+    staging_dir.mkdir(parents=True, exist_ok=True)
+    if staging_dir.is_symlink() or not staging_dir.is_dir():
+        raise NotADirectoryError(
+            f"Spawn staging container must be a real directory: {staging_dir}"
+        )
+    return staging_dir
+
+
+def gc_abandoned_stages(runtime_root: Path) -> None:
+    """Best-effort cleanup of incomplete spawn publication stages."""
+
+    paths = RuntimePaths.from_root_dir(runtime_root)
+    staging_dir = paths.spawns_dir / ".staging"
+    with lock_file(paths.spawns_flock):
+        if staging_dir.is_symlink():
+            with suppress(OSError):
+                staging_dir.unlink()
+            return
+        if not staging_dir.is_dir():
+            return
+        try:
+            entries = tuple(staging_dir.iterdir())
+        except OSError:
+            return
+        for entry in entries:
+            with suppress(OSError):
+                if not entry.is_symlink() and entry.is_dir():
+                    shutil.rmtree(entry)
+                else:
+                    entry.unlink()
 
 
 def start_spawn(
@@ -308,7 +346,10 @@ def start_spawn(
 
     with lock_file(paths.spawns_flock):
         if spawn_id is not None:
-            resolved_spawn_id = SpawnId(str(spawn_id))
+            explicit_spawn_id = str(spawn_id)
+            if not _is_safe_spawn_dir_name(explicit_spawn_id):
+                raise ValueError(f"Invalid spawn ID: {explicit_spawn_id}")
+            resolved_spawn_id = SpawnId(explicit_spawn_id)
         else:
             current = _read_spawn_counter(paths)
             if current == 0 and not _spawn_counter_path(paths).is_file():
@@ -375,9 +416,18 @@ def start_spawn(
             launch_policy_snapshot=resolved_launch_policy_snapshot,
         )
         spawn_dir = paths.spawns_dir / str(resolved_spawn_id)
-        spawn_dir.mkdir(parents=True, exist_ok=True)
-        atomic_write_text(spawn_dir / "starting-prompt.md", prompt)
-        _write_state(paths.spawns_dir, record, revision=1)
+        staging_dir = _ensure_staging_dir(paths)
+        stage_dir = staging_dir / f"{resolved_spawn_id}-{os.getpid()}-{secrets.token_hex(4)}"
+        stage_dir.mkdir()
+        atomic_write_text(stage_dir / "starting-prompt.md", prompt)
+        from meridian.lib.state.spawn.repository import record_to_stored_state
+
+        stored_state = record_to_stored_state(record, revision=1)
+        atomic_write_text(
+            stage_dir / "state.json",
+            stored_state.model_dump_json(indent=2) + "\n",
+        )
+        atomic_publish_dir(stage_dir, spawn_dir)
         return resolved_spawn_id
 
 
@@ -392,7 +442,10 @@ def remove_spawn_events(
     """
 
     paths = RuntimePaths.from_root_dir(runtime_root)
-    spawn_dir = paths.spawns_dir / str(spawn_id)
+    resolved_spawn_id = str(spawn_id)
+    if not _is_safe_spawn_dir_name(resolved_spawn_id):
+        raise ValueError(f"Invalid spawn ID: {resolved_spawn_id}")
+    spawn_dir = paths.spawns_dir / resolved_spawn_id
     with suppress(FileNotFoundError):
         shutil.rmtree(spawn_dir)
 
@@ -844,12 +897,14 @@ def list_spawns(
     """List v2 spawn records with optional equality filters."""
 
     paths = RuntimePaths.from_root_dir(runtime_root)
-    spawns = [
-        record
-        for spawn_id in _scan_spawn_ids(paths.spawns_dir)
-        if (record := _read_state(paths.spawns_dir, spawn_id, include_prompt=False))
-        is not None
-    ]
+    spawns: list[SpawnRecord] = []
+    for spawn_id in _scan_spawn_ids(paths.spawns_dir):
+        try:
+            record = _read_state(paths.spawns_dir, spawn_id, include_prompt=False)
+        except ValidationError:
+            continue
+        if record is not None:
+            spawns.append(record)
 
     if filters:
         spawns = _apply_spawn_filters(spawns, filters)

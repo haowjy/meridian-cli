@@ -20,6 +20,7 @@ State splits across two roots:
   sessions/                         — per-session lock + lease files
   spawn-id-counter                  — monotonic p1, p2, …
   spawns/
+    .staging/<unique>/              — complete unpublished spawn row
     v2-format.json                  — v2 migration marker
     <id>/
       state.json                    — authoritative spawn state (v2)
@@ -86,12 +87,19 @@ All state files are written through `atomic.py`:
   file, `os.fsync()`, then `os.replace()` (atomic rename). On POSIX also fsyncs
   the parent directory. Either the old file or new file exists — never a partial
   write.
+- `atomic_publish_dir()`: require a nonexistent destination, rename a complete
+  same-volume directory into place, then fsync the destination parent.
 - `append_text_line()`: opens in binary mode so `\n` is never translated to `\r\n`
   on Windows. JSONL byte offsets must be stable across platforms.
 
 Never write state files with plain `open()` + `write()`. Crash in the middle of a
 plain write leaves a partial file; partial state.json will fail Pydantic validation
 on next read.
+
+`start_spawn()` writes and syncs `starting-prompt.md` followed by `state.json` under
+`spawns/.staging/<spawn-id>-<pid>-<random>/`, then publishes the complete row with one
+directory rename while holding `spawns_flock`. Runtime-write startup removes abandoned
+`.staging/*` entries under the same lock; it never garbage-collects published rows.
 
 ### Read vs Write Root Resolvers
 
@@ -264,9 +272,9 @@ checkouts, triggering project setup side effects in CI.
 `append_text_line()`. Plain writes don't survive crashes.
 
 **Don't acquire `spawns_flock` for per-spawn mutations** — the global lock serializes
-all spawn ID reservation; acquiring it for individual spawn mutations creates
-unnecessary contention. Use `write_state_locked()` (per-spawn `state.lock`) for
-external writes.
+spawn ID allocation, initial row publication, and abandoned-stage GC. Acquiring it for
+later individual mutations creates unnecessary contention. Use `write_state_locked()`
+(per-spawn `state.lock`) for external writes.
 
 ## Related KB
 

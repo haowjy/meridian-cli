@@ -4,9 +4,55 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- Streaming completion now has shared evidence, profile, cleanup contracts and a
+  profile-driven coordinator for candidate, deadline, stabilization, and cleanup mechanics.
+- Pi deferred lifecycle telemetry exposes categorized persisted-descendant, rowless,
+  and tracked-bash counts alongside compatibility aggregates.
+
+### Changed
+- Failure and cancel terminal outcomes now publish before descendant/process cleanup runs asynchronously and best-effort, so a stuck child cleanup can no longer hang terminal publication.
+- Completed streaming sessions now use plan-owned async connection teardown; Pi cleanup
+  lifecycle phases and escalation policy no longer live in the spawn registry.
+- Streaming drain-plan selection now lives behind one plain/resident/Pi composition factory.
+- Drain-plan selection and Pi synthetic phase delivery now have direct regression coverage.
+- Phase 0 drain characterization now uses observable effects and fake clocks.
+- Persisted descendant assessment now has one reconciled, transitive evidence projection.
+- Pi completion now uses reconciled transitive descendants as its sole persisted-work
+  authority and watches disk only for Pi-private bash and notification evidence.
+- Resident completion now supplies reconciled-tree evidence, resident precedence/control,
+  and canonical descendant cleanup to the shared coordinator.
+- Pi completion now supplies its persisted-descendant/private-work evidence, timeout
+  precedence, phase emission, and cleanup to the shared coordinator.
+- Pi private-work blockers and cleanup handles now have one ledger with immutable,
+  categorized snapshots fed by lifecycle and disk observers.
+- Pi production cleanup now reads tracked process handles directly from the private-work
+  ledger instead of routing through the lifecycle tracker.
+- Completion profiles now own whether the coordinator evaluates without a terminal
+  candidate.
+
 ### Fixed
+- Spawn rows now appear only after their initial state and prompt are durably staged.
+- Retention pruning no longer deletes in-progress or newly published spawn rows.
+- Explicit spawn IDs now reject path-unsafe values while allowing symbolic IDs.
+- Spawn recovery no longer follows staging-container symlinks or lookalike numeric IDs.
 - Streaming drains no longer dispatch or fan out events whose history write failed.
 - Pi child-wave timeouts remain terminal when tracked-child cleanup fails.
+- Completion waits now retain stable readiness windows across early wakes and preserve
+  one absolute deadline.
+- Persisted completion activity now survives a concurrent auxiliary wake, and typed
+  post-persist evidence failures can finalize through profile policy immediately.
+- Pi micro-drain candidates now survive auxiliary blockers until the original
+  stabilization timeout, which alone finalizes or emits cancellation.
+- Pi completion now uses watcher-owned disk polling, propagates blocker accessor
+  failures, and keeps stream-exit policy inside the shared coordinator.
+- Pi reconciled-tree waits poll through nested descendant/report transitions and invoke
+  canonical descendant cleanup on process exit even without Pi lifecycle handles.
+- Pi completion nudges no longer treat reconciled-terminal descendants as active work.
+- Resident and Pi `done` signals now wait on unreadable completion evidence and fail
+  explicitly if it stays unavailable; Pi private-work read failures now enter that typed
+  unknown-evidence path.
+- Rejected Pi child candidates no longer retain stale read failures as unknown evidence.
 
 ## [0.3.31] - 2026-07-10
 

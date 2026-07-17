@@ -57,17 +57,37 @@ def test_retry_blocked_after_pi_child_started_detects_disk_child_state(
     tmp_path: Path,
 ) -> None:
     runtime_root = tmp_path / "runtime"
-    state_path = runtime_root / "spawns" / "p-child" / "state.json"
+    state_path = runtime_root / "spawns" / "p2" / "state.json"
     state_path.parent.mkdir(parents=True, exist_ok=True)
     state_path.write_text(
-        json.dumps({"id": "p-child", "parent_id": "p-parent", "status": "running"}),
+        json.dumps({"id": "p2", "parent_id": "p1", "status": "running"}),
         encoding="utf-8",
     )
 
     assert streaming_runner_module._retry_blocked_after_pi_child_started(
         harness_id=HarnessId.PI,
         runtime_root=runtime_root,
-        current_spawn_id=SpawnId("p-parent"),
+        current_spawn_id=SpawnId("p1"),
+    )
+
+
+@pytest.mark.parametrize("entry_name", [".staging", ".p2", "spawn-stage", "p²"])
+def test_retry_scan_ignores_non_spawn_row_entries(
+    tmp_path: Path,
+    entry_name: str,
+) -> None:
+    runtime_root = tmp_path / "runtime"
+    state_path = runtime_root / "spawns" / entry_name / "state.json"
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    state_path.write_text(
+        json.dumps({"id": entry_name, "parent_id": "p1", "status": "running"}),
+        encoding="utf-8",
+    )
+
+    assert not streaming_runner_module._retry_blocked_after_pi_child_started(
+        harness_id=HarnessId.PI,
+        runtime_root=runtime_root,
+        current_spawn_id=SpawnId("p1"),
     )
 
 @pytest.mark.asyncio

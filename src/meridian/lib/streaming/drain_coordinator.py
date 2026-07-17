@@ -6,7 +6,12 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol
 
+from meridian.lib.streaming.completion_contracts import CompletionCleanupRequest
 from meridian.lib.streaming.drain_policy import DrainAction, DrainPolicy, SingleTurnDrainPolicy
+from meridian.lib.streaming.drain_teardown import (
+    DEFAULT_DRAIN_SESSION_TEARDOWN,
+    DrainSessionTeardown,
+)
 
 if TYPE_CHECKING:
     from meridian.lib.harness.connections.base import HarnessEvent
@@ -35,6 +40,7 @@ class DrainExitDecision:
 
     recorded_outcome: TerminalEventOutcome | None = None
     fallback_error: str | None = None
+    post_publication_cleanup: CompletionCleanupRequest | None = None
 
 
 class AuxWakeCoordinator(Protocol):
@@ -67,6 +73,7 @@ class DrainPlan:
     aux_wake: AuxWakeCoordinator | None = None
     handle_aux_wake: Callable[[], Awaitable[DrainLoopDecision]] | None = None
     finalizer: DrainFinalizer | None = None
+    teardown: DrainSessionTeardown = DEFAULT_DRAIN_SESSION_TEARDOWN
 
     def selected_policy(self) -> DrainPolicy:
         return self.policy or SingleTurnDrainPolicy()
@@ -80,6 +87,7 @@ class DrainPlan:
             aux_wake=self.aux_wake,
             handle_aux_wake=self.handle_aux_wake,
             finalizer=self.finalizer,
+            teardown=self.teardown,
         )
 
 
@@ -118,3 +126,8 @@ class DrainCoordinator(Protocol):
         self,
         recorded_outcome: TerminalEventOutcome | None,
     ) -> DrainExitDecision: ...
+
+    async def execute_post_publication_cleanup(
+        self,
+        request: CompletionCleanupRequest,
+    ) -> None: ...

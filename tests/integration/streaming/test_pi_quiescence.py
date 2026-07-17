@@ -17,8 +17,16 @@ from meridian.lib.harness.connections.base import (
     StopProgressCallback,
     StopResult,
 )
+from meridian.lib.state import spawn_store
+from meridian.lib.streaming import pi_drain as pi_drain_module
 from meridian.lib.streaming.pi_subspawn_tracker import PiSubspawnTracker
-from tests.support.async_determinism import TaskGate, wait_until
+from tests.support.async_determinism import (
+    AsyncDeterminism,
+    TaskGate,
+    assert_still_pending,
+    wait_until,
+    yield_to_loop,
+)
 from tests.support.pi import (
     FakePiConnection as _FakePiConnection,
 )
@@ -45,6 +53,19 @@ def _read_history_phases(runtime_root: Path, spawn_id: SpawnId) -> list[str]:
         for event in _read_history(runtime_root, spawn_id)
         if event.get("event_type") == "meridian.pi.lifecycle.phase"
     ]
+
+
+def _history_has_phase(runtime_root: Path, spawn_id: SpawnId, phase: str) -> bool:
+    history_path = runtime_root / "spawns" / str(spawn_id) / "history.jsonl"
+    return history_path.exists() and phase in _read_history_phases(runtime_root, spawn_id)
+
+
+def _history_has_event(runtime_root: Path, spawn_id: SpawnId, event_type: str) -> bool:
+    history_path = runtime_root / "spawns" / str(spawn_id) / "history.jsonl"
+    return history_path.exists() and any(
+        event.get("event_type") == event_type
+        for event in _read_history(runtime_root, spawn_id)
+    )
 
 
 def _read_phase_events(
@@ -224,9 +245,8 @@ async def test_spawn_manager_pi_cleanup_escalation_does_not_block_terminal_succe
         assert fake_connection.stop_reasons == []
 
         await wait_until(
-            lambda: "cleanup_escalated"
-            in _read_history_phases(tmp_path, spawn_id),
-            description="cleanup_escalated lifecycle phase",
+            lambda: "cleanup_completed" in _read_history_phases(tmp_path, spawn_id),
+            description="cleanup_completed lifecycle phase",
         )
         history = _read_history(tmp_path, spawn_id)
         cleanup_escalated_phases = _read_phase_events(
@@ -242,10 +262,257 @@ async def test_spawn_manager_pi_cleanup_escalation_does_not_block_terminal_succe
         assert cleanup_running_phases
         assert cleanup_escalated_phases
         assert cleanup_escalated_phases[-1]["payload"].get("reason") == "abort_grace_expired"
-        assert history.index(cleanup_running_phases[-1]) < history.index(
-            cleanup_escalated_phases[-1]
-        )
+        cleanup_phases = [
+            event["payload"]["phase"]
+            for event in history
+            if event["event_type"] == "meridian.pi.lifecycle.phase"
+            and str(event["payload"]["phase"]).startswith("cleanup_")
+        ]
+        assert cleanup_phases == [
+            "cleanup_running",
+            "cleanup_escalated",
+            "cleanup_completed",
+        ]
     finally:
+        await manager.stop_spawn(spawn_id)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("stop_error", "expected_phases"),
+    [
+        (None, ["cleanup_running", "cleanup_completed"]),
+        ("stop failed", ["cleanup_running", "cleanup_failed"]),
+    ],
+)
+async def test_spawn_manager_pi_cleanup_publishes_terminal_before_async_teardown(
+    tmp_path: Path,
+    stop_error: str | None,
+    expected_phases: list[str],
+) -> None:
+    stop_started = asyncio.Event()
+    allow_stop = asyncio.Event()
+
+    class _GatedStopConnection(_FakePiConnection):
+        async def stop(
+            self,
+            *,
+            reason: str | None = None,
+            progress: StopProgressCallback | None = None,
+        ) -> StopResult:
+            _ = progress
+            self.stop_reasons.append(reason)
+            stop_started.set()
+            await allow_stop.wait()
+            if stop_error is not None:
+                raise RuntimeError(stop_error)
+            self._state = "stopped"
+            return StopResult()
+
+    fake_connection = _GatedStopConnection(
+        [
+            _pi_event("session", {"id": "ses-pi"}),
+            _pi_event(
+                "agent_end",
+                {"messages": [{"role": "assistant", "stopReason": "stop"}]},
+            ),
+        ]
+    )
+    spawn_id = SpawnId(f"p-pi-cleanup-{'failed' if stop_error else 'completed'}")
+    manager = await _start_pi_manager(tmp_path, fake_connection, spawn_id=spawn_id)
+
+    try:
+        outcome = await manager.wait_for_completion(spawn_id)
+        assert outcome is not None
+        assert outcome.status == "succeeded"
+        await asyncio.wait_for(stop_started.wait(), timeout=1.0)
+        assert fake_connection.stop_reasons == ["quiescent"]
+
+        allow_stop.set()
+        final_phase = expected_phases[-1]
+        await wait_until(
+            lambda: final_phase in _read_history_phases(tmp_path, spawn_id),
+            description=f"{final_phase} lifecycle phase",
+        )
+        history = _read_history(tmp_path, spawn_id)
+        cleanup_events = [
+            event
+            for event in history
+            if event["event_type"] == "meridian.pi.lifecycle.phase"
+            and str(event["payload"]["phase"]).startswith("cleanup_")
+        ]
+        assert [event["payload"]["phase"] for event in cleanup_events] == expected_phases
+        if stop_error is not None:
+            assert cleanup_events[-1]["payload"]["error"] == stop_error
+    finally:
+        allow_stop.set()
+        await manager.stop_spawn(spawn_id)
+
+
+@pytest.mark.asyncio
+async def test_pi_child_wave_timeout_publishes_while_descendant_cleanup_is_blocked(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cleanup_started = asyncio.Event()
+    allow_cleanup = asyncio.Event()
+    cleanup_finished = asyncio.Event()
+
+    class _GatedCleanupService:
+        async def cancel_descendants(self, target_spawn_id: SpawnId) -> set[str]:
+            assert target_spawn_id == SpawnId("p-pi-gated-child-wave")
+            cleanup_started.set()
+            await allow_cleanup.wait()
+            cleanup_finished.set()
+            return {"j-gated-child-wave"}
+
+    def _build_service(project_root: Path, runtime_root: Path) -> _GatedCleanupService:
+        assert project_root == tmp_path
+        assert runtime_root == tmp_path
+        return _GatedCleanupService()
+
+    async def _noop_process_cleanup(
+        target_spawn_id: SpawnId,
+        tracker: PiSubspawnTracker,
+        *,
+        reason: str,
+        exclude_subspawn_ids: set[str] | None = None,
+    ) -> None:
+        _ = target_spawn_id, tracker, reason, exclude_subspawn_ids
+
+    monkeypatch.setattr(
+        "meridian.lib.bootstrap.services.build_spawn_application_service_from_roots",
+        _build_service,
+    )
+    monkeypatch.setattr(
+        "meridian.lib.streaming.pi_process_cleanup.terminate_pi_tracked_subspawns",
+        _noop_process_cleanup,
+    )
+
+    class _OpenPiConnection(_FakePiConnection):
+        async def events(self):  # type: ignore[no-untyped-def]
+            for event in self._events:
+                yield event
+            await asyncio.Event().wait()
+
+    spawn_id = SpawnId("p-pi-gated-child-wave")
+    connection = _OpenPiConnection(
+        [
+            _pi_event("session", {"id": "ses-pi"}),
+            _pi_event(
+                "meridian.subspawn.start",
+                {
+                    "schema_version": 1,
+                    "subspawn_id": "j-gated-child-wave",
+                    "correlation_id": "j-gated-child-wave",
+                    "wait_policy": "tracked",
+                    "pid": 7701,
+                },
+            ),
+            _pi_event(
+                "agent_end",
+                {"messages": [{"role": "assistant", "stopReason": "stop"}]},
+            ),
+        ]
+    )
+    manager = await _start_pi_manager(
+        tmp_path,
+        connection,
+        spawn_id=spawn_id,
+        child_wave_timeout_seconds=0.01,
+    )
+    completion = asyncio.create_task(manager.wait_for_completion(spawn_id))
+
+    try:
+        await asyncio.wait_for(cleanup_started.wait(), timeout=1.0)
+        done, _ = await asyncio.wait({completion}, timeout=0.05)
+
+        assert completion in done
+        outcome = await completion
+        assert outcome is not None
+        assert outcome.status == "failed"
+        assert outcome.error == "pi_child_wave_timeout"
+        assert not cleanup_finished.is_set()
+    finally:
+        allow_cleanup.set()
+        with suppress(asyncio.CancelledError, TimeoutError):
+            await asyncio.wait_for(completion, timeout=1.0)
+        await manager.stop_spawn(spawn_id)
+
+
+@pytest.mark.asyncio
+async def test_pi_stream_exit_publishes_while_descendant_cleanup_is_blocked(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cleanup_started = asyncio.Event()
+    allow_cleanup = asyncio.Event()
+    cleanup_finished = asyncio.Event()
+
+    class _GatedCleanupService:
+        async def cancel_descendants(self, target_spawn_id: SpawnId) -> set[str]:
+            assert target_spawn_id == SpawnId("p-pi-gated-stream-exit")
+            cleanup_started.set()
+            await allow_cleanup.wait()
+            cleanup_finished.set()
+            return {"j-gated-stream-exit"}
+
+    def _build_service(project_root: Path, runtime_root: Path) -> _GatedCleanupService:
+        assert project_root == tmp_path
+        assert runtime_root == tmp_path
+        return _GatedCleanupService()
+
+    async def _noop_process_cleanup(
+        target_spawn_id: SpawnId,
+        tracker: PiSubspawnTracker,
+        *,
+        reason: str,
+        exclude_subspawn_ids: set[str] | None = None,
+    ) -> None:
+        _ = target_spawn_id, tracker, reason, exclude_subspawn_ids
+
+    monkeypatch.setattr(
+        "meridian.lib.bootstrap.services.build_spawn_application_service_from_roots",
+        _build_service,
+    )
+    monkeypatch.setattr(
+        "meridian.lib.streaming.pi_process_cleanup.terminate_pi_tracked_subspawns",
+        _noop_process_cleanup,
+    )
+
+    spawn_id = SpawnId("p-pi-gated-stream-exit")
+    connection = _FakePiConnection(
+        [
+            _pi_event("session", {"id": "ses-pi"}),
+            _pi_event(
+                "meridian.subspawn.start",
+                {
+                    "schema_version": 1,
+                    "subspawn_id": "j-gated-stream-exit",
+                    "correlation_id": "j-gated-stream-exit",
+                    "wait_policy": "tracked",
+                    "pid": 7702,
+                },
+            ),
+        ]
+    )
+    manager = await _start_pi_manager(tmp_path, connection, spawn_id=spawn_id)
+    completion = asyncio.create_task(manager.wait_for_completion(spawn_id))
+
+    try:
+        await asyncio.wait_for(cleanup_started.wait(), timeout=1.0)
+        done, _ = await asyncio.wait({completion}, timeout=0.05)
+
+        assert completion in done
+        outcome = await completion
+        assert outcome is not None
+        assert outcome.status == "failed"
+        assert outcome.error == "pi_process_exited_with_tracked_children"
+        assert not cleanup_finished.is_set()
+    finally:
+        allow_cleanup.set()
+        with suppress(asyncio.CancelledError, TimeoutError):
+            await asyncio.wait_for(completion, timeout=1.0)
         await manager.stop_spawn(spawn_id)
 
 
@@ -291,14 +558,25 @@ async def _run_pi_child_wave_timeout_with_cleanup_mocks(
     *,
     cancel_raises: bool = False,
 ) -> tuple[list[tuple[object, ...]], Any]:
+    determinism = AsyncDeterminism(start=100.0)
+    monkeypatch.setattr(pi_drain_module.time, "monotonic", determinism.clock.monotonic)
+    loop = asyncio.get_running_loop()
+    real_loop_time = loop.time
+    determinism.install_on_running_loop(monkeypatch)
     calls: list[tuple[object, ...]] = []
+    parent_id = SpawnId("p-pi-hybrid-reap")
+    child_id = SpawnId("p-child-hybrid-reap")
 
     class _Service:
         async def cancel_descendants(self, target_spawn_id: SpawnId) -> set[str]:
             calls.append(("cancel_descendants", str(target_spawn_id)))
+            child = spawn_store.get_spawn(tmp_path, child_id)
+            assert child is not None
+            assert child.parent_id == str(parent_id)
+            assert child.status == "running"
             if cancel_raises:
                 raise RuntimeError("cancel failed")
-            return {"j-hybrid-reap"}
+            return {str(child_id)}
 
     def _build_service(project_root: Path, runtime_root: Path) -> _Service:
         assert project_root == tmp_path
@@ -326,7 +604,7 @@ async def _run_pi_child_wave_timeout_with_cleanup_mocks(
         _build_service,
     )
     monkeypatch.setattr(
-        "meridian.lib.streaming.spawn_manager.terminate_pi_tracked_subspawns",
+        "meridian.lib.streaming.pi_process_cleanup.terminate_pi_tracked_subspawns",
         _fallback_cleanup,
     )
 
@@ -334,7 +612,7 @@ async def _run_pi_child_wave_timeout_with_cleanup_mocks(
         async def events(self):  # type: ignore[no-untyped-def]
             for event in self._events:
                 yield event
-            await asyncio.sleep(60)
+            await asyncio.Event().wait()
 
     fake_connection = _StuckWaveTimeoutConnection(
         [
@@ -343,8 +621,8 @@ async def _run_pi_child_wave_timeout_with_cleanup_mocks(
                 "meridian.subspawn.start",
                 {
                     "schema_version": 1,
-                    "subspawn_id": "j-hybrid-reap",
-                    "correlation_id": "j-hybrid-reap",
+                    "subspawn_id": str(child_id),
+                    "correlation_id": str(child_id),
                     "wait_policy": "tracked",
                     "pid": 7701,
                 },
@@ -366,18 +644,40 @@ async def _run_pi_child_wave_timeout_with_cleanup_mocks(
         ]
     )
 
-    spawn_id = SpawnId("p-pi-hybrid-reap")
+    spawn_store.start_spawn(
+        tmp_path,
+        spawn_id=child_id,
+        chat_id=str(child_id),
+        parent_id=str(parent_id),
+        model="test-model",
+        agent="test-agent",
+        harness="pi",
+        prompt="child",
+        status="running",
+    )
     manager = await _start_pi_manager(
         tmp_path,
         fake_connection,
-        spawn_id=spawn_id,
+        spawn_id=parent_id,
         child_wave_timeout_seconds=0.02,
     )
 
+    completion = asyncio.create_task(manager.wait_for_completion(parent_id))
     try:
-        outcome = await manager.wait_for_completion(spawn_id)
+        await wait_until(
+            lambda: _history_has_event(tmp_path, parent_id, "agent_end"),
+            description="Pi child-wave wait",
+        )
+        await assert_still_pending(completion)
+        determinism.advance(0.019)
+        await yield_to_loop()
+        assert not completion.done()
+        determinism.advance(0.0011)
+        await wait_until(completion.done, description="Pi child-wave timeout")
+        outcome = await completion
     finally:
-        await manager.stop_spawn(spawn_id)
+        monkeypatch.setattr(loop, "time", real_loop_time)
+        await manager.stop_spawn(parent_id)
     assert outcome is not None
     return calls, outcome
 
@@ -411,12 +711,18 @@ async def test_spawn_manager_pi_reap_falls_back_for_unreaped_children(
 @pytest.mark.asyncio
 async def test_spawn_manager_pi_child_wave_timeout_cleans_tracked_children_and_fails(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    determinism = AsyncDeterminism(start=100.0)
+    monkeypatch.setattr(pi_drain_module.time, "monotonic", determinism.clock.monotonic)
+    loop = asyncio.get_running_loop()
+    real_loop_time = loop.time
+    determinism.install_on_running_loop(monkeypatch)
     class _StuckWaveTimeoutConnection(_FakePiConnection):
         async def events(self):  # type: ignore[no-untyped-def]
             for event in self._events:
                 yield event
-            await asyncio.sleep(60)
+            await asyncio.Event().wait()
 
     events = [
         _pi_event("session", {"id": "ses-pi"}),
@@ -445,8 +751,30 @@ async def test_spawn_manager_pi_child_wave_timeout_cleans_tracked_children_and_f
         child_wave_timeout_seconds=0.02,
     )
 
+    completion = asyncio.create_task(manager.wait_for_completion(spawn_id))
     try:
-        outcome = await manager.wait_for_completion(spawn_id)
+        await wait_until(
+            lambda: (
+                _history_has_phase(
+                    tmp_path,
+                    spawn_id,
+                    "waiting_for_tracked_children",
+                )
+                and _history_has_event(
+                    tmp_path,
+                    spawn_id,
+                    "meridian/turn_completed",
+                )
+            ),
+            description="Pi child-wave wait",
+        )
+        await assert_still_pending(completion)
+        determinism.advance(0.019)
+        await yield_to_loop()
+        assert not completion.done()
+        determinism.advance(0.0011)
+        await wait_until(completion.done, description="Pi child-wave timeout")
+        outcome = await completion
         assert outcome is not None
         assert outcome.status == "failed"
         assert outcome.error == "pi_child_wave_timeout"
@@ -458,13 +786,21 @@ async def test_spawn_manager_pi_child_wave_timeout_cleans_tracked_children_and_f
         assert timeout_events
         assert timeout_events[-1]["payload"].get("active_tracked_count") == 1
     finally:
+        monkeypatch.setattr(loop, "time", real_loop_time)
         await manager.stop_spawn(spawn_id)
 
 
 @pytest.mark.asyncio
 async def test_spawn_manager_pi_child_wave_timeout_not_cleared_by_turn_active(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """After expiry is observed, later activity cannot revive the child wave."""
+    determinism = AsyncDeterminism(start=100.0)
+    monkeypatch.setattr(pi_drain_module.time, "monotonic", determinism.clock.monotonic)
+    loop = asyncio.get_running_loop()
+    real_loop_time = loop.time
+    determinism.install_on_running_loop(monkeypatch)
     late_turn_gate = TaskGate()
 
     class _DelayedWaveTimeoutConnection(_FakePiConnection):
@@ -526,16 +862,40 @@ async def test_spawn_manager_pi_child_wave_timeout_not_cleared_by_turn_active(
         late_turn_gate.open()
 
     release_task = asyncio.create_task(_release_late_turn_after_child_wave_timeout())
+    completion = asyncio.create_task(manager.wait_for_completion(spawn_id))
 
     try:
-        outcome = await manager.wait_for_completion(spawn_id)
+        await wait_until(
+            lambda: (
+                _history_has_phase(
+                    tmp_path,
+                    spawn_id,
+                    "waiting_for_tracked_children",
+                )
+                and _history_has_event(
+                    tmp_path,
+                    spawn_id,
+                    "meridian/turn_completed",
+                )
+            ),
+            description="Pi child-wave wait",
+        )
+        await assert_still_pending(completion)
+        determinism.advance(0.099)
+        await yield_to_loop()
+        assert not completion.done()
+        determinism.advance(0.0011)
+        await wait_until(completion.done, description="latched Pi child-wave timeout")
+        outcome = await completion
         assert outcome is not None
         assert outcome.status == "failed"
         assert outcome.error == "pi_child_wave_timeout"
+        assert _read_history_phases(tmp_path, spawn_id).count("pi_child_wave_timeout") == 1
     finally:
         release_task.cancel()
         with suppress(asyncio.CancelledError):
             await release_task
+        monkeypatch.setattr(loop, "time", real_loop_time)
         await manager.stop_spawn(spawn_id)
 
 

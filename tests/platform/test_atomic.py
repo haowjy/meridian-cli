@@ -130,3 +130,42 @@ def test_atomic_write_text_replaces_content_cross_platform(tmp_path: Path) -> No
 
     assert target.read_text(encoding="utf-8") == "after\n"
     assert _tmp_candidates(target) == []
+
+
+@posix_only
+def test_atomic_publish_dir_replaces_entry_and_fsyncs_parent(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    spawns_dir = tmp_path / "spawns"
+    stage_dir = spawns_dir / ".staging" / "p1-1234-deadbeef"
+    dest_dir = spawns_dir / "p1"
+    stage_dir.mkdir(parents=True)
+    (stage_dir / "state.json").write_text("complete\n", encoding="utf-8")
+    directory_fd = 999_005
+    fsync_calls = _capture_fsync_calls(
+        monkeypatch,
+        directory_path=spawns_dir,
+        directory_fd=directory_fd,
+    )
+
+    atomic_module.atomic_publish_dir(stage_dir, dest_dir)
+
+    assert not stage_dir.exists()
+    assert (dest_dir / "state.json").read_text(encoding="utf-8") == "complete\n"
+    assert directory_fd in fsync_calls
+
+
+def test_atomic_publish_dir_rejects_existing_destination(tmp_path: Path) -> None:
+    stage_dir = tmp_path / ".staging" / "p1-1234-deadbeef"
+    dest_dir = tmp_path / "p1"
+    stage_dir.mkdir(parents=True)
+    dest_dir.mkdir()
+    (stage_dir / "state.json").write_text("staged\n", encoding="utf-8")
+    (dest_dir / "state.json").write_text("existing\n", encoding="utf-8")
+
+    with pytest.raises(FileExistsError, match="Refusing to publish over existing destination"):
+        atomic_module.atomic_publish_dir(stage_dir, dest_dir)
+
+    assert (stage_dir / "state.json").read_text(encoding="utf-8") == "staged\n"
+    assert (dest_dir / "state.json").read_text(encoding="utf-8") == "existing\n"

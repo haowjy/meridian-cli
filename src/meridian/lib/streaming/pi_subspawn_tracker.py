@@ -9,6 +9,11 @@ from dataclasses import dataclass
 from meridian.lib.core.types import HarnessId
 from meridian.lib.harness import pi_lifecycle_events as pi_lifecycle
 from meridian.lib.harness.connections.base import HarnessEvent
+from meridian.lib.streaming.pi_work_ledger import (
+    PiCleanupHandle,
+    PiPendingNotification,
+    PiPrivateWorkLedger,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -36,14 +41,6 @@ _pi_wait_policy_is_tracked = pi_lifecycle.pi_wait_policy_is_tracked
 _unsupported_pi_schema_version_error = pi_lifecycle.unsupported_pi_schema_version_error
 
 
-@dataclass
-class PiPendingNotification:
-    notification_id: str
-    phase: str
-    started_monotonic: float
-    deadline_monotonic: float | None = None
-
-
 def _is_pi_lifecycle_namespace_label(label: str) -> bool:
     """Return True for Pi lifecycle labels that must not be silently ignored."""
     normalized = label.strip().lower()
@@ -59,24 +56,24 @@ def _is_pi_lifecycle_namespace_label(label: str) -> bool:
 
 @dataclass
 class PiSubspawnTracker:
-    active_ids: set[str]
-    active_process_groups: dict[str, int]
+    _ledger: PiPrivateWorkLedger
     canonical_event_keys: set[tuple[str, str, str]]
     resolved_subspawn_ids: set[str]
-    pending_notifications: dict[str, PiPendingNotification] | None = None
     notification_failure_error: str | None = None
-    notification_timeout_error: str | None = None
     lifecycle_tracking_invalidated_error: str | None = None
 
     @classmethod
-    def empty(cls) -> PiSubspawnTracker:
+    def empty(cls, ledger: PiPrivateWorkLedger | None = None) -> PiSubspawnTracker:
         return cls(
-            active_ids=set(),
-            active_process_groups={},
+            _ledger=ledger or PiPrivateWorkLedger(),
             canonical_event_keys=set(),
             resolved_subspawn_ids=set(),
-            pending_notifications={},
         )
+
+    def note_persisted_subspawns(self, subspawn_ids: tuple[str, ...]) -> None:
+        """Move lifecycle-observed IDs with descendant rows to tree-owned liveness."""
+        for subspawn_id in subspawn_ids:
+            self._ledger.note_persisted_subspawn(subspawn_id)
 
     def observe(
         self,
@@ -134,12 +131,13 @@ class PiSubspawnTracker:
                         extra={"subspawn_id": subspawn_id},
                     )
                     return False
-                self.active_ids.add(subspawn_id)
                 pgid = _pi_subspawn_pgid(event.payload)
                 pid = _pi_subspawn_pid(event.payload)
                 process_group_id = pgid if pgid is not None else pid
-                if process_group_id is not None:
-                    self.active_process_groups[subspawn_id] = process_group_id
+                self._ledger.note_subspawn_started(
+                    subspawn_id,
+                    process_group_id=process_group_id,
+                )
             elif has_canonical_label:
                 canonical_label = _canonical_lifecycle_label(
                     label_set,
@@ -164,8 +162,7 @@ class PiSubspawnTracker:
                     )
                     return False
                 self.resolved_subspawn_ids.add(subspawn_id)
-                self.active_ids.discard(subspawn_id)
-                self.active_process_groups.pop(subspawn_id, None)
+                self._ledger.note_subspawn_ended(subspawn_id)
                 return False
             if has_canonical_label:
                 canonical_label = _canonical_lifecycle_label(
@@ -178,16 +175,6 @@ class PiSubspawnTracker:
                 return False
             return False
 
-        pending_notifications = self.pending_notifications
-        if pending_notifications is None:
-            unknown_lifecycle_label = self._unknown_pi_lifecycle_namespace_label(label_set)
-            if unknown_lifecycle_label is not None:
-                self.lifecycle_tracking_invalidated_error = (
-                    "pi_lifecycle_tracking_invalidated:unsupported_lifecycle_event:"
-                    f"{unknown_lifecycle_label}"
-                )
-            return False
-
         is_notification_start = bool(
             label_set & (_PI_NOTIFICATION_QUEUED_EVENTS | _PI_NOTIFICATION_DELIVERED_EVENTS)
         )
@@ -197,20 +184,11 @@ class PiSubspawnTracker:
                 phase = (
                     "delivered" if bool(label_set & _PI_NOTIFICATION_DELIVERED_EVENTS) else "queued"
                 )
-                current = pending_notifications.get(notification_id)
-                started_monotonic = (
-                    current.started_monotonic if current is not None else observation_monotonic
-                )
-                deadline_monotonic = (
-                    None
-                    if notification_timeout_seconds is None or notification_timeout_seconds <= 0
-                    else started_monotonic + notification_timeout_seconds
-                )
-                pending_notifications[notification_id] = PiPendingNotification(
-                    notification_id=notification_id,
+                self._ledger.note_notification_started(
+                    notification_id,
                     phase=phase,
-                    started_monotonic=started_monotonic,
-                    deadline_monotonic=deadline_monotonic,
+                    observation_monotonic=observation_monotonic,
+                    notification_timeout_seconds=notification_timeout_seconds,
                 )
             elif label_set & _PI_CANONICAL_NOTIFICATION_EVENTS:
                 canonical_label = _canonical_lifecycle_label(
@@ -228,7 +206,7 @@ class PiSubspawnTracker:
         if is_notification_end:
             notification_id = _pi_notification_id(event.payload)
             if notification_id is not None:
-                pending_notifications.pop(notification_id, None)
+                self._ledger.note_notification_ended(notification_id)
             elif label_set & _PI_CANONICAL_NOTIFICATION_EVENTS:
                 canonical_label = _canonical_lifecycle_label(
                     label_set,
@@ -296,86 +274,53 @@ class PiSubspawnTracker:
                 return label
         return None
 
+    # Transitional query wrappers preserve the pre-ledger tracker interface for
+    # rollback callers. Production evidence and cleanup consume ledger snapshots
+    # and handles directly.
     def has_pending(self) -> bool:
-        return bool(self.active_ids)
+        return self._ledger.active_tracked_count() > 0
 
     def active_tracked_count(self) -> int:
-        return len(self.active_ids)
+        return self._ledger.active_tracked_count()
+
+    def active_tracked_ids(self) -> tuple[str, ...]:
+        return self._ledger.tracked_subspawn_ids()
 
     def active_tracked_pgid_candidates(
         self,
         *,
         exclude_ids: set[str] | None = None,
     ) -> tuple[int, ...]:
-        excluded = exclude_ids or set()
         unique = {
-            pgid
-            for subspawn_id, pgid in self.active_process_groups.items()
-            if subspawn_id in self.active_ids and subspawn_id not in excluded and pgid > 0
+            handle.process_group_id
+            for handle in self._ledger.cleanup_handles(exclude_ids=exclude_ids)
         }
         return tuple(sorted(unique))
 
+    def cleanup_handle_snapshot(
+        self,
+        *,
+        exclude_ids: set[str] | None = None,
+    ) -> tuple[PiCleanupHandle, ...]:
+        return self._ledger.cleanup_handles(exclude_ids=exclude_ids)
+
     def clear_tracked_children_after_wave_timeout(self) -> int:
-        tracked_count = self.active_tracked_count()
-        self.active_ids.clear()
-        self.active_process_groups.clear()
-        return tracked_count
+        return self._ledger.clear_tracked_subspawns()
 
     def has_pending_notifications(self) -> bool:
-        pending_notifications = self.pending_notifications
-        return bool(pending_notifications)
+        return self._ledger.has_pending_notifications()
 
     def pending_notification_count(self) -> int:
-        pending_notifications = self.pending_notifications
-        return len(pending_notifications or ())
+        return self._ledger.pending_notification_count()
+
+    def notification_snapshot(self) -> tuple[PiPendingNotification, ...]:
+        return self._ledger.pending_notifications()
 
     def resolve_notification_on_terminal(self, event: HarnessEvent) -> str | None:
-        pending_notifications = self.pending_notifications
-        if pending_notifications is None or not pending_notifications:
-            return None
-
-        notification_id = _pi_notification_id(event.payload)
-        if notification_id is not None and notification_id in pending_notifications:
-            pending_notifications.pop(notification_id, None)
-            return notification_id
-
-        delivered = [
-            pending.notification_id
-            for pending in pending_notifications.values()
-            if pending.phase == "delivered"
-        ]
-        if len(delivered) == 1:
-            resolved_id = delivered[0]
-            pending_notifications.pop(resolved_id, None)
-            return resolved_id
-        return None
+        return self._ledger.resolve_notification_on_terminal(_pi_notification_id(event.payload))
 
     def time_until_next_notification_timeout(self, now_monotonic: float) -> float | None:
-        pending_notifications = self.pending_notifications
-        if pending_notifications is None:
-            return None
-        remaining: float | None = None
-        for pending in pending_notifications.values():
-            deadline = pending.deadline_monotonic
-            if deadline is None:
-                continue
-            current_remaining = deadline - now_monotonic
-            if remaining is None or current_remaining < remaining:
-                remaining = current_remaining
-        return remaining
+        return self._ledger.time_until_next_notification_timeout(now_monotonic)
 
     def pop_expired_notification(self, now_monotonic: float) -> PiPendingNotification | None:
-        pending_notifications = self.pending_notifications
-        if pending_notifications is None:
-            return None
-        expired: PiPendingNotification | None = None
-        for pending in pending_notifications.values():
-            deadline = pending.deadline_monotonic
-            if deadline is None or deadline > now_monotonic:
-                continue
-            if expired is None or pending.started_monotonic < expired.started_monotonic:
-                expired = pending
-        if expired is None:
-            return None
-        pending_notifications.pop(expired.notification_id, None)
-        return expired
+        return self._ledger.pop_expired_notification(now_monotonic)

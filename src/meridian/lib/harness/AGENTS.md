@@ -105,7 +105,7 @@ parent signals, or supply the parent report.
   harness-agnostic tool representation), and three providers
   (`JsonlTranscriptProvider`, `HistoryJsonlTranscriptProvider`,
   `OpenCodeStorageTranscriptProvider`). Independent of the spawn/write paths — reads
-  only. See [.context/CONTEXT.md](.context/CONTEXT.md#session-read-path) for the
+  only. See [.context/session-transcripts.md](.context/session-transcripts.md) for the
   normalization table and provider selection rules.
 
 ## Subpackages
@@ -148,6 +148,8 @@ uncovered fields are treated as bugs, not warnings.
 → [.context/CONTEXT.md](.context/CONTEXT.md) — full contracts, session-ID observation
    chain, Claude PTY rationale, Codex managed-primary approval routing, OpenCode env
    merging, per-harness terminal event table.
+→ [.context/pi-integration.md](.context/pi-integration.md) — Pi extensions, runtime,
+   and quiescence.
 
 ## Related
 
