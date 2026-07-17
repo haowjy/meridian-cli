@@ -8,7 +8,7 @@ Every phase of a spawn launch — from CLI submission through handshake — is b
 
 ## Summary
 
-Planning draft. Scope, per issue:
+Scope, per issue:
 
 - **Closes #235** — add a startup-phase watchdog around `start_spawn`/`_start_connection` (the "2h18m wedged before any liveness signal" case); stop truncating first-attempt logs/artifacts on retry (`streaming_runner.py:1107-1112`).
 - **Closes #168** — bound `control.sock` path length (hash/shorten under long runtime roots) in `spawn_manager.py`; absorbs closed #174.
@@ -69,7 +69,24 @@ issue-triage-sweep
 
 ## Verification
 
-None yet — this is a planning draft (scoping commit only: `docs/plans/spawn-launch-hardening.md`). Implementation on this branch will carry its own tests per `tests/AGENTS.md` and a CHANGELOG entry.
+- Full bar green at every landing: `ruff` clean, `pyright` 0 errors,
+  `pytest-llm` 1595 passed / 2 skipped (final).
+- Pre-fix-failing regression tests per member: #441 fd-0-open-and-silent
+  subprocess test; #168 pathological-root socket-path bound; #201
+  deterministic port-claim race; #419 the audit probe
+  (cancel during `control_server.start()` → connection must be stopped,
+  was `{'connection_stopped': False, 'registered_sessions': 0}`); #235
+  startup-timeout + attempt-preservation tests; #37 marker/lifecycle/
+  orphan-evidence tests mirroring the p1996 incident shape.
+- Runtime probe pass (disposable roots, fake harnesses): #441 repro
+  completes in 1.7s (was: indefinite wedge); 222-char runtime root
+  spawns + injects fine (socket 64 bytes under `/tmp/meridian-<uid>/`);
+  wedged startup fails in ~1.2s with `startup phase timeout` and no
+  leftover processes; `attempt-1..3/` evidence intact after retries;
+  foreground/background success paths unchanged.
+- Adversarial review gate: correctness review (3 blocking + 1 should-fix
+  findings, all fixed and re-verified), maintainability review, and a
+  focused fix-verification pass.
 
 ## Knowledge Updates
 
@@ -79,3 +96,9 @@ Plan doc committed at `docs/plans/spawn-launch-hardening.md`. Triage evidence li
 
 - p5268, p5269 (terra explorers) — issue triage lanes C/D
 - two native sonnet reviewer lanes — issue triage lanes A/B
+- p5424 (explorer) — pre-connect corridor map
+- p5425/p5426/p5427 (coders) — wave 1: #441, #168, #201
+- p5432 + p5437 (coders) — wave 2: #235+#419 (+ finisher)
+- p5441 (coder) — wave 3: #37
+- p5446/p5447/p5448 (reviewers + prober) — G1 gate
+- p5452, p5457 (coders) — G1 fixes; p5458/p5459 — fix-verify + thermo re-run
