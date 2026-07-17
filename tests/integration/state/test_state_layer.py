@@ -1,6 +1,5 @@
 """State-layer tests for file-authoritative stores."""
 
-import json
 import multiprocessing
 from pathlib import Path
 from typing import TypedDict
@@ -165,12 +164,6 @@ def test_concurrent_update_spawn_preserves_non_overlapping_fields(tmp_path: Path
     assert row.harness_session_id == "sess-123"
     assert row.claude_config_dir == "/tmp/claude"
 
-    revisions = [
-        json.loads((runtime_root / "spawns" / spawn_id / "state.json").read_text(encoding="utf-8"))[
-            "revision"
-        ]
-    ]
-    assert revisions == [3]
     assert any(snapshot["execution_cwd"] == "/tmp/job" for snapshot in snapshots)
     assert any(snapshot["harness_session_id"] == "sess-123" for snapshot in snapshots)
 

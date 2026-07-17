@@ -102,7 +102,9 @@ def test_failure_sentinel_write_failure_does_not_block_finalize(
     def fail_write_text(*_args: object, **_kwargs: object) -> int:
         raise OSError("sentinel blocked")
 
-    monkeypatch.setattr(Path, "write_text", fail_write_text)
+    monkeypatch.setattr(
+        "meridian.lib.state.failure_sentinel.atomic_write_text", fail_write_text
+    )
 
     outcome = service.finalize(spawn_id, "failed", 1, origin="launcher")
 
@@ -281,3 +283,16 @@ def test_owner_mark_running_clears_stale_runner_created_epoch_when_pid_replaced(
     assert updated is not None
     assert updated.runner_pid == 999997
     assert updated.runner_created_at_epoch is None
+
+
+def test_owner_transition_preserves_metadata_written_after_cache_load(tmp_path: Path) -> None:
+    service = _make_service(tmp_path)
+    spawn_id = _start_spawn(service, status="queued")
+
+    spawn_store.update_spawn(tmp_path, spawn_id, claude_config_dir="/tmp/claude-config")
+    service.mark_running(spawn_id)
+
+    updated = spawn_store.get_spawn(tmp_path, spawn_id)
+    assert updated is not None
+    assert updated.status == "running"
+    assert updated.claude_config_dir == "/tmp/claude-config"

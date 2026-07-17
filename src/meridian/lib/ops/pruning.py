@@ -13,11 +13,15 @@ from pathlib import Path
 from pydantic import BaseModel, ConfigDict
 
 from meridian.lib.core.spawn_lifecycle import is_active_spawn_status
-from meridian.lib.platform.locking import lock_file
-from meridian.lib.state import spawn_store
+from meridian.lib.platform.locking import lock_file, try_lock_file
+from meridian.lib.state import session_store, spawn_store
 from meridian.lib.state.paths import RuntimePaths
 
 _SECONDS_PER_DAY = 24 * 60 * 60
+
+
+def _is_project_dir_name(name: str) -> bool:
+    return bool(name) and not name.startswith(".")
 
 
 class OrphanProjectDir(BaseModel):
@@ -113,7 +117,7 @@ def scan_orphan_project_dirs(
 
     results: list[OrphanProjectDir] = []
     for project_dir in sorted(projects_root.iterdir(), key=lambda path: path.name):
-        if not project_dir.is_dir():
+        if not _is_project_dir_name(project_dir.name) or not project_dir.is_dir():
             continue
 
         size_bytes, latest_mtime = _tree_activity(project_dir)
@@ -123,6 +127,10 @@ def scan_orphan_project_dirs(
             if is_active_spawn_status(spawn.status)
         ]
         if active_spawns:
+            continue
+        if session_store.list_active_sessions(project_dir) or session_store.has_live_session_leases(
+            project_dir
+        ):
             continue
 
         if _is_stale(latest_mtime, retention_days=retention_days, now=now):
@@ -231,8 +239,30 @@ def prune_orphan_project_dirs(orphans: list[OrphanProjectDir]) -> int:
 
     removed = 0
     for orphan in orphans:
-        if _prune_dir(Path(orphan.path)):
-            removed += 1
+        runtime_root = Path(orphan.path)
+        if (
+            not _is_project_dir_name(orphan.uuid)
+            or runtime_root.name != orphan.uuid
+            or runtime_root.parent.name != "projects"
+        ):
+            continue
+        paths = RuntimePaths.from_root_dir(runtime_root)
+        with try_lock_file(paths.project_lifetime_flock, reentrant=False) as lifetime_handle:
+            if lifetime_handle is None:
+                continue
+            active_spawns = [
+                spawn
+                for spawn in spawn_store.list_spawns(runtime_root)
+                if is_active_spawn_status(spawn.status)
+            ]
+            if active_spawns:
+                continue
+            if session_store.list_active_sessions(
+                runtime_root
+            ) or session_store.has_live_session_leases(runtime_root):
+                continue
+            if _prune_dir(runtime_root):
+                removed += 1
     return removed
 
 
@@ -251,10 +281,12 @@ def prune_stale_spawn_artifacts(stale: list[StaleSpawnArtifact]) -> int:
         runtime_root = artifact_path.parent.parent
         paths = RuntimePaths.from_root_dir(runtime_root)
         with lock_file(paths.spawns_flock):
-            record = spawn_store.get_spawn(runtime_root, artifact.spawn_id)
-            if record is not None and is_active_spawn_status(record.status):
-                continue
-            if _prune_dir(artifact_path):
+            if spawn_store.delete_published_spawn(
+                runtime_root,
+                artifact.spawn_id,
+                can_delete=lambda record: record is None
+                or not is_active_spawn_status(record.status),
+            ):
                 removed += 1
     return removed
 

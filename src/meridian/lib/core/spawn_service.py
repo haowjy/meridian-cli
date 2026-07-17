@@ -951,41 +951,36 @@ class SpawnApplicationService:
         SEAM-5.2: Returns False if already archived (idempotent).
         SEAM-5.3: Emits spawn.archived exactly once.
         """
-        from meridian.lib.spawn.archive import archive_spawn, is_spawn_archived
+        from meridian.lib.spawn.archive import archive_spawn
 
         spawn_id_str = str(spawn_id)
-        lock = await self._locks.acquire(spawn_id_str)
-        async with lock:
-            record = self.require_spawn(spawn_id)
+        record = self.require_spawn(spawn_id)
 
-            # SEAM-5.1: Validate terminal state
-            if not self.is_terminal(record.status):
-                raise ValueError(
-                    f"Cannot archive non-terminal spawn (status: {record.status}). "
-                    "Wait for spawn to complete or cancel it first."
-                )
-
-            # SEAM-5.2/5.3: serialize check + write + event so exactly one
-            # in-process caller observes not-yet-archived and emits.
-            if is_spawn_archived(self._runtime_root, spawn_id_str):
-                return False
-
-            archive_spawn(self._runtime_root, spawn_id_str)
-
-            notify_observers(
-                LifecycleEvent(
-                    event="spawn.archived",
-                    spawn_id=spawn_id_str,
-                    harness_id=record.harness or "",
-                    model=record.model or "",
-                    agent=record.agent,
-                    ts=datetime.now(tz=UTC),
-                    seq=next_spawn_sequence(spawn_id_str),
-                    payload={"archived": True},
-                )
+        # SEAM-5.1: Validate terminal state
+        if not self.is_terminal(record.status):
+            raise ValueError(
+                f"Cannot archive non-terminal spawn (status: {record.status}). "
+                "Wait for spawn to complete or cancel it first."
             )
 
-            return True
+        # SEAM-5.2/5.3: the cross-process mutation winner alone emits.
+        if not archive_spawn(self._runtime_root, spawn_id_str):
+            return False
+
+        notify_observers(
+            LifecycleEvent(
+                event="spawn.archived",
+                spawn_id=spawn_id_str,
+                harness_id=record.harness or "",
+                model=record.model or "",
+                agent=record.agent,
+                ts=datetime.now(tz=UTC),
+                seq=next_spawn_sequence(spawn_id_str),
+                payload={"archived": True},
+            )
+        )
+
+        return True
 
     # ---- Metadata Updates (SEAM-6) ----
 

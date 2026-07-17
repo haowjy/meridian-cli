@@ -17,6 +17,7 @@ from meridian.lib.platform.detached_process import (
     ParentDeathLink,
     detached_subprocess_config,
     link_child_lifetime_to_parent,
+    release_parent_death_link,
 )
 from meridian.lib.platform.process_scope import (
     ProcessScopeSnapshot,
@@ -116,7 +117,12 @@ async def launch_managed_backend(
     )
     scope_handle = ScopedProcessHandle(process=process, snapshot=snapshot)
 
-    record_scope(runtime_root, config.spawn_id, snapshot)
+    try:
+        record_scope(runtime_root, config.spawn_id, snapshot)
+    except BaseException:
+        await scope_handle.terminate(reason="scope_registration_failed")
+        await asyncio.to_thread(release_parent_death_link, parent_death_link)
+        raise
 
     return ManagedBackendHandle(
         process=process,

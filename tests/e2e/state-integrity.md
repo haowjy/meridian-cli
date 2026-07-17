@@ -83,11 +83,13 @@ import pathlib
 import sys
 
 root = pathlib.Path(os.environ["RUNTIME_ROOT"])
-lock_paths = sorted(root.glob("spawns/*/state.lock")) + sorted(root.glob("spawns/migration.lock"))
+lock_paths = sorted(root.glob("locks/spawns/*.lock")) + sorted(
+    root.glob("locks/process-scopes/*.lock")
+)
 if os.name == "nt":
     print("PASS: skipping POSIX flock probe on Windows")
 elif not lock_paths:
-    print("PASS: no per-spawn locks present yet")
+    print("PASS: no stable per-spawn locks present yet")
 else:
     import fcntl
     for path in lock_paths:

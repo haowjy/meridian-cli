@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import json
 import re
-import shutil
 from datetime import UTC, datetime
 from pathlib import Path, PurePath
 from typing import Any, cast
@@ -19,9 +18,6 @@ from typing import Any, cast
 import structlog
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from meridian.lib.platform.locking import lock_file
-from meridian.lib.state.atomic import atomic_write_text
-from meridian.lib.state.event_store import utc_now_iso
 from meridian.lib.state.paths import (
     ProjectPaths,
     resolve_project_paths,
@@ -34,7 +30,6 @@ _WHITESPACE_OR_UNDERSCORE = re.compile(r"[\s_]+")
 _REPEATED_HYPHENS = re.compile(r"-+")
 _STATUS_FILENAME = "__status.json"
 logger = structlog.get_logger(__name__)
-_UNSET = object()
 
 
 def _normalize_worktree_path_text(path: str) -> str:
@@ -313,7 +308,6 @@ def _read_or_initialize_status(
 
     raw = _read_json_object(status_file)
     if raw is None:
-        atomic_write_text(status_file, _serialize_status(default_payload))
         return default_payload
 
     changed = False
@@ -352,15 +346,12 @@ def _read_or_initialize_status(
 
     archived_value = raw.get("archived_at")
     if archived:
-        reopen_interrupted = archived_value is None and payload["status"] == "open"
         if isinstance(archived_value, str) and archived_value:
             payload["archived_at"] = archived_value
-        elif reopen_interrupted:
-            payload["archived_at"] = None
         else:
             payload["archived_at"] = _dir_mtime_iso(work_dir)
             changed = True
-        if not reopen_interrupted and payload["status"] != "done":
+        if payload["status"] != "done":
             payload["status"] = "done"
             changed = True
     else:
@@ -396,8 +387,6 @@ def _read_or_initialize_status(
         payload["task_dir"] = None
         changed = True
 
-    if changed:
-        atomic_write_text(status_file, _serialize_status(payload))
     return payload
 
 
@@ -543,41 +532,11 @@ def create_work_item(
     description: str = "",
     goal: str | None = None,
 ) -> WorkItem:
-    """Create a new active work item directory with ``__status.json`` metadata."""
+    """Create a new active work item through the locked repository."""
+    from meridian.lib.state.work_repository import create_work_item as create
 
-    paths = _project_paths_for_work_store(runtime_root, create_project_uuid=True)
-    slug = slugify(label)
-    normalized_goal = _normalize_goal(goal)
-    if not slug:
-        raise ValueError("Work item label must contain at least one letter or number.")
+    return create(runtime_root, label, description, goal)
 
-    active = _active_dir(paths, slug)
-    archived = _archived_dir(paths, slug)
-    if active.exists() or archived.exists():
-        raise ValueError(f"Work item '{slug}' already exists. Use `meridian work switch {slug}`.")
-
-    active.mkdir(parents=True, exist_ok=False)
-    created_at = utc_now_iso()
-    payload = _status_payload(
-        status="open",
-        description=description,
-        goal=normalized_goal,
-        created_at=created_at,
-        archived_at=None,
-        task_dir=None,
-        worktree=WorktreeMetadata(),
-    )
-    atomic_write_text(_status_path(active), _serialize_status(payload))
-    return WorkItem(
-        name=slug,
-        description=description,
-        goal=normalized_goal,
-        status="open",
-        created_at=created_at,
-        archived_at=None,
-        task_dir=None,
-        worktree=WorktreeMetadata(),
-    )
 
 
 def ensure_work_item_metadata(
@@ -588,49 +547,53 @@ def ensure_work_item_metadata(
     goal: str | None = None,
     status: str = "open",
 ) -> WorkItem:
-    """Ensure an exact work item slug exists on disk and return its metadata."""
+    """Ensure an exact work item slug exists through the locked repository."""
+    from meridian.lib.state.work_repository import ensure_work_item_metadata as ensure
 
-    normalized = _validate_exact_slug(work_id)
-    normalized_goal = _normalize_goal(goal)
-    if status == "done":
-        raise ValueError("'done' is reserved for archived work items.")
+    return ensure(
+        runtime_root, work_id, description=description, goal=goal, status=status
+    )
 
-    paths = _project_paths_for_work_store(runtime_root, create_project_uuid=True)
-    with lock_file(paths.root_dir / "work-store.flock"):
-        active_dir, archived_dir = _locate_dirs(paths, normalized)
-        _warn_both_locations(normalized, active_dir, archived_dir)
 
-        if active_dir is not None:
-            return _work_item_from_dir(
-                active_dir,
-                archived=False,
-                default_status=status,
-                default_description=description,
-                default_goal=normalized_goal,
-            )
-        if archived_dir is not None:
-            return _work_item_from_dir(
-                archived_dir,
-                archived=True,
-                default_description=description,
-                default_goal=normalized_goal,
-            )
+def heal_work_item(runtime_root: Path, work_id: str) -> WorkItem:
+    """Persist the normalized projection of one existing work item."""
+    from meridian.lib.state.work_repository import heal_work_item as heal
 
-        created_dir = _active_dir(paths, normalized)
-        created_dir.mkdir(parents=True, exist_ok=True)
-        return _work_item_from_dir(
-            created_dir,
-            archived=False,
-            default_status=status,
-            default_description=description,
-            default_goal=normalized_goal,
+    return heal(runtime_root, work_id)
+
+
+def work_item_needs_healing(runtime_root: Path, work_id: str) -> bool:
+    """Return whether an existing item's persisted metadata is non-canonical."""
+
+    paths = _project_paths_for_work_store(runtime_root)
+    active_dir, archived_dir = _locate_dirs(paths, work_id)
+    _warn_both_locations(work_id, active_dir, archived_dir)
+    work_dir = active_dir or archived_dir
+    if work_dir is None:
+        return False
+    item = _work_item_from_dir(work_dir, archived=active_dir is None)
+    expected = _serialize_status(
+        _status_payload(
+            status=item.status,
+            description=item.description,
+            goal=item.goal,
+            created_at=item.created_at,
+            archived_at=item.archived_at,
+            task_dir=item.task_dir,
+            worktree=item.worktree,
         )
+    )
+    try:
+        return _status_path(work_dir).read_text(encoding="utf-8") != expected
+    except OSError:
+        return True
+
 
 
 def get_work_item(runtime_root: Path, work_id: str) -> WorkItem | None:
     """Load one work item from active or archived directories."""
 
-    paths = _project_paths_for_work_store(runtime_root, create_project_uuid=True)
+    paths = _project_paths_for_work_store(runtime_root)
     active_dir, archived_dir = _locate_dirs(paths, work_id)
     _warn_both_locations(work_id, active_dir, archived_dir)
     if active_dir is not None:
@@ -643,15 +606,10 @@ def get_work_item(runtime_root: Path, work_id: str) -> WorkItem | None:
 def get_active_work_item(
     runtime_root: Path,
     work_id: str,
-    *,
-    create_project_uuid: bool = True,
 ) -> WorkItem | None:
     """Load one active work item."""
 
-    paths = _project_paths_for_work_store(
-        runtime_root,
-        create_project_uuid=create_project_uuid,
-    )
+    paths = _project_paths_for_work_store(runtime_root)
     active_dir = _active_dir(paths, work_id)
     if not active_dir.is_dir():
         return None
@@ -678,7 +636,7 @@ def list_work_items(runtime_root: Path) -> tuple[list[WorkItem], list[str]]:
     the active directory with a warning rather than raising.
     """
 
-    paths = _project_paths_for_work_store(runtime_root, create_project_uuid=True)
+    paths = _project_paths_for_work_store(runtime_root)
     active_dirs = _list_work_item_dirs(paths.work_dir)
     if not active_dirs:
         return [], []
@@ -708,7 +666,7 @@ def list_archived_work_items(
     the archived listing (the active copy takes precedence) with a warning.
     """
 
-    paths = _project_paths_for_work_store(runtime_root, create_project_uuid=True)
+    paths = _project_paths_for_work_store(runtime_root)
     archived_dirs = _list_work_item_dirs(paths.work_archive_dir)
     if not archived_dirs:
         return [], []
@@ -774,50 +732,13 @@ def update_work_item(
     description: str | None = None,
     goal: str | None = None,
 ) -> WorkItem:
-    """Update active work item metadata and rewrite ``__status.json`` atomically."""
+    """Update active work item metadata through the locked repository."""
+    from meridian.lib.state.work_repository import update_work_item as update
 
-    paths = _project_paths_for_work_store(runtime_root, create_project_uuid=True)
-    active_dir, archived_dir = _locate_dirs(paths, work_id)
-    _warn_both_locations(work_id, active_dir, archived_dir)
-    if active_dir is None:
-        if archived_dir is not None:
-            raise ValueError(
-                f"Work item '{work_id}' is archived and cannot be updated. Reopen it first."
-            )
-        raise ValueError(f"Work item '{work_id}' not found")
+    return update(
+        runtime_root, work_id, status=status, description=description, goal=goal
+    )
 
-    current = _work_item_from_dir(active_dir, archived=False)
-    normalized_goal = _normalize_goal(goal)
-    next_status = current.status if status is None else status
-    if next_status == "done":
-        raise ValueError("'done' is reserved for archived work items.")
-    next_description = current.description if description is None else description
-    next_goal = current.goal if goal is None else normalized_goal
-    updated = WorkItem(
-        name=current.name,
-        description=next_description,
-        goal=next_goal,
-        status=next_status,
-        created_at=current.created_at,
-        archived_at=None,
-        task_dir=current.task_dir,
-        worktree=current.worktree,
-    )
-    atomic_write_text(
-        _status_path(active_dir),
-        _serialize_status(
-            _status_payload(
-                status=updated.status,
-                description=updated.description,
-                goal=updated.goal,
-                created_at=updated.created_at,
-                archived_at=None,
-                task_dir=updated.task_dir,
-                worktree=updated.worktree,
-            )
-        ),
-    )
-    return updated
 
 
 def update_work_item_task_dir(
@@ -826,114 +747,13 @@ def update_work_item_task_dir(
     *,
     task_dir: str | None,
 ) -> WorkItem:
-    """Update only ``task_dir`` for an active work item."""
+    """Update task-dir metadata through the locked repository."""
+    from meridian.lib.state.work_repository import update_work_item_task_dir as update
 
-    paths = _project_paths_for_work_store(runtime_root, create_project_uuid=True)
-    active_dir, archived_dir = _locate_dirs(paths, work_id)
-    _warn_both_locations(work_id, active_dir, archived_dir)
-    if active_dir is None:
-        if archived_dir is not None:
-            raise ValueError(
-                f"Work item '{work_id}' is archived and cannot be updated. Reopen it first."
-            )
-        raise ValueError(f"Work item '{work_id}' not found")
-
-    current = _work_item_from_dir(active_dir, archived=False)
-    normalized_task_dir = None
-    if task_dir is not None:
-        stripped_task_dir = task_dir.strip()
-        if stripped_task_dir:
-            normalized_task_dir = _normalize_task_dir_path(stripped_task_dir)
-    updated = WorkItem(
-        name=current.name,
-        description=current.description,
-        goal=current.goal,
-        status=current.status,
-        created_at=current.created_at,
-        archived_at=current.archived_at,
-        task_dir=normalized_task_dir,
-        worktree=current.worktree,
-    )
-    atomic_write_text(
-        _status_path(active_dir),
-        _serialize_status(
-            _status_payload(
-                status=updated.status,
-                description=updated.description,
-                goal=updated.goal,
-                created_at=updated.created_at,
-                archived_at=None,
-                task_dir=updated.task_dir,
-                worktree=updated.worktree,
-            )
-        ),
-    )
-    return updated
+    return update(runtime_root, work_id, task_dir=task_dir)
 
 
-def update_work_item_worktree(
-    runtime_root: Path,
-    work_id: str,
-    *,
-    path: str | None | object = _UNSET,
-    branch: str | None | object = _UNSET,
-    repo_path: str | None | object = _UNSET,
-    name: str | None | object = _UNSET,
-    pending: bool | object = _UNSET,
-    managed: bool | object = _UNSET,
-) -> WorkItem:
-    """Update only the nested worktree metadata for an active work item."""
 
-    paths = _project_paths_for_work_store(runtime_root, create_project_uuid=True)
-    active_dir, archived_dir = _locate_dirs(paths, work_id)
-    _warn_both_locations(work_id, active_dir, archived_dir)
-    if active_dir is None:
-        if archived_dir is not None:
-            raise ValueError(
-                f"Work item '{work_id}' is archived and cannot be updated. Reopen it first."
-            )
-        raise ValueError(f"Work item '{work_id}' not found")
-
-    current = _work_item_from_dir(active_dir, archived=False)
-    next_path = current.worktree.path if path is _UNSET else cast("str | None", path)
-    next_branch = current.worktree.branch if branch is _UNSET else cast("str | None", branch)
-    next_repo_path = (
-        current.worktree.repo_path if repo_path is _UNSET else cast("str | None", repo_path)
-    )
-    next_name = current.worktree.name if name is _UNSET else cast("str | None", name)
-    next_worktree = WorktreeMetadata(
-        path=next_path,
-        branch=next_branch,
-        repo_path=next_repo_path,
-        name=next_name,
-        pending=current.worktree.pending if pending is _UNSET else bool(pending),
-        managed=current.worktree.managed if managed is _UNSET else bool(managed),
-    )
-    updated = WorkItem(
-        name=current.name,
-        description=current.description,
-        goal=current.goal,
-        status=current.status,
-        created_at=current.created_at,
-        archived_at=current.archived_at,
-        task_dir=current.task_dir,
-        worktree=next_worktree,
-    )
-    atomic_write_text(
-        _status_path(active_dir),
-        _serialize_status(
-            _status_payload(
-                status=updated.status,
-                description=updated.description,
-                goal=updated.goal,
-                created_at=updated.created_at,
-                archived_at=None,
-                task_dir=updated.task_dir,
-                worktree=updated.worktree,
-            )
-        ),
-    )
-    return updated
 
 
 def archive_work_item(
@@ -942,132 +762,29 @@ def archive_work_item(
     *,
     description: str | None = None,
 ) -> WorkItem:
-    """Archive active work by moving directory first, then setting done status."""
+    """Archive a work item through the locked repository."""
+    from meridian.lib.state.work_repository import archive_work_item as archive
 
-    paths = _project_paths_for_work_store(runtime_root, create_project_uuid=True)
-    active_dir, archived_dir = _locate_dirs(paths, work_id)
-    if active_dir is not None and archived_dir is not None:
-        _warn_both_locations(work_id, active_dir, archived_dir)
-        shutil.rmtree(archived_dir)
-        archived_dir = None
-
-    if active_dir is None:
-        if archived_dir is not None:
-            raise ValueError(f"Work item '{work_id}' is already archived.")
-        raise ValueError(f"Work item '{work_id}' not found")
-
-    destination = _archived_dir(paths, work_id)
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    active_dir.rename(destination)
-
-    current = _work_item_from_dir(destination, archived=True)
-    archived_at = utc_now_iso()
-    archived_description = current.description if description is None else description
-    archived_item = WorkItem(
-        name=current.name,
-        description=archived_description,
-        goal=current.goal,
-        status="done",
-        created_at=current.created_at,
-        archived_at=archived_at,
-        task_dir=current.task_dir,
-        worktree=current.worktree.model_copy(update={"pending": False}),
-    )
-    atomic_write_text(
-        _status_path(destination),
-        _serialize_status(
-            _status_payload(
-                status="done",
-                description=archived_item.description,
-                goal=archived_item.goal,
-                created_at=archived_item.created_at,
-                archived_at=archived_item.archived_at,
-                task_dir=archived_item.task_dir,
-                worktree=archived_item.worktree,
-            )
-        ),
-    )
-    return archived_item
+    return archive(runtime_root, work_id, description=description)
 
 
-def reopen_work_item(runtime_root: Path, work_id: str, *, status: str = "open") -> WorkItem:
-    """Reopen archived work by clearing archive metadata before moving to active."""
 
-    if status == "done":
-        raise ValueError("'done' is reserved for archived work items.")
+def reopen_work_item(
+    runtime_root: Path, work_id: str, *, status: str = "open"
+) -> WorkItem:
+    """Reopen a work item through the locked repository."""
+    from meridian.lib.state.work_repository import reopen_work_item as reopen
 
-    paths = _project_paths_for_work_store(runtime_root, create_project_uuid=True)
-    active_dir, archived_dir = _locate_dirs(paths, work_id)
-    if active_dir is not None and archived_dir is not None:
-        _warn_both_locations(work_id, active_dir, archived_dir)
-        shutil.rmtree(archived_dir)
-        return _work_item_from_dir(active_dir, archived=False)
-    if archived_dir is None:
-        if active_dir is not None:
-            raise ValueError(f"Work item '{work_id}' is already active.")
-        raise ValueError(f"Work item '{work_id}' not found")
+    return reopen(runtime_root, work_id, status=status)
 
-    current = _work_item_from_dir(archived_dir, archived=True)
-    atomic_write_text(
-        _status_path(archived_dir),
-        _serialize_status(
-            _status_payload(
-                status=status,
-                description=current.description,
-                goal=current.goal,
-                created_at=current.created_at,
-                archived_at=None,
-                task_dir=current.task_dir,
-                worktree=current.worktree.model_copy(update={"pending": False}),
-            )
-        ),
-    )
-
-    target = _active_dir(paths, work_id)
-    target.parent.mkdir(parents=True, exist_ok=True)
-    archived_dir.rename(target)
-    return _work_item_from_dir(target, archived=False, default_status=status)
 
 
 def rename_work_item(runtime_root: Path, old_work_id: str, new_name: str) -> WorkItem:
-    """Rename active or archived work directory in one atomic directory rename."""
+    """Rename a work item through the locked repository."""
+    from meridian.lib.state.work_repository import rename_work_item as rename
 
-    paths = _project_paths_for_work_store(runtime_root, create_project_uuid=True)
-    active_dir, archived_dir = _locate_dirs(paths, old_work_id)
-    if active_dir is not None and archived_dir is not None:
-        _warn_both_locations(old_work_id, active_dir, archived_dir)
-        shutil.rmtree(archived_dir)
-        archived_dir = None
-    if active_dir is None and archived_dir is None:
-        raise ValueError(f"Work item '{old_work_id}' not found")
+    return rename(runtime_root, old_work_id, new_name)
 
-    normalized = _validate_exact_slug(new_name)
-    if normalized == old_work_id:
-        existing = get_work_item(runtime_root, old_work_id)
-        if existing is None:
-            raise ValueError(f"Work item '{old_work_id}' not found")
-        return existing
-
-    target_active = _active_dir(paths, normalized)
-    target_archived = _archived_dir(paths, normalized)
-    if target_active.exists() or target_archived.exists():
-        raise ValueError(f"Work item '{normalized}' already exists.")
-
-    if active_dir is not None:
-        source = active_dir
-        target = _active_dir(paths, normalized)
-        archived = False
-    else:
-        source = archived_dir
-        target = _archived_dir(paths, normalized)
-        archived = True
-
-    if source is None:
-        raise ValueError(f"Work item '{old_work_id}' not found")
-
-    target.parent.mkdir(parents=True, exist_ok=True)
-    source.rename(target)
-    return _work_item_from_dir(target, archived=archived)
 
 
 def delete_work_item(
@@ -1076,33 +793,7 @@ def delete_work_item(
     *,
     force: bool = False,
 ) -> tuple[WorkItem, bool]:
-    """Delete active/archive work directories.
+    """Delete a work item through the locked repository."""
+    from meridian.lib.state.work_repository import delete_work_item as delete
 
-    Returns ``(deleted_item, had_artifacts)`` where ``had_artifacts`` indicates
-    files beyond ``__status.json``.
-    """
-
-    paths = _project_paths_for_work_store(runtime_root, create_project_uuid=True)
-    active_dir, archived_dir = _locate_dirs(paths, work_id)
-    if active_dir is None and archived_dir is None:
-        raise ValueError(f"Work item '{work_id}' not found")
-
-    primary_dir = active_dir or archived_dir
-    if primary_dir is None:
-        raise ValueError(f"Work item '{work_id}' not found")
-
-    deleted_item = (
-        _work_item_from_dir(primary_dir, archived=False)
-        if active_dir is not None
-        else _work_item_from_dir(primary_dir, archived=True)
-    )
-
-    existing_dirs = [candidate for candidate in (active_dir, archived_dir) if candidate is not None]
-    had_artifacts = any(_has_artifacts(candidate) for candidate in existing_dirs)
-    if had_artifacts and not force:
-        raise ValueError(f"Work item '{work_id}' has artifacts. Use --force to delete.")
-
-    for work_dir in existing_dirs:
-        shutil.rmtree(work_dir)
-
-    return deleted_item, had_artifacts
+    return delete(runtime_root, work_id, force=force)

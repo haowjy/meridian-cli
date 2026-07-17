@@ -20,6 +20,20 @@ from meridian.lib.platform.detached_process import DetachedSubprocessConfig, Par
 from meridian.lib.platform.process_scope.base import PROCESS_BIRTH_UNKNOWN_EPOCH
 from meridian.lib.state.paths import resolve_project_runtime_root
 from meridian.lib.state.process_scope_projection import read_scopes_from_disk
+from meridian.lib.state.spawn_store import start_spawn
+
+
+def _publish_spawn(tmp_path: Path, spawn_id: SpawnId, *, status: str = "running") -> None:
+    start_spawn(
+        resolve_project_runtime_root(tmp_path),
+        spawn_id=spawn_id,
+        chat_id="chat-1",
+        model="gpt-5.4",
+        agent="tester",
+        harness="codex",
+        prompt="test",
+        status=status,
+    )
 
 
 @pytest.mark.asyncio
@@ -34,6 +48,7 @@ async def test_launch_managed_backend_records_scope_with_parent_death_outcome(
     post_spawn_linked: bool,
 ) -> None:
     spawn_id = SpawnId("spawn-3")
+    _publish_spawn(tmp_path, spawn_id)
 
     monkeypatch.setattr(
         managed_backend,
@@ -74,6 +89,7 @@ async def test_launch_managed_backend_records_unknown_birth_sentinel_when_create
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     spawn_id = SpawnId("spawn-unknown-birth")
+    _publish_spawn(tmp_path, spawn_id)
 
     class _InaccessibleProcess:
         def __init__(self, pid: int) -> None:
@@ -110,3 +126,53 @@ async def test_launch_managed_backend_records_unknown_birth_sentinel_when_create
     assert handle.scope_handle.snapshot.root_created_at_epoch == PROCESS_BIRTH_UNKNOWN_EPOCH
     assert [scope.root_created_at_epoch for scope in scopes] == [PROCESS_BIRTH_UNKNOWN_EPOCH]
     await handle.process.wait()
+
+
+@pytest.mark.asyncio
+async def test_launch_managed_backend_cleans_up_when_terminal_spawn_rejects_scope(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    spawn_id = SpawnId("terminal-spawn")
+    _publish_spawn(tmp_path, spawn_id, status="succeeded")
+    launched: list[asyncio.subprocess.Process] = []
+    released: list[ParentDeathLink | None] = []
+    original_launch = asyncio.create_subprocess_exec
+
+    async def capture_launch(*args: object, **kwargs: object) -> asyncio.subprocess.Process:
+        process = await original_launch(*args, **kwargs)
+        launched.append(process)
+        return process
+
+    monkeypatch.setattr(managed_backend.asyncio, "create_subprocess_exec", capture_launch)
+    monkeypatch.setattr(
+        managed_backend,
+        "release_parent_death_link",
+        lambda link: released.append(link),
+        raising=False,
+    )
+
+    try:
+        with pytest.raises(ValueError, match="after cleanup began"):
+            await launch_managed_backend(
+                ManagedBackendConfig(
+                    spawn_id=spawn_id,
+                    harness_id=HarnessId.CODEX,
+                    command=(sys.executable, "-c", "import time; time.sleep(60)"),
+                    cwd=tmp_path,
+                    env=os.environ.copy(),
+                    control_root=tmp_path,
+                ),
+                stderr=asyncio.subprocess.DEVNULL,
+            )
+
+        assert len(launched) == 1
+        # psutil can observe exit before asyncio's child watcher sets returncode.
+        await asyncio.wait_for(launched[0].wait(), timeout=1.0)
+        assert launched[0].returncode is not None
+        assert len(released) == 1
+    finally:
+        for process in launched:
+            if process.returncode is None:
+                process.kill()
+                await process.wait()

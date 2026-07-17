@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol, cast
 
@@ -40,9 +41,12 @@ class _HookRegistryLike(Protocol):
 
 
 class _IntervalTrackerLike(Protocol):
-    def should_run(self, hook_name: str, interval: str) -> bool: ...
-
-    def mark_run(self, hook_name: str) -> None: ...
+    def run_if_due(
+        self,
+        hook_name: str,
+        interval: str,
+        fn: Callable[[], HookResult],
+    ) -> HookResult | None: ...
 
 
 class _ExternalRunnerLike(Protocol):
@@ -244,17 +248,33 @@ class HookDispatcher(LifecycleHook):
                 skip_reason="condition_not_met",
             )
 
-        if hook.interval and not self._interval_tracker.should_run(hook.name, hook.interval):
-            return HookResult(
-                hook_name=hook.name,
-                event=context.event_name,
-                outcome="skipped",
-                success=True,
-                skipped=True,
-                skip_reason="throttled",
-            )
-
         timeout_secs = hook.timeout_secs or DEFAULT_TIMEOUTS[EVENT_CLASS[context.event_name]]
+        if hook.interval:
+            result = self._interval_tracker.run_if_due(
+                hook.name,
+                hook.interval,
+                lambda: self._run_hook(hook, context, timeout_secs=timeout_secs),
+            )
+            if result is None:
+                return HookResult(
+                    hook_name=hook.name,
+                    event=context.event_name,
+                    outcome="skipped",
+                    success=True,
+                    skipped=True,
+                    skip_reason="throttled",
+                )
+            return result
+
+        return self._run_hook(hook, context, timeout_secs=timeout_secs)
+
+    def _run_hook(
+        self,
+        hook: Hook,
+        context: HookContext,
+        *,
+        timeout_secs: int,
+    ) -> HookResult:
         try:
             if hook.builtin:
                 result = self._run_builtin(hook, context)
@@ -268,9 +288,6 @@ class HookDispatcher(LifecycleHook):
                 success=False,
                 error=str(exc),
             )
-
-        if hook.interval and result.success and not result.skipped:
-            self._interval_tracker.mark_run(hook.name)
 
         return result
 

@@ -22,7 +22,7 @@ from meridian.lib.ops.runtime import (
 )
 from meridian.lib.ops.work_attachment import set_session_work_attachment
 from meridian.lib.ops.work_dashboard import work_dir_display
-from meridian.lib.state import session_store, spawn_store, work_store
+from meridian.lib.state import session_store, spawn_store, work_repository, work_store
 from meridian.lib.state.work_scope import WorkScope
 from meridian.lib.telemetry import emit_telemetry
 
@@ -395,7 +395,7 @@ def work_start_sync(
         if existing.status == "done":
             # Treat `work start <name>` on an archived item as an implicit reopen —
             # the user's intent is "I want to work on this" regardless of prior state.
-            item = work_store.reopen_work_item(project_state_dir, existing.name)
+            item = work_repository.reopen_work_item(project_state_dir, existing.name)
             reattach_warning = f"Work item '{item.name}' was archived; reopened automatically."
         else:
             item = existing
@@ -403,7 +403,7 @@ def work_start_sync(
                 f"Work item '{item.name}' already exists; attaching to existing item."
             )
     else:
-        item = work_store.create_work_item(
+        item = work_repository.create_work_item(
             project_state_dir,
             payload.label,
             requested_description,
@@ -412,7 +412,7 @@ def work_start_sync(
         created = True
     task_dir_warning: str | None = None
     if resolved_task_dir is not None:
-        item = work_store.update_work_item_task_dir(
+        item = work_repository.update_work_item_task_dir(
             project_state_dir,
             item.name,
             task_dir=resolved_task_dir.as_posix(),
@@ -471,7 +471,7 @@ def work_update_sync(
     current = _require_work_item(project_state_dir, payload.work_id)
     if payload.status == "done":
         attachment_warning = _active_work_attachment_warning(runtime_state_root, payload.work_id)
-        item = work_store.archive_work_item(
+        item = work_repository.archive_work_item(
             project_state_dir,
             payload.work_id,
             description=payload.description,
@@ -498,7 +498,7 @@ def work_update_sync(
             f"Work item '{payload.work_id}' is done. "
             f"Use `meridian work reopen {payload.work_id}` first."
         )
-    item = work_store.update_work_item(
+    item = work_repository.update_work_item(
         project_state_dir,
         payload.work_id,
         status=payload.status,
@@ -524,7 +524,7 @@ def work_done_sync(
     attachment_warning = _active_work_attachment_warning(runtime_state_root, payload.work_id)
     _require_work_item(project_state_dir, payload.work_id)
 
-    item = work_store.archive_work_item(project_state_dir, payload.work_id)
+    item = work_repository.archive_work_item(project_state_dir, payload.work_id)
     _dispatch_work_hook_event(
         event_name="work.done",
         project_root=roots.project_root,
@@ -550,7 +550,7 @@ def work_delete_sync(
 ) -> WorkDeleteOutput:
     nested_warning = _work_warning(ctx)
     project_state_dir = resolve_roots(payload.project_root).project_state_dir
-    item, had_artifacts = work_store.delete_work_item(
+    item, had_artifacts = work_repository.delete_work_item(
         project_state_dir,
         payload.work_id,
         force=payload.force,
@@ -575,7 +575,7 @@ def work_reopen_sync(
     warning = _work_warning(ctx)
     roots = resolve_roots(payload.project_root)
     project_state_dir = roots.project_state_dir
-    item = work_store.reopen_work_item(project_state_dir, payload.work_id)
+    item = work_repository.reopen_work_item(project_state_dir, payload.work_id)
     _emit_work_transition(
         "work.reopened",
         work_id=item.name,
@@ -636,7 +636,7 @@ def work_rename_sync(
             f"Use a slug (lowercase, hyphens, no spaces) — e.g. '{new_slug or 'my-feature'}'."
         )
 
-    item = work_store.rename_work_item(project_state_dir, old_name, new_slug)
+    item = work_repository.rename_work_item(project_state_dir, old_name, new_slug)
 
     for spawn in spawn_store.list_spawns(runtime_state_root, filters={"work_id": old_name}):
         if spawn.kind == "child":
@@ -703,7 +703,7 @@ def work_task_dir_sync(
     item = _require_work_item(project_state_dir, active_work_id)
 
     if payload.clear:
-        updated = work_store.update_work_item_task_dir(
+        updated = work_repository.update_work_item_task_dir(
             project_state_dir,
             item.name,
             task_dir=None,
@@ -713,7 +713,7 @@ def work_task_dir_sync(
         if not requested_task_dir:
             raise ValueError("task_dir path is empty")
         resolved_task_dir = _validate_task_dir_path(requested_task_dir)
-        updated = work_store.update_work_item_task_dir(
+        updated = work_repository.update_work_item_task_dir(
             project_state_dir,
             item.name,
             task_dir=resolved_task_dir.as_posix(),

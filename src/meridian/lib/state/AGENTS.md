@@ -11,13 +11,20 @@ State splits across distinct roots — understand which goes where before writin
 .meridian/                          ← repo-local, committed scaffolding
   id                                — project UUID / three-word ID
 
+~/.meridian/projects/.locks/<id>.lock
+                                    — shared session-lifetime / exclusive deletion gate
+
 ~/.meridian/projects/<id>/          ← user runtime, never committed
   sessions.jsonl                    — session events (append-only)
+  locks/spawns/<spawn_id>.lock      — stable per-spawn external-writer lock
+  locks/process-scopes/<spawn_id>.lock
+                                    — stable process-scope sidecar mutation lock
   spawns/.staging/<unique>/         — complete row build before atomic publication
   spawns/<spawn_id>/
     state.json                      — authoritative spawn state (v2)
-    state.lock                      — per-spawn lock for external writers
     history.jsonl                   — primary output artifact
+    process_scopes.json             — durable process identities + release markers
+    reaper_cleanup_claim.json       — pending finalize-first cleanup targets
     heartbeat · report.md · stderr.log · params.json · tokens.json
 
 <context.work root>/<slug>/         ← context-resolved, NOT repo-local
@@ -26,7 +33,8 @@ State splits across distinct roots — understand which goes where before writin
 ```
 
 The project UUID in `.meridian/id` keys into `~/.meridian/projects/<id>/`. Projects
-can move or be renamed without losing runtime history.
+can move or be renamed without losing runtime history. Project lifetime gates sit outside
+the deletable project root and, like every coordination lock identity, are never unlinked.
 
 Work items live under the `[context.work]` root (default
 `{user_home}/context/<id>/work/<slug>/`), resolved by `work_scope.py` /
@@ -38,26 +46,27 @@ context-path resolution.
 Spawn state lives in individual `state.json` files (`spawns/<id>/state.json`),
 not a global event log, so status reads stay O(1) instead of replaying O(n) events.
 
-## Two Write Tiers
+## Spawn Mutation Seam
 
-**Tier 1 — Owner writes (unlocked):**
-The spawn's own runner calls `write_state()` directly. It is the sole writer while
-active. Includes a best-effort terminal monotonicity guard — will not overwrite an
-already-terminal record unless `allow_terminal_overwrite=True`.
+Every update to a published spawn calls `write_state_locked()`. It acquires
+`locks/spawns/<id>.lock`, re-reads current state, applies a pure mutator, and writes
+atomically. The lock identity is outside the artifact directory it protects and is
+never unlinked, so all contenders coordinate through the same stable inode.
 
-**Tier 2 — External writes (per-spawn lock):**
-The reaper, cancel command, or any other process mutating a spawn it doesn't own
-calls `write_state_locked()`. This acquires `spawns/<id>/state.lock`, reads current
-state, applies a mutator function, and writes atomically. Skipping the lock races
-with the owner's unlocked writes.
+Process-scope registration and release markers route through the locked sidecar
+mutation seam. When both locks are needed, acquire the spawn-state lock before the
+scope-sidecar lock. Registration is refused after the spawn becomes terminal or a
+cleanup claim exists, so a process scope cannot appear after cleanup targets are fixed.
 
 ## Atomic Write Contract
 
-All state writes go through `atomic.py`. Never write state files with plain `open()`.
+State-facing writes go through `atomic.py`, which delegates file replacement to the
+dependency-neutral `lib/platform/atomic.py`. Never write state files with plain `open()`.
 
 - `atomic_write_text()` / `atomic_write_bytes()` — write to same-directory temp,
-  `os.fsync()`, then `os.replace()` (atomic rename). Either the old or new file
-  exists — never a partial write.
+  force runtime-state mode `0600`, `os.fsync()`, then `os.replace()` (atomic rename).
+  Either the old or new file exists — never a partial write. User-owned project files
+  and context work-item metadata use the preserve-mode platform atomic writer instead.
 - `atomic_publish_dir()` — rename a complete same-volume stage into a destination
   that must not exist, then fsync the publication parent.
 - `append_text_line()` — binary mode so JSONL newline encoding and byte offsets
@@ -85,8 +94,11 @@ a read-only projection of stale active rows. It may return an in-memory terminal
 status but never persists state or terminates processes, and it is safe at any depth.
 
 `reconcile_active_spawn()` is the side-effectful repair path. It runs from doctor
-background repair, fails closed outside root depth, cleans recorded orphan process
-scopes, and persists the terminal outcome through the locked external-writer path.
+background repair and fails closed outside root depth. It snapshots a cleanup claim
+under the spawn lock, persists the terminal outcome through the locked external-writer
+path, then terminates the claimed, birth-validated scopes. A separate stable cleanup
+lock prevents concurrent reapers from double-signalling; terminal rows retain failed
+claims for the next doctor pass.
 Both paths share liveness rules in `reaper.py` and completion/cancel precedence in
 `reconciliation.py`.
 
@@ -95,6 +107,8 @@ Both paths share liveness rules in `reaper.py` and completion/cancel precedence 
 - `user_paths.py` — `get_user_home()`. Start here for any new user-level storage.
 - `paths.py` — `RuntimePaths`, read vs write root resolvers.
 - `spawn_store.py` — `SpawnStore`. Main interface for listing, creating, updating spawns.
+- `work_store.py` / `work_repository.py` — pure work-item reads and the single locked
+  mutation repository, respectively.
 - `session_store.py` — Session event log.
 - `atomic.py` — atomic write primitives. All state writes use these.
 - `reaper.py` — read-only `reconcile_spawns()` projection and root-only
@@ -117,7 +131,11 @@ validation and miss `SpawnRecord` reconstruction from `starting-prompt.md`.
 
 **Don't acquire `spawns_flock` for per-spawn mutations** — the global lock serializes
 spawn ID allocation, initial row publication, and abandoned-stage GC. Later mutations
-use `write_state_locked()` (`state.lock`).
+use `write_state_locked()` (`locks/spawns/<id>.lock`, which is never unlinked).
+Published-row deletion uses `delete_published_spawn()` under that same stable lock;
+when deletion also takes the process-scope projection lock, the order is spawn lock
+then projection lock. Pruning acquires `spawns_flock` first. Pending reaper cleanup
+claims block deletion so durable cleanup intent is never discarded.
 
 **Don't hardcode `~/.meridian/`** — use `get_user_home()` from `user_paths.py`.
 It honors `MERIDIAN_HOME` and centralizes home resolution.

@@ -11,11 +11,13 @@ from pathlib import Path
 
 import pytest
 
+from meridian.lib.core.domain import SpawnStatus
 from meridian.lib.ops.pruning import (
+    StaleSpawnArtifact,
     prune_stale_spawn_artifacts,
     scan_stale_spawn_artifacts,
 )
-from meridian.lib.platform.locking import try_lock_file
+from meridian.lib.platform.locking import lock_file, try_lock_file
 from meridian.lib.state import spawn_store as spawn_store_module
 from meridian.lib.state.paths import RuntimePaths
 from meridian.lib.state.spawn import repository as spawn_repository
@@ -34,7 +36,9 @@ def _state_root(tmp_path: Path) -> Path:
     return state_dir
 
 
-def _start_test_spawn(runtime_root: Path, *, spawn_id: str) -> str:
+def _start_test_spawn(
+    runtime_root: Path, *, spawn_id: str, status: SpawnStatus = "running"
+) -> str:
     return str(
         start_spawn(
             runtime_root,
@@ -44,6 +48,7 @@ def _start_test_spawn(runtime_root: Path, *, spawn_id: str) -> str:
             harness="codex",
             prompt="hello",
             spawn_id=spawn_id,
+            status=status,
         )
     )
 
@@ -58,20 +63,18 @@ def _paused_initial_publication(
     state_serialization_reached = threading.Event()
     release_state_serialization = threading.Event()
     errors: list[BaseException] = []
-    original_record_to_stored_state = spawn_repository.record_to_stored_state
+    original_record_to_stored_state = spawn_store_module.record_to_stored_state
 
     def pause_before_state_serialization(
         record: SpawnRecord,
-        *,
-        revision: int,
     ) -> StoredSpawnState:
         state_serialization_reached.set()
         if not release_state_serialization.wait(timeout=5):
             raise TimeoutError("initial state serialization was not released")
-        return original_record_to_stored_state(record, revision=revision)
+        return original_record_to_stored_state(record)
 
     monkeypatch.setattr(
-        spawn_repository,
+        spawn_store_module,
         "record_to_stored_state",
         pause_before_state_serialization,
     )
@@ -240,6 +243,63 @@ def test_pruning_ignores_in_progress_publication_stage(
     assert row.id == spawn_id
 
 
+def test_pruning_does_not_split_spawn_lock_identity(tmp_path: Path) -> None:
+    """A pruned artifact must not let a second writer lock a new inode."""
+    # Pre-fix failure: ``assert [True] == [False]`` — the contender acquired
+    # the recreated path while this thread still held the unlinked old inode.
+    runtime_root = _state_root(tmp_path)
+    paths = RuntimePaths.from_root_dir(runtime_root)
+    spawn_id = "p7"
+    artifact_path = paths.spawns_dir / spawn_id
+    artifact_path.mkdir(parents=True)
+    lock_path = spawn_repository.spawn_lock_path(paths.spawns_dir, spawn_id)
+    second_writer_acquired: list[bool] = []
+
+    stale = [
+        StaleSpawnArtifact(
+            spawn_id=spawn_id,
+            project_uuid="project",
+            path=str(artifact_path),
+            size_bytes=0,
+            last_activity="2026-01-01T00:00:00+00:00",
+        )
+    ]
+
+    with lock_file(lock_path):
+        assert prune_stale_spawn_artifacts(stale) == 1
+
+        def try_second_writer() -> None:
+            with try_lock_file(lock_path) as handle:
+                second_writer_acquired.append(handle is not None)
+
+        contender = threading.Thread(target=try_second_writer)
+        contender.start()
+        contender.join(timeout=5)
+
+    assert not contender.is_alive()
+    assert second_writer_acquired == [False]
+
+
+def test_pruning_preserves_spawn_with_pending_cleanup_claim(tmp_path: Path) -> None:
+    runtime_root = _state_root(tmp_path)
+    paths = RuntimePaths.from_root_dir(runtime_root)
+    spawn_id = _start_test_spawn(runtime_root, spawn_id="p7", status="succeeded")
+    claim_path = paths.spawns_dir / spawn_id / "reaper_cleanup_claim.json"
+    claim_path.write_text('{"v":1,"scopes":[]}\n', encoding="utf-8")
+    stale = [
+        StaleSpawnArtifact(
+            spawn_id=spawn_id,
+            project_uuid="project",
+            path=str(paths.spawns_dir / spawn_id),
+            size_bytes=0,
+            last_activity="2026-01-01T00:00:00+00:00",
+        )
+    ]
+
+    assert prune_stale_spawn_artifacts(stale) == 0
+    assert claim_path.is_file()
+
+
 @pytest.mark.parametrize(
     "invalid_spawn_id",
     ["../escaped", "/absolute", ".staging", "..", "nested/child"],
@@ -317,3 +377,35 @@ def test_remove_spawn_events_rejects_staging_container(tmp_path: Path) -> None:
         remove_spawn_events(runtime_root, ".staging")
 
     assert staged_state.read_text(encoding="utf-8") == "in progress\n"
+
+
+def test_remove_spawn_events_cannot_leave_writer_ghost_row(tmp_path: Path) -> None:
+    """Rollback deletion must coordinate with an in-flight spawn writer."""
+    runtime_root = _state_root(tmp_path)
+    paths = RuntimePaths.from_root_dir(runtime_root)
+    spawn_id = str(_start_test_spawn(runtime_root, spawn_id="p7", status="queued"))
+    writer_holds_lock = threading.Event()
+    allow_writer = threading.Event()
+
+    def pause_writer(record: SpawnRecord) -> SpawnRecord:
+        writer_holds_lock.set()
+        assert allow_writer.wait(timeout=5)
+        return record.model_copy(update={"desc": "writer completed"})
+
+    writer = threading.Thread(
+        target=spawn_repository.write_state_locked,
+        args=(paths.spawns_dir, spawn_id, pause_writer),
+    )
+    writer.start()
+    assert writer_holds_lock.wait(timeout=5)
+
+    deletion = threading.Thread(target=remove_spawn_events, args=(runtime_root, spawn_id))
+    deletion.start()
+    deletion.join(timeout=0.2)
+    allow_writer.set()
+    writer.join(timeout=5)
+    deletion.join(timeout=5)
+
+    assert not writer.is_alive()
+    assert not deletion.is_alive()
+    assert not (paths.spawns_dir / spawn_id).exists()

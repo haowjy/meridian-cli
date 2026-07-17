@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-import json
 import subprocess
 import sys
 import time
+from collections.abc import Callable
+from datetime import datetime
 from pathlib import Path
 from uuid import uuid4
 
@@ -18,11 +19,14 @@ from meridian.lib.hooks.types import Hook, HookContext, HookEventName, HookOutco
 
 
 class NoopIntervalTracker:
-    def should_run(self, hook_name: str, interval: str) -> bool:
-        return True
-
-    def mark_run(self, hook_name: str) -> None:
-        return None
+    def run_if_due(
+        self,
+        hook_name: str,
+        interval: str,
+        fn: Callable[[], HookResult],
+    ) -> HookResult | None:
+        _ = (hook_name, interval)
+        return fn()
 
 
 class RecordingExternalRunner:
@@ -239,7 +243,7 @@ def test_dispatch_pipeline_persists_interval_state_across_runs(tmp_path: Path) -
     hooks = HooksConfig(
         hooks=(
             Hook(
-                name="throttled-recorder",
+                name="../../throttled recorder",
                 event="spawn.finalized",
                 source="project",
                 command=_python_command(script, str(marker)),
@@ -254,19 +258,54 @@ def test_dispatch_pipeline_persists_interval_state_across_runs(tmp_path: Path) -
         _context(),
     )
 
-    hook_state_path = runtime_root / "hook-state.json"
+    hook_state_dir = runtime_root / "hooks" / "last-run"
     assert [result.outcome for result in first_results] == ["success"]
     assert marker.exists() is True
-    assert hook_state_path.exists() is True
-    persisted_state = json.loads(hook_state_path.read_text(encoding="utf-8"))
-    assert "throttled-recorder" in persisted_state
+    timestamp_files = list(hook_state_dir.iterdir())
+    assert len(timestamp_files) == 1
+    assert len(timestamp_files[0].name) == 64
+    assert timestamp_files[0].name.isalnum()
+    datetime.fromisoformat(timestamp_files[0].read_text(encoding="utf-8").strip())
 
     second_dispatcher = HookDispatcher(project_root, runtime_root, registry=registry)
     second_results = second_dispatcher.fire(_context())
 
     assert [result.outcome for result in second_results] == ["skipped"]
     assert second_results[0].skip_reason == "throttled"
-    assert not list(hook_state_path.parent.glob(".hook-state.json.*.tmp"))
+    assert not list(hook_state_dir.glob(".*.tmp"))
+
+
+def test_dispatch_pipeline_does_not_throttle_after_failed_interval_hook(
+    tmp_path: Path,
+) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    runtime_root = tmp_path / "state"
+    hook = Hook(
+        name="retry-after-failure",
+        event="spawn.finalized",
+        source="project",
+        command="./fails.sh",
+        interval="1h",
+    )
+    registry = HookRegistry(project_root, hooks_config=HooksConfig(hooks=(hook,)))
+    runner = RecordingExternalRunner(outcomes={hook.name: _result(hook.name, outcome="failure")})
+    dispatcher = HookDispatcher(
+        project_root,
+        runtime_root,
+        registry=registry,
+        external_runner=runner,
+    )
+
+    first_results = dispatcher.fire(_context())
+    second_results = dispatcher.fire(_context())
+
+    assert [result.outcome for result in first_results + second_results] == [
+        "failure",
+        "failure",
+    ]
+    assert runner.call_order == [hook.name, hook.name]
+    assert not (runtime_root / "hooks" / "last-run").exists()
 
 
 def test_dispatch_pipeline_times_out_then_continues_to_later_hooks(tmp_path: Path) -> None:

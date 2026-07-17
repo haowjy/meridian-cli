@@ -10,7 +10,7 @@ from meridian.lib.config.context_config import ContextConfig
 from meridian.lib.config.project_paths import ProjectConfigPaths
 from meridian.lib.config.project_root import resolve_user_config_path
 from meridian.lib.core.types import SpawnId
-from meridian.lib.state.atomic import atomic_write_text
+from meridian.lib.platform.atomic import atomic_write_text
 from meridian.lib.state.user_paths import get_or_create_project_id, get_project_id
 
 _MERIDIAN_DIR = ".meridian"
@@ -44,7 +44,8 @@ class RuntimePaths(BaseModel):
     spawns_flock: Path
     sessions_jsonl: Path
     sessions_flock: Path
-    hook_state_json: Path
+    hooks_last_run_dir: Path
+    hook_locks_dir: Path
     session_id_counter: Path
     session_id_counter_flock: Path
     sessions_dir: Path
@@ -58,6 +59,12 @@ class RuntimePaths(BaseModel):
         """Return chats directory under state root."""
 
         return self.root_dir / "chats"
+
+    @property
+    def project_lifetime_flock(self) -> Path:
+        """Return the stable gate coordinating use and deletion of this root."""
+
+        return self.root_dir.parent / ".locks" / f"{self.root_dir.name}.lock"
 
     def chat_history_path(self, c_id: str) -> Path:
         """Return history.jsonl path for a chat."""
@@ -84,7 +91,8 @@ class RuntimePaths(BaseModel):
             spawns_flock=root_dir / "spawns.jsonl.flock",
             sessions_jsonl=root_dir / "sessions.jsonl",
             sessions_flock=root_dir / "sessions.jsonl.flock",
-            hook_state_json=root_dir / "hook-state.json",
+            hooks_last_run_dir=root_dir / "hooks" / "last-run",
+            hook_locks_dir=root_dir / "locks" / "hooks",
             session_id_counter=root_dir / "session-id-counter",
             session_id_counter_flock=root_dir / "session-id-counter.flock",
             sessions_dir=root_dir / "sessions",

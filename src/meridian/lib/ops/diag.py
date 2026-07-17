@@ -22,7 +22,7 @@ from meridian.lib.ops.pruning import (
     scan_stale_spawn_artifacts,
 )
 from meridian.lib.ops.runtime import resolve_project_authority, resolve_runtime_authority_for_write
-from meridian.lib.state import spawn_store
+from meridian.lib.state import spawn_store, work_store
 from meridian.lib.state.session_store import cleanup_stale_sessions
 from meridian.lib.state.user_paths import get_user_home
 from meridian.lib.telemetry.retention import (
@@ -185,13 +185,10 @@ def _repair_orphan_runs(
         raise ValueError("Doctor orphan-run repair requires a runtime root.")
     spawns = spawn_store.list_spawns(resolved_runtime_root)
     running_before = {s.id for s in spawns if is_active_spawn_status(s.status)}
+    # Terminal rows may carry a durable reaper cleanup claim left by a crash
+    # after finalization. The reconciler is a no-op for other terminal rows.
     reconciled = [
-        (
-            reconcile_active_spawn(project_root, resolved_runtime_root, spawn)
-            if is_active_spawn_status(spawn.status)
-            else spawn
-        )
-        for spawn in spawns
+        reconcile_active_spawn(project_root, resolved_runtime_root, spawn) for spawn in spawns
     ]
     running_after = {s.id for s in reconciled if is_active_spawn_status(s.status)}
     reconciled_orphans = tuple(sorted(running_before - running_after))
@@ -248,6 +245,19 @@ def doctor_sync(payload: DoctorInput) -> DoctorOutput:
     stale_locks = _repair_stale_session_locks(project_root)
     if stale_locks > 0:
         repaired.append("stale_session_locks")
+
+    project_state_dir = runtime_authority.project_state_dir
+    active_work_items, _ = work_store.list_work_items(project_state_dir)
+    archived_work_items, _ = work_store.list_archived_work_items(
+        project_state_dir, all_archived=True
+    )
+    healed_work_items = 0
+    for work_id in {item.name for item in (*active_work_items, *archived_work_items)}:
+        if work_store.work_item_needs_healing(project_state_dir, work_id):
+            work_store.heal_work_item(project_state_dir, work_id)
+            healed_work_items += 1
+    if healed_work_items:
+        repaired.append("work_item_metadata")
 
     if payload.kill_orphans and is_root_side_effect_process():
         orphan_runs, killed_orphan_spawns = _repair_orphan_runs(project_root)

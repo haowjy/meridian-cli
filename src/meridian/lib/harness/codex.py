@@ -5,7 +5,7 @@ import logging
 import os
 import re
 import sqlite3
-import tempfile
+import stat
 import time
 from pathlib import Path
 from typing import ClassVar, cast
@@ -75,7 +75,8 @@ from meridian.lib.launch.constants import (
     PRIMARY_BASE_COMMAND_CODEX,
 )
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec, TerminalSurfaceMode
-from meridian.lib.platform import IS_WINDOWS, get_home_path
+from meridian.lib.platform import get_home_path
+from meridian.lib.platform.atomic import atomic_replace
 from meridian.lib.safety.permissions import PermissionConfig
 
 logger = logging.getLogger(__name__)
@@ -86,19 +87,6 @@ def _codex_home() -> Path:
     if configured_home:
         return Path(configured_home).expanduser()
     return get_home_path() / ".codex"
-
-
-def _fsync_directory(path: Path) -> None:
-    if IS_WINDOWS:
-        return
-    flags = os.O_RDONLY
-    if hasattr(os, "O_DIRECTORY"):
-        flags |= os.O_DIRECTORY
-    directory_fd = os.open(path, flags)
-    try:
-        os.fsync(directory_fd)
-    finally:
-        os.close(directory_fd)
 
 
 def _rewrite_forked_session_meta(line: str, new_session_id: str) -> str:
@@ -120,28 +108,15 @@ def _rewrite_forked_session_meta(line: str, new_session_id: str) -> str:
 
 
 def _copy_rollout_atomic(*, source_path: Path, target_path: Path, new_session_id: str) -> None:
-    fd, tmp_name = tempfile.mkstemp(
-        prefix=f".{target_path.name}.",
-        suffix=".tmp",
-        dir=target_path.parent,
-    )
-    tmp_path = Path(tmp_name)
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as target_handle:
-            with source_path.open("r", encoding="utf-8") as source_handle:
-                first_line = source_handle.readline()
-                if not first_line:
-                    raise RuntimeError(f"Codex rollout file is empty: {source_path}")
-                target_handle.write(_rewrite_forked_session_meta(first_line, new_session_id))
-                for line in source_handle:
-                    target_handle.write(line)
-            target_handle.flush()
-            os.fsync(target_handle.fileno())
-        os.replace(tmp_path, target_path)
-        _fsync_directory(target_path.parent)
-    finally:
-        if tmp_path.exists():
-            tmp_path.unlink(missing_ok=True)
+    with source_path.open("r", encoding="utf-8") as source_handle:
+        source_mode = stat.S_IMODE(os.fstat(source_handle.fileno()).st_mode)
+        with atomic_replace(target_path, permissions=source_mode) as target_handle:
+            first_line = source_handle.readline()
+            if not first_line:
+                raise RuntimeError(f"Codex rollout file is empty: {source_path}")
+            target_handle.write(_rewrite_forked_session_meta(first_line, new_session_id))
+            for line in source_handle:
+                target_handle.write(line)
 
 
 def _fork_rollout_path(*, source_path: Path, source_session_id: str, new_session_id: str) -> Path:

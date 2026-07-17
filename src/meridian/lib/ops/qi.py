@@ -7,6 +7,7 @@ from pathlib import Path
 from pydantic import BaseModel, ConfigDict
 
 from meridian.lib.core.util import FormatContext
+from meridian.lib.platform.atomic import atomic_write_text
 
 # Directories to skip during discovery scans.
 _SKIP_DIRS: frozenset[str] = frozenset(
@@ -449,7 +450,7 @@ def qi_claude_md_fix_sync(root: Path, *, dry_run: bool = False) -> QiClaudeMdFix
             continue
 
         try:
-            claude_md.write_text(_CLAUDE_MIRROR_CONTENT, encoding="utf-8")
+            atomic_write_text(claude_md, _CLAUDE_MIRROR_CONTENT)
         except OSError as exc:
             created.pop()
             errors.append(f"cannot write {rel}: {exc}")

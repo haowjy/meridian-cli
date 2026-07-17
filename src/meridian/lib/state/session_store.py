@@ -4,18 +4,29 @@ import json
 import os
 import uuid
 from pathlib import Path
-from typing import Any, BinaryIO, Literal, NamedTuple, cast
+from typing import IO, Any, Literal, NamedTuple, cast
 
 from pydantic import BaseModel, ConfigDict, ValidationError
 
-from meridian.lib.platform import IS_WINDOWS, fcntl
-from meridian.lib.platform.locking import lock_file
+from meridian.lib.platform.locking import (
+    acquire_file_lock,
+    lock_file,
+    release_file_lock,
+    try_lock_file,
+)
 from meridian.lib.state.atomic import atomic_write_text
 from meridian.lib.state.event_store import append_event, read_events, utc_now_iso
 from meridian.lib.state.liveness import is_process_alive
 from meridian.lib.state.paths import RuntimePaths
 
-_SESSION_LOCK_HANDLES: dict[tuple[Path, str], tuple[BinaryIO, str]] = {}
+
+class _SessionLockHandles(NamedTuple):
+    session: IO[bytes]
+    project_lifetime: IO[bytes]
+    session_instance_id: str
+
+
+_SESSION_LOCK_HANDLES: dict[tuple[Path, str], _SessionLockHandles] = {}
 
 
 class SessionRecord(BaseModel):
@@ -197,8 +208,7 @@ def _write_session_lease(paths: RuntimePaths, chat_id: str, session_instance_id:
 def _session_instance_for_event(paths: RuntimePaths, runtime_root: Path, chat_id: str) -> str:
     held = _SESSION_LOCK_HANDLES.get(_session_lock_key(runtime_root, chat_id))
     if held is not None:
-        _, session_instance_id = held
-        return session_instance_id
+        return held.session_instance_id
 
     _, lease_session_instance_id = _read_session_lease(paths, chat_id)
     if lease_session_instance_id.strip():
@@ -298,113 +308,12 @@ def _session_lock_key(runtime_root: Path, chat_id: str) -> tuple[Path, str]:
     return (runtime_root.resolve(), chat_id)
 
 
-def _acquire_session_lock(lock_path: Path) -> BinaryIO:
-    if IS_WINDOWS:
-        return _win_acquire_session_lock(lock_path)
-    return _posix_acquire_session_lock(lock_path)
-
-
-def _lock_handle_matches_path(handle: BinaryIO, lock_path: Path) -> bool:
-    stat_handle = os.fstat(handle.fileno())
-    stat_path = lock_path.stat()
-    return stat_handle.st_ino == stat_path.st_ino and stat_handle.st_dev == stat_path.st_dev
-
-
-def _posix_acquire_session_lock(lock_path: Path) -> BinaryIO:
-    lock_path.parent.mkdir(parents=True, exist_ok=True)
-    while True:
-        handle = lock_path.open("a+b")
-        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
-        try:
-            if _lock_handle_matches_path(handle, lock_path):
-                return handle
-        except FileNotFoundError:
-            pass
-        _posix_release_session_lock(handle)
-        handle.close()
-
-
-def _win_acquire_session_lock(lock_path: Path) -> BinaryIO:
-    import msvcrt as _msvcrt
-
-    msvcrt = cast("Any", _msvcrt)
-    lock_path.parent.mkdir(parents=True, exist_ok=True)
-    while True:
-        handle = lock_path.open("a+b")
-        _ensure_windows_lock_region(handle)
-        handle.seek(0)
-        msvcrt.locking(handle.fileno(), msvcrt.LK_LOCK, 1)
-        try:
-            if _lock_handle_matches_path(handle, lock_path):
-                return handle
-        except FileNotFoundError:
-            pass
-        _win_release_session_lock(handle)
-        handle.close()
-
-
-def _release_session_lock_handle(handle: BinaryIO) -> None:
-    if IS_WINDOWS:
-        _win_release_session_lock(handle)
-    else:
-        _posix_release_session_lock(handle)
-
-
-def _posix_release_session_lock(handle: BinaryIO) -> None:
-    fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
-
-
-def _win_release_session_lock(handle: BinaryIO) -> None:
-    import msvcrt as _msvcrt
-
-    msvcrt = cast("Any", _msvcrt)
-    handle.seek(0)
-    msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
-
-
-def _ensure_windows_lock_region(handle: BinaryIO) -> None:
-    handle.seek(0, os.SEEK_END)
-    if handle.tell() == 0:
-        handle.write(b"\0")
-        handle.flush()
-        os.fsync(handle.fileno())
-    handle.seek(0)
-
-
-def _try_lock_nonblocking(handle: BinaryIO) -> bool:
-    if IS_WINDOWS:
-        return _win_try_lock_nonblocking(handle)
-    return _posix_try_lock_nonblocking(handle)
-
-
-def _posix_try_lock_nonblocking(handle: BinaryIO) -> bool:
-    try:
-        fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except BlockingIOError:
-        return False
-    return True
-
-
-def _win_try_lock_nonblocking(handle: BinaryIO) -> bool:
-    import msvcrt as _msvcrt
-
-    msvcrt = cast("Any", _msvcrt)
-    _ensure_windows_lock_region(handle)
-    handle.seek(0)
-    try:
-        msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
-    except OSError:
-        return False
-    return True
-
-
 def _release_session_lock(runtime_root: Path, chat_id: str) -> None:
     lock_data = _SESSION_LOCK_HANDLES.pop(_session_lock_key(runtime_root, chat_id), None)
     if lock_data is None:
         return
-    handle, _ = lock_data
-    _release_session_lock_handle(handle)
-    handle.close()
+    release_file_lock(lock_data.session)
+    release_file_lock(lock_data.project_lifetime)
 
 
 def start_session(
@@ -429,15 +338,16 @@ def start_session(
     """Append a session start event and acquire a lifetime session lock."""
 
     paths = RuntimePaths.from_root_dir(runtime_root)
-    started_at = utc_now_iso()
+    project_lifetime_handle = acquire_file_lock(paths.project_lifetime_flock, mode="shared")
     resolved_chat_id = chat_id.strip() if chat_id is not None else ""
-    if not resolved_chat_id:
-        resolved_chat_id = reserve_chat_id(runtime_root)
-
-    lock_path = paths.sessions_dir / f"{resolved_chat_id}.lock"
-    handle = _acquire_session_lock(lock_path)
+    handle: IO[bytes] | None = None
     session_instance_id = uuid.uuid4().hex
     try:
+        started_at = utc_now_iso()
+        if not resolved_chat_id:
+            resolved_chat_id = reserve_chat_id(runtime_root)
+        lock_path = paths.sessions_dir / f"{resolved_chat_id}.lock"
+        handle = acquire_file_lock(lock_path)
         event = SessionStartEvent(
             chat_id=resolved_chat_id,
             kind=kind,
@@ -462,13 +372,15 @@ def start_session(
             append_event(paths.sessions_jsonl, paths.sessions_flock, event)
             _write_session_lease(paths, resolved_chat_id, session_instance_id)
     except Exception:
-        _release_session_lock_handle(handle)
-        handle.close()
+        if handle is not None:
+            release_file_lock(handle)
+        release_file_lock(project_lifetime_handle)
         raise
 
-    _SESSION_LOCK_HANDLES[_session_lock_key(runtime_root, resolved_chat_id)] = (
-        handle,
-        session_instance_id,
+    _SESSION_LOCK_HANDLES[_session_lock_key(runtime_root, resolved_chat_id)] = _SessionLockHandles(
+        session=handle,
+        project_lifetime=project_lifetime_handle,
+        session_instance_id=session_instance_id,
     )
     return resolved_chat_id
 
@@ -562,12 +474,24 @@ def list_active_sessions(runtime_root: Path) -> list[str]:
     active: list[str] = []
     for lock_path in paths.sessions_dir.glob("*.lock"):
         chat_id = lock_path.stem
-        with lock_path.open("a+b") as handle:
-            if not _try_lock_nonblocking(handle):
+        with try_lock_file(lock_path, reentrant=False) as handle:
+            if handle is None:
                 active.append(chat_id)
-                continue
-            _release_session_lock_handle(handle)
     return sorted(active, key=_session_sort_key)
+
+
+def has_live_session_leases(runtime_root: Path) -> bool:
+    """Return whether any session lease names a currently live owner process."""
+
+    paths = RuntimePaths.from_root_dir(runtime_root)
+    if not paths.sessions_dir.exists():
+        return False
+    for lease_path in paths.sessions_dir.glob("*.lease.json"):
+        chat_id = lease_path.name.removesuffix(".lease.json")
+        _exists, _generation, owner_pid = _read_session_lease_data(paths, chat_id)
+        if owner_pid is not None and is_process_alive(owner_pid):
+            return True
+    return False
 
 
 def list_active_session_records(runtime_root: Path) -> list[SessionRecord]:
@@ -736,12 +660,12 @@ def cleanup_stale_sessions(runtime_root: Path) -> StaleSessionCleanup:
     if not paths.sessions_dir.exists():
         return StaleSessionCleanup(cleaned_ids=(), materialized_scopes=())
 
-    stale: list[tuple[str, Path, BinaryIO]] = []
+    stale: list[tuple[str, Path, IO[bytes]]] = []
     for lock_path in paths.sessions_dir.glob("*.lock"):
         chat_id = lock_path.stem
-        handle = lock_path.open("a+b")
-        if not _try_lock_nonblocking(handle):
-            handle.close()
+        try:
+            handle = acquire_file_lock(lock_path, timeout=0)
+        except TimeoutError:
             continue
         stale.append((chat_id, lock_path, handle))
 
@@ -803,19 +727,15 @@ def cleanup_stale_sessions(runtime_root: Path) -> StaleSessionCleanup:
             if existing is not None and existing.harness.strip():
                 stale_cleanup_scopes.append(existing.harness.strip())
             cleaned_ids.append(chat_id)
-            # Defer unlink until after handle release (required on Windows).
 
-    # Release lock handles first so Windows allows lock-file deletion.
+    # Lock paths are stable coordination identities and are never removed.
     for chat_id, _lock_path, handle in stale:
-        _release_session_lock_handle(handle)
-        handle.close()
+        release_file_lock(handle)
         if chat_id in cleaned_ids:
             _SESSION_LOCK_HANDLES.pop(_session_lock_key(runtime_root, chat_id), None)
 
-    # Remove lock and lease files only after all handles are closed.
-    for chat_id, lock_path, _ in stale:
+    for chat_id, _lock_path, _ in stale:
         if chat_id in cleaned_ids:
-            lock_path.unlink(missing_ok=True)
             _session_lease_path(paths, chat_id).unlink(missing_ok=True)
 
     return StaleSessionCleanup(

@@ -52,6 +52,19 @@ from meridian.lib.state.spawn.model import (
 from meridian.lib.state.spawn.model import (
     TerminalSpawnStatus as TerminalSpawnStatus,
 )
+from meridian.lib.state.spawn.repository import (
+    SpawnDeletionPrecondition as SpawnDeletionPrecondition,
+)
+from meridian.lib.state.spawn.repository import (
+    delete_published_spawn as delete_published_spawn,
+)
+from meridian.lib.state.spawn.repository import (
+    is_safe_spawn_dir_name as _is_safe_spawn_dir_name,
+)
+from meridian.lib.state.spawn.repository import read_state as _read_state
+from meridian.lib.state.spawn.repository import record_to_stored_state
+from meridian.lib.state.spawn.repository import scan_spawn_ids as _scan_spawn_ids
+from meridian.lib.state.spawn.repository import write_state_locked as _write_state_locked
 from meridian.lib.state.spawn.terminal_policy import decide_terminal_write
 from meridian.lib.state.spawn.transitions import (
     apply_cancel_intent,
@@ -82,19 +95,6 @@ def is_spawn_id_shape(spawn_id: SpawnId | str) -> bool:
     value = str(spawn_id)
     suffix = value[1:]
     return len(value) > 1 and value[0] == "p" and suffix.isascii() and suffix.isdigit()
-
-
-def _is_safe_spawn_dir_name(name: str) -> bool:
-    """Return whether a spawn ID is one non-hidden path component."""
-
-    separators = {"/", "\\", os.sep}
-    if os.altsep is not None:
-        separators.add(os.altsep)
-    return (
-        bool(name)
-        and not name.startswith(".")
-        and not any(separator in name for separator in separators)
-    )
 
 
 def _spawn_counter_path(paths: RuntimePaths) -> Path:
@@ -188,45 +188,6 @@ def _resolve_start_metadata(
             else launch_policy_snapshot
         ),
     )
-
-
-# ---------------------------------------------------------------------------
-# Spawn event store
-# ---------------------------------------------------------------------------
-
-
-def _read_state(
-    spawns_dir: Path,
-    spawn_id: str,
-    *,
-    include_prompt: bool = True,
-) -> SpawnRecord | None:
-    from meridian.lib.state.spawn.repository import read_state
-
-    return read_state(spawns_dir, spawn_id, include_prompt=include_prompt)
-
-
-def _write_state_locked(
-    spawns_dir: Path,
-    spawn_id: str,
-    mutator: Any,
-    *,
-    allow_terminal_overwrite: bool = False,
-) -> SpawnRecord:
-    from meridian.lib.state.spawn.repository import write_state_locked
-
-    return write_state_locked(
-        spawns_dir,
-        spawn_id,
-        mutator,
-        allow_terminal_overwrite=allow_terminal_overwrite,
-    )
-
-
-def _scan_spawn_ids(spawns_dir: Path) -> list[str]:
-    from meridian.lib.state.spawn.repository import scan_spawn_ids
-
-    return scan_spawn_ids(spawns_dir)
 
 
 class FinalizeOutcome(BaseModel):
@@ -420,9 +381,7 @@ def start_spawn(
         stage_dir = staging_dir / f"{resolved_spawn_id}-{os.getpid()}-{secrets.token_hex(4)}"
         stage_dir.mkdir()
         atomic_write_text(stage_dir / "starting-prompt.md", prompt)
-        from meridian.lib.state.spawn.repository import record_to_stored_state
-
-        stored_state = record_to_stored_state(record, revision=1)
+        stored_state = record_to_stored_state(record)
         atomic_write_text(
             stage_dir / "state.json",
             stored_state.model_dump_json(indent=2) + "\n",
@@ -441,13 +400,11 @@ def remove_spawn_events(
     can observe or act on the row. It is not a user-facing delete/archive path.
     """
 
-    paths = RuntimePaths.from_root_dir(runtime_root)
-    resolved_spawn_id = str(spawn_id)
-    if not _is_safe_spawn_dir_name(resolved_spawn_id):
-        raise ValueError(f"Invalid spawn ID: {resolved_spawn_id}")
-    spawn_dir = paths.spawns_dir / resolved_spawn_id
-    with suppress(FileNotFoundError):
-        shutil.rmtree(spawn_dir)
+    delete_published_spawn(
+        runtime_root,
+        spawn_id,
+        can_delete=lambda record: record is not None and record.status == "queued",
+    )
 
 
 def update_spawn(
@@ -568,7 +525,7 @@ def record_spawn_exited(
     exit_code: int,
     exited_at: str | None = None,
     clock: Clock | None = None,
-) -> None:
+) -> SpawnRecord | None:
     """Record latest drained harness-attempt exit metadata."""
 
     resolved_clock = clock or RealClock()
@@ -582,14 +539,14 @@ def record_spawn_exited(
         )
 
     try:
-        _write_state_locked(
+        return _write_state_locked(
             paths.spawns_dir,
             str(spawn_id),
             merge_exit,
             allow_terminal_overwrite=True,
         )
     except FileNotFoundError:
-        return
+        return None
 
 
 def record_runner_exit(
@@ -773,7 +730,7 @@ def mark_finalizing(
     runtime_root: Path,
     spawn_id: SpawnId | str,
 ) -> bool:
-    """CAS transition `running -> finalizing` under the spawn-store flock."""
+    """CAS transition `running -> finalizing` under the per-spawn lock."""
 
     transitioned, _snapshot = mark_finalizing_with_snapshot(
         runtime_root,
@@ -846,8 +803,14 @@ def mark_spawn_running_with_snapshot(
     if runner_pid is not None and resolved_runner_created_at_epoch is None:
         resolved_runner_created_at_epoch = _runner_created_at_epoch_for_pid(runner_pid)
 
+    class _NoTransition(Exception):
+        def __init__(self, snapshot: SpawnRecord) -> None:
+            self.snapshot = snapshot
+
     def merge(current: SpawnRecord) -> SpawnRecord:
         nonlocal changed
+        if not is_active_spawn_status(current.status):
+            raise _NoTransition(current)
         changed = current.status != "running"
         return apply_mark_running(
             current,
@@ -861,6 +824,8 @@ def mark_spawn_running_with_snapshot(
         committed = _write_state_locked(paths.spawns_dir, str(spawn_id), merge)
     except FileNotFoundError:
         return False, None
+    except _NoTransition as exc:
+        return False, exc.snapshot
     return changed, committed
 
 

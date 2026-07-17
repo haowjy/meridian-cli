@@ -1,13 +1,12 @@
 """Built-in git autosync hook implementation.
 
-This hook uses meridian.plugin_api exclusively - it does NOT import from
-meridian.lib.* for any functionality. This validates the plugin API surface.
+General hook capabilities come from plugin_api. Autosync artifact mutations
+are delegated to the tightly coupled transaction store.
 """
 
 from __future__ import annotations
 
 import fnmatch
-import hashlib
 import os
 import shutil
 import subprocess
@@ -21,12 +20,11 @@ import structlog
 
 from meridian.lib.hooks.builtin.autosync_store import (
     AUTOSYNC_IGNORE_PATTERNS,
+    AutosyncTransaction,
     ConflictRecord,
-    append_conflict_notice,
     generate_conflict_id,
     has_unresolved_conflict,
-    write_conflict,
-    write_sync_state,
+    transaction,
 )
 from meridian.plugin_api import (
     Hook,
@@ -34,9 +32,8 @@ from meridian.plugin_api import (
     HookOutcome,
     HookResult,
 )
-from meridian.plugin_api.fs import file_lock
+from meridian.plugin_api.fs import atomic_write_text
 from meridian.plugin_api.git import normalize_repo_url, resolve_clone_path
-from meridian.plugin_api.state import get_user_home
 
 logger = structlog.get_logger(__name__)
 
@@ -163,13 +160,11 @@ class GitAutosync:
         # Resolve clone path using plugin_api
         clone_path = resolve_clone_path(remote_url)
 
-        # Lock identity is clone-target based so URL aliases for the same clone path
-        # serialize correctly.
-        clone_path_hash = hashlib.sha256(str(clone_path.resolve()).encode("utf-8")).hexdigest()[:16]
-        lock_file_path = get_user_home() / "locks" / f"clone-{clone_path_hash}.lock"
         try:
-            with file_lock(lock_file_path, timeout=_LOCK_TIMEOUT_SECS):
-                return self._execute_with_lock(context, config, clone_path, start)
+            with transaction(clone_path, timeout=_LOCK_TIMEOUT_SECS) as autosync_tx:
+                return self._execute_with_lock(
+                    context, config, clone_path, start, autosync_tx
+                )
         except TimeoutError as exc:
             logger.warning(
                 "git_autosync_lock_timeout",
@@ -219,6 +214,7 @@ class GitAutosync:
         config: Hook,
         clone_path: Path,
         start: float,
+        autosync_tx: AutosyncTransaction,
     ) -> HookResult:
         """Execute sync workflow while holding the clone lock."""
 
@@ -269,6 +265,7 @@ class GitAutosync:
                 config.exclude,
                 conflict_policy,
                 context=context,
+                autosync_tx=autosync_tx,
             )
         except (OSError, subprocess.SubprocessError) as exc:
             logger.warning(
@@ -316,36 +313,46 @@ class GitAutosync:
             )
 
         local_path = Path(path_str).expanduser().resolve()
-        ok, error = self._ensure_local_repo(local_path)
-        if not ok:
-            logger.warning(
-                "git_autosync_local_init_failed",
-                path=str(local_path),
-                error=error,
-            )
-            return self._result(
-                config,
-                context,
-                _SyncOutcome(
-                    outcome="skipped",
-                    success=True,
-                    skipped=True,
-                    skip_reason="local_init_failed",
-                    error=error,
-                ),
-                start=start,
-                clone_path=str(local_path),
-                context_name="local",
-            )
-
-        conflict_policy = config.options.get("conflict_policy", "abort")
         try:
-            outcome = self._sync(
-                str(local_path),
-                config.exclude,
-                conflict_policy,
-                local_only=True,
-                context=context,
+            with transaction(local_path, timeout=_LOCK_TIMEOUT_SECS) as autosync_tx:
+                ok, error = self._ensure_local_repo(local_path)
+                if not ok:
+                    logger.warning(
+                        "git_autosync_local_init_failed",
+                        path=str(local_path),
+                        error=error,
+                    )
+                    return self._result(
+                        config,
+                        context,
+                        _SyncOutcome(
+                            outcome="skipped",
+                            success=True,
+                            skipped=True,
+                            skip_reason="local_init_failed",
+                            error=error,
+                        ),
+                        start=start,
+                        clone_path=str(local_path),
+                        context_name="local",
+                    )
+
+                conflict_policy = config.options.get("conflict_policy", "abort")
+                outcome = self._sync(
+                    str(local_path),
+                    config.exclude,
+                    conflict_policy,
+                    local_only=True,
+                    context=context,
+                    autosync_tx=autosync_tx,
+                )
+        except TimeoutError as exc:
+            outcome = _SyncOutcome(
+                outcome="skipped",
+                success=True,
+                skipped=True,
+                skip_reason="lock_timeout",
+                error=str(exc),
             )
         except (OSError, subprocess.SubprocessError) as exc:
             logger.warning(
@@ -538,21 +545,14 @@ class GitAutosync:
             new_content += "\n"
         new_content += "\n".join(missing_patterns) + "\n"
 
-        tmp_path = exclude_path.with_suffix(exclude_path.suffix + ".tmp")
         try:
-            tmp_path.write_text(new_content, encoding="utf-8")
-            tmp_path.replace(exclude_path)
+            atomic_write_text(exclude_path, new_content)
         except OSError as exc:
             logger.warning(
                 "git_autosync_default_ignores_write_failed",
                 clone_path=clone_path,
                 error=str(exc),
             )
-            try:
-                if tmp_path.exists():
-                    tmp_path.unlink()
-            except OSError:
-                pass
 
     def _get_current_branch(self, clone_path: str) -> str | None:
         result = self._run_git(clone_path, ["branch", "--show-current"], timeout=5)
@@ -724,6 +724,8 @@ class GitAutosync:
         conflict_policy: object = "abort",
         local_only: bool = False,
         context: HookContext | None = None,
+        *,
+        autosync_tx: AutosyncTransaction,
     ) -> _SyncOutcome:
         """Execute commit-first merge-based sync workflow."""
 
@@ -906,9 +908,9 @@ class GitAutosync:
             if stashed_excludes:
                 self._unstash_excluded_files(clone_path)
             if just_committed:
-                write_sync_state(Path(clone_path), outcome="success")
+                autosync_tx.write_sync_state(outcome="success")
                 return _SyncOutcome(outcome="success", success=True, files_changed=files_changed)
-            write_sync_state(Path(clone_path), outcome="nothing_to_sync")
+            autosync_tx.write_sync_state(outcome="nothing_to_sync")
             return _SyncOutcome(
                 outcome="skipped",
                 success=True,
@@ -1005,7 +1007,7 @@ class GitAutosync:
                             "git_autosync_merge_conflict_already_recorded",
                             clone_path=clone_path,
                         )
-                        write_sync_state(Path(clone_path), outcome="conflict_detected")
+                        autosync_tx.write_sync_state(outcome="conflict_detected")
                         return _SyncOutcome(
                             outcome="skipped",
                             success=True,
@@ -1033,40 +1035,8 @@ class GitAutosync:
                         created_at=datetime.now(UTC).isoformat(),
                         resolved=False,
                     )
-                    write_conflict(Path(clone_path), record)
-
-                    notice_written = append_conflict_notice(
-                        Path(clone_path),
-                        conflict_id,
-                        conflict_paths,
-                        branch,
-                    )
-                    if notice_written:
-                        add_notice = self._run_git(
-                            clone_path,
-                            ["add", "AGENTS.md"],
-                            timeout=_ADD_TIMEOUT_SECS,
-                        )
-                        if add_notice.returncode == 0:
-                            notice_commit = self._run_git(
-                                clone_path,
-                                ["commit", "-m", f"autosync: conflict notice {conflict_id}"],
-                                timeout=_COMMIT_TIMEOUT_SECS,
-                            )
-                            if notice_commit.returncode == 0:
-                                files_changed = self._get_commit_stats(clone_path)
-                            elif not self._looks_like_nothing_to_commit(notice_commit):
-                                logger.warning(
-                                    "git_autosync_notice_commit_failed",
-                                    clone_path=clone_path,
-                                    error=self._format_git_error(
-                                        "git commit conflict notice failed",
-                                        notice_commit,
-                                    ),
-                                )
-
-                    write_sync_state(
-                        Path(clone_path),
+                    autosync_tx.write_conflict(record)
+                    autosync_tx.write_sync_state(
                         outcome="conflict_detected",
                         conflict_id=conflict_id,
                     )
@@ -1117,7 +1087,7 @@ class GitAutosync:
                     files_changed=files_changed,
                 )
 
-            write_sync_state(Path(clone_path), outcome="success")
+            autosync_tx.write_sync_state(outcome="success")
             if stashed_excludes:
                 self._unstash_excluded_files(clone_path)
             return _SyncOutcome(
@@ -1127,7 +1097,7 @@ class GitAutosync:
             )
 
         # 12. Nothing to sync.
-        write_sync_state(Path(clone_path), outcome="nothing_to_sync")
+        autosync_tx.write_sync_state(outcome="nothing_to_sync")
         if stashed_excludes:
             self._unstash_excluded_files(clone_path)
         return _SyncOutcome(

@@ -12,7 +12,8 @@ External plugins follow the same rule: import `Hook`, `HookContext`, etc. from `
 
 - `types.py` — `Hook`, `HookContext`, `HookResult`, `HookEventName`, `HookOutcome`, `FailurePolicy` — the hook contract types
 - `state.py` — `get_project_home()`, `get_user_home()` — state root access
-- `fs.py` — `file_lock()` — advisory file locking for plugins
+- `fs.py` — `file_lock()`, `atomic_write_text()` — cross-platform locking and atomic
+  replacement for plugins
 - `git.py` — `resolve_clone_path()` — git clone path helpers
 - `config.py` — `get_user_config()` — user config access
 
@@ -20,7 +21,7 @@ External plugins follow the same rule: import `Hook`, `HookContext`, etc. from `
 
 ```python
 from meridian.plugin_api import Hook, HookContext      # stable, re-exported from __init__
-from meridian.plugin_api.fs import file_lock           # stable, direct submodule import
+from meridian.plugin_api.fs import atomic_write_text, file_lock  # stable submodule imports
 ```
 
 Submodule utilities (`fs`, `git`, `config`) are NOT re-exported from `__init__.py`. Import them directly from their submodule.
@@ -29,7 +30,8 @@ Submodule utilities (`fs`, `git`, `config`) are NOT re-exported from `__init__.p
 
 - `HookContext.to_env()` and `HookContext.to_json()` are the canonical serialization paths. External hooks receive both. Use them; don't build the serialization manually.
 - Breaking this API requires a version bump. Additions are fine; removals or signature changes are breaking.
-- This package has no dependency on `meridian.lib.*` — it must remain importable in external plugin environments.
+- Stable wrappers may delegate to dependency-neutral `meridian.lib.platform` primitives.
+  They must not depend on `meridian.lib.state` or other policy/state internals.
 
 ## Related
 

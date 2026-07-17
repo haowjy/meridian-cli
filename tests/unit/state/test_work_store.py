@@ -17,7 +17,7 @@ def test_legacy_worktree_metadata_normalizes_windows_path_separators() -> None:
     assert metadata.repo_path == "C:/Users/dev/repo"
 
 
-def test_get_work_item_lazily_migrates_task_dir_from_legacy_worktree_path(tmp_path: Path) -> None:
+def test_heal_work_item_migrates_task_dir_from_legacy_worktree_path(tmp_path: Path) -> None:
     state_root = tmp_path / "state"
     item = work_store.create_work_item(state_root, "legacy-task-dir", "", None)
     legacy_dir = tmp_path / "legacy-worktree"
@@ -31,8 +31,9 @@ def test_get_work_item_lazily_migrates_task_dir_from_legacy_worktree_path(tmp_pa
     loaded = work_store.get_work_item(state_root, item.name)
     assert loaded is not None
     assert loaded.task_dir == legacy_dir.resolve().as_posix()
+    assert json.loads(status_path.read_text(encoding="utf-8"))["task_dir"] is None
 
+    work_store.heal_work_item(state_root, item.name)
     payload_after = json.loads(status_path.read_text(encoding="utf-8"))
     assert payload_after["task_dir"] == legacy_dir.resolve().as_posix()
     assert payload_after["worktree"]["path"] == legacy_dir.resolve().as_posix()
-

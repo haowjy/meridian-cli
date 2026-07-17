@@ -5,7 +5,8 @@ be platform-agnostic — if you're writing `sys.platform == "win32"` outside thi
 module, that's a refactor trigger.
 
 Meridian is POSIX-first: Linux and macOS are supported. Existing native-Windows
-branches are untested, best-effort legacy code; do not add or expand them.
+branches (locking, process-scope, signals, path resolution) are untested,
+best-effort legacy code; do not add or expand them.
 
 ## Mental Model
 
@@ -39,10 +40,16 @@ centralized here; when maintaining an existing branch, use
 **Use `get_home_path()`, never `Path.home()`.** The helper honors `HOME`, which
 keeps path resolution explicit and testable.
 
-**File locking (`locking.py`) has reentrancy semantics.** A thread that already holds
-the lock re-enters safely. The OS lock releases only when the outermost `__exit__` runs.
-The legacy Windows branch writes a guard byte and fsyncs before the first lock
-attempt; this behavior is untested.
+**File locking (`locking.py`) has reentrancy, shared mode, and fork-safety.**
+`lock_file(path, mode="exclusive"|"shared", reentrant=True|False)` is the single
+locking primitive. A thread that already holds the lock re-enters safely (when
+reentrant). The OS lock releases only when the outermost `__exit__` runs. Acquired
+handles are tracked process-wide so a fork child closes every inherited descriptor
+without explicitly unlocking the parent's open-file-description lock. Shared mode
+uses `LOCK_SH`; a held shared lock cannot be upgraded to exclusive in place. The
+legacy Windows branch enforces exclusive locks but its shared mode is advisory-only;
+POSIX enforces shared mode. Windows exclusive locking writes a guard byte and fsyncs
+before the first lock attempt; this behavior is untested.
 
 **Legacy Windows signal branches are untested.** Their intended behavior is:
 - `os.kill(pid, SIGINT)` is unreliable — use `process.terminate()` instead.

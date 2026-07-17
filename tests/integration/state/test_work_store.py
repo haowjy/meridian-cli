@@ -3,7 +3,6 @@ from pathlib import Path
 
 import pytest
 
-import meridian.lib.state.work_store as work_store_module
 from meridian.lib.state.paths import RuntimePaths
 from meridian.lib.state.work_store import (
     archive_work_item,
@@ -57,9 +56,7 @@ def test_work_item_archive_and_reopen_preserves_metadata(tmp_path: Path) -> None
     assert not archived_dir.exists()
     assert active_status.exists()
     assert (active_dir / "notes.md").read_text(encoding="utf-8") == "hello"
-def test_list_archived_work_items_repairs_interrupted_archive_status(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_list_archived_work_items_projects_stale_status_without_persisting(tmp_path: Path) -> None:
     runtime_root = _state_root(tmp_path)
     paths = RuntimePaths.from_root_dir(runtime_root)
     item = create_work_item(runtime_root, "My feature")
@@ -67,25 +64,10 @@ def test_list_archived_work_items_repairs_interrupted_archive_status(
 
     active_dir = paths.work_dir / item.name
     (active_dir / "notes.md").write_text("hello", encoding="utf-8")
-    archived_status_path = paths.work_archive_dir / item.name / "__status.json"
-
-    original_atomic_write = work_store_module.atomic_write_text
-    failed_once = False
-
-    def crash_during_status_write(path: Path, content: str) -> None:
-        nonlocal failed_once
-        if path == archived_status_path and not failed_once:
-            failed_once = True
-            raise OSError("simulated crash after archive move")
-        original_atomic_write(path, content)
-
-    monkeypatch.setattr(work_store_module, "atomic_write_text", crash_during_status_write)
-    with pytest.raises(OSError, match="simulated crash after archive move"):
-        archive_work_item(runtime_root, item.name)
-
     archived_dir = paths.work_archive_dir / item.name
-    assert archived_dir.exists()
-    assert not active_dir.exists()
+    archived_dir.parent.mkdir(parents=True, exist_ok=True)
+    active_dir.rename(archived_dir)
+    archived_status_path = archived_dir / "__status.json"
     stale_payload = json.loads(archived_status_path.read_text(encoding="utf-8"))
     assert stale_payload["status"] == "blocked"
     assert stale_payload["archived_at"] is None
@@ -95,10 +77,7 @@ def test_list_archived_work_items_repairs_interrupted_archive_status(
     assert repaired[0].status == "done"
     assert repaired[0].archived_at is not None
 
-    persisted = get_work_item(runtime_root, item.name)
-    assert persisted is not None
-    assert persisted.status == "done"
-    assert persisted.archived_at is not None
+    assert json.loads(archived_status_path.read_text(encoding="utf-8")) == stale_payload
 def test_create_archive_and_reopen_use_project_templated_context_work_paths(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

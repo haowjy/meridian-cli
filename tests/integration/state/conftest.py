@@ -205,13 +205,32 @@ def fake_managed_primary_birth_liveness(
 def recording_managed_primary_terminations(monkeypatch) -> list[int]:
     """Record managed-primary termination attempts without touching real processes."""
 
+    from meridian.lib.platform.process_scope.base import CleanupResult
+
     terminated_pids: list[int] = []
 
     def _terminate(pid: int) -> bool:
         terminated_pids.append(pid)
         return True
 
+    def _terminate_scope(scope, *, grace_seconds: float, reason: str) -> CleanupResult:
+        terminated_pids.append(scope.root_pid)
+        return CleanupResult(
+            scope_id=scope.scope_id,
+            root_pid=scope.root_pid,
+            descendant_count=0,
+            reason=reason,
+            grace_seconds=grace_seconds,
+            kill_escalated=False,
+            degraded_fallback=False,
+            skip_reason=None,
+        )
+
     monkeypatch.setattr("meridian.lib.state.managed_primary._terminate_pid", _terminate)
+    monkeypatch.setattr(
+        "meridian.lib.core.process_cleanup.terminate_scope_sync",
+        _terminate_scope,
+    )
     return terminated_pids
 
 
@@ -250,4 +269,22 @@ def recording_scope_cleanup(monkeypatch, target: str) -> list[int | str]:
         )
 
     monkeypatch.setattr(target, _cleanup)
+    if target == "meridian.lib.core.process_cleanup.terminate_tree_sync":
+        def _cleanup_claimed(scope, *, grace_seconds: float, reason: str):
+            calls.append(scope.root_pid)
+            return CleanupResult(
+                scope_id=scope.scope_id,
+                root_pid=scope.root_pid,
+                descendant_count=0,
+                reason=reason,
+                grace_seconds=grace_seconds,
+                kill_escalated=False,
+                degraded_fallback=True,
+                skip_reason=None,
+            )
+
+        monkeypatch.setattr(
+            "meridian.lib.core.process_cleanup.terminate_scope_sync",
+            _cleanup_claimed,
+        )
     return calls

@@ -7,7 +7,10 @@ runtime spawns directory.
 from __future__ import annotations
 
 import os
+import shutil
+import stat
 from collections.abc import Callable
+from contextlib import suppress
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, cast
 
@@ -15,8 +18,10 @@ from pydantic import BaseModel, ConfigDict
 
 from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
 from meridian.lib.core.spawn_lifecycle import TERMINAL_SPAWN_STATUSES
+from meridian.lib.core.types import SpawnId
 from meridian.lib.platform.locking import lock_file
 from meridian.lib.state.atomic import atomic_write_text
+from meridian.lib.state.paths import RuntimePaths
 from meridian.lib.state.spawn.model import CancelIntent, SpawnRecord
 
 if TYPE_CHECKING:
@@ -33,9 +38,7 @@ class StoredSpawnState(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    v: Literal[2] = 2
-    revision: int
-
+    v: Literal[2]
     id: str
     chat_id: str | None = None
     owner_chat_id: str | None = None
@@ -99,19 +102,18 @@ def _prompt_path(spawns_dir: Path, spawn_id: str) -> Path:
     return _spawn_dir(spawns_dir, spawn_id) / "starting-prompt.md"
 
 
-def _lock_path(spawns_dir: Path, spawn_id: str) -> Path:
-    return _spawn_dir(spawns_dir, spawn_id) / "state.lock"
+def spawn_lock_path(spawns_dir: Path, spawn_id: str) -> Path:
+    """Return the stable external-writer lock for one published spawn."""
+    return spawns_dir.parent / "locks" / "spawns" / f"{spawn_id}.lock"
 
 
 def record_to_stored_state(
     record: SpawnRecord,
-    *,
-    revision: int = 0,
 ) -> StoredSpawnState:
     """Convert a spawn projection to v2 on-disk state without prompt body."""
 
     return StoredSpawnState(
-        revision=revision,
+        v=2,
         id=record.id,
         chat_id=record.chat_id,
         owner_chat_id=record.owner_chat_id,
@@ -260,38 +262,14 @@ def read_state(
     return stored_state_to_record(stored, prompt=prompt)
 
 
-def write_state(
-    spawns_dir: Path,
-    record: SpawnRecord,
-    *,
-    revision: int | None = None,
-    allow_terminal_overwrite: bool = False,
-) -> int:
-    """Write one spawn's v2 state file and return the committed revision.
+def _write_state(spawns_dir: Path, record: SpawnRecord) -> None:
+    """Persist a record whose current-state transition was decided by the caller."""
 
-    This owner hot path deliberately does not acquire locks. It performs a
-    best-effort terminal monotonicity guard by rereading on-disk state before
-    writing and refusing to overwrite any already-terminal record.
-    """
-
-    current = _read_stored_state(spawns_dir, record.id)
-    if (
-        current is not None
-        and current.status in TERMINAL_SPAWN_STATUSES
-        and not allow_terminal_overwrite
-    ):
-        raise ValueError(f"Refusing to overwrite terminal spawn state: {record.id}")
-
-    if current is not None and current.cancel_intent is not None and record.cancel_intent is None:
-        record = record.model_copy(update={"cancel_intent": current.cancel_intent})
-
-    next_revision = revision if revision is not None else (current.revision + 1 if current else 1)
-    stored = record_to_stored_state(record, revision=next_revision)
+    stored = record_to_stored_state(record)
     atomic_write_text(
         _state_path(spawns_dir, record.id),
         stored.model_dump_json(indent=2) + "\n",
     )
-    return next_revision
 
 
 def write_state_locked(
@@ -301,24 +279,89 @@ def write_state_locked(
     *,
     allow_terminal_overwrite: bool = False,
 ) -> SpawnRecord:
-    """Mutate one spawn state under its per-spawn ``state.lock``."""
+    """Re-read, mutate, and persist one spawn under its stable per-spawn lock.
 
-    with lock_file(_lock_path(spawns_dir, spawn_id)):
+    Lock reentrancy is forbidden because a nested mutation could commit from a
+    second snapshot and then be clobbered by the outer mutation's stale result.
+    """
+
+    with lock_file(spawn_lock_path(spawns_dir, spawn_id), reentrant=False):
         current = read_state(spawns_dir, spawn_id)
         if current is None:
             raise FileNotFoundError(_state_path(spawns_dir, spawn_id))
         updated = mutator(current)
         if updated.id != spawn_id:
             raise ValueError("Locked state mutator must not change spawn id")
-        write_state(
-            spawns_dir,
-            updated,
-            allow_terminal_overwrite=allow_terminal_overwrite,
-        )
-        committed = read_state(spawns_dir, spawn_id)
-        if committed is None:
-            raise FileNotFoundError(_state_path(spawns_dir, spawn_id))
-        return committed
+        if current.status in TERMINAL_SPAWN_STATUSES and not allow_terminal_overwrite:
+            raise ValueError(f"Refusing to overwrite terminal spawn state: {spawn_id}")
+        _write_state(spawns_dir, updated)
+        return updated
+
+
+type SpawnDeletionPrecondition = Callable[[SpawnRecord | None], bool]
+
+
+def is_safe_spawn_dir_name(name: str) -> bool:
+    separators = {"/", "\\", os.sep}
+    if os.altsep is not None:
+        separators.add(os.altsep)
+    return bool(name) and not name.startswith(".") and not any(
+        separator in name for separator in separators
+    )
+
+
+def _restore_spawn_artifact_permissions(
+    func: Callable[[str], object],
+    path: str,
+    exc_info: BaseException,
+) -> None:
+    if isinstance(exc_info, FileNotFoundError):
+        return
+    with suppress(OSError):
+        os.chmod(path, stat.S_IWRITE)
+    try:
+        func(path)
+    except OSError as error:
+        raise exc_info from error
+
+
+def delete_published_spawn(
+    runtime_root: Path,
+    spawn_id: SpawnId | str,
+    *,
+    can_delete: SpawnDeletionPrecondition,
+) -> bool:
+    """Delete one published spawn when its locked projection permits it.
+
+    Every published-row deletion routes through this seam. A cleanup claim
+    prevents deletion because it is durable at-least-once intent: the reaper
+    must finish or clear the claim before artifact retention may remove it.
+    Callers that also need ``spawns_flock`` must acquire it first.
+    """
+
+    paths = RuntimePaths.from_root_dir(runtime_root)
+    resolved_spawn_id = str(spawn_id)
+    if not is_safe_spawn_dir_name(resolved_spawn_id):
+        raise ValueError(f"Invalid spawn ID: {resolved_spawn_id}")
+    spawn_dir = paths.spawns_dir / resolved_spawn_id
+
+    with lock_file(spawn_lock_path(paths.spawns_dir, resolved_spawn_id)):
+        from meridian.lib.state.process_scope_projection import scope_projection_lock_path
+
+        # Global order: spawn state, then process-scope projection.
+        with lock_file(scope_projection_lock_path(runtime_root, resolved_spawn_id)):
+            claim_path = spawn_dir / "reaper_cleanup_claim.json"
+            if claim_path.exists() or not can_delete(
+                read_state(paths.spawns_dir, resolved_spawn_id, include_prompt=False)
+            ):
+                return False
+            if not spawn_dir.exists():
+                return False
+            try:
+                shutil.rmtree(spawn_dir, onexc=_restore_spawn_artifact_permissions)
+            except OSError:
+                return False
+            return True
 
 
 def scan_spawn_ids(spawns_dir: Path) -> list[str]:
@@ -338,12 +381,15 @@ def scan_spawn_ids(spawns_dir: Path) -> list[str]:
 
 
 __all__ = [
+    "SpawnDeletionPrecondition",
     "StoredSpawnState",
+    "delete_published_spawn",
+    "is_safe_spawn_dir_name",
     "read_prompt",
     "read_state",
     "record_to_stored_state",
     "scan_spawn_ids",
+    "spawn_lock_path",
     "stored_state_to_record",
-    "write_state",
     "write_state_locked",
 ]
