@@ -2,37 +2,28 @@ from __future__ import annotations
 
 import json
 import multiprocessing
+import time
 from concurrent.futures import ThreadPoolExecutor
 from functools import partial
 from pathlib import Path
+from typing import Any
 
 import meridian.lib.state.work_store as work_store
+from meridian.lib.state import work_repository
 
 
 def _update_work_field(
     runtime_root: Path,
-    barrier: multiprocessing.synchronize.Barrier,
     field: str,
 ) -> None:
-    original_write = getattr(work_store, "atomic_write_text", None)
+    original_read = work_repository._work_item_from_dir
 
-    if original_write is None:
-        if field == "description":
-            work_store.update_work_item(
-                runtime_root, "shared-task", description="new description"
-            )
-        else:
-            work_store.update_work_item_task_dir(
-                runtime_root, "shared-task", task_dir="/new/task-dir"
-            )
-        return
+    def delayed_read(work_dir: Path, **kwargs: Any) -> work_store.WorkItem:
+        item = original_read(work_dir, **kwargs)
+        time.sleep(0.1)
+        return item
 
-    def synchronized_write(path: Path, content: str) -> None:
-        if path.name == "__status.json":
-            barrier.wait(timeout=5)
-        original_write(path, content)
-
-    work_store.__dict__["atomic_write_text"] = synchronized_write
+    work_repository._work_item_from_dir = delayed_read
     if field == "description":
         work_store.update_work_item(runtime_root, "shared-task", description="new description")
     else:
@@ -70,9 +61,8 @@ def test_concurrent_field_updates_do_not_lose_each_other(tmp_path: Path) -> None
     runtime_root = _state_root(tmp_path)
     work_store.create_work_item(runtime_root, "shared-task")
     context = multiprocessing.get_context("fork")
-    barrier = context.Barrier(2)
     processes = [
-        context.Process(target=_update_work_field, args=(runtime_root, barrier, field))
+        context.Process(target=_update_work_field, args=(runtime_root, field))
         for field in ("description", "task_dir")
     ]
 
