@@ -29,7 +29,7 @@ helper in `base.py` handles the per-harness key lookup.
 
 **Protocol is runtime-checkable.** `HarnessExtractor` extends `SpawnExtractor` as a
 `Protocol` — runtime `isinstance()` checks work. Add new methods to the Protocol
-and to all three implementations together.
+and to every implementation together.
 
 ## Entry Points
 

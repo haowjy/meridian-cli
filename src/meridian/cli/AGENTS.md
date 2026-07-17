@@ -70,4 +70,4 @@ argv
 - `../lib/core/resolved_context.py` — `ResolvedContext` for primary launch
 
 → [.context/CONTEXT.md](.context/CONTEXT.md) — invocation class table, lazy import strategy, session initiation argument handling, app_tree circular-import pattern, help profile selection
-→ [KB: architecture/startup-pipeline.md](/home/jimyao/.meridian/git/meridian-flow-docs/kb/architecture/startup-pipeline.md)
+→ KB: `$MERIDIAN_CONTEXT_KB_DIR/architecture/startup-pipeline.md` (see `meridian context kb`)

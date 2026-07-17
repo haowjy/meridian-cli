@@ -58,9 +58,8 @@ cancel()          → finalize(status='cancelled')
 ## Related
 
 - `../state/` — spawn store consumed by `SpawnLifecycleService`
-- `../harness/ids.py` — `HarnessId` (re-exported via core types)
+- `types.py` — `HarnessId`
 - `../launch/` — uses `SpawnApplicationService` and `ResolvedContext`
 
 → [.context/CONTEXT.md](.context/CONTEXT.md) — ID type details, override merge semantics, `OutputSink` swap pattern, depth rationale, child env key enforcement
-→ [KB: codebase/core-primitives.md](/home/jimyao/.meridian/git/meridian-flow-docs/kb/codebase/core-primitives.md)
-→ [KB: concepts/config-precedence.md](/home/jimyao/.meridian/git/meridian-flow-docs/kb/concepts/config-precedence.md)
+→ KB: `$MERIDIAN_CONTEXT_KB_DIR/concepts/config-precedence.md` (see `meridian context kb`)

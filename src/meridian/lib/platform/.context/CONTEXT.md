@@ -115,7 +115,3 @@ signal.signal(signal.SIGINT, _handle)   # must call from main thread
 `TerminateProcess()` — unconditional kill, no signal handler runs. It does not
 silently fail. Use `psutil.Process(pid).terminate()` for equivalent cross-platform
 behavior.
-
-## Related KB
-
-- [KB: Platform Abstractions](../../../../../../../../.meridian/git/meridian-flow-docs/kb/codebase/platform-abstractions.md) — cross-cutting platform design

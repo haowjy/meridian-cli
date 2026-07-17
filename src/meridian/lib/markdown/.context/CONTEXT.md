@@ -27,7 +27,7 @@ Don't import `markdown_it` directly in other modules. Route through `extract_fil
 
 ## Related KB
 
-→ [KB: codebase/tools.md](/home/jimyao/.meridian/git/meridian-flow-docs/kb/codebase/tools.md)
+→ KB: `$MERIDIAN_CONTEXT_KB_DIR/codebase/tools.md` (see `meridian context kb`)
 
 ## Lateral Links
 

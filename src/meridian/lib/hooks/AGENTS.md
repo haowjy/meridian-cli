@@ -39,4 +39,4 @@ Override key is `(name, event)` — a higher-priority row with the same key repl
 ## Depth
 
 → [.context/CONTEXT.md](.context/CONTEXT.md) — config layering, event classes, failure behavior, plugin API boundary, context transport schema
-→ [KB: concepts/hooks-and-plugins.md](/home/jimyao/.meridian/git/meridian-flow-docs/kb/concepts/hooks-and-plugins.md)
+→ KB: `$MERIDIAN_CONTEXT_KB_DIR/concepts/hooks-and-plugins.md` (see `meridian context kb`)

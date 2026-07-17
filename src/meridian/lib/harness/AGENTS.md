@@ -5,9 +5,7 @@ Mechanism side of the policy/mechanism split. Translates harness-agnostic
 domain types. `ops/` and `launch/` work with domain types — harness specifics stay
 here.
 
-**OpenCode upstream status:** Development moved from the archived
-``opencode-ai/opencode`` repository to ``anomalyco/opencode`` (opencode.ai). The
-Meridian OpenCode adapter targets current opencode.ai CLI releases.
+The Meridian OpenCode adapter targets current opencode.ai CLI releases.
 
 ## Translation Pipeline
 

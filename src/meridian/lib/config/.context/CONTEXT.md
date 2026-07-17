@@ -135,4 +135,4 @@ debuggable errors.
 
 ## Related KB
 
-- [KB: Config Precedence](../../../../../../../../.meridian/git/meridian-flow-docs/kb/concepts/config-precedence.md) — full precedence chain and per-spawn vs project config distinction
+- `$MERIDIAN_CONTEXT_KB_DIR/concepts/config-precedence.md` — full precedence chain and per-spawn vs project config distinction (see `meridian context kb`)

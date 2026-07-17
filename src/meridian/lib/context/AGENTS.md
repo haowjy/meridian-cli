@@ -17,7 +17,7 @@ is `MERIDIAN_CONTEXT_{NAME}_DIR`. `context_env_key(name)` derives the var name.
 ## Key Rules
 
 **`{project}` placeholder resolves to `None` if no project ID is available.** A fresh
-project without `.meridian/project_id` produces `None` for any path containing
+project without `.meridian/id` produces `None` for any path containing
 `{project}`. `resolve_context_paths()` handles this gracefully with fallbacks, but
 if you call `_resolve_path()` directly, you must handle `None` returns.
 

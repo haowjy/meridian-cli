@@ -5,7 +5,7 @@ ops calls into `launch/`, `state/`, and `harness/`. Owns *what* to do — access
 control, input validation, lifecycle sequencing — not *how* to run a process.
 
 ```
-CLI / MCP / REST
+CLI / MCP
       │
       ▼
 ops/          ← policy: depth checks, work attachment, validate, route
@@ -20,14 +20,14 @@ inside ops/, that logic belongs in `launch/`.
 
 ## ops/spawn/ — The Core Subpackage
 
-The second of four driving adapters into `lib/launch/`. Owns foreground and
-background spawn paths for child spawns (not primary sessions).
+The spawn subprocess is the second of three driving adapters into `lib/launch/`.
+This package owns foreground and background child-spawn paths (not primary sessions).
 → [spawn/AGENTS.md](spawn/AGENTS.md)
 
 **SpawnApplicationService** (built by `build_spawn_application_service()` in
 `lib/bootstrap/services.py`) is the policy coordinator. Its key methods:
 
-- `prepare_spawn()` — resolve-before-persist; REST and streaming-serve entry point.
+- `prepare_spawn()` — resolve-before-persist entry point for streaming-serve.
   No row created on resolution failure (SEAM-1).
 - `cancel()` — surface-neutral cancel pipeline: managed-primary, signal, finalizing races.
 - `complete_spawn()` — idempotent terminal seam; acquires per-spawn lock internally.
@@ -80,10 +80,10 @@ references. All `--from` / `-f` operations route through this.
 
 ## Resolve-Before-Persist vs Row-First
 
-- **REST/streaming-serve** (via `SpawnApplicationService.prepare_spawn()`): resolution
+- **Streaming-serve** (via `SpawnApplicationService.prepare_spawn()`): resolution
   first, row created only on success. This is the clean path.
 - **Spawn subprocess** (`execute.py`): row created before calling `build_launch_context()`.
-  Known gap — unification with REST path is tracked as follow-up work.
+  This is a known gap; do not copy it into new paths.
 
 ## Anti-Patterns
 
@@ -106,4 +106,4 @@ use `SPEC_ONLY`.
 - `spawn/AGENTS.md` — spawn policy subpackage depth
 - `../launch/AGENTS.md` — mechanism layer ops/spawn drives
 - `../state/AGENTS.md` — state stores ops reads from
-- KB `architecture/launch-system.md` — four-adapter diagram; ops/spawn is adapter #2
+- KB `architecture/launch-system.md` — launch adapter architecture; ops/spawn is adapter #2 of three

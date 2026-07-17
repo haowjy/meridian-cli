@@ -7,7 +7,7 @@ over `str` / `int`. Zero runtime cost; mypy catches pass-the-wrong-id bugs
 statically. Use them on function signatures wherever spawn or model IDs are
 passed — don't accept `str` when you mean `SpawnId`.
 
-`HarnessId` and `TransportId` are defined here; the former `harness/ids.py` shim was deleted.
+`HarnessId` and `TransportId` are defined here.
 
 ## RuntimeOverrides and Merge Semantics (`overrides.py`)
 
@@ -152,11 +152,6 @@ the root process is still alive with a matching creation time. Returns `False`
 This is a fail-safe for leak prevention (PROC-007): a `session_owned` scope whose
 root has already died must be reclaimed, not silently preserved forever.
 
-### Deleted: `reclaim_stale_session_scopes()`
-
-This function was removed — it had zero callers and was fully superseded by
-`reclaim_session_owned_scopes_for_chat()`. Do not reference it.
-
 ## Spawn Lifecycle Decisions (`spawn_lifecycle.py`)
 
 `spawn_lifecycle.py` owns lifecycle resolution rules — pure stateless functions shared by the
@@ -221,7 +216,9 @@ the terminal state for read-path reconciliation. Durable completion → `succeed
 
 ## Related KB
 
-→ [KB: codebase/guide.md](/home/jimyao/.meridian/git/meridian-flow-docs/kb/codebase/guide.md) — core module orientation and codebase navigation
-→ [KB: concepts/config-precedence.md](/home/jimyao/.meridian/git/meridian-flow-docs/kb/concepts/config-precedence.md)
-→ [KB: architecture/state-system.md](/home/jimyao/.meridian/git/meridian-flow-docs/kb/architecture/state-system.md)
+KB lives at `$MERIDIAN_CONTEXT_KB_DIR` (see `meridian context kb`):
+
+- `$MERIDIAN_CONTEXT_KB_DIR/codebase/guide.md` — core module orientation and codebase navigation
+- `$MERIDIAN_CONTEXT_KB_DIR/concepts/config-precedence.md`
+- `$MERIDIAN_CONTEXT_KB_DIR/architecture/state-system.md`
 → [platform/process_scope/.context/CONTEXT.md](../../platform/process_scope/.context/CONTEXT.md) — mechanism layer (dispatch, backends, PID reuse guard)

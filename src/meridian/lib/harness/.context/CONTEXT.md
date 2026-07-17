@@ -33,7 +33,7 @@ read back. Process exit signals completion. Used for non-streaming spawns.
 
 **Connection path** (`lib/harness/connections/`): starts a long-lived process then
 connects bidirectionally. Events flow through the `SpawnManager` drain loop. Used
-for streaming app server.
+for streaming execution.
 
 Per-harness mapping:
 - Claude subprocess: `claude -p --output-format stream-json --verbose -`
@@ -71,14 +71,6 @@ the accounting guard will run on a partial registration set and fail.
 
 Every `SpawnParams` field must appear in each adapter's `consumed_fields` **or**
 `explicitly_ignored_fields`. Enforced at import time by `launch_spec.py:_enforce_spawn_params_accounting()`. Adding a field to `SpawnParams` without updating all adapters → `ImportError` on startup. This is not documentation — it is enforcement.
-
-Currently ignored fields:
-- Claude ignores `task_cwd`, `context_from_payload`, `reference_items`
-- Codex ignores `skills`, `agent`, `task_cwd`, `context_from_payload`, `reference_items`
-- Cursor ignores `skills`, `agent`, `adhoc_agent_payload`, `control_root`,
-  `appended_system_prompt`, `user_turn_content`,
-  `context_from_payload`, `reference_items`, `continue_harness_session_id`,
-  `continue_fork`, `effort`
 
 The spawn report path is no longer a `SpawnParams` field. It is derived once in
 `bind_launch_context` from `resolve_spawn_log_dir(project_root, spawn_id)`; the
@@ -254,13 +246,9 @@ override). If the parent process already exported this var, Meridian deep-merges
 new workspace entries into the parent config rather than suppressing projection.
 Suppression would silently drop workspace roots inherited from the spawner.
 
-The implementation (`project_workspace_roots()`, `OPENCODE_CONFIG_CONTENT_ENV`)
-lives in `launch/workspace_projection.py`, not in `harness/`. It was moved there
-to break a circular import in Python 3.14: `harness/__init__` → `opencode.py` →
-`opencode_http.py` → `workspace_projection` as a harness submodule, while harness
-was still initializing. The module only depends on `core.types` — it never depended
-on harness internals. `opencode_http.py` now imports `OPENCODE_CONFIG_CONTENT_ENV`
-from `meridian.lib.launch.workspace_projection`.
+`OPENCODE_CONFIG_CONTENT_ENV` lives in `launch/workspace_projection.py` to keep
+the bootstrap dependency direction acyclic; see
+[launch context](../../launch/.context/CONTEXT.md).
 
 ### Cursor: Subprocess-Only, Read-Only stdout
 
@@ -292,9 +280,9 @@ notification markers). The drain loop delegates this policy to
 `PiDrainCoordinator`, which only lets an `agent_end` success candidate finalize
 after the quiescence check passes.
 
-This is the first harness where "done" is not synonymous with "process exited."
-All other harnesses (Claude, Codex, OpenCode) use process exit or an explicit
-terminal event as the completion boundary.
+Pi completes by quiescence rather than a terminal event. Resident Codex and
+OpenCode also hold terminal-event completion until their persisted descendant
+trees drain; plain subprocess harnesses complete on exit or a terminal event.
 
 ### Pi: Runtime Compatibility Probing
 
@@ -377,7 +365,7 @@ accounting invariant treats any uncovered field as a bug, not a warning.
 ## Related .context/
 
 - [../../state/.context/CONTEXT.md](../../state/.context/CONTEXT.md) — artifact store that `SpawnExtractor` reads from; atomic write primitives
-- [../../launch/.context/CONTEXT.md](../../launch/.context/CONTEXT.md) — composition seam, four driving adapters, prepare/bind split, invariants
+- [../../launch/.context/CONTEXT.md](../../launch/.context/CONTEXT.md) — composition seam, three driving adapters, prepare/bind split, invariants
 - [../../../pi_runtime/.context/CONTEXT.md](../../../pi_runtime/.context/CONTEXT.md) — Pi TypeScript extensions, build pipeline, managed-bash / meridian-spawn-watch split
 - [Pi integration](pi-integration.md) — Pi adapter, runtime, and quiescence details
 - [Session transcripts](session-transcripts.md) — harness-neutral transcript normalization and providers

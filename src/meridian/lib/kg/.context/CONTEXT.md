@@ -42,7 +42,7 @@ Use `build_check` for validation gates (broken links + content issues). Use `bui
 
 ## Related KB
 
-→ [KB: codebase/tools.md](/home/jimyao/.meridian/git/meridian-flow-docs/kb/codebase/tools.md)
+→ KB: `$MERIDIAN_CONTEXT_KB_DIR/codebase/tools.md` (see `meridian context kb`)
 
 ## Lateral Links
 

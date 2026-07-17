@@ -2,11 +2,11 @@
 
 ## Architecture
 
-`ops/` sits between surfaces (CLI commands, MCP tools, REST routes) and mechanisms
+`ops/` sits between active surfaces (CLI commands and MCP tools) and mechanisms
 (`launch/`, `state/`, `harness/`). It owns *what* to do, not *how* to run a process.
 
 ```
-CLI / MCP / REST
+CLI / MCP
       │
       ▼
 ops/          ← policy: access control, input validation, lifecycle sequencing
@@ -18,8 +18,8 @@ ops/          ← policy: access control, input validation, lifecycle sequencing
 
 ### ops/spawn/ — The Spawn Policy Layer
 
-`ops/spawn/` is the second of four driving adapters into `lib/launch/`. It owns
-the foreground and background spawn paths for child spawns (not primary sessions).
+The spawn subprocess is the second of three driving adapters into `lib/launch/`.
+`ops/spawn/` owns foreground and background child-spawn paths (not primary sessions).
 
 **SpawnApplicationService** (in `lib/bootstrap/services.py`, built by `build_spawn_application_service()`)
 is the policy coordinator that `ops/spawn/api.py` instantiates. It sits above
@@ -32,7 +32,7 @@ Layer 5: SpawnLifecycleService       ← sole state writer (spawn_store)
 ```
 
 Key `SpawnApplicationService` methods:
-- `prepare_spawn()` — resolve-before-persist; REST and streaming-serve entry point
+- `prepare_spawn()` — resolve-before-persist entry point for streaming-serve
 - `cancel()` — surface-neutral cancel pipeline; managed-primary, signal, finalizing races
 - `complete_spawn()` — idempotent terminal seam; acquires per-spawn lock internally
 - `archive()` — validates terminal state, emits exactly one `spawn.archived`
@@ -59,11 +59,10 @@ This is safe because `complete_spawn()` is idempotent.
 ### Resolve-Before-Persist Pattern
 
 The spawn subprocess path creates the row *before* calling `build_launch_context()`.
-This is a known gap — it differs from the REST/streaming-serve paths which use
+This is a known gap — it differs from streaming-serve, which uses
 resolve-before-persist (`build_launch_context()` first, row creation only on success).
-Row-creation order unification is tracked as follow-up work.
 
-For the REST path, `SpawnApplicationService.prepare_spawn()` enforces:
+For streaming-serve, `SpawnApplicationService.prepare_spawn()` enforces:
 - **SEAM-1**: No spawn row on resolution failure
 - **SEAM-2**: Row metadata always reflects resolved model/agent/harness
 - **SEAM-3**: `ConnectionConfig.env_overrides` populated from `LaunchContext.env_overrides`
@@ -74,40 +73,6 @@ For the REST path, `SpawnApplicationService.prepare_spawn()` enforces:
 `LaunchArgvIntent.REQUIRED`. This is the only execution path that needs a real
 argv — it populates `cli_command` for dry-run display. All actual execution paths
 use `SPEC_ONLY`. Do not set `REQUIRED` on execution paths.
-
-### Worktree Lifecycle Protection
-
-`ops/worktree_lifecycle.py` is the raw git worktree layer — it owns creation,
-restoration, cleanup, and crash recovery. It is intentionally limited to git/worktree
-concerns and returns structured results for callers to persist elsewhere.
-
-`ops/worktree_ensure.py` sits above it and provides high-level ensure semantics used
-by `work_worktree.py` and spawn logic. The split is: lifecycle owns raw git operations,
-ensure owns state management and idempotency.
-
-Managed worktree creation writes a `mars.local.toml` guard with
-`[settings] targets = []` when the worktree is newly created. This prevents
-repo-local `meridian mars sync` from materializing harness targets inside each
-worktree. Existing `mars.local.toml` files are user-owned and preserved.
-
-**Destructive operations guard against three conditions:**
-
-1. **Manual worktrees** (`managed=False`): paths set via `work set-worktree` are never
-   removed or moved by `cleanup_for_done()`, `cleanup_for_delete()`, or `rename_worktree()`.
-   These return `skipped_manual` — the user owns the directory lifecycle.
-2. **Shared references**: when multiple work items reference the same worktree path,
-   cleanup returns `shared_reference` with the list of other item names. The worktree
-   is not removed while another item depends on it.
-3. **Unpushed commits** (done, not force): `cleanup_for_done()` checks for unpushed
-   commits before removal unless `--force` is passed. `cleanup_for_delete()` skips
-   this check — delete is already a destructive operation.
-
-**Worktree rename** (`rename_worktree()`) moves both the directory and the git branch
-to match the new work slug. Fails if the worktree is shared, missing, or not managed.
-
-**Crash recovery** (`recover_pending()`) handles interrupted `work start` between
-`git worktree add` and metadata write. If the worktree directory exists, it heals
-the record; otherwise it clears the pending flag.
 
 ### ops/init_ops.py — Init Orchestration
 
@@ -132,45 +97,6 @@ directories (containing `SKILL.md`), agents as files, so the scan uses
 type (e.g., `{"agents": [...], "skills": [...]}`). This avoids coupling Python
 to the mars JSON report shape — new content types (hooks, MCP servers, etc.) are
 automatically counted without Python model changes.
-
-### ops/worktree_ensure.py — Managed Worktree Orchestration
-
-`worktree_ensure.py` sits above `worktree_lifecycle.py` and provides high-level
-ensure semantics with state management, dry-run support, and session-scoped temporary
-worktrees. Used by `work_worktree.py` and `spawn/api.py`.
-
-**Key contracts:**
-
-`ensure_work_item_worktree()` is idempotent — calling twice returns `already_available`
-on the second call. Once managed metadata (repo_path + name) is persisted, subsequent
-calls reuse it regardless of `--repo` or cwd. Accepts dry-run mode and `allow_missing_dry_run`
-for work items that don't exist yet. Returns `WorktreeEnsureResult` with status, metadata,
-repo_root, canonical_path, and optional warning.
-
-`ensure_temporary_worktree()` provides session-scoped isolation keyed by spawn_id/chat_id
-(via `_temporary_key(ctx)` → `worktree-temp/` store). Uses same pending/rollback discipline:
-set pending before git, clear on failure, upgrade to ready on success.
-
-`get_temporary_worktree_status()` is read-only; heals pending-but-dir-exists records.
-
-Repo resolution (`_resolve_target_repo()`, `_resolve_repo_root()`) supports path selectors,
-workspace aliases, and cwd-based inference. Dry-run mode uses `.git` marker scanning
-without running git commands.
-
-Managed path policy: `_canonical_target()` derives `<repo>.worktrees/<name>`. Non-canonical
-paths are detected as drift and fail clearly.
-
-### ops/work_worktree.py — Work Worktree Command Orchestration
-
-`work_worktree.py` orchestrates `meridian work worktree` command logic. Accepts
-`WorkWorktreeInput` (work_id, ensure, repo, chat_id, project_root), returns
-`WorkWorktreeOutput` with worktree path, branch, name, repo_root, managed status,
-exists flag, temporary flag, ensured flag, message, and warning.
-
-Routes based on whether a work item is active: calls `ensure_work_item_worktree()`
-if present, else delegates to `ensure_temporary_worktree()`. When `ensure=False`,
-returns status-only response (no-op) if path already exists. When work_id is empty
-and no active work item, uses temporary worktree path.
 
 ### session_target.py / session_transcript.py — Ordered Transcript Sources
 
@@ -313,7 +239,7 @@ discovery stays in ops and artifact presence checking stays in the store.
 
 ## Related KB
 
-- `architecture/launch-system.md` — full four-adapter diagram; ops/spawn is adapter #2
+- `architecture/launch-system.md` — launch adapter architecture; ops/spawn is adapter #2 of three
 - `concepts/spawn-lifecycle.md` — spawn status machine ops surfaces expose
 - `architecture/spawn-finalization.md` — `SpawnApplicationService.complete_spawn()`,
   `CompleteSpawnOutcome`, per-spawn lock

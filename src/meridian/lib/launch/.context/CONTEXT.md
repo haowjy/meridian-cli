@@ -8,7 +8,7 @@ All launch state composition happens inside `build_launch_context()` in `context
 No driving adapter composes argv, env, or permissions independently. This is a hard
 invariant — violation means two places can diverge silently.
 
-`build_launch_context()` is now a backward-compat wrapper over a two-phase pipeline:
+`build_launch_context()` is a backward-compat wrapper over a two-phase pipeline:
 
 ```
 SpawnRequest + LaunchRuntime
@@ -264,38 +264,26 @@ or configured KB root). The path after `kb:` must be relative and must not escap
 the KB root. Example: `kb:architecture/launch-system.md`.
 
 **`@` prefix is unsupported** — attempting to use it raises a `ValueError` directing
-the user to use `kb:` instead. This was a legacy convention that has been removed.
+the user to use `kb:` instead.
 
 Directory references (`-f <dir>`) render as a tree structure with blocked directories
 (`.git`, `node_modules`, `.meridian`, etc.) and blocked suffixes (`.pyc`, `.egg-info`)
 excluded. File references include content inline if under 100KB; larger or binary
 files produce a warning instead.
 
-### Worktree Path Assignment vs Managed Ownership
+### Work Item Task Directories
 
-Work items track worktree paths through `WorktreeMetadata` in `work_store.py`,
-which separates **path assignment** from **managed git-worktree ownership**:
-
-- **`managed=True`**: provisioned by `work start` via `provision_for_start()`.
-  Lifecycle operations (cleanup on done/delete, rename, restore on reopen) apply.
-- **`managed=False`**: set manually via `work set-worktree`. The path is recorded
-  but lifecycle operations skip it — `cleanup_for_done()`, `cleanup_for_delete()`,
-  and `rename_worktree()` all return `skipped_manual` for unmanaged worktrees.
-
-This separation allows users to point a work item at an existing directory without
-meridian treating it as a disposable git worktree. Shared worktree references
-(multiple work items pointing at the same path) also block destructive lifecycle
-operations via the `shared_with` guard.
+Launch uses a work item's `task_dir` as its logical task cwd. Persisted
+`WorktreeMetadata` is state/display metadata only; launch does not provision or
+manage git worktrees.
 
 ### Workspace Projection
 
-`workspace_projection.py` in this module owns `project_workspace_roots()` and
-`OPENCODE_CONFIG_CONTENT_ENV`. It was moved here from `harness/` to eliminate a
-circular import in Python 3.14 bootstrap (`harness/__init__` → `opencode.py` →
-`opencode_http.py` → `workspace_projection` as a harness submodule while harness
-was still initializing). The module only depends on `core.types` — never on harness
-internals. `harness/connections/opencode_http.py` imports `OPENCODE_CONFIG_CONTENT_ENV`
-from this module.
+`workspace_projection.py` owns `project_workspace_roots()` and
+`OPENCODE_CONFIG_CONTENT_ENV`. Keeping this dependency-light module in `launch/`
+prevents `harness` bootstrap from importing back into a partially initialized
+harness package. It depends only on `core.types`, never on harness internals;
+`harness/connections/opencode_http.py` imports the env constant from here.
 
 Two steps inside `bind_launch_context()`:
 
@@ -337,8 +325,7 @@ finally:
 
 The inner try/finally ensures scope reclamation runs even if `stop_session` raises.
 `reclaim_session_owned_scopes_for_chat` terminates any process scopes the session owns
-(e.g., managed primary backends) that were not released during normal teardown — this
-was the missing step that caused session_owned scopes to persist as orphans.
+(e.g., managed primary backends) that were not released during normal teardown.
 
 **Callers must not add manual scope cleanup after `session_scope`** — reclamation is
 guaranteed by the context manager. Adding cleanup outside it creates a race between the
@@ -352,8 +339,8 @@ test injection; in production it always points to `reclaim_session_owned_scopes_
 `resolve_task_context_inputs()` in `context.py` is the single seam for assembling
 user-turn context blocks from `--from` refs and `-f` reference files:
 
-The full four-mode session-initiation model and its rationale live in
-[concepts/session-initiation.md](../../../../../../../../.meridian/git/haowjy-meridian-cli-kb/kb/concepts/session-initiation.md).
+The full four-mode session-initiation model and its rationale live at
+`$MERIDIAN_CONTEXT_KB_DIR/concepts/session-initiation.md` (see `meridian context kb`).
 This code-local note records only the launch seam and the fields it threads.
 
 ```python
@@ -372,9 +359,7 @@ def resolve_task_context_inputs(
 ```
 
 Both `_resolve_spawn_prepare_projection()` and `_resolve_primary_projection()` call
-this function. Before this seam existed, `_resolve_primary_projection()` hardcoded
-`reference_items=()` and `prior_output=""` — primary launch always had empty user-turn
-context even when `LaunchRequest.context_from` was populated.
+this function so both launch paths receive the same user-turn context inputs.
 
 **Content ordering** inside the assembled user turn:
 
@@ -388,18 +373,17 @@ context even when `LaunchRequest.context_from` was populated.
 (from `--from` on both spawn and primary surfaces). It is populated by the CLI layer
 from `ForkModeResolution.resolved_context_from` and passed through to
 `SpawnRequest.context_from` via `build_primary_spawn_request()` in `plan.py`.
-Before this field existed, primary launch silently dropped `--from` refs.
 
 **Do not unify `_resolve_spawn_prepare_projection()` and `_resolve_primary_projection()`.**
 Only the user-turn context resolution step is shared. The two projections differ in
 supplemental documents, agent profile body handling, report instruction, completion
 contract, session seeding, and passthrough arg normalization. `resolve_task_context_inputs()`
-is the only extraction authorized by this change.
+is the only shared extraction between them.
 
 #### Why User-Turn, Not System Prompt
 
 Prior context is rendered into the user turn, not the system prompt. The full
-rationale lives in [concepts/session-initiation.md](../../../../../../../../.meridian/git/haowjy-meridian-cli-kb/kb/concepts/session-initiation.md);
+rationale lives at `$MERIDIAN_CONTEXT_KB_DIR/concepts/session-initiation.md`;
 at this layer, the rule is simply to keep `--from` blocks in user-turn context
 blocks and out of `SystemInstruction`.
 

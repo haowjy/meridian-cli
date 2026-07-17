@@ -31,7 +31,9 @@ Op-style handlers (single Pydantic input model) use `ExtensionCommandSpec.from_o
 
 ## Surface Rules
 
-`ExtensionSurface`: `CLI`, `MCP`, `HTTP`. A command may expose any subset via `spec.surfaces`.
+`ExtensionSurface` declares `CLI`, `MCP`, and `HTTP`. CLI and MCP are active.
+HTTP remains in command specs, but no HTTP dispatcher or app server exists, so it
+is a dormant surface rather than a runnable endpoint.
 
 **Non-first-party commands cannot expose `CLI` or `MCP`** — enforced at `registry.register()`. This is a hard constraint, not a default. Attempting to register a non-first-party command with CLI or MCP surfaces raises `ValueError`.
 
@@ -43,9 +45,10 @@ Op-style handlers (single Pydantic input model) use `ExtensionCommandSpec.from_o
 
 **Surface-aware defaults** (applied by `ExtensionInvocationContextBuilder.build()` when `with_capabilities()` is not called explicitly):
 - `CLI` and `MCP` → `ExtensionCapabilities.denied()` (all False)
-- `HTTP` → `ExtensionCapabilities.elevated()` (all True)
+- dormant `HTTP` → `ExtensionCapabilities.elevated()` (all True)
 
-This reflects that the app server is a trusted orchestration boundary. CLI/MCP callers are unprivileged by default.
+CLI/MCP callers are unprivileged by default. The HTTP default is retained policy
+for a possible app-server return; no active boundary currently uses it.
 
 ## Registry Singleton
 
@@ -55,6 +58,6 @@ This reflects that the app server is a trusted orchestration boundary. CLI/MCP c
 
 ## Rationale
 
-Before the extension system, commands had parallel implementations for CLI/MCP and HTTP. The KB page documents the full history:
+One spec keeps surface implementations from diverging. The full design lives in:
 
-→ [KB: concepts/extension-system.md](/home/jimyao/.meridian/git/meridian-flow-docs/kb/concepts/extension-system.md)
+→ `$MERIDIAN_CONTEXT_KB_DIR/concepts/extension-system.md` (see `meridian context kb`)

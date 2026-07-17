@@ -95,4 +95,4 @@ but weaker than group kill or Job Object containment.
 - [`../AGENTS.md`](../AGENTS.md) — module entry points
 - [`../.context/CONTEXT.md`](../.context/CONTEXT.md) — parent platform invariants
 - [`../../../core/.context/CONTEXT.md`](../../../core/.context/CONTEXT.md) — process_cleanup.py, which owns policy decisions and calls terminate_scope_sync()
-- KB: [architecture/process-scope.md](/home/jimyao/.meridian/git/meridian-flow-docs/kb/architecture/process-scope.md)
+- KB: `$MERIDIAN_CONTEXT_KB_DIR/architecture/process-scope.md` (see `meridian context kb`)

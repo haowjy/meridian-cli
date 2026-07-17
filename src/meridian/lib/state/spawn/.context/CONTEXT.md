@@ -158,5 +158,5 @@ as an orphan failure even if artifacts exist.
 
 - [`../AGENTS.md`](../AGENTS.md) — entry points
 - [`../.context/CONTEXT.md`](../.context/CONTEXT.md) — parent state module contracts
-- KB [`architecture/spawn-finalization.md`](../../../../../../../../.meridian/git/haowjy-meridian-cli-kb/kb/architecture/spawn-finalization.md) — finalization authority lattice, `runner_exit_*` invariant, and reaper contract
-- KB [`architecture/state-system.md`](../../../../../../../../.meridian/git/haowjy-meridian-cli-kb/kb/architecture/state-system.md) — v2 state layout, per-spawn locking, and reconciliation model
+- `$MERIDIAN_CONTEXT_KB_DIR/architecture/spawn-finalization.md` — finalization authority lattice, `runner_exit_*` invariant, and reaper contract
+- `$MERIDIAN_CONTEXT_KB_DIR/architecture/state-system.md` — per-spawn state layout, locking, and reconciliation model
