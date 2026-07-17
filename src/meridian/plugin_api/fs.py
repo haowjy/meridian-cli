@@ -8,7 +8,15 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Literal
 
+from meridian.lib.platform.atomic import atomic_replace
 from meridian.lib.platform.locking import lock_file
+
+
+def atomic_write_text(path: Path, content: str, *, durable: bool = True) -> None:
+    """Atomically replace a text file through the dependency-neutral platform seam."""
+
+    with atomic_replace(path, durable=durable) as handle:
+        handle.write(content)
 
 
 @contextmanager

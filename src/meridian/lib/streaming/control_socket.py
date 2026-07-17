@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, cast
 
 from meridian.lib.core.types import SpawnId
 from meridian.lib.platform import IS_WINDOWS
+from meridian.lib.platform.atomic import atomic_replace
 from meridian.lib.streaming.types import InjectResult
 
 if TYPE_CHECKING:
@@ -70,7 +71,8 @@ class ControlSocketServer:
             if not isinstance(port_value, int):
                 raise RuntimeError("control socket server returned invalid bound port")
             self._port = port_value
-            self._port_file.write_text(f"{port_value}\n", encoding="utf-8")
+            with atomic_replace(self._port_file, durable=False) as handle:
+                handle.write(f"{port_value}\n")
             return
 
         self._socket_path.unlink(missing_ok=True)

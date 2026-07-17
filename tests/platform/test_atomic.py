@@ -2,6 +2,7 @@ from pathlib import Path
 
 import pytest
 
+from meridian.lib.platform import atomic as platform_atomic
 from meridian.lib.state import atomic as atomic_module
 from tests.conftest import posix_only
 
@@ -17,10 +18,10 @@ def _capture_fsync_calls(
     directory_fd: int | None = None,
 ) -> list[int]:
     fsync_calls: list[int] = []
-    original_open = atomic_module.os.open
-    original_close = atomic_module.os.close
+    original_open = platform_atomic.os.open
+    original_close = platform_atomic.os.close
 
-    monkeypatch.setattr(atomic_module.os, "fsync", fsync_calls.append)
+    monkeypatch.setattr(platform_atomic.os, "fsync", fsync_calls.append)
     if directory_fd is None:
         return fsync_calls
 
@@ -36,8 +37,8 @@ def _capture_fsync_calls(
             return
         original_close(fd)
 
-    monkeypatch.setattr(atomic_module.os, "open", fake_open)
-    monkeypatch.setattr(atomic_module.os, "close", fake_close)
+    monkeypatch.setattr(platform_atomic.os, "open", fake_open)
+    monkeypatch.setattr(platform_atomic.os, "close", fake_close)
     return fsync_calls
 
 
@@ -129,6 +130,21 @@ def test_atomic_write_text_replaces_content_cross_platform(tmp_path: Path) -> No
     atomic_module.atomic_write_text(target, "after\n")
 
     assert target.read_text(encoding="utf-8") == "after\n"
+    assert _tmp_candidates(target) == []
+
+
+def test_atomic_replace_exception_preserves_old_content(tmp_path: Path) -> None:
+    target = tmp_path / "state.txt"
+    target.write_text("before\n", encoding="utf-8")
+
+    with (
+        pytest.raises(RuntimeError, match="simulated crash"),
+        platform_atomic.atomic_replace(target) as handle,
+    ):
+        handle.write("partial")
+        raise RuntimeError("simulated crash")
+
+    assert target.read_text(encoding="utf-8") == "before\n"
     assert _tmp_candidates(target) == []
 
 

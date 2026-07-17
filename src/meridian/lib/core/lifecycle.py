@@ -24,7 +24,6 @@ reintroduce cycles.
 
 from __future__ import annotations
 
-import json
 import os
 import uuid
 from dataclasses import asdict, dataclass
@@ -759,18 +758,22 @@ class SpawnLifecycleService:
         origin: TerminalOrigin | None = None,
         error: str | None = None,
     ) -> None:
+        from meridian.lib.state.failure_sentinel import (
+            delete_failure_sentinel,
+            write_failure_sentinel,
+        )
+
         if record.status == "failed":
-            _write_failure_sentinel(
-                self._runtime_root,
-                record.id,
-                self._build_terminal_failure_diagnostic(
-                    record,
-                    origin=origin,
-                    error=error,
-                ),
+            failure = self._build_terminal_failure_diagnostic(
+                record,
+                origin=origin,
+                error=error,
             )
+            data = asdict(failure)
+            data["ts"] = failure.ts.isoformat()
+            write_failure_sentinel(self._runtime_root, record.id, data)
             return
-        _delete_failure_sentinel(self._runtime_root, record.id)
+        delete_failure_sentinel(self._runtime_root, record.id)
 
     def _dispatch(self, event: LifecycleEvent) -> None:
         correlation = LifecycleCorrelation(
@@ -1013,40 +1016,6 @@ def _terminal_telemetry_payload(spawn: SpawnRecord) -> dict[str, Any]:
     return payload
 
 
-def _write_failure_sentinel(
-    runtime_root: Path,
-    spawn_id: str,
-    failure: SpawnFailure,
-) -> None:
-    """Best-effort write of failure sentinel.
-
-    Does not propagate exceptions; terminal state writes take priority.
-    """
-    try:
-        from meridian.lib.state.paths import RuntimePaths
-
-        sentinel_path = (
-            RuntimePaths.from_root_dir(runtime_root).spawns_dir / spawn_id / "failure.json"
-        )
-        sentinel_path.parent.mkdir(parents=True, exist_ok=True)
-        data = asdict(failure)
-        data["ts"] = failure.ts.isoformat()
-        sentinel_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
-    except Exception:
-        logger.exception("Failed to write failure sentinel for %s", spawn_id)
-
-
-def _delete_failure_sentinel(runtime_root: Path, spawn_id: str) -> None:
-    """Best-effort removal of stale failure sentinel after non-failed replacement."""
-    try:
-        from meridian.lib.state.paths import RuntimePaths
-
-        sentinel_path = (
-            RuntimePaths.from_root_dir(runtime_root).spawns_dir / spawn_id / "failure.json"
-        )
-        sentinel_path.unlink(missing_ok=True)
-    except Exception:
-        logger.exception("Failed to remove failure sentinel for %s", spawn_id)
 
 
 # ---------------------------------------------------------------------------
