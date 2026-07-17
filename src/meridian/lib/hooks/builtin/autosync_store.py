@@ -1,30 +1,32 @@
-"""Autosync artifact storage — conflict metadata, sync state, AGENTS.md notices.
+"""Autosync artifact storage and transaction boundary.
 
 Single owner of the .meridian/autosync/ file layout. All reads and writes
 go through this module. No other module should construct paths into
 .meridian/autosync/ or parse its JSON directly.
 
-Dependencies: stdlib plus plugin_api only, preserving standalone extraction by
-keeping Meridian internals behind the public plugin boundary.
+Mutations are only available through :func:`transaction`, which serializes the
+complete autosync workflow for a sync root.
 """
 
 from __future__ import annotations
 
 import hashlib
 import json
-import re
 import time
+from collections.abc import Generator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
 
+from meridian.lib.platform.locking import lock_file
 from meridian.plugin_api.fs import AtomicReplaceDurabilityError, atomic_write_text
+from meridian.plugin_api.state import get_user_home
 
 AUTOSYNC_IGNORE_PATTERNS: tuple[str, ...] = (".git", "**/.git", ".meridian/autosync/")
 
-_NOTICE_START = "<!-- autosync-notices -->"
-_NOTICE_END = "<!-- /autosync-notices -->"
+_DEFAULT_LOCK_TIMEOUT_SECONDS = 60.0
 
 
 @dataclass(frozen=True)
@@ -79,6 +81,58 @@ def state_file(sync_root: Path) -> Path:
     """Return the sync state file path for a sync root."""
 
     return sync_root / ".meridian" / "autosync" / "state.json"
+
+
+def autosync_lock_path(sync_root: Path) -> Path:
+    """Return the canonical transaction lock path for a sync root."""
+
+    canonical_root = sync_root.expanduser().resolve()
+    root_hash = hashlib.sha256(str(canonical_root).encode("utf-8")).hexdigest()[:16]
+    return get_user_home() / "locks" / f"clone-{root_hash}.lock"
+
+
+@dataclass(frozen=True)
+class AutosyncTransaction:
+    """Mutation capability held while a sync root's lock is acquired."""
+
+    sync_root: Path
+
+    def write_conflict(self, record: ConflictRecord) -> None:
+        """Write one conflict metadata JSON atomically."""
+
+        _write_conflict(self.sync_root, record)
+
+    def write_sync_state(
+        self,
+        *,
+        outcome: str,
+        conflict_id: str | None = None,
+    ) -> None:
+        """Write autosync state JSON atomically."""
+
+        _write_sync_state(self.sync_root, outcome=outcome, conflict_id=conflict_id)
+
+    def mark_resolved(self, conflict_id: str) -> bool:
+        """Mark one conflict resolved within this transaction."""
+
+        return _mark_resolved(self.sync_root, conflict_id)
+
+
+@contextmanager
+def transaction(
+    sync_root: Path,
+    *,
+    timeout: float | None = _DEFAULT_LOCK_TIMEOUT_SECONDS,
+) -> Generator[AutosyncTransaction, None, None]:
+    """Hold the canonical sync-root lock and yield its mutation capability."""
+
+    canonical_root = sync_root.expanduser().resolve()
+    with lock_file(
+        autosync_lock_path(canonical_root),
+        timeout=timeout,
+        reentrant=True,
+    ):
+        yield AutosyncTransaction(canonical_root)
 
 
 def read_sync_state(sync_root: Path) -> SyncState | None:
@@ -195,7 +249,7 @@ def generate_conflict_id() -> str:
     return f"c{date_str}-{short_hash}"
 
 
-def write_conflict(sync_root: Path, record: ConflictRecord) -> None:
+def _write_conflict(sync_root: Path, record: ConflictRecord) -> None:
     """Write one conflict metadata JSON atomically."""
 
     target_dir = conflict_dir(sync_root)
@@ -224,7 +278,7 @@ def write_conflict(sync_root: Path, record: ConflictRecord) -> None:
     atomic_write_text(target, json.dumps(payload, indent=2))
 
 
-def write_sync_state(
+def _write_sync_state(
     sync_root: Path,
     *,
     outcome: str,
@@ -243,7 +297,7 @@ def write_sync_state(
     atomic_write_text(state_file(sync_root), json.dumps(payload, indent=2))
 
 
-def mark_resolved(sync_root: Path, conflict_id: str) -> bool:
+def _mark_resolved(sync_root: Path, conflict_id: str) -> bool:
     """Mark one conflict as resolved. Returns True when metadata was updated."""
 
     try:
@@ -262,101 +316,6 @@ def mark_resolved(sync_root: Path, conflict_id: str) -> bool:
         return False
 
 
-def append_conflict_notice(
-    sync_root: Path,
-    conflict_id: str,
-    paths: list[str],
-    remote_branch: str,
-) -> bool:
-    """Append a managed conflict notice to AGENTS.md."""
-
-    agents_md = sync_root / "AGENTS.md"
-    if not agents_md.exists():
-        return False
-
-    try:
-        content = agents_md.read_text(encoding="utf-8")
-    except OSError:
-        return False
-
-    conflict_start = _conflict_block_start(conflict_id)
-    conflict_end = _conflict_block_end(conflict_id)
-    conflict_pattern = re.compile(
-        rf"{re.escape(conflict_start)}.*?{re.escape(conflict_end)}",
-        flags=re.DOTALL,
-    )
-    if conflict_pattern.search(content):
-        return False
-
-    notice_block = _format_conflict_notice(conflict_id, paths, remote_branch)
-
-    if _NOTICE_START in content and _NOTICE_END in content:
-        start_idx = content.index(_NOTICE_START)
-        end_idx = content.index(_NOTICE_END)
-        if start_idx >= end_idx:
-            return False
-
-        prefix = content[:end_idx]
-        if not prefix.endswith("\n"):
-            prefix += "\n"
-        new_content = prefix + notice_block + "\n" + content[end_idx:]
-    elif _NOTICE_START in content or _NOTICE_END in content:
-        return False
-    else:
-        section = f"\n{_NOTICE_START}\n{notice_block}\n{_NOTICE_END}\n"
-        new_content = content.rstrip("\n") + "\n" + section
-
-    try:
-        return _write_text_reconciled(agents_md, new_content)
-    except OSError:
-        return False
-
-
-def strip_conflict_notice(sync_root: Path, conflict_id: str) -> bool:
-    """Remove one managed conflict notice block from AGENTS.md."""
-
-    agents_md = sync_root / "AGENTS.md"
-    if not agents_md.exists():
-        return False
-
-    try:
-        content = agents_md.read_text(encoding="utf-8")
-    except OSError:
-        return False
-
-    start_marker = _conflict_block_start(conflict_id)
-    end_marker = _conflict_block_end(conflict_id)
-
-    start_idx = content.find(start_marker)
-    end_start_idx = content.find(end_marker)
-    if start_idx < 0 or end_start_idx < 0 or end_start_idx < start_idx:
-        return False
-
-    end_idx = end_start_idx + len(end_marker)
-    if end_idx < len(content) and content[end_idx] == "\n":
-        end_idx += 1
-
-    new_content = content[:start_idx] + content[end_idx:]
-
-    ns_idx = new_content.find(_NOTICE_START)
-    ne_start = new_content.find(_NOTICE_END)
-    if ns_idx >= 0 and ne_start >= 0 and ne_start >= ns_idx:
-        between = new_content[ns_idx + len(_NOTICE_START) : ne_start].strip()
-        if not between:
-            ne_idx = ne_start + len(_NOTICE_END)
-            if ns_idx > 0 and new_content[ns_idx - 1] == "\n":
-                ns_idx -= 1
-            if ne_idx < len(new_content) and new_content[ne_idx] == "\n":
-                ne_idx += 1
-            new_content = new_content[:ns_idx] + new_content[ne_idx:]
-
-    new_content = new_content.rstrip("\n") + "\n" if new_content.strip() else ""
-    try:
-        return _write_text_reconciled(agents_md, new_content)
-    except OSError:
-        return False
-
-
 def _write_text_reconciled(path: Path, content: str) -> bool:
     """Write content, verifying visibility after a post-commit durability error."""
 
@@ -368,36 +327,6 @@ def _write_text_reconciled(path: Path, content: str) -> bool:
         except OSError:
             return False
     return True
-
-
-def _conflict_block_start(conflict_id: str) -> str:
-    return f"<!-- autosync-conflict:{conflict_id} -->"
-
-
-def _conflict_block_end(conflict_id: str) -> str:
-    return f"<!-- /autosync-conflict:{conflict_id} -->"
-
-
-def _format_conflict_notice(conflict_id: str, paths: list[str], remote_branch: str) -> str:
-    paths_str = ", ".join(f"`{path}`" for path in paths)
-    return (
-        f"{_conflict_block_start(conflict_id)}\n"
-        "### Autosync Conflict\n"
-        "\n"
-        f"Conflict `{conflict_id}` — autosync could not merge remote changes.\n"
-        f"Affected paths: {paths_str}. The working tree retains the\n"
-        f"local version. Remote changes are at `origin/{remote_branch}`.\n"
-        "\n"
-        "To resolve:\n"
-        "1. `git fetch origin`\n"
-        f"2. `git merge origin/{remote_branch}`\n"
-        "3. Resolve any conflicts in the affected files\n"
-        "4. `git add` the resolved files and `git commit`\n"
-        "5. Remove this notice block when done.\n"
-        "\n"
-        "If you are not modifying the affected files, this does not block your work.\n"
-        f"{_conflict_block_end(conflict_id)}"
-    )
 
 
 def _load_json_object(path: Path) -> dict[str, Any] | None:
@@ -454,22 +383,20 @@ def _find_conflict_file(
 
 __all__ = [
     "AUTOSYNC_IGNORE_PATTERNS",
+    "AutosyncTransaction",
     "ConflictRecord",
     "SyncRootStatus",
     "SyncState",
-    "append_conflict_notice",
+    "autosync_lock_path",
     "conflict_dir",
     "find_conflict_by_id",
     "generate_conflict_id",
     "has_autosync_state",
     "has_unresolved_conflict",
-    "mark_resolved",
     "read_conflicts",
     "read_status",
     "read_sync_state",
     "read_unresolved_conflicts",
     "state_file",
-    "strip_conflict_notice",
-    "write_conflict",
-    "write_sync_state",
+    "transaction",
 ]

@@ -231,7 +231,7 @@ def test_git_autosync_skips_when_user_state_lock_cannot_be_created(
     def _raise_permission(*_args: object, **_kwargs: object) -> None:
         raise PermissionError("sandbox denied")
 
-    monkeypatch.setattr("meridian.lib.hooks.builtin.git_autosync.file_lock", _raise_permission)
+    monkeypatch.setattr("meridian.lib.hooks.builtin.autosync_store.lock_file", _raise_permission)
 
     result = GitAutosync().execute(_context(work), _hook(remote=str(remote)))
 
@@ -315,7 +315,7 @@ def test_git_autosync_merge_conflict_aborts_and_records(
     assert remote_head_after_hook == remote_head_after_other
 
 
-def test_git_autosync_merge_conflict_writes_agents_md_notice(
+def test_git_autosync_merge_conflict_does_not_rewrite_agents_md(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -338,12 +338,10 @@ def test_git_autosync_merge_conflict_writes_agents_md_notice(
     assert result.skip_reason == "conflict_detected"
 
     agents_md = (work / "AGENTS.md").read_text(encoding="utf-8")
-    assert "<!-- autosync-notices -->" in agents_md
-    assert "<!-- /autosync-notices -->" in agents_md
-    assert "### Autosync Conflict" in agents_md
+    assert agents_md == "# Test\n"
 
     subjects = _git("log", "--pretty=%s", cwd=work, env=git_env).stdout.splitlines()
-    assert any(subject.startswith("autosync: conflict notice") for subject in subjects)
+    assert not any(subject.startswith("autosync: conflict notice") for subject in subjects)
 
 
 def test_git_autosync_merge_conflict_skips_notice_when_no_agents_md(
