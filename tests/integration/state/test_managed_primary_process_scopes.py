@@ -17,6 +17,7 @@ from meridian.lib.state.paths import resolve_runtime_paths
 from meridian.lib.state.process_scope_projection import (
     is_scope_released,
     mark_scope_released,
+    read_scopes_from_disk,
     record_scope,
 )
 from meridian.lib.state.reaper import reconcile_active_spawn
@@ -77,6 +78,21 @@ def _scope(
         job_name=None,
         degraded_reason=None,
     )
+
+
+@pytest.mark.parametrize("read_api", ["scopes", "released"])
+def test_missing_scope_sidecar_reads_do_not_create_lock_tree(
+    tmp_path: Path,
+    read_api: str,
+) -> None:
+    runtime_root = tmp_path / "runtime"
+
+    if read_api == "scopes":
+        assert read_scopes_from_disk(runtime_root, SpawnId("p1")) == []
+    else:
+        assert is_scope_released(runtime_root, SpawnId("p1"), "missing") is False
+
+    assert not runtime_root.exists()
 
 
 def test_concurrent_scope_releases_preserve_every_marker(

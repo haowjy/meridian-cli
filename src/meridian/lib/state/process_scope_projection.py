@@ -239,6 +239,8 @@ def is_scope_released(
 
     Returns False on any read error so callers fail open (attempt cleanup).
     """
+    if not _sidecar_path(runtime_root, spawn_id).is_file():
+        return False
     return release_id in read_scope_projection(runtime_root, spawn_id).released_ids
 
 
@@ -252,6 +254,8 @@ def read_scopes_from_disk(
     error.  Use when the spawn record may not have been refreshed yet (e.g.
     immediately after ``record_scope`` in the same process).
     """
+    if not _sidecar_path(runtime_root, spawn_id).is_file():
+        return []
     return list(read_scope_projection(runtime_root, spawn_id).scopes)
 
 
