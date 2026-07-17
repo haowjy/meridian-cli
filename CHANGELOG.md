@@ -4,6 +4,10 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+- Spawn reconciliation completion/cancel precedence now lives behind a shared
+  state-layer decision seam instead of a private reaper import. (#322)
+
 ## [0.3.32] - 2026-07-17
 
 ### Added
