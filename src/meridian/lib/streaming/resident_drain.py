@@ -20,7 +20,6 @@ from meridian.lib.streaming.completion_contracts import (
     CompletionDirectives,
     CompletionEvaluation,
     CompletionState,
-    DiagnosticBlocker,
     EvidenceEventDecision,
     EvidenceFailure,
     NudgeUrgency,
@@ -67,7 +66,6 @@ class _ResidentCompletionEvidence:
         self._descendant_evidence = ReconciledDescendantEvidence(
             runtime_root=runtime_root,
             root_spawn_id=spawn_id,
-            blocker_reader=lambda: _outstanding_descendant_blockers(runtime_root, spawn_id),
         )
         self._next_due: float | None = None
 
@@ -491,20 +489,4 @@ class ResidentDrainCoordinator:
         request: CompletionCleanupRequest,
     ) -> None:
         await self._coordinator.execute_post_publication_cleanup(request)
-
-def _outstanding_descendant_blockers(
-    runtime_root: Path,
-    spawn_id: SpawnId,
-) -> tuple[DiagnosticBlocker, ...]:
-    """Compatibility seam for resident failure characterization."""
-
-    assessment = ReconciledDescendantEvidence(
-        runtime_root=runtime_root,
-        root_spawn_id=spawn_id,
-    ).assess()
-    if assessment.failure is not None:
-        raise OSError(assessment.failure.detail)
-    return assessment.blockers
-
-
 __all__ = ["ResidentDrainCoordinator"]

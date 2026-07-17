@@ -22,6 +22,7 @@ from meridian.lib.streaming import pi_drain as pi_drain_module
 from meridian.lib.streaming.completion_nudge import PI_COMPLETION_NUDGE_MESSAGE
 from meridian.lib.streaming.drain_policy import DrainAction
 from meridian.lib.streaming.pi_drain import PiDrainCoordinator
+from meridian.lib.streaming.pi_quiescence import PiQuiescenceTracker
 from meridian.lib.streaming.pi_work_ledger import PiPrivateWorkLedger
 from meridian.lib.streaming.spawn_manager import SpawnManager
 from tests.support.async_determinism import AsyncDeterminism, assert_still_pending, wait_until
@@ -654,15 +655,10 @@ async def test_spawn_manager_pi_drain_loop_reevaluates_on_disk_wakeup(
     )
     disk_wakeup = asyncio.Event()
 
-    async def _fake_wait_for_disk_change(self: object) -> None:
+    async def _fake_wait_for_disk_change(self: PiQuiescenceTracker) -> None:
         await disk_wakeup.wait()
         disk_wakeup.clear()
-        watcher = getattr(self, "_disk_watcher", None)
-        assert watcher is not None, (
-            "PiQuiescenceTracker._disk_watcher must be set after start(); "
-            "quiescence was enabled but disk watcher was never initialized"
-        )
-        await watcher.force_rescan()
+        await self.refresh_disk_state()
 
     monkeypatch.setattr(
         "meridian.lib.streaming.pi_quiescence.PiQuiescenceTracker.wait_for_disk_change",
