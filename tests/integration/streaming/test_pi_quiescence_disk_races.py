@@ -17,7 +17,7 @@ from meridian.lib.harness.semantics import TerminalEventOutcome
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.safety.permissions import UnsafeNoOpPermissionResolver
 from meridian.lib.state import spawn_store
-from meridian.lib.state.spawn_signals import write_spawn_signal
+from meridian.lib.state.spawn_signals import spawn_signal_path
 from meridian.lib.streaming import pi_drain as pi_drain_module
 from meridian.lib.streaming.completion_nudge import PI_COMPLETION_NUDGE_MESSAGE
 from meridian.lib.streaming.drain_policy import DrainAction
@@ -473,7 +473,9 @@ async def test_pi_done_nudge_stops_when_done_signal_arrives(
         await coordinator.handle_timeout()
         assert sent_messages == [PI_COMPLETION_NUDGE_MESSAGE]
 
-        write_spawn_signal(tmp_path, spawn_id, "done")
+        done_signal = spawn_signal_path(tmp_path, spawn_id, "done")
+        done_signal.parent.mkdir(parents=True, exist_ok=True)
+        done_signal.write_text("test\n", encoding="utf-8")
         decision = await coordinator.handle_timeout()
 
         assert decision.recorded_outcome is not None

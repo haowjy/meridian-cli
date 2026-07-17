@@ -10,6 +10,7 @@ from meridian.lib.state.spawn_scope import (
     read_spawn_scope,
     write_spawn_scope_task_dir,
 )
+from meridian.lib.state.spawn_store import start_spawn
 
 pytestmark = pytest.mark.slow
 
@@ -21,10 +22,23 @@ def _project(tmp_path: Path) -> Path:
     return project_root
 
 
+def _publish_spawn(project_root: Path, spawn_id: str = "p1") -> None:
+    start_spawn(
+        resolve_project_runtime_root_for_write(project_root),
+        chat_id="c1",
+        model="gpt-5.6",
+        agent="coder",
+        harness="codex",
+        prompt="test",
+        spawn_id=spawn_id,
+    )
+
+
 def test_spawn_scope_write_read_round_trip(tmp_path: Path) -> None:
     project_root = _project(tmp_path)
     task_dir = tmp_path / "worktree"
     task_dir.mkdir(parents=True)
+    _publish_spawn(project_root)
 
     write_spawn_scope_task_dir(project_root, "p1", task_dir)
     scope = read_spawn_scope(project_root, "p1")
@@ -34,6 +48,7 @@ def test_spawn_scope_write_read_round_trip(tmp_path: Path) -> None:
 
 def test_spawn_scope_tombstone_sets_cleared_flag(tmp_path: Path) -> None:
     project_root = _project(tmp_path)
+    _publish_spawn(project_root)
 
     write_spawn_scope_task_dir(project_root, "p1", None)
     scope = read_spawn_scope(project_root, "p1")
@@ -83,6 +98,7 @@ def test_write_spawn_scope_uses_runtime_write_root(
     (project_root / ".meridian").mkdir(parents=True)
     task_dir = tmp_path / "worktree"
     task_dir.mkdir(parents=True)
+    _publish_spawn(project_root)
 
     write_spawn_scope_task_dir(project_root, "p1", task_dir)
 

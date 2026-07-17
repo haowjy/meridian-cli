@@ -16,6 +16,7 @@ from meridian.lib.ops.runtime import build_runtime
 from meridian.lib.ops.spawn.models import SpawnCreateInput
 from meridian.lib.ops.spawn.prepare import build_create_payload
 from meridian.lib.state.spawn_scope import write_spawn_scope_task_dir
+from meridian.lib.state.spawn_store import start_spawn
 from tests.support.launch import stub_bundle_request_and_resolve
 
 pytestmark = pytest.mark.slow
@@ -135,6 +136,15 @@ def test_parent_scope_file_task_dir_is_inherited_by_child(
     runtime = build_runtime(project_root)
     # Establish the project (runtime root) before writing the scope file so the
     # write and prepare's read resolve the same spawn-log dir.
+    start_spawn(
+        runtime.authority.runtime_root,
+        chat_id="c1",
+        model="gpt-5.4",
+        agent="coder",
+        harness="codex",
+        prompt="parent",
+        spawn_id="p-parent",
+    )
     write_spawn_scope_task_dir(runtime.project_root, "p-parent", scope_dir)
 
     artifacts = build_create_payload(

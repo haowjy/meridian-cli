@@ -14,6 +14,7 @@ from meridian.lib.state.atomic import (
     append_durable_jsonl_line,
     repair_jsonl_tail,
 )
+from meridian.lib.state.spawn_store import start_spawn
 from tests.conftest import posix_only
 
 
@@ -79,8 +80,17 @@ def test_permission_journal_repairs_torn_tail_before_append(tmp_path: Path) -> N
 async def test_control_journal_repairs_torn_tail_without_reusing_transition_seq(
     tmp_path: Path,
 ) -> None:
-    spawn_dir = tmp_path / "spawn"
-    spawn_dir.mkdir()
+    runtime_root = tmp_path / "runtime"
+    spawn_dir = runtime_root / "spawns" / "s-1"
+    start_spawn(
+        runtime_root,
+        chat_id="c1",
+        model="gpt-5.6",
+        agent="coder",
+        harness="codex",
+        prompt="test",
+        spawn_id="s-1",
+    )
     actions_path = spawn_dir / "control_actions.jsonl"
     complete_row = {
         "seq": 0,

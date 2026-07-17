@@ -68,6 +68,10 @@ fail, or clear signals for the parent.
 inject, interrupt, permission reply, and user-input-reply actions. Calling the
 connection directly breaks this serialization.
 
+**Spawn-owned journals share the spawn row's lifetime.** Permission and control-action
+writes route through `mutate_published_spawn_artifact()` at write time, including after
+awaited dispatches. Never append directly after an async boundary.
+
 **Terminal publication belongs to `SpawnManager`.** The drain loop supplies its
 classification, but `stop_spawn()` must still publish the finalized lifecycle row,
 resolve completion, and start that spawn's cleanup when a bounded drain is cancelled.
@@ -106,9 +110,10 @@ session drains that keep the harness alive across turns.
 
 ## Heartbeat / Reaper Contract
 
-`heartbeat_loop` touches `spawns/<id>/heartbeat` every 30 seconds. The reaper
+`heartbeat_loop` touches `spawns/<id>/heartbeat` every 30 seconds. It never creates the
+spawn directory and stops if the directory has been deleted. The reaper
 (`lib/state/reaper.py`) identifies orphaned spawns by staleness. A stopped heartbeat
-means the manager died or the spawn is orphaned.
+means the manager died, the spawn was deleted, or the spawn is orphaned.
 
 ## Entry Points
 
