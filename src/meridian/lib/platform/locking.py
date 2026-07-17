@@ -57,12 +57,20 @@ def _track_process_lock_handle(handle: IO[bytes]) -> None:
         _process_lock_handles.add(handle)
 
 
-def _forget_process_lock_handle(handle: IO[bytes]) -> bool:
+def _close_process_lock_handle(handle: IO[bytes], *, unlock: bool = False) -> None:
+    """Close a tracked descriptor before removing it from the fork registry."""
+
     with _process_lock_handles_guard:
-        if handle not in _process_lock_handles:
-            return False
-        _process_lock_handles.remove(handle)
-        return True
+        tracked = handle in _process_lock_handles
+        try:
+            if unlock and tracked:
+                _release_lock(handle)
+        finally:
+            try:
+                if not handle.closed:
+                    handle.close()
+            finally:
+                _process_lock_handles.discard(handle)
 
 
 def _held_locks() -> dict[Path, _HeldLock]:
@@ -171,11 +179,9 @@ def acquire_file_lock(
                     return handle
                 _release_lock(handle)
         except BaseException:
-            _forget_process_lock_handle(handle)
-            handle.close()
+            _close_process_lock_handle(handle)
             raise
-        _forget_process_lock_handle(handle)
-        handle.close()
+        _close_process_lock_handle(handle)
 
         if deadline is not None and time.monotonic() >= deadline:
             raise _timeout_error(lock_path, timeout, mode)
@@ -183,14 +189,7 @@ def acquire_file_lock(
 
 def release_file_lock(handle: IO[bytes]) -> None:
     """Release and close a handle returned by :func:`acquire_file_lock`."""
-    if not _forget_process_lock_handle(handle):
-        if not handle.closed:
-            handle.close()
-        return
-    try:
-        _release_lock(handle)
-    finally:
-        handle.close()
+    _close_process_lock_handle(handle, unlock=True)
 
 
 def _timeout_error(lock_path: Path, timeout: float | None, mode: LockMode) -> TimeoutError:
