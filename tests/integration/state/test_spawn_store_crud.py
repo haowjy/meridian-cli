@@ -521,7 +521,7 @@ def test_next_and_reserved_spawn_ids_ignore_opaque_dirs_and_honor_highest_seed(
         spawn_dir = spawns_dir / spawn_id
         spawn_dir.mkdir(parents=True, exist_ok=True)
         if spawn_id.startswith("p") and spawn_id[1:].isdigit():
-            state_payload = f'{{"v":2,"revision":1,"id":"{spawn_id}"}}\n'
+            state_payload = f'{{"v":2,"id":"{spawn_id}"}}\n'
             (spawn_dir / "state.json").write_text(state_payload, encoding="utf-8")
     (runtime_root / "spawn-id-counter").write_text("20\n", encoding="utf-8")
 

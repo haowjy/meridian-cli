@@ -422,7 +422,7 @@ def start_spawn(
         atomic_write_text(stage_dir / "starting-prompt.md", prompt)
         from meridian.lib.state.spawn.repository import record_to_stored_state
 
-        stored_state = record_to_stored_state(record, revision=1)
+        stored_state = record_to_stored_state(record)
         atomic_write_text(
             stage_dir / "state.json",
             stored_state.model_dump_json(indent=2) + "\n",
@@ -560,7 +560,7 @@ def record_spawn_exited(
     exit_code: int,
     exited_at: str | None = None,
     clock: Clock | None = None,
-) -> None:
+) -> SpawnRecord | None:
     """Record latest drained harness-attempt exit metadata."""
 
     resolved_clock = clock or RealClock()
@@ -574,14 +574,14 @@ def record_spawn_exited(
         )
 
     try:
-        _write_state_locked(
+        return _write_state_locked(
             paths.spawns_dir,
             str(spawn_id),
             merge_exit,
             allow_terminal_overwrite=True,
         )
     except FileNotFoundError:
-        return
+        return None
 
 
 def record_runner_exit(
@@ -838,8 +838,14 @@ def mark_spawn_running_with_snapshot(
     if runner_pid is not None and resolved_runner_created_at_epoch is None:
         resolved_runner_created_at_epoch = _runner_created_at_epoch_for_pid(runner_pid)
 
+    class _NoTransition(Exception):
+        def __init__(self, snapshot: SpawnRecord) -> None:
+            self.snapshot = snapshot
+
     def merge(current: SpawnRecord) -> SpawnRecord:
         nonlocal changed
+        if not is_active_spawn_status(current.status):
+            raise _NoTransition(current)
         changed = current.status != "running"
         return apply_mark_running(
             current,
@@ -853,6 +859,8 @@ def mark_spawn_running_with_snapshot(
         committed = _write_state_locked(paths.spawns_dir, str(spawn_id), merge)
     except FileNotFoundError:
         return False, None
+    except _NoTransition as exc:
+        return False, exc.snapshot
     return changed, committed
 
 

@@ -9,7 +9,6 @@ operations live in test_spawn_store_crud.py.
 
 from __future__ import annotations
 
-import json
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -40,13 +39,6 @@ def _start_test_spawn(runtime_root: Path) -> str:
             prompt="hello",
         )
     )
-
-
-def _state_revision(runtime_root: Path, spawn_id: str) -> int:
-    payload = json.loads(
-        (runtime_root / "spawns" / spawn_id / "state.json").read_text(encoding="utf-8")
-    )
-    return int(payload["revision"])
 
 
 def _finalize_spawn_worker(
@@ -182,8 +174,6 @@ def test_finalize_rejects_losing_authoritative_after_terminal(tmp_path: Path) ->
     assert first.transitioned is True
     assert second.wrote is False
     assert second.transitioned is False
-    assert _state_revision(runtime_root, spawn_id) == 2
-
     row = get_spawn(runtime_root, spawn_id)
     assert row is not None
     assert row.status == "succeeded"
@@ -210,7 +200,6 @@ def test_cross_process_authoritative_finalizers_persist_one_winner(
     row = get_spawn(runtime_root, spawn_id)
 
     assert sorted(outcomes) == [(False, False), (True, True)]
-    assert _state_revision(runtime_root, spawn_id) == 2
     assert row is not None
     assert row.status in {"succeeded", "failed"}
     assert row.duration_secs in {10.0, 99.0}

@@ -33,9 +33,7 @@ class StoredSpawnState(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    v: Literal[2] = 2
-    revision: int
-
+    v: Literal[2]
     id: str
     chat_id: str | None = None
     owner_chat_id: str | None = None
@@ -104,13 +102,11 @@ def _lock_path(spawns_dir: Path, spawn_id: str) -> Path:
 
 def record_to_stored_state(
     record: SpawnRecord,
-    *,
-    revision: int = 0,
 ) -> StoredSpawnState:
     """Convert a spawn projection to v2 on-disk state without prompt body."""
 
     return StoredSpawnState(
-        revision=revision,
+        v=2,
         id=record.id,
         chat_id=record.chat_id,
         owner_chat_id=record.owner_chat_id,
@@ -257,38 +253,14 @@ def read_state(
     return stored_state_to_record(stored, prompt=prompt)
 
 
-def write_state(
-    spawns_dir: Path,
-    record: SpawnRecord,
-    *,
-    revision: int | None = None,
-    allow_terminal_overwrite: bool = False,
-) -> int:
-    """Write one spawn's v2 state file and return the committed revision.
+def _write_state(spawns_dir: Path, record: SpawnRecord) -> None:
+    """Persist a record whose current-state transition was decided by the caller."""
 
-    This owner hot path deliberately does not acquire locks. It performs a
-    best-effort terminal monotonicity guard by rereading on-disk state before
-    writing and refusing to overwrite any already-terminal record.
-    """
-
-    current = _read_stored_state(spawns_dir, record.id)
-    if (
-        current is not None
-        and current.status in TERMINAL_SPAWN_STATUSES
-        and not allow_terminal_overwrite
-    ):
-        raise ValueError(f"Refusing to overwrite terminal spawn state: {record.id}")
-
-    if current is not None and current.cancel_intent is not None and record.cancel_intent is None:
-        record = record.model_copy(update={"cancel_intent": current.cancel_intent})
-
-    next_revision = revision if revision is not None else (current.revision + 1 if current else 1)
-    stored = record_to_stored_state(record, revision=next_revision)
+    stored = record_to_stored_state(record)
     atomic_write_text(
         _state_path(spawns_dir, record.id),
         stored.model_dump_json(indent=2) + "\n",
     )
-    return next_revision
 
 
 def write_state_locked(
@@ -298,24 +270,23 @@ def write_state_locked(
     *,
     allow_terminal_overwrite: bool = False,
 ) -> SpawnRecord:
-    """Mutate one spawn state under its per-spawn ``state.lock``."""
+    """Re-read, mutate, and persist one spawn under its stable per-spawn lock.
 
-    with lock_file(_lock_path(spawns_dir, spawn_id)):
+    Lock reentrancy is forbidden because a nested mutation could commit from a
+    second snapshot and then be clobbered by the outer mutation's stale result.
+    """
+
+    with lock_file(_lock_path(spawns_dir, spawn_id), reentrant=False):
         current = read_state(spawns_dir, spawn_id)
         if current is None:
             raise FileNotFoundError(_state_path(spawns_dir, spawn_id))
         updated = mutator(current)
         if updated.id != spawn_id:
             raise ValueError("Locked state mutator must not change spawn id")
-        write_state(
-            spawns_dir,
-            updated,
-            allow_terminal_overwrite=allow_terminal_overwrite,
-        )
-        committed = read_state(spawns_dir, spawn_id)
-        if committed is None:
-            raise FileNotFoundError(_state_path(spawns_dir, spawn_id))
-        return committed
+        if current.status in TERMINAL_SPAWN_STATUSES and not allow_terminal_overwrite:
+            raise ValueError(f"Refusing to overwrite terminal spawn state: {spawn_id}")
+        _write_state(spawns_dir, updated)
+        return updated
 
 
 def scan_spawn_ids(spawns_dir: Path) -> list[str]:
@@ -341,6 +312,5 @@ __all__ = [
     "record_to_stored_state",
     "scan_spawn_ids",
     "stored_state_to_record",
-    "write_state",
     "write_state_locked",
 ]

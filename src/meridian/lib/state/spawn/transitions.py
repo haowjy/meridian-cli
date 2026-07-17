@@ -1,8 +1,8 @@
 """Pure spawn-state transition mutators.
 
 These helpers contain no persistence, locking, or lifecycle hook dispatch.
-Callers decide whether they are running on the owner hot path or under the
-repository lock, then apply the same field-level mutation here.
+The repository applies these field-level mutations to a fresh snapshot while
+holding the per-spawn lock.
 """
 
 from __future__ import annotations
