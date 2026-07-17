@@ -18,20 +18,16 @@ in a separate `starting-prompt.md` file. This keeps `state.json` reads lightweig
 `record_to_stored_state()` / `stored_state_to_record()` are the conversion functions.
 `read_state()` calls both automatically; callers don't need the stored form directly.
 
-## Two-Tier Write Model
+## Locked Mutation Model
 
-**Tier 1 — Owner writes (`write_state`):** The spawn's own runner is the sole
-writer while active. Calls `write_state()` without acquiring `state.lock`. Performs
-a best-effort terminal monotonicity guard: reads current on-disk state, refuses to
-overwrite an already-terminal record unless `allow_terminal_overwrite=True`.
+Every published-spawn mutation calls `write_state_locked()`. It acquires the stable
+per-spawn lock at `locks/spawns/<id>.lock` (outside the spawn artifact directory,
+never unlinked), re-reads `state.json`, applies a pure mutator, and writes
+atomically. There is no public unlocked write path — the prior two-tier model
+(owner writes without lock / external writes with lock) was collapsed in PR #422.
 
-**Tier 2 — External writes (`write_state_locked`):** The reaper, cancel command,
-or any process that needs to mutate a spawn it doesn't own. Acquires `state.lock`,
-reads current state, applies a mutator function, writes atomically. Prevents torn
-writes when multiple processes compete.
-
-The distinction is enforced by convention. An external writer that skips `state.lock`
-races with the owner's unlocked writes.
+The conformance guard `tests/contract/test_state_write_conformance.py` rejects new
+raw writes to authoritative state files at CI.
 
 ## Pure Transitions
 

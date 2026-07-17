@@ -1,7 +1,7 @@
 # lib/platform/ — Context
 
-Centralizes all OS-specific code. Windows is a first-class product requirement —
-validate Windows behavior for any change touching paths, processes, or locking.
+Centralizes all OS-specific code. POSIX-first: Linux/macOS are the supported
+platforms. Existing Windows branches are legacy and untested — do not expand them.
 
 ## Contracts
 

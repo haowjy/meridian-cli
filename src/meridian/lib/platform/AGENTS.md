@@ -4,9 +4,10 @@ All platform-specific OS code lives here. Everything else in the codebase should
 be platform-agnostic — if you're writing `sys.platform == "win32"` outside this
 module, that's a refactor trigger.
 
-Windows is a first-class product target. Validate Windows behavior for any change
-touching paths, processes, locking, or signal handling. Do not ship code that only
-works on POSIX.
+POSIX-first: Linux/macOS are the supported platforms. Existing `os.name` /
+`sys.platform` branches (locking, process-scope, signals, path resolution) stay
+as legacy, untested, best-effort — do not expand them or add new Windows-specific
+machinery.
 
 ## Mental Model
 
@@ -39,12 +40,13 @@ Inline `sys.platform` comparisons are a refactor trigger.
 **Use `get_home_path()`, never `Path.home()`.** On Windows, `Path.home()` ignores
 the `HOME` env var and queries Windows APIs, breaking test isolation.
 
-**File locking (`locking.py`) has reentrancy semantics.** A thread that already holds
-the lock re-enters safely. The OS lock releases only when the outermost `__exit__` runs.
-Acquired handles are also tracked process-wide so a fork child closes every inherited
-descriptor without explicitly unlocking the parent's open-file-description lock.
-On Windows, the implementation writes a guard byte and fsyncs before the first lock
-attempt — the file must be non-zero-length.
+**File locking (`locking.py`) has reentrancy, shared mode, and fork-safety.**
+`lock_file(path, mode="exclusive"|"shared", reentrant=True|False)` is the single
+locking primitive. A thread that already holds the lock re-enters safely (when
+reentrant). The OS lock releases only when the outermost `__exit__` runs. Acquired
+handles are tracked process-wide so a fork child closes every inherited descriptor
+without explicitly unlocking the parent's open-file-description lock. Shared mode
+uses `LOCK_SH`; a held shared lock cannot be upgraded to exclusive in place.
 
 **Windows signal behavior diverges from POSIX in three ways that cause silent failures:**
 - `os.kill(pid, SIGINT)` is unreliable — use `process.terminate()` instead.
