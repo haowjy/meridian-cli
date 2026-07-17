@@ -65,8 +65,7 @@ scope-sidecar lock. Registration is refused after the spawn becomes terminal or 
 cleanup claim exists, so a process scope cannot appear after cleanup targets are fixed.
 The spawn repository and process-scope projection are persistence leaves with a
 one-way dependency: the projection may use repository reads and lock paths, while
-the repository never imports the projection. Cross-leaf operations belong in the
-aggregate `spawn_store.py`; in particular, published-spawn deletion owns the lock
+the repository never imports the projection. Cross-leaf operations belong in the aggregate `spawn_aggregate.py`; in particular, published-spawn deletion owns the lock
 order above. Reaper claims consume one immutable projection snapshot containing
 both scopes and released IDs, read under a single projection-lock acquisition.
 
@@ -119,6 +118,7 @@ Both paths share liveness rules in `reaper.py` and completion/cancel precedence 
 - `user_paths.py` — `get_user_home()`. Start here for any new user-level storage.
 - `paths.py` — `RuntimePaths`, read vs write root resolvers.
 - `spawn_store.py` — `SpawnStore`. Main interface for listing, creating, updating spawns.
+- `spawn_aggregate.py` — cross-leaf spawn mutations (published-row deletion).
 - `work_store.py` / `work_repository.py` — pure work-item reads and the single locked
   mutation repository, respectively.
 - `session_store.py` — Session event log.
@@ -152,7 +152,7 @@ spawn ID allocation, initial row publication, and abandoned-stage GC. Later muta
 use `write_state_locked()` (`locks/spawns/<id>.lock`, stable until orphan lock GC).
 Published-row deletion uses `delete_published_spawn()` under that same stable lock;
 when deletion also takes the process-scope projection lock, the order is spawn lock
-then projection lock. This composition belongs in `spawn_store.py`, not either leaf
+then projection lock. This composition belongs in `spawn_aggregate.py`, not either leaf
 repository. Pruning acquires `spawns_flock` first. Pending reaper cleanup
 claims block deletion so durable cleanup intent is never discarded.
 
