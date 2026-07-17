@@ -14,7 +14,10 @@ from typing import TYPE_CHECKING, Any, cast
 from meridian.lib.core.domain import SpawnStatus
 from meridian.lib.core.spawn_lifecycle import TERMINAL_SPAWN_STATUSES
 from meridian.lib.core.types import SpawnId
-from meridian.lib.harness.connections.base import HarnessEvent
+from meridian.lib.harness.connections.base import (
+    HarnessEvent,
+    reap_on_ownership_transfer_failure,
+)
 from meridian.lib.harness.control_action import (
     ControlActionCoordinator,
     ControlActionType,
@@ -203,67 +206,76 @@ class SpawnManager:
                 debug_path=self._spawn_dir(spawn_id) / "debug.jsonl",
             )
 
-        try:
-            connection = await self._start_connection(config, spec)
-        except Exception:
-            if tracer is not None:
-                tracer.close()
-            raise
+        connection: HarnessConnection[Any] | None = None
+        control_server: ControlSocketServer | None = None
+        drain_task: asyncio.Task[None] | None = None
 
-        resolved_policy = drain_policy
-        self._history_writers[spawn_id] = HarnessHistoryWriter(self._history_path(spawn_id))
-        if on_event is not None:
-            self.register_observer(spawn_id, CallbackObserver(on_event))
-        control_server = self._control_server_factory(
-            spawn_id,
-            socket_path,
-            self,
-        )
-
-        try:
-            await control_server.start()
-        except Exception:
+        async def _cleanup_unregistered_start() -> object:
             if tracer is not None:
                 tracer.close()
             await self._observers.shutdown(spawn_id)
             self._history_writers.pop(spawn_id, None)
-            with suppress(Exception):
-                await control_server.stop()
-            with suppress(Exception):
-                await connection.stop()
+            if drain_task is not None and not drain_task.done():
+                drain_task.cancel()
+                with suppress(asyncio.CancelledError, Exception):
+                    await drain_task
+            if control_server is not None:
+                with suppress(BaseException):
+                    await control_server.stop()
+            if connection is not None:
+                with suppress(BaseException):
+                    await connection.stop()
+            return None
+
+        try:
+            connection = await self._start_connection(config, spec)
+            resolved_policy = drain_policy
+            self._history_writers[spawn_id] = HarnessHistoryWriter(self._history_path(spawn_id))
+            if on_event is not None:
+                self.register_observer(spawn_id, CallbackObserver(on_event))
+            control_server = self._control_server_factory(
+                spawn_id,
+                socket_path,
+                self,
+            )
+
+            await control_server.start()
+
+            drain_plan = self._select_drain_plan(
+                spawn_id=spawn_id,
+                receiver=connection,
+                config=config,
+            )
+            if resolved_policy is not None:
+                drain_plan = drain_plan.with_policy(resolved_policy)
+            drain_task = asyncio.create_task(
+                self._drain_loop(
+                    spawn_id,
+                    connection,
+                    drain_plan,
+                    tracer,
+                )
+            )
+            self._sessions[spawn_id] = SpawnSession(
+                connection=connection,
+                drain_task=drain_task,
+                subscriber=None,
+                control_server=control_server,
+                started_monotonic=started_monotonic,
+                completion_future=completion_future,
+                debug_tracer=tracer,
+                raw_terminal_frames_authoritative=drain_plan.raw_terminal_frames_authoritative,
+                teardown=drain_plan.teardown,
+                drain_plan=drain_plan,
+                control_actions=ControlActionCoordinator(
+                    spawn_id=spawn_id,
+                    spawn_dir=self._spawn_dir(spawn_id),
+                ),
+            )
+        except BaseException:
+            await reap_on_ownership_transfer_failure(_cleanup_unregistered_start)
             raise
 
-        drain_plan = self._select_drain_plan(
-            spawn_id=spawn_id,
-            receiver=connection,
-            config=config,
-        )
-        if resolved_policy is not None:
-            drain_plan = drain_plan.with_policy(resolved_policy)
-        drain_task = asyncio.create_task(
-            self._drain_loop(
-                spawn_id,
-                connection,
-                drain_plan,
-                tracer,
-            )
-        )
-        self._sessions[spawn_id] = SpawnSession(
-            connection=connection,
-            drain_task=drain_task,
-            subscriber=None,
-            control_server=control_server,
-            started_monotonic=started_monotonic,
-            completion_future=completion_future,
-            debug_tracer=tracer,
-            raw_terminal_frames_authoritative=drain_plan.raw_terminal_frames_authoritative,
-            teardown=drain_plan.teardown,
-            drain_plan=drain_plan,
-            control_actions=ControlActionCoordinator(
-                spawn_id=spawn_id,
-                spawn_dir=self._spawn_dir(spawn_id),
-            ),
-        )
         self._completion_futures[spawn_id] = completion_future
         return connection
 

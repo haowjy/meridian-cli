@@ -74,6 +74,68 @@ class _FakeManager:
 
 
 @pytest.mark.asyncio
+async def test_startup_watchdog_reports_phase_and_cancels_start(
+    tmp_path: Path,
+) -> None:
+    child_stopped = asyncio.Event()
+    start_entered = asyncio.Event()
+
+    class HangingStartupManager(_FakeManager):
+        async def start_spawn(
+            self,
+            _config: ConnectionConfig,
+            _spec: ResolvedLaunchSpec,
+        ) -> _FakeConnection:
+            start_entered.set()
+            try:
+                await asyncio.Event().wait()
+            finally:
+                child_stopped.set()
+            raise AssertionError("unreachable")
+
+    manager = HangingStartupManager()
+    run = Spawn(
+        spawn_id=SpawnId("p-startup-timeout"),
+        prompt="hello",
+        model=ModelId("gpt-5.3-codex"),
+        status="running",
+    )
+    config = ConnectionConfig(
+        spawn_id=run.spawn_id,
+        harness_id=HarnessId.CODEX,
+        prompt=run.prompt,
+        control_root=tmp_path,
+        env_overrides={},
+    )
+
+    attempt = await _run_streaming_attempt(
+        run=run,
+        runtime_root=tmp_path,
+        launch_mode=FOREGROUND_LAUNCH_MODE,
+        log_dir=tmp_path / "logs",
+        manager=manager,
+        config=config,
+        run_spec=ResolvedLaunchSpec(
+            model="gpt-5.3-codex",
+            harness=HarnessId.CODEX,
+            permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
+        ),
+        budget_tracker=None,
+        signal_event=asyncio.Event(),
+        received_signal=[None],
+        timeout_seconds=None,
+        startup_timeout_seconds=0.01,
+        event_observer=None,
+        stream_stdout_to_terminal=False,
+        lifecycle_service=_FakeLifecycleService(),  # type: ignore[arg-type]
+    )
+
+    assert start_entered.is_set()
+    assert attempt.start_error == "startup phase timeout after 0.010s"
+    assert child_stopped.is_set()
+
+
+@pytest.mark.asyncio
 async def test_inactivity_watchdog_stops_stale_spawn() -> None:
     manager = _FakeManager()
     completion_event = asyncio.Event()

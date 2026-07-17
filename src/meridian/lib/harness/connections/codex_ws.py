@@ -49,6 +49,7 @@ from meridian.lib.harness.connections.base import (
     ServerRequestHandler,
     StopProgressCallback,
     StopResult,
+    reap_on_ownership_transfer_failure,
     validate_prompt_size,
 )
 from meridian.lib.harness.connections.errors import PortBindError
@@ -450,10 +451,12 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
             self._transition("connected")
             self._liveness.mark_activity()
             self._emit_startup_phase(StartupPhase.HARNESS_READY)
-        except Exception:
+        except BaseException:
             self._emit_startup_phase(StartupPhase.HARNESS_FAILED)
             self._transition("failed")
-            await self._cleanup_resources(mark_stopped=False)
+            await reap_on_ownership_transfer_failure(
+                lambda: self._cleanup_resources(mark_stopped=False)
+            )
             raise
 
     async def start_observer(

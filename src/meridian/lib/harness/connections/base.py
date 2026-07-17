@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import suppress
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
@@ -82,6 +84,25 @@ class StopResult:
 
 
 StopProgressCallback = Callable[[str, dict[str, object]], Awaitable[None]]
+
+
+async def reap_on_ownership_transfer_failure(
+    cleanup: Callable[[], Awaitable[object]],
+) -> None:
+    """Best-effort, cancellation-shielded cleanup before ownership transfers.
+
+    Startup callers use this after catching ``BaseException`` so external task
+    cancellation cannot strand a child between adapter, dispatch, and manager
+    ownership.  A task is used deliberately: ``shield`` keeps the reap alive if
+    the surrounding startup task receives another cancellation request.
+    """
+
+    try:
+        cleanup_task = asyncio.ensure_future(cleanup())
+    except BaseException:
+        return
+    with suppress(BaseException):
+        await asyncio.shield(cleanup_task)
 
 
 @dataclass(frozen=True)
@@ -217,6 +238,7 @@ class ConnectionConfig:
     prompt: str
     control_root: Path
     env_overrides: dict[str, str]
+    runtime_root: Path | None = None
     task_cwd: Path | None = None
     system: str | None = None
     timeout_seconds: float | None = None

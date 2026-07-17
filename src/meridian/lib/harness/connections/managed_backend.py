@@ -48,6 +48,62 @@ class ManagedBackendHandle:
     scope_handle: ScopedProcessHandle
     parent_death_link: ParentDeathLink
 
+
+async def register_spawn_owned_process(
+    config: ManagedBackendConfig,
+    process: asyncio.subprocess.Process,
+    *,
+    scope_id: str,
+    role: str,
+    parent_death_linked: bool = False,
+    job_name: str | None = None,
+    runtime_root: Path | None = None,
+    persist: bool = True,
+) -> ScopedProcessHandle:
+    """Persist crash-recovery ownership for an already launched child process."""
+
+    spawn_dir = resolve_spawn_log_dir(config.control_root, config.spawn_id)
+    spawn_dir.mkdir(parents=True, exist_ok=True)
+    resolved_runtime_root = runtime_root or spawn_dir.parent.parent
+    pid = process.pid
+    pgid: int | None = None
+    containment: str
+    if not IS_WINDOWS:
+        try:
+            pgid = os.getpgid(pid)
+            containment = "posix_pgid"
+        except OSError:
+            containment = "pid_tree_fallback"
+    else:
+        containment = "windows_job"
+
+    try:
+        birth_time = psutil.Process(pid).create_time()
+    except (psutil.NoSuchProcess, psutil.AccessDenied):
+        birth_time = PROCESS_BIRTH_UNKNOWN_EPOCH
+
+    snapshot = ProcessScopeSnapshot(
+        scope_id=scope_id,
+        owner_policy="spawn_owned",
+        owner_id=str(config.spawn_id),
+        role=role,
+        containment=containment,
+        root_pid=pid,
+        root_created_at_epoch=birth_time,
+        pgid=pgid,
+        job_name=job_name,
+        degraded_reason=None,
+        parent_death_linked=parent_death_linked,
+    )
+    scope_handle = ScopedProcessHandle(process=process, snapshot=snapshot)
+    try:
+        if persist:
+            record_scope(resolved_runtime_root, config.spawn_id, snapshot)
+    except BaseException:
+        await scope_handle.terminate(reason="scope_registration_failed")
+        raise
+    return scope_handle
+
 async def launch_managed_backend(
     config: ManagedBackendConfig,
     *,
@@ -57,7 +113,6 @@ async def launch_managed_backend(
 
     spawn_dir = resolve_spawn_log_dir(config.control_root, config.spawn_id)
     spawn_dir.mkdir(parents=True, exist_ok=True)
-    runtime_root = spawn_dir.parent.parent
     subprocess_config = detached_subprocess_config()
 
     try:
@@ -77,22 +132,6 @@ async def launch_managed_backend(
         ) from exc
 
     pid = process.pid
-    pgid: int | None = None
-    containment: str
-    if not IS_WINDOWS:
-        try:
-            pgid = os.getpgid(pid)
-            containment = "posix_pgid"
-        except OSError:
-            containment = "pid_tree_fallback"
-    else:
-        containment = "windows_job"
-
-    try:
-        birth_time = psutil.Process(pid).create_time()
-    except (psutil.NoSuchProcess, psutil.AccessDenied):
-        birth_time = PROCESS_BIRTH_UNKNOWN_EPOCH
-
     parent_death_link = (
         ParentDeathLink(parent_death_linked=False)
         if subprocess_config.parent_death_linked
@@ -102,25 +141,16 @@ async def launch_managed_backend(
         subprocess_config.parent_death_linked or parent_death_link.parent_death_linked
     )
 
-    snapshot = ProcessScopeSnapshot(
-        scope_id="backend",
-        owner_policy="spawn_owned",
-        owner_id=str(config.spawn_id),
-        role="harness_backend",
-        containment=containment,
-        root_pid=pid,
-        root_created_at_epoch=birth_time,
-        pgid=pgid,
-        job_name=parent_death_link.job_name,
-        degraded_reason=None,
-        parent_death_linked=parent_death_linked,
-    )
-    scope_handle = ScopedProcessHandle(process=process, snapshot=snapshot)
-
     try:
-        record_scope(runtime_root, config.spawn_id, snapshot)
+        scope_handle = await register_spawn_owned_process(
+            config,
+            process,
+            scope_id="backend",
+            role="harness_backend",
+            parent_death_linked=parent_death_linked,
+            job_name=parent_death_link.job_name,
+        )
     except BaseException:
-        await scope_handle.terminate(reason="scope_registration_failed")
         await asyncio.to_thread(release_parent_death_link, parent_death_link)
         raise
 
@@ -135,4 +165,5 @@ __all__ = [
     "ManagedBackendConfig",
     "ManagedBackendHandle",
     "launch_managed_backend",
+    "register_spawn_owned_process",
 ]

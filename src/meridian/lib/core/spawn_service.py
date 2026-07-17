@@ -453,6 +453,7 @@ class SpawnApplicationService:
             prompt=launch_ctx.resolved_request.prompt,
             control_root=launch_ctx.control_root,
             env_overrides=dict(launch_ctx.binding.environment.bind_env_overrides),
+            runtime_root=launch_ctx.runtime_root,
             task_cwd=connection_task_cwd,
             system=launch_ctx.binding.run_params.appended_system_prompt,
             pi_notification_timeout_seconds=resolve_pi_notification_timeout_seconds(

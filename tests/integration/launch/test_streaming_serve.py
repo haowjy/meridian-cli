@@ -54,6 +54,7 @@ def _fake_launch_context(
         project_root=project_root,
         control_root=project_root,
         task_cwd=child_cwd if child_cwd.resolve() != project_root.resolve() else None,
+        runtime_root=resolve_runtime_root(project_root),
         work_id=None,
         binding=SimpleNamespace(
             child_cwd=child_cwd,

@@ -23,12 +23,18 @@ from meridian.lib.harness.connections.base import (
     HarnessEvent,
     StopProgressCallback,
     StopResult,
+    reap_on_ownership_transfer_failure,
     validate_prompt_size,
+)
+from meridian.lib.harness.connections.managed_backend import (
+    ManagedBackendConfig,
+    register_spawn_owned_process,
 )
 from meridian.lib.harness.extractors.cursor import CURSOR_EXTRACTOR
 from meridian.lib.launch.constants import BASE_COMMAND_CURSOR_SUBPROCESS, BLOCKED_CHILD_ENV_VARS
 from meridian.lib.launch.env import inherit_child_env
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
+from meridian.lib.platform.process_scope import ProcessScopeSnapshot, ScopedProcessHandle
 from meridian.lib.state.paths import resolve_spawn_log_dir
 
 logger = logging.getLogger(__name__)
@@ -60,6 +66,7 @@ class CursorSubprocessConnection(HarnessConnection[ResolvedLaunchSpec]):
         self._session_id: str | None = None
         self._session_id_observer: Callable[[str], None] | None = None
         self._process: Process | None = None
+        self._scope_handle: ScopedProcessHandle | None = None
         self._stderr_handle: BufferedWriter | None = None
         self._event_stream_started = False
         self._protocol_validated = False
@@ -91,6 +98,11 @@ class CursorSubprocessConnection(HarnessConnection[ResolvedLaunchSpec]):
         if process is None:
             return None
         return process.pid
+
+    @property
+    def scope_snapshot(self) -> ProcessScopeSnapshot | None:
+        handle = self._scope_handle
+        return None if handle is None else handle.snapshot
 
     async def start(self, config: ConnectionConfig, spec: ResolvedLaunchSpec) -> None:
         if self._state != "created":
@@ -139,10 +151,27 @@ class CursorSubprocessConnection(HarnessConnection[ResolvedLaunchSpec]):
                 stderr=self._stderr_handle,
                 limit=_STDOUT_READLINE_LIMIT,
             )
+            self._scope_handle = await register_spawn_owned_process(
+                ManagedBackendConfig(
+                    spawn_id=config.spawn_id,
+                    harness_id=self.harness_id,
+                    command=tuple(command),
+                    cwd=config.control_root,
+                    env=env,
+                    control_root=config.control_root,
+                ),
+                self._process,
+                scope_id="stdio",
+                role="harness_stdio",
+                runtime_root=config.runtime_root,
+                persist=config.runtime_root is not None,
+            )
             self._set_state("connected")
-        except Exception:
+        except BaseException:
             self._set_state("failed")
-            await self._cleanup_resources(terminate_process=True)
+            await reap_on_ownership_transfer_failure(
+                lambda: self._cleanup_resources(terminate_process=True)
+            )
             raise
 
     async def stop(
@@ -271,6 +300,15 @@ class CursorSubprocessConnection(HarnessConnection[ResolvedLaunchSpec]):
     async def _terminate_process(self) -> None:
         process = self._process
         if process is None:
+            return
+        scope_handle = self._scope_handle
+        self._scope_handle = None
+        if scope_handle is not None and process.returncode is None:
+            await scope_handle.terminate(
+                grace_seconds=_PROCESS_STOP_TIMEOUT_SECONDS,
+                reason="cursor_connection_stop",
+            )
+            self._process = None
             return
         if process.returncode is None:
             with suppress(ProcessLookupError):

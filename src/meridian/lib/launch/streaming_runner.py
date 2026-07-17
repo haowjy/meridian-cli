@@ -38,6 +38,7 @@ from meridian.lib.launch.constants import (
     CURSOR_INACTIVITY_TIMEOUT_SECONDS,
     DEFAULT_INFRA_EXIT_CODE,
     HISTORY_FILENAME,
+    OUTPUT_FILENAME,
     REPORT_FILENAME,
     REPORT_WATCHDOG_GRACE_SECONDS,
     REPORT_WATCHDOG_POLL_SECONDS,
@@ -61,6 +62,7 @@ from meridian.lib.launch.resolve import (
     resolve_pi_task_ping_interval_seconds,
     resolve_resident_deadline_seconds,
     resolve_resident_poll_seconds,
+    resolve_startup_timeout_seconds,
 )
 from meridian.lib.launch.runner_helpers import (
     append_budget_exceeded_event as _append_budget_exceeded_event,
@@ -124,6 +126,13 @@ class _AttemptRuntime:
     terminal_observed: bool = False
     authoritative_terminal_status: SpawnStatus | None = None
     start_error: str | None = None
+
+
+class StartupPhaseTimeout(TimeoutError):
+    """The backend boot/connection/session-handshake phase exceeded its bound."""
+
+    def __init__(self, timeout_seconds: float) -> None:
+        super().__init__(f"startup phase timeout after {timeout_seconds:.3f}s")
 
 
 @dataclass
@@ -236,7 +245,31 @@ def _install_signal_handlers(
     return _cleanup
 
 
-def _truncate_attempt_logs(log_dir: Path) -> None:
+def _preserve_attempt_artifacts(
+    *,
+    artifacts: ArtifactStore,
+    spawn_id: SpawnId,
+    log_dir: Path,
+    completed_attempt: int,
+) -> None:
+    """Atomically move completed-attempt evidence out of the live artifact names."""
+
+    attempt_prefix = f"attempt-{completed_attempt}"
+    for name in (
+        HISTORY_FILENAME,
+        OUTPUT_FILENAME,
+        STDERR_FILENAME,
+        TOKENS_FILENAME,
+        REPORT_FILENAME,
+    ):
+        active_key = make_artifact_key(spawn_id, name)
+        if artifacts.exists(active_key):
+            artifacts.put(
+                make_artifact_key(spawn_id, f"{attempt_prefix}/{name}"),
+                artifacts.get(active_key),
+            )
+
+    attempt_dir = log_dir / attempt_prefix
     for name in (
         HISTORY_FILENAME,
         STDERR_FILENAME,
@@ -245,7 +278,8 @@ def _truncate_attempt_logs(log_dir: Path) -> None:
     ):
         target = log_dir / name
         if target.exists():
-            target.unlink()
+            attempt_dir.mkdir(parents=True, exist_ok=True)
+            os.replace(target, attempt_dir / name)
 
 
 def _scope_pi_session_dir_for_spawn(
@@ -665,6 +699,7 @@ async def _run_streaming_attempt(
     signal_event: asyncio.Event,
     received_signal: list[signal.Signals | None],
     timeout_seconds: float | None,
+    startup_timeout_seconds: float = 300.0,
     event_observer: Callable[[StreamEvent], None] | None,
     stream_stdout_to_terminal: bool,
     lifecycle_service: SpawnLifecycleService,
@@ -696,7 +731,11 @@ async def _run_streaming_attempt(
     terminal_outcome: TerminalEventOutcome | None = None
     authoritative_terminal_status: SpawnStatus | None = None
     try:
-        connection = await manager.start_spawn(config, run_spec)
+        try:
+            async with asyncio.timeout(startup_timeout_seconds):
+                connection = await manager.start_spawn(config, run_spec)
+        except TimeoutError as exc:
+            raise StartupPhaseTimeout(startup_timeout_seconds) from exc
         terminal_event_capture = (
             terminal_event_future
             if manager.raw_terminal_frames_are_authoritative(run.spawn_id)
@@ -947,6 +986,9 @@ async def execute_with_streaming(
         report_path = log_dir / REPORT_FILENAME
 
         timeout_seconds = minutes_to_seconds(request.execution_policy.timeout)
+        startup_timeout_seconds = resolve_startup_timeout_seconds(
+            config_snapshot=launch_context.runtime.config_snapshot,
+        )
         pi_notification_timeout_seconds = resolve_pi_notification_timeout_seconds(
             explicit_timeout_seconds=timeout_seconds,
             config_snapshot=launch_context.runtime.config_snapshot,
@@ -1033,6 +1075,7 @@ async def execute_with_streaming(
             prompt=spec.prompt,
             control_root=control_root,
             env_overrides=child_env,
+            runtime_root=runtime_root,
             task_cwd=child_cwd if child_cwd.resolve() != control_root.resolve() else None,
             system=getattr(spec, "appended_system_prompt", None),
             timeout_seconds=timeout_seconds,
@@ -1108,12 +1151,19 @@ async def execute_with_streaming(
                 ):
                     break
 
+                attempt_number = conclusion.retries_attempted + 1
+                if attempt_number > 1:
+                    _preserve_attempt_artifacts(
+                        artifacts=artifacts,
+                        spawn_id=run.spawn_id,
+                        log_dir=log_dir,
+                        completed_attempt=attempt_number - 1,
+                    )
                 reset_finalize_attempt_artifacts(
                     artifacts=artifacts,
                     spawn_id=run.spawn_id,
                     log_dir=log_dir,
                 )
-                _truncate_attempt_logs(log_dir)
 
                 if preflight_breach is not None:
                     conclusion.exit_code = DEFAULT_INFRA_EXIT_CODE
@@ -1133,6 +1183,7 @@ async def execute_with_streaming(
                     signal_event=shutdown_event,
                     received_signal=received_signal,
                     timeout_seconds=timeout_seconds,
+                    startup_timeout_seconds=startup_timeout_seconds,
                     event_observer=event_observer,
                     stream_stdout_to_terminal=stream_stdout_to_terminal,
                     lifecycle_service=lifecycle_service,

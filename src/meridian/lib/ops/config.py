@@ -412,6 +412,8 @@ def _scaffold_template() -> str:
             f"# guardrail_minutes = {defaults['timeouts.guardrail_minutes']}",
             "# Max minutes to wait on run completion operations.",
             f"# wait_minutes = {defaults['timeouts.wait_minutes']}",
+            "# Max minutes for backend boot, connection, and session handshake.",
+            f"# startup_minutes = {defaults['timeouts.startup_minutes']}",
             "",
             "# -- Spawn behavior ---------------------------------------------------------",
             "[spawn]",

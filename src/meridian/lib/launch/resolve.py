@@ -502,6 +502,23 @@ def resolve_resident_poll_seconds(
     return 10.0
 
 
+def resolve_startup_timeout_seconds(
+    *,
+    config_snapshot: dict[str, object] | None,
+) -> float:
+    """Resolve the outer backend boot/connection/handshake watchdog."""
+
+    try:
+        config = (
+            MeridianConfig.model_validate(config_snapshot)
+            if config_snapshot
+            else MeridianConfig()
+        )
+    except Exception:
+        config = MeridianConfig()
+    return float(config.startup_timeout_minutes) * 60.0
+
+
 __all__ = [
     "AgentLaunchInput",
     "ResolvedSkills",
@@ -519,5 +536,6 @@ __all__ = [
     "resolve_resident_poll_seconds",
     "resolve_skill_paths",
     "resolve_skills_from_profile",
+    "resolve_startup_timeout_seconds",
     "validate_harness_compatibility",
 ]

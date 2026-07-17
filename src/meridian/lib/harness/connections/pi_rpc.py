@@ -28,7 +28,12 @@ from meridian.lib.harness.connections.base import (
     HarnessEvent,
     StopProgressCallback,
     StopResult,
+    reap_on_ownership_transfer_failure,
     validate_prompt_size,
+)
+from meridian.lib.harness.connections.managed_backend import (
+    ManagedBackendConfig,
+    register_spawn_owned_process,
 )
 from meridian.lib.harness.errors import HarnessBinaryNotFound
 from meridian.lib.harness.pi_lifecycle_events import (
@@ -53,6 +58,7 @@ from meridian.lib.observability.trace_helpers import (
     trace_wire_send,
 )
 from meridian.lib.platform import IS_WINDOWS
+from meridian.lib.platform.process_scope import ProcessScopeSnapshot, ScopedProcessHandle
 from meridian.lib.state.paths import resolve_spawn_log_dir
 
 logger = logging.getLogger(__name__)
@@ -101,6 +107,7 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
         supported_startup_phases=frozenset(
             phase.value
             for phase in (
+                StartupPhase.LAUNCHING_SUBPROCESS,
                 StartupPhase.WAITING_FOR_CONNECTION,
                 StartupPhase.HARNESS_READY,
             )
@@ -119,6 +126,7 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
         self._state: ConnectionState = "created"
         self._spawn_id: SpawnId = SpawnId("")
         self._process: Process | None = None
+        self._scope_handle: ScopedProcessHandle | None = None
         self._stderr_handle: BufferedWriter | None = None
         self._stderr_log_path: Path | None = None
         self._event_stream_started = False
@@ -167,6 +175,11 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
             return None
         return process.pid
 
+    @property
+    def scope_snapshot(self) -> ProcessScopeSnapshot | None:
+        handle = self._scope_handle
+        return None if handle is None else handle.snapshot
+
     async def start(self, config: ConnectionConfig, spec: ResolvedLaunchSpec) -> None:
         if self._state != "created":
             raise RuntimeError(f"Connection can only start from 'created', got '{self._state}'")
@@ -193,6 +206,7 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
         self._set_state("starting")
 
         try:
+            self._emit_startup_phase(StartupPhase.LAUNCHING_SUBPROCESS)
             await self._start_subprocess(config, spec)
             self._queue_lifecycle_phase_event(
                 "process_spawned",
@@ -223,9 +237,11 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
                     prompt_chars=prompt_chars,
                     prompt_bytes=prompt_bytes,
                 )
-        except Exception:
+        except BaseException:
             self._mark_failed("Pi RPC connection startup failed.")
-            await self._cleanup_resources(terminate_process=True)
+            await reap_on_ownership_transfer_failure(
+                lambda: self._cleanup_resources(terminate_process=True)
+            )
             raise
 
     async def stop(
@@ -512,6 +528,21 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
                 stderr=self._stderr_handle,
                 limit=_STDOUT_READLINE_LIMIT,
                 start_new_session=not IS_WINDOWS,
+            )
+            self._scope_handle = await register_spawn_owned_process(
+                ManagedBackendConfig(
+                    spawn_id=config.spawn_id,
+                    harness_id=self.harness_id,
+                    command=tuple(command),
+                    cwd=config.control_root,
+                    env=env,
+                    control_root=config.control_root,
+                ),
+                self._process,
+                scope_id="stdio",
+                role="harness_stdio",
+                runtime_root=config.runtime_root,
+                persist=config.runtime_root is not None,
             )
         except (FileNotFoundError, NotADirectoryError) as exc:
             raise HarnessBinaryNotFound.from_os_error(
@@ -862,6 +893,15 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
         if process is None:
             return False
         stop_escalated = False
+        scope_handle = self._scope_handle
+        self._scope_handle = None
+        if scope_handle is not None and process.returncode is None:
+            result = await scope_handle.terminate(
+                grace_seconds=_PROCESS_KILL_GRACE_SECONDS,
+                reason="pi_connection_stop",
+            )
+            self._process = None
+            return result.kill_escalated
         if process.returncode is None:
             stop_escalated = True
             if process.stdin is not None:

@@ -36,6 +36,7 @@ from meridian.lib.harness.connections.base import (
     ObserverEndpoint,
     StopProgressCallback,
     StopResult,
+    reap_on_ownership_transfer_failure,
     validate_prompt_size,
 )
 from meridian.lib.harness.connections.errors import PortBindError
@@ -135,6 +136,7 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
         supported_startup_phases=frozenset(
             phase.value
             for phase in (
+                StartupPhase.LAUNCHING_SUBPROCESS,
                 StartupPhase.WAITING_FOR_CONNECTION,
                 StartupPhase.INITIALIZING_SESSION,
                 StartupPhase.HARNESS_READY,
@@ -299,6 +301,7 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
         )
 
         try:
+            self._emit_startup_phase(StartupPhase.LAUNCHING_SUBPROCESS)
             await self._launch_process(config, spec)
             self._emit_startup_phase(StartupPhase.WAITING_FOR_CONNECTION)
             await self._wait_for_ready(timeout_seconds=readiness_timeout)
@@ -310,9 +313,9 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
                 config.session_id_observer(self._session_id)
             if not self._primary_observer_mode:
                 await self._post_session_message(config.prompt, system=config.system)
-        except Exception:
+        except BaseException:
             self._set_failed()
-            await self._cleanup_runtime()
+            await reap_on_ownership_transfer_failure(self._cleanup_runtime)
             raise
 
         self._transition("connected")

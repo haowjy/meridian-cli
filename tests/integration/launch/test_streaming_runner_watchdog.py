@@ -16,7 +16,7 @@ from meridian.lib.core.types import HarnessId, ModelId, SpawnId, TransportId
 from meridian.lib.harness.registry import HarnessRegistry
 from meridian.lib.launch import constants as launch_constants
 from meridian.lib.state import spawn_store
-from meridian.lib.state.artifact_store import LocalStore
+from meridian.lib.state.artifact_store import LocalStore, make_artifact_key
 from meridian.lib.state.paths import resolve_project_runtime_root
 from meridian.lib.streaming import spawn_manager as spawn_manager_module
 from tests.integration.launch.streaming_runner_support import (
@@ -32,9 +32,11 @@ from tests.support.fakes import FakeClock, FakeHeartbeat
 
 _pi_extension_projection_fixture = _pi_extension_projection_fixture
 
-def test_truncate_attempt_logs_removes_only_attempt_scoped_outputs(tmp_path: Path) -> None:
+def test_retry_preserves_completed_attempt_artifacts(tmp_path: Path) -> None:
     log_dir = tmp_path / "spawns" / "r-truncate"
     log_dir.mkdir(parents=True, exist_ok=True)
+    artifacts = LocalStore(root_dir=tmp_path / ".artifacts")
+    spawn_id = SpawnId("r-truncate")
     attempt_files = (
         launch_constants.HISTORY_FILENAME,
         launch_constants.STDERR_FILENAME,
@@ -43,13 +45,26 @@ def test_truncate_attempt_logs_removes_only_attempt_scoped_outputs(tmp_path: Pat
     )
     for name in attempt_files:
         (log_dir / name).write_text("attempt data\n", encoding="utf-8")
+        artifacts.put(
+            make_artifact_key(spawn_id, name),
+            b"persisted attempt data\n",
+        )
     durable_path = log_dir / "durable.json"
     durable_path.write_text("durable data\n", encoding="utf-8")
 
-    streaming_runner_module._truncate_attempt_logs(log_dir)
+    streaming_runner_module._preserve_attempt_artifacts(
+        artifacts=artifacts,
+        spawn_id=spawn_id,
+        log_dir=log_dir,
+        completed_attempt=1,
+    )
 
     for name in attempt_files:
         assert not (log_dir / name).exists()
+        assert (log_dir / "attempt-1" / name).read_text(encoding="utf-8") == "attempt data\n"
+        assert artifacts.get(make_artifact_key(spawn_id, f"attempt-1/{name}")) == (
+            b"persisted attempt data\n"
+        )
     assert durable_path.exists()
 
 

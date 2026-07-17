@@ -1360,6 +1360,19 @@ class MeridianConfig(BaseSettings):
             env_vars=("MERIDIAN_WAIT_TIMEOUT_MINUTES",),
         ),
     ] = 30.0
+    startup_timeout_minutes: Annotated[
+        float,
+        config_field(
+            "timeouts.startup_minutes",
+            value_kind="float",
+            file_aliases=(
+                file_alias("timeouts", "startup_minutes"),
+                file_alias("timeouts", "startup_timeout_minutes"),
+                file_alias(None, "startup_timeout_minutes"),
+            ),
+            env_vars=("MERIDIAN_STARTUP_TIMEOUT_MINUTES",),
+        ),
+    ] = 5.0
     pi_child_wave_timeout_seconds: Annotated[
         float | None,
         config_field(
@@ -1470,6 +1483,13 @@ class MeridianConfig(BaseSettings):
     def _validate_wait_yield_settings(cls, value: float) -> float:
         if isinstance(value, bool) or value <= 0:
             raise ValueError(f"Invalid wait-yield setting: expected float > 0, got {value!r}.")
+        return float(value)
+
+    @field_validator("startup_timeout_minutes")
+    @classmethod
+    def _validate_startup_timeout_minutes(cls, value: float) -> float:
+        if isinstance(value, bool) or value <= 0:
+            raise ValueError(f"Invalid startup timeout: expected float > 0, got {value!r}.")
         return float(value)
 
     def default_model_for_harness(self, harness_id: str) -> str | None:
