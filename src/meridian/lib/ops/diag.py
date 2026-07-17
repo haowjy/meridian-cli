@@ -246,14 +246,15 @@ def doctor_sync(payload: DoctorInput) -> DoctorOutput:
     if stale_locks > 0:
         repaired.append("stale_session_locks")
 
-    active_work_items, _ = work_store.list_work_items(runtime_root)
+    project_state_dir = runtime_authority.project_state_dir
+    active_work_items, _ = work_store.list_work_items(project_state_dir)
     archived_work_items, _ = work_store.list_archived_work_items(
-        runtime_root, all_archived=True
+        project_state_dir, all_archived=True
     )
     healed_work_items = 0
     for work_id in {item.name for item in (*active_work_items, *archived_work_items)}:
-        if work_store.work_item_needs_healing(runtime_root, work_id):
-            work_store.heal_work_item(runtime_root, work_id)
+        if work_store.work_item_needs_healing(project_state_dir, work_id):
+            work_store.heal_work_item(project_state_dir, work_id)
             healed_work_items += 1
     if healed_work_items:
         repaired.append("work_item_metadata")

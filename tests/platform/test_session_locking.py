@@ -23,6 +23,7 @@ def _fork_while_release_is_paused(
     handle = acquire_file_lock(lock_path)
     release_started = threading.Event()
     allow_release = threading.Event()
+    fork_boundary = threading.Event()
     original_release = locking._release_lock
 
     def paused_release(releasing_handle: Any) -> None:
@@ -33,7 +34,15 @@ def _fork_while_release_is_paused(
     locking._release_lock = paused_release
     threading.Thread(target=release_file_lock, args=(handle,)).start()
     assert release_started.wait(timeout=5)
-    threading.Thread(target=lambda: (time.sleep(0.2), allow_release.set())).start()
+    # Registered after locking's handler, this before-fork callback runs first
+    # (reverse registration order) and proves the fork reached the guarded boundary.
+    os.register_at_fork(before=fork_boundary.set)
+
+    def release_at_fork_boundary() -> None:
+        assert fork_boundary.wait(timeout=5)
+        allow_release.set()
+
+    threading.Thread(target=release_at_fork_boundary).start()
 
     child_pid = os.fork()
     if child_pid == 0:

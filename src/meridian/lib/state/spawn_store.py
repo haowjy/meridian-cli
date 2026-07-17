@@ -8,8 +8,7 @@ from __future__ import annotations
 import os
 import secrets
 import shutil
-import stat
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from contextlib import suppress
 from datetime import UTC, datetime
 from pathlib import Path
@@ -53,7 +52,19 @@ from meridian.lib.state.spawn.model import (
 from meridian.lib.state.spawn.model import (
     TerminalSpawnStatus as TerminalSpawnStatus,
 )
-from meridian.lib.state.spawn.repository import spawn_lock_path
+from meridian.lib.state.spawn.repository import (
+    SpawnDeletionPrecondition as SpawnDeletionPrecondition,
+)
+from meridian.lib.state.spawn.repository import (
+    delete_published_spawn as delete_published_spawn,
+)
+from meridian.lib.state.spawn.repository import (
+    is_safe_spawn_dir_name as _is_safe_spawn_dir_name,
+)
+from meridian.lib.state.spawn.repository import read_state as _read_state
+from meridian.lib.state.spawn.repository import record_to_stored_state
+from meridian.lib.state.spawn.repository import scan_spawn_ids as _scan_spawn_ids
+from meridian.lib.state.spawn.repository import write_state_locked as _write_state_locked
 from meridian.lib.state.spawn.terminal_policy import decide_terminal_write
 from meridian.lib.state.spawn.transitions import (
     apply_cancel_intent,
@@ -84,19 +95,6 @@ def is_spawn_id_shape(spawn_id: SpawnId | str) -> bool:
     value = str(spawn_id)
     suffix = value[1:]
     return len(value) > 1 and value[0] == "p" and suffix.isascii() and suffix.isdigit()
-
-
-def _is_safe_spawn_dir_name(name: str) -> bool:
-    """Return whether a spawn ID is one non-hidden path component."""
-
-    separators = {"/", "\\", os.sep}
-    if os.altsep is not None:
-        separators.add(os.altsep)
-    return (
-        bool(name)
-        and not name.startswith(".")
-        and not any(separator in name for separator in separators)
-    )
 
 
 def _spawn_counter_path(paths: RuntimePaths) -> Path:
@@ -190,45 +188,6 @@ def _resolve_start_metadata(
             else launch_policy_snapshot
         ),
     )
-
-
-# ---------------------------------------------------------------------------
-# Spawn event store
-# ---------------------------------------------------------------------------
-
-
-def _read_state(
-    spawns_dir: Path,
-    spawn_id: str,
-    *,
-    include_prompt: bool = True,
-) -> SpawnRecord | None:
-    from meridian.lib.state.spawn.repository import read_state
-
-    return read_state(spawns_dir, spawn_id, include_prompt=include_prompt)
-
-
-def _write_state_locked(
-    spawns_dir: Path,
-    spawn_id: str,
-    mutator: Any,
-    *,
-    allow_terminal_overwrite: bool = False,
-) -> SpawnRecord:
-    from meridian.lib.state.spawn.repository import write_state_locked
-
-    return write_state_locked(
-        spawns_dir,
-        spawn_id,
-        mutator,
-        allow_terminal_overwrite=allow_terminal_overwrite,
-    )
-
-
-def _scan_spawn_ids(spawns_dir: Path) -> list[str]:
-    from meridian.lib.state.spawn.repository import scan_spawn_ids
-
-    return scan_spawn_ids(spawns_dir)
 
 
 class FinalizeOutcome(BaseModel):
@@ -422,8 +381,6 @@ def start_spawn(
         stage_dir = staging_dir / f"{resolved_spawn_id}-{os.getpid()}-{secrets.token_hex(4)}"
         stage_dir.mkdir()
         atomic_write_text(stage_dir / "starting-prompt.md", prompt)
-        from meridian.lib.state.spawn.repository import record_to_stored_state
-
         stored_state = record_to_stored_state(record)
         atomic_write_text(
             stage_dir / "state.json",
@@ -431,59 +388,6 @@ def start_spawn(
         )
         atomic_publish_dir(stage_dir, spawn_dir)
         return resolved_spawn_id
-
-
-type SpawnDeletionPrecondition = Callable[[SpawnRecord | None], bool]
-
-
-def _restore_spawn_artifact_permissions(
-    func: Callable[[str], object],
-    path: str,
-    exc_info: BaseException,
-) -> None:
-    if isinstance(exc_info, FileNotFoundError):
-        return
-    with suppress(OSError):
-        os.chmod(path, stat.S_IWRITE)
-    try:
-        func(path)
-    except OSError as error:
-        raise exc_info from error
-
-
-def delete_published_spawn(
-    runtime_root: Path,
-    spawn_id: SpawnId | str,
-    *,
-    can_delete: SpawnDeletionPrecondition,
-) -> bool:
-    """Delete one published spawn when its locked projection permits it.
-
-    Every published-row deletion routes through this seam. A cleanup claim
-    prevents deletion because it is durable at-least-once intent: the reaper
-    must finish or clear the claim before artifact retention may remove it.
-    Callers that also need ``spawns_flock`` must acquire it first.
-    """
-
-    paths = RuntimePaths.from_root_dir(runtime_root)
-    resolved_spawn_id = str(spawn_id)
-    if not _is_safe_spawn_dir_name(resolved_spawn_id):
-        raise ValueError(f"Invalid spawn ID: {resolved_spawn_id}")
-    spawn_dir = paths.spawns_dir / resolved_spawn_id
-
-    with lock_file(spawn_lock_path(paths.spawns_dir, resolved_spawn_id)):
-        claim_path = spawn_dir / "reaper_cleanup_claim.json"
-        if claim_path.exists() or not can_delete(
-            _read_state(paths.spawns_dir, resolved_spawn_id, include_prompt=False)
-        ):
-            return False
-        if not spawn_dir.exists():
-            return False
-        try:
-            shutil.rmtree(spawn_dir, onexc=_restore_spawn_artifact_permissions)
-        except OSError:
-            return False
-        return True
 
 
 def remove_spawn_events(
@@ -818,7 +722,7 @@ def mark_finalizing(
     runtime_root: Path,
     spawn_id: SpawnId | str,
 ) -> bool:
-    """CAS transition `running -> finalizing` under the spawn-store flock."""
+    """CAS transition `running -> finalizing` under the per-spawn lock."""
 
     transitioned, _snapshot = mark_finalizing_with_snapshot(
         runtime_root,

@@ -26,13 +26,13 @@ from meridian.lib.hooks.builtin.autosync_store import (
     has_unresolved_conflict,
     transaction,
 )
-from meridian.lib.platform.atomic import atomic_write_text
 from meridian.plugin_api import (
     Hook,
     HookContext,
     HookOutcome,
     HookResult,
 )
+from meridian.plugin_api.fs import atomic_write_text
 from meridian.plugin_api.git import normalize_repo_url, resolve_clone_path
 
 logger = structlog.get_logger(__name__)

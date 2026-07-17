@@ -7,7 +7,10 @@ runtime spawns directory.
 from __future__ import annotations
 
 import os
+import shutil
+import stat
 from collections.abc import Callable
+from contextlib import suppress
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, cast
 
@@ -15,8 +18,10 @@ from pydantic import BaseModel, ConfigDict
 
 from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
 from meridian.lib.core.spawn_lifecycle import TERMINAL_SPAWN_STATUSES
+from meridian.lib.core.types import SpawnId
 from meridian.lib.platform.locking import lock_file
 from meridian.lib.state.atomic import atomic_write_text
+from meridian.lib.state.paths import RuntimePaths
 from meridian.lib.state.spawn.model import CancelIntent, SpawnRecord
 
 if TYPE_CHECKING:
@@ -290,6 +295,68 @@ def write_state_locked(
         return updated
 
 
+type SpawnDeletionPrecondition = Callable[[SpawnRecord | None], bool]
+
+
+def is_safe_spawn_dir_name(name: str) -> bool:
+    separators = {"/", "\\", os.sep}
+    if os.altsep is not None:
+        separators.add(os.altsep)
+    return bool(name) and not name.startswith(".") and not any(
+        separator in name for separator in separators
+    )
+
+
+def _restore_spawn_artifact_permissions(
+    func: Callable[[str], object],
+    path: str,
+    exc_info: BaseException,
+) -> None:
+    if isinstance(exc_info, FileNotFoundError):
+        return
+    with suppress(OSError):
+        os.chmod(path, stat.S_IWRITE)
+    try:
+        func(path)
+    except OSError as error:
+        raise exc_info from error
+
+
+def delete_published_spawn(
+    runtime_root: Path,
+    spawn_id: SpawnId | str,
+    *,
+    can_delete: SpawnDeletionPrecondition,
+) -> bool:
+    """Delete one published spawn when its locked projection permits it.
+
+    Every published-row deletion routes through this seam. A cleanup claim
+    prevents deletion because it is durable at-least-once intent: the reaper
+    must finish or clear the claim before artifact retention may remove it.
+    Callers that also need ``spawns_flock`` must acquire it first.
+    """
+
+    paths = RuntimePaths.from_root_dir(runtime_root)
+    resolved_spawn_id = str(spawn_id)
+    if not is_safe_spawn_dir_name(resolved_spawn_id):
+        raise ValueError(f"Invalid spawn ID: {resolved_spawn_id}")
+    spawn_dir = paths.spawns_dir / resolved_spawn_id
+
+    with lock_file(spawn_lock_path(paths.spawns_dir, resolved_spawn_id)):
+        claim_path = spawn_dir / "reaper_cleanup_claim.json"
+        if claim_path.exists() or not can_delete(
+            read_state(paths.spawns_dir, resolved_spawn_id, include_prompt=False)
+        ):
+            return False
+        if not spawn_dir.exists():
+            return False
+        try:
+            shutil.rmtree(spawn_dir, onexc=_restore_spawn_artifact_permissions)
+        except OSError:
+            return False
+        return True
+
+
 def scan_spawn_ids(spawns_dir: Path) -> list[str]:
     """Return child directory names that contain a v2 ``state.json`` file."""
 
@@ -307,7 +374,10 @@ def scan_spawn_ids(spawns_dir: Path) -> list[str]:
 
 
 __all__ = [
+    "SpawnDeletionPrecondition",
     "StoredSpawnState",
+    "delete_published_spawn",
+    "is_safe_spawn_dir_name",
     "read_prompt",
     "read_state",
     "record_to_stored_state",

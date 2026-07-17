@@ -98,6 +98,6 @@ def test_authoritative_files_are_not_written_raw() -> None:
         + "\nRoute authoritative runtime state through its lib/state wrapper; "
         "route other internal file replacement through "
         "meridian.lib.platform.atomic.atomic_write_text; plugin-facing code must use "
-        "meridian.plugin_api.atomic_write_text. Add an allowlist entry only for a "
+        "meridian.plugin_api.fs.atomic_write_text. Add an allowlist entry only for a "
         "non-authoritative write, with a one-line justification."
     )

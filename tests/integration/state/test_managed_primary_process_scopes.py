@@ -1,6 +1,9 @@
 # qa-validated: reaper-escape-fix-test-cleanup
 from __future__ import annotations
 
+import json
+import threading
+from contextlib import suppress
 from pathlib import Path
 
 import pytest  # noqa: TC002
@@ -8,7 +11,7 @@ import pytest  # noqa: TC002
 from meridian.lib.core.process_cleanup import reclaim_session_owned_scopes_for_chat
 from meridian.lib.core.types import SpawnId
 from meridian.lib.platform.process_scope.base import CleanupResult, ProcessScopeSnapshot
-from meridian.lib.state import spawn_store
+from meridian.lib.state import process_scope_projection, spawn_store
 from meridian.lib.state.paths import resolve_runtime_paths
 from meridian.lib.state.process_scope_projection import (
     is_scope_released,
@@ -72,6 +75,60 @@ def _scope(
         job_name=None,
         degraded_reason=None,
     )
+
+
+def test_concurrent_scope_releases_preserve_every_marker(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Concurrent sidecar RMWs must serialize through one stable mutation seam."""
+    runtime_root, spawn_id = _create_primary_spawn(tmp_path)
+    scope_a = _scope(
+        spawn_id,
+        scope_id="a",
+        owner_policy="spawn_owned",
+        owner_id=spawn_id,
+        root_pid=301,
+    )
+    scope_b = _scope(
+        spawn_id,
+        scope_id="b",
+        owner_policy="spawn_owned",
+        owner_id=spawn_id,
+        root_pid=302,
+    )
+    record_scope(runtime_root, SpawnId(spawn_id), scope_a)
+    record_scope(runtime_root, SpawnId(spawn_id), scope_b)
+
+    original_read_raw = process_scope_projection._read_raw
+    reads_aligned = threading.Barrier(2)
+
+    def _aligned_read(path: Path) -> process_scope_projection.ScopeProjection:
+        payload = original_read_raw(path)
+        with suppress(threading.BrokenBarrierError):
+            reads_aligned.wait(timeout=0.2)
+        return payload
+
+    monkeypatch.setattr(process_scope_projection, "_read_raw", _aligned_read)
+    threads = [
+        threading.Thread(
+            target=mark_scope_released,
+            args=(runtime_root, SpawnId(spawn_id), scope.release_id),
+        )
+        for scope in (scope_a, scope_b)
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=2)
+        assert not thread.is_alive()
+
+    payload = json.loads(
+        (runtime_root / "spawns" / spawn_id / "process_scopes.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert set(payload["released"]) == {scope_a.release_id, scope_b.release_id}
 
 
 def test_reclaim_session_owned_scopes_for_chat_reclaims_all_matching_spawns(

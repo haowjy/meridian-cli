@@ -17,6 +17,8 @@ State splits across distinct roots — understand which goes where before writin
 ~/.meridian/projects/<id>/          ← user runtime, never committed
   sessions.jsonl                    — session events (append-only)
   locks/spawns/<spawn_id>.lock      — stable per-spawn external-writer lock
+  locks/process-scopes/<spawn_id>.lock
+                                    — stable process-scope sidecar mutation lock
   spawns/.staging/<unique>/         — complete row build before atomic publication
   spawns/<spawn_id>/
     state.json                      — authoritative spawn state (v2)
@@ -50,6 +52,11 @@ Every update to a published spawn calls `write_state_locked()`. It acquires
 `locks/spawns/<id>.lock`, re-reads current state, applies a pure mutator, and writes
 atomically. The lock identity is outside the artifact directory it protects and is
 never unlinked, so all contenders coordinate through the same stable inode.
+
+Process-scope registration and release markers route through the locked sidecar
+mutation seam. When both locks are needed, acquire the spawn-state lock before the
+scope-sidecar lock. Registration is refused after the spawn becomes terminal or a
+cleanup claim exists, so a process scope cannot appear after cleanup targets are fixed.
 
 ## Atomic Write Contract
 

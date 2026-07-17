@@ -124,9 +124,11 @@ reference-discovery, and dashboard callers. For each active row it calls
 does not persist state, terminate process scopes, or check process depth.
 
 `reconcile_active_spawn()` is the mutating repair operation used by doctor orphan-run
-repair. It fails closed unless `is_root_side_effect_process()` is true, applies the
-same reconciliation decision rules, cleans recorded orphan scopes, and persists a
-terminal result through the locked external-writer path.
+repair. It fails closed unless `is_root_side_effect_process()` is true and applies the
+same reconciliation decision rules. Under the spawn lock it first snapshots exact
+cleanup targets into `reaper_cleanup_claim.json`, then persists the terminal result,
+then terminates the claimed scopes. This finalize-first order makes state convergence
+independent of slow cleanup; a crash leaves a durable claim for the next doctor pass.
 
 Shared liveness decisions skip recent activity and live runner PIDs; prefer durable
 report completion, cancel precedence, and recorded runner terminal tuples; and
@@ -146,24 +148,12 @@ independently; a late cancel must not downgrade a completed spawn.
 
 **Managed-primary orphan cleanup:**
 
-When a spawn is flagged as a potential managed primary (Codex / OpenCode kind=primary)
-and must be finalized as failed, `reconcile_active_spawn()` first uses recorded
-`process_scopes.json` cleanup, then attempts managed-primary cleanup before writing
-the terminal state. The managed tier used depends on how much metadata is readable:
-
-1. **Managed snapshot available** (`read_managed_primary_snapshot()` succeeded):
-   `terminate_managed_primary_processes(managed_snapshot.metadata)` — terminates
-   launcher, backend, and TUI PIDs tracked in the snapshot.
-
-2. **Managed snapshot missing, metadata readable via late read**
-   (`read_primary_metadata()` on the spawn directory succeeds):
-   `terminate_managed_primary_processes(metadata)` — same termination path from
-   a fresh metadata read.
-
-3. **Metadata unreadable** (both snapshot and late read fail):
-   recorded scope cleanup already ran before this branch, cleaning
-   up what can be cleaned via scope records. A warning is logged; no further action
-   is taken because all available cleanup mechanisms have already fired.
+For managed primaries, the claim combines recorded spawn-owned scopes with fallback
+targets derived from the managed-primary snapshot when available. Birth-validated
+scope cleanup consumes only that claim after terminal finalization. Successful targets
+gain durable release markers; failed targets remain claimed for retry. A runner-origin
+terminal write clears a reconciler claim without signalling because runner authority
+supersedes reconciler cleanup intent.
 
 ## Patterns
 
@@ -217,7 +207,7 @@ checkouts, triggering project setup side effects in CI.
 **Don't acquire `spawns_flock` for per-spawn mutations** — the global lock serializes
 spawn ID allocation, initial row publication, and abandoned-stage GC. Acquiring it for
 later individual mutations creates unnecessary contention. Use `write_state_locked()`
-(per-spawn `state.lock`) for external writes.
+(per-spawn `locks/spawns/<id>.lock`) for external writes.
 
 ## Related KB
 

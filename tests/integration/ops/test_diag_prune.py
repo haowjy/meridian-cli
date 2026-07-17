@@ -112,11 +112,22 @@ def test_doctor_heals_legacy_work_item_metadata(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     project_root, _, _, _ = _seed_pruning_layout(tmp_path, monkeypatch)
-    runtime_root = tmp_path / "user-home" / "projects" / "current-project-uuid"
-    item = work_store.create_work_item(runtime_root, "legacy-item")
+    (project_root / "meridian.toml").write_text(
+        "\n".join(
+            [
+                "[context.work]",
+                'path = "context/work"',
+                'archive = "context/archive/work"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    project_state_dir = project_root / ".meridian"
+    item = work_store.create_work_item(project_state_dir, "legacy-item")
     legacy_task_dir = tmp_path / "legacy-task-dir"
     legacy_task_dir.mkdir()
-    status_path = work_store.work_scratch_dir(runtime_root, item.name) / "__status.json"
+    status_path = work_store.work_scratch_dir(project_state_dir, item.name) / "__status.json"
     payload = json.loads(status_path.read_text(encoding="utf-8"))
     payload["task_dir"] = None
     payload["worktree"]["path"] = legacy_task_dir.as_posix()

@@ -63,7 +63,7 @@ def _paused_initial_publication(
     state_serialization_reached = threading.Event()
     release_state_serialization = threading.Event()
     errors: list[BaseException] = []
-    original_record_to_stored_state = spawn_repository.record_to_stored_state
+    original_record_to_stored_state = spawn_store_module.record_to_stored_state
 
     def pause_before_state_serialization(
         record: SpawnRecord,
@@ -74,7 +74,7 @@ def _paused_initial_publication(
         return original_record_to_stored_state(record)
 
     monkeypatch.setattr(
-        spawn_repository,
+        spawn_store_module,
         "record_to_stored_state",
         pause_before_state_serialization,
     )
