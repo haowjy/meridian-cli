@@ -8,6 +8,9 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Literal
 
+from meridian.lib.platform.atomic import (
+    AtomicReplaceDurabilityError as AtomicReplaceDurabilityError,
+)
 from meridian.lib.platform.atomic import atomic_replace
 from meridian.lib.platform.locking import lock_file
 

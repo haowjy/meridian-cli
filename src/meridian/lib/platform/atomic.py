@@ -13,6 +13,16 @@ from typing import IO, Literal, overload
 from meridian.lib.platform import IS_WINDOWS
 
 
+class AtomicReplaceDurabilityError(OSError):
+    """The replacement committed, but syncing its directory entry failed."""
+
+    committed = True
+
+    def __init__(self, path: Path) -> None:
+        self.path = path
+        super().__init__(f"Atomic replacement committed but directory sync failed: {path}")
+
+
 def fsync_directory(path: Path) -> None:
     """Sync a directory entry so a completed replace survives a crash."""
 
@@ -110,9 +120,12 @@ def atomic_replace(
                 os.fsync(handle.fileno())
         os.replace(tmp_path, path)
         if durable:
-            fsync_directory(path.parent)
+            try:
+                fsync_directory(path.parent)
+            except OSError as error:
+                raise AtomicReplaceDurabilityError(path) from error
     finally:
         tmp_path.unlink(missing_ok=True)
 
 
-__all__ = ["atomic_replace", "fsync_directory"]
+__all__ = ["AtomicReplaceDurabilityError", "atomic_replace", "fsync_directory"]

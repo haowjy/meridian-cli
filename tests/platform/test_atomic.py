@@ -175,6 +175,29 @@ def test_atomic_replace_new_file_mode_honors_umask(tmp_path: Path) -> None:
     assert stat.S_IMODE(target.stat().st_mode) == 0o640
 
 
+def test_atomic_replace_reports_post_commit_directory_fsync_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    target = tmp_path / "state.txt"
+    target.write_text("before\n", encoding="utf-8")
+
+    def fail_directory_sync(_path: Path) -> None:
+        raise OSError("directory sync failed")
+
+    monkeypatch.setattr(platform_atomic, "fsync_directory", fail_directory_sync)
+
+    with (
+        pytest.raises(platform_atomic.AtomicReplaceDurabilityError) as raised,
+        platform_atomic.atomic_replace(target) as handle,
+    ):
+        handle.write("after\n")
+
+    assert raised.value.path == target
+    assert raised.value.committed is True
+    assert target.read_text(encoding="utf-8") == "after\n"
+
+
 @posix_only
 def test_atomic_publish_dir_replaces_entry_and_fsyncs_parent(
     tmp_path: Path,

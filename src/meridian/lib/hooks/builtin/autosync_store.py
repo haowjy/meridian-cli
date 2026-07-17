@@ -19,7 +19,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
 
-from meridian.plugin_api.fs import atomic_write_text
+from meridian.plugin_api.fs import AtomicReplaceDurabilityError, atomic_write_text
 
 AUTOSYNC_IGNORE_PATTERNS: tuple[str, ...] = (".git", "**/.git", ".meridian/autosync/")
 
@@ -255,11 +255,11 @@ def mark_resolved(sync_root: Path, conflict_id: str) -> bool:
 
     data["resolved"] = True
     data["resolved_at"] = datetime.now(UTC).isoformat()
+    content = json.dumps(data, indent=2)
     try:
-        atomic_write_text(target, json.dumps(data, indent=2))
+        return _write_text_reconciled(target, content)
     except OSError:
         return False
-    return True
 
 
 def append_conflict_notice(
@@ -307,10 +307,9 @@ def append_conflict_notice(
         new_content = content.rstrip("\n") + "\n" + section
 
     try:
-        atomic_write_text(agents_md, new_content)
+        return _write_text_reconciled(agents_md, new_content)
     except OSError:
         return False
-    return True
 
 
 def strip_conflict_notice(sync_root: Path, conflict_id: str) -> bool:
@@ -353,9 +352,21 @@ def strip_conflict_notice(sync_root: Path, conflict_id: str) -> bool:
 
     new_content = new_content.rstrip("\n") + "\n" if new_content.strip() else ""
     try:
-        atomic_write_text(agents_md, new_content)
+        return _write_text_reconciled(agents_md, new_content)
     except OSError:
         return False
+
+
+def _write_text_reconciled(path: Path, content: str) -> bool:
+    """Write content, verifying visibility after a post-commit durability error."""
+
+    try:
+        atomic_write_text(path, content)
+    except AtomicReplaceDurabilityError:
+        try:
+            return path.read_text(encoding="utf-8") == content
+        except OSError:
+            return False
     return True
 
 
