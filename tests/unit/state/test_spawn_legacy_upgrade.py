@@ -119,7 +119,13 @@ def test_v2_flat_rows_parse_as_strict_v3_models(
 
     assert restored is not None
     assert restored.status == row["status"]
-    assert restored.runner_exit is None if row["runner_exit_status"] is None else True
+    if row["runner_exit_status"] is None:
+        assert restored.runner_exit is None
+    else:
+        assert restored.runner_exit is not None
+        assert restored.runner_exit.status == row["runner_exit_status"]
+        assert restored.runner_exit.exit_code == row["runner_exit_code"]
+        assert restored.runner_exit.exited_at == row["runner_exit_at"]
     if row["status"] == "running":
         assert restored.terminal is None
     else:
@@ -157,6 +163,12 @@ def test_v2_nested_terminal_status_agreement_upgrades(tmp_path: Path) -> None:
         "terminal_origin",
     ):
         row.pop(field)
+    row["runner_exit"] = {
+        "status": row.pop("runner_exit_status"),
+        "exit_code": row.pop("runner_exit_code"),
+        "error": row.pop("runner_exit_error"),
+        "exited_at": row.pop("runner_exit_at"),
+    }
     row["terminal"] = terminal
     _write_row(spawns_dir, row)
 
@@ -165,6 +177,18 @@ def test_v2_nested_terminal_status_agreement_upgrades(tmp_path: Path) -> None:
     assert restored is not None
     assert restored.terminal is not None
     assert restored.terminal.exit_code == 0
+
+
+def test_missing_version_dispatches_through_v2_upgrade(tmp_path: Path) -> None:
+    spawns_dir = tmp_path / "spawns"
+    row = _v2_flat()
+    row.pop("v")
+    _write_row(spawns_dir, row)
+
+    restored = read_state(spawns_dir, "p1", include_prompt=False)
+
+    assert restored is not None
+    assert restored.status == "running"
 
 
 @pytest.mark.parametrize(
@@ -205,6 +229,38 @@ def test_disagreeing_nested_terminal_status_quarantines_with_reason(tmp_path: Pa
         read_state(spawns_dir, "p1")
 
     assert "disagree" in str(quarantined.value.report.validation_errors).lower()
+
+
+def test_nested_terminal_facts_on_active_status_quarantine(tmp_path: Path) -> None:
+    spawns_dir = tmp_path / "spawns"
+    row = _v2_flat()
+    projection_fields = {
+        "runner_exit_code", "runner_exit_status", "runner_exit_error", "runner_exit_at",
+        "finished_at", "published_at", "exit_code", "duration_secs", "total_cost_usd",
+        "input_tokens", "output_tokens", "cache_read_input_tokens",
+        "cache_creation_input_tokens", "reasoning_tokens", "cost_is_estimate", "error",
+        "terminal_origin",
+    }
+    for field in set(row) & projection_fields:
+        row.pop(field)
+    row.update(
+        runner_exit=None,
+        terminal={
+            "status": "running",
+            "exit_code": 0,
+            "finished_at": "2026-07-01T00:02:00Z",
+            "published_at": "2026-07-01T00:02:01Z",
+            "origin": "runner",
+        },
+    )
+    _write_row(spawns_dir, row)
+
+    with pytest.raises(SpawnStateQuarantined) as quarantined:
+        read_state(spawns_dir, "p1")
+
+    assert "terminal status and terminal facts" in str(
+        quarantined.value.report.validation_errors
+    )
 
 
 def test_v3_rows_bypass_legacy_upgrader(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

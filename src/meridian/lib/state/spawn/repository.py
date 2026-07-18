@@ -1,4 +1,4 @@
-"""Spawn v2 state-file persistence helpers.
+"""Spawn v3 state-file persistence helpers.
 
 The helpers in this module persist one ``state.json`` per spawn under the
 runtime spawns directory.
@@ -6,6 +6,7 @@ runtime spawns directory.
 
 from __future__ import annotations
 
+import json
 import os
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -17,17 +18,21 @@ from pydantic import ValidationError, model_validator
 from meridian.lib.core.domain import TERMINAL_SPAWN_STATUSES
 from meridian.lib.platform.locking import lock_file
 from meridian.lib.state.atomic import atomic_write_text
+from meridian.lib.state.spawn.legacy import (
+    LegacySpawnStateUpgradeError,
+    upgrade_legacy_spawn_state,
+)
 from meridian.lib.state.spawn.model import SpawnRecord, SpawnStateFields
 
 
 class StoredSpawnState(SpawnStateFields):
-    """On-disk v2 ``state.json`` representation.
+    """On-disk v3 ``state.json`` representation.
 
     The prompt body is stored separately in ``starting-prompt.md``; this model
     keeps only ``prompt_length`` metadata so state reads can stay lightweight.
     """
 
-    v: Literal[2]
+    v: Literal[3]
     prompt_length: int | None = None
 
     @model_validator(mode="after")
@@ -107,12 +112,12 @@ def spawn_lock_path(spawns_dir: Path, spawn_id: str) -> Path:
 def record_to_stored_state(
     record: SpawnRecord,
 ) -> StoredSpawnState:
-    """Convert a spawn projection to v2 on-disk state without prompt body."""
+    """Convert a spawn projection to v3 on-disk state without prompt body."""
 
     return StoredSpawnState.model_validate(
         {
             **record.model_dump(exclude={"prompt"}),
-            "v": 2,
+            "v": 3,
             "prompt_length": len(record.prompt) if record.prompt is not None else None,
         }
     )
@@ -122,7 +127,7 @@ def stored_state_to_record(
     stored: StoredSpawnState,
     prompt: str | None = None,
 ) -> SpawnRecord:
-    """Convert v2 on-disk state to a ``SpawnRecord`` projection."""
+    """Convert v3 on-disk state to a ``SpawnRecord`` projection."""
 
     return SpawnRecord.model_validate(
         {**stored.model_dump(exclude={"v", "prompt_length"}), "prompt": prompt}
@@ -143,12 +148,37 @@ def _read_stored_state(spawns_dir: Path, spawn_id: str) -> StoredSpawnState | No
     path = _state_path(spawns_dir, spawn_id)
     try:
         try:
-            return StoredSpawnState.model_validate_json(path.read_text(encoding="utf-8"))
-        except ValidationError as exc:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+            if not isinstance(raw, dict):
+                raise LegacySpawnStateUpgradeError(
+                    "invalid_root", "spawn state root must be an object"
+                )
+            candidate = upgrade_legacy_spawn_state(raw) if raw.get("v", 2) == 2 else raw
+            return StoredSpawnState.model_validate(candidate)
+        except (json.JSONDecodeError, LegacySpawnStateUpgradeError, ValidationError) as exc:
+            if isinstance(exc, ValidationError):
+                errors: tuple[object, ...] = tuple(exc.errors(include_url=False))
+            elif isinstance(exc, LegacySpawnStateUpgradeError):
+                errors = (
+                    {
+                        "type": "legacy_upgrade_error",
+                        "loc": exc.fields,
+                        "msg": str(exc),
+                        "rule": exc.rule,
+                    },
+                )
+            else:
+                errors = (
+                    {
+                        "type": "json_invalid",
+                        "loc": (exc.lineno, exc.colno),
+                        "msg": str(exc),
+                    },
+                )
             report = SpawnStateQuarantineReport(
                 spawn_id=spawn_id,
                 state_path=path,
-                validation_errors=tuple(exc.errors(include_url=False)),
+                validation_errors=errors,
             )
             raise SpawnStateQuarantined(report) from exc
     except FileNotFoundError:
@@ -221,7 +251,7 @@ def is_safe_spawn_dir_name(name: str) -> bool:
     )
 
 def scan_spawn_ids(spawns_dir: Path) -> list[str]:
-    """Return child directory names that contain a v2 ``state.json`` file."""
+    """Return child directory names that contain a ``state.json`` file."""
 
     try:
         entries = os.scandir(spawns_dir)

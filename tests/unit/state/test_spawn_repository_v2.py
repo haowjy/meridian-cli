@@ -72,7 +72,7 @@ def _seed_state(spawns_dir: Path, record: SpawnRecord) -> None:
     )
 
 
-def test_v2_state_round_trips_without_prompt_body(tmp_path: Path) -> None:
+def test_v3_state_round_trips_without_prompt_body(tmp_path: Path) -> None:
     spawns_dir = tmp_path / "spawns"
     record = _record(prompt="hello world")
 
