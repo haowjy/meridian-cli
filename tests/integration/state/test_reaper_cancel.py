@@ -187,7 +187,7 @@ def test_spawn_cancel_managed_primary_signals_launcher_first(
     )
 
     assert output.status == "finalizing"
-    assert output.exit_code == 1
+    assert output.exit_code == 130
     assert terminated_pids[0] == 7001
     assert set(terminated_pids[1:]) == {7002, 7003}
     latest = _get_spawn(runtime_root, spawn_id)

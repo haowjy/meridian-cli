@@ -97,6 +97,21 @@ def _runner_exit_terminal_update(record: SpawnRecord) -> dict[str, object]:
     }
 
 
+def _synthetic_stale_terminal_update(*, error: str, now: float) -> dict[str, object]:
+    observed_at = datetime.fromtimestamp(now, tz=UTC).isoformat().replace("+00:00", "Z")
+    return {
+        "status": "failed",
+        "terminal": TerminalFacts(
+            status="failed",
+            exit_code=1,
+            finished_at=observed_at,
+            published_at=observed_at,
+            error=error,
+            origin="reconciler",
+        ),
+    }
+
+
 def _read_only_nested_staleness_view(
     *,
     runtime_root: Path,
@@ -132,21 +147,13 @@ def _read_only_nested_staleness_view(
         if is_process_alive(runner_pid, created_after_epoch=runner_created_at_epoch):
             return record
         return record.model_copy(
-            update={
-                "status": "failed",
-                "exit_code": 1,
-                "error": "stale_nested_read",
-            }
+            update=_synthetic_stale_terminal_update(error="stale_nested_read", now=now)
         )
 
     if in_startup_grace:
         return record
     return record.model_copy(
-        update={
-            "status": "failed",
-            "exit_code": 1,
-            "error": "stale_nested_read_no_pid",
-        }
+        update=_synthetic_stale_terminal_update(error="stale_nested_read_no_pid", now=now)
     )
 
 

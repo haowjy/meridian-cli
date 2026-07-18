@@ -35,7 +35,7 @@ def _seed_running_spawn(runtime_root: Path, spawn_id: str) -> None:
     )
 
 
-def test_spawn_show_sync_renders_finalizing_status_and_orphan_finalization_hint(
+def test_spawn_show_sync_renders_finalizing_status_without_partial_terminal_error(
     tmp_path: Path,
 ) -> None:
     project_root = tmp_path / "repo"
@@ -49,7 +49,6 @@ def test_spawn_show_sync_renders_finalizing_status_and_orphan_finalization_hint(
         exited_at="2026-04-12T14:00:00Z",
     )
     assert spawn_store.mark_finalizing(runtime_root, "p1") is True
-    spawn_store.update_spawn(runtime_root, "p1", error="orphan_finalization")
     heartbeat = runtime_root / "spawns" / "p1" / "heartbeat"
     heartbeat.parent.mkdir(parents=True, exist_ok=True)
     heartbeat.touch(exist_ok=True)
@@ -70,8 +69,7 @@ def test_spawn_show_sync_renders_finalizing_status_and_orphan_finalization_hint(
     assert "Status: finalizing" in rendered
     verbose_rendered = output.format_text(FormatContext(verbosity=1))
     assert "Status: finalizing (cleanup in progress)" in verbose_rendered
-    assert "orphan_finalization" in verbose_rendered
-    assert "report.md may still contain useful content" in verbose_rendered
+    assert "orphan_finalization" not in verbose_rendered
     assert "awaiting finalization" not in verbose_rendered
 
 
