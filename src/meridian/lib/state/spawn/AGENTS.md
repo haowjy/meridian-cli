@@ -7,7 +7,8 @@ This is the low-level substrate that `spawn_store.py` in the parent package buil
 
 Four files with distinct responsibilities:
 
-**`model.py`** — in-memory types: `SpawnRecord`, `LaunchMode`, `SpawnOrigin`.
+**`model.py`** — in-memory types: `SpawnRecord`, `RunnerExitFacts`, `TerminalFacts`,
+`LaunchMode`, `SpawnOrigin`.
 `SpawnRecord` is what the rest of the system works with; it includes the starting
 prompt text (read separately from `starting-prompt.md`, not stored in `state.json`).
 
@@ -33,6 +34,11 @@ the stable per-spawn lock, re-reads the authoritative record, applies the caller
 pure transition, and atomically persists the result.
 
 ## Key Rules
+
+**Lifecycle facts are atomic.** Runner-exit evidence lives in `runner_exit`; finalized
+facts live in `terminal`. A terminal top-level status requires matching complete
+`terminal` facts, while active and `unknown` rows must not carry them. Flat lifecycle
+fact fields are not part of the persisted schema.
 
 **Read via `read_state()`, not raw JSON.** Raw reads bypass Pydantic validation
 and skip the `starting-prompt.md` reconstruction into `SpawnRecord.starting_prompt`.

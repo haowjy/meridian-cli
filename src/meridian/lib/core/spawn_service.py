@@ -1038,11 +1038,18 @@ def _cancel_outcome_from_record(
     already_terminal: bool = False,
     finalizing: bool = False,
 ) -> CancelOutcome:
+    terminal = record.terminal
+    if terminal is not None:
+        origin = terminal.origin
+        exit_code = terminal.exit_code
+    else:
+        origin = "cancel"
+        exit_code = record.cancel_intent.exit_code if record.cancel_intent is not None else 130
     return CancelOutcome(
         spawn_id=spawn_id,
         status=_coerce_cancel_status(record.status),
-        origin=record.terminal_origin or "cancel",
-        exit_code=record.exit_code if record.exit_code is not None else 1,
+        origin=origin,
+        exit_code=exit_code,
         already_terminal=already_terminal,
         finalizing=finalizing,
         model=record.model,

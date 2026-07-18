@@ -197,21 +197,12 @@ def _in_post_runner_exit_finalization_grace(record: SpawnRecord, now: float) -> 
 
 
 def _finalize_from_runner_exit_decision(record: SpawnRecord) -> FinalizeFromRunnerExit:
-    status = record.runner_exit_status
-    if status is None or not is_terminal_spawn_status(status):
-        return FinalizeFromRunnerExit(status=SpawnStatus.FAILED, exit_code=1, error="orphan_run")
-    if record.runner_exit_code is not None:
-        exit_code = record.runner_exit_code
-    elif status == "succeeded":
-        exit_code = 0
-    elif status == "cancelled":
-        exit_code = 130
-    else:
-        exit_code = 1
+    facts = record.runner_exit
+    assert facts is not None
     return FinalizeFromRunnerExit(
-        status=SpawnStatus(status),
-        exit_code=exit_code,
-        error=record.runner_exit_error,
+        status=SpawnStatus(facts.status),
+        exit_code=facts.exit_code,
+        error=facts.error,
     )
 
 

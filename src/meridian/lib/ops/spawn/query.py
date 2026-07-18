@@ -20,7 +20,7 @@ from meridian.lib.state.reaper import (
     SPAWN_POST_RUNNER_EXIT_FINALIZATION_GRACE_SECS,
     SPAWN_STARTUP_GRACE_SECS,
 )
-from meridian.lib.state.spawn.model import SpawnRecord
+from meridian.lib.state.spawn.model import SpawnRecord, TerminalFacts
 
 from .models import SpawnDetailOutput
 
@@ -82,20 +82,18 @@ def _has_recent_spawn_activity(runtime_root: Path, spawn_id: str, now: float) ->
 
 
 def _runner_exit_terminal_update(record: SpawnRecord) -> dict[str, object]:
-    status = record.runner_exit_status
-    assert status is not None
-    if record.runner_exit_code is not None:
-        exit_code = record.runner_exit_code
-    elif status == "succeeded":
-        exit_code = 0
-    elif status == "cancelled":
-        exit_code = 130
-    else:
-        exit_code = 1
+    facts = record.runner_exit
+    assert facts is not None
     return {
-        "status": status,
-        "exit_code": exit_code,
-        "error": record.runner_exit_error,
+        "status": facts.status,
+        "terminal": TerminalFacts(
+            status=facts.status,
+            exit_code=facts.exit_code,
+            finished_at=facts.exited_at,
+            published_at=facts.exited_at,
+            error=facts.error,
+            origin="runner",
+        ),
     }
 
 
