@@ -11,6 +11,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Fixed
 - Claude's preliminary version probe now uses the same bound child environment as
   the main harness process instead of inheriting the raw parent environment.
+- Claude prelaunch session materialization now reads its already-bound config
+  directory without recomposing or overwriting launch environment policy.
 
 ## [0.3.39] - 2026-07-17
 

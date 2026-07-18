@@ -253,7 +253,7 @@ def test_claude_adapter_uses_claude_config_dir_override(
     ("configured_root", "cwd_relative", "expected_suffix"),
     [
         ("~/claude-root", False, ("home", "claude-root")),
-        ("relative-claude-root", True, ("repo", "relative-claude-root")),
+        ("relative-claude-root", True, ("repo", "child", "relative-claude-root")),
     ],
 )
 def test_claude_prepare_prelaunch_normalizes_config_dir_for_env_and_metadata(
@@ -271,7 +271,7 @@ def test_claude_prepare_prelaunch_normalizes_config_dir_for_env_and_metadata(
     # Seed both HOME (POSIX) and USERPROFILE (Windows) so Path.expanduser() works on both platforms.
     monkeypatch.setenv("HOME", fake_home.as_posix())
     monkeypatch.setenv("USERPROFILE", str(fake_home))
-    monkeypatch.setenv("CLAUDE_CONFIG_DIR", configured_root)
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", "/ambient/claude-root")
     if cwd_relative:
         monkeypatch.chdir(repo_root)
 
@@ -281,13 +281,16 @@ def test_claude_prepare_prelaunch_normalizes_config_dir_for_env_and_metadata(
         spawn_id=SpawnId("p-test"),
         session=SessionRequest(),
         child_cwd=child_root,
-        child_env={},
+        child_env={
+            "HOME": fake_home.as_posix(),
+            "CLAUDE_CONFIG_DIR": configured_root,
+        },
         resolved_harness_session_id="session-1",
         record_effective_config_dir=recorded_dirs.append,
     )
 
     expected = str((tmp_path / Path(*expected_suffix)).resolve())
-    assert state.env_overrides["CLAUDE_CONFIG_DIR"] == expected
+    assert state.env_overrides == {}
     assert recorded_dirs == [expected]
 
 
