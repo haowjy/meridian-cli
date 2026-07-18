@@ -74,6 +74,15 @@ def get_project_id(project_root: Path) -> str | None:
     return raw_id.strip()
 
 
+def get_project_id_with_legacy_fallback(project_root: Path) -> str | None:
+    """Read project ID from ``meridian.toml``, falling back to ``.meridian/id``.
+
+    Read-only callers use this so legacy projects resolve without migration.
+    """
+
+    return get_project_id(project_root) or _legacy_project_id(project_root)
+
+
 def _legacy_project_id(project_root: Path) -> str | None:
     legacy_path = project_root / ".meridian" / "id"
     try:
@@ -104,7 +113,7 @@ def write_project_id(project_root: Path, project_id: str) -> None:
 def get_or_create_project_id(project_root: Path) -> str:
     """Read or create the project ID in ``meridian.toml``.
 
-    - If .meridian/id exists, read and return it (any format accepted)
+    - If .meridian/id exists, migrate its value into meridian.toml
     - If not, generate a three-word ID (adjective-noun-noun), collision-check
       against existing context/ and projects/ directories, write atomically
     - Up to 10 retries on collision; raises RuntimeError if exhausted

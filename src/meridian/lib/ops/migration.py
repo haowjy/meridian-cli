@@ -8,7 +8,6 @@ from pathlib import Path
 
 from meridian.lib.config.preserving_edit import project_config_transaction
 from meridian.lib.state.user_paths import (
-    get_project_home,
     get_project_id,
     get_user_home,
     write_project_id,
@@ -61,22 +60,6 @@ def _migrate_legacy_project_identity_locked(project_root: Path) -> MigrationResu
             blocking_reason="meridian.toml and .meridian/id contain different project IDs",
         )
 
-    try:
-        blocking_spawns = _get_active_spawns(legacy_id)
-    except Exception as exc:
-        return MigrationResult(
-            status="blocked",
-            old_id=legacy_id,
-            new_id=existing_id,
-            blocking_reason=f"Could not verify active spawns: {exc}",
-        )
-    if blocking_spawns:
-        return MigrationResult(
-            status="blocked",
-            old_id=legacy_id,
-            blocking_reason=f"Active spawns: {', '.join(blocking_spawns)}",
-        )
-
     # The legacy ID is the transition's completion marker. Keep it until the
     # committed identity and all generated legacy stragglers are settled so an
     # interrupted migration remains discoverable and safe to retry.
@@ -108,17 +91,3 @@ def migrate_project_id(project_root: Path) -> MigrationResult:
     return migrate_legacy_project_identity(project_root)
 
 
-def _get_active_spawns(project_id: str) -> list[str]:
-    """Return active or uncertain spawn IDs; callers block migration on failure.
-
-    Quarantined rows are uncertain work and count as blocking. Unreadable
-    authority raises; the caller converts that into a blocked migration.
-    """
-    from meridian.lib.state.spawn_store import ACTIVE_SPAWN_STATUSES, list_spawns
-
-    runtime_root = get_project_home(project_id)
-    if not runtime_root.exists():
-        return []
-    collection = list_spawns(runtime_root)
-    active = [spawn.id for spawn in collection.records if spawn.status in ACTIVE_SPAWN_STATUSES]
-    return [*active, *(f"quarantined:{row.spawn_id}" for row in collection.quarantines)]

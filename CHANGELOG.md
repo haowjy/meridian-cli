@@ -37,6 +37,11 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   corrupt or status-only row is no longer shown as succeeded. (#423)
 - Declined locked spawn mutations are a typed outcome, not an exception channel;
   a no-op cancel on a terminal spawn no longer emits a spurious `spawn.updated`. (#423)
+- `--from` resolves primary sessions that have a harness session ID but no spawn
+  row, rendering their transcript reference directly.
+- Project identity read paths fall back to `.meridian/id` when `meridian.toml
+  [project].id` is absent — legacy projects resolve without forced migration.
+- Legacy identity migration no longer blocks on active spawns.
 
 ## [0.3.42] - 2026-07-18
 

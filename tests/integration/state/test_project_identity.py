@@ -7,8 +7,10 @@ import pytest
 
 from meridian.lib.config.project_root import cwd_has_project_id
 from meridian.lib.ops.migration import migrate_project_id
+from meridian.lib.state.spawn_store import get_spawn, start_spawn
 from meridian.lib.state.user_paths import (
     get_or_create_project_id,
+    get_project_home,
     get_project_id,
     write_project_id,
 )
@@ -69,31 +71,43 @@ def test_failed_atomic_identity_write_leaves_existing_toml_usable(
     assert not (tmp_path / ".meridian.toml.identity.lock").exists()
 
 
-def test_migration_writes_identity_and_removes_legacy_files(
+def test_migration_with_active_spawns_writes_identity_and_removes_legacy_files(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     legacy = tmp_path / ".meridian"
     legacy.mkdir()
     (legacy / "id").write_text("legacy-project-id", encoding="utf-8")
     (legacy / ".gitignore").write_text("*\n!id\n", encoding="utf-8")
-    monkeypatch.setattr("meridian.lib.ops.migration._get_active_spawns", lambda _id: [])
+    monkeypatch.setenv("MERIDIAN_HOME", (tmp_path / "home").as_posix())
+    runtime_root = get_project_home("legacy-project-id")
+    start_spawn(
+        runtime_root,
+        spawn_id="p1",
+        chat_id="c1",
+        model="gpt-5.4",
+        agent="tester",
+        harness="codex",
+        prompt="active migration regression",
+        status="running",
+    )
 
     result = migrate_project_id(tmp_path)
 
     assert result.status == "migrated"
     assert get_project_id(tmp_path) == "legacy-project-id"
+    active_spawn = get_spawn(runtime_root, "p1")
+    assert active_spawn is not None
+    assert active_spawn.status == "running"
     assert not legacy.exists()
 
 
 def test_migration_resumes_after_legacy_straggler_cleanup(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path,
 ) -> None:
     legacy = tmp_path / ".meridian"
     legacy.mkdir()
     (legacy / "id").write_text("legacy-project-id", encoding="utf-8")
     write_project_id(tmp_path, "legacy-project-id")
-    monkeypatch.setattr("meridian.lib.ops.migration._get_active_spawns", lambda _id: [])
-
     result = migrate_project_id(tmp_path)
 
     assert result.status == "migrated"
@@ -101,23 +115,3 @@ def test_migration_resumes_after_legacy_straggler_cleanup(
     assert not result.removed_legacy_gitignore
     assert get_project_id(tmp_path) == "legacy-project-id"
     assert not legacy.exists()
-
-
-def test_migration_blocks_when_active_spawn_check_fails(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    legacy = tmp_path / ".meridian"
-    legacy.mkdir()
-    (legacy / "id").write_text("legacy-project-id", encoding="utf-8")
-
-    def fail_check(_project_id: str) -> list[str]:
-        raise OSError("runtime state unreadable")
-
-    monkeypatch.setattr("meridian.lib.ops.migration._get_active_spawns", fail_check)
-
-    result = migrate_project_id(tmp_path)
-
-    assert result.status == "blocked"
-    assert result.blocking_reason == "Could not verify active spawns: runtime state unreadable"
-    assert (legacy / "id").is_file()
-    assert get_project_id(tmp_path) is None
