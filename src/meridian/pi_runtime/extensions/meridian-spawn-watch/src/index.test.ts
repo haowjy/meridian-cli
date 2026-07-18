@@ -113,6 +113,16 @@ async function writeSpawnState(
   );
 }
 
+function terminalFacts(status = "succeeded"): Record<string, unknown> {
+  return {
+    status,
+    exit_code: status === "succeeded" ? 0 : 1,
+    finished_at: "2026-07-17T12:00:05Z",
+    published_at: "2026-07-17T12:00:05Z",
+    duration_secs: 65,
+  };
+}
+
 async function makeRuntime(): Promise<{ runtimeRoot: string; runtime: SpawnWatchRuntime; internals: SpawnWatchRuntimeInternals }> {
   const runtimeRoot = await mkdtemp(path.join(tmpdir(), "spawn-watch-origin-"));
   setEnv("MERIDIAN_PI_STATE_DIR", runtimeRoot);
@@ -162,9 +172,34 @@ describe("SpawnWatchRuntime bash-origin spawn tracking", () => {
       await internals.scanSpawns();
       expect(internals.fallbackScanReasons.has("active-origin-spawns")).toBe(true);
 
-      await writeSpawnState(runtimeRoot, "p1001", { originBashId: "b-origin", status: "succeeded" });
+      await writeSpawnState(runtimeRoot, "p1001", {
+        originBashId: "b-origin",
+        status: "succeeded",
+        terminal: terminalFacts(),
+      });
       await internals.scanSpawns();
       expect(internals.fallbackScanReasons.has("active-origin-spawns")).toBe(false);
+    } finally {
+      runtime.stop();
+      await rm(runtimeRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("does not report a status-only row as completed", async () => {
+    const { runtimeRoot, runtime, internals } = await makeRuntime();
+    try {
+      await writeBashRecords(runtimeRoot, "p-parent", [bashRecord("b-status-only")]);
+      await writeSpawnState(runtimeRoot, "p-status-only", {
+        originBashId: "b-status-only",
+        status: "succeeded",
+        terminal: null,
+      });
+      internals.running = true;
+
+      await internals.scanSpawns();
+
+      expect(internals.pending.has("p-status-only")).toBe(false);
+      expect(internals.fallbackScanReasons.has("active-origin-spawns")).toBe(true);
     } finally {
       runtime.stop();
       await rm(runtimeRoot, { recursive: true, force: true });
@@ -190,6 +225,7 @@ describe("SpawnWatchRuntime bash-origin spawn tracking", () => {
       await internals.scanSpawns();
 
       expect(internals.pending.get("p-duration")?.duration).toBe("1m05s");
+      expect(internals.pending.get("p-duration")?.kind).toBe("spawn");
     } finally {
       runtime.stop();
       await rm(runtimeRoot, { recursive: true, force: true });
@@ -239,7 +275,11 @@ describe("SpawnWatchRuntime bash-origin spawn tracking", () => {
       expect(internals.discoveryScanInterval).toBeNull();
       expect(internals.fallbackScanInterval).not.toBeNull();
 
-      await writeSpawnState(runtimeRoot, "p1001", { originBashId: "b-origin", status: "succeeded" });
+      await writeSpawnState(runtimeRoot, "p1001", {
+        originBashId: "b-origin",
+        status: "succeeded",
+        terminal: terminalFacts(),
+      });
       await internals.scanSpawns();
       expect(internals.fallbackScanReasons.has("spawn-discovery")).toBe(false);
     } finally {
