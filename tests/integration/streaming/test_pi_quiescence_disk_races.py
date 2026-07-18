@@ -556,6 +556,7 @@ async def test_spawn_manager_pi_drain_loop_reevaluates_on_disk_wakeup(
     )
 
     spawn_id = SpawnId("p-disk-wakeup")
+    start_row(tmp_path, str(spawn_id), HarnessId.PI, None)
     child_state = tmp_path / "spawns" / "p123" / "state.json"
     _write_json(
         child_state,
