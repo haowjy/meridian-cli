@@ -1,122 +1,104 @@
-"""Project ID migration from UUID to three-word format."""
+"""Migration from legacy repo-local project identity to ``meridian.toml``."""
 
 from __future__ import annotations
 
-import re
 import shutil
+from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 
-from meridian.lib.platform.atomic import atomic_write_text
 from meridian.lib.state.user_paths import (
+    _write_project_id_unlocked,
     get_project_home,
     get_project_id,
-    get_user_home,
-)
-from meridian.lib.state.wordgen import generate_project_id
-
-_UUID_PATTERN = re.compile(
-    r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
-    re.IGNORECASE,
+    write_project_id,
 )
 
 
 @dataclass(frozen=True)
 class MigrationResult:
-    """Result of a project ID migration attempt."""
+    """Result of a project identity migration attempt."""
 
-    status: str  # "migrated", "not-needed", "blocked"
+    status: str
     old_id: str | None = None
     new_id: str | None = None
     moved_context: bool = False
     moved_runtime: bool = False
     blocking_reason: str | None = None
+    removed_legacy_identity: bool = False
+    removed_legacy_gitignore: bool = False
 
 
-def is_uuid_format(project_id: str) -> bool:
-    """Return True if the string matches UUID format."""
-    return bool(_UUID_PATTERN.match(project_id))
+def _read_legacy_id(project_root: Path) -> str | None:
+    try:
+        value = (project_root / ".meridian" / "id").read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+    return value or None
 
 
-def migrate_project_id(project_root: Path) -> MigrationResult:
-    """Migrate a project from UUID ID to three-word ID.
+def migrate_legacy_project_identity(
+    project_root: Path,
+    *,
+    lock_held: bool = False,
+) -> MigrationResult:
+    """Move repo-local identity into ``meridian.toml``, writing identity last."""
 
-    Steps:
-    1. Read .meridian/id
-    2. Check if it's UUID format — skip if already a word ID
-    3. Check for active spawns — refuse if any
-    4. Generate new three-word ID (with collision check)
-    5. Move context dir if it exists
-    6. Move runtime dir if it exists
-    7. Update .meridian/id atomically (LAST)
-    """
-    meridian_dir = project_root / ".meridian"
-    current_id = get_project_id(meridian_dir)
-
-    if current_id is None:
+    existing_id = get_project_id(project_root)
+    legacy_id = _read_legacy_id(project_root)
+    if legacy_id is None:
+        return MigrationResult(status="not-needed", old_id=existing_id, new_id=existing_id)
+    if existing_id is not None and existing_id != legacy_id:
         return MigrationResult(
-            status="not-needed",
-            blocking_reason="No project ID found",
+            status="blocked",
+            old_id=legacy_id,
+            new_id=existing_id,
+            blocking_reason="meridian.toml and .meridian/id contain different project IDs",
         )
 
-    if not is_uuid_format(current_id):
-        return MigrationResult(
-            status="not-needed",
-            old_id=current_id,
-        )
-
-    # Check for active spawns before touching anything
-    blocking_spawns = _get_active_spawns(current_id)
+    blocking_spawns = _get_active_spawns(legacy_id)
     if blocking_spawns:
         return MigrationResult(
             status="blocked",
-            old_id=current_id,
+            old_id=legacy_id,
             blocking_reason=f"Active spawns: {', '.join(blocking_spawns)}",
         )
 
-    # Generate new three-word ID with collision check
-    user_home = get_user_home()
-    new_id: str | None = None
-    for _ in range(10):
-        candidate = generate_project_id()
-        if (
-            not (user_home / "context" / candidate).exists()
-            and not (user_home / "projects" / candidate).exists()
-        ):
-            new_id = candidate
-            break
+    # The user-home context/runtime roots already use this ID. Identity is the
+    # only authoritative write and therefore remains last among durable writes.
+    if existing_id is None:
+        if lock_held:
+            _write_project_id_unlocked(project_root, legacy_id)
+        else:
+            write_project_id(project_root, legacy_id)
 
-    if new_id is None:
-        return MigrationResult(
-            status="blocked",
-            old_id=current_id,
-            blocking_reason="Failed to generate unique ID after 10 attempts",
-        )
-
-    # Move directories before updating the ID file
-    moved_context = _try_move_dir(
-        user_home / "context" / current_id,
-        user_home / "context" / new_id,
-    )
-    moved_runtime = _try_move_dir(
-        user_home / "projects" / current_id,
-        user_home / "projects" / new_id,
-    )
-
-    # Update .meridian/id atomically — LAST
-    atomic_write_text(meridian_dir / "id", new_id)
+    legacy_dir = project_root / ".meridian"
+    legacy_identity = legacy_dir / "id"
+    legacy_gitignore = legacy_dir / ".gitignore"
+    removed_id = legacy_identity.exists()
+    removed_gitignore = legacy_gitignore.exists()
+    legacy_identity.unlink(missing_ok=True)
+    legacy_gitignore.unlink(missing_ok=True)
+    with suppress(OSError):
+        legacy_dir.rmdir()
 
     return MigrationResult(
         status="migrated",
-        old_id=current_id,
-        new_id=new_id,
-        moved_context=moved_context,
-        moved_runtime=moved_runtime,
+        old_id=legacy_id,
+        new_id=legacy_id,
+        removed_legacy_identity=removed_id,
+        removed_legacy_gitignore=removed_gitignore,
     )
 
 
+def migrate_project_id(project_root: Path) -> MigrationResult:
+    """Public migration entry point."""
+
+    return migrate_legacy_project_identity(project_root)
+
+
 def _try_move_dir(src: Path, dst: Path) -> bool:
-    """Move directory if source exists. Return True if moved."""
+    """Retained for compatibility with migration tests and old state repair."""
     if not src.exists():
         return False
     dst.parent.mkdir(parents=True, exist_ok=True)
@@ -125,12 +107,9 @@ def _try_move_dir(src: Path, dst: Path) -> bool:
 
 
 def _get_active_spawns(project_id: str) -> list[str]:
-    """Return list of active spawn IDs for this project. Empty if none or unreadable."""
+    """Return active spawn IDs, failing open exactly as the legacy migration did."""
     try:
-        from meridian.lib.state.spawn_store import (
-            ACTIVE_SPAWN_STATUSES,
-            list_spawns,
-        )
+        from meridian.lib.state.spawn_store import ACTIVE_SPAWN_STATUSES, list_spawns
 
         runtime_root = get_project_home(project_id)
         if not runtime_root.exists():
@@ -139,5 +118,4 @@ def _get_active_spawns(project_id: str) -> list[str]:
             spawn.id for spawn in list_spawns(runtime_root) if spawn.status in ACTIVE_SPAWN_STATUSES
         ]
     except Exception:
-        # Spawn store read failed — assume no active spawns and allow migration.
         return []
