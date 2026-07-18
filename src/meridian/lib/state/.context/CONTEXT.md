@@ -112,12 +112,14 @@ Up to 10 retries; raises `RuntimeError` if exhausted.
 
 ### Terminal Write Authority
 
-`spawn/terminal_policy.py:decide_terminal_write()` implements the projection
-authority rule: a runner-origin terminal write supersedes a reconciler-origin write
-on the same spawn. Terminal statuses are `succeeded`, `failed`, `cancelled`, and
-`timed_out`; `timed_out` is a terminal failure class distinct from generic
-`failed`. The reaper checks authority before finalizing — it will not overwrite a
-spawn that the runner already terminated with a higher-authority origin.
+Terminal write authority is inlined in `spawn_store.py:finalize_spawn()`. The
+finalize mutator checks `current.terminal.origin` against the incoming origin
+under the per-spawn lock: a reconciler-origin terminal write can be replaced by
+an authoritative origin (`runner`, `launcher`, `launch_failure`, `cancel`); all
+other terminal-to-terminal writes are rejected. Terminal statuses are
+`succeeded`, `failed`, `cancelled`, and `timed_out`. The reaper will not
+overwrite a spawn that the runner already terminated with a higher-authority
+origin.
 
 ### Reconciliation Behavior
 
