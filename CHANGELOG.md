@@ -4,6 +4,31 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+- Persisted spawn `state.json` is typed end to end: status, kind, runner-exit and
+  terminal facts, and chat/harness-session identities validate at load. An
+  out-of-vocabulary or wrong-shaped row is quarantined and reported, never silently
+  omitted or coerced. `list_spawns` and `get_spawn` now give the same answer for the
+  same disk state. (#423)
+- Spawn terminal facts are all-or-nothing behind a `terminal` discriminant: a
+  partial terminal row is unparseable, and `finalize` accepts only terminal
+  statuses. Removes exit-code guessing (0/130/1) and the default-1 fallback —
+  readers report the recorded exit code or nothing. (#423)
+- Work items decide archived-ness from directory location alone; `archived_at` is
+  stored but never decides. A crash between archive and reopen is unambiguous by
+  construction. Work-item reads no longer rewrite state files. (#423)
+- Harness events classify per bundle, dispatching by harness id before event type;
+  the same event name under two harnesses can no longer misclassify. (#423)
+
+### Fixed
+- Corrupt persisted spawn/session rows no longer crash reads or delete live spawn
+  data: migration and telemetry retention fail closed on quarantined/unreadable
+  state instead of treating it as "no spawns". (#423)
+- Pi `meridian-spawn-watch` reports completion from validated terminal facts; a
+  corrupt or status-only row is no longer shown as succeeded. (#423)
+- Declined locked spawn mutations are a typed outcome, not an exception channel;
+  a no-op cancel on a terminal spawn no longer emits a spurious `spawn.updated`. (#423)
+
 ## [0.3.39] - 2026-07-17
 
 ## [0.3.38] - 2026-07-17
