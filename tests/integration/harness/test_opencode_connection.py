@@ -26,7 +26,10 @@ from meridian.lib.platform.process_scope import ProcessScopeSnapshot, ScopedProc
 from meridian.lib.safety.permissions import (
     UnsafeNoOpPermissionResolver,
 )
-from meridian.lib.state.paths import resolve_spawn_log_dir
+from meridian.lib.state.paths import (
+    resolve_project_runtime_root_for_write,
+    resolve_spawn_log_dir,
+)
 from tests.support.async_determinism import AsyncDeterminism
 from tests.support.fakes import FakeClock
 from tests.support.opencode import FakeOpenCodeProcess
@@ -214,6 +217,9 @@ async def _collect_events_under_fake_clock(
 
 
 def _build_connection_config(tmp_path: Path) -> ConnectionConfig:
+    (tmp_path / "meridian.toml").write_text(
+        '[project]\nid = "opencode-connection-test"\n', encoding="utf-8"
+    )
     return ConnectionConfig(
         spawn_id=SpawnId("p-open-observer"),
         harness_id=HarnessId.OPENCODE,
@@ -528,7 +534,12 @@ def _set_startup_failure(
     config: ConnectionConfig,
     text: str,
 ) -> None:
-    spawn_dir = resolve_spawn_log_dir(config.control_root, config.spawn_id)
+    spawn_dir = resolve_spawn_log_dir(
+        config.control_root,
+        config.spawn_id,
+        runtime_root=config.runtime_root
+        or resolve_project_runtime_root_for_write(config.control_root),
+    )
     spawn_dir.mkdir(parents=True, exist_ok=True)
     connection._stderr_log_path = spawn_dir / "stderr.log"
     connection._stderr_log_path.write_text(text, encoding="utf-8")

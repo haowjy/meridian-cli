@@ -69,13 +69,19 @@ def resolve_bound_work_scope(
     project_root: Path,
     requested_work_id: str | None,
     child_spawn_id: str,
-) -> WorkScope:
+    runtime_root: Path,
+) -> WorkScope | None:
     """Bind-time scope: named repo scratch or child ambient spawn dir."""
 
     if requested_work_id is not None:
-        root = resolve_work_scratch_dir_for_project(project_root, requested_work_id)
+        try:
+            root = resolve_work_scratch_dir_for_project(project_root, requested_work_id)
+        except ValueError:
+            return None
         return WorkScope(kind="work_item", identifier=requested_work_id, root=root)
-    root = resolve_ambient_work_dir(project_root, child_spawn_id)
+    root = resolve_ambient_work_dir(
+        project_root, child_spawn_id, runtime_root=runtime_root
+    )
     return WorkScope(kind="ambient_spawn", identifier=child_spawn_id, root=root)
 
 
@@ -86,6 +92,7 @@ def resolve_work_scope_from_parts(
     work_id: str | None,
     bound_work_dir: Path | None,
     project_work_dir: Path | None = None,
+    runtime_root: Path | None = None,
 ) -> WorkScope | None:
     """Resolve active work scope from already-derived context parts.
 
@@ -105,13 +112,21 @@ def resolve_work_scope_from_parts(
         if project_work_dir is not None:
             root = project_work_dir / work_id
         elif project_root is not None:
-            root = resolve_work_scratch_dir_for_project(project_root, work_id)
+            try:
+                root = resolve_work_scratch_dir_for_project(project_root, work_id)
+            except ValueError:
+                return None
         else:
             return None
         return WorkScope(kind="work_item", identifier=work_id, root=root)
 
     if spawn_id is not None and project_root is not None:
-        root = resolve_ambient_work_dir(project_root, spawn_id)
+        try:
+            root = resolve_ambient_work_dir(
+                project_root, spawn_id, runtime_root=runtime_root
+            )
+        except ValueError:
+            return None
         return WorkScope(kind="ambient_spawn", identifier=str(spawn_id), root=root)
 
     return None

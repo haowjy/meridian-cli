@@ -34,17 +34,11 @@ def resolve_cli_project_root() -> CliProjectRoot:
             source="explicit",
             established=True,
         )
-    from meridian.lib.config.project_root import cwd_has_project_id
-
     resolution = resolve_project_root_resolution(execution_cwd=Path.cwd())
-    if resolution.source == "cwd":
-        established = cwd_has_project_id(resolution.project_root)
-    else:
-        established = True
     return CliProjectRoot(
-        project_root=resolution.project_root if established else None,
+        project_root=resolution.project_root,
         source=resolution.source,
-        established=established,
+        established=True,
     )
 
 
@@ -146,6 +140,8 @@ def missing_fork_session_error_with_discovery(
     from meridian.lib.state.primary_meta import read_primary_harness_session_discovery
 
     runtime_root = resolve_runtime_root_for_read(project_root)
+    if runtime_root is None:
+        return missing_fork_session_error(normalized_ref)
 
     spawn_id: str | None = normalized_ref if normalized_ref.startswith("p") else None
     if spawn_id is None:

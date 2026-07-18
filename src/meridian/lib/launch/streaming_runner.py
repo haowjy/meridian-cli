@@ -1094,7 +1094,9 @@ async def execute_with_streaming(
     atexit_callback: Callable[[], None] | None = None
 
     try:
-        log_dir = resolve_spawn_log_dir(project_root, run.spawn_id)
+        log_dir = resolve_spawn_log_dir(
+            project_root, run.spawn_id, runtime_root=runtime_root
+        )
         lifecycle_path = log_dir / RUNNER_LIFECYCLE_FILENAME
         output_log_path = log_dir / HISTORY_FILENAME
         report_path = log_dir / REPORT_FILENAME

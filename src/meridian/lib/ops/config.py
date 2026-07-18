@@ -45,7 +45,6 @@ from meridian.lib.ops.runtime import (
 from meridian.lib.platform.atomic import atomic_write_text
 from meridian.lib.state.paths import (
     RuntimePaths,
-    ensure_gitignore,
     load_context_config,
     resolve_project_paths_for_write,
     resolve_project_runtime_root_for_write,
@@ -630,9 +629,12 @@ def ensure_runtime_state_bootstrap_sync(project_root: Path) -> None:
     context_config = load_context_config(project_root)
 
     repo_state = resolve_project_paths_for_write(project_root)
-    # Always create the root .meridian directory
-    repo_state.root_dir.mkdir(parents=True, exist_ok=True)
-
+    if (
+        repo_state.kb_dir is None
+        or repo_state.work_dir is None
+        or repo_state.work_archive_dir is None
+    ):
+        raise ValueError("Project context paths are unresolved after identity creation.")
     # For context directories, skip only git-backed contexts with remotes.
     if context_config is None:
         # No context config = all local, create everything
@@ -662,18 +664,18 @@ def ensure_runtime_state_bootstrap_sync(project_root: Path) -> None:
     )
     for dir_path in runtime_dirs:
         dir_path.mkdir(parents=True, exist_ok=True)
-    ensure_gitignore(project_root)
 
 
 def ensure_state_bootstrap_sync(project_root: Path) -> ConfigInitOutput:
     """Ensure runtime state exists and scaffold project config when missing."""
 
-    ensure_runtime_state_bootstrap_sync(project_root)
     state = _resolve_project_config_state(project_root)
     if state.path is not None:
+        ensure_runtime_state_bootstrap_sync(project_root)
         return ConfigInitOutput(path=state.path.as_posix(), created=False)
 
     atomic_write_text(state.write_path, _scaffold_template())
+    ensure_runtime_state_bootstrap_sync(project_root)
     return ConfigInitOutput(path=state.write_path.as_posix(), created=True)
 
 

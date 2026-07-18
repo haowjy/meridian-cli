@@ -35,7 +35,7 @@ from meridian.lib.launch.request import (
 from meridian.lib.platform.process_scope import ProcessScopeSnapshot
 from meridian.lib.platform.process_scope import fallback as process_scope_fallback
 from meridian.lib.state.artifact_store import LocalStore
-from meridian.lib.state.paths import resolve_spawn_log_dir
+from meridian.lib.state.paths import resolve_project_runtime_root_for_write, resolve_spawn_log_dir
 from meridian.lib.state.spawn_signals import write_spawn_signal
 from tests.support.fakes import FakeClock
 from tests.support.pi import FakePiConnection, pi_event
@@ -142,7 +142,11 @@ class _ReportThenHangConnection:
     async def events(self):  # type: ignore[no-untyped-def]
         project_root = self._project_root
         assert project_root is not None
-        spawn_dir = resolve_spawn_log_dir(project_root, self._spawn_id)
+        spawn_dir = resolve_spawn_log_dir(
+            project_root,
+            self._spawn_id,
+            runtime_root=resolve_project_runtime_root_for_write(project_root),
+        )
         spawn_dir.mkdir(parents=True, exist_ok=True)
         (spawn_dir / "report.md").write_text(
             "# Done\n\nWatchdog fallback completed.\n",
@@ -276,7 +280,11 @@ class _OpenCodeTerminalWithScopeConnection:
     async def events(self):  # type: ignore[no-untyped-def]
         project_root = self._project_root
         assert project_root is not None
-        spawn_dir = resolve_spawn_log_dir(project_root, self._spawn_id)
+        spawn_dir = resolve_spawn_log_dir(
+            project_root,
+            self._spawn_id,
+            runtime_root=resolve_project_runtime_root_for_write(project_root),
+        )
         spawn_dir.mkdir(parents=True, exist_ok=True)
         (spawn_dir / "report.md").write_text("# Done\n\nOpenCode completed.\n", encoding="utf-8")
         yield HarnessEvent(
@@ -400,7 +408,11 @@ class _ResidentRearmRetryConnection(_ResidentDeadlineConnection):
     async def events(self):  # type: ignore[no-untyped-def]
         project_root = self._project_root
         assert project_root is not None
-        spawn_dir = resolve_spawn_log_dir(project_root, self._spawn_id)
+        spawn_dir = resolve_spawn_log_dir(
+            project_root,
+            self._spawn_id,
+            runtime_root=resolve_project_runtime_root_for_write(project_root),
+        )
         spawn_dir.mkdir(parents=True, exist_ok=True)
         (spawn_dir / "report.md").write_text(
             "# Done\n\nResident retry completed.\n",

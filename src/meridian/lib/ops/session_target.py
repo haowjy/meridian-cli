@@ -952,10 +952,14 @@ def resolve_session_log_target(
     ref: str,
     file_path: str | None,
     project_root: Path,
-    runtime_root: Path,
+    runtime_root: Path | None,
 ) -> SessionLogTarget:
     if file_path is not None and file_path.strip():
         return _resolve_file_target(file_path)
+
+    if runtime_root is None:
+        normalized = ref.strip()
+        raise FileNotFoundError(f"Session reference '{normalized}' not found")
 
     normalized_ref = ref.strip()
     if not normalized_ref:

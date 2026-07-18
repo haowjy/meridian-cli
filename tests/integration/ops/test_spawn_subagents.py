@@ -8,7 +8,7 @@ import pytest
 
 from meridian.lib.ops.spawn.api import SpawnSubagentsInput, spawn_subagents_sync
 from meridian.lib.state import spawn_store
-from meridian.lib.state.paths import resolve_project_runtime_root
+from meridian.lib.state.paths import resolve_project_runtime_root_for_write
 
 pytestmark = pytest.mark.slow
 
@@ -30,7 +30,7 @@ def _seed_spawn(
     spawn_id: str,
     agent: str,
 ) -> None:
-    runtime_root = resolve_project_runtime_root(project_root)
+    runtime_root = resolve_project_runtime_root_for_write(project_root)
     runtime_root.mkdir(parents=True, exist_ok=True)
     spawn_store.start_spawn(
         runtime_root,

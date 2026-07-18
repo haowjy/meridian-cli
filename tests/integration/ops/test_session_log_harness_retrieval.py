@@ -16,7 +16,7 @@ from meridian.lib.harness.claude import project_slug
 from meridian.lib.launch.constants import HISTORY_FILENAME
 from meridian.lib.ops.session_log import SessionLogInput, session_log_sync
 from meridian.lib.state import session_store, spawn_store
-from meridian.lib.state.paths import resolve_project_runtime_root
+from meridian.lib.state.paths import resolve_project_runtime_root_for_write
 from tests.support.opencode_db import (
     write_opencode_db_session,
     write_opencode_db_session_with_parts,
@@ -94,7 +94,7 @@ def test_session_log_resolves_opencode_db_transcript_when_session_diff_is_empty(
 ) -> None:
     project_root = tmp_path / "repo"
     project_root.mkdir()
-    runtime_root = resolve_project_runtime_root(project_root)
+    runtime_root = resolve_project_runtime_root_for_write(project_root)
     runtime_root.mkdir(parents=True, exist_ok=True)
 
     xdg_data_home = tmp_path / "xdg-data"
@@ -146,7 +146,7 @@ def test_session_log_resolves_opencode_db_without_legacy_session_file(
 ) -> None:
     project_root = tmp_path / "repo"
     project_root.mkdir()
-    runtime_root = resolve_project_runtime_root(project_root)
+    runtime_root = resolve_project_runtime_root_for_write(project_root)
     runtime_root.mkdir(parents=True, exist_ok=True)
 
     xdg_data_home = tmp_path / "xdg-data"
@@ -210,7 +210,7 @@ def test_session_log_renders_opencode_db_completed_tool_parts(
 ) -> None:
     project_root = tmp_path / "repo"
     project_root.mkdir()
-    runtime_root = resolve_project_runtime_root(project_root)
+    runtime_root = resolve_project_runtime_root_for_write(project_root)
     runtime_root.mkdir(parents=True, exist_ok=True)
 
     xdg_data_home = tmp_path / "xdg-data"
@@ -281,7 +281,7 @@ def test_session_log_default_render_shows_completed_opencode_task_result(
 ) -> None:
     project_root = tmp_path / "repo"
     project_root.mkdir()
-    runtime_root = resolve_project_runtime_root(project_root)
+    runtime_root = resolve_project_runtime_root_for_write(project_root)
     runtime_root.mkdir(parents=True, exist_ok=True)
 
     xdg_data_home = tmp_path / "xdg-data"
@@ -349,7 +349,7 @@ def test_session_log_renders_opencode_db_compaction_as_segment_handoff(
 ) -> None:
     project_root = tmp_path / "repo"
     project_root.mkdir()
-    runtime_root = resolve_project_runtime_root(project_root)
+    runtime_root = resolve_project_runtime_root_for_write(project_root)
     runtime_root.mkdir(parents=True, exist_ok=True)
 
     xdg_data_home = tmp_path / "xdg-data"
@@ -407,7 +407,7 @@ def test_session_log_falls_back_to_legacy_opencode_json_when_db_has_no_messages(
 ) -> None:
     project_root = tmp_path / "repo"
     project_root.mkdir()
-    runtime_root = resolve_project_runtime_root(project_root)
+    runtime_root = resolve_project_runtime_root_for_write(project_root)
     runtime_root.mkdir(parents=True, exist_ok=True)
 
     xdg_data_home = tmp_path / "xdg-data"
@@ -496,7 +496,7 @@ def test_session_log_falls_back_to_spawn_history_when_opencode_db_has_no_message
 ) -> None:
     project_root = tmp_path / "repo"
     project_root.mkdir()
-    runtime_root = resolve_project_runtime_root(project_root)
+    runtime_root = resolve_project_runtime_root_for_write(project_root)
     runtime_root.mkdir(parents=True, exist_ok=True)
 
     xdg_data_home = tmp_path / "xdg-data"
@@ -551,7 +551,7 @@ def test_session_log_resolves_codex_session_file_from_codex_home_env(
 ) -> None:
     project_root = tmp_path / "repo"
     project_root.mkdir()
-    runtime_root = resolve_project_runtime_root(project_root)
+    runtime_root = resolve_project_runtime_root_for_write(project_root)
     runtime_root.mkdir(parents=True, exist_ok=True)
 
     codex_home = tmp_path / "codex-home"
@@ -597,7 +597,7 @@ def test_session_log_resolves_claude_session_file_from_claude_config_dir_env(
 ) -> None:
     project_root = tmp_path / "repo"
     project_root.mkdir()
-    runtime_root = resolve_project_runtime_root(project_root)
+    runtime_root = resolve_project_runtime_root_for_write(project_root)
     runtime_root.mkdir(parents=True, exist_ok=True)
 
     claude_config_dir = tmp_path / "claude-config"

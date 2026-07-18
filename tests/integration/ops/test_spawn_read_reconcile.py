@@ -11,13 +11,13 @@ from meridian.lib.ops.spawn.models import (
     SpawnWaitInput,
 )
 from meridian.lib.state import spawn_store
-from meridian.lib.state.paths import resolve_project_runtime_root
+from meridian.lib.state.paths import resolve_project_runtime_root_for_write
 
 _OLD_TIMESTAMP = "2000-01-01T00:00:00Z"
 
 
 def _state_root(project_root: Path) -> Path:
-    runtime_root = resolve_project_runtime_root(project_root)
+    runtime_root = resolve_project_runtime_root_for_write(project_root)
     runtime_root.mkdir(parents=True, exist_ok=True)
     return runtime_root
 

@@ -6,7 +6,11 @@ from pydantic import BaseModel, ConfigDict
 
 from meridian.lib.core.context import RuntimeContext
 from meridian.lib.core.util import FormatContext
-from meridian.lib.ops.runtime import async_from_sync, resolve_roots_for_read
+from meridian.lib.ops.runtime import (
+    async_from_sync,
+    resolve_project_authority,
+    resolve_roots_for_read,
+)
 from meridian.lib.ops.session_corpus import resolve_session_search_corpus
 from meridian.lib.ops.session_target import resolve_session_log_target
 from meridian.lib.ops.session_transcript import (
@@ -185,9 +189,17 @@ def _search_single_target(payload: SessionSearchInput, *, query: str) -> Session
 
 def _search_corpus(payload: SessionSearchInput, *, query: str) -> SessionSearchOutput:
     roots = resolve_roots_for_read(payload.project_root)
+    if roots is None and not (payload.workspace or payload.global_scope):
+        return SessionSearchOutput(matches=())
+    project_root = (
+        roots.project_root
+        if roots is not None
+        else resolve_project_authority(payload.project_root).project_root
+    )
+    runtime_root = roots.runtime_root if roots is not None else None
     scopes = resolve_session_search_corpus(
-        project_root=roots.project_root,
-        runtime_root=roots.runtime_root,
+        project_root=project_root,
+        runtime_root=runtime_root,
         workspace=payload.workspace,
         global_scope=payload.global_scope,
         work_id=payload.work_id,

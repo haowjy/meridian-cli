@@ -74,6 +74,7 @@ def _normalized_prelaunch_metadata_text(
 def _persist_pi_runtime_metadata_for_spawn(
     *,
     project_root: Path,
+    runtime_root: Path,
     spawn_id: SpawnId,
     prelaunch_state: HarnessPrelaunchState,
 ) -> None:
@@ -94,7 +95,10 @@ def _persist_pi_runtime_metadata_for_spawn(
             prelaunch_state, "pi_runtime_auth_policy"
         ),
     }
-    metadata_path = resolve_spawn_log_dir(project_root, spawn_id) / PI_RUNTIME_META_FILENAME
+    metadata_path = (
+        resolve_spawn_log_dir(project_root, spawn_id, runtime_root=runtime_root)
+        / PI_RUNTIME_META_FILENAME
+    )
     atomic_write_text(metadata_path, json.dumps(payload, separators=(",", ":")) + "\n")
 
 
@@ -286,7 +290,11 @@ async def _prepare_execution_handoff(
             plan_overrides=run_env_overrides,
         )
         write_projection_artifacts(
-            log_dir=resolve_spawn_log_dir(project_paths.project_root, spawn.spawn_id),
+            log_dir=resolve_spawn_log_dir(
+                project_paths.project_root,
+                spawn.spawn_id,
+                runtime_root=runtime_root,
+            ),
             launch_context=launch_context,
             surface="spawn",
         )
@@ -436,6 +444,7 @@ async def launch_prepared_spawn(
                     if handoff.launch_context.harness.id is HarnessId.PI:
                         _persist_pi_runtime_metadata_for_spawn(
                             project_root=project_paths.project_root,
+                            runtime_root=runtime_root,
                             spawn_id=spawn.spawn_id,
                             prelaunch_state=prelaunch_state,
                         )

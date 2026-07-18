@@ -24,7 +24,10 @@ from meridian.lib.platform.process_scope import (
     ScopedProcessHandle,
 )
 from meridian.lib.platform.process_scope.base import PROCESS_BIRTH_UNKNOWN_EPOCH
-from meridian.lib.state.paths import resolve_spawn_log_dir
+from meridian.lib.state.paths import (
+    resolve_project_runtime_root_for_write,
+    resolve_spawn_log_dir,
+)
 from meridian.lib.state.process_scope_projection import record_scope
 
 
@@ -63,9 +66,13 @@ async def register_spawn_owned_process(
 ) -> ScopedProcessHandle:
     """Persist crash-recovery ownership for an already launched child process."""
 
-    spawn_dir = resolve_spawn_log_dir(control_root, spawn_id)
+    resolved_runtime_root = runtime_root or resolve_project_runtime_root_for_write(
+        control_root
+    )
+    spawn_dir = resolve_spawn_log_dir(
+        control_root, spawn_id, runtime_root=resolved_runtime_root
+    )
     spawn_dir.mkdir(parents=True, exist_ok=True)
-    resolved_runtime_root = runtime_root or spawn_dir.parent.parent
     pid = process.pid
     pgid: int | None = None
     containment: str
@@ -112,7 +119,10 @@ async def launch_managed_backend(
 ) -> ManagedBackendHandle:
     """Launch subprocess, build scope snapshot, link parent death, record scope."""
 
-    spawn_dir = resolve_spawn_log_dir(config.control_root, config.spawn_id)
+    runtime_root = resolve_project_runtime_root_for_write(config.control_root)
+    spawn_dir = resolve_spawn_log_dir(
+        config.control_root, config.spawn_id, runtime_root=runtime_root
+    )
     spawn_dir.mkdir(parents=True, exist_ok=True)
     subprocess_config = detached_subprocess_config()
 
@@ -151,6 +161,7 @@ async def launch_managed_backend(
             role="harness_backend",
             parent_death_linked=parent_death_linked,
             job_name=parent_death_link.job_name,
+            runtime_root=runtime_root,
         )
     except BaseException:
         await asyncio.to_thread(release_parent_death_link, parent_death_link)

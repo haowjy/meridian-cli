@@ -162,6 +162,7 @@ class ResolvedContext:
             work_id=work_id,
             bound_work_dir=bound_work_dir,
             project_work_dir=project_work_dir,
+            runtime_root=runtime_root,
         )
         work_dir = work_scope.root if work_scope is not None else None
 
@@ -175,13 +176,16 @@ class ResolvedContext:
         if project_root is not None:
             effective_config = resolved_config or ContextConfig()
             resolved_context_paths = resolve_context_paths(project_root, effective_config)
-            context_dirs = (
+            builtins = (
                 ("work", resolved_context_paths.work_root),
                 ("work_archive", resolved_context_paths.work_archive),
                 ("kb", resolved_context_paths.kb_root),
-                *tuple(
-                    sorted((name, path) for name, (path, _) in resolved_context_paths.extra.items())
-                ),
+            )
+            resolved_builtins = tuple(
+                (name, path) for name, path in builtins if path is not None
+            )
+            context_dirs = resolved_builtins + tuple(
+                sorted((name, path) for name, (path, _) in resolved_context_paths.extra.items())
             )
 
         return cls(

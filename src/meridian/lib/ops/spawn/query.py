@@ -161,6 +161,8 @@ def _select_latest_spawn_id(
     from meridian.lib.state.reaper import reconcile_spawns
 
     resolved_runtime_root = runtime_root or resolve_runtime_root_for_read(project_root)
+    if resolved_runtime_root is None:
+        return None
     spawns = reconcile_spawns(
         project_root,
         resolved_runtime_root,
@@ -185,6 +187,8 @@ def resolve_spawn_reference(
         raise ValueError("spawn_id is required")
     if not normalized.startswith("@"):
         resolved_runtime_root = runtime_root or resolve_runtime_root_for_read(project_root)
+        if resolved_runtime_root is None:
+            return normalized
         resolved = resolve_spawn_ref(resolved_runtime_root, normalized)
         return str(resolved) if resolved is not None else normalized
 
@@ -225,6 +229,8 @@ def read_spawn_row(
     runtime_root: Path | None = None,
 ) -> SpawnRecord | None:
     resolved_runtime_root = runtime_root or resolve_runtime_root_for_read(project_root)
+    if resolved_runtime_root is None:
+        return None
     record = spawn_store.get_spawn(resolved_runtime_root, spawn_id)
     if record is not None and is_active_spawn_status(record.status):
         if is_root_side_effect_process():
@@ -248,6 +254,8 @@ def read_spawn_row_read_only(
     """Return one spawn row without lifecycle reconciliation side effects."""
 
     resolved_runtime_root = runtime_root or resolve_runtime_root_for_read(project_root)
+    if resolved_runtime_root is None:
+        return None
     return spawn_store.get_spawn(resolved_runtime_root, spawn_id)
 
 
@@ -260,6 +268,8 @@ def read_latest_primary_spawn_for_chat_read_only(
     """Return the latest primary spawn row for a chat without reconciliation."""
 
     resolved_runtime_root = runtime_root or resolve_runtime_root_for_read(project_root)
+    if resolved_runtime_root is None:
+        return None
     spawns = session_identity.list_spawns_for_owner_chat(resolved_runtime_root, chat_id)
     primary_spawns = [row for row in spawns if row.kind == "primary"]
     if not primary_spawns:
@@ -275,6 +285,8 @@ def read_report(
     runtime_root: Path | None = None,
 ) -> tuple[str | None, str | None]:
     resolved_runtime_root = runtime_root or resolve_runtime_root_for_read(project_root)
+    if resolved_runtime_root is None:
+        return None, None
     report_path = resolved_runtime_root / "spawns" / spawn_id / "report.md"
     if not report_path.is_file():
         return None, None
@@ -390,6 +402,8 @@ def _read_running_log_details(
     runtime_root: Path | None = None,
 ) -> tuple[str, str | None]:
     resolved_runtime_root = runtime_root or resolve_runtime_root_for_read(project_root)
+    if resolved_runtime_root is None:
+        return "", None
     stderr_path = resolved_runtime_root / "spawns" / spawn_id / "stderr.log"
     if not stderr_path.is_file():
         return stderr_path.as_posix(), None
@@ -404,6 +418,8 @@ def _latest_pi_lifecycle_phase(
     runtime_root: Path | None = None,
 ) -> str | None:
     resolved_runtime_root = runtime_root or resolve_runtime_root_for_read(project_root)
+    if resolved_runtime_root is None:
+        return None
     history_path = resolved_runtime_root / "spawns" / spawn_id / "history.jsonl"
     if not history_path.is_file():
         return None
@@ -439,6 +455,8 @@ def _pi_cleanup_telemetry(
     runtime_root: Path | None = None,
 ) -> _PiCleanupTelemetry:
     resolved_runtime_root = runtime_root or resolve_runtime_root_for_read(project_root)
+    if resolved_runtime_root is None:
+        return _PiCleanupTelemetry(None, None, None, None)
     history_path = resolved_runtime_root / "spawns" / spawn_id / "history.jsonl"
     if not history_path.is_file():
         return _PiCleanupTelemetry(None, None, None, None)
@@ -522,6 +540,8 @@ def read_written_files(
     from meridian.lib.state.artifact_store import LocalStore
 
     resolved_runtime_root = runtime_root or resolve_runtime_root_for_read(project_root)
+    if resolved_runtime_root is None:
+        return ()
     artifacts = LocalStore(root_dir=resolved_runtime_root / "artifacts")
     return extract_written_files(artifacts, SpawnId(spawn_id))
 
@@ -611,10 +631,14 @@ def detail_from_row(
         last_attempt_exited_at=row.last_attempt_exited_at,
         last_attempt_exit_code=row.last_attempt_exit_code,
         session_config_dir=row.claude_config_dir,
-        session_log_available=spawn_session_log_available(
-            resolved_runtime_root,
-            row.id,
-            harness_session_id=row.harness_session_id,
+        session_log_available=(
+            False
+            if resolved_runtime_root is None
+            else spawn_session_log_available(
+                resolved_runtime_root,
+                row.id,
+                harness_session_id=row.harness_session_id,
+            )
         ),
     )
 

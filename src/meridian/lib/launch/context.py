@@ -218,7 +218,11 @@ class ChildEnvContext:
     ) -> dict[str, str]:
         work_dir = self.resolved.work_dir
         if self.resolved.work_id is None and child_spawn_id is not None:
-            work_dir = resolve_ambient_work_dir(self.project_root, child_spawn_id)
+            work_dir = resolve_ambient_work_dir(
+                self.project_root,
+                child_spawn_id,
+                runtime_root=self.runtime_root,
+            )
         elif self.resolved.work_id is None:
             work_dir = None
 
@@ -687,10 +691,13 @@ def _collect_context_projection_roots(
     """
     effective = config or ContextConfig()
     resolved = resolve_context_paths(project_root, effective)
-    candidates: list[tuple[str, Path]] = [
+    builtins = (
         ("work", resolved.work_root),
         ("work_archive", resolved.work_archive),
         ("kb", resolved.kb_root),
+    )
+    candidates: list[tuple[str, Path]] = [
+        (name, path) for name, path in builtins if path is not None
     ]
     candidates.extend((name, path) for name, (path, _source) in resolved.extra.items())
 
@@ -865,14 +872,17 @@ def _resolve_bound_active_work_dir(
     project_root: Path,
     requested_work_id: str | None,
     child_spawn_id: str,
+    runtime_root: Path,
 ) -> Path | None:
     """Pure bind-time work-dir: named repo scratch or child ambient spawn dir."""
 
-    return resolve_bound_work_scope(
+    scope = resolve_bound_work_scope(
         project_root=project_root,
         requested_work_id=requested_work_id,
         child_spawn_id=child_spawn_id,
-    ).root
+        runtime_root=runtime_root,
+    )
+    return scope.root if scope is not None else None
 
 
 def _reproject_context_env_at_bind(
@@ -1702,7 +1712,9 @@ def bind_launch_context(
     projected_content = prepared.projected_content
     seed_harness_session_args = prepared.seed_session_args
     model_selection = prepared.model_selection
-    spawn_log_dir = resolve_spawn_log_dir(project_paths.project_root, bindings.spawn_id)
+    spawn_log_dir = resolve_spawn_log_dir(
+        project_paths.project_root, bindings.spawn_id, runtime_root=runtime_root
+    )
     report_artifact_path = spawn_log_dir / REPORT_FILENAME
     system_prompt_path = spawn_log_dir / SYSTEM_PROMPT_FILENAME
     logical_task_cwd = project_paths.execution_cwd.resolve()
@@ -1910,6 +1922,7 @@ def bind_launch_context(
         project_root=project_paths.project_root,
         requested_work_id=requested_work_id,
         child_spawn_id=bindings.spawn_id,
+        runtime_root=runtime_root,
     )
     policy_snapshot = resolved_request.launch_policy_snapshot
     loaded_skills = policy_snapshot.loaded_skills if policy_snapshot is not None else ()

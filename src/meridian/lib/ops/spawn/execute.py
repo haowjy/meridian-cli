@@ -305,11 +305,16 @@ def execute_spawn_background(
     spawn_id_text = str(context.spawn.spawn_id)
     execution_cwd_str = initial_execution_cwd
     parent_launch_cwd_str = execution_contract.control_root.as_posix()
-    log_dir = resolve_spawn_log_dir(project_paths.project_root, context.spawn.spawn_id)
+    log_dir = resolve_spawn_log_dir(
+        project_paths.project_root,
+        context.spawn.spawn_id,
+        runtime_root=context.runtime_root,
+    )
     log_dir.mkdir(parents=True, exist_ok=True)
     try:
         _write_params_json(
             project_paths,
+            context.runtime_root,
             context.spawn.spawn_id,
             request,
             desc=payload.desc,
@@ -560,6 +565,7 @@ def execute_spawn_blocking(
         try:
             _write_params_json(
                 project_paths,
+                context.runtime_root,
                 spawn.spawn_id,
                 request,
                 desc=payload.desc,

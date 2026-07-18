@@ -17,7 +17,7 @@ from meridian.lib.hooks.dispatch import HookDispatcher
 from meridian.lib.hooks.interval import IntervalTracker
 from meridian.lib.hooks.registry import HookRegistry
 from meridian.lib.hooks.types import Hook, HookContext, HookEventName, HookResult
-from meridian.lib.ops.runtime import resolve_roots, resolve_roots_for_read
+from meridian.lib.ops.runtime import resolve_project_authority, resolve_roots
 
 
 class HookListInput(BaseModel):
@@ -242,8 +242,8 @@ def _hook_status(hook: Hook) -> str:
 
 
 def hooks_list_sync(payload: HookListInput) -> HookListOutput:
-    roots = resolve_roots_for_read(payload.project_root)
-    registry = HookRegistry(roots.project_root)
+    authority = resolve_project_authority(payload.project_root)
+    registry = HookRegistry(authority.project_root)
     hooks = tuple(
         HookListItem(
             name=hook.name,
@@ -369,8 +369,8 @@ def hooks_run_sync(payload: HookRunInput) -> HookRunOutput:
 
 
 def hooks_resolve_sync(payload: HookResolveInput) -> HookResolveOutput:
-    roots = resolve_roots_for_read(payload.project_root)
-    registry = HookRegistry(roots.project_root)
+    authority = resolve_project_authority(payload.project_root)
+    registry = HookRegistry(authority.project_root)
 
     hooks = tuple(
         HookResolveItem(

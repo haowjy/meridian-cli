@@ -297,6 +297,7 @@ def _announce_reserved_spawn(
 
 def _write_params_json(
     project_paths: ProjectConfigPaths,
+    runtime_root: Path,
     spawn_id: SpawnId,
     request: SpawnRequest,
     *,
@@ -304,7 +305,12 @@ def _write_params_json(
     work_id: str | None = None,
 ) -> None:
     """Write resolved execution params to the spawn directory."""
-    params_path = resolve_spawn_log_dir(project_paths.project_root, spawn_id) / "params.json"
+    params_path = (
+        resolve_spawn_log_dir(
+            project_paths.project_root, spawn_id, runtime_root=runtime_root
+        )
+        / "params.json"
+    )
     params_path.parent.mkdir(parents=True, exist_ok=True)
     params_payload = {
         "model": request.model or "",

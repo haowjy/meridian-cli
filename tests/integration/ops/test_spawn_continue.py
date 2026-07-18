@@ -19,7 +19,7 @@ from meridian.lib.ops.reference_recovery import RecoveryProvenance, RecoveryResu
 from meridian.lib.ops.spawn.execute_init import resolve_spawn_work_id
 from meridian.lib.ops.spawn.models import SpawnActionOutput, SpawnContinueInput, SpawnCreateInput
 from meridian.lib.state import spawn_store
-from meridian.lib.state.paths import resolve_project_runtime_root
+from meridian.lib.state.paths import resolve_project_runtime_root_for_write
 from tests.support.launch import stub_bundle_request_and_resolve
 
 
@@ -28,7 +28,7 @@ def _state_root(project_root: Path) -> Path:
         '[settings]\ntargets = [".claude", ".codex", ".opencode"]\n',
         encoding="utf-8",
     )
-    runtime_root = resolve_project_runtime_root(project_root)
+    runtime_root = resolve_project_runtime_root_for_write(project_root)
     runtime_root.mkdir(parents=True, exist_ok=True)
     return runtime_root
 

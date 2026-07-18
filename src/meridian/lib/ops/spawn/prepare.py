@@ -26,6 +26,7 @@ from meridian.lib.launch.request import (
 )
 from meridian.lib.launch.resolution import resolve_launch_inputs
 from meridian.lib.launch.resolve import parse_duration_seconds
+from meridian.lib.state.artifact_store import LocalStore
 from meridian.lib.state.paths import resolve_project_paths
 from meridian.lib.state.session_store import get_session_active_work_id
 from meridian.lib.state.spawn.model import BACKGROUND_LAUNCH_MODE, FOREGROUND_LAUNCH_MODE
@@ -33,9 +34,7 @@ from meridian.lib.state.spawn.model import BACKGROUND_LAUNCH_MODE, FOREGROUND_LA
 from ..runtime import (
     OperationRuntime,
     build_runtime,
-    build_runtime_from_root_and_config,
     resolve_runtime_authority_for_read,
-    runtime_context,
 )
 from .models import SpawnCreateInput
 from .task_dir import derive_inheritable_task_dir
@@ -110,7 +109,7 @@ def build_create_payload(
         elif payload.dry_run:
             authority = resolve_runtime_authority_for_read(payload.project_root)
             project_root = authority.project_root
-            runtime_root = authority.runtime_root or authority.project_state_dir
+            runtime_root = authority.runtime_root
             config = load_config(project_root, authority=authority)
             harness_registry = get_default_harness_registry()
         else:
@@ -122,7 +121,14 @@ def build_create_payload(
             config = runtime_bundle.config
             harness_registry = runtime_bundle.harness_registry
 
-        resolved_context = runtime_context(ctx)
+        resolved_context = (
+            ctx
+            if ctx is not None
+            else RuntimeContext.from_environment(
+                project_root=project_root,
+                runtime_root=runtime_root,
+            )
+        )
         explicit_work_id = payload.work.strip() or None
         inherit_ambient_work = not _is_exact_continue(payload)
         ambient_work_id = (
@@ -130,7 +136,12 @@ def build_create_payload(
             if inherit_ambient_work
             else None
         )
-        if inherit_ambient_work and ambient_work_id is None and resolved_context.chat_id:
+        if (
+            inherit_ambient_work
+            and ambient_work_id is None
+            and resolved_context.chat_id
+            and runtime_root is not None
+        ):
             try:
                 ambient_work_id = (
                     get_session_active_work_id(runtime_root, resolved_context.chat_id) or ""
@@ -222,14 +233,25 @@ def build_create_payload(
             env=_resolve_spawn_env(payload),
         )
 
-        mars_runtime_source = runtime or build_runtime_from_root_and_config(
-            project_root,
-            config,
-        )
+        if runtime is not None:
+            if runtime_root is None:
+                raise ValueError("Operation runtime is missing runtime authority root.")
+            preview_root = runtime_root
+            mars_runtime_source = runtime
+        else:
+            resolved_authority = resolve_runtime_authority_for_read(project_root)
+            preview_root = runtime_root or resolved_authority.user_home / "cache" / "dry-run"
+            mars_runtime_source = OperationRuntime(
+                project_root=project_root,
+                authority=resolved_authority,
+                config=config,
+                harness_registry=harness_registry,
+                artifacts=LocalStore(root_dir=preview_root / "artifacts"),
+            )
         composition_dry_run = payload.dry_run
         preview_runtime = build_spawn_mars_runtime(
             runtime=mars_runtime_source,
-            runtime_root=runtime_root,
+            runtime_root=preview_root,
             control_root=project_root,
             execution_cwd=launch_resolution.directory_context.logical_task_cwd.as_posix(),
             argv_intent=(

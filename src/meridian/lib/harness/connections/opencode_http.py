@@ -75,7 +75,10 @@ from meridian.lib.platform.process_scope import (
     ProcessScopeSnapshot,
     ScopedProcessHandle,
 )
-from meridian.lib.state.paths import resolve_spawn_log_dir
+from meridian.lib.state.paths import (
+    resolve_project_runtime_root_for_write,
+    resolve_spawn_log_dir,
+)
 
 logger = logging.getLogger(__name__)
 _STARTUP_STDERR_MAX_BYTES = 16 * 1024
@@ -532,7 +535,12 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
             port=port,
         )
         env = dict(config.child_env)
-        spawn_dir = resolve_spawn_log_dir(config.control_root, config.spawn_id)
+        runtime_root = config.runtime_root or resolve_project_runtime_root_for_write(
+            config.control_root
+        )
+        spawn_dir = resolve_spawn_log_dir(
+            config.control_root, config.spawn_id, runtime_root=runtime_root
+        )
         spawn_dir.mkdir(parents=True, exist_ok=True)
         _materialize_system_prompt(spawn_dir, config.system, env)
         self._stderr_log_path = spawn_dir / "stderr.log"

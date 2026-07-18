@@ -18,7 +18,10 @@ from meridian.lib.harness.connections.pi_rpc import PiRpcConnection
 from meridian.lib.harness.semantics import activity_transition, clears_signal, terminal_outcome
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.safety.permissions import UnsafeNoOpPermissionResolver
-from meridian.lib.state.paths import resolve_spawn_log_dir
+from meridian.lib.state.paths import (
+    resolve_project_runtime_root_for_write,
+    resolve_spawn_log_dir,
+)
 from meridian.lib.streaming.spawn_manager import SpawnManager
 
 _PI_HELP_SURFACE = (
@@ -487,7 +490,14 @@ async def test_pi_rpc_connection_ignores_non_lifecycle_stderr_lines_but_logs_the
         event.event_type == "meridian.lifecycle.parse_error"
         for event in non_phase_events
     )
-    stderr_log = resolve_spawn_log_dir(tmp_path, spawn_id) / "stderr.log"
+    stderr_log = (
+        resolve_spawn_log_dir(
+            tmp_path,
+            spawn_id,
+            runtime_root=resolve_project_runtime_root_for_write(tmp_path),
+        )
+        / "stderr.log"
+    )
     stderr_text = stderr_log.read_text(encoding="utf-8")
     assert plain_stderr in stderr_text
     assert non_allowlisted_json in stderr_text
@@ -865,7 +875,14 @@ async def test_pi_rpc_connection_surfaces_stderr_on_early_exit_before_first_even
     assert crash_stderr in message
     assert "Pi subprocess stderr:" in message
 
-    stderr_log = resolve_spawn_log_dir(tmp_path, spawn_id) / "stderr.log"
+    stderr_log = (
+        resolve_spawn_log_dir(
+            tmp_path,
+            spawn_id,
+            runtime_root=resolve_project_runtime_root_for_write(tmp_path),
+        )
+        / "stderr.log"
+    )
     assert crash_stderr in stderr_log.read_text(encoding="utf-8")
 
 

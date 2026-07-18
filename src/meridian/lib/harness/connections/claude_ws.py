@@ -44,7 +44,7 @@ from meridian.lib.observability.trace_helpers import (
 )
 from meridian.lib.platform import IS_WINDOWS
 from meridian.lib.platform.process_scope import ProcessScopeSnapshot, ScopedProcessHandle
-from meridian.lib.state.paths import resolve_spawn_log_dir
+from meridian.lib.state.paths import resolve_project_runtime_root_for_write, resolve_spawn_log_dir
 
 logger = logging.getLogger(__name__)
 
@@ -361,7 +361,14 @@ class ClaudeConnection(HarnessConnection[ResolvedLaunchSpec]):
         return None
 
     async def _start_subprocess(self, config: ConnectionConfig, spec: ResolvedLaunchSpec) -> None:
-        spawn_dir = resolve_spawn_log_dir(config.control_root, config.spawn_id)
+        spawn_dir = resolve_spawn_log_dir(
+            config.control_root,
+            config.spawn_id,
+            runtime_root=(
+                config.runtime_root
+                or resolve_project_runtime_root_for_write(config.control_root)
+            ),
+        )
         spawn_dir.mkdir(parents=True, exist_ok=True)
 
         stderr_path = spawn_dir / "stderr.log"

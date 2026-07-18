@@ -30,7 +30,7 @@ from meridian.lib.harness.extractors.cursor import CURSOR_EXTRACTOR
 from meridian.lib.launch.constants import BASE_COMMAND_CURSOR_SUBPROCESS
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.platform.process_scope import ProcessScopeSnapshot, ScopedProcessHandle
-from meridian.lib.state.paths import resolve_spawn_log_dir
+from meridian.lib.state.paths import resolve_project_runtime_root_for_write, resolve_spawn_log_dir
 
 logger = logging.getLogger(__name__)
 
@@ -107,7 +107,14 @@ class CursorSubprocessConnection(HarnessConnection[ResolvedLaunchSpec]):
         self._spawn_id = config.spawn_id
         self._set_state("starting")
 
-        spawn_dir = resolve_spawn_log_dir(config.control_root, config.spawn_id)
+        spawn_dir = resolve_spawn_log_dir(
+            config.control_root,
+            config.spawn_id,
+            runtime_root=(
+                config.runtime_root
+                or resolve_project_runtime_root_for_write(config.control_root)
+            ),
+        )
         spawn_dir.mkdir(parents=True, exist_ok=True)
         self._stderr_handle = (spawn_dir / "stderr.log").open("ab")
 

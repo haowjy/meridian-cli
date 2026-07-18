@@ -28,9 +28,17 @@ class RuntimeContext(BaseModel):
         return is_nested_meridian_depth(self.depth)
 
     @classmethod
-    def from_environment(cls) -> Self:
+    def from_environment(
+        cls,
+        *,
+        project_root: Path | None = None,
+        runtime_root: Path | None = None,
+    ) -> Self:
         """Build context from MERIDIAN_* environment variables."""
-        resolved = ResolvedContext.from_environment()
+        resolved = ResolvedContext.from_environment(
+            explicit_project_root=project_root,
+            explicit_runtime_root=runtime_root,
+        )
 
         return cls(
             spawn_id=resolved.spawn_id,
@@ -64,7 +72,7 @@ class RuntimeContext(BaseModel):
         return overrides
 
 
-def resolve_runtime_context(*, project_root: Path, runtime_root: Path) -> ResolvedContext:
+def resolve_runtime_context(*, project_root: Path, runtime_root: Path | None) -> ResolvedContext:
     """Resolve runtime context with explicit roots and no environment mutation."""
 
     return ResolvedContext.from_environment(

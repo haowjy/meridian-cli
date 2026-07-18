@@ -15,7 +15,7 @@ from meridian.lib.launch.constants import HISTORY_FILENAME
 from meridian.lib.ops.session_export import SessionExportInput, session_export_sync
 from meridian.lib.ops.session_log import SessionLogInput, session_log_sync
 from meridian.lib.state import session_store, spawn_store
-from meridian.lib.state.paths import resolve_project_runtime_root
+from meridian.lib.state.paths import resolve_project_runtime_root_for_write
 
 
 def _write_spawn_output(
@@ -72,7 +72,7 @@ def test_session_log_spawn_missing_harness_session_id_reads_live_output(
 ) -> None:
     project_root = tmp_path / "repo"
     project_root.mkdir()
-    runtime_root = resolve_project_runtime_root(project_root)
+    runtime_root = resolve_project_runtime_root_for_write(project_root)
     runtime_root.mkdir(parents=True, exist_ok=True)
 
     spawn_store.start_spawn(
@@ -112,7 +112,7 @@ def test_session_log_child_spawn_without_harness_id_does_not_use_parent_chat(
 ) -> None:
     project_root = tmp_path / "repo"
     project_root.mkdir()
-    runtime_root = resolve_project_runtime_root(project_root)
+    runtime_root = resolve_project_runtime_root_for_write(project_root)
     runtime_root.mkdir(parents=True, exist_ok=True)
     codex_home = tmp_path / "codex-home"
     monkeypatch.setenv("CODEX_HOME", codex_home.as_posix())
@@ -158,7 +158,7 @@ def test_session_log_child_spawn_uses_authoritative_child_chat_link(
 ) -> None:
     project_root = tmp_path / "repo"
     project_root.mkdir()
-    runtime_root = resolve_project_runtime_root(project_root)
+    runtime_root = resolve_project_runtime_root_for_write(project_root)
     runtime_root.mkdir(parents=True, exist_ok=True)
     codex_home = tmp_path / "codex-home"
     monkeypatch.setenv("CODEX_HOME", codex_home.as_posix())
@@ -205,7 +205,7 @@ def test_session_log_child_spawn_uses_authoritative_child_chat_link(
 def test_session_log_active_child_spawn_prefers_live_output(tmp_path: Path) -> None:
     project_root = tmp_path / "repo"
     project_root.mkdir()
-    runtime_root = resolve_project_runtime_root(project_root)
+    runtime_root = resolve_project_runtime_root_for_write(project_root)
     runtime_root.mkdir(parents=True, exist_ok=True)
 
     spawn_store.start_spawn(
@@ -255,7 +255,7 @@ def test_session_log_child_spawn_falls_back_to_artifact_output_when_native_unava
 ) -> None:
     project_root = tmp_path / "repo"
     project_root.mkdir()
-    runtime_root = resolve_project_runtime_root(project_root)
+    runtime_root = resolve_project_runtime_root_for_write(project_root)
     runtime_root.mkdir(parents=True, exist_ok=True)
 
     spawn_store.start_spawn(
@@ -296,7 +296,7 @@ def test_session_log_chat_missing_harness_session_id_does_not_read_primary_spawn
 ) -> None:
     project_root = tmp_path / "repo"
     project_root.mkdir()
-    runtime_root = resolve_project_runtime_root(project_root)
+    runtime_root = resolve_project_runtime_root_for_write(project_root)
     runtime_root.mkdir(parents=True, exist_ok=True)
 
     chat_id = session_store.start_session(
@@ -341,7 +341,7 @@ def test_session_export_spawn_duration_uses_last_attempt_exited_at(
 ) -> None:
     project_root = tmp_path / "repo"
     project_root.mkdir()
-    runtime_root = resolve_project_runtime_root(project_root)
+    runtime_root = resolve_project_runtime_root_for_write(project_root)
     runtime_root.mkdir(parents=True, exist_ok=True)
 
     spawn_store.start_spawn(
@@ -383,7 +383,7 @@ def test_session_export_include_spawns_groups_by_owner_chat(
 ) -> None:
     project_root = tmp_path / "repo"
     project_root.mkdir()
-    runtime_root = resolve_project_runtime_root(project_root)
+    runtime_root = resolve_project_runtime_root_for_write(project_root)
     runtime_root.mkdir(parents=True, exist_ok=True)
     codex_home = tmp_path / "codex-home"
     monkeypatch.setenv("CODEX_HOME", codex_home.as_posix())

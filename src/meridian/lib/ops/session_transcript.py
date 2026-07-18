@@ -54,7 +54,7 @@ class SessionLogRoute(NamedTuple):
 
 class ParsedSessionTranscript(NamedTuple):
     project_root: Path
-    runtime_root: Path
+    runtime_root: Path | None
     target: SessionLogTarget
     route: SessionLogRoute
     segments: list[list[TranscriptMessage]]
@@ -294,7 +294,7 @@ def _has_usable_interaction_content(parsed: TranscriptParseResult) -> bool:
 def parse_session_target(
     *,
     project_root: Path,
-    runtime_root: Path,
+    runtime_root: Path | None,
     target: SessionLogTarget,
     route: SessionLogRoute,
 ) -> ParsedSessionTranscript:
@@ -342,7 +342,7 @@ def read_session_transcript(
     project_root: str | None,
 ) -> ParsedSessionTranscript:
     authority = resolve_runtime_authority_for_read(project_root)
-    runtime_root = authority.runtime_root or authority.project_state_dir
+    runtime_root = authority.runtime_root
     target = resolve_session_log_target(
         ref=ref,
         file_path=file_path,

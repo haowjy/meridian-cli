@@ -14,7 +14,10 @@ from meridian.lib.harness.connections.base import (
 from meridian.lib.harness.errors import HarnessBinaryNotFound
 from meridian.lib.harness.permission_broker import PermissionBroker
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
-from meridian.lib.state.paths import resolve_spawn_log_dir
+from meridian.lib.state.paths import (
+    resolve_project_runtime_root_for_write,
+    resolve_spawn_log_dir,
+)
 
 if TYPE_CHECKING:
     from meridian.lib.harness.connections.base import ConnectionConfig, HarnessConnection
@@ -53,8 +56,13 @@ async def dispatch_start(
         await connection_ref["connection"].inject_runtime_event(event)
 
     if config.harness_id is HarnessId.CODEX:
+        runtime_root = config.runtime_root or resolve_project_runtime_root_for_write(
+            config.control_root
+        )
         request_handler = PermissionBroker(
-            spawn_dir=resolve_spawn_log_dir(config.control_root, config.spawn_id),
+            spawn_dir=resolve_spawn_log_dir(
+                config.control_root, config.spawn_id, runtime_root=runtime_root
+            ),
             event_sink=_runtime_event_sink,
             auto_reject_runtime_requests=True,
         )

@@ -15,7 +15,7 @@ from meridian.lib.harness.connections.claude_ws import ClaudeConnection
 from meridian.lib.harness.connections.codex_ws import CodexConnection
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.safety.permissions import UnsafeNoOpPermissionResolver
-from meridian.lib.state.paths import resolve_project_runtime_root
+from meridian.lib.state.paths import resolve_project_runtime_root_for_write
 from meridian.lib.state.spawn_store import start_spawn
 
 
@@ -121,7 +121,7 @@ async def _capture_codex_launch_cwd(
     monkeypatch.setattr(connection, "_cleanup_resources", _noop_cleanup)
     spawn_id = SpawnId(f"p-codex-{ws_port}")
     start_spawn(
-        resolve_project_runtime_root(control_root),
+        resolve_project_runtime_root_for_write(control_root),
         spawn_id=spawn_id,
         chat_id="chat-1",
         model="gpt-5.4",

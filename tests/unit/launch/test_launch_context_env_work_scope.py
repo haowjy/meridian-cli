@@ -157,7 +157,9 @@ def test_bind_launch_context_child_ambient_work_dir_matches_prompt(
 
     from meridian.lib.state.paths import resolve_ambient_work_dir
 
-    expected_child = resolve_ambient_work_dir(tmp_path, "p-child")
+    expected_child = resolve_ambient_work_dir(
+        tmp_path, "p-child", runtime_root=tmp_path / ".meridian"
+    )
     request = build_spawn_request().model_copy(
         update={"harness": HarnessId.CURSOR.value, "prompt_is_composed": False},
     )
@@ -204,7 +206,9 @@ def test_bind_launch_context_child_ambient_without_context_markers(
 
     from meridian.lib.state.paths import resolve_ambient_work_dir
 
-    expected_child = resolve_ambient_work_dir(tmp_path, "p-child")
+    expected_child = resolve_ambient_work_dir(
+        tmp_path, "p-child", runtime_root=tmp_path / ".meridian"
+    )
     custom_prompt = "CUSTOM_PROMPT_WITHOUT_CONTEXT_BLOCK"
     runtime_ctx = build_launch_context(
         spawn_id="p-child",
@@ -248,7 +252,9 @@ def test_bind_launch_context_context_refresh_survives_header_footer_wording_chan
 
     from meridian.lib.state.paths import resolve_ambient_work_dir
 
-    expected_child = resolve_ambient_work_dir(tmp_path, "p-child")
+    expected_child = resolve_ambient_work_dir(
+        tmp_path, "p-child", runtime_root=tmp_path / ".meridian"
+    )
     original_build_context_prompt = launch_context_module.build_context_prompt
     revised_header = "# Workspace Context (revised wording)"
     revised_footer = "See also: meridian context -h"
@@ -312,6 +318,9 @@ def test_bind_launch_context_named_work_dir_matches_prompt(
     tmp_path: Path,
 ) -> None:
     write_minimal_mars_config(tmp_path)
+    (tmp_path / "meridian.toml").write_text(
+        '[project]\nid = "named-work-prompt"\n', encoding="utf-8"
+    )
     stub_bundle_request_and_resolve(
         monkeypatch,
         model="gpt-5.4",
@@ -392,7 +401,9 @@ def test_bind_launch_context_composed_request_refreshes_child_work_dir(
         dry_run=True,
     )
 
-    expected_child = resolve_ambient_work_dir(tmp_path, "p-child")
+    expected_child = resolve_ambient_work_dir(
+        tmp_path, "p-child", runtime_root=tmp_path / ".meridian"
+    )
     child_ctx = bind_spawn_launch_context(
         prepared=prepared,
         bindings=RuntimeBindings(
@@ -477,7 +488,9 @@ def test_bind_launch_context_context_refresh_preserves_adhoc_agent_payload(
         harness_registry=get_default_harness_registry(),
     )
 
-    expected_child = resolve_ambient_work_dir(tmp_path, "p-child")
+    expected_child = resolve_ambient_work_dir(
+        tmp_path, "p-child", runtime_root=tmp_path / ".meridian"
+    )
     child_env = child_ctx.binding.environment.child_context_env
     run_params = child_ctx.binding.run_params
     assert_materialized_work_dir_parity(

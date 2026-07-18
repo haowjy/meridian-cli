@@ -8,7 +8,6 @@ from pathlib import Path
 from meridian.lib.config.context_config import ContextConfig, ContextSourceType
 from meridian.lib.state.paths import (
     ProjectPaths,
-    ensure_gitignore,
     resolve_project_paths,
     resolve_project_paths_for_write,
 )
@@ -34,15 +33,15 @@ class ProjectLayoutSnapshot:
         return self.paths.id_file
 
     @property
-    def kb_dir(self) -> Path:
+    def kb_dir(self) -> Path | None:
         return self.paths.kb_dir
 
     @property
-    def work_dir(self) -> Path:
+    def work_dir(self) -> Path | None:
         return self.paths.work_dir
 
     @property
-    def work_archive_dir(self) -> Path:
+    def work_archive_dir(self) -> Path | None:
         return self.paths.work_archive_dir
 
 
@@ -72,8 +71,12 @@ def ensure_project_dirs(project_root: Path) -> None:
 
     context_config = load_context_config(project_root)
     project_paths = resolve_project_paths_for_write(project_root)
-    project_paths.root_dir.mkdir(parents=True, exist_ok=True)
-
+    if (
+        project_paths.kb_dir is None
+        or project_paths.work_dir is None
+        or project_paths.work_archive_dir is None
+    ):
+        raise ValueError("Project context paths are unresolved after identity creation.")
     if context_config is None:
         project_paths.kb_dir.mkdir(parents=True, exist_ok=True)
         project_paths.work_dir.mkdir(parents=True, exist_ok=True)
@@ -93,9 +96,3 @@ def ensure_project_dirs(project_root: Path) -> None:
         if not work_git_with_remote:
             project_paths.work_dir.mkdir(parents=True, exist_ok=True)
             project_paths.work_archive_dir.mkdir(parents=True, exist_ok=True)
-
-
-def ensure_project_gitignore(project_root: Path) -> None:
-    """Reconcile the project-local `.meridian/.gitignore` for write paths."""
-
-    ensure_gitignore(project_root)

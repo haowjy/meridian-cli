@@ -14,7 +14,7 @@ from meridian.lib.harness.registry import HarnessRegistry
 from meridian.lib.launch import constants as launch_constants
 from meridian.lib.state import spawn_store
 from meridian.lib.state.artifact_store import LocalStore
-from meridian.lib.state.paths import resolve_project_runtime_root
+from meridian.lib.state.paths import resolve_project_runtime_root_for_write
 from meridian.lib.streaming import spawn_manager as spawn_manager_module
 from tests.integration.launch.streaming_runner_support import (
     _build_request,
@@ -44,7 +44,7 @@ async def test_setup_failure_produces_terminal_event(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """When setup raises, execute_with_streaming still writes a terminal event."""
-    runtime_root = resolve_project_runtime_root(tmp_path)
+    runtime_root = resolve_project_runtime_root_for_write(tmp_path)
     artifacts = LocalStore(root_dir=tmp_path / ".artifacts")
     registry = HarnessRegistry.with_defaults()
     fake_clock = FakeClock(start=1_000.0)
