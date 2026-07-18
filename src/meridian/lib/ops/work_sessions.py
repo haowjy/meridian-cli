@@ -36,7 +36,7 @@ def work_session_chat_ids(
             project_root,
             runtime_root,
             spawn_store.list_spawns(runtime_root),
-        ):
+        ).records:
             if (spawn.work_id or "").strip() != normalized_work_id:
                 continue
             chat_id = (spawn.chat_id or "").strip()
@@ -51,7 +51,7 @@ def work_session_chat_ids(
         project_root,
         runtime_root,
         spawn_store.list_spawns(runtime_root),
-    ):
+    ).records:
         if spawn.kind == "primary":
             continue
         if not is_active_spawn_status(spawn.status):

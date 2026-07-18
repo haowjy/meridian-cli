@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 
 from meridian.lib.core.types import ArtifactKey, SpawnId
-from meridian.lib.harness.connections.base import HarnessEvent
+from meridian.lib.harness.connections.base import RawHarnessEvent
 from meridian.lib.harness.extractors.cursor import CURSOR_EXTRACTOR
 
 
@@ -61,7 +61,7 @@ def test_cursor_extractor_reads_session_usage_and_result_report() -> None:
 
 
 def test_cursor_extractor_detects_session_from_nested_event_payload() -> None:
-    event = HarnessEvent(
+    event = RawHarnessEvent(
         event_type="system",
         harness_id="cursor",
         payload={"payload": {"session": "ses-cursor-nested"}},

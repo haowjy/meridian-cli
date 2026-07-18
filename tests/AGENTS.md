@@ -25,14 +25,14 @@ tests/smoke/        Markdown guides for manual CLI verification.
 ## Available Fakes
 
 `tests/support/fakes.py`: `FakeClock`, `FakeHeartbeat`.
-For spawn state, prefer v2 state helpers (`create_lifecycle_service`,
+For spawn state, prefer state helpers (`create_lifecycle_service`,
 `spawn_store.get_spawn`) or direct `state.json` assertions.
 
 ### Fake Fidelity
 
 When exit classification depends on event ordering, fakes must reproduce the real
 connection's pre-EOF death shape. A non-zero subprocess exit is not clean iterator
-exhaustion: the exit code becomes an `error/connectionClosed` event before the
+exhaustion: the exit code becomes a `meridian/error/connectionClosed` event before the
 iterator ends. This invariant applies to every adapter that synthesizes such an
 event. Do not replace it with direct `handle_stream_exit(None)` calls; that skips the
 precedence path where a generic process-exit failure is recorded before stream exit.

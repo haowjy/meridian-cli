@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, cast
 
+from meridian.lib.core.types import SpawnId
 from meridian.lib.launch.constants import PRIMARY_META_FILENAME
 from meridian.lib.state.atomic import atomic_write_text
 from meridian.lib.state.spawn_aggregate import mutate_published_spawn_artifact
@@ -248,7 +249,7 @@ def write_primary_metadata(
         return True
     return mutate_published_spawn_artifact(
         runtime_root,
-        spawn_id,
+        SpawnId(spawn_id),
         lambda: atomic_write_text(path, content),
     )
 

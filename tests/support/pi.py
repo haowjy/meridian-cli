@@ -15,8 +15,8 @@ from meridian.lib.harness.connections.base import (
     ConnectionConfig,
     ConnectionState,
     HarnessConnection,
-    HarnessEvent,
     PiSessionRole,
+    RawHarnessEvent,
     StopProgressCallback,
     StopResult,
 )
@@ -60,7 +60,7 @@ class NoopControlServer(ControlSocketServer):
 
 
 class FakePiConnection(HarnessConnection[ResolvedLaunchSpec]):
-    def __init__(self, events: list[HarnessEvent]) -> None:
+    def __init__(self, events: list[RawHarnessEvent]) -> None:
         self._events = events
         self._spawn_id = SpawnId("")
         self._state: ConnectionState = "created"
@@ -126,16 +126,16 @@ class FakePiConnection(HarnessConnection[ResolvedLaunchSpec]):
             yield event
 
 
-def pi_event(event_type: str, payload: dict[str, object] | None = None) -> HarnessEvent:
-    return HarnessEvent(event_type=event_type, harness_id="pi", payload=payload or {})
+def pi_event(event_type: str, payload: dict[str, object] | None = None) -> RawHarnessEvent:
+    return RawHarnessEvent(event_type=event_type, harness_id="pi", payload=payload or {})
 
 
-def pi_process_exit_event(return_code: int) -> HarnessEvent:
+def pi_process_exit_event(return_code: int) -> RawHarnessEvent:
     """Model the connection-close event emitted when the Pi process exits non-zero."""
     return pi_event(
-        "error/connectionClosed",
+        "meridian/error/connectionClosed",
         {
-            "type": "error/connectionClosed",
+            "type": "meridian/error/connectionClosed",
             "message": pi_subprocess_exit_error(return_code),
         },
     )

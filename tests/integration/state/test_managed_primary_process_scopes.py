@@ -468,7 +468,8 @@ def test_reaper_preserve_then_reclaim_reuses_same_scope_records(
 
     assert terminated_scope_ids == ["launcher"]
     assert reconciled.status == "failed"
-    assert reconciled.error == "orphan_primary"
+    assert reconciled.terminal is not None
+    assert reconciled.terminal.error == "orphan_primary"
     assert is_scope_released(runtime_root, SpawnId(spawn_id), scope_records[0].release_id) is True
     assert is_scope_released(runtime_root, SpawnId(spawn_id), scope_records[1].release_id) is False
     assert is_scope_released(runtime_root, SpawnId(spawn_id), scope_records[2].release_id) is False

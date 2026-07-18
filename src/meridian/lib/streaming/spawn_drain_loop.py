@@ -8,8 +8,9 @@ import time
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
 
+from meridian.lib.core.domain import SpawnStatus
 from meridian.lib.core.types import SpawnId
-from meridian.lib.harness.connections.base import HarnessEvent
+from meridian.lib.harness.connections.base import RawHarnessEvent
 from meridian.lib.state.history import HarnessHistoryWriter
 from meridian.lib.streaming.completion_contracts import CompletionCleanupRequest
 from meridian.lib.streaming.drain_coordinator import (
@@ -31,7 +32,7 @@ from meridian.lib.streaming.spawn_session import DrainOutcome, SpawnSession
 
 if TYPE_CHECKING:
     from meridian.lib.harness.connections.base import HarnessConnection
-    from meridian.lib.harness.semantics import TerminalEventOutcome
+    from meridian.lib.harness.semantics import NormalizedHarnessEvent, TerminalEventOutcome
     from meridian.lib.observability.debug_tracer import DebugTracer
 
 logger = logging.getLogger(__name__)
@@ -39,7 +40,7 @@ logger = logging.getLogger(__name__)
 PublishTerminal = Callable[
     [SpawnId, SpawnSession, DrainOutcome, CompletionCleanupRequest | None], DrainOutcome
 ]
-FanOutEvent = Callable[[SpawnId, HarnessEvent], None]
+FanOutEvent = Callable[[SpawnId, "NormalizedHarnessEvent"], None]
 FanOutTurnBoundary = Callable[[SpawnId, "TerminalEventOutcome"], Awaitable[None]]
 
 
@@ -74,7 +75,7 @@ class SpawnDrainLoop:
         """Durably append each harness event and fan out to the active subscriber."""
 
         # Import at runtime to avoid circular import during module initialization.
-        from meridian.lib.harness.semantics import activity_transition, terminal_outcome
+        from meridian.lib.harness.semantics import normalize_event
 
         consecutive_write_failures = 0
         max_consecutive_failures = 10
@@ -128,14 +129,15 @@ class SpawnDrainLoop:
                 event = wake.event
                 disk_change_ready_after_event = wake.disk_change_ready_after_event
 
-                transition = activity_transition(
+                normalized_event = normalize_event(
                     event,
                     primary_event_scope=receiver.primary_event_scope,
                 )
+                receiver.observe_event_semantics(normalized_event.semantics)
                 duplicate_canonical_event = await _observe_event(
                     coordinator,
                     event,
-                    transition,
+                    normalized_event.semantics.activity,
                 )
                 if duplicate_canonical_event:
                     continue
@@ -195,11 +197,8 @@ class SpawnDrainLoop:
                             break
                         continue
 
-                event_outcome = terminal_outcome(
-                    event,
-                    primary_event_scope=receiver.primary_event_scope,
-                )
-                self._fan_out_event(spawn_id, event)
+                event_outcome = normalized_event.semantics.terminal
+                self._fan_out_event(spawn_id, normalized_event)
                 persisted_event_decision = _note_event_persisted(coordinator, event)
                 if persisted_event_decision.recorded_outcome is not None:
                     recorded_terminal_outcome = persisted_event_decision.recorded_outcome
@@ -252,7 +251,7 @@ class SpawnDrainLoop:
                     and recorded_terminal_outcome.status == "succeeded"
                 ):
                     outcome = DrainOutcome(
-                        status="succeeded",
+                        status=SpawnStatus.SUCCEEDED,
                         exit_code=recorded_terminal_outcome.exit_code,
                         error=recorded_terminal_outcome.error,
                         duration_secs=max(
@@ -265,27 +264,27 @@ class SpawnDrainLoop:
                     )
                 elif drain_cancelled:
                     outcome = DrainOutcome(
-                        status="cancelled",
+                        status=SpawnStatus.CANCELLED,
                         exit_code=1,
                         duration_secs=max(0.0, time.monotonic() - session.started_monotonic),
                     )
                 elif drain_error is not None:
                     outcome = DrainOutcome(
-                        status="failed",
+                        status=SpawnStatus.FAILED,
                         exit_code=1,
                         error=str(drain_error),
                         duration_secs=max(0.0, time.monotonic() - session.started_monotonic),
                     )
                 elif session.cancel_sent:
                     outcome = DrainOutcome(
-                        status="cancelled",
+                        status=SpawnStatus.CANCELLED,
                         exit_code=143,
                         error="cancelled",
                         duration_secs=max(0.0, time.monotonic() - session.started_monotonic),
                     )
                 elif fallback_error is not None and recorded_terminal_outcome is None:
                     outcome = DrainOutcome(
-                        status="failed",
+                        status=SpawnStatus.FAILED,
                         exit_code=1,
                         error=fallback_error,
                         duration_secs=max(0.0, time.monotonic() - session.started_monotonic),
@@ -302,7 +301,7 @@ class SpawnDrainLoop:
                     )
                 else:
                     outcome = DrainOutcome(
-                        status="failed",
+                        status=SpawnStatus.FAILED,
                         exit_code=1,
                         error="connection_closed_without_terminal_event",
                         duration_secs=max(0.0, time.monotonic() - session.started_monotonic),
@@ -346,7 +345,7 @@ def _next_timeout(coordinator: DrainCoordinator | None) -> float | None:
 
 async def _observe_event(
     coordinator: DrainCoordinator | None,
-    event: HarnessEvent,
+    event: RawHarnessEvent,
     transition: str | None,
 ) -> bool:
     if coordinator is None:
@@ -356,7 +355,7 @@ async def _observe_event(
 
 def _note_event_persisted(
     coordinator: DrainCoordinator | None,
-    event: HarnessEvent,
+    event: RawHarnessEvent,
 ) -> DrainLoopDecision:
     if coordinator is None:
         return DrainLoopDecision()
@@ -365,7 +364,7 @@ def _note_event_persisted(
 
 async def _handle_terminal_event(
     coordinator: DrainCoordinator | None,
-    event: HarnessEvent,
+    event: RawHarnessEvent,
     outcome: TerminalEventOutcome,
     action: DrainAction,
 ) -> DrainTerminalDecision:

@@ -31,7 +31,7 @@ from meridian.lib.streaming.drain_coordinator import (
 )
 
 if TYPE_CHECKING:
-    from meridian.lib.harness.connections.base import HarnessEvent
+    from meridian.lib.harness.connections.base import RawHarnessEvent
     from meridian.lib.harness.semantics import TerminalEventOutcome
     from meridian.lib.streaming.drain_policy import DrainAction
 
@@ -129,7 +129,7 @@ class CompletionCoordinator:
             return None
         return max(min(candidates) - self._clock(), _TIMEOUT_FLOOR_SECONDS)
 
-    async def observe_event(self, event: HarnessEvent, transition: str | None) -> bool:
+    async def observe_event(self, event: RawHarnessEvent, transition: str | None) -> bool:
         self.note_activity_transition(transition)
         decision = await self._evidence.observe_event(event, transition)
         if (
@@ -139,7 +139,7 @@ class CompletionCoordinator:
             self._refresh_profile_deadline()
         return decision.duplicate_canonical_event
 
-    def note_event_persisted(self, event: HarnessEvent) -> DrainLoopDecision:
+    def note_event_persisted(self, event: RawHarnessEvent) -> DrainLoopDecision:
         decision = self._evidence.note_event_persisted(event)
         self._latch_evidence_decision(decision)
         if decision.activity is not None and self._phase == "stabilizing":
@@ -152,7 +152,7 @@ class CompletionCoordinator:
 
     async def handle_terminal_event(
         self,
-        event: HarnessEvent,
+        event: RawHarnessEvent,
         outcome: TerminalEventOutcome,
         action: DrainAction,
     ) -> DrainTerminalDecision:

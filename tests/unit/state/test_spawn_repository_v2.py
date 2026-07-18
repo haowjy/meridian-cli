@@ -2,8 +2,11 @@ from pathlib import Path
 
 import pytest
 
-from meridian.lib.state.spawn.model import SpawnRecord
+from meridian.lib.state.spawn.model import SpawnRecord, TerminalFacts
 from meridian.lib.state.spawn.repository import (
+    Applied,
+    Decline,
+    Declined,
     read_prompt,
     read_state,
     record_to_stored_state,
@@ -18,6 +21,16 @@ def _record(
     prompt: str | None = "hello",
     goal: str | None = "ship persistence",
 ) -> SpawnRecord:
+    terminal = (
+        TerminalFacts(
+            exit_code=0,
+            finished_at="2026-05-01T00:01:00Z",
+            published_at="2026-05-01T00:01:00Z",
+            origin="runner",
+        )
+        if status in {"succeeded", "failed", "cancelled", "timed_out"}
+        else None
+    )
     return SpawnRecord(
         id=spawn_id,
         chat_id="c1",
@@ -44,22 +57,8 @@ def _record(
         started_at="2026-05-01T00:00:00Z",
         last_attempt_exited_at=None,
         last_attempt_exit_code=None,
-        runner_exit_code=None,
-        runner_exit_status=None,
-        runner_exit_error=None,
-        runner_exit_at=None,
-        finished_at=None,
-        exit_code=None,
-        duration_secs=None,
-        total_cost_usd=None,
-        input_tokens=None,
-        output_tokens=None,
-        cache_read_input_tokens=None,
-        cache_creation_input_tokens=None,
-        reasoning_tokens=None,
-        cost_is_estimate=False,
-        error=None,
-        terminal_origin=None,
+        runner_exit=None,
+        terminal=terminal,
     )
 
 
@@ -73,7 +72,7 @@ def _seed_state(spawns_dir: Path, record: SpawnRecord) -> None:
     )
 
 
-def test_v2_state_round_trips_without_prompt_body(tmp_path: Path) -> None:
+def test_v3_state_round_trips_without_prompt_body(tmp_path: Path) -> None:
     spawns_dir = tmp_path / "spawns"
     record = _record(prompt="hello world")
 
@@ -89,15 +88,25 @@ def test_v2_state_round_trips_without_prompt_body(tmp_path: Path) -> None:
 
     assert restored == record
     assert read_prompt(spawns_dir, "p1") == "hello world"
+
+
 def test_write_state_locked_refuses_to_overwrite_terminal_state(tmp_path: Path) -> None:
     spawns_dir = tmp_path / "spawns"
     _seed_state(spawns_dir, _record(status="succeeded"))
+    replacement = TerminalFacts(
+        exit_code=1,
+        finished_at="2026-05-01T00:02:00Z",
+        published_at="2026-05-01T00:02:00Z",
+        origin="runner",
+    )
 
     with pytest.raises(ValueError, match="terminal spawn state"):
         write_state_locked(
             spawns_dir,
             "p1",
-            lambda current: current.model_copy(update={"status": "running"}),
+            lambda current: current.model_copy(
+                update={"status": "failed", "terminal": replacement}
+            ),
         )
 
     assert read_state(spawns_dir, "p1").status == "succeeded"  # type: ignore[union-attr]
@@ -113,8 +122,30 @@ def test_write_state_locked_applies_mutator_under_per_spawn_lock(tmp_path: Path)
         lambda current: current.model_copy(update={"runner_pid": 789, "desc": "updated"}),
     )
 
-    assert committed.runner_pid == 789
-    assert committed.desc == "updated"
+    assert isinstance(committed, Applied)
+    assert committed.before.runner_pid == 456
+    assert committed.after.runner_pid == 789
+    assert committed.after.desc == "updated"
+
+
+def test_write_state_locked_decline_preserves_state(tmp_path: Path) -> None:
+    spawns_dir = tmp_path / "spawns"
+    original = _record()
+    _seed_state(spawns_dir, original)
+    state_path = spawns_dir / "p1" / "state.json"
+    original_inode = state_path.stat().st_ino
+
+    outcome = write_state_locked(
+        spawns_dir,
+        "p1",
+        lambda _current: Decline("not applicable"),
+    )
+
+    assert isinstance(outcome, Declined)
+    assert outcome.snapshot == original.model_copy(update={"prompt": None})
+    assert outcome.reason == "not applicable"
+    assert read_state(spawns_dir, "p1") == outcome.snapshot
+    assert state_path.stat().st_ino == original_inode
 
 
 def test_start_spawn_persists_display_label_when_goal_and_desc_absent(tmp_path: Path) -> None:

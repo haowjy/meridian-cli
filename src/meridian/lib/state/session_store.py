@@ -9,6 +9,13 @@ from typing import IO, Any, Literal, NamedTuple, cast
 
 from pydantic import BaseModel, ConfigDict, ValidationError
 
+from meridian.lib.core.types import (
+    ChatId,
+    HarnessSessionId,
+    OptionalPersistedChatId,
+    OptionalPersistedHarnessSessionId,
+    PersistedChatId,
+)
 from meridian.lib.platform.locking import (
     acquire_file_lock,
     lock_file,
@@ -34,15 +41,15 @@ _SESSION_LOCK_HANDLES: dict[tuple[Path, str], _SessionLockHandles] = {}
 class SessionRecord(BaseModel):
     model_config = ConfigDict(frozen=True)
 
-    chat_id: str
+    chat_id: PersistedChatId
     kind: Literal["primary", "spawn"]
     harness: str
-    harness_session_id: str
+    harness_session_id: OptionalPersistedHarnessSessionId
     control_root: str | None = None
     task_cwd: str | None = None
     execution_cwd: str | None = None
     claude_config_dir: str | None = None
-    harness_session_ids: tuple[str, ...]
+    harness_session_ids: tuple[HarnessSessionId, ...]
     model: str
     agent: str
     agent_path: str
@@ -53,7 +60,7 @@ class SessionRecord(BaseModel):
     stopped_at: str | None
     session_instance_id: str = ""
     active_work_id: str | None = None
-    forked_from_chat_id: str | None = None
+    forked_from_chat_id: OptionalPersistedChatId = None
     spawn_id: str | None = None
 
 
@@ -62,10 +69,10 @@ class SessionStartEvent(BaseModel):
 
     v: int = 1
     event: Literal["start"] = "start"
-    chat_id: str
+    chat_id: PersistedChatId
     kind: Literal["primary", "spawn"] = "spawn"
     harness: str
-    harness_session_id: str
+    harness_session_id: OptionalPersistedHarnessSessionId
     control_root: str | None = None
     task_cwd: str | None = None
     execution_cwd: str | None = None
@@ -78,31 +85,28 @@ class SessionStartEvent(BaseModel):
     params: tuple[str, ...] = ()
     session_instance_id: str = ""
     started_at: str
-    forked_from_chat_id: str | None = None
+    forked_from_chat_id: OptionalPersistedChatId = None
     spawn_id: str | None = None
-
 
 class SessionStopEvent(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     v: int = 1
     event: Literal["stop"] = "stop"
-    chat_id: str
+    chat_id: PersistedChatId
     session_instance_id: str = ""
     stopped_at: str | None = None
-
 
 class SessionUpdateEvent(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     v: int = 1
     event: Literal["update"] = "update"
-    chat_id: str
-    harness_session_id: str
+    chat_id: PersistedChatId
+    harness_session_id: OptionalPersistedHarnessSessionId = None
     session_instance_id: str = ""
     claude_config_dir: str | None = None
     active_work_id: str | None = None
-
 
 type SessionEvent = SessionStartEvent | SessionStopEvent | SessionUpdateEvent
 type MaterializedCleanupScope = str
@@ -137,7 +141,9 @@ def _record_from_start_event(event: SessionStartEvent) -> SessionRecord:
         task_cwd=event.task_cwd,
         execution_cwd=event.execution_cwd,
         claude_config_dir=event.claude_config_dir,
-        harness_session_ids=(event.harness_session_id,),
+        harness_session_ids=(
+            (event.harness_session_id,) if event.harness_session_id is not None else ()
+        ),
         model=event.model,
         agent=event.agent,
         agent_path=event.agent_path,
@@ -275,11 +281,10 @@ def _records_by_session(runtime_root: Path) -> dict[str, SessionRecord]:
         updated_work_id = existing.active_work_id
         claude_config_dir = existing.claude_config_dir
         session_instance_id = existing.session_instance_id
-        normalized_harness_session_id = event.harness_session_id.strip()
-        if normalized_harness_session_id:
-            if normalized_harness_session_id not in session_ids:
-                session_ids = (*session_ids, normalized_harness_session_id)
-            harness_session_id = normalized_harness_session_id
+        if event.harness_session_id is not None:
+            if event.harness_session_id not in session_ids:
+                session_ids = (*session_ids, event.harness_session_id)
+            harness_session_id = event.harness_session_id
         if event.session_instance_id.strip():
             session_instance_id = event.session_instance_id
         if event.active_work_id is not None:
@@ -368,10 +373,10 @@ def start_session(
         lock_path = paths.sessions_dir / f"{resolved_chat_id}.lock"
         handle = acquire_file_lock(lock_path)
         event = SessionStartEvent(
-            chat_id=resolved_chat_id,
+            chat_id=ChatId(resolved_chat_id),
             kind=kind,
             harness=harness,
-            harness_session_id=harness_session_id,
+            harness_session_id=HarnessSessionId(harness_session_id),
             control_root=control_root,
             task_cwd=task_cwd,
             execution_cwd=execution_cwd,
@@ -384,7 +389,9 @@ def start_session(
             params=params,
             session_instance_id=session_instance_id,
             started_at=started_at,
-            forked_from_chat_id=forked_from_chat_id,
+            forked_from_chat_id=(
+                ChatId(forked_from_chat_id) if forked_from_chat_id is not None else None
+            ),
             spawn_id=spawn_id,
         )
         with lock_file(paths.sessions_flock):
@@ -410,7 +417,7 @@ def stop_session(runtime_root: Path, chat_id: str) -> None:
     paths = RuntimePaths.from_root_dir(runtime_root)
     session_instance_id = _session_instance_for_event(paths, runtime_root, chat_id)
     event = SessionStopEvent(
-        chat_id=chat_id,
+        chat_id=ChatId(chat_id),
         session_instance_id=session_instance_id,
         stopped_at=utc_now_iso(),
     )
@@ -430,8 +437,8 @@ def update_session_harness_id(runtime_root: Path, chat_id: str, harness_session_
 
     paths = RuntimePaths.from_root_dir(runtime_root)
     event = SessionUpdateEvent(
-        chat_id=chat_id,
-        harness_session_id=harness_session_id,
+        chat_id=ChatId(chat_id),
+        harness_session_id=HarnessSessionId(harness_session_id),
         session_instance_id=_session_instance_for_event(paths, runtime_root, chat_id),
     )
     append_event(
@@ -448,8 +455,8 @@ def update_session_work_id(runtime_root: Path, chat_id: str, work_id: str | None
     paths = RuntimePaths.from_root_dir(runtime_root)
     normalized_work_id = work_id.strip() if work_id is not None else ""
     event = SessionUpdateEvent(
-        chat_id=chat_id,
-        harness_session_id="",
+        chat_id=ChatId(chat_id),
+        harness_session_id=None,
         session_instance_id=_session_instance_for_event(paths, runtime_root, chat_id),
         active_work_id=normalized_work_id,
     )
@@ -470,8 +477,8 @@ def update_session_claude_config_dir(
 
     paths = RuntimePaths.from_root_dir(runtime_root)
     event = SessionUpdateEvent(
-        chat_id=chat_id,
-        harness_session_id="",
+        chat_id=ChatId(chat_id),
+        harness_session_id=None,
         session_instance_id=_session_instance_for_event(paths, runtime_root, chat_id),
         claude_config_dir=claude_config_dir,
     )
@@ -550,7 +557,7 @@ def list_active_sessions_for_work_id(runtime_root: Path, work_id: str) -> list[s
 
 
 def chat_ids_ever_attached_to_work(runtime_root: Path, work_id: str) -> set[str]:
-    """Return session IDs ever attached to a work item in raw session events."""
+    """Return session IDs from valid update events that attached to a work item."""
 
     normalized_work_id = work_id.strip()
     if not normalized_work_id:
@@ -559,18 +566,15 @@ def chat_ids_ever_attached_to_work(runtime_root: Path, work_id: str) -> set[str]
     paths = RuntimePaths.from_root_dir(runtime_root)
 
     def _parse_work_attachment(payload: dict[str, Any]) -> str | None:
-        event_type = payload.get("event")
-        if event_type not in {"start", "update"}:
+        event = _parse_event(payload)
+        if not isinstance(event, SessionUpdateEvent):
             return None
-        chat_id = payload.get("chat_id")
-        if not isinstance(chat_id, str) or not chat_id.strip():
-            return None
-        active_work_id = payload.get("active_work_id")
-        if not isinstance(active_work_id, str):
+        active_work_id = event.active_work_id
+        if active_work_id is None:
             return None
         if active_work_id.strip() != normalized_work_id:
             return None
-        return chat_id.strip()
+        return event.chat_id
 
     return set(read_events(paths.sessions_jsonl, _parse_work_attachment))
 
@@ -730,7 +734,7 @@ def cleanup_stale_sessions(runtime_root: Path) -> StaleSessionCleanup:
                         paths.sessions_jsonl,
                         paths.sessions_flock,
                         SessionStopEvent(
-                            chat_id=chat_id,
+                            chat_id=ChatId(chat_id),
                             session_instance_id=stop_session_instance_id,
                             stopped_at=stopped_at,
                         ),

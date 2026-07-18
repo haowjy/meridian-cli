@@ -141,7 +141,9 @@ def test_session_log_child_spawn_without_harness_id_does_not_use_parent_chat(
             harness="codex",
             prompt="do child thing",
             harness_session_id="",
-            status="failed",
+        )
+        spawn_store.finalize_spawn(
+            runtime_root, "p42", "failed", 1, origin="runner"
         )
 
         with pytest.raises(ValueError):
@@ -186,7 +188,9 @@ def test_session_log_child_spawn_uses_authoritative_child_chat_link(
             harness="codex",
             prompt="do child thing",
             harness_session_id="",
-            status="failed",
+        )
+        spawn_store.finalize_spawn(
+            runtime_root, "p42", "failed", 1, origin="runner"
         )
 
         output = session_log_sync(
@@ -267,8 +271,8 @@ def test_session_log_child_spawn_falls_back_to_artifact_output_when_native_unava
         harness="codex",
         prompt="do thing",
         harness_session_id="missing-native-session",
-        status="failed",
     )
+    spawn_store.finalize_spawn(runtime_root, "p42", "failed", 1, origin="runner")
     _write_spawn_output(
         runtime_root,
         "p42",

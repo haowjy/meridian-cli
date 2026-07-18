@@ -82,7 +82,7 @@ def active_descendants(
 ) -> list[SpawnRecord]:
     """Active (non-terminal) transitive descendants of one spawn."""
 
-    rows = spawn_store.list_spawns(runtime_root)
+    rows = spawn_store.list_spawns(runtime_root).records
     return [
         record
         for record in iter_descendants_from_parent_map(str(root_id), _by_parent(rows))

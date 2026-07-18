@@ -12,14 +12,20 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import TYPE_CHECKING, cast
 
-from meridian.lib.core.domain import SpawnStatus
+from meridian.lib.core.domain import (
+    ACTIVE_SPAWN_STATUSES,
+    ALL_SPAWN_STATUSES,
+    TERMINAL_SPAWN_STATUSES,
+    SpawnStatus,
+    TerminalSpawnStatus,
+)
 from meridian.lib.core.spawn_start import SpawnStartMetadata
 
 if TYPE_CHECKING:
     from meridian.lib.core.clock import Clock
     from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
     from meridian.lib.launch.types import PrimarySessionMetadata
-    from meridian.lib.state.spawn.model import LaunchMode
+    from meridian.lib.state.spawn.model import LaunchMode, SpawnKind
 
 
 @dataclass(frozen=True)
@@ -31,7 +37,7 @@ class SpawnReservation:
     prompt: str
     owner_chat_id: str | None = None
     parent_id: str | None = None
-    kind: str = "child"
+    kind: SpawnKind = "child"
     metadata: SpawnStartMetadata | None = None
     desc: str | None = None
     work_id: str | None = None
@@ -45,24 +51,39 @@ class SpawnReservation:
     worker_pid: int | None = None
     runner_pid: int | None = None
     launch_policy_snapshot: LaunchPolicySnapshot | None = None
-    status: SpawnStatus = "running"
+    status: SpawnStatus = SpawnStatus.RUNNING
     started_at: str | None = None
     clock: Clock | None = None
 
-# TODO(status-authority): SpawnStatus Literal in core/domain.py duplicates these sets.
-ALL_SPAWN_STATUSES: frozenset[str] = frozenset(
-    {"queued", "running", "finalizing", "succeeded", "failed", "cancelled", "timed_out"}
-)
-ACTIVE_SPAWN_STATUSES: frozenset[str] = frozenset({"queued", "running", "finalizing"})
-TERMINAL_SPAWN_STATUSES: frozenset[str] = frozenset(
-    {"succeeded", "failed", "cancelled", "timed_out"}
-)
 FAILURE_SPAWN_STATUSES: frozenset[str] = frozenset({"failed", "timed_out"})
 
-_ALLOWED_TRANSITIONS: dict[str, frozenset[str]] = {
-    "queued": frozenset({"running", "succeeded", "failed", "cancelled", "timed_out"}),
-    "running": frozenset({"finalizing", "succeeded", "failed", "cancelled", "timed_out"}),
-    "finalizing": frozenset({"succeeded", "failed", "cancelled", "timed_out"}),
+_ALLOWED_TRANSITIONS: dict[SpawnStatus, frozenset[SpawnStatus]] = {
+    SpawnStatus.QUEUED: frozenset(
+        {
+            SpawnStatus.RUNNING,
+            SpawnStatus.SUCCEEDED,
+            SpawnStatus.FAILED,
+            SpawnStatus.CANCELLED,
+            SpawnStatus.TIMED_OUT,
+        }
+    ),
+    SpawnStatus.RUNNING: frozenset(
+        {
+            SpawnStatus.FINALIZING,
+            SpawnStatus.SUCCEEDED,
+            SpawnStatus.FAILED,
+            SpawnStatus.CANCELLED,
+            SpawnStatus.TIMED_OUT,
+        }
+    ),
+    SpawnStatus.FINALIZING: frozenset(
+        {
+            SpawnStatus.SUCCEEDED,
+            SpawnStatus.FAILED,
+            SpawnStatus.CANCELLED,
+            SpawnStatus.TIMED_OUT,
+        }
+    ),
 }
 _CONTROL_EVENT_NAMES: frozenset[str] = frozenset(
     {"cancelled", "error", "error.connectionclosed"}
@@ -117,14 +138,14 @@ class ExecutionTerminalFacts:
     failure_reason: str | None = None
     cancellation_observed: bool = False
     durable_report_completion: bool = False
-    terminal_status: SpawnStatus | None = None
+    terminal_status: TerminalSpawnStatus | None = None
 
 
 @dataclass(frozen=True)
 class ExecutionTerminalOutcome:
     """Lifecycle-resolved terminal tuple derived from execution facts."""
 
-    status: SpawnStatus
+    status: TerminalSpawnStatus
     exit_code: int
     error: str | None
 
@@ -208,7 +229,7 @@ def coerce_spawn_status(status: str) -> SpawnStatus:
 
     if status in ALL_SPAWN_STATUSES:
         return cast("SpawnStatus", status)
-    return "failed"
+    return SpawnStatus.FAILED
 
 
 def validate_transition(from_status: SpawnStatus, to_status: SpawnStatus) -> None:
@@ -259,8 +280,8 @@ def resolve_execution_terminal_state(
     failure_reason: str | None,
     cancelled: bool = False,
     durable_report_completion: bool = False,
-    terminal_status: SpawnStatus | None = None,
-) -> tuple[SpawnStatus, int, str | None]:
+    terminal_status: TerminalSpawnStatus | None = None,
+) -> tuple[TerminalSpawnStatus, int, str | None]:
     """Normalize one execution outcome into the persisted terminal state."""
 
     if terminal_status is not None and terminal_status != "succeeded":
@@ -320,7 +341,7 @@ def resolve_reconciled_terminal_state(
     *,
     durable_report_completion: bool,
     fallback_error: str,
-) -> tuple[SpawnStatus, int, str | None]:
+) -> tuple[TerminalSpawnStatus, int, str | None]:
     """Resolve the terminal state produced by read-path reconciliation."""
 
     if durable_report_completion:

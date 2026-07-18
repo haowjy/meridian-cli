@@ -14,8 +14,8 @@ from meridian.lib.core.types import HarnessId, SpawnId, TransportId
 from meridian.lib.harness.connections.base import (
     ConnectionCapabilities,
     ConnectionConfig,
-    HarnessEvent,
     HarnessRequest,
+    RawHarnessEvent,
 )
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.safety.permissions import UnsafeNoOpPermissionResolver
@@ -80,7 +80,7 @@ async def test_spawn_manager_codex_hitl_requests_auto_rejected_for_spawned_agent
         def __init__(self, request_handler: object | None = None) -> None:
             self._spawn_id = SpawnId("")
             self._request_handler = request_handler
-            self._events: asyncio.Queue[HarnessEvent | None] = asyncio.Queue()
+            self._events: asyncio.Queue[RawHarnessEvent | None] = asyncio.Queue()
             self.state = "created"
             self.respond_calls: list[tuple[str, str, dict[str, object] | None]] = []
 
@@ -115,6 +115,9 @@ async def test_spawn_manager_codex_hitl_requests_auto_rejected_for_spawned_agent
         def primary_event_scope(self) -> None:
             return None
 
+        def observe_event_semantics(self, semantics: object) -> None:
+            _ = semantics
+
         @property
         def resident_backend(self) -> None:
             return None
@@ -148,7 +151,7 @@ async def test_spawn_manager_codex_hitl_requests_auto_rejected_for_spawned_agent
         async def send_cancel(self) -> None:
             return None
 
-        async def inject_runtime_event(self, event: HarnessEvent) -> None:
+        async def inject_runtime_event(self, event: RawHarnessEvent) -> None:
             await self._events.put(event)
 
         async def respond_request(
@@ -227,7 +230,7 @@ async def test_spawn_manager_retryable_permission_send_failure_resolves_not_fail
         def __init__(self, request_handler: object | None = None) -> None:
             self._spawn_id = SpawnId("")
             self._request_handler = request_handler
-            self._events: asyncio.Queue[HarnessEvent | None] = asyncio.Queue()
+            self._events: asyncio.Queue[RawHarnessEvent | None] = asyncio.Queue()
             self.state = "created"
             self.respond_attempts = 0
 
@@ -262,6 +265,9 @@ async def test_spawn_manager_retryable_permission_send_failure_resolves_not_fail
         def primary_event_scope(self) -> None:
             return None
 
+        def observe_event_semantics(self, semantics: object) -> None:
+            _ = semantics
+
         @property
         def resident_backend(self) -> None:
             return None
@@ -295,7 +301,7 @@ async def test_spawn_manager_retryable_permission_send_failure_resolves_not_fail
         async def send_cancel(self) -> None:
             return None
 
-        async def inject_runtime_event(self, event: HarnessEvent) -> None:
+        async def inject_runtime_event(self, event: RawHarnessEvent) -> None:
             await self._events.put(event)
 
         async def respond_request(

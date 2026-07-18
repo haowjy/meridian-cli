@@ -5,10 +5,12 @@ from __future__ import annotations
 from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal
 
 from meridian.lib.kg.types import AnalysisResult, CheckFinding, CheckResult
 
 _EXTERNAL_PREFIXES = ("http://", "https://", "mailto:", "#")
+_ChildKind = Literal["local", "external", "leaf", "broken"]
 
 
 def _is_external_str(target: str) -> bool:
@@ -28,7 +30,7 @@ class _Child:
     """One outbound link from a node."""
 
     dst: Path | str  # Path for local, str for external or broken
-    kind: str  # "local" | "external" | "leaf" | "broken"
+    kind: _ChildKind
     line: int
 
 

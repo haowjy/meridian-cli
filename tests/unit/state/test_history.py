@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from meridian.lib.harness.connections.base import HarnessEvent
+from meridian.lib.harness.connections.base import RawHarnessEvent
 from meridian.lib.state import history as history_mod
 from meridian.lib.state.history import (
     HarnessHistoryWriter,
@@ -11,8 +11,8 @@ from meridian.lib.state.history import (
 )
 
 
-def _event(index: int) -> HarnessEvent:
-    return HarnessEvent(
+def _event(index: int) -> RawHarnessEvent:
+    return RawHarnessEvent(
         event_type="assistant_message",
         payload={"index": index},
         harness_id="codex",
@@ -59,7 +59,7 @@ def test_writer_atomically_updates_last_observed_event_marker(tmp_path: Path) ->
         "item/started",
     ):
         result = writer.write(
-            HarnessEvent(event_type=event_type, payload={}, harness_id="codex")
+            RawHarnessEvent(event_type=event_type, payload={}, harness_id="codex")
         )
         assert result.success is True
         clock.advance(1.0)
@@ -103,12 +103,12 @@ def test_writer_throttles_last_observed_event_marker_checkpoints(
 
     monkeypatch.setattr(history_mod, "atomic_write_text", _counting_atomic_write_text)
 
-    writer.write(HarnessEvent(event_type="turn/started", payload={}, harness_id="codex"))
+    writer.write(RawHarnessEvent(event_type="turn/started", payload={}, harness_id="codex"))
     assert write_calls == 1
 
     for index in range(3):
         writer.write(
-            HarnessEvent(
+            RawHarnessEvent(
                 event_type="item/started",
                 payload={"index": index},
                 harness_id="codex",
@@ -117,7 +117,7 @@ def test_writer_throttles_last_observed_event_marker_checkpoints(
     assert write_calls == 1
 
     clock.advance(1.0)
-    writer.write(HarnessEvent(event_type="item/completed", payload={}, harness_id="codex"))
+    writer.write(RawHarnessEvent(event_type="item/completed", payload={}, harness_id="codex"))
     assert write_calls == 2
 
     marker = json.loads(marker_path.read_text(encoding="utf-8"))
@@ -180,35 +180,35 @@ def test_writer_adds_causal_fields_and_marks_stale_after_interrupt(tmp_path: Pat
     writer = HarnessHistoryWriter(history_path)
 
     writer.write(
-        HarnessEvent(
+        RawHarnessEvent(
             event_type="turn/started",
             payload={"turnId": "turn-old"},
             harness_id="codex",
         )
     )
     writer.write(
-        HarnessEvent(
+        RawHarnessEvent(
             event_type="item/started",
             payload={"item_id": "item-1"},
             harness_id="codex",
         )
     )
     writer.write(
-        HarnessEvent(
+        RawHarnessEvent(
             event_type="control/interrupt/requested",
             payload={"kind": "interrupt", "status": "requested", "turn_id": "turn-old"},
             harness_id="codex",
         )
     )
     writer.write(
-        HarnessEvent(
+        RawHarnessEvent(
             event_type="turn/started",
             payload={"turnId": "turn-new"},
             harness_id="codex",
         )
     )
     result = writer.write(
-        HarnessEvent(
+        RawHarnessEvent(
             event_type="item/completed",
             payload={"item_id": "item-1", "text": "late"},
             harness_id="codex",
@@ -230,28 +230,28 @@ def test_writer_rehydrates_causal_tracker_from_existing_history(tmp_path: Path) 
     writer = HarnessHistoryWriter(history_path)
 
     writer.write(
-        HarnessEvent(
+        RawHarnessEvent(
             event_type="turn/started",
             payload={"turnId": "turn-old"},
             harness_id="codex",
         )
     )
     writer.write(
-        HarnessEvent(
+        RawHarnessEvent(
             event_type="item/started",
             payload={"item_id": "item-1"},
             harness_id="codex",
         )
     )
     writer.write(
-        HarnessEvent(
+        RawHarnessEvent(
             event_type="control/interrupt/requested",
             payload={"kind": "interrupt", "status": "requested", "turn_id": "turn-old"},
             harness_id="codex",
         )
     )
     writer.write(
-        HarnessEvent(
+        RawHarnessEvent(
             event_type="turn/started",
             payload={"turnId": "turn-new"},
             harness_id="codex",
@@ -260,7 +260,7 @@ def test_writer_rehydrates_causal_tracker_from_existing_history(tmp_path: Path) 
 
     resumed = HarnessHistoryWriter(history_path)
     late = resumed.write(
-        HarnessEvent(
+        RawHarnessEvent(
             event_type="item/completed",
             payload={"item_id": "item-1"},
             harness_id="codex",

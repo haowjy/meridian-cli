@@ -45,11 +45,11 @@ def get_user_home() -> Path:
     return get_home_path() / ".meridian"
 
 
-def get_project_id(project_root: Path) -> str | None:
-    """Read the precedence-exempt project ID from ``meridian.toml``.
+def get_committed_project_id(project_root: Path) -> str | None:
+    """Read the committed project ID from ``meridian.toml`` only.
 
-    Accepts any non-empty string — UUIDs, three-word IDs, or any future format.
-    Returns None when the id file is missing, unreadable, or empty.
+    Does NOT fall back to ``.meridian/id``. Used by migration to detect whether
+    the identity has been written to the canonical location yet.
     """
 
     config_path = project_root / "meridian.toml"
@@ -72,6 +72,22 @@ def get_project_id(project_root: Path) -> str | None:
     if not isinstance(raw_id, str) or not raw_id.strip():
         raise ValueError(f"Invalid [project] id in '{config_path.as_posix()}'.")
     return raw_id.strip()
+
+
+def get_project_id(project_root: Path) -> str | None:
+    """Read project ID from ``meridian.toml``, falling back to ``.meridian/id``.
+
+    Precedence: ``meridian.toml [project].id`` → ``.meridian/id``.
+    Returns None when neither source is present, readable, or non-empty.
+    """
+
+    committed_id = get_committed_project_id(project_root)
+    if committed_id is not None:
+        return committed_id
+    legacy_id = _legacy_project_id(project_root)
+    if legacy_id is not None:
+        return legacy_id
+    return get_committed_project_id(project_root)
 
 
 def _legacy_project_id(project_root: Path) -> str | None:
@@ -104,7 +120,7 @@ def write_project_id(project_root: Path, project_id: str) -> None:
 def get_or_create_project_id(project_root: Path) -> str:
     """Read or create the project ID in ``meridian.toml``.
 
-    - If .meridian/id exists, read and return it (any format accepted)
+    - If .meridian/id exists, migrate its value into meridian.toml
     - If not, generate a three-word ID (adjective-noun-noun), collision-check
       against existing context/ and projects/ directories, write atomically
     - Up to 10 retries on collision; raises RuntimeError if exhausted

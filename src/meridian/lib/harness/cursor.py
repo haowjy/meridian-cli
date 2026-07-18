@@ -6,7 +6,7 @@ import shutil
 from pathlib import Path
 from typing import ClassVar
 
-from meridian.lib.core.domain import TokenUsage
+from meridian.lib.core.domain import SpawnStatus, TokenUsage
 from meridian.lib.core.types import HarnessId, SpawnId, TransportId
 from meridian.lib.harness.adapter import (
     ApprovalContract,
@@ -33,9 +33,18 @@ from meridian.lib.harness.bundle import (
     project_subprocess_spec,
     register_harness_bundle,
 )
+from meridian.lib.harness.connections.base import RawHarnessEvent
 from meridian.lib.harness.connections.cursor_subprocess import CursorSubprocessConnection
 from meridian.lib.harness.extractors.cursor import CURSOR_EXTRACTOR
 from meridian.lib.harness.projections.project_cursor import project_cursor_spec_to_cli_args
+from meridian.lib.harness.semantics import (
+    MERIDIAN_CONNECTION_CLOSED_EVENT,
+    EventSemantics,
+    HarnessSemantics,
+    TerminalEventOutcome,
+    connection_closed_outcome,
+    stringify_terminal_error,
+)
 from meridian.lib.launch.constants import BASE_COMMAND_CURSOR_SUBPROCESS
 from meridian.lib.launch.launch_types import (
     PreflightResult,
@@ -193,6 +202,38 @@ class CursorAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         return CURSOR_EXTRACTOR.extract_report(artifacts, spawn_id)
 
 
+def _resolve_cursor_terminal(event: RawHarnessEvent) -> TerminalEventOutcome | None:
+    if event.event_type == MERIDIAN_CONNECTION_CLOSED_EVENT:
+        return connection_closed_outcome(event)
+    if bool(event.payload.get("is_error")):
+        error = (
+            stringify_terminal_error(event.payload.get("result"))
+            or stringify_terminal_error(event.payload.get("error"))
+            or "cursor_result_error"
+        )
+        return TerminalEventOutcome(status=SpawnStatus.FAILED, exit_code=1, error=error)
+    subtype = str(event.payload.get("subtype", "")).strip().lower()
+    if subtype in {"", "success"}:
+        return TerminalEventOutcome(status=SpawnStatus.SUCCEEDED, exit_code=0)
+    error = stringify_terminal_error(event.payload.get("result"))
+    return TerminalEventOutcome(
+        status=SpawnStatus.FAILED,
+        exit_code=1,
+        error=error or f"cursor_result_{subtype}",
+    )
+
+
+CURSOR_SEMANTICS = HarnessSemantics(
+    events={
+        "result": EventSemantics(clears_signal=True),
+        MERIDIAN_CONNECTION_CLOSED_EVENT: EventSemantics(),
+    },
+    payload_resolvers={
+        "result": _resolve_cursor_terminal,
+        MERIDIAN_CONNECTION_CLOSED_EVENT: _resolve_cursor_terminal,
+    },
+)
+
 register_harness_bundle(
     HarnessBundle(
         harness_id=HarnessId.CURSOR,
@@ -203,5 +244,6 @@ register_harness_bundle(
         projections=HarnessProjectionPorts(
             subprocess_cli_args=project_cursor_spec_to_cli_args,
         ),
+        semantics=CURSOR_SEMANTICS,
     )
 )

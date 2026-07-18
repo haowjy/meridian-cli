@@ -260,6 +260,7 @@ register_harness_bundle(
         projections=HarnessProjectionPorts(
             subprocess_cli_args=project_pi_spec_to_cli_args,
         ),
+        semantics=PI_SEMANTICS,
     )
 )
 ```
@@ -385,20 +386,25 @@ become `--`, directory name ends with `--`.
 
 Even in Phase 1 subprocess-only mode, implement a `HarnessConnection` subclass
 that drains JSONL events through Meridian's streaming runner. The SpawnManager
-drain loop calls `terminal_outcome(event)` on each event; when that returns
-non-None, the drain breaks.
+normalizes each raw event once at the drain/primary-attach boundary with the
+bundle's `HarnessSemantics.normalize()`. The resulting `EventSemantics` travels
+with the raw evidence on `NormalizedHarnessEvent`; downstream activity, signal,
+and terminal handling consume that carried descriptor rather than interpreting
+the event again.
 
 ```python
 class PiConnection(HarnessConnection[ResolvedLaunchSpec]):
     async def start(self, config, spec): ...
     async def stop(self): ...
-    async def events(self) -> AsyncIterator[HarnessEvent]: ...
+    async def events(self) -> AsyncIterator[RawHarnessEvent]: ...
     async def send_cancel(self): ...        # Signal the process
     async def send_user_message(self): ...  # Raise ConnectionNotReady in Phase 1
 ```
 
 **Event stream reading**: Read JSONL lines from `process.stdout`,
-parse each as JSON, extract `type` field, emit `HarnessEvent(event_type, payload, harness_id)`.
+parse each as JSON, extract `type` field, and emit the open transport envelope
+`RawHarnessEvent(event_type, payload, harness_id)`. Unknown upstream names and payload
+fields remain persistable.
 
 **stderr handling**: Redirect `stderr` to `<spawn_dir>/stderr.log`. Never parse stderr
 for structured data — it's diagnostic only.
@@ -414,45 +420,43 @@ for graceful shutdown, then SIGKILL/`process.kill()`.
 
 ### 1.6 Event Semantics
 
-**File: `src/meridian/lib/harness/semantics.py`**
+**File: the adapter's `HarnessBundle` registration**
 
-Three functions must handle the new harness:
-
-**`terminal_outcome(event)`** — classifies whether an event completes a spawn drain:
+Register a `HarnessSemantics` port with a declarative event-name table. Use the small
+payload resolver only for outcomes that depend on event content:
 
 ```python
-if event.harness_id == HarnessId.PI.value and event.event_type == "agent_end":
+def resolve_pi_terminal(event: RawHarnessEvent) -> TerminalEventOutcome | None:
     messages = event.payload.get("messages", [])
     last_assistant = next(
         (m for m in reversed(messages) if m.get("role") == "assistant"), None
     )
     if last_assistant and last_assistant.get("stopReason") == "error":
-        return TerminalEventOutcome(status="failed", exit_code=1, error="pi_stop_error")
-    return TerminalEventOutcome(status="succeeded", exit_code=0)
+        return TerminalEventOutcome(
+            status=SpawnStatus.FAILED, exit_code=1, error="pi_stop_error"
+        )
+    return TerminalEventOutcome(status=SpawnStatus.SUCCEEDED, exit_code=0)
 ```
-
-**`activity_transition(event)`** — maps events to `"turn_active"` or `"idle"`:
 
 ```python
-if event.harness_id == HarnessId.PI.value:
-    if event.event_type in {"agent_start", "turn_start", "message_start",
-                             "message_update", "tool_execution_start",
-                             "tool_execution_update"}:
-        return "turn_active"
-    if event.event_type in {"turn_end", "agent_end"}:
-        return "idle"
+PI_SEMANTICS = HarnessSemantics(
+    events={
+        "agent_start": EventSemantics(activity="turn_active"),
+        "turn_start": EventSemantics(activity="turn_active"),
+        "turn_end": EventSemantics(activity="idle"),
+        "agent_end": EventSemantics(activity="idle", clears_signal=True),
+        MERIDIAN_CONNECTION_CLOSED_EVENT: EventSemantics(),
+    },
+    payload_resolvers={
+        "agent_end": resolve_pi_terminal,
+        MERIDIAN_CONNECTION_CLOSED_EVENT: connection_closed_outcome,
+    },
+)
 ```
 
-**`clears_signal(event)`** — which event clears a pending user signal:
-
-```python
-if event.harness_id == HarnessId.PI.value:
-    return event.event_type == "agent_end"
-```
-
-**Golden rule of semantics**: `event_type` is NOT globally unique. Always qualify
-by `event.harness_id` first. `turn/completed` is Codex; OpenCode uses
-`session.idle` for the same semantic.
+The shared normalizer selects the bundle by `HarnessId` before it reads `event_type`.
+Never add a harness-specific branch to `semantics.py`. Synthetic transport events use
+the reserved `meridian/` namespace.
 
 If the harness can multiplex child work on the same stream, also expose
 `HarnessConnection.primary_event_scope`. The scope identifies the parent conversation
@@ -845,7 +849,7 @@ All must pass. The pre-push hook enforces this automatically.
 | **Native Pi session-file transcript provider** | Low | Spawned Pi RPC `history.jsonl` now renders readable `session log` output from `message_end` events. A native Pi session-file provider may still be useful for non-Meridian Pi sessions, but it is no longer required for Meridian-managed spawn observability. |
 | **Mars model aliases/catalog** | Medium | Mars does not yet include Pi-compatible model paths in its alias resolution. Users must pass explicit `provider/model-id` strings. Need: `harness_candidates` / `runnable_paths` entries in Mars model definitions, provider discovery, and agent profile resolution for `harness: pi`. |
 | **Web extensions/tools** | Deferred | Built-in `web_search` and `web_fetch` extensions. These are Pi-native extensions that need authoring and bundling. |
-| **Notifications** | Deferred | Meridian spawn completion notifications surfaced through Pi's UI. |
+| **Notifications** | Done | `meridian-spawn-watch` surfaces spawn completion notifications in Pi and flushes pending notices before shutdown. |
 | **`meridian doctor` integration** | Deferred | Health checks for Pi binary, version, extensions, provider availability. |
 
 ### Quickest Next Fixes
@@ -878,7 +882,7 @@ src/meridian/cli/bootstrap.py                                           # + 'pi'
 src/meridian/lib/launch/constants.py                                    # + PI base commands
 src/meridian/lib/harness/__init__.py                                    # + pi bootstrap import
 src/meridian/lib/harness/registry.py                                    # + PiAdapter registration
-src/meridian/lib/harness/semantics.py                                   # + Pi event cases
+src/meridian/lib/harness/pi.py                                          # + per-bundle Pi event semantics registration
 src/meridian/lib/harness/projections/permission_flags.py                # + Pi empty tuple
 src/meridian/lib/launch/launch_types.py                                 # + TerminalSurfaceMode
 src/meridian/lib/harness/pi_runtime_resolver.py                         # + runtime resolution/probe

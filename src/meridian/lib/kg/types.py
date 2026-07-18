@@ -12,6 +12,10 @@ from typing import Literal
 from meridian.lib.markdown.types import ExtractedDocument
 
 FindingSeverity = Literal["error", "warning"]
+GraphEdgeKind = Literal["link", "image", "wikilink"]
+FindingCategory = Literal[
+    "broken_link", "read_error", "flag_block", "conflict_marker"
+]
 
 
 @dataclass
@@ -29,7 +33,7 @@ class GraphEdge:
 
     src: Path  # source document
     dst: Path | str  # resolved Path for local links; raw str for wikilinks/unresolved
-    kind: str  # "md_link" | "image" | "wikilink"
+    kind: GraphEdgeKind
     resolved: bool  # True if dst exists on filesystem
     line: int  # source line number
 
@@ -71,7 +75,7 @@ class AnalysisResult:
 class CheckFinding:
     """One finding from kg check."""
 
-    category: str  # "broken_link", "flag_block", "conflict_marker"
+    category: FindingCategory
     severity: FindingSeverity
     file: Path
     line: int

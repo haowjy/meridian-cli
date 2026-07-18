@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import ClassVar
+from typing import ClassVar, cast
 
 from meridian.lib.config.settings import resolve_pi_harness_profile
-from meridian.lib.core.domain import TokenUsage
+from meridian.lib.core.domain import SpawnStatus, TokenUsage
 from meridian.lib.core.types import HarnessId, SpawnId, TransportId
 from meridian.lib.harness.adapter import (
     ApprovalContract,
@@ -33,6 +33,7 @@ from meridian.lib.harness.bundle import (
     HarnessProjectionPorts,
     register_harness_bundle,
 )
+from meridian.lib.harness.connections.base import RawHarnessEvent
 from meridian.lib.harness.connections.pi_rpc import PiRpcConnection
 from meridian.lib.harness.extractors.pi import (
     PI_EXTRACTOR,
@@ -59,6 +60,14 @@ from meridian.lib.harness.projections.project_pi_native_tui import (
 )
 from meridian.lib.harness.projections.project_pi_rpc import (
     project_pi_spec_to_cli_args,
+)
+from meridian.lib.harness.semantics import (
+    MERIDIAN_CONNECTION_CLOSED_EVENT,
+    EventSemantics,
+    HarnessSemantics,
+    TerminalEventOutcome,
+    connection_closed_outcome,
+    stringify_terminal_error,
 )
 from meridian.lib.launch.composition import (
     ComposedLaunchContent,
@@ -184,9 +193,7 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         else:
             control_root = (run.control_root or "").strip()
             pi_profile = resolve_pi_harness_profile(
-                project_root=Path(control_root).expanduser().resolve()
-                if control_root
-                else None,
+                project_root=Path(control_root).expanduser().resolve() if control_root else None,
             )
         meridian_entrypoints = resolve_pi_extension_entrypoints(
             PiExtensionLaunchProfile(
@@ -425,6 +432,58 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         return None
 
 
+def _resolve_pi_terminal(event: RawHarnessEvent) -> TerminalEventOutcome | None:
+    if event.event_type == MERIDIAN_CONNECTION_CLOSED_EVENT:
+        return connection_closed_outcome(event)
+    if event.event_type == "response":
+        command = str(event.payload.get("command", "")).strip().lower()
+        is_inject_response = event.payload.get("meridian_control_action") == "inject"
+        if command == "prompt" and event.payload.get("success") is False and not is_inject_response:
+            error = stringify_terminal_error(event.payload.get("error")) or "pi_prompt_rejected"
+            return TerminalEventOutcome(status=SpawnStatus.FAILED, exit_code=1, error=error)
+        return None
+
+    messages_obj = event.payload.get("messages")
+    if isinstance(messages_obj, list):
+        for message_obj in reversed(cast("list[object]", messages_obj)):
+            if not isinstance(message_obj, dict):
+                continue
+            message = cast("dict[str, object]", message_obj)
+            if str(message.get("role", "")).strip().lower() != "assistant":
+                continue
+            stop_reason = str(message.get("stopReason", "")).strip().lower()
+            if stop_reason == "error":
+                return TerminalEventOutcome(
+                    status=SpawnStatus.FAILED, exit_code=1, error="pi_stop_error"
+                )
+            if stop_reason in {"abort", "aborted", "cancel", "cancelled", "canceled"}:
+                return TerminalEventOutcome(
+                    status=SpawnStatus.CANCELLED, exit_code=130, error="cancelled"
+                )
+            break
+    return TerminalEventOutcome(status=SpawnStatus.SUCCEEDED, exit_code=0)
+
+
+PI_SEMANTICS = HarnessSemantics(
+    events={
+        "agent_start": EventSemantics(activity="turn_active"),
+        "turn_start": EventSemantics(activity="turn_active"),
+        "message_start": EventSemantics(activity="turn_active"),
+        "message_update": EventSemantics(activity="turn_active"),
+        "tool_execution_start": EventSemantics(activity="turn_active"),
+        "tool_execution_update": EventSemantics(activity="turn_active"),
+        "turn_end": EventSemantics(activity="idle"),
+        "agent_end": EventSemantics(activity="idle", clears_signal=True),
+        "response": EventSemantics(),
+        MERIDIAN_CONNECTION_CLOSED_EVENT: EventSemantics(),
+    },
+    payload_resolvers={
+        "agent_end": _resolve_pi_terminal,
+        "response": _resolve_pi_terminal,
+        MERIDIAN_CONNECTION_CLOSED_EVENT: _resolve_pi_terminal,
+    },
+)
+
 register_harness_bundle(
     HarnessBundle(
         harness_id=HarnessId.PI,
@@ -435,5 +494,6 @@ register_harness_bundle(
         projections=HarnessProjectionPorts(
             subprocess_cli_args=_project_pi_subprocess_cli_args,
         ),
+        semantics=PI_SEMANTICS,
     )
 )

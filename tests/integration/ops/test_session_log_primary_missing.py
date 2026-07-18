@@ -139,10 +139,10 @@ def test_session_log_chat_missing_harness_session_id_detects_and_persists_primar
         assert [(message.role, message.content) for message in output.messages] == [
             ("assistant", "native codex transcript")
         ]
-        assert session_store.get_session_harness_id(runtime_root, chat_id) == ""
+        assert session_store.get_session_harness_id(runtime_root, chat_id) is None
         primary_spawn = spawn_store.get_spawn(runtime_root, "p42")
         assert primary_spawn is not None
-        assert primary_spawn.harness_session_id == ""
+        assert primary_spawn.harness_session_id is None
     finally:
         session_store.stop_session(runtime_root, chat_id)
 
@@ -200,10 +200,10 @@ def test_session_log_chat_missing_harness_session_id_reads_primary_meta_session_
         assert [(message.role, message.content) for message in output.messages] == [
             ("assistant", "meta-backed chat transcript")
         ]
-        assert session_store.get_session_harness_id(runtime_root, chat_id) == ""
+        assert session_store.get_session_harness_id(runtime_root, chat_id) is None
         primary_spawn = spawn_store.get_spawn(runtime_root, "p42")
         assert primary_spawn is not None
-        assert primary_spawn.harness_session_id == ""
+        assert primary_spawn.harness_session_id is None
     finally:
         session_store.stop_session(runtime_root, chat_id)
 
@@ -251,7 +251,7 @@ def test_session_log_primary_spawn_missing_harness_session_id_detects_native_ses
     ]
     primary_spawn = spawn_store.get_spawn(runtime_root, "p42")
     assert primary_spawn is not None
-    assert primary_spawn.harness_session_id == ""
+    assert primary_spawn.harness_session_id is None
 
 
 def test_session_log_primary_spawn_missing_harness_session_id_reads_primary_meta_session_id(
@@ -301,7 +301,7 @@ def test_session_log_primary_spawn_missing_harness_session_id_reads_primary_meta
     ]
     primary_spawn = spawn_store.get_spawn(runtime_root, "p42")
     assert primary_spawn is not None
-    assert primary_spawn.harness_session_id == ""
+    assert primary_spawn.harness_session_id is None
 
 
 def test_session_log_primary_spawn_missing_harness_session_id_does_not_read_spawn_output(

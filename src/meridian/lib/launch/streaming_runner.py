@@ -13,9 +13,10 @@ from collections.abc import Callable
 from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any
 
 import structlog
+from pydantic import TypeAdapter
 
 from meridian.lib.bootstrap.services import (
     build_spawn_application_service_from_roots,
@@ -23,7 +24,7 @@ from meridian.lib.bootstrap.services import (
 )
 from meridian.lib.config.settings import MeridianConfig
 from meridian.lib.core.clock import Clock, RealClock
-from meridian.lib.core.domain import Spawn, SpawnStatus
+from meridian.lib.core.domain import Spawn, SpawnStatus, TerminalSpawnStatus
 from meridian.lib.core.spawn_lifecycle import ExecutionTerminalFacts
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.adapter import StreamEvent
@@ -32,9 +33,8 @@ from meridian.lib.harness.common import parse_json_stream_event, unwrap_event_pa
 from meridian.lib.harness.connections.base import ConnectionConfig, HarnessConnection
 from meridian.lib.harness.extractor import StreamingExtractor
 from meridian.lib.harness.semantics import (
-    PrimaryEventScopeTracker,
+    NormalizedHarnessEvent,
     TerminalEventOutcome,
-    terminal_outcome,
 )
 from meridian.lib.launch.constants import (
     CURSOR_INACTIVITY_TIMEOUT_SECONDS,
@@ -111,7 +111,7 @@ from meridian.lib.utils.time import minutes_to_seconds
 
 if TYPE_CHECKING:
     from meridian.lib.core.lifecycle import SpawnLifecycleService
-    from meridian.lib.harness.connections.base import HarnessEvent
+    from meridian.lib.harness.connections.base import RawHarnessEvent
     from meridian.lib.state.spawn.model import CancelIntent
 
 _DEFAULT_CONFIG = MeridianConfig()
@@ -132,7 +132,7 @@ class _AttemptRuntime:
     terminated_by_inactivity: bool = False
     cancelled_by_request: bool = False
     terminal_observed: bool = False
-    authoritative_terminal_status: SpawnStatus | None = None
+    authoritative_terminal_status: TerminalSpawnStatus | None = None
     start_error: str | None = None
 
 
@@ -151,7 +151,7 @@ class StreamingRunConclusion:
     failure_reason: str | None = None
     extracted: FinalizeExtraction | None = None
     final_attempt_terminal_observed: bool = False
-    authoritative_terminal_status: SpawnStatus | None = None
+    authoritative_terminal_status: TerminalSpawnStatus | None = None
     cancellation_observed: bool = False
     retries_attempted: int = 0
 
@@ -408,29 +408,13 @@ def _retry_blocked_after_pi_child_started(
 
     if harness_id is not HarnessId.PI:
         return False
-    spawns_dir = runtime_root / "spawns"
-    if not spawns_dir.is_dir():
-        return False
-    for child in spawns_dir.iterdir():
-        if (
-            child.name.startswith(".")
-            or not spawn_store.is_spawn_id_shape(child.name)
-            or not child.is_dir()
-        ):
-            continue
-        state_path = child / "state.json"
-        if not state_path.is_file():
-            continue
-        try:
-            data = json.loads(state_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            continue
-        if not isinstance(data, dict):
-            continue
-        state = cast("dict[str, object]", data)
-        if state.get("parent_id") == str(current_spawn_id):
-            return True
-    return False
+    scan = spawn_store.list_spawns(runtime_root, parent_id=str(current_spawn_id))
+    # Retry policy fails closed: an unreadable sibling could be a child whose
+    # already-started work must not be orphaned by a new attempt.
+    return bool(
+        scan.records
+        or any(spawn_store.is_spawn_id_shape(report.spawn_id) for report in scan.quarantines)
+    )
 
 
 def _read_cancel_intent(runtime_root: Path, spawn_id: SpawnId) -> CancelIntent | None:
@@ -470,7 +454,7 @@ async def _sleep_retry_backoff_or_cancel(
         await asyncio.sleep(min(0.1, remaining))
 
 
-def _line_from_harness_event(event: HarnessEvent) -> str:
+def _line_from_harness_event(event: RawHarnessEvent) -> str:
     if event.raw_text is not None and event.raw_text.strip():
         return event.raw_text
     payload: dict[str, object] = dict(event.payload)
@@ -481,7 +465,7 @@ def _line_from_harness_event(event: HarnessEvent) -> str:
 def _observe_budget_from_event(
     *,
     budget_tracker: LiveBudgetTracker | None,
-    event: HarnessEvent,
+    event: RawHarnessEvent,
 ) -> BudgetBreach | None:
     if budget_tracker is None:
         return None
@@ -522,20 +506,20 @@ def _emit_stream_event(
 
 async def _consume_subscriber_events(
     *,
-    subscriber: asyncio.Queue[HarnessEvent | None],
+    subscriber: asyncio.Queue[NormalizedHarnessEvent | None],
     budget_tracker: LiveBudgetTracker | None,
     budget_signal: asyncio.Event,
     budget_breach_holder: list[BudgetBreach | None],
     event_observer: Callable[[StreamEvent], None] | None,
     stream_stdout_to_terminal: bool,
     terminal_event_future: asyncio.Future[TerminalEventOutcome] | None = None,
-    primary_scope_tracker: PrimaryEventScopeTracker | None = None,
     last_event_at: list[float] | None = None,
 ) -> None:
     while True:
-        event = await subscriber.get()
-        if event is None:
+        normalized_event = await subscriber.get()
+        if normalized_event is None:
             return
+        event = normalized_event.raw
 
         if last_event_at is not None:
             last_event_at[0] = asyncio.get_running_loop().time()
@@ -550,10 +534,7 @@ async def _consume_subscriber_events(
                 budget_signal.set()
 
         if terminal_event_future is not None and not terminal_event_future.done():
-            if primary_scope_tracker is not None:
-                event_outcome = primary_scope_tracker.terminal_outcome(event)
-            else:
-                event_outcome = terminal_outcome(event)
+            event_outcome = normalized_event.semantics.terminal
             if event_outcome is not None:
                 terminal_event_future.set_result(event_outcome)
 
@@ -588,7 +569,9 @@ async def _report_watchdog(
     if completion_event.is_set():
         return False
 
-    await manager.stop_spawn(spawn_id, status="cancelled", exit_code=1, error="report_watchdog")
+    await manager.stop_spawn(
+        spawn_id, status=SpawnStatus.CANCELLED, exit_code=1, error="report_watchdog"
+    )
     logger.info(
         "Report watchdog stopped active streaming connection after grace timeout.",
         spawn_id=str(spawn_id),
@@ -616,7 +599,9 @@ async def _inactivity_watchdog(
         await asyncio.sleep(min(poll_seconds, max(0.0, timeout_seconds - idle)))
     if completion_event.is_set():
         return False
-    await manager.stop_spawn(spawn_id, status="failed", exit_code=1, error="inactivity_stall")
+    await manager.stop_spawn(
+        spawn_id, status=SpawnStatus.FAILED, exit_code=1, error="inactivity_stall"
+    )
     logger.info(
         "Inactivity watchdog stopped stalled spawn after silence.",
         spawn_id=str(spawn_id),
@@ -682,7 +667,7 @@ async def run_streaming_spawn(
     consume_task: asyncio.Task[None] | None = None
     terminal_event_future: asyncio.Future[TerminalEventOutcome] | None = None
     terminal_outcome: TerminalEventOutcome | None = None
-    subscriber: asyncio.Queue[HarnessEvent | None] | None = None
+    subscriber: asyncio.Queue[NormalizedHarnessEvent | None] | None = None
     run_spec = spec
     spawn_store.update_spawn(
         runtime_root,
@@ -694,7 +679,7 @@ async def run_streaming_spawn(
         runtime_root,
     )
     try:
-        connection = await _start_spawn_with_timeout(
+        await _start_spawn_with_timeout(
             manager=manager,
             config=config,
             run_spec=run_spec,
@@ -722,13 +707,6 @@ async def run_streaming_spawn(
             if manager.raw_terminal_frames_are_authoritative(spawn_id)
             else None
         )
-        primary_scope_tracker = (
-            PrimaryEventScopeTracker(
-                primary_event_scope=connection.primary_event_scope
-            )
-            if terminal_event_capture is not None
-            else None
-        )
         completion_task = asyncio.create_task(manager.wait_for_completion(spawn_id))
         consume_task = asyncio.create_task(
             _consume_subscriber_events(
@@ -739,7 +717,6 @@ async def run_streaming_spawn(
                 event_observer=None,
                 stream_stdout_to_terminal=stream_to_terminal,
                 terminal_event_future=terminal_event_capture,
-                primary_scope_tracker=primary_scope_tracker,
             )
         )
         signal_task = asyncio.create_task(shutdown_event.wait())
@@ -758,7 +735,7 @@ async def run_streaming_spawn(
                 raise RuntimeError("terminal decision requires an exit code")
             await manager.stop_spawn(
                 spawn_id,
-                status=decision.synthetic_status or "cancelled",
+                status=decision.synthetic_status or SpawnStatus.CANCELLED,
                 exit_code=stop_exit_code,
                 error=decision.synthetic_error,
             )
@@ -793,7 +770,7 @@ async def run_streaming_spawn(
             if signal_cleanup is not None:
                 signal_cleanup()
             with suppress(Exception):
-                await manager.shutdown(status="cancelled", exit_code=1, error="shutdown")
+                await manager.shutdown(status=SpawnStatus.CANCELLED, exit_code=1, error="shutdown")
 
 
 async def _run_streaming_attempt(
@@ -830,8 +807,7 @@ async def _run_streaming_attempt(
         asyncio.get_running_loop().create_future()
     )
     terminal_event_capture: asyncio.Future[TerminalEventOutcome] | None = None
-    primary_scope_tracker: PrimaryEventScopeTracker | None = None
-    subscriber: asyncio.Queue[HarnessEvent | None] | None = None
+    subscriber: asyncio.Queue[NormalizedHarnessEvent | None] | None = None
     connection: HarnessConnection[Any] | None = None
     drain_exit_code = DEFAULT_INFRA_EXIT_CODE
     drain_error: str | None = None
@@ -840,7 +816,7 @@ async def _run_streaming_attempt(
     terminated_by_inactivity = False
     cancelled_by_request = False
     terminal_outcome: TerminalEventOutcome | None = None
-    authoritative_terminal_status: SpawnStatus | None = None
+    authoritative_terminal_status: TerminalSpawnStatus | None = None
     try:
         if runner_phase is not None:
             runner_phase[0] = "starting_harness"
@@ -853,13 +829,6 @@ async def _run_streaming_attempt(
         terminal_event_capture = (
             terminal_event_future
             if manager.raw_terminal_frames_are_authoritative(run.spawn_id)
-            else None
-        )
-        primary_scope_tracker = (
-            PrimaryEventScopeTracker(
-                primary_event_scope=connection.primary_event_scope
-            )
-            if terminal_event_capture is not None
             else None
         )
         await manager.start_heartbeat(run.spawn_id)
@@ -885,7 +854,6 @@ async def _run_streaming_attempt(
                 event_observer=event_observer,
                 stream_stdout_to_terminal=stream_stdout_to_terminal,
                 terminal_event_future=terminal_event_capture,
-                primary_scope_tracker=primary_scope_tracker,
                 last_event_at=last_event_at,
             )
         )
@@ -926,7 +894,7 @@ async def _run_streaming_attempt(
         if decision.trigger == TriggerKind.BUDGET:
             await manager.stop_spawn(
                 run.spawn_id,
-                status="failed",
+                status=SpawnStatus.FAILED,
                 exit_code=DEFAULT_INFRA_EXIT_CODE,
                 error="budget_exceeded",
             )
@@ -935,7 +903,7 @@ async def _run_streaming_attempt(
             timed_out = True
             await manager.stop_spawn(
                 run.spawn_id,
-                status="timed_out",
+                status=SpawnStatus.TIMED_OUT,
                 exit_code=3,
                 error="timeout",
             )
@@ -953,7 +921,7 @@ async def _run_streaming_attempt(
                 raise RuntimeError("terminal decision requires an exit code")
             await manager.stop_spawn(
                 run.spawn_id,
-                status=decision.synthetic_status or "cancelled",
+                status=decision.synthetic_status or SpawnStatus.CANCELLED,
                 exit_code=stop_exit_code,
                 error=decision.synthetic_error,
             )
@@ -970,7 +938,9 @@ async def _run_streaming_attempt(
                 drain_exit_code = drain_outcome.exit_code
                 drain_error = drain_outcome.error
                 if drain_outcome.authoritative and drain_outcome.status != "succeeded":
-                    authoritative_terminal_status = drain_outcome.status
+                    authoritative_terminal_status = TypeAdapter(
+                        TerminalSpawnStatus
+                    ).validate_python(drain_outcome.status)
             if timed_out and drain_outcome.status == "succeeded":
                 timed_out = False
             if drain_outcome.error == "report_watchdog":
@@ -1482,9 +1452,7 @@ async def execute_with_streaming(
                     # (success) or we finalize as "stalled". Never fall through to the
                     # generic retry classifier — re-running a stalled cursor turn would
                     # redo already-completed work.
-                    exit_override, failure_override = _inactivity_terminal_outcome(
-                        extraction
-                    )
+                    exit_override, failure_override = _inactivity_terminal_outcome(extraction)
                     if exit_override is not None:
                         conclusion.exit_code = exit_override
                     conclusion.failure_reason = failure_override
@@ -1577,8 +1545,7 @@ async def execute_with_streaming(
                     )
                     if retry_backoff_seconds > 0:
                         cancelled_during_backoff = await _sleep_retry_backoff_or_cancel(
-                            delay_seconds=retry_backoff_seconds
-                            * conclusion.retries_attempted,
+                            delay_seconds=retry_backoff_seconds * conclusion.retries_attempted,
                             shutdown_event=shutdown_event,
                             runtime_root=runtime_root,
                             spawn_id=run.spawn_id,
@@ -1706,7 +1673,7 @@ async def execute_with_streaming(
             signal_cleanup()
         if manager is not None:
             with suppress(Exception):
-                await manager.shutdown(status="cancelled", exit_code=1, error="shutdown")
+                await manager.shutdown(status=SpawnStatus.CANCELLED, exit_code=1, error="shutdown")
         try:
             duration_seconds = resolved_clock.monotonic() - started_at
         except Exception:

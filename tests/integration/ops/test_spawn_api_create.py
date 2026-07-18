@@ -18,7 +18,7 @@ from meridian.lib.bootstrap.services import prepare_for_runtime_write
 from meridian.lib.core.context import RuntimeContext
 from meridian.lib.core.types import HarnessId
 from meridian.lib.ops.spawn.models import SpawnCreateInput
-from meridian.lib.state import work_store
+from meridian.lib.state import work_repository, work_store
 from meridian.lib.state.paths import resolve_project_paths
 from meridian.lib.telemetry import init_telemetry
 from tests.support.fakes import RecordingTelemetrySink, wait_for_telemetry
@@ -361,10 +361,10 @@ def test_spawn_create_dry_run_uses_ambient_work_item_task_dir(
         harness=HarnessId.CODEX,
     )
     project_state_dir = resolve_project_paths(project_root).root_dir
-    work = work_store.create_work_item(project_state_dir, "ambient-task-dir", "", None)
+    work = work_repository.create_work_item(project_state_dir, "ambient-task-dir", "", None)
     ambient_task_dir = tmp_path / "ambient-task-dir"
     ambient_task_dir.mkdir(parents=True, exist_ok=True)
-    work_store.update_work_item_task_dir(
+    work_repository.update_work_item_task_dir(
         project_state_dir,
         work.name,
         task_dir=ambient_task_dir.as_posix(),

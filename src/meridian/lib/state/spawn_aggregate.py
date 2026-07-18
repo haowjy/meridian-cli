@@ -25,7 +25,7 @@ type SpawnDeletionPrecondition = Callable[[SpawnRecord | None], bool]
 
 def mutate_published_spawn_artifact(
     runtime_root: Path,
-    spawn_id: SpawnId | str,
+    spawn_id: SpawnId,
     mutate: Callable[[], None],
     *,
     can_mutate: Callable[[SpawnRecord], bool] | None = None,

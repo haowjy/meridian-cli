@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any, cast
 from meridian.lib.core.types import HarnessId, TransportId
 from meridian.lib.harness.bundle import get_harness_bundle
 from meridian.lib.harness.connections.base import (
-    HarnessEvent,
+    RawHarnessEvent,
     reap_on_ownership_transfer_failure,
 )
 from meridian.lib.harness.errors import HarnessBinaryNotFound
@@ -52,7 +52,7 @@ async def dispatch_start(
     request_handler: PermissionBroker | None = None
     connection_ref: dict[str, HarnessConnection[Any]] = {}
 
-    async def _runtime_event_sink(event: HarnessEvent) -> None:
+    async def _runtime_event_sink(event: RawHarnessEvent) -> None:
         await connection_ref["connection"].inject_runtime_event(event)
 
     if config.harness_id is HarnessId.CODEX:

@@ -110,7 +110,7 @@ def repair_session_reference_sync(payload: SessionRepairInput) -> SessionRepairO
         chat_record = _chat_record(runtime_root, ref)
         if (
             chat_record is not None
-            and chat_record.harness_session_id.strip() != detected_harness_session_id
+            and (chat_record.harness_session_id or "").strip() != detected_harness_session_id
         ):
             session_store.update_session_harness_id(runtime_root, ref, detected_harness_session_id)
             session_record_updated = True
@@ -153,7 +153,8 @@ def repair_session_reference_sync(payload: SessionRepairInput) -> SessionRepairO
             chat_record = _chat_record(runtime_root, chat_id)
             if (
                 chat_record is not None
-                and chat_record.harness_session_id.strip() != detected_harness_session_id
+                and (chat_record.harness_session_id or "").strip()
+                != detected_harness_session_id
             ):
                 session_store.update_session_harness_id(
                     runtime_root, chat_id, detected_harness_session_id

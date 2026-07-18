@@ -5,13 +5,15 @@ from __future__ import annotations
 import time
 from dataclasses import replace
 
+from pydantic import TypeAdapter
+
 from meridian.cli.utils import require_established_project_root
 from meridian.lib.bootstrap.services import (
     build_spawn_application_service,
     build_spawn_lifecycle_service_from_roots,
     prepare_for_runtime_write,
 )
-from meridian.lib.core.domain import SpawnStatus
+from meridian.lib.core.domain import SpawnStatus, TerminalSpawnStatus
 from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.launch.request import LaunchArgvIntent, SpawnRequest
@@ -89,7 +91,7 @@ async def streaming_serve(
         harness_registry=get_default_harness_registry(),
         kind="streaming",
         launch_mode="foreground",
-        initial_status="running",
+        initial_status=SpawnStatus.RUNNING,
     )
     spawn_id = prepared.spawn_id
     connection_config = prepared.connection_config
@@ -115,7 +117,7 @@ async def streaming_serve(
     def _report_control_endpoint(endpoint: str) -> None:
         print(f"Control endpoint: {endpoint}")
 
-    outcome_status: SpawnStatus = "failed"
+    outcome_status: TerminalSpawnStatus = "failed"
     outcome_exit_code = 1
     failure_message: str | None = None
     lifecycle_service = build_spawn_lifecycle_service_from_roots(project_root, runtime_root)
@@ -132,7 +134,7 @@ async def streaming_serve(
             lifecycle_service=lifecycle_service,
             on_control_endpoint_ready=_report_control_endpoint,
         )
-        outcome_status = outcome.status
+        outcome_status = TypeAdapter(TerminalSpawnStatus).validate_python(outcome.status)
         outcome_exit_code = outcome.exit_code
         if outcome_status == "failed":
             failure_message = outcome.error

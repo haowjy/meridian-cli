@@ -6,7 +6,7 @@ import sys
 from collections.abc import Callable
 from functools import partial
 from pathlib import Path
-from typing import Annotated, Any, cast, get_args
+from typing import Annotated, Any
 
 import structlog
 from cyclopts import App, Parameter
@@ -26,7 +26,7 @@ from meridian.lib.bootstrap.services import (
     prepare_for_runtime_write,
 )
 from meridian.lib.core.context import RuntimeContext
-from meridian.lib.core.domain import SpawnStatus
+from meridian.lib.core.domain import ALL_SPAWN_STATUSES, SpawnStatus
 from meridian.lib.core.spawn_lifecycle import ACTIVE_SPAWN_STATUSES
 from meridian.lib.core.util import FormatContext
 from meridian.lib.extensions.registry import get_first_party_registry
@@ -67,9 +67,7 @@ from meridian.lib.ops.spawn.models import SpawnLaunchOptionUpdates, normalize_go
 
 Emitter = Callable[[Any], None]
 logger = structlog.get_logger(__name__)
-_SPAWN_STATUS_VALUES: tuple[SpawnStatus, ...] = cast(
-    "tuple[SpawnStatus, ...]", get_args(SpawnStatus)
-)
+_SPAWN_STATUS_VALUES = tuple(ALL_SPAWN_STATUSES)
 _ACTIVE_VIEW_STATUSES: tuple[SpawnStatus, ...] = tuple(
     status for status in _SPAWN_STATUS_VALUES if status in ACTIVE_SPAWN_STATUSES
 )
@@ -748,12 +746,12 @@ def _spawn_list(
         "active": _ACTIVE_VIEW_STATUSES,
         "recent": _ACTIVE_VIEW_STATUSES,
         "all": (),
-        "running": ("running",),
-        "queued": ("queued",),
-        "completed": ("succeeded",),
-        "failed": ("failed",),
-        "cancelled": ("cancelled",),
-        "timed_out": ("timed_out",),
+        "running": (SpawnStatus.RUNNING,),
+        "queued": (SpawnStatus.QUEUED,),
+        "completed": (SpawnStatus.SUCCEEDED,),
+        "failed": (SpawnStatus.FAILED,),
+        "cancelled": (SpawnStatus.CANCELLED,),
+        "timed_out": (SpawnStatus.TIMED_OUT,),
     }
     if normalized_view not in view_map:
         supported = ", ".join(view_map)
@@ -763,9 +761,9 @@ def _spawn_list(
         candidate = status.strip()
         if candidate not in _SPAWN_STATUS_VALUES:
             raise ValueError(f"Unsupported spawn status '{status}'")
-        normalized_status = candidate
+        normalized_status = SpawnStatus(candidate)
     elif failed:
-        normalized_statuses = ("failed",)
+        normalized_statuses = (SpawnStatus.FAILED,)
     else:
         mapped_statuses = view_map[normalized_view]
         normalized_statuses = mapped_statuses

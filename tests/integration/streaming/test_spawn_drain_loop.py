@@ -13,7 +13,7 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 
 from meridian.lib.core.types import SpawnId
-from meridian.lib.harness.connections.base import HarnessConnection, HarnessEvent
+from meridian.lib.harness.connections.base import HarnessConnection, RawHarnessEvent
 from meridian.lib.state.history import HarnessHistoryWriter, WriteResult, read_history_range
 from meridian.lib.streaming.completion_contracts import (
     AssessmentTrigger,
@@ -42,7 +42,7 @@ from meridian.lib.streaming.spawn_session import DrainOutcome, SpawnSession
 from tests.support.fakes import FakeClock
 
 _SPAWN_ID = SpawnId("p-persist-order")
-Call = tuple[str, HarnessEvent]
+Call = tuple[str, RawHarnessEvent]
 
 
 def test_history_writer_stamps_lifecycle_rows_with_subsecond_wall_clock(tmp_path: Path) -> None:
@@ -54,7 +54,7 @@ def test_history_writer_stamps_lifecycle_rows_with_subsecond_wall_clock(tmp_path
     writer = HarnessHistoryWriter(history_path, clock=_SubsecondClock())
 
     result = writer.write(
-        HarnessEvent(
+        RawHarnessEvent(
             event_type="meridian.pi.lifecycle.phase",
             harness_id="pi",
             payload={"phase": "finalized"},
@@ -101,12 +101,15 @@ async def test_cancel_task_logs_unexpected_completed_task_failure(
 class _Receiver:
     primary_event_scope = None
 
-    def __init__(self, events: list[HarnessEvent]) -> None:
+    def __init__(self, events: list[RawHarnessEvent]) -> None:
         self._events = events
 
-    async def events(self) -> AsyncIterator[HarnessEvent]:
+    async def events(self) -> AsyncIterator[RawHarnessEvent]:
         for event in self._events:
             yield event
+
+    def observe_event_semantics(self, semantics: object) -> None:
+        _ = semantics
 
 
 class _HistoryWriter:
@@ -114,7 +117,7 @@ class _HistoryWriter:
         self._results = iter(results)
         self._calls = calls
 
-    def write(self, event: HarnessEvent) -> WriteResult:
+    def write(self, event: RawHarnessEvent) -> WriteResult:
         self._calls.append(("persist", event))
         return next(self._results)
 
@@ -132,12 +135,12 @@ class _Coordinator:
     def next_timeout(self) -> None:
         return None
 
-    async def observe_event(self, event: HarnessEvent, transition: str | None) -> bool:
+    async def observe_event(self, event: RawHarnessEvent, transition: str | None) -> bool:
         _ = transition
         self._calls.append(("pre_persist", event))
         return False
 
-    def note_event_persisted(self, event: HarnessEvent) -> DrainLoopDecision:
+    def note_event_persisted(self, event: RawHarnessEvent) -> DrainLoopDecision:
         self._calls.append(("noted", event))
         return DrainLoopDecision()
 
@@ -158,10 +161,13 @@ class _ConcurrentWakeReceiver:
     def __init__(self, wake: asyncio.Event) -> None:
         self._wake = wake
 
-    async def events(self) -> AsyncIterator[HarnessEvent]:
-        yield HarnessEvent(event_type="turn/completed", harness_id="codex", payload={})
+    def observe_event_semantics(self, semantics: object) -> None:
+        _ = semantics
+
+    async def events(self) -> AsyncIterator[RawHarnessEvent]:
+        yield RawHarnessEvent(event_type="turn/completed", harness_id="codex", payload={})
         await self._wake.wait()
-        yield HarnessEvent(event_type="message", harness_id="codex", payload={})
+        yield RawHarnessEvent(event_type="message", harness_id="codex", payload={})
 
 
 class _StabilizingEvidence:
@@ -178,13 +184,13 @@ class _StabilizingEvidence:
 
     async def observe_event(
         self,
-        event: HarnessEvent,
+        event: RawHarnessEvent,
         transition: str | None,
     ) -> EvidenceEventDecision:
         del event, transition
         return EvidenceEventDecision()
 
-    def note_event_persisted(self, event: HarnessEvent) -> EvidenceEventDecision:
+    def note_event_persisted(self, event: RawHarnessEvent) -> EvidenceEventDecision:
         if event.event_type == "message":
             return EvidenceEventDecision(
                 activity=EvidenceActivity(code="persisted_event")
@@ -280,14 +286,14 @@ class _NoopCompletionCleanup:
 
 
 async def _run_drain(
-    events: list[HarnessEvent],
+    events: list[RawHarnessEvent],
     results: list[WriteResult],
     *,
     outcomes: list[DrainOutcome] | None = None,
 ) -> list[Call]:
     calls: list[Call] = []
 
-    def record_observer_dispatch(_spawn_id: SpawnId, event: HarnessEvent) -> None:
+    def record_observer_dispatch(_spawn_id: SpawnId, event: RawHarnessEvent) -> None:
         calls.append(("observe", event))
 
     observers = Mock()
@@ -321,7 +327,7 @@ async def _run_drain(
         },
         observers=cast("EventObserverRegistry", observers),
         publish_terminal=_publish_terminal if outcomes is not None else Mock(),
-        fan_out_event=lambda _spawn_id, event: calls.append(("fan_out", event)),
+        fan_out_event=lambda _spawn_id, event: calls.append(("fan_out", event.raw)),
         fan_out_turn_boundary=AsyncMock(),
     )
     coordinator = cast("DrainCoordinator", _Coordinator(calls))
@@ -337,8 +343,8 @@ async def _run_drain(
 
 @pytest.mark.asyncio
 async def test_failed_history_write_blocks_post_persist_delivery() -> None:
-    failed_event = HarnessEvent(event_type="message", harness_id="test", payload={"id": 1})
-    persisted_event = HarnessEvent(
+    failed_event = RawHarnessEvent(event_type="message", harness_id="test", payload={"id": 1})
+    persisted_event = RawHarnessEvent(
         event_type="message",
         harness_id="test",
         payload={"id": 2},
@@ -366,7 +372,7 @@ async def test_failed_history_write_blocks_post_persist_delivery() -> None:
 @pytest.mark.asyncio
 async def test_tenth_history_write_failure_aborts_without_delivery() -> None:
     events = [
-        HarnessEvent(event_type="message", harness_id="test", payload={"id": index})
+        RawHarnessEvent(event_type="message", harness_id="test", payload={"id": index})
         for index in range(11)
     ]
 
@@ -392,12 +398,12 @@ async def test_tenth_history_write_failure_aborts_without_delivery() -> None:
 
 @pytest.mark.asyncio
 async def test_terminal_frame_history_write_failure_is_not_delivered_or_terminal() -> None:
-    failed_terminal = HarnessEvent(
+    failed_terminal = RawHarnessEvent(
         event_type="agent_end",
         harness_id="pi",
         payload={"messages": [{"role": "assistant", "stopReason": "stop"}]},
     )
-    persisted_after_terminal = HarnessEvent(
+    persisted_after_terminal = RawHarnessEvent(
         event_type="message",
         harness_id="pi",
         payload={"id": "after-failed-terminal"},

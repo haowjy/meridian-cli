@@ -14,7 +14,7 @@ from meridian.lib.core.clock import RealClock
 from meridian.lib.core.domain import SpawnStatus
 from meridian.lib.core.types import SpawnId
 from meridian.lib.harness.connections import managed_backend as managed_backend_module
-from meridian.lib.harness.connections.base import HarnessConnection, HarnessEvent, HarnessRequest
+from meridian.lib.harness.connections.base import HarnessConnection, HarnessRequest, RawHarnessEvent
 from meridian.lib.harness.connections.managed_backend import register_spawn_owned_process
 from meridian.lib.harness.control_action import ControlActionCoordinator, ControlActionType
 from meridian.lib.harness.permission_broker import PermissionBroker
@@ -32,7 +32,7 @@ from meridian.lib.state.reaper import (
 from meridian.lib.state.spawn_aggregate import delete_published_spawn
 from meridian.lib.state.spawn_scope import write_spawn_scope_task_dir
 from meridian.lib.state.spawn_signals import write_spawn_signal
-from meridian.lib.state.spawn_store import get_spawn, start_spawn
+from meridian.lib.state.spawn_store import finalize_spawn, get_spawn, start_spawn
 from meridian.lib.streaming.heartbeat import heartbeat_loop
 from meridian.lib.streaming.spawn_manager import SpawnManager
 
@@ -59,7 +59,8 @@ def test_late_failure_sentinel_does_not_recreate_deleted_spawn(tmp_path: Path) -
     runtime_root = tmp_path / "runtime"
     spawn_id = "p1"
     spawn_dir = runtime_root / "spawns" / spawn_id
-    _start_test_spawn(runtime_root, spawn_id, status="failed")
+    _start_test_spawn(runtime_root, spawn_id, status="running")
+    finalize_spawn(runtime_root, spawn_id, "failed", 1, origin="runner")
 
     assert delete_published_spawn(
         runtime_root,
@@ -76,7 +77,8 @@ def test_failure_sentinel_refuses_non_failed_spawn(tmp_path: Path) -> None:
     runtime_root = tmp_path / "runtime"
     spawn_id = "p1"
     sentinel_path = runtime_root / "spawns" / spawn_id / "failure.json"
-    _start_test_spawn(runtime_root, spawn_id, status="succeeded")
+    _start_test_spawn(runtime_root, spawn_id, status="running")
+    finalize_spawn(runtime_root, spawn_id, "succeeded", 0, origin="runner")
 
     write_failure_sentinel(runtime_root, spawn_id, {"reason": "stale"})
 
@@ -307,7 +309,7 @@ def test_late_history_and_marker_write_does_not_recreate_deleted_spawn(
         runtime_root=runtime_root,
         spawn_id=spawn_id,
     )
-    event = HarnessEvent(
+    event = RawHarnessEvent(
         event_type="turn/started",
         payload={},
         harness_id="codex",
@@ -357,7 +359,7 @@ async def test_history_and_marker_write_are_one_lifetime_mutation(
     write = asyncio.create_task(
         asyncio.to_thread(
             writer.write,
-            HarnessEvent(
+            RawHarnessEvent(
                 event_type="turn/started",
                 payload={},
                 harness_id="codex",
@@ -447,7 +449,8 @@ def test_reaper_evidence_refuses_terminal_spawn(tmp_path: Path) -> None:
     runtime_root = tmp_path / "runtime"
     spawn_id = "p1"
     evidence_path = runtime_root / "spawns" / spawn_id / "finalize-evidence.json"
-    _start_test_spawn(runtime_root, spawn_id, status="succeeded")
+    _start_test_spawn(runtime_root, spawn_id, status="running")
+    finalize_spawn(runtime_root, spawn_id, "succeeded", 0, origin="runner")
     record = get_spawn(runtime_root, spawn_id)
     assert record is not None
     now = time.time()

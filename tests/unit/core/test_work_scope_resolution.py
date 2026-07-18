@@ -14,7 +14,7 @@ from meridian.lib.core.resolved_context import ResolvedContext
 from meridian.lib.ops.context import WorkPathInput, resolve_active_work_scope_dir, work_path_sync
 from meridian.lib.ops.runtime import resolve_roots
 from meridian.lib.ops.work_attachment import set_session_work_attachment
-from meridian.lib.state import session_store, work_store
+from meridian.lib.state import session_store, work_repository, work_store
 from meridian.lib.state.paths import resolve_ambient_work_dir, resolve_work_scratch_dir_for_project
 from meridian.lib.state.user_paths import get_project_home
 from meridian.lib.state.work_scope import WorkScope, resolve_work_scope_from_parts
@@ -297,7 +297,7 @@ def test_session_work_id_ignores_stale_launch_bound_ambient_dir(
         model="gpt-5.4",
         chat_id="chat-stale",
     )
-    work_item = work_store.create_work_item(project_state_dir, "feature-a", "", None)
+    work_item = work_repository.create_work_item(project_state_dir, "feature-a", "", None)
     set_session_work_attachment(runtime_root, chat_id="chat-stale", work_id=work_item.name)
     named_scope = work_store.work_scratch_dir(project_state_dir, work_item.name)
 
@@ -488,7 +488,7 @@ def test_resolve_active_work_scope_dir_explicit_chat_id_wiring(
         model="gpt-5.4",
         chat_id="target-chat",
     )
-    work_item = work_store.create_work_item(project_state_dir, "session-work", "", None)
+    work_item = work_repository.create_work_item(project_state_dir, "session-work", "", None)
     set_session_work_attachment(runtime_root, chat_id="target-chat", work_id=work_item.name)
     target_scope = work_store.work_scratch_dir(project_state_dir, work_item.name)
 

@@ -1,4 +1,4 @@
-"""Spawn state query and shaping helpers backed by per-spawn `state.json` (v2)."""
+"""Spawn state query and shaping helpers backed by per-spawn `state.json`."""
 
 import json
 import re
@@ -20,7 +20,7 @@ from meridian.lib.state.reaper import (
     SPAWN_POST_RUNNER_EXIT_FINALIZATION_GRACE_SECS,
     SPAWN_STARTUP_GRACE_SECS,
 )
-from meridian.lib.state.spawn.model import SpawnRecord
+from meridian.lib.state.spawn.model import SpawnRecord, TerminalFacts
 
 from .models import SpawnDetailOutput
 
@@ -82,20 +82,31 @@ def _has_recent_spawn_activity(runtime_root: Path, spawn_id: str, now: float) ->
 
 
 def _runner_exit_terminal_update(record: SpawnRecord) -> dict[str, object]:
-    status = record.runner_exit_status
-    assert status is not None
-    if record.runner_exit_code is not None:
-        exit_code = record.runner_exit_code
-    elif status == "succeeded":
-        exit_code = 0
-    elif status == "cancelled":
-        exit_code = 130
-    else:
-        exit_code = 1
+    facts = record.runner_exit
+    assert facts is not None
     return {
-        "status": status,
-        "exit_code": exit_code,
-        "error": record.runner_exit_error,
+        "status": facts.status,
+        "terminal": TerminalFacts(
+            exit_code=facts.exit_code,
+            finished_at=facts.exited_at,
+            published_at=facts.exited_at,
+            error=facts.error,
+            origin="runner",
+        ),
+    }
+
+
+def _synthetic_stale_terminal_update(*, error: str, now: float) -> dict[str, object]:
+    observed_at = datetime.fromtimestamp(now, tz=UTC).isoformat().replace("+00:00", "Z")
+    return {
+        "status": "failed",
+        "terminal": TerminalFacts(
+            exit_code=1,
+            finished_at=observed_at,
+            published_at=observed_at,
+            error=error,
+            origin="reconciler",
+        ),
     }
 
 
@@ -110,8 +121,8 @@ def _read_only_nested_staleness_view(
         started_epoch is not None and now - started_epoch < _NESTED_READ_STARTUP_GRACE_SECS
     )
 
-    if record.runner_exit_status is not None:
-        exited_epoch = _iso_to_epoch(record.runner_exit_at)
+    if record.runner_exit is not None:
+        exited_epoch = _iso_to_epoch(record.runner_exit.exited_at)
         if (
             exited_epoch is not None
             and now - exited_epoch < _NESTED_READ_POST_RUNNER_EXIT_FINALIZATION_GRACE_SECS
@@ -134,21 +145,13 @@ def _read_only_nested_staleness_view(
         if is_process_alive(runner_pid, created_after_epoch=runner_created_at_epoch):
             return record
         return record.model_copy(
-            update={
-                "status": "failed",
-                "exit_code": 1,
-                "error": "stale_nested_read",
-            }
+            update=_synthetic_stale_terminal_update(error="stale_nested_read", now=now)
         )
 
     if in_startup_grace:
         return record
     return record.model_copy(
-        update={
-            "status": "failed",
-            "exit_code": 1,
-            "error": "stale_nested_read_no_pid",
-        }
+        update=_synthetic_stale_terminal_update(error="stale_nested_read_no_pid", now=now)
     )
 
 
@@ -167,7 +170,7 @@ def _select_latest_spawn_id(
         project_root,
         resolved_runtime_root,
         spawn_store.list_spawns(resolved_runtime_root),
-    )
+    ).records
     if statuses is not None:
         wanted = set(statuses)
         spawns = [item for item in spawns if item.status in wanted]
@@ -271,7 +274,7 @@ def read_latest_primary_spawn_for_chat_read_only(
     if resolved_runtime_root is None:
         return None
     spawns = session_identity.list_spawns_for_owner_chat(resolved_runtime_root, chat_id)
-    primary_spawns = [row for row in spawns if row.kind == "primary"]
+    primary_spawns = [row for row in spawns.records if row.kind == "primary"]
     if not primary_spawns:
         return None
     return primary_spawns[-1]
@@ -590,6 +593,7 @@ def detail_from_row(
 
     resolved_runtime_root = runtime_root or resolve_runtime_root_for_read(project_root)
 
+    terminal = row.terminal
     return SpawnDetailOutput(
         spawn_id=row.id,
         status=row.status,
@@ -602,17 +606,19 @@ def detail_from_row(
         goal=row.goal,
         desc=row.desc,
         started_at=row.started_at or "",
-        finished_at=row.finished_at,
-        duration_secs=row.duration_secs,
-        exit_code=row.exit_code,
-        failure_reason=row.error,
-        input_tokens=row.input_tokens,
-        output_tokens=row.output_tokens,
-        cache_read_input_tokens=row.cache_read_input_tokens,
-        cache_creation_input_tokens=row.cache_creation_input_tokens,
-        reasoning_tokens=row.reasoning_tokens,
-        cost_usd=row.total_cost_usd,
-        cost_is_estimate=row.cost_is_estimate,
+        finished_at=terminal.finished_at if terminal is not None else None,
+        duration_secs=terminal.duration_secs if terminal is not None else None,
+        exit_code=terminal.exit_code if terminal is not None else None,
+        failure_reason=terminal.error if terminal is not None else None,
+        input_tokens=terminal.input_tokens if terminal is not None else None,
+        output_tokens=terminal.output_tokens if terminal is not None else None,
+        cache_read_input_tokens=terminal.cache_read_input_tokens if terminal is not None else None,
+        cache_creation_input_tokens=(
+            terminal.cache_creation_input_tokens if terminal is not None else None
+        ),
+        reasoning_tokens=terminal.reasoning_tokens if terminal is not None else None,
+        cost_usd=terminal.total_cost_usd if terminal is not None else None,
+        cost_is_estimate=terminal.cost_is_estimate if terminal is not None else False,
         report_path=report_path,
         report_summary=report_summary,
         report_body=report_body,

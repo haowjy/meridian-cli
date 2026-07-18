@@ -23,7 +23,7 @@ from meridian.lib.harness.connections.base import (
     ConnectionNotReady,
     ConnectionState,
     HarnessConnection,
-    HarnessEvent,
+    RawHarnessEvent,
     StopProgressCallback,
     StopResult,
     reap_on_ownership_transfer_failure,
@@ -129,7 +129,7 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
         self._first_pi_event_received = False
         self._session_event_seen = False
         self._harness_ready_emitted = False
-        self._pending_lifecycle_phase_events: list[HarnessEvent] = []
+        self._pending_lifecycle_phase_events: list[RawHarnessEvent] = []
         self._launch_command: tuple[str, ...] = ()
         self._launch_cwd: str | None = None
         self._launch_session_role: str | None = None
@@ -316,7 +316,7 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
         self._set_state("stopping")
         await self._send_abort_message()
 
-    async def events(self) -> AsyncIterator[HarnessEvent]:
+    async def events(self) -> AsyncIterator[RawHarnessEvent]:
         process = self._process
         if process is None or process.stdout is None:
             return
@@ -581,7 +581,7 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
             rewritten.extend((_PI_SESSION_DIR_FLAG, session_dir))
         return rewritten
 
-    def _parse_stdout_line(self, line: str) -> HarnessEvent | None:
+    def _parse_stdout_line(self, line: str) -> RawHarnessEvent | None:
         payload_text = line.strip()
         if not payload_text:
             return None
@@ -640,7 +640,7 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
             payload = dict(payload)
             payload["meridian_control_action"] = "inject"
 
-        return HarnessEvent(
+        return RawHarnessEvent(
             event_type=normalized_type,
             payload=payload,
             harness_id=_HARNESS_NAME,
@@ -692,7 +692,7 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
         raw_line: str,
         error: str | None = None,
         raw_type: str | None = None,
-    ) -> HarnessEvent:
+    ) -> RawHarnessEvent:
         payload: dict[str, object] = {
             "type": "meridian.lifecycle.parse_error",
             "schema_version": PI_SUPPORTED_LIFECYCLE_SCHEMA_VERSION,
@@ -703,7 +703,7 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
             payload["error"] = error
         if raw_type is not None:
             payload["raw_type"] = raw_type
-        return HarnessEvent(
+        return RawHarnessEvent(
             event_type="meridian.lifecycle.parse_error",
             payload=payload,
             harness_id=_HARNESS_NAME,
@@ -816,10 +816,10 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
                 logger.exception("Failed to transition Pi RPC connection into failed state")
         logger.warning("Pi RPC connection failed: %s", reason)
 
-    def _error_event(self, message: str) -> HarnessEvent:
-        return HarnessEvent(
-            event_type="error/connectionClosed",
-            payload={"type": "error/connectionClosed", "message": message},
+    def _error_event(self, message: str) -> RawHarnessEvent:
+        return RawHarnessEvent(
+            event_type="meridian/error/connectionClosed",
+            payload={"type": "meridian/error/connectionClosed", "message": message},
             harness_id=_HARNESS_NAME,
         )
 
@@ -895,7 +895,7 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
         self,
         phase: str,
         **data: object,
-    ) -> HarnessEvent:
+    ) -> RawHarnessEvent:
         payload: dict[str, object] = {
             "type": _PI_PHASE_EVENT_TYPE,
             "phase": phase,
@@ -904,7 +904,7 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
         payload.update(data)
         if self._spawn_id:
             payload["spawn_id"] = str(self._spawn_id)
-        event = HarnessEvent(
+        event = RawHarnessEvent(
             event_type=_PI_PHASE_EVENT_TYPE,
             payload=payload,
             harness_id=_HARNESS_NAME,

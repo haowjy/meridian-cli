@@ -5,16 +5,18 @@ import pytest
 
 from meridian.lib.state.paths import RuntimePaths
 from meridian.lib.state.user_paths import get_project_id
-from meridian.lib.state.work_store import (
+from meridian.lib.state.work_repository import (
     archive_work_item,
     create_work_item,
+    rename_work_item,
+    reopen_work_item,
+    update_work_item,
+)
+from meridian.lib.state.work_state import slugify
+from meridian.lib.state.work_store import (
     get_work_item,
     list_archived_work_items,
     list_work_items,
-    rename_work_item,
-    reopen_work_item,
-    slugify,
-    update_work_item,
 )
 
 
@@ -31,6 +33,21 @@ def test_slugify_normalizes_and_truncates() -> None:
     assert slugify("Hello_world  2026!!!") == "hello-world-2026"
     assert slugify("___") == ""
     assert slugify("a" * 80) == "a" * 64
+
+
+@pytest.mark.parametrize("status", ["", "   ", "done"])
+def test_update_rejects_invalid_active_status(tmp_path: Path, status: str) -> None:
+    runtime_root = _state_root(tmp_path)
+    item = create_work_item(runtime_root, "status-validation")
+    status_path = runtime_root / "work" / item.name / "__status.json"
+    original = status_path.read_bytes()
+
+    with pytest.raises(ValueError):
+        update_work_item(runtime_root, item.name, status=status)
+
+    assert status_path.read_bytes() == original
+
+
 def test_work_item_archive_and_reopen_preserves_metadata(tmp_path: Path) -> None:
     runtime_root = _state_root(tmp_path)
 
@@ -57,6 +74,8 @@ def test_work_item_archive_and_reopen_preserves_metadata(tmp_path: Path) -> None
     assert not archived_dir.exists()
     assert active_status.exists()
     assert (active_dir / "notes.md").read_text(encoding="utf-8") == "hello"
+
+
 def test_list_archived_work_items_projects_stale_status_without_persisting(tmp_path: Path) -> None:
     runtime_root = _state_root(tmp_path)
     paths = RuntimePaths.from_root_dir(runtime_root)
@@ -79,6 +98,8 @@ def test_list_archived_work_items_projects_stale_status_without_persisting(tmp_p
     assert repaired[0].archived_at is not None
 
     assert json.loads(archived_status_path.read_text(encoding="utf-8")) == stale_payload
+
+
 def test_create_archive_and_reopen_use_project_templated_context_work_paths(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -132,6 +153,8 @@ def test_create_archive_and_reopen_use_project_templated_context_work_paths(
     assert reopened.archived_at is None
     assert not archived_dir.exists()
     assert (active_dir / "notes.md").read_text(encoding="utf-8") == "hello"
+
+
 def test_list_work_items_warns_on_duplicate_in_archive(tmp_path: Path) -> None:
     runtime_root = _state_root(tmp_path)
     paths = RuntimePaths.from_root_dir(runtime_root)

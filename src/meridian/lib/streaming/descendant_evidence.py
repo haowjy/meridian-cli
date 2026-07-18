@@ -64,9 +64,12 @@ class ReconciledDescendantEvidence:
         return WorkAssessment(disposition="ready", blockers=(), generation=generation)
 
     def _read_blockers(self) -> tuple[DiagnosticBlocker, ...]:
+        collection = spawn_store.list_spawns(self._runtime_root)
+        if collection.quarantines:
+            raise spawn_store.SpawnStateQuarantined(collection.quarantines[0])
         rows = [
             peek_reconciled_active_spawn(self._runtime_root, row)
-            for row in spawn_store.list_spawns(self._runtime_root)
+            for row in collection.records
         ]
         descendants = tuple(collect_descendants(str(self._root_spawn_id), rows))
         self._persisted_descendant_ids = tuple(

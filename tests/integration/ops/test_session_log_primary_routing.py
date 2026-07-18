@@ -239,8 +239,8 @@ def test_session_log_completed_managed_primary_prefers_native_transcript(
         kind="primary",
         prompt="do thing",
         harness_session_id=session_id,
-        status="failed",
     )
+    spawn_store.finalize_spawn(runtime_root, "p42", "failed", 1, origin="runner")
     _write_primary_meta(runtime_root, "p42")
     _write_spawn_output(
         runtime_root,
@@ -282,8 +282,8 @@ def test_session_log_completed_managed_primary_falls_back_to_output_when_native_
         kind="primary",
         prompt="do thing",
         harness_session_id="missing-native-session",
-        status="failed",
     )
+    spawn_store.finalize_spawn(runtime_root, "p42", "failed", 1, origin="runner")
     _write_primary_meta(runtime_root, "p42")
     _write_spawn_output(
         runtime_root,
@@ -325,8 +325,8 @@ def test_session_log_completed_managed_opencode_fallback_is_best_effort(
         kind="primary",
         prompt="do thing",
         harness_session_id="missing-native-session",
-        status="failed",
     )
+    spawn_store.finalize_spawn(runtime_root, "p42", "failed", 1, origin="runner")
     _write_primary_meta(runtime_root, "p42")
     _write_spawn_output(
         runtime_root,
@@ -377,8 +377,8 @@ def test_session_log_chat_managed_opencode_falls_back_to_primary_output(
             kind="primary",
             prompt="do thing",
             harness_session_id="missing-native-session",
-            status="failed",
         )
+        spawn_store.finalize_spawn(runtime_root, "p42", "failed", 1, origin="runner")
         _write_primary_meta(runtime_root, "p42")
         _write_spawn_output(
             runtime_root,
@@ -436,8 +436,8 @@ def test_session_log_chat_non_managed_primary_does_not_fall_back_to_output(
             kind="primary",
             prompt="do thing",
             harness_session_id="missing-native-session",
-            status="failed",
         )
+        spawn_store.finalize_spawn(runtime_root, "p42", "failed", 1, origin="runner")
         _write_spawn_output(
             runtime_root,
             "p42",

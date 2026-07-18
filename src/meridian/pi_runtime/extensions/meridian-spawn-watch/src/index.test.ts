@@ -27,7 +27,7 @@ type SpawnWatchRuntimeInternals = SpawnWatchRuntime & {
   scanBashRecords(): Promise<void>;
   scanSpawns(): Promise<void>;
   fallbackScanReasons: Set<string>;
-  pending: Map<string, { kind: "spawn" | "bash" }>;
+  pending: Map<string, { kind: "spawn" | "bash"; duration: string }>;
   running: boolean;
   enableDiscoveryPolling(): void;
   stopDiscoveryPolling(): void;
@@ -92,7 +92,12 @@ async function bashRecordWithSpawnOutput(
 async function writeSpawnState(
   runtimeRoot: string,
   spawnId: string,
-  values: { parentId?: string | null; originBashId?: string | null; status?: string } = {},
+  values: {
+    parentId?: string | null;
+    originBashId?: string | null;
+    status?: string;
+    terminal?: Record<string, unknown> | null;
+  } = {},
 ): Promise<void> {
   const spawnDir = path.join(runtimeRoot, "spawns", spawnId);
   await mkdir(spawnDir, { recursive: true });
@@ -103,8 +108,19 @@ async function writeSpawnState(
       parent_id: values.parentId ?? null,
       originating_bash_id: values.originBashId ?? null,
       status: values.status ?? "running",
+      terminal: values.terminal ?? null,
     }),
   );
+}
+
+function terminalFacts(status = "succeeded"): Record<string, unknown> {
+  return {
+    // Terminal status lives only at the top level of state.json.
+    exit_code: status === "succeeded" ? 0 : 1,
+    finished_at: "2026-07-17T12:00:05Z",
+    published_at: "2026-07-17T12:00:05Z",
+    duration_secs: 65,
+  };
 }
 
 async function makeRuntime(): Promise<{ runtimeRoot: string; runtime: SpawnWatchRuntime; internals: SpawnWatchRuntimeInternals }> {
@@ -156,9 +172,97 @@ describe("SpawnWatchRuntime bash-origin spawn tracking", () => {
       await internals.scanSpawns();
       expect(internals.fallbackScanReasons.has("active-origin-spawns")).toBe(true);
 
-      await writeSpawnState(runtimeRoot, "p1001", { originBashId: "b-origin", status: "succeeded" });
+      await writeSpawnState(runtimeRoot, "p1001", {
+        originBashId: "b-origin",
+        status: "succeeded",
+        terminal: terminalFacts(),
+      });
       await internals.scanSpawns();
       expect(internals.fallbackScanReasons.has("active-origin-spawns")).toBe(false);
+    } finally {
+      runtime.stop();
+      await rm(runtimeRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("does not report a status-only row as completed", async () => {
+    const { runtimeRoot, runtime, internals } = await makeRuntime();
+    try {
+      await writeBashRecords(runtimeRoot, "p-parent", [bashRecord("b-status-only")]);
+      await writeSpawnState(runtimeRoot, "p-status-only", {
+        originBashId: "b-status-only",
+        status: "succeeded",
+        terminal: null,
+      });
+      internals.running = true;
+
+      await internals.scanSpawns();
+
+      expect(internals.pending.has("p-status-only")).toBe(false);
+      expect(internals.fallbackScanReasons.has("active-origin-spawns")).toBe(true);
+    } finally {
+      runtime.stop();
+      await rm(runtimeRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("reads terminal duration from nested persisted facts", async () => {
+    const { runtimeRoot, runtime, internals } = await makeRuntime();
+    try {
+      await writeBashRecords(runtimeRoot, "p-parent", [bashRecord("b-duration")]);
+      await writeSpawnState(runtimeRoot, "p-duration", {
+        originBashId: "b-duration",
+        status: "succeeded",
+        terminal: {
+          exit_code: 0,
+          finished_at: "2026-07-17T12:00:05Z",
+          published_at: "2026-07-17T12:00:05Z",
+          duration_secs: 65,
+        },
+      });
+
+      await internals.scanSpawns();
+
+      expect(internals.pending.get("p-duration")?.duration).toBe("1m05s");
+      expect(internals.pending.get("p-duration")?.kind).toBe("spawn");
+    } finally {
+      runtime.stop();
+      await rm(runtimeRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("does not report a retired nested-status row as completed", async () => {
+    const { runtimeRoot, runtime, internals } = await makeRuntime();
+    try {
+      await writeBashRecords(runtimeRoot, "p-parent", [bashRecord("b-retired")]);
+      await writeSpawnState(runtimeRoot, "p-retired", {
+        originBashId: "b-retired",
+        status: "succeeded",
+        terminal: { ...terminalFacts(), status: "succeeded" },
+      });
+
+      await internals.scanSpawns();
+
+      expect(internals.pending.has("p-retired")).toBe(false);
+    } finally {
+      runtime.stop();
+      await rm(runtimeRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("reports a current-shape terminal row as completed", async () => {
+    const { runtimeRoot, runtime, internals } = await makeRuntime();
+    try {
+      await writeBashRecords(runtimeRoot, "p-parent", [bashRecord("b-current")]);
+      await writeSpawnState(runtimeRoot, "p-current", {
+        originBashId: "b-current",
+        status: "succeeded",
+        terminal: terminalFacts(),
+      });
+
+      await internals.scanSpawns();
+
+      expect(internals.pending.get("p-current")?.kind).toBe("spawn");
     } finally {
       runtime.stop();
       await rm(runtimeRoot, { recursive: true, force: true });
@@ -208,7 +312,11 @@ describe("SpawnWatchRuntime bash-origin spawn tracking", () => {
       expect(internals.discoveryScanInterval).toBeNull();
       expect(internals.fallbackScanInterval).not.toBeNull();
 
-      await writeSpawnState(runtimeRoot, "p1001", { originBashId: "b-origin", status: "succeeded" });
+      await writeSpawnState(runtimeRoot, "p1001", {
+        originBashId: "b-origin",
+        status: "succeeded",
+        terminal: terminalFacts(),
+      });
       await internals.scanSpawns();
       expect(internals.fallbackScanReasons.has("spawn-discovery")).toBe(false);
     } finally {

@@ -21,8 +21,8 @@ def _start_spawn(runtime_root: Path, spawn_id: str) -> None:
         agent="coder",
         harness="codex",
         prompt="hello",
-        status="succeeded",
     )
+    spawn_store.finalize_spawn(runtime_root, spawn_id, "succeeded", 0, origin="runner")
 
 
 @posix_only

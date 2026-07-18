@@ -42,10 +42,6 @@ HARNESS_EXTENSION_TOUCHPOINTS: tuple[str, ...] = (
         "src/meridian/lib/harness/projections/permission_flags.py "
         "(approval/sandbox CLI flag projection)"
     ),
-    (
-        "src/meridian/lib/harness/semantics.py::terminal_outcome() "
-        "(streaming terminal-event classification)"
-    ),
 )
 
 

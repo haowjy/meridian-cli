@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, cast
 
 import psutil
 
-from meridian.lib.harness.connections.base import HarnessEvent
+from meridian.lib.harness.connections.base import RawHarnessEvent
 from meridian.lib.state.liveness import is_process_alive, is_process_alive_with_birth
 from meridian.lib.state.primary_meta import PrimaryMetadata, read_primary_metadata
 from meridian.lib.state.reconciliation import (
@@ -75,7 +75,7 @@ class ManagedPrimaryCausalTracker:
         self._item_to_turn: dict[str, str] = {}
         self._request_to_turn: dict[str, str] = {}
 
-    def derive(self, event: HarnessEvent) -> CausalEnvelopeFields:
+    def derive(self, event: RawHarnessEvent) -> CausalEnvelopeFields:
         """Compute causal envelope fields and update correlation state."""
 
         normalized_type = _normalize_event_type(event.event_type)

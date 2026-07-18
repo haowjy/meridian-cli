@@ -14,6 +14,7 @@ from meridian.lib.platform import IS_WINDOWS
 from meridian.lib.state import spawn_store
 from meridian.lib.state.paths import resolve_runtime_paths
 from meridian.lib.state.spawn.model import LaunchMode
+from meridian.lib.state.spawn.repository import Applied
 from meridian.lib.streaming.signal_canceller import SignalCanceller
 
 
@@ -71,7 +72,7 @@ async def test_signal_canceller_finalizing_gate_skips_sigterm(
 ) -> None:
     runtime_root = resolve_runtime_paths(tmp_path).root_dir
     spawn_id = _start_spawn(runtime_root, spawn_id="p1", launch_mode="foreground", runner_pid=4321)
-    assert spawn_store.mark_finalizing(runtime_root, spawn_id) is True
+    assert isinstance(spawn_store.mark_finalizing(runtime_root, spawn_id), Applied)
 
     def _unexpected_terminate(pid: int, **_kwargs: object) -> None:
         raise AssertionError(f"terminate_tree_sync must not run for finalizing rows: pid={pid}")

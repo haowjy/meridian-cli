@@ -16,7 +16,7 @@ from meridian.lib.launch.launch_types import SpecT
 
 if TYPE_CHECKING:
     from meridian.lib.harness.connections.resident_backend import ResidentBackendControl
-    from meridian.lib.harness.semantics import PrimaryEventScope
+    from meridian.lib.harness.semantics import EventSemantics, PrimaryEventScope
     from meridian.lib.observability.debug_tracer import DebugTracer
     from meridian.lib.platform.process_scope import ProcessScopeSnapshot
 
@@ -138,12 +138,12 @@ async def reap_on_ownership_transfer_failure(
 
 
 @dataclass(frozen=True)
-class HarnessEvent:
+class RawHarnessEvent:
     """One parsed event from a running harness connection.
 
-    Event type values stay in the producing harness namespace. Consumers that
-    need semantic categories should normalize by both ``harness_id`` and
-    ``event_type`` rather than assuming event-type names are globally unique.
+    Event type values stay in the producing harness namespace. The semantic
+    normalizer selects a bundle by ``harness_id`` before interpreting
+    ``event_type``; event names are not globally unique.
     """
 
     event_type: str
@@ -237,7 +237,7 @@ class InteractiveHandler:
 
     def __init__(
         self,
-        event_sink: Callable[[HarnessEvent], Awaitable[None]],
+        event_sink: Callable[[RawHarnessEvent], Awaitable[None]],
     ) -> None:
         self._event_sink = event_sink
 
@@ -247,7 +247,7 @@ class InteractiveHandler:
         request: HarnessRequest,
     ) -> None:
         await self._event_sink(
-            HarnessEvent(
+            RawHarnessEvent(
                 event_type="request/opened",
                 payload={
                     "request_id": request.request_id,
@@ -332,6 +332,11 @@ class HarnessConnection(Generic[SpecT], ABC):
         """Parent scope for events that multiplex child activity on the same stream."""
         return None
 
+    def observe_event_semantics(self, semantics: EventSemantics) -> None:
+        """Apply connection-local state changes from the drain's interpretation."""
+
+        _ = semantics
+
     @property
     @abstractmethod
     def subprocess_pid(self) -> int | None: ...
@@ -369,7 +374,7 @@ class HarnessConnection(Generic[SpecT], ABC):
         self,
         *,
         policy: PrimaryRuntimeRequestPolicy,
-        event_sink: Callable[[HarnessEvent], Awaitable[None]] | None = None,
+        event_sink: Callable[[RawHarnessEvent], Awaitable[None]] | None = None,
         request_handler: ServerRequestHandler | None = None,
     ) -> None:
         """Configure runtime-request handling for one primary-session launch."""
@@ -381,7 +386,7 @@ class HarnessConnection(Generic[SpecT], ABC):
             f"{self.harness_id.value} does not support primary runtime request policy overrides"
         )
 
-    async def inject_runtime_event(self, event: HarnessEvent) -> None:
+    async def inject_runtime_event(self, event: RawHarnessEvent) -> None:
         """Inject one synthesized runtime event into the connection event stream."""
 
         _ = event
@@ -430,7 +435,7 @@ class HarnessConnection(Generic[SpecT], ABC):
     async def send_cancel(self) -> None: ...
 
     @abstractmethod
-    def events(self) -> AsyncIterator[HarnessEvent]: ...
+    def events(self) -> AsyncIterator[RawHarnessEvent]: ...
 
 
 __all__ = [
@@ -442,7 +447,6 @@ __all__ = [
     "ConnectionNotReady",
     "ConnectionState",
     "HarnessConnection",
-    "HarnessEvent",
     "HarnessRequest",
     "InteractiveHandler",
     "ObserverEndpoint",
@@ -450,6 +454,7 @@ __all__ = [
     "PrimaryRuntimeEventSurface",
     "PrimaryRuntimeRequestPolicy",
     "PromptTooLargeError",
+    "RawHarnessEvent",
     "ServerRequestHandler",
     "StopProgressCallback",
     "StopResult",

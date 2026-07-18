@@ -37,7 +37,8 @@ def test_outstanding_descendant_work_returns_false_for_terminal_cycle(
     spawn_store.finalize_spawn(tmp_path, SpawnId("p1"), "succeeded", 0, origin="runner")
     spawn_store.finalize_spawn(tmp_path, SpawnId("p2"), "succeeded", 0, origin="runner")
 
-    assert has_outstanding_descendant_work("p1", spawn_store.list_spawns(tmp_path)) is False
+    scan = spawn_store.list_spawns(tmp_path)
+    assert has_outstanding_descendant_work("p1", scan.records) is False
 
 
 def test_outstanding_descendant_work_finds_live_node_in_cycle(tmp_path: Path) -> None:
@@ -45,13 +46,14 @@ def test_outstanding_descendant_work_finds_live_node_in_cycle(tmp_path: Path) ->
     _start_row(tmp_path, "p2", parent_id="p1")
     spawn_store.finalize_spawn(tmp_path, SpawnId("p1"), "succeeded", 0, origin="runner")
 
-    assert has_outstanding_descendant_work("p1", spawn_store.list_spawns(tmp_path)) is True
+    scan = spawn_store.list_spawns(tmp_path)
+    assert has_outstanding_descendant_work("p1", scan.records) is True
 
 
 def test_collect_descendants_dedupes_malformed_cycle(tmp_path: Path) -> None:
     _start_row(tmp_path, "p1", parent_id="p2")
     _start_row(tmp_path, "p2", parent_id="p1")
 
-    descendants = collect_descendants("p1", spawn_store.list_spawns(tmp_path))
+    descendants = collect_descendants("p1", spawn_store.list_spawns(tmp_path).records)
 
     assert [row.id for row in descendants] == ["p1", "p2"]

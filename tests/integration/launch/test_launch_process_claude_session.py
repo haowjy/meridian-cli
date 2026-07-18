@@ -141,8 +141,8 @@ def test_run_harness_process_fresh_claude_primary_seeds_session_id(
     seeded_id = captured["command_session_id"]
     assert outcome.resolved_harness_session_id == seeded_id
     spawns = list_spawns(launch_context.runtime_root)
-    assert len(spawns) == 1
-    assert spawns[0].harness_session_id == seeded_id
+    assert len(spawns.records) == 1
+    assert spawns.records[0].harness_session_id == seeded_id
 
 
 @pytest.mark.slow
@@ -215,8 +215,8 @@ def test_run_harness_process_records_generated_claude_command_session_id(
     assert outcome.resolved_harness_session_id == generated_session_id
     assert outcome.chat_id is not None
     spawns = list_spawns(launch_context.runtime_root)
-    assert len(spawns) == 1
-    assert spawns[0].harness_session_id == generated_session_id
+    assert len(spawns.records) == 1
+    assert spawns.records[0].harness_session_id == generated_session_id
     assert outcome.chat_id is not None
     assert (
         session_store.get_session_harness_id(launch_context.runtime_root, outcome.chat_id)
@@ -270,7 +270,7 @@ def test_run_harness_process_repairs_state_when_observed_session_differs(
     assert outcome.resolved_harness_session_id == observed_id
     # Spawn record should have the observed ID
     spawns = list_spawns(launch_context.runtime_root)
-    assert any(spawn.harness_session_id == observed_id for spawn in spawns)
+    assert any(spawn.harness_session_id == observed_id for spawn in spawns.records)
 
 
 @pytest.mark.slow
@@ -356,8 +356,8 @@ def test_run_harness_process_reconciles_claude_tui_trampoline_session_id(
     assert outcome.resolved_harness_session_id == real_session_id
     assert outcome.chat_id is not None
     spawns = list_spawns(launch_context.runtime_root)
-    assert len(spawns) == 1
-    assert spawns[0].harness_session_id == real_session_id
+    assert len(spawns.records) == 1
+    assert spawns.records[0].harness_session_id == real_session_id
     assert (
         session_store.get_session_harness_id(launch_context.runtime_root, outcome.chat_id)
         == real_session_id

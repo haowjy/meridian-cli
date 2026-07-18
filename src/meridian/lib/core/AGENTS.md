@@ -15,7 +15,8 @@ deliberate exception that wires policy surfaces to launch and persistence.
 
 ## Key Rules
 
-- **Use `SpawnId`, `ModelId`, `ArtifactKey` — not `str`.** These are `NewType` aliases over `str`. Zero runtime cost; mypy catches wrong-ID bugs statically. Accept them on function signatures anywhere a spawn or model ID passes through.
+- **`SpawnStatus` (StrEnum in `domain.py`) is the single status authority.** Lifecycle sets (`ALL_SPAWN_STATUSES`, `ACTIVE_SPAWN_STATUSES`, `TERMINAL_SPAWN_STATUSES`) are derived from a member→`SpawnLifecycleClass` map. `TerminalSpawnStatus` is a `Literal` alias checked at import time to match the terminal members. Do not create parallel status vocabularies or frozensets — use the derived sets.
+- **Use `SpawnId`, `ModelId`, `ChatId`, `HarnessSessionId`, `ArtifactKey` — not `str`.** These are `NewType` aliases over `str`. Zero runtime cost; pyright catches wrong-ID bugs statically. Persisted chat and harness-session fields use Pydantic-aware `Annotated` aliases that normalize blank identities to `None` and enforce non-empty values at every parse boundary.
 - **`RuntimeOverrides`: use `None` to mean "not set", never `""` or `0`.** `resolve(*layers)` returns first-non-None per field. An empty string at a high-precedence layer wins over a meaningful value at a lower one.
 - **The environment registry is the sole declaration of child-process Meridian keys.** `ResolvedContext.child_env_overrides()` produces shared context handles, and the launch bind seam adds registered launch-specific handles such as `_MERIDIAN_HARNESS`; `validate_child_env_keys()` rejects unknown public or internal names.
 - **`is_root_side_effect_process()` is fail-closed.** A malformed non-empty `_MERIDIAN_DEPTH` returns `False`. Root-only side effects (e.g., the reaper) must not run inside delegated agent processes. When in doubt, fail closed.
@@ -24,7 +25,7 @@ deliberate exception that wires policy surfaces to launch and persistence.
 
 ## Entry Points
 
-- `types.py` — `SpawnId`, `ModelId`, `ArtifactKey`, `SchemaVersion` (typed IDs)
+- `types.py` — typed IDs and persisted identity normalization
 - `overrides.py` — `RuntimeOverrides`, `resolve(*layers)` (config precedence merge)
 - `resolved_context.py` — `ResolvedContext.from_environment()` (authoritative runtime env for one process)
 - `child_env.py` — `ALLOWED_CHILD_ENV_KEYS`, `validate_child_env_keys()`

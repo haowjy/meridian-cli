@@ -77,7 +77,7 @@ class SessionContextRef(BaseModel):
 
     ref_kind: Literal["session"] = "session"
     chat_id: str
-    primary_spawn_id: str
+    primary_spawn_id: str | None = None
     status: str
     agent: str
     model: str
@@ -90,21 +90,21 @@ class SessionContextRef(BaseModel):
 type ContextRef = SpawnContextRef | SessionContextRef
 
 
-def _select_primary_spawn_for_session(project_root: Path, chat_id: str) -> SpawnRecord:
+def _select_primary_spawn_for_session(project_root: Path, chat_id: str) -> SpawnRecord | None:
     from meridian.lib.state.reaper import reconcile_spawns
 
     runtime_root = resolve_runtime_root_for_read(project_root)
     if runtime_root is None:
-        raise ValueError(f"No primary spawn found for session '{chat_id}'")
+        return None
     owner_chat_id = session_identity.get_owner_chat_for_session(runtime_root, chat_id) or chat_id
     spawns = reconcile_spawns(
         project_root,
         runtime_root,
         session_identity.list_spawns_for_owner_chat(runtime_root, owner_chat_id),
     )
-    primary_spawns = [row for row in spawns if row.kind == "primary"]
+    primary_spawns = [row for row in spawns.records if row.kind == "primary"]
     if not primary_spawns:
-        raise ValueError(f"No primary spawn found for session '{chat_id}'")
+        return None
 
     return primary_spawns[-1]
 
@@ -145,7 +145,22 @@ def resolve_context_ref(project_root: Path, ref: str) -> ContextRef:
         return _spawn_context_ref(spawn_row, project_root)
     if _SESSION_REF_RE.fullmatch(normalized) or _is_tracked_session(project_root, normalized):
         primary_row = _select_primary_spawn_for_session(project_root, normalized)
-        return _session_context_ref(primary_row, project_root)
+        if primary_row is not None:
+            return _session_context_ref(primary_row, project_root)
+        runtime_root = resolve_runtime_root_for_read(project_root)
+        session = (
+            session_store.get_session_record(runtime_root, normalized)
+            if runtime_root is not None
+            else None
+        )
+        if session is not None:
+            if not (session.harness_session_id or "").strip():
+                raise ValueError(
+                    f"Session '{normalized}' exists but no transcript is available yet "
+                    "(no harness session id recorded)."
+                )
+            return _session_context_ref_from_record(session)
+        raise ValueError(f"No primary spawn found for session '{normalized}'")
 
     spawn_id = resolve_spawn_reference(project_root, normalized)
     row = read_spawn_row(project_root, spawn_id)
@@ -194,6 +209,23 @@ def _session_context_ref(primary_row: SpawnRecord, project_root: Path) -> Sessio
     )
 
 
+def _session_context_ref_from_record(
+    session: session_store.SessionRecord,
+) -> SessionContextRef:
+    """Build transcript context when a primary session has no spawn row."""
+
+    return SessionContextRef(
+        chat_id=session.chat_id,
+        status="stopped" if session.stopped_at is not None else "running",
+        agent=session.agent,
+        model=session.model,
+        harness=session.harness,
+        harness_session_id=(session.harness_session_id or "").strip() or None,
+        work_id=(session.active_work_id or "").strip() or None,
+        task_cwd=(session.task_cwd or session.execution_cwd or "").strip() or None,
+    )
+
+
 def resolved_context_ref_value(ref: ContextRef) -> str:
     """Return the external resolved reference value for operation output."""
 
@@ -217,24 +249,30 @@ def _render_context_ref(ref: ContextRef) -> str:
     agent = ref.agent or "n/a"
 
     if ref.ref_kind == "session":
-        tag_attrs = f'chat="{ref.chat_id}" primary_spawn="{ref.primary_spawn_id}"'
+        tag_attrs = f'chat="{ref.chat_id}"'
+        if ref.primary_spawn_id:
+            tag_attrs += f' primary_spawn="{ref.primary_spawn_id}"'
         transcript_ref = (
-            ref.chat_id if _SESSION_REF_RE.fullmatch(ref.chat_id) else ref.primary_spawn_id
+            ref.chat_id
+            if _SESSION_REF_RE.fullmatch(ref.chat_id) or ref.primary_spawn_id is None
+            else ref.primary_spawn_id
         )
         lines = [
             f"<prior-session-context {tag_attrs}>",
             f"# Prior session: {ref.chat_id}",
-            f"**Primary spawn:** {ref.primary_spawn_id} | "
             f"**Status:** {status} | **Agent:** {agent}",
         ]
+        if ref.primary_spawn_id:
+            lines[2] = f"**Primary spawn:** {ref.primary_spawn_id} | {lines[2]}"
         if ref.task_cwd:
             lines.append(f"**Task directory:** `{ref.task_cwd}`")
         lines.extend([
             "",
             "## Explore Further",
             f"- Session transcript: `meridian session log {transcript_ref}`",
-            f"- Primary spawn: `meridian spawn show {ref.primary_spawn_id}`",
         ])
+        if ref.primary_spawn_id:
+            lines.append(f"- Primary spawn: `meridian spawn show {ref.primary_spawn_id}`")
         if ref.harness_session_id and ref.harness_session_id.strip():
             lines.insert(
                 3,

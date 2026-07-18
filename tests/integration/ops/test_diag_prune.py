@@ -20,7 +20,7 @@ from meridian.lib.ops.pruning import (
     scan_orphan_project_dirs,
 )
 from meridian.lib.platform.locking import try_lock_file
-from meridian.lib.state import session_store, work_store
+from meridian.lib.state import session_store, work_repository, work_store
 
 
 def _create_project_root(tmp_path: Path) -> Path:
@@ -107,7 +107,7 @@ def _seed_pruning_layout(
     return project_root, current_spawn, orphan_root, other_spawn
 
 
-def test_doctor_heals_legacy_work_item_metadata(
+def test_doctor_repairs_malformed_work_item_metadata(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -124,19 +124,15 @@ def test_doctor_heals_legacy_work_item_metadata(
         encoding="utf-8",
     )
     project_state_dir = project_root / ".meridian"
-    item = work_store.create_work_item(project_state_dir, "legacy-item")
-    legacy_task_dir = tmp_path / "legacy-task-dir"
-    legacy_task_dir.mkdir()
+    item = work_repository.create_work_item(project_state_dir, "repair-item")
     status_path = work_store.work_scratch_dir(project_state_dir, item.name) / "__status.json"
-    payload = json.loads(status_path.read_text(encoding="utf-8"))
-    payload["task_dir"] = None
-    payload["worktree"]["path"] = legacy_task_dir.as_posix()
-    status_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    status_path.write_text("not json", encoding="utf-8")
 
     result = doctor_sync(DoctorInput(project_root=project_root.as_posix()))
 
-    healed = json.loads(status_path.read_text(encoding="utf-8"))
-    assert healed["task_dir"] == legacy_task_dir.resolve().as_posix()
+    repaired = json.loads(status_path.read_text(encoding="utf-8"))
+    assert repaired["status"] == "open"
+    assert repaired["archived_at"] is None
     assert "work_item_metadata" in result.repaired
 
 
@@ -160,6 +156,26 @@ def test_doctor_prune_only_prunes_current_project_artifacts(
     assert not current_spawn.exists()
     assert orphan_root.exists(), "orphan dir should NOT be pruned without --global"
     assert other_spawn.exists()
+
+
+def test_doctor_artifact_retention_preserves_quarantine_and_prunes_stale_row(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root, stale_spawn, _, _ = _seed_pruning_layout(tmp_path, monkeypatch)
+    (project_root / "meridian.toml").write_text(
+        '[project]\nid = "current-project-uuid"\n', encoding="utf-8"
+    )
+    runtime_root = stale_spawn.parent.parent
+    quarantined_spawn = runtime_root / "spawns" / "p2"
+    _write_text(quarantined_spawn / "state.json", "{}\n")
+    _set_tree_mtime(quarantined_spawn, 1_600_000_000.0)
+
+    result = doctor_sync(DoctorInput(project_root=project_root.as_posix(), prune=True))
+
+    assert result.pruned_spawn_artifacts == 1
+    assert not stale_spawn.exists()
+    assert quarantined_spawn.exists()
 
 
 def test_doctor_local_mode_skips_cross_project_enumeration(
@@ -268,6 +284,26 @@ def test_global_prune_cannot_unlink_live_session_lock_inode(tmp_path: Path) -> N
         if process.is_alive():
             process.terminate()
             process.join(5)
+
+
+def test_quarantine_only_project_is_not_pruned(tmp_path: Path) -> None:
+    user_home = tmp_path / "user-home"
+    runtime_root = user_home / "projects" / "project-uuid"
+    quarantined_spawn = runtime_root / "spawns" / "p1"
+    _write_text(quarantined_spawn / "state.json", "{}\n")
+    _set_tree_mtime(runtime_root, 1_600_000_000.0)
+
+    assert scan_orphan_project_dirs(user_home, retention_days=0, now=2_000_000_000.0) == []
+
+    orphan = OrphanProjectDir(
+        uuid=runtime_root.name,
+        path=runtime_root.as_posix(),
+        size_bytes=0,
+        last_activity="1970-01-01T00:00:00+00:00",
+        reason="stale",
+    )
+    assert prune_orphan_project_dirs([orphan]) == 0
+    assert runtime_root.exists()
 
 
 def test_global_prune_rejects_lock_directory_supplied_directly(tmp_path: Path) -> None:

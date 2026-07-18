@@ -20,20 +20,23 @@ from meridian.lib.platform.detached_process import DetachedSubprocessConfig, Par
 from meridian.lib.platform.process_scope.base import PROCESS_BIRTH_UNKNOWN_EPOCH
 from meridian.lib.state.paths import resolve_project_runtime_root_for_write
 from meridian.lib.state.process_scope_projection import read_scopes_from_disk
-from meridian.lib.state.spawn_store import start_spawn
+from meridian.lib.state.spawn_store import finalize_spawn, start_spawn
 
 
 def _publish_spawn(tmp_path: Path, spawn_id: SpawnId, *, status: str = "running") -> None:
+    runtime_root = resolve_project_runtime_root_for_write(tmp_path)
     start_spawn(
-        resolve_project_runtime_root_for_write(tmp_path),
+        runtime_root,
         spawn_id=spawn_id,
         chat_id="chat-1",
         model="gpt-5.4",
         agent="tester",
         harness="codex",
         prompt="test",
-        status=status,
+        status="running",
     )
+    if status == "succeeded":
+        finalize_spawn(runtime_root, spawn_id, "succeeded", 0, origin="runner")
 
 
 @pytest.mark.asyncio

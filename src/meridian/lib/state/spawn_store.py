@@ -8,15 +8,14 @@ from __future__ import annotations
 import os
 import secrets
 import shutil
-from collections.abc import Mapping
 from contextlib import suppress
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Literal, cast
+from typing import Literal, cast
 
 import psutil
 import structlog
-from pydantic import BaseModel, ConfigDict, ValidationError
 
 from meridian.lib.core.clock import Clock, RealClock
 from meridian.lib.core.domain import SpawnStatus, TokenUsage
@@ -29,20 +28,21 @@ from meridian.lib.core.spawn_lifecycle import (
 from meridian.lib.core.spawn_lifecycle import (
     is_active_spawn_status as _is_active_spawn_status,
 )
-from meridian.lib.core.spawn_lifecycle import (
-    is_terminal_spawn_status as _is_terminal_spawn_status,
-)
 from meridian.lib.core.spawn_start import SpawnStartMetadata, derive_display_label
-from meridian.lib.core.types import SpawnId
+from meridian.lib.core.types import ChatId, HarnessSessionId, SpawnId
 from meridian.lib.state.atomic import atomic_publish_dir, atomic_write_text
 from meridian.lib.state.event_store import lock_file
 from meridian.lib.state.paths import RuntimePaths
+from meridian.lib.state.spawn.model import (
+    AUTHORITATIVE_ORIGINS,
+)
 from meridian.lib.state.spawn.model import (
     CancelIntent as CancelIntent,
 )
 from meridian.lib.state.spawn.model import (
     LaunchMode as LaunchMode,
 )
+from meridian.lib.state.spawn.model import SpawnKind as SpawnKind
 from meridian.lib.state.spawn.model import (
     SpawnOrigin as SpawnOrigin,
 )
@@ -53,13 +53,19 @@ from meridian.lib.state.spawn.model import (
     TerminalSpawnStatus as TerminalSpawnStatus,
 )
 from meridian.lib.state.spawn.repository import (
+    Applied,
+    Decline,
+    LockedMutationResult,
+    SpawnStateQuarantined,
+    SpawnStateQuarantineReport,
+    record_to_stored_state,
+)
+from meridian.lib.state.spawn.repository import (
     is_safe_spawn_dir_name as _is_safe_spawn_dir_name,
 )
 from meridian.lib.state.spawn.repository import read_state as _read_state
-from meridian.lib.state.spawn.repository import record_to_stored_state
 from meridian.lib.state.spawn.repository import scan_spawn_ids as _scan_spawn_ids
 from meridian.lib.state.spawn.repository import write_state_locked as _write_state_locked
-from meridian.lib.state.spawn.terminal_policy import decide_terminal_write
 from meridian.lib.state.spawn.transitions import (
     apply_cancel_intent,
     apply_finalize,
@@ -71,6 +77,7 @@ from meridian.lib.state.spawn.transitions import (
 from meridian.lib.state.spawn_aggregate import delete_published_spawn
 
 logger = structlog.get_logger(__name__)
+
 
 # ---------------------------------------------------------------------------
 # ID generation (absorbed from state/id_gen.py)
@@ -185,23 +192,6 @@ def _resolve_start_metadata(
     )
 
 
-class FinalizeOutcome(BaseModel):
-    """Result of a finalize write with the exact post-write projection.
-
-    ``transitioned`` preserves the "this writer moved an active row to a
-    terminal state" signal. ``wrote`` distinguishes rejected reconciler attempts
-    from accepted authoritative metadata/override writes. ``snapshot`` is the
-    store projection immediately after the state write, computed under the same
-    lock, so callers can emit events without a post-write reread race.
-    """
-
-    model_config = ConfigDict(frozen=True)
-
-    transitioned: bool
-    wrote: bool
-    snapshot: SpawnRecord | None
-
-
 def _ensure_staging_dir(paths: RuntimePaths) -> Path:
     staging_dir = paths.spawns_dir / ".staging"
     if os.path.lexists(staging_dir) and (
@@ -254,7 +244,7 @@ def start_spawn(
     skills: tuple[str, ...] = (),
     skill_paths: tuple[str, ...] = (),
     harness: str,
-    kind: str = "child",
+    kind: SpawnKind = "child",
     prompt: str,
     metadata: SpawnStartMetadata | None = None,
     desc: str | None = None,
@@ -265,12 +255,13 @@ def start_spawn(
     control_root: str | None = None,
     task_cwd: str | None = None,
     execution_cwd: str | None = None,
+    claude_config_dir: str | None = None,
     launch_mode: LaunchMode | None = None,
     worker_pid: int | None = None,
     runner_pid: int | None = None,
     runner_created_at_epoch: float | None = None,
     launch_policy_snapshot: LaunchPolicySnapshot | None = None,
-    status: SpawnStatus = "running",
+    status: SpawnStatus = SpawnStatus.RUNNING,
     started_at: str | None = None,
     clock: Clock | None = None,
 ) -> SpawnId:
@@ -315,8 +306,8 @@ def start_spawn(
             resolved_spawn_id = SpawnId(f"p{next_value}")
         record = SpawnRecord(
             id=str(resolved_spawn_id),
-            chat_id=chat_id,
-            owner_chat_id=owner_chat_id,
+            chat_id=ChatId(chat_id),
+            owner_chat_id=ChatId(owner_chat_id) if owner_chat_id is not None else None,
             parent_id=parent_id,
             originating_bash_id=os.environ.get("_MERIDIAN_PI_BASH_ID") or None,
             model=model,
@@ -338,11 +329,15 @@ def start_spawn(
                 desc=start_metadata.desc,
                 prompt=prompt,
             ),
-            harness_session_id=harness_session_id,
+            harness_session_id=(
+                HarnessSessionId(harness_session_id)
+                if harness_session_id is not None
+                else None
+            ),
             control_root=control_root,
             task_cwd=task_cwd,
             execution_cwd=execution_cwd,
-            claude_config_dir=None,
+            claude_config_dir=claude_config_dir,
             launch_mode=launch_mode,
             worker_pid=worker_pid,
             runner_pid=runner_pid,
@@ -352,23 +347,9 @@ def start_spawn(
             started_at=started,
             last_attempt_exited_at=None,
             last_attempt_exit_code=None,
-            runner_exit_code=None,
-            runner_exit_status=None,
-            runner_exit_error=None,
-            runner_exit_at=None,
+            runner_exit=None,
             cancel_intent=None,
-            finished_at=None,
-            exit_code=None,
-            duration_secs=None,
-            total_cost_usd=None,
-            input_tokens=None,
-            output_tokens=None,
-            cache_read_input_tokens=None,
-            cache_creation_input_tokens=None,
-            reasoning_tokens=None,
-            cost_is_estimate=False,
-            error=None,
-            terminal_origin=None,
+            terminal=None,
             launch_policy_snapshot=resolved_launch_policy_snapshot,
         )
         spawn_dir = paths.spawns_dir / str(resolved_spawn_id)
@@ -389,7 +370,7 @@ def remove_spawn_events(
     runtime_root: Path,
     spawn_id: SpawnId | str,
 ) -> None:
-    """Remove v2 state for one spawn.
+    """Remove per-spawn state for one spawn.
 
     This narrow rollback seam is for failed spawn preparation before any runner
     can observe or act on the row. It is not a user-facing delete/archive path.
@@ -417,7 +398,6 @@ def update_spawn(
     task_cwd: str | None = None,
     execution_cwd: str | None = None,
     claude_config_dir: str | None = None,
-    error: str | None = None,
     desc: str | None = None,
     work_id: str | None = None,
     launch_policy_snapshot: LaunchPolicySnapshot | None = None,
@@ -460,8 +440,6 @@ def update_spawn(
             updates["execution_cwd"] = execution_cwd
         if claude_config_dir is not None:
             updates["claude_config_dir"] = claude_config_dir
-        if error is not None:
-            updates["error"] = error
         if desc is not None:
             updates["desc"] = desc
         if work_id is not None:
@@ -470,14 +448,13 @@ def update_spawn(
             updates["launch_policy_snapshot"] = launch_policy_snapshot
         return current.model_copy(update=updates)
 
-    try:
-        record = _write_state_locked(
-            paths.spawns_dir,
-            str(spawn_id),
-            merge,
-            allow_terminal_overwrite=True,
-        )
-    except FileNotFoundError:
+    outcome = _write_state_locked(
+        paths.spawns_dir,
+        str(spawn_id),
+        merge,
+        allow_terminal_overwrite=True,
+    )
+    if not isinstance(outcome, Applied):
         return
     from meridian.lib.core.telemetry import (
         LifecycleEvent,
@@ -485,6 +462,7 @@ def update_spawn(
         notify_observers,
     )
 
+    record = outcome.after
     notify_observers(
         LifecycleEvent(
             event="spawn.updated",
@@ -505,7 +483,6 @@ def update_spawn(
                 "task_cwd": task_cwd,
                 "execution_cwd": execution_cwd,
                 "claude_config_dir": claude_config_dir,
-                "error": error,
                 "desc": desc,
                 "work_id": work_id,
             },
@@ -533,15 +510,13 @@ def record_spawn_exited(
             exited_at=exited_at or resolved_clock.utc_now_iso(),
         )
 
-    try:
-        return _write_state_locked(
-            paths.spawns_dir,
-            str(spawn_id),
-            merge_exit,
-            allow_terminal_overwrite=True,
-        )
-    except FileNotFoundError:
-        return None
+    outcome = _write_state_locked(
+        paths.spawns_dir,
+        str(spawn_id),
+        merge_exit,
+        allow_terminal_overwrite=True,
+    )
+    return outcome.after if isinstance(outcome, Applied) else None
 
 
 def record_runner_exit(
@@ -556,20 +531,13 @@ def record_runner_exit(
 ) -> SpawnRecord | None:
     """Record runner-resolved terminal intent before finalization."""
 
-    if not _is_terminal_spawn_status(status):
-        raise ValueError(f"runner exit status must be terminal, got {status!r}")
-
     resolved_clock = clock or RealClock()
     paths = RuntimePaths.from_root_dir(runtime_root)
     resolved_exited_at = exited_at or resolved_clock.utc_now_iso()
 
-    class _RunnerExitSkipped(Exception):
-        def __init__(self, snapshot: SpawnRecord | None) -> None:
-            self.snapshot = snapshot
-
-    def merge_exit(current: SpawnRecord) -> SpawnRecord:
+    def merge_exit(current: SpawnRecord) -> SpawnRecord | Decline:
         if not is_active_spawn_status(current.status):
-            raise _RunnerExitSkipped(current)
+            return Decline("spawn is not active")
         return apply_runner_exit(
             current,
             status=status,
@@ -578,18 +546,12 @@ def record_runner_exit(
             exited_at=resolved_exited_at,
         )
 
-    if _read_state(paths.spawns_dir, str(spawn_id)) is None:
-        return None
-    try:
-        return _write_state_locked(
-            paths.spawns_dir,
-            str(spawn_id),
-            merge_exit,
-        )
-    except FileNotFoundError:
-        return None
-    except _RunnerExitSkipped:
-        return None
+    outcome = _write_state_locked(
+        paths.spawns_dir,
+        str(spawn_id),
+        merge_exit,
+    )
+    return outcome.after if isinstance(outcome, Applied) else None
 
 
 def record_cancel_intent(
@@ -601,8 +563,8 @@ def record_cancel_intent(
     requested_by: str = "user",
     requested_at: str | None = None,
     clock: Clock | None = None,
-) -> SpawnRecord | None:
-    """Record a durable spawn-level cancellation request under the spawn lock."""
+) -> LockedMutationResult:
+    """Return the outcome of recording a durable spawn-level cancellation request."""
 
     if requested_by not in {"user", "system"}:
         raise ValueError(f"cancel requested_by must be 'user' or 'system', got {requested_by!r}")
@@ -616,29 +578,16 @@ def record_cancel_intent(
     )
     paths = RuntimePaths.from_root_dir(runtime_root)
 
-    class _CancelIntentSkipped(Exception):
-        def __init__(self, snapshot: SpawnRecord) -> None:
-            self.snapshot = snapshot
-
-    def merge_intent(current: SpawnRecord) -> SpawnRecord:
-        if not is_active_spawn_status(current.status):
-            raise _CancelIntentSkipped(current)
+    def merge_intent(current: SpawnRecord) -> SpawnRecord | Decline:
         return apply_cancel_intent(current, intent=intent)
 
-    if _read_state(paths.spawns_dir, str(spawn_id)) is None:
-        return None
-    try:
-        return _write_state_locked(paths.spawns_dir, str(spawn_id), merge_intent)
-    except FileNotFoundError:
-        return None
-    except _CancelIntentSkipped as exc:
-        return exc.snapshot
+    return _write_state_locked(paths.spawns_dir, str(spawn_id), merge_intent)
 
 
 def finalize_spawn(
     runtime_root: Path,
     spawn_id: SpawnId | str,
-    status: SpawnStatus,
+    status: TerminalSpawnStatus,
     exit_code: int,
     *,
     origin: SpawnOrigin,
@@ -647,45 +596,27 @@ def finalize_spawn(
     finished_at: str | None = None,
     error: str | None = None,
     clock: Clock | None = None,
-) -> FinalizeOutcome:
-    """Finalize a spawn state and return write/transition details.
-
-    Writes only when the terminal write policy accepts the incoming finalize.
-    ``outcome.transitioned`` is True when the spawn was active (queued,
-    running, or finalizing) before this call, meaning this writer is the one
-    that moved it to a terminal state. It is False when the spawn was already
-    terminal or does not exist. Authoritative finalize events may still write
-    and replace a reconciler terminal tuple; callers should use
-    ``outcome.wrote`` and ``outcome.snapshot`` for post-write event emission.
-    """
+) -> LockedMutationResult:
+    """Finalize under the lock when terminal authority accepts the transition."""
     resolved_clock = clock or RealClock()
     paths = RuntimePaths.from_root_dir(runtime_root)
 
-    class _FinalizeRejected(Exception):
-        def __init__(self, snapshot: SpawnRecord) -> None:
-            self.snapshot = snapshot
-
-    was_active = False
-
-    def finalize(current: SpawnRecord) -> SpawnRecord:
-        nonlocal was_active
-        decision = decide_terminal_write(
-            current_status=current.status,
-            current_terminal_origin=current.terminal_origin,
-            incoming_origin=origin,
+    def finalize(current: SpawnRecord) -> SpawnRecord | Decline:
+        current_origin = current.terminal.origin if current.terminal is not None else None
+        can_replace_reconciliation = (
+            current_origin == "reconciler" and origin in AUTHORITATIVE_ORIGINS
         )
-        if decision.disposition == "reject":
+        if not is_active_spawn_status(current.status) and not can_replace_reconciliation:
             logger.info(
                 "Finalize rejected by terminal write policy.",
                 spawn_id=str(spawn_id),
                 current_status=current.status,
-                current_terminal_origin=current.terminal_origin,
+                current_terminal_origin=current_origin,
                 attempted_status=status,
                 attempted_origin=origin,
                 attempted_error=error,
             )
-            raise _FinalizeRejected(current)
-        was_active = is_active_spawn_status(current.status)
+            return Decline("terminal write policy rejected finalize")
         published_at = resolved_clock.utc_now_iso()
         return apply_finalize(
             current,
@@ -699,67 +630,28 @@ def finalize_spawn(
             error=error,
         )
 
-    record = _read_state(paths.spawns_dir, str(spawn_id))
-    if record is None:
-        decide_terminal_write(
-            current_status=None,
-            current_terminal_origin=None,
-            incoming_origin=origin,
-        )
-        return FinalizeOutcome(transitioned=False, wrote=False, snapshot=None)
-    try:
-        committed = _write_state_locked(
-            paths.spawns_dir,
-            str(spawn_id),
-            finalize,
-            allow_terminal_overwrite=True,
-        )
-    except _FinalizeRejected as exc:
-        return FinalizeOutcome(transitioned=False, wrote=False, snapshot=exc.snapshot)
-    return FinalizeOutcome(
-        transitioned=was_active,
-        wrote=True,
-        snapshot=committed,
+    return _write_state_locked(
+        paths.spawns_dir,
+        str(spawn_id),
+        finalize,
+        allow_terminal_overwrite=True,
     )
 
 
 def mark_finalizing(
     runtime_root: Path,
     spawn_id: SpawnId | str,
-) -> bool:
-    """CAS transition `running -> finalizing` under the per-spawn lock."""
-
-    transitioned, _snapshot = mark_finalizing_with_snapshot(
-        runtime_root,
-        spawn_id,
-    )
-    return transitioned
-
-
-def mark_finalizing_with_snapshot(
-    runtime_root: Path,
-    spawn_id: SpawnId | str,
-) -> tuple[bool, SpawnRecord | None]:
-    """CAS transition running -> finalizing and return the post-write projection."""
+) -> LockedMutationResult:
+    """CAS transition running -> finalizing under the per-spawn lock."""
 
     paths = RuntimePaths.from_root_dir(runtime_root)
 
-    class _NoTransition(Exception):
-        def __init__(self, snapshot: SpawnRecord | None) -> None:
-            self.snapshot = snapshot
-
-    def transition(current: SpawnRecord) -> SpawnRecord:
+    def transition(current: SpawnRecord) -> SpawnRecord | Decline:
         if current.status != "running":
-            raise _NoTransition(current)
+            return Decline("spawn is not running")
         return apply_mark_finalizing(current)
 
-    if _read_state(paths.spawns_dir, str(spawn_id)) is None:
-        return False, None
-    try:
-        committed = _write_state_locked(paths.spawns_dir, str(spawn_id), transition)
-    except _NoTransition as exc:
-        return False, exc.snapshot
-    return True, committed
+    return _write_state_locked(paths.spawns_dir, str(spawn_id), transition)
 
 
 def mark_spawn_running(
@@ -770,45 +662,18 @@ def mark_spawn_running(
     worker_pid: int | None = None,
     runner_pid: int | None = None,
     runner_created_at_epoch: float | None = None,
-) -> bool:
-    changed, _snapshot = mark_spawn_running_with_snapshot(
-        runtime_root,
-        spawn_id,
-        launch_mode=launch_mode,
-        worker_pid=worker_pid,
-        runner_pid=runner_pid,
-        runner_created_at_epoch=runner_created_at_epoch,
-    )
-    return changed
-
-
-def mark_spawn_running_with_snapshot(
-    runtime_root: Path,
-    spawn_id: SpawnId | str,
-    *,
-    launch_mode: LaunchMode | None = None,
-    worker_pid: int | None = None,
-    runner_pid: int | None = None,
-    runner_created_at_epoch: float | None = None,
-) -> tuple[bool, SpawnRecord | None]:
-    """Mark a spawn running and return the post-write projection without rereading."""
+) -> LockedMutationResult:
+    """Mark a spawn running under the per-spawn lock."""
 
     paths = RuntimePaths.from_root_dir(runtime_root)
 
-    changed = False
     resolved_runner_created_at_epoch = runner_created_at_epoch
     if runner_pid is not None and resolved_runner_created_at_epoch is None:
         resolved_runner_created_at_epoch = _runner_created_at_epoch_for_pid(runner_pid)
 
-    class _NoTransition(Exception):
-        def __init__(self, snapshot: SpawnRecord) -> None:
-            self.snapshot = snapshot
-
-    def merge(current: SpawnRecord) -> SpawnRecord:
-        nonlocal changed
+    def mark_running(current: SpawnRecord) -> SpawnRecord | Decline:
         if not is_active_spawn_status(current.status):
-            raise _NoTransition(current)
-        changed = current.status != "running"
+            return Decline("spawn is not active")
         return apply_mark_running(
             current,
             launch_mode=launch_mode,
@@ -817,13 +682,7 @@ def mark_spawn_running_with_snapshot(
             runner_created_at_epoch=resolved_runner_created_at_epoch,
         )
 
-    try:
-        committed = _write_state_locked(paths.spawns_dir, str(spawn_id), merge)
-    except FileNotFoundError:
-        return False, None
-    except _NoTransition as exc:
-        return False, exc.snapshot
-    return changed, committed
+    return _write_state_locked(paths.spawns_dir, str(spawn_id), mark_running)
 
 
 def _spawn_sort_key(spawn: SpawnRecord) -> tuple[int, str]:
@@ -832,54 +691,48 @@ def _spawn_sort_key(spawn: SpawnRecord) -> tuple[int, str]:
     return (10**9, spawn.id)
 
 
-def _apply_spawn_filters(
-    spawns: list[SpawnRecord],
-    filters: Mapping[str, Any],
-) -> list[SpawnRecord]:
-    filtered: list[SpawnRecord] = []
-    for spawn in spawns:
-        spawn_data = spawn.model_dump()
-        keep = True
-        for key, expected in filters.items():
-            if expected is None:
-                continue
-            if key == "owner_chat_id":
-                from meridian.lib.state.session_identity import spawn_owner_chat_id
+@dataclass(frozen=True)
+class SpawnScan:
+    """Immutable partition of valid rows and quarantined persisted siblings."""
 
-                if spawn_owner_chat_id(spawn) != expected:
-                    keep = False
-                    break
-                continue
-            if key not in spawn_data:
-                continue
-            if spawn_data[key] != expected:
-                keep = False
-                break
-        if keep:
-            filtered.append(spawn)
-    return filtered
+    records: tuple[SpawnRecord, ...]
+    quarantines: tuple[SpawnStateQuarantineReport, ...]
 
 
 def list_spawns(
     runtime_root: Path,
-    filters: Mapping[str, Any] | None = None,
-) -> list[SpawnRecord]:
-    """List v2 spawn records with optional equality filters."""
+    *,
+    chat_id: str | None = None,
+    owner_chat_id: str | None = None,
+    parent_id: str | None = None,
+    work_id: str | None = None,
+) -> SpawnScan:
+    """Partition valid persisted rows from structured quarantine reports."""
 
     paths = RuntimePaths.from_root_dir(runtime_root)
     spawns: list[SpawnRecord] = []
+    quarantines: list[SpawnStateQuarantineReport] = []
     for spawn_id in _scan_spawn_ids(paths.spawns_dir):
         try:
             record = _read_state(paths.spawns_dir, spawn_id, include_prompt=False)
-        except ValidationError:
+        except SpawnStateQuarantined as exc:
+            quarantines.append(exc.report)
             continue
         if record is not None:
             spawns.append(record)
 
-    if filters:
-        spawns = _apply_spawn_filters(spawns, filters)
+    if owner_chat_id is not None:
+        from meridian.lib.state.session_identity import spawn_owner_chat_id
 
-    return sorted(spawns, key=_spawn_sort_key)
+        spawns = [spawn for spawn in spawns if spawn_owner_chat_id(spawn) == owner_chat_id]
+    if chat_id is not None:
+        spawns = [spawn for spawn in spawns if spawn.chat_id == chat_id]
+    if parent_id is not None:
+        spawns = [spawn for spawn in spawns if spawn.parent_id == parent_id]
+    if work_id is not None:
+        spawns = [spawn for spawn in spawns if spawn.work_id == work_id]
+
+    return SpawnScan(tuple(sorted(spawns, key=_spawn_sort_key)), tuple(quarantines))
 
 
 def get_spawn(
@@ -893,40 +746,3 @@ def get_spawn(
 
     paths = RuntimePaths.from_root_dir(runtime_root)
     return _read_state(paths.spawns_dir, str(spawn_id))
-
-
-def spawn_stats(
-    runtime_root: Path,
-) -> dict[str, Any]:
-    """Aggregate high-level spawn stats from v2 state records."""
-
-    spawns = list_spawns(runtime_root)
-    by_status: dict[str, int] = {}
-    by_model: dict[str, int] = {}
-    total_duration_secs = 0.0
-    total_cost_usd = 0.0
-    total_input_tokens = 0
-    total_output_tokens = 0
-
-    for spawn in spawns:
-        by_status[spawn.status] = by_status.get(spawn.status, 0) + 1
-        if spawn.model is not None:
-            by_model[spawn.model] = by_model.get(spawn.model, 0) + 1
-        if spawn.duration_secs is not None:
-            total_duration_secs += spawn.duration_secs
-        if spawn.total_cost_usd is not None:
-            total_cost_usd += spawn.total_cost_usd
-        if spawn.input_tokens is not None:
-            total_input_tokens += spawn.input_tokens
-        if spawn.output_tokens is not None:
-            total_output_tokens += spawn.output_tokens
-
-    return {
-        "total_runs": len(spawns),
-        "by_status": by_status,
-        "by_model": by_model,
-        "total_duration_secs": total_duration_secs,
-        "total_cost_usd": total_cost_usd,
-        "total_input_tokens": total_input_tokens,
-        "total_output_tokens": total_output_tokens,
-    }

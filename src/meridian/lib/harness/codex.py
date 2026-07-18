@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import ClassVar, cast
 from uuid import uuid4
 
-from meridian.lib.core.domain import TokenUsage
+from meridian.lib.core.domain import SpawnStatus, TokenUsage
 from meridian.lib.core.types import HarnessId, SpawnId, TransportId
 from meridian.lib.harness.adapter import (
     ApprovalContract,
@@ -46,11 +46,13 @@ from meridian.lib.harness.codex_rollout import (
 )
 from meridian.lib.harness.common import (
     extract_codex_report,
+    extract_codex_thread_id,
     extract_session_id_from_artifacts_with_patterns,
 )
 from meridian.lib.harness.connections.base import (
     PrimaryRuntimeEventSurface,
     PrimaryRuntimeRequestPolicy,
+    RawHarnessEvent,
 )
 from meridian.lib.harness.connections.codex_ws import CodexConnection
 from meridian.lib.harness.extractors.codex import CODEX_EXTRACTOR
@@ -60,6 +62,14 @@ from meridian.lib.harness.projections.project_codex_streaming import (
 )
 from meridian.lib.harness.projections.project_codex_subprocess import (
     project_codex_spec_to_cli_args,
+)
+from meridian.lib.harness.semantics import (
+    MERIDIAN_CONNECTION_CLOSED_EVENT,
+    EventSemantics,
+    HarnessSemantics,
+    TerminalEventOutcome,
+    TerminalOutcomeCause,
+    connection_closed_outcome,
 )
 from meridian.lib.launch.composition import (
     ComposedLaunchContent,
@@ -521,6 +531,30 @@ class CodexAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         return extract_codex_report(artifacts, spawn_id)
 
 
+def _resolve_codex_terminal(event: RawHarnessEvent) -> TerminalEventOutcome | None:
+    if event.event_type == MERIDIAN_CONNECTION_CLOSED_EVENT:
+        return connection_closed_outcome(
+            event,
+            cause=TerminalOutcomeCause.REPLACEABLE_TRANSPORT_CLOSE,
+        )
+    return None
+
+
+CODEX_SEMANTICS = HarnessSemantics(
+    events={
+        "turn/started": EventSemantics(activity="turn_active"),
+        "turn/completed": EventSemantics(
+            activity="idle",
+            clears_signal=True,
+            terminal=TerminalEventOutcome(status=SpawnStatus.SUCCEEDED, exit_code=0),
+        ),
+        MERIDIAN_CONNECTION_CLOSED_EVENT: EventSemantics(),
+    },
+    payload_resolvers={MERIDIAN_CONNECTION_CLOSED_EVENT: _resolve_codex_terminal},
+    scoped_events=frozenset({"turn/started", "turn/completed"}),
+    scope_id_resolver=extract_codex_thread_id,
+)
+
 register_harness_bundle(
     HarnessBundle(
         harness_id=HarnessId.CODEX,
@@ -535,5 +569,6 @@ register_harness_bundle(
                 bootstrap_payload=project_codex_spec_to_thread_request_for_project,
             ),
         ),
+        semantics=CODEX_SEMANTICS,
     )
 )

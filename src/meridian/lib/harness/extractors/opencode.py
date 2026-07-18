@@ -19,7 +19,7 @@ from meridian.lib.harness.common import (
     coerce_optional_float,
     extract_usage_from_artifacts,
 )
-from meridian.lib.harness.connections.base import HarnessEvent
+from meridian.lib.harness.connections.base import RawHarnessEvent
 from meridian.lib.harness.opencode_report import (
     extract_opencode_report,
     extract_opencode_session_id_from_artifacts,
@@ -135,7 +135,7 @@ def _latest_spawn_start_epoch(*, runtime_root: Path, child_cwd: Path) -> float |
     latest_matching_child: float | None = None
 
     try:
-        spawns = spawn_store.list_spawns(runtime_root)
+        spawns = spawn_store.list_spawns(runtime_root).records
     except OSError:
         return None
 
@@ -259,7 +259,7 @@ def _detect_storage_session_id(
 class OpenCodeHarnessExtractor(HarnessExtractor[ResolvedLaunchSpec]):
     """Extractor implementation for OpenCode artifacts and events."""
 
-    def detect_session_id_from_event(self, event: HarnessEvent) -> str | None:
+    def detect_session_id_from_event(self, event: RawHarnessEvent) -> str | None:
         return session_from_mapping_with_keys(
             event.payload,
             ("session_id", "sessionId", "sessionID", "id"),

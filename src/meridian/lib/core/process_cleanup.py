@@ -380,7 +380,7 @@ def reclaim_session_owned_scopes_for_chat(
     """
     from meridian.lib.state.spawn_store import list_spawns
 
-    spawns = list_spawns(runtime_root, filters={"chat_id": chat_id})
+    spawns = list_spawns(runtime_root, chat_id=chat_id).records
     results: list[CleanupResult] = []
     for record in spawns:
         spawn_id = SpawnId(record.id)

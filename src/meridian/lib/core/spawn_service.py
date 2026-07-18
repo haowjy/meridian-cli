@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, Literal, cast
 import structlog
 
 from meridian.lib.catalog.model_aliases import MarsResultCache
-from meridian.lib.core.domain import SpawnStatus, TokenUsage
+from meridian.lib.core.domain import SpawnStatus, TerminalSpawnStatus, TokenUsage
 from meridian.lib.core.lifecycle import SpawnLifecycleService
 from meridian.lib.core.spawn_lifecycle import (
     ExecutionTerminalFacts,
@@ -54,13 +54,13 @@ from meridian.lib.launch.types import PrimarySessionMetadata
 from meridian.lib.state import spawn_store
 from meridian.lib.state.liveness import is_process_alive
 from meridian.lib.state.paths import RuntimePaths
-from meridian.lib.state.spawn.model import APP_LAUNCH_MODE, LaunchMode, SpawnOrigin
+from meridian.lib.state.spawn.model import APP_LAUNCH_MODE, LaunchMode, SpawnKind, SpawnOrigin
+from meridian.lib.state.spawn.repository import Applied, Declined
 from meridian.lib.state.spawn_report import spawn_report_has_durable_completion
 from meridian.lib.state.timestamps import iso_timestamp_to_epoch
 from meridian.lib.streaming.signal_canceller import CancelOutcome as SignalCancelOutcome
 
 if TYPE_CHECKING:
-    from meridian.lib.core.lifecycle import TerminalStatus
     from meridian.lib.harness.registry import HarnessRegistry
     from meridian.lib.observability.debug_tracer import DebugTracer
     from meridian.lib.state.primary_meta import PrimaryMetadata
@@ -173,12 +173,12 @@ class PrepareSpawnRequest:
     harness_registry: HarnessRegistry
     chat_id: str | None = None
     parent_id: str | None = None
-    kind: str = "child"
+    kind: SpawnKind = "child"
     desc: str | None = None
     work_id: str | None = None
     launch_mode: LaunchMode | None = None
     runner_pid: int | None = None
-    initial_status: SpawnStatus = "queued"
+    initial_status: SpawnStatus = SpawnStatus.QUEUED
     debug_tracer: DebugTracer | None = None
 
 
@@ -491,12 +491,12 @@ class SpawnApplicationService:
         harness_registry: HarnessRegistry,
         chat_id: str | None = None,
         parent_id: str | None = None,
-        kind: str = "child",
+        kind: SpawnKind = "child",
         desc: str | None = None,
         work_id: str | None = None,
         launch_mode: LaunchMode | None = None,
         runner_pid: int | None = None,
-        initial_status: SpawnStatus = "queued",
+        initial_status: SpawnStatus = SpawnStatus.QUEUED,
         debug_tracer: DebugTracer | None = None,
     ) -> PreparedSpawn:
         """Compatibility wrapper over the typed ``prepare`` request API."""
@@ -663,7 +663,7 @@ class SpawnApplicationService:
         record: SpawnRecord,
     ) -> None:
         """Best-effort cleanup for terminal managed orphan-primary spawns."""
-        if record.error != "orphan_primary":
+        if record.terminal is None or record.terminal.error != "orphan_primary":
             return
 
         from meridian.lib.state.managed_primary import terminate_managed_primary_processes
@@ -806,10 +806,10 @@ class SpawnApplicationService:
     async def complete_spawn(
         self,
         spawn_id: SpawnId,
-        status: str,
+        status: TerminalSpawnStatus,
         exit_code: int,
         *,
-        origin: str,
+        origin: SpawnOrigin,
         duration_secs: float | None = None,
         usage: TokenUsage | None = None,
         error: str | None = None,
@@ -836,7 +836,7 @@ class SpawnApplicationService:
         spawn_id: SpawnId,
         facts: ExecutionTerminalFacts,
         *,
-        origin: str,
+        origin: SpawnOrigin,
         duration_secs: float | None = None,
         usage: TokenUsage | None = None,
     ) -> CompleteExecutionOutcome:
@@ -873,10 +873,10 @@ class SpawnApplicationService:
     async def _complete_spawn_unlocked(
         self,
         spawn_id: SpawnId,
-        status: str,
+        status: TerminalSpawnStatus,
         exit_code: int,
         *,
-        origin: str,
+        origin: SpawnOrigin,
         duration_secs: float | None = None,
         usage: TokenUsage | None = None,
         error: str | None = None,
@@ -892,12 +892,11 @@ class SpawnApplicationService:
                 spawn_id=spawn_id,
             )
         was_terminal = self.is_terminal(record.status)
-        if not was_terminal and self.is_terminal(status):
-            terminal_status = cast("TerminalStatus", status)
+        if not was_terminal:
             await asyncio.to_thread(
                 self._lifecycle.record_runner_exit,
                 str(spawn_id),
-                status=terminal_status,
+                status=status,
                 exit_code=exit_code,
                 error=error,
             )
@@ -910,14 +909,14 @@ class SpawnApplicationService:
 
         outcome = self._lifecycle.finalize(
             str(spawn_id),
-            cast("SpawnStatus", status),
+            status,
             exit_code,
-            origin=cast("SpawnOrigin", origin),
+            origin=origin,
             duration_secs=duration_secs,
             usage=usage,
             error=error,
         )
-        if outcome.wrote:
+        if isinstance(outcome, Applied):
             from meridian.lib.state.process_scope_projection import (
                 mark_scope_released,
                 read_scopes_from_disk,
@@ -928,11 +927,21 @@ class SpawnApplicationService:
                 if scope.owner_policy == "spawn_owned":
                     mark_scope_released(self._runtime_root, spawn_id, scope.release_id)
         return CompleteSpawnOutcome(
-            wrote=outcome.wrote,
-            transitioned=outcome.transitioned,
+            wrote=isinstance(outcome, Applied),
+            transitioned=(
+                isinstance(outcome, Applied)
+                and not self.is_terminal(outcome.before.status)
+                and self.is_terminal(outcome.after.status)
+            ),
             entered_finalizing=entered_finalizing,
             already_terminal=was_terminal,
-            snapshot=outcome.snapshot,
+            snapshot=(
+                outcome.after
+                if isinstance(outcome, Applied)
+                else outcome.snapshot
+                if isinstance(outcome, Declined)
+                else None
+            ),
             spawn_id=spawn_id,
         )
 
@@ -988,7 +997,6 @@ class SpawnApplicationService:
         desc: str | None = None,
         work_id: str | None = None,
         harness_session_id: str | None = None,
-        error: str | None = None,
     ) -> None:
         """Update spawn metadata and emit spawn.updated.
 
@@ -1008,7 +1016,6 @@ class SpawnApplicationService:
                 desc,
                 work_id,
                 harness_session_id,
-                error,
             )
         ):
             return
@@ -1022,7 +1029,6 @@ class SpawnApplicationService:
             desc=desc,
             work_id=work_id,
             harness_session_id=harness_session_id,
-            error=error,
         )
 
 
@@ -1050,11 +1056,18 @@ def _cancel_outcome_from_record(
     already_terminal: bool = False,
     finalizing: bool = False,
 ) -> CancelOutcome:
+    terminal = record.terminal
+    if terminal is not None:
+        origin = terminal.origin
+        exit_code = terminal.exit_code
+    else:
+        origin = "cancel"
+        exit_code = record.cancel_intent.exit_code if record.cancel_intent is not None else 130
     return CancelOutcome(
         spawn_id=spawn_id,
         status=_coerce_cancel_status(record.status),
-        origin=record.terminal_origin or "cancel",
-        exit_code=record.exit_code if record.exit_code is not None else 1,
+        origin=origin,
+        exit_code=exit_code,
         already_terminal=already_terminal,
         finalizing=finalizing,
         model=record.model,

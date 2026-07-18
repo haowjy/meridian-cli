@@ -1,5 +1,7 @@
+import { Type, type Static } from "typebox";
+import { Value } from "typebox/value";
+
 export type BashStatus = "running" | "exited" | "killed" | "timed_out";
-export type SpawnStatus = "running" | "succeeded" | "failed" | "cancelled" | "timed_out" | "unknown";
 
 export type BashRecord = {
   bash_id: string;
@@ -41,23 +43,34 @@ export type ObservedSpawnsFile = {
   waiting_spawn_ids?: string[];
 };
 
-export type SpawnStateFile = {
-  id: string;
-  parent_id?: string | null;
-  model?: string | null;
-  agent?: string | null;
-  status?: SpawnStatus | string;
-  started_at?: string | null;
-  finished_at?: string | null;
-  duration_secs?: number | null;
-  total_cost_usd?: number | null;
-  originating_bash_id?: string | null;
-};
+export const SpawnStateFileSchema = Type.Object({
+  id: Type.String(),
+  parent_id: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+  model: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+  agent: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+  status: Type.String(),
+  started_at: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+  terminal: Type.Union([
+    Type.Object({
+      // Terminal status lives ONLY at the top level; `terminal` presence is
+      // the completion discriminant. Vocabulary is owned by Meridian, not Pi.
+      exit_code: Type.Number(),
+      finished_at: Type.String(),
+      published_at: Type.String(),
+      duration_secs: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
+      total_cost_usd: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
+    }, { additionalProperties: false }),
+    Type.Null(),
+  ]),
+  originating_bash_id: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+});
+
+export type SpawnStateFile = Static<typeof SpawnStateFileSchema>;
+
+export function parseSpawnStateFile(value: unknown): SpawnStateFile | null {
+  return Value.Check(SpawnStateFileSchema, value) ? value : null;
+}
 
 export function isTerminalBashStatus(status: string | undefined | null): boolean {
   return status === "exited" || status === "killed" || status === "timed_out";
-}
-
-export function isTerminalSpawnStatus(status: string | undefined | null): boolean {
-  return status === "succeeded" || status === "failed" || status === "cancelled" || status === "timed_out";
 }

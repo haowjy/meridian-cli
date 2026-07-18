@@ -16,7 +16,7 @@ from meridian.lib.bootstrap.services import RuntimeWriteContext, prepare_for_run
 from meridian.lib.config.project_paths import resolve_project_config_paths
 from meridian.lib.core.context import RuntimeContext
 from meridian.lib.core.domain import Spawn, SpawnStatus
-from meridian.lib.core.types import ModelId, SpawnId
+from meridian.lib.core.types import HarnessSessionId, ModelId, SpawnId
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.launch.request import LaunchRuntime, SpawnRequest
 from meridian.lib.state import spawn_store
@@ -82,14 +82,14 @@ def _cleanup_background_runtime_artifacts(log_dir: Path) -> None:
 
 def _record_launch_boundary_observation(
     runtime_root: Path,
-    spawn_id: str,
+    spawn_id: SpawnId,
     *,
     event: str,
     stage: str | None = None,
     parent_pid: int | None = None,
     launcher_pid: int | None = None,
     worker_pid: int | None = None,
-    harness_session_id: str | None = None,
+    harness_session_id: HarnessSessionId | None = None,
     command: tuple[str, ...] | None = None,
     cwd: str | None = None,
     error: str | None = None,
@@ -140,7 +140,7 @@ def _load_bg_worker_request(log_dir: Path) -> BackgroundWorkerLaunchRequest:
 
 def _build_background_worker_command(
     *,
-    spawn_id: str,
+    spawn_id: SpawnId,
     project_paths: Any,
 ) -> tuple[str, ...]:
     return (
@@ -148,7 +148,7 @@ def _build_background_worker_command(
         "-m",
         "meridian.lib.ops.spawn.execute_bg",
         "--spawn-id",
-        spawn_id,
+        str(spawn_id),
         "--project-root",
         project_paths.project_root.as_posix(),
     )
@@ -185,7 +185,7 @@ async def _execute_existing_spawn(
 
     _record_launch_boundary_observation(
         runtime_root,
-        str(spawn_id),
+        spawn_id,
         event=EVENT_WORKER_BOOT,
         stage="worker_boot",
         launcher_pid=(
@@ -204,7 +204,7 @@ async def _execute_existing_spawn(
     if not resolved_prompt:
         _record_launch_boundary_observation(
             runtime_root,
-            str(spawn_id),
+            spawn_id,
             event=EVENT_WORKER_FAILURE,
             stage="validate_request",
             worker_pid=os.getpid(),
@@ -220,7 +220,7 @@ async def _execute_existing_spawn(
     if not resolved_harness_id:
         _record_launch_boundary_observation(
             runtime_root,
-            str(spawn_id),
+            spawn_id,
             event=EVENT_WORKER_FAILURE,
             stage="validate_request",
             worker_pid=os.getpid(),
@@ -236,14 +236,14 @@ async def _execute_existing_spawn(
 
     _record_launch_boundary_observation(
         runtime_root,
-        str(spawn_id),
+        spawn_id,
         event=EVENT_WORKER_REQUEST_LOADED,
         stage="request_loaded",
         worker_pid=os.getpid(),
     )
 
     spawn_status: SpawnStatus = (
-        spawn_record.status if spawn_record.status != "unknown" else "queued"
+        spawn_record.status if spawn_record.status != "unknown" else SpawnStatus.QUEUED
     )
     spawn = Spawn(
         spawn_id=SpawnId(spawn_record.id),
@@ -260,7 +260,7 @@ async def _execute_existing_spawn(
 
     _record_launch_boundary_observation(
         runtime_root,
-        str(spawn_id),
+        spawn_id,
         event=EVENT_WORKER_TAKEOVER_STARTED,
         stage="launch_prepared_spawn",
         worker_pid=os.getpid(),
@@ -286,11 +286,11 @@ async def _execute_existing_spawn(
         work_id=spawn_record.work_id,
         harness_session_id_observer=lambda session_id: _record_launch_boundary_observation(
             runtime_root,
-            str(spawn_id),
+            spawn_id,
             event=EVENT_HARNESS_SESSION_OBSERVED,
             stage="session_observed",
             worker_pid=os.getpid(),
-            harness_session_id=session_id,
+            harness_session_id=HarnessSessionId(session_id),
         ),
         debug=runtime_request.debug,
         ctx=resolved_context,
@@ -340,7 +340,7 @@ def _background_worker_main(
             error = f"Failed to load background worker request: {exc}"
             _record_launch_boundary_observation(
                 runtime_root,
-                str(spawn_id),
+                spawn_id,
                 event=EVENT_WORKER_FAILURE,
                 stage="load_worker_request",
                 worker_pid=os.getpid(),
@@ -373,7 +373,7 @@ def _background_worker_main(
     except Exception as exc:
         _record_launch_boundary_observation(
             runtime_root,
-            str(spawn_id),
+            spawn_id,
             event=EVENT_WORKER_FAILURE,
             stage="worker_backstop",
             worker_pid=os.getpid(),

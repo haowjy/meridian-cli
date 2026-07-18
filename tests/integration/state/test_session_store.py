@@ -89,6 +89,52 @@ def _write_session_start(
         )
 
 
+def test_persisted_session_identities_are_normalized_at_parse(tmp_path: Path) -> None:
+    runtime_root = _state_root(tmp_path)
+    _write_session_start(
+        runtime_root=runtime_root,
+        chat_id="  c1  ",
+        session_instance_id="instance-1",
+    )
+
+    records = session_store.list_all_session_records(runtime_root)
+
+    assert len(records) == 1
+    assert records[0].chat_id == "c1"
+    assert records[0].harness_session_id == "c1  -thread"
+
+
+@pytest.mark.parametrize("field", ["chat_id", "harness_session_id"])
+@pytest.mark.parametrize("invalid_identity", [123, [], {}])
+def test_malformed_session_identity_does_not_abort_sibling_event_reads(
+    tmp_path: Path,
+    field: str,
+    invalid_identity: object,
+) -> None:
+    runtime_root = _state_root(tmp_path)
+    malformed = {
+        "v": 1,
+        "event": "start",
+        "chat_id": "bad-chat",
+        "kind": "spawn",
+        "harness": "codex",
+        "harness_session_id": "bad-thread",
+        "model": "gpt-5.4",
+        "started_at": "2026-03-01T00:00:00Z",
+        field: invalid_identity,
+    }
+    (runtime_root / "sessions.jsonl").write_text(json.dumps(malformed) + "\n", encoding="utf-8")
+    _write_session_start(
+        runtime_root=runtime_root,
+        chat_id="c1",
+        session_instance_id="instance-1",
+    )
+
+    records = session_store.list_all_session_records(runtime_root)
+
+    assert [record.chat_id for record in records] == ["c1"]
+
+
 def test_start_session_does_not_append_start_event_when_lock_acquire_fails(
     tmp_path: Path,
 ) -> None:
@@ -433,7 +479,7 @@ def test_cleanup_repairs_torn_event_tail_before_retrying_stop(tmp_path: Path) ->
     assert not lease_path.exists()
 
 
-def test_empty_harness_session_id_flows_through_start_update_and_record(tmp_path: Path) -> None:
+def test_empty_harness_session_id_normalizes_to_none_before_update(tmp_path: Path) -> None:
     runtime_root = _state_root(tmp_path)
     chat_id = session_store.start_session(
         runtime_root,
@@ -448,7 +494,7 @@ def test_empty_harness_session_id_flows_through_start_update_and_record(tmp_path
         record = session_store.get_session_record(runtime_root, chat_id)
         assert record is not None
         assert record.harness_session_id == "resolved-thread"
-        assert record.harness_session_ids == ("", "resolved-thread")
+        assert record.harness_session_ids == ("resolved-thread",)
 
         rows = [
             json.loads(line)
@@ -456,7 +502,7 @@ def test_empty_harness_session_id_flows_through_start_update_and_record(tmp_path
             if line.strip()
         ]
         assert rows[0]["event"] == "start"
-        assert rows[0]["harness_session_id"] == ""
+        assert rows[0]["harness_session_id"] is None
         assert rows[1]["event"] == "update"
         assert rows[1]["harness_session_id"] == "resolved-thread"
     finally:
@@ -628,3 +674,30 @@ def test_records_by_session_ignores_mismatched_generation_stop_and_update(tmp_pa
     assert record.active_work_id == "work-1"
     assert record.forked_from_chat_id is None
     assert record.stopped_at is None
+
+
+def test_work_attachment_history_ignores_malformed_session_update(tmp_path: Path) -> None:
+    runtime_root = _state_root(tmp_path)
+    _write_session_start(
+        runtime_root=runtime_root,
+        chat_id="c1",
+        session_instance_id="gen-a",
+    )
+    with (runtime_root / "sessions.jsonl").open("a", encoding="utf-8") as handle:
+        handle.write(
+            json.dumps(
+                {
+                    "v": 1,
+                    "event": "update",
+                    "chat_id": "c1",
+                    "harness_session_id": [],
+                    "session_instance_id": "gen-a",
+                    "active_work_id": "work-1",
+                }
+            )
+            + "\n"
+        )
+
+    attached = session_store.chat_ids_ever_attached_to_work(runtime_root, "work-1")
+
+    assert attached == set()

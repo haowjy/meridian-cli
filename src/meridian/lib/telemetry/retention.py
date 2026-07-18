@@ -210,19 +210,24 @@ def _list_segments(
     # Pre-load spawn records once so liveness checks are O(1) per segment
     # instead of O(all_spawns) per segment.
     spawn_records: dict[str, SpawnRecord] | None = None
+    quarantined_spawn_ids: frozenset[str] = frozenset()
+    spawn_state_unreadable = False
     if runtime_root is not None:
         try:
             from meridian.lib.state import spawn_store
 
             records = spawn_store.list_spawns(runtime_root)
-            spawn_records = {r.id: r for r in records}
+            spawn_records = {r.id: r for r in records.records}
+            quarantined_spawn_ids = frozenset(report.spawn_id for report in records.quarantines)
         except Exception:
-            spawn_records = None
+            spawn_state_unreadable = True
 
     def _is_spawn_live(spawn_id: str) -> bool:
         """Check spawn liveness against pre-loaded records."""
+        if spawn_state_unreadable or spawn_id in quarantined_spawn_ids:
+            return True
         if spawn_records is None:
-            return False
+            return True
         record = spawn_records.get(spawn_id)
         if record is None:
             return False

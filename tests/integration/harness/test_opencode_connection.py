@@ -15,11 +15,11 @@ from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.connections import opencode_http
 from meridian.lib.harness.connections.base import (
     ConnectionConfig,
-    HarnessEvent,
+    RawHarnessEvent,
 )
 from meridian.lib.harness.connections.errors import PortBindError
 from meridian.lib.harness.connections.opencode_http import OpenCodeConnection
-from meridian.lib.harness.semantics import terminal_outcome
+from meridian.lib.harness.semantics import normalize_event
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.platform.detached_process import ParentDeathLink
 from meridian.lib.platform.process_scope import ProcessScopeSnapshot, ScopedProcessHandle
@@ -186,7 +186,7 @@ async def _no_sleep(_delay: float) -> None:
     return None
 
 
-async def _collect_opencode_events(connection: OpenCodeConnection) -> list[HarnessEvent]:
+async def _collect_opencode_events(connection: OpenCodeConnection) -> list[RawHarnessEvent]:
     return [event async for event in connection.events()]
 
 
@@ -203,7 +203,7 @@ async def _collect_events_under_fake_clock(
     *,
     advance_budget: float = 1.0,
     step: float = 0.01,
-) -> list[HarnessEvent]:
+) -> list[RawHarnessEvent]:
     determinism.install_on_running_loop(monkeypatch)
     task = asyncio.create_task(_collect_opencode_events(connection))
     advanced = 0.0
@@ -268,12 +268,12 @@ async def test_opencode_process_death_emits_terminal_outcome_with_exit_diagnosti
 
     assert [event.event_type for event in events] == [
         "session.updated",
-        "error/connectionClosed",
+        "meridian/error/connectionClosed",
     ]
-    outcome = terminal_outcome(
+    outcome = normalize_event(
         events[-1],
         primary_event_scope=connection.primary_event_scope,
-    )
+    ).semantics.terminal
     assert outcome is not None
     assert outcome.status == "failed"
     assert outcome.error == (

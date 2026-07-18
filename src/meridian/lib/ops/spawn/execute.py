@@ -14,6 +14,7 @@ import structlog
 from meridian.lib.bootstrap.services import build_spawn_lifecycle_service_from_roots
 from meridian.lib.config.project_paths import resolve_project_config_paths
 from meridian.lib.core.context import RuntimeContext
+from meridian.lib.core.domain import SpawnStatus
 from meridian.lib.launch.context import PreparedLaunchSurface
 from meridian.lib.launch.cwd import resolve_task_cwd
 from meridian.lib.launch.request import LaunchArgvIntent, SpawnRequest
@@ -233,7 +234,7 @@ def _reserve_then_prepare(
         request=request,
         desc=payload.desc,
         work_id=resolve_spawn_work_id(payload, request, ctx=resolved_context),
-        status="queued",
+        status=SpawnStatus.QUEUED,
         launch_mode=launch_mode,
         runner_pid=runner_pid,
         launch_policy_snapshot=request.launch_policy_snapshot,
@@ -326,12 +327,12 @@ def execute_spawn_background(
     warning = request.warning
     context_from_resolved = request.context_from
     launch_command = _build_background_worker_command(
-        spawn_id=spawn_id_text,
+        spawn_id=context.spawn.spawn_id,
         project_paths=project_paths,
     )
     _record_launch_boundary_observation(
         context.runtime_root,
-        spawn_id_text,
+        context.spawn.spawn_id,
         event=EVENT_PARENT_LAUNCH_ATTEMPT,
         stage="parent_prepare",
         parent_pid=os.getpid(),
@@ -358,7 +359,7 @@ def execute_spawn_background(
     except Exception as exc:
         _record_launch_boundary_observation(
             context.runtime_root,
-            spawn_id_text,
+            context.spawn.spawn_id,
             event=EVENT_PARENT_LAUNCH_FAILED,
             stage="persist_worker_request",
             parent_pid=os.getpid(),
@@ -442,7 +443,7 @@ def execute_spawn_background(
     except OSError as exc:
         _record_launch_boundary_observation(
             context.runtime_root,
-            spawn_id_text,
+            context.spawn.spawn_id,
             event=EVENT_PARENT_LAUNCH_FAILED,
             stage="popen",
             parent_pid=os.getpid(),
@@ -487,7 +488,7 @@ def execute_spawn_background(
 
     _record_launch_boundary_observation(
         context.runtime_root,
-        spawn_id_text,
+        context.spawn.spawn_id,
         event=EVENT_PARENT_LAUNCH_SPAWNED,
         stage="popen",
         parent_pid=os.getpid(),
@@ -657,12 +658,12 @@ def execute_spawn_blocking(
         status = row.status
     done_secs = duration
     tokens_total: int | None = None
-    if row is not None:
-        row_duration = row.duration_secs
+    if row is not None and row.terminal is not None:
+        row_duration = row.terminal.duration_secs
         if row_duration is not None:
             done_secs = row_duration
-        input_tokens = row.input_tokens
-        output_tokens = row.output_tokens
+        input_tokens = row.terminal.input_tokens
+        output_tokens = row.terminal.output_tokens
         if input_tokens is not None and output_tokens is not None:
             tokens_total = input_tokens + output_tokens
     _emit_subrun_event(

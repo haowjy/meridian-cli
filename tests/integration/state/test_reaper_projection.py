@@ -58,10 +58,16 @@ def test_read_projection_does_not_reap_recorded_scope_but_explicit_reconcile_doe
     )
 
     from meridian.lib.state.reaper import reconcile_spawns
+    from meridian.lib.state.spawn_store import SpawnScan
 
-    projected = reconcile_spawns(tmp_path, runtime_root, [record])
-    assert projected[0].status == "failed"
-    assert projected[0].error == "orphan_run"
+    projected = reconcile_spawns(
+        tmp_path,
+        runtime_root,
+        SpawnScan(records=(record,), quarantines=()),
+    )
+    assert projected.records[0].status == "failed"
+    assert projected.records[0].terminal is not None
+    assert projected.records[0].terminal.error == "orphan_run"
     assert _get_spawn(runtime_root, spawn_id).status == "running"
     assert terminated_scopes == []
 
@@ -92,5 +98,6 @@ def test_read_projection_does_not_reap_recorded_scope_but_explicit_reconcile_doe
     reconciled = _reconcile(tmp_path, runtime_root, record)
 
     assert reconciled.status == "failed"
-    assert reconciled.error == "orphan_run"
+    assert reconciled.terminal is not None
+    assert reconciled.terminal.error == "orphan_run"
     assert terminated_scopes == ["backend:9402:reaper"]

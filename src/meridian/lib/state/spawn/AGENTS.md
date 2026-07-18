@@ -1,61 +1,70 @@
-# state/spawn/ — Spawn Domain Models and V2 Persistence
+# state/spawn/ — Spawn Domain Models and V3 Persistence
 
-Domain types, disk persistence, and finalization policy for per-spawn state files.
+Domain types, disk persistence, and pure transitions for per-spawn state files.
 This is the low-level substrate that `spawn_store.py` in the parent package builds on.
 
 ## What's Here
 
-Four files with distinct responsibilities:
+**`model.py`** — in-memory types: `SpawnRecord`, `RunnerExitFacts`, `TerminalFacts`,
+`LaunchMode`, `SpawnOrigin`. `SpawnRecord` includes the starting prompt reconstructed
+from `starting-prompt.md`; the prompt is not stored in `state.json`.
 
-**`model.py`** — in-memory types: `SpawnRecord`, `LaunchMode`, `SpawnOrigin`.
-`SpawnRecord` is what the rest of the system works with; it includes the starting
-prompt text (read separately from `starting-prompt.md`, not stored in `state.json`).
+**`repository.py`** — `StoredSpawnState` (the strict on-disk v3 schema), validated
+read/write helpers, and the locked mutation result protocol. It is a persistence leaf;
+cross-leaf aggregate operations belong in the parent `spawn_aggregate.py`.
 
-**`repository.py`** — `StoredSpawnState` (on-disk v2 schema) and the read/write
-helpers. `StoredSpawnState` is Pydantic and excludes the prompt body — prompts can
-be large and are stored in a separate file to keep `state.json` lean.
-It is a persistence leaf and does not compose process-scope projection operations;
-cross-leaf spawn aggregate operations live in the parent `spawn_aggregate.py`.
+**`legacy.py`** — the one-shot v2→v3 in-memory upgrade seam. Reads never rewrite
+legacy rows; their next locked mutation naturally persists v3. Unknown or conflicting
+legacy facts quarantine rather than bypassing the strict stored model.
 
-**`transitions.py`** — pure status mutator functions: `apply_mark_running()`,
-`apply_mark_finalizing()`, `apply_finalize()`, `apply_record_exited()`. No I/O,
-no locking. Takes a `StoredSpawnState`, returns a new one. Callers handle persistence.
-
-**`terminal_policy.py`** — `decide_terminal_write()`: authority lattice for terminal
-field writes. A runner-origin terminal write supersedes a reconciler-origin write.
-The reaper calls this before finalizing — it will not overwrite a spawn the runner
-already terminated with higher authority.
+**`transitions.py`** — pure transitions such as `apply_mark_running()`,
+`apply_finalize()`, and `apply_record_exited()`. They do no I/O or locking.
 
 ## Locked Mutation Model
 
 All published-state mutations call `write_state_locked()`. The repository acquires
 the stable per-spawn lock, re-reads the authoritative record, applies the caller's
-pure transition, and atomically persists the result.
+transition, and atomically persists it. Its discriminated result is exactly one of:
+
+- `Applied(before, after)`
+- `Declined(snapshot, reason)`
+- `Missing`
+
+A mutator returns the next `StoredSpawnState` or `Decline(reason)`. Applicability is
+therefore decided against the locked snapshot, never by an unlocked preflight read.
 
 ## Key Rules
 
-**Read via `read_state()`, not raw JSON.** Raw reads bypass Pydantic validation
-and skip the `starting-prompt.md` reconstruction into `SpawnRecord.starting_prompt`.
+**Status authority is `SpawnStatus` (StrEnum).** One enum in `core/domain.py` defines
+every valid status. Lifecycle sets are derived from an exhaustive enum-member map;
+transition policy is keyed by enum members. `TerminalSpawnStatus` is checked against
+the terminal members at import time.
 
-**Transitions are pure.** `transitions.py` functions take and return state — they
-do not write to disk. The caller decides when and how to persist the result.
+**Terminal status is stored once.** Top-level `status` is the sole status authority.
+`terminal: TerminalFacts | None` carries terminal facts, including the required
+`exit_code`, but does not repeat status. Terminal statuses require terminal facts;
+active and `unknown` rows forbid them. Consumers branch on `record.terminal` rather
+than flattened compatibility properties.
 
-**Terminal write authority:** runner supersedes reconciler. `decide_terminal_write()`
-returns the action to take; callers must not skip this check.
+**Out-of-vocabulary and extra fields are quarantined, not coerced.** The persisted
+model uses `extra="forbid"`; Pydantic validation failures become structured
+`SpawnStateQuarantined` reports. Collection reads return immutable `SpawnScan`
+envelopes from `spawn_store.py`, with separate `records` and `quarantines` tuples.
+Callers must explicitly choose or preserve both partitions.
+
+**Read via `read_state()`, not raw JSON.** Raw reads bypass Pydantic validation and
+skip `starting-prompt.md` reconstruction.
+
+**Transitions are pure.** The store owns persistence and terminal-write authority.
+Finalize decides authority and applicability inside its locked transition.
 
 ## Entry Points
 
 - `read_state(spawns_dir, spawn_id)` → `SpawnRecord | None`
-- `write_state_locked(spawns_dir, spawn_id, mutator)` — all published-state mutations
-- `scan_spawn_ids(spawns_dir)` — list spawns with a `state.json`
-- `decide_terminal_write(current_status, current_origin, incoming_origin)`
+- `write_state_locked(spawns_dir, spawn_id, mutator)` → `LockedMutationResult`
+- `scan_spawn_ids(spawns_dir)` — candidate directories containing `state.json`
 
 ## Depth
 
-→ [.context/CONTEXT.md](../.context/CONTEXT.md) — parent state module: atomic write
-   invariants, dual-root layout, read vs write root resolvers, reaper behavior.
-
-## Related
-
-- Parent `../.context/CONTEXT.md` — the locked mutation model is described there
-  in full; this subpackage implements the mechanism.
+→ [.context/CONTEXT.md](../.context/CONTEXT.md) — parent state module: atomic-write
+invariants, dual-root layout, read/write root resolution, and reaper behavior.

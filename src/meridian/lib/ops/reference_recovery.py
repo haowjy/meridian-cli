@@ -59,7 +59,7 @@ def _primary_spawn_for_chat(
 ) -> SpawnRecord | None:
     _ = project_root
     spawns = session_identity.list_spawns_for_owner_chat(runtime_root, chat_id)
-    primary_spawns = [row for row in spawns if row.kind == "primary"]
+    primary_spawns = [row for row in spawns.records if row.kind == "primary"]
     if not primary_spawns:
         return None
     return primary_spawns[-1]

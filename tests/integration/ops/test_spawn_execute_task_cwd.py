@@ -159,9 +159,11 @@ def test_spawn_create_persists_and_executes_prepared_task_cwd_contract(
         "read_spawn_row",
         lambda *_args, **_kwargs: SimpleNamespace(
             status="succeeded",
-            duration_secs=0.0,
-            input_tokens=None,
-            output_tokens=None,
+            terminal=SimpleNamespace(
+                duration_secs=0.0,
+                input_tokens=None,
+                output_tokens=None,
+            ),
         ),
     )
 

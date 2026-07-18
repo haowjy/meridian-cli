@@ -15,7 +15,7 @@ from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.connections.base import (
     ConnectionCapabilities,
     ConnectionConfig,
-    HarnessEvent,
+    RawHarnessEvent,
     StopProgressCallback,
     StopResult,
 )
@@ -23,8 +23,6 @@ from meridian.lib.harness.launch_spec import ResolvedLaunchSpec
 from meridian.lib.harness.registry import HarnessRegistry
 from meridian.lib.harness.semantics import (
     PrimaryEventScope,
-    codex_primary_event_scope,
-    opencode_primary_event_scope,
 )
 from meridian.lib.launch.context import build_launch_context
 from meridian.lib.launch.request import (
@@ -110,6 +108,9 @@ class _ReportThenHangConnection:
     def primary_event_scope(self) -> None:
         return None
 
+    def observe_event_semantics(self, semantics: object) -> None:
+        _ = semantics
+
     @property
     def resident_backend(self) -> object:
         return self._resident_backend
@@ -152,7 +153,7 @@ class _ReportThenHangConnection:
             "# Done\n\nWatchdog fallback completed.\n",
             encoding="utf-8",
         )
-        yield HarnessEvent(
+        yield RawHarnessEvent(
             event_type="item/completed",
             harness_id="codex",
             payload={
@@ -215,10 +216,13 @@ class _OpenCodeTerminalWithScopeConnection:
     @property
     def primary_event_scope(self) -> PrimaryEventScope | None:
         if self.harness is HarnessId.CODEX:
-            return codex_primary_event_scope(self._session_id)
+            return PrimaryEventScope(HarnessId.CODEX, self._session_id, True)
         if self.harness is HarnessId.OPENCODE:
-            return opencode_primary_event_scope(self._session_id)
+            return PrimaryEventScope(HarnessId.OPENCODE, self._session_id)
         return None
+
+    def observe_event_semantics(self, semantics: object) -> None:
+        _ = semantics
 
     @property
     def resident_backend(self) -> object:
@@ -287,7 +291,7 @@ class _OpenCodeTerminalWithScopeConnection:
         )
         spawn_dir.mkdir(parents=True, exist_ok=True)
         (spawn_dir / "report.md").write_text("# Done\n\nOpenCode completed.\n", encoding="utf-8")
-        yield HarnessEvent(
+        yield RawHarnessEvent(
             event_type=self.terminal_event_type,
             harness_id=self.harness.value,
             payload={
@@ -339,6 +343,9 @@ class _ResidentDeadlineConnection:
     def primary_event_scope(self) -> None:
         return None
 
+    def observe_event_semantics(self, semantics: object) -> None:
+        _ = semantics
+
     @property
     def resident_backend(self) -> object:
         return self._resident_backend
@@ -378,7 +385,7 @@ class _ResidentDeadlineConnection:
         _ = message
 
     async def events(self):  # type: ignore[no-untyped-def]
-        yield HarnessEvent(
+        yield RawHarnessEvent(
             event_type="turn/completed",
             harness_id="codex",
             payload={"threadId": self._session_id, "turnId": "turn-1"},
@@ -421,7 +428,7 @@ class _ResidentRearmRetryConnection(_ResidentDeadlineConnection):
         write_spawn_signal(type(self).runtime_root, self._spawn_id, "rearm")
         if self._attempt_index == 1:
             write_spawn_signal(type(self).runtime_root, self._spawn_id, "done")
-        yield HarnessEvent(
+        yield RawHarnessEvent(
             event_type="turn/completed",
             harness_id="codex",
             payload={"threadId": self._session_id, "turnId": f"turn-{self._attempt_index}"},
@@ -430,7 +437,7 @@ class _ResidentRearmRetryConnection(_ResidentDeadlineConnection):
 
 class _ScriptedRetryOpenCodeConnection:
     starts = 0
-    first_attempt_events: tuple[HarnessEvent, ...] = ()
+    first_attempt_events: tuple[RawHarnessEvent, ...] = ()
     session_id_value = "session-scripted-retry-opencode"
     subprocess_pid_value = 8383
 
@@ -438,7 +445,7 @@ class _ScriptedRetryOpenCodeConnection:
     def reset(
         cls,
         *,
-        first_attempt_events: tuple[HarnessEvent, ...],
+        first_attempt_events: tuple[RawHarnessEvent, ...],
         session_id: str,
         subprocess_pid: int,
     ) -> None:
@@ -478,7 +485,11 @@ class _ScriptedRetryOpenCodeConnection:
 
     @property
     def primary_event_scope(self) -> PrimaryEventScope | None:
-        return opencode_primary_event_scope(type(self).session_id_value)
+        session_id = type(self).session_id_value
+        return PrimaryEventScope(HarnessId.OPENCODE, session_id) if session_id else None
+
+    def observe_event_semantics(self, semantics: object) -> None:
+        _ = semantics
 
     @property
     def resident_backend(self) -> object:
@@ -515,7 +526,7 @@ class _ScriptedRetryOpenCodeConnection:
             for event in type(self).first_attempt_events:
                 yield event
             return
-        yield HarnessEvent(
+        yield RawHarnessEvent(
             event_type="session.idle",
             harness_id="opencode",
             payload={"type": "session.idle", "sessionID": self.session_id},

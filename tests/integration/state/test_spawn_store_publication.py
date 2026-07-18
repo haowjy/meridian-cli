@@ -24,6 +24,7 @@ from meridian.lib.state.spawn import repository as spawn_repository
 from meridian.lib.state.spawn.model import SpawnRecord
 from meridian.lib.state.spawn.repository import StoredSpawnState, read_state, scan_spawn_ids
 from meridian.lib.state.spawn_store import (
+    finalize_spawn,
     gc_abandoned_stages,
     remove_spawn_events,
     start_spawn,
@@ -39,7 +40,12 @@ def _state_root(tmp_path: Path) -> Path:
 def _start_test_spawn(
     runtime_root: Path, *, spawn_id: str, status: SpawnStatus = "running"
 ) -> str:
-    return str(
+    resolved_status = (
+        "running"
+        if status in {"succeeded", "failed", "cancelled", "timed_out"}
+        else status
+    )
+    resolved_spawn_id = str(
         start_spawn(
             runtime_root,
             chat_id="c1",
@@ -48,9 +54,12 @@ def _start_test_spawn(
             harness="codex",
             prompt="hello",
             spawn_id=spawn_id,
-            status=status,
+            status=resolved_status,
         )
     )
+    if status == "succeeded":
+        finalize_spawn(runtime_root, resolved_spawn_id, "succeeded", 0, origin="runner")
+    return resolved_spawn_id
 
 
 @contextmanager

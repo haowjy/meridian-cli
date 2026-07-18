@@ -8,7 +8,7 @@ from typing import cast
 import pytest
 
 from meridian.lib.harness.connections.claude_ws import ClaudeConnection
-from meridian.lib.harness.semantics import terminal_outcome
+from meridian.lib.harness.semantics import normalize_event
 
 
 class _VersionProcess:
@@ -70,16 +70,16 @@ async def test_claude_process_death_emits_diagnostic_event_before_eof(
 
     event = await anext(events)
 
-    assert event.event_type == "error/connectionClosed"
+    assert event.event_type == "meridian/error/connectionClosed"
     assert event.payload == {
-        "type": "error/connectionClosed",
+        "type": "meridian/error/connectionClosed",
         "message": (
             "Claude subprocess exited with code 17.\n\n"
             "Claude subprocess stderr:\n"
             "fatal claude backend detail"
         ),
     }
-    outcome = terminal_outcome(event)
+    outcome = normalize_event(event).semantics.terminal
     assert outcome is not None
     assert outcome.status == "failed"
     assert outcome.error == event.payload["message"]

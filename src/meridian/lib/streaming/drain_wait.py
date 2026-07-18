@@ -8,7 +8,7 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import Any
 
-from meridian.lib.harness.connections.base import HarnessEvent
+from meridian.lib.harness.connections.base import RawHarnessEvent
 from meridian.lib.streaming.drain_coordinator import AuxWakeCoordinator
 
 logger = logging.getLogger(__name__)
@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class DrainEventWake:
-    event: HarnessEvent
+    event: RawHarnessEvent
     disk_change_ready_after_event: bool = False
 
 
@@ -43,7 +43,7 @@ class DrainInputWaiter:
 
     def __init__(
         self,
-        events_iter: AsyncIterator[HarnessEvent],
+        events_iter: AsyncIterator[RawHarnessEvent],
         aux_wake: AuxWakeCoordinator,
         *,
         task_context: str = "drain input",
@@ -51,7 +51,7 @@ class DrainInputWaiter:
         self._events_iter = events_iter
         self._aux_wake = aux_wake
         self._task_context = task_context
-        self._pending_event_task: asyncio.Future[HarnessEvent] | None = None
+        self._pending_event_task: asyncio.Future[RawHarnessEvent] | None = None
         self._pending_disk_task: asyncio.Task[None] | None = None
 
     async def wait(self, timeout_seconds: float | None) -> DrainWake:

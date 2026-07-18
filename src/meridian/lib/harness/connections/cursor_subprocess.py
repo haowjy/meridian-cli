@@ -19,7 +19,7 @@ from meridian.lib.harness.connections.base import (
     ConnectionConfig,
     ConnectionState,
     HarnessConnection,
-    HarnessEvent,
+    RawHarnessEvent,
     StopProgressCallback,
     StopResult,
     reap_on_ownership_transfer_failure,
@@ -199,7 +199,7 @@ class CursorSubprocessConnection(HarnessConnection[ResolvedLaunchSpec]):
             self._set_state("stopping")
         await self._terminate_process()
 
-    async def events(self) -> AsyncIterator[HarnessEvent]:
+    async def events(self) -> AsyncIterator[RawHarnessEvent]:
         process = self._process
         if process is None:
             return
@@ -249,7 +249,7 @@ class CursorSubprocessConnection(HarnessConnection[ResolvedLaunchSpec]):
             self._observe_session_id_from_event(event)
             yield event
 
-    def _parse_stdout_line(self, raw_text: str) -> HarnessEvent | None:
+    def _parse_stdout_line(self, raw_text: str) -> RawHarnessEvent | None:
         payload_text = raw_text.strip()
         if not payload_text:
             return None
@@ -271,7 +271,7 @@ class CursorSubprocessConnection(HarnessConnection[ResolvedLaunchSpec]):
             )
             return None
 
-        return HarnessEvent(
+        return RawHarnessEvent(
             event_type=raw_event_type,
             payload=payload,
             harness_id=_HARNESS_NAME,
@@ -314,7 +314,7 @@ class CursorSubprocessConnection(HarnessConnection[ResolvedLaunchSpec]):
                 await process.wait()
         self._process = None
 
-    def _observe_session_id_from_event(self, event: HarnessEvent) -> None:
+    def _observe_session_id_from_event(self, event: RawHarnessEvent) -> None:
         detected = CURSOR_EXTRACTOR.detect_session_id_from_event(event)
         if not detected:
             return
@@ -322,9 +322,9 @@ class CursorSubprocessConnection(HarnessConnection[ResolvedLaunchSpec]):
         if self._session_id_observer is not None:
             self._session_id_observer(detected)
 
-    def _error_event(self, message: str, *, raw_text: str | None = None) -> HarnessEvent:
-        return HarnessEvent(
-            event_type="error/connectionClosed",
+    def _error_event(self, message: str, *, raw_text: str | None = None) -> RawHarnessEvent:
+        return RawHarnessEvent(
+            event_type="meridian/error/connectionClosed",
             payload={"type": "error", "message": message},
             harness_id=_HARNESS_NAME,
             raw_text=raw_text,

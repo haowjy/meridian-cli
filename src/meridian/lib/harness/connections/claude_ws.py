@@ -25,7 +25,7 @@ from meridian.lib.harness.connections.base import (
     ConnectionNotReady,
     ConnectionState,
     HarnessConnection,
-    HarnessEvent,
+    RawHarnessEvent,
     StopProgressCallback,
     StopResult,
     reap_on_ownership_transfer_failure,
@@ -33,7 +33,7 @@ from meridian.lib.harness.connections.base import (
 )
 from meridian.lib.harness.connections.managed_backend import register_spawn_owned_process
 from meridian.lib.harness.errors import HarnessBinaryNotFound
-from meridian.lib.harness.semantics import clears_signal
+from meridian.lib.harness.semantics import EventSemantics
 from meridian.lib.launch.constants import BASE_COMMAND_CLAUDE_STREAMING
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.observability.trace_helpers import (
@@ -224,8 +224,8 @@ class ClaudeConnection(HarnessConnection[ResolvedLaunchSpec]):
             self._set_state("stopping")
         await self._signal_process(signal.SIGINT)
 
-    async def events(self) -> AsyncIterator[HarnessEvent]:
-        """Yield HarnessEvent objects read line-by-line from Claude stdout."""
+    async def events(self) -> AsyncIterator[RawHarnessEvent]:
+        """Yield RawHarnessEvent objects read line-by-line from Claude stdout."""
 
         process = self._process
         if process is None:
@@ -281,8 +281,6 @@ class ClaudeConnection(HarnessConnection[ResolvedLaunchSpec]):
                     self._emit_startup_phase(StartupPhase.HARNESS_READY)
 
                 for event in parsed_events:
-                    if clears_signal(event):
-                        self._signal_in_flight = False
                     if self._tracer is not None:
                         self._tracer.emit(
                             "wire",
@@ -299,6 +297,10 @@ class ClaudeConnection(HarnessConnection[ResolvedLaunchSpec]):
             raise ConnectionNotReady(
                 f"Claude connection is not ready (state={self._state}); expected 'connected'."
             )
+
+    def observe_event_semantics(self, semantics: EventSemantics) -> None:
+        if semantics.clears_signal:
+            self._signal_in_flight = False
 
     def _set_state(self, next_state: ConnectionState) -> None:
         if next_state == self._state:
@@ -497,8 +499,8 @@ class ClaudeConnection(HarnessConnection[ResolvedLaunchSpec]):
             data = handle.read()
         return data.decode("utf-8", errors="replace").strip()
 
-    def _parse_stdout_line(self, line: str) -> list[HarnessEvent]:
-        """Parse one line of NDJSON from Claude stdout into HarnessEvent objects."""
+    def _parse_stdout_line(self, line: str) -> list[RawHarnessEvent]:
+        """Parse one line of NDJSON from Claude stdout into RawHarnessEvent objects."""
         payload_text = line.strip()
         if not payload_text:
             return []
@@ -524,7 +526,7 @@ class ClaudeConnection(HarnessConnection[ResolvedLaunchSpec]):
             return []
 
         return [
-            HarnessEvent(
+            RawHarnessEvent(
                 event_type=event_type,
                 payload=payload,
                 harness_id=_HARNESS_NAME,
@@ -532,13 +534,13 @@ class ClaudeConnection(HarnessConnection[ResolvedLaunchSpec]):
             )
         ]
 
-    def _error_event(self, message: str, raw_text: str | None = None) -> HarnessEvent:
+    def _error_event(self, message: str, raw_text: str | None = None) -> RawHarnessEvent:
         payload: dict[str, object] = {
-            "type": "error/connectionClosed",
+            "type": "meridian/error/connectionClosed",
             "message": message,
         }
-        return HarnessEvent(
-            event_type="error/connectionClosed",
+        return RawHarnessEvent(
+            event_type="meridian/error/connectionClosed",
             payload=payload,
             harness_id=_HARNESS_NAME,
             raw_text=raw_text,

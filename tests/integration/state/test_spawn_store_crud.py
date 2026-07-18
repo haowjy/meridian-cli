@@ -21,8 +21,15 @@ from meridian.lib.core.execution_policy import ResolvedExecutionPolicy
 from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
 from meridian.lib.core.spawn_start import SpawnStartMetadata
 from meridian.lib.state import spawn_store as spawn_store_module
+from meridian.lib.state.atomic import atomic_write_text
 from meridian.lib.state.paths import RuntimePaths
-from meridian.lib.state.spawn.repository import read_state, scan_spawn_ids
+from meridian.lib.state.spawn.repository import (
+    Applied,
+    Declined,
+    SpawnStateQuarantined,
+    read_state,
+    scan_spawn_ids,
+)
 from meridian.lib.state.spawn_store import (
     finalize_spawn,
     get_spawn,
@@ -83,6 +90,145 @@ def test_start_and_update_project_fields_round_trip(tmp_path: Path) -> None:
     assert row is not None
     assert row.launch_mode == "foreground"
     assert row.runner_pid == 2222
+
+
+def test_invalid_persisted_status_is_reported_and_not_coerced(tmp_path: Path) -> None:
+    runtime_root = _state_root(tmp_path)
+    spawn_id = _start_test_spawn(runtime_root)
+    valid_spawn_id = _start_test_spawn(runtime_root)
+    state_path = RuntimePaths.from_root_dir(runtime_root).spawns_dir / spawn_id / "state.json"
+    payload = json.loads(state_path.read_text(encoding="utf-8"))
+    payload["status"] = "zombie"
+    atomic_write_text(state_path, json.dumps(payload))
+
+    with pytest.raises(SpawnStateQuarantined) as single:
+        get_spawn(runtime_root, spawn_id)
+    collection = list_spawns(runtime_root)
+
+    assert [row.id for row in collection.records] == [valid_spawn_id]
+    assert len(collection.quarantines) == 1
+    assert single.value.report.spawn_id == collection.quarantines[0].spawn_id == spawn_id
+    assert single.value.report.state_path == collection.quarantines[0].state_path
+    assert "zombie" in str(single.value.report.validation_errors)
+    assert json.loads(state_path.read_text(encoding="utf-8"))["status"] == "zombie"
+
+
+def test_invalid_persisted_kind_is_reported_and_not_coerced(tmp_path: Path) -> None:
+    runtime_root = _state_root(tmp_path)
+    spawn_id = _start_test_spawn(runtime_root)
+    state_path = RuntimePaths.from_root_dir(runtime_root).spawns_dir / spawn_id / "state.json"
+    payload = json.loads(state_path.read_text(encoding="utf-8"))
+    payload["kind"] = "worker"
+    atomic_write_text(state_path, json.dumps(payload))
+
+    with pytest.raises(SpawnStateQuarantined):
+        get_spawn(runtime_root, spawn_id)
+    collection = list_spawns(runtime_root)
+
+    assert collection.records == ()
+    assert [report.spawn_id for report in collection.quarantines] == [spawn_id]
+    assert json.loads(state_path.read_text(encoding="utf-8"))["kind"] == "worker"
+
+
+def test_persisted_spawn_identities_are_normalized_at_parse(tmp_path: Path) -> None:
+    runtime_root = _state_root(tmp_path)
+    spawn_id = _start_test_spawn(runtime_root)
+    state_path = RuntimePaths.from_root_dir(runtime_root).spawns_dir / spawn_id / "state.json"
+    payload = json.loads(state_path.read_text(encoding="utf-8"))
+    payload.update(
+        chat_id="  c1  ",
+        owner_chat_id="   ",
+        harness_session_id="  thread-1  ",
+    )
+    atomic_write_text(state_path, json.dumps(payload))
+
+    row = get_spawn(runtime_root, spawn_id)
+
+    assert row is not None
+    assert row.chat_id == "c1"
+    assert row.owner_chat_id is None
+    assert row.harness_session_id == "thread-1"
+
+
+@pytest.mark.parametrize("field", ["chat_id", "harness_session_id"])
+@pytest.mark.parametrize("invalid_identity", [123, [], {}])
+def test_non_string_persisted_identity_is_quarantined(
+    tmp_path: Path,
+    field: str,
+    invalid_identity: object,
+) -> None:
+    runtime_root = _state_root(tmp_path)
+    spawn_id = _start_test_spawn(runtime_root)
+    valid_spawn_id = _start_test_spawn(runtime_root)
+    state_path = RuntimePaths.from_root_dir(runtime_root).spawns_dir / spawn_id / "state.json"
+    payload = json.loads(state_path.read_text(encoding="utf-8"))
+    payload[field] = invalid_identity
+    atomic_write_text(state_path, json.dumps(payload))
+
+    with pytest.raises(SpawnStateQuarantined):
+        get_spawn(runtime_root, spawn_id)
+    collection = list_spawns(runtime_root)
+
+    assert [row.id for row in collection.records] == [valid_spawn_id]
+    assert [report.spawn_id for report in collection.quarantines] == [spawn_id]
+
+
+@pytest.mark.parametrize("invalid_status", [[], {}, 123])
+def test_non_string_persisted_status_is_quarantined(
+    tmp_path: Path,
+    invalid_status: object,
+) -> None:
+    runtime_root = _state_root(tmp_path)
+    spawn_id = _start_test_spawn(runtime_root)
+    state_path = RuntimePaths.from_root_dir(runtime_root).spawns_dir / spawn_id / "state.json"
+    payload = json.loads(state_path.read_text(encoding="utf-8"))
+    payload["status"] = invalid_status
+    atomic_write_text(state_path, json.dumps(payload))
+
+    with pytest.raises(SpawnStateQuarantined) as quarantined:
+        get_spawn(runtime_root, spawn_id)
+
+    assert quarantined.value.report.spawn_id == spawn_id
+    assert str(invalid_status) in str(quarantined.value.report.validation_errors)
+
+
+def test_partial_terminal_facts_are_quarantined_instead_of_half_loaded(
+    tmp_path: Path,
+) -> None:
+    runtime_root = _state_root(tmp_path)
+    spawn_id = _start_test_spawn(runtime_root)
+    valid_spawn_id = _start_test_spawn(runtime_root)
+    state_path = RuntimePaths.from_root_dir(runtime_root).spawns_dir / spawn_id / "state.json"
+    payload = json.loads(state_path.read_text(encoding="utf-8"))
+    payload["exit_code"] = 9
+    atomic_write_text(state_path, json.dumps(payload))
+
+    with pytest.raises(SpawnStateQuarantined):
+        get_spawn(runtime_root, spawn_id)
+    collection = list_spawns(runtime_root)
+
+    assert [row.id for row in collection.records] == [valid_spawn_id]
+    assert [report.spawn_id for report in collection.quarantines] == [spawn_id]
+
+
+@pytest.mark.parametrize("retired_field", ["exit_code", "finished_at", "terminal_origin"])
+def test_retired_flat_terminal_fields_are_quarantined_by_extra_forbid(
+    tmp_path: Path,
+    retired_field: str,
+) -> None:
+    runtime_root = _state_root(tmp_path)
+    spawn_id = _start_test_spawn(runtime_root)
+    state_path = RuntimePaths.from_root_dir(runtime_root).spawns_dir / spawn_id / "state.json"
+    payload = json.loads(state_path.read_text(encoding="utf-8"))
+    payload[retired_field] = "retired"
+    atomic_write_text(state_path, json.dumps(payload))
+
+    with pytest.raises(SpawnStateQuarantined) as quarantined:
+        get_spawn(runtime_root, spawn_id)
+
+    errors = quarantined.value.report.validation_errors
+    assert retired_field in str(errors)
+    assert "extra_forbidden" in str(errors)
 
 
 def test_start_spawn_publishes_only_a_complete_readable_row(
@@ -402,14 +548,17 @@ def test_record_cancel_intent_persists_first_request_and_skips_terminal(
         requested_at="2026-06-03T01:01:00Z",
     )
 
-    assert first is not None
-    assert first.cancel_intent is not None
-    assert first.cancel_intent.exit_code == 130
-    assert second is not None
-    assert second.cancel_intent == first.cancel_intent
+    assert isinstance(first, Applied)
+
+    first_record = first.after
+    assert first_record.cancel_intent is not None
+    assert first_record.cancel_intent.exit_code == 130
+    assert isinstance(second, Declined)
+    assert second.reason == "cancel intent already recorded"
+    assert second.snapshot.cancel_intent == first_record.cancel_intent
     row = get_spawn(runtime_root, spawn_id)
     assert row is not None
-    assert row.cancel_intent == first.cancel_intent
+    assert row.cancel_intent == first_record.cancel_intent
 
     terminal_spawn_id = _start_test_spawn(runtime_root, spawn_id="p-terminal")
     finalize_spawn(runtime_root, terminal_spawn_id, "succeeded", 0, origin="runner")
@@ -422,9 +571,10 @@ def test_record_cancel_intent_persists_first_request_and_skips_terminal(
         requested_at="2026-06-03T01:00:00Z",
     )
 
-    assert result is not None
-    assert result.status == "succeeded"
-    assert result.cancel_intent is None
+    assert isinstance(result, Declined)
+
+    assert result.snapshot.status == "succeeded"
+    assert result.snapshot.cancel_intent is None
 
 
 def test_start_spawn_rejects_empty_goal(tmp_path: Path) -> None:
@@ -441,7 +591,7 @@ def test_start_spawn_rejects_empty_goal(tmp_path: Path) -> None:
             goal="   ",
         )
 
-    assert list_spawns(runtime_root) == []
+    assert list_spawns(runtime_root).records == ()
 
 
 def test_list_spawns_filters_v2_rows_and_keeps_listings_promptless(tmp_path: Path) -> None:
@@ -460,26 +610,23 @@ def test_list_spawns_filters_v2_rows_and_keeps_listings_promptless(tmp_path: Pat
     )
     finalize_spawn(runtime_root, p1, status="succeeded", exit_code=0, origin="runner")
 
-    filtered = list_spawns(runtime_root, filters={"status": "running", "agent": "reviewer"})
+    filtered = list_spawns(runtime_root, chat_id="c2")
 
-    assert [spawn.id for spawn in filtered] == [p2]
-    assert filtered[0].prompt is None
-    assert filtered[0].desc == "desc-2"
+    assert [spawn.id for spawn in filtered.records] == [p2]
+    assert filtered.records[0].prompt is None
+    assert filtered.records[0].desc == "desc-2"
 
 
-def test_list_spawns_skips_schema_invalid_row(tmp_path: Path) -> None:
+def test_list_spawns_reports_schema_invalid_row(tmp_path: Path) -> None:
     runtime_root = _state_root(tmp_path)
-    valid_spawn_id = _start_test_spawn(runtime_root)
+    _start_test_spawn(runtime_root)
     invalid_spawn_dir = runtime_root / "spawns" / "p999"
     invalid_spawn_dir.mkdir(parents=True)
-    (invalid_spawn_dir / "state.json").write_text(
-        json.dumps({"id": "p999"}),
-        encoding="utf-8",
-    )
+    atomic_write_text(invalid_spawn_dir / "state.json", json.dumps({"id": "p999"}))
 
-    spawns = list_spawns(runtime_root)
-
-    assert [spawn.id for spawn in spawns] == [valid_spawn_id]
+    collection = list_spawns(runtime_root)
+    assert [row.id for row in collection.records] == ["p1"]
+    assert [report.spawn_id for report in collection.quarantines] == ["p999"]
 
 
 def test_spawn_queries_read_v2_state_and_prompt(tmp_path: Path) -> None:
@@ -498,10 +645,10 @@ def test_spawn_queries_read_v2_state_and_prompt(tmp_path: Path) -> None:
     finalize_spawn(runtime_root, p1, status="succeeded", exit_code=0, origin="runner")
 
     spawns = list_spawns(runtime_root)
-    assert [spawn.id for spawn in spawns] == [p1, p2]
-    assert spawns[0].status == "succeeded"
-    assert spawns[1].status == "running"
-    assert all(spawn.prompt is None for spawn in spawns)
+    assert [spawn.id for spawn in spawns.records] == [p1, p2]
+    assert spawns.records[0].status == "succeeded"
+    assert spawns.records[1].status == "running"
+    assert all(spawn.prompt is None for spawn in spawns.records)
 
     row = get_spawn(runtime_root, p2)
     assert row is not None
@@ -547,7 +694,7 @@ def test_exited_event_is_non_terminal_and_projects_last_attempt_exit(tmp_path: P
     assert row.status == "running"
     assert row.last_attempt_exited_at == "2026-04-12T14:00:00Z"
     assert row.last_attempt_exit_code == 143
-    assert row.exit_code is None
+    assert row.terminal is None
 
 
 def test_record_runner_exit_persists_terminal_intent_without_finalizing(tmp_path: Path) -> None:
@@ -566,7 +713,8 @@ def test_record_runner_exit_persists_terminal_intent_without_finalizing(tmp_path
     row = get_spawn(runtime_root, spawn_id)
     assert row is not None
     assert row.status == "running"
-    assert row.runner_exit_status == "failed"
-    assert row.runner_exit_code == 42
-    assert row.runner_exit_error == "guardrail_failed"
-    assert row.runner_exit_at == "2026-04-12T14:03:00Z"
+    assert row.runner_exit is not None
+    assert row.runner_exit.status == "failed"
+    assert row.runner_exit.exit_code == 42
+    assert row.runner_exit.error == "guardrail_failed"
+    assert row.runner_exit.exited_at == "2026-04-12T14:03:00Z"

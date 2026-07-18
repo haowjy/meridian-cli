@@ -5,16 +5,16 @@ from __future__ import annotations
 import asyncio
 import json
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 import structlog
 
 from meridian.lib.bootstrap.services import build_spawn_application_service_from_roots
 from meridian.lib.core.depth import is_root_side_effect_process
-from meridian.lib.core.domain import SpawnStatus
+from meridian.lib.core.domain import TerminalSpawnStatus
 from meridian.lib.core.spawn_lifecycle import (
     is_active_spawn_status,
     is_terminal_spawn_status,
@@ -53,10 +53,17 @@ from meridian.lib.state.reconciliation import (
     Skip,
     completion_or_cancel_decision,
 )
-from meridian.lib.state.spawn.model import SpawnRecord
+from meridian.lib.state.spawn.model import (
+    SpawnOrigin,
+    SpawnRecord,
+    TerminalFacts,
+)
 from meridian.lib.state.spawn_aggregate import mutate_published_spawn_artifact
 from meridian.lib.state.spawn_report import spawn_report_has_durable_completion
 from meridian.lib.state.timestamps import iso_timestamp_to_epoch
+
+if TYPE_CHECKING:
+    from meridian.lib.state.spawn_store import SpawnScan
 
 logger = structlog.get_logger(__name__)
 
@@ -136,7 +143,7 @@ def _collect_artifact_snapshot(
             record.runner_pid,
             created_after_epoch=runner_created_at_epoch,
         )
-    launch_boundary = read_launch_boundary_summary(runtime_root, record.id)
+    launch_boundary = read_launch_boundary_summary(runtime_root, SpawnId(record.id))
     return ArtifactSnapshot(
         started_epoch=started_epoch,
         last_activity_epoch=last_activity_epoch,
@@ -190,7 +197,9 @@ def _is_pre_worker_launch_boundary_ghost(
 
 
 def _in_post_runner_exit_finalization_grace(record: SpawnRecord, now: float) -> bool:
-    exited_epoch = _runner_exit_at_epoch(record.runner_exit_at)
+    exited_epoch = _runner_exit_at_epoch(
+        record.runner_exit.exited_at if record.runner_exit is not None else None
+    )
     return (
         exited_epoch is not None
         and now - exited_epoch < SPAWN_POST_RUNNER_EXIT_FINALIZATION_GRACE_SECS
@@ -198,21 +207,12 @@ def _in_post_runner_exit_finalization_grace(record: SpawnRecord, now: float) -> 
 
 
 def _finalize_from_runner_exit_decision(record: SpawnRecord) -> FinalizeFromRunnerExit:
-    status = record.runner_exit_status
-    if status is None or not is_terminal_spawn_status(status):
-        return FinalizeFromRunnerExit(status="failed", exit_code=1, error="orphan_run")
-    if record.runner_exit_code is not None:
-        exit_code = record.runner_exit_code
-    elif status == "succeeded":
-        exit_code = 0
-    elif status == "cancelled":
-        exit_code = 130
-    else:
-        exit_code = 1
+    facts = record.runner_exit
+    assert facts is not None
     return FinalizeFromRunnerExit(
-        status=status,
-        exit_code=exit_code,
-        error=record.runner_exit_error,
+        status=facts.status,
+        exit_code=facts.exit_code,
+        error=facts.error,
     )
 
 
@@ -228,7 +228,7 @@ def decide_generic_reconciliation(
                 return decision
         if _has_recent_activity(snapshot):
             return Skip(reason="recent_activity")
-        if record.runner_exit_status is not None:
+        if record.runner_exit is not None:
             return _finalize_from_runner_exit_decision(record)
         if record.cancel_intent is not None:
             decision = completion_or_cancel_decision(record, snapshot.durable_report_completion)
@@ -236,7 +236,7 @@ def decide_generic_reconciliation(
                 return decision
         return FinalizeFailed(error="orphan_finalization")
 
-    if record.runner_exit_status is not None:
+    if record.runner_exit is not None:
         if snapshot.durable_report_completion:
             decision = completion_or_cancel_decision(record, snapshot.durable_report_completion)
             if decision is not None:
@@ -299,7 +299,7 @@ def decide_reconciliation(
     """Unified reconciliation dispatcher."""
 
     generic_decision = decide_generic_reconciliation(record, generic_snapshot, now)
-    if record.status == "finalizing" or record.runner_exit_status is not None:
+    if record.status == "finalizing" or record.runner_exit is not None:
         return generic_decision
 
     strategy = ManagedPrimaryReconciliationStrategy()
@@ -466,7 +466,7 @@ def _record_orphan_finalize_evidence(
     try:
         mutate_published_spawn_artifact(
             runtime_root,
-            record.id,
+            SpawnId(record.id),
             lambda: atomic_write_text(
                 evidence_path,
                 json.dumps(evidence, separators=(",", ":"), sort_keys=True) + "\n",
@@ -486,7 +486,7 @@ def _finalize_and_log(
     runtime_root: Path,
     record: SpawnRecord,
     *,
-    status: SpawnStatus,
+    status: TerminalSpawnStatus,
     exit_code: int,
     error: str | None,
     reason: str,
@@ -600,15 +600,22 @@ def _in_startup_grace(started_epoch: float | None, now: float) -> bool:
 def _record_with_terminal_state(
     record: SpawnRecord,
     *,
-    status: SpawnStatus,
+    status: TerminalSpawnStatus,
     exit_code: int,
     error: str | None,
+    origin: SpawnOrigin,
+    observed_at: str,
 ) -> SpawnRecord:
     return record.model_copy(
         update={
             "status": status,
-            "exit_code": exit_code,
-            "error": error,
+            "terminal": TerminalFacts(
+                exit_code=exit_code,
+                finished_at=observed_at,
+                published_at=observed_at,
+                error=error,
+                origin=origin,
+            ),
         }
     )
 
@@ -623,11 +630,12 @@ def peek_reconciled_active_spawn(
         return record
 
     now = time.time()
+    observed_at = datetime.fromtimestamp(now, UTC).isoformat().replace("+00:00", "Z")
     generic_snapshot = _collect_artifact_snapshot(runtime_root, record, now)
     if (
         record.status == "finalizing"
         and not generic_snapshot.durable_report_completion
-        and record.runner_exit_status is None
+        and record.runner_exit is None
         and record.cancel_intent is None
     ):
         return record
@@ -649,6 +657,8 @@ def peek_reconciled_active_spawn(
             status=status,
             exit_code=exit_code,
             error=error,
+            origin="reconciler",
+            observed_at=observed_at,
         )
     if isinstance(decision, FinalizeFromRunnerExit):
         return _record_with_terminal_state(
@@ -656,12 +666,16 @@ def peek_reconciled_active_spawn(
             status=decision.status,
             exit_code=decision.exit_code,
             error=decision.error,
+            origin="runner",
+            observed_at=observed_at,
         )
     return _record_with_terminal_state(
         record,
         status="failed",
         exit_code=decision.exit_code,
         error=decision.error,
+        origin="reconciler",
+        observed_at=observed_at,
     )
 
 
@@ -740,7 +754,7 @@ def _cleanup_claimed_scopes(runtime_root: Path, record: SpawnRecord) -> None:
         claimed = read_cleanup_claim(runtime_root, spawn_id)
         if not claimed:
             return
-        if record.terminal_origin != "reconciler":
+        if record.terminal is None or record.terminal.origin != "reconciler":
             replace_cleanup_claim(runtime_root, spawn_id, [])
             return
 
@@ -842,8 +856,8 @@ def reconcile_active_spawn(
 def reconcile_spawns(
     project_root: Path,
     runtime_root: Path,
-    spawns: list[SpawnRecord],
-) -> list[SpawnRecord]:
+    scan: SpawnScan,
+) -> SpawnScan:
     """Return a read-only reconciled projection for a batch of spawns.
 
     List/stat/reference-discovery callers use this helper. It intentionally does
@@ -851,11 +865,12 @@ def reconcile_spawns(
     reconcile_active_spawn().
     """
     _ = project_root
-    return [
-        (
+    return replace(
+        scan,
+        records=tuple(
             peek_reconciled_active_spawn(runtime_root, spawn)
             if is_active_spawn_status(spawn.status)
             else spawn
-        )
-        for spawn in spawns
-    ]
+            for spawn in scan.records
+        ),
+    )

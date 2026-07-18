@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
 
@@ -39,6 +40,7 @@ _CLAUDE_MD_FIX_SKIP_DIRS: frozenset[str] = _SKIP_DIRS | frozenset(
 )
 
 _CLAUDE_MIRROR_CONTENT = "@AGENTS.md\n"
+QiKnowledgeKind = Literal["agents", "context"]
 
 
 class QiKnowledgePoint(BaseModel):
@@ -47,7 +49,7 @@ class QiKnowledgePoint(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     rel_path: str  # root-relative, forward slashes
-    kind: str  # "agents" or "context"
+    kind: QiKnowledgeKind
 
 
 class QiSummaryOutput(BaseModel):

@@ -66,7 +66,7 @@ def test_reconcile_active_spawn_without_runner_pid_stays_unchanged_during_startu
     assert reconciled == record
     latest = _get_spawn(runtime_root, spawn_id)
     assert latest.status == "running"
-    assert latest.error is None
+    assert latest.terminal is None or latest.terminal.error is None
 
 
 def test_reconcile_active_spawn_without_runner_pid_fails_after_startup_grace(
@@ -78,11 +78,14 @@ def test_reconcile_active_spawn_without_runner_pid_fails_after_startup_grace(
     reconciled = _reconcile(tmp_path, runtime_root, record)
 
     assert reconciled.status == "failed"
-    assert reconciled.exit_code == 1
-    assert reconciled.error == "missing_runner_pid"
+    assert reconciled.terminal is not None
+    assert reconciled.terminal.exit_code == 1
+    assert reconciled.terminal is not None
+    assert reconciled.terminal.error == "missing_runner_pid"
     latest = _get_spawn(runtime_root, spawn_id)
     assert latest.status == "failed"
-    assert latest.error == "missing_runner_pid"
+    assert latest.terminal is not None
+    assert latest.terminal.error == "missing_runner_pid"
 
 
 def test_reconcile_active_spawn_background_without_takeover_evidence_gets_boundary_error(
@@ -105,10 +108,12 @@ def test_reconcile_active_spawn_background_without_takeover_evidence_gets_bounda
     reconciled = _reconcile(tmp_path, runtime_root, record)
 
     assert reconciled.status == "failed"
-    assert reconciled.error == "launch_boundary_no_takeover"
+    assert reconciled.terminal is not None
+    assert reconciled.terminal.error == "launch_boundary_no_takeover"
     latest = _get_spawn(runtime_root, spawn_id)
     assert latest.status == "failed"
-    assert latest.error == "launch_boundary_no_takeover"
+    assert latest.terminal is not None
+    assert latest.terminal.error == "launch_boundary_no_takeover"
 
 
 def test_reconcile_active_spawn_background_takeover_evidence_keeps_runner_alive_skip(
@@ -142,7 +147,7 @@ def test_reconcile_active_spawn_background_takeover_evidence_keeps_runner_alive_
     assert reconciled == record
     latest = _get_spawn(runtime_root, spawn_id)
     assert latest.status == "running"
-    assert latest.error is None
+    assert latest.terminal is None or latest.terminal.error is None
 
 
 def test_reconcile_active_spawn_returns_unchanged_when_runner_is_alive(
@@ -157,7 +162,7 @@ def test_reconcile_active_spawn_returns_unchanged_when_runner_is_alive(
     assert reconciled == record
     latest = _get_spawn(runtime_root, spawn_id)
     assert latest.status == "running"
-    assert latest.error is None
+    assert latest.terminal is None or latest.terminal.error is None
 
 
 def test_reconcile_active_spawn_finalizing_stale_heartbeat_marks_orphan_finalization(
@@ -178,11 +183,14 @@ def test_reconcile_active_spawn_finalizing_stale_heartbeat_marks_orphan_finaliza
     reconciled = _reconcile(tmp_path, runtime_root, record)
 
     assert reconciled.status == "failed"
-    assert reconciled.exit_code == 1
-    assert reconciled.error == "orphan_finalization"
+    assert reconciled.terminal is not None
+    assert reconciled.terminal.exit_code == 1
+    assert reconciled.terminal is not None
+    assert reconciled.terminal.error == "orphan_finalization"
     latest = _get_spawn(runtime_root, spawn_id)
     assert latest.status == "failed"
-    assert latest.error == "orphan_finalization"
+    assert latest.terminal is not None
+    assert latest.terminal.error == "orphan_finalization"
 
 
 def test_reconcile_active_spawn_finalizing_recent_activity_skips(
@@ -205,7 +213,7 @@ def test_reconcile_active_spawn_finalizing_recent_activity_skips(
     assert reconciled == record
     latest = _get_spawn(runtime_root, spawn_id)
     assert latest.status == "finalizing"
-    assert latest.error is None
+    assert latest.terminal is None or latest.terminal.error is None
 
 
 def test_reconcile_active_spawn_with_dead_runner_and_no_exit_or_report_fails(
@@ -218,11 +226,14 @@ def test_reconcile_active_spawn_with_dead_runner_and_no_exit_or_report_fails(
     reconciled = _reconcile(tmp_path, runtime_root, record)
 
     assert reconciled.status == "failed"
-    assert reconciled.exit_code == 1
-    assert reconciled.error == "orphan_run"
+    assert reconciled.terminal is not None
+    assert reconciled.terminal.exit_code == 1
+    assert reconciled.terminal is not None
+    assert reconciled.terminal.error == "orphan_run"
     latest = _get_spawn(runtime_root, spawn_id)
     assert latest.status == "failed"
-    assert latest.error == "orphan_run"
+    assert latest.terminal is not None
+    assert latest.terminal.error == "orphan_run"
 
 
 def test_reaped_orphan_records_runner_child_and_last_event_evidence(
@@ -261,7 +272,8 @@ def test_reaped_orphan_records_runner_child_and_last_event_evidence(
 
     reconciled = _reconcile(tmp_path, runtime_root, _get_spawn(runtime_root, spawn_id))
 
-    assert reconciled.error == "orphan_run"
+    assert reconciled.terminal is not None
+    assert reconciled.terminal.error == "orphan_run"
     evidence = json.loads(
         (spawn_dir / FINALIZE_EVIDENCE_FILENAME).read_text(encoding="utf-8")
     )
@@ -290,8 +302,10 @@ def test_reconcile_active_spawn_with_cancel_intent_and_dead_runner_cancels(
     reconciled = _reconcile(tmp_path, runtime_root, record)
 
     assert reconciled.status == "cancelled"
-    assert reconciled.exit_code == 130
-    assert reconciled.error == "cancelled"
+    assert reconciled.terminal is not None
+    assert reconciled.terminal.exit_code == 130
+    assert reconciled.terminal is not None
+    assert reconciled.terminal.error == "cancelled"
 
 
 def test_reconcile_active_spawn_with_cancel_intent_keeps_durable_completion(
@@ -312,8 +326,9 @@ def test_reconcile_active_spawn_with_cancel_intent_keeps_durable_completion(
     reconciled = _reconcile(tmp_path, runtime_root, record)
 
     assert reconciled.status == "succeeded"
-    assert reconciled.exit_code == 0
-    assert reconciled.error is None
+    assert reconciled.terminal is not None
+    assert reconciled.terminal.exit_code == 0
+    assert reconciled.terminal is None or reconciled.terminal.error is None
 
 
 @pytest.mark.parametrize(
@@ -341,13 +356,18 @@ def test_reconcile_active_spawn_depth_gate_respects_env_matrix(
     reconciled = _reconcile(tmp_path, runtime_root, record)
 
     assert reconciled.status == expected_status
-    assert reconciled.error == expected_error
     latest = _get_spawn(runtime_root, spawn_id)
     assert latest.status == expected_status
-    assert latest.error == expected_error
     if expected_status == "failed":
-        assert reconciled.exit_code == 1
-        assert latest.exit_code == 1
+        assert reconciled.terminal is not None
+        assert reconciled.terminal.error == expected_error
+        assert reconciled.terminal.exit_code == 1
+        assert latest.terminal is not None
+        assert latest.terminal.error == expected_error
+        assert latest.terminal.exit_code == 1
+    else:
+        assert reconciled.terminal is None
+        assert latest.terminal is None
 
 
 def test_reconcile_active_spawn_dead_runner_recent_activity_still_fails(
@@ -370,11 +390,14 @@ def test_reconcile_active_spawn_dead_runner_recent_activity_still_fails(
     reconciled = _reconcile(tmp_path, runtime_root, record)
 
     assert reconciled.status == "failed"
-    assert reconciled.exit_code == 1
-    assert reconciled.error == "orphan_run"
+    assert reconciled.terminal is not None
+    assert reconciled.terminal.exit_code == 1
+    assert reconciled.terminal is not None
+    assert reconciled.terminal.error == "orphan_run"
     latest = _get_spawn(runtime_root, spawn_id)
     assert latest.status == "failed"
-    assert latest.error == "orphan_run"
+    assert latest.terminal is not None
+    assert latest.terminal.error == "orphan_run"
 
 
 def test_reconcile_active_spawn_last_attempt_exit_drives_orphan_failure_after_activity_stales(
@@ -399,12 +422,16 @@ def test_reconcile_active_spawn_last_attempt_exit_drives_orphan_failure_after_ac
     reconciled = _reconcile(tmp_path, runtime_root, record)
 
     assert reconciled.status == "failed"
-    assert reconciled.exit_code == 3
-    assert reconciled.error == "orphan_run"
+    assert reconciled.terminal is not None
+    assert reconciled.terminal.exit_code == 3
+    assert reconciled.terminal is not None
+    assert reconciled.terminal.error == "orphan_run"
     latest = _get_spawn(runtime_root, spawn_id)
     assert latest.status == "failed"
-    assert latest.exit_code == 3
-    assert latest.error == "orphan_run"
+    assert latest.terminal is not None
+    assert latest.terminal.exit_code == 3
+    assert latest.terminal is not None
+    assert latest.terminal.error == "orphan_run"
 
 
 def test_reconcile_active_spawn_post_exit_with_live_runner_skips(
@@ -436,7 +463,7 @@ def test_reconcile_active_spawn_post_exit_with_live_runner_skips(
     assert reconciled == record
     latest = _get_spawn(runtime_root, spawn_id)
     assert latest.status == "running"
-    assert latest.error is None
+    assert latest.terminal is None or latest.terminal.error is None
 
 
 @pytest.mark.parametrize(
@@ -472,12 +499,16 @@ def test_reconcile_active_spawn_finalizes_from_runner_exit_tuple_after_grace(
     reconciled = _reconcile(tmp_path, runtime_root, record)
 
     assert reconciled.status == expected_status
-    assert reconciled.exit_code == runner_exit_code
-    assert reconciled.error == expected_error
+    assert reconciled.terminal is not None
+    assert reconciled.terminal.exit_code == runner_exit_code
+    assert reconciled.terminal is not None
+    assert reconciled.terminal.error == expected_error
     latest = _get_spawn(runtime_root, spawn_id)
     assert latest.status == expected_status
-    assert latest.exit_code == runner_exit_code
-    assert latest.error == expected_error
+    assert latest.terminal is not None
+    assert latest.terminal.exit_code == runner_exit_code
+    assert latest.terminal is not None
+    assert latest.terminal.error == expected_error
 
 
 def test_reconcile_active_spawn_durable_report_wins_over_cancelled_runner_exit(
@@ -508,12 +539,14 @@ def test_reconcile_active_spawn_durable_report_wins_over_cancelled_runner_exit(
     reconciled = _reconcile(tmp_path, runtime_root, record)
 
     assert reconciled.status == "succeeded"
-    assert reconciled.exit_code == 0
-    assert reconciled.error is None
+    assert reconciled.terminal is not None
+    assert reconciled.terminal.exit_code == 0
+    assert reconciled.terminal is None or reconciled.terminal.error is None
     latest = _get_spawn(runtime_root, spawn_id)
     assert latest.status == "succeeded"
-    assert latest.exit_code == 0
-    assert latest.error is None
+    assert latest.terminal is not None
+    assert latest.terminal.exit_code == 0
+    assert latest.terminal is None or latest.terminal.error is None
 
 
 class _MidPrepKillSimulation(Exception):
@@ -613,8 +646,11 @@ def test_reserve_then_prepare_mid_prep_kill_leaves_queued_row_reconciled(
     reconciled = _reconcile(project_root, runtime_root, record)
 
     assert reconciled.status == "failed"
-    assert reconciled.exit_code == 1
-    assert reconciled.error == "missing_runner_pid"
+    assert reconciled.terminal is not None
+    assert reconciled.terminal.exit_code == 1
+    assert reconciled.terminal is not None
+    assert reconciled.terminal.error == "missing_runner_pid"
     latest = _get_spawn(runtime_root, spawn_id)
     assert latest.status == "failed"
-    assert latest.error == "missing_runner_pid"
+    assert latest.terminal is not None
+    assert latest.terminal.error == "missing_runner_pid"

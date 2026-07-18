@@ -102,7 +102,8 @@ def test_runner_finalize_between_reaper_snapshot_and_cleanup_preserves_scope(
     reconciled = reconcile_active_spawn(tmp_path, runtime_root, _record(runtime_root, spawn_id))
 
     assert reconciled.status == "succeeded"
-    assert reconciled.terminal_origin == "runner"
+    assert reconciled.terminal is not None
+    assert reconciled.terminal.origin == "runner"
     assert kill_calls == []
 
 

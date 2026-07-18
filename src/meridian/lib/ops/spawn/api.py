@@ -60,6 +60,7 @@ from meridian.lib.state.primary_meta import (
 from meridian.lib.state.spawn.model import SpawnRecord
 from meridian.lib.state.spawn_signals import SpawnSignalKind, write_spawn_signal
 from meridian.lib.state.spawn_tree import collect_descendants, descendant_id_set
+from meridian.lib.state.work_state import slugify
 from meridian.lib.telemetry.init import setup_telemetry
 from meridian.lib.telemetry.observer import register_spawn_telemetry_observer
 from meridian.lib.telemetry.router import emit_telemetry
@@ -109,7 +110,6 @@ from .query import (
 )
 
 _WAIT_PROGRESS_INTERVAL_SECS = 5.0
-
 
 
 def _looks_like_spawn_ref(ref: str) -> bool:
@@ -234,7 +234,7 @@ def _missing_follow_up_session_error(source_ref: str) -> str:
 
 
 def _validate_exact_work_id(work_id: str) -> str:
-    normalized = work_store.slugify(work_id)
+    normalized = slugify(work_id)
     if not normalized or normalized != work_id:
         raise ValueError(
             f"Invalid work item name '{work_id}'. "
@@ -454,9 +454,7 @@ def spawn_create_sync(
             matched_policy_rule=getattr(prepared_request, "matched_policy_rule", None),
             fallback_chain=tuple(getattr(prepared_request, "fallback_chain", ()) or ()),
             terminal_surface_mode=(
-                terminal_surface_mode.value
-                if terminal_surface_mode is not None
-                else None
+                terminal_surface_mode.value if terminal_surface_mode is not None else None
             ),
             project_root=authority.project_root.as_posix(),
             project_root_source=authority.project_root_source,
@@ -537,7 +535,9 @@ def spawn_list_sync(
 
     spawns = list(
         reversed(
-            reconcile_spawns(project_root, runtime_root, spawn_store.list_spawns(runtime_root))
+            reconcile_spawns(
+                project_root, runtime_root, spawn_store.list_spawns(runtime_root)
+            ).records
         )
     )
 
@@ -601,8 +601,8 @@ def spawn_list_sync(
                 kind=kind,
                 activity=surfaced_activity,
                 managed_backend=managed_backend,
-                duration_secs=row.duration_secs,
-                cost_usd=row.total_cost_usd,
+                duration_secs=row.terminal.duration_secs if row.terminal is not None else None,
+                cost_usd=row.terminal.total_cost_usd if row.terminal is not None else None,
             )
         )
 
@@ -655,9 +655,9 @@ def spawn_children_sync(
                 runtime_root,
                 spawn_store.list_spawns(
                     runtime_root,
-                    filters={"parent_id": spawn_id},
+                    parent_id=spawn_id,
                 ),
-            )
+            ).records
         )
     )
     entries = tuple(
@@ -667,8 +667,8 @@ def spawn_children_sync(
             model=row.model or "",
             agent=row.agent or None,
             desc=_spawn_display_label(row),
-            duration_secs=row.duration_secs,
-            cost_usd=row.total_cost_usd,
+            duration_secs=row.terminal.duration_secs if row.terminal is not None else None,
+            cost_usd=row.terminal.total_cost_usd if row.terminal is not None else None,
         )
         for row in children
     )
@@ -691,7 +691,6 @@ async def spawn_children(
     )
 
 
-
 def spawn_stats_sync(
     payload: SpawnStatsInput,
     ctx: RuntimeContext | None = None,
@@ -709,16 +708,18 @@ def spawn_stats_sync(
     all_spawns = (
         []
         if runtime_root is None
-        else reconcile_spawns(project_root, runtime_root, spawn_store.list_spawns(runtime_root))
+        else list(
+            reconcile_spawns(
+                project_root, runtime_root, spawn_store.list_spawns(runtime_root)
+            ).records
+        )
     )
 
     if payload.session is not None and payload.session.strip():
         from meridian.lib.state.session_identity import spawn_matches_exact_session
 
         wanted_session = payload.session.strip()
-        all_spawns = [
-            row for row in all_spawns if spawn_matches_exact_session(row, wanted_session)
-        ]
+        all_spawns = [row for row in all_spawns if spawn_matches_exact_session(row, wanted_session)]
 
     if payload.spawn_id is not None:
         root_id = payload.spawn_id.strip()
@@ -770,13 +771,14 @@ def spawn_stats_sync(
         acc["total"] = int(acc["total"]) + 1
         if row.status in ALL_SPAWN_STATUSES:
             acc[row.status] = int(acc[row.status]) + 1
-        if row.total_cost_usd is not None:
-            acc["cost_usd"] = float(acc["cost_usd"]) + row.total_cost_usd
+        terminal = row.terminal
+        if terminal is not None and terminal.total_cost_usd is not None:
+            acc["cost_usd"] = float(acc["cost_usd"]) + terminal.total_cost_usd
 
-        if row.duration_secs is not None:
-            total_duration_secs += row.duration_secs
-        if row.total_cost_usd is not None:
-            total_cost_usd += row.total_cost_usd
+        if terminal is not None and terminal.duration_secs is not None:
+            total_duration_secs += terminal.duration_secs
+        if terminal is not None and terminal.total_cost_usd is not None:
+            total_cost_usd += terminal.total_cost_usd
 
     models: dict[str, ModelStats] = {
         k: ModelStats(
@@ -800,10 +802,10 @@ def spawn_stats_sync(
                 spawn_id=s.id,
                 status=s.status,
                 model=s.model or "",
-                duration_secs=s.duration_secs,
-                cost_usd=s.total_cost_usd,
-                input_tokens=s.input_tokens,
-                output_tokens=s.output_tokens,
+                duration_secs=s.terminal.duration_secs if s.terminal is not None else None,
+                cost_usd=s.terminal.total_cost_usd if s.terminal is not None else None,
+                input_tokens=s.terminal.input_tokens if s.terminal is not None else None,
+                output_tokens=s.terminal.output_tokens if s.terminal is not None else None,
             )
             for s in spawns
         )
@@ -1286,10 +1288,10 @@ def spawn_cancel_all_sync(
         project_root,
         runtime_root,
         spawn_store.list_spawns(runtime_root),
-    )
+    ).records
     if work_id is not None:
-        active_session_work_ids = {
-            record.chat_id: record.active_work_id
+        active_session_work_ids: dict[str, str] | None = {
+            str(record.chat_id): record.active_work_id
             for record in session_store.list_active_session_records(runtime_root)
             if record.active_work_id is not None and record.active_work_id.strip()
         }
@@ -1469,7 +1471,7 @@ def _discover_pending_spawns(
         project_root,
         runtime_root,
         spawn_store.list_spawns(runtime_root),
-    )
+    ).records
 
     # Build descendant set if scoping to a parent
     descendant_ids: set[str] | None = None
@@ -1482,10 +1484,7 @@ def _discover_pending_spawns(
         if row.status in ACTIVE_SPAWN_STATUSES
         and row.id != exclude_spawn_id
         and (descendant_ids is None or row.id in descendant_ids)
-        and (
-            descendant_ids is not None
-            or spawn_matches_owner_chat(row, chat_id or "")
-        )
+        and (descendant_ids is not None or spawn_matches_owner_chat(row, chat_id or ""))
     ]
     pending.sort(key=lambda row: row.id)
     return pending
@@ -2124,9 +2123,7 @@ def spawn_fork_sync(
 
     inherited_skills = (
         resolved_reference.source_skills
-        if payload.inherit_source_skills
-        and requested_agent is None
-        and not payload.agent_opt_out
+        if payload.inherit_source_skills and requested_agent is None and not payload.agent_opt_out
         else payload.skills
     )
 

@@ -11,16 +11,16 @@ from meridian.lib.harness.connections.base import (
     ConnectionConfig,
     ConnectionState,
     HarnessConnection,
-    HarnessEvent,
+    RawHarnessEvent,
     StopProgressCallback,
     StopResult,
 )
 from meridian.lib.harness.connections.liveness import LivenessDecision
 from meridian.lib.harness.connections.resident_backend import ResidentBackendControl
 from meridian.lib.harness.semantics import (
+    NormalizedHarnessEvent,
     PrimaryEventScope,
     TerminalEventOutcome,
-    opencode_primary_event_scope,
 )
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.safety.permissions import UnsafeNoOpPermissionResolver
@@ -61,7 +61,7 @@ class FakeResidentConnection(HarnessConnection[ResolvedLaunchSpec]):
         self._harness_id = harness_id
         self._spawn_id = SpawnId("")
         self._state: ConnectionState = "created"
-        self.resident_events: asyncio.Queue[HarnessEvent | None] = asyncio.Queue()
+        self.resident_events: asyncio.Queue[RawHarnessEvent | None] = asyncio.Queue()
         self._resident_backend = FakeResidentBackendControl()
         self.stop_reasons: list[str | None] = []
 
@@ -94,7 +94,7 @@ class FakeResidentConnection(HarnessConnection[ResolvedLaunchSpec]):
     @property
     def primary_event_scope(self) -> PrimaryEventScope | None:
         if self._harness_id is HarnessId.OPENCODE:
-            return opencode_primary_event_scope(self.session_id)
+            return PrimaryEventScope(HarnessId.OPENCODE, "ses-resident")
         return None
 
     @property
@@ -134,14 +134,14 @@ class FakeResidentConnection(HarnessConnection[ResolvedLaunchSpec]):
     async def send_cancel(self) -> None:
         return None
 
-    async def events(self) -> AsyncIterator[HarnessEvent]:
+    async def events(self) -> AsyncIterator[RawHarnessEvent]:
         while True:
             event = await self.resident_events.get()
             if event is None:
                 return
             yield event
 
-    def emit(self, event: HarnessEvent) -> None:
+    def emit(self, event: RawHarnessEvent) -> None:
         self.resident_events.put_nowait(event)
 
     def close_stream(self) -> None:
@@ -152,8 +152,8 @@ class FakeResidentConnection(HarnessConnection[ResolvedLaunchSpec]):
 
         self.mark_failed()
         self.emit(
-            HarnessEvent(
-                event_type="error/connectionClosed",
+            RawHarnessEvent(
+                event_type="meridian/error/connectionClosed",
                 payload={"message": message},
                 harness_id=self.harness_id.value,
             )
@@ -216,24 +216,24 @@ def resident_event(
     harness_id: HarnessId,
     event_type: str,
     payload: dict[str, object],
-) -> HarnessEvent:
+) -> RawHarnessEvent:
     if harness_id is HarnessId.OPENCODE and "properties" not in payload:
         payload = {
             **payload,
             "type": event_type,
             "properties": {"sessionID": "ses-resident"},
         }
-    return HarnessEvent(event_type=event_type, harness_id=harness_id.value, payload=payload)
+    return RawHarnessEvent(event_type=event_type, harness_id=harness_id.value, payload=payload)
 
 
 async def next_turn_boundary(
-    subscriber: asyncio.Queue[HarnessEvent | None],
-) -> HarnessEvent:
+    subscriber: asyncio.Queue[NormalizedHarnessEvent | None],
+) -> RawHarnessEvent:
     while True:
         event = await subscriber.get()
         assert event is not None
-        if event.event_type == TURN_BOUNDARY_EVENT_TYPE:
-            return event
+        if event.raw.event_type == TURN_BOUNDARY_EVENT_TYPE:
+            return event.raw
 
 
 def start_row(

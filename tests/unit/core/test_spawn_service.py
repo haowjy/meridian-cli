@@ -187,9 +187,10 @@ async def test_complete_spawn_persists_terminal_intent_and_terminal_row(
     row = spawn_store.get_spawn(runtime_root, spawn_id)
     assert row is not None
     assert row.status == "failed"
-    assert row.runner_exit_status == "failed"
-    assert row.runner_exit_code == 9
-    assert row.runner_exit_error == "launch_failed"
+    assert row.runner_exit is not None
+    assert row.runner_exit.status == "failed"
+    assert row.runner_exit.exit_code == 9
+    assert row.runner_exit.error == "launch_failed"
 
 
 @pytest.mark.asyncio
@@ -218,8 +219,7 @@ async def test_complete_execution_does_not_backfill_runner_exit_on_terminal_row(
     assert outcome.completion.snapshot is not None
     row = spawn_store.get_spawn(runtime_root, spawn_id)
     assert row is not None
-    assert row.runner_exit_status is None
-    assert row.runner_exit_code is None
+    assert row.runner_exit is None
 
 
 @pytest.mark.asyncio
@@ -283,7 +283,8 @@ async def test_complete_execution_keeps_cancel_for_synthetic_failure_report(
     row = spawn_store.get_spawn(runtime_root, spawn_id)
     assert row is not None
     assert row.status == "cancelled"
-    assert row.exit_code == 130
+    assert row.terminal is not None
+    assert row.terminal.exit_code == 130
 
 
 @pytest.mark.asyncio
@@ -318,7 +319,8 @@ async def test_complete_execution_keeps_cancel_for_codex_close_error_report(
     row = spawn_store.get_spawn(runtime_root, spawn_id)
     assert row is not None
     assert row.status == "cancelled"
-    assert row.exit_code == 130
+    assert row.terminal is not None
+    assert row.terminal.exit_code == 130
 
 
 @pytest.mark.asyncio
@@ -354,7 +356,8 @@ async def test_complete_execution_keeps_cancel_for_claude_aborted_streaming_resu
     row = spawn_store.get_spawn(runtime_root, spawn_id)
     assert row is not None
     assert row.status == "cancelled"
-    assert row.exit_code == 130
+    assert row.terminal is not None
+    assert row.terminal.exit_code == 130
 
 
 @pytest.mark.asyncio

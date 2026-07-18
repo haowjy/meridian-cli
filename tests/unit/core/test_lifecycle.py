@@ -21,6 +21,7 @@ from meridian.lib.core.spawn_start import SpawnStartMetadata
 from meridian.lib.launch.types import PrimarySessionMetadata
 from meridian.lib.state import spawn_store
 from meridian.lib.state.paths import RuntimePaths
+from meridian.lib.state.spawn.repository import Applied, Declined
 
 
 class StoreSnapshotHook:
@@ -36,7 +37,11 @@ class StoreSnapshotHook:
             (
                 event.event_type,
                 None if record is None else record.status,
-                None if record is None else record.terminal_origin,
+                (
+                    None
+                    if record is None or record.terminal is None
+                    else record.terminal.origin
+                ),
             )
         )
 
@@ -109,8 +114,8 @@ def test_failure_sentinel_write_failure_does_not_block_finalize(
     outcome = service.finalize(spawn_id, "failed", 1, origin="launcher")
 
     record = spawn_store.get_spawn(tmp_path, spawn_id)
-    assert outcome.transitioned is True
-    assert outcome.wrote is True
+    assert isinstance(outcome, Applied)
+
     assert record is not None
     assert record.status == "failed"
 
@@ -129,11 +134,13 @@ def test_authoritative_non_failed_finalize_removes_stale_failure_sentinel(
     outcome = authoritative.finalize(spawn_id, "succeeded", 0, origin="runner")
 
     record = spawn_store.get_spawn(tmp_path, spawn_id)
-    assert outcome.transitioned is False
-    assert outcome.wrote is True
+    assert isinstance(outcome, Applied)
+    assert outcome.before.status == "failed"
+
     assert record is not None
     assert record.status == "succeeded"
-    assert record.terminal_origin == "runner"
+    assert record.terminal is not None
+    assert record.terminal.origin == "runner"
     assert not sentinel_path.exists()
 
 
@@ -158,9 +165,9 @@ def test_bootstrap_from_disk_loads_owner_record_for_write_through(
     assert worker.mark_finalizing(spawn_id) is True
     outcome = worker.finalize(spawn_id, "succeeded", 0, origin="runner")
 
-    assert outcome.wrote is True
-    assert outcome.snapshot is not None
-    assert outcome.snapshot.status == "succeeded"
+
+    assert isinstance(outcome, Applied)
+    assert outcome.after.status == "succeeded"
 
 
 def test_finalize_dispatches_hooks_after_terminal_state_is_persisted(tmp_path: Path) -> None:
@@ -262,7 +269,8 @@ def test_owner_mark_running_clears_stale_runner_created_epoch_when_pid_replaced(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    service = _make_service(tmp_path)
+    hook = EventTypeHook()
+    service = _make_service(tmp_path, hooks=[hook])
     spawn_id = _start_spawn(service)
     service.mark_running(
         spawn_id,
@@ -274,6 +282,7 @@ def test_owner_mark_running_clears_stale_runner_created_epoch_when_pid_replaced(
     assert initial.runner_created_at_epoch == 222.0
 
     monkeypatch.setattr("meridian.lib.core.lifecycle._pid_created_at_epoch", lambda _pid: None)
+    hook.event_types.clear()
     service.mark_running(
         spawn_id,
         runner_pid=999997,
@@ -283,6 +292,58 @@ def test_owner_mark_running_clears_stale_runner_created_epoch_when_pid_replaced(
     assert updated is not None
     assert updated.runner_pid == 999997
     assert updated.runner_created_at_epoch is None
+    assert hook.event_types == []
+
+
+def test_mark_running_terminal_decline_emits_no_event(tmp_path: Path) -> None:
+    hook = EventTypeHook()
+    service = _make_service(tmp_path, hooks=[hook])
+    spawn_id = _start_spawn(service)
+    service.finalize(spawn_id, "succeeded", 0, origin="runner")
+    hook.event_types.clear()
+
+    service.mark_running(spawn_id, runner_pid=999997)
+
+    record = spawn_store.get_spawn(tmp_path, spawn_id)
+    assert record is not None
+    assert record.status == "succeeded"
+    assert record.runner_pid is None
+    assert hook.event_types == []
+
+
+def test_finalize_decline_emits_no_event_and_preserves_state(tmp_path: Path) -> None:
+    hook = EventTypeHook()
+    service = _make_service(tmp_path, hooks=[hook])
+    spawn_id = _start_spawn(service)
+    service.finalize(spawn_id, "succeeded", 0, origin="runner")
+    before = spawn_store.get_spawn(tmp_path, spawn_id)
+    hook.event_types.clear()
+
+    outcome = service.finalize(spawn_id, "failed", 1, origin="launcher")
+
+    assert isinstance(outcome, Declined)
+    assert outcome.snapshot == before
+    assert spawn_store.get_spawn(tmp_path, spawn_id) == before
+    assert hook.event_types == []
+
+
+def test_cancel_after_terminal_writes_nothing_and_emits_no_event(tmp_path: Path) -> None:
+    hook = EventTypeHook()
+    service = _make_service(tmp_path, hooks=[hook])
+    spawn_id = _start_spawn(service)
+    service.finalize(spawn_id, "succeeded", 0, origin="runner")
+    state_path = RuntimePaths.from_root_dir(tmp_path).spawns_dir / spawn_id / "state.json"
+    before = state_path.read_bytes()
+    before_inode = state_path.stat().st_ino
+    hook.event_types.clear()
+
+    record = service.request_cancel(spawn_id)
+
+    assert record is not None
+    assert record.status == "succeeded"
+    assert state_path.read_bytes() == before
+    assert state_path.stat().st_ino == before_inode
+    assert hook.event_types == []
 
 
 def test_owner_transition_preserves_metadata_written_after_cache_load(tmp_path: Path) -> None:

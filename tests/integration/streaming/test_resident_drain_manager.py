@@ -141,7 +141,9 @@ async def test_opencode_child_session_idle_does_not_finalize_parent(
 
     try:
         observed = await subscriber.get()
-        assert observed == child_idle
+        assert observed is not None
+        assert observed.raw == child_idle
+        assert observed.semantics.terminal is None
         with pytest.raises(asyncio.TimeoutError):
             await asyncio.wait_for(
                 asyncio.shield(manager.wait_for_completion(spawn_id)),

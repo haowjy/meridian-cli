@@ -26,7 +26,7 @@ meridian.toml
   locks/gc.lock                     — lock-GC pass serialization
   spawns/.staging/<unique>/         — complete row build before atomic publication
   spawns/<spawn_id>/
-    state.json                      — authoritative spawn state (v2)
+    state.json                      — authoritative spawn state (schema v3)
     history.jsonl                   — primary output artifact
     attempt-N/                      — preserved retry evidence from prior attempts
     last-observed-event.json        — diagnostic marker for last harness event + counters
@@ -47,7 +47,7 @@ the deletable project root and are never unlinked.
 
 Work items live under the `[context.work]` root (default
 `{user_home}/context/<id>/work/<slug>/`), resolved by `work_scope.py` /
-`work_store.py` — **never** the project repo. See `docs/configuration.md` for
+`work_state.py` — **never** the project repo. See `docs/configuration.md` for
 context-path resolution.
 
 ## Spawn State: V2 Per-Spawn Files
@@ -109,9 +109,10 @@ triggering project setup side effects in CI.
 
 ## Reconciliation Behavior
 
-`reaper.py:reconcile_spawns()` gives list, stats, reference, and dashboard callers
-a read-only projection of stale active rows. It may return an in-memory terminal
-status but never persists state or terminates processes, and it is safe at any depth.
+`reaper.py:reconcile_spawns()` accepts and returns an immutable `SpawnScan`, preserving
+its quarantine partition while projecting stale active records for list, stats, reference,
+and dashboard callers. It may return an in-memory terminal status but never persists
+state or terminates processes, and it is safe at any depth.
 
 `reconcile_active_spawn()` is the side-effectful repair path. It runs from doctor
 background repair and fails closed outside root depth. It snapshots a cleanup claim
@@ -126,10 +127,10 @@ Both paths share liveness rules in `reaper.py` and completion/cancel precedence 
 
 - `user_paths.py` — `get_user_home()`. Start here for any new user-level storage.
 - `paths.py` — `RuntimePaths`, read vs write root resolvers.
-- `spawn_store.py` — `SpawnStore`. Main interface for listing, creating, updating spawns.
+- `spawn_store.py` — listing/query, creation, and mutation interface; scans return `SpawnScan`.
 - `spawn_aggregate.py` — published-row deletion and spawn-owned artifact lifetime guard.
-- `work_store.py` / `work_repository.py` — pure work-item reads and the single locked
-  mutation repository, respectively.
+- `work_state.py` / `work_store.py` / `work_repository.py` — work-item models and
+  codec, pure reads, and the single locked mutation repository, respectively.
 - `session_store.py` — Session event log.
 - `atomic.py` — atomic write primitives. All state writes use these.
 - `reaper.py` — read-only `reconcile_spawns()` projection and root-only
@@ -138,7 +139,8 @@ Both paths share liveness rules in `reaper.py` and completion/cancel precedence 
 
 ## Spawn Subpackage
 
-`spawn/` contains domain models, v2 persistence helpers, and finalization policy.
+`spawn/` contains domain models, strict v3 persistence helpers, the one-shot legacy
+v2 read upgrader, and pure transitions.
 → [spawn/AGENTS.md](spawn/AGENTS.md)
 
 ## Anti-Patterns

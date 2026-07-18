@@ -10,7 +10,7 @@ import pytest
 
 from meridian.lib.core.domain import SpawnStatus
 from meridian.lib.core.types import HarnessId, SpawnId
-from meridian.lib.harness.connections.base import ConnectionConfig, HarnessEvent
+from meridian.lib.harness.connections.base import ConnectionConfig, RawHarnessEvent
 from meridian.lib.harness.pi_lifecycle_events import PI_LIFECYCLE_EVENT_ALLOWLIST
 from meridian.lib.harness.semantics import TerminalEventOutcome
 from meridian.lib.state import spawn_store
@@ -81,7 +81,7 @@ async def test_real_pi_tracked_child_followup_has_no_canonical_lifecycle_depende
     _start_row(tmp_path, child_id, parent_id=str(_SPAWN_ID))
     observed_event_types: list[str] = []
 
-    async def observe(event: HarnessEvent, transition: str | None = None) -> None:
+    async def observe(event: RawHarnessEvent, transition: str | None = None) -> None:
         observed_event_types.append(event.event_type)
         await coordinator.observe_event(event, transition)
 

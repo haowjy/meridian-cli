@@ -165,8 +165,7 @@ def report_search_sync(
         if runtime_root is None:
             return ReportSearchOutput(results=())
         spawn_ids = tuple(
-            row.id
-            for row in reversed(spawn_store.list_spawns(runtime_root))
+            row.id for row in reversed(spawn_store.list_spawns(runtime_root).records)
         )
 
     matches: list[ReportSearchResult] = []

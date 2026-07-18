@@ -10,7 +10,8 @@ from pathlib import Path
 from typing import Any, cast
 
 from meridian.lib.core.clock import Clock, RealClock
-from meridian.lib.harness.connections.base import HarnessEvent
+from meridian.lib.core.types import SpawnId
+from meridian.lib.harness.connections.base import RawHarnessEvent
 from meridian.lib.state.atomic import append_text_line, atomic_write_text
 from meridian.lib.state.managed_primary import ManagedPrimaryCausalTracker
 from meridian.lib.state.spawn_aggregate import mutate_published_spawn_artifact
@@ -68,7 +69,7 @@ class HarnessHistoryWriter:
             return -1
         return self._seq - 1
 
-    def write(self, event: HarnessEvent) -> WriteResult:
+    def write(self, event: RawHarnessEvent) -> WriteResult:
         """Write one event and return write success metadata."""
 
         causal = self._causal_tracker.derive(event)
@@ -102,7 +103,7 @@ class HarnessHistoryWriter:
                 _write_artifacts()
             elif not mutate_published_spawn_artifact(
                 self.runtime_root,
-                self.spawn_id,
+                SpawnId(self.spawn_id),
                 _write_artifacts,
             ):
                 return WriteResult(success=False, error="spawn no longer published")
@@ -113,7 +114,7 @@ class HarnessHistoryWriter:
 
     def _record_last_observed_event(
         self,
-        event: HarnessEvent,
+        event: RawHarnessEvent,
         *,
         timestamp: str,
         seq: int,
@@ -196,7 +197,7 @@ class HarnessHistoryWriter:
                 if causal_key in typed_envelope and causal_key not in replay_payload:
                     replay_payload[causal_key] = typed_envelope[causal_key]
             self._causal_tracker.derive(
-                HarnessEvent(
+                RawHarnessEvent(
                     event_type=event_type,
                     payload=replay_payload,
                     harness_id=harness_id,

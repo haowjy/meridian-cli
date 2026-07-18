@@ -9,7 +9,7 @@ import json
 import pytest
 
 from meridian.lib.harness.connections import codex_ws
-from meridian.lib.harness.connections.base import HarnessEvent
+from meridian.lib.harness.connections.base import RawHarnessEvent
 from meridian.lib.harness.connections.codex_ws import CodexConnection
 from tests.support.async_determinism import AsyncDeterminism
 
@@ -47,7 +47,7 @@ class _FreezesAfterMessagesWebSocket:
         self.closed = True
 
 
-async def _collect_events(connection: CodexConnection) -> list[HarnessEvent]:
+async def _collect_events(connection: CodexConnection) -> list[RawHarnessEvent]:
     return [event async for event in connection.events()]
 
 
@@ -58,7 +58,7 @@ async def _collect_codex_events_under_fake_clock(
     *,
     advance_budget: float = 1.0,
     step: float = 0.01,
-) -> list[HarnessEvent]:
+) -> list[RawHarnessEvent]:
     determinism.install_on_running_loop(monkeypatch)
     reader_task = asyncio.create_task(connection._read_messages_loop())
     collect_task = asyncio.create_task(_collect_events(connection))
@@ -103,7 +103,7 @@ async def test_codex_events_fail_after_liveness_timeout_mid_stream(
 
     assert [event.event_type for event in events] == [
         "item/updated",
-        "error/connectionClosed",
+        "meridian/error/connectionClosed",
     ]
     assert "liveness timeout" in str(events[-1].payload["message"])
     assert connection.state == "failed"

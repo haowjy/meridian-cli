@@ -13,6 +13,7 @@ from meridian.lib.core.lifecycle import SpawnLifecycleService
 from meridian.lib.core.spawn_lifecycle import SpawnReservation
 from meridian.lib.core.telemetry import SpawnEventCounter
 from meridian.lib.launch.types import PrimarySessionMetadata
+from meridian.lib.state.atomic import atomic_write_text
 from meridian.lib.telemetry import emit_telemetry
 from meridian.lib.telemetry.init import setup_telemetry
 from meridian.lib.telemetry.retention import run_retention_cleanup
@@ -95,6 +96,41 @@ def test_retention_preserves_spawn_owned_segments_for_reconciled_active_spawns(t
     run_retention_cleanup(telemetry_dir, runtime_root=tmp_path, max_age_days=7)
 
     assert segment.exists()
+
+
+def test_retention_preserves_valid_active_segment_beside_quarantined_row(tmp_path) -> None:
+    telemetry_dir = tmp_path / "telemetry"
+    valid_segment = write_segment(
+        telemetry_dir,
+        "p1.999-0001.jsonl",
+        event="spawn.running",
+        domain="spawn",
+    )
+    quarantined_segment = write_segment(
+        telemetry_dir,
+        "p2.999-0001.jsonl",
+        event="spawn.running",
+        domain="spawn",
+    )
+    old_time = time.time() - 10 * 24 * 60 * 60
+    os.utime(valid_segment, (old_time, old_time))
+    os.utime(quarantined_segment, (old_time, old_time))
+
+    service = SpawnLifecycleService(tmp_path)
+    valid_id = start_spawn(service)
+    quarantined_id = start_spawn(service)
+    assert (valid_id, quarantined_id) == ("p1", "p2")
+    heartbeat = tmp_path / "spawns" / valid_id / "heartbeat"
+    heartbeat.touch()
+    state_path = tmp_path / "spawns" / quarantined_id / "state.json"
+    payload = json.loads(state_path.read_text(encoding="utf-8"))
+    payload["status"] = "zombie"
+    atomic_write_text(state_path, json.dumps(payload))
+
+    run_retention_cleanup(telemetry_dir, runtime_root=tmp_path, max_age_days=7)
+
+    assert valid_segment.exists()
+    assert quarantined_segment.exists()
 
 
 def test_retention_deletes_spawn_owned_segments_for_stale_spawns(tmp_path) -> None:

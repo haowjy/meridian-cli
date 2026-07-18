@@ -8,8 +8,9 @@ not involved.
 ## Mental Model
 
 Each transport wraps a long-lived process and turns its output into a stream of
-`HarnessEvent` objects consumed by the drain loop. The drain loop calls
-`terminal_outcome(event)` on each event; when that returns non-None, it breaks.
+`RawHarnessEvent` objects consumed by the drain loop. The drain loop normalizes
+each event once, applies connection-local signal state from that descriptor, and
+carries the raw event plus its semantics to subscribers.
 
 Transports differ at the wire level:
 - **Claude** (`claude_ws.py`): stdin/stdout NDJSON. No WebSocket despite the filename.
@@ -55,7 +56,7 @@ an awaited startup boundary, artifact opens and guarded scope registration fail 
 
 ## Entry Points
 
-- `base.py` — `HarnessConnection` ABC, `HarnessEvent`, `ConnectionCapabilities`,
+- `base.py` — `HarnessConnection` ABC, `RawHarnessEvent`, `ConnectionCapabilities`,
   `ConnectionConfig`, `ServerRequestHandler` protocol, size constants,
   `reap_on_ownership_transfer_failure()`.
 - `resident_backend.py` — explicit resident-backend control seam used by

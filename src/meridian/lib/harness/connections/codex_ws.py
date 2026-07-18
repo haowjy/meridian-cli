@@ -41,11 +41,11 @@ from meridian.lib.harness.connections.base import (
     ConnectionNotReady,
     ConnectionState,
     HarnessConnection,
-    HarnessEvent,
     HarnessRequest,
     InteractiveHandler,
     ObserverEndpoint,
     PrimaryRuntimeRequestPolicy,
+    RawHarnessEvent,
     ServerRequestHandler,
     StopProgressCallback,
     StopResult,
@@ -66,9 +66,8 @@ from meridian.lib.harness.connections.resident_backend import (
     ResidentBackendControl,
 )
 from meridian.lib.harness.semantics import (
+    EventSemantics,
     PrimaryEventScope,
-    clears_signal,
-    codex_primary_event_scope,
 )
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.observability.trace_helpers import (
@@ -230,7 +229,7 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
         self._next_request_id = 1
         self._pending_requests: dict[int, asyncio.Future[dict[str, object]]] = {}
         self._hitl_requests: dict[str, object] = {}
-        self._event_queue: asyncio.Queue[HarnessEvent | None] = asyncio.Queue()
+        self._event_queue: asyncio.Queue[RawHarnessEvent | None] = asyncio.Queue()
         self._liveness = BackendLivenessPolicy(
             timeout_seconds=lambda: self._LIVENESS_TIMEOUT_SECONDS,
             now=lambda: _time.monotonic(),
@@ -240,7 +239,6 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
 
         self._current_turn_id: str | None = None
         self._thread_id: str | None = None
-        self._main_turn_thread_id: str | None = None
         self._tracer: DebugTracer | None = None
         self._cancel_requested = False
         self._signal_in_flight = False
@@ -290,12 +288,15 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
         return self._current_turn_id
 
     @property
-    def main_turn_thread_id(self) -> str | None:
-        return self._main_turn_thread_id
-
-    @property
     def primary_event_scope(self) -> PrimaryEventScope | None:
-        return codex_primary_event_scope(self._main_turn_thread_id)
+        thread_id = (self._thread_id or "").strip()
+        if not thread_id:
+            return None
+        return PrimaryEventScope(
+            harness_id=HarnessId.CODEX,
+            scope_id=thread_id,
+            unscoped_events_match=True,
+        )
 
     @property
     def subprocess_pid(self) -> int | None:
@@ -361,7 +362,6 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
         self._event_queue = asyncio.Queue()
         self._current_turn_id = None
         self._thread_id = None
-        self._main_turn_thread_id = None
         self._liveness.reset()
         self._cancel_requested = False
         self._signal_in_flight = False
@@ -477,7 +477,7 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
         self,
         *,
         policy: PrimaryRuntimeRequestPolicy,
-        event_sink: Callable[[HarnessEvent], Awaitable[None]] | None = None,
+        event_sink: Callable[[RawHarnessEvent], Awaitable[None]] | None = None,
         request_handler: ServerRequestHandler | None = None,
     ) -> None:
         if policy in (
@@ -496,7 +496,7 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
             return
         raise ValueError(f"Unsupported Codex primary runtime request policy: {policy}")
 
-    async def inject_runtime_event(self, event: HarnessEvent) -> None:
+    async def inject_runtime_event(self, event: RawHarnessEvent) -> None:
         await self._event_queue.put(event)
 
     async def stop(
@@ -581,7 +581,7 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
         self._transition("stopping")
         await self._close_ws()
 
-    async def events(self) -> AsyncIterator[HarnessEvent]:
+    async def events(self) -> AsyncIterator[RawHarnessEvent]:
         while True:
             event = await self._event_queue.get()
             if event is None:
@@ -743,8 +743,8 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
                         self._emit_startup_phase(StartupPhase.HARNESS_FAILED)
                         self._transition("failed")
                         await self._event_queue.put(
-                            HarnessEvent(
-                                event_type="error/connectionClosed",
+                            RawHarnessEvent(
+                                event_type="meridian/error/connectionClosed",
                                 payload={"message": message},
                                 harness_id=self.harness_id.value,
                                 raw_text=None,
@@ -815,8 +815,8 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
                 self._emit_startup_phase(StartupPhase.HARNESS_FAILED)
                 self._transition("failed")
                 await self._event_queue.put(
-                    HarnessEvent(
-                        event_type="error/connectionClosed",
+                    RawHarnessEvent(
+                        event_type="meridian/error/connectionClosed",
                         payload={"message": str(exc)},
                         harness_id=self.harness_id.value,
                         raw_text=None,
@@ -862,7 +862,6 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
         await self._clear_stale_hitl_requests(reason="connection_stopped")
         self._clear_turn_liveness_signals()
         self._thread_id = None
-        self._main_turn_thread_id = None
         self._cancel_requested = False
         self._signal_in_flight = False
         self._liveness.signal_request_resolved("cancel")
@@ -971,7 +970,7 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
             return
 
         await self._event_queue.put(
-            HarnessEvent(
+            RawHarnessEvent(
                 event_type="warning/unsupportedServerRequest",
                 payload={"method": method, "params": payload},
                 harness_id=self.harness_id.value,
@@ -1000,7 +999,7 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
             method,
         )
         await self._event_queue.put(
-            HarnessEvent(
+            RawHarnessEvent(
                 event_type="warning/approvalRejected",
                 payload={
                     "reason": "confirm_mode",
@@ -1028,7 +1027,7 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
             await self._resolve_server_request(payload)
         self._update_turn_state(method=method, payload=payload)
         await self._event_queue.put(
-            HarnessEvent(
+            RawHarnessEvent(
                 event_type=method,
                 payload=payload,
                 harness_id=self.harness_id.value,
@@ -1300,21 +1299,6 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
         return method_obj, cast("dict[str, object]", payload_obj)
 
     def _update_turn_state(self, *, method: str, payload: dict[str, object]) -> None:
-        event = HarnessEvent(
-            event_type=method,
-            payload=payload,
-            harness_id=HarnessId.CODEX.value,
-        )
-        if method == "turn/started" and self._main_turn_thread_id is None:
-            thread_id = _extract_thread_id(payload)
-            if thread_id is not None:
-                self._main_turn_thread_id = thread_id
-        if clears_signal(event, primary_event_scope=self.primary_event_scope):
-            self._end_current_turn()
-            self._signal_in_flight = False
-            self._liveness.signal_request_resolved("cancel")
-            return
-
         if method in {"thread/start", "thread/started"}:
             thread_id = _extract_thread_id(payload)
             if thread_id is not None:
@@ -1326,6 +1310,12 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
                 self._liveness.signal_turn_ended(self._current_turn_id)
             self._current_turn_id = turn_id
             self._liveness.signal_turn_started(turn_id)
+            self._signal_in_flight = False
+            self._liveness.signal_request_resolved("cancel")
+
+    def observe_event_semantics(self, semantics: EventSemantics) -> None:
+        if semantics.clears_signal:
+            self._end_current_turn()
             self._signal_in_flight = False
             self._liveness.signal_request_resolved("cancel")
 

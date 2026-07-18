@@ -9,6 +9,7 @@ from meridian.lib.core.spawn_lifecycle import SpawnReservation
 from meridian.lib.core.types import SpawnId
 from meridian.lib.launch.types import PrimarySessionMetadata
 from meridian.lib.state.paths import resolve_runtime_paths
+from meridian.lib.state.spawn.repository import Applied, Declined
 from meridian.lib.state.spawn_store import (
     finalize_spawn,
     get_spawn,
@@ -107,8 +108,8 @@ def test_locking_contention_writes_clean_v2_state(tmp_path: Path) -> None:
         assert proc.exitcode == 0
 
     rows = list_spawns(runtime_root)
-    assert len(rows) == process_count
-    assert all(row.status == "succeeded" for row in rows)
+    assert len(rows.records) == process_count
+    assert all(row.status == "succeeded" for row in rows.records)
 
     assert len(list((runtime_root / "spawns").glob("*/state.json"))) == process_count
 
@@ -203,12 +204,11 @@ def test_owner_finalize_drops_stale_terminal_write_after_external_winner(tmp_pat
     )
     row = get_spawn(runtime_root, spawn_id)
 
-    assert external.wrote is True
-    assert stale_owner.wrote is False
-    assert stale_owner.transitioned is False
-    assert stale_owner.snapshot is not None
+    assert isinstance(external, Applied)
+    assert isinstance(stale_owner, Declined)
     assert stale_owner.snapshot.status == "succeeded"
     assert row is not None
     assert row.status == "succeeded"
-    assert row.error is None
-    assert row.duration_secs == 1.0
+    assert row.terminal is not None
+    assert row.terminal.error is None
+    assert row.terminal.duration_secs == 1.0

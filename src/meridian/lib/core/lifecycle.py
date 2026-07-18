@@ -34,6 +34,7 @@ from uuid import UUID
 import psutil
 import structlog
 
+from meridian.lib.core.domain import SpawnStatus, TerminalSpawnStatus
 from meridian.lib.core.spawn_lifecycle import (
     TERMINAL_SPAWN_STATUSES,
     SpawnReservation,
@@ -56,14 +57,14 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from meridian.lib.core.clock import Clock
-    from meridian.lib.core.domain import SpawnStatus, TokenUsage
+    from meridian.lib.core.domain import TokenUsage
     from meridian.lib.hooks.dispatch import HookDispatcher
     from meridian.lib.state.spawn.model import (
         LaunchMode,
         SpawnOrigin,
         SpawnRecord,
     )
-    from meridian.lib.state.spawn_store import FinalizeOutcome
+    from meridian.lib.state.spawn.repository import LockedMutationResult
 
 logger = structlog.get_logger(__name__)
 
@@ -85,12 +86,22 @@ def _spawn_store() -> Any:
     return spawn_store
 
 
+def _locked_mutation_snapshot(outcome: LockedMutationResult) -> SpawnRecord | None:
+    from meridian.lib.state.spawn.repository import Applied, Declined
+
+    if isinstance(outcome, Applied):
+        return outcome.after
+    if isinstance(outcome, Declined):
+        return outcome.snapshot
+    return None
+
+
 # ---------------------------------------------------------------------------
 # Public type aliases
 # ---------------------------------------------------------------------------
 
 EventType = Literal["spawn.created", "spawn.running", "spawn.finalized"]
-TerminalStatus = Literal["succeeded", "failed", "cancelled", "timed_out"]
+TerminalStatus = TerminalSpawnStatus
 TerminalOrigin = Literal["runner", "launcher", "cancel", "reconciler", "launch_failure"]
 
 
@@ -98,6 +109,7 @@ type TerminalOutcomeCategory = Literal["succeeded"] | SpawnFailureCategory
 
 
 _TERMINAL_STATUS_VALUES: frozenset[str] = TERMINAL_SPAWN_STATUSES
+
 
 # ---------------------------------------------------------------------------
 # Event ID generation
@@ -325,7 +337,7 @@ class SpawnLifecycleService:
             resolved_runner_created_at_epoch = runner_created_at_epoch
             if runner_pid is not None and resolved_runner_created_at_epoch is None:
                 resolved_runner_created_at_epoch = _pid_created_at_epoch(runner_pid)
-            changed, record = _spawn_store().mark_spawn_running_with_snapshot(
+            outcome = _spawn_store().mark_spawn_running(
                 self._runtime_root,
                 spawn_id,
                 launch_mode=launch_mode,
@@ -333,9 +345,12 @@ class SpawnLifecycleService:
                 runner_pid=runner_pid,
                 runner_created_at_epoch=resolved_runner_created_at_epoch,
             )
+            from meridian.lib.state.spawn.repository import Applied
+
+            record = _locked_mutation_snapshot(outcome)
             if self._owns_record(spawn_id) and record is not None:
                 self._record = record
-            if changed:
+            if isinstance(outcome, Applied) and outcome.before.status != outcome.after.status:
                 event = self._build_event("spawn.running", record, spawn_id=spawn_id)
                 self._dispatch(event)
                 self._emit_telemetry_event("spawn.running", record)
@@ -423,7 +438,7 @@ class SpawnLifecycleService:
         with bind_lifecycle_correlation(
             self._correlation(operation="request_cancel", spawn_id=spawn_id)
         ):
-            record = _spawn_store().record_cancel_intent(
+            outcome = _spawn_store().record_cancel_intent(
                 self._runtime_root,
                 spawn_id,
                 exit_code=exit_code,
@@ -432,28 +447,32 @@ class SpawnLifecycleService:
                 requested_at=requested_at,
                 clock=clock,
             )
-            if record is None:
+            from meridian.lib.state.spawn.repository import Applied, Missing
+
+            if isinstance(outcome, Missing):
                 return None
-            self._emit_telemetry_event(
-                "spawn.updated",
-                record,
-                payload={
-                    "cancel_intent": {
-                        "requested_at": record.cancel_intent.requested_at,
-                        "exit_code": record.cancel_intent.exit_code,
-                        "error": record.cancel_intent.error,
-                        "requested_by": record.cancel_intent.requested_by,
-                    }
-                    if record.cancel_intent is not None
-                    else None,
-                },
-            )
+            record = outcome.after if isinstance(outcome, Applied) else outcome.snapshot
+            if isinstance(outcome, Applied):
+                self._emit_telemetry_event(
+                    "spawn.updated",
+                    record,
+                    payload={
+                        "cancel_intent": {
+                            "requested_at": record.cancel_intent.requested_at,
+                            "exit_code": record.cancel_intent.exit_code,
+                            "error": record.cancel_intent.error,
+                            "requested_by": record.cancel_intent.requested_by,
+                        }
+                        if record.cancel_intent is not None
+                        else None,
+                    },
+                )
             return record
 
     def finalize(
         self,
         spawn_id: str,
-        status: SpawnStatus,
+        status: TerminalSpawnStatus,
         exit_code: int,
         *,
         origin: SpawnOrigin,
@@ -462,7 +481,7 @@ class SpawnLifecycleService:
         finished_at: str | None = None,
         error: str | None = None,
         clock: Clock | None = None,
-    ) -> FinalizeOutcome:
+    ) -> LockedMutationResult:
         """Finalize a spawn and dispatch spawn.finalized for persisted terminal writes."""
         requested_category = self._terminal_outcome_category(
             status=status,
@@ -490,18 +509,21 @@ class SpawnLifecycleService:
                 error=error,
                 clock=clock,
             )
-            if outcome.wrote and outcome.snapshot is not None:
+            from meridian.lib.state.spawn.repository import Applied
+
+            if isinstance(outcome, Applied):
+                snapshot = outcome.after
                 if self._owns_record(spawn_id):
-                    self._record = outcome.snapshot
+                    self._record = snapshot
                 self._reconcile_failure_sentinel(
-                    outcome.snapshot,
+                    snapshot,
                     origin=origin,
                     error=error,
                 )
-                event = self._build_event("spawn.finalized", outcome.snapshot)
+                event = self._build_event("spawn.finalized", snapshot)
                 self._dispatch(event)
                 self._emit_telemetry_event_for_record(
-                    f"spawn.{outcome.snapshot.status}", outcome.snapshot
+                    f"spawn.{snapshot.status}", snapshot
                 )
             return outcome
 
@@ -510,12 +532,16 @@ class SpawnLifecycleService:
         with bind_lifecycle_correlation(
             self._correlation(operation="mark_finalizing", spawn_id=spawn_id)
         ):
-            transitioned, record = _spawn_store().mark_finalizing_with_snapshot(
+            outcome = _spawn_store().mark_finalizing(
                 self._runtime_root,
                 spawn_id,
             )
+            from meridian.lib.state.spawn.repository import Applied
+
+            record = _locked_mutation_snapshot(outcome)
             if self._owns_record(spawn_id) and record is not None:
                 self._record = record
+            transitioned = isinstance(outcome, Applied)
             if transitioned:
                 self._emit_telemetry_event("spawn.finalizing", record)
             return transitioned
@@ -552,7 +578,12 @@ class SpawnLifecycleService:
                 error=error,
                 clock=clock,
             )
-            return outcome.transitioned
+            from meridian.lib.state.spawn.repository import Applied
+
+            return (
+                isinstance(outcome, Applied)
+                and outcome.before.status not in TERMINAL_SPAWN_STATUSES
+            )
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -579,7 +610,7 @@ class SpawnLifecycleService:
             resolved_status = record.status
         resolved_origin = terminal_origin
         if resolved_origin is None and record is not None:
-            resolved_origin = record.terminal_origin
+            resolved_origin = record.terminal.origin if record.terminal is not None else None
         return LifecycleCorrelation(
             spawn_id=resolved_spawn_id,
             parent_id=record.parent_id if record is not None else None,
@@ -611,9 +642,12 @@ class SpawnLifecycleService:
         origin: TerminalOrigin | None = None,
         error: str | None = None,
     ) -> SpawnFailure:
+        terminal = record.terminal
+        terminal_origin = terminal.origin if terminal is not None else None
+        terminal_error = terminal.error if terminal is not None else None
         outcome_category = _terminal_failure_category(
             status=record.status,
-            origin=origin or record.terminal_origin,
+            origin=origin or terminal_origin,
         )
         correlation = self._correlation(
             operation="finalize",
@@ -624,13 +658,13 @@ class SpawnLifecycleService:
         return SpawnFailure(
             spawn_id=record.id,
             ts=datetime.now(tz=UTC),
-            exit_code=record.exit_code,
-            reason=record.error or error or record.terminal_origin or origin or "spawn failed",
+            exit_code=terminal.exit_code if terminal is not None else None,
+            reason=terminal_error or error or terminal_origin or origin or "spawn failed",
             category=outcome_category or SpawnFailureCategory.UNKNOWN_FAILURE,
             status=record.status,
-            origin=record.terminal_origin or origin,
+            origin=terminal_origin or origin,
             correlation=correlation.to_context(),
-            metadata={"origin": record.terminal_origin or origin},
+            metadata={"origin": terminal_origin or origin},
         )
 
     def bootstrap_from_disk(self, spawn_id: str) -> SpawnRecord | None:
@@ -763,19 +797,24 @@ class SpawnLifecycleService:
             rec_status = record.status
             if rec_status in _TERMINAL_STATUS_VALUES:
                 status = rec_status  # type: ignore[assignment]
-            origin = record.terminal_origin  # type: ignore[assignment]
-            duration_secs = record.duration_secs
-            total_cost_usd = record.total_cost_usd
-            input_tokens = record.input_tokens
-            output_tokens = record.output_tokens
-            cache_read_input_tokens = record.cache_read_input_tokens
-            cache_creation_input_tokens = record.cache_creation_input_tokens
-            reasoning_tokens = record.reasoning_tokens
-            cost_is_estimate = record.cost_is_estimate
+            terminal = record.terminal
+            origin = terminal.origin if terminal is not None else None  # type: ignore[assignment]
+            duration_secs = terminal.duration_secs if terminal is not None else None
+            total_cost_usd = terminal.total_cost_usd if terminal is not None else None
+            input_tokens = terminal.input_tokens if terminal is not None else None
+            output_tokens = terminal.output_tokens if terminal is not None else None
+            cache_read_input_tokens = (
+                terminal.cache_read_input_tokens if terminal is not None else None
+            )
+            cache_creation_input_tokens = (
+                terminal.cache_creation_input_tokens if terminal is not None else None
+            )
+            reasoning_tokens = terminal.reasoning_tokens if terminal is not None else None
+            cost_is_estimate = terminal.cost_is_estimate if terminal is not None else False
             outcome_category = self._terminal_outcome_category(
                 status=record.status,
-                origin=record.terminal_origin,
-                error=record.error,
+                origin=terminal.origin if terminal is not None else None,
+                error=terminal.error if terminal is not None else None,
             )
 
         return LifecycleEvent(
@@ -865,36 +904,38 @@ def _terminal_outcome_category(
 
 def _terminal_telemetry_payload(spawn: SpawnRecord) -> dict[str, Any]:
     """Build sparse terminal lifecycle payload for observer projections."""
+    terminal = spawn.terminal
     payload: dict[str, Any] = {
         "status": spawn.status,
     }
     failure_category = _terminal_failure_category(
         status=spawn.status,
-        origin=spawn.terminal_origin,
-        error=spawn.error,
+        origin=terminal.origin if terminal is not None else None,
+        error=terminal.error if terminal is not None else None,
     )
     if failure_category is not None:
         payload["category"] = str(failure_category)
-    if spawn.exit_code is not None:
-        payload["exit_code"] = spawn.exit_code
-    if spawn.duration_secs is not None:
-        payload["duration_secs"] = spawn.duration_secs
-    if spawn.total_cost_usd is not None:
-        payload["total_cost_usd"] = spawn.total_cost_usd
-    if spawn.input_tokens is not None:
-        payload["input_tokens"] = spawn.input_tokens
-    if spawn.output_tokens is not None:
-        payload["output_tokens"] = spawn.output_tokens
-    if spawn.cache_read_input_tokens is not None:
-        payload["cache_read_input_tokens"] = spawn.cache_read_input_tokens
-    if spawn.cache_creation_input_tokens is not None:
-        payload["cache_creation_input_tokens"] = spawn.cache_creation_input_tokens
-    if spawn.reasoning_tokens is not None:
-        payload["reasoning_tokens"] = spawn.reasoning_tokens
-    if spawn.cost_is_estimate:
+    if terminal is None:
+        return payload
+    payload["exit_code"] = terminal.exit_code
+    if terminal.duration_secs is not None:
+        payload["duration_secs"] = terminal.duration_secs
+    if terminal.total_cost_usd is not None:
+        payload["total_cost_usd"] = terminal.total_cost_usd
+    if terminal.input_tokens is not None:
+        payload["input_tokens"] = terminal.input_tokens
+    if terminal.output_tokens is not None:
+        payload["output_tokens"] = terminal.output_tokens
+    if terminal.cache_read_input_tokens is not None:
+        payload["cache_read_input_tokens"] = terminal.cache_read_input_tokens
+    if terminal.cache_creation_input_tokens is not None:
+        payload["cache_creation_input_tokens"] = terminal.cache_creation_input_tokens
+    if terminal.reasoning_tokens is not None:
+        payload["reasoning_tokens"] = terminal.reasoning_tokens
+    if terminal.cost_is_estimate:
         payload["cost_is_estimate"] = True
-    if spawn.error:
-        payload["reason"] = spawn.error
+    if terminal.error:
+        payload["reason"] = terminal.error
     return payload
 
 

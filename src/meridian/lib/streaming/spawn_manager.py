@@ -15,13 +15,14 @@ from meridian.lib.core.domain import SpawnStatus
 from meridian.lib.core.spawn_lifecycle import TERMINAL_SPAWN_STATUSES
 from meridian.lib.core.types import SpawnId
 from meridian.lib.harness.connections.base import (
-    HarnessEvent,
+    RawHarnessEvent,
     reap_on_ownership_transfer_failure,
 )
 from meridian.lib.harness.control_action import (
     ControlActionCoordinator,
     ControlActionType,
 )
+from meridian.lib.harness.semantics import NormalizedHarnessEvent, normalize_event
 from meridian.lib.launch.constants import LAST_OBSERVED_EVENT_FILENAME
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.state import spawn_store
@@ -360,7 +361,7 @@ class SpawnManager:
             return True
         return session.raw_terminal_frames_authoritative
 
-    def subscribe(self, spawn_id: SpawnId) -> asyncio.Queue[HarnessEvent | None] | None:
+    def subscribe(self, spawn_id: SpawnId) -> asyncio.Queue[NormalizedHarnessEvent | None] | None:
         """Attach one subscriber queue to the spawn, or return None if unavailable."""
 
         session = self._sessions.get(spawn_id)
@@ -604,7 +605,7 @@ class SpawnManager:
         self,
         spawn_id: SpawnId,
         *,
-        status: SpawnStatus = "cancelled",
+        status: SpawnStatus = SpawnStatus.CANCELLED,
         exit_code: int = 1,
         error: str | None = None,
     ) -> DrainOutcome | None:
@@ -788,7 +789,7 @@ class SpawnManager:
         exit_code: int,
         error: str | None,
     ) -> None:
-        terminal_event = HarnessEvent(
+        terminal_event = RawHarnessEvent(
             event_type="cancelled",
             payload={
                 "type": "cancelled",
@@ -804,7 +805,13 @@ class SpawnManager:
             with suppress(Exception):
                 history_writer.write(terminal_event)
                 self._observers.dispatch(spawn_id, terminal_event)
-        self._fan_out_event(spawn_id, terminal_event)
+        self._fan_out_event(
+            spawn_id,
+            normalize_event(
+                terminal_event,
+                primary_event_scope=session.connection.primary_event_scope,
+            ),
+        )
 
     async def _fan_out_turn_boundary(
         self,
@@ -813,7 +820,7 @@ class SpawnManager:
     ) -> None:
         """Emit a synthetic turn boundary event for persistent drain sessions."""
 
-        synthetic = HarnessEvent(
+        synthetic = RawHarnessEvent(
             event_type=TURN_BOUNDARY_EVENT_TYPE,
             harness_id="meridian",
             payload={
@@ -834,9 +841,9 @@ class SpawnManager:
                     spawn_id,
                     persist_exc,
                 )
-        self._fan_out_event(spawn_id, synthetic)
+        self._fan_out_event(spawn_id, normalize_event(synthetic))
 
-    def emit_event(self, spawn_id: SpawnId, event: HarnessEvent) -> None:
+    def emit_event(self, spawn_id: SpawnId, event: RawHarnessEvent) -> None:
         """Persist and publish one manager-authored harness event."""
 
         history_writer = self._history_writers.get(spawn_id)
@@ -851,7 +858,9 @@ class SpawnManager:
                     spawn_id,
                     persist_exc,
                 )
-        self._fan_out_event(spawn_id, event)
+        session = self._sessions.get(spawn_id)
+        scope = session.connection.primary_event_scope if session is not None else None
+        self._fan_out_event(spawn_id, normalize_event(event, primary_event_scope=scope))
         tracer = self.get_tracer(spawn_id)
         if tracer is not None:
             trace_event = f"{event.harness_id}_{event.event_type.rsplit('.', 1)[-1]}"
@@ -864,7 +873,7 @@ class SpawnManager:
     async def shutdown(
         self,
         *,
-        status: SpawnStatus = "cancelled",
+        status: SpawnStatus = SpawnStatus.CANCELLED,
         exit_code: int = 1,
         error: str | None = None,
     ) -> None:
@@ -925,7 +934,11 @@ class SpawnManager:
         with path.open("rb") as handle:
             return sum(1 for _ in handle)
 
-    def _fan_out_event(self, spawn_id: SpawnId, event: HarnessEvent | None) -> None:
+    def _fan_out_event(
+        self,
+        spawn_id: SpawnId,
+        event: NormalizedHarnessEvent | None,
+    ) -> None:
         session = self._sessions.get(spawn_id)
         if session is None or session.subscriber is None:
             return
@@ -945,7 +958,7 @@ class SpawnManager:
                 session.debug_tracer.emit(
                     "drain",
                     "event_fanout",
-                    data={"event_type": event.event_type},
+                    data={"event_type": event.raw.event_type},
                 )
         except asyncio.QueueFull:
             from meridian.lib.telemetry import emit_telemetry
@@ -960,13 +973,13 @@ class SpawnManager:
                 scope="streaming.spawn_manager",
                 severity="warning",
                 ids={"spawn_id": str(spawn_id)},
-                data={**error_data, "event_type": event.event_type},
+                data={**error_data, "event_type": event.raw.event_type},
             )
             if session.debug_tracer is not None:
                 session.debug_tracer.emit(
                     "drain",
                     "event_dropped",
-                    data={"event_type": event.event_type, "reason": "queue_full"},
+                    data={"event_type": event.raw.event_type, "reason": "queue_full"},
                 )
 
     def _spawn_dir(self, spawn_id: SpawnId) -> Path:

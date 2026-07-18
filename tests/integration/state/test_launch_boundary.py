@@ -25,7 +25,7 @@ def _start_test_spawn(runtime_root: Path, spawn_id: str) -> None:
         harness="codex",
         prompt="test",
         spawn_id=spawn_id,
-        status="succeeded",
+        status="running",
     )
 
 

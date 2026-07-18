@@ -7,7 +7,7 @@ from dataclasses import dataclass
 
 from meridian.lib.core.types import HarnessId
 from meridian.lib.harness import pi_lifecycle_events as pi_lifecycle
-from meridian.lib.harness.connections.base import HarnessEvent
+from meridian.lib.harness.connections.base import RawHarnessEvent
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +28,7 @@ class PiLifecycleTracker:
     def empty(cls) -> PiLifecycleTracker:
         return cls(canonical_event_keys=set())
 
-    def observe(self, event: HarnessEvent) -> bool:
+    def observe(self, event: RawHarnessEvent) -> bool:
         """Observe one event and report whether it duplicates a canonical row."""
         if event.harness_id != HarnessId.PI.value:
             return False
@@ -80,7 +80,7 @@ class PiLifecycleTracker:
             )
         return False
 
-    def _is_parse_error_for_canonical_lifecycle_event(self, event: HarnessEvent) -> bool:
+    def _is_parse_error_for_canonical_lifecycle_event(self, event: RawHarnessEvent) -> bool:
         labels = set(pi_lifecycle.pi_lifecycle_event_label_candidates(event))
         if "meridian.lifecycle.parse_error" not in labels:
             return False

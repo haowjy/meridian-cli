@@ -18,7 +18,7 @@ import {
   resolveSpawnsDir,
 } from "../../shared/pi_state_paths";
 import type { BashRecord, BashRecordsFile, ObservedSpawnsFile, SpawnStateFile } from "../../shared/schemas";
-import { isTerminalBashStatus, isTerminalSpawnStatus } from "../../shared/schemas";
+import { isTerminalBashStatus, parseSpawnStateFile } from "../../shared/schemas";
 import { openLogOverlay } from "../../shared/log_overlay";
 import {
   openTaskPanel,
@@ -135,7 +135,7 @@ export class SpawnWatchRuntime {
     await this.loadClearedSpawnIds();
     const terminalStates = (await this.readOriginSpawnStates()).filter(
       (state) =>
-        isTerminalSpawnStatus(String(state.status ?? "")) &&
+        state.terminal !== null &&
         !this.clearedSpawnIds.has(state.id),
     );
     for (const state of terminalStates) {
@@ -335,13 +335,13 @@ export class SpawnWatchRuntime {
     this.discoverMissingSpawnStates();
     const suppressed = await this.readSuppressedSpawnIds();
     const states = await this.rows();
-    if (states.some((state) => !isTerminalSpawnStatus(state.status))) {
+    if (states.some((state) => state.terminal === null)) {
       this.enableFallbackScan("active-origin-spawns");
     } else {
       this.disableFallbackScan("active-origin-spawns");
     }
     for (const state of states) {
-      if (!isTerminalSpawnStatus(state.status)) continue;
+      if (state.terminal === null) continue;
       const id = state.id;
       if (suppressed.has(id)) {
         TERMINAL_NOTIFIED.add(id);
@@ -352,9 +352,9 @@ export class SpawnWatchRuntime {
       this.pending.set(id, {
         id,
         kind: "spawn",
-        status: String(state.status),
+        status: state.status,
         label: `${state.agent ?? "spawn"}${state.model ? ` (${state.model})` : ""}`,
-        duration: formatDurationSecs(state.duration_secs),
+        duration: formatDurationSecs(state.terminal?.duration_secs),
       });
     }
     this.scheduleFlush();
@@ -467,7 +467,7 @@ export class SpawnWatchRuntime {
   }
 
   private isClearedTerminalSpawn(state: SpawnStateFile): boolean {
-    return this.clearedSpawnIds.has(state.id) && isTerminalSpawnStatus(String(state.status ?? ""));
+    return this.clearedSpawnIds.has(state.id) && state.terminal !== null;
   }
 
   private async loadClearedSpawnIds(): Promise<void> {
@@ -577,7 +577,8 @@ export class SpawnWatchRuntime {
   }
 
   private async readSpawnState(spawnId: string): Promise<SpawnStateFile | null> {
-    return await readJsonFile<SpawnStateFile | null>(this.spawnStatePath(spawnId), null);
+    const value = await readJsonFile<unknown>(this.spawnStatePath(spawnId), null);
+    return parseSpawnStateFile(value);
   }
 
   private spawnStatePath(spawnId: string): string {
@@ -649,30 +650,30 @@ function formatSpawnStatus(row: SpawnStateFile, theme: Theme): string {
   const error = (value: string) => theme.fg("error", value);
   const warning = (value: string) => theme.fg("warning", value);
 
+  if (row.terminal === null) return success(`● ${status}`);
   if (status === "succeeded") return dim("✓ succeeded");
   if (status === "failed") return error("✗ failed");
   if (status === "cancelled" || status === "canceled") return warning(`✗ ${status}`);
   if (status === "timed_out") return error("✗ timed_out");
-  if (!isTerminalSpawnStatus(status)) return success(`● ${status}`);
-  return dim(status);
+  return dim(`✓ ${status}`);
 }
 
 function renderSpawnPreview(row: SpawnStateFile, theme: Theme): string[] {
   const dim = (value: string) => theme.fg("dim", value);
   const lines = [
-    `${theme.fg("accent", row.id)} ${formatSpawnStatus(row, theme)} ${dim(formatDurationSecs(row.duration_secs))}`,
+    `${theme.fg("accent", row.id)} ${formatSpawnStatus(row, theme)} ${dim(formatDurationSecs(row.terminal?.duration_secs))}`,
     dim(`${row.agent ?? "spawn"}${row.model ? ` · ${row.model}` : ""}`),
   ];
   if (row.originating_bash_id) lines.push(dim(`launched by ${row.originating_bash_id}`));
   if (row.started_at) lines.push(dim(`started ${row.started_at}`));
-  if (row.finished_at) lines.push(dim(`finished ${row.finished_at}`));
+  if (row.terminal?.finished_at) lines.push(dim(`finished ${row.terminal.finished_at}`));
   return lines;
 }
 
 const SPAWN_PANEL_COLUMNS: SelectablePanelColumn<SpawnStateFile>[] = [
   { header: "ID", width: 10, render: (row, theme, selected) => (theme ? (selected ? theme.fg("accent", row.id) : theme.fg("dim", row.id)) : row.id) },
   { header: "STATUS", width: 14, render: (row, theme) => (theme ? formatSpawnStatus(row, theme) : String(row.status ?? "")) },
-  { header: "DUR", width: 8, render: (row, theme) => (theme ? theme.fg("dim", formatDurationSecs(row.duration_secs)) : formatDurationSecs(row.duration_secs)), align: "right" },
+  { header: "DUR", width: 8, render: (row, theme) => (theme ? theme.fg("dim", formatDurationSecs(row.terminal?.duration_secs)) : formatDurationSecs(row.terminal?.duration_secs)), align: "right" },
   { header: "AGENT", width: 16, render: (row) => String(row.agent ?? "") },
   { header: "MODEL", width: 24, render: (row, theme) => (theme ? theme.fg("dim", String(row.model ?? "")) : String(row.model ?? "")) },
   { header: "← BASH", width: 10, render: (row, theme) => (theme ? theme.fg("dim", String(row.originating_bash_id ?? "")) : String(row.originating_bash_id ?? "")) },
@@ -710,7 +711,7 @@ export default function meridianSpawnWatchExtension(pi: ExtensionAPI): void {
         onEnter: async (row) => {
           await openLogOverlay(ctx as PanelCommandContext, {
             title: `Spawn log ${row.id}`,
-            initialFollow: !isTerminalSpawnStatus(String(row.status ?? "")),
+            initialFollow: row.terminal === null,
             refreshIntervalMs: 2000,
             streams: [
               {

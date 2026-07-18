@@ -456,7 +456,7 @@ def _spawn_history_fallback_for_session_ref(
     return _spawn_history_fallback_for_harness_session_id(
         runtime_root=runtime_root,
         display_id=display_id,
-        harness_session_id=record.harness_session_id,
+        harness_session_id=record.harness_session_id or "",
     )
 
 
@@ -469,7 +469,7 @@ def _spawn_history_fallback_for_harness_session_id(
     normalized_session_id = harness_session_id.strip()
     if not normalized_session_id:
         return None
-    for row in reversed(spawn_store.list_spawns(runtime_root)):
+    for row in reversed(spawn_store.list_spawns(runtime_root).records):
         if (row.harness_session_id or "").strip() != normalized_session_id:
             continue
         output_target = _target_from_spawn_output(
@@ -494,9 +494,13 @@ def _spawn_history_fallback_for_chat_ref(
     if primary_spawn is not None:
         candidates.append(primary_spawn)
     candidates.extend(
-        reversed(session_identity.list_spawns_for_exact_session(runtime_root, chat_id))
+        reversed(
+            session_identity.list_spawns_for_exact_session(runtime_root, chat_id).records
+        )
     )
-    candidates.extend(reversed(session_identity.list_spawns_for_owner_chat(runtime_root, chat_id)))
+    candidates.extend(
+        reversed(session_identity.list_spawns_for_owner_chat(runtime_root, chat_id).records)
+    )
 
     seen: set[str] = set()
     for row in candidates:
@@ -531,7 +535,7 @@ def _latest_harness_session_id(record: session_store.SessionRecord) -> str | Non
         normalized = candidate.strip()
         if normalized:
             return normalized
-    normalized = record.harness_session_id.strip()
+    normalized = (record.harness_session_id or "").strip()
     return normalized or None
 
 
@@ -819,7 +823,7 @@ def _resolve_from_spawn_id(
                 chat_id=row.chat_id,
             )
             if record is not None:
-                session_id = record.harness_session_id.strip()
+                session_id = (record.harness_session_id or "").strip()
                 if record.harness.strip():
                     harness = record.harness.strip()
             if not session_id:
@@ -917,7 +921,7 @@ def _resolve_from_session_ref(
 ) -> SessionLogTarget:
     record = session_store.resolve_session_ref(runtime_root, session_ref)
     if record is not None:
-        session_id = record.harness_session_id.strip() or session_ref
+        session_id = (record.harness_session_id or "").strip() or session_ref
         harness = record.harness.strip() or None
         target = _resolve_harness_session_file(
             project_root=project_root,

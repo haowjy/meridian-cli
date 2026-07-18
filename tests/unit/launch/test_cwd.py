@@ -11,7 +11,7 @@ from meridian.lib.launch.cwd import (
     resolve_effective_task_dir,
     resolve_task_cwd,
 )
-from meridian.lib.state import work_store
+from meridian.lib.state import work_repository
 from meridian.lib.state.paths import resolve_project_runtime_root_for_write
 from meridian.lib.state.spawn_scope import write_spawn_scope_task_dir
 from meridian.lib.state.spawn_store import start_spawn
@@ -26,10 +26,10 @@ def _roots(tmp_path: Path) -> tuple[Path, Path]:
 
 
 def _work_with_task_dir(state_dir: Path, tmp_path: Path, name: str) -> str:
-    item = work_store.create_work_item(state_dir, name, "", None)
+    item = work_repository.create_work_item(state_dir, name, "", None)
     task_dir = tmp_path / f"{name}-task-dir"
     task_dir.mkdir(parents=True, exist_ok=True)
-    work_store.update_work_item_task_dir(state_dir, item.name, task_dir=task_dir.as_posix())
+    work_repository.update_work_item_task_dir(state_dir, item.name, task_dir=task_dir.as_posix())
     return item.name
 
 
@@ -88,7 +88,7 @@ def test_resolve_task_cwd_explicit_work_uses_work_item_task_dir(tmp_path: Path) 
 
 def test_resolve_task_cwd_explicit_work_is_boundary_over_ambient(tmp_path: Path) -> None:
     authority_root, state_dir = _roots(tmp_path)
-    explicit = work_store.create_work_item(state_dir, "explicit-work", "", None)
+    explicit = work_repository.create_work_item(state_dir, "explicit-work", "", None)
     ambient_id = _work_with_task_dir(state_dir, tmp_path, "ambient-work")
 
     resolved = resolve_task_cwd(
@@ -280,7 +280,7 @@ def test_resolve_task_cwd_explicit_work_without_task_dir_preserves_inherited(
     tmp_path: Path,
 ) -> None:
     authority_root, state_dir = _roots(tmp_path)
-    explicit = work_store.create_work_item(state_dir, "explicit-work", "", None)
+    explicit = work_repository.create_work_item(state_dir, "explicit-work", "", None)
     inherited = tmp_path / "inherited-task"
     inherited.mkdir(parents=True, exist_ok=True)
 
