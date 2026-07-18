@@ -94,9 +94,9 @@ def resolve_spawn_ref(runtime_root: Path, ref: str) -> SpawnId | None:
     if spawn is not None:
         return SpawnId(spawn.id)
 
-    matches = session_identity.list_spawns_for_owner_chat(runtime_root, ref)
+    matches = list(session_identity.list_spawns_for_owner_chat(runtime_root, ref).records)
     if not matches:
-        matches = spawn_store.list_spawns(runtime_root, filters={"chat_id": ref})
+        matches = list(spawn_store.list_spawns(runtime_root, chat_id=ref).records)
     if matches:
         matches.sort(key=lambda item: item.started_at or "", reverse=True)
         return SpawnId(matches[0].id)
@@ -114,7 +114,7 @@ def _latest_harness_session_id(record: session_store.SessionRecord) -> str | Non
 
 def _latest_primary_spawn_id_for_chat(runtime_root: Path, chat_id: str) -> str | None:
     rows = session_identity.list_spawns_for_owner_chat(runtime_root, chat_id)
-    primary_rows = [row for row in rows if row.kind == "primary"]
+    primary_rows = [row for row in rows.records if row.kind == "primary"]
     if not primary_rows:
         return None
     return primary_rows[-1].id

@@ -12,6 +12,7 @@ from meridian.lib.ops.spawn.models import (
 )
 from meridian.lib.state import spawn_store
 from meridian.lib.state.paths import resolve_project_runtime_root
+from meridian.lib.state.spawn.repository import Applied
 
 _OLD_TIMESTAMP = "2000-01-01T00:00:00Z"
 
@@ -48,7 +49,7 @@ def test_spawn_show_sync_renders_finalizing_status_without_partial_terminal_erro
         exit_code=143,
         exited_at="2026-04-12T14:00:00Z",
     )
-    assert spawn_store.mark_finalizing(runtime_root, "p1") is True
+    assert isinstance(spawn_store.mark_finalizing(runtime_root, "p1"), Applied)
     heartbeat = runtime_root / "spawns" / "p1" / "heartbeat"
     heartbeat.parent.mkdir(parents=True, exist_ok=True)
     heartbeat.touch(exist_ok=True)
@@ -97,14 +98,14 @@ def test_read_spawn_row_nested_stale_dead_runner_returns_synthetic_failed(
 
     assert result is not None
     assert result.status == "failed"
-    assert result.exit_code == 1
-    assert result.error == "stale_nested_read"
+    assert result.terminal is not None
+    assert result.terminal.exit_code == 1
+    assert result.terminal.error == "stale_nested_read"
 
     persisted = spawn_store.get_spawn(runtime_root, "p3")
     assert persisted is not None
     assert persisted.status == "running"
-    assert persisted.exit_code is None
-    assert persisted.error is None
+    assert persisted.terminal is None
 
 
 def test_read_spawn_row_nested_recent_disk_activity_keeps_running(
@@ -141,7 +142,7 @@ def test_read_spawn_row_nested_recent_disk_activity_keeps_running(
 
         assert result is not None
         assert result.status == "running"
-        assert result.error is None
+        assert result.terminal is None
 
 
 def test_read_spawn_row_nested_stale_missing_runner_pid_returns_synthetic_failed(
@@ -168,13 +169,14 @@ def test_read_spawn_row_nested_stale_missing_runner_pid_returns_synthetic_failed
 
     assert result is not None
     assert result.status == "failed"
-    assert result.exit_code == 1
-    assert result.error == "stale_nested_read_no_pid"
+    assert result.terminal is not None
+    assert result.terminal.exit_code == 1
+    assert result.terminal.error == "stale_nested_read_no_pid"
 
     persisted = spawn_store.get_spawn(runtime_root, "p6")
     assert persisted is not None
     assert persisted.status == "running"
-    assert persisted.error is None
+    assert persisted.terminal is None
 
 
 def test_read_spawn_row_nested_post_runner_exit_grace_keeps_running_status(
@@ -200,9 +202,9 @@ def test_read_spawn_row_nested_post_runner_exit_grace_keeps_running_status(
 
     assert result is not None
     assert result.status == "running"
-    assert result.runner_exit_status == "failed"
-    assert result.exit_code is None
-    assert result.error is None
+    assert result.runner_exit is not None
+    assert result.runner_exit.status == "failed"
+    assert result.terminal is None
 
 
 
@@ -235,8 +237,7 @@ def test_read_spawn_row_nested_startup_grace_keeps_running_status(
 
     assert result is not None
     assert result.status == "running"
-    assert result.exit_code is None
-    assert result.error is None
+    assert result.terminal is None
 
 
 def test_read_spawn_row_nested_runner_exit_after_grace_returns_synthetic_terminal(
@@ -261,15 +262,16 @@ def test_read_spawn_row_nested_runner_exit_after_grace_returns_synthetic_termina
 
     assert result is not None
     assert result.status == "failed"
-    assert result.exit_code == 17
-    assert result.error == "runner_failed"
+    assert result.terminal is not None
+    assert result.terminal.exit_code == 17
+    assert result.terminal.error == "runner_failed"
 
     persisted = spawn_store.get_spawn(runtime_root, "p-runner-exit")
     assert persisted is not None
     assert persisted.status == "running"
-    assert persisted.runner_exit_status == "failed"
-    assert persisted.exit_code is None
-    assert persisted.error is None
+    assert persisted.runner_exit is not None
+    assert persisted.runner_exit.status == "failed"
+    assert persisted.terminal is None
 
 
 def test_spawn_wait_sync_nested_stale_active_returns_synthetic_terminal_without_persisting(
@@ -312,5 +314,4 @@ def test_spawn_wait_sync_nested_stale_active_returns_synthetic_terminal_without_
     persisted = spawn_store.get_spawn(runtime_root, "p-wait-stale")
     assert persisted is not None
     assert persisted.status == "running"
-    assert persisted.exit_code is None
-    assert persisted.error is None
+    assert persisted.terminal is None

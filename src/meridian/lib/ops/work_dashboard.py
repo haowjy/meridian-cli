@@ -432,7 +432,7 @@ def work_dashboard_sync(
         project_root,
         runtime_state_root,
         spawn_store.list_spawns(runtime_state_root),
-    ):
+    ).records:
         if not is_active_spawn_status(spawn.status):
             continue
         row = _dashboard_spawn(spawn)
@@ -532,7 +532,7 @@ def work_show_sync(
             project_root,
             runtime_state_root,
             spawn_store.list_spawns(runtime_state_root),
-        )
+        ).records
         if _associated_with_work_item(
             spawn,
             work_id=item.name,

@@ -64,7 +64,7 @@ if TYPE_CHECKING:
         SpawnOrigin,
         SpawnRecord,
     )
-    from meridian.lib.state.spawn_store import FinalizeOutcome
+    from meridian.lib.state.spawn.repository import LockedMutationResult
 
 logger = structlog.get_logger(__name__)
 
@@ -84,6 +84,16 @@ def _spawn_store() -> Any:
     from meridian.lib.state import spawn_store
 
     return spawn_store
+
+
+def _locked_mutation_snapshot(outcome: LockedMutationResult) -> SpawnRecord | None:
+    from meridian.lib.state.spawn.repository import Applied, Declined
+
+    if isinstance(outcome, Applied):
+        return outcome.after
+    if isinstance(outcome, Declined):
+        return outcome.snapshot
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -327,7 +337,7 @@ class SpawnLifecycleService:
             resolved_runner_created_at_epoch = runner_created_at_epoch
             if runner_pid is not None and resolved_runner_created_at_epoch is None:
                 resolved_runner_created_at_epoch = _pid_created_at_epoch(runner_pid)
-            changed, record = _spawn_store().mark_spawn_running_with_snapshot(
+            outcome = _spawn_store().mark_spawn_running(
                 self._runtime_root,
                 spawn_id,
                 launch_mode=launch_mode,
@@ -335,9 +345,12 @@ class SpawnLifecycleService:
                 runner_pid=runner_pid,
                 runner_created_at_epoch=resolved_runner_created_at_epoch,
             )
+            from meridian.lib.state.spawn.repository import Applied
+
+            record = _locked_mutation_snapshot(outcome)
             if self._owns_record(spawn_id) and record is not None:
                 self._record = record
-            if changed:
+            if isinstance(outcome, Applied) and outcome.before.status != outcome.after.status:
                 event = self._build_event("spawn.running", record, spawn_id=spawn_id)
                 self._dispatch(event)
                 self._emit_telemetry_event("spawn.running", record)
@@ -434,10 +447,12 @@ class SpawnLifecycleService:
                 requested_at=requested_at,
                 clock=clock,
             )
-            if outcome is None:
+            from meridian.lib.state.spawn.repository import Applied, Missing
+
+            if isinstance(outcome, Missing):
                 return None
-            record = outcome.snapshot
-            if outcome.wrote:
+            record = outcome.after if isinstance(outcome, Applied) else outcome.snapshot
+            if isinstance(outcome, Applied):
                 self._emit_telemetry_event(
                     "spawn.updated",
                     record,
@@ -466,7 +481,7 @@ class SpawnLifecycleService:
         finished_at: str | None = None,
         error: str | None = None,
         clock: Clock | None = None,
-    ) -> FinalizeOutcome:
+    ) -> LockedMutationResult:
         """Finalize a spawn and dispatch spawn.finalized for persisted terminal writes."""
         requested_category = self._terminal_outcome_category(
             status=status,
@@ -494,18 +509,21 @@ class SpawnLifecycleService:
                 error=error,
                 clock=clock,
             )
-            if outcome.wrote and outcome.snapshot is not None:
+            from meridian.lib.state.spawn.repository import Applied
+
+            if isinstance(outcome, Applied):
+                snapshot = outcome.after
                 if self._owns_record(spawn_id):
-                    self._record = outcome.snapshot
+                    self._record = snapshot
                 self._reconcile_failure_sentinel(
-                    outcome.snapshot,
+                    snapshot,
                     origin=origin,
                     error=error,
                 )
-                event = self._build_event("spawn.finalized", outcome.snapshot)
+                event = self._build_event("spawn.finalized", snapshot)
                 self._dispatch(event)
                 self._emit_telemetry_event_for_record(
-                    f"spawn.{outcome.snapshot.status}", outcome.snapshot
+                    f"spawn.{snapshot.status}", snapshot
                 )
             return outcome
 
@@ -514,12 +532,16 @@ class SpawnLifecycleService:
         with bind_lifecycle_correlation(
             self._correlation(operation="mark_finalizing", spawn_id=spawn_id)
         ):
-            transitioned, record = _spawn_store().mark_finalizing_with_snapshot(
+            outcome = _spawn_store().mark_finalizing(
                 self._runtime_root,
                 spawn_id,
             )
+            from meridian.lib.state.spawn.repository import Applied
+
+            record = _locked_mutation_snapshot(outcome)
             if self._owns_record(spawn_id) and record is not None:
                 self._record = record
+            transitioned = isinstance(outcome, Applied)
             if transitioned:
                 self._emit_telemetry_event("spawn.finalizing", record)
             return transitioned
@@ -556,7 +578,12 @@ class SpawnLifecycleService:
                 error=error,
                 clock=clock,
             )
-            return outcome.transitioned
+            from meridian.lib.state.spawn.repository import Applied
+
+            return (
+                isinstance(outcome, Applied)
+                and outcome.before.status not in TERMINAL_SPAWN_STATUSES
+            )
 
     # ------------------------------------------------------------------
     # Internal helpers

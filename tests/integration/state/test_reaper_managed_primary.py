@@ -87,7 +87,7 @@ def test_reconcile_active_spawn_managed_primary_idle_launcher_alive_skips(
     assert reconciled == record
     latest = _get_spawn(runtime_root, spawn_id)
     assert latest.status == "running"
-    assert latest.error is None
+    assert latest.terminal is None or latest.terminal.error is None
 
 
 def test_reconcile_active_spawn_managed_primary_dead_launcher_marks_orphan_primary(
@@ -114,11 +114,14 @@ def test_reconcile_active_spawn_managed_primary_dead_launcher_marks_orphan_prima
     reconciled = _reconcile(tmp_path, runtime_root, record)
 
     assert reconciled.status == "failed"
-    assert reconciled.exit_code == 1
-    assert reconciled.error == "orphan_primary"
+    assert reconciled.terminal is not None
+    assert reconciled.terminal.exit_code == 1
+    assert reconciled.terminal is not None
+    assert reconciled.terminal.error == "orphan_primary"
     latest = _get_spawn(runtime_root, spawn_id)
     assert latest.status == "failed"
-    assert latest.error == "orphan_primary"
+    assert latest.terminal is not None
+    assert latest.terminal.error == "orphan_primary"
     assert terminated_pids == [8882, 9992]
 
 
@@ -145,11 +148,14 @@ def test_reconcile_active_spawn_managed_primary_candidate_unreadable_metadata_ki
     reconciled = _reconcile(tmp_path, runtime_root, record)
 
     assert reconciled.status == "failed"
-    assert reconciled.exit_code == 1
-    assert reconciled.error == "orphan_primary"
+    assert reconciled.terminal is not None
+    assert reconciled.terminal.exit_code == 1
+    assert reconciled.terminal is not None
+    assert reconciled.terminal.error == "orphan_primary"
     latest = _get_spawn(runtime_root, spawn_id)
     assert latest.status == "failed"
-    assert latest.error == "orphan_primary"
+    assert latest.terminal is not None
+    assert latest.terminal.error == "orphan_primary"
     assert terminated_pids == [worker_pid]
 
 
@@ -179,8 +185,9 @@ def test_reconcile_active_spawn_managed_primary_finalizing_activity_uses_report_
     reconciled = _reconcile(tmp_path, runtime_root, record)
 
     assert reconciled.status == "succeeded"
-    assert reconciled.exit_code == 0
-    assert reconciled.error is None
+    assert reconciled.terminal is not None
+    assert reconciled.terminal.exit_code == 0
+    assert reconciled.terminal is None or reconciled.terminal.error is None
     assert terminated_pids == []
 
 
@@ -216,12 +223,16 @@ def test_reconcile_active_spawn_managed_primary_uses_runner_exit_tuple_before_or
     reconciled = _reconcile(tmp_path, runtime_root, record)
 
     assert reconciled.status == "failed"
-    assert reconciled.exit_code == 73
-    assert reconciled.error == "guardrail_failed"
+    assert reconciled.terminal is not None
+    assert reconciled.terminal.exit_code == 73
+    assert reconciled.terminal is not None
+    assert reconciled.terminal.error == "guardrail_failed"
     latest = _get_spawn(runtime_root, spawn_id)
     assert latest.status == "failed"
-    assert latest.exit_code == 73
-    assert latest.error == "guardrail_failed"
+    assert latest.terminal is not None
+    assert latest.terminal.exit_code == 73
+    assert latest.terminal is not None
+    assert latest.terminal.error == "guardrail_failed"
 
 
 def test_reconcile_active_spawn_child_orphan_terminates_worker_process_group(
@@ -245,12 +256,15 @@ def test_reconcile_active_spawn_child_orphan_terminates_worker_process_group(
     reconciled = _reconcile(tmp_path, runtime_root, record)
 
     assert reconciled.status == "failed"
-    assert reconciled.exit_code == 1
-    assert reconciled.error == "orphan_run"
+    assert reconciled.terminal is not None
+    assert reconciled.terminal.exit_code == 1
+    assert reconciled.terminal is not None
+    assert reconciled.terminal.error == "orphan_run"
     assert terminated_pids == [worker_pid]
     latest = _get_spawn(runtime_root, spawn_id)
     assert latest.status == "failed"
-    assert latest.error == "orphan_run"
+    assert latest.terminal is not None
+    assert latest.terminal.error == "orphan_run"
 
 
 def test_reconcile_managed_primary_finalizing_cancel_intent_cancels(
@@ -278,7 +292,9 @@ def test_reconcile_managed_primary_finalizing_cancel_intent_cancels(
     reconciled = _reconcile(tmp_path, runtime_root, record)
 
     assert reconciled.status == "cancelled"
-    assert reconciled.exit_code == 130
-    assert reconciled.error == "cancelled"
+    assert reconciled.terminal is not None
+    assert reconciled.terminal.exit_code == 130
+    assert reconciled.terminal is not None
+    assert reconciled.terminal.error == "cancelled"
     latest = _get_spawn(runtime_root, spawn_id)
     assert latest.status == "cancelled"

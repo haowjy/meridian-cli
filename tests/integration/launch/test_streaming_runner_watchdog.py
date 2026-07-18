@@ -19,7 +19,6 @@ from meridian.lib.launch.extract import enrich_finalize, reset_finalize_attempt_
 from meridian.lib.state import spawn_store
 from meridian.lib.state.artifact_store import LocalStore, make_artifact_key
 from meridian.lib.state.paths import resolve_project_runtime_root
-from meridian.lib.state.spawn.repository import SpawnStateQuarantined
 from meridian.lib.streaming import spawn_manager as spawn_manager_module
 from tests.integration.launch.streaming_runner_support import (
     _build_request,
@@ -246,7 +245,7 @@ def test_retry_blocked_after_pi_child_started_detects_disk_child_state(
     )
 
 
-def test_retry_gate_surfaces_quarantined_child_state(tmp_path: Path) -> None:
+def test_retry_gate_fails_closed_for_quarantined_spawn_state(tmp_path: Path) -> None:
     runtime_root = tmp_path / "runtime"
     state_path = runtime_root / "spawns" / "p2" / "state.json"
     state_path.parent.mkdir(parents=True, exist_ok=True)
@@ -263,14 +262,11 @@ def test_retry_gate_surfaces_quarantined_child_state(tmp_path: Path) -> None:
         encoding="utf-8",
     )
 
-    with pytest.raises(SpawnStateQuarantined) as quarantined:
-        streaming_runner_module._retry_blocked_after_pi_child_started(
-            harness_id=HarnessId.PI,
-            runtime_root=runtime_root,
-            current_spawn_id=SpawnId("p1"),
-        )
-
-    assert quarantined.value.report.spawn_id == "p2"
+    assert streaming_runner_module._retry_blocked_after_pi_child_started(
+        harness_id=HarnessId.PI,
+        runtime_root=runtime_root,
+        current_spawn_id=SpawnId("p1"),
+    )
 
 
 @pytest.mark.parametrize("entry_name", [".staging", ".p2", "spawn-stage", "p²"])
@@ -351,8 +347,8 @@ async def test_execute_with_streaming_succeeds_after_report_watchdog_cleanup(
     row = spawn_store.get_spawn(runtime_root, run.spawn_id)
     assert row is not None
     assert row.status == "succeeded"
-    assert row.exit_code == 0
-    assert row.error is None
+    assert row.terminal.exit_code == 0
+    assert row.terminal.error is None
     assert fake_heartbeat.touches
     report = (runtime_root / "spawns" / str(run.spawn_id) / "report.md").read_text(encoding="utf-8")
     assert "Watchdog fallback completed." in report
@@ -418,7 +414,7 @@ async def test_execute_with_streaming_finalizes_when_duration_clock_read_fails(
     row = spawn_store.get_spawn(runtime_root, run.spawn_id)
     assert row is not None
     assert row.status == "succeeded"
-    assert row.exit_code == 0
-    assert row.error is None
-    assert row.duration_secs == 0.0
+    assert row.terminal.exit_code == 0
+    assert row.terminal.error is None
+    assert row.terminal.duration_secs == 0.0
     assert fake_heartbeat.touches

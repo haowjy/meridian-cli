@@ -163,7 +163,9 @@ def missing_fork_session_error_with_discovery(
                 runtime_root, lookup_chat_id
             )
             pi_primary_spawns = [
-                row for row in chat_spawns if row.kind == "primary" and row.harness == "pi"
+                row
+                for row in chat_spawns.records
+                if row.kind == "primary" and row.harness == "pi"
             ]
             if pi_primary_spawns:
                 pi_primary_spawns.sort(key=lambda row: row.started_at or "", reverse=True)

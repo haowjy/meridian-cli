@@ -5,10 +5,10 @@ from __future__ import annotations
 import asyncio
 import json
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 import structlog
 
@@ -61,6 +61,9 @@ from meridian.lib.state.spawn.model import (
 from meridian.lib.state.spawn_aggregate import mutate_published_spawn_artifact
 from meridian.lib.state.spawn_report import spawn_report_has_durable_completion
 from meridian.lib.state.timestamps import iso_timestamp_to_epoch
+
+if TYPE_CHECKING:
+    from meridian.lib.state.spawn_store import SpawnScan
 
 logger = structlog.get_logger(__name__)
 
@@ -853,8 +856,8 @@ def reconcile_active_spawn(
 def reconcile_spawns(
     project_root: Path,
     runtime_root: Path,
-    spawns: list[SpawnRecord],
-) -> list[SpawnRecord]:
+    scan: SpawnScan,
+) -> SpawnScan:
     """Return a read-only reconciled projection for a batch of spawns.
 
     List/stat/reference-discovery callers use this helper. It intentionally does
@@ -862,11 +865,12 @@ def reconcile_spawns(
     reconcile_active_spawn().
     """
     _ = project_root
-    return [
-        (
+    return replace(
+        scan,
+        records=tuple(
             peek_reconciled_active_spawn(runtime_root, spawn)
             if is_active_spawn_status(spawn.status)
             else spawn
-        )
-        for spawn in spawns
-    ]
+            for spawn in scan.records
+        ),
+    )

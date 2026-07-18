@@ -91,6 +91,6 @@ async def test_setup_failure_produces_terminal_event(
     row = spawn_store.get_spawn(runtime_root, run.spawn_id)
     assert row is not None
     assert row.status == "failed"
-    assert row.exit_code == launch_constants.DEFAULT_INFRA_EXIT_CODE
-    assert row.error is not None
-    assert row.terminal_origin == "runner"
+    assert row.terminal.exit_code == launch_constants.DEFAULT_INFRA_EXIT_CODE
+    assert row.terminal.error is not None
+    assert row.terminal.origin == "runner"

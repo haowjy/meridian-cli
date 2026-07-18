@@ -533,7 +533,9 @@ def spawn_list_sync(
 
     spawns = list(
         reversed(
-            reconcile_spawns(project_root, runtime_root, spawn_store.list_spawns(runtime_root))
+            reconcile_spawns(
+                project_root, runtime_root, spawn_store.list_spawns(runtime_root)
+            ).records
         )
     )
 
@@ -649,9 +651,9 @@ def spawn_children_sync(
                 runtime_root,
                 spawn_store.list_spawns(
                     runtime_root,
-                    filters={"parent_id": spawn_id},
+                    parent_id=spawn_id,
                 ),
-            )
+            ).records
         )
     )
     entries = tuple(
@@ -700,7 +702,11 @@ def spawn_stats_sync(
     )
     from meridian.lib.state.reaper import reconcile_spawns
 
-    all_spawns = reconcile_spawns(project_root, runtime_root, spawn_store.list_spawns(runtime_root))
+    all_spawns = list(
+        reconcile_spawns(
+            project_root, runtime_root, spawn_store.list_spawns(runtime_root)
+        ).records
+    )
 
     if payload.session is not None and payload.session.strip():
         from meridian.lib.state.session_identity import spawn_matches_exact_session
@@ -1271,7 +1277,7 @@ def spawn_cancel_all_sync(
         project_root,
         runtime_root,
         spawn_store.list_spawns(runtime_root),
-    )
+    ).records
     if work_id is not None:
         active_session_work_ids: dict[str, str] | None = {
             str(record.chat_id): record.active_work_id
@@ -1454,7 +1460,7 @@ def _discover_pending_spawns(
         project_root,
         runtime_root,
         spawn_store.list_spawns(runtime_root),
-    )
+    ).records
 
     # Build descendant set if scoping to a parent
     descendant_ids: set[str] | None = None

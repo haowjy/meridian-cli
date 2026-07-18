@@ -139,8 +139,8 @@ async def test_execute_with_streaming_attempt_timeout_survives_pi_abort(
     assert exit_code == 3
     assert row is not None
     assert row.status == "timed_out"
-    assert row.exit_code == 3
-    assert row.error == "timeout"
+    assert row.terminal.exit_code == 3
+    assert row.terminal.error == "timeout"
     history_path = runtime_root / "spawns" / str(run.spawn_id) / "history.jsonl"
     history = [json.loads(line) for line in history_path.read_text().splitlines()]
     finalized = [
@@ -257,8 +257,8 @@ async def test_execute_with_streaming_finalizes_resident_deadline_without_retry(
     assert _ResidentDeadlineConnection.starts == 1
     assert row is not None
     assert row.status == "timed_out"
-    assert row.exit_code == 1
-    assert row.error == "resident_deadline_expired"
+    assert row.terminal.exit_code == 1
+    assert row.terminal.error == "resident_deadline_expired"
 
 
 @pytest.mark.asyncio
@@ -411,8 +411,8 @@ async def test_execute_with_streaming_does_not_retry_authoritative_terminal_fail
     assert _ScriptedRetryOpenCodeConnection.starts == 1
     assert row is not None
     assert row.status == "failed"
-    assert row.exit_code == 1
-    assert row.error == "connection reset by peer"
+    assert row.terminal.exit_code == 1
+    assert row.terminal.error == "connection reset by peer"
 
 
 @pytest.mark.asyncio
@@ -479,4 +479,4 @@ async def test_execute_with_streaming_retries_single_turn_close_without_terminal
     assert _ScriptedRetryOpenCodeConnection.starts == 2
     assert row is not None
     assert row.status == "succeeded"
-    assert row.exit_code == 0
+    assert row.terminal.exit_code == 0

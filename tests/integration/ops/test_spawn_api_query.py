@@ -26,6 +26,7 @@ from meridian.lib.ops.spawn.models import (
 )
 from meridian.lib.state import spawn_store
 from meridian.lib.state.paths import resolve_project_runtime_root_for_write
+from meridian.lib.state.spawn.repository import Applied
 
 
 def _state_root(project_root: Path) -> Path:
@@ -79,7 +80,7 @@ def test_spawn_stats_includes_finalizing_bucket(tmp_path: Path) -> None:
         harness="codex",
         prompt="finalizing",
     )
-    assert spawn_store.mark_finalizing(runtime_root, finalizing_id) is True
+    assert isinstance(spawn_store.mark_finalizing(runtime_root, finalizing_id), Applied)
     succeeded_id = spawn_store.start_spawn(
         runtime_root,
         chat_id="c3",
@@ -465,9 +466,9 @@ def test_spawn_children_uses_persisted_display_label_without_prompt_read(tmp_pat
         goal=None,
     )
 
-    listed = spawn_store.list_spawns(runtime_root, filters={"parent_id": str(parent_id)})
-    assert len(listed) == 1
-    child_row = listed[0]
+    listed = spawn_store.list_spawns(runtime_root, parent_id=str(parent_id))
+    assert len(listed.records) == 1
+    child_row = listed.records[0]
     assert child_row.id == str(child_id)
     assert child_row.prompt is None
     assert child_row.display_label == "child prompt label"
@@ -512,8 +513,8 @@ def test_spawn_children_prefers_goal_over_display_label(tmp_path: Path) -> None:
         goal="ship the feature",
     )
 
-    listed = spawn_store.list_spawns(runtime_root, filters={"parent_id": str(parent_id)})
-    assert listed[0].display_label is None
+    listed = spawn_store.list_spawns(runtime_root, parent_id=str(parent_id))
+    assert listed.records[0].display_label is None
 
     output = spawn_api.spawn_children_sync(
         SpawnChildrenInput(project_root=project_root.as_posix(), spawn_id=str(parent_id))
@@ -554,9 +555,9 @@ def test_spawn_children_legacy_row_without_display_label_returns_none_desc(tmp_p
     state.pop("display_label", None)
     state_path.write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
 
-    listed = spawn_store.list_spawns(runtime_root, filters={"parent_id": str(parent_id)})
-    assert listed[0].prompt is None
-    assert listed[0].display_label is None
+    listed = spawn_store.list_spawns(runtime_root, parent_id=str(parent_id))
+    assert listed.records[0].prompt is None
+    assert listed.records[0].display_label is None
 
     output = spawn_api.spawn_children_sync(
         SpawnChildrenInput(project_root=project_root.as_posix(), spawn_id=str(parent_id))

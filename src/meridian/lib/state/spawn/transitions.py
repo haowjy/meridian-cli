@@ -21,6 +21,7 @@ if TYPE_CHECKING:
         SpawnRecord,
         TerminalSpawnStatus,
     )
+    from meridian.lib.state.spawn.repository import Decline
 
 
 def apply_mark_running(
@@ -98,13 +99,15 @@ def apply_cancel_intent(
     record: SpawnRecord,
     *,
     intent: CancelIntent,
-) -> SpawnRecord:
+) -> SpawnRecord | Decline:
     """Return ``record`` with durable spawn-level cancel intent applied."""
 
+    from meridian.lib.state.spawn.repository import Decline
+
     if record.status in TERMINAL_SPAWN_STATUSES:
-        return record
+        return Decline("spawn is not active")
     if record.cancel_intent is not None:
-        return record
+        return Decline("cancel intent already recorded")
     return record.model_copy(update={"cancel_intent": intent})
 
 

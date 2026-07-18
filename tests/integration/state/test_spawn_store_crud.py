@@ -24,6 +24,8 @@ from meridian.lib.state import spawn_store as spawn_store_module
 from meridian.lib.state.atomic import atomic_write_text
 from meridian.lib.state.paths import RuntimePaths
 from meridian.lib.state.spawn.repository import (
+    Applied,
+    Declined,
     SpawnStateQuarantined,
     read_state,
     scan_spawn_ids,
@@ -103,7 +105,7 @@ def test_invalid_persisted_status_is_reported_and_not_coerced(tmp_path: Path) ->
         get_spawn(runtime_root, spawn_id)
     collection = list_spawns(runtime_root)
 
-    assert [row.id for row in collection] == [valid_spawn_id]
+    assert [row.id for row in collection.records] == [valid_spawn_id]
     assert len(collection.quarantines) == 1
     assert single.value.report.spawn_id == collection.quarantines[0].spawn_id == spawn_id
     assert single.value.report.state_path == collection.quarantines[0].state_path
@@ -123,7 +125,7 @@ def test_invalid_persisted_kind_is_reported_and_not_coerced(tmp_path: Path) -> N
         get_spawn(runtime_root, spawn_id)
     collection = list_spawns(runtime_root)
 
-    assert collection == []
+    assert collection.records == ()
     assert [report.spawn_id for report in collection.quarantines] == [spawn_id]
     assert json.loads(state_path.read_text(encoding="utf-8"))["kind"] == "worker"
 
@@ -167,7 +169,7 @@ def test_non_string_persisted_identity_is_quarantined(
         get_spawn(runtime_root, spawn_id)
     collection = list_spawns(runtime_root)
 
-    assert [row.id for row in collection] == [valid_spawn_id]
+    assert [row.id for row in collection.records] == [valid_spawn_id]
     assert [report.spawn_id for report in collection.quarantines] == [spawn_id]
 
 
@@ -205,7 +207,7 @@ def test_partial_terminal_facts_are_quarantined_instead_of_half_loaded(
         get_spawn(runtime_root, spawn_id)
     collection = list_spawns(runtime_root)
 
-    assert [row.id for row in collection] == [valid_spawn_id]
+    assert [row.id for row in collection.records] == [valid_spawn_id]
     assert [report.spawn_id for report in collection.quarantines] == [spawn_id]
 
 
@@ -546,12 +548,13 @@ def test_record_cancel_intent_persists_first_request_and_skips_terminal(
         requested_at="2026-06-03T01:01:00Z",
     )
 
-    assert first is not None
-    assert first.wrote is True
-    first_record = first.snapshot
+    assert isinstance(first, Applied)
+
+    first_record = first.after
     assert first_record.cancel_intent is not None
     assert first_record.cancel_intent.exit_code == 130
-    assert second is not None
+    assert isinstance(second, Declined)
+    assert second.reason == "cancel intent already recorded"
     assert second.snapshot.cancel_intent == first_record.cancel_intent
     row = get_spawn(runtime_root, spawn_id)
     assert row is not None
@@ -568,8 +571,8 @@ def test_record_cancel_intent_persists_first_request_and_skips_terminal(
         requested_at="2026-06-03T01:00:00Z",
     )
 
-    assert result is not None
-    assert result.wrote is False
+    assert isinstance(result, Declined)
+
     assert result.snapshot.status == "succeeded"
     assert result.snapshot.cancel_intent is None
 
@@ -588,7 +591,7 @@ def test_start_spawn_rejects_empty_goal(tmp_path: Path) -> None:
             goal="   ",
         )
 
-    assert list_spawns(runtime_root) == []
+    assert list_spawns(runtime_root).records == ()
 
 
 def test_list_spawns_filters_v2_rows_and_keeps_listings_promptless(tmp_path: Path) -> None:
@@ -607,11 +610,11 @@ def test_list_spawns_filters_v2_rows_and_keeps_listings_promptless(tmp_path: Pat
     )
     finalize_spawn(runtime_root, p1, status="succeeded", exit_code=0, origin="runner")
 
-    filtered = list_spawns(runtime_root, filters={"status": "running", "agent": "reviewer"})
+    filtered = list_spawns(runtime_root, chat_id="c2")
 
-    assert [spawn.id for spawn in filtered] == [p2]
-    assert filtered[0].prompt is None
-    assert filtered[0].desc == "desc-2"
+    assert [spawn.id for spawn in filtered.records] == [p2]
+    assert filtered.records[0].prompt is None
+    assert filtered.records[0].desc == "desc-2"
 
 
 def test_list_spawns_reports_schema_invalid_row(tmp_path: Path) -> None:
@@ -622,7 +625,7 @@ def test_list_spawns_reports_schema_invalid_row(tmp_path: Path) -> None:
     atomic_write_text(invalid_spawn_dir / "state.json", json.dumps({"id": "p999"}))
 
     collection = list_spawns(runtime_root)
-    assert [row.id for row in collection] == ["p1"]
+    assert [row.id for row in collection.records] == ["p1"]
     assert [report.spawn_id for report in collection.quarantines] == ["p999"]
 
 
@@ -642,10 +645,10 @@ def test_spawn_queries_read_v2_state_and_prompt(tmp_path: Path) -> None:
     finalize_spawn(runtime_root, p1, status="succeeded", exit_code=0, origin="runner")
 
     spawns = list_spawns(runtime_root)
-    assert [spawn.id for spawn in spawns] == [p1, p2]
-    assert spawns[0].status == "succeeded"
-    assert spawns[1].status == "running"
-    assert all(spawn.prompt is None for spawn in spawns)
+    assert [spawn.id for spawn in spawns.records] == [p1, p2]
+    assert spawns.records[0].status == "succeeded"
+    assert spawns.records[1].status == "running"
+    assert all(spawn.prompt is None for spawn in spawns.records)
 
     row = get_spawn(runtime_root, p2)
     assert row is not None

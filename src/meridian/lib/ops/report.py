@@ -160,6 +160,7 @@ def report_search_sync(
             row.id
             for row in reversed(
                 spawn_store.list_spawns(resolve_runtime_root_for_read(project_root))
+                .records
             )
         )
 

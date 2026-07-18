@@ -100,7 +100,7 @@ def _select_primary_spawn_for_session(project_root: Path, chat_id: str) -> Spawn
         runtime_root,
         session_identity.list_spawns_for_owner_chat(runtime_root, owner_chat_id),
     )
-    primary_spawns = [row for row in spawns if row.kind == "primary"]
+    primary_spawns = [row for row in spawns.records if row.kind == "primary"]
     if not primary_spawns:
         raise ValueError(f"No primary spawn found for session '{chat_id}'")
 

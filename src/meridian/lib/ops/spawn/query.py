@@ -168,7 +168,7 @@ def _select_latest_spawn_id(
         project_root,
         resolved_runtime_root,
         spawn_store.list_spawns(resolved_runtime_root),
-    )
+    ).records
     if statuses is not None:
         wanted = set(statuses)
         spawns = [item for item in spawns if item.status in wanted]
@@ -264,7 +264,7 @@ def read_latest_primary_spawn_for_chat_read_only(
 
     resolved_runtime_root = runtime_root or resolve_runtime_root_for_read(project_root)
     spawns = session_identity.list_spawns_for_owner_chat(resolved_runtime_root, chat_id)
-    primary_spawns = [row for row in spawns if row.kind == "primary"]
+    primary_spawns = [row for row in spawns.records if row.kind == "primary"]
     if not primary_spawns:
         return None
     return primary_spawns[-1]

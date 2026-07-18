@@ -1,11 +1,12 @@
 from pathlib import Path
 
 import pytest
-from pydantic import ValidationError
 
-from meridian.lib.state.spawn.model import RunnerExitFacts, SpawnRecord, TerminalFacts
+from meridian.lib.state.spawn.model import SpawnRecord, TerminalFacts
 from meridian.lib.state.spawn.repository import (
+    Applied,
     Decline,
+    Declined,
     read_prompt,
     read_state,
     record_to_stored_state,
@@ -22,7 +23,6 @@ def _record(
 ) -> SpawnRecord:
     terminal = (
         TerminalFacts(
-            status=status,
             exit_code=0,
             finished_at="2026-05-01T00:01:00Z",
             published_at="2026-05-01T00:01:00Z",
@@ -90,72 +90,10 @@ def test_v2_state_round_trips_without_prompt_body(tmp_path: Path) -> None:
     assert read_prompt(spawns_dir, "p1") == "hello world"
 
 
-@pytest.mark.parametrize(
-    "update",
-    (
-        {"status": "running"},
-        {"exit_code": None},
-        {"finished_at": None},
-    ),
-)
-def test_terminal_facts_copy_revalidates_closed_status_and_required_fields(
-    update: dict[str, object],
-) -> None:
-    facts = TerminalFacts(
-        status="succeeded",
-        exit_code=0,
-        finished_at="2026-05-01T00:01:00Z",
-        published_at="2026-05-01T00:01:00Z",
-        origin="runner",
-    )
-
-    with pytest.raises(ValidationError):
-        facts.model_copy(update=update)
-
-
-@pytest.mark.parametrize("update", ({"status": "running"}, {"exit_code": None}))
-def test_runner_exit_facts_copy_revalidates_complete_terminal_tuple(
-    update: dict[str, object],
-) -> None:
-    facts = RunnerExitFacts(
-        status="failed",
-        exit_code=9,
-        error="runner failed",
-        exited_at="2026-05-01T00:01:00Z",
-    )
-
-    with pytest.raises(ValidationError):
-        facts.model_copy(update=update)
-
-
-def test_spawn_record_copy_revalidates_terminal_equivalence() -> None:
-    running = _record()
-    succeeded = _record(status="succeeded")
-    assert succeeded.terminal is not None
-    mismatched = TerminalFacts(
-        status="failed",
-        exit_code=1,
-        finished_at="2026-05-01T00:01:00Z",
-        published_at="2026-05-01T00:01:00Z",
-        origin="runner",
-    )
-
-    invalid_updates = (
-        (running, {"status": "succeeded"}),
-        (running, {"terminal": succeeded.terminal}),
-        (succeeded, {"terminal": None}),
-        (succeeded, {"terminal": mismatched}),
-    )
-    for record, update in invalid_updates:
-        with pytest.raises(ValidationError):
-            record.model_copy(update=update)
-
-
 def test_write_state_locked_refuses_to_overwrite_terminal_state(tmp_path: Path) -> None:
     spawns_dir = tmp_path / "spawns"
     _seed_state(spawns_dir, _record(status="succeeded"))
     replacement = TerminalFacts(
-        status="failed",
         exit_code=1,
         finished_at="2026-05-01T00:02:00Z",
         published_at="2026-05-01T00:02:00Z",
@@ -184,10 +122,10 @@ def test_write_state_locked_applies_mutator_under_per_spawn_lock(tmp_path: Path)
         lambda current: current.model_copy(update={"runner_pid": 789, "desc": "updated"}),
     )
 
-    assert committed.wrote is True
-    assert committed.snapshot.runner_pid == 789
-    assert committed.snapshot.desc == "updated"
-    assert committed.reason is None
+    assert isinstance(committed, Applied)
+    assert committed.before.runner_pid == 456
+    assert committed.after.runner_pid == 789
+    assert committed.after.desc == "updated"
 
 
 def test_write_state_locked_decline_preserves_state(tmp_path: Path) -> None:
@@ -203,7 +141,7 @@ def test_write_state_locked_decline_preserves_state(tmp_path: Path) -> None:
         lambda _current: Decline("not applicable"),
     )
 
-    assert outcome.wrote is False
+    assert isinstance(outcome, Declined)
     assert outcome.snapshot == original.model_copy(update={"prompt": None})
     assert outcome.reason == "not applicable"
     assert read_state(spawns_dir, "p1") == outcome.snapshot

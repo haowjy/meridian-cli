@@ -79,8 +79,10 @@ def test_cancel_orphan_primary_after_passive_reconcile_still_terminates(
     reconciled = _reconcile(tmp_path, runtime_root, _get_spawn(runtime_root, spawn_id))
 
     assert reconciled.status == "failed"
-    assert reconciled.exit_code == 1
-    assert reconciled.error == "orphan_primary"
+    assert reconciled.terminal is not None
+    assert reconciled.terminal.exit_code == 1
+    assert reconciled.terminal is not None
+    assert reconciled.terminal.error == "orphan_primary"
     assert terminated_pids == [7302, 7303]
 
     output = spawn_api.spawn_cancel_sync(
@@ -95,7 +97,8 @@ def test_cancel_orphan_primary_after_passive_reconcile_still_terminates(
     assert terminated_pids == [7302, 7303, 7302, 7303]
     latest = _get_spawn(runtime_root, spawn_id)
     assert latest.status == "failed"
-    assert latest.error == "orphan_primary"
+    assert latest.terminal is not None
+    assert latest.terminal.error == "orphan_primary"
 
 
 def test_cancel_orphan_primary_candidate_with_unreadable_metadata_uses_worker_pid_fallback(
@@ -128,8 +131,10 @@ def test_cancel_orphan_primary_candidate_with_unreadable_metadata_uses_worker_pi
     reconciled = _reconcile(tmp_path, runtime_root, _get_spawn(runtime_root, spawn_id))
 
     assert reconciled.status == "failed"
-    assert reconciled.exit_code == 1
-    assert reconciled.error == "orphan_primary"
+    assert reconciled.terminal is not None
+    assert reconciled.terminal.exit_code == 1
+    assert reconciled.terminal is not None
+    assert reconciled.terminal.error == "orphan_primary"
     assert passive_terminated_pids == [worker_pid]
 
     explicit_terminated_pids = recording_scope_cleanup(
@@ -149,7 +154,8 @@ def test_cancel_orphan_primary_candidate_with_unreadable_metadata_uses_worker_pi
     assert explicit_terminated_pids == [worker_pid]
     latest = _get_spawn(runtime_root, spawn_id)
     assert latest.status == "failed"
-    assert latest.error == "orphan_primary"
+    assert latest.terminal is not None
+    assert latest.terminal.error == "orphan_primary"
 
 
 def test_spawn_cancel_managed_primary_signals_launcher_first(
@@ -241,5 +247,6 @@ def test_spawn_cancel_managed_primary_queued_converges_to_terminal(
     assert terminated_pids == []
     latest = _get_spawn(runtime_root, spawn_id)
     assert latest.status == "cancelled"
-    assert latest.error == "cancelled"
-    assert latest.terminal_origin == "cancel"
+    assert latest.terminal is not None
+    assert latest.terminal.error == "cancelled"
+    assert latest.terminal.origin == "cancel"

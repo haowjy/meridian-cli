@@ -97,7 +97,7 @@ async def test_streaming_serve_shutdown_finalizes_once_as_cancelled(
     row = get_spawn(runtime_root, "p1")
     assert row is not None
     assert row.status == "cancelled"
-    assert row.exit_code == 1
+    assert row.terminal.exit_code == 1
 
 
 @pytest.mark.asyncio
@@ -119,9 +119,9 @@ async def test_streaming_serve_start_failure_finalizes_failed_once(
     row = get_spawn(runtime_root, "p1")
     assert row is not None
     assert row.status == "failed"
-    assert row.error == "boom"
+    assert row.terminal.error == "boom"
     assert row.status == "failed"
-    assert row.error == "boom"
+    assert row.terminal.error == "boom"
 
 
 @pytest.mark.asyncio

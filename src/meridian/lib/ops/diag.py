@@ -188,7 +188,7 @@ def _repair_orphan_runs(
         ).runtime_root
     if resolved_runtime_root is None:
         raise ValueError("Doctor orphan-run repair requires a runtime root.")
-    spawns = spawn_store.list_spawns(resolved_runtime_root)
+    spawns = spawn_store.list_spawns(resolved_runtime_root).records
     running_before = {s.id for s in spawns if is_active_spawn_status(s.status)}
     # Terminal rows may carry a durable reaper cleanup claim left by a crash
     # after finalization. The reconciler is a no-op for other terminal rows.
@@ -271,7 +271,7 @@ def doctor_sync(payload: DoctorInput) -> DoctorOutput:
         if orphan_runs > 0:
             repaired.append("orphan_runs")
 
-    spawns = spawn_store.list_spawns(runtime_root)
+    spawns = spawn_store.list_spawns(runtime_root).records
     active_spawn_ids = {spawn.id for spawn in spawns if is_active_spawn_status(spawn.status)}
     orphan_project_dirs: list[OrphanProjectDir] = []
     if payload.global_:

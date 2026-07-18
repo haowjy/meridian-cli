@@ -26,7 +26,6 @@ def _make_record(
 ) -> SpawnRecord:
     terminal = (
         TerminalFacts(
-            status=status,  # type: ignore[arg-type]
             exit_code=exit_code if exit_code is not None else 1,
             finished_at=started_at or "2024-01-01T00:00:00Z",
             published_at=started_at or "2024-01-01T00:00:00Z",

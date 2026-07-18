@@ -133,7 +133,7 @@ def scan_orphan_project_dirs(
         size_bytes, latest_mtime = _tree_activity(project_dir)
         active_spawns = [
             spawn
-            for spawn in spawn_store.list_spawns(project_dir)
+            for spawn in spawn_store.list_spawns(project_dir).records
             if is_active_spawn_status(spawn.status)
         ]
         if active_spawns:
@@ -262,7 +262,7 @@ def prune_orphan_project_dirs(orphans: list[OrphanProjectDir]) -> int:
                 continue
             active_spawns = [
                 spawn
-                for spawn in spawn_store.list_spawns(runtime_root)
+                for spawn in spawn_store.list_spawns(runtime_root).records
                 if is_active_spawn_status(spawn.status)
             ]
             if active_spawns:

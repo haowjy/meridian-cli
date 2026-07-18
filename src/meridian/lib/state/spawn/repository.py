@@ -64,12 +64,27 @@ class Decline:
 
 
 @dataclass(frozen=True)
-class MutationOutcome:
-    """Persistence result and authoritative snapshot from a locked mutation."""
+class Applied:
+    """A locked mutation that persisted one atomic before/after transition."""
 
-    wrote: bool
+    before: SpawnRecord
+    after: SpawnRecord
+
+
+@dataclass(frozen=True)
+class Declined:
+    """A locked mutation that preserved its authoritative snapshot."""
+
     snapshot: SpawnRecord
-    reason: str | None = None
+    reason: str
+
+
+@dataclass(frozen=True)
+class Missing:
+    """The spawn did not exist when the mutation lock was held."""
+
+
+type LockedMutationResult = Applied | Declined | Missing
 
 
 def _spawn_dir(spawns_dir: Path, spawn_id: str) -> Path:
@@ -175,7 +190,7 @@ def write_state_locked(
     mutator: Callable[[SpawnRecord], SpawnRecord | Decline],
     *,
     allow_terminal_overwrite: bool = False,
-) -> MutationOutcome:
+) -> LockedMutationResult:
     """Re-read, mutate, and persist one spawn under its stable per-spawn lock.
 
     Lock reentrancy is forbidden because a nested mutation could commit from a
@@ -185,16 +200,16 @@ def write_state_locked(
     with lock_file(spawn_lock_path(spawns_dir, spawn_id), reentrant=False):
         current = read_state(spawns_dir, spawn_id)
         if current is None:
-            raise FileNotFoundError(_state_path(spawns_dir, spawn_id))
+            return Missing()
         updated = mutator(current)
         if isinstance(updated, Decline):
-            return MutationOutcome(wrote=False, snapshot=current, reason=updated.reason)
+            return Declined(snapshot=current, reason=updated.reason)
         if updated.id != spawn_id:
             raise ValueError("Locked state mutator must not change spawn id")
         if current.status in TERMINAL_SPAWN_STATUSES and not allow_terminal_overwrite:
             raise ValueError(f"Refusing to overwrite terminal spawn state: {spawn_id}")
         _write_state(spawns_dir, updated)
-        return MutationOutcome(wrote=True, snapshot=updated)
+        return Applied(before=current, after=updated)
 
 
 def is_safe_spawn_dir_name(name: str) -> bool:
@@ -222,8 +237,11 @@ def scan_spawn_ids(spawns_dir: Path) -> list[str]:
 
 
 __all__ = [
+    "Applied",
     "Decline",
-    "MutationOutcome",
+    "Declined",
+    "LockedMutationResult",
+    "Missing",
     "SpawnStateQuarantineReport",
     "SpawnStateQuarantined",
     "StoredSpawnState",

@@ -72,7 +72,7 @@ class SessionStartEvent(BaseModel):
     chat_id: PersistedChatId
     kind: Literal["primary", "spawn"] = "spawn"
     harness: str
-    harness_session_id: HarnessSessionId | None
+    harness_session_id: OptionalPersistedHarnessSessionId
     control_root: str | None = None
     task_cwd: str | None = None
     execution_cwd: str | None = None
@@ -85,7 +85,7 @@ class SessionStartEvent(BaseModel):
     params: tuple[str, ...] = ()
     session_instance_id: str = ""
     started_at: str
-    forked_from_chat_id: ChatId | None = None
+    forked_from_chat_id: OptionalPersistedChatId = None
     spawn_id: str | None = None
 
 class SessionStopEvent(BaseModel):
@@ -93,7 +93,7 @@ class SessionStopEvent(BaseModel):
 
     v: int = 1
     event: Literal["stop"] = "stop"
-    chat_id: ChatId
+    chat_id: PersistedChatId
     session_instance_id: str = ""
     stopped_at: str | None = None
 

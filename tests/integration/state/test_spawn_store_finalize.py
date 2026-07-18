@@ -20,11 +20,11 @@ from meridian.lib.core.domain import (
     TerminalSpawnStatus,
     TokenUsage,
 )
+from meridian.lib.state.spawn.repository import Applied, Declined, Missing
 from meridian.lib.state.spawn_store import (
     finalize_spawn,
     get_spawn,
     mark_finalizing,
-    mark_finalizing_with_snapshot,
     start_spawn,
 )
 from tests.support.process_race import run_spawn_race_or_skip
@@ -64,20 +64,19 @@ def test_finalize_propagates_concurrent_disappearance(
         finalize_spawn(runtime_root, spawn_id, "succeeded", 0, origin="runner")
 
 
-def test_mark_finalizing_propagates_concurrent_disappearance(
+def test_mark_finalizing_reports_concurrent_disappearance(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     runtime_root = _state_root(tmp_path)
     spawn_id = _start_test_spawn(runtime_root)
 
-    def disappeared(*_args: object, **_kwargs: object) -> None:
-        raise FileNotFoundError(spawn_id)
+    def disappeared(*_args: object, **_kwargs: object) -> Missing:
+        return Missing()
 
     monkeypatch.setattr("meridian.lib.state.spawn_store._write_state_locked", disappeared)
 
-    with pytest.raises(FileNotFoundError):
-        mark_finalizing_with_snapshot(runtime_root, spawn_id)
+    assert isinstance(mark_finalizing(runtime_root, spawn_id), Missing)
 
 
 def _finalize_spawn_worker(
@@ -95,18 +94,23 @@ def _finalize_spawn_worker(
         origin="runner",
         duration_secs=duration_secs,
     )
-    return (outcome.wrote, outcome.transitioned)
+    return (
+        isinstance(outcome, Applied),
+        isinstance(outcome, Applied) and outcome.before.status not in {
+            "succeeded", "failed", "cancelled", "timed_out"
+        },
+    )
 
 
 def test_mark_finalizing_state_machine_enforces_running_only(tmp_path: Path) -> None:
     runtime_root = _state_root(tmp_path)
     running_spawn_id = _start_test_spawn(runtime_root)
 
-    assert mark_finalizing(runtime_root, running_spawn_id) is True
+    assert isinstance(mark_finalizing(runtime_root, running_spawn_id), Applied)
     row = get_spawn(runtime_root, running_spawn_id)
     assert row is not None
     assert row.status == "finalizing"
-    assert mark_finalizing(runtime_root, "p-missing") is False
+    assert isinstance(mark_finalizing(runtime_root, "p-missing"), Missing)
 
     non_running_statuses: tuple[SpawnStatus, ...] = (
         "queued",
@@ -136,7 +140,7 @@ def test_mark_finalizing_state_machine_enforces_running_only(tmp_path: Path) -> 
                 0,
                 origin="runner",
             )
-        assert mark_finalizing(runtime_root, spawn_id) is False
+        assert isinstance(mark_finalizing(runtime_root, spawn_id), Declined)
         row = get_spawn(runtime_root, spawn_id)
         assert row is not None
         assert row.status == start_status
@@ -147,7 +151,7 @@ def test_mark_finalizing_concurrent_race_only_one_writer_wins(tmp_path: Path) ->
     spawn_id = _start_test_spawn(runtime_root)
 
     def attempt(_unused: int) -> bool:
-        return mark_finalizing(runtime_root, spawn_id)
+        return isinstance(mark_finalizing(runtime_root, spawn_id), Applied)
 
     with ThreadPoolExecutor(max_workers=2) as pool:
         results = list(pool.map(attempt, (0, 1)))
@@ -180,11 +184,10 @@ def test_projection_authority_reconciler_then_runner_replaces_terminal_tuple(
         origin="runner",
         duration_secs=12.5,
     )
-    assert reconciler_outcome.transitioned is True
-    assert runner_outcome.transitioned is False
-    assert runner_outcome.wrote is True
-    assert runner_outcome.snapshot is not None
-    assert runner_outcome.snapshot.status == "succeeded"
+    assert isinstance(reconciler_outcome, Applied)
+    assert isinstance(runner_outcome, Applied)
+    assert runner_outcome.before.status == "failed"
+    assert runner_outcome.after.status == "succeeded"
 
     row = get_spawn(runtime_root, spawn_id)
     assert row is not None
@@ -219,10 +222,8 @@ def test_finalize_rejects_losing_authoritative_after_terminal(tmp_path: Path) ->
         error="loser",
     )
 
-    assert first.wrote is True
-    assert first.transitioned is True
-    assert second.wrote is False
-    assert second.transitioned is False
+    assert isinstance(first, Applied)
+    assert isinstance(second, Declined)
     row = get_spawn(runtime_root, spawn_id)
     assert row is not None
     assert row.status == "succeeded"
@@ -259,7 +260,7 @@ def test_cross_process_authoritative_finalizers_persist_one_winner(
 def test_finalize_spawn_reconciler_writes_through_finalizing_row(tmp_path: Path) -> None:
     runtime_root = _state_root(tmp_path)
     spawn_id = _start_test_spawn(runtime_root)
-    assert mark_finalizing(runtime_root, spawn_id) is True
+    assert isinstance(mark_finalizing(runtime_root, spawn_id), Applied)
 
     outcome = finalize_spawn(
         runtime_root,
@@ -270,8 +271,7 @@ def test_finalize_spawn_reconciler_writes_through_finalizing_row(tmp_path: Path)
         error="orphan_finalization",
     )
 
-    assert outcome.transitioned is True
-    assert outcome.wrote is True
+    assert isinstance(outcome, Applied)
     row = get_spawn(runtime_root, spawn_id)
     assert row is not None
     assert row.status == "failed"

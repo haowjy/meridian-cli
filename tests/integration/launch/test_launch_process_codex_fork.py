@@ -151,8 +151,8 @@ def test_run_harness_process_uses_adapter_primary_seed_port_not_harness_id(
     assert outcome.exit_code == 0
     assert outcome.resolved_harness_session_id == seeded_session_id
     spawns = list_spawns(launch_context.runtime_root)
-    assert len(spawns) == 1
-    assert spawns[0].harness_session_id == seeded_session_id
+    assert len(spawns.records) == 1
+    assert spawns.records[0].harness_session_id == seeded_session_id
 
 
 @pytest.mark.slow
@@ -277,8 +277,8 @@ def test_run_harness_process_fork_uses_new_chat_and_materialized_session(
     assert captured["env_chat_id"] == "c999"
     assert outcome.chat_id == "c999"
     spawns = list_spawns(launch_context.runtime_root)
-    assert len(spawns) == 1
-    assert spawns[0].terminal_origin == "launcher"
+    assert len(spawns.records) == 1
+    assert spawns.records[0].terminal.origin == "launcher"
 
 
 @pytest.mark.slow

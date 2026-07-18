@@ -374,9 +374,9 @@ def test_run_harness_process_managed_marks_running_before_attach_returns(
     ) -> PrimaryAttachOutcome:
         _ = harness_id, spawn_id, spawn_dir, control_root, task_cwd, env, spec, process_launcher
         assert callable(on_running)
-        assert list_spawns(launch_context.runtime_root)[0].status == "queued"
+        assert list_spawns(launch_context.runtime_root).records[0].status == "queued"
         on_running(5151)
-        running_record = list_spawns(launch_context.runtime_root)[0]
+        running_record = list_spawns(launch_context.runtime_root).records[0]
         captured["status_seen_before_return"] = running_record.status
         captured["worker_pid_seen_before_return"] = running_record.worker_pid
         return PrimaryAttachOutcome(exit_code=0, session_id="thread-managed", tui_pid=5151)

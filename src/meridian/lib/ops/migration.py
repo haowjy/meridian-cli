@@ -137,7 +137,7 @@ def _get_active_spawns(project_id: str) -> list[str]:
             return []
         collection = list_spawns(runtime_root)
         active = [
-            spawn.id for spawn in collection if spawn.status in ACTIVE_SPAWN_STATUSES
+            spawn.id for spawn in collection.records if spawn.status in ACTIVE_SPAWN_STATUSES
         ]
         return [*active, *(f"quarantined:{row.spawn_id}" for row in collection.quarantines)]
     except Exception:

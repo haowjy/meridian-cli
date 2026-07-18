@@ -90,10 +90,16 @@ def test_reconcile_active_spawn_uses_recorded_runner_birth_for_pid_reuse_behavio
     reconciled = _reconcile(tmp_path, runtime_root, record)
 
     assert reconciled.status == expected_status
-    assert reconciled.error == expected_error
     latest = _get_spawn(runtime_root, spawn_id)
     assert latest.status == expected_status
-    assert latest.error == expected_error
+    if expected_error is None:
+        assert reconciled.terminal is None
+        assert latest.terminal is None
+    else:
+        assert reconciled.terminal is not None
+        assert reconciled.terminal.error == expected_error
+        assert latest.terminal is not None
+        assert latest.terminal.error == expected_error
 
 
 @pytest.mark.parametrize(
@@ -126,10 +132,16 @@ def test_reconcile_active_spawn_falls_back_to_started_epoch_for_pid_reuse_behavi
     reconciled = _reconcile(tmp_path, runtime_root, record)
 
     assert reconciled.status == expected_status
-    assert reconciled.error == expected_error
     latest = _get_spawn(runtime_root, spawn_id)
     assert latest.status == expected_status
-    assert latest.error == expected_error
+    if expected_error is None:
+        assert reconciled.terminal is None
+        assert latest.terminal is None
+    else:
+        assert reconciled.terminal is not None
+        assert reconciled.terminal.error == expected_error
+        assert latest.terminal is not None
+        assert latest.terminal.error == expected_error
 
 
 def test_reconcile_active_spawn_finalizing_uses_runner_exit_tuple(
@@ -159,8 +171,10 @@ def test_reconcile_active_spawn_finalizing_uses_runner_exit_tuple(
     reconciled = _reconcile(tmp_path, runtime_root, record)
 
     assert reconciled.status == "cancelled"
-    assert reconciled.exit_code == 130
-    assert reconciled.error == "cancelled"
+    assert reconciled.terminal is not None
+    assert reconciled.terminal.exit_code == 130
+    assert reconciled.terminal is not None
+    assert reconciled.terminal.error == "cancelled"
 
 
 def test_reconcile_active_spawn_runner_exit_grace_skips_until_grace_expires(

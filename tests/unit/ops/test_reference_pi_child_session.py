@@ -93,7 +93,11 @@ def test_pi_missing_session_diagnostics_from_child_ref(tmp_path: Path) -> None:
     project_root, runtime_root, owner_chat_id, child_chat_id, _session_dir = (
         _seed_pi_primary_family(tmp_path)
     )
-    primary_spawn_id = spawn_store.list_spawns(runtime_root, filters={"kind": "primary"})[0].id
+    primary_spawn_id = next(
+        record.id
+        for record in spawn_store.list_spawns(runtime_root).records
+        if record.kind == "primary"
+    )
     write_primary_metadata(
         runtime_root / "spawns" / primary_spawn_id,
         PrimaryMetadata(

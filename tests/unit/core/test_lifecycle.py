@@ -21,6 +21,7 @@ from meridian.lib.core.spawn_start import SpawnStartMetadata
 from meridian.lib.launch.types import PrimarySessionMetadata
 from meridian.lib.state import spawn_store
 from meridian.lib.state.paths import RuntimePaths
+from meridian.lib.state.spawn.repository import Applied, Declined
 
 
 class StoreSnapshotHook:
@@ -113,8 +114,8 @@ def test_failure_sentinel_write_failure_does_not_block_finalize(
     outcome = service.finalize(spawn_id, "failed", 1, origin="launcher")
 
     record = spawn_store.get_spawn(tmp_path, spawn_id)
-    assert outcome.transitioned is True
-    assert outcome.wrote is True
+    assert isinstance(outcome, Applied)
+
     assert record is not None
     assert record.status == "failed"
 
@@ -133,8 +134,9 @@ def test_authoritative_non_failed_finalize_removes_stale_failure_sentinel(
     outcome = authoritative.finalize(spawn_id, "succeeded", 0, origin="runner")
 
     record = spawn_store.get_spawn(tmp_path, spawn_id)
-    assert outcome.transitioned is False
-    assert outcome.wrote is True
+    assert isinstance(outcome, Applied)
+    assert outcome.before.status == "failed"
+
     assert record is not None
     assert record.status == "succeeded"
     assert record.terminal is not None
@@ -163,9 +165,9 @@ def test_bootstrap_from_disk_loads_owner_record_for_write_through(
     assert worker.mark_finalizing(spawn_id) is True
     outcome = worker.finalize(spawn_id, "succeeded", 0, origin="runner")
 
-    assert outcome.wrote is True
-    assert outcome.snapshot is not None
-    assert outcome.snapshot.status == "succeeded"
+
+    assert isinstance(outcome, Applied)
+    assert outcome.after.status == "succeeded"
 
 
 def test_finalize_dispatches_hooks_after_terminal_state_is_persisted(tmp_path: Path) -> None:
@@ -319,8 +321,7 @@ def test_finalize_decline_emits_no_event_and_preserves_state(tmp_path: Path) -> 
 
     outcome = service.finalize(spawn_id, "failed", 1, origin="launcher")
 
-    assert outcome.wrote is False
-    assert outcome.transitioned is False
+    assert isinstance(outcome, Declined)
     assert outcome.snapshot == before
     assert spawn_store.get_spawn(tmp_path, spawn_id) == before
     assert hook.event_types == []

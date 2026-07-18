@@ -135,7 +135,7 @@ def _latest_spawn_start_epoch(*, runtime_root: Path, child_cwd: Path) -> float |
     latest_matching_child: float | None = None
 
     try:
-        spawns = spawn_store.list_spawns(runtime_root)
+        spawns = spawn_store.list_spawns(runtime_root).records
     except OSError:
         return None
 

@@ -112,7 +112,7 @@ def _active_work_attachment_warning(runtime_root: Path, work_id: str) -> str | N
     attached_session_ids = session_store.list_active_sessions_for_work_id(runtime_root, work_id)
     active_spawn_ids = [
         spawn.id
-        for spawn in spawn_store.list_spawns(runtime_root, filters={"work_id": work_id})
+        for spawn in spawn_store.list_spawns(runtime_root, work_id=work_id).records
         if spawn.kind != "primary" and is_active_spawn_status(spawn.status)
     ]
     warnings: list[str] = []
@@ -638,7 +638,7 @@ def work_rename_sync(
 
     item = work_repository.rename_work_item(project_state_dir, old_name, new_slug)
 
-    for spawn in spawn_store.list_spawns(runtime_state_root, filters={"work_id": old_name}):
+    for spawn in spawn_store.list_spawns(runtime_state_root, work_id=old_name).records:
         if spawn.kind == "child":
             spawn_store.update_spawn(runtime_state_root, spawn.id, work_id=item.name)
 

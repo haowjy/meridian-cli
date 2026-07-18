@@ -135,16 +135,18 @@ def spawn_matches_exact_session(row: SpawnRecord, session_chat_id: str) -> bool:
     return spawn_exact_chat_id(row) == normalize_optional_identity(session_chat_id)
 
 
-def list_spawns_for_owner_chat(runtime_root: Path, owner_chat_id: str) -> list[SpawnRecord]:
+def list_spawns_for_owner_chat(runtime_root: Path, owner_chat_id: str) -> spawn_store.SpawnScan:
     """List spawn rows whose owner/session-family chat id matches."""
 
-    return spawn_store.list_spawns(runtime_root, filters={"owner_chat_id": owner_chat_id})
+    return spawn_store.list_spawns(runtime_root, owner_chat_id=owner_chat_id)
 
 
-def list_spawns_for_exact_session(runtime_root: Path, session_chat_id: str) -> list[SpawnRecord]:
+def list_spawns_for_exact_session(
+    runtime_root: Path, session_chat_id: str
+) -> spawn_store.SpawnScan:
     """List spawn rows whose exact session chat id matches."""
 
-    return spawn_store.list_spawns(runtime_root, filters={"chat_id": session_chat_id})
+    return spawn_store.list_spawns(runtime_root, chat_id=session_chat_id)
 
 
 __all__ = [

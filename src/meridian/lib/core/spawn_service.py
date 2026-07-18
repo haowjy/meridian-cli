@@ -55,6 +55,7 @@ from meridian.lib.state import spawn_store
 from meridian.lib.state.liveness import is_process_alive
 from meridian.lib.state.paths import RuntimePaths
 from meridian.lib.state.spawn.model import APP_LAUNCH_MODE, LaunchMode, SpawnKind, SpawnOrigin
+from meridian.lib.state.spawn.repository import Applied, Declined
 from meridian.lib.state.spawn_report import spawn_report_has_durable_completion
 from meridian.lib.state.timestamps import iso_timestamp_to_epoch
 from meridian.lib.streaming.signal_canceller import CancelOutcome as SignalCancelOutcome
@@ -903,7 +904,7 @@ class SpawnApplicationService:
             usage=usage,
             error=error,
         )
-        if outcome.wrote:
+        if isinstance(outcome, Applied):
             from meridian.lib.state.process_scope_projection import (
                 mark_scope_released,
                 read_scopes_from_disk,
@@ -914,11 +915,21 @@ class SpawnApplicationService:
                 if scope.owner_policy == "spawn_owned":
                     mark_scope_released(self._runtime_root, spawn_id, scope.release_id)
         return CompleteSpawnOutcome(
-            wrote=outcome.wrote,
-            transitioned=outcome.transitioned,
+            wrote=isinstance(outcome, Applied),
+            transitioned=(
+                isinstance(outcome, Applied)
+                and not self.is_terminal(outcome.before.status)
+                and self.is_terminal(outcome.after.status)
+            ),
             entered_finalizing=entered_finalizing,
             already_terminal=was_terminal,
-            snapshot=outcome.snapshot,
+            snapshot=(
+                outcome.after
+                if isinstance(outcome, Applied)
+                else outcome.snapshot
+                if isinstance(outcome, Declined)
+                else None
+            ),
             spawn_id=spawn_id,
         )
 

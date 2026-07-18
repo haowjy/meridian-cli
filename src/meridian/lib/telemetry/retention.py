@@ -217,7 +217,7 @@ def _list_segments(
             from meridian.lib.state import spawn_store
 
             records = spawn_store.list_spawns(runtime_root)
-            spawn_records = {r.id: r for r in records}
+            spawn_records = {r.id: r for r in records.records}
             quarantined_spawn_ids = frozenset(report.spawn_id for report in records.quarantines)
         except Exception:
             spawn_state_unreadable = True

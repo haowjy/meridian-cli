@@ -247,7 +247,7 @@ def _spawn_appendices(
         return []
     sections: list[str] = []
     seen: set[str] = set()
-    for spawn in spawn_store.list_spawns(runtime_root):
+    for spawn in spawn_store.list_spawns(runtime_root).records:
         if spawn.id in seen:
             continue
         if spawn.kind == "primary":

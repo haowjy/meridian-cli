@@ -102,7 +102,6 @@ from meridian.lib.state.spawn.model import (
     FOREGROUND_LAUNCH_MODE,
     LaunchMode,
 )
-from meridian.lib.state.spawn.repository import read_state, scan_spawn_ids
 from meridian.lib.state.spawn_aggregate import mutate_published_spawn_artifact
 from meridian.lib.streaming.spawn_manager import DrainOutcome, SpawnManager
 from meridian.lib.utils.time import minutes_to_seconds
@@ -406,16 +405,13 @@ def _retry_blocked_after_pi_child_started(
 
     if harness_id is not HarnessId.PI:
         return False
-    spawns_dir = runtime_root / "spawns"
-    if not spawns_dir.is_dir():
-        return False
-    for child_id in scan_spawn_ids(spawns_dir):
-        if not spawn_store.is_spawn_id_shape(child_id):
-            continue
-        record = read_state(spawns_dir, child_id, include_prompt=False)
-        if record is not None and record.parent_id == str(current_spawn_id):
-            return True
-    return False
+    scan = spawn_store.list_spawns(runtime_root, parent_id=str(current_spawn_id))
+    # Retry policy fails closed: an unreadable sibling could be a child whose
+    # already-started work must not be orphaned by a new attempt.
+    return bool(
+        scan.records
+        or any(spawn_store.is_spawn_id_shape(report.spawn_id) for report in scan.quarantines)
+    )
 
 
 def _read_cancel_intent(runtime_root: Path, spawn_id: SpawnId) -> CancelIntent | None:

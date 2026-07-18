@@ -109,9 +109,10 @@ triggering project setup side effects in CI.
 
 ## Reconciliation Behavior
 
-`reaper.py:reconcile_spawns()` gives list, stats, reference, and dashboard callers
-a read-only projection of stale active rows. It may return an in-memory terminal
-status but never persists state or terminates processes, and it is safe at any depth.
+`reaper.py:reconcile_spawns()` accepts and returns an immutable `SpawnScan`, preserving
+its quarantine partition while projecting stale active records for list, stats, reference,
+and dashboard callers. It may return an in-memory terminal status but never persists
+state or terminates processes, and it is safe at any depth.
 
 `reconcile_active_spawn()` is the side-effectful repair path. It runs from doctor
 background repair and fails closed outside root depth. It snapshots a cleanup claim
@@ -126,7 +127,7 @@ Both paths share liveness rules in `reaper.py` and completion/cancel precedence 
 
 - `user_paths.py` — `get_user_home()`. Start here for any new user-level storage.
 - `paths.py` — `RuntimePaths`, read vs write root resolvers.
-- `spawn_store.py` — `SpawnStore`. Main interface for listing, creating, updating spawns.
+- `spawn_store.py` — listing/query, creation, and mutation interface; scans return `SpawnScan`.
 - `spawn_aggregate.py` — published-row deletion and spawn-owned artifact lifetime guard.
 - `work_store.py` / `work_repository.py` — pure work-item reads and the single locked
   mutation repository, respectively.
@@ -138,7 +139,7 @@ Both paths share liveness rules in `reaper.py` and completion/cancel precedence 
 
 ## Spawn Subpackage
 
-`spawn/` contains domain models, v2 persistence helpers, and finalization policy.
+`spawn/` contains domain models, strict v2 persistence helpers, and pure transitions.
 → [spawn/AGENTS.md](spawn/AGENTS.md)
 
 ## Anti-Patterns
