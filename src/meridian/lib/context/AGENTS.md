@@ -16,10 +16,7 @@ is `MERIDIAN_CONTEXT_{NAME}_DIR`. `context_env_key(name)` derives the var name.
 
 ## Key Rules
 
-**`{project}` placeholder resolves to `None` if no project ID is available.** A fresh
-project without `.meridian/id` produces `None` for any path containing
-`{project}`. `resolve_context_paths()` handles this gracefully with fallbacks, but
-if you call `_resolve_path()` directly, you must handle `None` returns.
+**`{project}` is resolved from `meridian.toml` identity.** Read-only use does not create identity. When identity is absent, unresolved projection paths are never created; write paths create identity before resolving context state.
 
 **`check_env=False` is for prompt injection, not human display.** `render_context_lines()`
 with `check_env=False` always emits `$ENV_VAR (resolved_path)` — verbose and not
@@ -33,13 +30,7 @@ Paths resolve via `[context.work]` and `[context.kb]` configuration. Defaults ar
 - `work_root` → `{user_home}/context/{project}/work`
 - `kb_root` → `{user_home}/context/{project}/kb`
 
-When `{project}` cannot resolve (no `.meridian/id`), fallbacks kick in:
-- `work_root` → `<project_root>/.meridian/work`
-- `kb_root` → `<project_root>/.meridian/kb`
-- Extra contexts requiring `{project}` → silently skipped
-
-A normally initialized project never hits the fallback. Callers can assume a non-null
-result but must not assume the paths exist on disk.
+When `{project}` cannot resolve, no repo-local context fallback is used. Extra contexts requiring identity are skipped, and no state is created.
 
 ## Entry Points
 
@@ -52,7 +43,7 @@ Key types:
 ## Depth
 
 → [.context/CONTEXT.md](.context/CONTEXT.md) — placeholder substitution rules,
-git-backed resolution, fallback behavior, env var naming convention, rendering modes
+git-backed resolution, identity-free read behavior, env var naming convention, rendering modes
 
 ## Related
 

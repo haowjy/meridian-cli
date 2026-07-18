@@ -10,10 +10,7 @@ other named context directories.
 
 `_resolve_path()` supports two placeholders:
 
-- `{project}` — replaced by the project's stable ID (from `.meridian/id`).
-  Returns `None` if `{project}` is present but no project ID is available (fresh
-  project). Callers must handle `None` — `resolve_context_paths()` falls back to
-  `.meridian/work` or `.meridian/kb`.
+- `{project}` — replaced by the project's stable `[project] id` from `meridian.toml`. Returns `None` when identity is absent; read paths remain stateless and write paths create identity first.
 - `{user_home}` — replaced by `get_user_home()`. Always available.
 
 Paths without placeholders resolve relative to `project_root` if not absolute.
@@ -25,16 +22,9 @@ resolves relative to the auto-cloned repository at `resolve_clone_path(remote)`.
 The clone itself is handled lazily by git-autosync hooks — `_resolve_path()` only
 derives the expected path; it does not trigger cloning.
 
-### Fallback Behavior
+### Identity-Free Reads
 
-When `{project}` cannot be resolved (no project ID):
-- `work_root` falls back to `project_root / ".meridian" / "work"`
-- `work_archive` falls back to `project_root / ".meridian" / "archive" / "work"`
-- `kb_root` falls back to `project_root / ".meridian" / "kb"`
-- Extra contexts that require `{project}` are silently skipped
-
-This means fresh projects always have a valid `ResolvedContextPaths` — callers can
-assume the object is non-null but should not assume the paths exist on disk.
+No repo-local context fallback exists. Without identity, read-only projection uses non-materialized unresolved paths and extra `{project}` contexts are skipped.
 
 ### Env Var Naming Convention
 

@@ -64,7 +64,7 @@ cd your-repo
 meridian init
 ```
 
-This creates `.meridian/` with a project UUID and default `.gitignore`. The `.gitignore` inside `.meridian/` is managed automatically — it tracks `id`, `kb/`, `work/`, and `archive/` and ignores everything else. Spawn history and session state live at the user level (`~/.meridian/projects/<uuid>/`) and are never committed.
+This creates `meridian.toml` with a machine-managed `[project] id`. Spawn history, locks, caches, and session state live under `~/.meridian/projects/<id>/`; no runtime state lives in the repository.
 
 Bare `meridian init` bootstraps Meridian config/runtime only. It does not initialize Mars packages on its own.
 

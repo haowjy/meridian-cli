@@ -15,6 +15,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   under user-home-owned state rather than project `.meridian/` directories.
 - The repository now commits its `[project] id` and drops tracked
   `.meridian/id` and `.meridian/.gitignore` carrier files.
+- Configuration and debugging guides now document committed project identity,
+  lazy migration, and user-home runtime/context ownership.
 - Environment boundary coverage now locks the public max-depth cap, public hook
   payload, and internal Pi transport names together across their runtime seams.
 - Child launches now expose one public project identity, `MERIDIAN_PROJECT_DIR`;
