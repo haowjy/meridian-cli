@@ -21,6 +21,11 @@ from meridian.lib.harness.pi import PiAdapter
 from meridian.lib.launch.env import apply_pi_bind_time_env, build_harness_child_env
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.safety.permissions import PermissionConfig, UnsafeNoOpPermissionResolver
+from meridian.lib.state import spawn_store
+from meridian.lib.state.paths import (
+    resolve_project_runtime_root_for_write,
+    resolve_spawn_log_dir,
+)
 
 _PI_HELP = (
     "--mode rpc --model --append-system-prompt --session --fork "
@@ -99,12 +104,27 @@ async def test_claude_probe_and_main_process_share_sanitized_bound_environment(
         permission_config=PermissionConfig(),
     )
     connection = ClaudeConnection()
+    spawn_id = SpawnId("p-env-boundary-claude")
+    runtime_root = resolve_project_runtime_root_for_write(tmp_path)
+    spawn_store.start_spawn(
+        runtime_root,
+        spawn_id=spawn_id,
+        chat_id=str(spawn_id),
+        model="test-model",
+        agent="test-agent",
+        harness="claude",
+        prompt="hello",
+    )
+    resolve_spawn_log_dir(tmp_path, spawn_id, runtime_root=runtime_root).mkdir(
+        parents=True, exist_ok=True
+    )
     await connection.start(
         ConnectionConfig(
-            spawn_id=SpawnId("p-env-boundary-claude"),
+            spawn_id=spawn_id,
             harness_id=HarnessId.CLAUDE,
             prompt="hello",
             control_root=tmp_path,
+            runtime_root=runtime_root,
             child_env=child_env,
         ),
         ResolvedLaunchSpec(
@@ -183,12 +203,27 @@ async def test_pi_main_process_receives_role_gated_bound_runtime_environment(
         reset_on_activity=False,
     )
     connection = PiRpcConnection()
+    spawn_id = SpawnId("p-env-boundary-pi")
+    runtime_root = resolve_project_runtime_root_for_write(tmp_path)
+    spawn_store.start_spawn(
+        runtime_root,
+        spawn_id=spawn_id,
+        chat_id=str(spawn_id),
+        model="test-model",
+        agent="test-agent",
+        harness="pi",
+        prompt="hello",
+    )
+    resolve_spawn_log_dir(tmp_path, spawn_id, runtime_root=runtime_root).mkdir(
+        parents=True, exist_ok=True
+    )
     await connection.start(
         ConnectionConfig(
-            spawn_id=SpawnId("p-env-boundary-pi"),
+            spawn_id=spawn_id,
             harness_id=HarnessId.PI,
             prompt="hello",
             control_root=tmp_path,
+            runtime_root=runtime_root,
             child_env=child_env,
             pi_session_role=role,  # type: ignore[arg-type]
         ),

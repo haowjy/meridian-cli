@@ -53,6 +53,19 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Harness subprocess boundary coverage now exercises preliminary probes and main
   processes, including secret filtering and Pi role-gated runtime settings.
 
+## [0.3.41] - 2026-07-18
+
+### Fixed
+- Codex managed-primary bootstrap no longer waits for turn completion — rollout
+  materialization is the readiness gate again. Rich context (`--work`,
+  `--prompt-file`, `--from`) caused 120s timeout when the model began real work
+  during bootstrap.
+
+## [0.3.40] - 2026-07-18
+
+### Fixed
+- Late spawn-owned artifact writes no longer recreate deleted spawn directories.
+
 ## [0.3.39] - 2026-07-17
 
 ## [0.3.38] - 2026-07-17

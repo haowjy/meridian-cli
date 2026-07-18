@@ -9,6 +9,7 @@ from pathlib import Path
 
 from meridian.lib.state.atomic import atomic_write_text
 from meridian.lib.state.paths import RuntimePaths
+from meridian.lib.state.spawn_aggregate import mutate_published_spawn_artifact
 
 logger = logging.getLogger(__name__)
 
@@ -20,7 +21,12 @@ def write_failure_sentinel(
 
     try:
         path = RuntimePaths.from_root_dir(runtime_root).spawns_dir / spawn_id / "failure.json"
-        atomic_write_text(path, json.dumps(payload, indent=2))
+        mutate_published_spawn_artifact(
+            runtime_root,
+            spawn_id,
+            lambda: atomic_write_text(path, json.dumps(payload, indent=2)),
+            can_mutate=lambda record: record.status == "failed",
+        )
     except Exception:
         logger.exception("Failed to write failure sentinel for %s", spawn_id)
 

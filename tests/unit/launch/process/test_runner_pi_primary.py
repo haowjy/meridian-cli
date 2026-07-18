@@ -16,6 +16,7 @@ from meridian.lib.launch.process.ports import (
 from meridian.lib.launch.process.primary_attach import PrimaryAttachOutcome
 from meridian.lib.safety.permissions import UnsafeNoOpPermissionResolver
 from meridian.lib.state.primary_meta import read_primary_metadata
+from meridian.lib.state.spawn_store import start_spawn
 
 if TYPE_CHECKING:
     import pytest
@@ -100,9 +101,20 @@ def test_execute_primary_process_for_pi_uses_native_blackbox_path(
 def test_write_native_primary_metadata_redacts_secret_argv(tmp_path: Path) -> None:
     spawn_id = "p-pi-primary-redacted-meta"
     spawn_dir = tmp_path / "spawns" / spawn_id
-    spawn_dir.mkdir(parents=True)
+    start_spawn(
+        tmp_path,
+        chat_id="c1",
+        model="gpt-5.6",
+        agent="coder",
+        harness="pi",
+        prompt="test",
+        spawn_id=spawn_id,
+        status="running",
+    )
 
     runner_module._write_native_primary_metadata(
+        runtime_root=tmp_path,
+        spawn_id=SpawnId(spawn_id),
         spawn_dir=spawn_dir,
         command=(
             "/usr/local/bin/pi",

@@ -36,7 +36,9 @@ Their absence does not affect the priority ordering of the remaining triggers.
 
 `FileHeartbeat.touch()` updates a file's mtime to the current time. The reaper reads this
 file to detect live streaming spawns. Touch it periodically from the streaming loop — the
-reaper's liveness window is configured separately in the state system.
+reaper's liveness window is configured separately in the state system. It never creates
+missing parent directories; once the published spawn directory is deleted, later touches
+are no-ops.
 
 ## Lateral Links
 

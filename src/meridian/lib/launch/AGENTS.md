@@ -160,6 +160,10 @@ attempt_dir)` — crash-atomic via tmp dir staging. After the filesystem commit,
 artifact-store copies are made and active-attempt keys are deleted so the next
 attempt starts clean.
 
+Runner lifecycle and history diagnostics can execute after async boundaries. Their
+parent-creating writes use the published-spawn artifact mutation seam; never append
+late diagnostics directly into a spawn directory that retention may have deleted.
+
 ## Prompt Source
 
 Stdin prompt reading requires explicit `--prompt-file -`. The implicit stdin

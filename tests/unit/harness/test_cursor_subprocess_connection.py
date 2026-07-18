@@ -14,6 +14,8 @@ from meridian.lib.harness.connections.base import ConnectionConfig, HarnessEvent
 from meridian.lib.harness.connections.cursor_subprocess import CursorSubprocessConnection
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.safety.permissions import UnsafeNoOpPermissionResolver
+from meridian.lib.state import spawn_store
+from meridian.lib.state.paths import resolve_spawn_log_dir
 
 
 class _FakeStdout:
@@ -251,9 +253,22 @@ async def _start_fresh_cursor_spawn(
         harness_id=HarnessId.CURSOR,
         prompt="hello",
         control_root=tmp_path,
+        runtime_root=tmp_path,
         child_env={},
         session_id_observer=observed.append,
     )
+    spawn_store.start_spawn(
+        tmp_path,
+        spawn_id=config.spawn_id,
+        chat_id=str(config.spawn_id),
+        model="test-model",
+        agent="test-agent",
+        harness="cursor",
+        prompt="hello",
+    )
+    resolve_spawn_log_dir(
+        tmp_path, config.spawn_id, runtime_root=tmp_path
+    ).mkdir(parents=True, exist_ok=True)
     spec = ResolvedLaunchSpec(
         harness=HarnessId.CURSOR,
         prompt="hello",
@@ -309,9 +324,22 @@ async def test_cursor_start_mints_chat_id_and_records_observer(
         harness_id=HarnessId.CURSOR,
         prompt="hello",
         control_root=tmp_path,
+        runtime_root=tmp_path,
         child_env={},
         session_id_observer=observed.append,
     )
+    spawn_store.start_spawn(
+        tmp_path,
+        spawn_id=config.spawn_id,
+        chat_id=str(config.spawn_id),
+        model="test-model",
+        agent="test-agent",
+        harness="cursor",
+        prompt="hello",
+    )
+    resolve_spawn_log_dir(
+        tmp_path, config.spawn_id, runtime_root=tmp_path
+    ).mkdir(parents=True, exist_ok=True)
     spec = ResolvedLaunchSpec(
         harness=HarnessId.CURSOR,
         prompt="hello",
@@ -360,9 +388,22 @@ async def test_cursor_start_reuses_continue_session_id_without_minting(
         harness_id=HarnessId.CURSOR,
         prompt="hello",
         control_root=tmp_path,
+        runtime_root=tmp_path,
         child_env={},
         session_id_observer=observed.append,
     )
+    spawn_store.start_spawn(
+        tmp_path,
+        spawn_id=config.spawn_id,
+        chat_id=str(config.spawn_id),
+        model="test-model",
+        agent="test-agent",
+        harness="cursor",
+        prompt="hello",
+    )
+    resolve_spawn_log_dir(
+        tmp_path, config.spawn_id, runtime_root=tmp_path
+    ).mkdir(parents=True, exist_ok=True)
     spec = ResolvedLaunchSpec(
         harness=HarnessId.CURSOR,
         prompt="hello",

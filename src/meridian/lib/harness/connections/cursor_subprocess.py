@@ -115,7 +115,6 @@ class CursorSubprocessConnection(HarnessConnection[ResolvedLaunchSpec]):
                 or resolve_project_runtime_root_for_write(config.control_root)
             ),
         )
-        spawn_dir.mkdir(parents=True, exist_ok=True)
         self._stderr_handle = (spawn_dir / "stderr.log").open("ab")
 
         env = dict(config.child_env)

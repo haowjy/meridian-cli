@@ -9,6 +9,7 @@ from typing import Literal, cast
 
 from meridian.lib.launch.constants import PRIMARY_META_FILENAME
 from meridian.lib.state.atomic import atomic_write_text
+from meridian.lib.state.spawn_aggregate import mutate_published_spawn_artifact
 
 ActivityState = Literal["starting", "idle", "turn_active", "finalizing"]
 HarnessSessionDiscovery = Literal["ok", "never_created", "discovery_failed"]
@@ -204,8 +205,17 @@ def read_primary_metadata(runtime_root: Path, spawn_id: str) -> PrimaryMetadata 
     )
 
 
-def write_primary_metadata(spawn_dir: Path, metadata: PrimaryMetadata) -> None:
+def write_primary_metadata(
+    spawn_dir: Path,
+    metadata: PrimaryMetadata,
+    *,
+    runtime_root: Path | None = None,
+    spawn_id: str | None = None,
+) -> bool:
     """Atomic write via tmp+rename."""
+
+    if (runtime_root is None) is not (spawn_id is None):
+        raise ValueError("runtime_root and spawn_id must be provided together")
 
     payload = {
         "managed_backend": metadata.managed_backend,
@@ -231,9 +241,15 @@ def write_primary_metadata(spawn_dir: Path, metadata: PrimaryMetadata) -> None:
         "session_dir": metadata.session_dir,
         "auth_policy": metadata.auth_policy,
     }
-    atomic_write_text(
-        primary_meta_path(spawn_dir=spawn_dir),
-        json.dumps(payload, separators=(",", ":")) + "\n",
+    path = primary_meta_path(spawn_dir=spawn_dir)
+    content = json.dumps(payload, separators=(",", ":")) + "\n"
+    if runtime_root is None or spawn_id is None:
+        atomic_write_text(path, content)
+        return True
+    return mutate_published_spawn_artifact(
+        runtime_root,
+        spawn_id,
+        lambda: atomic_write_text(path, content),
     )
 
 

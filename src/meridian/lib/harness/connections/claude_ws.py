@@ -369,7 +369,6 @@ class ClaudeConnection(HarnessConnection[ResolvedLaunchSpec]):
                 or resolve_project_runtime_root_for_write(config.control_root)
             ),
         )
-        spawn_dir.mkdir(parents=True, exist_ok=True)
 
         stderr_path = spawn_dir / "stderr.log"
         self._stderr_log_path = stderr_path

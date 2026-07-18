@@ -816,10 +816,14 @@ async def test_primary_attach_activity_transitions_update_metadata(
     activity_transitions: list[object] = []
     original_write_primary_metadata = primary_attach_module.write_primary_metadata
 
-    def _record_activity_write(spawn_dir_arg: Path, metadata: Any) -> None:
+    def _record_activity_write(
+        spawn_dir_arg: Path,
+        metadata: Any,
+        **kwargs: Any,
+    ) -> bool:
         if not activity_transitions or activity_transitions[-1] != metadata.activity:
             activity_transitions.append(metadata.activity)
-        original_write_primary_metadata(spawn_dir_arg, metadata)
+        return original_write_primary_metadata(spawn_dir_arg, metadata, **kwargs)
 
     monkeypatch.setattr(
         primary_attach_module,

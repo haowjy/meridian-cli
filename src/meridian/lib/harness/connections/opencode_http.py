@@ -541,7 +541,6 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
         spawn_dir = resolve_spawn_log_dir(
             config.control_root, config.spawn_id, runtime_root=runtime_root
         )
-        spawn_dir.mkdir(parents=True, exist_ok=True)
         _materialize_system_prompt(spawn_dir, config.system, env)
         self._stderr_log_path = spawn_dir / "stderr.log"
         self._stderr_handle = self._stderr_log_path.open("ab")

@@ -14,6 +14,7 @@ from meridian.lib.state.paths import (
     resolve_spawn_log_dir,
     spawn_log_subpath,
 )
+from meridian.lib.state.spawn_aggregate import mutate_published_spawn_artifact
 
 logger = logging.getLogger(__name__)
 
@@ -38,11 +39,6 @@ def _scope_path_for_read(project_root: Path, spawn_id: str) -> Path | None:
         resolve_spawn_log_dir(project_root, spawn_id, runtime_root=runtime_root)
         / _SCOPE_FILENAME
     )
-
-
-def _scope_path_for_write(project_root: Path, spawn_id: str) -> Path:
-    runtime_root = resolve_project_runtime_root_for_write(project_root)
-    return runtime_root / spawn_log_subpath(spawn_id) / _SCOPE_FILENAME
 
 
 def read_spawn_scope(project_root: Path, spawn_id: str) -> SpawnScope:
@@ -79,15 +75,20 @@ def write_spawn_scope_task_dir(
     project_root: Path,
     spawn_id: str,
     task_dir: Path | None,
-) -> None:
+) -> bool:
     """Write or tombstone task_dir in scope.json. Atomic tmp+rename."""
 
-    path = _scope_path_for_write(project_root, spawn_id)
+    runtime_root = resolve_project_runtime_root_for_write(project_root)
+    path = runtime_root / spawn_log_subpath(spawn_id) / _SCOPE_FILENAME
     if task_dir is None:
         payload = {"task_dir": None}
     else:
         payload = {"task_dir": task_dir.expanduser().resolve().as_posix()}
-    atomic_write_text(path, json.dumps(payload, separators=(",", ":")))
+    return mutate_published_spawn_artifact(
+        runtime_root,
+        spawn_id,
+        lambda: atomic_write_text(path, json.dumps(payload, separators=(",", ":"))),
+    )
 
 
 __all__ = [

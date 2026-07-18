@@ -482,6 +482,15 @@ async def test_opencode_launch_process_passes_child_env_to_managed_backend(
     )
     fake_process = FakeOpenCodeProcess()
     captured: dict[str, object] = {}
+    resolve_spawn_log_dir(
+        config.control_root,
+        config.spawn_id,
+        runtime_root=config.runtime_root
+        or resolve_project_runtime_root_for_write(config.control_root),
+    ).mkdir(
+        parents=True,
+        exist_ok=True,
+    )
 
     async def _fake_launch_managed_backend(
         backend_config: object,

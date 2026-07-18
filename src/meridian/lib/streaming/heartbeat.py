@@ -19,10 +19,12 @@ async def heartbeat_loop(
     """Touch the per-spawn heartbeat sentinel on a fixed interval."""
 
     sentinel = paths.heartbeat_path(runtime_root, spawn_id)
-    sentinel.parent.mkdir(parents=True, exist_ok=True)
     while True:
-        if touch is None:
-            sentinel.touch()
-        else:
-            touch(runtime_root, spawn_id)
+        try:
+            if touch is None:
+                sentinel.touch()
+            else:
+                touch(runtime_root, spawn_id)
+        except FileNotFoundError:
+            return
         await asyncio.sleep(interval)

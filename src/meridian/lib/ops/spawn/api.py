@@ -1153,7 +1153,8 @@ def _spawn_signal_sync(
             spawn_id=payload.spawn_id,
             ctx=ctx,
         )
-        write_spawn_signal(runtime_root, resolved_spawn_id, kind)
+        if not write_spawn_signal(runtime_root, resolved_spawn_id, kind):
+            raise ValueError(f"Spawn '{resolved_spawn_id}' not found")
     except ValueError as exc:
         return SpawnActionOutput(
             command=command,
