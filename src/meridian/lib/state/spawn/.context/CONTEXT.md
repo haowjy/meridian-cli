@@ -35,8 +35,19 @@ SpawnStateFields
 `TerminalFacts` carries terminal evidence (exit code, timestamps, metrics,
 origin) but does not repeat status. When `status` is terminal, `terminal`
 must not be `None`; when `status` is active or `unknown`, `terminal` must
-be `None`. `StoredSpawnState` uses `extra="forbid"`, so persisted rows with
-a nested `terminal.status` or stale flat lifecycle fields are quarantined.
+be `None`. `StoredSpawnState` uses `extra="forbid"`, so unknown fields on a
+v3 row are quarantined, never silently accepted.
+
+**Legacy rows (`v: 2` or missing).** `legacy.py` upgrades known pre-v3 shapes
+in memory at the parse boundary, BEFORE the strict model validates: flat
+`runner_exit_*`/terminal projection fields map to the nested sub-models, an
+agreeing nested `terminal.status` is dropped, `RETIRED_LEGACY_FIELDS` (fields
+from dead schema generations, e.g. `revision`) are deliberately discarded, and
+pre-`published_at` history backfills `published_at := finished_at`. The
+upgrader is a mechanical re-shaper, never a reconciler: status conflicts,
+partial facts, and truly unknown fields still quarantine. Reads never rewrite
+legacy files — the next locked mutation persists v3 naturally. The module is
+deletable once pre-v3 rows are gone from the wild.
 
 ## Quarantine
 
