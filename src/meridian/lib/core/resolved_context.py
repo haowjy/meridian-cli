@@ -11,7 +11,7 @@ from typing import Literal, Protocol, Self
 from meridian.lib.config.context_config import ContextConfig
 from meridian.lib.context.resolver import context_env_key, resolve_context_paths
 from meridian.lib.core.depth import (
-    MERIDIAN_DEPTH_ENV,
+    DEPTH_ENV,
     child_meridian_depth,
     parse_meridian_depth,
 )
@@ -69,7 +69,7 @@ class ResolvedContext:
         When *explicit_project_root* or *explicit_runtime_root* are supplied they
         take precedence over ``MERIDIAN_PROJECT_DIR``. ``runtime_root`` is derived
         from ``project_root`` (``.meridian/id`` → user home) unless
-        *explicit_runtime_root* is supplied — inherited ``MERIDIAN_RUNTIME_DIR`` is
+        *explicit_runtime_root* is supplied — inherited ``_MERIDIAN_RUNTIME_DIR`` is
         never read.
         """
 
@@ -80,8 +80,8 @@ class ResolvedContext:
         backend_impl = backend or LocalFilesystemBackend()
 
         spawn_id_raw = os.getenv("MERIDIAN_SPAWN_ID", "").strip()
-        parent_spawn_id_raw = os.getenv("MERIDIAN_PARENT_SPAWN_ID", "").strip()
-        depth_raw = os.getenv(MERIDIAN_DEPTH_ENV, "0").strip()
+        parent_spawn_id_raw = os.getenv("_MERIDIAN_PARENT_SPAWN_ID", "").strip()
+        depth_raw = os.getenv(DEPTH_ENV, "0").strip()
         project_root_raw = os.getenv("MERIDIAN_PROJECT_DIR", "").strip()
         task_dir_raw = os.getenv("MERIDIAN_TASK_DIR", "").strip()
         inherited_task_dir = (
@@ -205,13 +205,13 @@ class ResolvedContext:
         """Produce `MERIDIAN_*` env overrides for child processes."""
 
         next_depth = child_meridian_depth(self.depth, increment_depth=increment_depth)
-        overrides: dict[str, str] = {"MERIDIAN_DEPTH": str(next_depth)}
+        overrides: dict[str, str] = {"_MERIDIAN_DEPTH": str(next_depth)}
         if child_spawn_id is not None:
             overrides["MERIDIAN_SPAWN_ID"] = child_spawn_id
         elif self.spawn_id is not None:
             overrides["MERIDIAN_SPAWN_ID"] = str(self.spawn_id)
         if self.spawn_id is not None:
-            overrides["MERIDIAN_PARENT_SPAWN_ID"] = str(self.spawn_id)
+            overrides["_MERIDIAN_PARENT_SPAWN_ID"] = str(self.spawn_id)
         if self.project_root is not None:
             overrides["MERIDIAN_PROJECT_DIR"] = self.project_root.as_posix()
         if self.chat_id:

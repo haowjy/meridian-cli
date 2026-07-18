@@ -856,6 +856,7 @@ def build_child_runtime_env_overrides(
     )
     if additional_overrides:
         runtime_overrides.update(additional_overrides)
+        validate_child_env_keys(runtime_overrides)
     return runtime_overrides
 
 
@@ -1868,7 +1869,7 @@ def bind_launch_context(
         runtime.composition_surface == LaunchCompositionSurface.SPAWN_PREPARE
         and harness.id.value in _resolve_deny_headless_harnesses(runtime, project_paths)
     ):
-        parent_harness = os.getenv("MERIDIAN_HARNESS", "")
+        parent_harness = os.getenv("_MERIDIAN_HARNESS", "")
         if parent_harness == harness.id.value:
             # Caller is on the same harness that's denied — suggest native delegation.
             agent_hint = (
@@ -1996,16 +1997,17 @@ def bind_launch_context(
     )
     # Informational: tells the child its own harness for yield timing.
     # Not a policy override — from_env() does not read it back.
-    child_context_env["MERIDIAN_HARNESS"] = harness.id.value
+    child_context_env["_MERIDIAN_HARNESS"] = harness.id.value
     child_context_env["MERIDIAN_PROJECT_ROOT"] = resolved_control_root.as_posix()
     # Override inherited task-dir with the child's resolved task-dir.
     # child_env_overrides() carries the parent's MERIDIAN_TASK_DIR;
     # bind resolves the child's logical_task_cwd and overwrites.
     child_context_env["MERIDIAN_TASK_DIR"] = directory_context.logical_task_cwd.as_posix()
     if harness.id == HarnessId.PI:
-        child_context_env["MERIDIAN_PI_STATE_DIR"] = runtime_root.as_posix()
+        child_context_env["_MERIDIAN_PI_STATE_DIR"] = runtime_root.as_posix()
     if task_cwd is not None:
         child_context_env["MERIDIAN_TASK_CWD"] = task_cwd.as_posix()
+    validate_child_env_keys(child_context_env)
     runtime_override_env = (
         runtime.resolved_runtime_overrides.to_env()
         if runtime.has_runtime_override_snapshot

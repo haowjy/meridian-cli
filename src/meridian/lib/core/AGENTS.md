@@ -18,7 +18,7 @@ deliberate exception that wires policy surfaces to launch and persistence.
 - **Use `SpawnId`, `ModelId`, `ArtifactKey` — not `str`.** These are `NewType` aliases over `str`. Zero runtime cost; mypy catches wrong-ID bugs statically. Accept them on function signatures anywhere a spawn or model ID passes through.
 - **`RuntimeOverrides`: use `None` to mean "not set", never `""` or `0`.** `resolve(*layers)` returns first-non-None per field. An empty string at a high-precedence layer wins over a meaningful value at a lower one.
 - **`child_env_overrides()` is the only correct way to produce child-process `MERIDIAN_*` env vars.** Every launch path routes through it. `ALLOWED_CHILD_ENV_KEYS` enforces the allowed set — `validate_child_env_keys()` raises on unknown keys.
-- **`is_root_side_effect_process()` is fail-closed.** A malformed non-empty `MERIDIAN_DEPTH` returns `False`. Root-only side effects (e.g., the reaper) must not run inside delegated agent processes. When in doubt, fail closed.
+- **`is_root_side_effect_process()` is fail-closed.** A malformed non-empty `_MERIDIAN_DEPTH` returns `False`. Root-only side effects (e.g., the reaper) must not run inside delegated agent processes. When in doubt, fail closed.
 - **`LifecycleHook.on_event()` exceptions are logged but never block transitions.** Hooks must tolerate partial data.
 - **`spawn_store` is imported at the bottom of `lifecycle.py`** to break a circular import with `state/__init__`. Do not move it to the top.
 

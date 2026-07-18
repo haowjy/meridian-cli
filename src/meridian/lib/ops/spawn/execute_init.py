@@ -110,7 +110,7 @@ def _spawn_background_worker_env(
     """Build child env overrides for the detached background worker process.
 
     The background worker runs as a peer of the launching process (same
-    ``MERIDIAN_DEPTH``), not as a depth-child.  Depth is inherited unchanged;
+    ``_MERIDIAN_DEPTH``), not as a depth-child.  Depth is inherited unchanged;
     only the work-item keys differ from the parent environment.
     """
     # Read the current depth so the worker inherits the same value.

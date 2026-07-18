@@ -11,7 +11,7 @@ Agent-mode subcommand help text includes agent-specific notes and safe search pl
 ## spawn --help in agent mode includes agent notes
 
 ```bash
-MERIDIAN_DEPTH=1 uv run meridian spawn --help
+_MERIDIAN_DEPTH=1 uv run meridian spawn --help
 ```
 - [ ] Exit 0
 - [ ] `Agent Notes:` appears in output
@@ -22,7 +22,7 @@ MERIDIAN_DEPTH=1 uv run meridian spawn --help
 ## session --help uses renderer-safe search placeholders
 
 ```bash
-MERIDIAN_DEPTH=1 uv run meridian session --help
+_MERIDIAN_DEPTH=1 uv run meridian session --help
 ```
 - [ ] Exit 0
 - [ ] `search QUERY [REF]` appears in output
@@ -31,7 +31,7 @@ MERIDIAN_DEPTH=1 uv run meridian session --help
 ## doctor --help in agent mode includes agent notes
 
 ```bash
-MERIDIAN_DEPTH=1 uv run meridian doctor --help
+_MERIDIAN_DEPTH=1 uv run meridian doctor --help
 ```
 - [ ] Exit 0
 - [ ] `Agent Notes:` appears in output
@@ -42,7 +42,7 @@ MERIDIAN_DEPTH=1 uv run meridian doctor --help
 ## --human flag suppresses agent notes
 
 ```bash
-MERIDIAN_DEPTH=1 uv run meridian --human spawn --help
+_MERIDIAN_DEPTH=1 uv run meridian --human spawn --help
 ```
 - [ ] Exit 0
 - [ ] `Agent Notes:` does NOT appear in output
@@ -50,14 +50,14 @@ MERIDIAN_DEPTH=1 uv run meridian --human spawn --help
 ## Agent notes restore correctly between invocations
 
 ```bash
-MERIDIAN_DEPTH= uv run meridian --agent config --help
+_MERIDIAN_DEPTH= uv run meridian --agent config --help
 ```
 - [ ] Exit 0
 - [ ] `Agent Notes:` appears in output
 - [ ] `Resolution is per field` appears in output
 
 ```bash
-MERIDIAN_DEPTH=1 uv run meridian --human config --help
+_MERIDIAN_DEPTH=1 uv run meridian --human config --help
 ```
 - [ ] Exit 0
 - [ ] `Agent Notes:` does NOT appear in output

@@ -1578,7 +1578,7 @@ def _resolve_wait_checkpoint_seconds(
         return payload.yield_after_secs
 
     _ = (spawn_ids, project_root)
-    parent_harness = os.getenv("MERIDIAN_HARNESS")
+    parent_harness = os.getenv("_MERIDIAN_HARNESS")
     return float(config.wait_yield_seconds_for_harness(parent_harness))
 
 

@@ -64,14 +64,14 @@ def _fake_launch_context(
             environment=SimpleNamespace(
                 bind_env_overrides={
                     "MERIDIAN_SPAWN_ID": spawn_id,
-                    "MERIDIAN_PARENT_SPAWN_ID": "p-parent",
+                    "_MERIDIAN_PARENT_SPAWN_ID": "p-parent",
                     "EXTRA_ENV": "present",
                 },
                 final_env={
                     "PATH": "/usr/bin",
                     "HOME": "/home/tester",
                     "MERIDIAN_SPAWN_ID": spawn_id,
-                    "MERIDIAN_PARENT_SPAWN_ID": "p-parent",
+                    "_MERIDIAN_PARENT_SPAWN_ID": "p-parent",
                     "EXTRA_ENV": "present",
                 },
             ),
@@ -183,7 +183,7 @@ async def test_streaming_serve_debug_keeps_projected_connection_config(
     assert config.child_env["PATH"] == "/usr/bin"
     assert config.child_env["HOME"] == "/home/tester"
     assert config.child_env["MERIDIAN_SPAWN_ID"] == "p1"
-    assert config.child_env["MERIDIAN_PARENT_SPAWN_ID"] == "p-parent"
+    assert config.child_env["_MERIDIAN_PARENT_SPAWN_ID"] == "p-parent"
     assert config.child_env["EXTRA_ENV"] == "present"
     assert config.debug_tracer is not None
     assert runner_call["startup_timeout_seconds"] == resolve_startup_timeout_seconds(

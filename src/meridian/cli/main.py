@@ -996,18 +996,18 @@ def _directory_env_scope(
 ) -> Generator[None, None, None]:
     """Set ``MERIDIAN_PROJECT_DIR`` and restore on exit.
 
-    When *directory_explicit* (``-C`` active), also unset ``MERIDIAN_RUNTIME_DIR``
+    When *directory_explicit* (``-C`` active), also unset ``_MERIDIAN_RUNTIME_DIR``
     so the runtime layer derives from project identity instead of a stale override.
     """
 
     keys = ["MERIDIAN_PROJECT_DIR"]
     if directory_explicit:
-        keys.append("MERIDIAN_RUNTIME_DIR")
+        keys.append("_MERIDIAN_RUNTIME_DIR")
     saved = {key: os.environ.get(key) for key in keys}
     if project_root is not None:
         os.environ["MERIDIAN_PROJECT_DIR"] = project_root.as_posix()
     if directory_explicit:
-        os.environ.pop("MERIDIAN_RUNTIME_DIR", None)
+        os.environ.pop("_MERIDIAN_RUNTIME_DIR", None)
     try:
         yield
     finally:

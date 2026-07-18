@@ -73,7 +73,7 @@ def test_doctor_kill_orphans_skips_repair_when_depth_is_not_clearly_root(
     project_root = _create_project_root(tmp_path)
     _create_agent_skill_dirs(project_root)
     _seed_active_spawn(project_root)
-    monkeypatch.setenv("MERIDIAN_DEPTH", "1")
+    monkeypatch.setenv("_MERIDIAN_DEPTH", "1")
     monkeypatch.setattr(
         diag,
         "check_upgrade_availability",
@@ -95,9 +95,9 @@ def test_doctor_kill_orphans_repairs_orphan_runs_when_depth_is_clearly_root(
     _create_agent_skill_dirs(project_root)
     spawn_id = _seed_active_spawn(project_root, started_at="2020-01-01T00:00:00Z")
     if depth_value is None:
-        monkeypatch.delenv("MERIDIAN_DEPTH", raising=False)
+        monkeypatch.delenv("_MERIDIAN_DEPTH", raising=False)
     else:
-        monkeypatch.setenv("MERIDIAN_DEPTH", depth_value)
+        monkeypatch.setenv("_MERIDIAN_DEPTH", depth_value)
     monkeypatch.setattr(
         diag,
         "check_upgrade_availability",
@@ -119,7 +119,7 @@ def test_doctor_does_not_reconcile_orphans_without_kill_flag(
     project_root = _create_project_root(tmp_path)
     _create_agent_skill_dirs(project_root)
     spawn_id = _seed_active_spawn(project_root, started_at="2020-01-01T00:00:00Z")
-    monkeypatch.delenv("MERIDIAN_DEPTH", raising=False)
+    monkeypatch.delenv("_MERIDIAN_DEPTH", raising=False)
     monkeypatch.setattr(
         diag,
         "check_upgrade_availability",
@@ -144,7 +144,7 @@ def test_doctor_live_active_warning_uses_post_repair_spawns(
     _create_agent_skill_dirs(project_root)
     stale_spawn_id = _seed_active_spawn(project_root, started_at="2020-01-01T00:00:00Z")
     live_spawn_id = _seed_active_spawn(project_root, started_at=datetime.now(UTC).isoformat())
-    monkeypatch.delenv("MERIDIAN_DEPTH", raising=False)
+    monkeypatch.delenv("_MERIDIAN_DEPTH", raising=False)
     monkeypatch.setattr(
         diag,
         "check_upgrade_availability",
@@ -172,7 +172,7 @@ def test_doctor_prune_preserves_v2_state_dir_after_same_run_reconcile(
     _write_text(stale_artifact_dir / "history.jsonl", '{"event":"start"}\n')
     _write_text(stale_artifact_dir / "report.md", "done\n")
     _set_tree_mtime(stale_artifact_dir, 1_600_000_000.0)
-    monkeypatch.delenv("MERIDIAN_DEPTH", raising=False)
+    monkeypatch.delenv("_MERIDIAN_DEPTH", raising=False)
     monkeypatch.setattr(
         diag,
         "check_upgrade_availability",

@@ -93,7 +93,7 @@ def test_read_spawn_row_nested_stale_dead_runner_returns_synthetic_failed(
         runner_pid=999_999_999,
         started_at=_OLD_TIMESTAMP,
     )
-    monkeypatch.setenv("MERIDIAN_DEPTH", "1")
+    monkeypatch.setenv("_MERIDIAN_DEPTH", "1")
 
     result = spawn_query.read_spawn_row(project_root, "p3", runtime_root=runtime_root)
 
@@ -116,7 +116,7 @@ def test_read_spawn_row_nested_recent_disk_activity_keeps_running(
     project_root = tmp_path / "repo"
     project_root.mkdir()
     runtime_root = _state_root(project_root)
-    monkeypatch.setenv("MERIDIAN_DEPTH", "1")
+    monkeypatch.setenv("_MERIDIAN_DEPTH", "1")
 
     for spawn_id, activity_file in [
         ("p-heartbeat", "heartbeat"),
@@ -164,7 +164,7 @@ def test_read_spawn_row_nested_stale_missing_runner_pid_returns_synthetic_failed
         runner_pid=None,
         started_at=_OLD_TIMESTAMP,
     )
-    monkeypatch.setenv("MERIDIAN_DEPTH", "1")
+    monkeypatch.setenv("_MERIDIAN_DEPTH", "1")
 
     result = spawn_query.read_spawn_row(project_root, "p6", runtime_root=runtime_root)
 
@@ -196,7 +196,7 @@ def test_read_spawn_row_nested_post_runner_exit_grace_keeps_running_status(
         error="runner_failed",
         exited_at=recent_exited_at,
     )
-    monkeypatch.setenv("MERIDIAN_DEPTH", "1")
+    monkeypatch.setenv("_MERIDIAN_DEPTH", "1")
 
     result = spawn_query.read_spawn_row(project_root, "p9", runtime_root=runtime_root)
 
@@ -227,7 +227,7 @@ def test_read_spawn_row_nested_startup_grace_keeps_running_status(
         runner_pid=999_999_999,
         started_at=recent_started_at,
     )
-    monkeypatch.setenv("MERIDIAN_DEPTH", "1")
+    monkeypatch.setenv("_MERIDIAN_DEPTH", "1")
 
     result = spawn_query.read_spawn_row(
         project_root,
@@ -257,7 +257,7 @@ def test_read_spawn_row_nested_runner_exit_after_grace_returns_synthetic_termina
         error="runner_failed",
         exited_at=_OLD_TIMESTAMP,
     )
-    monkeypatch.setenv("MERIDIAN_DEPTH", "1")
+    monkeypatch.setenv("_MERIDIAN_DEPTH", "1")
 
     result = spawn_query.read_spawn_row(project_root, "p-runner-exit", runtime_root=runtime_root)
 
@@ -292,7 +292,7 @@ def test_spawn_wait_sync_nested_stale_active_returns_synthetic_terminal_without_
         runner_pid=999_999_999,
         started_at=_OLD_TIMESTAMP,
     )
-    monkeypatch.setenv("MERIDIAN_DEPTH", "1")
+    monkeypatch.setenv("_MERIDIAN_DEPTH", "1")
 
     output = spawn_api.spawn_wait_sync(
         SpawnWaitInput(

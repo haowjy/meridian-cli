@@ -5,7 +5,7 @@
 
 Covers: terminal short-circuit, runner-pid guards, background-mode
 boundary events, dead-runner + activity artifact heuristics, and the
-MERIDIAN_DEPTH gate.  Managed-primary paths live in
+_MERIDIAN_DEPTH gate.  Managed-primary paths live in
 test_reaper_managed_primary.py; cancel flows in test_reaper_cancel.py.
 """
 
@@ -336,7 +336,7 @@ def test_reconcile_active_spawn_depth_gate_respects_env_matrix(
         started_at=_OLD_STARTED_AT,
     )
     record = _get_spawn(runtime_root, spawn_id)
-    monkeypatch.setenv("MERIDIAN_DEPTH", depth_value)
+    monkeypatch.setenv("_MERIDIAN_DEPTH", depth_value)
 
     reconciled = _reconcile(tmp_path, runtime_root, record)
 

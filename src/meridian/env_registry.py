@@ -176,32 +176,32 @@ ENV_VARS: tuple[EnvVar, ...] = (
         EnvSubtype.INTER_TOOL,
         "Marks invocation through Meridian for mars-agents.",
     ),
-    # Internal handles use their pre-migration names until the flag-day rename.
-    _internal_handle("MERIDIAN_DEPTH", "Current delegated spawn depth."),
-    _internal_handle("MERIDIAN_PARENT_SPAWN_ID", "Parent spawn identifier."),
-    _internal_handle("MERIDIAN_RUNTIME_DIR", "Resolved per-project runtime directory."),
-    _internal_handle("MERIDIAN_HARNESS", "Harness identity propagated one level."),
+    # Internal handles.
+    _internal_handle("_MERIDIAN_DEPTH", "Current delegated spawn depth."),
+    _internal_handle("_MERIDIAN_PARENT_SPAWN_ID", "Parent spawn identifier."),
+    _internal_handle("_MERIDIAN_RUNTIME_DIR", "Resolved per-project runtime directory."),
+    _internal_handle("_MERIDIAN_HARNESS", "Harness identity propagated one level."),
     _internal_handle("MERIDIAN_PROJECT_ROOT", "Legacy child control-root projection."),
     _internal_handle("MERIDIAN_TASK_CWD", "Legacy physical child working directory."),
-    _internal_handle("MERIDIAN_GUARDRAIL_RUN_ID", "Guardrail run identifier."),
-    _internal_handle("MERIDIAN_GUARDRAIL_OUTPUT_LOG", "Guardrail output log path."),
-    _internal_handle("MERIDIAN_GUARDRAIL_REPORT_PATH", "Guardrail report path."),
+    _internal_handle("_MERIDIAN_GUARDRAIL_RUN_ID", "Guardrail run identifier."),
+    _internal_handle("_MERIDIAN_GUARDRAIL_OUTPUT_LOG", "Guardrail output log path."),
+    _internal_handle("_MERIDIAN_GUARDRAIL_REPORT_PATH", "Guardrail report path."),
     _internal_handle(
-        "MERIDIAN_PRIMARY_STDERR_LOG_PATH", "Primary subprocess stderr path.", child=False
+        "_MERIDIAN_PRIMARY_STDERR_LOG_PATH", "Primary subprocess stderr path.", child=False
     ),
-    _internal_handle("MERIDIAN_PI_STATE_DIR", "Pi extension runtime-state root."),
-    _internal_handle("MERIDIAN_PI_SESSION_ROLE", "Pi primary or spawned session role."),
-    _internal_handle("MERIDIAN_PI_BASH_ID", "Originating managed-bash task identifier."),
-    _internal_handle("MERIDIAN_PI_CHILD_WAVE_TIMEOUT_MS", "Resolved Pi child-wave timeout."),
-    _internal_handle("MERIDIAN_PI_TASK_PING_INTERVAL_MS", "Resolved Pi task-ping interval."),
+    _internal_handle("_MERIDIAN_PI_STATE_DIR", "Pi extension runtime-state root."),
+    _internal_handle("_MERIDIAN_PI_SESSION_ROLE", "Pi primary or spawned session role."),
+    _internal_handle("_MERIDIAN_PI_BASH_ID", "Originating managed-bash task identifier."),
+    _internal_handle("_MERIDIAN_PI_CHILD_WAVE_TIMEOUT_MS", "Resolved Pi child-wave timeout."),
+    _internal_handle("_MERIDIAN_PI_TASK_PING_INTERVAL_MS", "Resolved Pi task-ping interval."),
     _internal_handle(
-        "MERIDIAN_PI_TASK_PING_RESET_ON_ACTIVITY", "Resolved Pi task-ping reset policy."
-    ),
-    _internal_handle(
-        "MERIDIAN_PI_BACKGROUND_TASKS_ENABLED", "Resolved Pi background-task bundle toggle."
+        "_MERIDIAN_PI_TASK_PING_RESET_ON_ACTIVITY", "Resolved Pi task-ping reset policy."
     ),
     _internal_handle(
-        "MERIDIAN_PI_SPAWN_WATCH_ENABLED", "Resolved Pi spawn-watch bundle toggle."
+        "_MERIDIAN_PI_BACKGROUND_TASKS_ENABLED", "Resolved Pi background-task bundle toggle."
+    ),
+    _internal_handle(
+        "_MERIDIAN_PI_SPAWN_WATCH_ENABLED", "Resolved Pi spawn-watch bundle toggle."
     ),
 )
 
@@ -262,4 +262,3 @@ __all__ = [
     "is_allowed_child_env_name",
     "is_registered_env_name",
 ]
-

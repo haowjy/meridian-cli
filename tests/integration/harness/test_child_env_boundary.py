@@ -206,5 +206,5 @@ async def test_pi_main_process_receives_role_gated_bound_runtime_environment(
         if "--version" not in record["argv"] and "--help" not in record["argv"]  # type: ignore[operator]
     )
     main_env = cast("dict[str, str]", main_record["env"])
-    assert main_env.get("MERIDIAN_PI_CHILD_WAVE_TIMEOUT_MS") == expected_timeout
-    assert main_env.get("MERIDIAN_PI_TASK_PING_INTERVAL_MS") == expected_interval
+    assert main_env.get("_MERIDIAN_PI_CHILD_WAVE_TIMEOUT_MS") == expected_timeout
+    assert main_env.get("_MERIDIAN_PI_TASK_PING_INTERVAL_MS") == expected_interval

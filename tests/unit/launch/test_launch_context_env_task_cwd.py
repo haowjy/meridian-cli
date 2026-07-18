@@ -39,7 +39,7 @@ def test_build_launch_context_projects_external_task_cwd_for_active_harness_proj
         model="gpt-5.4",
         harness=HarnessId.CODEX,
     )
-    monkeypatch.setenv("MERIDIAN_DEPTH", "1")
+    monkeypatch.setenv("_MERIDIAN_DEPTH", "1")
     outside_task_cwd = tmp_path.parent / f"{tmp_path.name}-outside-task"
     outside_task_cwd.mkdir(parents=True, exist_ok=True)
 
@@ -62,7 +62,7 @@ def test_build_launch_context_opencode_projects_external_task_cwd_as_wildcard(
     monkeypatch: MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    monkeypatch.setenv("MERIDIAN_DEPTH", "1")
+    monkeypatch.setenv("_MERIDIAN_DEPTH", "1")
     stub_bundle_request_and_resolve(
         monkeypatch,
         model="gemini-2.5-pro",
@@ -96,7 +96,7 @@ def test_build_launch_context_falls_back_for_harness_without_workspace_projectio
     monkeypatch: MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    monkeypatch.setenv("MERIDIAN_DEPTH", "1")
+    monkeypatch.setenv("_MERIDIAN_DEPTH", "1")
     outside_task_cwd = tmp_path.parent / f"{tmp_path.name}-outside-task-pi"
     outside_task_cwd.mkdir(parents=True, exist_ok=True)
     stub_bundle_request_and_resolve(
@@ -137,7 +137,7 @@ def test_build_launch_context_prefers_explicit_runtime_roots_over_legacy_aliases
     monkeypatch: MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    monkeypatch.setenv("MERIDIAN_DEPTH", "1")
+    monkeypatch.setenv("_MERIDIAN_DEPTH", "1")
     explicit_task_cwd = tmp_path.parent / f"{tmp_path.name}-explicit-task"
     explicit_task_cwd.mkdir(parents=True, exist_ok=True)
     legacy_project_root = tmp_path.parent / f"{tmp_path.name}-legacy-root"

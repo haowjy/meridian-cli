@@ -4,12 +4,12 @@ import os
 from collections.abc import Mapping
 from contextlib import suppress
 
-MERIDIAN_DEPTH_ENV = "MERIDIAN_DEPTH"
+DEPTH_ENV = "_MERIDIAN_DEPTH"
 MERIDIAN_SPAWN_ID_ENV = "MERIDIAN_SPAWN_ID"
 
 
 def parse_meridian_depth(raw: str | None) -> int:
-    """Parse a ``MERIDIAN_DEPTH`` value as a non-negative integer."""
+    """Parse a ``_MERIDIAN_DEPTH`` value as a non-negative integer."""
     value = (raw or "0").strip()
     with suppress(ValueError, TypeError):
         return max(0, int(value))
@@ -19,13 +19,13 @@ def parse_meridian_depth(raw: str | None) -> int:
 def current_meridian_depth(env: Mapping[str, str] | None = None) -> int:
     """Return the current process's normalized Meridian depth."""
     source = os.environ if env is None else env
-    return parse_meridian_depth(source.get(MERIDIAN_DEPTH_ENV))
+    return parse_meridian_depth(source.get(DEPTH_ENV))
 
 
 def has_valid_meridian_depth(env: Mapping[str, str] | None = None) -> bool:
     """Return whether the current depth env value is absent/empty or parseable."""
     source = os.environ if env is None else env
-    raw = (source.get(MERIDIAN_DEPTH_ENV) or "").strip()
+    raw = (source.get(DEPTH_ENV) or "").strip()
     if not raw:
         return True
     try:
@@ -87,7 +87,7 @@ def max_depth_reached(current_depth: int, max_depth: int) -> bool:
 
 
 __all__ = [
-    "MERIDIAN_DEPTH_ENV",
+    "DEPTH_ENV",
     "MERIDIAN_SPAWN_ID_ENV",
     "child_meridian_depth",
     "current_meridian_depth",

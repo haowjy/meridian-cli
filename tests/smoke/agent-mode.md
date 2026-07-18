@@ -11,7 +11,7 @@ Restricted help, output defaults, and flag behavior in agent mode.
 ## Agent help is restricted
 
 ```bash
-MERIDIAN_DEPTH=1 uv run meridian --help
+_MERIDIAN_DEPTH=1 uv run meridian --help
 ```
 - [ ] Exit 0
 - [ ] `spawn`, `work`, and `models` appear in output
@@ -20,7 +20,7 @@ MERIDIAN_DEPTH=1 uv run meridian --help
 ## --human flag restores full help
 
 ```bash
-MERIDIAN_DEPTH=1 uv run meridian --human --help
+_MERIDIAN_DEPTH=1 uv run meridian --human --help
 ```
 - [ ] Exit 0
 - [ ] `spawn` and `work` appear in output
@@ -28,7 +28,7 @@ MERIDIAN_DEPTH=1 uv run meridian --human --help
 ## --agent flag forces restricted help without nested-process detection
 
 ```bash
-MERIDIAN_DEPTH= uv run meridian --agent --help
+_MERIDIAN_DEPTH= uv run meridian --agent --help
 ```
 - [ ] Exit 0
 - [ ] `spawn`, `work`, `models` appear in output
@@ -37,7 +37,7 @@ MERIDIAN_DEPTH= uv run meridian --agent --help
 ## --agent and --human are mutually exclusive
 
 ```bash
-MERIDIAN_DEPTH=1 uv run meridian --agent --human --help
+_MERIDIAN_DEPTH=1 uv run meridian --agent --human --help
 ```
 - [ ] Exit 1
 - [ ] stderr contains `Cannot combine --agent with --human`
@@ -45,7 +45,7 @@ MERIDIAN_DEPTH=1 uv run meridian --agent --human --help
 ## models list redirect works in agent mode
 
 ```bash
-MERIDIAN_DEPTH=1 uv run meridian models list
+_MERIDIAN_DEPTH=1 uv run meridian models list
 ```
 - [ ] Exit 1
 - [ ] stderr contains `meridian mars models list`
@@ -54,7 +54,7 @@ MERIDIAN_DEPTH=1 uv run meridian models list
 ## models list redirect ignores --format json
 
 ```bash
-MERIDIAN_DEPTH=1 uv run meridian --format json models list
+_MERIDIAN_DEPTH=1 uv run meridian --format json models list
 ```
 - [ ] Exit 1
 - [ ] stderr contains `meridian mars models list`
@@ -63,6 +63,6 @@ MERIDIAN_DEPTH=1 uv run meridian --format json models list
 ## Control-plane commands default to JSON in agent mode
 
 ```bash
-MERIDIAN_DEPTH=1 uv run meridian work current
+_MERIDIAN_DEPTH=1 uv run meridian work current
 ```
 - [ ] If exit 0 and stdout is non-empty, stdout is valid JSON

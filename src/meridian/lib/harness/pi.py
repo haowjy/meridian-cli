@@ -245,7 +245,7 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             resolved_harness_session_id,
             record_effective_config_dir,
         )
-        role = child_env.get("MERIDIAN_PI_SESSION_ROLE", "").strip().lower()
+        role = child_env.get("_MERIDIAN_PI_SESSION_ROLE", "").strip().lower()
         launch_role = "primary" if role == "primary" else "spawned"
         try:
             resolved_runtime = resolve_pi_runtime(env=child_env, role=launch_role)

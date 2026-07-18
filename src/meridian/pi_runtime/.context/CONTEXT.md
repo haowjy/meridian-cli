@@ -35,7 +35,7 @@ pi_runtime/
 
 | Extension | Owns | Writes / observes |
 |---|---|---|
-| `managed-bash` | `bash` / `bash_manage`, tracked vs detached bash records, `/ps*` slash commands, `MERIDIAN_PI_BASH_ID` injection into child processes | `runtime_root/pi-bash/<spawn-id>/bash-records.json` and bash logs |
+| `managed-bash` | `bash` / `bash_manage`, tracked vs detached bash records, `/ps*` slash commands, `_MERIDIAN_PI_BASH_ID` injection into child processes | `runtime_root/pi-bash/<spawn-id>/bash-records.json` and bash logs |
 | `meridian-spawn-watch` | correlated spawn discovery, `/spawn*` slash commands, implicit-wait `sendMessage({triggerTurn: true})` notifications | watches `runtime_root/spawns/<child>/state.json`, reads `originating_bash_id`, writes `runtime_root/pi-bash/<spawn-id>/last-notification.json` |
 
 `managed-bash` is the mechanism extension. `meridian-spawn-watch` is the policy extension.
@@ -66,8 +66,8 @@ extensions do not change spawn behavior.
 - **spawned RPC mode**: `managed-bash` + `meridian-spawn-watch`
 - **primary native TUI mode**: `meridian-spawn-watch` only; no bash override and no spawned-session auto-stop
 
-Role-specific behavior is gated by environment, including `MERIDIAN_PI_SESSION_ROLE` and
-`MERIDIAN_PI_STATE_DIR`.
+Role-specific behavior is gated by environment, including `_MERIDIAN_PI_SESSION_ROLE` and
+`_MERIDIAN_PI_STATE_DIR`.
 
 ## Contracts
 
@@ -100,7 +100,7 @@ Shared TypeScript interface between Pi and extensions:
 
 ### Spawn Correlation
 
-`managed-bash` injects `MERIDIAN_PI_BASH_ID=b-*` into every child process. If that
+`managed-bash` injects `_MERIDIAN_PI_BASH_ID=b-*` into every child process. If that
 process runs `meridian spawn` (directly, through `uv run meridian`, or through a wrapper),
 Meridian's spawn store persists the value as `originating_bash_id` on the child spawn
 record. `meridian-spawn-watch` reads disk state and uses that field to scope `/spawn`

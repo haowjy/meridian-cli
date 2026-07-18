@@ -32,7 +32,7 @@ def derive_runtime_root_from_project(
     *,
     for_write: bool = False,
 ) -> Path | None:
-    """Derive runtime state root from project identity without reading ``MERIDIAN_RUNTIME_DIR``."""
+    """Derive runtime state root from project identity without reading ``_MERIDIAN_RUNTIME_DIR``."""
 
     project_paths = resolve_project_paths(project_root)
     project_state_dir = project_paths.root_dir

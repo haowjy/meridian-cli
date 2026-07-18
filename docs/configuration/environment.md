@@ -34,15 +34,15 @@ resolved logical task cwd; it is not inherited.
 | `MERIDIAN_TASK_CWD` | Bind-time alias for the child's resolved task cwd (not inherited) |
 | `MERIDIAN_CONFIG` | User config overlay path |
 | `MERIDIAN_HOME` | Override user state root (default `~/.meridian/`) |
-| `MERIDIAN_RUNTIME_DIR` | Override the runtime state root. Absolute path = use as-is; relative path = resolve relative to repo root. Repo-owned default paths (`kb/`, `work/`, `archive/work/`) always stay in `.meridian/` regardless of this setting. |
+| `_MERIDIAN_RUNTIME_DIR` | Override the runtime state root. Absolute path = use as-is; relative path = resolve relative to repo root. Repo-owned default paths (`kb/`, `work/`, `archive/work/`) always stay in `.meridian/` regardless of this setting. |
 | `MERIDIAN_FS_DIR` | Resolved shared filesystem path for the current repo state root |
 | `MERIDIAN_ACTIVE_WORK_ID` | Active attached work item slug, when one exists |
 | `MERIDIAN_ACTIVE_WORK_DIR` | Active scope directory: named work item scratch dir when attached, else the run's ambient spawn scope (`spawns/p<N>/work`) |
 | `MERIDIAN_SPAWN_ID` | Current run/spawn ID for primary and delegated execution |
 | `MERIDIAN_CHAT_ID` | Top-level session id inherited across the spawn tree |
-| `MERIDIAN_DEPTH` | Zero-based delegation depth (`0` = primary/root, `1` = first delegated spawn) |
+| `_MERIDIAN_DEPTH` | Zero-based delegation depth (`0` = primary/root, `1` = first delegated spawn) |
 | `MERIDIAN_MAX_DEPTH` | Max zero-based delegated spawn depth override |
-| `MERIDIAN_PARENT_SPAWN_ID` | Immediate parent spawn ID for nested execution |
+| `_MERIDIAN_PARENT_SPAWN_ID` | Immediate parent spawn ID for nested execution |
 
 ## Runtime Policy Overrides
 
@@ -75,9 +75,9 @@ These override spawn-level runtime policy. They sit above project config but bel
 
 | Variable | Purpose |
 |---|---|
-| `MERIDIAN_GUARDRAIL_RUN_ID` | Spawn id passed to guardrail scripts |
-| `MERIDIAN_GUARDRAIL_OUTPUT_LOG` | Path to `output.jsonl` |
-| `MERIDIAN_GUARDRAIL_REPORT_PATH` | Path to `report.md` when a report exists |
+| `_MERIDIAN_GUARDRAIL_RUN_ID` | Spawn id passed to guardrail scripts |
+| `_MERIDIAN_GUARDRAIL_OUTPUT_LOG` | Path to `output.jsonl` |
+| `_MERIDIAN_GUARDRAIL_REPORT_PATH` | Path to `report.md` when a report exists |
 | `MERIDIAN_SECRET_<KEY>` | Secret injection/redaction channel |
 
 ## Permission Naming

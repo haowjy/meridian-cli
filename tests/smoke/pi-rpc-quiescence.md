@@ -159,7 +159,7 @@ The record may reach exited before the first `agent_end`. Even then, expect stdo
 
 1. Start a spawned Pi RPC run with tracked work.
 2. After its spawn row exists, force-kill the runner process.
-3. From `MERIDIAN_DEPTH=1`, run `meridian spawn wait <spawn-id>`.
+3. From `_MERIDIAN_DEPTH=1`, run `meridian spawn wait <spawn-id>`.
 
 Expect stale shaping only after the startup grace (about 15 seconds) and recent-activity
 grace (about 120 seconds across heartbeat/history/spawn/bash-record mtimes). Nested

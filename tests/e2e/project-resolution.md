@@ -46,7 +46,7 @@ PY
 
 ```bash
 export MERIDIAN_PROJECT_DIR="$SMOKE_A"
-export MERIDIAN_RUNTIME_DIR="$MERIDIAN_HOME/projects/proj-a"
+export _MERIDIAN_RUNTIME_DIR="$MERIDIAN_HOME/projects/proj-a"
 uv run meridian -C "$SMOKE_B" --json spawn list > /tmp/meridian-project-c.json && \
 uv run python - <<'PY'
 import json
@@ -56,13 +56,13 @@ spawn_ids = {row["spawn_id"] for row in payload["spawns"]}
 assert "p-smoke-b" in spawn_ids, spawn_ids
 assert "p-smoke-a" not in spawn_ids, spawn_ids
 PY
-echo "PASS: -C ignored stale MERIDIAN_RUNTIME_DIR and read target project state"
+echo "PASS: -C ignored stale _MERIDIAN_RUNTIME_DIR and read target project state"
 ```
 
 ## PROJECT-2. `MERIDIAN_PROJECT_DIR` remains the inherited project source [CRITICAL]
 
 ```bash
-unset MERIDIAN_RUNTIME_DIR
+unset _MERIDIAN_RUNTIME_DIR
 export MERIDIAN_PROJECT_DIR="$SMOKE_A"
 uv run meridian --json spawn list > /tmp/meridian-project-env.json && \
 uv run python - <<'PY'
@@ -82,6 +82,6 @@ echo "PASS: MERIDIAN_PROJECT_DIR selected inherited project state"
 rm -rf "$SMOKE_A" "$SMOKE_B" "$MERIDIAN_HOME" \
   /tmp/meridian-project-c.json \
   /tmp/meridian-project-env.json
-unset SMOKE_A SMOKE_B MERIDIAN_HOME MERIDIAN_PROJECT_DIR MERIDIAN_RUNTIME_DIR REPO_ROOT
+unset SMOKE_A SMOKE_B MERIDIAN_HOME MERIDIAN_PROJECT_DIR _MERIDIAN_RUNTIME_DIR REPO_ROOT
 echo "PASS: cleanup complete"
 ```

@@ -43,13 +43,13 @@ Background paths and tests pass `NullSink`.
 
 ## Depth Parsing and Root-Side-Effect Gating (`depth.py`)
 
-`MERIDIAN_DEPTH` propagates through spawned processes. The reaper and other
+`_MERIDIAN_DEPTH` propagates through spawned processes. The reaper and other
 root-only side effects must only run at depth 0.
 
 `is_root_side_effect_process()` is **fail-closed**: a malformed non-empty
 value returns `False`. A root-only side effect (e.g., the reaper
 auto-finalizing spawns) must not run inside a delegated agent process.
-Malformed `MERIDIAN_DEPTH` indicates corruption, test isolation, or
+Malformed `_MERIDIAN_DEPTH` indicates corruption, test isolation, or
 unexpected nesting — failing closed prevents incorrect reap actions.
 
 Other helpers: `current_meridian_depth()`, `child_meridian_depth()`,

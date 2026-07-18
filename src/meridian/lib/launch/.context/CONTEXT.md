@@ -181,13 +181,13 @@ Source: `_effective_fallback_chain()`.
 matched an alias rule and rerouted the harness), the pre-transformation base is tried
 first as a fallback before walking the policy list. Source: `_demoted_base_candidate()`.
 
-### MERIDIAN_HARNESS Child Env
+### _MERIDIAN_HARNESS Child Env
 
-`bind_launch_context()` writes `MERIDIAN_HARNESS = harness.id.value` into the child env.
+`bind_launch_context()` writes `_MERIDIAN_HARNESS = harness.id.value` into the child env.
 This is **one-hop only** — not in `ALLOWED_CHILD_ENV_KEYS`, does not cascade to
 grandchildren. Each spawn level derives its own value from its own `build_launch_context()`.
 
-The orchestrator reads `os.getenv("MERIDIAN_HARNESS")` at wait time to determine
+The orchestrator reads `os.getenv("_MERIDIAN_HARNESS")` at wait time to determine
 its own yield interval — it is asking about *its own* harness's prompt-cache TTL,
 not the spawns it is waiting on.
 

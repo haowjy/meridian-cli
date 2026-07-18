@@ -45,7 +45,7 @@ RuntimeRootSource = Literal[
 
 
 def _runtime_override_env_root(project_root: Path) -> Path | None:
-    override = os.getenv("MERIDIAN_RUNTIME_DIR", "").strip()
+    override = os.getenv("_MERIDIAN_RUNTIME_DIR", "").strip()
     if not override:
         return None
     candidate = Path(override).expanduser()
@@ -53,11 +53,11 @@ def _runtime_override_env_root(project_root: Path) -> Path | None:
 
 
 def _runtime_dir_env_override_applies(*, ignore_runtime_env: bool = False) -> bool:
-    """Return whether ``MERIDIAN_RUNTIME_DIR`` may override derived runtime roots.
+    """Return whether ``_MERIDIAN_RUNTIME_DIR`` may override derived runtime roots.
 
     Power-user override applies only at the primary Meridian root.  Nested
     processes derive runtime from ``MERIDIAN_PROJECT_DIR``; ``-C`` unsets
-    ``MERIDIAN_RUNTIME_DIR`` at process scope so this check is moot when
+    ``_MERIDIAN_RUNTIME_DIR`` at process scope so this check is moot when
     the flag is active.
     """
 

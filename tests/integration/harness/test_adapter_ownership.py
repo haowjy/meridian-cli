@@ -317,7 +317,7 @@ def test_pi_prepare_prelaunch_preserves_bound_agent_dir(
         resolve_runtime,
     )
     child_env = {
-        "MERIDIAN_PI_SESSION_ROLE": "primary",
+        "_MERIDIAN_PI_SESSION_ROLE": "primary",
         "PI_CODING_AGENT_DIR": str(bound_agent_dir),
         "PI_CODING_AGENT_SESSION_DIR": str(tmp_path / "sessions"),
     }

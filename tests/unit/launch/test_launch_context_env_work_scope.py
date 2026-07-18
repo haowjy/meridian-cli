@@ -151,7 +151,7 @@ def test_bind_launch_context_child_ambient_work_dir_matches_prompt(
     )
     parent_ambient = tmp_path / ".meridian" / "spawns" / "p-parent" / "work"
     monkeypatch.setenv("MERIDIAN_SPAWN_ID", "p-parent")
-    monkeypatch.setenv("MERIDIAN_DEPTH", "1")
+    monkeypatch.setenv("_MERIDIAN_DEPTH", "1")
     monkeypatch.setenv("MERIDIAN_ACTIVE_WORK_DIR", parent_ambient.as_posix())
     monkeypatch.delenv("MERIDIAN_ACTIVE_WORK_ID", raising=False)
 
@@ -197,7 +197,7 @@ def test_bind_launch_context_child_ambient_without_context_markers(
     )
     parent_ambient = tmp_path / ".meridian" / "spawns" / "p-parent" / "work"
     monkeypatch.setenv("MERIDIAN_SPAWN_ID", "p-parent")
-    monkeypatch.setenv("MERIDIAN_DEPTH", "1")
+    monkeypatch.setenv("_MERIDIAN_DEPTH", "1")
     monkeypatch.setenv("MERIDIAN_ACTIVE_WORK_DIR", parent_ambient.as_posix())
     monkeypatch.delenv("MERIDIAN_ACTIVE_WORK_ID", raising=False)
     monkeypatch.setattr(launch_context_module, "build_context_prompt", lambda **_kwargs: None)
@@ -242,7 +242,7 @@ def test_bind_launch_context_context_refresh_survives_header_footer_wording_chan
     )
     parent_ambient = tmp_path / ".meridian" / "spawns" / "p-parent" / "work"
     monkeypatch.setenv("MERIDIAN_SPAWN_ID", "p-parent")
-    monkeypatch.setenv("MERIDIAN_DEPTH", "1")
+    monkeypatch.setenv("_MERIDIAN_DEPTH", "1")
     monkeypatch.setenv("MERIDIAN_ACTIVE_WORK_DIR", parent_ambient.as_posix())
     monkeypatch.delenv("MERIDIAN_ACTIVE_WORK_ID", raising=False)
 
@@ -360,7 +360,7 @@ def test_bind_launch_context_composed_request_refreshes_child_work_dir(
     )
     parent_ambient = tmp_path / ".meridian" / "spawns" / "p-parent" / "work"
     monkeypatch.setenv("MERIDIAN_SPAWN_ID", "p-parent")
-    monkeypatch.setenv("MERIDIAN_DEPTH", "1")
+    monkeypatch.setenv("_MERIDIAN_DEPTH", "1")
     monkeypatch.setenv("MERIDIAN_ACTIVE_WORK_DIR", parent_ambient.as_posix())
     monkeypatch.delenv("MERIDIAN_ACTIVE_WORK_ID", raising=False)
 
@@ -427,7 +427,7 @@ def test_bind_launch_context_context_refresh_preserves_adhoc_agent_payload(
     )
     parent_ambient = tmp_path / ".meridian" / "spawns" / "p-parent" / "work"
     monkeypatch.setenv("MERIDIAN_SPAWN_ID", "p-parent")
-    monkeypatch.setenv("MERIDIAN_DEPTH", "1")
+    monkeypatch.setenv("_MERIDIAN_DEPTH", "1")
     monkeypatch.setenv("MERIDIAN_ACTIVE_WORK_DIR", parent_ambient.as_posix())
     monkeypatch.delenv("MERIDIAN_ACTIVE_WORK_ID", raising=False)
 

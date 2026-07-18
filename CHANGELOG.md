@@ -5,6 +5,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Changed
+- Repo-internal process and Pi transport variables now use the `_MERIDIAN_*`
+  namespace; public configuration inputs and agent-facing handles remain stable.
 - Meridian-owned environment variables now have one tiered registry that drives
   child propagation and hook payload keys and guards source literals from drift.
 - Harness connections now consume one complete bind-resolved child environment;

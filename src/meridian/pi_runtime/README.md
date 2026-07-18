@@ -34,4 +34,4 @@ Then delegate **smoke-tester** for runtime verification (`meridian pi`, spawn fl
 - **Meridian spawns in `/spawn`** — ids confirmed via `meridian spawn list` / `spawn show` (same store as `meridian spawn wait`), not shell-command regex.
 - **Blocking wait** — `meridian spawn wait` in the terminal, or **`/spawn:wait <p-id>`** in Pi (30m subprocess cap; CLI may checkpoint earlier).
 - **`/ps`** — observability only (`ps:kill`, `ps:logs`); no wait subcommand. `/spawns*` removed.
-- **Task pings** — tracked background bash sends one follow-up ping after `MERIDIAN_PI_TASK_PING_INTERVAL_MS` (project config/CLI resolve to this env var). Pings are one-shot per task and reset on log activity unless `MERIDIAN_PI_TASK_PING_RESET_ON_ACTIVITY=false`.
+- **Task pings** — tracked background bash sends one follow-up ping after `_MERIDIAN_PI_TASK_PING_INTERVAL_MS` (project config/CLI resolve to this env var). Pings are one-shot per task and reset on log activity unless `_MERIDIAN_PI_TASK_PING_RESET_ON_ACTIVITY=false`.

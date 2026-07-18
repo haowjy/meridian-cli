@@ -45,7 +45,7 @@ class RuntimeContext(BaseModel):
     def to_env_overrides(self) -> dict[str, str]:
         """Produce MERIDIAN_* env overrides for child processes."""
 
-        overrides: dict[str, str] = {"MERIDIAN_DEPTH": str(self.depth)}
+        overrides: dict[str, str] = {"_MERIDIAN_DEPTH": str(self.depth)}
         if self.spawn_id is not None:
             overrides["MERIDIAN_SPAWN_ID"] = str(self.spawn_id)
         if self.project_root is not None:

@@ -119,7 +119,7 @@ grep -Eq 'succeeded:|failed:|cancelled:' /tmp/meridian-lifecycle-stats.txt && \
 echo "PASS: spawn stats returned aggregate counts" || echo "FAIL: spawn stats output was incomplete"
 ```
 
-### LIFE-7. Nested read (`MERIDIAN_DEPTH>0`) does not stamp `orphan_run` [CRITICAL]
+### LIFE-7. Nested read (`_MERIDIAN_DEPTH>0`) does not stamp `orphan_run` [CRITICAL]
 
 ```bash
 uv run python - <<'PY'
@@ -143,7 +143,7 @@ spawn_id = str(
     )
 )
 env = dict(os.environ)
-env['MERIDIAN_DEPTH'] = '1'
+env['_MERIDIAN_DEPTH'] = '1'
 subprocess.run(
     ['uv', 'run', 'meridian', '--json', 'spawn', 'show', spawn_id],
     check=False,

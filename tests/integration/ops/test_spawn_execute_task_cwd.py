@@ -34,7 +34,7 @@ def test_spawn_create_background_handoff_preserves_external_task_cwd(
     runtime_root = tmp_path / "runtime-root"
     external_task_cwd = tmp_path / "outside-worktree"
     external_task_cwd.mkdir(parents=True, exist_ok=True)
-    monkeypatch.setenv("MERIDIAN_RUNTIME_DIR", runtime_root.as_posix())
+    monkeypatch.setenv("_MERIDIAN_RUNTIME_DIR", runtime_root.as_posix())
     monkeypatch.chdir(invocation_cwd)
     stub_bundle_request_and_resolve(
         monkeypatch,
@@ -109,7 +109,7 @@ def test_spawn_create_persists_and_executes_prepared_task_cwd_contract(
     runtime_root = tmp_path / "runtime-root"
     external_task_cwd = tmp_path / "outside-worktree"
     external_task_cwd.mkdir(parents=True, exist_ok=True)
-    monkeypatch.setenv("MERIDIAN_RUNTIME_DIR", runtime_root.as_posix())
+    monkeypatch.setenv("_MERIDIAN_RUNTIME_DIR", runtime_root.as_posix())
     monkeypatch.chdir(invocation_cwd)
     stub_bundle_request_and_resolve(
         monkeypatch,

@@ -31,9 +31,9 @@ _CHILD_ENV_ALLOWLIST = frozenset(
 _CHILD_ENV_ALLOWLIST_PREFIXES = ("LC_", "XDG_", "UV_")
 _CHILD_ENV_SECRET_SUFFIXES = ("_TOKEN", "_KEY", "_SECRET")
 _PI_SESSION_DIR_ENV = "PI_CODING_AGENT_SESSION_DIR"
-_PI_CHILD_WAVE_TIMEOUT_MS_ENV = "MERIDIAN_PI_CHILD_WAVE_TIMEOUT_MS"
-_PI_TASK_PING_INTERVAL_MS_ENV = "MERIDIAN_PI_TASK_PING_INTERVAL_MS"
-_PI_TASK_PING_RESET_ON_ACTIVITY_ENV = "MERIDIAN_PI_TASK_PING_RESET_ON_ACTIVITY"
+_PI_CHILD_WAVE_TIMEOUT_MS_ENV = "_MERIDIAN_PI_CHILD_WAVE_TIMEOUT_MS"
+_PI_TASK_PING_INTERVAL_MS_ENV = "_MERIDIAN_PI_TASK_PING_INTERVAL_MS"
+_PI_TASK_PING_RESET_ON_ACTIVITY_ENV = "_MERIDIAN_PI_TASK_PING_RESET_ON_ACTIVITY"
 
 
 def apply_pi_bind_time_env(
@@ -165,7 +165,7 @@ def build_harness_env_overrides(
             # `opencode run` (subprocess mode) doesn't auto-reject all tool calls.
             merged["OPENCODE_PERMISSION"] = '{"*":"allow"}'
     if adapter.id == HarnessId.PI:
-        merged["MERIDIAN_PI_SESSION_ROLE"] = resolve_pi_session_role(
+        merged["_MERIDIAN_PI_SESSION_ROLE"] = resolve_pi_session_role(
             interactive=run_params.interactive
         )
     return merged
@@ -215,10 +215,10 @@ def merge_env_overrides(
     """
     forbidden: list[tuple[str, str]] = []
     for key in plan_overrides:
-        if key.upper().startswith("MERIDIAN_"):
+        if key.upper().startswith(("MERIDIAN_", "_MERIDIAN_")):
             forbidden.append((key, "plan_overrides"))
     for key in preflight_overrides:
-        if key.upper().startswith("MERIDIAN_"):
+        if key.upper().startswith(("MERIDIAN_", "_MERIDIAN_")):
             forbidden.append((key, "preflight_overrides"))
 
     if forbidden:

@@ -318,7 +318,7 @@ def start_spawn(
             chat_id=chat_id,
             owner_chat_id=owner_chat_id,
             parent_id=parent_id,
-            originating_bash_id=os.environ.get("MERIDIAN_PI_BASH_ID") or None,
+            originating_bash_id=os.environ.get("_MERIDIAN_PI_BASH_ID") or None,
             model=model,
             agent=agent,
             agent_path=agent_path,
