@@ -128,9 +128,14 @@ def _upgrade_flat_runner_exit(raw: dict[str, Any]) -> dict[str, Any] | None:
 
 
 def _upgrade_flat_terminal(raw: dict[str, Any]) -> dict[str, Any] | None:
-    _require_fields(raw, set(_TERMINAL_FIELDS), "terminal")
+    # Historical backfill: rows written before published_at existed define
+    # publication time as finish time. Meaning-carrying terminal facts remain
+    # required and are never inferred.
+    _require_fields(raw, set(_TERMINAL_FIELDS) - {"published_at"}, "terminal")
     status = raw.get("status")
-    values = {target: raw[source] for source, target in _TERMINAL_FIELDS.items()}
+    values = {target: raw.get(source) for source, target in _TERMINAL_FIELDS.items()}
+    if status in _TERMINAL_STATUSES and "published_at" not in raw:
+        values["published_at"] = values["finished_at"]
     if status not in _TERMINAL_STATUSES:
         baseline: dict[str, Any] = {field: None for field in values}
         baseline["cost_is_estimate"] = False
