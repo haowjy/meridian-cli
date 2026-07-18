@@ -18,6 +18,7 @@ from meridian.lib.harness.connections.base import (
 from meridian.lib.harness.connections.liveness import LivenessDecision
 from meridian.lib.harness.connections.resident_backend import ResidentBackendControl
 from meridian.lib.harness.semantics import (
+    NormalizedHarnessEvent,
     PrimaryEventScope,
     TerminalEventOutcome,
 )
@@ -226,13 +227,13 @@ def resident_event(
 
 
 async def next_turn_boundary(
-    subscriber: asyncio.Queue[RawHarnessEvent | None],
+    subscriber: asyncio.Queue[NormalizedHarnessEvent | None],
 ) -> RawHarnessEvent:
     while True:
         event = await subscriber.get()
         assert event is not None
-        if event.event_type == TURN_BOUNDARY_EVENT_TYPE:
-            return event
+        if event.raw.event_type == TURN_BOUNDARY_EVENT_TYPE:
+            return event.raw
 
 
 def start_row(

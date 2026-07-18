@@ -20,6 +20,7 @@ from meridian.lib.harness.connections.base import (
     StopResult,
 )
 from meridian.lib.harness.control_action import ControlActionCoordinator
+from meridian.lib.harness.semantics import normalize_event
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.safety.permissions import UnsafeNoOpPermissionResolver
 from meridian.lib.state.paths import resolve_runtime_paths
@@ -198,6 +199,9 @@ async def test_wait_for_completion_survives_cleanup_without_private_hooks(
         def primary_event_scope(self) -> None:
             return None
 
+        def observe_event_semantics(self, semantics: object) -> None:
+            _ = semantics
+
         @property
         def resident_backend(self) -> None:
             return None
@@ -336,8 +340,8 @@ async def test_backpressure_drop_emits_runtime_telemetry(tmp_path: Path) -> None
 
     first = RawHarnessEvent(event_type="first", harness_id="codex", payload={})
     second = RawHarnessEvent(event_type="second", harness_id="codex", payload={})
-    manager._fan_out_event(spawn_id, first)
-    manager._fan_out_event(spawn_id, second)
+    manager._fan_out_event(spawn_id, normalize_event(first))
+    manager._fan_out_event(spawn_id, normalize_event(second))
 
     wait_for_telemetry(
         lambda: any(event.event == "runtime.stream_event_dropped" for event in sink.events)
@@ -389,6 +393,10 @@ async def test_stop_spawn_reaps_recorded_scope_when_connection_stop_raises(
 
         @property
         def resident_backend(self) -> None:
+            return None
+
+        @property
+        def primary_event_scope(self) -> None:
             return None
 
         async def stop(
@@ -518,6 +526,9 @@ async def test_spawn_manager_serializes_control_actions_and_persists_transitions
         @property
         def primary_event_scope(self) -> None:
             return None
+
+        def observe_event_semantics(self, semantics: object) -> None:
+            _ = semantics
 
         @property
         def resident_backend(self) -> None:

@@ -123,6 +123,9 @@ async def test_immediate_background_inject_waits_for_real_control_endpoint(
         def __init__(self) -> None:
             self._events: asyncio.Queue[RawHarnessEvent | None] = asyncio.Queue()
 
+        def observe_event_semantics(self, semantics: object) -> None:
+            _ = semantics
+
         async def events(self):  # type: ignore[no-untyped-def]
             while True:
                 event = await self._events.get()

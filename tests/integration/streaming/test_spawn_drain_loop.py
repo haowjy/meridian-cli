@@ -161,6 +161,9 @@ class _ConcurrentWakeReceiver:
     def __init__(self, wake: asyncio.Event) -> None:
         self._wake = wake
 
+    def observe_event_semantics(self, semantics: object) -> None:
+        _ = semantics
+
     async def events(self) -> AsyncIterator[RawHarnessEvent]:
         yield RawHarnessEvent(event_type="turn/completed", harness_id="codex", payload={})
         await self._wake.wait()

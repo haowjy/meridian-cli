@@ -108,6 +108,9 @@ class _ReportThenHangConnection:
     def primary_event_scope(self) -> None:
         return None
 
+    def observe_event_semantics(self, semantics: object) -> None:
+        _ = semantics
+
     @property
     def resident_backend(self) -> object:
         return self._resident_backend
@@ -213,6 +216,9 @@ class _OpenCodeTerminalWithScopeConnection:
         if self.harness is HarnessId.OPENCODE:
             return PrimaryEventScope(HarnessId.OPENCODE, self._session_id)
         return None
+
+    def observe_event_semantics(self, semantics: object) -> None:
+        _ = semantics
 
     @property
     def resident_backend(self) -> object:
@@ -328,6 +334,9 @@ class _ResidentDeadlineConnection:
     @property
     def primary_event_scope(self) -> None:
         return None
+
+    def observe_event_semantics(self, semantics: object) -> None:
+        _ = semantics
 
     @property
     def resident_backend(self) -> object:
@@ -466,6 +475,9 @@ class _ScriptedRetryOpenCodeConnection:
     def primary_event_scope(self) -> PrimaryEventScope | None:
         session_id = type(self).session_id_value
         return PrimaryEventScope(HarnessId.OPENCODE, session_id) if session_id else None
+
+    def observe_event_semantics(self, semantics: object) -> None:
+        _ = semantics
 
     @property
     def resident_backend(self) -> object:

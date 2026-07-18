@@ -127,6 +127,9 @@ class FakeManagedConnection:
     def primary_event_scope(self) -> None:
         return None
 
+    def observe_event_semantics(self, semantics: object) -> None:
+        _ = semantics
+
     @property
     def managed_backend(self) -> None:
         return None

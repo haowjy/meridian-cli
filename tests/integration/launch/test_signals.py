@@ -97,6 +97,9 @@ async def test_streaming_runner_signal_cancel_invokes_send_cancel_once(
         def primary_event_scope(self) -> None:
             return None
 
+        def observe_event_semantics(self, semantics: object) -> None:
+            _ = semantics
+
         @property
         def resident_backend(self) -> None:
             return None
