@@ -6,6 +6,11 @@ from typing import Any, cast
 
 # Remove this module once pre-v3 spawn rows no longer exist in the wild.
 
+# Fields from pre-main schema generations that carry no v3 meaning and are
+# deliberately discarded during upgrade. This is a curated exception list;
+# fields absent from it still fail the unknown-fields rule.
+RETIRED_LEGACY_FIELDS: frozenset[str] = frozenset({"revision"})
+
 _RUNNER_EXIT_FIELDS = {
     "runner_exit_code": "exit_code",
     "runner_exit_status": "status",
@@ -68,8 +73,13 @@ _COMMON_FIELDS = {
     "prompt_length",
     "launch_policy_snapshot",
 }
-_FLAT_FIELDS = _COMMON_FIELDS | set(_RUNNER_EXIT_FIELDS) | set(_TERMINAL_FIELDS)
-_NESTED_FIELDS = _COMMON_FIELDS | {"runner_exit", "terminal"}
+_FLAT_FIELDS = (
+    _COMMON_FIELDS
+    | set(_RUNNER_EXIT_FIELDS)
+    | set(_TERMINAL_FIELDS)
+    | RETIRED_LEGACY_FIELDS
+)
+_NESTED_FIELDS = _COMMON_FIELDS | {"runner_exit", "terminal"} | RETIRED_LEGACY_FIELDS
 
 
 class LegacySpawnStateUpgradeError(ValueError):
@@ -163,7 +173,7 @@ def _upgrade_nested(raw: dict[str, Any]) -> dict[str, Any]:
             )
 
     _reject_unknown(raw, _NESTED_FIELDS)
-    upgraded = dict(raw)
+    upgraded = {key: value for key, value in raw.items() if key not in RETIRED_LEGACY_FIELDS}
     upgraded["v"] = 3
     if terminal is not None:
         upgraded["terminal"] = {key: value for key, value in terminal.items() if key != "status"}
@@ -190,10 +200,16 @@ def upgrade_legacy_spawn_state(raw: dict[str, Any]) -> dict[str, Any]:
     upgraded = {
         key: value
         for key, value in raw.items()
-        if key not in _RUNNER_EXIT_FIELDS and key not in _TERMINAL_FIELDS
+        if key not in _RUNNER_EXIT_FIELDS
+        and key not in _TERMINAL_FIELDS
+        and key not in RETIRED_LEGACY_FIELDS
     }
     upgraded.update(v=3, runner_exit=runner_exit, terminal=terminal)
     return upgraded
 
 
-__all__ = ["LegacySpawnStateUpgradeError", "upgrade_legacy_spawn_state"]
+__all__ = [
+    "RETIRED_LEGACY_FIELDS",
+    "LegacySpawnStateUpgradeError",
+    "upgrade_legacy_spawn_state",
+]

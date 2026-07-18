@@ -707,7 +707,7 @@ def list_spawns(
     parent_id: str | None = None,
     work_id: str | None = None,
 ) -> SpawnScan:
-    """Partition valid v2 rows from structured quarantine reports."""
+    """Partition valid persisted rows from structured quarantine reports."""
 
     paths = RuntimePaths.from_root_dir(runtime_root)
     spawns: list[SpawnRecord] = []

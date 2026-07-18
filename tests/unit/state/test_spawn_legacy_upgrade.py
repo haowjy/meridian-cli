@@ -191,6 +191,33 @@ def test_missing_version_dispatches_through_v2_upgrade(tmp_path: Path) -> None:
     assert restored.status == "running"
 
 
+def test_retired_revision_field_is_deliberately_dropped(tmp_path: Path) -> None:
+    spawns_dir = tmp_path / "spawns"
+    row = _v2_flat()
+    row["revision"] = 17
+    state_path = _write_row(spawns_dir, row)
+
+    restored = read_state(spawns_dir, "p1", include_prompt=False)
+
+    assert restored is not None
+    assert restored.status == "running"
+    assert json.loads(state_path.read_text(encoding="utf-8"))["revision"] == 17
+
+
+def test_unrecognized_legacy_field_still_quarantines(tmp_path: Path) -> None:
+    spawns_dir = tmp_path / "spawns"
+    row = _v2_flat()
+    row["not_a_curated_retired_field"] = "must not disappear"
+    _write_row(spawns_dir, row)
+
+    with pytest.raises(SpawnStateQuarantined) as quarantined:
+        read_state(spawns_dir, "p1")
+
+    errors = quarantined.value.report.validation_errors
+    assert "unknown_fields" in str(errors)
+    assert "not_a_curated_retired_field" in str(errors)
+
+
 @pytest.mark.parametrize(
     ("mutate", "reason"),
     [
