@@ -898,7 +898,7 @@ class SpawnApplicationService:
 
         outcome = self._lifecycle.finalize(
             str(spawn_id),
-            cast("SpawnStatus", status),
+            cast("TerminalStatus", status),
             exit_code,
             origin=cast("SpawnOrigin", origin),
             duration_secs=duration_secs,

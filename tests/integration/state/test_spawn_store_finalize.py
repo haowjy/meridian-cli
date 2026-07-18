@@ -12,7 +12,14 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from meridian.lib.core.domain import TERMINAL_SPAWN_STATUSES, SpawnStatus, TokenUsage
+import pytest
+
+from meridian.lib.core.domain import (
+    TERMINAL_SPAWN_STATUSES,
+    SpawnStatus,
+    TerminalSpawnStatus,
+    TokenUsage,
+)
 from meridian.lib.state.spawn_store import (
     finalize_spawn,
     get_spawn,
@@ -41,10 +48,29 @@ def _start_test_spawn(runtime_root: Path) -> str:
     )
 
 
+def test_finalize_spawn_rejects_nonterminal_status_at_api_boundary(tmp_path: Path) -> None:
+    runtime_root = _state_root(tmp_path)
+    spawn_id = _start_test_spawn(runtime_root)
+
+    with pytest.raises(ValueError, match="finalize status must be terminal"):
+        finalize_spawn(
+            runtime_root,
+            spawn_id,
+            "finalizing",  # pyright: ignore[reportArgumentType]
+            1,
+            origin="runner",
+        )
+
+    row = get_spawn(runtime_root, spawn_id)
+    assert row is not None
+    assert row.status == "running"
+    assert row.terminal is None
+
+
 def _finalize_spawn_worker(
     runtime_root_str: str,
     spawn_id: str,
-    status: SpawnStatus,
+    status: TerminalSpawnStatus,
     exit_code: int,
     duration_secs: float,
 ) -> tuple[bool, bool]:

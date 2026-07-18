@@ -77,6 +77,11 @@ from meridian.lib.state.spawn_aggregate import delete_published_spawn
 
 logger = structlog.get_logger(__name__)
 
+
+def _validate_finalize_status(status: object) -> None:
+    if not isinstance(status, str) or not _is_terminal_spawn_status(status):
+        raise ValueError(f"finalize status must be terminal, got {status!r}")
+
 # ---------------------------------------------------------------------------
 # ID generation (absorbed from state/id_gen.py)
 # ---------------------------------------------------------------------------
@@ -357,7 +362,7 @@ def start_spawn(
             worker_pid=worker_pid,
             runner_pid=runner_pid,
             runner_created_at_epoch=resolved_runner_created_at_epoch,
-            status=SpawnStatus(status),
+            status=status,
             prompt=prompt,
             started_at=started,
             last_attempt_exited_at=None,
@@ -568,7 +573,7 @@ def record_runner_exit(
             raise _RunnerExitSkipped(current)
         return apply_runner_exit(
             current,
-            status=SpawnStatus(status),
+            status=status,
             exit_code=exit_code,
             error=error,
             exited_at=resolved_exited_at,
@@ -634,7 +639,7 @@ def record_cancel_intent(
 def finalize_spawn(
     runtime_root: Path,
     spawn_id: SpawnId | str,
-    status: SpawnStatus,
+    status: TerminalSpawnStatus,
     exit_code: int,
     *,
     origin: SpawnOrigin,
@@ -654,6 +659,7 @@ def finalize_spawn(
     and replace a reconciler terminal tuple; callers should use
     ``outcome.wrote`` and ``outcome.snapshot`` for post-write event emission.
     """
+    _validate_finalize_status(status)
     resolved_clock = clock or RealClock()
     paths = RuntimePaths.from_root_dir(runtime_root)
 

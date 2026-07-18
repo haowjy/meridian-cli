@@ -34,7 +34,7 @@ from uuid import UUID
 import psutil
 import structlog
 
-from meridian.lib.core.domain import SpawnStatus
+from meridian.lib.core.domain import SpawnStatus, TerminalSpawnStatus
 from meridian.lib.core.spawn_lifecycle import (
     TERMINAL_SPAWN_STATUSES,
     SpawnReservation,
@@ -91,7 +91,7 @@ def _spawn_store() -> Any:
 # ---------------------------------------------------------------------------
 
 EventType = Literal["spawn.created", "spawn.running", "spawn.finalized"]
-TerminalStatus = Literal["succeeded", "failed", "cancelled", "timed_out"]
+TerminalStatus = TerminalSpawnStatus
 TerminalOrigin = Literal["runner", "launcher", "cancel", "reconciler", "launch_failure"]
 
 
@@ -99,6 +99,11 @@ type TerminalOutcomeCategory = Literal["succeeded"] | SpawnFailureCategory
 
 
 _TERMINAL_STATUS_VALUES: frozenset[str] = TERMINAL_SPAWN_STATUSES
+
+
+def _validate_finalize_status(status: object) -> None:
+    if not isinstance(status, str) or status not in TERMINAL_SPAWN_STATUSES:
+        raise ValueError(f"finalize status must be terminal, got {status!r}")
 
 # ---------------------------------------------------------------------------
 # Event ID generation
@@ -454,7 +459,7 @@ class SpawnLifecycleService:
     def finalize(
         self,
         spawn_id: str,
-        status: SpawnStatus,
+        status: TerminalSpawnStatus,
         exit_code: int,
         *,
         origin: SpawnOrigin,
@@ -465,6 +470,7 @@ class SpawnLifecycleService:
         clock: Clock | None = None,
     ) -> FinalizeOutcome:
         """Finalize a spawn and dispatch spawn.finalized for persisted terminal writes."""
+        _validate_finalize_status(status)
         requested_category = self._terminal_outcome_category(
             status=status,
             origin=origin,
@@ -544,7 +550,7 @@ class SpawnLifecycleService:
         ):
             outcome = self.finalize(
                 spawn_id,
-                SpawnStatus.CANCELLED,
+                "cancelled",
                 exit_code,
                 origin="cancel",
                 duration_secs=duration_secs,
