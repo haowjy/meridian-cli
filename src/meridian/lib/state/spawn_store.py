@@ -43,6 +43,7 @@ from meridian.lib.state.spawn.model import (
 from meridian.lib.state.spawn.model import (
     LaunchMode as LaunchMode,
 )
+from meridian.lib.state.spawn.model import SpawnKind as SpawnKind
 from meridian.lib.state.spawn.model import (
     SpawnOrigin as SpawnOrigin,
 )
@@ -258,7 +259,7 @@ def start_spawn(
     skills: tuple[str, ...] = (),
     skill_paths: tuple[str, ...] = (),
     harness: str,
-    kind: str = "child",
+    kind: SpawnKind = "child",
     prompt: str,
     metadata: SpawnStartMetadata | None = None,
     desc: str | None = None,

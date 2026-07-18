@@ -10,6 +10,7 @@ from meridian.lib.core.domain import SpawnStatus
 from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
 
 LaunchMode = Literal["background", "foreground", "app"]
+SpawnKind = Literal["child", "primary", "streaming"]
 BACKGROUND_LAUNCH_MODE: LaunchMode = "background"
 FOREGROUND_LAUNCH_MODE: LaunchMode = "foreground"
 APP_LAUNCH_MODE: LaunchMode = "app"
@@ -56,7 +57,7 @@ class SpawnStateFields(BaseModel):
     skills: tuple[str, ...] = ()
     skill_paths: tuple[str, ...] = ()
     harness: str | None = None
-    kind: str = "child"
+    kind: SpawnKind = "child"
     desc: str | None = None
     work_id: str | None = None
     goal: str | None = None
@@ -114,6 +115,7 @@ __all__ = [
     "LaunchPolicySnapshot",
     "PersistedSpawnStatus",
     "SpawnOrigin",
+    "SpawnKind",
     "SpawnRecord",
     "SpawnStateFields",
     "TerminalSpawnStatus",

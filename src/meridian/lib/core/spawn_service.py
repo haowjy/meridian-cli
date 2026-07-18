@@ -54,7 +54,7 @@ from meridian.lib.launch.types import PrimarySessionMetadata
 from meridian.lib.state import spawn_store
 from meridian.lib.state.liveness import is_process_alive
 from meridian.lib.state.paths import RuntimePaths
-from meridian.lib.state.spawn.model import APP_LAUNCH_MODE, LaunchMode, SpawnOrigin
+from meridian.lib.state.spawn.model import APP_LAUNCH_MODE, LaunchMode, SpawnKind, SpawnOrigin
 from meridian.lib.state.spawn_report import spawn_report_has_durable_completion
 from meridian.lib.state.timestamps import iso_timestamp_to_epoch
 from meridian.lib.streaming.signal_canceller import CancelOutcome as SignalCancelOutcome
@@ -173,7 +173,7 @@ class PrepareSpawnRequest:
     harness_registry: HarnessRegistry
     chat_id: str | None = None
     parent_id: str | None = None
-    kind: str = "child"
+    kind: SpawnKind = "child"
     desc: str | None = None
     work_id: str | None = None
     launch_mode: LaunchMode | None = None
@@ -479,7 +479,7 @@ class SpawnApplicationService:
         harness_registry: HarnessRegistry,
         chat_id: str | None = None,
         parent_id: str | None = None,
-        kind: str = "child",
+        kind: SpawnKind = "child",
         desc: str | None = None,
         work_id: str | None = None,
         launch_mode: LaunchMode | None = None,

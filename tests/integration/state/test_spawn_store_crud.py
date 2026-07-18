@@ -111,6 +111,23 @@ def test_invalid_persisted_status_is_reported_and_not_coerced(tmp_path: Path) ->
     assert json.loads(state_path.read_text(encoding="utf-8"))["status"] == "zombie"
 
 
+def test_invalid_persisted_kind_is_reported_and_not_coerced(tmp_path: Path) -> None:
+    runtime_root = _state_root(tmp_path)
+    spawn_id = _start_test_spawn(runtime_root)
+    state_path = RuntimePaths.from_root_dir(runtime_root).spawns_dir / spawn_id / "state.json"
+    payload = json.loads(state_path.read_text(encoding="utf-8"))
+    payload["kind"] = "worker"
+    atomic_write_text(state_path, json.dumps(payload))
+
+    with pytest.raises(SpawnStateQuarantined):
+        get_spawn(runtime_root, spawn_id)
+    collection = list_spawns(runtime_root)
+
+    assert collection == []
+    assert [report.spawn_id for report in collection.quarantines] == [spawn_id]
+    assert json.loads(state_path.read_text(encoding="utf-8"))["kind"] == "worker"
+
+
 @pytest.mark.parametrize("invalid_status", [[], {}, 123])
 def test_non_string_persisted_status_is_quarantined(
     tmp_path: Path,

@@ -42,6 +42,7 @@ class StoredSpawnState(SpawnStateFields):
             return value
         vocabularies = {
             "status": _PERSISTED_STATUS_VALUES,
+            "kind": {"child", "primary", "streaming"},
             "launch_mode": _LAUNCH_MODE_VALUES,
             "runner_exit_status": TERMINAL_SPAWN_STATUSES,
             "terminal_origin": _AUTHORITATIVE_ORIGINS | {"reconciler"},
