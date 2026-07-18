@@ -242,8 +242,6 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
         self._current_turn_id: str | None = None
         self._thread_id: str | None = None
         self._main_turn_thread_id: str | None = None
-        self._last_completed_turn_id: str | None = None
-        self._turn_completed_event = asyncio.Event()
         self._tracer: DebugTracer | None = None
         self._cancel_requested = False
         self._signal_in_flight = False
@@ -365,8 +363,6 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
         self._current_turn_id = None
         self._thread_id = None
         self._main_turn_thread_id = None
-        self._last_completed_turn_id = None
-        self._turn_completed_event.clear()
         self._liveness.reset()
         self._cancel_requested = False
         self._signal_in_flight = False
@@ -1207,20 +1203,25 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
         return config.control_root
 
     async def _send_bootstrap_turn_and_wait(self, *, agent_name: str | None) -> None:
-        """Send a minimal bootstrap turn and wait for completion.
+        """Send a bootstrap turn and wait for the rollout to become attachable.
 
         This materializes the Codex rollout file so the TUI can later attach
         to this thread. The bootstrap prompt is deterministic and minimal.
-        Meridian intentionally leaves the thread's normal model/effort
-        semantics alone; bootstrap should be made cheaper by improving the
-        attachability gate, not by mutating user-visible Codex defaults.
+
+        The load-bearing requirement is "thread is attachable", not "bootstrap
+        response is semantically complete". We gate on rollout materialization
+        because that is the earliest observed durable signal that
+        ``codex resume --remote`` can attach. We intentionally do NOT wait for
+        ``turn/completed`` — the model may begin real work (reading context,
+        calling tools) and take arbitrarily long. The TUI handles in-progress
+        turns fine.
         """
         thread_id = self._require_thread_id("bootstrap_turn")
         normalized_agent = (agent_name or "").strip()
         prompt = _BOOTSTRAP_TURN_PROMPT
         if normalized_agent:
             prompt = f"{prompt} (agent: {normalized_agent})"
-        result = await self._request(
+        await self._request(
             "turn/start",
             {
                 "threadId": thread_id,
@@ -1228,14 +1229,6 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
             },
         )
         await self._wait_for_rollout_materialization()
-        turn_id = (
-            _extract_turn_id(result)
-            or self._current_turn_id
-            or self._last_completed_turn_id
-        )
-        if turn_id is None:
-            raise RuntimeError("Codex bootstrap turn did not provide a turn id")
-        await self._wait_for_turn_completion(turn_id)
 
     async def _wait_for_rollout_materialization(self, timeout_seconds: float = 120.0) -> None:
         """Block until Codex has created an attachable rollout for the thread.
@@ -1274,31 +1267,6 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
             if not process_running or not ws_open:
                 raise RuntimeError("Codex connection lost during bootstrap turn")
 
-    async def _wait_for_turn_completion(
-        self,
-        turn_id: str,
-        timeout_seconds: float = 120.0,
-    ) -> None:
-        """Wait until the observer receives completion for the bootstrap turn."""
-
-        loop = asyncio.get_running_loop()
-        deadline = loop.time() + timeout_seconds
-        while self._last_completed_turn_id != turn_id:
-            self._turn_completed_event.clear()
-            if self._last_completed_turn_id == turn_id:
-                return
-            remaining = deadline - loop.time()
-            if remaining <= 0:
-                raise RuntimeError(
-                    f"Bootstrap turn timed out after {timeout_seconds}s waiting for completion"
-                )
-            try:
-                await asyncio.wait_for(self._turn_completed_event.wait(), timeout=remaining)
-            except TimeoutError as exc:
-                raise RuntimeError(
-                    f"Bootstrap turn timed out after {timeout_seconds}s waiting for completion"
-                ) from exc
-
     async def _bootstrap_thread(self, spec: ResolvedLaunchSpec) -> dict[str, object]:
         method, payload = self._thread_bootstrap_request(spec)
         return await self._request(method, payload)
@@ -1336,9 +1304,7 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
             if thread_id is not None:
                 self._main_turn_thread_id = thread_id
         if clears_signal(event, primary_event_scope=self.primary_event_scope):
-            self._last_completed_turn_id = _extract_turn_id(payload) or self._current_turn_id
             self._end_current_turn()
-            self._turn_completed_event.set()
             self._signal_in_flight = False
             self._liveness.signal_request_resolved("cancel")
             return

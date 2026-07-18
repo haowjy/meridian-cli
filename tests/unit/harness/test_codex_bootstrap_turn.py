@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 from unittest.mock import AsyncMock
 
 import pytest
@@ -25,7 +24,6 @@ async def test_bootstrap_turn_identifies_agent_when_available(
     connection._thread_id = "thread-1"
     connection._request = AsyncMock(return_value={"turn": {"id": "turn-1"}})  # type: ignore[method-assign]
     connection._wait_for_rollout_materialization = AsyncMock()  # type: ignore[method-assign]
-    connection._wait_for_turn_completion = AsyncMock()  # type: ignore[method-assign]
 
     await connection._send_bootstrap_turn_and_wait(agent_name=agent_name)
 
@@ -39,23 +37,20 @@ async def test_bootstrap_turn_identifies_agent_when_available(
 
 
 @pytest.mark.asyncio
-async def test_bootstrap_wait_finishes_only_after_matching_turn_completes() -> None:
+async def test_bootstrap_does_not_wait_for_turn_completion() -> None:
+    """Rollout materialization is the readiness boundary, not turn completion.
+
+    The bootstrap turn may trigger real model work (tool calls, reasoning)
+    that takes arbitrarily long. Waiting for turn/completed caused a 120s
+    timeout regression when rich context was present (see #452).
+    """
     connection = CodexConnection()
-    wait_task = asyncio.create_task(
-        connection._wait_for_turn_completion("turn-1", timeout_seconds=1.0)
-    )
+    connection._thread_id = "thread-1"
+    connection._request = AsyncMock(return_value={"turn": {"id": "turn-1"}})  # type: ignore[method-assign]
+    connection._wait_for_rollout_materialization = AsyncMock()  # type: ignore[method-assign]
 
-    connection._update_turn_state(
-        method="turn/started",
-        payload={"threadId": "thread-1", "turn": {"id": "turn-1"}},
-    )
-    await asyncio.sleep(0)
-    assert wait_task.done() is False
+    await connection._send_bootstrap_turn_and_wait(agent_name="gpt-dev")
 
-    connection._update_turn_state(
-        method="turn/completed",
-        payload={"threadId": "thread-1", "turn": {"id": "turn-1"}},
-    )
-
-    await asyncio.wait_for(wait_task, timeout=1.0)
-    assert connection.current_turn_id is None
+    # Only rollout materialization should be awaited, not turn completion
+    connection._wait_for_rollout_materialization.assert_awaited_once()
+    assert not hasattr(connection, "_wait_for_turn_completion")
