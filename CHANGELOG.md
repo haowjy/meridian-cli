@@ -13,6 +13,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   the main harness process instead of inheriting the raw parent environment.
 - Claude prelaunch session materialization now reads its already-bound config
   directory without recomposing or overwriting launch environment policy.
+- Pi RPC connections now preserve the bind-resolved agent directory instead of
+  deriving it again from the ambient parent home directory.
 
 ## [0.3.39] - 2026-07-17
 

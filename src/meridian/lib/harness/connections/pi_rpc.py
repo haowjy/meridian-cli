@@ -37,7 +37,6 @@ from meridian.lib.harness.pi_lifecycle_events import (
     has_unsupported_pi_lifecycle_schema_version,
     redact_pi_command_for_history,
 )
-from meridian.lib.harness.pi_paths import pi_agent_dir_env_override
 from meridian.lib.harness.pi_runtime_resolver import (
     PiRuntimeResolutionError,
     resolve_pi_runtime,
@@ -491,7 +490,6 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
             base_command=BASE_COMMAND_PI_SUBPROCESS,
         )
         env = dict(config.child_env)
-        env.update(pi_agent_dir_env_override())
         session_dir = env.get("PI_CODING_AGENT_SESSION_DIR", "").strip()
         if session_dir:
             command = self._apply_session_dir_arg(command, session_dir)

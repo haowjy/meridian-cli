@@ -285,7 +285,10 @@ async def test_pi_rpc_connection_launches_resolved_runtime_with_scoped_session_d
         "observed_path = os.environ.get('PI_RPC_OBSERVED_PATH', '').strip()\n"
         "if observed_path:\n"
         "    with open(observed_path, 'w', encoding='utf-8') as handle:\n"
-        "        json.dump({'argv': sys.argv}, handle)\n"
+        "        json.dump({\n"
+        "            'argv': sys.argv,\n"
+        "            'pi_agent_dir': os.environ.get('PI_CODING_AGENT_DIR'),\n"
+        "        }, handle)\n"
         "for line in sys.stdin:\n"
         "    payload = json.loads(line)\n"
         "    payload_type = payload.get('type')\n"
@@ -308,6 +311,8 @@ async def test_pi_rpc_connection_launches_resolved_runtime_with_scoped_session_d
     fake_pi.chmod(0o755)
 
     scoped_session_dir = tmp_path / "pi-sessions" / "p-pi-direct-runtime"
+    bound_agent_dir = tmp_path / "bound-home" / ".pi" / "agent"
+    monkeypatch.setenv("HOME", str(tmp_path / "ambient-home"))
     connection = PiRpcConnection()
     await connection.start(
         ConnectionConfig(
@@ -317,6 +322,7 @@ async def test_pi_rpc_connection_launches_resolved_runtime_with_scoped_session_d
             control_root=tmp_path,
             child_env={
                 "MERIDIAN_PI_BINARY": str(fake_pi),
+                "PI_CODING_AGENT_DIR": str(bound_agent_dir),
                 "PI_CODING_AGENT_SESSION_DIR": str(scoped_session_dir),
                 "PI_RPC_OBSERVED_PATH": str(observed_path),
             },
@@ -336,6 +342,7 @@ async def test_pi_rpc_connection_launches_resolved_runtime_with_scoped_session_d
     _ = [event async for event in event_iter]
 
     observed = json.loads(observed_path.read_text(encoding="utf-8"))
+    assert observed["pi_agent_dir"] == str(bound_agent_dir)
     argv = observed["argv"]
     assert argv[0] == str(fake_pi)
     assert argv[argv.index("--mode") + 1] == "rpc"
