@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from enum import StrEnum
-from typing import TypeVar
+from typing import Literal, TypeVar, get_args
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -68,6 +68,13 @@ _SPAWN_STATUS_CLASSIFICATIONS = {
 ALL_SPAWN_STATUSES, ACTIVE_SPAWN_STATUSES, TERMINAL_SPAWN_STATUSES = _derive_spawn_status_sets(
     _SPAWN_STATUS_CLASSIFICATIONS
 )
+
+type TerminalSpawnStatus = Literal["succeeded", "failed", "cancelled", "timed_out"]
+
+if frozenset(get_args(TerminalSpawnStatus.__value__)) != frozenset(
+    status.value for status in TERMINAL_SPAWN_STATUSES
+):
+    raise ImportError("TerminalSpawnStatus must account for every terminal SpawnStatus member")
 
 
 class TokenUsage(BaseModel):

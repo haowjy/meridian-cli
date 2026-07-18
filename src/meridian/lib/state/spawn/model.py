@@ -6,7 +6,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, field_validator
 
-from meridian.lib.core.domain import SpawnStatus
+from meridian.lib.core.domain import SpawnStatus, TerminalSpawnStatus
 from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
 from meridian.lib.core.types import ChatId, HarnessSessionId, normalize_optional_identity
 
@@ -20,7 +20,6 @@ _LAUNCH_MODE_VALUES: frozenset[LaunchMode] = frozenset(
 )
 
 SpawnOrigin = Literal["runner", "launcher", "launch_failure", "cancel", "reconciler"]
-TerminalSpawnStatus = Literal["succeeded", "failed", "cancelled", "timed_out"]
 PersistedSpawnStatus = SpawnStatus | Literal["unknown"]
 _AUTHORITATIVE_ORIGIN_VALUES: tuple[SpawnOrigin, ...] = (
     "runner",
@@ -40,6 +39,38 @@ class CancelIntent(BaseModel):
     exit_code: int
     error: str | None
     requested_by: Literal["user", "system"] = "user"
+
+
+class RunnerExitFacts(BaseModel):
+    """Complete runner-resolved terminal intent, persisted before finalization."""
+
+    model_config = ConfigDict(frozen=True)
+
+    status: TerminalSpawnStatus
+    exit_code: int
+    error: str | None
+    exited_at: str
+
+
+class TerminalFacts(BaseModel):
+    """Complete persisted facts for a finalized spawn."""
+
+    model_config = ConfigDict(frozen=True)
+
+    status: TerminalSpawnStatus
+    exit_code: int
+    finished_at: str
+    published_at: str
+    duration_secs: float | None = None
+    total_cost_usd: float | None = None
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+    cache_read_input_tokens: int | None = None
+    cache_creation_input_tokens: int | None = None
+    reasoning_tokens: int | None = None
+    cost_is_estimate: bool = False
+    error: str | None = None
+    origin: SpawnOrigin
 
 
 class SpawnStateFields(BaseModel):
@@ -120,9 +151,11 @@ __all__ = [
     "LaunchMode",
     "LaunchPolicySnapshot",
     "PersistedSpawnStatus",
+    "RunnerExitFacts",
     "SpawnKind",
     "SpawnOrigin",
     "SpawnRecord",
     "SpawnStateFields",
+    "TerminalFacts",
     "TerminalSpawnStatus",
 ]
