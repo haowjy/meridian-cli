@@ -569,7 +569,7 @@ def list_active_sessions_for_work_id(runtime_root: Path, work_id: str) -> list[s
 
 
 def chat_ids_ever_attached_to_work(runtime_root: Path, work_id: str) -> set[str]:
-    """Return session IDs ever attached to a work item in raw session events."""
+    """Return session IDs from valid update events that attached to a work item."""
 
     normalized_work_id = work_id.strip()
     if not normalized_work_id:
@@ -578,18 +578,15 @@ def chat_ids_ever_attached_to_work(runtime_root: Path, work_id: str) -> set[str]
     paths = RuntimePaths.from_root_dir(runtime_root)
 
     def _parse_work_attachment(payload: dict[str, Any]) -> str | None:
-        event_type = payload.get("event")
-        if event_type not in {"start", "update"}:
+        event = _parse_event(payload)
+        if not isinstance(event, SessionUpdateEvent):
             return None
-        chat_id = payload.get("chat_id")
-        if not isinstance(chat_id, str) or not chat_id.strip():
-            return None
-        active_work_id = payload.get("active_work_id")
-        if not isinstance(active_work_id, str):
+        active_work_id = event.active_work_id
+        if active_work_id is None:
             return None
         if active_work_id.strip() != normalized_work_id:
             return None
-        return chat_id.strip()
+        return event.chat_id
 
     return set(read_events(paths.sessions_jsonl, _parse_work_attachment))
 

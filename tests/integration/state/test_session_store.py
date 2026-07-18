@@ -674,3 +674,30 @@ def test_records_by_session_ignores_mismatched_generation_stop_and_update(tmp_pa
     assert record.active_work_id == "work-1"
     assert record.forked_from_chat_id is None
     assert record.stopped_at is None
+
+
+def test_work_attachment_history_ignores_malformed_session_update(tmp_path: Path) -> None:
+    runtime_root = _state_root(tmp_path)
+    _write_session_start(
+        runtime_root=runtime_root,
+        chat_id="c1",
+        session_instance_id="gen-a",
+    )
+    with (runtime_root / "sessions.jsonl").open("a", encoding="utf-8") as handle:
+        handle.write(
+            json.dumps(
+                {
+                    "v": 1,
+                    "event": "update",
+                    "chat_id": "c1",
+                    "harness_session_id": [],
+                    "session_instance_id": "gen-a",
+                    "active_work_id": "work-1",
+                }
+            )
+            + "\n"
+        )
+
+    attached = session_store.chat_ids_ever_attached_to_work(runtime_root, "work-1")
+
+    assert attached == set()
