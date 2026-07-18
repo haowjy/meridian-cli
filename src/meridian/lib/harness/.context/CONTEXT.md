@@ -137,17 +137,21 @@ to inspect without instantiating an adapter. The contract sub-models:
 - `BootstrapContract` — subprocess-only vs managed-primary-attach, fork materialization
 - `TransportContract` — transport IDs and whether observer/controller is required
 
-### Terminal Event Classification — Closed Semantic Union
+### Terminal Event Classification — Normalize-Once Descriptors
 
 Raw harness events arrive as open `RawHarnessEvent` envelopes (harness CLIs
-are unpinned, so unknown event types are expected). `HarnessSemantics.normalize()`
-classifies each event through the per-bundle semantic port into a closed
-discriminated union: `SemanticEvent = ActivitySemanticEvent | TerminalSemanticEvent | SignalClearedSemanticEvent`.
+are unpinned, so unknown event types are expected). `normalize_event()`
+classifies each event through the per-bundle semantic port into a typed
+`EventSemantics` descriptor with three fields: `activity` (turn state),
+`clears_signal` (bool), and `terminal` (`TerminalEventOutcome | None`).
+The result is `NormalizedHarnessEvent` carrying the raw event and its single
+descriptor. Each event is normalized exactly once; downstream consumers read
+the descriptor.
 
 Each adapter's `HarnessBundle` registers a `HarnessSemantics` with:
-- `event_classes`: event-name→`frozenset[SemanticClass]` table
-- `payload_resolver`: optional callable for `TERMINAL_PAYLOAD` events
-- `scoped_events` / `scope_id_resolver`: parent-scope filtering
+- `events`: event-name to `EventSemantics` descriptor table
+- `payload_resolvers`: optional callable for events needing payload inspection
+- `scoped_events`: parent-scope filtering
 
 Dispatch is by `HarnessId` (bundle lookup), then by `event_type` within that
 bundle's table. Shared `semantics.py` contains no harness event names — adding
@@ -164,8 +168,9 @@ Key mappings:
   The succeeded candidate is finalized only when `PiDrainCoordinator` confirms
   quiescence (parent idle, no pending children/bash, no pending notifications).
 
-`PrimaryEventScope` is the parent-conversation identity used for this filtering:
-Codex uses the main `threadId`, and OpenCode uses the launched parent `sessionID`.
+`PrimaryEventScope` is the parent-conversation identity used for this filtering.
+Connections own primary scope construction: Codex builds it from the bootstrapped
+main `threadId`; OpenCode builds it from the launched parent `sessionID`.
 This is the single drain-loop scope contract; do not add harness-specific parallel
 parameters (for example, a Codex-only thread-id compatibility argument) to semantic
 helpers or coordinators.
