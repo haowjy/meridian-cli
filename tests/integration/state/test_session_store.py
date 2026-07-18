@@ -448,7 +448,7 @@ def test_cleanup_repairs_torn_event_tail_before_retrying_stop(tmp_path: Path) ->
     assert not lease_path.exists()
 
 
-def test_empty_harness_session_id_flows_through_start_update_and_record(tmp_path: Path) -> None:
+def test_empty_harness_session_id_normalizes_to_none_before_update(tmp_path: Path) -> None:
     runtime_root = _state_root(tmp_path)
     chat_id = session_store.start_session(
         runtime_root,
@@ -463,7 +463,7 @@ def test_empty_harness_session_id_flows_through_start_update_and_record(tmp_path
         record = session_store.get_session_record(runtime_root, chat_id)
         assert record is not None
         assert record.harness_session_id == "resolved-thread"
-        assert record.harness_session_ids == ("", "resolved-thread")
+        assert record.harness_session_ids == ("resolved-thread",)
 
         rows = [
             json.loads(line)
@@ -471,7 +471,7 @@ def test_empty_harness_session_id_flows_through_start_update_and_record(tmp_path
             if line.strip()
         ]
         assert rows[0]["event"] == "start"
-        assert rows[0]["harness_session_id"] == ""
+        assert rows[0]["harness_session_id"] is None
         assert rows[1]["event"] == "update"
         assert rows[1]["harness_session_id"] == "resolved-thread"
     finally:
