@@ -16,7 +16,7 @@ from meridian.lib.launch.launch_types import SpecT
 
 if TYPE_CHECKING:
     from meridian.lib.harness.connections.resident_backend import ResidentBackendControl
-    from meridian.lib.harness.semantics import PrimaryEventScope
+    from meridian.lib.harness.semantics import EventSemantics, PrimaryEventScope
     from meridian.lib.observability.debug_tracer import DebugTracer
     from meridian.lib.platform.process_scope import ProcessScopeSnapshot
 
@@ -326,6 +326,11 @@ class HarnessConnection(Generic[SpecT], ABC):
     def primary_event_scope(self) -> PrimaryEventScope | None:
         """Parent scope for events that multiplex child activity on the same stream."""
         return None
+
+    def observe_event_semantics(self, semantics: EventSemantics) -> None:
+        """Apply connection-local state changes from the drain's interpretation."""
+
+        _ = semantics
 
     @property
     @abstractmethod

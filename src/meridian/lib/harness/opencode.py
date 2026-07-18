@@ -62,8 +62,8 @@ from meridian.lib.harness.projections.project_opencode_subprocess import (
 )
 from meridian.lib.harness.semantics import (
     MERIDIAN_CONNECTION_CLOSED_EVENT,
+    EventSemantics,
     HarnessSemantics,
-    SemanticClass,
     TerminalEventOutcome,
     connection_closed_outcome,
     stringify_terminal_error,
@@ -569,37 +569,31 @@ def _resolve_opencode_terminal(event: RawHarnessEvent) -> TerminalEventOutcome |
 
 
 OPENCODE_SEMANTICS = HarnessSemantics(
-    event_classes={
-        "agent_message_chunk": frozenset({SemanticClass.TURN_ACTIVE}),
-        "agent_thought_chunk": frozenset({SemanticClass.TURN_ACTIVE}),
-        "tool_call": frozenset({SemanticClass.TURN_ACTIVE}),
-        "tool_call_update": frozenset({SemanticClass.TURN_ACTIVE}),
-        "session.idle": frozenset(
-            {
-                SemanticClass.IDLE,
-                SemanticClass.SIGNAL_CLEARED,
-                SemanticClass.TERMINAL_SUCCESS,
-            }
+    events={
+        "agent_message_chunk": EventSemantics(activity="turn_active"),
+        "agent_thought_chunk": EventSemantics(activity="turn_active"),
+        "tool_call": EventSemantics(activity="turn_active"),
+        "tool_call_update": EventSemantics(activity="turn_active"),
+        "session.idle": EventSemantics(
+            activity="idle",
+            clears_signal=True,
+            terminal=TerminalEventOutcome(status=SpawnStatus.SUCCEEDED, exit_code=0),
         ),
-        "session.error": frozenset(
-            {SemanticClass.SIGNAL_CLEARED, SemanticClass.TERMINAL_PAYLOAD}
-        ),
-        MERIDIAN_CONNECTION_CLOSED_EVENT: frozenset({SemanticClass.TERMINAL_PAYLOAD}),
+        "session.error": EventSemantics(clears_signal=True),
+        MERIDIAN_CONNECTION_CLOSED_EVENT: EventSemantics(),
     },
-    payload_resolver=_resolve_opencode_terminal,
+    payload_resolvers={
+        "session.error": _resolve_opencode_terminal,
+        MERIDIAN_CONNECTION_CLOSED_EVENT: _resolve_opencode_terminal,
+    },
     scoped_events=frozenset(
         {
-            "agent_message_chunk",
-            "agent_thought_chunk",
-            "tool_call",
-            "tool_call_update",
-            "session.idle",
-            "session.error",
+            "agent_message_chunk", "agent_thought_chunk", "tool_call",
+            "tool_call_update", "session.idle", "session.error",
         }
     ),
     scope_id_resolver=extract_opencode_session_id,
 )
-
 
 register_harness_bundle(
     HarnessBundle(

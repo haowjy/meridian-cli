@@ -32,9 +32,8 @@ from meridian.lib.harness.common import parse_json_stream_event, unwrap_event_pa
 from meridian.lib.harness.connections.base import ConnectionConfig, HarnessConnection
 from meridian.lib.harness.extractor import StreamingExtractor
 from meridian.lib.harness.semantics import (
-    PrimaryEventScopeTracker,
+    NormalizedHarnessEvent,
     TerminalEventOutcome,
-    terminal_outcome,
 )
 from meridian.lib.launch.constants import (
     CURSOR_INACTIVITY_TIMEOUT_SECONDS,
@@ -506,20 +505,20 @@ def _emit_stream_event(
 
 async def _consume_subscriber_events(
     *,
-    subscriber: asyncio.Queue[RawHarnessEvent | None],
+    subscriber: asyncio.Queue[NormalizedHarnessEvent | None],
     budget_tracker: LiveBudgetTracker | None,
     budget_signal: asyncio.Event,
     budget_breach_holder: list[BudgetBreach | None],
     event_observer: Callable[[StreamEvent], None] | None,
     stream_stdout_to_terminal: bool,
     terminal_event_future: asyncio.Future[TerminalEventOutcome] | None = None,
-    primary_scope_tracker: PrimaryEventScopeTracker | None = None,
     last_event_at: list[float] | None = None,
 ) -> None:
     while True:
-        event = await subscriber.get()
-        if event is None:
+        normalized_event = await subscriber.get()
+        if normalized_event is None:
             return
+        event = normalized_event.raw
 
         if last_event_at is not None:
             last_event_at[0] = asyncio.get_running_loop().time()
@@ -534,10 +533,7 @@ async def _consume_subscriber_events(
                 budget_signal.set()
 
         if terminal_event_future is not None and not terminal_event_future.done():
-            if primary_scope_tracker is not None:
-                event_outcome = primary_scope_tracker.terminal_outcome(event)
-            else:
-                event_outcome = terminal_outcome(event)
+            event_outcome = normalized_event.semantics.terminal
             if event_outcome is not None:
                 terminal_event_future.set_result(event_outcome)
 
@@ -670,7 +666,7 @@ async def run_streaming_spawn(
     consume_task: asyncio.Task[None] | None = None
     terminal_event_future: asyncio.Future[TerminalEventOutcome] | None = None
     terminal_outcome: TerminalEventOutcome | None = None
-    subscriber: asyncio.Queue[RawHarnessEvent | None] | None = None
+    subscriber: asyncio.Queue[NormalizedHarnessEvent | None] | None = None
     run_spec = spec
     spawn_store.update_spawn(
         runtime_root,
@@ -682,7 +678,7 @@ async def run_streaming_spawn(
         runtime_root,
     )
     try:
-        connection = await _start_spawn_with_timeout(
+        await _start_spawn_with_timeout(
             manager=manager,
             config=config,
             run_spec=run_spec,
@@ -710,11 +706,6 @@ async def run_streaming_spawn(
             if manager.raw_terminal_frames_are_authoritative(spawn_id)
             else None
         )
-        primary_scope_tracker = (
-            PrimaryEventScopeTracker(primary_event_scope=connection.primary_event_scope)
-            if terminal_event_capture is not None
-            else None
-        )
         completion_task = asyncio.create_task(manager.wait_for_completion(spawn_id))
         consume_task = asyncio.create_task(
             _consume_subscriber_events(
@@ -725,7 +716,6 @@ async def run_streaming_spawn(
                 event_observer=None,
                 stream_stdout_to_terminal=stream_to_terminal,
                 terminal_event_future=terminal_event_capture,
-                primary_scope_tracker=primary_scope_tracker,
             )
         )
         signal_task = asyncio.create_task(shutdown_event.wait())
@@ -816,8 +806,7 @@ async def _run_streaming_attempt(
         asyncio.get_running_loop().create_future()
     )
     terminal_event_capture: asyncio.Future[TerminalEventOutcome] | None = None
-    primary_scope_tracker: PrimaryEventScopeTracker | None = None
-    subscriber: asyncio.Queue[RawHarnessEvent | None] | None = None
+    subscriber: asyncio.Queue[NormalizedHarnessEvent | None] | None = None
     connection: HarnessConnection[Any] | None = None
     drain_exit_code = DEFAULT_INFRA_EXIT_CODE
     drain_error: str | None = None
@@ -839,11 +828,6 @@ async def _run_streaming_attempt(
         terminal_event_capture = (
             terminal_event_future
             if manager.raw_terminal_frames_are_authoritative(run.spawn_id)
-            else None
-        )
-        primary_scope_tracker = (
-            PrimaryEventScopeTracker(primary_event_scope=connection.primary_event_scope)
-            if terminal_event_capture is not None
             else None
         )
         await manager.start_heartbeat(run.spawn_id)
@@ -869,7 +853,6 @@ async def _run_streaming_attempt(
                 event_observer=event_observer,
                 stream_stdout_to_terminal=stream_stdout_to_terminal,
                 terminal_event_future=terminal_event_capture,
-                primary_scope_tracker=primary_scope_tracker,
                 last_event_at=last_event_at,
             )
         )

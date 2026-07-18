@@ -23,8 +23,6 @@ from meridian.lib.harness.launch_spec import ResolvedLaunchSpec
 from meridian.lib.harness.registry import HarnessRegistry
 from meridian.lib.harness.semantics import (
     PrimaryEventScope,
-    codex_primary_event_scope,
-    opencode_primary_event_scope,
 )
 from meridian.lib.launch.context import build_launch_context
 from meridian.lib.launch.request import (
@@ -211,9 +209,9 @@ class _OpenCodeTerminalWithScopeConnection:
     @property
     def primary_event_scope(self) -> PrimaryEventScope | None:
         if self.harness is HarnessId.CODEX:
-            return codex_primary_event_scope(self._session_id)
+            return PrimaryEventScope(HarnessId.CODEX, self._session_id, True)
         if self.harness is HarnessId.OPENCODE:
-            return opencode_primary_event_scope(self._session_id)
+            return PrimaryEventScope(HarnessId.OPENCODE, self._session_id)
         return None
 
     @property
@@ -466,7 +464,8 @@ class _ScriptedRetryOpenCodeConnection:
 
     @property
     def primary_event_scope(self) -> PrimaryEventScope | None:
-        return opencode_primary_event_scope(type(self).session_id_value)
+        session_id = type(self).session_id_value
+        return PrimaryEventScope(HarnessId.OPENCODE, session_id) if session_id else None
 
     @property
     def resident_backend(self) -> object:

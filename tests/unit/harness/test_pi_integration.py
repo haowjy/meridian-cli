@@ -19,7 +19,7 @@ from meridian.lib.harness.connections.base import (
     RawHarnessEvent,
 )
 from meridian.lib.harness.connections.pi_rpc import PiRpcConnection
-from meridian.lib.harness.semantics import activity_transition, clears_signal, terminal_outcome
+from meridian.lib.harness.semantics import normalize_event
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.safety.permissions import UnsafeNoOpPermissionResolver
 from meridian.lib.state import spawn_store
@@ -165,24 +165,21 @@ def test_pi_semantics_terminal_outcome_and_activity_mapping() -> None:
         },
     )
 
-    assert terminal_outcome(success_event) is not None
-    assert terminal_outcome(success_event).status == "succeeded"
-    assert terminal_outcome(error_event) is not None
-    assert terminal_outcome(error_event).status == "failed"
-    assert terminal_outcome(cancelled_event) is not None
-    assert terminal_outcome(cancelled_event).status == "cancelled"
-    assert terminal_outcome(cancelled_event).error == "cancelled"
-    assert activity_transition(
+    assert normalize_event(success_event).semantics.terminal is not None
+    assert normalize_event(success_event).semantics.terminal.status == "succeeded"
+    assert normalize_event(error_event).semantics.terminal is not None
+    assert normalize_event(error_event).semantics.terminal.status == "failed"
+    assert normalize_event(cancelled_event).semantics.terminal is not None
+    assert normalize_event(cancelled_event).semantics.terminal.status == "cancelled"
+    assert normalize_event(cancelled_event).semantics.terminal.error == "cancelled"
+    assert normalize_event(
         RawHarnessEvent(event_type="message_update", harness_id="pi", payload={})
-    ) == "turn_active"
-    assert (
-        activity_transition(RawHarnessEvent(event_type="agent_end", harness_id="pi", payload={}))
-        == "idle"
-    )
-    assert (
-        clears_signal(RawHarnessEvent(event_type="agent_end", harness_id="pi", payload={}))
-        is True
-    )
+    ).semantics.activity == "turn_active"
+    agent_end = normalize_event(
+        RawHarnessEvent(event_type="agent_end", harness_id="pi", payload={})
+    ).semantics
+    assert agent_end.activity == "idle"
+    assert agent_end.clears_signal is True
 
 
 @pytest.mark.asyncio

@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import ClassVar, cast
 from uuid import uuid4
 
-from meridian.lib.core.domain import TokenUsage
+from meridian.lib.core.domain import SpawnStatus, TokenUsage
 from meridian.lib.core.types import HarnessId, SpawnId, TransportId
 from meridian.lib.harness.adapter import (
     ApprovalContract,
@@ -65,8 +65,8 @@ from meridian.lib.harness.projections.project_codex_subprocess import (
 )
 from meridian.lib.harness.semantics import (
     MERIDIAN_CONNECTION_CLOSED_EVENT,
+    EventSemantics,
     HarnessSemantics,
-    SemanticClass,
     TerminalEventOutcome,
     TerminalOutcomeCause,
     connection_closed_outcome,
@@ -541,24 +541,19 @@ def _resolve_codex_terminal(event: RawHarnessEvent) -> TerminalEventOutcome | No
 
 
 CODEX_SEMANTICS = HarnessSemantics(
-    event_classes={
-        "turn/started": frozenset({SemanticClass.TURN_ACTIVE}),
-        "turn/completed": frozenset(
-            {
-                SemanticClass.IDLE,
-                SemanticClass.SIGNAL_CLEARED,
-                SemanticClass.TERMINAL_SUCCESS,
-            }
+    events={
+        "turn/started": EventSemantics(activity="turn_active"),
+        "turn/completed": EventSemantics(
+            activity="idle",
+            clears_signal=True,
+            terminal=TerminalEventOutcome(status=SpawnStatus.SUCCEEDED, exit_code=0),
         ),
-        MERIDIAN_CONNECTION_CLOSED_EVENT: frozenset({SemanticClass.TERMINAL_PAYLOAD}),
+        MERIDIAN_CONNECTION_CLOSED_EVENT: EventSemantics(),
     },
-    payload_resolver=_resolve_codex_terminal,
+    payload_resolvers={MERIDIAN_CONNECTION_CLOSED_EVENT: _resolve_codex_terminal},
     scoped_events=frozenset({"turn/started", "turn/completed"}),
     scope_id_resolver=extract_codex_thread_id,
-    primary_scope_event="turn/started",
-    primary_scope_unscoped_events_match=True,
 )
-
 
 register_harness_bundle(
     HarnessBundle(

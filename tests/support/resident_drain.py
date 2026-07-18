@@ -20,7 +20,6 @@ from meridian.lib.harness.connections.resident_backend import ResidentBackendCon
 from meridian.lib.harness.semantics import (
     PrimaryEventScope,
     TerminalEventOutcome,
-    opencode_primary_event_scope,
 )
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.safety.permissions import UnsafeNoOpPermissionResolver
@@ -94,7 +93,7 @@ class FakeResidentConnection(HarnessConnection[ResolvedLaunchSpec]):
     @property
     def primary_event_scope(self) -> PrimaryEventScope | None:
         if self._harness_id is HarnessId.OPENCODE:
-            return opencode_primary_event_scope(self.session_id)
+            return PrimaryEventScope(HarnessId.OPENCODE, "ses-resident")
         return None
 
     @property

@@ -20,7 +20,7 @@ from meridian.lib.harness.connections.base import (
 )
 from meridian.lib.harness.connections.errors import PortBindError
 from meridian.lib.harness.connections.opencode_http import OpenCodeConnection
-from meridian.lib.harness.semantics import terminal_outcome
+from meridian.lib.harness.semantics import normalize_event
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.platform.detached_process import ParentDeathLink
 from meridian.lib.platform.process_scope import ProcessScopeSnapshot, ScopedProcessHandle
@@ -265,10 +265,10 @@ async def test_opencode_process_death_emits_terminal_outcome_with_exit_diagnosti
         "session.updated",
         "meridian/error/connectionClosed",
     ]
-    outcome = terminal_outcome(
+    outcome = normalize_event(
         events[-1],
         primary_event_scope=connection.primary_event_scope,
-    )
+    ).semantics.terminal
     assert outcome is not None
     assert outcome.status == "failed"
     assert outcome.error == (
