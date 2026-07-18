@@ -271,8 +271,7 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         )
         if scoped_session_dir is not None:
             session_dir = scoped_session_dir
-        agent_dir_overrides = pi_agent_dir_env_override()
-        child_env.update(agent_dir_overrides)
+        agent_dir = child_env.get("PI_CODING_AGENT_DIR", "").strip()
         state_dir_overrides = pi_meridian_state_dir_env_override(
             env=child_env,
             runtime_root=runtime_root,
@@ -280,7 +279,6 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         child_env.update(state_dir_overrides)
         env_overrides: dict[str, str] = {
             "MERIDIAN_PI_BINARY": resolved_runtime.binary_path,
-            **agent_dir_overrides,
         }
         if scoped_session_dir is not None:
             env_overrides["PI_CODING_AGENT_SESSION_DIR"] = scoped_session_dir
@@ -292,7 +290,7 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
                 "pi_runtime_path": resolved_runtime.binary_path,
                 "pi_runtime_version": resolved_runtime.runtime_version,
                 "pi_runtime_session_dir": session_dir,
-                "pi_runtime_agent_dir": agent_dir_overrides["PI_CODING_AGENT_DIR"],
+                "pi_runtime_agent_dir": agent_dir,
                 "pi_runtime_auth_policy": "shared-pi-agent-dir",
             },
         )

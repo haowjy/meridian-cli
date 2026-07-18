@@ -3,6 +3,7 @@
 import json
 import os
 import time
+from collections.abc import Mapping
 from pathlib import Path
 from uuid import uuid4
 
@@ -13,6 +14,8 @@ from meridian.lib.harness.claude import ClaudeAdapter
 from meridian.lib.harness.claude_sessions import candidate_claude_project_dirs, project_slug
 from meridian.lib.harness.codex import CodexAdapter
 from meridian.lib.harness.opencode import OpenCodeAdapter
+from meridian.lib.harness.pi import PiAdapter
+from meridian.lib.harness.pi_runtime_resolver import PiLaunchRole, PiRuntimeResolution
 from meridian.lib.harness.session_detection import infer_harness_from_untracked_session_ref
 from meridian.lib.launch.request import SessionRequest
 
@@ -292,6 +295,45 @@ def test_claude_prepare_prelaunch_normalizes_config_dir_for_env_and_metadata(
     expected = str((tmp_path / Path(*expected_suffix)).resolve())
     assert state.env_overrides == {}
     assert recorded_dirs == [expected]
+
+
+def test_pi_prepare_prelaunch_preserves_bound_agent_dir(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    bound_agent_dir = tmp_path / "bound-home" / ".pi" / "agent"
+    monkeypatch.setenv("HOME", str(tmp_path / "ambient-home"))
+
+    def resolve_runtime(*, env: Mapping[str, str], role: PiLaunchRole) -> PiRuntimeResolution:
+        _ = env, role
+        return PiRuntimeResolution(
+            binary_path="/bound/bin/pi",
+            runtime_kind="override",
+            runtime_version="pi 3.0.0",
+        )
+
+    monkeypatch.setattr(
+        "meridian.lib.harness.pi.resolve_pi_runtime",
+        resolve_runtime,
+    )
+    child_env = {
+        "MERIDIAN_PI_SESSION_ROLE": "primary",
+        "PI_CODING_AGENT_DIR": str(bound_agent_dir),
+        "PI_CODING_AGENT_SESSION_DIR": str(tmp_path / "sessions"),
+    }
+
+    state = PiAdapter().prepare_prelaunch(
+        runtime_root=tmp_path / "runtime",
+        spawn_id=SpawnId("p-test"),
+        session=SessionRequest(),
+        child_cwd=tmp_path,
+        child_env=child_env,
+        resolved_harness_session_id="",
+    )
+
+    assert child_env["PI_CODING_AGENT_DIR"] == str(bound_agent_dir)
+    assert "PI_CODING_AGENT_DIR" not in state.env_overrides
+    assert state.metadata["pi_runtime_agent_dir"] == str(bound_agent_dir)
 
 
 def test_codex_adapter_owns_session_detection(
