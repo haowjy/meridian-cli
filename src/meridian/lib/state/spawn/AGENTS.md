@@ -1,4 +1,4 @@
-# state/spawn/ — Spawn Domain Models and V2 Persistence
+# state/spawn/ — Spawn Domain Models and V3 Persistence
 
 Domain types, disk persistence, and pure transitions for per-spawn state files.
 This is the low-level substrate that `spawn_store.py` in the parent package builds on.
@@ -9,9 +9,13 @@ This is the low-level substrate that `spawn_store.py` in the parent package buil
 `LaunchMode`, `SpawnOrigin`. `SpawnRecord` includes the starting prompt reconstructed
 from `starting-prompt.md`; the prompt is not stored in `state.json`.
 
-**`repository.py`** — `StoredSpawnState` (the strict on-disk v2 schema), validated
+**`repository.py`** — `StoredSpawnState` (the strict on-disk v3 schema), validated
 read/write helpers, and the locked mutation result protocol. It is a persistence leaf;
 cross-leaf aggregate operations belong in the parent `spawn_aggregate.py`.
+
+**`legacy.py`** — the one-shot v2→v3 in-memory upgrade seam. Reads never rewrite
+legacy rows; their next locked mutation naturally persists v3. Unknown or conflicting
+legacy facts quarantine rather than bypassing the strict stored model.
 
 **`transitions.py`** — pure transitions such as `apply_mark_running()`,
 `apply_finalize()`, and `apply_record_exited()`. They do no I/O or locking.

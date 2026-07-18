@@ -1,4 +1,4 @@
-"""Spawn state query and shaping helpers backed by per-spawn `state.json` (v2)."""
+"""Spawn state query and shaping helpers backed by per-spawn `state.json`."""
 
 import json
 import re

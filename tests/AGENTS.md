@@ -25,7 +25,7 @@ tests/smoke/        Markdown guides for manual CLI verification.
 ## Available Fakes
 
 `tests/support/fakes.py`: `FakeClock`, `FakeHeartbeat`.
-For spawn state, prefer v2 state helpers (`create_lifecycle_service`,
+For spawn state, prefer state helpers (`create_lifecycle_service`,
 `spawn_store.get_spawn`) or direct `state.json` assertions.
 
 ### Fake Fidelity

@@ -370,7 +370,7 @@ def remove_spawn_events(
     runtime_root: Path,
     spawn_id: SpawnId | str,
 ) -> None:
-    """Remove v2 state for one spawn.
+    """Remove per-spawn state for one spawn.
 
     This narrow rollback seam is for failed spawn preparation before any runner
     can observe or act on the row. It is not a user-facing delete/archive path.

@@ -69,7 +69,7 @@ print('PASS: spawn show returned terminal metadata')
 PY
 ```
 
-### LIFE-4. `state.json` exists, is v2, and omits the prompt body [CRITICAL]
+### LIFE-4. `state.json` exists, is v3, and omits the prompt body [CRITICAL]
 
 ```bash
 SPAWN_ID="$(uv run python - <<'PY'
@@ -88,11 +88,11 @@ state_path = root / 'spawns' / spawn_id / 'state.json'
 prompt_path = root / 'spawns' / spawn_id / 'starting-prompt.md'
 state = json.loads(state_path.read_text(encoding='utf-8'))
 prompt_text = prompt_path.read_text(encoding='utf-8')
-assert state['v'] == 2
+assert state['v'] == 3
 assert state['id'] == spawn_id
 assert state['prompt_length'] == len(prompt_text)
 assert prompt_text not in json.dumps(state)
-print('PASS: state.json is v2 and prompt body stays in starting-prompt.md')
+print('PASS: state.json is v3 and prompt body stays in starting-prompt.md')
 PY
 ```
 

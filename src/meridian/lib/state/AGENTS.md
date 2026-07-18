@@ -26,7 +26,7 @@ meridian.toml
   locks/gc.lock                     — lock-GC pass serialization
   spawns/.staging/<unique>/         — complete row build before atomic publication
   spawns/<spawn_id>/
-    state.json                      — authoritative spawn state (v2)
+    state.json                      — authoritative spawn state (schema v3)
     history.jsonl                   — primary output artifact
     attempt-N/                      — preserved retry evidence from prior attempts
     last-observed-event.json        — diagnostic marker for last harness event + counters
@@ -139,7 +139,8 @@ Both paths share liveness rules in `reaper.py` and completion/cancel precedence 
 
 ## Spawn Subpackage
 
-`spawn/` contains domain models, strict v2 persistence helpers, and pure transitions.
+`spawn/` contains domain models, strict v3 persistence helpers, the one-shot legacy
+v2 read upgrader, and pure transitions.
 → [spawn/AGENTS.md](spawn/AGENTS.md)
 
 ## Anti-Patterns
