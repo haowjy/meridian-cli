@@ -49,7 +49,8 @@ class StoredSpawnState(SpawnStateFields):
         invalid = {
             field: raw
             for field, allowed in vocabularies.items()
-            if (raw := value.get(field)) is not None and raw not in allowed
+            if (raw := value.get(field)) is not None
+            and (not isinstance(raw, str) or raw not in allowed)
         }
         if invalid:
             raise ValueError(f"quarantined unknown spawn vocabulary: {invalid}")
