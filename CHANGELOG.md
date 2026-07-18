@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.3.40] - 2026-07-18
+
 ### Fixed
 - Late spawn-owned artifact writes no longer recreate deleted spawn directories.
 
