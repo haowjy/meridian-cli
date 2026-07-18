@@ -18,6 +18,7 @@ from meridian.lib.platform.locking import lock_file
 from meridian.lib.state.event_store import utc_now_iso
 from meridian.lib.state.paths import ProjectPaths
 from meridian.lib.state.work_state import (
+    STATUS_FILENAME,
     WorkItem,
     WorktreeMetadata,
     active_work_dir,
@@ -57,7 +58,7 @@ def _validate_active_status(status: str) -> str:
 def _has_artifacts(work_dir: Path) -> bool:
     if not work_dir.is_dir():
         return False
-    return any(child.name != "__status.json" for child in work_dir.iterdir())
+    return any(child.name != STATUS_FILENAME for child in work_dir.iterdir())
 
 
 def _validate_exact_slug(raw_name: str) -> str:
