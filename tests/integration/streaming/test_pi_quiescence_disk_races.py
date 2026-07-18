@@ -554,11 +554,7 @@ async def test_spawn_manager_pi_drain_loop_reevaluates_on_disk_wakeup(
     )
 
     spawn_id = SpawnId("p-disk-wakeup")
-    child_state = tmp_path / "spawns" / "p123" / "state.json"
-    _write_json(
-        child_state,
-        {"id": "p123", "parent_id": str(spawn_id), "status": "running"},
-    )
+    start_row(tmp_path, "p123", HarnessId.CODEX, str(spawn_id))
 
     class _OpenAfterTerminalConnection(_FakePiConnection):
         async def events(self):  # type: ignore[no-untyped-def]
@@ -604,9 +600,12 @@ async def test_spawn_manager_pi_drain_loop_reevaluates_on_disk_wakeup(
     try:
         completion = asyncio.create_task(manager.wait_for_completion(spawn_id))
         await assert_still_pending(completion)
-        _write_json(
-            child_state,
-            {"id": "p123", "parent_id": str(spawn_id), "status": "succeeded"},
+        spawn_store.finalize_spawn(
+            tmp_path,
+            SpawnId("p123"),
+            "succeeded",
+            0,
+            origin="runner",
         )
         disk_wakeup.set()
         outcome = await completion

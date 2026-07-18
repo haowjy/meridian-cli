@@ -73,6 +73,34 @@ class SpawnStateQuarantined(ValueError):
         super().__init__(f"Spawn state quarantined: {report.state_path}")
 
 
+def _enforce_spawn_state_field_accounting(
+    *,
+    shared_fields: set[str] | None = None,
+    stored_fields: set[str] | None = None,
+    record_fields: set[str] | None = None,
+) -> None:
+    """Fail at import when either projection stops accounting for a shared field."""
+
+    expected = shared_fields if shared_fields is not None else set(SpawnStateFields.model_fields)
+    stored = stored_fields if stored_fields is not None else set(StoredSpawnState.model_fields)
+    record = record_fields if record_fields is not None else set(SpawnRecord.model_fields)
+    stored_shared = stored - {"v", "prompt_length"}
+    record_shared = record - {"prompt"}
+    missing_stored = expected - stored_shared
+    stale_stored = stored_shared - expected
+    missing_record = expected - record_shared
+    stale_record = record_shared - expected
+    if missing_stored or stale_stored or missing_record or stale_record:
+        raise ImportError(
+            "Spawn state field-accounting drift. "
+            f"Stored missing={sorted(missing_stored)}, stale={sorted(stale_stored)}. "
+            f"Record missing={sorted(missing_record)}, stale={sorted(stale_record)}."
+        )
+
+
+_enforce_spawn_state_field_accounting()
+
+
 
 def _spawn_dir(spawns_dir: Path, spawn_id: str) -> Path:
     return spawns_dir / spawn_id
