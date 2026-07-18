@@ -93,6 +93,7 @@ def test_start_and_update_project_fields_round_trip(tmp_path: Path) -> None:
 def test_invalid_persisted_status_is_reported_and_not_coerced(tmp_path: Path) -> None:
     runtime_root = _state_root(tmp_path)
     spawn_id = _start_test_spawn(runtime_root)
+    valid_spawn_id = _start_test_spawn(runtime_root)
     state_path = RuntimePaths.from_root_dir(runtime_root).spawns_dir / spawn_id / "state.json"
     payload = json.loads(state_path.read_text(encoding="utf-8"))
     payload["status"] = "zombie"
@@ -100,11 +101,12 @@ def test_invalid_persisted_status_is_reported_and_not_coerced(tmp_path: Path) ->
 
     with pytest.raises(SpawnStateQuarantined) as single:
         get_spawn(runtime_root, spawn_id)
-    with pytest.raises(SpawnStateQuarantined) as collection:
-        list_spawns(runtime_root)
+    collection = list_spawns(runtime_root)
 
-    assert single.value.report.spawn_id == collection.value.report.spawn_id == spawn_id
-    assert single.value.report.state_path == collection.value.report.state_path
+    assert [row.id for row in collection] == [valid_spawn_id]
+    assert len(collection.quarantines) == 1
+    assert single.value.report.spawn_id == collection.quarantines[0].spawn_id == spawn_id
+    assert single.value.report.state_path == collection.quarantines[0].state_path
     assert "zombie" in str(single.value.report.validation_errors)
     assert json.loads(state_path.read_text(encoding="utf-8"))["status"] == "zombie"
 
@@ -517,9 +519,9 @@ def test_list_spawns_reports_schema_invalid_row(tmp_path: Path) -> None:
     invalid_spawn_dir.mkdir(parents=True)
     atomic_write_text(invalid_spawn_dir / "state.json", json.dumps({"id": "p999"}))
 
-    with pytest.raises(SpawnStateQuarantined) as quarantined:
-        list_spawns(runtime_root)
-    assert quarantined.value.report.spawn_id == "p999"
+    collection = list_spawns(runtime_root)
+    assert [row.id for row in collection] == ["p1"]
+    assert [report.spawn_id for report in collection.quarantines] == ["p999"]
 
 
 def test_spawn_queries_read_v2_state_and_prompt(tmp_path: Path) -> None:

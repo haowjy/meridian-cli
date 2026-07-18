@@ -53,10 +53,14 @@ from meridian.lib.state.spawn.model import (
     TerminalSpawnStatus as TerminalSpawnStatus,
 )
 from meridian.lib.state.spawn.repository import (
+    SpawnStateQuarantined,
+    SpawnStateQuarantineReport,
+    record_to_stored_state,
+)
+from meridian.lib.state.spawn.repository import (
     is_safe_spawn_dir_name as _is_safe_spawn_dir_name,
 )
 from meridian.lib.state.spawn.repository import read_state as _read_state
-from meridian.lib.state.spawn.repository import record_to_stored_state
 from meridian.lib.state.spawn.repository import scan_spawn_ids as _scan_spawn_ids
 from meridian.lib.state.spawn.repository import write_state_locked as _write_state_locked
 from meridian.lib.state.spawn.terminal_policy import decide_terminal_write
@@ -861,23 +865,40 @@ def _apply_spawn_filters(
     return filtered
 
 
+class SpawnCollection(list[SpawnRecord]):
+    """Valid spawn rows paired with reports for quarantined sibling rows."""
+
+    def __init__(
+        self,
+        records: list[SpawnRecord],
+        quarantines: list[SpawnStateQuarantineReport],
+    ) -> None:
+        super().__init__(records)
+        self.quarantines = tuple(quarantines)
+
+
 def list_spawns(
     runtime_root: Path,
     filters: Mapping[str, Any] | None = None,
-) -> list[SpawnRecord]:
-    """List v2 spawn records with optional equality filters."""
+) -> SpawnCollection:
+    """Partition valid v2 rows from structured quarantine reports."""
 
     paths = RuntimePaths.from_root_dir(runtime_root)
     spawns: list[SpawnRecord] = []
+    quarantines: list[SpawnStateQuarantineReport] = []
     for spawn_id in _scan_spawn_ids(paths.spawns_dir):
-        record = _read_state(paths.spawns_dir, spawn_id, include_prompt=False)
+        try:
+            record = _read_state(paths.spawns_dir, spawn_id, include_prompt=False)
+        except SpawnStateQuarantined as exc:
+            quarantines.append(exc.report)
+            continue
         if record is not None:
             spawns.append(record)
 
     if filters:
         spawns = _apply_spawn_filters(spawns, filters)
 
-    return sorted(spawns, key=_spawn_sort_key)
+    return SpawnCollection(sorted(spawns, key=_spawn_sort_key), quarantines)
 
 
 def get_spawn(

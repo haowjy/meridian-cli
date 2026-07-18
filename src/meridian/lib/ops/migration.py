@@ -125,7 +125,7 @@ def _try_move_dir(src: Path, dst: Path) -> bool:
 
 
 def _get_active_spawns(project_id: str) -> list[str]:
-    """Return list of active spawn IDs for this project. Empty if none or unreadable."""
+    """Return active or uncertain spawn IDs, failing closed on unreadable authority."""
     try:
         from meridian.lib.state.spawn_store import (
             ACTIVE_SPAWN_STATUSES,
@@ -135,9 +135,11 @@ def _get_active_spawns(project_id: str) -> list[str]:
         runtime_root = get_project_home(project_id)
         if not runtime_root.exists():
             return []
-        return [
-            spawn.id for spawn in list_spawns(runtime_root) if spawn.status in ACTIVE_SPAWN_STATUSES
+        collection = list_spawns(runtime_root)
+        active = [
+            spawn.id for spawn in collection if spawn.status in ACTIVE_SPAWN_STATUSES
         ]
+        return [*active, *(f"quarantined:{row.spawn_id}" for row in collection.quarantines)]
     except Exception:
-        # Spawn store read failed — assume no active spawns and allow migration.
-        return []
+        # An unreadable authority may contain active work. Migration must fail closed.
+        return ["unreadable-spawn-state"]
