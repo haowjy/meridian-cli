@@ -6,17 +6,68 @@ model split, two-tier write discipline, and finalization policy.
 
 ## SpawnRecord vs StoredSpawnState
 
-`SpawnRecord` (in `model.py`) is the in-memory projection used throughout the
-codebase. `StoredSpawnState` (in `repository.py`) is the on-disk v2 `state.json`
-representation.
-
-Key difference: `SpawnRecord` carries the full prompt body in `prompt: str | None`.
-`StoredSpawnState` stores only `prompt_length: int | None` — the prompt body lives
-in a separate `starting-prompt.md` file. This keeps `state.json` reads lightweight
-(no large strings in the JSON), and `read_state()` stitches them together.
+Both projections share a frozen `SpawnStateFields` base that carries every shared
+field once. `SpawnRecord` (in `model.py`) adds the full prompt body
+(`prompt: str | None`). `StoredSpawnState` (in `repository.py`) stores only
+`prompt_length: int | None` — the prompt body lives in `starting-prompt.md` to
+keep `state.json` reads lightweight.
 
 `record_to_stored_state()` / `stored_state_to_record()` are the conversion functions.
 `read_state()` calls both automatically; callers don't need the stored form directly.
+An import-time field-accounting guard (`_enforce_spawn_state_field_accounting`)
+fails if either projection stops accounting for a shared field.
+
+## Discriminated Lifecycle Facts
+
+Lifecycle evidence is nested into typed frozen sub-models, not stored as flat
+top-level fields. A status and its accompanying facts form one coherent parse
+unit — it is impossible to construct a terminal spawn without complete terminal
+facts, or carry terminal facts on an active spawn.
+
+```
+SpawnStateFields
+  status: PersistedSpawnStatus          # top-level authority
+  runner_exit: RunnerExitFacts | None   # runner-resolved terminal intent
+  terminal: TerminalFacts | None        # finalized outcome + metrics
+```
+
+**Enforced-equivalence invariant.** When `status` is terminal,
+`terminal.status` must equal `status` and `terminal` must not be `None`.
+When `status` is active or `unknown`, `terminal` must be `None`. A
+`model_validator(mode="before")` enforces this at every parse; stale flat
+lifecycle fields (`runner_exit_code`, `finished_at`, `exit_code`,
+`terminal_origin`, etc.) are rejected outright so historical data is never
+silently misinterpreted as the new schema.
+
+**Revalidation on copy.** Both `RunnerExitFacts`, `TerminalFacts`, and
+`SpawnStateFields` extend `_RevalidatedFrozenModel`, whose `model_copy(update=)`
+round-trips through `model_validate` instead of Pydantic's default shallow copy.
+This closes the escape hatch where `model_copy(update={"status": "succeeded"})`
+would bypass the discriminant invariant.
+
+Backward-compatible property accessors (`runner_exit_status`,
+`runner_exit_code`, `finished_at`, `exit_code`, `terminal_origin`, etc.)
+delegate to the sub-models so existing callers compile unchanged.
+
+## Quarantine
+
+Out-of-vocabulary persisted rows are quarantined, never silently omitted or
+coerced.
+
+`StoredSpawnState` validates vocabulary fields (`status`, `kind`,
+`launch_mode`, and nested `runner_exit.status`, `terminal.status`,
+`terminal.origin`) before Pydantic field parsing via a `model_validator`.
+Non-string values and unknown enum members both route to the quarantine seam:
+type-check runs BEFORE string operations so a non-string value raises
+`ValueError` (quarantine) rather than `AttributeError` (crash past the seam).
+
+Single-row reads (`get_spawn`) raise `SpawnStateQuarantined` with a structured
+`SpawnStateQuarantineReport`. Collection reads (`list_spawns`) partition valid
+rows from quarantine reports into a `SpawnCollection` — callers iterate
+the collection for valid rows and inspect `.quarantines` for problem reports.
+
+Migration and telemetry-retention fail closed on quarantine: an unreadable row
+may contain active work, so those paths skip it rather than deleting live data.
 
 ## Locked Mutation Model
 
@@ -41,76 +92,51 @@ Status transitions are validated against the allowed state machine in
 `core.spawn_lifecycle.validate_transition()`. Pass `validate_status_transition=False`
 only when the record may be in `unknown` status (legacy migration paths).
 
-## Attempt vs Terminal-Intent Fields
+## Attempt vs Runner-Exit vs Terminal Facts
 
-The spawn record carries two distinct categories of exit metadata. Confusing them
-produces wrong terminal-state decisions.
+The spawn record carries three distinct categories of exit metadata at different
+nesting levels. Confusing them produces wrong terminal-state decisions.
 
-### Attempt-level bookkeeping: `last_attempt_exit_code` / `last_attempt_exited_at`
+### Attempt-level: `last_attempt_exit_code` / `last_attempt_exited_at`
 
-Replaces `process_exit_code` / `exited_at`. Same write path — `apply_record_exited()`
-in `transitions.py`, called after each harness attempt drains. Same semantics as
-before, but the name makes the scope explicit: these are **attempt-level** values
-overwritten on every retry. They carry no spawn-level terminal meaning.
+Flat top-level fields overwritten on every harness-attempt drain. They carry no
+spawn-level terminal meaning — a `0` exit code can precede retries or
+post-attempt budget failures. Written by `apply_record_exited()` in
+`transitions.py`.
 
-| Aspect | Detail |
-|---|---|
-| Written by | `_run_streaming_attempt`, `run_streaming_spawn`, `run_harness_process` |
-| Written when | After each attempt drains (per-attempt, not final) |
-| Overwritten on retry | Yes — each new attempt replaces the prior value |
-| Terminal meaning | None — a `0` exit code can precede retries or post-attempt budget failures |
-| Readers | `SpawnDetailOutput` (display), session export duration fallback, reaper diagnostic context |
+### Runner terminal intent: `runner_exit: RunnerExitFacts | None`
 
-### Runner terminal intent: `runner_exit_code` / `runner_exit_status` / `runner_exit_error` / `runner_exit_at`
+Frozen sub-model holding the runner's resolved terminal outcome (`status`,
+`exit_code`, `error`, `exited_at`). Written exactly once after all attempts
+and post-attempt work are complete, before `mark_finalizing()`.
 
-The runner's **resolved terminal outcome** — what the runner would have passed to
-`complete_execution()` if it hadn't crashed. Written exactly once, after all attempts
-and post-attempt work (guardrails, retry decisions, budget checks) are complete.
-
-**Authoritative presence check:** `runner_exit_status is not None`. If `None`, the
-entire tuple is treated as absent regardless of other `runner_exit_*` values. This
-is the single unambiguous guard for the reaper.
-
-| Aspect | Detail |
-|---|---|
-| Written by | `record_runner_exit()` on `SpawnLifecycleService` |
-| Written when | After `terminal_facts` is resolved, BEFORE `mark_finalizing()` |
-| Written how many times | Once per spawn — `write_state()` under signal masking |
-| Values | `runner_exit_status`: `"succeeded"` \| `"failed"` \| `"cancelled"` |
-| Reaper usage | Replaces the old `process_exit_code is not None` branch — reaper finalizes from the persisted decision, not from attempt evidence |
+**Authoritative presence check:** `runner_exit is not None`. The reaper pivots
+entirely on this; attempt-level fields carry no terminal weight.
 
 **Write sequence (caller contract):**
 
-1. Resolve `terminal_facts` from `conclusion`
-2. `record_runner_exit()` — persist resolved outcome (atomic write)
+1. Resolve `terminal_facts` from run conclusion
+2. `record_runner_exit()` — persist `RunnerExitFacts` (atomic write)
 3. `complete_execution()` → `mark_finalizing()` → `finalize()`
 
-Crash safety:
-- Crash between 2 and 3: reaper sees `runner_exit_*` on `running` spawn → uses it.
-- Crash between 3's `mark_finalizing()` and `finalize()`: reaper sees `runner_exit_*` on `finalizing` spawn → uses it.
-- Crash before 2: reaper sees no `runner_exit_*` → orphan-fails. Correct.
+Crash between 2 and 3: reaper sees `runner_exit` on a `running`/`finalizing`
+spawn and uses it. Crash before 2: reaper sees no `runner_exit` and
+orphan-fails. Writers must cover all terminal paths.
 
-**Writers must cover all terminal paths:** `execute_with_streaming()` (primary),
-`_finalize_lifecycle_and_observe_session()` (process runner), and `streaming_serve.py`
-CLI path. Consistency across all paths is mandatory — inconsistent coverage produces
-orphan false-failures for some launch modes.
+### Finalized outcome: `terminal: TerminalFacts | None`
+
+Frozen sub-model holding the complete finalized state (`status`, `exit_code`,
+`finished_at`, `published_at`, `duration_secs`, token/cost metrics, `error`,
+`origin`). Written by `apply_finalize()` in `transitions.py`.
+
+The enforced-equivalence invariant ties `status` (top-level) to
+`terminal.status`; constructing a mismatch fails at parse time.
 
 ### PID-liveness hardening: `runner_created_at_epoch`
 
-`psutil.Process(runner_pid).create_time()` captured at spawn start alongside
-`runner_pid`. Passed to `is_process_alive()` as `created_after_epoch` for robust
-PID-birth-time verification.
-
-The prior heuristic used `started_at` with a 30s grace period — fragile under
-delayed launch (runner starting >30s after spawn creation). `runner_created_at_epoch`
-makes this exact.
-
-| Aspect | Detail |
-|---|---|
-| Captured when | `mark_running` / `start_spawn` — wherever `runner_pid` is set |
-| Value | Unix epoch float from `psutil.Process(os.getpid()).create_time()` |
-| Fallback | `None` if `psutil.AccessDenied` or `psutil.NoSuchProcess` — caller falls back to `started_at` heuristic |
-| Cross-platform | `psutil.Process.create_time()` works on Windows, Linux, macOS |
+`psutil.Process(runner_pid).create_time()` captured alongside `runner_pid`.
+Passed to `is_process_alive()` for robust PID-birth-time verification. Falls
+back to `started_at` heuristic when `psutil` raises.
 
 ## Terminal Write Authority
 
@@ -142,13 +168,22 @@ status regressions (e.g. writing `running` after `success`).
 **Don't treat `last_attempt_exit_code == 0` as a spawn-success signal.** It is
 attempt-level bookkeeping — overwritten on retries and potentially stale after
 post-attempt budget checks or guardrail failures that change the outcome. The
-runner's terminal intent lives in `runner_exit_status`, not in attempt exit codes.
+runner's terminal intent lives in `runner_exit.status`, not in attempt exit codes.
 
-**Don't trust `durable_report` as success evidence when `runner_exit_status is None`
+**Don't trust `durable_report` as success evidence when `runner_exit is None`
 and the runner is dead.** A `report.md` from a prior guardrail-failing attempt looks
 identical to one from a successful run. The runner is the only entity that knows
-whether the spawn succeeded — if it never persisted `runner_exit_*`, treat the spawn
+whether the spawn succeeded — if it never persisted `runner_exit`, treat the spawn
 as an orphan failure even if artifacts exist.
+
+**Don't set flat lifecycle fact fields on the model.** Fields like `exit_code`,
+`finished_at`, `terminal_origin` are read-only properties that delegate to the
+`terminal` sub-model. Build `RunnerExitFacts` or `TerminalFacts` and pass the
+sub-model to the transition function.
+
+**Don't catch `SpawnStateQuarantined` and coerce to a default.** Quarantine
+means the row's vocabulary is unrecognizable. Coercing it silently discards the
+quarantine signal that migration and retention depend on to fail closed.
 
 ## Related
 

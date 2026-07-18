@@ -37,10 +37,23 @@ updated `SpawnRecord` or `Decline(reason)`; the repository returns a
 
 ## Key Rules
 
-**Lifecycle facts are atomic.** Runner-exit evidence lives in `runner_exit`; finalized
-facts live in `terminal`. A terminal top-level status requires matching complete
-`terminal` facts, while active and `unknown` rows must not carry them. Flat lifecycle
-fact fields are not part of the persisted schema.
+**Status authority is `SpawnStatus` (StrEnum).** One enum in `core/domain.py`
+defines every valid status. Lifecycle sets (`ALL_SPAWN_STATUSES`,
+`ACTIVE_SPAWN_STATUSES`, `TERMINAL_SPAWN_STATUSES`) are derived from a
+member-to-lifecycle-class map, not declared as separate constants.
+`TerminalSpawnStatus` is a type alias checked against the enum at import time.
+
+**Lifecycle facts are discriminated and atomic.** Runner-exit evidence lives in
+`runner_exit: RunnerExitFacts | None`; finalized facts live in
+`terminal: TerminalFacts | None`. A terminal top-level status requires matching
+`terminal` facts with `terminal.status == status`; active and `unknown` rows
+must not carry them. `_RevalidatedFrozenModel.model_copy(update=)` revalidates
+the invariant so it cannot be bypassed by in-memory copy.
+
+**Out-of-vocab rows are quarantined, not coerced.** Single reads raise
+`SpawnStateQuarantined`; collection reads partition into `SpawnCollection`
+(valid rows + quarantine reports). Migration and retention fail closed on
+quarantine.
 
 **Read via `read_state()`, not raw JSON.** Raw reads bypass Pydantic validation
 and skip the `starting-prompt.md` reconstruction into `SpawnRecord.starting_prompt`.

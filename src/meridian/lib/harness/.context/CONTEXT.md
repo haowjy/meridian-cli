@@ -137,17 +137,22 @@ to inspect without instantiating an adapter. The contract sub-models:
 - `BootstrapContract` — subprocess-only vs managed-primary-attach, fork materialization
 - `TransportContract` — transport IDs and whether observer/controller is required
 
-### Terminal Event Classification
+### Terminal Event Classification — Closed Semantic Union
 
-`semantics.py:terminal_outcome(event)` drives the drain loop's break condition by
-first selecting `HarnessBundle.semantics` from the event's `HarnessId`. Each adapter
-owns its event-name table and payload-dependent resolver; shared classifiers contain
-no harness event names.
-Returns `TerminalEventOutcome(status, exit_code, error)` or `None`.
-`event_type` is NOT globally unique — always qualified by `event.harness_id`.
-For harnesses whose streams can include child work, callers pass a
-`PrimaryEventScope` from `HarnessConnection.primary_event_scope` into
-`terminal_outcome()`, `activity_transition()`, and `clears_signal()`.
+Raw harness events arrive as open `RawHarnessEvent` envelopes (harness CLIs
+are unpinned, so unknown event types are expected). `HarnessSemantics.normalize()`
+classifies each event through the per-bundle semantic port into a closed
+discriminated union: `SemanticEvent = ActivitySemanticEvent | TerminalSemanticEvent | SignalClearedSemanticEvent`.
+
+Each adapter's `HarnessBundle` registers a `HarnessSemantics` with:
+- `event_classes`: event-name→`frozenset[SemanticClass]` table
+- `payload_resolver`: optional callable for `TERMINAL_PAYLOAD` events
+- `scoped_events` / `scope_id_resolver`: parent-scope filtering
+
+Dispatch is by `HarnessId` (bundle lookup), then by `event_type` within that
+bundle's table. Shared `semantics.py` contains no harness event names — adding
+a harness never adds cases there. `event_type` is NOT globally unique; always
+qualify by `event.harness_id`.
 
 Key mappings:
 - Claude: `result` event with `is_error=True` → failed; `subtype in ("", "success")` and `terminal_reason in ("", "completed")` → succeeded

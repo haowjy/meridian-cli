@@ -1,5 +1,17 @@
 # lib/core — Contracts and Architecture
 
+## Spawn Status Authority (`domain.py`)
+
+`SpawnStatus` is a `StrEnum` with seven members. Lifecycle classification is
+declared as a `dict[SpawnStatus, SpawnLifecycleClass]` map; `ALL_SPAWN_STATUSES`,
+`ACTIVE_SPAWN_STATUSES`, and `TERMINAL_SPAWN_STATUSES` are derived from it by
+`_derive_spawn_status_sets()`. Adding or reclassifying a status requires editing
+the map; the sets update automatically.
+
+`TerminalSpawnStatus` is a `Literal` type alias. An import-time guard compares
+its members to the StrEnum's terminal partition and raises `ImportError` on
+mismatch. This ensures the type annotation and the runtime enum never drift.
+
 ## ID Types (`types.py`)
 
 `SpawnId`, `ModelId`, `ChatId`, `HarnessSessionId`, `ArtifactKey`, and
@@ -10,7 +22,10 @@ passed — don't accept `str` when you mean `SpawnId`.
 
 Persisted `ChatId` and `HarnessSessionId` values pass through the shared
 `normalize_optional_identity()` strip-or-None function independently at the spawn
-`state.json` and session JSONL parse boundaries.
+`state.json` and session JSONL parse boundaries. The normalizer accepts `object`,
+returns `None` for `None`, and raises `ValueError` for non-string values — the
+type-check runs before `.strip()` so non-strings route to quarantine rather
+than crashing with `AttributeError`.
 
 `HarnessId` and `TransportId` are defined here.
 
