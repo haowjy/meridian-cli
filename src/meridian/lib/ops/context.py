@@ -435,9 +435,9 @@ def _relative_time(iso_str: str) -> str:
     return f"{days}d ago"
 
 
-def _sync_status_for_context(context_root: Path) -> str | None:
+def _sync_status_for_context(context_root: Path, *, runtime_root: Path) -> str | None:
     """Return compact sync status text for one context root."""
-    status = read_status(context_root)
+    status = read_status(context_root, runtime_root=runtime_root)
     if status.state is None and not status.unresolved_conflicts:
         return None
 
@@ -467,18 +467,26 @@ def context_sync(input: ContextInput) -> ContextOutput:
     """Synchronous handler for context query."""
 
     authority = resolve_runtime_authority_for_read()
-    runtime_root = authority.runtime_root or authority.project_state_dir
+    if authority.runtime_root is None:
+        raise ValueError("Project has no identity; no context state exists.")
+    runtime_root = authority.runtime_root
     resolved_runtime_context = _resolve_runtime_context(authority.project_root, runtime_root)
     context_config = load_context_config(authority.project_root) or ContextConfig()
     resolved_paths = resolve_context_paths(authority.project_root, context_config)
+    if (
+        resolved_paths.work_root is None
+        or resolved_paths.work_archive is None
+        or resolved_paths.kb_root is None
+    ):
+        raise ValueError("Project context paths are unresolved.")
     extra_config = _extra_context_config(context_config)
     extra_contexts: dict[str, ContextEntryOutput] = {}
     sync_status: dict[str, str] = {}
 
-    work_sync = _sync_status_for_context(resolved_paths.work_root)
+    work_sync = _sync_status_for_context(resolved_paths.work_root, runtime_root=runtime_root)
     if work_sync is not None:
         sync_status["work"] = work_sync
-    kb_sync = _sync_status_for_context(resolved_paths.kb_root)
+    kb_sync = _sync_status_for_context(resolved_paths.kb_root, runtime_root=runtime_root)
     if kb_sync is not None:
         sync_status["kb"] = kb_sync
 
@@ -492,7 +500,7 @@ def context_sync(input: ContextInput) -> ContextOutput:
             path=config_entry.path,
             resolved=path.as_posix(),
         )
-        extra_sync = _sync_status_for_context(path)
+        extra_sync = _sync_status_for_context(path, runtime_root=runtime_root)
         if extra_sync is not None:
             sync_status[normalized] = extra_sync
 
@@ -527,7 +535,9 @@ def work_current_sync(input: WorkCurrentInput) -> WorkCurrentOutput:
 
     _ = input
     authority = resolve_runtime_authority_for_read()
-    runtime_root = authority.runtime_root or authority.project_state_dir
+    runtime_root = authority.runtime_root
+    if runtime_root is None:
+        return WorkCurrentOutput(work_dir=None)
     scope = resolve_active_work_scope(authority.project_root, runtime_root)
 
     return WorkCurrentOutput(
@@ -539,7 +549,9 @@ def work_path_sync(input: WorkPathInput) -> WorkPathOutput:
     """Materialize a path under the active work scope and return its absolute path."""
 
     authority = resolve_runtime_authority_for_read()
-    runtime_root = authority.runtime_root or authority.project_state_dir
+    runtime_root = authority.runtime_root
+    if runtime_root is None:
+        raise ValueError("Project has no identity; no active work scope exists.")
     scope = resolve_active_work_scope(authority.project_root, runtime_root)
     if scope is None:
         raise ValueError("No active work scope is resolvable for this process.")
@@ -562,6 +574,8 @@ def work_root_sync(input: WorkRootInput) -> WorkRootOutput:
     authority = resolve_runtime_authority_for_read()
     context_config = load_context_config(authority.project_root) or ContextConfig()
     resolved_paths = resolve_context_paths(authority.project_root, context_config)
+    if resolved_paths.work_root is None:
+        raise ValueError("Project has no identity; work root is unresolved.")
     return WorkRootOutput(work_root=resolved_paths.work_root.as_posix())
 
 

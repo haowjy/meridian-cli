@@ -17,8 +17,9 @@ def test_resolve_cli_project_root_establishes_cwd_with_project_id(
 ) -> None:
     project_root = tmp_path / "repo"
     project_root.mkdir()
-    (project_root / ".meridian").mkdir()
-    (project_root / ".meridian" / "id").write_text("proj-cwd", encoding="utf-8")
+    (project_root / "meridian.toml").write_text(
+        '[project]\nid = "proj-cwd"\n', encoding="utf-8"
+    )
     monkeypatch.chdir(project_root)
     monkeypatch.delenv("MERIDIAN_PROJECT_DIR", raising=False)
 
@@ -29,7 +30,7 @@ def test_resolve_cli_project_root_establishes_cwd_with_project_id(
     assert resolution.source == "cwd"
 
 
-def test_resolve_cli_project_root_rejects_bare_cwd_without_project_id(
+def test_resolve_cli_project_root_accepts_bare_cwd_without_project_id(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -40,8 +41,8 @@ def test_resolve_cli_project_root_rejects_bare_cwd_without_project_id(
 
     resolution = resolve_cli_project_root()
 
-    assert resolution.established is False
-    assert resolution.project_root is None
+    assert resolution.established is True
+    assert resolution.project_root == bare_cwd.resolve()
     assert resolution.source == "cwd"
 
 

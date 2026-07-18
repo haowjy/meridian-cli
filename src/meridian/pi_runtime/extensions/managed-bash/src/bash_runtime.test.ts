@@ -36,9 +36,9 @@ describe("BashRuntime task pings", () => {
 
   it("sends one ping for a tracked background command", async () => {
     const runtimeRoot = await mkdtemp(path.join(tmpdir(), "pi-bash-ping-"));
-    setEnv("MERIDIAN_PI_STATE_DIR", runtimeRoot);
+    setEnv("_MERIDIAN_PI_STATE_DIR", runtimeRoot);
     setEnv("MERIDIAN_SPAWN_ID", "p-test-ping");
-    setEnv("MERIDIAN_PI_TASK_PING_INTERVAL_MS", "20");
+    setEnv("_MERIDIAN_PI_TASK_PING_INTERVAL_MS", "20");
 
     const pings: string[] = [];
     const runtime = new BashRuntime({

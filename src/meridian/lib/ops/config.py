@@ -11,7 +11,11 @@ import structlog
 from pydantic import BaseModel, ConfigDict, field_serializer
 
 from meridian.lib.config.context_config import ContextSourceType
-from meridian.lib.config.preserving_edit import reset_scalar_option, set_scalar_option
+from meridian.lib.config.preserving_edit import (
+    mutate_project_config,
+    reset_scalar_option,
+    set_scalar_option,
+)
 from meridian.lib.config.project_config_state import (
     ProjectConfigState,
     resolve_project_config_state,
@@ -45,11 +49,11 @@ from meridian.lib.ops.runtime import (
 from meridian.lib.platform.atomic import atomic_write_text
 from meridian.lib.state.paths import (
     RuntimePaths,
-    ensure_gitignore,
     load_context_config,
     resolve_project_paths_for_write,
     resolve_project_runtime_root_for_write,
 )
+from meridian.lib.state.user_paths import get_user_home
 
 _MISSING_PROJECT_CONFIG_MESSAGE = "no project config; run `meridian config init`"
 _LOCAL_CONFIG_FILENAME = "meridian.local.toml"
@@ -630,9 +634,12 @@ def ensure_runtime_state_bootstrap_sync(project_root: Path) -> None:
     context_config = load_context_config(project_root)
 
     repo_state = resolve_project_paths_for_write(project_root)
-    # Always create the root .meridian directory
-    repo_state.root_dir.mkdir(parents=True, exist_ok=True)
-
+    if (
+        repo_state.kb_dir is None
+        or repo_state.work_dir is None
+        or repo_state.work_archive_dir is None
+    ):
+        raise ValueError("Project context paths are unresolved after identity creation.")
     # For context directories, skip only git-backed contexts with remotes.
     if context_config is None:
         # No context config = all local, create everything
@@ -662,18 +669,18 @@ def ensure_runtime_state_bootstrap_sync(project_root: Path) -> None:
     )
     for dir_path in runtime_dirs:
         dir_path.mkdir(parents=True, exist_ok=True)
-    ensure_gitignore(project_root)
 
 
 def ensure_state_bootstrap_sync(project_root: Path) -> ConfigInitOutput:
     """Ensure runtime state exists and scaffold project config when missing."""
 
-    ensure_runtime_state_bootstrap_sync(project_root)
     state = _resolve_project_config_state(project_root)
     if state.path is not None:
+        ensure_runtime_state_bootstrap_sync(project_root)
         return ConfigInitOutput(path=state.path.as_posix(), created=False)
 
     atomic_write_text(state.write_path, _scaffold_template())
+    ensure_runtime_state_bootstrap_sync(project_root)
     return ConfigInitOutput(path=state.write_path.as_posix(), created=True)
 
 
@@ -737,12 +744,15 @@ def config_set_sync(payload: ConfigSetInput) -> ConfigSetOutput:
         raw_value=payload.value,
     )
 
-    edit_result = set_scalar_option(
-        path.read_text(encoding="utf-8"),
-        option=option,
-        value=value,
+    def edit(text: str) -> tuple[str, None]:
+        result = set_scalar_option(text, option=option, value=value)
+        return result.text, None
+
+    mutate_project_config(
+        project_root,
+        get_user_home(),
+        edit,
     )
-    atomic_write_text(path, edit_result.text)
 
     return ConfigSetOutput(
         path=path.as_posix(),
@@ -773,8 +783,16 @@ def config_reset_sync(payload: ConfigResetInput) -> ConfigResetOutput:
     project_root = _resolve_project_root(payload.project_root)
     path = _require_project_config_path(_resolve_project_config_state(project_root))
     option = _resolve_option(payload.key)
-    edit_result = reset_scalar_option(path.read_text(encoding="utf-8"), option=option)
-    atomic_write_text(path, edit_result.text)
+
+    def edit(text: str):
+        result = reset_scalar_option(text, option=option)
+        return result.text, result
+
+    edit_result = mutate_project_config(
+        project_root,
+        get_user_home(),
+        edit,
+    )
 
     return ConfigResetOutput(
         path=path.as_posix(),

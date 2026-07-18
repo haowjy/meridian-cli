@@ -135,10 +135,14 @@ def _project_paths_for_work_store(
 
 
 def _active_dir(paths: ProjectPaths, work_id: str) -> Path:
+    if paths.work_dir is None:
+        raise ValueError("Project work path is unresolved.")
     return paths.work_dir / work_id
 
 
 def _archived_dir(paths: ProjectPaths, work_id: str) -> Path:
+    if paths.work_archive_dir is None:
+        raise ValueError("Project work archive path is unresolved.")
     return paths.work_archive_dir / work_id
 
 
@@ -594,6 +598,8 @@ def get_work_item(runtime_root: Path, work_id: str) -> WorkItem | None:
     """Load one work item from active or archived directories."""
 
     paths = _project_paths_for_work_store(runtime_root)
+    if paths.work_dir is None or paths.work_archive_dir is None:
+        return None
     active_dir, archived_dir = _locate_dirs(paths, work_id)
     _warn_both_locations(work_id, active_dir, archived_dir)
     if active_dir is not None:
@@ -610,6 +616,8 @@ def get_active_work_item(
     """Load one active work item."""
 
     paths = _project_paths_for_work_store(runtime_root)
+    if paths.work_dir is None:
+        return None
     active_dir = _active_dir(paths, work_id)
     if not active_dir.is_dir():
         return None
@@ -637,6 +645,8 @@ def list_work_items(runtime_root: Path) -> tuple[list[WorkItem], list[str]]:
     """
 
     paths = _project_paths_for_work_store(runtime_root)
+    if paths.work_dir is None or paths.work_archive_dir is None:
+        return [], []
     active_dirs = _list_work_item_dirs(paths.work_dir)
     if not active_dirs:
         return [], []
@@ -667,6 +677,8 @@ def list_archived_work_items(
     """
 
     paths = _project_paths_for_work_store(runtime_root)
+    if paths.work_dir is None or paths.work_archive_dir is None:
+        return [], []
     archived_dirs = _list_work_item_dirs(paths.work_archive_dir)
     if not archived_dirs:
         return [], []

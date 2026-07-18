@@ -224,7 +224,7 @@ def test_config_show_ignores_inaccessible_implicit_user_config(
     config_path = tmp_path / "user-home" / "config.toml"
     project_root.mkdir()
     monkeypatch.setenv("MERIDIAN_HOME", config_path.parent.as_posix())
-    monkeypatch.setenv("MERIDIAN_DEPTH", "1")
+    monkeypatch.setenv("_MERIDIAN_DEPTH", "1")
     monkeypatch.delenv("MERIDIAN_CONFIG", raising=False)
 
     original_is_file = Path.is_file
@@ -310,7 +310,7 @@ def test_project_authority_freezes_meridian_local_path_at_resolution_time(
     project_root.mkdir()
     authority = resolve_project_authority(project_root)
 
-    monkeypatch.setenv("MERIDIAN_RUNTIME_DIR", (tmp_path / "runtime-b" / ".meridian").as_posix())
+    monkeypatch.setenv("_MERIDIAN_RUNTIME_DIR", (tmp_path / "runtime-b" / ".meridian").as_posix())
 
     assert authority.project_config_paths.meridian_local_toml == (
         project_root.resolve() / "meridian.local.toml"
@@ -346,7 +346,7 @@ def test_build_config_surface_uses_authority_project_config_paths_after_env_chan
     )
     frozen_authority = authority.model_copy(update={"project_config_paths": frozen_paths})
 
-    monkeypatch.setenv("MERIDIAN_RUNTIME_DIR", (tmp_path / "runtime-after").as_posix())
+    monkeypatch.setenv("_MERIDIAN_RUNTIME_DIR", (tmp_path / "runtime-after").as_posix())
 
     surface = build_config_surface(frozen_authority)
 
@@ -356,19 +356,15 @@ def test_build_config_surface_uses_authority_project_config_paths_after_env_chan
     )
 
 
-def test_runtime_authority_for_read_falls_back_to_project_state_in_plain_directory(
+def test_runtime_authority_for_read_is_unresolved_in_plain_directory(
     tmp_path: Path,
 ) -> None:
     project_root = tmp_path / "plain-project"
     nested = project_root / "docs"
-    runtime_root = project_root / ".meridian"
     nested.mkdir(parents=True)
-    runtime_root.mkdir()
-    (runtime_root / "id").write_text("project-uuid", encoding="utf-8")
-    (runtime_root / "spawns.jsonl").write_text("", encoding="utf-8")
 
     authority = resolve_runtime_authority_for_read(project_root, execution_cwd=nested)
 
     assert authority.project_root == project_root.resolve()
-    assert authority.runtime_root == runtime_root.resolve()
-    assert authority.runtime_root_source in {"project-state", "project-state-fallback"}
+    assert authority.runtime_root is None
+    assert authority.runtime_root_source == "unresolved"

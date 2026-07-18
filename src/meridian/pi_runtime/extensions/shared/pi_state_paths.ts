@@ -1,20 +1,17 @@
+import os from "node:os";
 import path from "node:path";
 
 /** Mirrors ``pi_paths.resolve_meridian_pi_state_dir`` — extension runtime state root. */
 export function resolveStateRoot(): string {
-  const explicit = process.env.MERIDIAN_PI_STATE_DIR?.trim();
+  const explicit = process.env._MERIDIAN_PI_STATE_DIR?.trim();
   if (explicit) {
     return explicit;
-  }
-  const agentDir = process.env.PI_CODING_AGENT_DIR?.trim();
-  if (agentDir) {
-    return path.join(agentDir, ".meridian");
   }
   const home = process.env.HOME?.trim();
   if (home) {
     return path.join(home, ".meridian", "meridian-pi", "state");
   }
-  return path.join(process.cwd(), ".meridian");
+  return path.join(os.homedir(), ".meridian", "meridian-pi", "state");
 }
 
 export function currentSpawnIdFromEnv(): string {

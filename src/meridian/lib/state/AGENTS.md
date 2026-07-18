@@ -8,8 +8,8 @@ no in-memory objects that survive process death. If it's not on disk, it doesn't
 State splits across distinct roots — understand which goes where before writing anything:
 
 ```
-.meridian/                          ← repo-local, committed scaffolding
-  id                                — project UUID / three-word ID
+meridian.toml
+  [project] id                      — committed machine-managed project identity
 
 ~/.meridian/projects/.locks/<id>.lock
                                     — shared session-lifetime / exclusive deletion gate
@@ -41,7 +41,7 @@ State splits across distinct roots — understand which goes where before writin
   prompts/ handoffs/ …              — work artifacts
 ```
 
-The project UUID in `.meridian/id` keys into `~/.meridian/projects/<id>/`. Projects
+The project ID in `meridian.toml` `[project] id` keys into `~/.meridian/projects/<id>/`. Projects
 can move or be renamed without losing runtime history. Project lifetime gates sit outside
 the deletable project root and are never unlinked.
 
@@ -104,7 +104,7 @@ Use the correct resolver — they have different side effects:
 | `resolve_project_runtime_root()` | No | Read paths (list, show, status) |
 | `resolve_project_runtime_root_for_write()` | Yes (under lock) | Write paths only |
 
-Using `*_for_write()` on a read path creates `.meridian/id` in untouched checkouts,
+Using `*_for_write()` on a read path creates `meridian.toml` identity in untouched checkouts,
 triggering project setup side effects in CI.
 
 ## Reconciliation Behavior
@@ -146,7 +146,7 @@ Both paths share liveness rules in `reaper.py` and completion/cancel precedence 
 **Don't read `state.json` without `read_state()`** — raw JSON reads bypass Pydantic
 validation and miss `SpawnRecord` reconstruction from `starting-prompt.md`.
 
-**Don't use `*_for_write()` on read paths** — creates project UUID in clean checkouts.
+**Don't use `*_for_write()` on read paths** — creates project identity in clean checkouts.
 
 **Don't write state files with `open()`** — use `atomic_write_text()` or `append_text_line()`.
 

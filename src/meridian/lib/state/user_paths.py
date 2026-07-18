@@ -3,11 +3,16 @@
 from __future__ import annotations
 
 import os
+import tomllib
 from pathlib import Path
+from typing import cast
 
+from meridian.lib.config.preserving_edit import (
+    mutate_project_config,
+    project_config_transaction,
+    set_project_id,
+)
 from meridian.lib.platform import IS_WINDOWS, get_home_path
-from meridian.lib.platform.atomic import atomic_write_text
-from meridian.lib.platform.locking import lock_file
 from meridian.lib.state.wordgen import generate_project_id
 
 
@@ -40,25 +45,64 @@ def get_user_home() -> Path:
     return get_home_path() / ".meridian"
 
 
-def get_project_id(meridian_dir: Path) -> str | None:
-    """Read-only project ID lookup from `.meridian/id`.
+def get_project_id(project_root: Path) -> str | None:
+    """Read the precedence-exempt project ID from ``meridian.toml``.
 
     Accepts any non-empty string — UUIDs, three-word IDs, or any future format.
     Returns None when the id file is missing, unreadable, or empty.
     """
 
-    id_file = meridian_dir / "id"
-    if not id_file.is_file():
+    config_path = project_root / "meridian.toml"
+    if not config_path.is_file():
         return None
     try:
-        project_id = id_file.read_text(encoding="utf-8").strip()
+        payload = cast("dict[str, object]", tomllib.loads(config_path.read_text(encoding="utf-8")))
     except OSError:
         return None
-    return project_id or None
+    except tomllib.TOMLDecodeError as exc:
+        raise ValueError(f"Invalid TOML in '{config_path.as_posix()}': {exc}") from exc
+    project = payload.get("project")
+    if project is None:
+        return None
+    if not isinstance(project, dict):
+        raise ValueError(f"Invalid [project] table in '{config_path.as_posix()}'.")
+    raw_id = cast("dict[str, object]", project).get("id")
+    if raw_id is None:
+        return None
+    if not isinstance(raw_id, str) or not raw_id.strip():
+        raise ValueError(f"Invalid [project] id in '{config_path.as_posix()}'.")
+    return raw_id.strip()
 
 
-def get_or_create_project_id(meridian_dir: Path) -> str:
-    """Read or generate the project ID from .meridian/id.
+def _legacy_project_id(project_root: Path) -> str | None:
+    legacy_path = project_root / ".meridian" / "id"
+    try:
+        value = legacy_path.read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+    return value or None
+
+
+def write_project_id(project_root: Path, project_id: str) -> None:
+    """Append or create the machine-managed project identity atomically."""
+
+    normalized = project_id.strip()
+    mutate_project_config(
+        project_root,
+        get_user_home(),
+        lambda text: (
+            set_project_id(
+                text,
+                normalized,
+                config_path=project_root / "meridian.toml",
+            ),
+            None,
+        ),
+    )
+
+
+def get_or_create_project_id(project_root: Path) -> str:
+    """Read or create the project ID in ``meridian.toml``.
 
     - If .meridian/id exists, read and return it (any format accepted)
     - If not, generate a three-word ID (adjective-noun-noun), collision-check
@@ -66,15 +110,26 @@ def get_or_create_project_id(meridian_dir: Path) -> str:
     - Up to 10 retries on collision; raises RuntimeError if exhausted
     """
 
-    project_id = get_project_id(meridian_dir)
+    project_id = get_project_id(project_root)
     if project_id is not None:
         return project_id
 
-    lock_path = meridian_dir / "id.lock"
-    with lock_file(lock_path):
-        project_id = get_project_id(meridian_dir)
+    with project_config_transaction(project_root, get_user_home()):
+        project_id = get_project_id(project_root)
         if project_id is not None:
             return project_id
+
+        legacy_id = _legacy_project_id(project_root)
+        if legacy_id is not None:
+            from meridian.lib.ops.migration import migrate_legacy_project_identity
+
+            result = migrate_legacy_project_identity(project_root)
+            if result.status == "blocked":
+                raise RuntimeError(result.blocking_reason or "Project identity migration blocked")
+            migrated_id = get_project_id(project_root)
+            if migrated_id is None:
+                raise RuntimeError("Legacy project identity migration did not write an identity.")
+            return migrated_id
 
         user_home = get_user_home()
         for _ in range(10):
@@ -88,9 +143,7 @@ def get_or_create_project_id(meridian_dir: Path) -> str:
         else:
             raise RuntimeError("Failed to generate a unique project ID after 10 attempts")
 
-        id_file = meridian_dir / "id"
-        meridian_dir.mkdir(parents=True, exist_ok=True)
-        atomic_write_text(id_file, project_id)
+        write_project_id(project_root, project_id)
         return project_id
 
 

@@ -23,18 +23,18 @@ Both paths converge at `launch_prepared_spawn()`:
 
 `api.py` checks `max_depth_reached()` before every spawn execution. A spawn chain
 that exceeds the depth limit returns `depth_exceeded_output()` instead of creating
-a new spawn. `MERIDIAN_DEPTH` is an env var that increments with each spawn level;
+a new spawn. `_MERIDIAN_DEPTH` is an env var that increments with each spawn level;
 nested processes also read it to skip reaping side effects.
 
 ## Wait Behavior
 
 `spawn_wait` has two modes:
 - With spawn IDs: waits for specific spawns.
-- Without args (no-arg form): scoped to the current `MERIDIAN_DEPTH` — waits for
+- Without args (no-arg form): scoped to the current `_MERIDIAN_DEPTH` — waits for
   spawns created at this nesting level only, not grandchild spawns.
 
 Checkpoint polling respects the depth-appropriate yield interval (read from
-`MERIDIAN_HARNESS` env — the orchestrator's own harness prompt-cache TTL).
+`_MERIDIAN_HARNESS` env — the orchestrator's own harness prompt-cache TTL).
 
 ## The Exception to SPEC_ONLY
 

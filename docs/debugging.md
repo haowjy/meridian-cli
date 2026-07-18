@@ -17,7 +17,7 @@ Read this only when something looks wrong: a spawn seems stuck, expected output 
 
 ## Spawn Artifact Layout
 
-Each spawn writes artifacts under `.meridian/spawns/<spawn_id>/`.
+Each spawn writes artifacts under `~/.meridian/projects/<project-id>/spawns/<spawn-id>/`. Use CLI output rather than hardcoding this path.
 
 | File | Contents |
 |---|---|

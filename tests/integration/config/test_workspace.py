@@ -18,7 +18,7 @@ from tests.support.launch import stub_bundle_request_and_resolve
 
 @pytest.fixture(autouse=True)
 def _clear_state_root_override(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("MERIDIAN_RUNTIME_DIR", raising=False)
+    monkeypatch.delenv("_MERIDIAN_RUNTIME_DIR", raising=False)
 
 
 def _repo(tmp_path: Path) -> Path:

@@ -29,15 +29,23 @@ class SpawnScope:
     task_dir_cleared: bool = False
 
 
-def _scope_path_for_read(project_root: Path, spawn_id: str) -> Path:
-    return resolve_spawn_log_dir(project_root, spawn_id) / _SCOPE_FILENAME
+def _scope_path_for_read(project_root: Path, spawn_id: str) -> Path | None:
+    from meridian.lib.state.paths import resolve_project_runtime_root_or_none
+
+    runtime_root = resolve_project_runtime_root_or_none(project_root)
+    if runtime_root is None:
+        return None
+    return (
+        resolve_spawn_log_dir(project_root, spawn_id, runtime_root=runtime_root)
+        / _SCOPE_FILENAME
+    )
 
 
 def read_spawn_scope(project_root: Path, spawn_id: str) -> SpawnScope:
     """Read scope.json for a spawn. Tolerates missing, empty, or corrupt files."""
 
     path = _scope_path_for_read(project_root, spawn_id)
-    if not path.is_file():
+    if path is None or not path.is_file():
         return SpawnScope()
     try:
         text = path.read_text(encoding="utf-8").strip()

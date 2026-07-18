@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-import json
 import shutil
 import subprocess
 import threading
 from collections.abc import Generator
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
+from dataclasses import asdict
 from pathlib import Path
 from typing import cast
 from uuid import uuid4
@@ -51,7 +51,7 @@ def _context(work_dir: Path) -> HookContext:
         event_id=uuid4(),
         timestamp="2026-04-20T00:00:00+00:00",
         project_root=str(work_dir),
-        runtime_root=str(work_dir / ".meridian"),
+        runtime_root=str(work_dir.parent / "runtime"),
         work_id="w123",
         work_dir=str(work_dir),
     )
@@ -140,18 +140,12 @@ def _configure_clone_override(
 def _read_conflicts(work: Path) -> list[dict[str, object]]:
     """Read all conflict metadata files from a sync root."""
 
-    conflict_dir = work / ".meridian" / "autosync" / "conflicts"
-    if not conflict_dir.exists():
-        return []
-
-    conflicts: list[dict[str, object]] = []
-    for path in sorted(conflict_dir.iterdir()):
-        if path.suffix != ".json":
-            continue
-        loaded = json.loads(path.read_text(encoding="utf-8"))
-        if isinstance(loaded, dict):
-            conflicts.append(cast("dict[str, object]", loaded))
-    return conflicts
+    return [
+        cast("dict[str, object]", asdict(record))
+        for record in autosync_store.read_conflicts(
+            work, runtime_root=work.parent / "runtime"
+        )
+    ]
 
 
 def _git_path(repo: Path, name: str, *, env: dict[str, str]) -> Path:
@@ -375,8 +369,10 @@ def test_conflict_resolution_waits_for_complete_hook_transaction(
     def delayed_write_conflict(
         sync_root: Path,
         record: autosync_store.ConflictRecord,
+        *,
+        runtime_root: Path,
     ) -> None:
-        original_write_conflict(sync_root, record)
+        original_write_conflict(sync_root, record, runtime_root=runtime_root)
         record_written.set()
         assert release_hook.wait(timeout=5)
 
@@ -384,14 +380,21 @@ def test_conflict_resolution_waits_for_complete_hook_transaction(
     def observed_resolution_transaction(
         sync_root: Path,
         *,
+        runtime_root: Path,
         timeout: float | None = 60.0,
     ) -> Generator[AutosyncMutation, None, None]:
         resolution_started.set()
-        with original_transaction(sync_root, timeout=timeout) as autosync_tx:
+        with original_transaction(
+            sync_root, runtime_root=runtime_root, timeout=timeout
+        ) as autosync_tx:
             yield autosync_tx
 
     monkeypatch.setattr(autosync_store, "_write_conflict", delayed_write_conflict)
-    monkeypatch.setattr(sync_conflicts, "_find_sync_roots", lambda: [work])
+    monkeypatch.setattr(
+        sync_conflicts,
+        "_find_sync_roots",
+        lambda: ([work], work.parent / "runtime"),
+    )
     monkeypatch.setattr(sync_conflicts, "transaction", observed_resolution_transaction)
 
     with ThreadPoolExecutor(max_workers=2) as executor:
@@ -542,7 +545,7 @@ def test_git_autosync_default_ignores_written(
     exclude_contents = (work / ".git" / "info" / "exclude").read_text(encoding="utf-8")
     assert ".git" in exclude_contents
     assert "**/.git" in exclude_contents
-    assert ".meridian/autosync/" in exclude_contents
+    assert ".meridian/autosync/" not in exclude_contents
 
 
 def test_git_autosync_aborts_stale_rebase_on_entry(

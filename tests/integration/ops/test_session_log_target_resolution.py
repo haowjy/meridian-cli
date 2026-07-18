@@ -14,10 +14,11 @@ from pathlib import Path
 
 import pytest
 
+from meridian.lib.ops.reference import resolve_session_reference
 from meridian.lib.ops.session_log import SessionLogInput, session_log_sync
 from meridian.lib.ops.session_target import resolve_session_log_target
 from meridian.lib.state import session_store, spawn_store
-from meridian.lib.state.paths import resolve_project_runtime_root
+from meridian.lib.state.paths import resolve_project_runtime_root_for_write
 
 
 def _write_codex_rollout(
@@ -84,13 +85,44 @@ def _write_opencode_session(
     return session_path
 
 
+def test_identity_free_raw_harness_reference_resolves_without_runtime(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    codex_home = tmp_path / "codex-home"
+    monkeypatch.setenv("CODEX_HOME", codex_home.as_posix())
+    session_id = "78f02237-df5f-43fe-a6e5-929f98287877"
+    rollout = _write_codex_rollout(
+        sessions_root=codex_home / "sessions",
+        project_root=project_root,
+        session_id=session_id,
+        assistant_text="stateless transcript",
+    )
+
+    reference = resolve_session_reference(project_root, session_id)
+    log_target = resolve_session_log_target(
+        ref=session_id,
+        file_path=None,
+        project_root=project_root,
+        runtime_root=None,
+    )
+
+    assert not (project_root / "meridian.toml").exists()
+    assert reference.harness_session_id == session_id
+    assert reference.harness == "codex"
+    assert not reference.tracked
+    assert log_target.session_id == session_id
+    assert log_target.file_path == rollout
+
+
 def test_session_log_chat_prefers_detected_transcript_without_mutating_tracked_ids(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
     project_root = tmp_path / "repo"
     project_root.mkdir()
-    runtime_root = resolve_project_runtime_root(project_root)
+    runtime_root = resolve_project_runtime_root_for_write(project_root)
     runtime_root.mkdir(parents=True, exist_ok=True)
 
     home_root = tmp_path / "home"
@@ -156,7 +188,7 @@ def test_session_log_spawn_prefers_detected_transcript_without_mutating_tracked_
 ) -> None:
     project_root = tmp_path / "repo"
     project_root.mkdir()
-    runtime_root = resolve_project_runtime_root(project_root)
+    runtime_root = resolve_project_runtime_root_for_write(project_root)
     runtime_root.mkdir(parents=True, exist_ok=True)
 
     home_root = tmp_path / "home"
@@ -221,7 +253,7 @@ def test_resolve_target_chat_detected_primary_session_without_transcript_is_not_
 ) -> None:
     project_root = tmp_path / "repo"
     project_root.mkdir()
-    runtime_root = resolve_project_runtime_root(project_root)
+    runtime_root = resolve_project_runtime_root_for_write(project_root)
     runtime_root.mkdir(parents=True, exist_ok=True)
 
     home_root = tmp_path / "home"
@@ -279,7 +311,7 @@ def test_resolve_target_spawn_detected_primary_session_without_transcript_is_not
 ) -> None:
     project_root = tmp_path / "repo"
     project_root.mkdir()
-    runtime_root = resolve_project_runtime_root(project_root)
+    runtime_root = resolve_project_runtime_root_for_write(project_root)
     runtime_root.mkdir(parents=True, exist_ok=True)
 
     home_root = tmp_path / "home"
@@ -323,7 +355,7 @@ def test_resolve_target_spawn_detected_primary_session_without_transcript_is_not
 def test_resolve_target_chat_not_found_preserves_missing_chat_error(tmp_path: Path) -> None:
     project_root = tmp_path / "repo"
     project_root.mkdir()
-    runtime_root = resolve_project_runtime_root(project_root)
+    runtime_root = resolve_project_runtime_root_for_write(project_root)
     runtime_root.mkdir(parents=True, exist_ok=True)
 
     with pytest.raises(ValueError) as exc:
@@ -342,7 +374,7 @@ def test_resolve_target_spawn_id_uses_read_only_lookup_without_reconciliation(
 ) -> None:
     project_root = tmp_path / "repo"
     project_root.mkdir()
-    runtime_root = resolve_project_runtime_root(project_root)
+    runtime_root = resolve_project_runtime_root_for_write(project_root)
     runtime_root.mkdir(parents=True, exist_ok=True)
 
     codex_home = tmp_path / "codex-home"
@@ -393,7 +425,7 @@ def test_resolve_target_chat_id_uses_read_only_lookup_without_reconciliation(
 ) -> None:
     project_root = tmp_path / "repo"
     project_root.mkdir()
-    runtime_root = resolve_project_runtime_root(project_root)
+    runtime_root = resolve_project_runtime_root_for_write(project_root)
     runtime_root.mkdir(parents=True, exist_ok=True)
 
     codex_home = tmp_path / "codex-home"

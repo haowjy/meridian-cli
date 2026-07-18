@@ -284,7 +284,7 @@ async def start_manager(
             harness_id=connection.harness_id,
             prompt="hello",
             control_root=tmp_path,
-            env_overrides={},
+            child_env={},
             resident_deadline_seconds=resident_deadline_seconds,
             resident_poll_seconds=resident_poll_seconds,
         ),

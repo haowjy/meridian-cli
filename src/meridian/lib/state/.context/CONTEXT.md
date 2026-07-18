@@ -7,9 +7,8 @@
 State splits across two roots:
 
 ```
-.meridian/                          ← repo-local, committed scaffolding
-  id                                — project UUID / three-word ID
-  id.lock                           — exclusive lock for UUID generation
+meridian.toml
+  [project] id                      — committed machine-managed project identity
 
 ~/.meridian/projects/<id>/          ← user runtime, never committed
   sessions.jsonl                    — all session events, append-only
@@ -38,7 +37,7 @@ State splits across two roots:
   prompts/ handoffs/ …              — work artifacts
 ```
 
-The project ID in `.meridian/id` is the key that maps to
+The project ID in `meridian.toml` `[project] id` is the key that maps to
 `~/.meridian/projects/<id>/`. Projects can be moved or renamed without losing
 runtime history.
 
@@ -94,7 +93,7 @@ directory rename while holding `spawns_flock`. Runtime-write startup removes aba
 | `resolve_project_runtime_root_or_none()` | No | Read paths where caller needs to know if uninitialized |
 | `resolve_project_runtime_root_for_write()` | Yes (under lock) | Write paths (start spawn, record session) |
 
-Using `*_for_write()` on a read path creates `.meridian/id` in untouched checkouts
+Using `*_for_write()` on a read path creates `meridian.toml` identity in untouched checkouts
 (CI, first-time runs). This triggers project setup side effects unexpectedly.
 
 ### Monotonic ID Generation
@@ -106,7 +105,7 @@ Format: `p1`, `p2`, `p3`, …
 **Session IDs** (`session-id-counter`): incremented under `lock_file()`. Format:
 `c1`, `c2`, `c3`, …
 
-**Project UUID / three-word ID** (`.meridian/id`): generated under `id.lock` with
+**Project ID** (`meridian.toml` `[project] id`): generated under a transient adjacent creation lock with
 double-checked locking. Collision-checked against existing
 `~/.meridian/context/<id>/` and `~/.meridian/projects/<id>/` directories.
 Up to 10 retries; raises `RuntimeError` if exhausted.
@@ -209,7 +208,7 @@ new OS-specific home-directory branches.
 **Don't read `state.json` without `read_state()`** — raw JSON reads bypass Pydantic
 validation and miss the `SpawnRecord` reconstruction from `starting-prompt.md`.
 
-**Don't use `*_for_write()` on read paths** — it creates the project UUID in clean
+**Don't use `*_for_write()` on read paths** — it creates project identity in clean
 checkouts, triggering project setup side effects in CI.
 
 **Don't use `open()` for state file writes** — use `atomic_write_text()` or

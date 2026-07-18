@@ -35,9 +35,9 @@ with all collected failures.
 boundary — repo scripts are untrusted. Do not weaken this.
 
 Injected env vars available to guardrail scripts:
-- `MERIDIAN_GUARDRAIL_RUN_ID` — the spawn ID
-- `MERIDIAN_GUARDRAIL_OUTPUT_LOG` — path to the spawn output log
-- `MERIDIAN_GUARDRAIL_REPORT_PATH` — optional report path
+- `_MERIDIAN_GUARDRAIL_RUN_ID` — the spawn ID
+- `_MERIDIAN_GUARDRAIL_OUTPUT_LOG` — path to the spawn output log
+- `_MERIDIAN_GUARDRAIL_REPORT_PATH` — optional report path
 
 **Command resolution:**
 - Legacy native-Windows branch (untested): `.cmd`/`.bat` → `cmd.exe /d /c`;

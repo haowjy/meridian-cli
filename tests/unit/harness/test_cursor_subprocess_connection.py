@@ -14,6 +14,7 @@ from meridian.lib.harness.connections.base import ConnectionConfig, HarnessEvent
 from meridian.lib.harness.connections.cursor_subprocess import CursorSubprocessConnection
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.safety.permissions import UnsafeNoOpPermissionResolver
+from meridian.lib.state import spawn_store
 from meridian.lib.state.paths import resolve_spawn_log_dir
 
 
@@ -62,15 +63,6 @@ class _FakeProcess:
 
 async def _collect_events(connection: CursorSubprocessConnection) -> list[HarnessEvent]:
     return [event async for event in connection.events()]
-
-
-def _passthrough_child_env(
-    _base: object,
-    overrides: dict[str, str],
-    blocked: object,
-) -> dict[str, str]:
-    _ = blocked
-    return dict(overrides)
 
 
 @pytest.mark.asyncio
@@ -250,11 +242,6 @@ async def _start_fresh_cursor_spawn(
         return _AgentOnlyProcess()
 
     monkeypatch.setattr(
-        cursor_subprocess_module,
-        "inherit_child_env",
-        _passthrough_child_env,
-    )
-    monkeypatch.setattr(
         cursor_subprocess_module.asyncio,
         "create_subprocess_exec",
         _fake_create_subprocess_exec,
@@ -266,10 +253,22 @@ async def _start_fresh_cursor_spawn(
         harness_id=HarnessId.CURSOR,
         prompt="hello",
         control_root=tmp_path,
-        env_overrides={},
+        runtime_root=tmp_path,
+        child_env={},
         session_id_observer=observed.append,
     )
-    resolve_spawn_log_dir(tmp_path, config.spawn_id).mkdir(parents=True)
+    spawn_store.start_spawn(
+        tmp_path,
+        spawn_id=config.spawn_id,
+        chat_id=str(config.spawn_id),
+        model="test-model",
+        agent="test-agent",
+        harness="cursor",
+        prompt="hello",
+    )
+    resolve_spawn_log_dir(
+        tmp_path, config.spawn_id, runtime_root=tmp_path
+    ).mkdir(parents=True, exist_ok=True)
     spec = ResolvedLaunchSpec(
         harness=HarnessId.CURSOR,
         prompt="hello",
@@ -314,11 +313,6 @@ async def test_cursor_start_mints_chat_id_and_records_observer(
         return _AgentOnlyProcess()
 
     monkeypatch.setattr(
-        cursor_subprocess_module,
-        "inherit_child_env",
-        _passthrough_child_env,
-    )
-    monkeypatch.setattr(
         cursor_subprocess_module.asyncio,
         "create_subprocess_exec",
         _fake_create_subprocess_exec,
@@ -330,10 +324,22 @@ async def test_cursor_start_mints_chat_id_and_records_observer(
         harness_id=HarnessId.CURSOR,
         prompt="hello",
         control_root=tmp_path,
-        env_overrides={},
+        runtime_root=tmp_path,
+        child_env={},
         session_id_observer=observed.append,
     )
-    resolve_spawn_log_dir(tmp_path, config.spawn_id).mkdir(parents=True)
+    spawn_store.start_spawn(
+        tmp_path,
+        spawn_id=config.spawn_id,
+        chat_id=str(config.spawn_id),
+        model="test-model",
+        agent="test-agent",
+        harness="cursor",
+        prompt="hello",
+    )
+    resolve_spawn_log_dir(
+        tmp_path, config.spawn_id, runtime_root=tmp_path
+    ).mkdir(parents=True, exist_ok=True)
     spec = ResolvedLaunchSpec(
         harness=HarnessId.CURSOR,
         prompt="hello",
@@ -371,11 +377,6 @@ async def test_cursor_start_reuses_continue_session_id_without_minting(
         return _AgentOnlyProcess()
 
     monkeypatch.setattr(
-        cursor_subprocess_module,
-        "inherit_child_env",
-        _passthrough_child_env,
-    )
-    monkeypatch.setattr(
         cursor_subprocess_module.asyncio,
         "create_subprocess_exec",
         _fake_create_subprocess_exec,
@@ -387,10 +388,22 @@ async def test_cursor_start_reuses_continue_session_id_without_minting(
         harness_id=HarnessId.CURSOR,
         prompt="hello",
         control_root=tmp_path,
-        env_overrides={},
+        runtime_root=tmp_path,
+        child_env={},
         session_id_observer=observed.append,
     )
-    resolve_spawn_log_dir(tmp_path, config.spawn_id).mkdir(parents=True)
+    spawn_store.start_spawn(
+        tmp_path,
+        spawn_id=config.spawn_id,
+        chat_id=str(config.spawn_id),
+        model="test-model",
+        agent="test-agent",
+        harness="cursor",
+        prompt="hello",
+    )
+    resolve_spawn_log_dir(
+        tmp_path, config.spawn_id, runtime_root=tmp_path
+    ).mkdir(parents=True, exist_ok=True)
     spec = ResolvedLaunchSpec(
         harness=HarnessId.CURSOR,
         prompt="hello",

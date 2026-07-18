@@ -1,5 +1,25 @@
 # Environment variables
 
+## Public and internal namespaces
+
+`MERIDIAN_*` is Meridian's public environment contract. Users, prompt packages,
+agents, hook scripts, and companion tools may set or read these names according
+to their role. Public names are stable and fall into four groups:
+
+- **config inputs** such as `MERIDIAN_MODEL` and `MERIDIAN_MAX_DEPTH`;
+- **injected handles** such as `MERIDIAN_PROJECT_DIR`, `MERIDIAN_TASK_DIR`, and
+  `MERIDIAN_SPAWN_ID`;
+- **hook payload** names (`MERIDIAN_HOOK_*`, `MERIDIAN_SPAWN_STATUS`,
+  `MERIDIAN_SPAWN_AGENT`, `MERIDIAN_SPAWN_MODEL`,
+  `MERIDIAN_SPAWN_DURATION_SECS`, `MERIDIAN_SPAWN_COST_USD`, and
+  `MERIDIAN_SPAWN_ERROR`); and
+- **inter-tool signals**, currently `MERIDIAN_MANAGED`.
+
+`_MERIDIAN_*` is repo-internal process plumbing. These values are documented
+only for contributors and diagnostics; external callers must not set or depend
+on them, and their names may change without notice. The source registry in
+`src/meridian/env_registry.py` is authoritative for both tiers.
+
 ## Project root and task directory
 
 Project root (control root for config, runtime state, and harness context) resolves
@@ -20,29 +40,25 @@ project root. Query with `meridian task-dir`; clear a stale inherited value with
 `meridian task-dir clear`. Use `--task-dir` on primary/spawn launch for one-shot
 overrides — not `-C`, which retargets the entire project/control root.
 
-`MERIDIAN_PROJECT_ROOT` is the bind-time export of the resolved project/control
-root to child sessions. `MERIDIAN_TASK_CWD` is a bind-time alias for the child's
-resolved logical task cwd; it is not inherited.
-
 ## Core
 
 | Variable | Purpose |
 |---|---|
 | `MERIDIAN_PROJECT_DIR` | Inherited project/control root; wins over literal CWD when set |
-| `MERIDIAN_PROJECT_ROOT` | Bind-time export of project/control root to child sessions |
 | `MERIDIAN_TASK_DIR` | Inherited source-edit directory; set/clear via `meridian task-dir` |
-| `MERIDIAN_TASK_CWD` | Bind-time alias for the child's resolved task cwd (not inherited) |
 | `MERIDIAN_CONFIG` | User config overlay path |
 | `MERIDIAN_HOME` | Override user state root (default `~/.meridian/`) |
-| `MERIDIAN_RUNTIME_DIR` | Override the runtime state root. Absolute path = use as-is; relative path = resolve relative to repo root. Repo-owned default paths (`kb/`, `work/`, `archive/work/`) always stay in `.meridian/` regardless of this setting. |
-| `MERIDIAN_FS_DIR` | Resolved shared filesystem path for the current repo state root |
 | `MERIDIAN_ACTIVE_WORK_ID` | Active attached work item slug, when one exists |
 | `MERIDIAN_ACTIVE_WORK_DIR` | Active scope directory: named work item scratch dir when attached, else the run's ambient spawn scope (`spawns/p<N>/work`) |
 | `MERIDIAN_SPAWN_ID` | Current run/spawn ID for primary and delegated execution |
 | `MERIDIAN_CHAT_ID` | Top-level session id inherited across the spawn tree |
-| `MERIDIAN_DEPTH` | Zero-based delegation depth (`0` = primary/root, `1` = first delegated spawn) |
 | `MERIDIAN_MAX_DEPTH` | Max zero-based delegated spawn depth override |
-| `MERIDIAN_PARENT_SPAWN_ID` | Immediate parent spawn ID for nested execution |
+
+Internally, `_MERIDIAN_DEPTH` carries the current zero-based counter while the
+public `MERIDIAN_MAX_DEPTH` remains the user-configurable cap. Other internal
+handles include the resolved runtime directory, parent spawn ID, harness ID,
+guardrail paths, and Pi transport settings; consult the registry rather than
+depending on those names.
 
 ## Runtime Policy Overrides
 
@@ -75,9 +91,9 @@ These override spawn-level runtime policy. They sit above project config but bel
 
 | Variable | Purpose |
 |---|---|
-| `MERIDIAN_GUARDRAIL_RUN_ID` | Spawn id passed to guardrail scripts |
-| `MERIDIAN_GUARDRAIL_OUTPUT_LOG` | Path to `output.jsonl` |
-| `MERIDIAN_GUARDRAIL_REPORT_PATH` | Path to `report.md` when a report exists |
+| `_MERIDIAN_GUARDRAIL_RUN_ID` | Spawn id passed to guardrail scripts |
+| `_MERIDIAN_GUARDRAIL_OUTPUT_LOG` | Path to `output.jsonl` |
+| `_MERIDIAN_GUARDRAIL_REPORT_PATH` | Path to `report.md` when a report exists |
 | `MERIDIAN_SECRET_<KEY>` | Secret injection/redaction channel |
 
 ## Permission Naming

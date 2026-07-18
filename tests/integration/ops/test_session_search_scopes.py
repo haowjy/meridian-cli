@@ -7,6 +7,7 @@ from pathlib import Path
 
 from meridian.lib.ops.session_search import SessionSearchInput, session_search_sync
 from meridian.lib.state import session_store
+from meridian.lib.state.user_paths import get_project_home
 
 
 def _write_codex_rollout(
@@ -54,17 +55,22 @@ def test_session_search_workspace_scope_uses_runtime_evidence_not_repo_markers(
 
     current_root = tmp_path / "current"
     current_root.mkdir()
-    (current_root / "meridian.toml").write_text("", encoding="utf-8")
+    (current_root / "meridian.toml").write_text(
+        '[project]\nid = "current-project"\n', encoding="utf-8"
+    )
 
     workspace_root = tmp_path / "workspace-repo"
     workspace_root.mkdir()
+    (workspace_root / "meridian.toml").write_text(
+        '[project]\nid = "workspace-project"\n', encoding="utf-8"
+    )
     (current_root / "meridian.local.toml").write_text(
         "[workspace.docs]\npath = '../workspace-repo'\n",
         encoding="utf-8",
     )
 
-    current_runtime = current_root / ".meridian"
-    workspace_runtime = workspace_root / ".meridian"
+    current_runtime = get_project_home("current-project")
+    workspace_runtime = get_project_home("workspace-project")
     current_runtime.mkdir(parents=True, exist_ok=True)
     workspace_runtime.mkdir(parents=True, exist_ok=True)
 
@@ -108,7 +114,7 @@ def test_session_search_workspace_scope_uses_runtime_evidence_not_repo_markers(
     assert len(output.matches) == 1
     match = output.matches[0]
     assert match.corpus == workspace_root.as_posix()
-    assert not (workspace_root / "meridian.toml").exists()
+    assert (workspace_root / "meridian.toml").is_file()
     assert not (workspace_root / ".git").exists()
     assert match.open_command.startswith("meridian session log --file ")
     assert "--segment 0 --around 1 --context 5" in match.open_command

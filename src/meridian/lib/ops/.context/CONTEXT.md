@@ -190,7 +190,7 @@ keeping the render layer decoupled from the data layer.
 ### OperationRuntime
 
 `runtime.py` provides `OperationRuntime` and `build_runtime()` — the ops-layer
-equivalent of `LaunchRuntime`. It resolves runtime root from env (`MERIDIAN_RUNTIME_DIR`),
+equivalent of `LaunchRuntime`. It resolves runtime root from env (`_MERIDIAN_RUNTIME_DIR`),
 project state, or user home. Operations that need both project and runtime state
 use `resolve_runtime_root_and_config()`.
 
@@ -199,7 +199,7 @@ use `resolve_runtime_root_and_config()`.
 `ops/spawn/api.py` checks `max_depth_reached()` before executing spawns. A spawn
 inside a spawn inside a spawn eventually hits the depth limit; the outer caller
 gets `depth_exceeded_output()` instead of a new spawn. The reaper also checks
-`MERIDIAN_DEPTH` and skips reaping when inside a spawn.
+`_MERIDIAN_DEPTH` and skips reaping when inside a spawn.
 
 ### Session Reference Resolution
 

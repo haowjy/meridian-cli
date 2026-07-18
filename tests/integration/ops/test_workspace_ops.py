@@ -7,7 +7,7 @@ from meridian.lib.ops.workspace import WorkspaceInitInput, workspace_init_sync
 
 @pytest.fixture(autouse=True)
 def _clear_state_root_override(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("MERIDIAN_RUNTIME_DIR", raising=False)
+    monkeypatch.delenv("_MERIDIAN_RUNTIME_DIR", raising=False)
 
 
 def _repo(tmp_path: Path) -> Path:
@@ -79,7 +79,7 @@ def test_workspace_init_ignores_state_root_parent_for_workspace_file(
     (project_root / ".git").mkdir()
     override_root = tmp_path / "state-root" / ".meridian"
     override_root.parent.mkdir(parents=True)
-    monkeypatch.setenv("MERIDIAN_RUNTIME_DIR", override_root.as_posix())
+    monkeypatch.setenv("_MERIDIAN_RUNTIME_DIR", override_root.as_posix())
 
     result = workspace_init_sync(WorkspaceInitInput(project_root=project_root.as_posix()))
 

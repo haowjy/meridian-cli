@@ -31,7 +31,9 @@ def _workspace_scopes(current_project_root: Path) -> tuple[SessionCorpusScope, .
     scopes: list[SessionCorpusScope] = []
     for root in get_projectable_roots(snapshot):
         authority = resolve_runtime_authority_for_read(root)
-        runtime_root = authority.runtime_root or authority.project_state_dir
+        runtime_root = authority.runtime_root
+        if runtime_root is None:
+            continue
         if not _runtime_has_session_data(runtime_root):
             continue
         scopes.append(
@@ -68,7 +70,7 @@ def _global_runtime_scopes() -> tuple[SessionCorpusScope, ...]:
 def resolve_session_search_corpus(
     *,
     project_root: Path,
-    runtime_root: Path,
+    runtime_root: Path | None,
     workspace: bool,
     global_scope: bool,
     work_id: str | None,
@@ -79,23 +81,29 @@ def resolve_session_search_corpus(
     if sum((workspace, global_scope, bool(normalized_work_id))) > 1:
         raise ValueError("Use only one scope flag: --workspace, --global, or --work.")
 
-    current_scope = SessionCorpusScope(
-        project_root=project_root,
-        runtime_root=runtime_root,
-        label=project_root.as_posix(),
+    current_scope = (
+        SessionCorpusScope(
+            project_root=project_root,
+            runtime_root=runtime_root,
+            label=project_root.as_posix(),
+        )
+        if runtime_root is not None
+        else None
     )
     if normalized_work_id:
+        if current_scope is None:
+            return ()
         chat_filter = frozenset(
             work_session_chat_ids(
                 project_root,
-                runtime_root,
+                current_scope.runtime_root,
                 normalized_work_id,
                 include_all=True,
             )
         )
         return (current_scope._replace(chat_filter=chat_filter),)
 
-    scopes: list[SessionCorpusScope] = [current_scope]
+    scopes: list[SessionCorpusScope] = [current_scope] if current_scope is not None else []
     if workspace:
         scopes.extend(_workspace_scopes(project_root))
     if global_scope:

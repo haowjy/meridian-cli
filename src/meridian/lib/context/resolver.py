@@ -20,10 +20,10 @@ from meridian.plugin_api.git import resolve_clone_path
 class ResolvedContextPaths:
     """Resolved context paths after substitution."""
 
-    work_root: Path
-    work_archive: Path
+    work_root: Path | None
+    work_archive: Path | None
     work_source: ContextSourceType
-    kb_root: Path
+    kb_root: Path | None
     kb_source: ContextSourceType
     extra: dict[str, tuple[Path, ContextSourceType]]
 
@@ -98,14 +98,11 @@ def resolve_context_paths(
 ) -> ResolvedContextPaths:
     """Resolve context paths from config.
 
-    Paths containing ``{project}`` without a resolvable project ID fall back to
-    project-local ``.meridian/`` equivalents.
+    Paths containing ``{project}`` remain unresolved without a project ID.
     """
 
     if project_id is None:
-        project_id = get_project_id(project_root / ".meridian")
-
-    fallback_root = project_root / ".meridian"
+        project_id = get_project_id(project_root)
 
     work_root_resolved = _resolve_path(
         config.work.path,
@@ -129,14 +126,6 @@ def resolve_context_paths(
         remote=config.kb.remote,
     )
 
-    work_root = work_root_resolved if work_root_resolved is not None else fallback_root / "work"
-    work_archive = (
-        work_archive_resolved
-        if work_archive_resolved is not None
-        else fallback_root / "archive" / "work"
-    )
-    kb_root = kb_root_resolved if kb_root_resolved is not None else fallback_root / "kb"
-
     extra: dict[str, tuple[Path, ContextSourceType]] = {}
     extras_raw = getattr(config, "__pydantic_extra__", None)
     extras = cast("dict[str, object]", extras_raw) if isinstance(extras_raw, dict) else {}
@@ -159,10 +148,10 @@ def resolve_context_paths(
         extra[name] = (resolved, parsed.source)
 
     return ResolvedContextPaths(
-        work_root=work_root,
-        work_archive=work_archive,
+        work_root=work_root_resolved,
+        work_archive=work_archive_resolved,
         work_source=config.work.source,
-        kb_root=kb_root,
+        kb_root=kb_root_resolved,
         kb_source=config.kb.source,
         extra=extra,
     )
@@ -208,7 +197,9 @@ def render_context_lines(
     else:
         lines.append("work: (no active work item — run 'meridian work start')")
 
-    archive_resolved = resolved.work_archive.as_posix()
+    archive_resolved = (
+        resolved.work_archive.as_posix() if resolved.work_archive is not None else ""
+    )
     if archive_resolved:
         archive_env_key = context_env_key("work_archive")
         if check_env:
@@ -219,15 +210,18 @@ def render_context_lines(
         else:
             lines.append(f"  archive: ${archive_env_key} ({archive_resolved})")
 
-    kb_resolved = resolved.kb_root.as_posix()
-    kb_env_key = context_env_key("kb")
-    if check_env:
-        if os.getenv(kb_env_key, "") == kb_resolved:
-            lines.append(f"kb: ${kb_env_key}")
+    if resolved.kb_root is not None:
+        kb_resolved = resolved.kb_root.as_posix()
+        kb_env_key = context_env_key("kb")
+        if check_env:
+            if os.getenv(kb_env_key, "") == kb_resolved:
+                lines.append(f"kb: ${kb_env_key}")
+            else:
+                lines.append(f"kb: {kb_resolved}")
         else:
-            lines.append(f"kb: {kb_resolved}")
+            lines.append(f"kb: ${kb_env_key} ({kb_resolved})")
     else:
-        lines.append(f"kb: ${kb_env_key} ({kb_resolved})")
+        lines.append("kb: (unresolved — project has no identity)")
 
     for name in sorted(resolved.extra):
         path, _ = resolved.extra[name]

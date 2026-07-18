@@ -862,6 +862,9 @@ def _normalize_toml_payload(
 ) -> dict[str, object]:
     normalized: dict[str, object] = {}
     for key, raw_value in payload.items():
+        if key == "project":
+            # Identity is read by the precedence-exempt minimal loader.
+            continue
         if key == "output":
             normalized["output"] = _merge_nested_dicts(
                 cast("dict[str, object]", normalized.get("output", {})),

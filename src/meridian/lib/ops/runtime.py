@@ -20,7 +20,6 @@ from meridian.lib.core.context import RuntimeContext
 from meridian.lib.core.sink import NullSink, OutputSink
 from meridian.lib.state.artifact_store import LocalStore
 from meridian.lib.state.paths import resolve_project_paths
-from meridian.lib.state.runtime_root import root_has_runtime_state as _root_has_runtime_state
 from meridian.lib.state.user_paths import (
     get_or_create_project_id,
     get_project_home,
@@ -37,15 +36,13 @@ P = ParamSpec("P")
 T = TypeVar("T")
 RuntimeRootSource = Literal[
     "env",
-    "project-state",
-    "project-state-fallback",
     "user-home-project",
     "unresolved",
 ]
 
 
 def _runtime_override_env_root(project_root: Path) -> Path | None:
-    override = os.getenv("MERIDIAN_RUNTIME_DIR", "").strip()
+    override = os.getenv("_MERIDIAN_RUNTIME_DIR", "").strip()
     if not override:
         return None
     candidate = Path(override).expanduser()
@@ -53,11 +50,11 @@ def _runtime_override_env_root(project_root: Path) -> Path | None:
 
 
 def _runtime_dir_env_override_applies(*, ignore_runtime_env: bool = False) -> bool:
-    """Return whether ``MERIDIAN_RUNTIME_DIR`` may override derived runtime roots.
+    """Return whether ``_MERIDIAN_RUNTIME_DIR`` may override derived runtime roots.
 
     Power-user override applies only at the primary Meridian root.  Nested
     processes derive runtime from ``MERIDIAN_PROJECT_DIR``; ``-C`` unsets
-    ``MERIDIAN_RUNTIME_DIR`` at process scope so this check is moot when
+    ``_MERIDIAN_RUNTIME_DIR`` at process scope so this check is moot when
     the flag is active.
     """
 
@@ -188,33 +185,17 @@ def resolve_runtime_authority_for_read(
         )
         else None
     )
-    project_id = read_project_id(authority.project_state_dir)
+    project_id = read_project_id(authority.project_root)
     if override_root is not None:
         runtime_root = override_root
     elif project_id is not None:
-        candidate_runtime_root = get_project_home(project_id)
-        runtime_root = (
-            authority.project_state_dir
-            if (
-                not _root_has_runtime_state(candidate_runtime_root)
-                and _root_has_runtime_state(authority.project_state_dir)
-            )
-            else candidate_runtime_root
-        )
-    elif _root_has_runtime_state(authority.project_state_dir):
-        runtime_root = authority.project_state_dir
+        runtime_root = get_project_home(project_id)
     else:
         runtime_root = None
     if runtime_root is None:
         runtime_source: RuntimeRootSource = "unresolved"
     elif override_root is not None and runtime_root == override_root:
-        runtime_source = "env" if runtime_root != authority.project_state_dir else "project-state"
-    elif runtime_root == authority.project_state_dir:
-        runtime_source = (
-            "project-state-fallback"
-            if override_root is not None or project_id is not None
-            else "project-state"
-        )
+        runtime_source = "env"
     else:
         runtime_source = "user-home-project"
     return authority.model_copy(
@@ -242,15 +223,12 @@ def resolve_runtime_authority_for_write(
         else None
     )
     runtime_root = override or get_project_home(
-        get_or_create_project_id(authority.project_state_dir)
+        get_or_create_project_id(authority.project_root)
     )
-    runtime_source: RuntimeRootSource = (
-        "project-state" if runtime_root == authority.project_state_dir else "user-home-project"
-    )
+    runtime_source: RuntimeRootSource = "user-home-project"
     if (
         override is not None
         and override == runtime_root
-        and runtime_root != authority.project_state_dir
     ):
         runtime_source = "env"
     return authority.model_copy(
@@ -347,23 +325,16 @@ def resolve_runtime_root_or_none(project_root: Path) -> Path | None:
     return resolve_runtime_authority_for_read(project_root).runtime_root
 
 
-def resolve_runtime_root_for_read(project_root: Path) -> Path:
-    """Resolve runtime state root for read paths without UUID creation.
+def resolve_runtime_root_for_read(project_root: Path) -> Path | None:
+    """Resolve runtime state root for reads, or ``None`` without identity."""
 
-    If a UUID exists but its user runtime root is still empty while repo-local
-    state has data, prefer repo-local state as a compatibility fallback.
-    """
-
-    authority = resolve_runtime_authority_for_read(project_root)
-    if authority.runtime_root is None:
-        return authority.project_state_dir
-    return authority.runtime_root
+    return resolve_runtime_authority_for_read(project_root).runtime_root
 
 
 def get_project_id(project_root: Path) -> str:
     """Get/create project ID, returns project ID string."""
 
-    return get_or_create_project_id(resolve_project_paths(project_root).root_dir)
+    return get_or_create_project_id(project_root)
 
 
 def resolve_roots(project_root: str | None) -> ResolvedRoots:
@@ -378,12 +349,14 @@ def resolve_roots(project_root: str | None) -> ResolvedRoots:
     )
 
 
-def resolve_roots_for_read(project_root: str | None) -> ResolvedRoots:
+def resolve_roots_for_read(project_root: str | None) -> ResolvedRoots | None:
     authority = resolve_runtime_authority_for_read(project_root)
+    if authority.runtime_root is None:
+        return None
     return ResolvedRoots(
         project_root=authority.project_root,
         project_state_dir=authority.project_state_dir,
-        runtime_root=authority.runtime_root or authority.project_state_dir,
+        runtime_root=authority.runtime_root,
         execution_cwd=authority.execution_cwd,
     )
 

@@ -253,7 +253,9 @@ def _resolve_spawn_reference(
     )
     if source_execution_cwd is None and row.harness == "claude" and row.kind == "child":
         # Legacy Claude child spawns executed from the spawn log directory.
-        source_execution_cwd = resolve_spawn_log_dir(project_root, ref).as_posix()
+        source_execution_cwd = resolve_spawn_log_dir(
+            project_root, ref, runtime_root=runtime_root
+        ).as_posix()
     elif source_execution_cwd is None:
         source_execution_cwd = project_root.as_posix()
     source_pi_session_dir: str | None = None
@@ -409,6 +411,10 @@ def resolve_session_reference(
         raise ValueError("Session reference is required.")
 
     resolved_runtime_root = runtime_root or resolve_runtime_root_for_read(project_root)
+    if resolved_runtime_root is None:
+        if not _SPAWN_REF_RE.fullmatch(normalized) and not _CHAT_REF_RE.fullmatch(normalized):
+            return _resolve_untracked_reference(project_root, normalized)
+        raise ValueError(f"Session reference '{normalized}' not found")
     if _SPAWN_REF_RE.fullmatch(normalized):
         result = _resolve_spawn_reference(resolved_runtime_root, normalized, project_root)
         if result.missing_harness_session_id:

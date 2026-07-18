@@ -180,7 +180,10 @@ def test_build_launch_context_dry_run_codex_o_uses_sentinel(tmp_path: Path) -> N
 
     runtime_o = runtime_ctx.binding.argv.index("-o")
     dry_o = dry_run_ctx.binding.argv.index("-o")
-    expected_report = resolve_spawn_log_dir(tmp_path, spawn_id) / REPORT_FILENAME
+    expected_report = (
+        resolve_spawn_log_dir(tmp_path, spawn_id, runtime_root=Path(runtime.runtime_root))
+        / REPORT_FILENAME
+    )
     assert runtime_ctx.binding.argv[runtime_o + 1] == expected_report.as_posix()
     assert dry_run_ctx.binding.argv[dry_o + 1] == DRY_RUN_REPORT_PATH
 
@@ -335,6 +338,9 @@ def test_collect_context_projection_roots_skips_missing_dirs(tmp_path: Path) -> 
 
     project_root = tmp_path / "proj"
     project_root.mkdir()
+    (project_root / "meridian.toml").write_text(
+        '[project]\nid = "projection-roots"\n', encoding="utf-8"
+    )
     config = ContextConfig()
     resolved = resolve_context_paths(project_root, config)
 

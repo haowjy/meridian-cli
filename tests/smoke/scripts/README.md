@@ -64,6 +64,6 @@ Prepares a **real** Pi install for manual smoke (no fake binaries, no test runne
 | Warns if Node is below 24 | Extension builds expect Node 24+ |
 | Sets `PI_CODING_AGENT_DIR` | Defaults to `~/.pi/agent` if unset |
 | `--build-extensions` | Runs `npm run build:extensions` in `src/meridian/pi_runtime` |
-| `--isolated-state` | Sets `MERIDIAN_PI_STATE_DIR` to a temp dir (extension task state only) |
+| `--isolated-state` | Sets `_MERIDIAN_PI_STATE_DIR` to a temp dir (extension task state only) |
 
 Does not invoke `meridian spawn`, assert outcomes, or patch `pi`.

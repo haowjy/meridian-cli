@@ -5,14 +5,14 @@ from pathlib import Path
 from meridian.cli.utils import missing_fork_session_error_with_discovery
 from meridian.lib.ops.reference import resolve_session_reference
 from meridian.lib.state import session_store, spawn_store
-from meridian.lib.state.paths import resolve_project_runtime_root
+from meridian.lib.state.paths import resolve_project_runtime_root_for_write
 from meridian.lib.state.primary_meta import PrimaryMetadata, write_primary_metadata
 
 
 def _seed_pi_primary_family(tmp_path: Path) -> tuple[Path, Path, str, str, str]:
     project_root = tmp_path / "repo"
     project_root.mkdir()
-    runtime_root = resolve_project_runtime_root(project_root)
+    runtime_root = resolve_project_runtime_root_for_write(project_root)
     runtime_root.mkdir(parents=True, exist_ok=True)
     custom_session_dir = tmp_path / "pi-sessions"
     custom_session_dir.mkdir()

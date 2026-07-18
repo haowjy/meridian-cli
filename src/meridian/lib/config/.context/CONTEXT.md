@@ -6,6 +6,19 @@ TOML + env precedence chain. This is distinct from per-spawn runtime overrides
 
 ## Architecture
 
+### Project Config Mutation Transaction
+
+Identity creation, identity migration, and `config set/reset` use
+`preserving_edit.mutate_project_config()` (migration composes via its associated
+transaction context). The transaction holds an exclusive
+`platform.locking.lock_file()` across the read, preserving edit, and atomic
+replace. Its stable lock lives at
+`<user-home>/locks/project-config/<sha256(resolved-project-root)>.lock`: hashing
+the canonical root avoids basename collisions without writing repo-local state
+or depending on an identity that may not exist yet. The platform lock's
+thread-local reentrancy lets identity migration and identity creation compose
+without a second lock protocol or a cross-module `lock_held` flag.
+
 ### Two Config Systems — Don't Conflate
 
 **`MeridianConfig`** — persistent, project-wide operational settings: retry policy,

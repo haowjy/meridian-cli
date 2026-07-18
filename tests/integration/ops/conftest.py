@@ -20,6 +20,6 @@ import pytest
 @pytest.fixture(autouse=True)
 def _isolate_ops_runtime_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """Isolate ops tests from inherited runtime environment."""
-    monkeypatch.delenv("MERIDIAN_RUNTIME_DIR", raising=False)
-    monkeypatch.setenv("MERIDIAN_DEPTH", "1")
+    monkeypatch.delenv("_MERIDIAN_RUNTIME_DIR", raising=False)
+    monkeypatch.setenv("_MERIDIAN_DEPTH", "1")
     monkeypatch.setenv("MERIDIAN_HOME", (tmp_path / "user-home").as_posix())

@@ -15,7 +15,7 @@ from typing import TypeVar
 from meridian.lib.platform.atomic import atomic_write_text
 from meridian.lib.platform.locking import lock_file
 from meridian.lib.state.event_store import utc_now_iso
-from meridian.lib.state.paths import ProjectPaths
+from meridian.lib.state.paths import ProjectPaths, resolve_project_runtime_root_for_write
 from meridian.lib.state.work_store import (
     WorkItem,
     WorktreeMetadata,
@@ -49,7 +49,12 @@ def _mutate_item(runtime_root: Path, work_id: str, mutation: _NamespaceMutation[
     """
 
     paths = _project_paths_for_work_store(runtime_root, create_project_uuid=True)
-    with lock_file(paths.root_dir / "work-store.flock", reentrant=False):
+    lock_root = (
+        resolve_project_runtime_root_for_write(runtime_root.parent)
+        if runtime_root.name == ".meridian"
+        else runtime_root
+    )
+    with lock_file(lock_root / "work-store.flock", reentrant=False):
         active_dir, archived_dir = _locate_dirs(paths, work_id)
         return mutation(paths, active_dir, archived_dir)
 

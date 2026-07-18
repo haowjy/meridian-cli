@@ -46,7 +46,7 @@ def _build_config(
         harness_id=harness_id,
         prompt="hello",
         control_root=project_root,
-        env_overrides={},
+        child_env={},
         pi_session_role=pi_session_role,
     )
 

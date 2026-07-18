@@ -76,7 +76,7 @@ def test_bind_child_env_uses_resolved_task_dir_not_stale_parent_inherited(
     )
     monkeypatch.setenv("MERIDIAN_TASK_DIR", parent_inherited.as_posix())
     monkeypatch.setenv("MERIDIAN_SPAWN_ID", "p-parent")
-    monkeypatch.setenv("MERIDIAN_DEPTH", "1")
+    monkeypatch.setenv("_MERIDIAN_DEPTH", "1")
     runtime = build_runtime(project_root)
 
     artifacts = build_create_payload(
@@ -132,7 +132,7 @@ def test_parent_scope_file_task_dir_is_inherited_by_child(
         harness=HarnessId.CODEX,
     )
     monkeypatch.setenv("MERIDIAN_SPAWN_ID", "p-parent")
-    monkeypatch.setenv("MERIDIAN_DEPTH", "1")
+    monkeypatch.setenv("_MERIDIAN_DEPTH", "1")
     runtime = build_runtime(project_root)
     # Establish the project (runtime root) before writing the scope file so the
     # write and prepare's read resolve the same spawn-log dir.

@@ -52,8 +52,8 @@ export PI_CODING_AGENT_DIR="${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}"
 
 if [[ "$_ISOLATED_STATE" -eq 1 ]]; then
   _pi_state="$(mktemp -d)"
-  export MERIDIAN_PI_STATE_DIR="$_pi_state"
-  echo "Pi setup: MERIDIAN_PI_STATE_DIR=$_pi_state (isolated extension task state)"
+  export _MERIDIAN_PI_STATE_DIR="$_pi_state"
+  echo "Pi setup: _MERIDIAN_PI_STATE_DIR=$_pi_state (isolated extension task state)"
 fi
 
 if [[ "$_BUILD_EXTENSIONS" -eq 1 ]]; then

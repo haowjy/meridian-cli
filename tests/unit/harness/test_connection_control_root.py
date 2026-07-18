@@ -15,7 +15,7 @@ from meridian.lib.harness.connections.claude_ws import ClaudeConnection
 from meridian.lib.harness.connections.codex_ws import CodexConnection
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.safety.permissions import UnsafeNoOpPermissionResolver
-from meridian.lib.state.paths import resolve_project_runtime_root
+from meridian.lib.state.paths import resolve_project_runtime_root_for_write
 from meridian.lib.state.spawn_store import start_spawn
 
 
@@ -65,12 +65,11 @@ async def test_claude_connection_launches_subprocess_from_control_root(
         captured["env"] = dict(env)
         return _FakeProcess()
 
-    monkeypatch.setattr(claude_ws, "inherit_child_env", lambda _base, overrides, blocked: overrides)
     monkeypatch.setattr(claude_ws.asyncio, "create_subprocess_exec", _fake_create_subprocess_exec)
     connection = ClaudeConnection()
     monkeypatch.setattr(connection, "_build_command", lambda _config, _spec: ["claude", "--test"])
     spawn_id = SpawnId("p-claude-cwd")
-    runtime_root = resolve_project_runtime_root(control_root)
+    runtime_root = resolve_project_runtime_root_for_write(control_root)
     start_spawn(
         runtime_root,
         spawn_id=spawn_id,
@@ -87,7 +86,7 @@ async def test_claude_connection_launches_subprocess_from_control_root(
         control_root=control_root,
         runtime_root=runtime_root,
         task_cwd=task_cwd,
-        env_overrides={"MERIDIAN_TEST": "1"},
+        child_env={"MERIDIAN_TEST": "1"},
     )
 
     await connection._start_subprocess(config, _build_spec())
@@ -122,7 +121,6 @@ async def _capture_codex_launch_cwd(
     async def _noop_cleanup(*, mark_stopped: bool) -> None:
         _ = mark_stopped
 
-    monkeypatch.setattr(codex_ws, "inherit_child_env", lambda _base, overrides: overrides)
     monkeypatch.setattr(
         codex_ws,
         "project_managed_primary_backend_command",
@@ -135,7 +133,7 @@ async def _capture_codex_launch_cwd(
     monkeypatch.setattr(connection, "_cleanup_resources", _noop_cleanup)
     spawn_id = SpawnId(f"p-codex-{ws_port}")
     start_spawn(
-        resolve_project_runtime_root(control_root),
+        resolve_project_runtime_root_for_write(control_root),
         spawn_id=spawn_id,
         chat_id="chat-1",
         model="gpt-5.4",
@@ -150,7 +148,11 @@ async def _capture_codex_launch_cwd(
         prompt="hi",
         control_root=control_root,
         task_cwd=task_cwd,
-        env_overrides={"MERIDIAN_TEST": "1"},
+        child_env={
+            "PATH": "/usr/bin",
+            "HOME": "/home/tester",
+            "MERIDIAN_SPAWN_ID": str(spawn_id),
+        },
         ws_port=ws_port,
     )
 
@@ -160,6 +162,8 @@ async def _capture_codex_launch_cwd(
     if connection._stderr_handle is not None:
         connection._stderr_handle.close()
         connection._stderr_handle = None
+
+    assert captured["env"] == config.child_env
 
     return str(captured["cwd"])
 
@@ -214,7 +218,7 @@ def test_codex_managed_bootstrap_request_uses_control_root(
         prompt="hi",
         control_root=control_root,
         task_cwd=task_cwd,
-        env_overrides={},
+        child_env={},
     )
     method, payload = connection._thread_bootstrap_request(_build_spec())
 
@@ -257,7 +261,7 @@ def test_codex_rollout_materialization_uses_control_root_when_task_cwd_provided(
         prompt="hi",
         control_root=control_root,
         task_cwd=task_cwd,
-        env_overrides={},
+        child_env={},
     )
     connection._codex_home = codex_home
     connection._thread_id = "thread-1"

@@ -19,7 +19,10 @@ from meridian.lib.harness.semantics import activity_transition, clears_signal, t
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.safety.permissions import UnsafeNoOpPermissionResolver
 from meridian.lib.state import spawn_store
-from meridian.lib.state.paths import resolve_spawn_log_dir
+from meridian.lib.state.paths import (
+    resolve_project_runtime_root_for_write,
+    resolve_spawn_log_dir,
+)
 from meridian.lib.streaming.spawn_manager import SpawnManager
 
 _PI_HELP_SURFACE = (
@@ -76,7 +79,12 @@ async def _start_existing_pi_connection(
     config: ConnectionConfig,
     spec: ResolvedLaunchSpec,
 ) -> None:
-    resolve_spawn_log_dir(config.control_root, config.spawn_id).mkdir(
+    resolve_spawn_log_dir(
+        config.control_root,
+        config.spawn_id,
+        runtime_root=config.runtime_root
+        or resolve_project_runtime_root_for_write(config.control_root),
+    ).mkdir(
         parents=True,
         exist_ok=True,
     )
@@ -234,7 +242,10 @@ async def test_pi_rpc_connection_supports_multi_turn_injection_and_abort(
             harness_id=HarnessId.PI,
             prompt="hello",
             control_root=tmp_path,
-            env_overrides={},
+            child_env={
+                "PATH": os.environ["PATH"],
+                "PI_RPC_INBOUND_LOG": str(inbound_log),
+            },
         ),
         ResolvedLaunchSpec(
             harness=HarnessId.PI,
@@ -308,7 +319,10 @@ async def test_pi_rpc_connection_launches_resolved_runtime_with_scoped_session_d
         "observed_path = os.environ.get('PI_RPC_OBSERVED_PATH', '').strip()\n"
         "if observed_path:\n"
         "    with open(observed_path, 'w', encoding='utf-8') as handle:\n"
-        "        json.dump({'argv': sys.argv}, handle)\n"
+        "        json.dump({\n"
+        "            'argv': sys.argv,\n"
+        "            'pi_agent_dir': os.environ.get('PI_CODING_AGENT_DIR'),\n"
+        "        }, handle)\n"
         "for line in sys.stdin:\n"
         "    payload = json.loads(line)\n"
         "    payload_type = payload.get('type')\n"
@@ -331,6 +345,8 @@ async def test_pi_rpc_connection_launches_resolved_runtime_with_scoped_session_d
     fake_pi.chmod(0o755)
 
     scoped_session_dir = tmp_path / "pi-sessions" / "p-pi-direct-runtime"
+    bound_agent_dir = tmp_path / "bound-home" / ".pi" / "agent"
+    monkeypatch.setenv("HOME", str(tmp_path / "ambient-home"))
     connection = PiRpcConnection()
     await _start_existing_pi_connection(
         connection,
@@ -339,8 +355,9 @@ async def test_pi_rpc_connection_launches_resolved_runtime_with_scoped_session_d
             harness_id=HarnessId.PI,
             prompt="hello",
             control_root=tmp_path,
-            env_overrides={
+            child_env={
                 "MERIDIAN_PI_BINARY": str(fake_pi),
+                "PI_CODING_AGENT_DIR": str(bound_agent_dir),
                 "PI_CODING_AGENT_SESSION_DIR": str(scoped_session_dir),
                 "PI_RPC_OBSERVED_PATH": str(observed_path),
             },
@@ -360,6 +377,7 @@ async def test_pi_rpc_connection_launches_resolved_runtime_with_scoped_session_d
     _ = [event async for event in event_iter]
 
     observed = json.loads(observed_path.read_text(encoding="utf-8"))
+    assert observed["pi_agent_dir"] == str(bound_agent_dir)
     argv = observed["argv"]
     assert argv[0] == str(fake_pi)
     assert argv[argv.index("--mode") + 1] == "rpc"
@@ -400,7 +418,7 @@ async def test_pi_rpc_connection_redacts_secret_like_cli_args_in_process_spawned
             harness_id=HarnessId.PI,
             prompt="hello",
             control_root=tmp_path,
-            env_overrides={
+            child_env={
                 "PI_CODING_AGENT_SESSION_DIR": str(scoped_session_dir),
             },
         ),
@@ -478,7 +496,7 @@ async def test_pi_rpc_connection_ignores_non_lifecycle_stderr_lines_but_logs_the
             harness_id=HarnessId.PI,
             prompt="hello",
             control_root=tmp_path,
-            env_overrides={},
+            child_env={"PATH": os.environ["PATH"]},
             pi_session_role="spawned",
         ),
         ResolvedLaunchSpec(
@@ -506,7 +524,14 @@ async def test_pi_rpc_connection_ignores_non_lifecycle_stderr_lines_but_logs_the
         event.event_type == "meridian.lifecycle.parse_error"
         for event in non_phase_events
     )
-    stderr_log = resolve_spawn_log_dir(tmp_path, spawn_id) / "stderr.log"
+    stderr_log = (
+        resolve_spawn_log_dir(
+            tmp_path,
+            spawn_id,
+            runtime_root=resolve_project_runtime_root_for_write(tmp_path),
+        )
+        / "stderr.log"
+    )
     stderr_text = stderr_log.read_text(encoding="utf-8")
     assert plain_stderr in stderr_text
     assert non_allowlisted_json in stderr_text
@@ -564,7 +589,10 @@ async def test_pi_spawn_manager_auto_delivers_initial_prompt_and_quiesces_withou
             harness_id=HarnessId.PI,
             prompt="hello auto prompt",
             control_root=tmp_path,
-            env_overrides={},
+            child_env={
+                "PATH": os.environ["PATH"],
+                "PI_RPC_INBOUND_LOG": str(inbound_log),
+            },
             pi_session_role="spawned",
         ),
         ResolvedLaunchSpec(
@@ -668,7 +696,7 @@ async def test_pi_spawn_manager_startup_diagnostics_report_outcome_and_marker(
             harness_id=HarnessId.PI,
             prompt="hello startup",
             control_root=tmp_path,
-            env_overrides={},
+            child_env={"PATH": os.environ["PATH"]},
             pi_session_role="spawned",
         ),
         ResolvedLaunchSpec(
@@ -739,7 +767,7 @@ async def test_pi_spawn_manager_prompt_response_failure_fails_fast_with_reported
             harness_id=HarnessId.PI,
             prompt="hello",
             control_root=tmp_path,
-            env_overrides={},
+            child_env={},
             pi_session_role="spawned",
         ),
         ResolvedLaunchSpec(
@@ -806,7 +834,10 @@ async def test_pi_connection_launches_in_control_root_when_task_cwd_provided(
             harness_id=HarnessId.PI,
             prompt="hello",
             control_root=control_root,
-            env_overrides={},
+            child_env={
+                "PATH": os.environ["PATH"],
+                "PI_TEST_CWD_FILE": str(observed_cwd),
+            },
             task_cwd=task_cwd,
         ),
         ResolvedLaunchSpec(
@@ -862,7 +893,7 @@ async def test_pi_rpc_connection_surfaces_stderr_on_early_exit_before_first_even
             harness_id=HarnessId.PI,
             prompt="hello",
             control_root=tmp_path,
-            env_overrides={},
+            child_env={},
             pi_session_role="spawned",
         ),
         ResolvedLaunchSpec(
@@ -883,7 +914,14 @@ async def test_pi_rpc_connection_surfaces_stderr_on_early_exit_before_first_even
     assert crash_stderr in message
     assert "Pi subprocess stderr:" in message
 
-    stderr_log = resolve_spawn_log_dir(tmp_path, spawn_id) / "stderr.log"
+    stderr_log = (
+        resolve_spawn_log_dir(
+            tmp_path,
+            spawn_id,
+            runtime_root=resolve_project_runtime_root_for_write(tmp_path),
+        )
+        / "stderr.log"
+    )
     assert crash_stderr in stderr_log.read_text(encoding="utf-8")
 
 
@@ -910,7 +948,7 @@ async def test_pi_rpc_connection_start_fails_fast_when_runtime_resolution_fails(
                 harness_id=HarnessId.PI,
                 prompt="hello",
                 control_root=tmp_path,
-                env_overrides={},
+                child_env={},
             ),
             ResolvedLaunchSpec(
                 harness=HarnessId.PI,

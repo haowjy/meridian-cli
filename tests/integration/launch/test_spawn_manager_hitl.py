@@ -31,7 +31,7 @@ def _build_config(spawn_id: SpawnId, project_root: Path) -> ConnectionConfig:
         harness_id=HarnessId.CODEX,
         prompt="hello",
         control_root=project_root,
-        env_overrides={},
+        child_env={},
     )
 
 

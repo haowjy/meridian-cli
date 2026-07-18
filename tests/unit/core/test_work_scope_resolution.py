@@ -46,6 +46,13 @@ class _ResolutionCase:
     expect_work_dir_is_not: Path | None = None
 
 
+def _write_project_identity(project_root: Path, project_id: str) -> None:
+    project_root.mkdir(parents=True, exist_ok=True)
+    (project_root / "meridian.toml").write_text(
+        f'[project]\nid = "{project_id}"\n', encoding="utf-8"
+    )
+
+
 def _make_backend(session_work_id: str | None) -> MagicMock:
     backend = MagicMock()
     backend.get_session_active_work_id.return_value = session_work_id
@@ -66,9 +73,7 @@ def _resolve_case(
     case: _ResolutionCase,
 ) -> ResolvedContext:
     project_root = tmp_path / "repo"
-    state_dir = project_root / ".meridian"
-    state_dir.mkdir(parents=True)
-    (state_dir / "id").write_text(case.project_id, encoding="utf-8")
+    _write_project_identity(project_root, case.project_id)
 
     _apply_env(
         monkeypatch,
@@ -278,9 +283,7 @@ def test_session_work_id_ignores_stale_launch_bound_ambient_dir(
     """Regression: session switch must not keep launch-bound ambient MERIDIAN_ACTIVE_WORK_DIR."""
 
     project_root = tmp_path / "repo"
-    state_dir = project_root / ".meridian"
-    state_dir.mkdir(parents=True)
-    (state_dir / "id").write_text("proj-stale-bound", encoding="utf-8")
+    _write_project_identity(project_root, "proj-stale-bound")
     (project_root / "mars.toml").write_text("", encoding="utf-8")
     roots = resolve_roots(project_root.as_posix())
     runtime_root = roots.runtime_root
@@ -333,9 +336,7 @@ def test_resolve_work_scope_from_parts_uses_context_dir_when_project_root_set(
     tmp_path: Path,
 ) -> None:
     project_root = tmp_path / "repo"
-    state_dir = project_root / ".meridian"
-    state_dir.mkdir(parents=True)
-    (state_dir / "id").write_text("proj-scope-parts", encoding="utf-8")
+    _write_project_identity(project_root, "proj-scope-parts")
     (project_root / "meridian.local.toml").write_text(
         "\n".join(
             [
@@ -383,9 +384,7 @@ def test_runtime_context_to_env_overrides_uses_context_resolved_work_dir(
     tmp_path: Path,
 ) -> None:
     project_root = tmp_path / "repo"
-    state_dir = project_root / ".meridian"
-    state_dir.mkdir(parents=True)
-    (state_dir / "id").write_text("proj-runtime-ctx", encoding="utf-8")
+    _write_project_identity(project_root, "proj-runtime-ctx")
     (project_root / "meridian.local.toml").write_text(
         "\n".join(
             [
@@ -436,9 +435,7 @@ def test_named_work_resolves_under_context_work_not_runtime_root(
     monkeypatch: MonkeyPatch,
 ) -> None:
     project_root = tmp_path / "repo"
-    state_dir = project_root / ".meridian"
-    state_dir.mkdir(parents=True)
-    (state_dir / "id").write_text("proj-ctx-work", encoding="utf-8")
+    _write_project_identity(project_root, "proj-ctx-work")
     (project_root / "meridian.local.toml").write_text(
         "\n".join(
             [
@@ -476,9 +473,7 @@ def test_resolve_active_work_scope_dir_explicit_chat_id_wiring(
     """Thin ops wiring: explicit chat_id reaches session attachment without env mutation."""
 
     project_root = tmp_path / "repo"
-    state_dir = project_root / ".meridian"
-    state_dir.mkdir(parents=True)
-    (state_dir / "id").write_text("proj-scope-chat", encoding="utf-8")
+    _write_project_identity(project_root, "proj-scope-chat")
     (project_root / "mars.toml").write_text("", encoding="utf-8")
     roots = resolve_roots(project_root.as_posix())
     runtime_root = roots.runtime_root

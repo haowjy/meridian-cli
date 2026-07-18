@@ -24,7 +24,7 @@ from meridian.lib.launch.workspace_projection import ProjectionResult
 from meridian.lib.state import spawn_store
 from meridian.lib.state.artifact_store import LocalStore
 from meridian.lib.state.paths import (
-    resolve_project_runtime_root,
+    resolve_project_runtime_root_for_write,
 )
 from meridian.lib.streaming import spawn_manager as spawn_manager_module
 from tests.integration.launch.streaming_runner_support import (
@@ -76,7 +76,7 @@ class _ClaudeSeedPersistenceConnection:
     async def start(self, config: ConnectionConfig, spec: ResolvedLaunchSpec) -> None:
         self._spawn_id = config.spawn_id
         self._project_root = config.control_root
-        runtime_root = resolve_project_runtime_root(config.control_root)
+        runtime_root = resolve_project_runtime_root_for_write(config.control_root)
         row = spawn_store.get_spawn(runtime_root, config.spawn_id)
         assert row is not None
         self.__class__.observed_start_session_id = row.harness_session_id
@@ -144,7 +144,7 @@ class _OpenCodeSeedPortConnection:
     async def start(self, config: ConnectionConfig, spec: ResolvedLaunchSpec) -> None:
         _ = spec
         self._spawn_id = config.spawn_id
-        runtime_root = resolve_project_runtime_root(config.control_root)
+        runtime_root = resolve_project_runtime_root_for_write(config.control_root)
         row = spawn_store.get_spawn(runtime_root, config.spawn_id)
         assert row is not None
         self.__class__.observed_start_session_id = row.harness_session_id
@@ -215,7 +215,7 @@ class _OpenCodeConnectSessionConnection:
         self._spawn_id = config.spawn_id
         if config.session_id_observer is not None:
             config.session_id_observer(self._session_id)
-        runtime_root = resolve_project_runtime_root(config.control_root)
+        runtime_root = resolve_project_runtime_root_for_write(config.control_root)
         row = spawn_store.get_spawn(runtime_root, config.spawn_id)
         assert row is not None
         self.__class__.observed_start_session_id = row.harness_session_id
@@ -254,7 +254,7 @@ async def test_execute_with_streaming_persists_claude_seed_before_start(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    runtime_root = resolve_project_runtime_root(tmp_path)
+    runtime_root = resolve_project_runtime_root_for_write(tmp_path)
     artifacts = LocalStore(root_dir=tmp_path / ".artifacts")
     registry = HarnessRegistry.with_defaults()
     fake_clock = FakeClock(start=1_000.0)
@@ -314,7 +314,7 @@ async def test_execute_with_streaming_uses_adapter_seed_port_not_harness_id(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    runtime_root = resolve_project_runtime_root(tmp_path)
+    runtime_root = resolve_project_runtime_root_for_write(tmp_path)
     artifacts = LocalStore(root_dir=tmp_path / ".artifacts")
     registry = HarnessRegistry.with_defaults()
     fake_clock = FakeClock(start=1_000.0)
@@ -384,7 +384,7 @@ async def test_execute_with_streaming_persists_opencode_session_id_at_connect(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    runtime_root = resolve_project_runtime_root(tmp_path)
+    runtime_root = resolve_project_runtime_root_for_write(tmp_path)
     artifacts = LocalStore(root_dir=tmp_path / ".artifacts")
     registry = HarnessRegistry.with_defaults()
     fake_clock = FakeClock(start=1_000.0)
@@ -447,7 +447,7 @@ async def test_execute_with_streaming_persists_selected_task_cwd_on_projection_f
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    runtime_root = resolve_project_runtime_root(tmp_path)
+    runtime_root = resolve_project_runtime_root_for_write(tmp_path)
     artifacts = LocalStore(root_dir=tmp_path / ".artifacts")
     registry = HarnessRegistry.with_defaults()
     fake_clock = FakeClock(start=1_000.0)

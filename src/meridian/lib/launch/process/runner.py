@@ -582,7 +582,9 @@ def _finalize_lifecycle_and_observe_session(
 
     resolved_exit_code = exit_code
     if primary_spawn_id is not None:
-        log_dir = resolve_spawn_log_dir(project_root, primary_spawn_id)
+        log_dir = resolve_spawn_log_dir(
+            project_root, primary_spawn_id, runtime_root=runtime_root
+        )
         report_path = log_dir / "report.md"
         try:
             report_text = report_path.read_text(encoding="utf-8") if report_path.is_file() else None
@@ -980,7 +982,9 @@ def run_harness_process(
                         )
                     resolved_harness_session_id = forked_session_id
                 initial_persisted_harness_session_id = resolved_harness_session_id
-                log_dir = resolve_spawn_log_dir(config_root, primary_spawn_id)
+                log_dir = resolve_spawn_log_dir(
+                    config_root, primary_spawn_id, runtime_root=runtime_root
+                )
                 primary_started = time.monotonic()
                 primary_started_epoch = time.time()
                 primary_started_local_iso = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
@@ -1294,7 +1298,9 @@ def run_harness_process(
                     _write_native_primary_metadata(
                         runtime_root=runtime_root,
                         spawn_id=primary_spawn_id,
-                        spawn_dir=resolve_spawn_log_dir(config_root, primary_spawn_id),
+                        spawn_dir=resolve_spawn_log_dir(
+                            config_root, primary_spawn_id, runtime_root=runtime_root
+                        ),
                         command=native_primary_metadata_command,
                         launch_cwd=launch_child_cwd,
                         launcher_pid=os.getpid(),

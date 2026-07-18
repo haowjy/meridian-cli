@@ -95,3 +95,7 @@ path = ".."
 
 [env]
 OPENCODE_ENABLE_EXA = "1"
+
+# managed by meridian — do not edit
+[project]
+id = "mellow-hollow-brood"

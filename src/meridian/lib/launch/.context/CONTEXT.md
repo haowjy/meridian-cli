@@ -2,11 +2,13 @@
 
 ## Architecture
 
-### The Composition Seam (Invariant I-1)
+### The Prepare/Bind Composition Seam (Invariant I-1)
 
-All launch state composition happens inside `build_launch_context()` in `context.py`.
-No driving adapter composes argv, env, or permissions independently. This is a hard
-invariant — violation means two places can diverge silently.
+Runtime launch composition happens once inside `bind_launch_context()` in `context.py`.
+It produces the complete argv, environment, cwd, and permissions consumed by the
+driving adapter and its connection. No adapter recomposes the child environment
+from `os.environ`. `build_launch_context()` remains the convenience wrapper that
+prepares and binds in one call.
 
 `build_launch_context()` is a backward-compat wrapper over a two-phase pipeline:
 
@@ -132,8 +134,8 @@ constraint required for the background worker's disk-persisted request.
 
 | Code | Rule |
 |------|------|
-| I-1 | All composition inside `build_launch_context()` — no adapter composes independently |
-| I-2 | No driving adapter reconstructs argv, env, or permissions independently |
+| I-1 | Runtime composition happens at `bind_launch_context()`; `build_launch_context()` is its prepare+bind wrapper |
+| I-2 | Driving adapters and connections consume the bound argv, env, and permissions without reconstruction |
 | I-4 | `observe_session_id()` called exactly once post-execution (primary path only) |
 | I-5 | `SpawnRequest`/`LaunchRuntime` carry no derived state; `LaunchContext` complete at construction |
 | I-10 | Fork materialization (`fork.py`) happens only after spawn row exists |
@@ -181,13 +183,14 @@ Source: `_effective_fallback_chain()`.
 matched an alias rule and rerouted the harness), the pre-transformation base is tried
 first as a fallback before walking the policy list. Source: `_demoted_base_candidate()`.
 
-### MERIDIAN_HARNESS Child Env
+### _MERIDIAN_HARNESS Child Env
 
-`bind_launch_context()` writes `MERIDIAN_HARNESS = harness.id.value` into the child env.
-This is **one-hop only** — not in `ALLOWED_CHILD_ENV_KEYS`, does not cascade to
-grandchildren. Each spawn level derives its own value from its own `build_launch_context()`.
+`bind_launch_context()` writes `_MERIDIAN_HARNESS = harness.id.value` into the child env.
+It is registered in `ALLOWED_CHILD_ENV_KEYS`; each bind overwrites any inherited
+value with the selected child harness before the complete environment crosses the
+connection boundary.
 
-The orchestrator reads `os.getenv("MERIDIAN_HARNESS")` at wait time to determine
+The orchestrator reads `os.getenv("_MERIDIAN_HARNESS")` at wait time to determine
 its own yield interval — it is asking about *its own* harness's prompt-cache TTL,
 not the spawns it is waiting on.
 

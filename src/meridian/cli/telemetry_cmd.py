@@ -49,12 +49,9 @@ def _resolve_telemetry_dirs(global_flag: bool) -> list[Path]:
         return dirs
 
     project_root = require_established_project_root()
-    try:
-        runtime_root = resolve_runtime_root_for_read(project_root)
-    except Exception as exc:
-        raise ValueError(
-            "Not inside a Meridian project. Use --global to query across all projects."
-        ) from exc
+    runtime_root = resolve_runtime_root_for_read(project_root)
+    if runtime_root is None:
+        return []
 
     telemetry_dir = runtime_root / "telemetry"
     return [telemetry_dir] if telemetry_dir.is_dir() else []

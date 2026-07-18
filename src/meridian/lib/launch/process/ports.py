@@ -8,7 +8,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Protocol
 
-PRIMARY_STDERR_LOG_PATH_ENV = "MERIDIAN_PRIMARY_STDERR_LOG_PATH"
+PRIMARY_STDERR_LOG_PATH_ENV = "_MERIDIAN_PRIMARY_STDERR_LOG_PATH"
 
 
 @dataclass(frozen=True)

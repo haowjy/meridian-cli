@@ -148,27 +148,33 @@ class HookContext:
     def to_env(self) -> dict[str, str]:
         """Convert context to MERIDIAN_* environment variables."""
 
-        env: dict[str, str | None] = {
-            "MERIDIAN_HOOK_EVENT": self.event_name,
-            "MERIDIAN_HOOK_EVENT_ID": str(self.event_id),
-            "MERIDIAN_HOOK_TIMESTAMP": self.timestamp,
-            "MERIDIAN_HOOK_SCHEMA_VERSION": str(self.schema_version),
-            "MERIDIAN_PROJECT_DIR": self.project_root,
-            "MERIDIAN_SPAWN_ID": self.spawn_id,
-            "MERIDIAN_SPAWN_STATUS": self.spawn_status,
-            "MERIDIAN_SPAWN_AGENT": self.spawn_agent,
-            "MERIDIAN_SPAWN_MODEL": self.spawn_model,
-            "MERIDIAN_SPAWN_DURATION_SECS": (
+        from meridian.env_registry import HOOK_PAYLOAD_ENV_KEYS
+
+        values: dict[str, str | None] = {
+            "event_name": self.event_name,
+            "event_id": str(self.event_id),
+            "timestamp": self.timestamp,
+            "schema_version": str(self.schema_version),
+            "project_root": self.project_root,
+            "spawn_id": self.spawn_id,
+            "spawn_status": self.spawn_status,
+            "spawn_agent": self.spawn_agent,
+            "spawn_model": self.spawn_model,
+            "spawn_duration_secs": (
                 None if self.spawn_duration_secs is None else str(self.spawn_duration_secs)
             ),
-            "MERIDIAN_SPAWN_COST_USD": (
+            "spawn_cost_usd": (
                 None if self.spawn_cost_usd is None else str(self.spawn_cost_usd)
             ),
-            "MERIDIAN_SPAWN_ERROR": self.spawn_error,
-            "MERIDIAN_ACTIVE_WORK_ID": self.work_id,
-            "MERIDIAN_ACTIVE_WORK_DIR": self.work_dir,
+            "spawn_error": self.spawn_error,
+            "work_id": self.work_id,
+            "work_dir": self.work_dir,
         }
-        return {key: value for key, value in env.items() if value is not None}
+        return {
+            HOOK_PAYLOAD_ENV_KEYS[field]: value
+            for field, value in values.items()
+            if value is not None
+        }
 
     def to_json(self) -> str:
         """Convert context to JSON for stdin transport."""

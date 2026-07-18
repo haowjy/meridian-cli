@@ -94,6 +94,8 @@ def _select_primary_spawn_for_session(project_root: Path, chat_id: str) -> Spawn
     from meridian.lib.state.reaper import reconcile_spawns
 
     runtime_root = resolve_runtime_root_for_read(project_root)
+    if runtime_root is None:
+        raise ValueError(f"No primary spawn found for session '{chat_id}'")
     owner_chat_id = session_identity.get_owner_chat_for_session(runtime_root, chat_id) or chat_id
     spawns = reconcile_spawns(
         project_root,
@@ -109,6 +111,8 @@ def _select_primary_spawn_for_session(project_root: Path, chat_id: str) -> Spawn
 
 def _is_tracked_session(project_root: Path, chat_id: str) -> bool:
     runtime_root = resolve_runtime_root_for_read(project_root)
+    if runtime_root is None:
+        return False
     return bool(session_store.get_session_records(runtime_root, {chat_id}))
 
 
@@ -172,6 +176,8 @@ def _session_context_ref(primary_row: SpawnRecord, project_root: Path) -> Sessio
     if not chat_id:
         raise ValueError(f"Primary spawn '{primary_row.id}' has no associated session")
     runtime_root = resolve_runtime_root_for_read(project_root)
+    if runtime_root is None:
+        raise ValueError(f"Primary spawn '{primary_row.id}' has no runtime state")
     work_id = (
         session_store.get_session_active_work_id(runtime_root, chat_id) or ""
     ).strip() or None

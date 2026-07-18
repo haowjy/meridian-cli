@@ -96,8 +96,8 @@ const DEFAULT_WAIT_TIMEOUT_MIN = 10;
 const MAX_TIMEOUT_MIN = 59;
 const LOG_TAIL_BYTES = 4 * 1024;
 const DEFAULT_TASK_PING_INTERVAL_MS = 55 * 60_000;
-const TASK_PING_INTERVAL_ENV = "MERIDIAN_PI_TASK_PING_INTERVAL_MS";
-const TASK_PING_RESET_ON_ACTIVITY_ENV = "MERIDIAN_PI_TASK_PING_RESET_ON_ACTIVITY";
+const TASK_PING_INTERVAL_ENV = "_MERIDIAN_PI_TASK_PING_INTERVAL_MS";
+const TASK_PING_RESET_ON_ACTIVITY_ENV = "_MERIDIAN_PI_TASK_PING_RESET_ON_ACTIVITY";
 export const USER_BASH_PANEL_BACKGROUND_MSG = "Sent to background — /ps";
 
 export class BashRuntime {
@@ -340,7 +340,7 @@ export class BashRuntime {
       stderr_log_path: logPaths.stderr,
       log_bytes: 0,
       timeout_min: timeoutMin,
-      originating_bash_id: process.env.MERIDIAN_PI_BASH_ID || null,
+      originating_bash_id: process.env._MERIDIAN_PI_BASH_ID || null,
       ping_sent_at_ms: null,
       child: null,
       waiters: [],
@@ -351,7 +351,7 @@ export class BashRuntime {
 
     const child = spawn(command, {
       cwd,
-      env: { ...env, MERIDIAN_PI_BASH_ID: bashId },
+      env: { ...env, _MERIDIAN_PI_BASH_ID: bashId },
       shell: true,
       stdio: ["ignore", "pipe", "pipe"],
     });

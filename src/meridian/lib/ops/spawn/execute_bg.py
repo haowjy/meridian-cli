@@ -330,7 +330,9 @@ def _background_worker_main(
             )
         )
         register_spawn_telemetry_observer()
-        log_dir = resolve_spawn_log_dir(project_paths.project_root, spawn_id)
+        log_dir = resolve_spawn_log_dir(
+            project_paths.project_root, spawn_id, runtime_root=runtime_root
+        )
 
         try:
             launch_request = _load_bg_worker_request(log_dir)

@@ -329,7 +329,7 @@ async def start_pi_manager(
             harness_id=HarnessId.PI,
             prompt="hello",
             control_root=runtime_root,
-            env_overrides={},
+            child_env={},
             pi_session_role=session_role,
             pi_child_wave_timeout_seconds=child_wave_timeout_seconds,
         ),
@@ -415,7 +415,7 @@ def _config(runtime_root: Path, spawn_id: SpawnId) -> ConnectionConfig:
         harness_id=HarnessId.PI,
         prompt="hello",
         control_root=runtime_root,
-        env_overrides={},
+        child_env={},
         pi_session_role="spawned",
     )
 

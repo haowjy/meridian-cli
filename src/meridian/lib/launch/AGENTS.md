@@ -207,7 +207,7 @@ See [.context/CONTEXT.md](.context/CONTEXT.md#why-user-turn-not-system-prompt) f
    (authority_root, logical_task_cwd, actual_process_cwd), task CWD instruction
    injection, reference loading and anchor semantics (`kb:` prefix, `@` unsupported),
    worktree path assignment vs managed ownership separation, workspace projection
-   detail, env injection, background worker trust model, MERIDIAN_HARNESS child env
+   detail, env injection, background worker trust model, _MERIDIAN_HARNESS child env
    behavior, exact continue replay contract, full invariant table, model-policy
    overlay composition and fallback chain rules, user-turn context threading
    (`resolve_task_context_inputs()`) and why prior-context goes in the user turn.

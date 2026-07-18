@@ -528,7 +528,7 @@ def test_spawn_prepare_headless_deny_same_harness_suggests_native_agent(
         model="claude-opus-4-6",
         harness=HarnessId.CLAUDE,
     )
-    monkeypatch.setenv("MERIDIAN_HARNESS", "claude")
+    monkeypatch.setenv("_MERIDIAN_HARNESS", "claude")
 
     with pytest.raises(ValueError) as exc_info:
         build_launch_context(
