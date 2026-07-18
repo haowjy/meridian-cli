@@ -587,7 +587,6 @@ Environment:
 _MERIDIAN_PI_SESSION_ROLE=primary
 MERIDIAN_SPAWN_ID=<primary-spawn-id>
 PI_CODING_AGENT_SESSION_DIR=<user_home>/meridian-pi/sessions
-MERIDIAN_PRIMARY_METADATA_PATH=<sidecar path>
 ```
 
 Primary must not pass `--mode rpc`, managed extensions, or any wrapper-only flags.

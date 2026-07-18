@@ -62,13 +62,17 @@ built from `MERIDIAN_*` env vars. `ResolvedContext.from_environment()` is
 the canonical constructor — do not build it from dict literals in
 application code.
 
-`child_env_overrides(*, increment_depth, child_spawn_id)` is the **only**
-correct way to produce child-process `MERIDIAN_*` env vars. All launch
-paths that build child env must route through it.
+`ResolvedContext.child_env_overrides(*, increment_depth, child_spawn_id)`
+produces the shared child context. The launch bind seam is the other producer:
+it adds registered launch-specific handles such as `_MERIDIAN_HARNESS` before
+validating and composing the complete child environment. Adapters consume that
+bound environment rather than producing or recomposing Meridian keys.
 
 `ALLOWED_CHILD_ENV_KEYS` frozenset enforces the allowed key set.
 `validate_child_env_keys()` raises on unknown keys. `MERIDIAN_CONTEXT_<NAME>_DIR`
-keys are validated by regex pattern.
+keys are validated by regex pattern. `_MERIDIAN_HARNESS` is a registered member
+of `ALLOWED_CHILD_ENV_KEYS`; the bind seam overwrites any inherited value with
+the harness selected for the child launch.
 
 ## SpawnLifecycleService (`lifecycle.py`)
 

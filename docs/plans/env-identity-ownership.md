@@ -6,13 +6,17 @@ Three explicitly-parked design decisions all touch the same surface — who owns
 
 One written decision set: env-var namespace convention, single child-env composition point, and project identity in `meridian.toml` — then mechanical migration.
 
-## Summary
+## Status
 
-Planning draft. Scope, per issue:
+Shipped on `task/env-identity-ownership`. This file records the historical plan;
+the implementation now has:
 
-- **Closes #361** — child-env ownership: connections consume `final_env` instead of recomposing from `os.environ` (5 connection adapters still call `inherit_child_env` themselves).
-- **Closes #336** — decide the `_MERIDIAN_*` internal vs public env convention and split `ALLOWED_CHILD_ENV_KEYS` accordingly.
-- **Closes #341** — deprecate repo-local `.meridian/`: move project identity into `meridian.toml`.
+- **#361** — connections consume the complete bind-resolved child environment;
+  no connection adapter recomposes it from `os.environ`.
+- **#336** — a tiered environment registry distinguishes stable `MERIDIAN_*`
+  contracts from internal `_MERIDIAN_*` transport and drives child propagation.
+- **#341** — project identity lives in committed `meridian.toml`; runtime and
+  context state live under the user home, with resumable legacy migration.
 
 ## Resulting Behavior
 
@@ -20,7 +24,9 @@ Env composition happens once, the public env surface is deliberate, and project 
 
 ## Changes
 
-Design-first (`@design-lead` pass), then migration. #361 and #336 share the namespace decision; #341 is separable but benefits from the same review. Cross-repo impact: prompt packages and mars-agents read MERIDIAN_* vars.
+The work was implemented as a coordinated migration because #361 and #336 share
+the namespace boundary. Cross-repo consumers retain their registered public
+contracts while Meridian's harness connections consume one bound environment.
 
 ## Work Item
 
@@ -28,7 +34,10 @@ issue-triage-sweep
 
 ## Verification
 
-None yet — this is a planning draft (scoping commit only: `docs/plans/env-identity-ownership.md`). Implementation on this branch will carry its own tests per `tests/AGENTS.md` and a CHANGELOG entry.
+The shipped branch includes contract coverage for registry/source drift,
+integration coverage at harness subprocess boundaries, project-identity migration
+coverage, and stateless read-path coverage. The changes are recorded under
+`[Unreleased]` in `CHANGELOG.md`.
 
 ## Knowledge Updates
 

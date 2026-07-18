@@ -17,7 +17,7 @@ deliberate exception that wires policy surfaces to launch and persistence.
 
 - **Use `SpawnId`, `ModelId`, `ArtifactKey` — not `str`.** These are `NewType` aliases over `str`. Zero runtime cost; mypy catches wrong-ID bugs statically. Accept them on function signatures anywhere a spawn or model ID passes through.
 - **`RuntimeOverrides`: use `None` to mean "not set", never `""` or `0`.** `resolve(*layers)` returns first-non-None per field. An empty string at a high-precedence layer wins over a meaningful value at a lower one.
-- **The environment registry is the sole declaration of child-process Meridian keys.** `child_env_overrides()` produces shared context handles; the bind seam adds launch-specific registered handles, then `validate_child_env_keys()` rejects unknown public or internal names.
+- **The environment registry is the sole declaration of child-process Meridian keys.** `ResolvedContext.child_env_overrides()` produces shared context handles, and the launch bind seam adds registered launch-specific handles such as `_MERIDIAN_HARNESS`; `validate_child_env_keys()` rejects unknown public or internal names.
 - **`is_root_side_effect_process()` is fail-closed.** A malformed non-empty `_MERIDIAN_DEPTH` returns `False`. Root-only side effects (e.g., the reaper) must not run inside delegated agent processes. When in doubt, fail closed.
 - **`LifecycleHook.on_event()` exceptions are logged but never block transitions.** Hooks must tolerate partial data.
 - **`spawn_store` is imported at the bottom of `lifecycle.py`** to break a circular import with `state/__init__`. Do not move it to the top.
@@ -27,7 +27,7 @@ deliberate exception that wires policy surfaces to launch and persistence.
 - `types.py` — `SpawnId`, `ModelId`, `ArtifactKey`, `SchemaVersion` (typed IDs)
 - `overrides.py` — `RuntimeOverrides`, `resolve(*layers)` (config precedence merge)
 - `resolved_context.py` — `ResolvedContext.from_environment()` (authoritative runtime env for one process)
-- `child_env.py` — `child_env_overrides()`, `ALLOWED_CHILD_ENV_KEYS`, `validate_child_env_keys()`
+- `child_env.py` — `ALLOWED_CHILD_ENV_KEYS`, `validate_child_env_keys()`
 - `lifecycle.py` — `SpawnLifecycleService` (state machine: created → running → finalizing → finalized)
 - `spawn_service.py` — `SpawnApplicationService` (create/list/cancel spawns)
 - `sink.py` — `OutputSink` protocol, `NullSink` (output routing abstraction)
