@@ -14,7 +14,7 @@ import structlog
 
 from meridian.lib.bootstrap.services import build_spawn_application_service_from_roots
 from meridian.lib.core.depth import is_root_side_effect_process
-from meridian.lib.core.domain import SpawnStatus
+from meridian.lib.core.domain import TerminalSpawnStatus
 from meridian.lib.core.spawn_lifecycle import (
     is_active_spawn_status,
     is_terminal_spawn_status,
@@ -57,7 +57,6 @@ from meridian.lib.state.spawn.model import (
     SpawnOrigin,
     SpawnRecord,
     TerminalFacts,
-    TerminalSpawnStatus,
 )
 from meridian.lib.state.spawn_aggregate import mutate_published_spawn_artifact
 from meridian.lib.state.spawn_report import spawn_report_has_durable_completion
@@ -195,7 +194,9 @@ def _is_pre_worker_launch_boundary_ghost(
 
 
 def _in_post_runner_exit_finalization_grace(record: SpawnRecord, now: float) -> bool:
-    exited_epoch = _runner_exit_at_epoch(record.runner_exit_at)
+    exited_epoch = _runner_exit_at_epoch(
+        record.runner_exit.exited_at if record.runner_exit is not None else None
+    )
     return (
         exited_epoch is not None
         and now - exited_epoch < SPAWN_POST_RUNNER_EXIT_FINALIZATION_GRACE_SECS
@@ -206,7 +207,7 @@ def _finalize_from_runner_exit_decision(record: SpawnRecord) -> FinalizeFromRunn
     facts = record.runner_exit
     assert facts is not None
     return FinalizeFromRunnerExit(
-        status=SpawnStatus(facts.status),
+        status=facts.status,
         exit_code=facts.exit_code,
         error=facts.error,
     )
@@ -224,7 +225,7 @@ def decide_generic_reconciliation(
                 return decision
         if _has_recent_activity(snapshot):
             return Skip(reason="recent_activity")
-        if record.runner_exit_status is not None:
+        if record.runner_exit is not None:
             return _finalize_from_runner_exit_decision(record)
         if record.cancel_intent is not None:
             decision = completion_or_cancel_decision(record, snapshot.durable_report_completion)
@@ -232,7 +233,7 @@ def decide_generic_reconciliation(
                 return decision
         return FinalizeFailed(error="orphan_finalization")
 
-    if record.runner_exit_status is not None:
+    if record.runner_exit is not None:
         if snapshot.durable_report_completion:
             decision = completion_or_cancel_decision(record, snapshot.durable_report_completion)
             if decision is not None:
@@ -295,7 +296,7 @@ def decide_reconciliation(
     """Unified reconciliation dispatcher."""
 
     generic_decision = decide_generic_reconciliation(record, generic_snapshot, now)
-    if record.status == "finalizing" or record.runner_exit_status is not None:
+    if record.status == "finalizing" or record.runner_exit is not None:
         return generic_decision
 
     strategy = ManagedPrimaryReconciliationStrategy()
@@ -482,7 +483,7 @@ def _finalize_and_log(
     runtime_root: Path,
     record: SpawnRecord,
     *,
-    status: SpawnStatus,
+    status: TerminalSpawnStatus,
     exit_code: int,
     error: str | None,
     reason: str,
@@ -535,7 +536,7 @@ def _finalize_failed(
         project_root,
         runtime_root,
         record,
-        status=SpawnStatus.FAILED,
+        status="failed",
         exit_code=exit_code,
         error=error,
         reason=error,
@@ -596,7 +597,7 @@ def _in_startup_grace(started_epoch: float | None, now: float) -> bool:
 def _record_with_terminal_state(
     record: SpawnRecord,
     *,
-    status: SpawnStatus,
+    status: TerminalSpawnStatus,
     exit_code: int,
     error: str | None,
     origin: SpawnOrigin,
@@ -606,7 +607,6 @@ def _record_with_terminal_state(
         update={
             "status": status,
             "terminal": TerminalFacts(
-                status=cast("TerminalSpawnStatus", status),
                 exit_code=exit_code,
                 finished_at=observed_at,
                 published_at=observed_at,
@@ -632,7 +632,7 @@ def peek_reconciled_active_spawn(
     if (
         record.status == "finalizing"
         and not generic_snapshot.durable_report_completion
-        and record.runner_exit_status is None
+        and record.runner_exit is None
         and record.cancel_intent is None
     ):
         return record
@@ -668,7 +668,7 @@ def peek_reconciled_active_spawn(
         )
     return _record_with_terminal_state(
         record,
-        status=SpawnStatus.FAILED,
+        status="failed",
         exit_code=decision.exit_code,
         error=decision.error,
         origin="reconciler",
@@ -751,7 +751,7 @@ def _cleanup_claimed_scopes(runtime_root: Path, record: SpawnRecord) -> None:
         claimed = read_cleanup_claim(runtime_root, spawn_id)
         if not claimed:
             return
-        if record.terminal_origin != "reconciler":
+        if record.terminal is None or record.terminal.origin != "reconciler":
             replace_cleanup_claim(runtime_root, spawn_id, [])
             return
 

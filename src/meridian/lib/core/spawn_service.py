@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, Literal, cast
 import structlog
 
 from meridian.lib.catalog.model_aliases import MarsResultCache
-from meridian.lib.core.domain import SpawnStatus, TokenUsage
+from meridian.lib.core.domain import SpawnStatus, TerminalSpawnStatus, TokenUsage
 from meridian.lib.core.lifecycle import SpawnLifecycleService
 from meridian.lib.core.spawn_lifecycle import (
     ExecutionTerminalFacts,
@@ -60,7 +60,6 @@ from meridian.lib.state.timestamps import iso_timestamp_to_epoch
 from meridian.lib.streaming.signal_canceller import CancelOutcome as SignalCancelOutcome
 
 if TYPE_CHECKING:
-    from meridian.lib.core.lifecycle import TerminalStatus
     from meridian.lib.harness.registry import HarnessRegistry
     from meridian.lib.observability.debug_tracer import DebugTracer
     from meridian.lib.state.primary_meta import PrimaryMetadata
@@ -651,7 +650,7 @@ class SpawnApplicationService:
         record: SpawnRecord,
     ) -> None:
         """Best-effort cleanup for terminal managed orphan-primary spawns."""
-        if record.error != "orphan_primary":
+        if record.terminal is None or record.terminal.error != "orphan_primary":
             return
 
         from meridian.lib.state.managed_primary import terminate_managed_primary_processes
@@ -794,10 +793,10 @@ class SpawnApplicationService:
     async def complete_spawn(
         self,
         spawn_id: SpawnId,
-        status: str,
+        status: TerminalSpawnStatus,
         exit_code: int,
         *,
-        origin: str,
+        origin: SpawnOrigin,
         duration_secs: float | None = None,
         usage: TokenUsage | None = None,
         error: str | None = None,
@@ -824,7 +823,7 @@ class SpawnApplicationService:
         spawn_id: SpawnId,
         facts: ExecutionTerminalFacts,
         *,
-        origin: str,
+        origin: SpawnOrigin,
         duration_secs: float | None = None,
         usage: TokenUsage | None = None,
     ) -> CompleteExecutionOutcome:
@@ -861,10 +860,10 @@ class SpawnApplicationService:
     async def _complete_spawn_unlocked(
         self,
         spawn_id: SpawnId,
-        status: str,
+        status: TerminalSpawnStatus,
         exit_code: int,
         *,
-        origin: str,
+        origin: SpawnOrigin,
         duration_secs: float | None = None,
         usage: TokenUsage | None = None,
         error: str | None = None,
@@ -880,12 +879,11 @@ class SpawnApplicationService:
                 spawn_id=spawn_id,
             )
         was_terminal = self.is_terminal(record.status)
-        if not was_terminal and self.is_terminal(status):
-            terminal_status = cast("TerminalStatus", status)
+        if not was_terminal:
             await asyncio.to_thread(
                 self._lifecycle.record_runner_exit,
                 str(spawn_id),
-                status=terminal_status,
+                status=status,
                 exit_code=exit_code,
                 error=error,
             )
@@ -898,9 +896,9 @@ class SpawnApplicationService:
 
         outcome = self._lifecycle.finalize(
             str(spawn_id),
-            cast("TerminalStatus", status),
+            status,
             exit_code,
-            origin=cast("SpawnOrigin", origin),
+            origin=origin,
             duration_secs=duration_secs,
             usage=usage,
             error=error,

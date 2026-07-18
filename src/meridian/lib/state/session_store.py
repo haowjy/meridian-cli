@@ -7,9 +7,15 @@ from contextlib import ExitStack
 from pathlib import Path
 from typing import IO, Any, Literal, NamedTuple, cast
 
-from pydantic import BaseModel, ConfigDict, ValidationError, field_validator
+from pydantic import BaseModel, ConfigDict, ValidationError
 
-from meridian.lib.core.types import ChatId, HarnessSessionId, normalize_optional_identity
+from meridian.lib.core.types import (
+    ChatId,
+    HarnessSessionId,
+    OptionalPersistedChatId,
+    OptionalPersistedHarnessSessionId,
+    PersistedChatId,
+)
 from meridian.lib.platform.locking import (
     acquire_file_lock,
     lock_file,
@@ -35,10 +41,10 @@ _SESSION_LOCK_HANDLES: dict[tuple[Path, str], _SessionLockHandles] = {}
 class SessionRecord(BaseModel):
     model_config = ConfigDict(frozen=True)
 
-    chat_id: ChatId
+    chat_id: PersistedChatId
     kind: Literal["primary", "spawn"]
     harness: str
-    harness_session_id: HarnessSessionId | None
+    harness_session_id: OptionalPersistedHarnessSessionId
     control_root: str | None = None
     task_cwd: str | None = None
     execution_cwd: str | None = None
@@ -54,7 +60,7 @@ class SessionRecord(BaseModel):
     stopped_at: str | None
     session_instance_id: str = ""
     active_work_id: str | None = None
-    forked_from_chat_id: ChatId | None = None
+    forked_from_chat_id: OptionalPersistedChatId = None
     spawn_id: str | None = None
 
 
@@ -63,7 +69,7 @@ class SessionStartEvent(BaseModel):
 
     v: int = 1
     event: Literal["start"] = "start"
-    chat_id: ChatId
+    chat_id: PersistedChatId
     kind: Literal["primary", "spawn"] = "spawn"
     harness: str
     harness_session_id: HarnessSessionId | None
@@ -82,12 +88,6 @@ class SessionStartEvent(BaseModel):
     forked_from_chat_id: ChatId | None = None
     spawn_id: str | None = None
 
-    @field_validator("chat_id", "harness_session_id", "forked_from_chat_id", mode="before")
-    @classmethod
-    def normalize_persisted_identity(cls, value: object) -> str | None:
-        return normalize_optional_identity(value)
-
-
 class SessionStopEvent(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
@@ -97,28 +97,16 @@ class SessionStopEvent(BaseModel):
     session_instance_id: str = ""
     stopped_at: str | None = None
 
-    @field_validator("chat_id", mode="before")
-    @classmethod
-    def normalize_persisted_identity(cls, value: object) -> str | None:
-        return normalize_optional_identity(value)
-
-
 class SessionUpdateEvent(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     v: int = 1
     event: Literal["update"] = "update"
-    chat_id: ChatId
-    harness_session_id: HarnessSessionId | None = None
+    chat_id: PersistedChatId
+    harness_session_id: OptionalPersistedHarnessSessionId = None
     session_instance_id: str = ""
     claude_config_dir: str | None = None
     active_work_id: str | None = None
-
-    @field_validator("chat_id", "harness_session_id", mode="before")
-    @classmethod
-    def normalize_persisted_identity(cls, value: object) -> str | None:
-        return normalize_optional_identity(value)
-
 
 type SessionEvent = SessionStartEvent | SessionStopEvent | SessionUpdateEvent
 type MaterializedCleanupScope = str

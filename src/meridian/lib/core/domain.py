@@ -69,6 +69,9 @@ ALL_SPAWN_STATUSES, ACTIVE_SPAWN_STATUSES, TERMINAL_SPAWN_STATUSES = _derive_spa
     _SPAWN_STATUS_CLASSIFICATIONS
 )
 
+if set(_SPAWN_STATUS_CLASSIFICATIONS) != set(SpawnStatus):
+    raise ImportError("Spawn status classifications must account for every SpawnStatus member")
+
 type TerminalSpawnStatus = Literal["succeeded", "failed", "cancelled", "timed_out"]
 
 if frozenset(get_args(TerminalSpawnStatus.__value__)) != frozenset(

@@ -101,10 +101,6 @@ type TerminalOutcomeCategory = Literal["succeeded"] | SpawnFailureCategory
 _TERMINAL_STATUS_VALUES: frozenset[str] = TERMINAL_SPAWN_STATUSES
 
 
-def _validate_finalize_status(status: object) -> None:
-    if not isinstance(status, str) or status not in TERMINAL_SPAWN_STATUSES:
-        raise ValueError(f"finalize status must be terminal, got {status!r}")
-
 # ---------------------------------------------------------------------------
 # Event ID generation
 # ---------------------------------------------------------------------------
@@ -472,7 +468,6 @@ class SpawnLifecycleService:
         clock: Clock | None = None,
     ) -> FinalizeOutcome:
         """Finalize a spawn and dispatch spawn.finalized for persisted terminal writes."""
-        _validate_finalize_status(status)
         requested_category = self._terminal_outcome_category(
             status=status,
             origin=origin,
@@ -588,7 +583,7 @@ class SpawnLifecycleService:
             resolved_status = record.status
         resolved_origin = terminal_origin
         if resolved_origin is None and record is not None:
-            resolved_origin = record.terminal_origin
+            resolved_origin = record.terminal.origin if record.terminal is not None else None
         return LifecycleCorrelation(
             spawn_id=resolved_spawn_id,
             parent_id=record.parent_id if record is not None else None,
@@ -620,9 +615,12 @@ class SpawnLifecycleService:
         origin: TerminalOrigin | None = None,
         error: str | None = None,
     ) -> SpawnFailure:
+        terminal = record.terminal
+        terminal_origin = terminal.origin if terminal is not None else None
+        terminal_error = terminal.error if terminal is not None else None
         outcome_category = _terminal_failure_category(
             status=record.status,
-            origin=origin or record.terminal_origin,
+            origin=origin or terminal_origin,
         )
         correlation = self._correlation(
             operation="finalize",
@@ -633,13 +631,13 @@ class SpawnLifecycleService:
         return SpawnFailure(
             spawn_id=record.id,
             ts=datetime.now(tz=UTC),
-            exit_code=record.exit_code,
-            reason=record.error or error or record.terminal_origin or origin or "spawn failed",
+            exit_code=terminal.exit_code if terminal is not None else None,
+            reason=terminal_error or error or terminal_origin or origin or "spawn failed",
             category=outcome_category or SpawnFailureCategory.UNKNOWN_FAILURE,
             status=record.status,
-            origin=record.terminal_origin or origin,
+            origin=terminal_origin or origin,
             correlation=correlation.to_context(),
-            metadata={"origin": record.terminal_origin or origin},
+            metadata={"origin": terminal_origin or origin},
         )
 
     def bootstrap_from_disk(self, spawn_id: str) -> SpawnRecord | None:
@@ -772,19 +770,24 @@ class SpawnLifecycleService:
             rec_status = record.status
             if rec_status in _TERMINAL_STATUS_VALUES:
                 status = rec_status  # type: ignore[assignment]
-            origin = record.terminal_origin  # type: ignore[assignment]
-            duration_secs = record.duration_secs
-            total_cost_usd = record.total_cost_usd
-            input_tokens = record.input_tokens
-            output_tokens = record.output_tokens
-            cache_read_input_tokens = record.cache_read_input_tokens
-            cache_creation_input_tokens = record.cache_creation_input_tokens
-            reasoning_tokens = record.reasoning_tokens
-            cost_is_estimate = record.cost_is_estimate
+            terminal = record.terminal
+            origin = terminal.origin if terminal is not None else None  # type: ignore[assignment]
+            duration_secs = terminal.duration_secs if terminal is not None else None
+            total_cost_usd = terminal.total_cost_usd if terminal is not None else None
+            input_tokens = terminal.input_tokens if terminal is not None else None
+            output_tokens = terminal.output_tokens if terminal is not None else None
+            cache_read_input_tokens = (
+                terminal.cache_read_input_tokens if terminal is not None else None
+            )
+            cache_creation_input_tokens = (
+                terminal.cache_creation_input_tokens if terminal is not None else None
+            )
+            reasoning_tokens = terminal.reasoning_tokens if terminal is not None else None
+            cost_is_estimate = terminal.cost_is_estimate if terminal is not None else False
             outcome_category = self._terminal_outcome_category(
                 status=record.status,
-                origin=record.terminal_origin,
-                error=record.error,
+                origin=terminal.origin if terminal is not None else None,
+                error=terminal.error if terminal is not None else None,
             )
 
         return LifecycleEvent(
@@ -874,36 +877,38 @@ def _terminal_outcome_category(
 
 def _terminal_telemetry_payload(spawn: SpawnRecord) -> dict[str, Any]:
     """Build sparse terminal lifecycle payload for observer projections."""
+    terminal = spawn.terminal
     payload: dict[str, Any] = {
         "status": spawn.status,
     }
     failure_category = _terminal_failure_category(
         status=spawn.status,
-        origin=spawn.terminal_origin,
-        error=spawn.error,
+        origin=terminal.origin if terminal is not None else None,
+        error=terminal.error if terminal is not None else None,
     )
     if failure_category is not None:
         payload["category"] = str(failure_category)
-    if spawn.exit_code is not None:
-        payload["exit_code"] = spawn.exit_code
-    if spawn.duration_secs is not None:
-        payload["duration_secs"] = spawn.duration_secs
-    if spawn.total_cost_usd is not None:
-        payload["total_cost_usd"] = spawn.total_cost_usd
-    if spawn.input_tokens is not None:
-        payload["input_tokens"] = spawn.input_tokens
-    if spawn.output_tokens is not None:
-        payload["output_tokens"] = spawn.output_tokens
-    if spawn.cache_read_input_tokens is not None:
-        payload["cache_read_input_tokens"] = spawn.cache_read_input_tokens
-    if spawn.cache_creation_input_tokens is not None:
-        payload["cache_creation_input_tokens"] = spawn.cache_creation_input_tokens
-    if spawn.reasoning_tokens is not None:
-        payload["reasoning_tokens"] = spawn.reasoning_tokens
-    if spawn.cost_is_estimate:
+    if terminal is None:
+        return payload
+    payload["exit_code"] = terminal.exit_code
+    if terminal.duration_secs is not None:
+        payload["duration_secs"] = terminal.duration_secs
+    if terminal.total_cost_usd is not None:
+        payload["total_cost_usd"] = terminal.total_cost_usd
+    if terminal.input_tokens is not None:
+        payload["input_tokens"] = terminal.input_tokens
+    if terminal.output_tokens is not None:
+        payload["output_tokens"] = terminal.output_tokens
+    if terminal.cache_read_input_tokens is not None:
+        payload["cache_read_input_tokens"] = terminal.cache_read_input_tokens
+    if terminal.cache_creation_input_tokens is not None:
+        payload["cache_creation_input_tokens"] = terminal.cache_creation_input_tokens
+    if terminal.reasoning_tokens is not None:
+        payload["reasoning_tokens"] = terminal.reasoning_tokens
+    if terminal.cost_is_estimate:
         payload["cost_is_estimate"] = True
-    if spawn.error:
-        payload["reason"] = spawn.error
+    if terminal.error:
+        payload["reason"] = terminal.error
     return payload
 
 

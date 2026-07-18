@@ -140,7 +140,6 @@ def apply_finalize(
     from meridian.lib.state.spawn.model import TerminalFacts
 
     terminal = TerminalFacts(
-        status=status,
         exit_code=exit_code,
         finished_at=finished_at,
         published_at=published_at,
@@ -154,7 +153,8 @@ def apply_finalize(
         ),
         reasoning_tokens=usage.reasoning_tokens if usage is not None else None,
         cost_is_estimate=(
-            (usage.cost_is_estimate if usage is not None else False) or record.cost_is_estimate
+            (usage.cost_is_estimate if usage is not None else False)
+            or (record.terminal.cost_is_estimate if record.terminal is not None else False)
         ),
         error=error,
         origin=origin,

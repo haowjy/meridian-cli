@@ -10,17 +10,14 @@ import os
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Literal
+from typing import Literal, Self
 
 from pydantic import ValidationError, model_validator
 
-from meridian.lib.core.domain import ALL_SPAWN_STATUSES, TERMINAL_SPAWN_STATUSES
+from meridian.lib.core.domain import TERMINAL_SPAWN_STATUSES
 from meridian.lib.platform.locking import lock_file
 from meridian.lib.state.atomic import atomic_write_text
-from meridian.lib.state.spawn.model import _LAUNCH_MODE_VALUES, SpawnRecord, SpawnStateFields
-from meridian.lib.state.spawn.model import AUTHORITATIVE_ORIGINS as _AUTHORITATIVE_ORIGINS
-
-_PERSISTED_STATUS_VALUES = ALL_SPAWN_STATUSES | {"unknown"}
+from meridian.lib.state.spawn.model import SpawnRecord, SpawnStateFields
 
 
 class StoredSpawnState(SpawnStateFields):
@@ -33,42 +30,13 @@ class StoredSpawnState(SpawnStateFields):
     v: Literal[2]
     prompt_length: int | None = None
 
-    @model_validator(mode="before")
-    @classmethod
-    def quarantine_unknown_vocabulary(cls, value: Any) -> Any:
-        """Reject, rather than reinterpret, rows with unknown vocabulary values."""
+    @model_validator(mode="after")
+    def require_terminal_facts(self) -> Self:
+        """Keep terminal status and its required facts one atomic persisted meaning."""
 
-        if not isinstance(value, dict):
-            return value
-        vocabularies = {
-            "status": _PERSISTED_STATUS_VALUES,
-            "kind": {"child", "primary", "streaming"},
-            "launch_mode": _LAUNCH_MODE_VALUES,
-        }
-        invalid = {
-            field: raw
-            for field, allowed in vocabularies.items()
-            if (raw := value.get(field)) is not None
-            and (not isinstance(raw, str) or raw not in allowed)
-        }
-        if invalid:
-            raise ValueError(f"quarantined unknown spawn vocabulary: {invalid}")
-        nested_vocabularies: tuple[tuple[str, str, frozenset[object]], ...] = (
-            ("runner_exit", "status", TERMINAL_SPAWN_STATUSES),
-            ("terminal", "status", TERMINAL_SPAWN_STATUSES),
-            ("terminal", "origin", _AUTHORITATIVE_ORIGINS | {"reconciler"}),
-        )
-        nested_invalid: dict[str, object] = {}
-        for container_name, field, allowed in nested_vocabularies:
-            container = value.get(container_name)
-            if not isinstance(container, dict):
-                continue
-            raw = container.get(field)
-            if raw is not None and (not isinstance(raw, str) or raw not in allowed):
-                nested_invalid[f"{container_name}.{field}"] = raw
-        if nested_invalid:
-            raise ValueError(f"quarantined unknown spawn vocabulary: {nested_invalid}")
-        return value
+        if (self.status in TERMINAL_SPAWN_STATUSES) != (self.terminal is not None):
+            raise ValueError("terminal status and terminal facts must appear together")
+        return self
 
 
 @dataclass(frozen=True)
@@ -102,35 +70,6 @@ class MutationOutcome:
     wrote: bool
     snapshot: SpawnRecord
     reason: str | None = None
-
-
-def _enforce_spawn_state_field_accounting(
-    *,
-    shared_fields: set[str] | None = None,
-    stored_fields: set[str] | None = None,
-    record_fields: set[str] | None = None,
-) -> None:
-    """Fail at import when either projection stops accounting for a shared field."""
-
-    expected = shared_fields if shared_fields is not None else set(SpawnStateFields.model_fields)
-    stored = stored_fields if stored_fields is not None else set(StoredSpawnState.model_fields)
-    record = record_fields if record_fields is not None else set(SpawnRecord.model_fields)
-    stored_shared = stored - {"v", "prompt_length"}
-    record_shared = record - {"prompt"}
-    missing_stored = expected - stored_shared
-    stale_stored = stored_shared - expected
-    missing_record = expected - record_shared
-    stale_record = record_shared - expected
-    if missing_stored or stale_stored or missing_record or stale_record:
-        raise ImportError(
-            "Spawn state field-accounting drift. "
-            f"Stored missing={sorted(missing_stored)}, stale={sorted(stale_stored)}. "
-            f"Record missing={sorted(missing_record)}, stale={sorted(stale_record)}."
-        )
-
-
-_enforce_spawn_state_field_accounting()
-
 
 
 def _spawn_dir(spawns_dir: Path, spawn_id: str) -> Path:

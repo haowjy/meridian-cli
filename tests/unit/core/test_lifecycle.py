@@ -36,7 +36,11 @@ class StoreSnapshotHook:
             (
                 event.event_type,
                 None if record is None else record.status,
-                None if record is None else record.terminal_origin,
+                (
+                    None
+                    if record is None or record.terminal is None
+                    else record.terminal.origin
+                ),
             )
         )
 
@@ -133,7 +137,8 @@ def test_authoritative_non_failed_finalize_removes_stale_failure_sentinel(
     assert outcome.wrote is True
     assert record is not None
     assert record.status == "succeeded"
-    assert record.terminal_origin == "runner"
+    assert record.terminal is not None
+    assert record.terminal.origin == "runner"
     assert not sentinel_path.exists()
 
 

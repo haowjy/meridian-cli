@@ -80,10 +80,6 @@ from meridian.lib.state.spawn_aggregate import delete_published_spawn
 logger = structlog.get_logger(__name__)
 
 
-def _validate_finalize_status(status: object) -> None:
-    if not isinstance(status, str) or not _is_terminal_spawn_status(status):
-        raise ValueError(f"finalize status must be terminal, got {status!r}")
-
 # ---------------------------------------------------------------------------
 # ID generation (absorbed from state/id_gen.py)
 # ---------------------------------------------------------------------------
@@ -665,7 +661,6 @@ def finalize_spawn(
     and replace a reconciler terminal tuple; callers should use
     ``outcome.wrote`` and ``outcome.snapshot`` for post-write event emission.
     """
-    _validate_finalize_status(status)
     resolved_clock = clock or RealClock()
     paths = RuntimePaths.from_root_dir(runtime_root)
 
@@ -677,7 +672,9 @@ def finalize_spawn(
         def __call__(self, current: SpawnRecord) -> SpawnRecord | Decline:
             decision = decide_terminal_write(
                 current_status=current.status,
-                current_terminal_origin=current.terminal_origin,
+                current_terminal_origin=(
+                    current.terminal.origin if current.terminal is not None else None
+                ),
                 incoming_origin=origin,
             )
             if decision.disposition == "reject":
@@ -685,7 +682,9 @@ def finalize_spawn(
                     "Finalize rejected by terminal write policy.",
                     spawn_id=str(spawn_id),
                     current_status=current.status,
-                    current_terminal_origin=current.terminal_origin,
+                    current_terminal_origin=(
+                        current.terminal.origin if current.terminal is not None else None
+                    ),
                     attempted_status=status,
                     attempted_origin=origin,
                     attempted_error=error,

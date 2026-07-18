@@ -48,26 +48,6 @@ def _start_test_spawn(runtime_root: Path) -> str:
         )
     )
 
-
-def test_finalize_spawn_rejects_nonterminal_status_at_api_boundary(tmp_path: Path) -> None:
-    runtime_root = _state_root(tmp_path)
-    spawn_id = _start_test_spawn(runtime_root)
-
-    with pytest.raises(ValueError, match="finalize status must be terminal"):
-        finalize_spawn(
-            runtime_root,
-            spawn_id,
-            "finalizing",  # pyright: ignore[reportArgumentType]
-            1,
-            origin="runner",
-        )
-
-    row = get_spawn(runtime_root, spawn_id)
-    assert row is not None
-    assert row.status == "running"
-    assert row.terminal is None
-
-
 def test_finalize_propagates_concurrent_disappearance(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -209,10 +189,11 @@ def test_projection_authority_reconciler_then_runner_replaces_terminal_tuple(
     row = get_spawn(runtime_root, spawn_id)
     assert row is not None
     assert row.status == "succeeded"
-    assert row.exit_code == 0
-    assert row.error is None
-    assert row.terminal_origin == "runner"
-    assert row.duration_secs == 12.5
+    assert row.terminal is not None
+    assert row.terminal.exit_code == 0
+    assert row.terminal.error is None
+    assert row.terminal.origin == "runner"
+    assert row.terminal.duration_secs == 12.5
 
 
 def test_finalize_rejects_losing_authoritative_after_terminal(tmp_path: Path) -> None:
@@ -245,11 +226,12 @@ def test_finalize_rejects_losing_authoritative_after_terminal(tmp_path: Path) ->
     row = get_spawn(runtime_root, spawn_id)
     assert row is not None
     assert row.status == "succeeded"
-    assert row.exit_code == 0
-    assert row.duration_secs is None
-    assert row.total_cost_usd is None
-    assert row.error is None
-    assert row.terminal_origin == "runner"
+    assert row.terminal is not None
+    assert row.terminal.exit_code == 0
+    assert row.terminal.duration_secs is None
+    assert row.terminal.total_cost_usd is None
+    assert row.terminal.error is None
+    assert row.terminal.origin == "runner"
 
 
 def test_cross_process_authoritative_finalizers_persist_one_winner(
@@ -270,7 +252,8 @@ def test_cross_process_authoritative_finalizers_persist_one_winner(
     assert sorted(outcomes) == [(False, False), (True, True)]
     assert row is not None
     assert row.status in {"succeeded", "failed"}
-    assert row.duration_secs in {10.0, 99.0}
+    assert row.terminal is not None
+    assert row.terminal.duration_secs in {10.0, 99.0}
 
 
 def test_finalize_spawn_reconciler_writes_through_finalizing_row(tmp_path: Path) -> None:
@@ -292,4 +275,5 @@ def test_finalize_spawn_reconciler_writes_through_finalizing_row(tmp_path: Path)
     row = get_spawn(runtime_root, spawn_id)
     assert row is not None
     assert row.status == "failed"
-    assert row.error == "orphan_finalization"
+    assert row.terminal is not None
+    assert row.terminal.error == "orphan_finalization"

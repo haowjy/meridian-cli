@@ -1,7 +1,9 @@
 """Stable domain identifier types."""
 
 from enum import StrEnum
-from typing import NewType
+from typing import Annotated, NewType
+
+from pydantic import BeforeValidator, StringConstraints
 
 
 class HarnessId(StrEnum):
@@ -50,12 +52,39 @@ def normalize_optional_identity(value: object) -> str | None:
     normalized = value.strip()
     return normalized or None
 
+
+# Persisted optional identity fields normalize at the type boundary.  Keeping the
+# NewType inside Annotated preserves static separation while Pydantic owns the
+# whitespace/non-empty contract everywhere these types are used.
+PersistedChatId = Annotated[
+    ChatId,
+    BeforeValidator(normalize_optional_identity),
+    StringConstraints(min_length=1),
+]
+PersistedHarnessSessionId = Annotated[
+    HarnessSessionId,
+    BeforeValidator(normalize_optional_identity),
+    StringConstraints(min_length=1),
+]
+OptionalPersistedChatId = Annotated[
+    ChatId | None,
+    BeforeValidator(normalize_optional_identity),
+]
+OptionalPersistedHarnessSessionId = Annotated[
+    HarnessSessionId | None,
+    BeforeValidator(normalize_optional_identity),
+]
+
 __all__ = [
     "ArtifactKey",
     "ChatId",
     "HarnessId",
     "HarnessSessionId",
     "ModelId",
+    "OptionalPersistedChatId",
+    "OptionalPersistedHarnessSessionId",
+    "PersistedChatId",
+    "PersistedHarnessSessionId",
     "SchemaVersion",
     "SpawnId",
     "TransportId",

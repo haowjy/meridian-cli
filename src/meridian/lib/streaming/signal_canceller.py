@@ -292,7 +292,7 @@ def _outcome_from_record(
 ) -> CancelOutcome:
     return CancelOutcome(
         status=_status_or_default(record.status),
-        origin=_origin_or_default(record.terminal_origin),
+        origin=_origin_or_default(record.terminal.origin if record.terminal is not None else None),
         exit_code=_exit_code_or_default(record),
         already_terminal=already_terminal,
     )
@@ -309,7 +309,7 @@ def _origin_or_default(origin: SpawnOrigin | None) -> SpawnOrigin:
 
 
 def _exit_code_or_default(record: SpawnRecord) -> int:
-    return record.exit_code if record.exit_code is not None else 1
+    return record.terminal.exit_code if record.terminal is not None else 1
 
 
 def _pid_is_alive(pid: int | None, started_epoch: float | None) -> bool:

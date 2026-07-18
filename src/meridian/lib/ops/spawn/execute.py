@@ -651,12 +651,12 @@ def execute_spawn_blocking(
         status = row.status
     done_secs = duration
     tokens_total: int | None = None
-    if row is not None:
-        row_duration = row.duration_secs
+    if row is not None and row.terminal is not None:
+        row_duration = row.terminal.duration_secs
         if row_duration is not None:
             done_secs = row_duration
-        input_tokens = row.input_tokens
-        output_tokens = row.output_tokens
+        input_tokens = row.terminal.input_tokens
+        output_tokens = row.terminal.output_tokens
         if input_tokens is not None and output_tokens is not None:
             tokens_total = input_tokens + output_tokens
     _emit_subrun_event(

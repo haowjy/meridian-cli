@@ -87,7 +87,6 @@ def _runner_exit_terminal_update(record: SpawnRecord) -> dict[str, object]:
     return {
         "status": facts.status,
         "terminal": TerminalFacts(
-            status=facts.status,
             exit_code=facts.exit_code,
             finished_at=facts.exited_at,
             published_at=facts.exited_at,
@@ -102,7 +101,6 @@ def _synthetic_stale_terminal_update(*, error: str, now: float) -> dict[str, obj
     return {
         "status": "failed",
         "terminal": TerminalFacts(
-            status="failed",
             exit_code=1,
             finished_at=observed_at,
             published_at=observed_at,
@@ -123,8 +121,8 @@ def _read_only_nested_staleness_view(
         started_epoch is not None and now - started_epoch < _NESTED_READ_STARTUP_GRACE_SECS
     )
 
-    if record.runner_exit_status is not None:
-        exited_epoch = _iso_to_epoch(record.runner_exit_at)
+    if record.runner_exit is not None:
+        exited_epoch = _iso_to_epoch(record.runner_exit.exited_at)
         if (
             exited_epoch is not None
             and now - exited_epoch < _NESTED_READ_POST_RUNNER_EXIT_FINALIZATION_GRACE_SECS
@@ -575,6 +573,7 @@ def detail_from_row(
 
     resolved_runtime_root = runtime_root or resolve_runtime_root_for_read(project_root)
 
+    terminal = row.terminal
     return SpawnDetailOutput(
         spawn_id=row.id,
         status=row.status,
@@ -587,17 +586,19 @@ def detail_from_row(
         goal=row.goal,
         desc=row.desc,
         started_at=row.started_at or "",
-        finished_at=row.finished_at,
-        duration_secs=row.duration_secs,
-        exit_code=row.exit_code,
-        failure_reason=row.error,
-        input_tokens=row.input_tokens,
-        output_tokens=row.output_tokens,
-        cache_read_input_tokens=row.cache_read_input_tokens,
-        cache_creation_input_tokens=row.cache_creation_input_tokens,
-        reasoning_tokens=row.reasoning_tokens,
-        cost_usd=row.total_cost_usd,
-        cost_is_estimate=row.cost_is_estimate,
+        finished_at=terminal.finished_at if terminal is not None else None,
+        duration_secs=terminal.duration_secs if terminal is not None else None,
+        exit_code=terminal.exit_code if terminal is not None else None,
+        failure_reason=terminal.error if terminal is not None else None,
+        input_tokens=terminal.input_tokens if terminal is not None else None,
+        output_tokens=terminal.output_tokens if terminal is not None else None,
+        cache_read_input_tokens=terminal.cache_read_input_tokens if terminal is not None else None,
+        cache_creation_input_tokens=(
+            terminal.cache_creation_input_tokens if terminal is not None else None
+        ),
+        reasoning_tokens=terminal.reasoning_tokens if terminal is not None else None,
+        cost_usd=terminal.total_cost_usd if terminal is not None else None,
+        cost_is_estimate=terminal.cost_is_estimate if terminal is not None else False,
         report_path=report_path,
         report_summary=report_summary,
         report_body=report_body,

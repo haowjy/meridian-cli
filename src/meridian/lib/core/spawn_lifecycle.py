@@ -17,6 +17,7 @@ from meridian.lib.core.domain import (
     ALL_SPAWN_STATUSES,
     TERMINAL_SPAWN_STATUSES,
     SpawnStatus,
+    TerminalSpawnStatus,
 )
 from meridian.lib.core.spawn_start import SpawnStartMetadata
 
@@ -56,10 +57,33 @@ class SpawnReservation:
 
 FAILURE_SPAWN_STATUSES: frozenset[str] = frozenset({"failed", "timed_out"})
 
-_ALLOWED_TRANSITIONS: dict[str, frozenset[str]] = {
-    "queued": frozenset({"running", "succeeded", "failed", "cancelled", "timed_out"}),
-    "running": frozenset({"finalizing", "succeeded", "failed", "cancelled", "timed_out"}),
-    "finalizing": frozenset({"succeeded", "failed", "cancelled", "timed_out"}),
+_ALLOWED_TRANSITIONS: dict[SpawnStatus, frozenset[SpawnStatus]] = {
+    SpawnStatus.QUEUED: frozenset(
+        {
+            SpawnStatus.RUNNING,
+            SpawnStatus.SUCCEEDED,
+            SpawnStatus.FAILED,
+            SpawnStatus.CANCELLED,
+            SpawnStatus.TIMED_OUT,
+        }
+    ),
+    SpawnStatus.RUNNING: frozenset(
+        {
+            SpawnStatus.FINALIZING,
+            SpawnStatus.SUCCEEDED,
+            SpawnStatus.FAILED,
+            SpawnStatus.CANCELLED,
+            SpawnStatus.TIMED_OUT,
+        }
+    ),
+    SpawnStatus.FINALIZING: frozenset(
+        {
+            SpawnStatus.SUCCEEDED,
+            SpawnStatus.FAILED,
+            SpawnStatus.CANCELLED,
+            SpawnStatus.TIMED_OUT,
+        }
+    ),
 }
 _CONTROL_EVENT_NAMES: frozenset[str] = frozenset(
     {"cancelled", "error", "error.connectionclosed"}
@@ -114,14 +138,14 @@ class ExecutionTerminalFacts:
     failure_reason: str | None = None
     cancellation_observed: bool = False
     durable_report_completion: bool = False
-    terminal_status: SpawnStatus | None = None
+    terminal_status: TerminalSpawnStatus | None = None
 
 
 @dataclass(frozen=True)
 class ExecutionTerminalOutcome:
     """Lifecycle-resolved terminal tuple derived from execution facts."""
 
-    status: SpawnStatus
+    status: TerminalSpawnStatus
     exit_code: int
     error: str | None
 
@@ -256,22 +280,22 @@ def resolve_execution_terminal_state(
     failure_reason: str | None,
     cancelled: bool = False,
     durable_report_completion: bool = False,
-    terminal_status: SpawnStatus | None = None,
-) -> tuple[SpawnStatus, int, str | None]:
+    terminal_status: TerminalSpawnStatus | None = None,
+) -> tuple[TerminalSpawnStatus, int, str | None]:
     """Normalize one execution outcome into the persisted terminal state."""
 
     if terminal_status is not None and terminal_status != "succeeded":
         return terminal_status, exit_code, failure_reason
     if durable_report_completion:
-        return SpawnStatus.SUCCEEDED, 0, None
+        return "succeeded", 0, None
     if terminal_status is not None:
         return terminal_status, exit_code, failure_reason
     if cancelled:
         resolved_exit_code = exit_code if exit_code != 0 else 130
-        return SpawnStatus.CANCELLED, resolved_exit_code, failure_reason
+        return "cancelled", resolved_exit_code, failure_reason
     if exit_code == 0:
-        return SpawnStatus.SUCCEEDED, 0, failure_reason
-    return SpawnStatus.FAILED, exit_code, failure_reason
+        return "succeeded", 0, failure_reason
+    return "failed", exit_code, failure_reason
 
 
 def resolve_execution_terminal_outcome(
@@ -303,10 +327,10 @@ def resolve_completion_cancel_precedence(
     """Resolve the shared durable-completion-vs-late-cancel precedence rule."""
 
     if durable_report_completion:
-        return ExecutionTerminalOutcome(status=SpawnStatus.SUCCEEDED, exit_code=0, error=None)
+        return ExecutionTerminalOutcome(status="succeeded", exit_code=0, error=None)
     if cancel_requested:
         return ExecutionTerminalOutcome(
-            status=SpawnStatus.CANCELLED,
+            status="cancelled",
             exit_code=cancel_exit_code,
             error=cancel_error,
         )
@@ -317,9 +341,9 @@ def resolve_reconciled_terminal_state(
     *,
     durable_report_completion: bool,
     fallback_error: str,
-) -> tuple[SpawnStatus, int, str | None]:
+) -> tuple[TerminalSpawnStatus, int, str | None]:
     """Resolve the terminal state produced by read-path reconciliation."""
 
     if durable_report_completion:
-        return SpawnStatus.SUCCEEDED, 0, None
-    return SpawnStatus.FAILED, 1, fallback_error
+        return "succeeded", 0, None
+    return "failed", 1, fallback_error

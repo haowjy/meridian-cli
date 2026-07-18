@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from meridian.lib.core.domain import SpawnStatus
+from meridian.lib.core.domain import TerminalSpawnStatus
 from meridian.lib.core.spawn_lifecycle import resolve_completion_cancel_precedence
 from meridian.lib.state.spawn.model import SpawnRecord
 
@@ -27,7 +27,7 @@ class FinalizeSucceededFromReport:
 
 @dataclass(frozen=True)
 class FinalizeFromRunnerExit:
-    status: SpawnStatus
+    status: TerminalSpawnStatus
     exit_code: int
     error: str | None
 

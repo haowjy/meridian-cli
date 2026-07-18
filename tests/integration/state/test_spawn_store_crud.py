@@ -209,6 +209,26 @@ def test_partial_terminal_facts_are_quarantined_instead_of_half_loaded(
     assert [report.spawn_id for report in collection.quarantines] == [spawn_id]
 
 
+@pytest.mark.parametrize("retired_field", ["exit_code", "finished_at", "terminal_origin"])
+def test_retired_flat_terminal_fields_are_quarantined_by_extra_forbid(
+    tmp_path: Path,
+    retired_field: str,
+) -> None:
+    runtime_root = _state_root(tmp_path)
+    spawn_id = _start_test_spawn(runtime_root)
+    state_path = RuntimePaths.from_root_dir(runtime_root).spawns_dir / spawn_id / "state.json"
+    payload = json.loads(state_path.read_text(encoding="utf-8"))
+    payload[retired_field] = "retired"
+    atomic_write_text(state_path, json.dumps(payload))
+
+    with pytest.raises(SpawnStateQuarantined) as quarantined:
+        get_spawn(runtime_root, spawn_id)
+
+    errors = quarantined.value.report.validation_errors
+    assert retired_field in str(errors)
+    assert "extra_forbidden" in str(errors)
+
+
 def test_start_spawn_publishes_only_a_complete_readable_row(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -671,7 +691,7 @@ def test_exited_event_is_non_terminal_and_projects_last_attempt_exit(tmp_path: P
     assert row.status == "running"
     assert row.last_attempt_exited_at == "2026-04-12T14:00:00Z"
     assert row.last_attempt_exit_code == 143
-    assert row.exit_code is None
+    assert row.terminal is None
 
 
 def test_record_runner_exit_persists_terminal_intent_without_finalizing(tmp_path: Path) -> None:
@@ -690,7 +710,8 @@ def test_record_runner_exit_persists_terminal_intent_without_finalizing(tmp_path
     row = get_spawn(runtime_root, spawn_id)
     assert row is not None
     assert row.status == "running"
-    assert row.runner_exit_status == "failed"
-    assert row.runner_exit_code == 42
-    assert row.runner_exit_error == "guardrail_failed"
-    assert row.runner_exit_at == "2026-04-12T14:03:00Z"
+    assert row.runner_exit is not None
+    assert row.runner_exit.status == "failed"
+    assert row.runner_exit.exit_code == 42
+    assert row.runner_exit.error == "guardrail_failed"
+    assert row.runner_exit.exited_at == "2026-04-12T14:03:00Z"

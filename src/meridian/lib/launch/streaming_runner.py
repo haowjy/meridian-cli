@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import structlog
+from pydantic import TypeAdapter
 
 from meridian.lib.bootstrap.services import (
     build_spawn_application_service_from_roots,
@@ -23,7 +24,7 @@ from meridian.lib.bootstrap.services import (
 )
 from meridian.lib.config.settings import MeridianConfig
 from meridian.lib.core.clock import Clock, RealClock
-from meridian.lib.core.domain import Spawn, SpawnStatus
+from meridian.lib.core.domain import Spawn, SpawnStatus, TerminalSpawnStatus
 from meridian.lib.core.spawn_lifecycle import ExecutionTerminalFacts
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.adapter import StreamEvent
@@ -129,7 +130,7 @@ class _AttemptRuntime:
     terminated_by_inactivity: bool = False
     cancelled_by_request: bool = False
     terminal_observed: bool = False
-    authoritative_terminal_status: SpawnStatus | None = None
+    authoritative_terminal_status: TerminalSpawnStatus | None = None
     start_error: str | None = None
 
 
@@ -148,7 +149,7 @@ class StreamingRunConclusion:
     failure_reason: str | None = None
     extracted: FinalizeExtraction | None = None
     final_attempt_terminal_observed: bool = False
-    authoritative_terminal_status: SpawnStatus | None = None
+    authoritative_terminal_status: TerminalSpawnStatus | None = None
     cancellation_observed: bool = False
     retries_attempted: int = 0
 
@@ -826,7 +827,7 @@ async def _run_streaming_attempt(
     terminated_by_inactivity = False
     cancelled_by_request = False
     terminal_outcome: TerminalEventOutcome | None = None
-    authoritative_terminal_status: SpawnStatus | None = None
+    authoritative_terminal_status: TerminalSpawnStatus | None = None
     try:
         if runner_phase is not None:
             runner_phase[0] = "starting_harness"
@@ -947,14 +948,16 @@ async def _run_streaming_attempt(
         drain_outcome = await completion_task
         if drain_outcome is not None and terminal_outcome is None:
             if timed_out and drain_outcome.status != "succeeded":
-                authoritative_terminal_status = SpawnStatus.TIMED_OUT
+                authoritative_terminal_status = "timed_out"
                 drain_exit_code = 3
                 drain_error = "timeout"
             else:
                 drain_exit_code = drain_outcome.exit_code
                 drain_error = drain_outcome.error
                 if drain_outcome.authoritative and drain_outcome.status != "succeeded":
-                    authoritative_terminal_status = drain_outcome.status
+                    authoritative_terminal_status = TypeAdapter(
+                        TerminalSpawnStatus
+                    ).validate_python(drain_outcome.status)
             if timed_out and drain_outcome.status == "succeeded":
                 timed_out = False
             if drain_outcome.error == "report_watchdog":

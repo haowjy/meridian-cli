@@ -597,8 +597,8 @@ def spawn_list_sync(
                 kind=kind,
                 activity=surfaced_activity,
                 managed_backend=managed_backend,
-                duration_secs=row.duration_secs,
-                cost_usd=row.total_cost_usd,
+                duration_secs=row.terminal.duration_secs if row.terminal is not None else None,
+                cost_usd=row.terminal.total_cost_usd if row.terminal is not None else None,
             )
         )
 
@@ -661,8 +661,8 @@ def spawn_children_sync(
             model=row.model or "",
             agent=row.agent or None,
             desc=_spawn_display_label(row),
-            duration_secs=row.duration_secs,
-            cost_usd=row.total_cost_usd,
+            duration_secs=row.terminal.duration_secs if row.terminal is not None else None,
+            cost_usd=row.terminal.total_cost_usd if row.terminal is not None else None,
         )
         for row in children
     )
@@ -760,13 +760,14 @@ def spawn_stats_sync(
         acc["total"] = int(acc["total"]) + 1
         if row.status in ALL_SPAWN_STATUSES:
             acc[row.status] = int(acc[row.status]) + 1
-        if row.total_cost_usd is not None:
-            acc["cost_usd"] = float(acc["cost_usd"]) + row.total_cost_usd
+        terminal = row.terminal
+        if terminal is not None and terminal.total_cost_usd is not None:
+            acc["cost_usd"] = float(acc["cost_usd"]) + terminal.total_cost_usd
 
-        if row.duration_secs is not None:
-            total_duration_secs += row.duration_secs
-        if row.total_cost_usd is not None:
-            total_cost_usd += row.total_cost_usd
+        if terminal is not None and terminal.duration_secs is not None:
+            total_duration_secs += terminal.duration_secs
+        if terminal is not None and terminal.total_cost_usd is not None:
+            total_cost_usd += terminal.total_cost_usd
 
     models: dict[str, ModelStats] = {
         k: ModelStats(
@@ -790,10 +791,10 @@ def spawn_stats_sync(
                 spawn_id=s.id,
                 status=s.status,
                 model=s.model or "",
-                duration_secs=s.duration_secs,
-                cost_usd=s.total_cost_usd,
-                input_tokens=s.input_tokens,
-                output_tokens=s.output_tokens,
+                duration_secs=s.terminal.duration_secs if s.terminal is not None else None,
+                cost_usd=s.terminal.total_cost_usd if s.terminal is not None else None,
+                input_tokens=s.terminal.input_tokens if s.terminal is not None else None,
+                output_tokens=s.terminal.output_tokens if s.terminal is not None else None,
             )
             for s in spawns
         )
