@@ -4,13 +4,16 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Literal
+
+LinkKind = Literal["link", "image", "wikilink"]
 
 
 @dataclass
 class ExtractedLink:
     """One link extracted from a markdown document."""
 
-    kind: str  # "link" | "image" | "wikilink"
+    kind: LinkKind
     target: str  # raw URL or wikilink target (anchor stripped for links)
     text: str  # display text or alt
     line: int  # 1-indexed line in source file
@@ -52,4 +55,5 @@ __all__ = [
     "ExtractedHeading",
     "ExtractedLink",
     "FencedBlock",
+    "LinkKind",
 ]
