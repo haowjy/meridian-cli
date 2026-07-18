@@ -61,7 +61,7 @@ def test_failed_atomic_identity_write_leaves_existing_toml_usable(
     def interrupted(_path: Path, _content: str) -> None:
         raise KeyboardInterrupt
 
-    monkeypatch.setattr("meridian.lib.state.user_paths.atomic_write_text", interrupted)
+    monkeypatch.setattr("meridian.lib.config.preserving_edit.atomic_write_text", interrupted)
     with pytest.raises(KeyboardInterrupt):
         write_project_id(tmp_path, "never-committed")
     assert config_path.read_text(encoding="utf-8") == original

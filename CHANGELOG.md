@@ -33,6 +33,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   adapter-local process launches no longer rebuild it from the parent process.
 
 ### Fixed
+- Project identity creation, identity migration, and `config set/reset` now
+  serialize `meridian.toml` read-modify-write transactions through one stable
+  user-home lock, preventing concurrent edits from clobbering each other.
 - The environment registry drift guard now recognizes dot and bracket access
   across JavaScript and TypeScript module extensions.
 - Legacy identity migration now keeps its legacy ID completion marker until

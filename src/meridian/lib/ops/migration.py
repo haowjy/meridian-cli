@@ -7,10 +7,11 @@ from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 
+from meridian.lib.config.preserving_edit import project_config_transaction
 from meridian.lib.state.user_paths import (
-    _write_project_id_unlocked,
     get_project_home,
     get_project_id,
+    get_user_home,
     write_project_id,
 )
 
@@ -39,10 +40,15 @@ def _read_legacy_id(project_root: Path) -> str | None:
 
 def migrate_legacy_project_identity(
     project_root: Path,
-    *,
-    lock_held: bool = False,
 ) -> MigrationResult:
     """Move repo-local identity into ``meridian.toml`` resumably."""
+
+    with project_config_transaction(project_root, get_user_home()):
+        return _migrate_legacy_project_identity_locked(project_root)
+
+
+def _migrate_legacy_project_identity_locked(project_root: Path) -> MigrationResult:
+    """Run migration while the reentrant project-config transaction is held."""
 
     existing_id = get_project_id(project_root)
     legacy_id = _read_legacy_id(project_root)
@@ -76,10 +82,7 @@ def migrate_legacy_project_identity(
     # committed identity and all generated legacy stragglers are settled so an
     # interrupted migration remains discoverable and safe to retry.
     if existing_id is None:
-        if lock_held:
-            _write_project_id_unlocked(project_root, legacy_id)
-        else:
-            write_project_id(project_root, legacy_id)
+        write_project_id(project_root, legacy_id)
 
     legacy_dir = project_root / ".meridian"
     legacy_identity = legacy_dir / "id"

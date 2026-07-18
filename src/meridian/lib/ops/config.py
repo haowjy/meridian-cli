@@ -11,7 +11,11 @@ import structlog
 from pydantic import BaseModel, ConfigDict, field_serializer
 
 from meridian.lib.config.context_config import ContextSourceType
-from meridian.lib.config.preserving_edit import reset_scalar_option, set_scalar_option
+from meridian.lib.config.preserving_edit import (
+    mutate_project_config,
+    reset_scalar_option,
+    set_scalar_option,
+)
 from meridian.lib.config.project_config_state import (
     ProjectConfigState,
     resolve_project_config_state,
@@ -49,6 +53,7 @@ from meridian.lib.state.paths import (
     resolve_project_paths_for_write,
     resolve_project_runtime_root_for_write,
 )
+from meridian.lib.state.user_paths import get_user_home
 
 _MISSING_PROJECT_CONFIG_MESSAGE = "no project config; run `meridian config init`"
 _LOCAL_CONFIG_FILENAME = "meridian.local.toml"
@@ -739,12 +744,15 @@ def config_set_sync(payload: ConfigSetInput) -> ConfigSetOutput:
         raw_value=payload.value,
     )
 
-    edit_result = set_scalar_option(
-        path.read_text(encoding="utf-8"),
-        option=option,
-        value=value,
+    def edit(text: str) -> tuple[str, None]:
+        result = set_scalar_option(text, option=option, value=value)
+        return result.text, None
+
+    mutate_project_config(
+        project_root,
+        get_user_home(),
+        edit,
     )
-    atomic_write_text(path, edit_result.text)
 
     return ConfigSetOutput(
         path=path.as_posix(),
@@ -775,8 +783,16 @@ def config_reset_sync(payload: ConfigResetInput) -> ConfigResetOutput:
     project_root = _resolve_project_root(payload.project_root)
     path = _require_project_config_path(_resolve_project_config_state(project_root))
     option = _resolve_option(payload.key)
-    edit_result = reset_scalar_option(path.read_text(encoding="utf-8"), option=option)
-    atomic_write_text(path, edit_result.text)
+
+    def edit(text: str):
+        result = reset_scalar_option(text, option=option)
+        return result.text, result
+
+    edit_result = mutate_project_config(
+        project_root,
+        get_user_home(),
+        edit,
+    )
 
     return ConfigResetOutput(
         path=path.as_posix(),
