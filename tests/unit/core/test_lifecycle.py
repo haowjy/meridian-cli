@@ -301,6 +301,23 @@ def test_mark_running_terminal_decline_emits_no_event(tmp_path: Path) -> None:
     assert hook.event_types == []
 
 
+def test_finalize_decline_emits_no_event_and_preserves_state(tmp_path: Path) -> None:
+    hook = EventTypeHook()
+    service = _make_service(tmp_path, hooks=[hook])
+    spawn_id = _start_spawn(service)
+    service.finalize(spawn_id, "succeeded", 0, origin="runner")
+    before = spawn_store.get_spawn(tmp_path, spawn_id)
+    hook.event_types.clear()
+
+    outcome = service.finalize(spawn_id, "failed", 1, origin="launcher")
+
+    assert outcome.wrote is False
+    assert outcome.transitioned is False
+    assert outcome.snapshot == before
+    assert spawn_store.get_spawn(tmp_path, spawn_id) == before
+    assert hook.event_types == []
+
+
 def test_owner_transition_preserves_metadata_written_after_cache_load(tmp_path: Path) -> None:
     service = _make_service(tmp_path)
     spawn_id = _start_spawn(service, status="queued")

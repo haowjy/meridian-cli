@@ -55,6 +55,7 @@ from meridian.lib.state.spawn.model import (
 )
 from meridian.lib.state.spawn.repository import (
     Decline,
+    MutationOutcome,
     SpawnStateQuarantined,
     SpawnStateQuarantineReport,
     record_to_stored_state,
@@ -211,6 +212,21 @@ class FinalizeOutcome(BaseModel):
     transitioned: bool
     wrote: bool
     snapshot: SpawnRecord | None
+
+    @classmethod
+    def from_mutation(
+        cls,
+        outcome: MutationOutcome,
+        *,
+        transitioned: bool,
+    ) -> FinalizeOutcome:
+        """Add lifecycle transition meaning to a persistence outcome."""
+
+        return cls(
+            transitioned=outcome.wrote and transitioned,
+            wrote=outcome.wrote,
+            snapshot=outcome.snapshot,
+        )
 
 
 def _ensure_staging_dir(paths: RuntimePaths) -> Path:
@@ -653,43 +669,43 @@ def finalize_spawn(
     resolved_clock = clock or RealClock()
     paths = RuntimePaths.from_root_dir(runtime_root)
 
-    class _FinalizeRejected(Exception):
-        def __init__(self, snapshot: SpawnRecord) -> None:
-            self.snapshot = snapshot
+    class FinalizeMutation:
+        """Apply terminal policy while retaining lifecycle transition framing."""
 
-    was_active = False
+        transitioned = False
 
-    def finalize(current: SpawnRecord) -> SpawnRecord:
-        nonlocal was_active
-        decision = decide_terminal_write(
-            current_status=current.status,
-            current_terminal_origin=current.terminal_origin,
-            incoming_origin=origin,
-        )
-        if decision.disposition == "reject":
-            logger.info(
-                "Finalize rejected by terminal write policy.",
-                spawn_id=str(spawn_id),
+        def __call__(self, current: SpawnRecord) -> SpawnRecord | Decline:
+            decision = decide_terminal_write(
                 current_status=current.status,
                 current_terminal_origin=current.terminal_origin,
-                attempted_status=status,
-                attempted_origin=origin,
-                attempted_error=error,
+                incoming_origin=origin,
             )
-            raise _FinalizeRejected(current)
-        was_active = is_active_spawn_status(current.status)
-        published_at = resolved_clock.utc_now_iso()
-        return apply_finalize(
-            current,
-            status,
-            exit_code,
-            origin=origin,
-            finished_at=finished_at or published_at,
-            published_at=published_at,
-            duration_secs=duration_secs,
-            usage=usage,
-            error=error,
-        )
+            if decision.disposition == "reject":
+                logger.info(
+                    "Finalize rejected by terminal write policy.",
+                    spawn_id=str(spawn_id),
+                    current_status=current.status,
+                    current_terminal_origin=current.terminal_origin,
+                    attempted_status=status,
+                    attempted_origin=origin,
+                    attempted_error=error,
+                )
+                return Decline("terminal write policy rejected finalize")
+            self.transitioned = is_active_spawn_status(current.status)
+            published_at = resolved_clock.utc_now_iso()
+            return apply_finalize(
+                current,
+                status,
+                exit_code,
+                origin=origin,
+                finished_at=finished_at or published_at,
+                published_at=published_at,
+                duration_secs=duration_secs,
+                usage=usage,
+                error=error,
+            )
+
+    mutation = FinalizeMutation()
 
     record = _read_state(paths.spawns_dir, str(spawn_id))
     if record is None:
@@ -703,15 +719,14 @@ def finalize_spawn(
         outcome = _write_state_locked(
             paths.spawns_dir,
             str(spawn_id),
-            finalize,
+            mutation,
             allow_terminal_overwrite=True,
         )
-    except _FinalizeRejected as exc:
-        return FinalizeOutcome(transitioned=False, wrote=False, snapshot=exc.snapshot)
-    return FinalizeOutcome(
-        transitioned=was_active,
-        wrote=True,
-        snapshot=outcome.snapshot,
+    except FileNotFoundError:
+        return FinalizeOutcome(transitioned=False, wrote=False, snapshot=None)
+    return FinalizeOutcome.from_mutation(
+        outcome,
+        transitioned=mutation.transitioned,
     )
 
 
