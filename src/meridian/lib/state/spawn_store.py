@@ -715,15 +715,12 @@ def finalize_spawn(
             incoming_origin=origin,
         )
         return FinalizeOutcome(transitioned=False, wrote=False, snapshot=None)
-    try:
-        outcome = _write_state_locked(
-            paths.spawns_dir,
-            str(spawn_id),
-            mutation,
-            allow_terminal_overwrite=True,
-        )
-    except FileNotFoundError:
-        return FinalizeOutcome(transitioned=False, wrote=False, snapshot=None)
+    outcome = _write_state_locked(
+        paths.spawns_dir,
+        str(spawn_id),
+        mutation,
+        allow_terminal_overwrite=True,
+    )
     return FinalizeOutcome.from_mutation(
         outcome,
         transitioned=mutation.transitioned,
@@ -758,10 +755,7 @@ def mark_finalizing_with_snapshot(
 
     if _read_state(paths.spawns_dir, str(spawn_id)) is None:
         return False, None
-    try:
-        outcome = _write_state_locked(paths.spawns_dir, str(spawn_id), transition)
-    except FileNotFoundError:
-        return False, None
+    outcome = _write_state_locked(paths.spawns_dir, str(spawn_id), transition)
     return outcome.wrote, outcome.snapshot
 
 

@@ -24,6 +24,7 @@ from meridian.lib.state.spawn_store import (
     finalize_spawn,
     get_spawn,
     mark_finalizing,
+    mark_finalizing_with_snapshot,
     start_spawn,
 )
 from tests.support.process_race import run_spawn_race_or_skip
@@ -65,6 +66,38 @@ def test_finalize_spawn_rejects_nonterminal_status_at_api_boundary(tmp_path: Pat
     assert row is not None
     assert row.status == "running"
     assert row.terminal is None
+
+
+def test_finalize_propagates_concurrent_disappearance(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime_root = _state_root(tmp_path)
+    spawn_id = _start_test_spawn(runtime_root)
+
+    def disappeared(*_args: object, **_kwargs: object) -> None:
+        raise FileNotFoundError(spawn_id)
+
+    monkeypatch.setattr("meridian.lib.state.spawn_store._write_state_locked", disappeared)
+
+    with pytest.raises(FileNotFoundError):
+        finalize_spawn(runtime_root, spawn_id, "succeeded", 0, origin="runner")
+
+
+def test_mark_finalizing_propagates_concurrent_disappearance(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime_root = _state_root(tmp_path)
+    spawn_id = _start_test_spawn(runtime_root)
+
+    def disappeared(*_args: object, **_kwargs: object) -> None:
+        raise FileNotFoundError(spawn_id)
+
+    monkeypatch.setattr("meridian.lib.state.spawn_store._write_state_locked", disappeared)
+
+    with pytest.raises(FileNotFoundError):
+        mark_finalizing_with_snapshot(runtime_root, spawn_id)
 
 
 def _finalize_spawn_worker(
