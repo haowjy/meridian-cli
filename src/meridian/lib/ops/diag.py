@@ -22,7 +22,7 @@ from meridian.lib.ops.pruning import (
     scan_stale_spawn_artifacts,
 )
 from meridian.lib.ops.runtime import resolve_project_authority, resolve_runtime_authority_for_write
-from meridian.lib.state import spawn_store, work_store
+from meridian.lib.state import spawn_store, work_repository, work_store
 from meridian.lib.state.lock_gc import LockGcStats, gc_orphaned_locks
 from meridian.lib.state.session_store import cleanup_stale_sessions
 from meridian.lib.state.user_paths import get_user_home
@@ -144,8 +144,7 @@ def _check_legacy_worktree_temp(runtime_root: Path) -> DoctorWarning | None:
     return DoctorWarning(
         code="legacy_worktree_temp_dir",
         message=(
-            "Legacy worktree-temp directory exists and is no longer used. "
-            "Safe to delete manually."
+            "Legacy worktree-temp directory exists and is no longer used. Safe to delete manually."
         ),
         payload={"path": legacy_temp_dir.as_posix()},
     )
@@ -158,9 +157,7 @@ def _repair_stale_session_locks(
 ) -> int:
     resolved_runtime_root = runtime_root
     if resolved_runtime_root is None:
-        resolved_runtime_root = resolve_runtime_authority_for_write(
-            project_root
-        ).runtime_root
+        resolved_runtime_root = resolve_runtime_authority_for_write(project_root).runtime_root
     if resolved_runtime_root is None:
         raise ValueError("Doctor lock repair requires a runtime root.")
     cleanup = cleanup_stale_sessions(resolved_runtime_root)
@@ -183,9 +180,7 @@ def _repair_orphan_runs(
 
     resolved_runtime_root = runtime_root
     if resolved_runtime_root is None:
-        resolved_runtime_root = resolve_runtime_authority_for_write(
-            project_root
-        ).runtime_root
+        resolved_runtime_root = resolve_runtime_authority_for_write(project_root).runtime_root
     if resolved_runtime_root is None:
         raise ValueError("Doctor orphan-run repair requires a runtime root.")
     spawns = spawn_store.list_spawns(resolved_runtime_root).records
@@ -261,7 +256,7 @@ def doctor_sync(payload: DoctorInput) -> DoctorOutput:
     healed_work_items = 0
     for work_id in {item.name for item in (*active_work_items, *archived_work_items)}:
         if work_store.work_item_needs_repair(project_state_dir, work_id):
-            work_store.repair_work_item(project_state_dir, work_id)
+            work_repository.repair_work_item(project_state_dir, work_id)
             healed_work_items += 1
     if healed_work_items:
         repaired.append("work_item_metadata")

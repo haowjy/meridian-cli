@@ -17,7 +17,7 @@ from meridian.lib.ops.context import (
 from meridian.lib.ops.runtime import build_runtime
 from meridian.lib.ops.work_attachment import set_session_work_attachment
 from meridian.lib.ops.work_lifecycle import WorkTaskDirInput, work_task_dir_sync
-from meridian.lib.state import session_store, work_store
+from meridian.lib.state import session_store, work_repository
 from meridian.lib.state.spawn_scope import write_spawn_scope_task_dir
 from meridian.lib.state.spawn_store import start_spawn
 
@@ -138,8 +138,10 @@ def test_work_task_dir_ignores_spawn_scope_and_inherited_env(
     scope_dir.mkdir(parents=True)
     inherited.mkdir(parents=True)
 
-    item = work_store.create_work_item(runtime.authority.project_state_dir, "feature", "", None)
-    work_store.update_work_item_task_dir(
+    item = work_repository.create_work_item(
+        runtime.authority.project_state_dir, "feature", "", None
+    )
+    work_repository.update_work_item_task_dir(
         runtime.authority.project_state_dir,
         item.name,
         task_dir=work_task_dir.as_posix(),

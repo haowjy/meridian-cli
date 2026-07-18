@@ -11,7 +11,7 @@ from meridian.lib.launch.request import SpawnRequest
 from meridian.lib.ops.spawn.execute import _resolve_execution_contract
 from meridian.lib.ops.spawn.models import SpawnCreateInput
 from meridian.lib.ops.spawn.task_dir import derive_inheritable_task_dir
-from meridian.lib.state import work_store
+from meridian.lib.state import work_repository
 from meridian.lib.state.paths import resolve_project_paths
 
 pytestmark = pytest.mark.slow
@@ -34,8 +34,8 @@ def test_derive_inheritable_task_dir_omits_work_item_provenance(
     work_task_dir.mkdir(parents=True)
     inherited = tmp_path / "inherited"
     inherited.mkdir(parents=True)
-    item = work_store.create_work_item(state_dir, "feature", "", None)
-    work_store.update_work_item_task_dir(
+    item = work_repository.create_work_item(state_dir, "feature", "", None)
+    work_repository.update_work_item_task_dir(
         state_dir,
         item.name,
         task_dir=work_task_dir.as_posix(),
@@ -60,8 +60,8 @@ def test_execute_contract_does_not_shadow_ambient_work_item_task_dir(
     state_dir = resolve_project_paths(project_root).root_dir
     work_task_dir = tmp_path / "work-task"
     work_task_dir.mkdir(parents=True)
-    item = work_store.create_work_item(state_dir, "feature", "", None)
-    work_store.update_work_item_task_dir(
+    item = work_repository.create_work_item(state_dir, "feature", "", None)
+    work_repository.update_work_item_task_dir(
         state_dir,
         item.name,
         task_dir=work_task_dir.as_posix(),

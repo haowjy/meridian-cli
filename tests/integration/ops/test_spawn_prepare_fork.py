@@ -13,7 +13,7 @@ from meridian.lib.ops.runtime import build_runtime_from_root_and_config
 from meridian.lib.ops.spawn import context_ref
 from meridian.lib.ops.spawn.models import SpawnCreateInput
 from meridian.lib.ops.spawn.prepare import SpawnCreateArtifacts, build_create_payload
-from meridian.lib.state import work_store
+from meridian.lib.state import work_repository
 from meridian.lib.state.paths import resolve_kb_dir, resolve_project_paths
 from tests.support.launch import FakeBundleResult
 
@@ -339,10 +339,10 @@ def test_build_create_payload_kb_reference_uses_authority_kb_dir_with_external_t
     runtime = build_runtime_from_root_and_config(project_root, load_config(project_root))
 
     project_state_dir = resolve_project_paths(project_root).root_dir
-    work = work_store.create_work_item(project_state_dir, "feature-x", "", None)
+    work = work_repository.create_work_item(project_state_dir, "feature-x", "", None)
     external_task_cwd = tmp_path / "external-worktree"
     external_task_cwd.mkdir(parents=True, exist_ok=True)
-    work_store.update_work_item_task_dir(
+    work_repository.update_work_item_task_dir(
         project_state_dir,
         work.name,
         task_dir=external_task_cwd.as_posix(),
@@ -386,10 +386,10 @@ def test_build_create_payload_relative_reference_resolves_from_selected_worktree
     runtime = build_runtime_from_root_and_config(project_root, load_config(project_root))
 
     project_state_dir = resolve_project_paths(project_root).root_dir
-    work = work_store.create_work_item(project_state_dir, "feature-x", "", None)
+    work = work_repository.create_work_item(project_state_dir, "feature-x", "", None)
     external_task_cwd = tmp_path / "feature-worktree"
     external_task_cwd.mkdir(parents=True, exist_ok=True)
-    work_store.update_work_item_task_dir(
+    work_repository.update_work_item_task_dir(
         project_state_dir,
         work.name,
         task_dir=external_task_cwd.as_posix(),

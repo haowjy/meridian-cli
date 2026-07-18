@@ -19,7 +19,7 @@ from meridian.lib.ops.runtime import (
     resolve_runtime_authority_for_write,
 )
 from meridian.lib.ops.spawn.models import SpawnCreateInput
-from meridian.lib.state import spawn_store, work_store
+from meridian.lib.state import spawn_store, work_repository, work_store
 from meridian.lib.state.paths import resolve_project_paths
 
 if TYPE_CHECKING:
@@ -417,7 +417,7 @@ def test_reserve_then_prepare_materializes_context_from_work(
     assert authority.runtime_root is not None
 
     _patch_lifecycle_service_with_hook(monkeypatch, hook)
-    work_store.create_work_item(project_state_dir, "source-work", "", None)
+    work_repository.create_work_item(project_state_dir, "source-work", "", None)
 
     async def _fake_launch_prepared_spawn(**kwargs: object) -> int:
         spawn = cast("Any", kwargs["spawn"])

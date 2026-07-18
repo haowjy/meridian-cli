@@ -24,7 +24,7 @@ from meridian.lib.launch.plan import (
 from meridian.lib.launch.request import LaunchCompositionSurface
 from meridian.lib.launch.types import LaunchRequest, build_primary_prompt
 from meridian.lib.ops.spawn import context_ref
-from meridian.lib.state import work_store
+from meridian.lib.state import work_repository, work_store
 from meridian.lib.state.paths import resolve_project_paths
 from tests.support.fixtures import write_agent
 from tests.support.launch import stub_bundle_request_and_resolve
@@ -274,8 +274,8 @@ def test_primary_launch_resolves_reference_files_from_work_task_dir(
     _write_minimal_mars_config(project_root)
     (project_root / "task-only.txt").write_text("project shadow", encoding="utf-8")
     (task_dir / "task-only.txt").write_text("task marker", encoding="utf-8")
-    work_store.ensure_work_item_metadata(project_root / ".meridian", "task-work")
-    work_store.update_work_item_task_dir(
+    work_repository.ensure_work_item_metadata(project_root / ".meridian", "task-work")
+    work_repository.update_work_item_task_dir(
         project_root / ".meridian",
         "task-work",
         task_dir=task_dir.as_posix(),

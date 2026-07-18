@@ -24,6 +24,7 @@ from meridian.lib.ops.work_attachment import set_session_work_attachment
 from meridian.lib.ops.work_dashboard import work_dir_display
 from meridian.lib.state import session_store, spawn_store, work_repository, work_store
 from meridian.lib.state.work_scope import WorkScope
+from meridian.lib.state.work_state import WorkItem, slugify
 from meridian.lib.telemetry import emit_telemetry
 
 _NESTED_WORK_WARNING = (
@@ -42,7 +43,7 @@ def _validate_task_dir_path(task_dir: str) -> Path:
     return resolved_task_dir
 
 
-def _require_work_item(project_state_dir: Path, work_id: str) -> work_store.WorkItem:
+def _require_work_item(project_state_dir: Path, work_id: str) -> WorkItem:
     item = work_store.get_work_item(project_state_dir, work_id)
     if item is None:
         raise ValueError(f"Work item '{work_id}' not found")
@@ -376,7 +377,7 @@ def work_start_sync(
     runtime_state_root = roots.runtime_root
     chat_id = resolve_chat_id(payload_chat_id=payload.chat_id, ctx=runtime_context(ctx))
     requested_description = payload.description.strip()
-    normalized_work_id = work_store.slugify(payload.label)
+    normalized_work_id = slugify(payload.label)
     if not normalized_work_id:
         raise ValueError("Work item label must contain at least one letter or number.")
     slug_warning: str | None = None
@@ -629,7 +630,7 @@ def work_rename_sync(
     old_name = payload.work_id
     _require_work_item(project_state_dir, old_name)
 
-    new_slug = work_store.slugify(payload.new_name)
+    new_slug = slugify(payload.new_name)
     if not new_slug or new_slug != payload.new_name:
         raise ValueError(
             f"Invalid work item name '{payload.new_name}'. "

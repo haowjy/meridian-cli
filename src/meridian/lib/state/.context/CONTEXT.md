@@ -179,24 +179,23 @@ path may unlink coordination locks. In particular, unlinking while a reentrant o
 frame remains locked strands that frame on an orphaned inode and permits split-brain on
 a recreated path.
 
-`work_scope.py` resolves each work directory. `work_store.py` provides pure read
-projections and compatibility facades; `work_repository.py` serializes all status
-and directory-namespace mutations behind the stable project-level
-`work-store.flock`. Mutable metadata lives in
+`work_scope.py` resolves each work directory. `work_state.py` owns the work-item
+models, metadata codec, and shared directory-location primitives. `work_store.py`
+provides pure read projections; `work_repository.py` serializes all status and
+directory-namespace mutations behind the stable project-level `work-store.flock`.
+Mutable metadata lives in
 `<context.work root>/<slug>/__status.json`; there is no separate rename-intent file.
 
 ### WorktreeMetadata
 
-`WorktreeMetadata` in `work_store.py` preserves path, branch, repository, name,
+`WorktreeMetadata` in `work_state.py` preserves path, branch, repository, name,
 pending, and managed fields in work-item status. Current code reads the path and
 pending flag for dashboard display but does not provision, rename, or clean up git
 worktrees. Archiving or reopening a work item clears `pending`.
 
 **Path separator normalization**: `WorktreeMetadata.path` and `.repo_path` normalize
 backslash separators to POSIX (forward slash) at the Pydantic validation boundary via
-`@field_validator(..., mode="before")`. The coercion function `_coerce_worktree_metadata()`
-also detects separator normalization and marks legacy records for rewrite. This keeps
-stored metadata separator-stable.
+`@field_validator(..., mode="before")`. This keeps stored metadata separator-stable.
 
 ### User-Level Storage for New Features
 
