@@ -9,8 +9,9 @@ from __future__ import annotations
 
 import shutil
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
-from typing import TypeVar
+from typing import Generic, TypeVar
 
 from meridian.lib.platform.atomic import atomic_write_text
 from meridian.lib.platform.locking import lock_file
@@ -36,12 +37,33 @@ from meridian.lib.state.work_store import (
 )
 
 T = TypeVar("T")
-_NamespaceMutation = Callable[[ProjectPaths, Path | None, Path | None], T]
+_StateWrite = tuple[Path, WorkItem]
+
+
+@dataclass(frozen=True)
+class _MutationResult(Generic[T]):
+    value: T
+    state_write: _StateWrite | None = None
+
+
+_NamespaceMutation = Callable[
+    [ProjectPaths, Path | None, Path | None], _MutationResult[T]
+]
 _ItemMutation = Callable[[WorkItem], WorkItem]
 
 
-def _mutate_item(runtime_root: Path, work_id: str, mutation: _NamespaceMutation[T]) -> T:
-    """Run one work-item mutation while holding the stable store lock.
+def _validate_active_status(status: str) -> str:
+    if not status.strip():
+        raise ValueError("Work item status must not be empty.")
+    if status == "done":
+        raise ValueError("'done' is reserved for archived work items.")
+    return status
+
+
+def write_state_locked(
+    runtime_root: Path, work_id: str, mutation: _NamespaceMutation[T]
+) -> T:
+    """Run one work mutation and its optional atomic state write under one lock.
 
     The seam deliberately disables reentrancy: a nested mutation could write an
     inner result and then let the outer mutation overwrite it from a stale
@@ -51,7 +73,11 @@ def _mutate_item(runtime_root: Path, work_id: str, mutation: _NamespaceMutation[
     paths = _project_paths_for_work_store(runtime_root, create_project_uuid=True)
     with lock_file(paths.root_dir / "work-store.flock", reentrant=False):
         active_dir, archived_dir = _locate_dirs(paths, work_id)
-        return mutation(paths, active_dir, archived_dir)
+        result = mutation(paths, active_dir, archived_dir)
+        if result.state_write is not None:
+            work_dir, item = result.state_write
+            _write_item(work_dir, item)
+        return result.value
 
 
 def _write_item(work_dir: Path, item: WorkItem) -> None:
@@ -70,7 +96,7 @@ def _mutate_active_item(
         _paths: ProjectPaths,
         active_dir: Path | None,
         archived_dir: Path | None,
-    ) -> WorkItem:
+    ) -> _MutationResult[WorkItem]:
         _warn_both_locations(work_id, active_dir, archived_dir)
         if active_dir is None:
             if archived_dir is not None:
@@ -79,10 +105,9 @@ def _mutate_active_item(
                 )
             raise ValueError(f"Work item '{work_id}' not found")
         updated = mutation(_work_item_from_dir(active_dir, archived=False))
-        _write_item(active_dir, updated)
-        return updated
+        return _MutationResult(updated, (active_dir, updated))
 
-    return _mutate_item(runtime_root, work_id, mutate)
+    return write_state_locked(runtime_root, work_id, mutate)
 
 
 def create_work_item(
@@ -100,7 +125,7 @@ def create_work_item(
         paths: ProjectPaths,
         active_dir: Path | None,
         archived_dir: Path | None,
-    ) -> WorkItem:
+    ) -> _MutationResult[WorkItem]:
         if active_dir is not None or archived_dir is not None:
             raise ValueError(
                 f"Work item '{slug}' already exists. Use `meridian work switch {slug}`."
@@ -117,10 +142,9 @@ def create_work_item(
             task_dir=None,
             worktree=WorktreeMetadata(),
         )
-        _write_item(active, item)
-        return item
+        return _MutationResult(item, (active, item))
 
-    return _mutate_item(runtime_root, slug, create)
+    return write_state_locked(runtime_root, slug, create)
 
 
 def ensure_work_item_metadata(
@@ -133,14 +157,13 @@ def ensure_work_item_metadata(
 ) -> WorkItem:
     normalized = _validate_exact_slug(work_id)
     normalized_goal = _normalize_goal(goal)
-    if status == "done":
-        raise ValueError("'done' is reserved for archived work items.")
+    status = _validate_active_status(status)
 
     def ensure(
         paths: ProjectPaths,
         active_dir: Path | None,
         archived_dir: Path | None,
-    ) -> WorkItem:
+    ) -> _MutationResult[WorkItem]:
         _warn_both_locations(normalized, active_dir, archived_dir)
         if active_dir is not None:
             item = _work_item_from_dir(
@@ -150,8 +173,7 @@ def ensure_work_item_metadata(
                 default_description=description,
                 default_goal=normalized_goal,
             )
-            _write_item(active_dir, item)
-            return item
+            return _MutationResult(item, (active_dir, item))
         if archived_dir is not None:
             item = _work_item_from_dir(
                 archived_dir,
@@ -159,8 +181,7 @@ def ensure_work_item_metadata(
                 default_description=description,
                 default_goal=normalized_goal,
             )
-            _write_item(archived_dir, item)
-            return item
+            return _MutationResult(item, (archived_dir, item))
         created_dir = _active_dir(paths, normalized)
         created_dir.mkdir(parents=True, exist_ok=False)
         item = _work_item_from_dir(
@@ -170,29 +191,27 @@ def ensure_work_item_metadata(
             default_description=description,
             default_goal=normalized_goal,
         )
-        _write_item(created_dir, item)
-        return item
+        return _MutationResult(item, (created_dir, item))
 
-    return _mutate_item(runtime_root, normalized, ensure)
+    return write_state_locked(runtime_root, normalized, ensure)
 
 
-def heal_work_item(runtime_root: Path, work_id: str) -> WorkItem:
-    """Persist the normalized projection of one existing item under lock."""
+def repair_work_item(runtime_root: Path, work_id: str) -> WorkItem:
+    """Persist a location-authoritative projection of one item under lock."""
 
-    def heal(
+    def repair(
         _paths: ProjectPaths,
         active_dir: Path | None,
         archived_dir: Path | None,
-    ) -> WorkItem:
+    ) -> _MutationResult[WorkItem]:
         _warn_both_locations(work_id, active_dir, archived_dir)
         work_dir = active_dir or archived_dir
         if work_dir is None:
             raise ValueError(f"Work item '{work_id}' not found")
         item = _work_item_from_dir(work_dir, archived=active_dir is None)
-        _write_item(work_dir, item)
-        return item
+        return _MutationResult(item, (work_dir, item))
 
-    return _mutate_item(runtime_root, work_id, heal)
+    return write_state_locked(runtime_root, work_id, repair)
 
 
 def update_work_item(
@@ -204,11 +223,11 @@ def update_work_item(
     goal: str | None = None,
 ) -> WorkItem:
     normalized_goal = _normalize_goal(goal)
+    if status is not None:
+        status = _validate_active_status(status)
 
     def update(current: WorkItem) -> WorkItem:
         next_status = current.status if status is None else status
-        if next_status == "done":
-            raise ValueError("'done' is reserved for archived work items.")
         return current.model_copy(
             update={
                 "status": next_status,
@@ -247,7 +266,7 @@ def archive_work_item(
         paths: ProjectPaths,
         active_dir: Path | None,
         archived_dir: Path | None,
-    ) -> WorkItem:
+    ) -> _MutationResult[WorkItem]:
         if active_dir is not None and archived_dir is not None:
             _warn_both_locations(work_id, active_dir, archived_dir)
             shutil.rmtree(archived_dir)
@@ -269,25 +288,23 @@ def archive_work_item(
         destination = _archived_dir(paths, work_id)
         destination.parent.mkdir(parents=True, exist_ok=True)
         active_dir.rename(destination)
-        _write_item(destination, archived_item)
-        return archived_item
+        return _MutationResult(archived_item, (destination, archived_item))
 
-    return _mutate_item(runtime_root, work_id, archive)
+    return write_state_locked(runtime_root, work_id, archive)
 
 
 def reopen_work_item(runtime_root: Path, work_id: str, *, status: str = "open") -> WorkItem:
-    if status == "done":
-        raise ValueError("'done' is reserved for archived work items.")
+    status = _validate_active_status(status)
 
     def reopen(
         paths: ProjectPaths,
         active_dir: Path | None,
         archived_dir: Path | None,
-    ) -> WorkItem:
+    ) -> _MutationResult[WorkItem]:
         if active_dir is not None and archived_dir is not None:
             _warn_both_locations(work_id, active_dir, archived_dir)
             shutil.rmtree(archived_dir)
-            return _work_item_from_dir(active_dir, archived=False)
+            return _MutationResult(_work_item_from_dir(active_dir, archived=False))
         if archived_dir is None:
             if active_dir is not None:
                 raise ValueError(f"Work item '{work_id}' is already active.")
@@ -304,10 +321,9 @@ def reopen_work_item(runtime_root: Path, work_id: str, *, status: str = "open") 
         target = _active_dir(paths, work_id)
         target.parent.mkdir(parents=True, exist_ok=True)
         archived_dir.rename(target)
-        _write_item(target, reopened)
-        return reopened
+        return _MutationResult(reopened, (target, reopened))
 
-    return _mutate_item(runtime_root, work_id, reopen)
+    return write_state_locked(runtime_root, work_id, reopen)
 
 
 def rename_work_item(runtime_root: Path, old_work_id: str, new_name: str) -> WorkItem:
@@ -317,7 +333,7 @@ def rename_work_item(runtime_root: Path, old_work_id: str, new_name: str) -> Wor
         paths: ProjectPaths,
         active_dir: Path | None,
         archived_dir: Path | None,
-    ) -> WorkItem:
+    ) -> _MutationResult[WorkItem]:
         if active_dir is not None and archived_dir is not None:
             _warn_both_locations(old_work_id, active_dir, archived_dir)
             shutil.rmtree(archived_dir)
@@ -326,7 +342,9 @@ def rename_work_item(runtime_root: Path, old_work_id: str, new_name: str) -> Wor
         if source is None:
             raise ValueError(f"Work item '{old_work_id}' not found")
         if normalized == old_work_id:
-            return _work_item_from_dir(source, archived=active_dir is None)
+            return _MutationResult(
+                _work_item_from_dir(source, archived=active_dir is None)
+            )
         if _active_dir(paths, normalized).exists() or _archived_dir(paths, normalized).exists():
             raise ValueError(f"Work item '{normalized}' already exists.")
         target = (
@@ -336,9 +354,9 @@ def rename_work_item(runtime_root: Path, old_work_id: str, new_name: str) -> Wor
         )
         target.parent.mkdir(parents=True, exist_ok=True)
         source.rename(target)
-        return _work_item_from_dir(target, archived=active_dir is None)
+        return _MutationResult(_work_item_from_dir(target, archived=active_dir is None))
 
-    return _mutate_item(runtime_root, old_work_id, rename)
+    return write_state_locked(runtime_root, old_work_id, rename)
 
 
 def delete_work_item(
@@ -351,7 +369,7 @@ def delete_work_item(
         _paths: ProjectPaths,
         active_dir: Path | None,
         archived_dir: Path | None,
-    ) -> tuple[WorkItem, bool]:
+    ) -> _MutationResult[tuple[WorkItem, bool]]:
         primary_dir = active_dir or archived_dir
         if primary_dir is None:
             raise ValueError(f"Work item '{work_id}' not found")
@@ -362,6 +380,6 @@ def delete_work_item(
             raise ValueError(f"Work item '{work_id}' has artifacts. Use --force to delete.")
         for work_dir in existing_dirs:
             shutil.rmtree(work_dir)
-        return deleted_item, had_artifacts
+        return _MutationResult((deleted_item, had_artifacts))
 
-    return _mutate_item(runtime_root, work_id, delete)
+    return write_state_locked(runtime_root, work_id, delete)

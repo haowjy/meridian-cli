@@ -30,6 +30,21 @@ def test_slugify_normalizes_and_truncates() -> None:
     assert slugify("Hello_world  2026!!!") == "hello-world-2026"
     assert slugify("___") == ""
     assert slugify("a" * 80) == "a" * 64
+
+
+@pytest.mark.parametrize("status", ["", "   ", "done"])
+def test_update_rejects_invalid_active_status(tmp_path: Path, status: str) -> None:
+    runtime_root = _state_root(tmp_path)
+    item = create_work_item(runtime_root, "status-validation")
+    status_path = runtime_root / "work" / item.name / "__status.json"
+    original = status_path.read_bytes()
+
+    with pytest.raises(ValueError):
+        update_work_item(runtime_root, item.name, status=status)
+
+    assert status_path.read_bytes() == original
+
+
 def test_work_item_archive_and_reopen_preserves_metadata(tmp_path: Path) -> None:
     runtime_root = _state_root(tmp_path)
 

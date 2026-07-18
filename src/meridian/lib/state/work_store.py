@@ -362,14 +362,14 @@ def ensure_work_item_metadata(
     )
 
 
-def heal_work_item(runtime_root: Path, work_id: str) -> WorkItem:
-    """Persist the normalized projection of one existing work item."""
-    from meridian.lib.state.work_repository import heal_work_item as heal
+def repair_work_item(runtime_root: Path, work_id: str) -> WorkItem:
+    """Repair one item from its location-authoritative read projection."""
+    from meridian.lib.state.work_repository import repair_work_item as repair
 
-    return heal(runtime_root, work_id)
+    return repair(runtime_root, work_id)
 
 
-def work_item_needs_healing(runtime_root: Path, work_id: str) -> bool:
+def work_item_needs_repair(runtime_root: Path, work_id: str) -> bool:
     """Return whether an existing item's persisted metadata is non-canonical."""
 
     paths = _project_paths_for_work_store(runtime_root)

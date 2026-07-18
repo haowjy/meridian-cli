@@ -260,8 +260,8 @@ def doctor_sync(payload: DoctorInput) -> DoctorOutput:
     )
     healed_work_items = 0
     for work_id in {item.name for item in (*active_work_items, *archived_work_items)}:
-        if work_store.work_item_needs_healing(project_state_dir, work_id):
-            work_store.heal_work_item(project_state_dir, work_id)
+        if work_store.work_item_needs_repair(project_state_dir, work_id):
+            work_store.repair_work_item(project_state_dir, work_id)
             healed_work_items += 1
     if healed_work_items:
         repaired.append("work_item_metadata")
