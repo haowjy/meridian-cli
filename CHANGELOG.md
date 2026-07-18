@@ -5,6 +5,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Changed
+- Child launches now expose one public project identity, `MERIDIAN_PROJECT_DIR`;
+  the redundant `MERIDIAN_PROJECT_ROOT` and unused `MERIDIAN_TASK_CWD` are removed.
 - Repo-internal process and Pi transport variables now use the `_MERIDIAN_*`
   namespace; public configuration inputs and agent-facing handles remain stable.
 - Meridian-owned environment variables now have one tiered registry that drives

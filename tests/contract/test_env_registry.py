@@ -4,7 +4,7 @@ import ast
 import re
 from pathlib import Path
 
-from meridian.env_registry import is_registered_env_name
+from meridian.env_registry import ENV_VARS, EnvTier, is_registered_env_name
 
 _ENV_NAME = re.compile(r"_?MERIDIAN_[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)*")
 _TS_STRING = re.compile(r'''["'](_?MERIDIAN_[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)*)["']''')
@@ -51,3 +51,12 @@ def test_every_meridian_env_literal_is_registered() -> None:
         name for name in _source_env_literals() if not is_registered_env_name(name)
     )
     assert unregistered == []
+
+
+def test_registry_prefix_matches_stability_tier() -> None:
+    mismatches = [
+        entry.name
+        for entry in ENV_VARS
+        if entry.name.startswith("_MERIDIAN_") != (entry.tier is EnvTier.INTERNAL)
+    ]
+    assert mismatches == []

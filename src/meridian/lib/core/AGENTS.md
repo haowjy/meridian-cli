@@ -17,7 +17,7 @@ deliberate exception that wires policy surfaces to launch and persistence.
 
 - **Use `SpawnId`, `ModelId`, `ArtifactKey` — not `str`.** These are `NewType` aliases over `str`. Zero runtime cost; mypy catches wrong-ID bugs statically. Accept them on function signatures anywhere a spawn or model ID passes through.
 - **`RuntimeOverrides`: use `None` to mean "not set", never `""` or `0`.** `resolve(*layers)` returns first-non-None per field. An empty string at a high-precedence layer wins over a meaningful value at a lower one.
-- **`child_env_overrides()` is the only correct way to produce child-process `MERIDIAN_*` env vars.** Every launch path routes through it. `ALLOWED_CHILD_ENV_KEYS` enforces the allowed set — `validate_child_env_keys()` raises on unknown keys.
+- **The environment registry is the sole declaration of child-process Meridian keys.** `child_env_overrides()` produces shared context handles; the bind seam adds launch-specific registered handles, then `validate_child_env_keys()` rejects unknown public or internal names.
 - **`is_root_side_effect_process()` is fail-closed.** A malformed non-empty `_MERIDIAN_DEPTH` returns `False`. Root-only side effects (e.g., the reaper) must not run inside delegated agent processes. When in doubt, fail closed.
 - **`LifecycleHook.on_event()` exceptions are logged but never block transitions.** Hooks must tolerate partial data.
 - **`spawn_store` is imported at the bottom of `lifecycle.py`** to break a circular import with `state/__init__`. Do not move it to the top.
@@ -52,7 +52,7 @@ cancel()          → finalize(status='cancelled')
 
 - Don't default override fields to `""` or `0` — use `None`. A non-None value wins at any layer, including the empty string.
 - Don't build `ResolvedContext` from dict literals in application code — use `ResolvedContext.from_environment()`.
-- Don't produce `MERIDIAN_*` child env vars manually — route through `child_env_overrides()`.
+- Don't add Meridian child env keys outside the bind seam, and register every permitted key before projecting it.
 - Don't pass raw `str` where `SpawnId` or `ModelId` is expected — mypy will catch it but it's also a clarity failure.
 
 ## Related

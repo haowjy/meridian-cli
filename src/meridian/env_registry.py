@@ -181,8 +181,6 @@ ENV_VARS: tuple[EnvVar, ...] = (
     _internal_handle("_MERIDIAN_PARENT_SPAWN_ID", "Parent spawn identifier."),
     _internal_handle("_MERIDIAN_RUNTIME_DIR", "Resolved per-project runtime directory."),
     _internal_handle("_MERIDIAN_HARNESS", "Harness identity propagated one level."),
-    _internal_handle("MERIDIAN_PROJECT_ROOT", "Legacy child control-root projection."),
-    _internal_handle("MERIDIAN_TASK_CWD", "Legacy physical child working directory."),
     _internal_handle("_MERIDIAN_GUARDRAIL_RUN_ID", "Guardrail run identifier."),
     _internal_handle("_MERIDIAN_GUARDRAIL_OUTPUT_LOG", "Guardrail output log path."),
     _internal_handle("_MERIDIAN_GUARDRAIL_REPORT_PATH", "Guardrail report path."),
