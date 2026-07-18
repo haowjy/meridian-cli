@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.3.41] - 2026-07-18
+
 ### Fixed
 - Codex managed-primary bootstrap no longer waits for turn completion — rollout
   materialization is the readiness gate again. Rich context (`--work`,
