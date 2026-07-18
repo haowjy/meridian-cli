@@ -29,6 +29,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   adapter-local process launches no longer rebuild it from the parent process.
 
 ### Fixed
+- The environment registry drift guard now recognizes dot and bracket access
+  across JavaScript and TypeScript module extensions.
 - Claude's preliminary version probe now uses the same bound child environment as
   the main harness process instead of inheriting the raw parent environment.
 - Claude prelaunch session materialization now reads its already-bound config
