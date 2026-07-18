@@ -13,7 +13,11 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Spawn terminal facts are all-or-nothing behind a `terminal` discriminant: a
   partial terminal row is unparseable, and `finalize` accepts only terminal
   statuses. Removes exit-code guessing (0/130/1) and the default-1 fallback —
-  readers report the recorded exit code or nothing. (#423)
+  readers report the recorded exit code or nothing. Status lives only at the
+  top level; `terminal` no longer duplicates it, and rows with the retired
+  nested status quarantine. (#423)
+- Locked spawn mutations resolve to exactly Applied, Declined, or Missing;
+  reads return a scan envelope that cannot silently drop quarantined rows. (#423)
 - Work items decide archived-ness from directory location alone; `archived_at` is
   stored but never decides. A crash between archive and reopen is unambiguous by
   construction. Work-item reads no longer rewrite state files. (#423)
