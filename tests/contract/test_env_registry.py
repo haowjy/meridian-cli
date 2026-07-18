@@ -7,9 +7,9 @@ from pathlib import Path
 from meridian.env_registry import ENV_VARS, EnvTier, is_registered_env_name
 
 _ENV_NAME = re.compile(r"_?MERIDIAN_[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)*")
-_JS_ENV_ACCESS = re.compile(
-    r'''process\s*\.\s*env\s*(?:\.\s*(_?MERIDIAN_[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)*)'''
-    r'''|\[\s*["'](_?MERIDIAN_[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)*)["']\s*\])'''
+_JS_STRING = re.compile(r'''["'](_?MERIDIAN_[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)*)["']''')
+_JS_ENV_DOT_ACCESS = re.compile(
+    r'''process\s*\.\s*env\s*\.\s*(_?MERIDIAN_[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)*)\b'''
 )
 _JS_EXTENSIONS = {".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx", ".mts", ".cts"}
 _SOURCE_ROOT = Path(__file__).parents[2] / "src"
@@ -46,8 +46,9 @@ def _source_env_literals() -> set[str]:
         if path.suffix == ".py":
             literals.update(_python_env_literals(path))
         elif path.suffix in _JS_EXTENSIONS:
-            for match in _JS_ENV_ACCESS.finditer(path.read_text(encoding="utf-8")):
-                literals.add(match.group(1) or match.group(2))
+            source = path.read_text(encoding="utf-8")
+            literals.update(_JS_STRING.findall(source))
+            literals.update(_JS_ENV_DOT_ACCESS.findall(source))
     return literals
 
 
