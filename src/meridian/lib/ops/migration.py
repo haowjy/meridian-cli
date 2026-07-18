@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import shutil
 from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
@@ -107,15 +106,6 @@ def migrate_project_id(project_root: Path) -> MigrationResult:
     """Public migration entry point."""
 
     return migrate_legacy_project_identity(project_root)
-
-
-def _try_move_dir(src: Path, dst: Path) -> bool:
-    """Retained for compatibility with migration tests and old state repair."""
-    if not src.exists():
-        return False
-    dst.parent.mkdir(parents=True, exist_ok=True)
-    shutil.move(str(src), str(dst))
-    return True
 
 
 def _get_active_spawns(project_id: str) -> list[str]:
