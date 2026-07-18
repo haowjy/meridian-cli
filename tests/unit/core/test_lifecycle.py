@@ -262,7 +262,8 @@ def test_owner_mark_running_clears_stale_runner_created_epoch_when_pid_replaced(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    service = _make_service(tmp_path)
+    hook = EventTypeHook()
+    service = _make_service(tmp_path, hooks=[hook])
     spawn_id = _start_spawn(service)
     service.mark_running(
         spawn_id,
@@ -274,6 +275,7 @@ def test_owner_mark_running_clears_stale_runner_created_epoch_when_pid_replaced(
     assert initial.runner_created_at_epoch == 222.0
 
     monkeypatch.setattr("meridian.lib.core.lifecycle._pid_created_at_epoch", lambda _pid: None)
+    hook.event_types.clear()
     service.mark_running(
         spawn_id,
         runner_pid=999997,
@@ -283,6 +285,7 @@ def test_owner_mark_running_clears_stale_runner_created_epoch_when_pid_replaced(
     assert updated is not None
     assert updated.runner_pid == 999997
     assert updated.runner_created_at_epoch is None
+    assert hook.event_types == []
 
 
 def test_mark_running_terminal_decline_emits_no_event(tmp_path: Path) -> None:

@@ -194,6 +194,8 @@ def test_write_state_locked_decline_preserves_state(tmp_path: Path) -> None:
     spawns_dir = tmp_path / "spawns"
     original = _record()
     _seed_state(spawns_dir, original)
+    state_path = spawns_dir / "p1" / "state.json"
+    original_inode = state_path.stat().st_ino
 
     outcome = write_state_locked(
         spawns_dir,
@@ -205,6 +207,7 @@ def test_write_state_locked_decline_preserves_state(tmp_path: Path) -> None:
     assert outcome.snapshot == original.model_copy(update={"prompt": None})
     assert outcome.reason == "not applicable"
     assert read_state(spawns_dir, "p1") == outcome.snapshot
+    assert state_path.stat().st_ino == original_inode
 
 
 def test_start_spawn_persists_display_label_when_goal_and_desc_absent(tmp_path: Path) -> None:
