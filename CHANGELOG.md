@@ -4,6 +4,12 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+- Codex managed-primary bootstrap no longer waits for turn completion — rollout
+  materialization is the readiness gate again. Rich context (`--work`,
+  `--prompt-file`, `--from`) caused 120s timeout when the model began real work
+  during bootstrap.
+
 ## [0.3.40] - 2026-07-18
 
 ### Fixed
