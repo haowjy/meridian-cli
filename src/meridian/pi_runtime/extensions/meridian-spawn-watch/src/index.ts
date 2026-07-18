@@ -354,7 +354,7 @@ export class SpawnWatchRuntime {
         kind: "spawn",
         status: String(state.status),
         label: `${state.agent ?? "spawn"}${state.model ? ` (${state.model})` : ""}`,
-        duration: formatDurationSecs(state.duration_secs),
+        duration: formatDurationSecs(state.terminal?.duration_secs),
       });
     }
     this.scheduleFlush();
@@ -660,19 +660,19 @@ function formatSpawnStatus(row: SpawnStateFile, theme: Theme): string {
 function renderSpawnPreview(row: SpawnStateFile, theme: Theme): string[] {
   const dim = (value: string) => theme.fg("dim", value);
   const lines = [
-    `${theme.fg("accent", row.id)} ${formatSpawnStatus(row, theme)} ${dim(formatDurationSecs(row.duration_secs))}`,
+    `${theme.fg("accent", row.id)} ${formatSpawnStatus(row, theme)} ${dim(formatDurationSecs(row.terminal?.duration_secs))}`,
     dim(`${row.agent ?? "spawn"}${row.model ? ` · ${row.model}` : ""}`),
   ];
   if (row.originating_bash_id) lines.push(dim(`launched by ${row.originating_bash_id}`));
   if (row.started_at) lines.push(dim(`started ${row.started_at}`));
-  if (row.finished_at) lines.push(dim(`finished ${row.finished_at}`));
+  if (row.terminal?.finished_at) lines.push(dim(`finished ${row.terminal.finished_at}`));
   return lines;
 }
 
 const SPAWN_PANEL_COLUMNS: SelectablePanelColumn<SpawnStateFile>[] = [
   { header: "ID", width: 10, render: (row, theme, selected) => (theme ? (selected ? theme.fg("accent", row.id) : theme.fg("dim", row.id)) : row.id) },
   { header: "STATUS", width: 14, render: (row, theme) => (theme ? formatSpawnStatus(row, theme) : String(row.status ?? "")) },
-  { header: "DUR", width: 8, render: (row, theme) => (theme ? theme.fg("dim", formatDurationSecs(row.duration_secs)) : formatDurationSecs(row.duration_secs)), align: "right" },
+  { header: "DUR", width: 8, render: (row, theme) => (theme ? theme.fg("dim", formatDurationSecs(row.terminal?.duration_secs)) : formatDurationSecs(row.terminal?.duration_secs)), align: "right" },
   { header: "AGENT", width: 16, render: (row) => String(row.agent ?? "") },
   { header: "MODEL", width: 24, render: (row, theme) => (theme ? theme.fg("dim", String(row.model ?? "")) : String(row.model ?? "")) },
   { header: "← BASH", width: 10, render: (row, theme) => (theme ? theme.fg("dim", String(row.originating_bash_id ?? "")) : String(row.originating_bash_id ?? "")) },

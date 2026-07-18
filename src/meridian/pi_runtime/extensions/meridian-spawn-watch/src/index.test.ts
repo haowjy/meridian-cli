@@ -27,7 +27,7 @@ type SpawnWatchRuntimeInternals = SpawnWatchRuntime & {
   scanBashRecords(): Promise<void>;
   scanSpawns(): Promise<void>;
   fallbackScanReasons: Set<string>;
-  pending: Map<string, { kind: "spawn" | "bash" }>;
+  pending: Map<string, { kind: "spawn" | "bash"; duration: string }>;
   running: boolean;
   enableDiscoveryPolling(): void;
   stopDiscoveryPolling(): void;
@@ -92,7 +92,12 @@ async function bashRecordWithSpawnOutput(
 async function writeSpawnState(
   runtimeRoot: string,
   spawnId: string,
-  values: { parentId?: string | null; originBashId?: string | null; status?: string } = {},
+  values: {
+    parentId?: string | null;
+    originBashId?: string | null;
+    status?: string;
+    terminal?: Record<string, unknown> | null;
+  } = {},
 ): Promise<void> {
   const spawnDir = path.join(runtimeRoot, "spawns", spawnId);
   await mkdir(spawnDir, { recursive: true });
@@ -103,6 +108,7 @@ async function writeSpawnState(
       parent_id: values.parentId ?? null,
       originating_bash_id: values.originBashId ?? null,
       status: values.status ?? "running",
+      terminal: values.terminal ?? null,
     }),
   );
 }
@@ -159,6 +165,31 @@ describe("SpawnWatchRuntime bash-origin spawn tracking", () => {
       await writeSpawnState(runtimeRoot, "p1001", { originBashId: "b-origin", status: "succeeded" });
       await internals.scanSpawns();
       expect(internals.fallbackScanReasons.has("active-origin-spawns")).toBe(false);
+    } finally {
+      runtime.stop();
+      await rm(runtimeRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("reads terminal duration from nested persisted facts", async () => {
+    const { runtimeRoot, runtime, internals } = await makeRuntime();
+    try {
+      await writeBashRecords(runtimeRoot, "p-parent", [bashRecord("b-duration")]);
+      await writeSpawnState(runtimeRoot, "p-duration", {
+        originBashId: "b-duration",
+        status: "succeeded",
+        terminal: {
+          status: "succeeded",
+          exit_code: 0,
+          finished_at: "2026-07-17T12:00:05Z",
+          published_at: "2026-07-17T12:00:05Z",
+          duration_secs: 65,
+        },
+      });
+
+      await internals.scanSpawns();
+
+      expect(internals.pending.get("p-duration")?.duration).toBe("1m05s");
     } finally {
       runtime.stop();
       await rm(runtimeRoot, { recursive: true, force: true });

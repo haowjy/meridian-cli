@@ -48,9 +48,14 @@ export type SpawnStateFile = {
   agent?: string | null;
   status?: SpawnStatus | string;
   started_at?: string | null;
-  finished_at?: string | null;
-  duration_secs?: number | null;
-  total_cost_usd?: number | null;
+  terminal?: {
+    status: SpawnStatus | string;
+    exit_code: number;
+    finished_at: string;
+    published_at: string;
+    duration_secs?: number | null;
+    total_cost_usd?: number | null;
+  } | null;
   originating_bash_id?: string | null;
 };
 
