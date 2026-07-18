@@ -31,7 +31,9 @@ already terminated with higher authority.
 
 All published-state mutations call `write_state_locked()`. The repository acquires
 the stable per-spawn lock, re-reads the authoritative record, applies the caller's
-pure transition, and atomically persists the result.
+pure transition, and atomically persists the result. Mutators return either the
+updated `SpawnRecord` or `Decline(reason)`; the repository returns a
+`MutationOutcome` containing the authoritative snapshot and whether it wrote.
 
 ## Key Rules
 
@@ -52,7 +54,7 @@ returns the action to take; callers must not skip this check.
 ## Entry Points
 
 - `read_state(spawns_dir, spawn_id)` → `SpawnRecord | None`
-- `write_state_locked(spawns_dir, spawn_id, mutator)` — all published-state mutations
+- `write_state_locked(spawns_dir, spawn_id, mutator)` → `MutationOutcome`
 - `scan_spawn_ids(spawns_dir)` — list spawns with a `state.json`
 - `decide_terminal_write(current_status, current_origin, incoming_origin)`
 

@@ -27,9 +27,8 @@ def decide_terminal_write(
 ) -> TerminalWriteDecision:
     """Decide whether a finalize event should write terminal fields.
 
-    This reproduces the reducer's pre-policy decision lattice. Rejected events
-    are still partially merged by the reducer until the Phase 1.3 hardening
-    changes reject into a true no-op.
+    Rejected events are true no-ops: the locked mutation preserves the current
+    state and reports that no write occurred.
     """
 
     if current_status is None:
