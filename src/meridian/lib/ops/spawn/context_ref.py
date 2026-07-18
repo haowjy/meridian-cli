@@ -154,6 +154,11 @@ def resolve_context_ref(project_root: Path, ref: str) -> ContextRef:
             else None
         )
         if session is not None:
+            if not (session.harness_session_id or "").strip():
+                raise ValueError(
+                    f"Session '{normalized}' exists but no transcript is available yet "
+                    "(no harness session id recorded)."
+                )
             return _session_context_ref_from_record(session)
         raise ValueError(f"No primary spawn found for session '{normalized}'")
 

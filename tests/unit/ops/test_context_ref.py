@@ -57,3 +57,29 @@ def test_resolve_context_ref_accepts_primary_session_without_spawn_row(
     rendered = render_context_refs((resolved,))
     assert f"meridian session log {chat_id}" in rendered
     assert "meridian spawn show" not in rendered
+
+
+def test_resolve_context_ref_rejects_session_without_transcript(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime_root = tmp_path / ".meridian"
+    runtime_root.mkdir()
+
+    monkeypatch.setattr(
+        "meridian.lib.ops.spawn.context_ref.resolve_runtime_root_for_read",
+        lambda _project_root: runtime_root,
+    )
+    chat_id = session_store.start_session(
+        runtime_root,
+        harness="codex",
+        harness_session_id="",
+        model="gpt-5.4",
+        kind="primary",
+    )
+
+    try:
+        with pytest.raises(ValueError, match="no transcript is available"):
+            resolve_context_ref(tmp_path, chat_id)
+    finally:
+        session_store.stop_session(runtime_root, chat_id)
