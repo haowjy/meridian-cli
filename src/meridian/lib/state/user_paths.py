@@ -45,11 +45,11 @@ def get_user_home() -> Path:
     return get_home_path() / ".meridian"
 
 
-def get_project_id(project_root: Path) -> str | None:
-    """Read the precedence-exempt project ID from ``meridian.toml``.
+def get_committed_project_id(project_root: Path) -> str | None:
+    """Read the committed project ID from ``meridian.toml`` only.
 
-    Accepts any non-empty string — UUIDs, three-word IDs, or any future format.
-    Returns None when the id file is missing, unreadable, or empty.
+    Does NOT fall back to ``.meridian/id``. Used by migration to detect whether
+    the identity has been written to the canonical location yet.
     """
 
     config_path = project_root / "meridian.toml"
@@ -74,13 +74,14 @@ def get_project_id(project_root: Path) -> str | None:
     return raw_id.strip()
 
 
-def get_project_id_with_legacy_fallback(project_root: Path) -> str | None:
+def get_project_id(project_root: Path) -> str | None:
     """Read project ID from ``meridian.toml``, falling back to ``.meridian/id``.
 
-    Read-only callers use this so legacy projects resolve without migration.
+    Precedence: ``meridian.toml [project].id`` → ``.meridian/id``.
+    Returns None when neither source is present, readable, or non-empty.
     """
 
-    return get_project_id(project_root) or _legacy_project_id(project_root)
+    return get_committed_project_id(project_root) or _legacy_project_id(project_root)
 
 
 def _legacy_project_id(project_root: Path) -> str | None:

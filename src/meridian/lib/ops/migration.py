@@ -8,7 +8,7 @@ from pathlib import Path
 
 from meridian.lib.config.preserving_edit import project_config_transaction
 from meridian.lib.state.user_paths import (
-    get_project_id,
+    get_committed_project_id,
     get_user_home,
     write_project_id,
 )
@@ -48,7 +48,7 @@ def migrate_legacy_project_identity(
 def _migrate_legacy_project_identity_locked(project_root: Path) -> MigrationResult:
     """Run migration while the reentrant project-config transaction is held."""
 
-    existing_id = get_project_id(project_root)
+    existing_id = get_committed_project_id(project_root)
     legacy_id = _read_legacy_id(project_root)
     if legacy_id is None:
         return MigrationResult(status="not-needed", old_id=existing_id, new_id=existing_id)

@@ -9,7 +9,7 @@ from meridian.lib.state.user_paths import (
     get_project_home,
 )
 from meridian.lib.state.user_paths import (
-    get_project_id_with_legacy_fallback as read_project_id,
+    get_project_id as read_project_id,
 )
 
 
