@@ -20,7 +20,7 @@ from meridian.lib.ops.pruning import (
     scan_orphan_project_dirs,
 )
 from meridian.lib.platform.locking import try_lock_file
-from meridian.lib.state import session_store, work_store
+from meridian.lib.state import session_store, work_repository, work_store
 
 
 def _create_project_root(tmp_path: Path) -> Path:
@@ -124,7 +124,7 @@ def test_doctor_repairs_malformed_work_item_metadata(
         encoding="utf-8",
     )
     project_state_dir = project_root / ".meridian"
-    item = work_store.create_work_item(project_state_dir, "repair-item")
+    item = work_repository.create_work_item(project_state_dir, "repair-item")
     status_path = work_store.work_scratch_dir(project_state_dir, item.name) / "__status.json"
     status_path.write_text("not json", encoding="utf-8")
 

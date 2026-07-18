@@ -12,6 +12,7 @@ import pytest
 
 import meridian.lib.state.work_store as work_store
 from meridian.lib.state import work_repository
+from meridian.lib.state.work_state import WorkItem
 from tests.conftest import posix_only
 
 
@@ -19,18 +20,20 @@ def _update_work_field(
     runtime_root: Path,
     field: str,
 ) -> None:
-    original_read = work_repository._work_item_from_dir
+    original_read = work_repository.load_work_item_from_dir
 
-    def delayed_read(work_dir: Path, **kwargs: Any) -> work_store.WorkItem:
+    def delayed_read(work_dir: Path, **kwargs: Any) -> WorkItem:
         item = original_read(work_dir, **kwargs)
         time.sleep(0.1)
         return item
 
-    work_repository._work_item_from_dir = delayed_read
+    work_repository.load_work_item_from_dir = delayed_read
     if field == "description":
-        work_store.update_work_item(runtime_root, "shared-task", description="new description")
+        work_repository.update_work_item(runtime_root, "shared-task", description="new description")
     else:
-        work_store.update_work_item_task_dir(runtime_root, "shared-task", task_dir="/new/task-dir")
+        work_repository.update_work_item_task_dir(
+            runtime_root, "shared-task", task_dir="/new/task-dir"
+        )
 
 
 def _state_root(tmp_path: Path) -> Path:
@@ -43,7 +46,7 @@ def _state_root(tmp_path: Path) -> Path:
 
 
 def _ensure_shared_task_name(_: int, *, runtime_root: Path) -> str:
-    return work_store.ensure_work_item_metadata(runtime_root, "shared-task").name
+    return work_repository.ensure_work_item_metadata(runtime_root, "shared-task").name
 
 
 def test_ensure_work_item_metadata_with_concurrent_calls(tmp_path: Path) -> None:
@@ -63,7 +66,7 @@ def test_ensure_work_item_metadata_with_concurrent_calls(tmp_path: Path) -> None
 @posix_only
 def test_concurrent_field_updates_do_not_lose_each_other(tmp_path: Path) -> None:
     runtime_root = _state_root(tmp_path)
-    work_store.create_work_item(runtime_root, "shared-task")
+    work_repository.create_work_item(runtime_root, "shared-task")
     context = multiprocessing.get_context("fork")
     processes = [
         context.Process(target=_update_work_field, args=(runtime_root, field))
@@ -86,7 +89,7 @@ def test_get_work_item_is_pure_and_explicit_repair_fixes_malformed_status(
     tmp_path: Path,
 ) -> None:
     runtime_root = _state_root(tmp_path)
-    item = work_store.create_work_item(runtime_root, "repair-malformed")
+    item = work_repository.create_work_item(runtime_root, "repair-malformed")
 
     status_path = runtime_root / "work" / item.name / "__status.json"
     status_path.write_text("not json", encoding="utf-8")
@@ -97,7 +100,7 @@ def test_get_work_item_is_pure_and_explicit_repair_fixes_malformed_status(
     assert loaded.status == "open"
     assert status_path.read_text(encoding="utf-8") == "not json"
 
-    work_store.repair_work_item(runtime_root, item.name)
+    work_repository.repair_work_item(runtime_root, item.name)
     payload = json.loads(status_path.read_text(encoding="utf-8"))
     assert payload["status"] == "open"
     assert payload["created_at"]
@@ -106,13 +109,13 @@ def test_get_work_item_is_pure_and_explicit_repair_fixes_malformed_status(
 
 def test_repair_uses_directory_timestamp_when_archived_at_is_missing(tmp_path: Path) -> None:
     runtime_root = _state_root(tmp_path)
-    item = work_store.create_work_item(runtime_root, "repair-archive-time")
+    item = work_repository.create_work_item(runtime_root, "repair-archive-time")
     active_dir = runtime_root / "work" / item.name
     archived_dir = runtime_root / "archive" / "work" / item.name
     archived_dir.parent.mkdir(parents=True)
     active_dir.rename(archived_dir)
 
-    repaired = work_store.repair_work_item(runtime_root, item.name)
+    repaired = work_repository.repair_work_item(runtime_root, item.name)
 
     assert repaired.status == "done"
     assert repaired.archived_at is not None
@@ -125,15 +128,15 @@ def test_interrupted_archive_is_archived_by_directory_location(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     runtime_root = _state_root(tmp_path)
-    item = work_store.create_work_item(runtime_root, "archive-crash")
-    work_store.update_work_item(runtime_root, item.name, status="blocked")
+    item = work_repository.create_work_item(runtime_root, "archive-crash")
+    work_repository.update_work_item(runtime_root, item.name, status="blocked")
 
-    def crash_before_metadata_write(_work_dir: Path, _item: work_store.WorkItem) -> None:
+    def crash_before_metadata_write(_work_dir: Path, _item: WorkItem) -> None:
         raise OSError("simulated crash")
 
     monkeypatch.setattr(work_repository, "_write_item", crash_before_metadata_write)
     with pytest.raises(OSError, match="simulated crash"):
-        work_store.archive_work_item(runtime_root, item.name)
+        work_repository.archive_work_item(runtime_root, item.name)
 
     assert not (runtime_root / "work" / item.name).exists()
     assert (runtime_root / "archive" / "work" / item.name).is_dir()
@@ -146,15 +149,15 @@ def test_interrupted_reopen_is_active_by_directory_location(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     runtime_root = _state_root(tmp_path)
-    item = work_store.create_work_item(runtime_root, "reopen-crash")
-    work_store.archive_work_item(runtime_root, item.name)
+    item = work_repository.create_work_item(runtime_root, "reopen-crash")
+    work_repository.archive_work_item(runtime_root, item.name)
 
-    def crash_before_metadata_write(_work_dir: Path, _item: work_store.WorkItem) -> None:
+    def crash_before_metadata_write(_work_dir: Path, _item: WorkItem) -> None:
         raise OSError("simulated crash")
 
     monkeypatch.setattr(work_repository, "_write_item", crash_before_metadata_write)
     with pytest.raises(OSError, match="simulated crash"):
-        work_store.reopen_work_item(runtime_root, item.name)
+        work_repository.reopen_work_item(runtime_root, item.name)
 
     assert (runtime_root / "work" / item.name).is_dir()
     assert not (runtime_root / "archive" / "work" / item.name).exists()
@@ -165,9 +168,9 @@ def test_interrupted_reopen_is_active_by_directory_location(
 
 def test_delete_without_force_succeeds_for_status_only_directory(tmp_path: Path) -> None:
     runtime_root = _state_root(tmp_path)
-    item = work_store.create_work_item(runtime_root, "delete-me")
+    item = work_repository.create_work_item(runtime_root, "delete-me")
 
-    deleted, had_artifacts = work_store.delete_work_item(runtime_root, item.name, force=False)
+    deleted, had_artifacts = work_repository.delete_work_item(runtime_root, item.name, force=False)
 
     assert deleted.name == item.name
     assert had_artifacts is False

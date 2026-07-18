@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from meridian.lib.state.work_store import WorktreeMetadata
+from meridian.lib.state.work_state import WorktreeMetadata
 
 
 def test_legacy_worktree_metadata_normalizes_windows_path_separators() -> None:

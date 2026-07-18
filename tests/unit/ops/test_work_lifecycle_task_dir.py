@@ -20,7 +20,7 @@ from meridian.lib.ops.work_lifecycle import (
     work_start_sync,
     work_task_dir_sync,
 )
-from meridian.lib.state import session_store, work_store
+from meridian.lib.state import session_store, work_repository, work_store
 
 
 def _setup_project(tmp_path: Path) -> tuple[Path, Path, Path]:
@@ -81,7 +81,7 @@ def test_work_task_dir_print_without_active_work_returns_project_root(tmp_path: 
 
 def test_work_task_dir_set_and_clear_updates_active_item(tmp_path: Path) -> None:
     project_root, project_state_dir, runtime_root = _setup_project(tmp_path)
-    item = work_store.create_work_item(project_state_dir, "feature-y", "", None)
+    item = work_repository.create_work_item(project_state_dir, "feature-y", "", None)
     session_store.start_session(
         runtime_root,
         harness="codex",
@@ -141,8 +141,10 @@ def test_lifecycle_commands_do_not_mutate_task_dir_filesystem(tmp_path: Path) ->
     task_dir = tmp_path / "external-dir"
     task_dir.mkdir(parents=True, exist_ok=True)
 
-    work = work_store.create_work_item(project_state_dir, "rename-me", "", None)
-    work_store.update_work_item_task_dir(project_state_dir, work.name, task_dir=task_dir.as_posix())
+    work = work_repository.create_work_item(project_state_dir, "rename-me", "", None)
+    work_repository.update_work_item_task_dir(
+        project_state_dir, work.name, task_dir=task_dir.as_posix()
+    )
 
     renamed = work_rename_sync(
         WorkRenameInput(

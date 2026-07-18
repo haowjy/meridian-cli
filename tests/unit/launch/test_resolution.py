@@ -4,7 +4,7 @@ import pytest
 
 from meridian.lib.launch.resolution import resolve_launch_inputs
 from meridian.lib.ops.spawn import context_ref
-from meridian.lib.state import work_store
+from meridian.lib.state import work_repository
 
 
 def _stub_context_from_work(
@@ -87,8 +87,8 @@ def test_resolve_launch_inputs_resolves_references_from_selected_task_dir(
     task_file = task_dir / "task-only.txt"
     task_file.write_text("task marker", encoding="utf-8")
     project_state_dir = project_root / ".meridian"
-    work_store.ensure_work_item_metadata(project_state_dir, "task-work")
-    work_store.update_work_item_task_dir(
+    work_repository.ensure_work_item_metadata(project_state_dir, "task-work")
+    work_repository.update_work_item_task_dir(
         project_state_dir,
         "task-work",
         task_dir=task_dir.as_posix(),
