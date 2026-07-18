@@ -124,6 +124,8 @@ class ProcessOutcome(BaseModel):
 
 def _write_native_primary_metadata(
     *,
+    runtime_root: Path,
+    spawn_id: SpawnId,
     spawn_dir: Path,
     command: tuple[str, ...],
     launch_cwd: Path,
@@ -168,6 +170,8 @@ def _write_native_primary_metadata(
                 session_dir=runtime_metadata.get("session_dir"),
                 auth_policy=runtime_metadata.get("auth_policy"),
             ),
+            runtime_root=runtime_root,
+            spawn_id=str(spawn_id),
         )
     except Exception:
         logger.debug("Failed to write native primary metadata", exc_info=True)
@@ -789,6 +793,7 @@ async def _run_primary_attach(
             connection=connection,
             tui_command_builder=passthrough.build_tui_command(connection, spec),
             process_launcher=process_launcher,
+            runtime_root=spawn_dir.parent.parent,
             on_running=on_running,
         )
         return await launcher.run(
@@ -1134,6 +1139,8 @@ def run_harness_process(
                         prelaunch_state=prelaunch_state,
                     )
                     _write_native_primary_metadata(
+                        runtime_root=runtime_root,
+                        spawn_id=primary_spawn_id,
                         spawn_dir=log_dir,
                         command=native_primary_metadata_command,
                         launch_cwd=launch_child_cwd,
@@ -1157,6 +1164,8 @@ def run_harness_process(
                     )
                     if write_native_primary_metadata:
                         _write_native_primary_metadata(
+                            runtime_root=runtime_root,
+                            spawn_id=primary_spawn_id,
                             spawn_dir=log_dir,
                             command=native_primary_metadata_command,
                             launch_cwd=launch_child_cwd,
@@ -1283,6 +1292,8 @@ def run_harness_process(
                             discovery_status = discovery_outcome.discovery
                             discovery_detail = discovery_outcome.detail
                     _write_native_primary_metadata(
+                        runtime_root=runtime_root,
+                        spawn_id=primary_spawn_id,
                         spawn_dir=resolve_spawn_log_dir(config_root, primary_spawn_id),
                         command=native_primary_metadata_command,
                         launch_cwd=launch_child_cwd,

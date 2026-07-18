@@ -14,6 +14,7 @@ from typing import cast
 from meridian.lib.core.types import SpawnId
 from meridian.lib.harness.connections.base import ConnectionNotReady
 from meridian.lib.state.atomic import append_durable_jsonl_line
+from meridian.lib.state.spawn_aggregate import mutate_published_spawn_artifact
 
 
 class ControlActionType(StrEnum):
@@ -66,6 +67,7 @@ class ControlActionCoordinator:
     ) -> None:
         self._spawn_id = spawn_id
         self._actions_path = spawn_dir / "control_actions.jsonl"
+        self._runtime_root = spawn_dir.parent.parent
         self._default_max_attempts = max(1, int(default_max_attempts))
         self._retry_delay_secs = max(0.0, float(retry_delay_secs))
         self._lock = asyncio.Lock()
@@ -239,7 +241,12 @@ class ControlActionCoordinator:
             record["error"] = error
         self._transition_seq += 1
         line = json.dumps(record, separators=(",", ":"), sort_keys=True) + "\n"
-        await asyncio.to_thread(append_durable_jsonl_line, self._actions_path, line)
+        await asyncio.to_thread(
+            mutate_published_spawn_artifact,
+            self._runtime_root,
+            self._spawn_id,
+            lambda: append_durable_jsonl_line(self._actions_path, line),
+        )
 
     def _load_counter_state(self) -> _CounterState:
         if not self._actions_path.exists():

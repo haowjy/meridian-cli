@@ -26,6 +26,8 @@ from meridian.lib.ops.runtime import (
 from meridian.lib.ops.spawn import execute as spawn_execute_module
 from meridian.lib.ops.spawn.models import SpawnCreateInput
 from meridian.lib.safety.permissions import UnsafeNoOpPermissionResolver
+from meridian.lib.state import spawn_store
+from meridian.lib.state.paths import resolve_spawn_log_dir
 from meridian.lib.streaming.spawn_manager import SpawnManager
 
 _PI_BUSY_REJECTION = (
@@ -257,6 +259,16 @@ async def test_pi_busy_turn_inject_queues_follow_up_and_completes_both_turns(
 ) -> None:
     inbound_log = _configure_pi_runtime(monkeypatch, tmp_path, None)
     spawn_id = SpawnId("p-pi-busy-inject")
+    spawn_store.start_spawn(
+        tmp_path,
+        spawn_id=spawn_id,
+        chat_id=str(spawn_id),
+        model="test-model",
+        agent="test-agent",
+        harness="pi",
+        prompt="FIRST",
+    )
+    resolve_spawn_log_dir(tmp_path, spawn_id).mkdir(parents=True)
     manager = SpawnManager(
         runtime_root=tmp_path,
         project_root=tmp_path,
@@ -270,6 +282,7 @@ async def test_pi_busy_turn_inject_queues_follow_up_and_completes_both_turns(
             harness_id=HarnessId.PI,
             prompt="FIRST",
             control_root=tmp_path,
+            runtime_root=tmp_path,
             env_overrides={},
             pi_session_role="spawned",
         ),
@@ -310,6 +323,16 @@ async def test_pi_rejected_inject_is_reported_and_does_not_fail_spawn(
 ) -> None:
     inbound_log = _configure_pi_runtime(monkeypatch, tmp_path, rejection)
     spawn_id = SpawnId("p-pi-rejected-inject")
+    spawn_store.start_spawn(
+        tmp_path,
+        spawn_id=spawn_id,
+        chat_id=str(spawn_id),
+        model="test-model",
+        agent="test-agent",
+        harness="pi",
+        prompt="FIRST",
+    )
+    resolve_spawn_log_dir(tmp_path, spawn_id).mkdir(parents=True)
     manager = SpawnManager(
         runtime_root=tmp_path,
         project_root=tmp_path,
@@ -323,6 +346,7 @@ async def test_pi_rejected_inject_is_reported_and_does_not_fail_spawn(
             harness_id=HarnessId.PI,
             prompt="FIRST",
             control_root=tmp_path,
+            runtime_root=tmp_path,
             env_overrides={},
             pi_session_role="spawned",
         ),

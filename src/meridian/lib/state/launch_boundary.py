@@ -9,6 +9,7 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict
 
 from meridian.lib.state.event_store import append_event, read_events, utc_now_iso
+from meridian.lib.state.spawn_aggregate import mutate_published_spawn_artifact
 
 LAUNCH_BOUNDARY_FILENAME = "launch-boundary.jsonl"
 
@@ -80,26 +81,29 @@ def record_launch_boundary_event(
     details: dict[str, Any] | None = None,
 ) -> None:
     data_path = launch_boundary_path(runtime_root, spawn_id)
-    data_path.parent.mkdir(parents=True, exist_ok=True)
-    append_event(
-        data_path,
-        launch_boundary_lock_path(runtime_root, spawn_id),
-        LaunchBoundaryEvent(
-            ts=utc_now_iso(),
-            event=event,
-            stage=stage,
-            parent_pid=parent_pid,
-            launcher_pid=launcher_pid,
-            worker_pid=worker_pid,
-            harness_session_id=harness_session_id,
-            command=command,
-            cwd=cwd,
-            error=error,
-            exception_type=exception_type,
-            details=details,
-        ),
-        exclude_none=True,
-    )
+
+    def append_observation() -> None:
+        append_event(
+            data_path,
+            launch_boundary_lock_path(runtime_root, spawn_id),
+            LaunchBoundaryEvent(
+                ts=utc_now_iso(),
+                event=event,
+                stage=stage,
+                parent_pid=parent_pid,
+                launcher_pid=launcher_pid,
+                worker_pid=worker_pid,
+                harness_session_id=harness_session_id,
+                command=command,
+                cwd=cwd,
+                error=error,
+                exception_type=exception_type,
+                details=details,
+            ),
+            exclude_none=True,
+        )
+
+    mutate_published_spawn_artifact(runtime_root, spawn_id, append_observation)
 
 
 def read_launch_boundary_events(

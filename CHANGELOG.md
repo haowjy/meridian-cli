@@ -4,6 +4,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+<<<<<<< HEAD
 ### Changed
 - Persisted spawn `state.json` is typed end to end: status, kind, runner-exit and
   terminal facts, and chat/harness-session identities validate at load. An
@@ -28,6 +29,20 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   corrupt or status-only row is no longer shown as succeeded. (#423)
 - Declined locked spawn mutations are a typed outcome, not an exception channel;
   a no-op cancel on a terminal spawn no longer emits a spurious `spawn.updated`. (#423)
+=======
+## [0.3.41] - 2026-07-18
+
+### Fixed
+- Codex managed-primary bootstrap no longer waits for turn completion — rollout
+  materialization is the readiness gate again. Rich context (`--work`,
+  `--prompt-file`, `--from`) caused 120s timeout when the model began real work
+  during bootstrap.
+
+## [0.3.40] - 2026-07-18
+
+### Fixed
+- Late spawn-owned artifact writes no longer recreate deleted spawn directories.
+>>>>>>> origin/main
 
 ## [0.3.39] - 2026-07-17
 

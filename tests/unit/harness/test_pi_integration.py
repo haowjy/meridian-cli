@@ -22,6 +22,7 @@ from meridian.lib.harness.connections.pi_rpc import PiRpcConnection
 from meridian.lib.harness.semantics import activity_transition, clears_signal, terminal_outcome
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.safety.permissions import UnsafeNoOpPermissionResolver
+from meridian.lib.state import spawn_store
 from meridian.lib.state.paths import resolve_spawn_log_dir
 from meridian.lib.streaming.spawn_manager import SpawnManager
 
@@ -70,8 +71,20 @@ async def _start_pi_connection(
     spec: ResolvedLaunchSpec,
 ) -> PiRpcConnection:
     connection = PiRpcConnection()
-    await connection.start(config, spec)
+    await _start_existing_pi_connection(connection, config, spec)
     return connection
+
+
+async def _start_existing_pi_connection(
+    connection: PiRpcConnection,
+    config: ConnectionConfig,
+    spec: ResolvedLaunchSpec,
+) -> None:
+    resolve_spawn_log_dir(config.control_root, config.spawn_id).mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+    await connection.start(config, spec)
 
 
 def _history_events(runtime_root: Path, spawn_id: SpawnId) -> list[dict[str, object]]:
@@ -81,6 +94,18 @@ def _history_events(runtime_root: Path, spawn_id: SpawnId) -> list[dict[str, obj
         for line in history_path.read_text(encoding="utf-8").splitlines()
         if line
     ]
+
+
+def _publish_manager_spawn(runtime_root: Path, spawn_id: SpawnId) -> None:
+    spawn_store.start_spawn(
+        runtime_root,
+        spawn_id=spawn_id,
+        chat_id=str(spawn_id),
+        model="test-model",
+        agent="test-agent",
+        harness="pi",
+        prompt="hello",
+    )
 
 
 @pytest.mark.parametrize(
@@ -209,7 +234,8 @@ async def test_pi_rpc_connection_supports_multi_turn_injection_and_abort(
     monkeypatch.setenv("PI_RPC_INBOUND_LOG", str(inbound_log))
 
     connection = PiRpcConnection()
-    await connection.start(
+    await _start_existing_pi_connection(
+        connection,
         ConnectionConfig(
             spawn_id=SpawnId("p-pi-rpc-connection"),
             harness_id=HarnessId.PI,
@@ -313,7 +339,8 @@ async def test_pi_rpc_connection_launches_resolved_runtime_with_scoped_session_d
 
     scoped_session_dir = tmp_path / "pi-sessions" / "p-pi-direct-runtime"
     connection = PiRpcConnection()
-    await connection.start(
+    await _start_existing_pi_connection(
+        connection,
         ConnectionConfig(
             spawn_id=SpawnId("p-pi-direct-runtime"),
             harness_id=HarnessId.PI,
@@ -373,7 +400,8 @@ async def test_pi_rpc_connection_redacts_secret_like_cli_args_in_process_spawned
 
     connection = PiRpcConnection()
     scoped_session_dir = tmp_path / "sessions" / "p-pi-redacted-argv"
-    await connection.start(
+    await _start_existing_pi_connection(
+        connection,
         ConnectionConfig(
             spawn_id=SpawnId("p-pi-redacted-argv"),
             harness_id=HarnessId.PI,
@@ -450,7 +478,8 @@ async def test_pi_rpc_connection_ignores_non_lifecycle_stderr_lines_but_logs_the
     monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
 
     connection = PiRpcConnection()
-    await connection.start(
+    await _start_existing_pi_connection(
+        connection,
         ConnectionConfig(
             spawn_id=spawn_id,
             harness_id=HarnessId.PI,
@@ -528,6 +557,7 @@ async def test_pi_spawn_manager_auto_delivers_initial_prompt_and_quiesces_withou
     monkeypatch.setenv("PI_RPC_INBOUND_LOG", str(inbound_log))
 
     spawn_id = SpawnId("p-pi-autoprompt-quiesce")
+    _publish_manager_spawn(tmp_path, spawn_id)
     manager = SpawnManager(
         runtime_root=tmp_path,
         project_root=tmp_path,
@@ -631,6 +661,7 @@ async def test_pi_spawn_manager_startup_diagnostics_report_outcome_and_marker(
     monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
 
     spawn_id = SpawnId(f"p-pi-{scenario}")
+    _publish_manager_spawn(tmp_path, spawn_id)
     manager = SpawnManager(
         runtime_root=tmp_path,
         project_root=tmp_path,
@@ -701,6 +732,7 @@ async def test_pi_spawn_manager_prompt_response_failure_fails_fast_with_reported
     monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
 
     spawn_id = SpawnId("p-pi-prompt-failed-response")
+    _publish_manager_spawn(tmp_path, spawn_id)
     manager = SpawnManager(
         runtime_root=tmp_path,
         project_root=tmp_path,
@@ -774,7 +806,8 @@ async def test_pi_connection_launches_in_control_root_when_task_cwd_provided(
     monkeypatch.setenv("PI_TEST_CWD_FILE", str(observed_cwd))
 
     connection = PiRpcConnection()
-    await connection.start(
+    await _start_existing_pi_connection(
+        connection,
         ConnectionConfig(
             spawn_id=SpawnId("p-pi-task-cwd"),
             harness_id=HarnessId.PI,
@@ -829,7 +862,8 @@ async def test_pi_rpc_connection_surfaces_stderr_on_early_exit_before_first_even
     monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
 
     connection = PiRpcConnection()
-    await connection.start(
+    await _start_existing_pi_connection(
+        connection,
         ConnectionConfig(
             spawn_id=spawn_id,
             harness_id=HarnessId.PI,
@@ -876,7 +910,8 @@ async def test_pi_rpc_connection_start_fails_fast_when_runtime_resolution_fails(
 
     connection = PiRpcConnection()
     with pytest.raises(ConnectionNotReady, match=rf"^{expected_error}$"):
-        await connection.start(
+        await _start_existing_pi_connection(
+            connection,
             ConnectionConfig(
                 spawn_id=SpawnId("p-pi-runtime-resolution-error"),
                 harness_id=HarnessId.PI,

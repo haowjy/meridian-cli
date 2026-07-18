@@ -49,6 +49,10 @@ Durable `spawn_owned` process scopes and the reaper own any residue beyond that
 bound. The rejected alternative (`with suppress` single-shot) did not survive
 repeated cancellation.
 
+**The published spawn directory is a startup precondition.** Connection and process-
+adoption paths never create `spawns/<id>/`. If retention deletes the aggregate across
+an awaited startup boundary, artifact opens and guarded scope registration fail closed.
+
 ## Entry Points
 
 - `base.py` — `HarnessConnection` ABC, `RawHarnessEvent`, `ConnectionCapabilities`,

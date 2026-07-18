@@ -102,6 +102,7 @@ from meridian.lib.state.spawn.model import (
     LaunchMode,
 )
 from meridian.lib.state.spawn.repository import read_state, scan_spawn_ids
+from meridian.lib.state.spawn_aggregate import mutate_published_spawn_artifact
 from meridian.lib.streaming.spawn_manager import DrainOutcome, SpawnManager
 from meridian.lib.utils.time import minutes_to_seconds
 
@@ -254,6 +255,8 @@ def _install_signal_handlers(
 
 
 def _append_runner_lifecycle_event(
+    runtime_root: Path,
+    spawn_id: SpawnId,
     path: Path,
     *,
     clock: Clock,
@@ -271,9 +274,13 @@ def _append_runner_lifecycle_event(
         **details,
     }
     try:
-        append_text_line(
-            path,
-            json.dumps(payload, separators=(",", ":"), sort_keys=True) + "\n",
+        mutate_published_spawn_artifact(
+            runtime_root,
+            spawn_id,
+            lambda: append_text_line(
+                path,
+                json.dumps(payload, separators=(",", ":"), sort_keys=True) + "\n",
+            ),
         )
     except Exception:
         logger.warning("Failed to append runner lifecycle evidence.", exc_info=True)
@@ -1086,6 +1093,8 @@ async def execute_with_streaming(
         def _record_lifecycle(event: str, **details: object) -> None:
             assert lifecycle_path is not None
             _append_runner_lifecycle_event(
+                runtime_root,
+                run.spawn_id,
                 lifecycle_path,
                 clock=resolved_clock,
                 event=event,
@@ -1636,6 +1645,8 @@ async def execute_with_streaming(
     except Exception as exc:
         if lifecycle_path is not None:
             _append_runner_lifecycle_event(
+                runtime_root,
+                run.spawn_id,
                 lifecycle_path,
                 clock=resolved_clock,
                 event="exception",
@@ -1654,6 +1665,8 @@ async def execute_with_streaming(
         runner_phase[0] = "finalizing"
         if lifecycle_path is not None:
             _append_runner_lifecycle_event(
+                runtime_root,
+                run.spawn_id,
                 lifecycle_path,
                 clock=resolved_clock,
                 event="finalizing",
@@ -1714,6 +1727,8 @@ async def execute_with_streaming(
         lifecycle_active[0] = False
         if lifecycle_path is not None:
             _append_runner_lifecycle_event(
+                runtime_root,
+                run.spawn_id,
                 lifecycle_path,
                 clock=resolved_clock,
                 event="runner_completed",

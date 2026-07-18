@@ -12,7 +12,9 @@ from meridian.lib.launch.cwd import (
     resolve_task_cwd,
 )
 from meridian.lib.state import work_store
+from meridian.lib.state.paths import resolve_project_runtime_root_for_write
 from meridian.lib.state.spawn_scope import write_spawn_scope_task_dir
+from meridian.lib.state.spawn_store import start_spawn
 
 
 def _roots(tmp_path: Path) -> tuple[Path, Path]:
@@ -29,6 +31,18 @@ def _work_with_task_dir(state_dir: Path, tmp_path: Path, name: str) -> str:
     task_dir.mkdir(parents=True, exist_ok=True)
     work_store.update_work_item_task_dir(state_dir, item.name, task_dir=task_dir.as_posix())
     return item.name
+
+
+def _publish_spawn(project_root: Path, spawn_id: str = "p1") -> None:
+    start_spawn(
+        resolve_project_runtime_root_for_write(project_root),
+        chat_id="c1",
+        model="gpt-5.6",
+        agent="coder",
+        harness="codex",
+        prompt="test",
+        spawn_id=spawn_id,
+    )
 
 
 def test_resolve_task_cwd_uses_explicit_task_dir_override_first(tmp_path: Path) -> None:
@@ -324,6 +338,7 @@ def test_resolve_effective_task_dir_precedence_scope_work_inherited_root(
     work_task_dir = tmp_path / "work-task"
     work_task_dir.mkdir(parents=True)
     work_id = _work_with_task_dir(state_dir, tmp_path, "feature")
+    _publish_spawn(project_root)
 
     write_spawn_scope_task_dir(project_root, "p1", scope_dir)
     effective = resolve_effective_task_dir(
@@ -393,6 +408,7 @@ def test_resolve_effective_task_dir_tombstone_skips_inherited(tmp_path: Path) ->
     state_dir.mkdir(parents=True)
     inherited = tmp_path / "inherited"
     inherited.mkdir(parents=True)
+    _publish_spawn(project_root)
 
     write_spawn_scope_task_dir(project_root, "p1", None)
     effective = resolve_effective_task_dir(

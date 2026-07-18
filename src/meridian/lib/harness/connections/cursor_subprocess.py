@@ -110,7 +110,6 @@ class CursorSubprocessConnection(HarnessConnection[ResolvedLaunchSpec]):
         self._set_state("starting")
 
         spawn_dir = resolve_spawn_log_dir(config.control_root, config.spawn_id)
-        spawn_dir.mkdir(parents=True, exist_ok=True)
         self._stderr_handle = (spawn_dir / "stderr.log").open("ab")
 
         env = inherit_child_env(

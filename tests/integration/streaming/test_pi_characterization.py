@@ -14,7 +14,7 @@ from meridian.lib.harness.connections.base import ConnectionConfig, RawHarnessEv
 from meridian.lib.harness.pi_lifecycle_events import PI_LIFECYCLE_EVENT_ALLOWLIST
 from meridian.lib.harness.semantics import TerminalEventOutcome
 from meridian.lib.state import spawn_store
-from meridian.lib.state.spawn_signals import write_spawn_signal
+from meridian.lib.state.spawn_signals import spawn_signal_path
 from meridian.lib.streaming import descendant_evidence as descendant_evidence_module
 from meridian.lib.streaming import pi_completion_profile as pi_completion_profile_module
 from meridian.lib.streaming.completion_nudge import PI_COMPLETION_NUDGE_MESSAGE
@@ -28,6 +28,12 @@ _SUCCESS = TerminalEventOutcome(status="succeeded", exit_code=0)
 _TERMINATE = DrainAction(terminate=True, emit_turn_boundary=False)
 _AGENT_END = pi_event("agent_end")
 _start_coordinator = PiDrainScenario.start
+
+
+def _write_done_signal(runtime_root: Path, spawn_id: str) -> None:
+    path = spawn_signal_path(runtime_root, spawn_id, "done")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("test\n", encoding="utf-8")
 
 
 def _write_running_bash(runtime_root: Path, spawn_id: SpawnId) -> None:
@@ -182,7 +188,7 @@ async def test_done_fails_closed_when_pi_descendant_evidence_stays_unreadable(
             _SUCCESS,
             _TERMINATE,
         )
-        write_spawn_signal(tmp_path, "p1", "done")
+        _write_done_signal(tmp_path, "p1")
 
         started.clock.advance(0.25)
         waiting = await coordinator.handle_timeout()
@@ -231,7 +237,7 @@ async def test_done_completes_when_pi_descendant_evidence_recovers(
     try:
         await coordinator.observe_event(_AGENT_END, "idle")
         await coordinator.handle_terminal_event(_AGENT_END, _SUCCESS, _TERMINATE)
-        write_spawn_signal(tmp_path, "p1", "done")
+        _write_done_signal(tmp_path, "p1")
         waiting = await coordinator.handle_timeout()
 
         store_available = True
@@ -264,7 +270,7 @@ async def test_done_fails_closed_on_pi_private_work_read_error(
             _SUCCESS,
             _TERMINATE,
         )
-        write_spawn_signal(tmp_path, "p1", "done")
+        _write_done_signal(tmp_path, "p1")
         waiting = await coordinator.handle_timeout()
 
         assert terminal.recorded_outcome is None
