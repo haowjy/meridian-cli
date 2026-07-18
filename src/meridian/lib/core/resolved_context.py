@@ -223,8 +223,8 @@ class ResolvedContext:
         if self.inherited_task_dir is not None:
             overrides["MERIDIAN_TASK_DIR"] = self.inherited_task_dir.as_posix()
         for context_name, context_dir in self.context_dirs:
-            env_key = context_env_key(context_name)
-            if env_key == "MERIDIAN_CONTEXT__DIR":
+            if not context_name.strip():
                 continue
+            env_key = context_env_key(context_name)
             overrides[env_key] = context_dir.as_posix()
         return overrides

@@ -5,6 +5,7 @@ from collections.abc import Callable, Collection, Mapping
 from pathlib import Path
 from typing import cast
 
+from meridian.env_registry import is_allowed_child_env_name
 from meridian.lib.core.child_env import ALLOWED_CHILD_ENV_KEYS
 from meridian.lib.core.overrides import RUNTIME_OVERRIDE_ENV_VARS
 from meridian.lib.core.types import HarnessId, SpawnId
@@ -64,7 +65,7 @@ def apply_pi_bind_time_env(
 
 def _is_allowlisted_child_env_var(key: str) -> bool:
     normalized = key.upper()
-    if normalized in _CHILD_ENV_ALLOWLIST:
+    if normalized in _CHILD_ENV_ALLOWLIST or is_allowed_child_env_name(normalized):
         return True
     return any(normalized.startswith(prefix) for prefix in _CHILD_ENV_ALLOWLIST_PREFIXES)
 
