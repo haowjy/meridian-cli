@@ -34,6 +34,22 @@ def test_committed_identity_is_read_without_minting(tmp_path: Path) -> None:
     assert not (tmp_path / ".meridian").exists()
 
 
+def test_project_id_rechecks_committed_identity_after_legacy_migration_handoff(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    committed_reads = iter((None, "migrated-project-id"))
+    monkeypatch.setattr(
+        "meridian.lib.state.user_paths.get_committed_project_id",
+        lambda _project_root: next(committed_reads),
+    )
+    monkeypatch.setattr(
+        "meridian.lib.state.user_paths._legacy_project_id",
+        lambda _project_root: None,
+    )
+
+    assert get_project_id(tmp_path) == "migrated-project-id"
+
+
 def test_mars_only_write_creates_meridian_identity(tmp_path: Path) -> None:
     (tmp_path / "mars.toml").write_text("[settings]\n", encoding="utf-8")
     project_id = get_or_create_project_id(tmp_path)

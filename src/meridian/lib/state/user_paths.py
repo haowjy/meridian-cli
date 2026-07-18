@@ -81,7 +81,13 @@ def get_project_id(project_root: Path) -> str | None:
     Returns None when neither source is present, readable, or non-empty.
     """
 
-    return get_committed_project_id(project_root) or _legacy_project_id(project_root)
+    committed_id = get_committed_project_id(project_root)
+    if committed_id is not None:
+        return committed_id
+    legacy_id = _legacy_project_id(project_root)
+    if legacy_id is not None:
+        return legacy_id
+    return get_committed_project_id(project_root)
 
 
 def _legacy_project_id(project_root: Path) -> str | None:
