@@ -227,7 +227,9 @@ async def test_pi_rpc_connection_supports_multi_turn_injection_and_abort(
     monkeypatch.setenv("PI_RPC_INBOUND_LOG", str(inbound_log))
 
     connection = PiRpcConnection()
-    await _start_existing_pi_connection(connection,        ConnectionConfig(
+    await _start_existing_pi_connection(
+        connection,
+        ConnectionConfig(
             spawn_id=SpawnId("p-pi-rpc-connection"),
             harness_id=HarnessId.PI,
             prompt="hello",
@@ -330,7 +332,9 @@ async def test_pi_rpc_connection_launches_resolved_runtime_with_scoped_session_d
 
     scoped_session_dir = tmp_path / "pi-sessions" / "p-pi-direct-runtime"
     connection = PiRpcConnection()
-    await _start_existing_pi_connection(connection,        ConnectionConfig(
+    await _start_existing_pi_connection(
+        connection,
+        ConnectionConfig(
             spawn_id=SpawnId("p-pi-direct-runtime"),
             harness_id=HarnessId.PI,
             prompt="hello",
@@ -389,7 +393,9 @@ async def test_pi_rpc_connection_redacts_secret_like_cli_args_in_process_spawned
 
     connection = PiRpcConnection()
     scoped_session_dir = tmp_path / "sessions" / "p-pi-redacted-argv"
-    await _start_existing_pi_connection(connection,        ConnectionConfig(
+    await _start_existing_pi_connection(
+        connection,
+        ConnectionConfig(
             spawn_id=SpawnId("p-pi-redacted-argv"),
             harness_id=HarnessId.PI,
             prompt="hello",
@@ -465,7 +471,9 @@ async def test_pi_rpc_connection_ignores_non_lifecycle_stderr_lines_but_logs_the
     monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
 
     connection = PiRpcConnection()
-    await _start_existing_pi_connection(connection,        ConnectionConfig(
+    await _start_existing_pi_connection(
+        connection,
+        ConnectionConfig(
             spawn_id=spawn_id,
             harness_id=HarnessId.PI,
             prompt="hello",
@@ -791,7 +799,9 @@ async def test_pi_connection_launches_in_control_root_when_task_cwd_provided(
     monkeypatch.setenv("PI_TEST_CWD_FILE", str(observed_cwd))
 
     connection = PiRpcConnection()
-    await _start_existing_pi_connection(connection,        ConnectionConfig(
+    await _start_existing_pi_connection(
+        connection,
+        ConnectionConfig(
             spawn_id=SpawnId("p-pi-task-cwd"),
             harness_id=HarnessId.PI,
             prompt="hello",
@@ -845,7 +855,9 @@ async def test_pi_rpc_connection_surfaces_stderr_on_early_exit_before_first_even
     monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
 
     connection = PiRpcConnection()
-    await _start_existing_pi_connection(connection,        ConnectionConfig(
+    await _start_existing_pi_connection(
+        connection,
+        ConnectionConfig(
             spawn_id=spawn_id,
             harness_id=HarnessId.PI,
             prompt="hello",
@@ -891,7 +903,9 @@ async def test_pi_rpc_connection_start_fails_fast_when_runtime_resolution_fails(
 
     connection = PiRpcConnection()
     with pytest.raises(ConnectionNotReady, match=rf"^{expected_error}$"):
-        await _start_existing_pi_connection(connection,            ConnectionConfig(
+        await _start_existing_pi_connection(
+            connection,
+            ConnectionConfig(
                 spawn_id=SpawnId("p-pi-runtime-resolution-error"),
                 harness_id=HarnessId.PI,
                 prompt="hello",
