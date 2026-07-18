@@ -104,6 +104,37 @@ def test_persisted_session_identities_are_normalized_at_parse(tmp_path: Path) ->
     assert records[0].harness_session_id == "c1  -thread"
 
 
+@pytest.mark.parametrize("field", ["chat_id", "harness_session_id"])
+@pytest.mark.parametrize("invalid_identity", [123, [], {}])
+def test_malformed_session_identity_does_not_abort_sibling_event_reads(
+    tmp_path: Path,
+    field: str,
+    invalid_identity: object,
+) -> None:
+    runtime_root = _state_root(tmp_path)
+    malformed = {
+        "v": 1,
+        "event": "start",
+        "chat_id": "bad-chat",
+        "kind": "spawn",
+        "harness": "codex",
+        "harness_session_id": "bad-thread",
+        "model": "gpt-5.4",
+        "started_at": "2026-03-01T00:00:00Z",
+        field: invalid_identity,
+    }
+    (runtime_root / "sessions.jsonl").write_text(json.dumps(malformed) + "\n", encoding="utf-8")
+    _write_session_start(
+        runtime_root=runtime_root,
+        chat_id="c1",
+        session_instance_id="instance-1",
+    )
+
+    records = session_store.list_all_session_records(runtime_root)
+
+    assert [record.chat_id for record in records] == ["c1"]
+
+
 def test_start_session_does_not_append_start_event_when_lock_acquire_fails(
     tmp_path: Path,
 ) -> None:

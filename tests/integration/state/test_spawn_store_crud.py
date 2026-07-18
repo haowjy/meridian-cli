@@ -148,6 +148,29 @@ def test_persisted_spawn_identities_are_normalized_at_parse(tmp_path: Path) -> N
     assert row.harness_session_id == "thread-1"
 
 
+@pytest.mark.parametrize("field", ["chat_id", "harness_session_id"])
+@pytest.mark.parametrize("invalid_identity", [123, [], {}])
+def test_non_string_persisted_identity_is_quarantined(
+    tmp_path: Path,
+    field: str,
+    invalid_identity: object,
+) -> None:
+    runtime_root = _state_root(tmp_path)
+    spawn_id = _start_test_spawn(runtime_root)
+    valid_spawn_id = _start_test_spawn(runtime_root)
+    state_path = RuntimePaths.from_root_dir(runtime_root).spawns_dir / spawn_id / "state.json"
+    payload = json.loads(state_path.read_text(encoding="utf-8"))
+    payload[field] = invalid_identity
+    atomic_write_text(state_path, json.dumps(payload))
+
+    with pytest.raises(SpawnStateQuarantined):
+        get_spawn(runtime_root, spawn_id)
+    collection = list_spawns(runtime_root)
+
+    assert [row.id for row in collection] == [valid_spawn_id]
+    assert [report.spawn_id for report in collection.quarantines] == [spawn_id]
+
+
 @pytest.mark.parametrize("invalid_status", [[], {}, 123])
 def test_non_string_persisted_status_is_quarantined(
     tmp_path: Path,

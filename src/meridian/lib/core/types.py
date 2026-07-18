@@ -40,11 +40,13 @@ ArtifactKey = NewType("ArtifactKey", str)
 SchemaVersion = NewType("SchemaVersion", int)
 
 
-def normalize_optional_identity(value: str | None) -> str | None:
+def normalize_optional_identity(value: object) -> str | None:
     """Canonicalize an identity read from persisted state."""
 
     if value is None:
         return None
+    if not isinstance(value, str):
+        raise ValueError("persisted identity must be a string or null")
     normalized = value.strip()
     return normalized or None
 

@@ -99,7 +99,7 @@ class SpawnStateFields(BaseModel):
 
     @field_validator("chat_id", "owner_chat_id", "harness_session_id", mode="before")
     @classmethod
-    def normalize_persisted_identity(cls, value: str | None) -> str | None:
+    def normalize_persisted_identity(cls, value: object) -> str | None:
         return normalize_optional_identity(value)
 
 
