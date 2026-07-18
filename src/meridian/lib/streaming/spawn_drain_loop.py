@@ -32,7 +32,7 @@ from meridian.lib.streaming.spawn_session import DrainOutcome, SpawnSession
 
 if TYPE_CHECKING:
     from meridian.lib.harness.connections.base import HarnessConnection
-    from meridian.lib.harness.semantics import TerminalEventOutcome
+    from meridian.lib.harness.semantics import NormalizedHarnessEvent, TerminalEventOutcome
     from meridian.lib.observability.debug_tracer import DebugTracer
 
 logger = logging.getLogger(__name__)
@@ -40,7 +40,7 @@ logger = logging.getLogger(__name__)
 PublishTerminal = Callable[
     [SpawnId, SpawnSession, DrainOutcome, CompletionCleanupRequest | None], DrainOutcome
 ]
-FanOutEvent = Callable[[SpawnId, RawHarnessEvent], None]
+FanOutEvent = Callable[[SpawnId, "NormalizedHarnessEvent"], None]
 FanOutTurnBoundary = Callable[[SpawnId, "TerminalEventOutcome"], Awaitable[None]]
 
 
@@ -75,7 +75,7 @@ class SpawnDrainLoop:
         """Durably append each harness event and fan out to the active subscriber."""
 
         # Import at runtime to avoid circular import during module initialization.
-        from meridian.lib.harness.semantics import activity_transition, terminal_outcome
+        from meridian.lib.harness.semantics import normalize_event
 
         consecutive_write_failures = 0
         max_consecutive_failures = 10
@@ -129,14 +129,15 @@ class SpawnDrainLoop:
                 event = wake.event
                 disk_change_ready_after_event = wake.disk_change_ready_after_event
 
-                transition = activity_transition(
+                normalized_event = normalize_event(
                     event,
                     primary_event_scope=receiver.primary_event_scope,
                 )
+                receiver.observe_event_semantics(normalized_event.semantics)
                 duplicate_canonical_event = await _observe_event(
                     coordinator,
                     event,
-                    transition,
+                    normalized_event.semantics.activity,
                 )
                 if duplicate_canonical_event:
                     continue
@@ -196,11 +197,8 @@ class SpawnDrainLoop:
                             break
                         continue
 
-                event_outcome = terminal_outcome(
-                    event,
-                    primary_event_scope=receiver.primary_event_scope,
-                )
-                self._fan_out_event(spawn_id, event)
+                event_outcome = normalized_event.semantics.terminal
+                self._fan_out_event(spawn_id, normalized_event)
                 persisted_event_decision = _note_event_persisted(coordinator, event)
                 if persisted_event_decision.recorded_outcome is not None:
                     recorded_terminal_outcome = persisted_event_decision.recorded_outcome

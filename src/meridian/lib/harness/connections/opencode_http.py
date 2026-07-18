@@ -58,9 +58,8 @@ from meridian.lib.harness.projections.project_opencode_streaming import (
 )
 from meridian.lib.harness.projections.projection_errors import HarnessCapabilityMismatch
 from meridian.lib.harness.semantics import (
+    EventSemantics,
     PrimaryEventScope,
-    clears_signal,
-    opencode_primary_event_scope,
 )
 from meridian.lib.launch.env import inherit_child_env
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
@@ -236,7 +235,10 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
 
     @property
     def primary_event_scope(self) -> PrimaryEventScope | None:
-        return opencode_primary_event_scope(self._session_id)
+        session_id = (self._session_id or "").strip()
+        if not session_id:
+            return None
+        return PrimaryEventScope(harness_id=HarnessId.OPENCODE, scope_id=session_id)
 
     @property
     def subprocess_pid(self) -> int | None:
@@ -1024,10 +1026,12 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
             harness_id=HarnessId.OPENCODE.value,
             raw_text=raw_text,
         )
-        if clears_signal(event, primary_event_scope=self.primary_event_scope):
+        return event
+
+    def observe_event_semantics(self, semantics: EventSemantics) -> None:
+        if semantics.clears_signal:
             self._signal_in_flight = False
             self._liveness.signal_request_resolved("cancel")
-        return event
 
     async def _ensure_http_client(self) -> Any:
         if self._client is not None:

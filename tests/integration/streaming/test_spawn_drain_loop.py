@@ -108,6 +108,9 @@ class _Receiver:
         for event in self._events:
             yield event
 
+    def observe_event_semantics(self, semantics: object) -> None:
+        _ = semantics
+
 
 class _HistoryWriter:
     def __init__(self, results: list[WriteResult], calls: list[Call]) -> None:
@@ -157,6 +160,9 @@ class _ConcurrentWakeReceiver:
 
     def __init__(self, wake: asyncio.Event) -> None:
         self._wake = wake
+
+    def observe_event_semantics(self, semantics: object) -> None:
+        _ = semantics
 
     async def events(self) -> AsyncIterator[RawHarnessEvent]:
         yield RawHarnessEvent(event_type="turn/completed", harness_id="codex", payload={})
@@ -321,7 +327,7 @@ async def _run_drain(
         },
         observers=cast("EventObserverRegistry", observers),
         publish_terminal=_publish_terminal if outcomes is not None else Mock(),
-        fan_out_event=lambda _spawn_id, event: calls.append(("fan_out", event)),
+        fan_out_event=lambda _spawn_id, event: calls.append(("fan_out", event.raw)),
         fan_out_turn_boundary=AsyncMock(),
     )
     coordinator = cast("DrainCoordinator", _Coordinator(calls))

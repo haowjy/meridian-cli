@@ -69,6 +69,9 @@ class _ClaudeSeedPersistenceConnection:
     def primary_event_scope(self) -> None:
         return None
 
+    def observe_event_semantics(self, semantics: object) -> None:
+        _ = semantics
+
     @property
     def resident_backend(self) -> None:
         return None
@@ -136,6 +139,9 @@ class _OpenCodeSeedPortConnection:
     @property
     def primary_event_scope(self) -> None:
         return None
+
+    def observe_event_semantics(self, semantics: object) -> None:
+        _ = semantics
 
     @property
     def resident_backend(self) -> None:
@@ -205,6 +211,9 @@ class _OpenCodeConnectSessionConnection:
     @property
     def primary_event_scope(self) -> None:
         return None
+
+    def observe_event_semantics(self, semantics: object) -> None:
+        _ = semantics
 
     @property
     def resident_backend(self) -> None:

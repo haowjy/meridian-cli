@@ -99,12 +99,11 @@ parent signals, or supply the parent report.
   parent inherited `Agent` grants cannot bypass the Mars `agent_copy` boundary.
 - `__init__.py` — `HARNESS_EXTENSION_TOUCHPOINTS` and `ensure_bootstrap()`.
   Read before adding a harness — lists every file that must be touched.
-- `semantics.py` — `HarnessSemantics` port and closed `SemanticEvent` union
-  (`ActivitySemanticEvent | TerminalSemanticEvent | SignalClearedSemanticEvent`).
-  Each adapter's `HarnessBundle` registers its own event-name→`SemanticClass` table
-  and optional payload resolver. `HarnessSemantics.normalize(event)` dispatches by
-  `HarnessId`, never by shared event-name switch; shared `semantics.py` contains no
-  harness event names.
+- `semantics.py` — `HarnessSemantics` port and typed `EventSemantics` descriptor.
+  Each adapter's `HarnessBundle` registers its own event-name descriptors and
+  optional payload resolvers. `normalize_event()` dispatches by `HarnessId` before
+  event name and returns raw evidence with its one normalized descriptor; shared
+  `semantics.py` contains no harness event names.
 - `common.py` — shared extraction helpers used by adapters.
 - `transcript.py` — cross-harness session read path. `TranscriptMessage` (with
   `tool_call: ToolCall | None` and `is_tool_result: bool`), `ToolCall` (canonical

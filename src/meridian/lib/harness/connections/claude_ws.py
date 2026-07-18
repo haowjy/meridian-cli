@@ -33,7 +33,7 @@ from meridian.lib.harness.connections.base import (
 )
 from meridian.lib.harness.connections.managed_backend import register_spawn_owned_process
 from meridian.lib.harness.errors import HarnessBinaryNotFound
-from meridian.lib.harness.semantics import clears_signal
+from meridian.lib.harness.semantics import EventSemantics
 from meridian.lib.launch.constants import (
     BASE_COMMAND_CLAUDE_STREAMING,
     BLOCKED_CHILD_ENV_VARS,
@@ -291,8 +291,6 @@ class ClaudeConnection(HarnessConnection[ResolvedLaunchSpec]):
                     self._emit_startup_phase(StartupPhase.HARNESS_READY)
 
                 for event in parsed_events:
-                    if clears_signal(event):
-                        self._signal_in_flight = False
                     if self._tracer is not None:
                         self._tracer.emit(
                             "wire",
@@ -309,6 +307,10 @@ class ClaudeConnection(HarnessConnection[ResolvedLaunchSpec]):
             raise ConnectionNotReady(
                 f"Claude connection is not ready (state={self._state}); expected 'connected'."
             )
+
+    def observe_event_semantics(self, semantics: EventSemantics) -> None:
+        if semantics.clears_signal:
+            self._signal_in_flight = False
 
     def _set_state(self, next_state: ConnectionState) -> None:
         if next_state == self._state:

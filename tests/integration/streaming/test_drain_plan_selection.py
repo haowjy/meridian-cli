@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.connections.base import ConnectionConfig, RawHarnessEvent
+from meridian.lib.harness.semantics import NormalizedHarnessEvent
 from meridian.lib.streaming.drain_coordinator import DrainPlan
 from meridian.lib.streaming.drain_policy import (
     PiRpcQuiescenceDrainPolicy,
@@ -127,9 +128,10 @@ def test_spawn_manager_authored_event_emission_order(
 
     manager._history_writers[spawn_id] = cast("Any", _Writer())
     manager._observers = cast("Any", _Observers())
-    def _fan_out(target_spawn_id: SpawnId, event: RawHarnessEvent | None) -> None:
+    def _fan_out(target_spawn_id: SpawnId, event: NormalizedHarnessEvent | None) -> None:
         assert target_spawn_id == spawn_id
-        calls.append(("fan_out", cast("RawHarnessEvent", event)))
+        assert event is not None
+        calls.append(("fan_out", event.raw))
 
     def _get_tracer(target_spawn_id: SpawnId) -> _Tracer:
         assert target_spawn_id == spawn_id

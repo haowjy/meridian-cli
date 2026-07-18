@@ -260,6 +260,7 @@ register_harness_bundle(
         projections=HarnessProjectionPorts(
             subprocess_cli_args=project_pi_spec_to_cli_args,
         ),
+        semantics=PI_SEMANTICS,
     )
 )
 ```
@@ -845,7 +846,7 @@ All must pass. The pre-push hook enforces this automatically.
 | **Native Pi session-file transcript provider** | Low | Spawned Pi RPC `history.jsonl` now renders readable `session log` output from `message_end` events. A native Pi session-file provider may still be useful for non-Meridian Pi sessions, but it is no longer required for Meridian-managed spawn observability. |
 | **Mars model aliases/catalog** | Medium | Mars does not yet include Pi-compatible model paths in its alias resolution. Users must pass explicit `provider/model-id` strings. Need: `harness_candidates` / `runnable_paths` entries in Mars model definitions, provider discovery, and agent profile resolution for `harness: pi`. |
 | **Web extensions/tools** | Deferred | Built-in `web_search` and `web_fetch` extensions. These are Pi-native extensions that need authoring and bundling. |
-| **Notifications** | Deferred | Meridian spawn completion notifications surfaced through Pi's UI. |
+| **Notifications** | Done | `meridian-spawn-watch` surfaces spawn completion notifications in Pi and flushes pending notices before shutdown. |
 | **`meridian doctor` integration** | Deferred | Health checks for Pi binary, version, extensions, provider availability. |
 
 ### Quickest Next Fixes
@@ -878,7 +879,7 @@ src/meridian/cli/bootstrap.py                                           # + 'pi'
 src/meridian/lib/launch/constants.py                                    # + PI base commands
 src/meridian/lib/harness/__init__.py                                    # + pi bootstrap import
 src/meridian/lib/harness/registry.py                                    # + PiAdapter registration
-src/meridian/lib/harness/semantics.py                                   # + Pi event cases
+src/meridian/lib/harness/pi.py                                          # + per-bundle Pi event semantics registration
 src/meridian/lib/harness/projections/permission_flags.py                # + Pi empty tuple
 src/meridian/lib/launch/launch_types.py                                 # + TerminalSurfaceMode
 src/meridian/lib/harness/pi_runtime_resolver.py                         # + runtime resolution/probe

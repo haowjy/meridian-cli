@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import StrEnum
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Literal
@@ -36,7 +36,7 @@ class TerminalEventOutcome:
 
 @dataclass(frozen=True)
 class PrimaryEventScope:
-    """Primary harness event scope for parent-session classification."""
+    """Primary harness event scope owned by a live connection."""
 
     harness_id: HarnessId
     scope_id: str
@@ -44,39 +44,20 @@ class PrimaryEventScope:
 
 
 @dataclass(frozen=True)
-class ActivitySemanticEvent:
-    """Closed semantic variant describing UI activity."""
+class EventSemantics:
+    """All semantic meaning derived from one raw harness event."""
 
-    kind: Literal["activity"] = field(default="activity", init=False)
-    state: ActivityState = "idle"
-
-
-@dataclass(frozen=True)
-class TerminalSemanticEvent:
-    """Closed semantic variant describing a terminal outcome."""
-
-    outcome: TerminalEventOutcome
-    kind: Literal["terminal"] = field(default="terminal", init=False)
+    activity: ActivityState | None = None
+    clears_signal: bool = False
+    terminal: TerminalEventOutcome | None = None
 
 
 @dataclass(frozen=True)
-class SignalClearedSemanticEvent:
-    """Closed semantic variant describing acknowledgement of a user signal."""
+class NormalizedHarnessEvent:
+    """Raw evidence carried with its single semantic interpretation."""
 
-    kind: Literal["signal_cleared"] = field(default="signal_cleared", init=False)
-
-
-type SemanticEvent = ActivitySemanticEvent | TerminalSemanticEvent | SignalClearedSemanticEvent
-
-
-class SemanticClass(StrEnum):
-    """Declarative semantic classes registered by a harness bundle."""
-
-    TURN_ACTIVE = "turn_active"
-    IDLE = "idle"
-    SIGNAL_CLEARED = "signal_cleared"
-    TERMINAL_SUCCESS = "terminal_success"
-    TERMINAL_PAYLOAD = "terminal_payload"
+    raw: RawHarnessEvent
+    semantics: EventSemantics
 
 
 type PayloadSemanticResolver = Callable[["RawHarnessEvent"], TerminalEventOutcome | None]
@@ -110,113 +91,47 @@ def connection_closed_outcome(
     return TerminalEventOutcome(status=SpawnStatus.FAILED, exit_code=1, error=error, cause=cause)
 
 
-def codex_primary_event_scope(thread_id: str | None) -> PrimaryEventScope | None:
-    """Build Codex's primary-thread scope from a transport observation."""
-
-    normalized = (thread_id or "").strip()
-    if not normalized:
-        return None
-    return PrimaryEventScope(
-        harness_id=HarnessId.CODEX,
-        scope_id=normalized,
-        unscoped_events_match=True,
-    )
-
-
-def opencode_primary_event_scope(session_id: str | None) -> PrimaryEventScope | None:
-    """Build OpenCode's primary-session scope from its launch response."""
-
-    normalized = (session_id or "").strip()
-    if not normalized:
-        return None
-    return PrimaryEventScope(harness_id=HarnessId.OPENCODE, scope_id=normalized)
-
-
 @dataclass(frozen=True)
 class HarnessSemantics:
-    """Per-harness port from open raw events to the closed semantic union."""
+    """Per-harness port from open raw events to one typed semantic descriptor."""
 
-    event_classes: Mapping[str, frozenset[SemanticClass]]
-    payload_resolver: PayloadSemanticResolver | None = None
+    events: Mapping[str, EventSemantics]
+    payload_resolvers: Mapping[str, PayloadSemanticResolver] = MappingProxyType({})
     scoped_events: frozenset[str] = frozenset()
     scope_id_resolver: ScopeIdResolver | None = None
-    primary_scope_event: str | None = None
-    primary_scope_unscoped_events_match: bool = False
 
     def __post_init__(self) -> None:
+        object.__setattr__(self, "events", MappingProxyType(dict(self.events)))
         object.__setattr__(
             self,
-            "event_classes",
-            MappingProxyType(dict(self.event_classes)),
+            "payload_resolvers",
+            MappingProxyType(dict(self.payload_resolvers)),
         )
-        if any(not classes for classes in self.event_classes.values()):
-            raise ValueError("HarnessSemantics event classes must not be empty")
-        if (
-            any(
-                SemanticClass.TERMINAL_PAYLOAD in classes for classes in self.event_classes.values()
-            )
-            and self.payload_resolver is None
-        ):
-            raise ValueError("terminal_payload event requires a payload_resolver")
-        if not self.scoped_events.issubset(self.event_classes):
-            raise ValueError("scoped events must be declared in event_classes")
+        if not self.payload_resolvers.keys() <= self.events.keys():
+            raise ValueError("payload resolver events must be declared in events")
+        if not self.scoped_events.issubset(self.events):
+            raise ValueError("scoped events must be declared in events")
         if self.scoped_events and self.scope_id_resolver is None:
             raise ValueError("scoped semantic events require a scope_id_resolver")
-        if self.primary_scope_event is not None and self.scope_id_resolver is None:
-            raise ValueError("primary scope observation requires a scope_id_resolver")
-        if (
-            self.primary_scope_event is not None
-            and self.primary_scope_event not in self.event_classes
-        ):
-            raise ValueError("primary scope event must be declared in event_classes")
 
     def normalize(
         self,
         event: RawHarnessEvent,
         *,
         primary_event_scope: PrimaryEventScope | None = None,
-    ) -> tuple[SemanticEvent, ...]:
-        """Normalize one known event; unknown upstream names remain ignorable."""
+    ) -> EventSemantics:
+        """Normalize one event; unknown or out-of-scope events have no semantics."""
 
-        classes = self.event_classes.get(event.event_type)
-        if classes is None or not self._matches_scope(event, primary_event_scope):
-            return ()
-
-        normalized: list[SemanticEvent] = []
-        if SemanticClass.TURN_ACTIVE in classes:
-            normalized.append(ActivitySemanticEvent(state="turn_active"))
-        if SemanticClass.IDLE in classes:
-            normalized.append(ActivitySemanticEvent(state="idle"))
-        if SemanticClass.SIGNAL_CLEARED in classes:
-            normalized.append(SignalClearedSemanticEvent())
-        if SemanticClass.TERMINAL_SUCCESS in classes:
-            normalized.append(
-                TerminalSemanticEvent(
-                    TerminalEventOutcome(status=SpawnStatus.SUCCEEDED, exit_code=0)
-                )
-            )
-        if SemanticClass.TERMINAL_PAYLOAD in classes:
-            if self.payload_resolver is None:
-                raise RuntimeError("terminal_payload event has no payload resolver")
-            outcome = self.payload_resolver(event)
-            if outcome is not None:
-                normalized.append(TerminalSemanticEvent(outcome))
-        return tuple(normalized)
-
-    def observe_primary_scope(self, event: RawHarnessEvent) -> PrimaryEventScope | None:
-        if event.event_type != self.primary_scope_event or self.scope_id_resolver is None:
-            return None
-        try:
-            harness_id = HarnessId(event.harness_id)
-        except ValueError:
-            return None
-        scope_id = self.scope_id_resolver(event.payload)
-        if scope_id is None:
-            return None
-        return PrimaryEventScope(
-            harness_id=harness_id,
-            scope_id=scope_id,
-            unscoped_events_match=self.primary_scope_unscoped_events_match,
+        descriptor = self.events.get(event.event_type)
+        if descriptor is None or not self._matches_scope(event, primary_event_scope):
+            return EventSemantics()
+        resolver = self.payload_resolvers.get(event.event_type)
+        if resolver is None:
+            return descriptor
+        return EventSemantics(
+            activity=descriptor.activity,
+            clears_signal=descriptor.clears_signal,
+            terminal=resolver(event),
         )
 
     def _matches_scope(
@@ -239,107 +154,36 @@ def normalize_event(
     event: RawHarnessEvent,
     *,
     primary_event_scope: PrimaryEventScope | None = None,
-) -> tuple[SemanticEvent, ...]:
+) -> NormalizedHarnessEvent:
     """Dispatch by harness identity before interpreting the raw event name."""
 
     try:
         harness_id = HarnessId(event.harness_id)
     except ValueError:
-        return ()
+        return NormalizedHarnessEvent(event, EventSemantics())
 
     # Lazy imports preserve the load-bearing adapter bootstrap order.
     from meridian.lib.harness import ensure_bootstrap
     from meridian.lib.harness.bundle import get_harness_bundle
 
     ensure_bootstrap()
-    return get_harness_bundle(harness_id).semantics.normalize(
+    semantics = get_harness_bundle(harness_id).semantics.normalize(
         event,
         primary_event_scope=primary_event_scope,
     )
-
-
-def terminal_outcome(
-    event: RawHarnessEvent,
-    *,
-    primary_event_scope: PrimaryEventScope | None = None,
-) -> TerminalEventOutcome | None:
-    for semantic in normalize_event(event, primary_event_scope=primary_event_scope):
-        if isinstance(semantic, TerminalSemanticEvent):
-            return semantic.outcome
-    return None
-
-
-def activity_transition(
-    event: RawHarnessEvent,
-    *,
-    primary_event_scope: PrimaryEventScope | None = None,
-) -> ActivityState | None:
-    for semantic in normalize_event(event, primary_event_scope=primary_event_scope):
-        if isinstance(semantic, ActivitySemanticEvent):
-            return semantic.state
-    return None
-
-
-def clears_signal(
-    event: RawHarnessEvent,
-    *,
-    primary_event_scope: PrimaryEventScope | None = None,
-) -> bool:
-    return any(
-        isinstance(semantic, SignalClearedSemanticEvent)
-        for semantic in normalize_event(event, primary_event_scope=primary_event_scope)
-    )
-
-
-@dataclass
-class PrimaryEventScopeTracker:
-    """Track the primary scope declared by the event's harness bundle."""
-
-    primary_event_scope: PrimaryEventScope | None = field(default=None)
-
-    def observe(self, event: RawHarnessEvent) -> None:
-        if self.primary_event_scope is not None:
-            return
-        try:
-            harness_id = HarnessId(event.harness_id)
-        except ValueError:
-            return
-        from meridian.lib.harness import ensure_bootstrap
-        from meridian.lib.harness.bundle import get_harness_bundle
-
-        ensure_bootstrap()
-        self.primary_event_scope = get_harness_bundle(harness_id).semantics.observe_primary_scope(
-            event
-        )
-
-    def terminal_outcome(self, event: RawHarnessEvent) -> TerminalEventOutcome | None:
-        self.observe(event)
-        return terminal_outcome(event, primary_event_scope=self.primary_event_scope)
-
-    def activity_transition(self, event: RawHarnessEvent) -> ActivityState | None:
-        self.observe(event)
-        return activity_transition(event, primary_event_scope=self.primary_event_scope)
+    return NormalizedHarnessEvent(event, semantics)
 
 
 __all__ = [
     "MERIDIAN_CONNECTION_CLOSED_EVENT",
-    "ActivitySemanticEvent",
     "ActivityState",
+    "EventSemantics",
     "HarnessSemantics",
+    "NormalizedHarnessEvent",
     "PrimaryEventScope",
-    "PrimaryEventScopeTracker",
-    "SemanticClass",
-    "SemanticEvent",
-    "SignalClearedSemanticEvent",
     "TerminalEventOutcome",
     "TerminalOutcomeCause",
-    "TerminalSemanticEvent",
-    "activity_transition",
-    "clears_signal",
-    "codex_primary_event_scope",
     "connection_closed_outcome",
     "normalize_event",
-    "opencode_primary_event_scope",
     "stringify_terminal_error",
-    "terminal_outcome",
 ]

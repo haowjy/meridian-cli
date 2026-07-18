@@ -26,7 +26,7 @@ from meridian.lib.harness.connections.base import (
     RawHarnessEvent,
 )
 from meridian.lib.harness.connections.errors import PortBindError
-from meridian.lib.harness.semantics import activity_transition
+from meridian.lib.harness.semantics import normalize_event
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.platform import IS_WINDOWS
 from meridian.lib.platform.process_scope import terminate_scope_sync
@@ -439,10 +439,12 @@ class PrimaryAttachLauncher:
     def _update_activity_from_event(self, event: RawHarnessEvent) -> None:
         """Update activity state based on connection events."""
 
-        activity = activity_transition(
+        normalized = normalize_event(
             event,
             primary_event_scope=self._connection.primary_event_scope,
         )
+        self._connection.observe_event_semantics(normalized.semantics)
+        activity = normalized.semantics.activity
         if activity is not None:
             self._set_activity(activity)
 

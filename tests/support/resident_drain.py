@@ -18,9 +18,9 @@ from meridian.lib.harness.connections.base import (
 from meridian.lib.harness.connections.liveness import LivenessDecision
 from meridian.lib.harness.connections.resident_backend import ResidentBackendControl
 from meridian.lib.harness.semantics import (
+    NormalizedHarnessEvent,
     PrimaryEventScope,
     TerminalEventOutcome,
-    opencode_primary_event_scope,
 )
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.safety.permissions import UnsafeNoOpPermissionResolver
@@ -94,7 +94,7 @@ class FakeResidentConnection(HarnessConnection[ResolvedLaunchSpec]):
     @property
     def primary_event_scope(self) -> PrimaryEventScope | None:
         if self._harness_id is HarnessId.OPENCODE:
-            return opencode_primary_event_scope(self.session_id)
+            return PrimaryEventScope(HarnessId.OPENCODE, "ses-resident")
         return None
 
     @property
@@ -227,13 +227,13 @@ def resident_event(
 
 
 async def next_turn_boundary(
-    subscriber: asyncio.Queue[RawHarnessEvent | None],
+    subscriber: asyncio.Queue[NormalizedHarnessEvent | None],
 ) -> RawHarnessEvent:
     while True:
         event = await subscriber.get()
         assert event is not None
-        if event.event_type == TURN_BOUNDARY_EVENT_TYPE:
-            return event
+        if event.raw.event_type == TURN_BOUNDARY_EVENT_TYPE:
+            return event.raw
 
 
 def start_row(

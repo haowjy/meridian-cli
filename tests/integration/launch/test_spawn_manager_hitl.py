@@ -115,6 +115,9 @@ async def test_spawn_manager_codex_hitl_requests_auto_rejected_for_spawned_agent
         def primary_event_scope(self) -> None:
             return None
 
+        def observe_event_semantics(self, semantics: object) -> None:
+            _ = semantics
+
         @property
         def resident_backend(self) -> None:
             return None
@@ -261,6 +264,9 @@ async def test_spawn_manager_retryable_permission_send_failure_resolves_not_fail
         @property
         def primary_event_scope(self) -> None:
             return None
+
+        def observe_event_semantics(self, semantics: object) -> None:
+            _ = semantics
 
         @property
         def resident_backend(self) -> None:

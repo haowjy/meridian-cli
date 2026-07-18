@@ -39,8 +39,8 @@ from meridian.lib.harness.extractors.cursor import CURSOR_EXTRACTOR
 from meridian.lib.harness.projections.project_cursor import project_cursor_spec_to_cli_args
 from meridian.lib.harness.semantics import (
     MERIDIAN_CONNECTION_CLOSED_EVENT,
+    EventSemantics,
     HarnessSemantics,
-    SemanticClass,
     TerminalEventOutcome,
     connection_closed_outcome,
     stringify_terminal_error,
@@ -224,15 +224,15 @@ def _resolve_cursor_terminal(event: RawHarnessEvent) -> TerminalEventOutcome | N
 
 
 CURSOR_SEMANTICS = HarnessSemantics(
-    event_classes={
-        "result": frozenset(
-            {SemanticClass.TERMINAL_PAYLOAD, SemanticClass.SIGNAL_CLEARED}
-        ),
-        MERIDIAN_CONNECTION_CLOSED_EVENT: frozenset({SemanticClass.TERMINAL_PAYLOAD}),
+    events={
+        "result": EventSemantics(clears_signal=True),
+        MERIDIAN_CONNECTION_CLOSED_EVENT: EventSemantics(),
     },
-    payload_resolver=_resolve_cursor_terminal,
+    payload_resolvers={
+        "result": _resolve_cursor_terminal,
+        MERIDIAN_CONNECTION_CLOSED_EVENT: _resolve_cursor_terminal,
+    },
 )
-
 
 register_harness_bundle(
     HarnessBundle(

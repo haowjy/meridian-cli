@@ -63,8 +63,8 @@ from meridian.lib.harness.projections.project_pi_rpc import (
 )
 from meridian.lib.harness.semantics import (
     MERIDIAN_CONNECTION_CLOSED_EVENT,
+    EventSemantics,
     HarnessSemantics,
-    SemanticClass,
     TerminalEventOutcome,
     connection_closed_outcome,
     stringify_terminal_error,
@@ -467,27 +467,24 @@ def _resolve_pi_terminal(event: RawHarnessEvent) -> TerminalEventOutcome | None:
 
 
 PI_SEMANTICS = HarnessSemantics(
-    event_classes={
-        "agent_start": frozenset({SemanticClass.TURN_ACTIVE}),
-        "turn_start": frozenset({SemanticClass.TURN_ACTIVE}),
-        "message_start": frozenset({SemanticClass.TURN_ACTIVE}),
-        "message_update": frozenset({SemanticClass.TURN_ACTIVE}),
-        "tool_execution_start": frozenset({SemanticClass.TURN_ACTIVE}),
-        "tool_execution_update": frozenset({SemanticClass.TURN_ACTIVE}),
-        "turn_end": frozenset({SemanticClass.IDLE}),
-        "agent_end": frozenset(
-            {
-                SemanticClass.IDLE,
-                SemanticClass.SIGNAL_CLEARED,
-                SemanticClass.TERMINAL_PAYLOAD,
-            }
-        ),
-        "response": frozenset({SemanticClass.TERMINAL_PAYLOAD}),
-        MERIDIAN_CONNECTION_CLOSED_EVENT: frozenset({SemanticClass.TERMINAL_PAYLOAD}),
+    events={
+        "agent_start": EventSemantics(activity="turn_active"),
+        "turn_start": EventSemantics(activity="turn_active"),
+        "message_start": EventSemantics(activity="turn_active"),
+        "message_update": EventSemantics(activity="turn_active"),
+        "tool_execution_start": EventSemantics(activity="turn_active"),
+        "tool_execution_update": EventSemantics(activity="turn_active"),
+        "turn_end": EventSemantics(activity="idle"),
+        "agent_end": EventSemantics(activity="idle", clears_signal=True),
+        "response": EventSemantics(),
+        MERIDIAN_CONNECTION_CLOSED_EVENT: EventSemantics(),
     },
-    payload_resolver=_resolve_pi_terminal,
+    payload_resolvers={
+        "agent_end": _resolve_pi_terminal,
+        "response": _resolve_pi_terminal,
+        MERIDIAN_CONNECTION_CLOSED_EVENT: _resolve_pi_terminal,
+    },
 )
-
 
 register_harness_bundle(
     HarnessBundle(

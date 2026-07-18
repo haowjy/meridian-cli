@@ -65,8 +65,8 @@ from meridian.lib.harness.launch_types import SessionSeed
 from meridian.lib.harness.projections.project_claude import project_claude_spec_to_cli_args
 from meridian.lib.harness.semantics import (
     MERIDIAN_CONNECTION_CLOSED_EVENT,
+    EventSemantics,
     HarnessSemantics,
-    SemanticClass,
     TerminalEventOutcome,
     connection_closed_outcome,
     stringify_terminal_error,
@@ -625,15 +625,15 @@ def _resolve_claude_terminal(event: RawHarnessEvent) -> TerminalEventOutcome | N
 
 
 CLAUDE_SEMANTICS = HarnessSemantics(
-    event_classes={
-        "result": frozenset(
-            {SemanticClass.TERMINAL_PAYLOAD, SemanticClass.SIGNAL_CLEARED}
-        ),
-        MERIDIAN_CONNECTION_CLOSED_EVENT: frozenset({SemanticClass.TERMINAL_PAYLOAD}),
+    events={
+        "result": EventSemantics(clears_signal=True),
+        MERIDIAN_CONNECTION_CLOSED_EVENT: EventSemantics(),
     },
-    payload_resolver=_resolve_claude_terminal,
+    payload_resolvers={
+        "result": _resolve_claude_terminal,
+        MERIDIAN_CONNECTION_CLOSED_EVENT: _resolve_claude_terminal,
+    },
 )
-
 
 register_harness_bundle(
     HarnessBundle(
