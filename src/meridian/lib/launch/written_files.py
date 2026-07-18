@@ -38,7 +38,6 @@ _KNOWN_DIR_PREFIXES: tuple[str, ...] = (
     "backend/",
     "scripts/",
     ".mars/",
-    ".meridian/",
     "config/",
 )
 _EXPLICIT_JSON_FILENAMES: tuple[str, ...] = ("written_files.json",)

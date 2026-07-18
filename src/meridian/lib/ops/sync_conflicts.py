@@ -124,13 +124,15 @@ def _to_entry(record: ConflictRecord) -> ConflictEntry:
     )
 
 
-def _find_sync_roots() -> list[Path]:
+def _find_sync_roots() -> tuple[list[Path], Path | None]:
     """Find sync roots by checking resolved context paths."""
 
     try:
         authority = resolve_runtime_authority_for_read()
     except Exception:
-        return []
+        return [], None
+    if authority.runtime_root is None:
+        return [], None
 
     context_config = load_context_config(authority.project_root) or ContextConfig()
     resolved_paths = resolve_context_paths(authority.project_root, context_config)
@@ -141,28 +143,38 @@ def _find_sync_roots() -> list[Path]:
     roots: list[Path] = []
     seen: set[Path] = set()
     for candidate in candidates:
+        if candidate is None:
+            continue
         if candidate in seen:
             continue
         seen.add(candidate)
-        if has_autosync_state(candidate):
+        if has_autosync_state(candidate, runtime_root=authority.runtime_root):
             roots.append(candidate)
-    return roots
+    return roots, authority.runtime_root
 
 
 def list_conflicts_sync() -> ConflictListOutput:
     """List unresolved conflicts across all sync roots."""
 
     conflicts: list[ConflictEntry] = []
-    for sync_root in _find_sync_roots():
-        conflicts.extend(_to_entry(record) for record in read_unresolved_conflicts(sync_root))
+    roots, runtime_root = _find_sync_roots()
+    if runtime_root is None:
+        return ConflictListOutput()
+    for sync_root in roots:
+        conflicts.extend(
+            _to_entry(record)
+            for record in read_unresolved_conflicts(sync_root, runtime_root=runtime_root)
+        )
     return ConflictListOutput(conflicts=conflicts)
 
 
 def show_conflict_sync(conflict_id: str) -> ConflictShowOutput:
     """Show details for one conflict id."""
 
-    roots = _find_sync_roots()
-    _root, record = find_conflict_by_id(roots, conflict_id)
+    roots, runtime_root = _find_sync_roots()
+    if runtime_root is None:
+        return ConflictShowOutput(error=f"Conflict '{conflict_id}' not found.")
+    _root, record = find_conflict_by_id(roots, conflict_id, runtime_root=runtime_root)
     if record is None:
         return ConflictShowOutput(error=f"Conflict '{conflict_id}' not found.")
     return ConflictShowOutput(conflict=_to_entry(record))
@@ -171,8 +183,10 @@ def show_conflict_sync(conflict_id: str) -> ConflictShowOutput:
 def resolve_conflict_sync(conflict_id: str) -> ConflictResolveOutput:
     """Mark a conflict as resolved within its autosync transaction."""
 
-    roots = _find_sync_roots()
-    sync_root, record = find_conflict_by_id(roots, conflict_id)
+    roots, runtime_root = _find_sync_roots()
+    if runtime_root is None:
+        return ConflictResolveOutput(conflict_id=conflict_id, resolved=True)
+    sync_root, record = find_conflict_by_id(roots, conflict_id, runtime_root=runtime_root)
     if record is None:
         # Idempotent: treat missing conflict as already resolved.
         return ConflictResolveOutput(conflict_id=conflict_id, resolved=True)
@@ -185,7 +199,7 @@ def resolve_conflict_sync(conflict_id: str) -> ConflictResolveOutput:
         )
 
     try:
-        with transaction(sync_root) as autosync_tx:
+        with transaction(sync_root, runtime_root=runtime_root) as autosync_tx:
             resolved = autosync_tx.mark_resolved(conflict_id)
     except (OSError, TimeoutError) as exc:
         return ConflictResolveOutput(

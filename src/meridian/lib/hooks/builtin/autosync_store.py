@@ -24,7 +24,7 @@ from meridian.lib.platform.locking import lock_file
 from meridian.plugin_api.fs import AtomicReplaceDurabilityError, atomic_write_text
 from meridian.plugin_api.state import get_user_home
 
-AUTOSYNC_IGNORE_PATTERNS: tuple[str, ...] = (".git", "**/.git", ".meridian/autosync/")
+AUTOSYNC_IGNORE_PATTERNS: tuple[str, ...] = (".git", "**/.git")
 
 _DEFAULT_LOCK_TIMEOUT_SECONDS = 60.0
 
@@ -65,22 +65,30 @@ class SyncRootStatus:
     unresolved_conflicts: tuple[ConflictRecord, ...]
 
 
-def has_autosync_state(sync_root: Path) -> bool:
+def has_autosync_state(sync_root: Path, *, runtime_root: Path) -> bool:
     """Return whether autosync artifacts exist for the sync root."""
 
-    return conflict_dir(sync_root).exists() or state_file(sync_root).exists()
+    return conflict_dir(sync_root, runtime_root=runtime_root).exists() or state_file(
+        sync_root, runtime_root=runtime_root
+    ).exists()
 
 
-def conflict_dir(sync_root: Path) -> Path:
+def _autosync_root(sync_root: Path, runtime_root: Path) -> Path:
+    canonical = sync_root.expanduser().resolve()
+    root_hash = hashlib.sha256(str(canonical).encode("utf-8")).hexdigest()[:16]
+    return runtime_root / "autosync" / root_hash
+
+
+def conflict_dir(sync_root: Path, *, runtime_root: Path) -> Path:
     """Return the conflict metadata directory for a sync root."""
 
-    return sync_root / ".meridian" / "autosync" / "conflicts"
+    return _autosync_root(sync_root, runtime_root) / "conflicts"
 
 
-def state_file(sync_root: Path) -> Path:
+def state_file(sync_root: Path, *, runtime_root: Path) -> Path:
     """Return the sync state file path for a sync root."""
 
-    return sync_root / ".meridian" / "autosync" / "state.json"
+    return _autosync_root(sync_root, runtime_root) / "state.json"
 
 
 def autosync_lock_path(sync_root: Path) -> Path:
@@ -111,11 +119,12 @@ class _LockedAutosyncTransaction:
     """Concrete mutation capability constructed only while its lock is held."""
 
     sync_root: Path
+    runtime_root: Path
 
     def write_conflict(self, record: ConflictRecord) -> None:
         """Write one conflict metadata JSON atomically."""
 
-        _write_conflict(self.sync_root, record)
+        _write_conflict(self.sync_root, record, runtime_root=self.runtime_root)
 
     def write_sync_state(
         self,
@@ -125,18 +134,24 @@ class _LockedAutosyncTransaction:
     ) -> None:
         """Write autosync state JSON atomically."""
 
-        _write_sync_state(self.sync_root, outcome=outcome, conflict_id=conflict_id)
+        _write_sync_state(
+            self.sync_root,
+            outcome=outcome,
+            conflict_id=conflict_id,
+            runtime_root=self.runtime_root,
+        )
 
     def mark_resolved(self, conflict_id: str) -> bool:
         """Mark one conflict resolved within this transaction."""
 
-        return _mark_resolved(self.sync_root, conflict_id)
+        return _mark_resolved(self.sync_root, conflict_id, runtime_root=self.runtime_root)
 
 
 @contextmanager
 def transaction(
     sync_root: Path,
     *,
+    runtime_root: Path,
     timeout: float | None = _DEFAULT_LOCK_TIMEOUT_SECONDS,
 ) -> Generator[AutosyncMutation, None, None]:
     """Hold the canonical sync-root lock and yield its mutation capability."""
@@ -147,13 +162,13 @@ def transaction(
         timeout=timeout,
         reentrant=True,
     ):
-        yield _LockedAutosyncTransaction(canonical_root)
+        yield _LockedAutosyncTransaction(canonical_root, runtime_root)
 
 
-def read_sync_state(sync_root: Path) -> SyncState | None:
+def read_sync_state(sync_root: Path, *, runtime_root: Path) -> SyncState | None:
     """Read sync state for one root."""
 
-    target = state_file(sync_root)
+    target = state_file(sync_root, runtime_root=runtime_root)
     if not target.exists():
         return None
     data = _load_json_object(target)
@@ -170,10 +185,10 @@ def read_sync_state(sync_root: Path) -> SyncState | None:
     )
 
 
-def read_conflicts(sync_root: Path) -> list[ConflictRecord]:
+def read_conflicts(sync_root: Path, *, runtime_root: Path) -> list[ConflictRecord]:
     """Read all conflict records for one sync root."""
 
-    root = conflict_dir(sync_root)
+    root = conflict_dir(sync_root, runtime_root=runtime_root)
     if not root.exists():
         return []
 
@@ -224,36 +239,46 @@ def read_conflicts(sync_root: Path) -> list[ConflictRecord]:
     return records
 
 
-def read_unresolved_conflicts(sync_root: Path) -> list[ConflictRecord]:
+def read_unresolved_conflicts(sync_root: Path, *, runtime_root: Path) -> list[ConflictRecord]:
     """Read unresolved conflict records for one sync root."""
 
-    return [record for record in read_conflicts(sync_root) if not record.resolved]
+    return [
+        record for record in read_conflicts(sync_root, runtime_root=runtime_root)
+        if not record.resolved
+    ]
 
 
 def find_conflict_by_id(
     sync_roots: list[Path],
     conflict_id: str,
+    *,
+    runtime_root: Path,
 ) -> tuple[Path | None, ConflictRecord | None]:
     """Find one conflict ID across provided sync roots."""
 
     for sync_root in sync_roots:
-        for record in read_conflicts(sync_root):
+        for record in read_conflicts(sync_root, runtime_root=runtime_root):
             if record.id == conflict_id:
                 return sync_root, record
     return None, None
 
 
-def read_status(sync_root: Path) -> SyncRootStatus:
+def read_status(sync_root: Path, *, runtime_root: Path) -> SyncRootStatus:
     """Read aggregate autosync status for one sync root."""
 
-    unresolved = tuple(read_unresolved_conflicts(sync_root))
-    return SyncRootStatus(state=read_sync_state(sync_root), unresolved_conflicts=unresolved)
+    unresolved = tuple(read_unresolved_conflicts(sync_root, runtime_root=runtime_root))
+    return SyncRootStatus(
+        state=read_sync_state(sync_root, runtime_root=runtime_root),
+        unresolved_conflicts=unresolved,
+    )
 
 
-def has_unresolved_conflict(sync_root: Path) -> bool:
+def has_unresolved_conflict(sync_root: Path, *, runtime_root: Path) -> bool:
     """Return whether any unresolved conflict exists for this root."""
 
-    return any(not record.resolved for record in read_conflicts(sync_root))
+    return any(
+        not record.resolved for record in read_conflicts(sync_root, runtime_root=runtime_root)
+    )
 
 
 def generate_conflict_id() -> str:
@@ -264,10 +289,10 @@ def generate_conflict_id() -> str:
     return f"c{date_str}-{short_hash}"
 
 
-def _write_conflict(sync_root: Path, record: ConflictRecord) -> None:
+def _write_conflict(sync_root: Path, record: ConflictRecord, *, runtime_root: Path) -> None:
     """Write one conflict metadata JSON atomically."""
 
-    target_dir = conflict_dir(sync_root)
+    target_dir = conflict_dir(sync_root, runtime_root=runtime_root)
     target_dir.mkdir(parents=True, exist_ok=True)
 
     payload: dict[str, Any] = {
@@ -298,10 +323,11 @@ def _write_sync_state(
     *,
     outcome: str,
     conflict_id: str | None = None,
+    runtime_root: Path,
 ) -> None:
     """Write autosync state JSON atomically."""
 
-    target_dir = sync_root / ".meridian" / "autosync"
+    target_dir = _autosync_root(sync_root, runtime_root)
     target_dir.mkdir(parents=True, exist_ok=True)
 
     payload = {
@@ -309,14 +335,16 @@ def _write_sync_state(
         "outcome": outcome,
         "conflict_id": conflict_id,
     }
-    atomic_write_text(state_file(sync_root), json.dumps(payload, indent=2))
+    atomic_write_text(
+        state_file(sync_root, runtime_root=runtime_root), json.dumps(payload, indent=2)
+    )
 
 
-def _mark_resolved(sync_root: Path, conflict_id: str) -> bool:
+def _mark_resolved(sync_root: Path, conflict_id: str, *, runtime_root: Path) -> bool:
     """Mark one conflict as resolved. Returns True when metadata was updated."""
 
     try:
-        target, data = _find_conflict_file(sync_root, conflict_id)
+        target, data = _find_conflict_file(sync_root, conflict_id, runtime_root=runtime_root)
     except OSError:
         return False
     if target is None or data is None:
@@ -380,8 +408,10 @@ def _to_optional_str(value: object) -> str | None:
 def _find_conflict_file(
     sync_root: Path,
     conflict_id: str,
+    *,
+    runtime_root: Path,
 ) -> tuple[Path | None, dict[str, Any] | None]:
-    root = conflict_dir(sync_root)
+    root = conflict_dir(sync_root, runtime_root=runtime_root)
     direct = root / f"{conflict_id}.json"
     direct_data = _load_json_object(direct) if direct.exists() else None
     if direct_data is not None:
