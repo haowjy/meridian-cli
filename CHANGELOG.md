@@ -15,6 +15,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   directory without recomposing or overwriting launch environment policy.
 - Pi RPC connections now preserve the bind-resolved agent directory instead of
   deriving it again from the ambient parent home directory.
+- Harness subprocess boundary coverage now exercises preliminary probes and main
+  processes, including secret filtering and Pi role-gated runtime settings.
 
 ## [0.3.39] - 2026-07-17
 
