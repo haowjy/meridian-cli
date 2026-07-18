@@ -214,7 +214,6 @@ describe("SpawnWatchRuntime bash-origin spawn tracking", () => {
         originBashId: "b-duration",
         status: "succeeded",
         terminal: {
-          status: "succeeded",
           exit_code: 0,
           finished_at: "2026-07-17T12:00:05Z",
           published_at: "2026-07-17T12:00:05Z",
@@ -226,6 +225,44 @@ describe("SpawnWatchRuntime bash-origin spawn tracking", () => {
 
       expect(internals.pending.get("p-duration")?.duration).toBe("1m05s");
       expect(internals.pending.get("p-duration")?.kind).toBe("spawn");
+    } finally {
+      runtime.stop();
+      await rm(runtimeRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("does not report a retired nested-status row as completed", async () => {
+    const { runtimeRoot, runtime, internals } = await makeRuntime();
+    try {
+      await writeBashRecords(runtimeRoot, "p-parent", [bashRecord("b-retired")]);
+      await writeSpawnState(runtimeRoot, "p-retired", {
+        originBashId: "b-retired",
+        status: "succeeded",
+        terminal: { ...terminalFacts(), status: "succeeded" },
+      });
+
+      await internals.scanSpawns();
+
+      expect(internals.pending.has("p-retired")).toBe(false);
+    } finally {
+      runtime.stop();
+      await rm(runtimeRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("reports a current-shape terminal row as completed", async () => {
+    const { runtimeRoot, runtime, internals } = await makeRuntime();
+    try {
+      await writeBashRecords(runtimeRoot, "p-parent", [bashRecord("b-current")]);
+      await writeSpawnState(runtimeRoot, "p-current", {
+        originBashId: "b-current",
+        status: "succeeded",
+        terminal: terminalFacts(),
+      });
+
+      await internals.scanSpawns();
+
+      expect(internals.pending.get("p-current")?.kind).toBe("spawn");
     } finally {
       runtime.stop();
       await rm(runtimeRoot, { recursive: true, force: true });

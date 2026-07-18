@@ -644,7 +644,7 @@ function formatBashNotification(items: NotificationItem[]): string {
 }
 
 function formatSpawnStatus(row: SpawnStateFile, theme: Theme): string {
-  const status = String(row.terminal?.status ?? row.status ?? "unknown").toLowerCase();
+  const status = String(row.status ?? "unknown").toLowerCase();
   const dim = (value: string) => theme.fg("dim", value);
   const success = (value: string) => theme.fg("success", value);
   const error = (value: string) => theme.fg("error", value);
