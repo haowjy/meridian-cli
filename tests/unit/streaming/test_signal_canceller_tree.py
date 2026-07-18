@@ -10,7 +10,7 @@ import pytest
 
 from meridian.lib.core.types import SpawnId
 from meridian.lib.platform.process_scope import CleanupResult, ProcessScopeSnapshot
-from meridian.lib.state.spawn.model import SpawnRecord
+from meridian.lib.state.spawn.model import SpawnRecord, TerminalFacts
 from meridian.lib.streaming.signal_canceller import SignalCanceller
 
 
@@ -24,6 +24,17 @@ def _make_record(
     exit_code: int | None = None,
     terminal_origin: str | None = None,
 ) -> SpawnRecord:
+    terminal = (
+        TerminalFacts(
+            status=status,  # type: ignore[arg-type]
+            exit_code=exit_code if exit_code is not None else 1,
+            finished_at=started_at or "2024-01-01T00:00:00Z",
+            published_at=started_at or "2024-01-01T00:00:00Z",
+            origin=terminal_origin or "runner",  # type: ignore[arg-type]
+        )
+        if status in {"succeeded", "failed", "cancelled", "timed_out"}
+        else None
+    )
     return SpawnRecord(
         id="s-test",
         chat_id=None,
@@ -50,18 +61,7 @@ def _make_record(
         last_attempt_exited_at=None,
         last_attempt_exit_code=None,
         runner_exit=None,
-        finished_at=None,
-        exit_code=exit_code,
-        duration_secs=None,
-        total_cost_usd=None,
-        input_tokens=None,
-        output_tokens=None,
-        cache_read_input_tokens=None,
-        cache_creation_input_tokens=None,
-        reasoning_tokens=None,
-        cost_is_estimate=False,
-        error=None,
-        terminal_origin=terminal_origin,  # type: ignore[arg-type]
+        terminal=terminal,
     )
 
 

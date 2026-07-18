@@ -50,18 +50,7 @@ def _record(
         last_attempt_exited_at=None,
         last_attempt_exit_code=None,
         runner_exit=None,
-        finished_at=None,
-        exit_code=None,
-        duration_secs=None,
-        total_cost_usd=None,
-        input_tokens=None,
-        output_tokens=None,
-        cache_read_input_tokens=None,
-        cache_creation_input_tokens=None,
-        reasoning_tokens=None,
-        cost_is_estimate=False,
-        error=None,
-        terminal_origin=None,
+        terminal=None,
     )
 
 

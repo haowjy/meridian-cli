@@ -46,6 +46,11 @@ def _create_spawn(
     started_at: str | None = _OLD_STARTED_AT,
 ) -> tuple[Path, str]:
     runtime_root = _state_root(tmp_path)
+    initial_status = (
+        SpawnStatus.RUNNING
+        if status in {"succeeded", "failed", "cancelled", "timed_out"}
+        else status
+    )
     created_spawn_id = spawn_store.start_spawn(
         runtime_root,
         spawn_id=spawn_id,
@@ -57,10 +62,18 @@ def _create_spawn(
         prompt="hello",
         worker_pid=worker_pid,
         launch_mode=launch_mode,
-        status=status,
+        status=initial_status,
         runner_pid=runner_pid,
         started_at=started_at,
     )
+    if status in {"succeeded", "failed", "cancelled", "timed_out"}:
+        spawn_store.finalize_spawn(
+            runtime_root,
+            created_spawn_id,
+            status=status,  # type: ignore[arg-type]
+            exit_code=0 if status == "succeeded" else 1,
+            origin="runner",
+        )
     return runtime_root, str(created_spawn_id)
 
 

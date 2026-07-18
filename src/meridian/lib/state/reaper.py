@@ -53,7 +53,12 @@ from meridian.lib.state.reconciliation import (
     Skip,
     completion_or_cancel_decision,
 )
-from meridian.lib.state.spawn.model import SpawnRecord
+from meridian.lib.state.spawn.model import (
+    SpawnOrigin,
+    SpawnRecord,
+    TerminalFacts,
+    TerminalSpawnStatus,
+)
 from meridian.lib.state.spawn_report import spawn_report_has_durable_completion
 from meridian.lib.state.timestamps import iso_timestamp_to_epoch
 
@@ -588,12 +593,20 @@ def _record_with_terminal_state(
     status: SpawnStatus,
     exit_code: int,
     error: str | None,
+    origin: SpawnOrigin,
+    observed_at: str,
 ) -> SpawnRecord:
     return record.model_copy(
         update={
             "status": status,
-            "exit_code": exit_code,
-            "error": error,
+            "terminal": TerminalFacts(
+                status=cast("TerminalSpawnStatus", status),
+                exit_code=exit_code,
+                finished_at=observed_at,
+                published_at=observed_at,
+                error=error,
+                origin=origin,
+            ),
         }
     )
 
@@ -608,6 +621,7 @@ def peek_reconciled_active_spawn(
         return record
 
     now = time.time()
+    observed_at = datetime.fromtimestamp(now, UTC).isoformat().replace("+00:00", "Z")
     generic_snapshot = _collect_artifact_snapshot(runtime_root, record, now)
     if (
         record.status == "finalizing"
@@ -634,6 +648,8 @@ def peek_reconciled_active_spawn(
             status=status,
             exit_code=exit_code,
             error=error,
+            origin="reconciler",
+            observed_at=observed_at,
         )
     if isinstance(decision, FinalizeFromRunnerExit):
         return _record_with_terminal_state(
@@ -641,12 +657,16 @@ def peek_reconciled_active_spawn(
             status=decision.status,
             exit_code=decision.exit_code,
             error=decision.error,
+            origin="runner",
+            observed_at=observed_at,
         )
     return _record_with_terminal_state(
         record,
         status=SpawnStatus.FAILED,
         exit_code=decision.exit_code,
         error=decision.error,
+        origin="reconciler",
+        observed_at=observed_at,
     )
 
 
