@@ -429,7 +429,7 @@ class SpawnLifecycleService:
         with bind_lifecycle_correlation(
             self._correlation(operation="request_cancel", spawn_id=spawn_id)
         ):
-            record = _spawn_store().record_cancel_intent(
+            outcome = _spawn_store().record_cancel_intent(
                 self._runtime_root,
                 spawn_id,
                 exit_code=exit_code,
@@ -438,22 +438,24 @@ class SpawnLifecycleService:
                 requested_at=requested_at,
                 clock=clock,
             )
-            if record is None:
+            if outcome is None:
                 return None
-            self._emit_telemetry_event(
-                "spawn.updated",
-                record,
-                payload={
-                    "cancel_intent": {
-                        "requested_at": record.cancel_intent.requested_at,
-                        "exit_code": record.cancel_intent.exit_code,
-                        "error": record.cancel_intent.error,
-                        "requested_by": record.cancel_intent.requested_by,
-                    }
-                    if record.cancel_intent is not None
-                    else None,
-                },
-            )
+            record = outcome.snapshot
+            if outcome.wrote:
+                self._emit_telemetry_event(
+                    "spawn.updated",
+                    record,
+                    payload={
+                        "cancel_intent": {
+                            "requested_at": record.cancel_intent.requested_at,
+                            "exit_code": record.cancel_intent.exit_code,
+                            "error": record.cancel_intent.error,
+                            "requested_by": record.cancel_intent.requested_by,
+                        }
+                        if record.cancel_intent is not None
+                        else None,
+                    },
+                )
             return record
 
     def finalize(

@@ -527,13 +527,15 @@ def test_record_cancel_intent_persists_first_request_and_skips_terminal(
     )
 
     assert first is not None
-    assert first.cancel_intent is not None
-    assert first.cancel_intent.exit_code == 130
+    assert first.wrote is True
+    first_record = first.snapshot
+    assert first_record.cancel_intent is not None
+    assert first_record.cancel_intent.exit_code == 130
     assert second is not None
-    assert second.cancel_intent == first.cancel_intent
+    assert second.snapshot.cancel_intent == first_record.cancel_intent
     row = get_spawn(runtime_root, spawn_id)
     assert row is not None
-    assert row.cancel_intent == first.cancel_intent
+    assert row.cancel_intent == first_record.cancel_intent
 
     terminal_spawn_id = _start_test_spawn(runtime_root, spawn_id="p-terminal")
     finalize_spawn(runtime_root, terminal_spawn_id, "succeeded", 0, origin="runner")
@@ -547,8 +549,9 @@ def test_record_cancel_intent_persists_first_request_and_skips_terminal(
     )
 
     assert result is not None
-    assert result.status == "succeeded"
-    assert result.cancel_intent is None
+    assert result.wrote is False
+    assert result.snapshot.status == "succeeded"
+    assert result.snapshot.cancel_intent is None
 
 
 def test_start_spawn_rejects_empty_goal(tmp_path: Path) -> None:

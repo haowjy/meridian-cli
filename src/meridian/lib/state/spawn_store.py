@@ -613,8 +613,8 @@ def record_cancel_intent(
     requested_by: str = "user",
     requested_at: str | None = None,
     clock: Clock | None = None,
-) -> SpawnRecord | None:
-    """Record a durable spawn-level cancellation request under the spawn lock."""
+) -> MutationOutcome | None:
+    """Return the outcome of recording a durable spawn-level cancellation request."""
 
     if requested_by not in {"user", "system"}:
         raise ValueError(f"cancel requested_by must be 'user' or 'system', got {requested_by!r}")
@@ -639,7 +639,7 @@ def record_cancel_intent(
         outcome = _write_state_locked(paths.spawns_dir, str(spawn_id), merge_intent)
     except FileNotFoundError:
         return None
-    return outcome.snapshot
+    return outcome
 
 
 def finalize_spawn(

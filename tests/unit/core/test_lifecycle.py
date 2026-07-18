@@ -321,6 +321,25 @@ def test_finalize_decline_emits_no_event_and_preserves_state(tmp_path: Path) -> 
     assert hook.event_types == []
 
 
+def test_cancel_after_terminal_writes_nothing_and_emits_no_event(tmp_path: Path) -> None:
+    hook = EventTypeHook()
+    service = _make_service(tmp_path, hooks=[hook])
+    spawn_id = _start_spawn(service)
+    service.finalize(spawn_id, "succeeded", 0, origin="runner")
+    state_path = RuntimePaths.from_root_dir(tmp_path).spawns_dir / spawn_id / "state.json"
+    before = state_path.read_bytes()
+    before_inode = state_path.stat().st_ino
+    hook.event_types.clear()
+
+    record = service.request_cancel(spawn_id)
+
+    assert record is not None
+    assert record.status == "succeeded"
+    assert state_path.read_bytes() == before
+    assert state_path.stat().st_ino == before_inode
+    assert hook.event_types == []
+
+
 def test_owner_transition_preserves_metadata_written_after_cache_load(tmp_path: Path) -> None:
     service = _make_service(tmp_path)
     spawn_id = _start_spawn(service, status="queued")
