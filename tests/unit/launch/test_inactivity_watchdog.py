@@ -102,7 +102,7 @@ async def test_startup_watchdog_reports_phase_and_cancels_start(
         harness_id=HarnessId.CODEX,
         prompt=run.prompt,
         control_root=tmp_path,
-        env_overrides={},
+        child_env={},
     )
 
     attempt = await _sr_mod._run_streaming_attempt(
@@ -175,7 +175,7 @@ async def test_run_streaming_spawn_bounds_hanging_startup(
         harness_id=HarnessId.CODEX,
         prompt="hello",
         control_root=tmp_path,
-        env_overrides={},
+        child_env={},
     )
     with pytest.raises(_sr_mod.StartupPhaseTimeout, match=r"startup phase timeout after 0\.010s"):
         await _sr_mod.run_streaming_spawn(
@@ -251,7 +251,7 @@ async def test_run_streaming_spawn_honors_explicit_startup_timeout_over_default(
                 harness_id=HarnessId.CODEX,
                 prompt="hello",
                 control_root=tmp_path,
-                env_overrides={},
+                child_env={},
             ),
             spec=ResolvedLaunchSpec(
                 model="gpt-5.3-codex",
@@ -382,7 +382,7 @@ async def test_non_cursor_harness_skips_inactivity_watchdog(
         harness_id=HarnessId.CODEX,
         prompt=run.prompt,
         control_root=tmp_path,
-        env_overrides={},
+        child_env={},
     )
 
     await _sr_mod._run_streaming_attempt(
@@ -445,7 +445,7 @@ async def test_cursor_harness_arms_inactivity_watchdog(
         harness_id=HarnessId.CURSOR,
         prompt=run.prompt,
         control_root=tmp_path,
-        env_overrides={},
+        child_env={},
     )
 
     await _sr_mod._run_streaming_attempt(

@@ -8,10 +8,10 @@ from meridian.lib.harness.claude import ClaudeAdapter
 from meridian.lib.harness.pi import PiAdapter
 from meridian.lib.harness.projections.permission_flags import resolve_permission_flags
 from meridian.lib.launch.env import (
+    apply_pi_bind_time_env,
     build_harness_child_env,
     inherit_child_env,
     merge_env_overrides,
-    sanitize_child_env,
 )
 from meridian.lib.safety.permissions import (
     PermissionConfig,
@@ -23,7 +23,7 @@ from meridian.lib.safety.permissions import (
 
 _MERIDIAN_RUNTIME_KEYS = (
     "MERIDIAN_PROJECT_DIR",
-    "MERIDIAN_DEPTH",
+    "_MERIDIAN_DEPTH",
     "MERIDIAN_CHAT_ID",
     "MERIDIAN_CONTEXT_KB_DIR",
     "MERIDIAN_ACTIVE_WORK_ID",
@@ -182,39 +182,6 @@ def test_codex_uses_exact_sandbox_from_profile(
     assert resolve_permission_flags(resolver, HarnessId.CODEX) == expected_flags
 
 
-def test_sanitize_child_env_strips_secrets() -> None:
-    sanitized = sanitize_child_env(
-        base_env={
-            "PATH": "/usr/bin",
-            "HOME": "/home/tester",
-            "LC_ALL": "C.UTF-8",
-            "XDG_RUNTIME_DIR": "/tmp/xdg",
-            "UV_CACHE_DIR": "/tmp/uv",
-            "EXAMPLE_TOKEN": "drop-me",
-            "EXAMPLE_KEY": "drop-me-too",
-            "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE": "67",
-            "ANTHROPIC_API_KEY": "allowed-credential",
-        },
-        env_overrides={
-            "MERIDIAN_DEPTH": "2",
-            "CUSTOM_SECRET": "explicit-override",
-        },
-        pass_through={"ANTHROPIC_API_KEY"},
-    )
-
-    assert sanitized["PATH"] == "/usr/bin"
-    assert sanitized["HOME"] == "/home/tester"
-    assert sanitized["LC_ALL"] == "C.UTF-8"
-    assert sanitized["XDG_RUNTIME_DIR"] == "/tmp/xdg"
-    assert sanitized["UV_CACHE_DIR"] == "/tmp/uv"
-    assert sanitized["ANTHROPIC_API_KEY"] == "allowed-credential"
-    assert sanitized["MERIDIAN_DEPTH"] == "2"
-    assert sanitized["CUSTOM_SECRET"] == "explicit-override"
-    assert "EXAMPLE_TOKEN" not in sanitized
-    assert "EXAMPLE_KEY" not in sanitized
-    assert "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE" not in sanitized
-
-
 def test_build_harness_child_env_inherits_allowed_vars_and_blocks_adapter_vars() -> None:
     child_env = build_harness_child_env(
         base_env={
@@ -223,38 +190,40 @@ def test_build_harness_child_env_inherits_allowed_vars_and_blocks_adapter_vars()
             "MISC_VALUE": "keep-too",
             "CLAUDECODE": "1",
             "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE": "67",
+            "MERIDIAN_SECRET_DATABASE": "drop-me",
             "MERIDIAN_PRIMARY_PROMPT": "stale",
         },
         adapter=ClaudeAdapter(),
         run_params=SpawnParams(prompt="test", model=ModelId("claude-sonnet-4-6")),
         permission_config=PermissionConfig(),
-        runtime_env_overrides={"MERIDIAN_DEPTH": "2"},
+        runtime_env_overrides={"_MERIDIAN_DEPTH": "2"},
     )
 
     assert child_env["PATH"] == "/usr/bin"
     assert child_env["UNRELATED_TOKEN"] == "keep-me"
     assert child_env["MISC_VALUE"] == "keep-too"
-    assert child_env["MERIDIAN_DEPTH"] == "2"
+    assert child_env["_MERIDIAN_DEPTH"] == "2"
     assert child_env["MERIDIAN_PRIMARY_PROMPT"] == "stale"
     assert child_env["CLAUDE_AUTOCOMPACT_PCT_OVERRIDE"] == "67"
     assert "CLAUDECODE" not in child_env
+    assert "MERIDIAN_SECRET_DATABASE" not in child_env
 
 
 def test_inherit_child_env_blocks_meridian_runtime_dir() -> None:
     inherited = inherit_child_env(
         base_env={
             "PATH": "/usr/bin",
-            "MERIDIAN_RUNTIME_DIR": "/stale/runtime",
+            "_MERIDIAN_RUNTIME_DIR": "/stale/runtime",
         },
         env_overrides={
             "MERIDIAN_PROJECT_DIR": "/repo",
-            "MERIDIAN_PI_STATE_DIR": "/resolved/runtime",
+            "_MERIDIAN_PI_STATE_DIR": "/resolved/runtime",
         },
     )
 
-    assert "MERIDIAN_RUNTIME_DIR" not in inherited
+    assert "_MERIDIAN_RUNTIME_DIR" not in inherited
     assert inherited["MERIDIAN_PROJECT_DIR"] == "/repo"
-    assert inherited["MERIDIAN_PI_STATE_DIR"] == "/resolved/runtime"
+    assert inherited["_MERIDIAN_PI_STATE_DIR"] == "/resolved/runtime"
 
 
 def test_build_harness_child_env_pi_state_dir_from_runtime_root() -> None:
@@ -262,22 +231,44 @@ def test_build_harness_child_env_pi_state_dir_from_runtime_root() -> None:
     child_env = build_harness_child_env(
         base_env={
             "PATH": "/usr/bin",
-            "MERIDIAN_PI_STATE_DIR": "/stale/pi-state",
-            "MERIDIAN_RUNTIME_DIR": "/stale/runtime",
+            "_MERIDIAN_PI_STATE_DIR": "/stale/pi-state",
+            "_MERIDIAN_RUNTIME_DIR": "/stale/runtime",
         },
         adapter=PiAdapter(),
         run_params=SpawnParams(prompt="test", model=ModelId("openai-codex/gpt-5.4-mini")),
         permission_config=PermissionConfig(),
         runtime_env_overrides={
-            "MERIDIAN_PI_STATE_DIR": runtime_root,
+            "_MERIDIAN_PI_STATE_DIR": runtime_root,
             "MERIDIAN_PROJECT_DIR": "/repo",
         },
     )
 
-    assert child_env["MERIDIAN_PI_STATE_DIR"] == runtime_root
+    assert child_env["_MERIDIAN_PI_STATE_DIR"] == runtime_root
     assert child_env["MERIDIAN_PROJECT_DIR"] == "/repo"
-    assert "MERIDIAN_RUNTIME_DIR" not in child_env
+    assert "_MERIDIAN_RUNTIME_DIR" not in child_env
     assert "PI_CODING_AGENT_SESSION_DIR" in child_env
+
+
+def test_pi_bind_time_env_contains_agent_dir_timeout_and_task_ping() -> None:
+    child_env = build_harness_child_env(
+        base_env={"PATH": "/usr/bin", "HOME": "/home/tester"},
+        adapter=PiAdapter(),
+        run_params=SpawnParams(prompt="test", model=ModelId("openai-codex/gpt-5.4-mini")),
+        permission_config=PermissionConfig(),
+    )
+
+    apply_pi_bind_time_env(
+        child_env,
+        launch_role="spawned",
+        timeout_seconds=2.75,
+        interval_seconds=0.125,
+        reset_on_activity=False,
+    )
+
+    assert child_env["PI_CODING_AGENT_SESSION_DIR"]
+    assert child_env["_MERIDIAN_PI_CHILD_WAVE_TIMEOUT_MS"] == "2750"
+    assert child_env["_MERIDIAN_PI_TASK_PING_INTERVAL_MS"] == "125"
+    assert child_env["_MERIDIAN_PI_TASK_PING_RESET_ON_ACTIVITY"] == "false"
 
 
 def test_inherit_child_env_runtime_overrides_win() -> None:
@@ -289,14 +280,14 @@ def test_inherit_child_env_runtime_overrides_win() -> None:
         },
         env_overrides={
             "FOO": "override",
-            "MERIDIAN_DEPTH": "2",
+            "_MERIDIAN_DEPTH": "2",
             "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE": "42",
         },
     )
 
     assert inherited["PATH"] == "/usr/bin"
     assert inherited["FOO"] == "override"
-    assert inherited["MERIDIAN_DEPTH"] == "2"
+    assert inherited["_MERIDIAN_DEPTH"] == "2"
     assert inherited["CLAUDE_AUTOCOMPACT_PCT_OVERRIDE"] == "42"
 
 
@@ -308,7 +299,7 @@ def test_merge_env_overrides_rejects_meridian_keys_from_plan_and_preflight() -> 
             with pytest.raises(RuntimeError) as exc_info:
                 merge_env_overrides(
                     plan_overrides=plan_overrides,
-                    runtime_overrides={"MERIDIAN_DEPTH": "2"},
+                    runtime_overrides={"_MERIDIAN_DEPTH": "2"},
                     preflight_overrides=preflight_overrides,
                 )
             assert f"{key} via {source}" in str(exc_info.value)
@@ -317,7 +308,7 @@ def test_merge_env_overrides_rejects_meridian_keys_from_plan_and_preflight() -> 
 def test_merge_env_overrides_accepts_runtime_meridian_keys() -> None:
     runtime_overrides = {
         "MERIDIAN_PROJECT_DIR": "/repo",
-        "MERIDIAN_DEPTH": "2",
+        "_MERIDIAN_DEPTH": "2",
         "MERIDIAN_CHAT_ID": "c-parent",
         "MERIDIAN_CONTEXT_KB_DIR": "/repo/.meridian/kb",
         "MERIDIAN_ACTIVE_WORK_ID": "current",
@@ -349,7 +340,7 @@ def test_merge_env_overrides_non_meridian_precedence() -> None:
         },
         runtime_overrides={
             "FOO": "runtime",
-            "MERIDIAN_DEPTH": "2",
+            "_MERIDIAN_DEPTH": "2",
             "RUNTIME_ONLY": "runtime",
         },
     )
@@ -359,7 +350,7 @@ def test_merge_env_overrides_non_meridian_precedence() -> None:
         "PLAN_ONLY": "plan",
         "PREFLIGHT_ONLY": "preflight",
         "RUNTIME_ONLY": "runtime",
-        "MERIDIAN_DEPTH": "2",
+        "_MERIDIAN_DEPTH": "2",
         "EMPTY_VALUE": "",
         "MULTILINE_VALUE": "line-1\nline-2",
     }

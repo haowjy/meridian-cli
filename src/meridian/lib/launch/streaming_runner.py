@@ -51,7 +51,11 @@ from meridian.lib.launch.constants import (
     TOKENS_FILENAME,
 )
 from meridian.lib.launch.context import LaunchContext
-from meridian.lib.launch.env import resolve_pi_session_role, scope_pi_session_dir_for_spawn
+from meridian.lib.launch.env import (
+    apply_pi_bind_time_env,
+    resolve_pi_session_role,
+    scope_pi_session_dir_for_spawn,
+)
 from meridian.lib.launch.errors import ErrorCategory, classify_error, should_retry
 from meridian.lib.launch.extract import (
     FinalizeExtraction,
@@ -1067,7 +1071,9 @@ async def execute_with_streaming(
     atexit_callback: Callable[[], None] | None = None
 
     try:
-        log_dir = resolve_spawn_log_dir(project_root, run.spawn_id)
+        log_dir = resolve_spawn_log_dir(
+            project_root, run.spawn_id, runtime_root=runtime_root
+        )
         lifecycle_path = log_dir / RUNNER_LIFECYCLE_FILENAME
         output_log_path = log_dir / HISTORY_FILENAME
         report_path = log_dir / REPORT_FILENAME
@@ -1131,6 +1137,15 @@ async def execute_with_streaming(
                 child_env=child_env,
                 spawn_id=run.spawn_id,
             )
+        if resolved_harness_id is HarnessId.PI:
+            assert pi_session_role is not None
+            apply_pi_bind_time_env(
+                child_env,
+                launch_role=pi_session_role,
+                timeout_seconds=pi_child_wave_timeout_seconds,
+                interval_seconds=pi_task_ping_interval_seconds,
+                reset_on_activity=request.pi_task_ping_reset_on_activity,
+            )
 
         spawn_store.update_spawn(
             runtime_root,
@@ -1178,7 +1193,7 @@ async def execute_with_streaming(
             harness_id=resolved_harness_id,
             prompt=spec.prompt,
             control_root=control_root,
-            env_overrides=child_env,
+            child_env=child_env,
             runtime_root=runtime_root,
             task_cwd=child_cwd if child_cwd.resolve() != control_root.resolve() else None,
             system=getattr(spec, "appended_system_prompt", None),

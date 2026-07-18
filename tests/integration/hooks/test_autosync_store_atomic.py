@@ -9,26 +9,28 @@ from meridian.lib.hooks.builtin.autosync_store import (
     ConflictRecord,
     autosync_lock_path,
     read_conflicts,
+    state_file,
     transaction,
 )
 
 
 def test_local_and_remote_workflows_serialize_on_one_sync_root(tmp_path: Path) -> None:
     """Local and remote entry paths cannot overlap their mutation workflows."""
+    runtime_root = tmp_path / "runtime"
 
     first_entered = threading.Event()
     release_first = threading.Event()
     second_entered = threading.Event()
 
     def first_workflow() -> None:
-        with transaction(tmp_path) as autosync_tx:
+        with transaction(tmp_path, runtime_root=runtime_root) as autosync_tx:
             first_entered.set()
             assert release_first.wait(timeout=5)
             autosync_tx.write_sync_state(outcome="local")
 
     def second_workflow() -> None:
         assert first_entered.wait(timeout=5)
-        with transaction(tmp_path / ".") as autosync_tx:
+        with transaction(tmp_path / ".", runtime_root=runtime_root) as autosync_tx:
             second_entered.set()
             autosync_tx.write_sync_state(outcome="remote")
 
@@ -42,15 +44,14 @@ def test_local_and_remote_workflows_serialize_on_one_sync_root(tmp_path: Path) -
         second.result()
 
     payload = json.loads(
-        (tmp_path / ".meridian" / "autosync" / "state.json").read_text(
-            encoding="utf-8"
-        )
+        state_file(tmp_path, runtime_root=runtime_root).read_text(encoding="utf-8")
     )
     assert payload["outcome"] == "remote"
 
 
 def test_hook_write_and_resolution_do_not_lose_conflict_update(tmp_path: Path) -> None:
     """Resolution waits for the hook transaction that creates its record."""
+    runtime_root = tmp_path / "runtime"
 
     record_written = threading.Event()
     release_hook = threading.Event()
@@ -71,7 +72,7 @@ def test_hook_write_and_resolution_do_not_lose_conflict_update(tmp_path: Path) -
     )
 
     def hook_workflow() -> None:
-        with transaction(tmp_path) as autosync_tx:
+        with transaction(tmp_path, runtime_root=runtime_root) as autosync_tx:
             autosync_tx.write_conflict(record)
             record_written.set()
             assert release_hook.wait(timeout=5)
@@ -79,7 +80,7 @@ def test_hook_write_and_resolution_do_not_lose_conflict_update(tmp_path: Path) -
 
     def resolve_workflow() -> None:
         assert record_written.wait(timeout=5)
-        with transaction(tmp_path) as autosync_tx:
+        with transaction(tmp_path, runtime_root=runtime_root) as autosync_tx:
             resolution_entered.set()
             assert autosync_tx.mark_resolved("c1")
 
@@ -92,7 +93,7 @@ def test_hook_write_and_resolution_do_not_lose_conflict_update(tmp_path: Path) -
         hook.result()
         resolve.result()
 
-    [stored] = read_conflicts(tmp_path)
+    [stored] = read_conflicts(tmp_path, runtime_root=runtime_root)
     assert stored.resolved is True
     assert stored.resolved_at is not None
 

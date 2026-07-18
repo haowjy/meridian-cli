@@ -86,6 +86,8 @@ def repair_session_reference_sync(payload: SessionRepairInput) -> SessionRepairO
     )
     project_root = resolve_project_root_resolution(explicit_project_root).project_root
     runtime_root = resolve_runtime_root_for_read(project_root)
+    if runtime_root is None:
+        return SessionRepairOutput(reason=f"Session reference '{ref}' not found.")
     target = resolve_session_repair_target(
         ref=ref,
         project_root=project_root,

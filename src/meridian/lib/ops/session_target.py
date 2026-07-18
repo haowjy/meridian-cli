@@ -936,13 +936,7 @@ def _resolve_from_session_ref(
         )
         return _with_sources(target, output_target)
 
-    inferred = infer_harness_from_untracked_session_ref(project_root, session_ref)
-    inferred_name = str(inferred) if inferred is not None else None
-    target = _resolve_harness_session_file(
-        project_root=project_root,
-        session_id=session_ref,
-        harness=inferred_name,
-    )
+    target = _resolve_untracked_session_ref(project_root=project_root, session_ref=session_ref)
     output_target = _spawn_history_fallback_for_harness_session_id(
         runtime_root=runtime_root,
         display_id=session_ref,
@@ -951,12 +945,23 @@ def _resolve_from_session_ref(
     return _with_sources(target, output_target)
 
 
+def _resolve_untracked_session_ref(
+    *, project_root: Path, session_ref: str
+) -> SessionLogTarget:
+    inferred = infer_harness_from_untracked_session_ref(project_root, session_ref)
+    return _resolve_harness_session_file(
+        project_root=project_root,
+        session_id=session_ref,
+        harness=str(inferred) if inferred is not None else None,
+    )
+
+
 def resolve_session_log_target(
     *,
     ref: str,
     file_path: str | None,
     project_root: Path,
-    runtime_root: Path,
+    runtime_root: Path | None,
 ) -> SessionLogTarget:
     if file_path is not None and file_path.strip():
         return _resolve_file_target(file_path)
@@ -964,6 +969,15 @@ def resolve_session_log_target(
     normalized_ref = ref.strip()
     if not normalized_ref:
         raise ValueError("Session reference is required unless --file is provided")
+
+    if runtime_root is None:
+        is_chat_id = normalized_ref.startswith("c") and normalized_ref[1:].isdigit()
+        if _is_spawn_ref(normalized_ref) or is_chat_id:
+            raise FileNotFoundError(f"Session reference '{normalized_ref}' not found")
+        return _resolve_untracked_session_ref(
+            project_root=project_root,
+            session_ref=normalized_ref,
+        )
 
     if _is_chat_ref(runtime_root, normalized_ref):
         return _resolve_from_chat_id(

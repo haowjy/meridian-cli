@@ -104,6 +104,11 @@ def _fake_launch_context_builder(child_cwd: Path) -> Any:
                 child_cwd=child_cwd,
                 environment=SimpleNamespace(
                     bind_env_overrides={"MERIDIAN_SPAWN_ID": spawn_id},
+                    final_env={
+                        "PATH": "/usr/bin",
+                        "HOME": "/home/tester",
+                        "MERIDIAN_SPAWN_ID": spawn_id,
+                    },
                 ),
                 run_params=SimpleNamespace(appended_system_prompt="", interactive=False),
             ),

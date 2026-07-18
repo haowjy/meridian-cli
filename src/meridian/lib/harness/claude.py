@@ -1,7 +1,6 @@
 """Claude CLI harness adapter."""
 
 import json
-import os
 from pathlib import Path
 from typing import Any, ClassVar, cast
 from uuid import uuid4
@@ -382,16 +381,21 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         resolved_harness_session_id: str,
         record_effective_config_dir: RecordConfigDirFn | None = None,
     ) -> HarnessPrelaunchState:
-        _ = runtime_root, spawn_id, child_env
+        _ = runtime_root, spawn_id
 
-        configured_root = os.environ.get("CLAUDE_CONFIG_DIR", "").strip()
-        effective_config_root = (
-            Path(configured_root).expanduser().resolve() if configured_root else None
-        )
-        env_overrides: dict[str, str] = {}
+        configured_root = child_env.get("CLAUDE_CONFIG_DIR", "").strip()
+        effective_config_root: Path | None = None
+        if configured_root:
+            config_path = Path(configured_root)
+            if configured_root == "~" or configured_root.startswith("~/"):
+                child_home = child_env.get("HOME", "").strip()
+                if child_home:
+                    config_path = Path(child_home) / configured_root.removeprefix("~/")
+            if not config_path.is_absolute():
+                config_path = child_cwd / config_path
+            effective_config_root = config_path.resolve()
         if effective_config_root is not None:
             effective_config_dir = str(effective_config_root)
-            env_overrides["CLAUDE_CONFIG_DIR"] = effective_config_dir
             if record_effective_config_dir is not None:
                 record_effective_config_dir(effective_config_dir)
 
@@ -410,7 +414,7 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
                 target_config_root=session_access.target_config_root,
             )
 
-        return HarnessPrelaunchState(env_overrides=env_overrides)
+        return HarnessPrelaunchState()
 
     def cleanup_prelaunch(
         self,

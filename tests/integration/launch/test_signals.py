@@ -158,7 +158,7 @@ async def test_streaming_runner_signal_cancel_invokes_send_cancel_once(
             harness_id=HarnessId.CODEX,
             prompt="hello",
             control_root=tmp_path,
-            env_overrides={},
+            child_env={},
         ),
         spec=ResolvedLaunchSpec(
             prompt="hello",

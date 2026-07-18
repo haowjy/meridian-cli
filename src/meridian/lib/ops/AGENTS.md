@@ -35,7 +35,7 @@ This package owns foreground and background child-spawn paths (not primary sessi
 
 **Depth guard:** `api.py` checks `max_depth_reached()` before executing spawns. A
 spawn chain that hits the limit returns `depth_exceeded_output()` instead of a new
-spawn. The reaper also reads `MERIDIAN_DEPTH` and skips reaping when nested.
+spawn. The reaper also reads `_MERIDIAN_DEPTH` and skips reaping when nested.
 
 ## Operation Categories
 

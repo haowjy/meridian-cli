@@ -21,9 +21,10 @@ def test_child_env_context_resolves_child_ambient_not_parent_dir(
     monkeypatch,
 ) -> None:
     project_root = tmp_path / "repo"
-    state_dir = project_root / ".meridian"
-    state_dir.mkdir(parents=True)
-    (state_dir / "id").write_text("proj-child-env", encoding="utf-8")
+    project_root.mkdir(parents=True)
+    (project_root / "meridian.toml").write_text(
+        '[project]\nid = "proj-child-env"\n', encoding="utf-8"
+    )
     runtime_root = tmp_path / "runtime"
     runtime_root.mkdir()
     parent_ambient = tmp_path / "parent-ambient"
@@ -41,7 +42,9 @@ def test_child_env_context_resolves_child_ambient_not_parent_dir(
     assert ctx.work_id is None
     assert ctx.work_dir is None
 
-    expected_child = resolve_ambient_work_dir(project_root, "p-child")
+    expected_child = resolve_ambient_work_dir(
+        project_root, "p-child", runtime_root=runtime_root
+    )
     overrides = ctx.child_context(child_spawn_id="p-child")
     assert overrides["MERIDIAN_ACTIVE_WORK_DIR"] == expected_child.as_posix()
     assert overrides["MERIDIAN_ACTIVE_WORK_DIR"] != parent_ambient.as_posix()
@@ -53,9 +56,10 @@ def test_build_child_runtime_env_overrides_named_work_uses_scratch_dir(
     monkeypatch,
 ) -> None:
     project_root = tmp_path / "repo"
-    state_dir = project_root / ".meridian"
-    state_dir.mkdir(parents=True)
-    (state_dir / "id").write_text("proj-named-work", encoding="utf-8")
+    project_root.mkdir(parents=True)
+    (project_root / "meridian.toml").write_text(
+        '[project]\nid = "proj-named-work"\n', encoding="utf-8"
+    )
     (project_root / "mars.toml").write_text('[settings]\ntargets = [".claude"]\n', encoding="utf-8")
     runtime_root = tmp_path / "runtime"
     runtime_root.mkdir()

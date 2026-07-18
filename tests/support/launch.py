@@ -83,7 +83,7 @@ def assert_task_cwd_instruction(system_prompt: str, task_dir: Path | str) -> Non
     """Assert the harness-aware task-dir guidance is present and unambiguous."""
     task_dir_posix = Path(task_dir).as_posix()
     assert "# Source-edit directory" in system_prompt
-    assert "Use `MERIDIAN_PROJECT_ROOT` for project coordination files" in system_prompt
+    assert "Use `MERIDIAN_PROJECT_DIR` for project coordination files" in system_prompt
     assert task_dir_posix in system_prompt
     assert "MERIDIAN_TASK_DIR" in system_prompt
     assert "project root, NOT" in system_prompt

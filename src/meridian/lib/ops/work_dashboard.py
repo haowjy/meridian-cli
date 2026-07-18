@@ -417,6 +417,8 @@ def work_dashboard_sync(
 ) -> WorkDashboardOutput:
     _ = ctx
     roots = resolve_roots_for_read(payload.project_root)
+    if roots is None:
+        return WorkDashboardOutput()
     project_root = roots.project_root
     project_state_dir = roots.project_state_dir
     runtime_state_root = roots.runtime_root
@@ -485,7 +487,10 @@ def work_list_sync(
     ctx: RuntimeContext | None = None,
 ) -> WorkListOutput:
     _ = ctx
-    project_state_dir = resolve_roots_for_read(payload.project_root).project_state_dir
+    roots = resolve_roots_for_read(payload.project_root)
+    if roots is None:
+        return WorkListOutput()
+    project_state_dir = roots.project_state_dir
     if payload.done_only:
         items, warnings = work_store.list_archived_work_items(
             project_state_dir,
@@ -515,6 +520,8 @@ def work_show_sync(
 ) -> WorkShowOutput:
     _ = ctx
     roots = resolve_roots_for_read(payload.project_root)
+    if roots is None:
+        raise ValueError(f"Work item '{payload.work_id}' not found")
     project_root = roots.project_root
     project_state_dir = roots.project_state_dir
     runtime_state_root = roots.runtime_root
@@ -572,6 +579,11 @@ def work_sessions_sync(
     ctx: RuntimeContext | None = None,
 ) -> WorkSessionsOutput:
     roots = resolve_roots_for_read(payload.project_root)
+    if roots is None:
+        resolved_work_id = payload.work_id.strip()
+        if not resolved_work_id:
+            raise ValueError("Work ID is required.")
+        raise ValueError(f"Work item '{resolved_work_id}' not found")
     project_root = roots.project_root
     project_state_dir = roots.project_state_dir
     runtime_state_root = roots.runtime_root

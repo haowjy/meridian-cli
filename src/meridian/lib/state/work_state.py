@@ -138,10 +138,14 @@ def project_paths_for_work_store(
 
 
 def active_work_dir(paths: ProjectPaths, work_id: str) -> Path:
+    if paths.work_dir is None:
+        raise ValueError("Project work path is unresolved.")
     return paths.work_dir / work_id
 
 
 def archived_work_dir(paths: ProjectPaths, work_id: str) -> Path:
+    if paths.work_archive_dir is None:
+        raise ValueError("Project work archive path is unresolved.")
     return paths.work_archive_dir / work_id
 
 

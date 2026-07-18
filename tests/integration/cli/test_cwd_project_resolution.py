@@ -1,4 +1,4 @@
-"""CLI integration: cwd with .meridian/id establishes a project."""
+"""CLI integration: TOML anchors identity but never gates command use."""
 
 from __future__ import annotations
 
@@ -35,7 +35,8 @@ def _run_meridian(
 
 def _assert_project_initialized(project_root: Path) -> None:
     assert (project_root / "meridian.toml").is_file()
-    assert (project_root / ".meridian" / "id").is_file()
+    assert "[project]" in (project_root / "meridian.toml").read_text(encoding="utf-8")
+    assert not (project_root / ".meridian").exists()
 
 
 def _assert_project_not_initialized(project_root: Path) -> None:
@@ -54,8 +55,9 @@ def meridian_home(tmp_path: Path) -> Path:
 def cwd_with_project_id(tmp_path: Path) -> Path:
     project_root = tmp_path / "project"
     project_root.mkdir()
-    (project_root / ".meridian").mkdir()
-    (project_root / ".meridian" / "id").write_text("proj-cwd-integration", encoding="utf-8")
+    (project_root / "meridian.toml").write_text(
+        '[project]\nid = "proj-cwd-integration"\n', encoding="utf-8"
+    )
     return project_root
 
 
@@ -64,6 +66,14 @@ def cwd_without_project_id(tmp_path: Path) -> Path:
     bare_cwd = tmp_path / "no-project"
     bare_cwd.mkdir()
     return bare_cwd
+
+
+@pytest.fixture
+def cwd_with_mars_only(tmp_path: Path) -> Path:
+    project_root = tmp_path / "mars-only"
+    project_root.mkdir()
+    (project_root / "mars.toml").write_text("[settings]\n", encoding="utf-8")
+    return project_root
 
 
 @pytest.mark.integration
@@ -78,7 +88,7 @@ def test_spawn_list_succeeds_from_cwd_with_project_id(
 
 
 @pytest.mark.integration
-def test_spawn_list_fails_from_cwd_without_project_id(
+def test_spawn_list_succeeds_without_project_id_and_creates_nothing(
     cwd_without_project_id: Path,
     meridian_home: Path,
 ) -> None:
@@ -88,9 +98,25 @@ def test_spawn_list_fails_from_cwd_without_project_id(
         meridian_home=meridian_home,
     )
 
-    assert result.returncode == 1
-    assert NO_PROJECT_MSG in (result.stdout + result.stderr)
+    assert result.returncode == 0, result.stderr or result.stdout
+    assert NO_PROJECT_MSG not in (result.stdout + result.stderr)
     _assert_project_not_initialized(cwd_without_project_id)
+
+
+@pytest.mark.integration
+def test_spawn_list_in_mars_only_project_does_not_create_meridian_toml(
+    cwd_with_mars_only: Path,
+    meridian_home: Path,
+) -> None:
+    before = {path.relative_to(cwd_with_mars_only) for path in cwd_with_mars_only.rglob("*")}
+    result = _run_meridian(
+        ["spawn", "list"], cwd=cwd_with_mars_only, meridian_home=meridian_home
+    )
+    after = {path.relative_to(cwd_with_mars_only) for path in cwd_with_mars_only.rglob("*")}
+
+    assert result.returncode == 0, result.stderr or result.stdout
+    assert after == before
+    assert not (cwd_with_mars_only / "meridian.toml").exists()
 
 
 @pytest.mark.integration
@@ -182,14 +208,10 @@ def test_create_commands_auto_initialize_cwd_without_project_id(
 @pytest.mark.parametrize(
     "args",
     [
-        ["--mode", "human", "spawn", "cancel", "p999"],
-        ["--mode", "human", "config", "reset", "defaults.max_depth"],
         ["--mode", "human", "work", "list"],
-        ["--mode", "human", "streaming", "test"],
-        ["--mode", "human", "test", "harness"],
     ],
 )
-def test_strict_commands_do_not_auto_initialize_cwd_without_project_id(
+def test_read_commands_do_not_auto_initialize_cwd_without_project_id(
     args: list[str],
     cwd_without_project_id: Path,
     meridian_home: Path,
@@ -200,13 +222,12 @@ def test_strict_commands_do_not_auto_initialize_cwd_without_project_id(
         meridian_home=meridian_home,
     )
 
-    assert result.returncode == 1
-    assert NO_PROJECT_MSG in (result.stdout + result.stderr)
+    assert NO_PROJECT_MSG not in (result.stdout + result.stderr)
     _assert_project_not_initialized(cwd_without_project_id)
 
 
 @pytest.mark.integration
-def test_primary_launch_does_not_scaffold_config_for_established_cwd(
+def test_primary_launch_preserves_existing_config_identity(
     cwd_with_project_id: Path,
     meridian_home: Path,
 ) -> None:
@@ -225,7 +246,8 @@ def test_primary_launch_does_not_scaffold_config_for_established_cwd(
 
     assert result.returncode == 1
     assert NO_PROJECT_MSG not in (result.stdout + result.stderr)
-    assert not (cwd_with_project_id / "meridian.toml").exists()
+    content = (cwd_with_project_id / "meridian.toml").read_text(encoding="utf-8")
+    assert 'id = "proj-cwd-integration"' in content
 
 
 @pytest.mark.integration

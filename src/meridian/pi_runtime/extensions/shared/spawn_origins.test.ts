@@ -26,7 +26,7 @@ describe("spawn origin ids", () => {
 
   it("serializes concurrent origin writes", async () => {
     const runtimeRoot = await mkdtemp(path.join(tmpdir(), "spawn-origins-"));
-    setEnv("MERIDIAN_PI_STATE_DIR", runtimeRoot);
+    setEnv("_MERIDIAN_PI_STATE_DIR", runtimeRoot);
 
     try {
       await Promise.all([

@@ -7,3 +7,13 @@
   state/history.py) should not be carried into #424 as a projection API —
   rewrite-era design should derive orphan evidence from authoritative
   history or an explicitly-owned diagnostics sink.
+- [#454] Bind-seam env projection is not structurally final. Pi timeout/ping
+  are projected post-bind by two writers (spawn_service, streaming_runner) and
+  the primary path skips apply_pi_bind_time_env; bindings.chat_id is set after
+  bind; generic env.py holds adapter.id branches. Consolidate to an
+  adapter-owned projection hook invoked inside bind_launch_context(), building
+  ResolvedLaunchEnvironment.final_env only after it. (A1)
+- [#454] prepare_prelaunch() has two output channels — a mutable child_env and
+  a returned env_overrides — handled differently by spawned vs primary callers.
+  Make child_env a read-only Mapping and env_overrides the sole output, applied
+  once via a shared launch helper. (A2)

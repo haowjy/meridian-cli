@@ -263,13 +263,18 @@ class InteractiveHandler:
 
 @dataclass(frozen=True)
 class ConnectionConfig:
-    """Configuration inputs for starting one harness connection."""
+    """Configuration inputs for starting one harness connection.
+
+    ``child_env`` is the complete, sanitized environment resolved by the launch
+    bind seam. Connections consume it as-is and may only add values that become
+    knowable while establishing the connection.
+    """
 
     spawn_id: SpawnId
     harness_id: HarnessId
     prompt: str
     control_root: Path
-    env_overrides: dict[str, str]
+    child_env: dict[str, str]
     runtime_root: Path | None = None
     task_cwd: Path | None = None
     system: str | None = None

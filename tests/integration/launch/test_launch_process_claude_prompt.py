@@ -217,7 +217,8 @@ def test_run_harness_process_black_box_primary_uses_control_root_with_distinct_t
     ) -> tuple[int, int]:
         _ = command, output_log_path
         captured["cwd"] = cwd
-        captured["task_env"] = dict(env).get("MERIDIAN_TASK_CWD")
+        captured["task_env"] = dict(env).get("MERIDIAN_TASK_DIR")
+        captured["project_env"] = dict(env).get("MERIDIAN_PROJECT_DIR")
         assert callable(on_child_started)
         on_child_started(4445)
         return (0, 4445)
@@ -232,6 +233,7 @@ def test_run_harness_process_black_box_primary_uses_control_root_with_distinct_t
 
     assert captured["cwd"] == project_root
     assert captured["task_env"] == task_cwd.as_posix()
+    assert captured["project_env"] == project_root.as_posix()
     assert_task_cwd_instruction(
         launch_context.binding.run_params.appended_system_prompt or "",
         task_cwd,

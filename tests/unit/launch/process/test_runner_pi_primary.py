@@ -79,7 +79,7 @@ def test_execute_primary_process_for_pi_uses_native_blackbox_path(
         control_root=tmp_path,
         launch_cwd=tmp_path,
         task_cwd=None,
-        child_env={"MERIDIAN_PI_SESSION_ROLE": "primary"},
+        child_env={"_MERIDIAN_PI_SESSION_ROLE": "primary"},
         launch_spec=_build_spec(),
         command=("pi",),
         harness_contract=PiAdapter().contract,
@@ -93,7 +93,7 @@ def test_execute_primary_process_for_pi_uses_native_blackbox_path(
     assert exit_code == 0
     assert managed_session_id is None
     assert on_running_pids == [4242]
-    expected_env = {"MERIDIAN_PI_SESSION_ROLE": "primary"}
+    expected_env = {"_MERIDIAN_PI_SESSION_ROLE": "primary"}
     expected_env[PRIMARY_STDERR_LOG_PATH_ENV] = str((tmp_path / "logs") / "stderr.log")
     assert capture_calls == [(("pi",), tmp_path, expected_env, None)]
 

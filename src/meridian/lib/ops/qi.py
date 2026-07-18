@@ -14,7 +14,6 @@ from meridian.lib.platform.atomic import atomic_write_text
 _SKIP_DIRS: frozenset[str] = frozenset(
     {
         ".git",
-        ".meridian",
         "__pycache__",
         "node_modules",
         ".venv",

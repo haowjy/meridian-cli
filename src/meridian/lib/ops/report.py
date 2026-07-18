@@ -44,13 +44,18 @@ def _resolve_spawn(
         current_spawn_id=str(resolved_ctx.spawn_id or ""),
     )
     runtime_root = resolve_runtime_root_for_read(project_root)
+    if runtime_root is None:
+        raise ValueError(f"Spawn '{resolved_spawn}' not found")
     if spawn_store.get_spawn(runtime_root, resolved_spawn) is None:
         raise ValueError(f"Spawn '{resolved_spawn}' not found")
     return resolved_spawn
 
 
 def _report_path(project_root: Path, *, spawn_id: str) -> Path:
-    return resolve_runtime_root_for_read(project_root) / "spawns" / spawn_id / "report.md"
+    runtime_root = resolve_runtime_root_for_read(project_root)
+    if runtime_root is None:
+        raise ValueError(f"Report for spawn '{spawn_id}' not found")
+    return runtime_root / "spawns" / spawn_id / "report.md"
 
 
 def _report_snippet(text: str, *, query: str) -> str:
@@ -156,12 +161,11 @@ def report_search_sync(
     elif resolved_ctx.spawn_id is not None:
         spawn_ids = (resolve_spawn_reference(project_root, str(resolved_ctx.spawn_id)),)
     else:
+        runtime_root = resolve_runtime_root_for_read(project_root)
+        if runtime_root is None:
+            return ReportSearchOutput(results=())
         spawn_ids = tuple(
-            row.id
-            for row in reversed(
-                spawn_store.list_spawns(resolve_runtime_root_for_read(project_root))
-                .records
-            )
+            row.id for row in reversed(spawn_store.list_spawns(runtime_root).records)
         )
 
     matches: list[ReportSearchResult] = []

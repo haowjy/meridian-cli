@@ -69,7 +69,6 @@ from meridian.lib.harness.semantics import (
     EventSemantics,
     PrimaryEventScope,
 )
-from meridian.lib.launch.env import inherit_child_env
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.observability.trace_helpers import (
     trace_parse_error,
@@ -81,7 +80,7 @@ from meridian.lib.platform.process_scope import (
     ProcessScopeSnapshot,
     ScopedProcessHandle,
 )
-from meridian.lib.state.paths import resolve_spawn_log_dir
+from meridian.lib.state.paths import resolve_project_runtime_root_for_write, resolve_spawn_log_dir
 
 _DEFAULT_CONNECT_TIMEOUT_SECONDS = 30.0
 _DEFAULT_REQUEST_TIMEOUT_SECONDS = 30.0
@@ -371,10 +370,17 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
         port = config.ws_port if config.ws_port > 0 else _reserve_port(host)
         ws_url = f"ws://{host}:{port}"
 
-        env = inherit_child_env(os.environ, config.env_overrides)
+        env = dict(config.child_env)
         self._codex_home = resolve_codex_home(env)
         effective_cwd = self._effective_project_root()
-        spawn_dir = resolve_spawn_log_dir(config.control_root, config.spawn_id)
+        spawn_dir = resolve_spawn_log_dir(
+            config.control_root,
+            config.spawn_id,
+            runtime_root=(
+                config.runtime_root
+                or resolve_project_runtime_root_for_write(config.control_root)
+            ),
+        )
         self._stderr_log_path = spawn_dir / "stderr.log"
         self._stderr_handle = self._stderr_log_path.open("ab")
         self._stderr_read_offset = self._stderr_handle.tell()

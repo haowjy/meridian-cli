@@ -4,6 +4,7 @@ from pathlib import Path
 import pytest
 
 from meridian.lib.state.paths import RuntimePaths
+from meridian.lib.state.user_paths import get_project_id
 from meridian.lib.state.work_repository import (
     archive_work_item,
     create_work_item,
@@ -110,7 +111,6 @@ def test_create_archive_and_reopen_use_project_templated_context_work_paths(
     monkeypatch.setenv("MERIDIAN_HOME", user_state_root.as_posix())
     monkeypatch.delenv("MERIDIAN_CONFIG", raising=False)
     (project_root / ".git").write_text("gitdir: .git/worktrees/repo\n", encoding="utf-8")
-    runtime_root.mkdir(parents=True, exist_ok=True)
     (project_root / "meridian.toml").write_text(
         "\n".join(
             [
@@ -126,14 +126,14 @@ def test_create_archive_and_reopen_use_project_templated_context_work_paths(
         encoding="utf-8",
     )
 
-    assert not (runtime_root / "id").exists()
+    assert get_project_id(project_root) is None
 
     item = create_work_item(runtime_root, "My feature")
-    project_uuid = (runtime_root / "id").read_text(encoding="utf-8").strip()
+    project_uuid = get_project_id(project_root)
+    assert project_uuid is not None
     active_dir = project_root / "contexts" / project_uuid / "work" / item.name
     archived_dir = project_root / "contexts" / project_uuid / "archive" / "work" / item.name
 
-    assert project_uuid
     assert active_dir.is_dir()
     assert not (runtime_root / "work" / item.name).exists()
 

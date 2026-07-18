@@ -302,7 +302,8 @@ def test_run_harness_process_codex_managed_attach_uses_control_root_with_distinc
         captured["harness_id"] = harness_id
         captured["control_root"] = control_root
         captured["task_cwd"] = passthrough_task_cwd
-        captured["task_env"] = dict(env).get("MERIDIAN_TASK_CWD")
+        captured["task_env"] = dict(env).get("MERIDIAN_TASK_DIR")
+        captured["project_env"] = dict(env).get("MERIDIAN_PROJECT_DIR")
         if callable(on_running):
             on_running(5152)
         return PrimaryAttachOutcome(exit_code=0, session_id="thread-managed", tui_pid=5152)
@@ -323,6 +324,7 @@ def test_run_harness_process_codex_managed_attach_uses_control_root_with_distinc
     assert captured["control_root"] == project_root
     assert captured["task_cwd"] == task_cwd
     assert captured["task_env"] == task_cwd.as_posix()
+    assert captured["project_env"] == project_root.as_posix()
     assert_task_cwd_instruction(
         launch_context.binding.run_params.appended_system_prompt or "",
         task_cwd,

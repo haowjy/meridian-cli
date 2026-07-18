@@ -192,7 +192,7 @@ def test_doctor_prune_with_global_also_prunes_global_orphan_dirs(
         orphan_root,
         other_spawn,
     ) = _seed_pruning_layout(tmp_path, monkeypatch)
-    monkeypatch.setenv("MERIDIAN_DEPTH", "0")
+    monkeypatch.setenv("_MERIDIAN_DEPTH", "0")
 
     result = doctor_sync(
         DoctorInput(project_root=project_root.as_posix(), prune=True, global_=True)
@@ -218,7 +218,7 @@ def test_doctor_global_requires_root_side_effect_process(
         orphan_root,
         other_spawn,
     ) = _seed_pruning_layout(tmp_path, monkeypatch)
-    monkeypatch.setenv("MERIDIAN_DEPTH", "1")
+    monkeypatch.setenv("_MERIDIAN_DEPTH", "1")
     monkeypatch.setattr(
         diag,
         "scan_orphan_project_dirs",

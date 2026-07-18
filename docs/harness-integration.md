@@ -584,10 +584,9 @@ observability.
 Environment:
 
 ```text
-MERIDIAN_PI_SESSION_ROLE=primary
+_MERIDIAN_PI_SESSION_ROLE=primary
 MERIDIAN_SPAWN_ID=<primary-spawn-id>
 PI_CODING_AGENT_SESSION_DIR=<user_home>/meridian-pi/sessions
-MERIDIAN_PRIMARY_METADATA_PATH=<sidecar path>
 ```
 
 Primary must not pass `--mode rpc`, managed extensions, or any wrapper-only flags.
@@ -601,7 +600,7 @@ Primary must not pass `--mode rpc`, managed extensions, or any wrapper-only flag
 Environment:
 
 ```text
-MERIDIAN_PI_SESSION_ROLE=spawned
+_MERIDIAN_PI_SESSION_ROLE=spawned
 MERIDIAN_SPAWN_ID=<spawn-id>
 PI_CODING_AGENT_SESSION_DIR=<spawn/session scoped dir>
 ```
@@ -770,7 +769,7 @@ Follow `tests/smoke/pi-manual.md` and `tests/smoke/pi-rpc-quiescence.md`. Requir
 
 - [ ] Happy spawn succeeds; `report.md` is a normal reply, not lifecycle JSON only
 - [ ] Auth/model failures surface readable errors (#262), not `cleanup_completed` bodies
-- [ ] `pi_paths`: Meridian bundles under `~/.meridian/pi/extensions/` (`-e` targets); `MERIDIAN_PI_STATE_DIR` for extension runtime state
+- [ ] `pi_paths`: Meridian bundles under `~/.meridian/pi/extensions/` (`-e` targets); `_MERIDIAN_PI_STATE_DIR` for extension runtime state
 
 ### Runtime Resolution Smoke
 

@@ -29,6 +29,57 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Declined locked spawn mutations are a typed outcome, not an exception channel;
   a no-op cancel on a terminal spawn no longer emits a spurious `spawn.updated`. (#423)
 
+## [0.3.42] - 2026-07-18
+
+### Changed
+- Child launches now use only the inherited-environment policy; the unused
+  parallel sanitized-environment allowlist path has been removed.
+- Project identity now lives in committed `meridian.toml` `[project] id` and is
+  created with a preserving, concurrency-safe TOML append.
+- `meridian migrate` moves legacy `.meridian/id` identity into `meridian.toml`
+  and removes the generated project-local identity carrier files.
+- Identity-free read commands now return stateless empty or not-found results
+  instead of projecting runtime or context state into the repository.
+- Autosync, work-store locks, Pi state, caches, and runtime artifacts now live
+  under user-home-owned state rather than project `.meridian/` directories.
+- The repository now commits its `[project] id` and drops tracked
+  `.meridian/id` and `.meridian/.gitignore` carrier files.
+- Configuration and debugging guides now document committed project identity,
+  lazy migration, and user-home runtime/context ownership.
+- Harness and agent-facing architecture guides now describe the shipped single
+  bind-seam environment composer and registered internal harness handle.
+- Environment boundary coverage now locks the public max-depth cap, public hook
+  payload, and internal Pi transport names together across their runtime seams.
+- Child launches now expose one public project identity, `MERIDIAN_PROJECT_DIR`;
+  the redundant `MERIDIAN_PROJECT_ROOT` and unused `MERIDIAN_TASK_CWD` are removed.
+- Repo-internal process and Pi transport variables now use the `_MERIDIAN_*`
+  namespace; public configuration inputs and agent-facing handles remain stable.
+- Meridian-owned environment variables now have one tiered registry that drives
+  child propagation and hook payload keys and guards source literals from drift.
+- Harness connections now consume one complete bind-resolved child environment;
+  adapter-local process launches no longer rebuild it from the parent process.
+
+### Fixed
+- Project identity creation, identity migration, and `config set/reset` now
+  serialize `meridian.toml` read-modify-write transactions through one stable
+  user-home lock, preventing concurrent edits from clobbering each other.
+- The environment registry drift guard now recognizes dot and bracket access
+  across JavaScript and TypeScript module extensions.
+- Legacy identity migration now keeps its legacy ID completion marker until
+  cleanup finishes and blocks safely when active-spawn verification fails.
+- Raw harness session references and transcripts now resolve in identity-free
+  checkouts without requiring project runtime state.
+- Claude's preliminary version probe now uses the same bound child environment as
+  the main harness process instead of inheriting the raw parent environment.
+- Claude prelaunch session materialization now reads its already-bound config
+  directory without recomposing or overwriting launch environment policy.
+- Pi RPC connections now preserve the bind-resolved agent directory instead of
+  deriving it again from the ambient parent home directory.
+- Pi primary prelaunch preserves that same bound agent directory while resolving
+  runtime metadata and spawn-scoped session state.
+- Harness subprocess boundary coverage now exercises preliminary probes and main
+  processes, including secret filtering and Pi role-gated runtime settings.
+
 ## [0.3.41] - 2026-07-18
 
 ### Fixed

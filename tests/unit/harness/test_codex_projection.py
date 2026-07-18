@@ -284,7 +284,12 @@ def test_bind_sets_codex_report_output_path_from_spawn_log_dir(
         harness_registry=get_default_harness_registry(),
     )
 
-    expected_report = resolve_spawn_log_dir(project_root, spawn_id) / REPORT_FILENAME
+    expected_report = (
+        resolve_spawn_log_dir(
+            project_root, spawn_id, runtime_root=project_root / ".meridian"
+        )
+        / REPORT_FILENAME
+    )
     assert bound.binding.spec.report_output_path == expected_report.as_posix()
     assert "-o" in bound.binding.argv
     o_index = bound.binding.argv.index("-o")

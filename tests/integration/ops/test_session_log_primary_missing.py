@@ -15,7 +15,7 @@ import pytest
 from meridian.lib.launch.constants import HISTORY_FILENAME, PRIMARY_META_FILENAME
 from meridian.lib.ops.session_log import SessionLogInput, session_log_sync
 from meridian.lib.state import session_store, spawn_store
-from meridian.lib.state.paths import resolve_project_runtime_root
+from meridian.lib.state.paths import resolve_project_runtime_root_for_write
 
 
 def _write_spawn_output(
@@ -96,7 +96,7 @@ def test_session_log_chat_missing_harness_session_id_detects_and_persists_primar
 ) -> None:
     project_root = tmp_path / "repo"
     project_root.mkdir()
-    runtime_root = resolve_project_runtime_root(project_root)
+    runtime_root = resolve_project_runtime_root_for_write(project_root)
     runtime_root.mkdir(parents=True, exist_ok=True)
 
     home_root = tmp_path / "home"
@@ -153,7 +153,7 @@ def test_session_log_chat_missing_harness_session_id_reads_primary_meta_session_
 ) -> None:
     project_root = tmp_path / "repo"
     project_root.mkdir()
-    runtime_root = resolve_project_runtime_root(project_root)
+    runtime_root = resolve_project_runtime_root_for_write(project_root)
     runtime_root.mkdir(parents=True, exist_ok=True)
 
     home_root = tmp_path / "home"
@@ -214,7 +214,7 @@ def test_session_log_primary_spawn_missing_harness_session_id_detects_native_ses
 ) -> None:
     project_root = tmp_path / "repo"
     project_root.mkdir()
-    runtime_root = resolve_project_runtime_root(project_root)
+    runtime_root = resolve_project_runtime_root_for_write(project_root)
     runtime_root.mkdir(parents=True, exist_ok=True)
 
     home_root = tmp_path / "home"
@@ -260,7 +260,7 @@ def test_session_log_primary_spawn_missing_harness_session_id_reads_primary_meta
 ) -> None:
     project_root = tmp_path / "repo"
     project_root.mkdir()
-    runtime_root = resolve_project_runtime_root(project_root)
+    runtime_root = resolve_project_runtime_root_for_write(project_root)
     runtime_root.mkdir(parents=True, exist_ok=True)
 
     home_root = tmp_path / "home"
@@ -309,7 +309,7 @@ def test_session_log_primary_spawn_missing_harness_session_id_does_not_read_spaw
 ) -> None:
     project_root = tmp_path / "repo"
     project_root.mkdir()
-    runtime_root = resolve_project_runtime_root(project_root)
+    runtime_root = resolve_project_runtime_root_for_write(project_root)
     runtime_root.mkdir(parents=True, exist_ok=True)
 
     spawn_store.start_spawn(
@@ -346,7 +346,7 @@ def test_session_log_primary_spawn_pi_never_created_skips_default_root_detection
 ) -> None:
     project_root = tmp_path / "repo"
     project_root.mkdir()
-    runtime_root = resolve_project_runtime_root(project_root)
+    runtime_root = resolve_project_runtime_root_for_write(project_root)
     runtime_root.mkdir(parents=True, exist_ok=True)
 
     spawn_store.start_spawn(

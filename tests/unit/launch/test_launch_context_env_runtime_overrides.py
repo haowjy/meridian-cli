@@ -106,10 +106,10 @@ def test_build_launch_context_primary_preserves_runtime_depth(
         model="gpt-5.4",
         harness=HarnessId.CODEX,
     )
-    monkeypatch.delenv("MERIDIAN_DEPTH", raising=False)
+    monkeypatch.delenv("_MERIDIAN_DEPTH", raising=False)
     monkeypatch.delenv("MERIDIAN_SPAWN_ID", raising=False)
     if parent_depth is not None:
-        monkeypatch.setenv("MERIDIAN_DEPTH", parent_depth)
+        monkeypatch.setenv("_MERIDIAN_DEPTH", parent_depth)
     runtime = build_launch_runtime(
         tmp_path=tmp_path,
         composition_surface=LaunchCompositionSurface.PRIMARY,
@@ -123,9 +123,9 @@ def test_build_launch_context_primary_preserves_runtime_depth(
         dry_run=True,
     )
 
-    assert runtime_ctx.binding.environment.bind_env_overrides["MERIDIAN_DEPTH"] == expected_depth
+    assert runtime_ctx.binding.environment.bind_env_overrides["_MERIDIAN_DEPTH"] == expected_depth
     assert runtime_ctx.binding.environment.bind_env_overrides["MERIDIAN_SPAWN_ID"] == "p-primary"
-    assert "MERIDIAN_PARENT_SPAWN_ID" not in runtime_ctx.binding.environment.bind_env_overrides
+    assert "_MERIDIAN_PARENT_SPAWN_ID" not in runtime_ctx.binding.environment.bind_env_overrides
 
 
 def test_build_launch_context_emits_child_spawn_id(
@@ -133,7 +133,7 @@ def test_build_launch_context_emits_child_spawn_id(
     tmp_path: Path,
 ) -> None:
     monkeypatch.setenv("MERIDIAN_SPAWN_ID", "p-parent")
-    monkeypatch.setenv("MERIDIAN_DEPTH", "1")
+    monkeypatch.setenv("_MERIDIAN_DEPTH", "1")
     runtime_ctx = build_launch_context(
         spawn_id="p-child",
         request=build_spawn_request(),
@@ -144,4 +144,4 @@ def test_build_launch_context_emits_child_spawn_id(
 
     bind_env = runtime_ctx.binding.environment.bind_env_overrides
     assert bind_env["MERIDIAN_SPAWN_ID"] == "p-child"
-    assert bind_env["MERIDIAN_PARENT_SPAWN_ID"] == "p-parent"
+    assert bind_env["_MERIDIAN_PARENT_SPAWN_ID"] == "p-parent"

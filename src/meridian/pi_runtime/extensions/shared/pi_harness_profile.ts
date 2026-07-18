@@ -41,12 +41,12 @@ export function resolvePiHarnessProfile(): {
     background_tasks_enabled = false;
   }
 
-  const bg = envFlag("MERIDIAN_PI_BACKGROUND_TASKS_ENABLED");
+  const bg = envFlag("_MERIDIAN_PI_BACKGROUND_TASKS_ENABLED");
   if (bg != null) {
     background_tasks_enabled = bg;
   }
 
-  const sw = envFlag("MERIDIAN_PI_SPAWN_WATCH_ENABLED");
+  const sw = envFlag("_MERIDIAN_PI_SPAWN_WATCH_ENABLED");
   if (sw != null) {
     spawn_watch_enabled = sw;
   }

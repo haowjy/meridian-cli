@@ -105,7 +105,7 @@ def test_execute_mars_passthrough_sets_managed_env(
 
 
 def test_main_mars_defaults_to_text_in_agent_mode(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("MERIDIAN_DEPTH", "1")
+    monkeypatch.setenv("_MERIDIAN_DEPTH", "1")
     captured: dict[str, object] = {}
 
     def _fake_run_mars_passthrough(

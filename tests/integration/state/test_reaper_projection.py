@@ -50,7 +50,7 @@ def test_read_projection_does_not_reap_recorded_scope_but_explicit_reconcile_doe
     )
     record_scope(runtime_root, SpawnId(spawn_id), backend_scope)
     record = _get_spawn(runtime_root, spawn_id)
-    monkeypatch.setenv("MERIDIAN_DEPTH", "1")
+    monkeypatch.setenv("_MERIDIAN_DEPTH", "1")
     fake_reaper_liveness(monkeypatch, set())
     terminated_scopes = recording_scope_cleanup(
         monkeypatch,
@@ -94,7 +94,7 @@ def test_read_projection_does_not_reap_recorded_scope_but_explicit_reconcile_doe
     assert _get_spawn(runtime_root, spawn_id).status == "running"
     assert terminated_scopes == []
 
-    monkeypatch.delenv("MERIDIAN_DEPTH", raising=False)
+    monkeypatch.delenv("_MERIDIAN_DEPTH", raising=False)
     reconciled = _reconcile(tmp_path, runtime_root, record)
 
     assert reconciled.status == "failed"

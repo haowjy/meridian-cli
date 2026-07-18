@@ -56,7 +56,7 @@ class OpenCodePassthrough:
             harness_id=HarnessId.OPENCODE,
             prompt=spec.prompt,
             control_root=control_root,
-            env_overrides=dict(env),
+            child_env=dict(env),
             task_cwd=task_cwd,
             system=spec.appended_system_prompt or None,
         )

@@ -179,20 +179,20 @@ def _runtime_root_from_prepared_for_read(
     project_root: Path,
 ) -> Path:
     runtime_root = prepared.runtime_root
-    return runtime_root or resolve_runtime_root_for_read(project_root)
+    resolved = runtime_root or resolve_runtime_root_for_read(project_root)
+    if resolved is None:
+        raise ValueError("Project has no runtime state.")
+    return resolved
 
 
 def _resolve_spawn_read_authority(
     *,
     project_root: str | None,
     prepared: RuntimeReadContext | RuntimeWriteContext | None = None,
-) -> tuple[Path, Path]:
+) -> tuple[Path, Path | None]:
     if prepared is not None:
         resolved_project_root = _project_root_from_prepared(prepared)
-        resolved_runtime_root = _runtime_root_from_prepared_for_read(
-            prepared,
-            project_root=resolved_project_root,
-        )
+        resolved_runtime_root = prepared.runtime_root
         return resolved_project_root, resolved_runtime_root
 
     resolved_project_root = _resolve_project_root_input(project_root)
@@ -523,10 +523,14 @@ def spawn_list_sync(
     prepared: RuntimeReadContext | None = None,
 ) -> SpawnListOutput:
     _ = (ctx, sink)
+    if prepared is not None and prepared.runtime_root is None:
+        return SpawnListOutput(spawns=())
     project_root, runtime_root = _resolve_spawn_read_authority(
         project_root=payload.project_root,
         prepared=prepared,
     )
+    if runtime_root is None:
+        return SpawnListOutput(spawns=())
     from meridian.lib.state.reaper import reconcile_spawns
 
     spawns = list(
@@ -631,6 +635,8 @@ def spawn_children_sync(
         project_root=payload.project_root,
         prepared=prepared,
     )
+    if runtime_root is None:
+        return SpawnListOutput(spawns=(), text_view="children")
     normalized_ref = payload.spawn_id.strip()
     if not normalized_ref:
         raise ValueError("spawn_id is required")
@@ -699,10 +705,14 @@ def spawn_stats_sync(
     )
     from meridian.lib.state.reaper import reconcile_spawns
 
-    all_spawns = list(
-        reconcile_spawns(
-            project_root, runtime_root, spawn_store.list_spawns(runtime_root)
-        ).records
+    all_spawns = (
+        []
+        if runtime_root is None
+        else list(
+            reconcile_spawns(
+                project_root, runtime_root, spawn_store.list_spawns(runtime_root)
+            ).records
+        )
     )
 
     if payload.session is not None and payload.session.strip():
@@ -837,6 +847,9 @@ def spawn_show_sync(
         project_root=payload.project_root,
         prepared=prepared,
     )
+    if runtime_root is None:
+        normalized = payload.spawn_id.strip()
+        raise ValueError(f"Spawn '{normalized}' not found")
     if prepared is not None:
         spawn_id = resolve_spawn_reference(
             project_root,
@@ -937,6 +950,9 @@ def spawn_files_sync(
         project_root=payload.project_root,
         prepared=prepared,
     )
+    if runtime_root is None:
+        normalized = payload.spawn_id.strip()
+        raise ValueError(f"Spawn '{normalized}' not found")
     if prepared is not None:
         spawn_id = resolve_spawn_reference(
             project_root,
@@ -979,7 +995,7 @@ def spawn_subagents_sync(
     )
     spawn_id = (os.environ.get("MERIDIAN_SPAWN_ID") or "").strip() or None
     agent: str | None = None
-    if spawn_id is not None:
+    if spawn_id is not None and runtime_root is not None:
         row = read_spawn_row(project_root, spawn_id, runtime_root=runtime_root)
         agent = (row.agent or "").strip() or None if row is not None else None
 
@@ -1578,7 +1594,7 @@ def _resolve_wait_checkpoint_seconds(
         return payload.yield_after_secs
 
     _ = (spawn_ids, project_root)
-    parent_harness = os.getenv("MERIDIAN_HARNESS")
+    parent_harness = os.getenv("_MERIDIAN_HARNESS")
     return float(config.wait_yield_seconds_for_harness(parent_harness))
 
 
@@ -1652,6 +1668,16 @@ def spawn_wait_sync(
     else:
         project_root, config = resolve_runtime_root_and_config_for_read(payload.project_root)
         runtime_root = resolve_runtime_root_for_read(project_root)
+    if runtime_root is None:
+        active_sink.status("No pending spawns.")
+        return SpawnWaitMultiOutput(
+            spawns=(),
+            total_runs=0,
+            succeeded_runs=0,
+            failed_runs=0,
+            cancelled_runs=0,
+            any_failed=False,
+        )
     has_explicit_ids = bool(payload.spawn_ids) or bool(
         payload.spawn_id is not None and payload.spawn_id.strip()
     )
@@ -2068,6 +2094,8 @@ def spawn_fork_sync(
     normalized_source_ref = payload.source_ref.strip()
     if not normalized_source_ref:
         raise ValueError("Session reference is required.")
+    if runtime_root is None:
+        raise ValueError(f"Session reference '{normalized_source_ref}' not found")
 
     resolved_reference = resolve_session_reference(
         project_root,
@@ -2156,6 +2184,9 @@ def spawn_continue_sync(
         project_root=payload.project_root,
         prepared=prepared,
     )
+    if runtime_root is None:
+        normalized = payload.spawn_id.strip()
+        raise ValueError(f"Spawn '{normalized}' not found")
     resolved_spawn_id, source_spawn, resolved_reference = _source_spawn_for_follow_up(
         payload.spawn_id,
         project_root,

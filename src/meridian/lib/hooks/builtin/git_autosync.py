@@ -161,7 +161,11 @@ class GitAutosync:
         clone_path = resolve_clone_path(remote_url)
 
         try:
-            with transaction(clone_path, timeout=_LOCK_TIMEOUT_SECS) as autosync_tx:
+            with transaction(
+                clone_path,
+                runtime_root=Path(context.runtime_root),
+                timeout=_LOCK_TIMEOUT_SECS,
+            ) as autosync_tx:
                 return self._execute_with_lock(
                     context, config, clone_path, start, autosync_tx
                 )
@@ -314,7 +318,11 @@ class GitAutosync:
 
         local_path = Path(path_str).expanduser().resolve()
         try:
-            with transaction(local_path, timeout=_LOCK_TIMEOUT_SECS) as autosync_tx:
+            with transaction(
+                local_path,
+                runtime_root=Path(context.runtime_root),
+                timeout=_LOCK_TIMEOUT_SECS,
+            ) as autosync_tx:
                 ok, error = self._ensure_local_repo(local_path)
                 if not ok:
                     logger.warning(
@@ -1000,7 +1008,9 @@ class GitAutosync:
                             error=f"{message}; {abort_error}",
                         )
 
-                    if has_unresolved_conflict(Path(clone_path)):
+                    if context is not None and has_unresolved_conflict(
+                        Path(clone_path), runtime_root=Path(context.runtime_root)
+                    ):
                         if stashed_excludes:
                             self._unstash_excluded_files(clone_path)
                         logger.warning(

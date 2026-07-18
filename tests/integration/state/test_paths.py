@@ -5,7 +5,6 @@ import pytest
 from meridian.lib.config.context_config import ContextConfig
 from meridian.lib.state.paths import (
     RuntimePaths,
-    ensure_gitignore,
     load_context_config,
     resolve_project_paths,
     resolve_project_paths_for_write,
@@ -13,31 +12,6 @@ from meridian.lib.state.paths import (
 )
 
 
-def test_ensure_gitignore_preserves_existing_lines_and_adds_required_entries(
-    tmp_path: Path,
-) -> None:
-    project_root = tmp_path / "repo"
-    gitignore_path = project_root / ".meridian" / ".gitignore"
-    gitignore_path.parent.mkdir(parents=True)
-    gitignore_path.write_text(
-        "\n".join(
-            [
-                "# Ignore everything by default",
-                "*",
-                "!.gitignore",
-                "!config.toml",
-            ]
-        )
-        + "\n",
-        encoding="utf-8",
-    )
-
-    ensure_gitignore(project_root)
-
-    updated = gitignore_path.read_text(encoding="utf-8")
-    assert "!config.toml" in updated
-    assert "!.gitignore" in updated
-    assert "!id" in updated
 def test_state_root_paths_repo_meridian_stays_runtime_root_local(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -90,7 +64,11 @@ def test_resolve_project_paths_for_write_initializes_project_placeholder_paths(
     )
 
     paths = resolve_project_paths_for_write(project_root)
-    project_uuid = (project_root / ".meridian" / "id").read_text(encoding="utf-8").strip()
+    import tomllib
+
+    project_uuid = tomllib.loads(
+        (project_root / "meridian.toml").read_text(encoding="utf-8")
+    )["project"]["id"]
 
     assert project_uuid
     assert paths.work_dir == project_root / f"contexts/{project_uuid}/work"
@@ -205,7 +183,7 @@ def test_load_context_config_uses_meridian_config_env_override(
     assert resolved_paths.kb_dir == project_root / "env/kb"
 
 
-def test_resolve_project_paths_from_context_falls_back_when_project_placeholder_uninitialized(
+def test_resolve_project_paths_does_not_fall_back_to_repo_local_state(
     tmp_path: Path,
 ) -> None:
     project_root = tmp_path / "repo"
@@ -222,8 +200,8 @@ def test_resolve_project_paths_from_context_falls_back_when_project_placeholder_
 
     paths = resolve_project_paths_from_context(project_root, context_config=config)
 
-    assert paths.root_dir == project_root / ".meridian"
-    assert paths.work_dir == project_root / ".meridian" / "work"
-    assert paths.work_archive_dir == project_root / ".meridian" / "archive" / "work"
-    assert paths.kb_dir == project_root / ".meridian" / "kb"
-    assert not (project_root / ".meridian" / "id").exists()
+    assert paths.work_dir is None
+    assert paths.work_archive_dir is None
+    assert paths.kb_dir is None
+    assert not (project_root / ".meridian").exists()
+    assert not (project_root / "meridian.toml").exists()

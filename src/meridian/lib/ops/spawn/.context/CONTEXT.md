@@ -5,7 +5,7 @@
 `spawn_create_sync()` checks `max_depth_reached()` **before** executing any spawn. When depth
 is exceeded, it returns `depth_exceeded_output()` with no side effects — no spawn row is created.
 
-Depth is read from `MERIDIAN_DEPTH` env var in the child. The reaper also checks `MERIDIAN_DEPTH`
+Depth is read from `_MERIDIAN_DEPTH` env var in the child. The reaper also checks `_MERIDIAN_DEPTH`
 and skips reaping when inside a spawn. This is an ops-layer enforcement; `launch/` does not
 independently enforce depth.
 
@@ -21,7 +21,7 @@ pattern — agents get a periodic yield to check progress rather than blocking i
 **Hard timeout** (`timeout_explicit=True`): waits up to `timeout` minutes, then raises `TimeoutError`
 with an actionable message listing pending spawn IDs and suggested next commands.
 
-The yield interval is resolved from `MERIDIAN_HARNESS` env var (parent harness's prompt-cache TTL
+The yield interval is resolved from `_MERIDIAN_HARNESS` env var (parent harness's prompt-cache TTL
 awareness) unless `yield_after_secs` is explicitly passed.
 
 ## No-Arg Wait Scoping

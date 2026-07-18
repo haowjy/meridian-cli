@@ -78,10 +78,10 @@ def run_guardrails(
         if key.startswith("MERIDIAN_SECRET_"):
             child_env.pop(key, None)
 
-    child_env["MERIDIAN_GUARDRAIL_RUN_ID"] = str(spawn_id)
-    child_env["MERIDIAN_GUARDRAIL_OUTPUT_LOG"] = output_log_path.as_posix()
+    child_env["_MERIDIAN_GUARDRAIL_RUN_ID"] = str(spawn_id)
+    child_env["_MERIDIAN_GUARDRAIL_OUTPUT_LOG"] = output_log_path.as_posix()
     if report_path is not None:
-        child_env["MERIDIAN_GUARDRAIL_REPORT_PATH"] = report_path.as_posix()
+        child_env["_MERIDIAN_GUARDRAIL_REPORT_PATH"] = report_path.as_posix()
 
     failures: list[GuardrailFailure] = []
     for script in guardrails:

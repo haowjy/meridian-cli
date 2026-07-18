@@ -10,24 +10,7 @@ from meridian.lib.config.context_config import ContextConfig
 from meridian.lib.config.project_paths import ProjectConfigPaths
 from meridian.lib.config.project_root import resolve_user_config_path
 from meridian.lib.core.types import SpawnId
-from meridian.lib.platform.atomic import atomic_write_text
-from meridian.lib.state.user_paths import get_or_create_project_id, get_project_id
-
-_MERIDIAN_DIR = ".meridian"
-_GITIGNORE_CONTENT = (
-    "# Ignore everything by default\n"
-    "*\n"
-    "\n"
-    "# Track .gitignore itself\n"
-    "!.gitignore\n"
-    "\n"
-    "# Track project identity\n"
-    "!id\n"
-)
-_REQUIRED_GITIGNORE_LINES = (
-    "!.gitignore",
-    "!id",
-)
+from meridian.lib.state.user_paths import get_or_create_project_id, get_project_id, get_user_home
 
 
 class RuntimePaths(BaseModel):
@@ -110,9 +93,9 @@ class ProjectPaths(BaseModel):
 
     root_dir: Path
     id_file: Path
-    kb_dir: Path
-    work_dir: Path
-    work_archive_dir: Path
+    kb_dir: Path | None
+    work_dir: Path | None
+    work_archive_dir: Path | None
 
     @classmethod
     def from_root_dir(cls, root_dir: Path) -> Self:
@@ -283,15 +266,21 @@ def resolve_project_paths_from_context(
         resolve_context_paths,
     )
 
-    project_state_dir = project_root / _MERIDIAN_DIR
+    project_state_dir = project_root / ".meridian"  # legacy carrier; never created
     project_id: str | None = None
     if context_uses_project_placeholder(effective_config):
         if create_project_uuid:
-            project_id = get_or_create_project_id(project_state_dir)
+            project_id = get_or_create_project_id(project_root)
         else:
-            project_id = get_project_id(project_state_dir)
+            project_id = get_project_id(project_root)
         if project_id is None:
-            return ProjectPaths.from_root_dir(project_state_dir)
+            return ProjectPaths(
+                root_dir=project_state_dir,
+                id_file=project_state_dir / "id",
+                kb_dir=None,
+                work_dir=None,
+                work_archive_dir=None,
+            )
 
     resolved = resolve_context_paths(
         project_root,
@@ -308,9 +297,9 @@ def resolve_project_paths_from_context(
 
 
 def resolve_runtime_paths(project_root: Path) -> ProjectPaths:
-    """Resolve all state paths rooted under `.meridian/`."""
+    """Resolve state paths for a mutating caller, creating identity if needed."""
 
-    root_dir = resolve_project_runtime_root(project_root)
+    root_dir = resolve_project_runtime_root_for_write(project_root)
     return ProjectPaths.from_root_dir(root_dir)
 
 
@@ -318,13 +307,13 @@ def resolve_project_runtime_root(project_root: Path) -> Path:
     """Resolve runtime state root for read paths.
 
     This helper is read-only: it never creates `.meridian/id`.
-    If no runtime UUID exists yet, it falls back to repo `.meridian/`.
+    Raises when no identity exists; zero-state command paths use the optional resolver.
     """
 
     runtime_root = resolve_project_runtime_root_or_none(project_root)
     if runtime_root is not None:
         return runtime_root
-    return resolve_project_paths(project_root).root_dir
+    raise ValueError("Project has no runtime state.")
 
 
 def resolve_project_runtime_root_or_none(project_root: Path) -> Path | None:
@@ -350,11 +339,12 @@ def resolve_project_runtime_root_for_write(project_root: Path) -> Path:
 def resolve_cache_dir(project_root: Path) -> Path:
     """Return runtime cache directory for a repository root."""
 
-    return resolve_project_runtime_root(project_root) / "cache"
+    runtime_root = resolve_project_runtime_root_or_none(project_root)
+    return runtime_root / "cache" if runtime_root is not None else get_user_home() / "cache"
 
 
-def resolve_kb_dir(project_root: Path) -> Path:
-    """Return `.meridian/kb/` for a repository root."""
+def resolve_kb_dir(project_root: Path) -> Path | None:
+    """Return the configured KB directory, or ``None`` without identity."""
 
     return resolve_project_paths(project_root).kb_dir
 
@@ -368,6 +358,8 @@ def resolve_work_scratch_dir_for_project(
     """Return the authority-resolved work directory for a work item."""
 
     resolved_project_paths = project_paths or resolve_project_paths(project_root)
+    if resolved_project_paths.work_dir is None:
+        raise ValueError("Project has no identity; work path is unresolved.")
     return resolved_project_paths.work_dir / work_id
 
 
@@ -377,16 +369,30 @@ def spawn_log_subpath(spawn_id: SpawnId | str) -> Path:
     return Path("spawns") / str(spawn_id)
 
 
-def resolve_spawn_log_dir(project_root: Path, spawn_id: SpawnId | str) -> Path:
+def resolve_spawn_log_dir(
+    project_root: Path,
+    spawn_id: SpawnId | str,
+    *,
+    runtime_root: Path,
+) -> Path:
     """Resolve absolute spawn log directory for a spawn ID."""
 
-    return resolve_project_runtime_root(project_root) / spawn_log_subpath(spawn_id)
+    _ = project_root
+    return runtime_root / spawn_log_subpath(spawn_id)
 
 
-def resolve_ambient_work_dir(project_root: Path, spawn_id: SpawnId | str) -> Path:
+def resolve_ambient_work_dir(
+    project_root: Path,
+    spawn_id: SpawnId | str,
+    *,
+    runtime_root: Path | None = None,
+) -> Path:
     """Resolve the ambient artifact directory for a spawn (pure path math, no mkdir)."""
 
-    return resolve_spawn_log_dir(project_root, spawn_id) / "work"
+    resolved_root = runtime_root or resolve_project_runtime_root(project_root)
+    return resolve_spawn_log_dir(
+        project_root, spawn_id, runtime_root=resolved_root
+    ) / "work"
 
 
 def heartbeat_path(runtime_root: Path, spawn_id: SpawnId | str) -> Path:
@@ -401,45 +407,3 @@ def spawn_output_path(runtime_root: Path, spawn_id: SpawnId | str) -> Path:
     from meridian.lib.launch.constants import HISTORY_FILENAME
 
     return RuntimePaths.from_root_dir(runtime_root).spawns_dir / str(spawn_id) / HISTORY_FILENAME
-
-
-def ensure_gitignore(project_root: Path) -> Path:
-    """Seed `.meridian/.gitignore` and non-destructively add required tracked entries."""
-
-    meridian_dir = resolve_project_paths(project_root).root_dir
-    meridian_dir.mkdir(parents=True, exist_ok=True)
-    gitignore_path = meridian_dir / ".gitignore"
-
-    if gitignore_path.exists():
-        existing_text = gitignore_path.read_text(encoding="utf-8")
-        updated_text = _merge_required_gitignore_lines(existing_text)
-        if updated_text != existing_text:
-            atomic_write_text(gitignore_path, updated_text)
-        return gitignore_path
-
-    atomic_write_text(gitignore_path, _GITIGNORE_CONTENT)
-    return gitignore_path
-
-
-def _merge_required_gitignore_lines(existing_text: str) -> str:
-    existing_lines = existing_text.splitlines()
-    normalized_existing = "\n".join(existing_lines)
-    if existing_text.endswith("\n"):
-        normalized_existing += "\n"
-
-    present_lines = {line.strip() for line in existing_lines}
-    missing_lines = [line for line in _REQUIRED_GITIGNORE_LINES if line not in present_lines]
-    if not missing_lines:
-        return normalized_existing
-
-    suffix = "\n".join(
-        [
-            "",
-            "# Added by Meridian to keep required project state tracked",
-            *missing_lines,
-            "",
-        ]
-    )
-    if not normalized_existing.endswith("\n"):
-        return normalized_existing + suffix
-    return normalized_existing + suffix.lstrip("\n")

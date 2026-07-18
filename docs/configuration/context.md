@@ -58,15 +58,10 @@ When `source = "git"`, Meridian clones the remote into a local cache and resolve
 `path` values support two placeholders:
 
 - `{user_home}` — the Meridian user home (e.g. `~/.meridian`).
-- `{project}` — the project ID from `.meridian/id`.
+- `{project}` — the project ID from committed `meridian.toml` `[project] id`.
 
 For `source = "git"`, `path` is resolved relative to the clone root. For
 `source = "local"`, absolute paths (including expanded placeholders) are used as
 given; a relative `path` resolves against the project root.
 
-The built-in defaults are user-scoped (`{user_home}/context/{project}/...`), so
-work and KB live **outside** the project repo. As a fallback only, when a `path`
-contains `{project}` but no project ID can be resolved (no `.meridian/id`),
-Meridian uses the project-local `.meridian/` equivalents (`.meridian/work`,
-`.meridian/kb`, `.meridian/archive/work`). A normally initialized project never
-hits this fallback.
+The built-in defaults are user-scoped (`{user_home}/context/{project}/...`), so work and KB live **outside** the project repo. There is no repo-local fallback. Read-only commands with no identity create no context state; durable writes create identity before resolving these paths.

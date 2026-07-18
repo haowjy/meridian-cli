@@ -105,7 +105,6 @@ def prepare_for_project_write(project_root: Path) -> ProjectWriteContext:
 
     authority = resolve_project_authority(project_root)
     project_state.ensure_project_dirs(authority.project_root)
-    project_state.ensure_project_gitignore(authority.project_root)
     return ProjectWriteContext(
         authority=authority,
         project_root=authority.project_root,
@@ -121,7 +120,6 @@ def prepare_for_runtime_write(
 
     authority = resolve_runtime_authority_for_write(project_root)
     project_state.ensure_project_dirs(authority.project_root)
-    project_state.ensure_project_gitignore(authority.project_root)
     runtime_root = runtime_state.ensure_runtime_root(
         authority.project_root,
         authority=authority,

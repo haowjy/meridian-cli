@@ -61,7 +61,7 @@ def _build_config(
         harness_id=harness_id,
         prompt="hello",
         control_root=control_root,
-        env_overrides={},
+        child_env={},
         ws_port=ws_port,
     )
 

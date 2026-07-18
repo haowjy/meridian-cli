@@ -16,16 +16,17 @@ if TYPE_CHECKING:
 
 def test_derive_runtime_root_uses_project_id_user_home(tmp_path: Path) -> None:
     project_root = tmp_path / "repo"
-    state_dir = project_root / ".meridian"
-    state_dir.mkdir(parents=True)
-    (state_dir / "id").write_text("proj-abc", encoding="utf-8")
+    project_root.mkdir(parents=True)
+    (project_root / "meridian.toml").write_text(
+        '[project]\nid = "proj-abc"\n', encoding="utf-8"
+    )
 
     derived = derive_runtime_root_from_project(project_root)
 
     assert derived == get_project_home("proj-abc")
 
 
-def test_derive_runtime_root_falls_back_to_local_state_without_id(tmp_path: Path) -> None:
+def test_derive_runtime_root_is_unresolved_without_identity(tmp_path: Path) -> None:
     project_root = tmp_path / "plain"
     state_dir = project_root / ".meridian"
     state_dir.mkdir(parents=True)
@@ -33,7 +34,7 @@ def test_derive_runtime_root_falls_back_to_local_state_without_id(tmp_path: Path
 
     derived = derive_runtime_root_from_project(project_root)
 
-    assert derived == state_dir.resolve()
+    assert derived is None
 
 
 def test_from_environment_derives_runtime_from_project_dir_not_runtime_env(
@@ -41,14 +42,15 @@ def test_from_environment_derives_runtime_from_project_dir_not_runtime_env(
     monkeypatch: MonkeyPatch,
 ) -> None:
     project_root = tmp_path / "repo"
-    state_dir = project_root / ".meridian"
-    state_dir.mkdir(parents=True)
-    (state_dir / "id").write_text("proj-env", encoding="utf-8")
+    project_root.mkdir(parents=True)
+    (project_root / "meridian.toml").write_text(
+        '[project]\nid = "proj-env"\n', encoding="utf-8"
+    )
     wrong_runtime = tmp_path / "wrong-runtime"
     wrong_runtime.mkdir()
 
     monkeypatch.setenv("MERIDIAN_PROJECT_DIR", project_root.as_posix())
-    monkeypatch.setenv("MERIDIAN_RUNTIME_DIR", wrong_runtime.as_posix())
+    monkeypatch.setenv("_MERIDIAN_RUNTIME_DIR", wrong_runtime.as_posix())
 
     ctx = ResolvedContext.from_environment()
 
@@ -68,7 +70,7 @@ def test_child_env_overrides_propagate_project_dir_only(tmp_path: Path) -> None:
     overrides = ctx.child_env_overrides()
 
     assert overrides["MERIDIAN_PROJECT_DIR"] == project_root.as_posix()
-    assert "MERIDIAN_RUNTIME_DIR" not in overrides
+    assert "_MERIDIAN_RUNTIME_DIR" not in overrides
 
 
 def test_resolve_runtime_authority_ignores_runtime_env_when_flagged(
@@ -76,12 +78,13 @@ def test_resolve_runtime_authority_ignores_runtime_env_when_flagged(
     monkeypatch: MonkeyPatch,
 ) -> None:
     project_root = tmp_path / "repo"
-    state_dir = project_root / ".meridian"
-    state_dir.mkdir(parents=True)
-    (state_dir / "id").write_text("proj-flag", encoding="utf-8")
+    project_root.mkdir(parents=True)
+    (project_root / "meridian.toml").write_text(
+        '[project]\nid = "proj-flag"\n', encoding="utf-8"
+    )
     override = tmp_path / "override"
     override.mkdir()
-    monkeypatch.setenv("MERIDIAN_RUNTIME_DIR", override.as_posix())
+    monkeypatch.setenv("_MERIDIAN_RUNTIME_DIR", override.as_posix())
 
     authority = resolve_runtime_authority_for_read(
         project_root,
@@ -95,13 +98,14 @@ def test_resolve_runtime_authority_derives_when_runtime_dir_absent(
     tmp_path: Path,
     monkeypatch: MonkeyPatch,
 ) -> None:
-    """When -C scope unsets MERIDIAN_RUNTIME_DIR, runtime derives from project identity."""
+    """When -C scope unsets _MERIDIAN_RUNTIME_DIR, runtime derives from project identity."""
     project_root = tmp_path / "repo"
-    state_dir = project_root / ".meridian"
-    state_dir.mkdir(parents=True)
-    (state_dir / "id").write_text("proj-explicit", encoding="utf-8")
-    monkeypatch.delenv("MERIDIAN_DEPTH", raising=False)
-    monkeypatch.delenv("MERIDIAN_RUNTIME_DIR", raising=False)
+    project_root.mkdir(parents=True)
+    (project_root / "meridian.toml").write_text(
+        '[project]\nid = "proj-explicit"\n', encoding="utf-8"
+    )
+    monkeypatch.delenv("_MERIDIAN_DEPTH", raising=False)
+    monkeypatch.delenv("_MERIDIAN_RUNTIME_DIR", raising=False)
 
     authority = resolve_runtime_authority_for_read(project_root)
 
@@ -116,8 +120,8 @@ def test_resolve_runtime_authority_honors_runtime_env_at_root(
     project_root.mkdir()
     override = tmp_path / "override"
     override.mkdir()
-    monkeypatch.delenv("MERIDIAN_DEPTH", raising=False)
-    monkeypatch.setenv("MERIDIAN_RUNTIME_DIR", override.as_posix())
+    monkeypatch.delenv("_MERIDIAN_DEPTH", raising=False)
+    monkeypatch.setenv("_MERIDIAN_RUNTIME_DIR", override.as_posix())
 
     authority = resolve_runtime_authority_for_read(project_root)
 
@@ -134,8 +138,8 @@ def test_resolve_runtime_authority_honors_empty_override_over_project_state(
     (state_dir / "spawns.jsonl").write_text("", encoding="utf-8")
     override = tmp_path / "empty-override"
     override.mkdir()
-    monkeypatch.delenv("MERIDIAN_DEPTH", raising=False)
-    monkeypatch.setenv("MERIDIAN_RUNTIME_DIR", override.as_posix())
+    monkeypatch.delenv("_MERIDIAN_DEPTH", raising=False)
+    monkeypatch.setenv("_MERIDIAN_RUNTIME_DIR", override.as_posix())
 
     authority = resolve_runtime_authority_for_read(project_root)
 

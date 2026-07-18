@@ -303,21 +303,26 @@ def session_export_sync(
         project_root=payload.project_root,
     )
     ref = payload.ref.strip() or transcript.target.session_id
-    exact_chat_id, owner_chat_id, parent_id = _session_scope_for_ref(transcript.runtime_root, ref)
+    runtime_root = transcript.runtime_root
+    exact_chat_id, owner_chat_id, parent_id = (
+        _session_scope_for_ref(runtime_root, ref)
+        if runtime_root is not None
+        else (None, None, None)
+    )
     appendices = (
         _spawn_appendices(
-            transcript.runtime_root,
+            runtime_root,
             exact_chat_id=exact_chat_id,
             owner_chat_id=owner_chat_id,
             parent_id=parent_id,
         )
-        if payload.include_spawns
+        if payload.include_spawns and runtime_root is not None
         else []
     )
     markdown = _render_markdown(
         session_id=transcript.target.session_id,
         source=transcript.target.source,
-        metadata=_session_metadata(transcript.runtime_root, ref),
+        metadata=_session_metadata(runtime_root, ref) if runtime_root is not None else [],
         messages=_flatten_segments(transcript.segments),
         appendices=appendices,
     )

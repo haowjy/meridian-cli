@@ -93,8 +93,7 @@ def _concurrent_update_worker(
 # To enable this on Windows the state-layer locking would need to be ported to a Windows-native
 # advisory lock (e.g. LockFileEx) behind a platform adapter.
 def test_locking_contention_writes_clean_v2_state(tmp_path: Path) -> None:
-    runtime_root = tmp_path / ".meridian"
-    runtime_root.mkdir(parents=True, exist_ok=True)
+    runtime_root = resolve_runtime_paths(tmp_path).root_dir
     process_count = 8
 
     ctx = multiprocessing.get_context("spawn")

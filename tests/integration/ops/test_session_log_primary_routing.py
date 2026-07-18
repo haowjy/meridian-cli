@@ -14,7 +14,7 @@ from meridian.lib.launch.constants import HISTORY_FILENAME, PRIMARY_META_FILENAM
 from meridian.lib.ops.session_log import SessionLogInput, session_log_sync
 from meridian.lib.ops.session_target import resolve_session_log_target
 from meridian.lib.state import session_store, spawn_store
-from meridian.lib.state.paths import resolve_project_runtime_root
+from meridian.lib.state.paths import resolve_project_runtime_root_for_write
 
 
 def _write_spawn_output(
@@ -88,7 +88,7 @@ def test_session_log_active_managed_primary_prefers_live_output_over_native_tran
 ) -> None:
     project_root = tmp_path / "repo"
     project_root.mkdir()
-    runtime_root = resolve_project_runtime_root(project_root)
+    runtime_root = resolve_project_runtime_root_for_write(project_root)
     runtime_root.mkdir(parents=True, exist_ok=True)
 
     home_root = tmp_path / "home"
@@ -141,7 +141,7 @@ def test_session_log_active_managed_primary_chat_matches_spawn_live_output(
 ) -> None:
     project_root = tmp_path / "repo"
     project_root.mkdir()
-    runtime_root = resolve_project_runtime_root(project_root)
+    runtime_root = resolve_project_runtime_root_for_write(project_root)
     runtime_root.mkdir(parents=True, exist_ok=True)
 
     home_root = tmp_path / "home"
@@ -216,7 +216,7 @@ def test_session_log_completed_managed_primary_prefers_native_transcript(
 ) -> None:
     project_root = tmp_path / "repo"
     project_root.mkdir()
-    runtime_root = resolve_project_runtime_root(project_root)
+    runtime_root = resolve_project_runtime_root_for_write(project_root)
     runtime_root.mkdir(parents=True, exist_ok=True)
 
     home_root = tmp_path / "home"
@@ -269,7 +269,7 @@ def test_session_log_completed_managed_primary_falls_back_to_output_when_native_
 ) -> None:
     project_root = tmp_path / "repo"
     project_root.mkdir()
-    runtime_root = resolve_project_runtime_root(project_root)
+    runtime_root = resolve_project_runtime_root_for_write(project_root)
     runtime_root.mkdir(parents=True, exist_ok=True)
 
     spawn_store.start_spawn(
@@ -312,7 +312,7 @@ def test_session_log_completed_managed_opencode_fallback_is_best_effort(
 ) -> None:
     project_root = tmp_path / "repo"
     project_root.mkdir()
-    runtime_root = resolve_project_runtime_root(project_root)
+    runtime_root = resolve_project_runtime_root_for_write(project_root)
     runtime_root.mkdir(parents=True, exist_ok=True)
 
     spawn_store.start_spawn(
@@ -356,7 +356,7 @@ def test_session_log_chat_managed_opencode_falls_back_to_primary_output(
 ) -> None:
     project_root = tmp_path / "repo"
     project_root.mkdir()
-    runtime_root = resolve_project_runtime_root(project_root)
+    runtime_root = resolve_project_runtime_root_for_write(project_root)
     runtime_root.mkdir(parents=True, exist_ok=True)
 
     chat_id = session_store.start_session(
@@ -415,7 +415,7 @@ def test_session_log_chat_non_managed_primary_does_not_fall_back_to_output(
 ) -> None:
     project_root = tmp_path / "repo"
     project_root.mkdir()
-    runtime_root = resolve_project_runtime_root(project_root)
+    runtime_root = resolve_project_runtime_root_for_write(project_root)
     runtime_root.mkdir(parents=True, exist_ok=True)
 
     chat_id = session_store.start_session(

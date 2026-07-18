@@ -61,7 +61,6 @@ from meridian.lib.harness.semantics import (
     EventSemantics,
     PrimaryEventScope,
 )
-from meridian.lib.launch.env import inherit_child_env
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.launch.workspace_projection import OPENCODE_CONFIG_CONTENT_ENV
 from meridian.lib.observability.trace_helpers import (
@@ -75,7 +74,10 @@ from meridian.lib.platform.process_scope import (
     ProcessScopeSnapshot,
     ScopedProcessHandle,
 )
-from meridian.lib.state.paths import resolve_spawn_log_dir
+from meridian.lib.state.paths import (
+    resolve_project_runtime_root_for_write,
+    resolve_spawn_log_dir,
+)
 
 logger = logging.getLogger(__name__)
 _STARTUP_STDERR_MAX_BYTES = 16 * 1024
@@ -534,8 +536,13 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
             host=host,
             port=port,
         )
-        env = inherit_child_env(os.environ, config.env_overrides)
-        spawn_dir = resolve_spawn_log_dir(config.control_root, config.spawn_id)
+        env = dict(config.child_env)
+        runtime_root = config.runtime_root or resolve_project_runtime_root_for_write(
+            config.control_root
+        )
+        spawn_dir = resolve_spawn_log_dir(
+            config.control_root, config.spawn_id, runtime_root=runtime_root
+        )
         _materialize_system_prompt(spawn_dir, config.system, env)
         self._stderr_log_path = spawn_dir / "stderr.log"
         self._stderr_handle = self._stderr_log_path.open("ab")
@@ -1173,8 +1180,8 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
     def _startup_child_env(self) -> dict[str, str]:
         config = self._config
         if config is None:
-            return dict(os.environ)
-        return inherit_child_env(os.environ, config.env_overrides)
+            raise RuntimeError("OpenCode startup diagnostics require a bound child environment")
+        return dict(config.child_env)
 
     def _read_startup_stderr_excerpt(self) -> str:
         stderr_handle = self._stderr_handle

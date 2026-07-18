@@ -73,7 +73,7 @@ class CodexPassthrough:
             harness_id=HarnessId.CODEX,
             prompt=spec.prompt,
             control_root=control_root,
-            env_overrides=dict(env),
+            child_env=dict(env),
             task_cwd=task_cwd,
             ws_bind_host=ws_bind_host,
             ws_port=_reserve_local_port(ws_bind_host),

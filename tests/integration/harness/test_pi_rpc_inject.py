@@ -210,7 +210,7 @@ async def test_immediate_background_inject_waits_for_real_control_endpoint(
                 harness_id=HarnessId.CODEX,
                 prompt="FIRST",
                 control_root=project_root,
-                env_overrides={},
+                child_env={},
             ),
             ResolvedLaunchSpec(
                 harness=HarnessId.CODEX,
@@ -271,7 +271,9 @@ async def test_pi_busy_turn_inject_queues_follow_up_and_completes_both_turns(
         harness="pi",
         prompt="FIRST",
     )
-    resolve_spawn_log_dir(tmp_path, spawn_id).mkdir(parents=True)
+    resolve_spawn_log_dir(tmp_path, spawn_id, runtime_root=tmp_path).mkdir(
+        parents=True, exist_ok=True
+    )
     manager = SpawnManager(
         runtime_root=tmp_path,
         project_root=tmp_path,
@@ -286,7 +288,10 @@ async def test_pi_busy_turn_inject_queues_follow_up_and_completes_both_turns(
             prompt="FIRST",
             control_root=tmp_path,
             runtime_root=tmp_path,
-            env_overrides={},
+            child_env={
+                "PATH": os.environ["PATH"],
+                "PI_RPC_INBOUND_LOG": str(inbound_log),
+            },
             pi_session_role="spawned",
         ),
         ResolvedLaunchSpec(
@@ -335,7 +340,9 @@ async def test_pi_rejected_inject_is_reported_and_does_not_fail_spawn(
         harness="pi",
         prompt="FIRST",
     )
-    resolve_spawn_log_dir(tmp_path, spawn_id).mkdir(parents=True)
+    resolve_spawn_log_dir(tmp_path, spawn_id, runtime_root=tmp_path).mkdir(
+        parents=True, exist_ok=True
+    )
     manager = SpawnManager(
         runtime_root=tmp_path,
         project_root=tmp_path,
@@ -350,7 +357,10 @@ async def test_pi_rejected_inject_is_reported_and_does_not_fail_spawn(
             prompt="FIRST",
             control_root=tmp_path,
             runtime_root=tmp_path,
-            env_overrides={},
+            child_env={
+                "PATH": os.environ["PATH"],
+                "PI_RPC_INBOUND_LOG": str(inbound_log),
+            },
             pi_session_role="spawned",
         ),
         ResolvedLaunchSpec(

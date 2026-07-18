@@ -52,7 +52,10 @@ paths depending on timing.
 | `workspace` | `external` | Not merged by settings |
 
 **`preserving_edit.py` for in-place config edits.** Direct TOML writes lose comments
-and formatting. Use `preserving_edit.py` when editing config programmatically.
+and formatting. Use `mutate_project_config()` when editing `meridian.toml`; it
+serializes the full read-modify-write transaction with a project-root-keyed lock
+under the user Meridian home. Lower-level preserving editors belong in the same
+module and run inside that transaction.
 
 ## Entry Points
 

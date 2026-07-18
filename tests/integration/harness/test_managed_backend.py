@@ -18,13 +18,13 @@ from meridian.lib.harness.connections.managed_backend import (
 )
 from meridian.lib.platform.detached_process import DetachedSubprocessConfig, ParentDeathLink
 from meridian.lib.platform.process_scope.base import PROCESS_BIRTH_UNKNOWN_EPOCH
-from meridian.lib.state.paths import resolve_project_runtime_root
+from meridian.lib.state.paths import resolve_project_runtime_root_for_write
 from meridian.lib.state.process_scope_projection import read_scopes_from_disk
 from meridian.lib.state.spawn_store import finalize_spawn, start_spawn
 
 
 def _publish_spawn(tmp_path: Path, spawn_id: SpawnId, *, status: str = "running") -> None:
-    runtime_root = resolve_project_runtime_root(tmp_path)
+    runtime_root = resolve_project_runtime_root_for_write(tmp_path)
     start_spawn(
         runtime_root,
         spawn_id=spawn_id,
@@ -76,7 +76,7 @@ async def test_launch_managed_backend_records_scope_with_parent_death_outcome(
         stderr=asyncio.subprocess.DEVNULL,
     )
 
-    runtime_root = resolve_project_runtime_root(tmp_path)
+    runtime_root = resolve_project_runtime_root_for_write(tmp_path)
     scopes = read_scopes_from_disk(runtime_root, spawn_id)
 
     assert handle.scope_handle.snapshot.parent_death_linked is True
@@ -125,7 +125,7 @@ async def test_launch_managed_backend_records_unknown_birth_sentinel_when_create
         stderr=asyncio.subprocess.DEVNULL,
     )
 
-    scopes = read_scopes_from_disk(resolve_project_runtime_root(tmp_path), spawn_id)
+    scopes = read_scopes_from_disk(resolve_project_runtime_root_for_write(tmp_path), spawn_id)
     assert handle.scope_handle.snapshot.root_created_at_epoch == PROCESS_BIRTH_UNKNOWN_EPOCH
     assert [scope.root_created_at_epoch for scope in scopes] == [PROCESS_BIRTH_UNKNOWN_EPOCH]
     await handle.process.wait()

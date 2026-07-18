@@ -415,10 +415,12 @@ def _resolve_reference_path(
     *,
     raw_path: str | Path,
     reference_anchor: Path,
-    kb_dir: Path,
+    kb_dir: Path | None,
 ) -> Path:
     raw_text = str(raw_path)
     if raw_text.startswith("kb:"):
+        if kb_dir is None:
+            raise ValueError("Cannot resolve a kb: reference without project identity.")
         relative = raw_text[3:]
         if not relative:
             raise ValueError("Path after 'kb:' must not be empty.")
@@ -470,7 +472,7 @@ def load_reference_items(
     paths: Sequence[str | Path],
     *,
     reference_anchor: Path,
-    kb_dir: Path,
+    kb_dir: Path | None,
 ) -> tuple[ReferenceItem, ...]:
     """Load reference items (files or directories) in input order.
 
@@ -486,7 +488,7 @@ def load_reference_items(
         FileNotFoundError: If a path doesn't exist.
     """
     anchor = reference_anchor.expanduser().resolve()
-    resolved_kb_dir = kb_dir.expanduser().resolve()
+    resolved_kb_dir = kb_dir.expanduser().resolve() if kb_dir is not None else None
     loaded: list[ReferenceItem] = []
 
     for raw_path in paths:
@@ -514,7 +516,7 @@ def validate_reference_paths(
     paths: Sequence[str | Path],
     *,
     reference_anchor: Path,
-    kb_dir: Path,
+    kb_dir: Path | None,
 ) -> tuple[Path, ...]:
     """Validate reference paths exist without reading content.
 
@@ -530,7 +532,7 @@ def validate_reference_paths(
         FileNotFoundError: If a path doesn't exist.
     """
     anchor = reference_anchor.expanduser().resolve()
-    resolved_kb_dir = kb_dir.expanduser().resolve()
+    resolved_kb_dir = kb_dir.expanduser().resolve() if kb_dir is not None else None
     validated: list[Path] = []
 
     for raw_path in paths:

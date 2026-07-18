@@ -1,10 +1,13 @@
 # qa-validated: test-suite-redesign
 """Config get/set/reset operations and precedence resolution tests."""
 
+import tomllib
 from pathlib import Path
+from threading import Event, Thread
 
 import pytest
 
+import meridian.lib.ops.config as config_module
 from meridian.lib.config.settings import load_config
 from meridian.lib.ops.config import (
     ConfigGetInput,
@@ -24,6 +27,71 @@ def _repo(tmp_path: Path) -> Path:
     project_root = tmp_path / "repo"
     project_root.mkdir()
     return project_root
+
+
+def test_config_set_and_identity_creation_share_one_transaction(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project_root = _repo(tmp_path)
+    config_path = project_root / "meridian.toml"
+    config_path.write_text("[defaults]\nmax_depth = 4\n", encoding="utf-8")
+    monkeypatch.setenv("MERIDIAN_HOME", (tmp_path / "user-home").as_posix())
+
+    config_edit_entered = Event()
+    release_config_edit = Event()
+    identity_started = Event()
+    identity_finished = Event()
+    failures: list[BaseException] = []
+    original_set_scalar_option = config_module.set_scalar_option
+
+    def pause_config_edit(*args: object, **kwargs: object):
+        config_edit_entered.set()
+        if not release_config_edit.wait(timeout=5):
+            raise TimeoutError("test did not release config edit")
+        return original_set_scalar_option(*args, **kwargs)  # pyright: ignore[reportArgumentType]
+
+    monkeypatch.setattr(config_module, "set_scalar_option", pause_config_edit)
+
+    def set_config() -> None:
+        try:
+            config_set_sync(
+                ConfigSetInput(
+                    project_root=project_root.as_posix(),
+                    key="defaults.max_depth",
+                    value="9",
+                )
+            )
+        except BaseException as exc:
+            failures.append(exc)
+
+    def create_identity() -> None:
+        try:
+            from meridian.lib.state.user_paths import write_project_id
+
+            identity_started.set()
+            write_project_id(project_root, "concurrent-project-id")
+        except BaseException as exc:
+            failures.append(exc)
+        finally:
+            identity_finished.set()
+
+    config_thread = Thread(target=set_config)
+    identity_thread = Thread(target=create_identity)
+    config_thread.start()
+    assert config_edit_entered.wait(timeout=5)
+    identity_thread.start()
+    assert identity_started.wait(timeout=5)
+    assert not identity_finished.wait(timeout=0.1)
+    release_config_edit.set()
+    config_thread.join(timeout=5)
+    identity_thread.join(timeout=5)
+
+    assert not config_thread.is_alive()
+    assert not identity_thread.is_alive()
+    assert failures == []
+    payload = tomllib.loads(config_path.read_text(encoding="utf-8"))
+    assert payload["defaults"]["max_depth"] == 9
+    assert payload["project"]["id"] == "concurrent-project-id"
 
 
 def test_config_set_requires_project_config_file(

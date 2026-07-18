@@ -48,13 +48,13 @@ meridian init
 
 5. Agent-mode foreground default:
    ```bash
-   MERIDIAN_DEPTH=1 meridian spawn -a meridian-subagent -m gpt-5.4-mini -p 'Reply with exactly OK'
+   _MERIDIAN_DEPTH=1 meridian spawn -a meridian-subagent -m gpt-5.4-mini -p 'Reply with exactly OK'
    ```
    Expect compact text, not JSON.
 
 6. Agent-mode background preservation:
    ```bash
-   MERIDIAN_DEPTH=1 meridian spawn -a meridian-subagent -m gpt-5.4-mini -p 'Reply with exactly OK' --bg
+   _MERIDIAN_DEPTH=1 meridian spawn -a meridian-subagent -m gpt-5.4-mini -p 'Reply with exactly OK' --bg
    ```
    Expect JSON wait-note wire output with `wait_required: true`; no compact
    report view and no transcript pointer in the submission response.

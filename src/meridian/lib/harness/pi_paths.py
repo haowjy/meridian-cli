@@ -3,7 +3,7 @@
 Spawned RPC sessions keep per-spawn session files under Meridian state, but agent
 config (auth, extension materialization) uses the same tree as interactive ``pi``.
 Meridian extension bundles are read from a stable install root; runtime extension
-state uses ``MERIDIAN_PI_STATE_DIR``.
+state uses ``_MERIDIAN_PI_STATE_DIR``.
 """
 
 from __future__ import annotations
@@ -16,7 +16,7 @@ from meridian.lib.state.user_paths import get_user_home
 
 _PI_AGENT_DIR_ENV = "PI_CODING_AGENT_DIR"
 _PI_SESSION_DIR_ENV = "PI_CODING_AGENT_SESSION_DIR"
-_MERIDIAN_PI_STATE_DIR_ENV = "MERIDIAN_PI_STATE_DIR"
+_PI_STATE_DIR_ENV = "_MERIDIAN_PI_STATE_DIR"
 _MERIDIAN_EXTENSION_NAMESPACE = "meridian"
 _MERIDIAN_PI_EXTENSION_ROOT_ENV = "MERIDIAN_PI_EXTENSION_INSTALL_ROOT"
 
@@ -60,7 +60,7 @@ def resolve_meridian_pi_state_dir(*, env: Mapping[str, str] | None = None) -> Pa
     """Return Meridian Pi extension runtime state root."""
 
     if env is not None:
-        explicit = env.get(_MERIDIAN_PI_STATE_DIR_ENV, "").strip()
+        explicit = env.get(_PI_STATE_DIR_ENV, "").strip()
         if explicit:
             return Path(explicit).expanduser()
     return get_user_home() / "meridian-pi" / "state"
@@ -107,8 +107,8 @@ def pi_meridian_state_dir_env_override(
     """Env override for extension runtime state (tasks, spawn-watch tree)."""
 
     if runtime_root is not None:
-        return {_MERIDIAN_PI_STATE_DIR_ENV: str(runtime_root)}
-    return {_MERIDIAN_PI_STATE_DIR_ENV: str(resolve_meridian_pi_state_dir(env=env))}
+        return {_PI_STATE_DIR_ENV: str(runtime_root)}
+    return {_PI_STATE_DIR_ENV: str(resolve_meridian_pi_state_dir(env=env))}
 
 
 __all__ = [

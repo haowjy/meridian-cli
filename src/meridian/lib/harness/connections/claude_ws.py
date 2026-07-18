@@ -34,11 +34,7 @@ from meridian.lib.harness.connections.base import (
 from meridian.lib.harness.connections.managed_backend import register_spawn_owned_process
 from meridian.lib.harness.errors import HarnessBinaryNotFound
 from meridian.lib.harness.semantics import EventSemantics
-from meridian.lib.launch.constants import (
-    BASE_COMMAND_CLAUDE_STREAMING,
-    BLOCKED_CHILD_ENV_VARS,
-)
-from meridian.lib.launch.env import inherit_child_env
+from meridian.lib.launch.constants import BASE_COMMAND_CLAUDE_STREAMING
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.observability.trace_helpers import (
     trace_parse_error,
@@ -48,7 +44,7 @@ from meridian.lib.observability.trace_helpers import (
 )
 from meridian.lib.platform import IS_WINDOWS
 from meridian.lib.platform.process_scope import ProcessScopeSnapshot, ScopedProcessHandle
-from meridian.lib.state.paths import resolve_spawn_log_dir
+from meridian.lib.state.paths import resolve_project_runtime_root_for_write, resolve_spawn_log_dir
 
 logger = logging.getLogger(__name__)
 
@@ -58,12 +54,6 @@ _VERSION_CHECK_TIMEOUT_SECONDS: Final[float] = 5.0
 _STDERR_MAX_BYTES: Final[int] = 16 * 1024
 _TESTED_VERSION_PREFIXES: Final[tuple[str, ...]] = ("1.", "2.")
 _HARNESS_NAME: Final[str] = HarnessId.CLAUDE.value
-_BLOCKED_CHILD_ENV_VARS: Final[frozenset[str]] = frozenset(
-    {
-        "CLAUDECODE",
-        *BLOCKED_CHILD_ENV_VARS,
-    }
-)
 
 
 class ClaudeConnection(HarnessConnection[ResolvedLaunchSpec]):
@@ -174,7 +164,7 @@ class ClaudeConnection(HarnessConnection[ResolvedLaunchSpec]):
         self._set_state("starting")
 
         try:
-            await self._check_claude_version()
+            await self._check_claude_version(config.child_env)
             self._emit_startup_phase(StartupPhase.LAUNCHING_SUBPROCESS)
             await self._start_subprocess(config, spec)
             self._emit_startup_phase(StartupPhase.WAITING_FOR_CONNECTION)
@@ -331,11 +321,12 @@ class ClaudeConnection(HarnessConnection[ResolvedLaunchSpec]):
                 logger.exception("Failed to transition Claude connection into failed state")
         logger.warning("Claude connection failed: %s", reason)
 
-    async def _check_claude_version(self) -> None:
+    async def _check_claude_version(self, child_env: dict[str, str]) -> None:
         try:
             process = await asyncio.create_subprocess_exec(
                 "claude",
                 "--version",
+                env=dict(child_env),
                 stdout=PIPE,
                 stderr=PIPE,
             )
@@ -372,7 +363,14 @@ class ClaudeConnection(HarnessConnection[ResolvedLaunchSpec]):
         return None
 
     async def _start_subprocess(self, config: ConnectionConfig, spec: ResolvedLaunchSpec) -> None:
-        spawn_dir = resolve_spawn_log_dir(config.control_root, config.spawn_id)
+        spawn_dir = resolve_spawn_log_dir(
+            config.control_root,
+            config.spawn_id,
+            runtime_root=(
+                config.runtime_root
+                or resolve_project_runtime_root_for_write(config.control_root)
+            ),
+        )
 
         stderr_path = spawn_dir / "stderr.log"
         self._stderr_log_path = stderr_path
@@ -380,11 +378,7 @@ class ClaudeConnection(HarnessConnection[ResolvedLaunchSpec]):
 
         command = self._build_command(config, spec)
 
-        env = inherit_child_env(
-            os.environ,
-            config.env_overrides,
-            blocked=_BLOCKED_CHILD_ENV_VARS,
-        )
+        env = dict(config.child_env)
 
         try:
             self._process = await asyncio.create_subprocess_exec(

@@ -125,7 +125,7 @@ function terminalFacts(status = "succeeded"): Record<string, unknown> {
 
 async function makeRuntime(): Promise<{ runtimeRoot: string; runtime: SpawnWatchRuntime; internals: SpawnWatchRuntimeInternals }> {
   const runtimeRoot = await mkdtemp(path.join(tmpdir(), "spawn-watch-origin-"));
-  setEnv("MERIDIAN_PI_STATE_DIR", runtimeRoot);
+  setEnv("_MERIDIAN_PI_STATE_DIR", runtimeRoot);
   setEnv("MERIDIAN_SPAWN_ID", "p-parent");
   const runtime = new SpawnWatchRuntime({} as ConstructorParameters<typeof SpawnWatchRuntime>[0]);
   return { runtimeRoot, runtime, internals: runtime as SpawnWatchRuntimeInternals };
@@ -379,7 +379,7 @@ describe("SpawnWatchRuntime bash-origin spawn tracking", () => {
 
   it("starts discovery polling for expected spawn ids without state.json", async () => {
     const runtimeRoot = await mkdtemp(path.join(tmpdir(), "spawn-watch-origin-start-"));
-    setEnv("MERIDIAN_PI_STATE_DIR", runtimeRoot);
+    setEnv("_MERIDIAN_PI_STATE_DIR", runtimeRoot);
     setEnv("MERIDIAN_SPAWN_ID", "p-parent");
     await writeBashRecords(runtimeRoot, "p-parent", [
       await bashRecordWithSpawnOutput(runtimeRoot, "b-origin", "p1002"),

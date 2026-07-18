@@ -16,7 +16,7 @@ from typing import Generic, TypeVar
 from meridian.lib.platform.atomic import atomic_write_text
 from meridian.lib.platform.locking import lock_file
 from meridian.lib.state.event_store import utc_now_iso
-from meridian.lib.state.paths import ProjectPaths
+from meridian.lib.state.paths import ProjectPaths, resolve_project_runtime_root_for_write
 from meridian.lib.state.work_state import (
     STATUS_FILENAME,
     WorkItem,
@@ -93,7 +93,12 @@ def write_state_locked(runtime_root: Path, work_id: str, mutation: _NamespaceMut
     """
 
     paths = project_paths_for_work_store(runtime_root, create_project_uuid=True)
-    with lock_file(paths.root_dir / "work-store.flock", reentrant=False):
+    lock_root = (
+        resolve_project_runtime_root_for_write(runtime_root.parent)
+        if runtime_root.name == ".meridian"
+        else runtime_root
+    )
+    with lock_file(lock_root / "work-store.flock", reentrant=False):
         active_dir, archived_dir = locate_work_dirs(paths, work_id)
         result = mutation(paths, active_dir, archived_dir)
         if result.state_write is not None:

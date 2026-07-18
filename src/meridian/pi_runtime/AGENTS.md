@@ -18,7 +18,7 @@ Keep that mechanism/policy boundary intact.
 
 - Use the shared JSON-file helpers for disk state; readers can encounter a
   missing or truncated file.
-- Correlate spawned work through `MERIDIAN_PI_BASH_ID`, persisted spawn rows,
+- Correlate spawned work through `_MERIDIAN_PI_BASH_ID`, persisted spawn rows,
   and the origin sidecar — never argv parsing.
 - Change extension source, never `dist/` output. Rebuild bundles before testing
   source changes; launch projection may otherwise use an installed bundle.
