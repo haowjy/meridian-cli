@@ -13,8 +13,8 @@ def test_chat_and_harness_session_ids_cannot_be_swapped(tmp_path: Path) -> None:
         "\n".join(
             (
                 "from meridian.lib.core.types import ChatId, HarnessSessionId",
-                'chat_id = ChatId("c1")',
-                'harness_session_id = HarnessSessionId("thread-1")',
+                'chat_id: ChatId = ChatId("c1")',
+                'harness_session_id: HarnessSessionId = HarnessSessionId("thread-1")',
                 "chat_id = harness_session_id",
             )
         ),
@@ -29,4 +29,4 @@ def test_chat_and_harness_session_ids_cannot_be_swapped(tmp_path: Path) -> None:
     )
 
     assert result.returncode == 1
-    assert 'cannot be assigned to type "ChatId"' in result.stdout
+    assert 'Type "HarnessSessionId" is not assignable to declared type "ChatId"' in result.stdout
