@@ -11,7 +11,7 @@ import os
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal, Self
+from typing import Any, Literal, Self, cast
 
 from pydantic import ValidationError, model_validator
 
@@ -148,11 +148,12 @@ def _read_stored_state(spawns_dir: Path, spawn_id: str) -> StoredSpawnState | No
     path = _state_path(spawns_dir, spawn_id)
     try:
         try:
-            raw = json.loads(path.read_text(encoding="utf-8"))
-            if not isinstance(raw, dict):
+            parsed: object = json.loads(path.read_text(encoding="utf-8"))
+            if not isinstance(parsed, dict):
                 raise LegacySpawnStateUpgradeError(
                     "invalid_root", "spawn state root must be an object"
                 )
+            raw = cast("dict[str, Any]", parsed)
             candidate = upgrade_legacy_spawn_state(raw) if raw.get("v", 2) == 2 else raw
             return StoredSpawnState.model_validate(candidate)
         except (json.JSONDecodeError, LegacySpawnStateUpgradeError, ValidationError) as exc:

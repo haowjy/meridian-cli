@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
 # Remove this module once pre-v3 spawn rows no longer exist in the wild.
 
@@ -122,7 +122,7 @@ def _upgrade_flat_terminal(raw: dict[str, Any]) -> dict[str, Any] | None:
     status = raw.get("status")
     values = {target: raw[source] for source, target in _TERMINAL_FIELDS.items()}
     if status not in _TERMINAL_STATUSES:
-        baseline = {field: None for field in values}
+        baseline: dict[str, Any] = {field: None for field in values}
         baseline["cost_is_estimate"] = False
         present = tuple(field for field, value in values.items() if value != baseline[field])
         if present:
@@ -152,6 +152,7 @@ def _upgrade_nested(raw: dict[str, Any]) -> dict[str, Any]:
             raise LegacySpawnStateUpgradeError(
                 "invalid_nested_terminal", "nested terminal facts must be an object"
             )
+        terminal = cast("dict[str, Any]", terminal)
         nested_status = terminal.get("status")
         if nested_status != raw.get("status"):
             raise LegacySpawnStateUpgradeError(
