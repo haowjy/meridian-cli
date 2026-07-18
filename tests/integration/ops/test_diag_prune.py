@@ -107,7 +107,7 @@ def _seed_pruning_layout(
     return project_root, current_spawn, orphan_root, other_spawn
 
 
-def test_doctor_heals_legacy_work_item_metadata(
+def test_doctor_repairs_malformed_work_item_metadata(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -124,19 +124,15 @@ def test_doctor_heals_legacy_work_item_metadata(
         encoding="utf-8",
     )
     project_state_dir = project_root / ".meridian"
-    item = work_store.create_work_item(project_state_dir, "legacy-item")
-    legacy_task_dir = tmp_path / "legacy-task-dir"
-    legacy_task_dir.mkdir()
+    item = work_store.create_work_item(project_state_dir, "repair-item")
     status_path = work_store.work_scratch_dir(project_state_dir, item.name) / "__status.json"
-    payload = json.loads(status_path.read_text(encoding="utf-8"))
-    payload["task_dir"] = None
-    payload["worktree"]["path"] = legacy_task_dir.as_posix()
-    status_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    status_path.write_text("not json", encoding="utf-8")
 
     result = doctor_sync(DoctorInput(project_root=project_root.as_posix()))
 
-    healed = json.loads(status_path.read_text(encoding="utf-8"))
-    assert healed["task_dir"] == legacy_task_dir.resolve().as_posix()
+    repaired = json.loads(status_path.read_text(encoding="utf-8"))
+    assert repaired["status"] == "open"
+    assert repaired["archived_at"] is None
     assert "work_item_metadata" in result.repaired
 
 
