@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, cast
 
 from meridian.lib.core.clock import Clock, RealClock
+from meridian.lib.core.types import SpawnId
 from meridian.lib.harness.connections.base import RawHarnessEvent
 from meridian.lib.state.atomic import append_text_line, atomic_write_text
 from meridian.lib.state.managed_primary import ManagedPrimaryCausalTracker
@@ -102,7 +103,7 @@ class HarnessHistoryWriter:
                 _write_artifacts()
             elif not mutate_published_spawn_artifact(
                 self.runtime_root,
-                self.spawn_id,
+                SpawnId(self.spawn_id),
                 _write_artifacts,
             ):
                 return WriteResult(success=False, error="spawn no longer published")
