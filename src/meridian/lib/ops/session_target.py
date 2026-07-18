@@ -456,7 +456,7 @@ def _spawn_history_fallback_for_session_ref(
     return _spawn_history_fallback_for_harness_session_id(
         runtime_root=runtime_root,
         display_id=display_id,
-        harness_session_id=record.harness_session_id,
+        harness_session_id=record.harness_session_id or "",
     )
 
 
@@ -531,7 +531,7 @@ def _latest_harness_session_id(record: session_store.SessionRecord) -> str | Non
         normalized = candidate.strip()
         if normalized:
             return normalized
-    normalized = record.harness_session_id.strip()
+    normalized = (record.harness_session_id or "").strip()
     return normalized or None
 
 
@@ -819,7 +819,7 @@ def _resolve_from_spawn_id(
                 chat_id=row.chat_id,
             )
             if record is not None:
-                session_id = record.harness_session_id.strip()
+                session_id = (record.harness_session_id or "").strip()
                 if record.harness.strip():
                     harness = record.harness.strip()
             if not session_id:
@@ -917,7 +917,7 @@ def _resolve_from_session_ref(
 ) -> SessionLogTarget:
     record = session_store.resolve_session_ref(runtime_root, session_ref)
     if record is not None:
-        session_id = record.harness_session_id.strip() or session_ref
+        session_id = (record.harness_session_id or "").strip() or session_ref
         harness = record.harness.strip() or None
         target = _resolve_harness_session_file(
             project_root=project_root,

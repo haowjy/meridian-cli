@@ -128,6 +128,26 @@ def test_invalid_persisted_kind_is_reported_and_not_coerced(tmp_path: Path) -> N
     assert json.loads(state_path.read_text(encoding="utf-8"))["kind"] == "worker"
 
 
+def test_persisted_spawn_identities_are_normalized_at_parse(tmp_path: Path) -> None:
+    runtime_root = _state_root(tmp_path)
+    spawn_id = _start_test_spawn(runtime_root)
+    state_path = RuntimePaths.from_root_dir(runtime_root).spawns_dir / spawn_id / "state.json"
+    payload = json.loads(state_path.read_text(encoding="utf-8"))
+    payload.update(
+        chat_id="  c1  ",
+        owner_chat_id="   ",
+        harness_session_id="  thread-1  ",
+    )
+    atomic_write_text(state_path, json.dumps(payload))
+
+    row = get_spawn(runtime_root, spawn_id)
+
+    assert row is not None
+    assert row.chat_id == "c1"
+    assert row.owner_chat_id is None
+    assert row.harness_session_id == "thread-1"
+
+
 @pytest.mark.parametrize("invalid_status", [[], {}, 123])
 def test_non_string_persisted_status_is_quarantined(
     tmp_path: Path,

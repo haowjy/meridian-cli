@@ -4,10 +4,11 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, field_validator
 
 from meridian.lib.core.domain import SpawnStatus
 from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
+from meridian.lib.core.types import ChatId, HarnessSessionId, normalize_optional_identity
 
 LaunchMode = Literal["background", "foreground", "app"]
 SpawnKind = Literal["child", "primary", "streaming"]
@@ -47,8 +48,8 @@ class SpawnStateFields(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     id: str
-    chat_id: str | None = None
-    owner_chat_id: str | None = None
+    chat_id: ChatId | None = None
+    owner_chat_id: ChatId | None = None
     parent_id: str | None = None
     originating_bash_id: str | None = None
     model: str | None = None
@@ -62,7 +63,7 @@ class SpawnStateFields(BaseModel):
     work_id: str | None = None
     goal: str | None = None
     display_label: str | None = None
-    harness_session_id: str | None = None
+    harness_session_id: HarnessSessionId | None = None
     control_root: str | None = None
     task_cwd: str | None = None
     execution_cwd: str | None = None
@@ -95,6 +96,11 @@ class SpawnStateFields(BaseModel):
     error: str | None = None
     terminal_origin: SpawnOrigin | None = None
     launch_policy_snapshot: LaunchPolicySnapshot | None = None
+
+    @field_validator("chat_id", "owner_chat_id", "harness_session_id", mode="before")
+    @classmethod
+    def normalize_persisted_identity(cls, value: str | None) -> str | None:
+        return normalize_optional_identity(value)
 
 
 class SpawnRecord(SpawnStateFields):

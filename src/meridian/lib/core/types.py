@@ -34,15 +34,29 @@ def normalize_mars_target_name(name: str) -> str:
 
 SpawnId = NewType("SpawnId", str)
 ModelId = NewType("ModelId", str)
+ChatId = NewType("ChatId", str)
+HarnessSessionId = NewType("HarnessSessionId", str)
 ArtifactKey = NewType("ArtifactKey", str)
 SchemaVersion = NewType("SchemaVersion", int)
 
+
+def normalize_optional_identity(value: str | None) -> str | None:
+    """Canonicalize an identity read from persisted state."""
+
+    if value is None:
+        return None
+    normalized = value.strip()
+    return normalized or None
+
 __all__ = [
     "ArtifactKey",
+    "ChatId",
     "HarnessId",
+    "HarnessSessionId",
     "ModelId",
     "SchemaVersion",
     "SpawnId",
     "TransportId",
     "normalize_mars_target_name",
+    "normalize_optional_identity",
 ]

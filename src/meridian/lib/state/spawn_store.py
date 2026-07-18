@@ -33,7 +33,7 @@ from meridian.lib.core.spawn_lifecycle import (
     is_terminal_spawn_status as _is_terminal_spawn_status,
 )
 from meridian.lib.core.spawn_start import SpawnStartMetadata, derive_display_label
-from meridian.lib.core.types import SpawnId
+from meridian.lib.core.types import ChatId, HarnessSessionId, SpawnId
 from meridian.lib.state.atomic import atomic_publish_dir, atomic_write_text
 from meridian.lib.state.event_store import lock_file
 from meridian.lib.state.paths import RuntimePaths
@@ -321,8 +321,8 @@ def start_spawn(
             resolved_spawn_id = SpawnId(f"p{next_value}")
         record = SpawnRecord(
             id=str(resolved_spawn_id),
-            chat_id=chat_id,
-            owner_chat_id=owner_chat_id,
+            chat_id=ChatId(chat_id),
+            owner_chat_id=ChatId(owner_chat_id) if owner_chat_id is not None else None,
             parent_id=parent_id,
             originating_bash_id=os.environ.get("MERIDIAN_PI_BASH_ID") or None,
             model=model,
@@ -344,7 +344,11 @@ def start_spawn(
                 desc=start_metadata.desc,
                 prompt=prompt,
             ),
-            harness_session_id=harness_session_id,
+            harness_session_id=(
+                HarnessSessionId(harness_session_id)
+                if harness_session_id is not None
+                else None
+            ),
             control_root=control_root,
             task_cwd=task_cwd,
             execution_cwd=execution_cwd,

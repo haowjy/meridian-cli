@@ -1271,8 +1271,8 @@ def spawn_cancel_all_sync(
         spawn_store.list_spawns(runtime_root),
     )
     if work_id is not None:
-        active_session_work_ids = {
-            record.chat_id: record.active_work_id
+        active_session_work_ids: dict[str, str] | None = {
+            str(record.chat_id): record.active_work_id
             for record in session_store.list_active_session_records(runtime_root)
             if record.active_work_id is not None and record.active_work_id.strip()
         }

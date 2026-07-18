@@ -89,6 +89,21 @@ def _write_session_start(
         )
 
 
+def test_persisted_session_identities_are_normalized_at_parse(tmp_path: Path) -> None:
+    runtime_root = _state_root(tmp_path)
+    _write_session_start(
+        runtime_root=runtime_root,
+        chat_id="  c1  ",
+        session_instance_id="instance-1",
+    )
+
+    records = session_store.list_all_session_records(runtime_root)
+
+    assert len(records) == 1
+    assert records[0].chat_id == "c1"
+    assert records[0].harness_session_id == "c1  -thread"
+
+
 def test_start_session_does_not_append_start_event_when_lock_acquire_fails(
     tmp_path: Path,
 ) -> None:
