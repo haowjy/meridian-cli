@@ -18,6 +18,11 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   nested status quarantine. (#423)
 - Locked spawn mutations resolve to exactly Applied, Declined, or Missing;
   reads return a scan envelope that cannot silently drop quarantined rows. (#423)
+- Spawn `state.json` is now schema v3. Legacy v2 rows (flat runner-exit and
+  terminal fields, pre-`published_at` history) upgrade in memory at the parse
+  boundary through a one-shot versioned codec — old spawn history stays
+  readable. Conflicting or truly unknown legacy rows still quarantine; reads
+  never rewrite files. (#423)
 - Work items decide archived-ness from directory location alone; `archived_at` is
   stored but never decides. A crash between archive and reopen is unambiguous by
   construction. Work-item reads no longer rewrite state files. (#423)
