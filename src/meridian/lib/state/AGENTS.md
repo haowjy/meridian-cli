@@ -47,7 +47,7 @@ the deletable project root and are never unlinked.
 
 Work items live under the `[context.work]` root (default
 `{user_home}/context/<id>/work/<slug>/`), resolved by `work_scope.py` /
-`work_store.py` — **never** the project repo. See `docs/configuration.md` for
+`work_state.py` — **never** the project repo. See `docs/configuration.md` for
 context-path resolution.
 
 ## Spawn State: V2 Per-Spawn Files
@@ -128,8 +128,8 @@ Both paths share liveness rules in `reaper.py` and completion/cancel precedence 
 - `paths.py` — `RuntimePaths`, read vs write root resolvers.
 - `spawn_store.py` — `SpawnStore`. Main interface for listing, creating, updating spawns.
 - `spawn_aggregate.py` — published-row deletion and spawn-owned artifact lifetime guard.
-- `work_store.py` / `work_repository.py` — pure work-item reads and the single locked
-  mutation repository, respectively.
+- `work_state.py` / `work_store.py` / `work_repository.py` — work-item models and
+  codec, pure reads, and the single locked mutation repository, respectively.
 - `session_store.py` — Session event log.
 - `atomic.py` — atomic write primitives. All state writes use these.
 - `reaper.py` — read-only `reconcile_spawns()` projection and root-only
