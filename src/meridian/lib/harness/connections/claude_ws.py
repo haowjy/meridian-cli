@@ -164,7 +164,7 @@ class ClaudeConnection(HarnessConnection[ResolvedLaunchSpec]):
         self._set_state("starting")
 
         try:
-            await self._check_claude_version()
+            await self._check_claude_version(config.child_env)
             self._emit_startup_phase(StartupPhase.LAUNCHING_SUBPROCESS)
             await self._start_subprocess(config, spec)
             self._emit_startup_phase(StartupPhase.WAITING_FOR_CONNECTION)
@@ -319,11 +319,12 @@ class ClaudeConnection(HarnessConnection[ResolvedLaunchSpec]):
                 logger.exception("Failed to transition Claude connection into failed state")
         logger.warning("Claude connection failed: %s", reason)
 
-    async def _check_claude_version(self) -> None:
+    async def _check_claude_version(self, child_env: dict[str, str]) -> None:
         try:
             process = await asyncio.create_subprocess_exec(
                 "claude",
                 "--version",
+                env=dict(child_env),
                 stdout=PIPE,
                 stderr=PIPE,
             )

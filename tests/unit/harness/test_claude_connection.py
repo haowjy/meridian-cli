@@ -11,6 +11,11 @@ from meridian.lib.harness.connections.claude_ws import ClaudeConnection
 from meridian.lib.harness.semantics import terminal_outcome
 
 
+class _VersionProcess:
+    async def communicate(self) -> tuple[bytes, bytes]:
+        return b"2.1.0\n", b""
+
+
 class _FakeStdout:
     async def readline(self) -> bytes:
         return b""
@@ -23,6 +28,32 @@ class _ExitedProcess:
 
     async def wait(self) -> int:
         return self.returncode
+
+
+@pytest.mark.asyncio
+async def test_claude_version_probe_uses_bound_child_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured_env: dict[str, str] = {}
+
+    async def fake_create_subprocess_exec(
+        *_command: str,
+        env: dict[str, str],
+        **_kwargs: object,
+    ) -> _VersionProcess:
+        captured_env.update(env)
+        return _VersionProcess()
+
+    monkeypatch.setattr(
+        "meridian.lib.harness.connections.claude_ws.asyncio.create_subprocess_exec",
+        fake_create_subprocess_exec,
+    )
+    child_env = {"PATH": "/bound/bin", "HOME": "/bound/home"}
+
+    await ClaudeConnection()._check_claude_version(child_env)  # pyright: ignore[reportPrivateUsage]
+
+    assert captured_env == child_env
+    assert captured_env is not child_env
 
 
 @pytest.mark.asyncio
