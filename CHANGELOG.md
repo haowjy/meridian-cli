@@ -5,6 +5,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Changed
+- Environment boundary coverage now locks the public max-depth cap, public hook
+  payload, and internal Pi transport names together across their runtime seams.
 - Child launches now expose one public project identity, `MERIDIAN_PROJECT_DIR`;
   the redundant `MERIDIAN_PROJECT_ROOT` and unused `MERIDIAN_TASK_CWD` are removed.
 - Repo-internal process and Pi transport variables now use the `_MERIDIAN_*`

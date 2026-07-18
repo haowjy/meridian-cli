@@ -170,14 +170,17 @@ async def test_pi_main_process_receives_role_gated_bound_runtime_environment(
             interactive=role == "primary",
         ),
         permission_config=PermissionConfig(),
-        runtime_env_overrides={"MERIDIAN_PI_BINARY": str(fake_pi)},
+        runtime_env_overrides={
+            "MERIDIAN_PI_BINARY": str(fake_pi),
+            "_MERIDIAN_PI_STATE_DIR": str(tmp_path / "runtime"),
+        },
     )
     apply_pi_bind_time_env(
         child_env,
         launch_role=role,  # type: ignore[arg-type]
         timeout_seconds=timeout,
         interval_seconds=interval,
-        reset_on_activity=None,
+        reset_on_activity=False,
     )
     connection = PiRpcConnection()
     await connection.start(
@@ -206,5 +209,8 @@ async def test_pi_main_process_receives_role_gated_bound_runtime_environment(
         if "--version" not in record["argv"] and "--help" not in record["argv"]  # type: ignore[operator]
     )
     main_env = cast("dict[str, str]", main_record["env"])
+    assert main_env["_MERIDIAN_PI_SESSION_ROLE"] == role
+    assert main_env["_MERIDIAN_PI_STATE_DIR"] == str(tmp_path / "runtime")
     assert main_env.get("_MERIDIAN_PI_CHILD_WAVE_TIMEOUT_MS") == expected_timeout
     assert main_env.get("_MERIDIAN_PI_TASK_PING_INTERVAL_MS") == expected_interval
+    assert main_env["_MERIDIAN_PI_TASK_PING_RESET_ON_ACTIVITY"] == "false"

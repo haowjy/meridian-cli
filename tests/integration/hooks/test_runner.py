@@ -57,6 +57,9 @@ def test_external_runner_sets_cwd_env_and_json_stdin(tmp_path: Path) -> None:
         "print(os.environ['MERIDIAN_PROJECT_DIR'])\n"
         "print(payload['runtime_root'])\n"
         "print(os.environ['MERIDIAN_SPAWN_ID'])\n"
+        "print(os.environ['MERIDIAN_SPAWN_STATUS'])\n"
+        "print(os.environ['MERIDIAN_SPAWN_AGENT'])\n"
+        "print(os.environ['MERIDIAN_SPAWN_MODEL'])\n"
         "print(payload['event_name'])\n"
         "print(payload['spawn']['id'])\n",
         encoding="utf-8",
@@ -79,8 +82,9 @@ def test_external_runner_sets_cwd_env_and_json_stdin(tmp_path: Path) -> None:
     assert lines[3] == str(project_root.resolve())
     assert lines[4] == str(runtime_root)
     assert lines[5] == "p123"
-    assert lines[6] == "spawn.finalized"
-    assert lines[7] == "p123"
+    assert lines[6:9] == ["success", "reviewer", "gpt-5.3-codex"]
+    assert lines[9] == "spawn.finalized"
+    assert lines[10] == "p123"
 
 
 def test_external_runner_captures_nonzero_exit_and_1kb_tails(tmp_path: Path) -> None:
