@@ -205,8 +205,9 @@ do not call `connection.send_user_message()` directly.
 `heartbeat_loop` touches `spawns/<id>/heartbeat` every 30 seconds. The reaper
 (`lib/state/reaper.py`) identifies orphaned spawns by checking heartbeat staleness
 during doctor runs. The loop stops without recreating its parent when the published
-spawn directory is deleted. Otherwise, a heartbeat that stops updating means the
-spawn is orphaned or the manager died.
+spawn directory is deleted. Unexpected cessation while a spawn should remain active
+means the spawn is orphaned or the manager died; normal completion, cancellation,
+and manager shutdown also stop the task intentionally.
 
 The `touch` callable is injectable for tests. The `heartbeat_interval_secs` parameter
 is configurable on `SpawnManager`.
