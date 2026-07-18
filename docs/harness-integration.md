@@ -386,8 +386,11 @@ become `--`, directory name ends with `--`.
 
 Even in Phase 1 subprocess-only mode, implement a `HarnessConnection` subclass
 that drains JSONL events through Meridian's streaming runner. The SpawnManager
-drain loop calls `terminal_outcome(event)` on each event; when that returns
-non-None, the drain breaks.
+normalizes each raw event once at the drain/primary-attach boundary with the
+bundle's `HarnessSemantics.normalize()`. The resulting `EventSemantics` travels
+with the raw evidence on `NormalizedHarnessEvent`; downstream activity, signal,
+and terminal handling consume that carried descriptor rather than interpreting
+the event again.
 
 ```python
 class PiConnection(HarnessConnection[ResolvedLaunchSpec]):
@@ -429,24 +432,25 @@ def resolve_pi_terminal(event: RawHarnessEvent) -> TerminalEventOutcome | None:
         (m for m in reversed(messages) if m.get("role") == "assistant"), None
     )
     if last_assistant and last_assistant.get("stopReason") == "error":
-        return TerminalEventOutcome(status="failed", exit_code=1, error="pi_stop_error")
-    return TerminalEventOutcome(status="succeeded", exit_code=0)
+        return TerminalEventOutcome(
+            status=SpawnStatus.FAILED, exit_code=1, error="pi_stop_error"
+        )
+    return TerminalEventOutcome(status=SpawnStatus.SUCCEEDED, exit_code=0)
 ```
 
 ```python
 PI_SEMANTICS = HarnessSemantics(
-    event_classes={
-        "agent_start": frozenset({SemanticClass.TURN_ACTIVE}),
-        "turn_start": frozenset({SemanticClass.TURN_ACTIVE}),
-        "turn_end": frozenset({SemanticClass.IDLE}),
-        "agent_end": frozenset({
-            SemanticClass.IDLE,
-            SemanticClass.SIGNAL_CLEARED,
-            SemanticClass.TERMINAL_PAYLOAD,
-        }),
-        MERIDIAN_CONNECTION_CLOSED_EVENT: frozenset({SemanticClass.TERMINAL_PAYLOAD}),
+    events={
+        "agent_start": EventSemantics(activity="turn_active"),
+        "turn_start": EventSemantics(activity="turn_active"),
+        "turn_end": EventSemantics(activity="idle"),
+        "agent_end": EventSemantics(activity="idle", clears_signal=True),
+        MERIDIAN_CONNECTION_CLOSED_EVENT: EventSemantics(),
     },
-    payload_resolver=resolve_pi_terminal,
+    payload_resolvers={
+        "agent_end": resolve_pi_terminal,
+        MERIDIAN_CONNECTION_CLOSED_EVENT: connection_closed_outcome,
+    },
 )
 ```
 
