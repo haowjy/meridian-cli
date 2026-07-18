@@ -16,7 +16,7 @@ from typing import Any, Literal, cast
 
 import psutil
 import structlog
-from pydantic import BaseModel, ConfigDict, ValidationError
+from pydantic import BaseModel, ConfigDict
 
 from meridian.lib.core.clock import Clock, RealClock
 from meridian.lib.core.domain import SpawnStatus, TokenUsage
@@ -265,6 +265,7 @@ def start_spawn(
     control_root: str | None = None,
     task_cwd: str | None = None,
     execution_cwd: str | None = None,
+    claude_config_dir: str | None = None,
     launch_mode: LaunchMode | None = None,
     worker_pid: int | None = None,
     runner_pid: int | None = None,
@@ -342,7 +343,7 @@ def start_spawn(
             control_root=control_root,
             task_cwd=task_cwd,
             execution_cwd=execution_cwd,
-            claude_config_dir=None,
+            claude_config_dir=claude_config_dir,
             launch_mode=launch_mode,
             worker_pid=worker_pid,
             runner_pid=runner_pid,
@@ -869,10 +870,7 @@ def list_spawns(
     paths = RuntimePaths.from_root_dir(runtime_root)
     spawns: list[SpawnRecord] = []
     for spawn_id in _scan_spawn_ids(paths.spawns_dir):
-        try:
-            record = _read_state(paths.spawns_dir, spawn_id, include_prompt=False)
-        except ValidationError:
-            continue
+        record = _read_state(paths.spawns_dir, spawn_id, include_prompt=False)
         if record is not None:
             spawns.append(record)
 

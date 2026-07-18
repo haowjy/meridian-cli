@@ -8,82 +8,70 @@ from __future__ import annotations
 
 import os
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal, cast
+from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import ValidationError, model_validator
 
-from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
-from meridian.lib.core.spawn_lifecycle import TERMINAL_SPAWN_STATUSES
+from meridian.lib.core.domain import ALL_SPAWN_STATUSES, TERMINAL_SPAWN_STATUSES
 from meridian.lib.platform.locking import lock_file
 from meridian.lib.state.atomic import atomic_write_text
-from meridian.lib.state.spawn.model import CancelIntent, SpawnRecord
+from meridian.lib.state.spawn.model import _LAUNCH_MODE_VALUES, SpawnRecord, SpawnStateFields
+from meridian.lib.state.spawn.model import AUTHORITATIVE_ORIGINS as _AUTHORITATIVE_ORIGINS
 
-if TYPE_CHECKING:
-    from meridian.lib.core.domain import SpawnStatus
-    from meridian.lib.state.spawn.model import LaunchMode, SpawnOrigin, TerminalSpawnStatus
+_PERSISTED_STATUS_VALUES = ALL_SPAWN_STATUSES | {"unknown"}
 
 
-class StoredSpawnState(BaseModel):
+class StoredSpawnState(SpawnStateFields):
     """On-disk v2 ``state.json`` representation.
 
     The prompt body is stored separately in ``starting-prompt.md``; this model
     keeps only ``prompt_length`` metadata so state reads can stay lightweight.
     """
 
-    model_config = ConfigDict(frozen=True)
-
     v: Literal[2]
-    id: str
-    chat_id: str | None = None
-    owner_chat_id: str | None = None
-    parent_id: str | None = None
-    originating_bash_id: str | None = None
-    model: str | None = None
-    agent: str | None = None
-    agent_path: str | None = None
-    skills: tuple[str, ...] = ()
-    skill_paths: tuple[str, ...] = ()
-    harness: str | None = None
-    kind: str = "child"
-    desc: str | None = None
-    work_id: str | None = None
-    goal: str | None = None
-    display_label: str | None = None
-    harness_session_id: str | None = None
-    control_root: str | None = None
-    task_cwd: str | None = None
-    execution_cwd: str | None = None
-    claude_config_dir: str | None = None
-    launch_mode: str | None = None
-    worker_pid: int | None = None
-    runner_pid: int | None = None
-    runner_created_at_epoch: float | None = None
-    resident_rearm_count: int = 0
-    status: str = "unknown"
-    started_at: str | None = None
-    last_attempt_exited_at: str | None = None
-    last_attempt_exit_code: int | None = None
-    runner_exit_code: int | None = None
-    runner_exit_status: str | None = None
-    runner_exit_error: str | None = None
-    runner_exit_at: str | None = None
-    cancel_intent: CancelIntent | None = None
-    finished_at: str | None = None
-    published_at: str | None = None
-    exit_code: int | None = None
-    duration_secs: float | None = None
-    total_cost_usd: float | None = None
-    input_tokens: int | None = None
-    output_tokens: int | None = None
-    cache_read_input_tokens: int | None = None
-    cache_creation_input_tokens: int | None = None
-    reasoning_tokens: int | None = None
-    cost_is_estimate: bool = False
-    error: str | None = None
-    terminal_origin: str | None = None
     prompt_length: int | None = None
-    launch_policy_snapshot: LaunchPolicySnapshot | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def quarantine_unknown_vocabulary(cls, value: Any) -> Any:
+        """Reject, rather than reinterpret, rows with unknown vocabulary values."""
+
+        if not isinstance(value, dict):
+            return value
+        vocabularies = {
+            "status": _PERSISTED_STATUS_VALUES,
+            "launch_mode": _LAUNCH_MODE_VALUES,
+            "runner_exit_status": TERMINAL_SPAWN_STATUSES,
+            "terminal_origin": _AUTHORITATIVE_ORIGINS | {"reconciler"},
+        }
+        invalid = {
+            field: raw
+            for field, allowed in vocabularies.items()
+            if (raw := value.get(field)) is not None and raw not in allowed
+        }
+        if invalid:
+            raise ValueError(f"quarantined unknown spawn vocabulary: {invalid}")
+        return value
+
+
+@dataclass(frozen=True)
+class SpawnStateQuarantineReport:
+    """Observable report for a persisted row that cannot be interpreted."""
+
+    spawn_id: str
+    state_path: Path
+    validation_errors: tuple[object, ...]
+
+
+class SpawnStateQuarantined(ValueError):
+    """Raised consistently by single-row and collection reads for invalid state."""
+
+    def __init__(self, report: SpawnStateQuarantineReport) -> None:
+        self.report = report
+        super().__init__(f"Spawn state quarantined: {report.state_path}")
+
 
 
 def _spawn_dir(spawns_dir: Path, spawn_id: str) -> Path:
@@ -108,58 +96,12 @@ def record_to_stored_state(
 ) -> StoredSpawnState:
     """Convert a spawn projection to v2 on-disk state without prompt body."""
 
-    return StoredSpawnState(
-        v=2,
-        id=record.id,
-        chat_id=record.chat_id,
-        owner_chat_id=record.owner_chat_id,
-        parent_id=record.parent_id,
-        originating_bash_id=record.originating_bash_id,
-        model=record.model,
-        agent=record.agent,
-        agent_path=record.agent_path,
-        skills=record.skills,
-        skill_paths=record.skill_paths,
-        harness=record.harness,
-        kind=record.kind,
-        desc=record.desc,
-        work_id=record.work_id,
-        goal=record.goal,
-        display_label=record.display_label,
-        harness_session_id=record.harness_session_id,
-        control_root=record.control_root,
-        task_cwd=record.task_cwd,
-        execution_cwd=record.execution_cwd,
-        claude_config_dir=record.claude_config_dir,
-        launch_mode=record.launch_mode,
-        worker_pid=record.worker_pid,
-        runner_pid=record.runner_pid,
-        runner_created_at_epoch=record.runner_created_at_epoch,
-        resident_rearm_count=record.resident_rearm_count,
-        status=record.status,
-        started_at=record.started_at,
-        last_attempt_exited_at=record.last_attempt_exited_at,
-        last_attempt_exit_code=record.last_attempt_exit_code,
-        runner_exit_code=record.runner_exit_code,
-        runner_exit_status=record.runner_exit_status,
-        runner_exit_error=record.runner_exit_error,
-        runner_exit_at=record.runner_exit_at,
-        cancel_intent=record.cancel_intent,
-        finished_at=record.finished_at,
-        published_at=record.published_at,
-        exit_code=record.exit_code,
-        duration_secs=record.duration_secs,
-        total_cost_usd=record.total_cost_usd,
-        input_tokens=record.input_tokens,
-        output_tokens=record.output_tokens,
-        cache_read_input_tokens=record.cache_read_input_tokens,
-        cache_creation_input_tokens=record.cache_creation_input_tokens,
-        reasoning_tokens=record.reasoning_tokens,
-        cost_is_estimate=record.cost_is_estimate,
-        error=record.error,
-        terminal_origin=record.terminal_origin,
-        prompt_length=len(record.prompt) if record.prompt is not None else None,
-        launch_policy_snapshot=record.launch_policy_snapshot,
+    return StoredSpawnState.model_validate(
+        {
+            **record.model_dump(exclude={"prompt"}),
+            "v": 2,
+            "prompt_length": len(record.prompt) if record.prompt is not None else None,
+        }
     )
 
 
@@ -169,57 +111,8 @@ def stored_state_to_record(
 ) -> SpawnRecord:
     """Convert v2 on-disk state to a ``SpawnRecord`` projection."""
 
-    return SpawnRecord(
-        id=stored.id,
-        chat_id=stored.chat_id,
-        owner_chat_id=stored.owner_chat_id,
-        parent_id=stored.parent_id,
-        originating_bash_id=stored.originating_bash_id,
-        model=stored.model,
-        agent=stored.agent,
-        agent_path=stored.agent_path,
-        skills=stored.skills,
-        skill_paths=stored.skill_paths,
-        harness=stored.harness,
-        kind=stored.kind,
-        desc=stored.desc,
-        work_id=stored.work_id,
-        goal=stored.goal,
-        display_label=stored.display_label,
-        harness_session_id=stored.harness_session_id,
-        control_root=stored.control_root,
-        task_cwd=stored.task_cwd,
-        execution_cwd=stored.execution_cwd,
-        claude_config_dir=stored.claude_config_dir,
-        launch_mode=cast("LaunchMode | None", stored.launch_mode),
-        worker_pid=stored.worker_pid,
-        runner_pid=stored.runner_pid,
-        runner_created_at_epoch=stored.runner_created_at_epoch,
-        resident_rearm_count=stored.resident_rearm_count,
-        status=cast('SpawnStatus | Literal["unknown"]', stored.status),
-        prompt=prompt,
-        started_at=stored.started_at,
-        last_attempt_exited_at=stored.last_attempt_exited_at,
-        last_attempt_exit_code=stored.last_attempt_exit_code,
-        runner_exit_code=stored.runner_exit_code,
-        runner_exit_status=cast('TerminalSpawnStatus | None', stored.runner_exit_status),
-        runner_exit_error=stored.runner_exit_error,
-        runner_exit_at=stored.runner_exit_at,
-        cancel_intent=stored.cancel_intent,
-        finished_at=stored.finished_at,
-        published_at=stored.published_at,
-        exit_code=stored.exit_code,
-        duration_secs=stored.duration_secs,
-        total_cost_usd=stored.total_cost_usd,
-        input_tokens=stored.input_tokens,
-        output_tokens=stored.output_tokens,
-        cache_read_input_tokens=stored.cache_read_input_tokens,
-        cache_creation_input_tokens=stored.cache_creation_input_tokens,
-        reasoning_tokens=stored.reasoning_tokens,
-        cost_is_estimate=stored.cost_is_estimate,
-        error=stored.error,
-        terminal_origin=cast("SpawnOrigin | None", stored.terminal_origin),
-        launch_policy_snapshot=stored.launch_policy_snapshot,
+    return SpawnRecord.model_validate(
+        {**stored.model_dump(exclude={"v", "prompt_length"}), "prompt": prompt}
     )
 
 
@@ -236,7 +129,15 @@ def read_prompt(spawns_dir: Path, spawn_id: str) -> str | None:
 def _read_stored_state(spawns_dir: Path, spawn_id: str) -> StoredSpawnState | None:
     path = _state_path(spawns_dir, spawn_id)
     try:
-        return StoredSpawnState.model_validate_json(path.read_text(encoding="utf-8"))
+        try:
+            return StoredSpawnState.model_validate_json(path.read_text(encoding="utf-8"))
+        except ValidationError as exc:
+            report = SpawnStateQuarantineReport(
+                spawn_id=spawn_id,
+                state_path=path,
+                validation_errors=tuple(exc.errors(include_url=False)),
+            )
+            raise SpawnStateQuarantined(report) from exc
     except FileNotFoundError:
         return None
 
@@ -321,6 +222,8 @@ def scan_spawn_ids(spawns_dir: Path) -> list[str]:
 
 
 __all__ = [
+    "SpawnStateQuarantineReport",
+    "SpawnStateQuarantined",
     "StoredSpawnState",
     "is_safe_spawn_dir_name",
     "read_prompt",
