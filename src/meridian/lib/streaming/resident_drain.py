@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any
 
 import structlog
 
+from meridian.lib.core.domain import SpawnStatus
 from meridian.lib.core.types import SpawnId
 from meridian.lib.harness.connections.liveness import LivenessDecision
 from meridian.lib.harness.semantics import TerminalEventOutcome, TerminalOutcomeCause
@@ -50,7 +51,7 @@ if TYPE_CHECKING:
 logger = structlog.get_logger()
 
 _BACKEND_DEAD_WHILE_AWAITING_DONE = TerminalEventOutcome(
-    status="failed",
+    status=SpawnStatus.FAILED,
     exit_code=1,
     error="backend_dead_while_awaiting_done",
 )
@@ -175,7 +176,7 @@ class _ResidentCompletionProfile:
         if self._resident_health_status() == LivenessDecision.BACKEND_DEAD:
             return _BACKEND_DEAD_WHILE_AWAITING_DONE
         return TerminalEventOutcome(
-            status="failed",
+            status=SpawnStatus.FAILED,
             exit_code=1,
             error="stream_closed_while_awaiting_done",
         )
@@ -268,7 +269,7 @@ class _ResidentCompletionProfile:
                     return ProfileDecision(
                         action="fail",
                         outcome=TerminalEventOutcome(
-                            status="failed",
+                            status=SpawnStatus.FAILED,
                             exit_code=1,
                             error="resident_evidence_unreadable",
                         ),
@@ -287,7 +288,7 @@ class _ResidentCompletionProfile:
             return ProfileDecision(
                 action="cleanup",
                 outcome=TerminalEventOutcome(
-                    status="timed_out",
+                    status=SpawnStatus.TIMED_OUT,
                     exit_code=1,
                     error=error,
                 ),

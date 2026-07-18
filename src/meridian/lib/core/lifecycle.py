@@ -34,6 +34,7 @@ from uuid import UUID
 import psutil
 import structlog
 
+from meridian.lib.core.domain import SpawnStatus
 from meridian.lib.core.spawn_lifecycle import (
     TERMINAL_SPAWN_STATUSES,
     SpawnReservation,
@@ -56,7 +57,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from meridian.lib.core.clock import Clock
-    from meridian.lib.core.domain import SpawnStatus, TokenUsage
+    from meridian.lib.core.domain import TokenUsage
     from meridian.lib.hooks.dispatch import HookDispatcher
     from meridian.lib.state.spawn.model import (
         LaunchMode,
@@ -543,7 +544,7 @@ class SpawnLifecycleService:
         ):
             outcome = self.finalize(
                 spawn_id,
-                "cancelled",
+                SpawnStatus.CANCELLED,
                 exit_code,
                 origin="cancel",
                 duration_secs=duration_secs,

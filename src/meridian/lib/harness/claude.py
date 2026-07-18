@@ -7,7 +7,7 @@ from typing import Any, ClassVar, cast
 from uuid import uuid4
 
 from meridian.lib.core.conversation import Conversation, ConversationTurn, ToolCall
-from meridian.lib.core.domain import TokenUsage
+from meridian.lib.core.domain import SpawnStatus, TokenUsage
 from meridian.lib.core.types import ArtifactKey, HarnessId, SpawnId, TransportId
 from meridian.lib.harness.adapter import (
     CLAUDE_SPAWN_USAGE_VARIANTS,
@@ -605,14 +605,14 @@ def _resolve_claude_terminal(event: RawHarnessEvent) -> TerminalEventOutcome | N
             or stringify_terminal_error(event.payload.get("error"))
             or "claude_result_error"
         )
-        return TerminalEventOutcome(status="failed", exit_code=1, error=error)
+        return TerminalEventOutcome(status=SpawnStatus.FAILED, exit_code=1, error=error)
 
     subtype = str(event.payload.get("subtype", "")).strip().lower()
     terminal_reason = str(event.payload.get("terminal_reason", "")).strip().lower()
     if subtype in {"", "success"} and terminal_reason in {"", "completed"}:
-        return TerminalEventOutcome(status="succeeded", exit_code=0)
+        return TerminalEventOutcome(status=SpawnStatus.SUCCEEDED, exit_code=0)
     if terminal_reason == "completed":
-        return TerminalEventOutcome(status="succeeded", exit_code=0)
+        return TerminalEventOutcome(status=SpawnStatus.SUCCEEDED, exit_code=0)
 
     error = stringify_terminal_error(event.payload.get("result"))
     if subtype not in {"", "success"}:
@@ -621,7 +621,7 @@ def _resolve_claude_terminal(event: RawHarnessEvent) -> TerminalEventOutcome | N
         error = error or f"claude_terminal_{terminal_reason}"
     else:
         error = error or "claude_result_unknown"
-    return TerminalEventOutcome(status="failed", exit_code=1, error=error)
+    return TerminalEventOutcome(status=SpawnStatus.FAILED, exit_code=1, error=error)
 
 
 CLAUDE_SEMANTICS = HarnessSemantics(

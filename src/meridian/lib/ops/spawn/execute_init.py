@@ -162,7 +162,7 @@ def build_spawn_reservation(
     request: SpawnRequest,
     desc: str | None = None,
     work_id: str | None = None,
-    status: SpawnStatus = "running",
+    status: SpawnStatus = SpawnStatus.RUNNING,
     launch_mode: LaunchMode | None = None,
     runner_pid: int | None = None,
     launch_policy_snapshot: LaunchPolicySnapshot | None = None,

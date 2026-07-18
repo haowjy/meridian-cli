@@ -8,6 +8,7 @@ import time
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
 
+from meridian.lib.core.domain import SpawnStatus
 from meridian.lib.core.types import SpawnId
 from meridian.lib.harness.connections.base import RawHarnessEvent
 from meridian.lib.state.history import HarnessHistoryWriter
@@ -252,7 +253,7 @@ class SpawnDrainLoop:
                     and recorded_terminal_outcome.status == "succeeded"
                 ):
                     outcome = DrainOutcome(
-                        status="succeeded",
+                        status=SpawnStatus.SUCCEEDED,
                         exit_code=recorded_terminal_outcome.exit_code,
                         error=recorded_terminal_outcome.error,
                         duration_secs=max(
@@ -265,27 +266,27 @@ class SpawnDrainLoop:
                     )
                 elif drain_cancelled:
                     outcome = DrainOutcome(
-                        status="cancelled",
+                        status=SpawnStatus.CANCELLED,
                         exit_code=1,
                         duration_secs=max(0.0, time.monotonic() - session.started_monotonic),
                     )
                 elif drain_error is not None:
                     outcome = DrainOutcome(
-                        status="failed",
+                        status=SpawnStatus.FAILED,
                         exit_code=1,
                         error=str(drain_error),
                         duration_secs=max(0.0, time.monotonic() - session.started_monotonic),
                     )
                 elif session.cancel_sent:
                     outcome = DrainOutcome(
-                        status="cancelled",
+                        status=SpawnStatus.CANCELLED,
                         exit_code=143,
                         error="cancelled",
                         duration_secs=max(0.0, time.monotonic() - session.started_monotonic),
                     )
                 elif fallback_error is not None and recorded_terminal_outcome is None:
                     outcome = DrainOutcome(
-                        status="failed",
+                        status=SpawnStatus.FAILED,
                         exit_code=1,
                         error=fallback_error,
                         duration_secs=max(0.0, time.monotonic() - session.started_monotonic),
@@ -302,7 +303,7 @@ class SpawnDrainLoop:
                     )
                 else:
                     outcome = DrainOutcome(
-                        status="failed",
+                        status=SpawnStatus.FAILED,
                         exit_code=1,
                         error="connection_closed_without_terminal_event",
                         duration_secs=max(0.0, time.monotonic() - session.started_monotonic),

@@ -11,7 +11,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import ClassVar, cast
 
-from meridian.lib.core.domain import TokenUsage
+from meridian.lib.core.domain import SpawnStatus, TokenUsage
 from meridian.lib.core.types import HarnessId, SpawnId, TransportId
 from meridian.lib.harness.adapter import (
     ApprovalContract,
@@ -562,7 +562,7 @@ def _resolve_opencode_terminal(event: RawHarnessEvent) -> TerminalEventOutcome |
         else stringify_terminal_error(event.payload.get("error"))
     )
     return TerminalEventOutcome(
-        status="failed",
+        status=SpawnStatus.FAILED,
         exit_code=1,
         error=error or "opencode_session_error",
     )

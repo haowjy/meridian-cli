@@ -9,10 +9,11 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, cast
 
+from meridian.lib.core.domain import SpawnStatus
 from meridian.lib.core.spawn_lifecycle import TERMINAL_SPAWN_STATUSES, validate_transition
 
 if TYPE_CHECKING:
-    from meridian.lib.core.domain import SpawnStatus, TokenUsage
+    from meridian.lib.core.domain import TokenUsage
     from meridian.lib.state.spawn.model import (
         CancelIntent,
         LaunchMode,
@@ -33,9 +34,9 @@ def apply_mark_running(
     """Return ``record`` with running status and optional launch metadata."""
 
     if validate_status_transition and record.status not in {"unknown", "running"}:
-        validate_transition(cast("SpawnStatus", record.status), "running")
+        validate_transition(cast("SpawnStatus", record.status), SpawnStatus.RUNNING)
 
-    updates: dict[str, object] = {"status": "running"}
+    updates: dict[str, object] = {"status": SpawnStatus.RUNNING}
     if launch_mode is not None:
         updates["launch_mode"] = launch_mode
     if worker_pid is not None:
@@ -105,8 +106,8 @@ def apply_cancel_intent(
 def apply_mark_finalizing(record: SpawnRecord) -> SpawnRecord:
     """Return ``record`` after validating and applying running -> finalizing."""
 
-    validate_transition(cast("SpawnStatus", record.status), "finalizing")
-    return record.model_copy(update={"status": "finalizing"})
+    validate_transition(cast("SpawnStatus", record.status), SpawnStatus.FINALIZING)
+    return record.model_copy(update={"status": SpawnStatus.FINALIZING})
 
 
 def apply_finalize(
@@ -133,7 +134,7 @@ def apply_finalize(
 
     return record.model_copy(
         update={
-            "status": status,
+            "status": SpawnStatus(status),
             "exit_code": exit_code,
             "finished_at": finished_at,
             "published_at": published_at,

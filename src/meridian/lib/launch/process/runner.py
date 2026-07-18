@@ -17,7 +17,7 @@ from pydantic import BaseModel, ConfigDict
 
 from meridian.lib.bootstrap.services import build_spawn_application_service_from_roots
 from meridian.lib.catalog.model_aliases import MarsResultCache
-from meridian.lib.core.domain import TokenUsage
+from meridian.lib.core.domain import SpawnStatus, TokenUsage
 from meridian.lib.core.spawn_lifecycle import (
     ExecutionTerminalFacts,
     SpawnReservation,
@@ -947,7 +947,7 @@ def run_harness_process(
                             launch_mode=FOREGROUND_LAUNCH_MODE,
                             work_id=attached_work_id,
                             runner_pid=os.getpid(),
-                            status="queued",
+                            status=SpawnStatus.QUEUED,
                         )
                     )
                 )

@@ -71,7 +71,7 @@ class SignalCanceller:
                 return _outcome_from_record(terminal, already_terminal=True)
             latest = spawn_store.get_spawn(self._runtime_root, spawn_id) or record
             return CancelOutcome(
-                status="finalizing",
+                status=SpawnStatus.FINALIZING,
                 origin="cancel",
                 exit_code=_exit_code_or_default(latest),
                 finalizing=True,
@@ -108,7 +108,7 @@ class SignalCanceller:
                 return _outcome_from_record(terminal)
             latest = spawn_store.get_spawn(self._runtime_root, spawn_id) or latest
             return CancelOutcome(
-                status="finalizing",
+                status=SpawnStatus.FINALIZING,
                 origin="cancel",
                 exit_code=_exit_code_or_default(latest),
                 finalizing=True,
@@ -122,7 +122,7 @@ class SignalCanceller:
 
         latest = spawn_store.get_spawn(self._runtime_root, spawn_id) or record
         return CancelOutcome(
-            status="finalizing",
+            status=SpawnStatus.FINALIZING,
             origin="cancel",
             exit_code=_exit_code_or_default(latest),
             finalizing=True,
@@ -157,7 +157,7 @@ class SignalCanceller:
         cancel_exit_code = record.cancel_intent.exit_code if record.cancel_intent else 130
         await self._manager.stop_spawn(
             spawn_id,
-            status="cancelled",
+            status=SpawnStatus.CANCELLED,
             exit_code=cancel_exit_code,
             error="cancelled",
         )
@@ -167,7 +167,7 @@ class SignalCanceller:
 
         latest = spawn_store.get_spawn(self._runtime_root, spawn_id) or record
         return CancelOutcome(
-            status="finalizing",
+            status=SpawnStatus.FINALIZING,
             origin="cancel",
             exit_code=_exit_code_or_default(latest),
             finalizing=True,
@@ -242,12 +242,14 @@ class SignalCanceller:
         if status_code == 503:
             if latest is not None:
                 return CancelOutcome(
-                    status="finalizing",
+                    status=SpawnStatus.FINALIZING,
                     origin="cancel",
                     exit_code=_exit_code_or_default(latest),
                     finalizing=True,
                 )
-            return CancelOutcome(status="finalizing", origin="cancel", exit_code=1, finalizing=True)
+            return CancelOutcome(
+                status=SpawnStatus.FINALIZING, origin="cancel", exit_code=1, finalizing=True
+            )
 
         if status_code == 404:
             raise ValueError(f"Spawn '{spawn_id}' not found")

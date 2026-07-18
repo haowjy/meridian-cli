@@ -271,7 +271,7 @@ def start_spawn(
     runner_pid: int | None = None,
     runner_created_at_epoch: float | None = None,
     launch_policy_snapshot: LaunchPolicySnapshot | None = None,
-    status: SpawnStatus = "running",
+    status: SpawnStatus = SpawnStatus.RUNNING,
     started_at: str | None = None,
     clock: Clock | None = None,
 ) -> SpawnId:
@@ -348,7 +348,7 @@ def start_spawn(
             worker_pid=worker_pid,
             runner_pid=runner_pid,
             runner_created_at_epoch=resolved_runner_created_at_epoch,
-            status=status,
+            status=SpawnStatus(status),
             prompt=prompt,
             started_at=started,
             last_attempt_exited_at=None,
@@ -573,7 +573,7 @@ def record_runner_exit(
             raise _RunnerExitSkipped(current)
         return apply_runner_exit(
             current,
-            status=status,
+            status=SpawnStatus(status),
             exit_code=exit_code,
             error=error,
             exited_at=resolved_exited_at,

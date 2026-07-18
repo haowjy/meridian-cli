@@ -601,7 +601,7 @@ class SpawnManager:
         self,
         spawn_id: SpawnId,
         *,
-        status: SpawnStatus = "cancelled",
+        status: SpawnStatus = SpawnStatus.CANCELLED,
         exit_code: int = 1,
         error: str | None = None,
     ) -> DrainOutcome | None:
@@ -861,7 +861,7 @@ class SpawnManager:
     async def shutdown(
         self,
         *,
-        status: SpawnStatus = "cancelled",
+        status: SpawnStatus = SpawnStatus.CANCELLED,
         exit_code: int = 1,
         error: str | None = None,
     ) -> None:

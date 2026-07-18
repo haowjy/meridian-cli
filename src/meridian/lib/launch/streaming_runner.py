@@ -577,7 +577,9 @@ async def _report_watchdog(
     if completion_event.is_set():
         return False
 
-    await manager.stop_spawn(spawn_id, status="cancelled", exit_code=1, error="report_watchdog")
+    await manager.stop_spawn(
+        spawn_id, status=SpawnStatus.CANCELLED, exit_code=1, error="report_watchdog"
+    )
     logger.info(
         "Report watchdog stopped active streaming connection after grace timeout.",
         spawn_id=str(spawn_id),
@@ -605,7 +607,9 @@ async def _inactivity_watchdog(
         await asyncio.sleep(min(poll_seconds, max(0.0, timeout_seconds - idle)))
     if completion_event.is_set():
         return False
-    await manager.stop_spawn(spawn_id, status="failed", exit_code=1, error="inactivity_stall")
+    await manager.stop_spawn(
+        spawn_id, status=SpawnStatus.FAILED, exit_code=1, error="inactivity_stall"
+    )
     logger.info(
         "Inactivity watchdog stopped stalled spawn after silence.",
         spawn_id=str(spawn_id),
@@ -712,9 +716,7 @@ async def run_streaming_spawn(
             else None
         )
         primary_scope_tracker = (
-            PrimaryEventScopeTracker(
-                primary_event_scope=connection.primary_event_scope
-            )
+            PrimaryEventScopeTracker(primary_event_scope=connection.primary_event_scope)
             if terminal_event_capture is not None
             else None
         )
@@ -747,7 +749,7 @@ async def run_streaming_spawn(
                 raise RuntimeError("terminal decision requires an exit code")
             await manager.stop_spawn(
                 spawn_id,
-                status=decision.synthetic_status or "cancelled",
+                status=decision.synthetic_status or SpawnStatus.CANCELLED,
                 exit_code=stop_exit_code,
                 error=decision.synthetic_error,
             )
@@ -782,7 +784,7 @@ async def run_streaming_spawn(
             if signal_cleanup is not None:
                 signal_cleanup()
             with suppress(Exception):
-                await manager.shutdown(status="cancelled", exit_code=1, error="shutdown")
+                await manager.shutdown(status=SpawnStatus.CANCELLED, exit_code=1, error="shutdown")
 
 
 async def _run_streaming_attempt(
@@ -845,9 +847,7 @@ async def _run_streaming_attempt(
             else None
         )
         primary_scope_tracker = (
-            PrimaryEventScopeTracker(
-                primary_event_scope=connection.primary_event_scope
-            )
+            PrimaryEventScopeTracker(primary_event_scope=connection.primary_event_scope)
             if terminal_event_capture is not None
             else None
         )
@@ -915,7 +915,7 @@ async def _run_streaming_attempt(
         if decision.trigger == TriggerKind.BUDGET:
             await manager.stop_spawn(
                 run.spawn_id,
-                status="failed",
+                status=SpawnStatus.FAILED,
                 exit_code=DEFAULT_INFRA_EXIT_CODE,
                 error="budget_exceeded",
             )
@@ -924,7 +924,7 @@ async def _run_streaming_attempt(
             timed_out = True
             await manager.stop_spawn(
                 run.spawn_id,
-                status="timed_out",
+                status=SpawnStatus.TIMED_OUT,
                 exit_code=3,
                 error="timeout",
             )
@@ -942,7 +942,7 @@ async def _run_streaming_attempt(
                 raise RuntimeError("terminal decision requires an exit code")
             await manager.stop_spawn(
                 run.spawn_id,
-                status=decision.synthetic_status or "cancelled",
+                status=decision.synthetic_status or SpawnStatus.CANCELLED,
                 exit_code=stop_exit_code,
                 error=decision.synthetic_error,
             )
@@ -952,7 +952,7 @@ async def _run_streaming_attempt(
         drain_outcome = await completion_task
         if drain_outcome is not None and terminal_outcome is None:
             if timed_out and drain_outcome.status != "succeeded":
-                authoritative_terminal_status = "timed_out"
+                authoritative_terminal_status = SpawnStatus.TIMED_OUT
                 drain_exit_code = 3
                 drain_error = "timeout"
             else:
@@ -1458,9 +1458,7 @@ async def execute_with_streaming(
                     # (success) or we finalize as "stalled". Never fall through to the
                     # generic retry classifier — re-running a stalled cursor turn would
                     # redo already-completed work.
-                    exit_override, failure_override = _inactivity_terminal_outcome(
-                        extraction
-                    )
+                    exit_override, failure_override = _inactivity_terminal_outcome(extraction)
                     if exit_override is not None:
                         conclusion.exit_code = exit_override
                     conclusion.failure_reason = failure_override
@@ -1553,8 +1551,7 @@ async def execute_with_streaming(
                     )
                     if retry_backoff_seconds > 0:
                         cancelled_during_backoff = await _sleep_retry_backoff_or_cancel(
-                            delay_seconds=retry_backoff_seconds
-                            * conclusion.retries_attempted,
+                            delay_seconds=retry_backoff_seconds * conclusion.retries_attempted,
                             shutdown_event=shutdown_event,
                             runtime_root=runtime_root,
                             spawn_id=run.spawn_id,
@@ -1678,7 +1675,7 @@ async def execute_with_streaming(
             signal_cleanup()
         if manager is not None:
             with suppress(Exception):
-                await manager.shutdown(status="cancelled", exit_code=1, error="shutdown")
+                await manager.shutdown(status=SpawnStatus.CANCELLED, exit_code=1, error="shutdown")
         try:
             duration_seconds = resolved_clock.monotonic() - started_at
         except Exception:

@@ -88,7 +88,7 @@ async def arbitrate_terminal(
             trigger=TriggerKind.BUDGET,
             terminal_outcome=None,
             stop_required=True,
-            synthetic_status="failed",
+            synthetic_status=SpawnStatus.FAILED,
             synthetic_exit_code=None,
             synthetic_error="budget_exceeded",
         )
@@ -102,7 +102,7 @@ async def arbitrate_terminal(
             trigger=TriggerKind.TIMEOUT,
             terminal_outcome=None,
             stop_required=True,
-            synthetic_status="failed",
+            synthetic_status=SpawnStatus.FAILED,
             synthetic_exit_code=3,
             synthetic_error="timeout",
         )
@@ -143,7 +143,7 @@ async def arbitrate_terminal(
             trigger=TriggerKind.SIGNAL,
             terminal_outcome=None,
             stop_required=True,
-            synthetic_status="cancelled",
+            synthetic_status=SpawnStatus.CANCELLED,
             synthetic_exit_code=None,
             synthetic_error="cancelled",
         )

@@ -6,7 +6,7 @@ import shutil
 from pathlib import Path
 from typing import ClassVar
 
-from meridian.lib.core.domain import TokenUsage
+from meridian.lib.core.domain import SpawnStatus, TokenUsage
 from meridian.lib.core.types import HarnessId, SpawnId, TransportId
 from meridian.lib.harness.adapter import (
     ApprovalContract,
@@ -211,13 +211,13 @@ def _resolve_cursor_terminal(event: RawHarnessEvent) -> TerminalEventOutcome | N
             or stringify_terminal_error(event.payload.get("error"))
             or "cursor_result_error"
         )
-        return TerminalEventOutcome(status="failed", exit_code=1, error=error)
+        return TerminalEventOutcome(status=SpawnStatus.FAILED, exit_code=1, error=error)
     subtype = str(event.payload.get("subtype", "")).strip().lower()
     if subtype in {"", "success"}:
-        return TerminalEventOutcome(status="succeeded", exit_code=0)
+        return TerminalEventOutcome(status=SpawnStatus.SUCCEEDED, exit_code=0)
     error = stringify_terminal_error(event.payload.get("result"))
     return TerminalEventOutcome(
-        status="failed",
+        status=SpawnStatus.FAILED,
         exit_code=1,
         error=error or f"cursor_result_{subtype}",
     )

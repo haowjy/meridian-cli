@@ -50,7 +50,7 @@ class SpawnReservation:
     worker_pid: int | None = None
     runner_pid: int | None = None
     launch_policy_snapshot: LaunchPolicySnapshot | None = None
-    status: SpawnStatus = "running"
+    status: SpawnStatus = SpawnStatus.RUNNING
     started_at: str | None = None
     clock: Clock | None = None
 
@@ -205,7 +205,7 @@ def coerce_spawn_status(status: str) -> SpawnStatus:
 
     if status in ALL_SPAWN_STATUSES:
         return cast("SpawnStatus", status)
-    return "failed"
+    return SpawnStatus.FAILED
 
 
 def validate_transition(from_status: SpawnStatus, to_status: SpawnStatus) -> None:
@@ -263,15 +263,15 @@ def resolve_execution_terminal_state(
     if terminal_status is not None and terminal_status != "succeeded":
         return terminal_status, exit_code, failure_reason
     if durable_report_completion:
-        return "succeeded", 0, None
+        return SpawnStatus.SUCCEEDED, 0, None
     if terminal_status is not None:
         return terminal_status, exit_code, failure_reason
     if cancelled:
         resolved_exit_code = exit_code if exit_code != 0 else 130
-        return "cancelled", resolved_exit_code, failure_reason
+        return SpawnStatus.CANCELLED, resolved_exit_code, failure_reason
     if exit_code == 0:
-        return "succeeded", 0, failure_reason
-    return "failed", exit_code, failure_reason
+        return SpawnStatus.SUCCEEDED, 0, failure_reason
+    return SpawnStatus.FAILED, exit_code, failure_reason
 
 
 def resolve_execution_terminal_outcome(
@@ -303,10 +303,10 @@ def resolve_completion_cancel_precedence(
     """Resolve the shared durable-completion-vs-late-cancel precedence rule."""
 
     if durable_report_completion:
-        return ExecutionTerminalOutcome(status="succeeded", exit_code=0, error=None)
+        return ExecutionTerminalOutcome(status=SpawnStatus.SUCCEEDED, exit_code=0, error=None)
     if cancel_requested:
         return ExecutionTerminalOutcome(
-            status="cancelled",
+            status=SpawnStatus.CANCELLED,
             exit_code=cancel_exit_code,
             error=cancel_error,
         )
@@ -321,5 +321,5 @@ def resolve_reconciled_terminal_state(
     """Resolve the terminal state produced by read-path reconciliation."""
 
     if durable_report_completion:
-        return "succeeded", 0, None
-    return "failed", 1, fallback_error
+        return SpawnStatus.SUCCEEDED, 0, None
+    return SpawnStatus.FAILED, 1, fallback_error

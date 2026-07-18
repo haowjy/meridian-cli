@@ -14,6 +14,7 @@ import structlog
 from meridian.lib.bootstrap.services import build_spawn_lifecycle_service_from_roots
 from meridian.lib.config.project_paths import resolve_project_config_paths
 from meridian.lib.core.context import RuntimeContext
+from meridian.lib.core.domain import SpawnStatus
 from meridian.lib.launch.context import PreparedLaunchSurface
 from meridian.lib.launch.cwd import resolve_task_cwd
 from meridian.lib.launch.request import LaunchArgvIntent, SpawnRequest
@@ -233,7 +234,7 @@ def _reserve_then_prepare(
         request=request,
         desc=payload.desc,
         work_id=resolve_spawn_work_id(payload, request, ctx=resolved_context),
-        status="queued",
+        status=SpawnStatus.QUEUED,
         launch_mode=launch_mode,
         runner_pid=runner_pid,
         launch_policy_snapshot=request.launch_policy_snapshot,

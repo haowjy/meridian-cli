@@ -159,7 +159,7 @@ class PiCompletionProfile:
             return ProfileDecision(
                 action="fail",
                 outcome=_terminal_outcome(
-                    status="failed",
+                    status=SpawnStatus.FAILED,
                     exit_code=1,
                     error=lifecycle_failure.detail or lifecycle_failure.code,
                 ),
@@ -258,7 +258,7 @@ class PiCompletionProfile:
             )
         ):
             recorded_outcome = _terminal_outcome(
-                status="failed",
+                status=SpawnStatus.FAILED,
                 exit_code=1,
                 error="pi_process_exited_with_tracked_children",
             )
@@ -426,7 +426,7 @@ class PiCompletionProfile:
             return ProfileDecision(
                 action="cleanup",
                 outcome=_terminal_outcome(
-                    status="failed",
+                    status=SpawnStatus.FAILED,
                     exit_code=1,
                     error=_pi_child_wave_timeout_error(),
                 ),
@@ -454,7 +454,7 @@ class PiCompletionProfile:
             return ProfileDecision(
                 action="fail",
                 outcome=_terminal_outcome(
-                    status="failed",
+                    status=SpawnStatus.FAILED,
                     exit_code=1,
                     error="pi_evidence_unreadable",
                 ),

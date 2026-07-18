@@ -178,7 +178,7 @@ class PrepareSpawnRequest:
     work_id: str | None = None
     launch_mode: LaunchMode | None = None
     runner_pid: int | None = None
-    initial_status: SpawnStatus = "queued"
+    initial_status: SpawnStatus = SpawnStatus.QUEUED
     debug_tracer: DebugTracer | None = None
 
 
@@ -484,7 +484,7 @@ class SpawnApplicationService:
         work_id: str | None = None,
         launch_mode: LaunchMode | None = None,
         runner_pid: int | None = None,
-        initial_status: SpawnStatus = "queued",
+        initial_status: SpawnStatus = SpawnStatus.QUEUED,
         debug_tracer: DebugTracer | None = None,
     ) -> PreparedSpawn:
         """Compatibility wrapper over the typed ``prepare`` request API."""

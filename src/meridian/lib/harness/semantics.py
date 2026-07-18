@@ -107,7 +107,7 @@ def connection_closed_outcome(
     """Build the shared outcome for a Meridian synthetic connection close."""
 
     error = stringify_terminal_error(event.payload.get("message")) or "connection_closed"
-    return TerminalEventOutcome(status="failed", exit_code=1, error=error, cause=cause)
+    return TerminalEventOutcome(status=SpawnStatus.FAILED, exit_code=1, error=error, cause=cause)
 
 
 def codex_primary_event_scope(thread_id: str | None) -> PrimaryEventScope | None:
@@ -153,8 +153,7 @@ class HarnessSemantics:
             raise ValueError("HarnessSemantics event classes must not be empty")
         if (
             any(
-                SemanticClass.TERMINAL_PAYLOAD in classes
-                for classes in self.event_classes.values()
+                SemanticClass.TERMINAL_PAYLOAD in classes for classes in self.event_classes.values()
             )
             and self.payload_resolver is None
         ):
@@ -192,7 +191,9 @@ class HarnessSemantics:
             normalized.append(SignalClearedSemanticEvent())
         if SemanticClass.TERMINAL_SUCCESS in classes:
             normalized.append(
-                TerminalSemanticEvent(TerminalEventOutcome(status="succeeded", exit_code=0))
+                TerminalSemanticEvent(
+                    TerminalEventOutcome(status=SpawnStatus.SUCCEEDED, exit_code=0)
+                )
             )
         if SemanticClass.TERMINAL_PAYLOAD in classes:
             if self.payload_resolver is None:
@@ -307,9 +308,9 @@ class PrimaryEventScopeTracker:
         from meridian.lib.harness.bundle import get_harness_bundle
 
         ensure_bootstrap()
-        self.primary_event_scope = get_harness_bundle(
-            harness_id
-        ).semantics.observe_primary_scope(event)
+        self.primary_event_scope = get_harness_bundle(harness_id).semantics.observe_primary_scope(
+            event
+        )
 
     def terminal_outcome(self, event: RawHarnessEvent) -> TerminalEventOutcome | None:
         self.observe(event)

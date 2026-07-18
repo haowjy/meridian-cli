@@ -89,7 +89,7 @@ async def streaming_serve(
         harness_registry=get_default_harness_registry(),
         kind="streaming",
         launch_mode="foreground",
-        initial_status="running",
+        initial_status=SpawnStatus.RUNNING,
     )
     spawn_id = prepared.spawn_id
     connection_config = prepared.connection_config
@@ -115,7 +115,7 @@ async def streaming_serve(
     def _report_control_endpoint(endpoint: str) -> None:
         print(f"Control endpoint: {endpoint}")
 
-    outcome_status: SpawnStatus = "failed"
+    outcome_status: SpawnStatus = SpawnStatus.FAILED
     outcome_exit_code = 1
     failure_message: str | None = None
     lifecycle_service = build_spawn_lifecycle_service_from_roots(project_root, runtime_root)

@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import ClassVar, cast
 
 from meridian.lib.config.settings import resolve_pi_harness_profile
-from meridian.lib.core.domain import TokenUsage
+from meridian.lib.core.domain import SpawnStatus, TokenUsage
 from meridian.lib.core.types import HarnessId, SpawnId, TransportId
 from meridian.lib.harness.adapter import (
     ApprovalContract,
@@ -193,9 +193,7 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         else:
             control_root = (run.control_root or "").strip()
             pi_profile = resolve_pi_harness_profile(
-                project_root=Path(control_root).expanduser().resolve()
-                if control_root
-                else None,
+                project_root=Path(control_root).expanduser().resolve() if control_root else None,
             )
         meridian_entrypoints = resolve_pi_extension_entrypoints(
             PiExtensionLaunchProfile(
@@ -444,7 +442,7 @@ def _resolve_pi_terminal(event: RawHarnessEvent) -> TerminalEventOutcome | None:
         is_inject_response = event.payload.get("meridian_control_action") == "inject"
         if command == "prompt" and event.payload.get("success") is False and not is_inject_response:
             error = stringify_terminal_error(event.payload.get("error")) or "pi_prompt_rejected"
-            return TerminalEventOutcome(status="failed", exit_code=1, error=error)
+            return TerminalEventOutcome(status=SpawnStatus.FAILED, exit_code=1, error=error)
         return None
 
     messages_obj = event.payload.get("messages")
@@ -457,13 +455,15 @@ def _resolve_pi_terminal(event: RawHarnessEvent) -> TerminalEventOutcome | None:
                 continue
             stop_reason = str(message.get("stopReason", "")).strip().lower()
             if stop_reason == "error":
-                return TerminalEventOutcome(status="failed", exit_code=1, error="pi_stop_error")
+                return TerminalEventOutcome(
+                    status=SpawnStatus.FAILED, exit_code=1, error="pi_stop_error"
+                )
             if stop_reason in {"abort", "aborted", "cancel", "cancelled", "canceled"}:
                 return TerminalEventOutcome(
-                    status="cancelled", exit_code=130, error="cancelled"
+                    status=SpawnStatus.CANCELLED, exit_code=130, error="cancelled"
                 )
             break
-    return TerminalEventOutcome(status="succeeded", exit_code=0)
+    return TerminalEventOutcome(status=SpawnStatus.SUCCEEDED, exit_code=0)
 
 
 PI_SEMANTICS = HarnessSemantics(

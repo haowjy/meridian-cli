@@ -199,7 +199,7 @@ def _in_post_runner_exit_finalization_grace(record: SpawnRecord, now: float) -> 
 def _finalize_from_runner_exit_decision(record: SpawnRecord) -> FinalizeFromRunnerExit:
     status = record.runner_exit_status
     if status is None or not is_terminal_spawn_status(status):
-        return FinalizeFromRunnerExit(status="failed", exit_code=1, error="orphan_run")
+        return FinalizeFromRunnerExit(status=SpawnStatus.FAILED, exit_code=1, error="orphan_run")
     if record.runner_exit_code is not None:
         exit_code = record.runner_exit_code
     elif status == "succeeded":
@@ -209,7 +209,7 @@ def _finalize_from_runner_exit_decision(record: SpawnRecord) -> FinalizeFromRunn
     else:
         exit_code = 1
     return FinalizeFromRunnerExit(
-        status=status,
+        status=SpawnStatus(status),
         exit_code=exit_code,
         error=record.runner_exit_error,
     )
@@ -533,7 +533,7 @@ def _finalize_failed(
         project_root,
         runtime_root,
         record,
-        status="failed",
+        status=SpawnStatus.FAILED,
         exit_code=exit_code,
         error=error,
         reason=error,
@@ -653,7 +653,7 @@ def peek_reconciled_active_spawn(
         )
     return _record_with_terminal_state(
         record,
-        status="failed",
+        status=SpawnStatus.FAILED,
         exit_code=decision.exit_code,
         error=decision.error,
     )
