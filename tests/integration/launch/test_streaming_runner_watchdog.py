@@ -19,6 +19,7 @@ from meridian.lib.launch.extract import enrich_finalize, reset_finalize_attempt_
 from meridian.lib.state import spawn_store
 from meridian.lib.state.artifact_store import LocalStore, make_artifact_key
 from meridian.lib.state.paths import resolve_project_runtime_root
+from meridian.lib.state.spawn.repository import SpawnStateQuarantined
 from meridian.lib.streaming import spawn_manager as spawn_manager_module
 from tests.integration.launch.streaming_runner_support import (
     _build_request,
@@ -227,11 +228,15 @@ def test_retry_blocked_after_pi_child_started_detects_disk_child_state(
     tmp_path: Path,
 ) -> None:
     runtime_root = tmp_path / "runtime"
-    state_path = runtime_root / "spawns" / "p2" / "state.json"
-    state_path.parent.mkdir(parents=True, exist_ok=True)
-    state_path.write_text(
-        json.dumps({"id": "p2", "parent_id": "p1", "status": "running"}),
-        encoding="utf-8",
+    spawn_store.start_spawn(
+        runtime_root,
+        spawn_id="p2",
+        chat_id="c2",
+        parent_id="p1",
+        model="gpt-5.4",
+        agent="coder",
+        harness="pi",
+        prompt="child",
     )
 
     assert streaming_runner_module._retry_blocked_after_pi_child_started(
@@ -239,6 +244,33 @@ def test_retry_blocked_after_pi_child_started_detects_disk_child_state(
         runtime_root=runtime_root,
         current_spawn_id=SpawnId("p1"),
     )
+
+
+def test_retry_gate_surfaces_quarantined_child_state(tmp_path: Path) -> None:
+    runtime_root = tmp_path / "runtime"
+    state_path = runtime_root / "spawns" / "p2" / "state.json"
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    state_path.write_text(
+        json.dumps(
+            {
+                "v": 2,
+                "id": "p2",
+                "parent_id": "p1",
+                "status": ["running"],
+                "exit_code": 0,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(SpawnStateQuarantined) as quarantined:
+        streaming_runner_module._retry_blocked_after_pi_child_started(
+            harness_id=HarnessId.PI,
+            runtime_root=runtime_root,
+            current_spawn_id=SpawnId("p1"),
+        )
+
+    assert quarantined.value.report.spawn_id == "p2"
 
 
 @pytest.mark.parametrize("entry_name", [".staging", ".p2", "spawn-stage", "p²"])

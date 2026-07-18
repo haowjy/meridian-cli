@@ -13,7 +13,7 @@ from collections.abc import Callable
 from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any
 
 import structlog
 
@@ -101,6 +101,7 @@ from meridian.lib.state.spawn.model import (
     FOREGROUND_LAUNCH_MODE,
     LaunchMode,
 )
+from meridian.lib.state.spawn.repository import read_state, scan_spawn_ids
 from meridian.lib.streaming.spawn_manager import DrainOutcome, SpawnManager
 from meridian.lib.utils.time import minutes_to_seconds
 
@@ -400,24 +401,11 @@ def _retry_blocked_after_pi_child_started(
     spawns_dir = runtime_root / "spawns"
     if not spawns_dir.is_dir():
         return False
-    for child in spawns_dir.iterdir():
-        if (
-            child.name.startswith(".")
-            or not spawn_store.is_spawn_id_shape(child.name)
-            or not child.is_dir()
-        ):
+    for child_id in scan_spawn_ids(spawns_dir):
+        if not spawn_store.is_spawn_id_shape(child_id):
             continue
-        state_path = child / "state.json"
-        if not state_path.is_file():
-            continue
-        try:
-            data = json.loads(state_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            continue
-        if not isinstance(data, dict):
-            continue
-        state = cast("dict[str, object]", data)
-        if state.get("parent_id") == str(current_spawn_id):
+        record = read_state(spawns_dir, child_id, include_prompt=False)
+        if record is not None and record.parent_id == str(current_spawn_id):
             return True
     return False
 
