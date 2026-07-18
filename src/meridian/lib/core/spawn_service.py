@@ -976,7 +976,6 @@ class SpawnApplicationService:
         desc: str | None = None,
         work_id: str | None = None,
         harness_session_id: str | None = None,
-        error: str | None = None,
     ) -> None:
         """Update spawn metadata and emit spawn.updated.
 
@@ -996,7 +995,6 @@ class SpawnApplicationService:
                 desc,
                 work_id,
                 harness_session_id,
-                error,
             )
         ):
             return
@@ -1010,7 +1008,6 @@ class SpawnApplicationService:
             desc=desc,
             work_id=work_id,
             harness_session_id=harness_session_id,
-            error=error,
         )
 
 

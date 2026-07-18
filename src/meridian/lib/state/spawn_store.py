@@ -418,7 +418,6 @@ def update_spawn(
     task_cwd: str | None = None,
     execution_cwd: str | None = None,
     claude_config_dir: str | None = None,
-    error: str | None = None,
     desc: str | None = None,
     work_id: str | None = None,
     launch_policy_snapshot: LaunchPolicySnapshot | None = None,
@@ -461,8 +460,6 @@ def update_spawn(
             updates["execution_cwd"] = execution_cwd
         if claude_config_dir is not None:
             updates["claude_config_dir"] = claude_config_dir
-        if error is not None:
-            updates["error"] = error
         if desc is not None:
             updates["desc"] = desc
         if work_id is not None:
@@ -506,7 +503,6 @@ def update_spawn(
                 "task_cwd": task_cwd,
                 "execution_cwd": execution_cwd,
                 "claude_config_dir": claude_config_dir,
-                "error": error,
                 "desc": desc,
                 "work_id": work_id,
             },
