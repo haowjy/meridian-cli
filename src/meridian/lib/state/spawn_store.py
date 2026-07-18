@@ -54,6 +54,7 @@ from meridian.lib.state.spawn.model import (
     TerminalSpawnStatus as TerminalSpawnStatus,
 )
 from meridian.lib.state.spawn.repository import (
+    Decline,
     SpawnStateQuarantined,
     SpawnStateQuarantineReport,
     record_to_stored_state,
@@ -561,13 +562,9 @@ def record_runner_exit(
     paths = RuntimePaths.from_root_dir(runtime_root)
     resolved_exited_at = exited_at or resolved_clock.utc_now_iso()
 
-    class _RunnerExitSkipped(Exception):
-        def __init__(self, snapshot: SpawnRecord | None) -> None:
-            self.snapshot = snapshot
-
-    def merge_exit(current: SpawnRecord) -> SpawnRecord:
+    def merge_exit(current: SpawnRecord) -> SpawnRecord | Decline:
         if not is_active_spawn_status(current.status):
-            raise _RunnerExitSkipped(current)
+            return Decline("spawn is not active")
         return apply_runner_exit(
             current,
             status=status,
@@ -579,15 +576,16 @@ def record_runner_exit(
     if _read_state(paths.spawns_dir, str(spawn_id)) is None:
         return None
     try:
-        return _write_state_locked(
+        outcome = _write_state_locked(
             paths.spawns_dir,
             str(spawn_id),
             merge_exit,
-        ).snapshot
+        )
     except FileNotFoundError:
         return None
-    except _RunnerExitSkipped:
+    if not outcome.wrote:
         return None
+    return outcome.snapshot
 
 
 def record_cancel_intent(
@@ -614,23 +612,18 @@ def record_cancel_intent(
     )
     paths = RuntimePaths.from_root_dir(runtime_root)
 
-    class _CancelIntentSkipped(Exception):
-        def __init__(self, snapshot: SpawnRecord) -> None:
-            self.snapshot = snapshot
-
-    def merge_intent(current: SpawnRecord) -> SpawnRecord:
+    def merge_intent(current: SpawnRecord) -> SpawnRecord | Decline:
         if not is_active_spawn_status(current.status):
-            raise _CancelIntentSkipped(current)
+            return Decline("spawn is not active")
         return apply_cancel_intent(current, intent=intent)
 
     if _read_state(paths.spawns_dir, str(spawn_id)) is None:
         return None
     try:
-        return _write_state_locked(paths.spawns_dir, str(spawn_id), merge_intent).snapshot
+        outcome = _write_state_locked(paths.spawns_dir, str(spawn_id), merge_intent)
     except FileNotFoundError:
         return None
-    except _CancelIntentSkipped as exc:
-        return exc.snapshot
+    return outcome.snapshot
 
 
 def finalize_spawn(
@@ -743,22 +736,18 @@ def mark_finalizing_with_snapshot(
 
     paths = RuntimePaths.from_root_dir(runtime_root)
 
-    class _NoTransition(Exception):
-        def __init__(self, snapshot: SpawnRecord | None) -> None:
-            self.snapshot = snapshot
-
-    def transition(current: SpawnRecord) -> SpawnRecord:
+    def transition(current: SpawnRecord) -> SpawnRecord | Decline:
         if current.status != "running":
-            raise _NoTransition(current)
+            return Decline("spawn is not running")
         return apply_mark_finalizing(current)
 
     if _read_state(paths.spawns_dir, str(spawn_id)) is None:
         return False, None
     try:
         outcome = _write_state_locked(paths.spawns_dir, str(spawn_id), transition)
-    except _NoTransition as exc:
-        return False, exc.snapshot
-    return True, outcome.snapshot
+    except FileNotFoundError:
+        return False, None
+    return outcome.wrote, outcome.snapshot
 
 
 def mark_spawn_running(
@@ -794,35 +783,34 @@ def mark_spawn_running_with_snapshot(
 
     paths = RuntimePaths.from_root_dir(runtime_root)
 
-    changed = False
     resolved_runner_created_at_epoch = runner_created_at_epoch
     if runner_pid is not None and resolved_runner_created_at_epoch is None:
         resolved_runner_created_at_epoch = _runner_created_at_epoch_for_pid(runner_pid)
 
-    class _NoTransition(Exception):
-        def __init__(self, snapshot: SpawnRecord) -> None:
-            self.snapshot = snapshot
+    class MarkRunningMutation:
+        """Apply launch metadata while retaining lifecycle transition framing."""
 
-    def merge(current: SpawnRecord) -> SpawnRecord:
-        nonlocal changed
-        if not is_active_spawn_status(current.status):
-            raise _NoTransition(current)
-        changed = current.status != "running"
-        return apply_mark_running(
-            current,
-            launch_mode=launch_mode,
-            worker_pid=worker_pid,
-            runner_pid=runner_pid,
-            runner_created_at_epoch=resolved_runner_created_at_epoch,
-        )
+        transitioned = False
+
+        def __call__(self, current: SpawnRecord) -> SpawnRecord | Decline:
+            if not is_active_spawn_status(current.status):
+                return Decline("spawn is not active")
+            self.transitioned = current.status != "running"
+            return apply_mark_running(
+                current,
+                launch_mode=launch_mode,
+                worker_pid=worker_pid,
+                runner_pid=runner_pid,
+                runner_created_at_epoch=resolved_runner_created_at_epoch,
+            )
+
+    mutation = MarkRunningMutation()
 
     try:
-        outcome = _write_state_locked(paths.spawns_dir, str(spawn_id), merge)
+        outcome = _write_state_locked(paths.spawns_dir, str(spawn_id), mutation)
     except FileNotFoundError:
         return False, None
-    except _NoTransition as exc:
-        return False, exc.snapshot
-    return changed, outcome.snapshot
+    return outcome.wrote and mutation.transitioned, outcome.snapshot
 
 
 def _spawn_sort_key(spawn: SpawnRecord) -> tuple[int, str]:
