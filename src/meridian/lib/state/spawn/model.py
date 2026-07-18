@@ -4,9 +4,13 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, field_validator
+from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
-from meridian.lib.core.domain import SpawnStatus, TerminalSpawnStatus
+from meridian.lib.core.domain import (
+    TERMINAL_SPAWN_STATUSES,
+    SpawnStatus,
+    TerminalSpawnStatus,
+)
 from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
 from meridian.lib.core.types import ChatId, HarnessSessionId, normalize_optional_identity
 
@@ -108,30 +112,136 @@ class SpawnStateFields(BaseModel):
     started_at: str | None = None
     last_attempt_exited_at: str | None = None
     last_attempt_exit_code: int | None = None
-    runner_exit_code: int | None = None
-    runner_exit_status: TerminalSpawnStatus | None = None
-    runner_exit_error: str | None = None
-    runner_exit_at: str | None = None
+    runner_exit: RunnerExitFacts | None = None
     cancel_intent: CancelIntent | None = None
-    finished_at: str | None = None
-    published_at: str | None = None
-    exit_code: int | None = None
-    duration_secs: float | None = None
-    total_cost_usd: float | None = None
-    input_tokens: int | None = None
-    output_tokens: int | None = None
-    cache_read_input_tokens: int | None = None
-    cache_creation_input_tokens: int | None = None
-    reasoning_tokens: int | None = None
-    cost_is_estimate: bool = False
-    error: str | None = None
-    terminal_origin: SpawnOrigin | None = None
+    terminal: TerminalFacts | None = None
     launch_policy_snapshot: LaunchPolicySnapshot | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def require_discriminated_terminal_facts(cls, value: object) -> object:
+        """Require terminal status and terminal facts to appear as one coherent state."""
+
+        if not isinstance(value, dict):
+            return value
+        retired_fact_fields = {
+            "runner_exit_code",
+            "runner_exit_status",
+            "runner_exit_error",
+            "runner_exit_at",
+            "finished_at",
+            "published_at",
+            "exit_code",
+            "duration_secs",
+            "total_cost_usd",
+            "input_tokens",
+            "output_tokens",
+            "cache_read_input_tokens",
+            "cache_creation_input_tokens",
+            "reasoning_tokens",
+            "cost_is_estimate",
+            "error",
+            "terminal_origin",
+        }
+        present_retired_fields = retired_fact_fields.intersection(value)
+        if present_retired_fields:
+            raise ValueError(
+                f"flat lifecycle facts are not parseable: {sorted(present_retired_fields)}"
+            )
+        status = value.get("status", "unknown")
+        if not isinstance(status, str):
+            return value
+        terminal = value.get("terminal")
+        if status in TERMINAL_SPAWN_STATUSES:
+            if terminal is None:
+                raise ValueError("terminal spawn status requires complete terminal facts")
+            if not isinstance(terminal, (dict, TerminalFacts)):
+                return value
+            terminal_status = (
+                terminal.get("status") if isinstance(terminal, dict) else terminal.status
+            )
+            if not isinstance(terminal_status, str):
+                return value
+            if terminal_status != status:
+                raise ValueError("terminal facts status must match spawn status")
+        elif terminal is not None:
+            raise ValueError("nonterminal spawn status cannot carry terminal facts")
+        return value
 
     @field_validator("chat_id", "owner_chat_id", "harness_session_id", mode="before")
     @classmethod
     def normalize_persisted_identity(cls, value: object) -> str | None:
         return normalize_optional_identity(value)
+
+    @property
+    def runner_exit_status(self) -> TerminalSpawnStatus | None:
+        return self.runner_exit.status if self.runner_exit is not None else None
+
+    @property
+    def runner_exit_code(self) -> int | None:
+        return self.runner_exit.exit_code if self.runner_exit is not None else None
+
+    @property
+    def runner_exit_error(self) -> str | None:
+        return self.runner_exit.error if self.runner_exit is not None else None
+
+    @property
+    def runner_exit_at(self) -> str | None:
+        return self.runner_exit.exited_at if self.runner_exit is not None else None
+
+    @property
+    def finished_at(self) -> str | None:
+        return self.terminal.finished_at if self.terminal is not None else None
+
+    @property
+    def published_at(self) -> str | None:
+        return self.terminal.published_at if self.terminal is not None else None
+
+    @property
+    def exit_code(self) -> int | None:
+        return self.terminal.exit_code if self.terminal is not None else None
+
+    @property
+    def duration_secs(self) -> float | None:
+        return self.terminal.duration_secs if self.terminal is not None else None
+
+    @property
+    def total_cost_usd(self) -> float | None:
+        return self.terminal.total_cost_usd if self.terminal is not None else None
+
+    @property
+    def input_tokens(self) -> int | None:
+        return self.terminal.input_tokens if self.terminal is not None else None
+
+    @property
+    def output_tokens(self) -> int | None:
+        return self.terminal.output_tokens if self.terminal is not None else None
+
+    @property
+    def cache_read_input_tokens(self) -> int | None:
+        return self.terminal.cache_read_input_tokens if self.terminal is not None else None
+
+    @property
+    def cache_creation_input_tokens(self) -> int | None:
+        return (
+            self.terminal.cache_creation_input_tokens if self.terminal is not None else None
+        )
+
+    @property
+    def reasoning_tokens(self) -> int | None:
+        return self.terminal.reasoning_tokens if self.terminal is not None else None
+
+    @property
+    def cost_is_estimate(self) -> bool:
+        return self.terminal.cost_is_estimate if self.terminal is not None else False
+
+    @property
+    def error(self) -> str | None:
+        return self.terminal.error if self.terminal is not None else None
+
+    @property
+    def terminal_origin(self) -> SpawnOrigin | None:
+        return self.terminal.origin if self.terminal is not None else None
 
 
 class SpawnRecord(SpawnStateFields):

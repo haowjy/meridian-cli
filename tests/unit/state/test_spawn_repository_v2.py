@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from meridian.lib.state.spawn.model import SpawnRecord
+from meridian.lib.state.spawn.model import SpawnRecord, TerminalFacts
 from meridian.lib.state.spawn.repository import (
     read_prompt,
     read_state,
@@ -18,6 +18,17 @@ def _record(
     prompt: str | None = "hello",
     goal: str | None = "ship persistence",
 ) -> SpawnRecord:
+    terminal = (
+        TerminalFacts(
+            status=status,
+            exit_code=0,
+            finished_at="2026-05-01T00:01:00Z",
+            published_at="2026-05-01T00:01:00Z",
+            origin="runner",
+        )
+        if status in {"succeeded", "failed", "cancelled", "timed_out"}
+        else None
+    )
     return SpawnRecord(
         id=spawn_id,
         chat_id="c1",
@@ -44,22 +55,8 @@ def _record(
         started_at="2026-05-01T00:00:00Z",
         last_attempt_exited_at=None,
         last_attempt_exit_code=None,
-        runner_exit_code=None,
-        runner_exit_status=None,
-        runner_exit_error=None,
-        runner_exit_at=None,
-        finished_at=None,
-        exit_code=None,
-        duration_secs=None,
-        total_cost_usd=None,
-        input_tokens=None,
-        output_tokens=None,
-        cache_read_input_tokens=None,
-        cache_creation_input_tokens=None,
-        reasoning_tokens=None,
-        cost_is_estimate=False,
-        error=None,
-        terminal_origin=None,
+        runner_exit=None,
+        terminal=terminal,
     )
 
 

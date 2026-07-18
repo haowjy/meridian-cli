@@ -12,7 +12,7 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from meridian.lib.core.domain import SpawnStatus, TokenUsage
+from meridian.lib.core.domain import TERMINAL_SPAWN_STATUSES, SpawnStatus, TokenUsage
 from meridian.lib.state.spawn_store import (
     finalize_spawn,
     get_spawn,
@@ -77,6 +77,7 @@ def test_mark_finalizing_state_machine_enforces_running_only(tmp_path: Path) -> 
         "cancelled",
     )
     for start_status in non_running_statuses:
+        initial_status = "running" if start_status in TERMINAL_SPAWN_STATUSES else start_status
         spawn_id = str(
             start_spawn(
                 runtime_root,
@@ -85,9 +86,17 @@ def test_mark_finalizing_state_machine_enforces_running_only(tmp_path: Path) -> 
                 agent="coder",
                 harness="codex",
                 prompt="hello",
-                status=start_status,
+                status=initial_status,
             )
         )
+        if start_status in TERMINAL_SPAWN_STATUSES:
+            finalize_spawn(
+                runtime_root,
+                spawn_id,
+                start_status,
+                0,
+                origin="runner",
+            )
         assert mark_finalizing(runtime_root, spawn_id) is False
         row = get_spawn(runtime_root, spawn_id)
         assert row is not None

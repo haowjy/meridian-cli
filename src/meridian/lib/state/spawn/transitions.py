@@ -19,6 +19,7 @@ if TYPE_CHECKING:
         LaunchMode,
         SpawnOrigin,
         SpawnRecord,
+        TerminalSpawnStatus,
     )
 
 
@@ -70,7 +71,7 @@ def apply_record_exited(
 def apply_runner_exit(
     record: SpawnRecord,
     *,
-    status: SpawnStatus,
+    status: TerminalSpawnStatus,
     exit_code: int,
     error: str | None,
     exited_at: str,
@@ -78,11 +79,15 @@ def apply_runner_exit(
 ) -> SpawnRecord:
     """Return ``record`` with runner-resolved terminal intent applied."""
 
+    from meridian.lib.state.spawn.model import RunnerExitFacts
+
     updates: dict[str, object] = {
-        "runner_exit_status": status,
-        "runner_exit_code": exit_code,
-        "runner_exit_error": error,
-        "runner_exit_at": exited_at,
+        "runner_exit": RunnerExitFacts(
+            status=status,
+            exit_code=exit_code,
+            error=error,
+            exited_at=exited_at,
+        )
     }
     if spawn_id is not None:
         updates["id"] = spawn_id
@@ -112,7 +117,7 @@ def apply_mark_finalizing(record: SpawnRecord) -> SpawnRecord:
 
 def apply_finalize(
     record: SpawnRecord,
-    status: SpawnStatus,
+    status: TerminalSpawnStatus,
     exit_code: int,
     *,
     origin: SpawnOrigin,
@@ -130,29 +135,28 @@ def apply_finalize(
         and record.status != "unknown"
         and record.status not in TERMINAL_SPAWN_STATUSES
     ):
-        validate_transition(record.status, status)
+        validate_transition(record.status, SpawnStatus(status))
 
-    return record.model_copy(
-        update={
-            "status": SpawnStatus(status),
-            "exit_code": exit_code,
-            "finished_at": finished_at,
-            "published_at": published_at,
-            "duration_secs": duration_secs,
-            "total_cost_usd": usage.total_cost_usd if usage is not None else None,
-            "input_tokens": usage.input_tokens if usage is not None else None,
-            "output_tokens": usage.output_tokens if usage is not None else None,
-            "cache_read_input_tokens": (
-                usage.cache_read_input_tokens if usage is not None else None
-            ),
-            "cache_creation_input_tokens": (
-                usage.cache_creation_input_tokens if usage is not None else None
-            ),
-            "reasoning_tokens": usage.reasoning_tokens if usage is not None else None,
-            "cost_is_estimate": (
-                (usage.cost_is_estimate if usage is not None else False) or record.cost_is_estimate
-            ),
-            "error": error,
-            "terminal_origin": origin,
-        }
+    from meridian.lib.state.spawn.model import TerminalFacts
+
+    terminal = TerminalFacts(
+        status=status,
+        exit_code=exit_code,
+        finished_at=finished_at,
+        published_at=published_at,
+        duration_secs=duration_secs,
+        total_cost_usd=usage.total_cost_usd if usage is not None else None,
+        input_tokens=usage.input_tokens if usage is not None else None,
+        output_tokens=usage.output_tokens if usage is not None else None,
+        cache_read_input_tokens=usage.cache_read_input_tokens if usage is not None else None,
+        cache_creation_input_tokens=(
+            usage.cache_creation_input_tokens if usage is not None else None
+        ),
+        reasoning_tokens=usage.reasoning_tokens if usage is not None else None,
+        cost_is_estimate=(
+            (usage.cost_is_estimate if usage is not None else False) or record.cost_is_estimate
+        ),
+        error=error,
+        origin=origin,
     )
+    return record.model_copy(update={"status": SpawnStatus(status), "terminal": terminal})

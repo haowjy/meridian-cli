@@ -190,6 +190,25 @@ def test_non_string_persisted_status_is_quarantined(
     assert str(invalid_status) in str(quarantined.value.report.validation_errors)
 
 
+def test_partial_terminal_facts_are_quarantined_instead_of_half_loaded(
+    tmp_path: Path,
+) -> None:
+    runtime_root = _state_root(tmp_path)
+    spawn_id = _start_test_spawn(runtime_root)
+    valid_spawn_id = _start_test_spawn(runtime_root)
+    state_path = RuntimePaths.from_root_dir(runtime_root).spawns_dir / spawn_id / "state.json"
+    payload = json.loads(state_path.read_text(encoding="utf-8"))
+    payload["exit_code"] = 9
+    atomic_write_text(state_path, json.dumps(payload))
+
+    with pytest.raises(SpawnStateQuarantined):
+        get_spawn(runtime_root, spawn_id)
+    collection = list_spawns(runtime_root)
+
+    assert [row.id for row in collection] == [valid_spawn_id]
+    assert [report.spawn_id for report in collection.quarantines] == [spawn_id]
+
+
 def test_start_spawn_publishes_only_a_complete_readable_row(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

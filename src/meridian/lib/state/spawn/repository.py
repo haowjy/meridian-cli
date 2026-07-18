@@ -44,8 +44,6 @@ class StoredSpawnState(SpawnStateFields):
             "status": _PERSISTED_STATUS_VALUES,
             "kind": {"child", "primary", "streaming"},
             "launch_mode": _LAUNCH_MODE_VALUES,
-            "runner_exit_status": TERMINAL_SPAWN_STATUSES,
-            "terminal_origin": _AUTHORITATIVE_ORIGINS | {"reconciler"},
         }
         invalid = {
             field: raw
@@ -55,6 +53,21 @@ class StoredSpawnState(SpawnStateFields):
         }
         if invalid:
             raise ValueError(f"quarantined unknown spawn vocabulary: {invalid}")
+        nested_vocabularies: tuple[tuple[str, str, frozenset[object]], ...] = (
+            ("runner_exit", "status", TERMINAL_SPAWN_STATUSES),
+            ("terminal", "status", TERMINAL_SPAWN_STATUSES),
+            ("terminal", "origin", _AUTHORITATIVE_ORIGINS | {"reconciler"}),
+        )
+        nested_invalid: dict[str, object] = {}
+        for container_name, field, allowed in nested_vocabularies:
+            container = value.get(container_name)
+            if not isinstance(container, dict):
+                continue
+            raw = container.get(field)
+            if raw is not None and (not isinstance(raw, str) or raw not in allowed):
+                nested_invalid[f"{container_name}.{field}"] = raw
+        if nested_invalid:
+            raise ValueError(f"quarantined unknown spawn vocabulary: {nested_invalid}")
         return value
 
 
