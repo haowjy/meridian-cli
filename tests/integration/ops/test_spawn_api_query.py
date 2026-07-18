@@ -362,8 +362,8 @@ def test_spawn_show_and_list_hydrate_primary_and_pi_diagnostics(tmp_path: Path) 
         harness="codex",
         kind="primary",
         prompt="done",
-        status="succeeded",
     )
+    spawn_store.finalize_spawn(runtime_root, primary_id, "succeeded", 0, origin="runner")
     _write_primary_meta(
         runtime_root,
         str(primary_id),
@@ -592,4 +592,3 @@ def test_spawn_show_surfaces_persisted_goal_and_distinct_task_dir(tmp_path: Path
 
     assert detail.goal == "ship the migration"
     assert detail.task_cwd == task_cwd.as_posix()
-

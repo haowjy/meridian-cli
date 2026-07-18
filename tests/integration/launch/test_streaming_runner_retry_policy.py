@@ -171,7 +171,7 @@ async def test_execute_with_streaming_attempt_timeout_survives_pi_abort(
     )
     assert re.fullmatch(
         r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3,6}Z",
-        state["published_at"],
+        state["terminal"]["published_at"],
     )
 
 @pytest.mark.asyncio
