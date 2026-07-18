@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import asyncio
 import socket
-from collections.abc import Mapping
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
@@ -220,7 +219,7 @@ def _build_connection_config(tmp_path: Path) -> ConnectionConfig:
         harness_id=HarnessId.OPENCODE,
         prompt="hello from test",
         control_root=tmp_path,
-        env_overrides={"MERIDIAN_TEST_ENV": "1"},
+        child_env={"MERIDIAN_TEST_ENV": "1"},
         system="system from test",
     )
 
@@ -466,7 +465,7 @@ async def test_opencode_readiness_gate_retries_transient_timeout_before_session_
 
 
 @pytest.mark.asyncio
-async def test_opencode_launch_process_passes_env_overrides_to_managed_backend(
+async def test_opencode_launch_process_passes_child_env_to_managed_backend(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -477,13 +476,6 @@ async def test_opencode_launch_process_passes_env_overrides_to_managed_backend(
     )
     fake_process = FakeOpenCodeProcess()
     captured: dict[str, object] = {}
-
-    def _fake_inherit_child_env(
-        _base_env: Mapping[str, str],
-        overrides: dict[str, str],
-    ) -> dict[str, str]:
-        captured["overrides"] = dict(overrides)
-        return {"MERIDIAN_INHERIT_CALLED": "1", **overrides}
 
     async def _fake_launch_managed_backend(
         backend_config: object,
@@ -512,18 +504,23 @@ async def test_opencode_launch_process_passes_env_overrides_to_managed_backend(
         )
 
     monkeypatch.setattr(opencode_http, "_find_free_port", lambda _host="127.0.0.1": 17777)
-    monkeypatch.setattr(opencode_http, "inherit_child_env", _fake_inherit_child_env)
     monkeypatch.setattr(opencode_http, "launch_managed_backend", _fake_launch_managed_backend)
 
     await connection._launch_process(config, spec)
 
     backend_config = captured["backend_config"]
-    assert captured["overrides"] == config.env_overrides
-    assert backend_config.env["MERIDIAN_INHERIT_CALLED"] == "1"
+    assert backend_config.env is not config.child_env
     assert backend_config.env["MERIDIAN_TEST_ENV"] == "1"
     assert connection.subprocess_pid == fake_process.pid
 
     await connection._cleanup_runtime()
+
+
+def test_opencode_startup_diagnostics_require_bound_child_env() -> None:
+    connection = OpenCodeConnection()
+
+    with pytest.raises(RuntimeError, match="bound child environment"):
+        connection._startup_child_env()
 
 
 def _set_startup_failure(
@@ -549,7 +546,7 @@ async def test_opencode_startup_exit_surfaces_stderr_and_xdg_hint(
     connection = OpenCodeConnection()
     config = replace(
         _build_connection_config(tmp_path),
-        env_overrides={"XDG_DATA_HOME": "/root/meridian-probe-opencode-no-access"},
+        child_env={"XDG_DATA_HOME": "/root/meridian-probe-opencode-no-access"},
     )
 
     async def launch_failure(

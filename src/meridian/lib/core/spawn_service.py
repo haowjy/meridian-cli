@@ -42,7 +42,7 @@ from meridian.lib.launch.composition_spawn import (
     compose_spawn_launch_surface,
 )
 from meridian.lib.launch.context import LaunchContext, RuntimeBindings
-from meridian.lib.launch.env import resolve_pi_session_role
+from meridian.lib.launch.env import apply_pi_bind_time_env, resolve_pi_session_role
 from meridian.lib.launch.request import LaunchRuntime, SpawnRequest
 from meridian.lib.launch.resolve import (
     resolve_pi_child_wave_timeout_seconds,
@@ -432,19 +432,34 @@ class SpawnApplicationService:
         connection_task_cwd = (
             child_cwd if child_cwd.resolve() != launch_ctx.control_root.resolve() else None
         )
+        child_env = dict(launch_ctx.binding.environment.final_env)
+        pi_child_wave_timeout_seconds = resolve_pi_child_wave_timeout_seconds(
+            explicit_timeout_seconds=None,
+            config_snapshot=launch_config_snapshot,
+        )
+        pi_task_ping_interval_seconds = resolve_pi_task_ping_interval_seconds(
+            explicit_interval_seconds=resolved_request.pi_task_ping_interval_seconds,
+            config_snapshot=launch_config_snapshot,
+        )
+        if harness_id is HarnessId.PI:
+            assert pi_session_role is not None
+            apply_pi_bind_time_env(
+                child_env,
+                launch_role=pi_session_role,
+                timeout_seconds=pi_child_wave_timeout_seconds,
+                interval_seconds=pi_task_ping_interval_seconds,
+                reset_on_activity=resolved_request.pi_task_ping_reset_on_activity,
+            )
         connection_config = ConnectionConfig(
             spawn_id=final_spawn_id,
             harness_id=harness_id,
             prompt=launch_ctx.resolved_request.prompt,
             control_root=launch_ctx.control_root,
-            env_overrides=dict(launch_ctx.binding.environment.bind_env_overrides),
+            child_env=child_env,
             runtime_root=launch_ctx.runtime_root,
             task_cwd=connection_task_cwd,
             system=launch_ctx.binding.run_params.appended_system_prompt,
-            pi_child_wave_timeout_seconds=resolve_pi_child_wave_timeout_seconds(
-                explicit_timeout_seconds=None,
-                config_snapshot=launch_config_snapshot,
-            ),
+            pi_child_wave_timeout_seconds=pi_child_wave_timeout_seconds,
             resident_deadline_seconds=resolve_resident_deadline_seconds(
                 config_snapshot=launch_config_snapshot,
             ),
@@ -452,10 +467,7 @@ class SpawnApplicationService:
                 config_snapshot=launch_config_snapshot,
             ),
             resident_rearm_budget=resolved_request.execution_policy.resident_rearm_budget,
-            pi_task_ping_interval_seconds=resolve_pi_task_ping_interval_seconds(
-                explicit_interval_seconds=resolved_request.pi_task_ping_interval_seconds,
-                config_snapshot=launch_config_snapshot,
-            ),
+            pi_task_ping_interval_seconds=pi_task_ping_interval_seconds,
             pi_task_ping_reset_on_activity=resolved_request.pi_task_ping_reset_on_activity,
             pi_session_role=pi_session_role,
             debug_tracer=payload.debug_tracer,

@@ -67,6 +67,13 @@ def _fake_launch_context(
                     "MERIDIAN_PARENT_SPAWN_ID": "p-parent",
                     "EXTRA_ENV": "present",
                 },
+                final_env={
+                    "PATH": "/usr/bin",
+                    "HOME": "/home/tester",
+                    "MERIDIAN_SPAWN_ID": spawn_id,
+                    "MERIDIAN_PARENT_SPAWN_ID": "p-parent",
+                    "EXTRA_ENV": "present",
+                },
             ),
             spec=SimpleNamespace(name="fake-spec"),
             run_params=SimpleNamespace(
@@ -173,9 +180,11 @@ async def test_streaming_serve_debug_keeps_projected_connection_config(
     assert config.control_root == tmp_path
     assert config.task_cwd == child_cwd
     assert config.system == "SYSTEM: projected"
-    assert config.env_overrides["MERIDIAN_SPAWN_ID"] == "p1"
-    assert config.env_overrides["MERIDIAN_PARENT_SPAWN_ID"] == "p-parent"
-    assert config.env_overrides["EXTRA_ENV"] == "present"
+    assert config.child_env["PATH"] == "/usr/bin"
+    assert config.child_env["HOME"] == "/home/tester"
+    assert config.child_env["MERIDIAN_SPAWN_ID"] == "p1"
+    assert config.child_env["MERIDIAN_PARENT_SPAWN_ID"] == "p-parent"
+    assert config.child_env["EXTRA_ENV"] == "present"
     assert config.debug_tracer is not None
     assert runner_call["startup_timeout_seconds"] == resolve_startup_timeout_seconds(
         config_snapshot=config_snapshot,

@@ -1,5 +1,6 @@
 """Child-process environment helpers shared by launch and spawn paths."""
 
+import math
 from collections.abc import Callable, Collection, Mapping
 from pathlib import Path
 from typing import cast
@@ -29,6 +30,36 @@ _CHILD_ENV_ALLOWLIST = frozenset(
 _CHILD_ENV_ALLOWLIST_PREFIXES = ("LC_", "XDG_", "UV_")
 _CHILD_ENV_SECRET_SUFFIXES = ("_TOKEN", "_KEY", "_SECRET")
 _PI_SESSION_DIR_ENV = "PI_CODING_AGENT_SESSION_DIR"
+_PI_CHILD_WAVE_TIMEOUT_MS_ENV = "MERIDIAN_PI_CHILD_WAVE_TIMEOUT_MS"
+_PI_TASK_PING_INTERVAL_MS_ENV = "MERIDIAN_PI_TASK_PING_INTERVAL_MS"
+_PI_TASK_PING_RESET_ON_ACTIVITY_ENV = "MERIDIAN_PI_TASK_PING_RESET_ON_ACTIVITY"
+
+
+def apply_pi_bind_time_env(
+    env: dict[str, str],
+    *,
+    launch_role: PiSessionRole,
+    timeout_seconds: float | None,
+    interval_seconds: float | None,
+    reset_on_activity: bool | None,
+) -> None:
+    """Bake resolved Pi runtime settings into a complete child environment."""
+
+    if (
+        launch_role == "spawned"
+        and timeout_seconds is not None
+        and math.isfinite(timeout_seconds)
+        and timeout_seconds > 0
+    ):
+        env[_PI_CHILD_WAVE_TIMEOUT_MS_ENV] = str(max(1, int(timeout_seconds * 1000)))
+    if (
+        interval_seconds is not None
+        and math.isfinite(interval_seconds)
+        and interval_seconds > 0
+    ):
+        env[_PI_TASK_PING_INTERVAL_MS_ENV] = str(max(1, int(interval_seconds * 1000)))
+    if reset_on_activity is not None:
+        env[_PI_TASK_PING_RESET_ON_ACTIVITY_ENV] = "true" if reset_on_activity else "false"
 
 
 def _is_allowlisted_child_env_var(key: str) -> bool:
@@ -98,7 +129,12 @@ def inherit_child_env(
     """Return an inherited child environment with targeted non-propagation."""
 
     blocked_keys = {name.upper() for name in blocked}
-    inherited = {key: value for key, value in base_env.items() if key.upper() not in blocked_keys}
+    inherited = {
+        key: value
+        for key, value in base_env.items()
+        if key.upper() not in blocked_keys
+        and not key.upper().startswith("MERIDIAN_SECRET_")
+    }
     if env_overrides is not None:
         inherited.update(env_overrides)
     _normalize_meridian_env(inherited)

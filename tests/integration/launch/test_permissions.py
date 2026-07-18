@@ -8,6 +8,7 @@ from meridian.lib.harness.claude import ClaudeAdapter
 from meridian.lib.harness.pi import PiAdapter
 from meridian.lib.harness.projections.permission_flags import resolve_permission_flags
 from meridian.lib.launch.env import (
+    apply_pi_bind_time_env,
     build_harness_child_env,
     inherit_child_env,
     merge_env_overrides,
@@ -223,6 +224,7 @@ def test_build_harness_child_env_inherits_allowed_vars_and_blocks_adapter_vars()
             "MISC_VALUE": "keep-too",
             "CLAUDECODE": "1",
             "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE": "67",
+            "MERIDIAN_SECRET_DATABASE": "drop-me",
             "MERIDIAN_PRIMARY_PROMPT": "stale",
         },
         adapter=ClaudeAdapter(),
@@ -238,6 +240,7 @@ def test_build_harness_child_env_inherits_allowed_vars_and_blocks_adapter_vars()
     assert child_env["MERIDIAN_PRIMARY_PROMPT"] == "stale"
     assert child_env["CLAUDE_AUTOCOMPACT_PCT_OVERRIDE"] == "67"
     assert "CLAUDECODE" not in child_env
+    assert "MERIDIAN_SECRET_DATABASE" not in child_env
 
 
 def test_inherit_child_env_blocks_meridian_runtime_dir() -> None:
@@ -278,6 +281,28 @@ def test_build_harness_child_env_pi_state_dir_from_runtime_root() -> None:
     assert child_env["MERIDIAN_PROJECT_DIR"] == "/repo"
     assert "MERIDIAN_RUNTIME_DIR" not in child_env
     assert "PI_CODING_AGENT_SESSION_DIR" in child_env
+
+
+def test_pi_bind_time_env_contains_agent_dir_timeout_and_task_ping() -> None:
+    child_env = build_harness_child_env(
+        base_env={"PATH": "/usr/bin", "HOME": "/home/tester"},
+        adapter=PiAdapter(),
+        run_params=SpawnParams(prompt="test", model=ModelId("openai-codex/gpt-5.4-mini")),
+        permission_config=PermissionConfig(),
+    )
+
+    apply_pi_bind_time_env(
+        child_env,
+        launch_role="spawned",
+        timeout_seconds=2.75,
+        interval_seconds=0.125,
+        reset_on_activity=False,
+    )
+
+    assert child_env["PI_CODING_AGENT_SESSION_DIR"]
+    assert child_env["MERIDIAN_PI_CHILD_WAVE_TIMEOUT_MS"] == "2750"
+    assert child_env["MERIDIAN_PI_TASK_PING_INTERVAL_MS"] == "125"
+    assert child_env["MERIDIAN_PI_TASK_PING_RESET_ON_ACTIVITY"] == "false"
 
 
 def test_inherit_child_env_runtime_overrides_win() -> None:

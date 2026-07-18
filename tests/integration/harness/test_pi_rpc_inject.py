@@ -205,7 +205,7 @@ async def test_immediate_background_inject_waits_for_real_control_endpoint(
                 harness_id=HarnessId.CODEX,
                 prompt="FIRST",
                 control_root=project_root,
-                env_overrides={},
+                child_env={},
             ),
             ResolvedLaunchSpec(
                 harness=HarnessId.CODEX,
@@ -270,7 +270,10 @@ async def test_pi_busy_turn_inject_queues_follow_up_and_completes_both_turns(
             harness_id=HarnessId.PI,
             prompt="FIRST",
             control_root=tmp_path,
-            env_overrides={},
+            child_env={
+                "PATH": os.environ["PATH"],
+                "PI_RPC_INBOUND_LOG": str(inbound_log),
+            },
             pi_session_role="spawned",
         ),
         ResolvedLaunchSpec(
@@ -323,7 +326,10 @@ async def test_pi_rejected_inject_is_reported_and_does_not_fail_spawn(
             harness_id=HarnessId.PI,
             prompt="FIRST",
             control_root=tmp_path,
-            env_overrides={},
+            child_env={
+                "PATH": os.environ["PATH"],
+                "PI_RPC_INBOUND_LOG": str(inbound_log),
+            },
             pi_session_role="spawned",
         ),
         ResolvedLaunchSpec(

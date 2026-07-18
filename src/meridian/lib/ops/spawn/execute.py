@@ -398,6 +398,7 @@ def execute_spawn_background(
     stdout_path = log_dir / BACKGROUND_STDOUT_FILENAME
     stderr_path = log_dir / BACKGROUND_STDERR_FILENAME
 
+    # This launches Meridian's background worker, not a harness child.
     launch_env = dict(os.environ)
     launch_env.update(
         _spawn_background_worker_env(

@@ -4,6 +4,10 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+- Harness connections now consume one complete bind-resolved child environment;
+  adapter-local process launches no longer rebuild it from the parent process.
+
 ## [0.3.39] - 2026-07-17
 
 ## [0.3.38] - 2026-07-17

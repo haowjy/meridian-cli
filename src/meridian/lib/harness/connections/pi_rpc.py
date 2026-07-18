@@ -5,8 +5,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import math
-import os
 import signal
 import time
 from asyncio.subprocess import PIPE, Process
@@ -44,8 +42,7 @@ from meridian.lib.harness.pi_runtime_resolver import (
     PiRuntimeResolutionError,
     resolve_pi_runtime,
 )
-from meridian.lib.launch.constants import BASE_COMMAND_PI_SUBPROCESS, BLOCKED_CHILD_ENV_VARS
-from meridian.lib.launch.env import inherit_child_env
+from meridian.lib.launch.constants import BASE_COMMAND_PI_SUBPROCESS
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.launch.report import compact_pi_failure_output
 from meridian.lib.observability.trace_helpers import (
@@ -69,12 +66,8 @@ _PI_PHASE_EVENT_TYPE: Final[str] = "meridian.pi.lifecycle.phase"
 _PI_FIRST_EVENT_TIMEOUT_REASON: Final[str] = "pi_rpc_no_response_after_initial_prompt"
 _PI_SPAWNED_PROMPT_REQUIRED_REASON: Final[str] = "pi_rpc_spawned_prompt_required"
 _FIRST_STDOUT_AFTER_INITIAL_PROMPT_TIMEOUT_SECONDS: Final[float] = 30.0
-_BLOCKED_CHILD_ENV_VARS: Final[frozenset[str]] = BLOCKED_CHILD_ENV_VARS
 _PI_SESSION_DIR_FLAG: Final[str] = "--session-dir"
 PI_SUBPROCESS_EXIT_ERROR_PREFIX: Final[str] = "Pi subprocess exited with code "
-_PI_CHILD_WAVE_TIMEOUT_MS_ENV: Final[str] = "MERIDIAN_PI_CHILD_WAVE_TIMEOUT_MS"
-_PI_TASK_PING_INTERVAL_MS_ENV: Final[str] = "MERIDIAN_PI_TASK_PING_INTERVAL_MS"
-_PI_TASK_PING_RESET_ON_ACTIVITY_ENV: Final[str] = "MERIDIAN_PI_TASK_PING_RESET_ON_ACTIVITY"
 _STREAM_LINE_KIND: Final[Literal["line"]] = "line"
 _STREAM_EOF_KIND: Final[Literal["eof"]] = "eof"
 _STREAM_ERROR_KIND: Final[Literal["error"]] = "error"
@@ -497,11 +490,7 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
             spec,
             base_command=BASE_COMMAND_PI_SUBPROCESS,
         )
-        env = inherit_child_env(
-            os.environ,
-            config.env_overrides,
-            blocked=_BLOCKED_CHILD_ENV_VARS,
-        )
+        env = dict(config.child_env)
         env.update(pi_agent_dir_env_override())
         session_dir = env.get("PI_CODING_AGENT_SESSION_DIR", "").strip()
         if session_dir:
@@ -509,16 +498,6 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
         launch_role = "spawned"
         if (self._launch_session_role or "").strip().lower() == "primary":
             launch_role = "primary"
-        self._apply_pi_child_wave_timeout_env(
-            env=env,
-            launch_role=launch_role,
-            timeout_seconds=config.pi_child_wave_timeout_seconds,
-        )
-        self._apply_pi_task_ping_env(
-            env=env,
-            interval_seconds=config.pi_task_ping_interval_seconds,
-            reset_on_activity=config.pi_task_ping_reset_on_activity,
-        )
         try:
             resolved_runtime = resolve_pi_runtime(env=env, role=launch_role)
         except PiRuntimeResolutionError as exc:
@@ -597,39 +576,6 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
         if not replaced:
             rewritten.extend((_PI_SESSION_DIR_FLAG, session_dir))
         return rewritten
-
-    def _apply_pi_child_wave_timeout_env(
-        self,
-        *,
-        env: dict[str, str],
-        launch_role: str,
-        timeout_seconds: float | None,
-    ) -> None:
-        if launch_role != "spawned":
-            return
-        if timeout_seconds is None or not math.isfinite(timeout_seconds) or timeout_seconds <= 0:
-            return
-        timeout_ms = max(1, int(timeout_seconds * 1000))
-        env[_PI_CHILD_WAVE_TIMEOUT_MS_ENV] = str(timeout_ms)
-
-    def _apply_pi_task_ping_env(
-        self,
-        *,
-        env: dict[str, str],
-        interval_seconds: float | None,
-        reset_on_activity: bool | None,
-    ) -> None:
-        if (
-            interval_seconds is not None
-            and math.isfinite(interval_seconds)
-            and interval_seconds > 0
-        ):
-            interval_ms = max(1, int(interval_seconds * 1000))
-            env[_PI_TASK_PING_INTERVAL_MS_ENV] = str(interval_ms)
-        if reset_on_activity is not None:
-            env[_PI_TASK_PING_RESET_ON_ACTIVITY_ENV] = (
-                "true" if reset_on_activity else "false"
-            )
 
     def _parse_stdout_line(self, line: str) -> HarnessEvent | None:
         payload_text = line.strip()

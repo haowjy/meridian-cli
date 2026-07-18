@@ -34,11 +34,7 @@ from meridian.lib.harness.connections.base import (
 from meridian.lib.harness.connections.managed_backend import register_spawn_owned_process
 from meridian.lib.harness.errors import HarnessBinaryNotFound
 from meridian.lib.harness.semantics import clears_signal
-from meridian.lib.launch.constants import (
-    BASE_COMMAND_CLAUDE_STREAMING,
-    BLOCKED_CHILD_ENV_VARS,
-)
-from meridian.lib.launch.env import inherit_child_env
+from meridian.lib.launch.constants import BASE_COMMAND_CLAUDE_STREAMING
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.observability.trace_helpers import (
     trace_parse_error,
@@ -58,12 +54,6 @@ _VERSION_CHECK_TIMEOUT_SECONDS: Final[float] = 5.0
 _STDERR_MAX_BYTES: Final[int] = 16 * 1024
 _TESTED_VERSION_PREFIXES: Final[tuple[str, ...]] = ("1.", "2.")
 _HARNESS_NAME: Final[str] = HarnessId.CLAUDE.value
-_BLOCKED_CHILD_ENV_VARS: Final[frozenset[str]] = frozenset(
-    {
-        "CLAUDECODE",
-        *BLOCKED_CHILD_ENV_VARS,
-    }
-)
 
 
 class ClaudeConnection(HarnessConnection[ResolvedLaunchSpec]):
@@ -379,11 +369,7 @@ class ClaudeConnection(HarnessConnection[ResolvedLaunchSpec]):
 
         command = self._build_command(config, spec)
 
-        env = inherit_child_env(
-            os.environ,
-            config.env_overrides,
-            blocked=_BLOCKED_CHILD_ENV_VARS,
-        )
+        env = dict(config.child_env)
 
         try:
             self._process = await asyncio.create_subprocess_exec(

@@ -591,7 +591,7 @@ async def test_spawn_manager_pi_drain_loop_reevaluates_on_disk_wakeup(
             harness_id=HarnessId.PI,
             prompt="hello",
             control_root=tmp_path,
-            env_overrides={},
+            child_env={},
             pi_session_role="spawned",
         ),
         ResolvedLaunchSpec(

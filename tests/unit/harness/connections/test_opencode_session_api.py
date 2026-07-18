@@ -102,7 +102,7 @@ async def test_create_session_uses_spec_model_not_connection_config(tmp_path) ->
         harness_id=HarnessId.OPENCODE,
         prompt="hello",
         control_root=tmp_path,
-        env_overrides={},
+        child_env={},
     )
 
     session_id = await connection._create_session(

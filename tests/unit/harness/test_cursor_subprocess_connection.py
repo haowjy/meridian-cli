@@ -63,15 +63,6 @@ async def _collect_events(connection: CursorSubprocessConnection) -> list[Harnes
     return [event async for event in connection.events()]
 
 
-def _passthrough_child_env(
-    _base: object,
-    overrides: dict[str, str],
-    blocked: object,
-) -> dict[str, str]:
-    _ = blocked
-    return dict(overrides)
-
-
 @pytest.mark.asyncio
 async def test_cursor_events_skip_invalid_lines_after_protocol_validation() -> None:
     connection = CursorSubprocessConnection()
@@ -249,11 +240,6 @@ async def _start_fresh_cursor_spawn(
         return _AgentOnlyProcess()
 
     monkeypatch.setattr(
-        cursor_subprocess_module,
-        "inherit_child_env",
-        _passthrough_child_env,
-    )
-    monkeypatch.setattr(
         cursor_subprocess_module.asyncio,
         "create_subprocess_exec",
         _fake_create_subprocess_exec,
@@ -265,7 +251,7 @@ async def _start_fresh_cursor_spawn(
         harness_id=HarnessId.CURSOR,
         prompt="hello",
         control_root=tmp_path,
-        env_overrides={},
+        child_env={},
         session_id_observer=observed.append,
     )
     spec = ResolvedLaunchSpec(
@@ -312,11 +298,6 @@ async def test_cursor_start_mints_chat_id_and_records_observer(
         return _AgentOnlyProcess()
 
     monkeypatch.setattr(
-        cursor_subprocess_module,
-        "inherit_child_env",
-        _passthrough_child_env,
-    )
-    monkeypatch.setattr(
         cursor_subprocess_module.asyncio,
         "create_subprocess_exec",
         _fake_create_subprocess_exec,
@@ -328,7 +309,7 @@ async def test_cursor_start_mints_chat_id_and_records_observer(
         harness_id=HarnessId.CURSOR,
         prompt="hello",
         control_root=tmp_path,
-        env_overrides={},
+        child_env={},
         session_id_observer=observed.append,
     )
     spec = ResolvedLaunchSpec(
@@ -368,11 +349,6 @@ async def test_cursor_start_reuses_continue_session_id_without_minting(
         return _AgentOnlyProcess()
 
     monkeypatch.setattr(
-        cursor_subprocess_module,
-        "inherit_child_env",
-        _passthrough_child_env,
-    )
-    monkeypatch.setattr(
         cursor_subprocess_module.asyncio,
         "create_subprocess_exec",
         _fake_create_subprocess_exec,
@@ -384,7 +360,7 @@ async def test_cursor_start_reuses_continue_session_id_without_minting(
         harness_id=HarnessId.CURSOR,
         prompt="hello",
         control_root=tmp_path,
-        env_overrides={},
+        child_env={},
         session_id_observer=observed.append,
     )
     spec = ResolvedLaunchSpec(

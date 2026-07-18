@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import os
 import uuid
 from asyncio.subprocess import DEVNULL, PIPE, Process
 from collections.abc import AsyncIterator, Callable
@@ -28,8 +27,7 @@ from meridian.lib.harness.connections.base import (
 )
 from meridian.lib.harness.connections.managed_backend import register_spawn_owned_process
 from meridian.lib.harness.extractors.cursor import CURSOR_EXTRACTOR
-from meridian.lib.launch.constants import BASE_COMMAND_CURSOR_SUBPROCESS, BLOCKED_CHILD_ENV_VARS
-from meridian.lib.launch.env import inherit_child_env
+from meridian.lib.launch.constants import BASE_COMMAND_CURSOR_SUBPROCESS
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.platform.process_scope import ProcessScopeSnapshot, ScopedProcessHandle
 from meridian.lib.state.paths import resolve_spawn_log_dir
@@ -113,11 +111,7 @@ class CursorSubprocessConnection(HarnessConnection[ResolvedLaunchSpec]):
         spawn_dir.mkdir(parents=True, exist_ok=True)
         self._stderr_handle = (spawn_dir / "stderr.log").open("ab")
 
-        env = inherit_child_env(
-            os.environ,
-            config.env_overrides,
-            blocked=BLOCKED_CHILD_ENV_VARS,
-        )
+        env = dict(config.child_env)
         self._session_id_observer = config.session_id_observer
 
         chat_id = (spec.continue_session_id or "").strip() or await _mint_chat_id(

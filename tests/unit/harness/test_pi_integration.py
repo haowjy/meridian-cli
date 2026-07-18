@@ -208,7 +208,10 @@ async def test_pi_rpc_connection_supports_multi_turn_injection_and_abort(
             harness_id=HarnessId.PI,
             prompt="hello",
             control_root=tmp_path,
-            env_overrides={},
+            child_env={
+                "PATH": os.environ["PATH"],
+                "PI_RPC_INBOUND_LOG": str(inbound_log),
+            },
         ),
         ResolvedLaunchSpec(
             harness=HarnessId.PI,
@@ -312,7 +315,7 @@ async def test_pi_rpc_connection_launches_resolved_runtime_with_scoped_session_d
             harness_id=HarnessId.PI,
             prompt="hello",
             control_root=tmp_path,
-            env_overrides={
+            child_env={
                 "MERIDIAN_PI_BINARY": str(fake_pi),
                 "PI_CODING_AGENT_SESSION_DIR": str(scoped_session_dir),
                 "PI_RPC_OBSERVED_PATH": str(observed_path),
@@ -372,7 +375,7 @@ async def test_pi_rpc_connection_redacts_secret_like_cli_args_in_process_spawned
             harness_id=HarnessId.PI,
             prompt="hello",
             control_root=tmp_path,
-            env_overrides={
+            child_env={
                 "PI_CODING_AGENT_SESSION_DIR": str(scoped_session_dir),
             },
         ),
@@ -449,7 +452,7 @@ async def test_pi_rpc_connection_ignores_non_lifecycle_stderr_lines_but_logs_the
             harness_id=HarnessId.PI,
             prompt="hello",
             control_root=tmp_path,
-            env_overrides={},
+            child_env={"PATH": os.environ["PATH"]},
             pi_session_role="spawned",
         ),
         ResolvedLaunchSpec(
@@ -534,7 +537,10 @@ async def test_pi_spawn_manager_auto_delivers_initial_prompt_and_quiesces_withou
             harness_id=HarnessId.PI,
             prompt="hello auto prompt",
             control_root=tmp_path,
-            env_overrides={},
+            child_env={
+                "PATH": os.environ["PATH"],
+                "PI_RPC_INBOUND_LOG": str(inbound_log),
+            },
             pi_session_role="spawned",
         ),
         ResolvedLaunchSpec(
@@ -637,7 +643,7 @@ async def test_pi_spawn_manager_startup_diagnostics_report_outcome_and_marker(
             harness_id=HarnessId.PI,
             prompt="hello startup",
             control_root=tmp_path,
-            env_overrides={},
+            child_env={"PATH": os.environ["PATH"]},
             pi_session_role="spawned",
         ),
         ResolvedLaunchSpec(
@@ -707,7 +713,7 @@ async def test_pi_spawn_manager_prompt_response_failure_fails_fast_with_reported
             harness_id=HarnessId.PI,
             prompt="hello",
             control_root=tmp_path,
-            env_overrides={},
+            child_env={},
             pi_session_role="spawned",
         ),
         ResolvedLaunchSpec(
@@ -773,7 +779,10 @@ async def test_pi_connection_launches_in_control_root_when_task_cwd_provided(
             harness_id=HarnessId.PI,
             prompt="hello",
             control_root=control_root,
-            env_overrides={},
+            child_env={
+                "PATH": os.environ["PATH"],
+                "PI_TEST_CWD_FILE": str(observed_cwd),
+            },
             task_cwd=task_cwd,
         ),
         ResolvedLaunchSpec(
@@ -828,7 +837,7 @@ async def test_pi_rpc_connection_surfaces_stderr_on_early_exit_before_first_even
             harness_id=HarnessId.PI,
             prompt="hello",
             control_root=tmp_path,
-            env_overrides={},
+            child_env={},
             pi_session_role="spawned",
         ),
         ResolvedLaunchSpec(
@@ -875,7 +884,7 @@ async def test_pi_rpc_connection_start_fails_fast_when_runtime_resolution_fails(
                 harness_id=HarnessId.PI,
                 prompt="hello",
                 control_root=tmp_path,
-                env_overrides={},
+                child_env={},
             ),
             ResolvedLaunchSpec(
                 harness=HarnessId.PI,
