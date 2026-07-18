@@ -19,10 +19,12 @@ class FileHeartbeat:
         self._clock = clock or RealClock()
 
     def touch(self) -> None:
-        self._path.parent.mkdir(parents=True, exist_ok=True)
-        self._path.touch(exist_ok=True)
-        now = self._clock.time()
-        os.utime(self._path, (now, now))
+        try:
+            self._path.touch(exist_ok=True)
+            now = self._clock.time()
+            os.utime(self._path, (now, now))
+        except FileNotFoundError:
+            return
 
 
 __all__ = ["FileHeartbeat", "HeartbeatTouch"]

@@ -54,6 +54,7 @@ from meridian.lib.state.reconciliation import (
     completion_or_cancel_decision,
 )
 from meridian.lib.state.spawn.model import SpawnRecord
+from meridian.lib.state.spawn_aggregate import mutate_published_spawn_artifact
 from meridian.lib.state.spawn_report import spawn_report_has_durable_completion
 from meridian.lib.state.timestamps import iso_timestamp_to_epoch
 
@@ -463,9 +464,14 @@ def _record_orphan_finalize_evidence(
     }
     evidence_path = runtime_root / "spawns" / record.id / FINALIZE_EVIDENCE_FILENAME
     try:
-        atomic_write_text(
-            evidence_path,
-            json.dumps(evidence, separators=(",", ":"), sort_keys=True) + "\n",
+        mutate_published_spawn_artifact(
+            runtime_root,
+            record.id,
+            lambda: atomic_write_text(
+                evidence_path,
+                json.dumps(evidence, separators=(",", ":"), sort_keys=True) + "\n",
+            ),
+            can_mutate=lambda current: is_active_spawn_status(current.status),
         )
     except Exception:
         logger.warning(

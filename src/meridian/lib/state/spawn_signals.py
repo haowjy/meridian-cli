@@ -11,6 +11,7 @@ from typing import Literal
 from meridian.lib.core.types import SpawnId
 from meridian.lib.state.atomic import atomic_write_text
 from meridian.lib.state.paths import spawn_log_subpath
+from meridian.lib.state.spawn_aggregate import mutate_published_spawn_artifact
 
 SpawnSignalKind = Literal["done", "rearm"]
 
@@ -29,11 +30,22 @@ def spawn_signal_path(runtime_root: Path, spawn_id: SpawnId | str, kind: SpawnSi
     return runtime_root / spawn_log_subpath(spawn_id) / f"{kind}.signal"
 
 
-def write_spawn_signal(runtime_root: Path, spawn_id: SpawnId | str, kind: SpawnSignalKind) -> None:
-    """Atomically write an idempotent resident spawn signal."""
+def write_spawn_signal(
+    runtime_root: Path,
+    spawn_id: SpawnId | str,
+    kind: SpawnSignalKind,
+) -> bool:
+    """Write an idempotent signal while its published spawn still exists."""
 
     timestamp = datetime.now(UTC).isoformat().replace("+00:00", "Z")
-    atomic_write_text(spawn_signal_path(runtime_root, spawn_id, kind), f"{timestamp}\n")
+    return mutate_published_spawn_artifact(
+        runtime_root,
+        spawn_id,
+        lambda: atomic_write_text(
+            spawn_signal_path(runtime_root, spawn_id, kind),
+            f"{timestamp}\n",
+        ),
+    )
 
 
 def consume_spawn_signal(

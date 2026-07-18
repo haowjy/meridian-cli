@@ -27,6 +27,7 @@ from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.state import spawn_store
 from meridian.lib.state.atomic import append_text_line
 from meridian.lib.state.history import HarnessHistoryWriter
+from meridian.lib.state.spawn_aggregate import mutate_published_spawn_artifact
 from meridian.lib.state.spawn_tree import terminate_recorded_spawn_scope
 from meridian.lib.streaming.completion_contracts import CompletionCleanupRequest
 from meridian.lib.streaming.control_socket import ControlSocketServer, control_socket_path
@@ -236,6 +237,8 @@ class SpawnManager:
                 last_observed_event_path=(
                     self._spawn_dir(spawn_id) / LAST_OBSERVED_EVENT_FILENAME
                 ),
+                runtime_root=self._runtime_root,
+                spawn_id=str(spawn_id),
             )
             if on_event is not None:
                 self.register_observer(spawn_id, CallbackObserver(on_event))
@@ -572,7 +575,7 @@ class SpawnManager:
             "ts": time.time(),
             "source": source,
         }
-        await self._append_jsonl(log_path, payload)
+        await self._append_jsonl(spawn_id, log_path, payload)
         return inbound_seq
 
     def get_connection(self, spawn_id: SpawnId) -> HarnessConnection[Any] | None:
@@ -900,11 +903,21 @@ class SpawnManager:
             if not session.terminal_published
         ]
 
-    async def _append_jsonl(self, path: Path, payload: dict[str, Any]) -> None:
+    async def _append_jsonl(
+        self,
+        spawn_id: SpawnId,
+        path: Path,
+        payload: dict[str, Any],
+    ) -> None:
         """Append one JSON line to a JSONL file (used for inbound control log)."""
 
         line = json.dumps(payload, separators=(",", ":"), sort_keys=True) + "\n"
-        await asyncio.to_thread(append_text_line, path, line)
+        await asyncio.to_thread(
+            mutate_published_spawn_artifact,
+            self._runtime_root,
+            spawn_id,
+            lambda: append_text_line(path, line),
+        )
 
     def _count_jsonl_lines(self, path: Path) -> int:
         if not path.exists():

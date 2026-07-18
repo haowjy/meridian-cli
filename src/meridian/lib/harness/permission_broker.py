@@ -18,6 +18,7 @@ from meridian.lib.harness.connections.base import (
     ServerRequestHandler,
 )
 from meridian.lib.state.atomic import append_durable_jsonl_line, atomic_write_text
+from meridian.lib.state.spawn_aggregate import mutate_published_spawn_artifact
 
 PermissionRequestType = Literal["approval", "user_input"]
 PermissionRequestStatus = Literal["pending", "resolved", "failed", "cancelled"]
@@ -77,6 +78,8 @@ class PermissionBroker(ServerRequestHandler):
         auto_reject_runtime_requests: bool = False,
     ) -> None:
         self._spawn_dir = spawn_dir
+        self._runtime_root = spawn_dir.parent.parent
+        self._spawn_id = spawn_dir.name
         self._event_sink = event_sink
         self._policy_hook = policy_hook
         self._auto_reject_runtime_requests = auto_reject_runtime_requests
@@ -309,7 +312,11 @@ class PermissionBroker(ServerRequestHandler):
             timestamp=_utc_now_iso(),
         )
         line = json.dumps(_transition_to_json(transition), sort_keys=True, separators=(",", ":"))
-        append_durable_jsonl_line(self._journal_path, line + "\n")
+        mutate_published_spawn_artifact(
+            self._runtime_root,
+            self._spawn_id,
+            lambda: append_durable_jsonl_line(self._journal_path, line + "\n"),
+        )
         self._transitions.append(transition)
         self._apply_transition(transition)
         return transition
@@ -366,9 +373,13 @@ class PermissionBroker(ServerRequestHandler):
         payload = {
             "consumers": self._consumer_cursors,
         }
-        atomic_write_text(
-            self._cursor_path,
-            json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n",
+        mutate_published_spawn_artifact(
+            self._runtime_root,
+            self._spawn_id,
+            lambda: atomic_write_text(
+                self._cursor_path,
+                json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n",
+            ),
         )
 
 

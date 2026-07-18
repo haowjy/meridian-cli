@@ -364,7 +364,8 @@ def task_dir_set_sync(input: TaskDirSetInput) -> TaskDirMutationOutput:
     runtime_ctx = RuntimeContext.from_environment()
     spawn_id = _require_session_spawn_id(runtime_ctx)
     task_dir = _validated_task_dir_path(input.path)
-    write_spawn_scope_task_dir(authority.project_root, spawn_id, task_dir)
+    if not write_spawn_scope_task_dir(authority.project_root, spawn_id, task_dir):
+        raise ValueError(f"Spawn '{spawn_id}' not found")
     return TaskDirMutationOutput()
 
 
@@ -375,7 +376,8 @@ def task_dir_clear_sync(input: TaskDirClearInput) -> TaskDirMutationOutput:
     authority = resolve_runtime_authority_for_write()
     runtime_ctx = RuntimeContext.from_environment()
     spawn_id = _require_session_spawn_id(runtime_ctx)
-    write_spawn_scope_task_dir(authority.project_root, spawn_id, None)
+    if not write_spawn_scope_task_dir(authority.project_root, spawn_id, None):
+        raise ValueError(f"Spawn '{spawn_id}' not found")
     return TaskDirMutationOutput()
 
 

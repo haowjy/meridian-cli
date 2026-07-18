@@ -477,6 +477,10 @@ async def test_opencode_launch_process_passes_env_overrides_to_managed_backend(
     )
     fake_process = FakeOpenCodeProcess()
     captured: dict[str, object] = {}
+    resolve_spawn_log_dir(config.control_root, config.spawn_id).mkdir(
+        parents=True,
+        exist_ok=True,
+    )
 
     def _fake_inherit_child_env(
         _base_env: Mapping[str, str],

@@ -64,6 +64,10 @@ the accounting guard runs on a partial set and raises false `ImportError`.
 
 ## Key Invariants
 
+**Spawn-owned harness journals:** permission and control-action writes must use the
+published-spawn artifact mutation seam at the write point. An awaited send or dispatch
+can cross spawn deletion; a late journal or cursor write must not recreate the directory.
+
 **SpawnParams accounting:** every field must appear in `consumed_fields` or
 `explicitly_ignored_fields` for each adapter. Adding a `SpawnParams` field
 without updating all adapters → startup failure.

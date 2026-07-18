@@ -1,4 +1,4 @@
-"""Cross-leaf spawn mutations that compose repository and projection persistence."""
+"""Spawn aggregate mutations that coordinate published-row lifetime."""
 
 from __future__ import annotations
 
@@ -21,6 +21,31 @@ from meridian.lib.state.spawn.repository import (
 )
 
 type SpawnDeletionPrecondition = Callable[[SpawnRecord | None], bool]
+
+
+def mutate_published_spawn_artifact(
+    runtime_root: Path,
+    spawn_id: SpawnId | str,
+    mutate: Callable[[], None],
+    *,
+    can_mutate: Callable[[SpawnRecord], bool] | None = None,
+) -> bool:
+    """Mutate a spawn-owned artifact without outliving its published row."""
+
+    paths = RuntimePaths.from_root_dir(runtime_root)
+    resolved_spawn_id = str(spawn_id)
+    if not is_safe_spawn_dir_name(resolved_spawn_id):
+        raise ValueError(f"Invalid spawn ID: {resolved_spawn_id}")
+
+    with lock_file(
+        spawn_lock_path(paths.spawns_dir, resolved_spawn_id),
+        reentrant=False,
+    ):
+        current = read_state(paths.spawns_dir, resolved_spawn_id, include_prompt=False)
+        if current is None or (can_mutate is not None and not can_mutate(current)):
+            return False
+        mutate()
+        return True
 
 
 def _restore_spawn_artifact_permissions(

@@ -218,6 +218,7 @@ class PrimaryAttachLauncher:
         connection: HarnessConnection[Any],
         tui_command_builder: TuiCommandBuilder,
         process_launcher: ProcessLauncher,
+        runtime_root: Path | None = None,
         on_running: Callable[[int], None] | None = None,
     ) -> None:
         self._spawn_id = spawn_id
@@ -225,6 +226,7 @@ class PrimaryAttachLauncher:
         self._connection = connection
         self._tui_command_builder = tui_command_builder
         self._process_launcher = process_launcher
+        self._runtime_root = runtime_root
         self._on_running = on_running
         self._metadata = _LauncherMetadata()
         self._metadata_lock = Lock()
@@ -242,8 +244,13 @@ class PrimaryAttachLauncher:
     ) -> PrimaryAttachOutcome:
         """Execute the full primary attach lifecycle."""
 
-        self._spawn_dir.mkdir(parents=True, exist_ok=True)
-        self._history_writer = HarnessHistoryWriter(self._spawn_dir / "history.jsonl")
+        if self._runtime_root is None:
+            self._spawn_dir.mkdir(parents=True, exist_ok=True)
+        self._history_writer = HarnessHistoryWriter(
+            self._spawn_dir / "history.jsonl",
+            runtime_root=self._runtime_root,
+            spawn_id=str(self._spawn_id) if self._runtime_root is not None else None,
+        )
         connection_started = False
         session_id: str | None = None
         running_process: RunningProcess | None = None
@@ -405,7 +412,12 @@ class PrimaryAttachLauncher:
 
         with self._metadata_lock:
             metadata = self._metadata.to_primary_metadata()
-        write_primary_metadata(self._spawn_dir, metadata)
+        write_primary_metadata(
+            self._spawn_dir,
+            metadata,
+            runtime_root=self._runtime_root,
+            spawn_id=str(self._spawn_id) if self._runtime_root is not None else None,
+        )
 
     async def _run_event_writer(self) -> None:
         """Stream connection events to history.jsonl."""

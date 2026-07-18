@@ -19,6 +19,7 @@ from meridian.lib.ops.work_attachment import set_session_work_attachment
 from meridian.lib.ops.work_lifecycle import WorkTaskDirInput, work_task_dir_sync
 from meridian.lib.state import session_store, work_store
 from meridian.lib.state.spawn_scope import write_spawn_scope_task_dir
+from meridian.lib.state.spawn_store import start_spawn
 
 pytestmark = pytest.mark.slow
 
@@ -29,6 +30,18 @@ def _seed_project(tmp_path: Path) -> Path:
     (project_root / "mars.toml").write_text('[settings]\ntargets = [".claude"]\n', encoding="utf-8")
     (project_root / ".meridian").mkdir(parents=True)
     return project_root
+
+
+def _publish_spawn(runtime_root: Path, spawn_id: str) -> None:
+    start_spawn(
+        runtime_root,
+        chat_id="c1",
+        model="gpt-5.6",
+        agent="coder",
+        harness="codex",
+        prompt="test",
+        spawn_id=spawn_id,
+    )
 
 
 def test_task_dir_query_uses_inherited_env_when_no_scope(
@@ -60,7 +73,8 @@ def test_task_dir_set_then_query_reflects_scope_override(
     monkeypatch.chdir(project_root)
     monkeypatch.setenv("MERIDIAN_SPAWN_ID", "p-scope")
     monkeypatch.setenv("MERIDIAN_TASK_DIR", inherited.as_posix())
-    build_runtime(project_root)
+    runtime = build_runtime(project_root)
+    _publish_spawn(runtime.authority.runtime_root, "p-scope")
 
     task_dir_set_sync(TaskDirSetInput(path=scope_dir.as_posix()))
     output = task_dir_sync(TaskDirInput())
@@ -83,6 +97,7 @@ def test_task_dir_clear_skips_stale_inherited_env(
     monkeypatch.setenv("MERIDIAN_SPAWN_ID", "p-clear")
     monkeypatch.setenv("MERIDIAN_TASK_DIR", inherited.as_posix())
     runtime = build_runtime(project_root)
+    _publish_spawn(runtime.authority.runtime_root, "p-clear")
     write_spawn_scope_task_dir(runtime.project_root, "p-clear", scope_dir)
 
     task_dir_clear_sync(TaskDirClearInput())
@@ -144,6 +159,7 @@ def test_work_task_dir_ignores_spawn_scope_and_inherited_env(
 
     monkeypatch.setenv("MERIDIAN_SPAWN_ID", "p-work")
     monkeypatch.setenv("MERIDIAN_TASK_DIR", inherited.as_posix())
+    _publish_spawn(runtime.authority.runtime_root, "p-work")
     write_spawn_scope_task_dir(runtime.project_root, "p-work", scope_dir)
 
     output = work_task_dir_sync(

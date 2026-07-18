@@ -69,11 +69,23 @@ async def test_claude_connection_launches_subprocess_from_control_root(
     monkeypatch.setattr(claude_ws.asyncio, "create_subprocess_exec", _fake_create_subprocess_exec)
     connection = ClaudeConnection()
     monkeypatch.setattr(connection, "_build_command", lambda _config, _spec: ["claude", "--test"])
+    spawn_id = SpawnId("p-claude-cwd")
+    runtime_root = resolve_project_runtime_root(control_root)
+    start_spawn(
+        runtime_root,
+        spawn_id=spawn_id,
+        chat_id="chat-1",
+        model="gpt-5.4",
+        agent="coder",
+        harness="claude",
+        prompt="hi",
+    )
     config = ConnectionConfig(
-        spawn_id=SpawnId("p-claude-cwd"),
+        spawn_id=spawn_id,
         harness_id=HarnessId.CLAUDE,
         prompt="hi",
         control_root=control_root,
+        runtime_root=runtime_root,
         task_cwd=task_cwd,
         env_overrides={"MERIDIAN_TEST": "1"},
     )
