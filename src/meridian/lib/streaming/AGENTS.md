@@ -112,8 +112,9 @@ session drains that keep the harness alive across turns.
 
 `heartbeat_loop` touches `spawns/<id>/heartbeat` every 30 seconds. It never creates the
 spawn directory and stops if the directory has been deleted. The reaper
-(`lib/state/reaper.py`) identifies orphaned spawns by staleness. A stopped heartbeat
-means the manager died, the spawn was deleted, or the spawn is orphaned.
+(`lib/state/reaper.py`) identifies orphaned spawns by staleness. Unexpected heartbeat
+cessation while a spawn should remain active means the manager died or the spawn is
+orphaned; deletion, normal completion, cancellation, and shutdown stop it intentionally.
 
 ## Entry Points
 
