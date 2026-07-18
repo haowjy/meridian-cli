@@ -5,6 +5,7 @@ from pydantic import ValidationError
 
 from meridian.lib.state.spawn.model import RunnerExitFacts, SpawnRecord, TerminalFacts
 from meridian.lib.state.spawn.repository import (
+    Decline,
     read_prompt,
     read_state,
     record_to_stored_state,
@@ -183,8 +184,27 @@ def test_write_state_locked_applies_mutator_under_per_spawn_lock(tmp_path: Path)
         lambda current: current.model_copy(update={"runner_pid": 789, "desc": "updated"}),
     )
 
-    assert committed.runner_pid == 789
-    assert committed.desc == "updated"
+    assert committed.wrote is True
+    assert committed.snapshot.runner_pid == 789
+    assert committed.snapshot.desc == "updated"
+    assert committed.reason is None
+
+
+def test_write_state_locked_decline_preserves_state(tmp_path: Path) -> None:
+    spawns_dir = tmp_path / "spawns"
+    original = _record()
+    _seed_state(spawns_dir, original)
+
+    outcome = write_state_locked(
+        spawns_dir,
+        "p1",
+        lambda _current: Decline("not applicable"),
+    )
+
+    assert outcome.wrote is False
+    assert outcome.snapshot == original.model_copy(update={"prompt": None})
+    assert outcome.reason == "not applicable"
+    assert read_state(spawns_dir, "p1") == outcome.snapshot
 
 
 def test_start_spawn_persists_display_label_when_goal_and_desc_absent(tmp_path: Path) -> None:

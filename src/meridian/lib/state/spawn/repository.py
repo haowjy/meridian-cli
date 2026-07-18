@@ -88,6 +88,22 @@ class SpawnStateQuarantined(ValueError):
         super().__init__(f"Spawn state quarantined: {report.state_path}")
 
 
+@dataclass(frozen=True)
+class Decline:
+    """A locked mutator's decision to preserve the current state."""
+
+    reason: str
+
+
+@dataclass(frozen=True)
+class MutationOutcome:
+    """Persistence result and authoritative snapshot from a locked mutation."""
+
+    wrote: bool
+    snapshot: SpawnRecord
+    reason: str | None = None
+
+
 def _enforce_spawn_state_field_accounting(
     *,
     shared_fields: set[str] | None = None,
@@ -217,10 +233,10 @@ def _write_state(spawns_dir: Path, record: SpawnRecord) -> None:
 def write_state_locked(
     spawns_dir: Path,
     spawn_id: str,
-    mutator: Callable[[SpawnRecord], SpawnRecord],
+    mutator: Callable[[SpawnRecord], SpawnRecord | Decline],
     *,
     allow_terminal_overwrite: bool = False,
-) -> SpawnRecord:
+) -> MutationOutcome:
     """Re-read, mutate, and persist one spawn under its stable per-spawn lock.
 
     Lock reentrancy is forbidden because a nested mutation could commit from a
@@ -232,12 +248,14 @@ def write_state_locked(
         if current is None:
             raise FileNotFoundError(_state_path(spawns_dir, spawn_id))
         updated = mutator(current)
+        if isinstance(updated, Decline):
+            return MutationOutcome(wrote=False, snapshot=current, reason=updated.reason)
         if updated.id != spawn_id:
             raise ValueError("Locked state mutator must not change spawn id")
         if current.status in TERMINAL_SPAWN_STATUSES and not allow_terminal_overwrite:
             raise ValueError(f"Refusing to overwrite terminal spawn state: {spawn_id}")
         _write_state(spawns_dir, updated)
-        return updated
+        return MutationOutcome(wrote=True, snapshot=updated)
 
 
 def is_safe_spawn_dir_name(name: str) -> bool:
@@ -265,6 +283,8 @@ def scan_spawn_ids(spawns_dir: Path) -> list[str]:
 
 
 __all__ = [
+    "Decline",
+    "MutationOutcome",
     "SpawnStateQuarantineReport",
     "SpawnStateQuarantined",
     "StoredSpawnState",

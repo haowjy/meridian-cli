@@ -469,7 +469,7 @@ def update_spawn(
         return current.model_copy(update=updates)
 
     try:
-        record = _write_state_locked(
+        outcome = _write_state_locked(
             paths.spawns_dir,
             str(spawn_id),
             merge,
@@ -483,6 +483,7 @@ def update_spawn(
         notify_observers,
     )
 
+    record = outcome.snapshot
     notify_observers(
         LifecycleEvent(
             event="spawn.updated",
@@ -536,7 +537,7 @@ def record_spawn_exited(
             str(spawn_id),
             merge_exit,
             allow_terminal_overwrite=True,
-        )
+        ).snapshot
     except FileNotFoundError:
         return None
 
@@ -582,7 +583,7 @@ def record_runner_exit(
             paths.spawns_dir,
             str(spawn_id),
             merge_exit,
-        )
+        ).snapshot
     except FileNotFoundError:
         return None
     except _RunnerExitSkipped:
@@ -625,7 +626,7 @@ def record_cancel_intent(
     if _read_state(paths.spawns_dir, str(spawn_id)) is None:
         return None
     try:
-        return _write_state_locked(paths.spawns_dir, str(spawn_id), merge_intent)
+        return _write_state_locked(paths.spawns_dir, str(spawn_id), merge_intent).snapshot
     except FileNotFoundError:
         return None
     except _CancelIntentSkipped as exc:
@@ -706,7 +707,7 @@ def finalize_spawn(
         )
         return FinalizeOutcome(transitioned=False, wrote=False, snapshot=None)
     try:
-        committed = _write_state_locked(
+        outcome = _write_state_locked(
             paths.spawns_dir,
             str(spawn_id),
             finalize,
@@ -717,7 +718,7 @@ def finalize_spawn(
     return FinalizeOutcome(
         transitioned=was_active,
         wrote=True,
-        snapshot=committed,
+        snapshot=outcome.snapshot,
     )
 
 
@@ -754,10 +755,10 @@ def mark_finalizing_with_snapshot(
     if _read_state(paths.spawns_dir, str(spawn_id)) is None:
         return False, None
     try:
-        committed = _write_state_locked(paths.spawns_dir, str(spawn_id), transition)
+        outcome = _write_state_locked(paths.spawns_dir, str(spawn_id), transition)
     except _NoTransition as exc:
         return False, exc.snapshot
-    return True, committed
+    return True, outcome.snapshot
 
 
 def mark_spawn_running(
@@ -816,12 +817,12 @@ def mark_spawn_running_with_snapshot(
         )
 
     try:
-        committed = _write_state_locked(paths.spawns_dir, str(spawn_id), merge)
+        outcome = _write_state_locked(paths.spawns_dir, str(spawn_id), merge)
     except FileNotFoundError:
         return False, None
     except _NoTransition as exc:
         return False, exc.snapshot
-    return changed, committed
+    return changed, outcome.snapshot
 
 
 def _spawn_sort_key(spawn: SpawnRecord) -> tuple[int, str]:
