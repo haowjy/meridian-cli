@@ -352,7 +352,7 @@ export class SpawnWatchRuntime {
       this.pending.set(id, {
         id,
         kind: "spawn",
-        status: state.terminal.status,
+        status: state.status,
         label: `${state.agent ?? "spawn"}${state.model ? ` (${state.model})` : ""}`,
         duration: formatDurationSecs(state.terminal?.duration_secs),
       });

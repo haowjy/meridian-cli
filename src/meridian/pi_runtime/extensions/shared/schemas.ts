@@ -52,8 +52,8 @@ export const SpawnStateFileSchema = Type.Object({
   started_at: Type.Optional(Type.Union([Type.String(), Type.Null()])),
   terminal: Type.Union([
     Type.Object({
-      // Terminal vocabulary is owned by Meridian's persisted state, not Pi.
-      status: Type.String(),
+      // Terminal status lives ONLY at the top level; `terminal` presence is
+      // the completion discriminant. Vocabulary is owned by Meridian, not Pi.
       exit_code: Type.Number(),
       finished_at: Type.String(),
       published_at: Type.String(),

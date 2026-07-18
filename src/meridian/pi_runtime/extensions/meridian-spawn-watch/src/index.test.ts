@@ -115,7 +115,7 @@ async function writeSpawnState(
 
 function terminalFacts(status = "succeeded"): Record<string, unknown> {
   return {
-    status,
+    // Terminal status lives only at the top level of state.json.
     exit_code: status === "succeeded" ? 0 : 1,
     finished_at: "2026-07-17T12:00:05Z",
     published_at: "2026-07-17T12:00:05Z",
