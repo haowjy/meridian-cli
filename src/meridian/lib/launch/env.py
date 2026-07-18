@@ -5,7 +5,6 @@ from collections.abc import Callable, Collection, Mapping
 from pathlib import Path
 from typing import cast
 
-from meridian.env_registry import is_allowed_child_env_name
 from meridian.lib.core.child_env import ALLOWED_CHILD_ENV_KEYS
 from meridian.lib.core.overrides import RUNTIME_OVERRIDE_ENV_VARS
 from meridian.lib.core.types import HarnessId, SpawnId
@@ -15,21 +14,6 @@ from meridian.lib.safety.permissions import PermissionConfig
 
 from .constants import BLOCKED_CHILD_ENV_VARS
 
-_CHILD_ENV_ALLOWLIST = frozenset(
-    {
-        "PATH",
-        "HOME",
-        "USER",
-        "SHELL",
-        "LANG",
-        "TERM",
-        "TMPDIR",
-        "PYTHONPATH",
-        "VIRTUAL_ENV",
-    }
-)
-_CHILD_ENV_ALLOWLIST_PREFIXES = ("LC_", "XDG_", "UV_")
-_CHILD_ENV_SECRET_SUFFIXES = ("_TOKEN", "_KEY", "_SECRET")
 _PI_SESSION_DIR_ENV = "PI_CODING_AGENT_SESSION_DIR"
 _PI_CHILD_WAVE_TIMEOUT_MS_ENV = "_MERIDIAN_PI_CHILD_WAVE_TIMEOUT_MS"
 _PI_TASK_PING_INTERVAL_MS_ENV = "_MERIDIAN_PI_TASK_PING_INTERVAL_MS"
@@ -63,18 +47,6 @@ def apply_pi_bind_time_env(
         env[_PI_TASK_PING_RESET_ON_ACTIVITY_ENV] = "true" if reset_on_activity else "false"
 
 
-def _is_allowlisted_child_env_var(key: str) -> bool:
-    normalized = key.upper()
-    if normalized in _CHILD_ENV_ALLOWLIST or is_allowed_child_env_name(normalized):
-        return True
-    return any(normalized.startswith(prefix) for prefix in _CHILD_ENV_ALLOWLIST_PREFIXES)
-
-
-def _looks_like_secret_env_var(key: str) -> bool:
-    normalized = key.upper()
-    return any(normalized.endswith(suffix) for suffix in _CHILD_ENV_SECRET_SUFFIXES)
-
-
 def _normalize_meridian_env(env: dict[str, str]) -> None:
     """Normalize MERIDIAN_CONTEXT_*_DIR path overrides.
 
@@ -95,30 +67,6 @@ def _normalize_meridian_env(env: dict[str, str]) -> None:
             to_drop.append(key)
     for key in to_drop:
         env.pop(key, None)
-
-
-def sanitize_child_env(
-    base_env: Mapping[str, str],
-    env_overrides: Mapping[str, str] | None,
-    pass_through: Collection[str],
-) -> dict[str, str]:
-    """Return a sanitized child environment with explicit pass-through controls."""
-
-    pass_through_keys = {name.upper() for name in pass_through}
-    sanitized: dict[str, str] = {}
-
-    for key, value in base_env.items():
-        normalized = key.upper()
-        if _looks_like_secret_env_var(normalized) and normalized not in pass_through_keys:
-            continue
-        if normalized in pass_through_keys or _is_allowlisted_child_env_var(normalized):
-            sanitized[key] = value
-
-    if env_overrides is not None:
-        sanitized.update(env_overrides)
-
-    _normalize_meridian_env(sanitized)
-    return sanitized
 
 
 def inherit_child_env(

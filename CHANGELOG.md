@@ -5,6 +5,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Changed
+- Child launches now use only the inherited-environment policy; the unused
+  parallel sanitized-environment allowlist path has been removed.
 - Project identity now lives in committed `meridian.toml` `[project] id` and is
   created with a preserving, concurrency-safe TOML append.
 - `meridian migrate` moves legacy `.meridian/id` identity into `meridian.toml`

@@ -12,7 +12,6 @@ from meridian.lib.launch.env import (
     build_harness_child_env,
     inherit_child_env,
     merge_env_overrides,
-    sanitize_child_env,
 )
 from meridian.lib.safety.permissions import (
     PermissionConfig,
@@ -181,39 +180,6 @@ def test_codex_uses_exact_sandbox_from_profile(
 
     assert config.sandbox == expected_sandbox
     assert resolve_permission_flags(resolver, HarnessId.CODEX) == expected_flags
-
-
-def test_sanitize_child_env_strips_secrets() -> None:
-    sanitized = sanitize_child_env(
-        base_env={
-            "PATH": "/usr/bin",
-            "HOME": "/home/tester",
-            "LC_ALL": "C.UTF-8",
-            "XDG_RUNTIME_DIR": "/tmp/xdg",
-            "UV_CACHE_DIR": "/tmp/uv",
-            "EXAMPLE_TOKEN": "drop-me",
-            "EXAMPLE_KEY": "drop-me-too",
-            "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE": "67",
-            "ANTHROPIC_API_KEY": "allowed-credential",
-        },
-        env_overrides={
-            "_MERIDIAN_DEPTH": "2",
-            "CUSTOM_SECRET": "explicit-override",
-        },
-        pass_through={"ANTHROPIC_API_KEY"},
-    )
-
-    assert sanitized["PATH"] == "/usr/bin"
-    assert sanitized["HOME"] == "/home/tester"
-    assert sanitized["LC_ALL"] == "C.UTF-8"
-    assert sanitized["XDG_RUNTIME_DIR"] == "/tmp/xdg"
-    assert sanitized["UV_CACHE_DIR"] == "/tmp/uv"
-    assert sanitized["ANTHROPIC_API_KEY"] == "allowed-credential"
-    assert sanitized["_MERIDIAN_DEPTH"] == "2"
-    assert sanitized["CUSTOM_SECRET"] == "explicit-override"
-    assert "EXAMPLE_TOKEN" not in sanitized
-    assert "EXAMPLE_KEY" not in sanitized
-    assert "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE" not in sanitized
 
 
 def test_build_harness_child_env_inherits_allowed_vars_and_blocks_adapter_vars() -> None:
