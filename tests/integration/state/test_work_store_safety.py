@@ -8,6 +8,8 @@ from functools import partial
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 import meridian.lib.state.work_store as work_store
 from meridian.lib.state import work_repository
 from tests.conftest import posix_only
@@ -80,7 +82,9 @@ def test_concurrent_field_updates_do_not_lose_each_other(tmp_path: Path) -> None
     assert item.task_dir == "/new/task-dir"
 
 
-def test_get_work_item_is_pure_and_explicit_heal_repairs_malformed_status(tmp_path: Path) -> None:
+def test_get_work_item_is_pure_and_explicit_repair_fixes_malformed_status(
+    tmp_path: Path,
+) -> None:
     runtime_root = _state_root(tmp_path)
     item = work_store.create_work_item(runtime_root, "repair-malformed")
 
@@ -93,11 +97,72 @@ def test_get_work_item_is_pure_and_explicit_heal_repairs_malformed_status(tmp_pa
     assert loaded.status == "open"
     assert status_path.read_text(encoding="utf-8") == "not json"
 
-    work_store.heal_work_item(runtime_root, item.name)
+    work_store.repair_work_item(runtime_root, item.name)
     payload = json.loads(status_path.read_text(encoding="utf-8"))
     assert payload["status"] == "open"
     assert payload["created_at"]
     assert payload["archived_at"] is None
+
+
+def test_repair_uses_directory_timestamp_when_archived_at_is_missing(tmp_path: Path) -> None:
+    runtime_root = _state_root(tmp_path)
+    item = work_store.create_work_item(runtime_root, "repair-archive-time")
+    active_dir = runtime_root / "work" / item.name
+    archived_dir = runtime_root / "archive" / "work" / item.name
+    archived_dir.parent.mkdir(parents=True)
+    active_dir.rename(archived_dir)
+
+    repaired = work_store.repair_work_item(runtime_root, item.name)
+
+    assert repaired.status == "done"
+    assert repaired.archived_at is not None
+    payload = json.loads((archived_dir / "__status.json").read_text(encoding="utf-8"))
+    assert payload["status"] == "done"
+    assert payload["archived_at"] == repaired.archived_at
+
+
+def test_interrupted_archive_is_archived_by_directory_location(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runtime_root = _state_root(tmp_path)
+    item = work_store.create_work_item(runtime_root, "archive-crash")
+    work_store.update_work_item(runtime_root, item.name, status="blocked")
+
+    def crash_before_metadata_write(_work_dir: Path, _item: work_store.WorkItem) -> None:
+        raise OSError("simulated crash")
+
+    monkeypatch.setattr(work_repository, "_write_item", crash_before_metadata_write)
+    with pytest.raises(OSError, match="simulated crash"):
+        work_store.archive_work_item(runtime_root, item.name)
+
+    assert not (runtime_root / "work" / item.name).exists()
+    assert (runtime_root / "archive" / "work" / item.name).is_dir()
+    loaded = work_store.get_work_item(runtime_root, item.name)
+    assert loaded is not None
+    assert loaded.status == "done"
+
+
+def test_interrupted_reopen_is_active_by_directory_location(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runtime_root = _state_root(tmp_path)
+    item = work_store.create_work_item(runtime_root, "reopen-crash")
+    work_store.archive_work_item(runtime_root, item.name)
+
+    def crash_before_metadata_write(_work_dir: Path, _item: work_store.WorkItem) -> None:
+        raise OSError("simulated crash")
+
+    monkeypatch.setattr(work_repository, "_write_item", crash_before_metadata_write)
+    with pytest.raises(OSError, match="simulated crash"):
+        work_store.reopen_work_item(runtime_root, item.name)
+
+    assert (runtime_root / "work" / item.name).is_dir()
+    assert not (runtime_root / "archive" / "work" / item.name).exists()
+    loaded = work_store.get_work_item(runtime_root, item.name)
+    assert loaded is not None
+    assert loaded.status == "open"
+
+
 def test_delete_without_force_succeeds_for_status_only_directory(tmp_path: Path) -> None:
     runtime_root = _state_root(tmp_path)
     item = work_store.create_work_item(runtime_root, "delete-me")
