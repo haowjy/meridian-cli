@@ -55,7 +55,10 @@ def test_persist_report_wraps_assistant_extract_with_report_heading(tmp_path: Pa
 
 def test_classify_finalize_report_rejects_codex_close_error_payload() -> None:
     report = ExtractedReport(
-        content='{"type":"error/connectionClosed","message":"no close frame received or sent"}',
+        content=(
+            '{"type":"meridian/error/connectionClosed",'
+            '"message":"no close frame received or sent"}'
+        ),
         source="assistant_message",
     )
 
@@ -149,7 +152,7 @@ def test_extract_or_fallback_report_ignores_codex_connection_closed_history(
     spawn_id = SpawnId("p-codex-close")
     artifacts.put(
         ArtifactKey(f"{spawn_id}/history.jsonl"),
-        b'{"event_type":"error/connectionClosed",'
+        b'{"event_type":"meridian/error/connectionClosed",'
         b'"payload":{"message":"no close frame received or sent"},'
         b'"seq":5}\n',
     )

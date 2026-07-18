@@ -139,7 +139,10 @@ to inspect without instantiating an adapter. The contract sub-models:
 
 ### Terminal Event Classification
 
-`semantics.py:terminal_outcome(event)` drives the drain loop's break condition.
+`semantics.py:terminal_outcome(event)` drives the drain loop's break condition by
+first selecting `HarnessBundle.semantics` from the event's `HarnessId`. Each adapter
+owns its event-name table and payload-dependent resolver; shared classifiers contain
+no harness event names.
 Returns `TerminalEventOutcome(status, exit_code, error)` or `None`.
 `event_type` is NOT globally unique — always qualified by `event.harness_id`.
 For harnesses whose streams can include child work, callers pass a
@@ -148,9 +151,9 @@ For harnesses whose streams can include child work, callers pass a
 
 Key mappings:
 - Claude: `result` event with `is_error=True` → failed; `subtype in ("", "success")` and `terminal_reason in ("", "completed")` → succeeded
-- Codex: main-thread `turn/completed` → succeeded; `error/connectionClosed` → failed
+- Codex: main-thread `turn/completed` → succeeded; `meridian/error/connectionClosed` → failed
 - OpenCode: parent-session `session.idle` → succeeded; parent-session `session.error` → failed
-- Cursor: `error/connectionClosed` → failed; no explicit success event — stdout EOF
+- Cursor: `meridian/error/connectionClosed` → failed; no explicit success event — stdout EOF
   + process exit code 0 is the success boundary (see `CursorSubprocessConnection.events()`).
 - Pi: `agent_end` → succeeded candidate; `cancelled`/`error` → failed.
   The succeeded candidate is finalized only when `PiDrainCoordinator` confirms
@@ -175,11 +178,11 @@ specific evidence already recorded.
 
 | Harness | Unexpected death delivered to the drain |
 |---|---|
-| Claude | Non-zero subprocess exit at stdout EOF yields `error/connectionClosed` with the exit code and captured stderr excerpt when present, then the iterator ends. Stdout reader failure yields the same event with the read error. |
-| Codex | Unexpected WebSocket reader failure or liveness timeout queues `error/connectionClosed`, then queue EOF. A clean WebSocket close queues EOF without a terminal event. Startup process exit is raised before draining and includes exit code plus the captured stderr excerpt when present. |
-| OpenCode | A detected backend process exit yields `error/connectionClosed` with the exit code and captured stderr excerpt when present, then the SSE iterator ends. SSE liveness failure without a detected process exit currently ends without a terminal event. |
-| Cursor | Non-zero subprocess exit at stdout EOF yields `error/connectionClosed` with the exit code, then the iterator ends. Exit code zero is the success boundary and ends without a terminal event. |
-| Pi | Non-zero subprocess exit yields `error/connectionClosed` with the exit code and captured stderr when present, then the iterator ends. Pi completion remains subject to its quiescence profile rather than raw EOF. |
+| Claude | Non-zero subprocess exit at stdout EOF yields `meridian/error/connectionClosed` with the exit code and captured stderr excerpt when present, then the iterator ends. Stdout reader failure yields the same event with the read error. |
+| Codex | Unexpected WebSocket reader failure or liveness timeout queues `meridian/error/connectionClosed`, then queue EOF. A clean WebSocket close queues EOF without a terminal event. Startup process exit is raised before draining and includes exit code plus the captured stderr excerpt when present. |
+| OpenCode | A detected backend process exit yields `meridian/error/connectionClosed` with the exit code and captured stderr excerpt when present, then the SSE iterator ends. SSE liveness failure without a detected process exit currently ends without a terminal event. |
+| Cursor | Non-zero subprocess exit at stdout EOF yields `meridian/error/connectionClosed` with the exit code, then the iterator ends. Exit code zero is the success boundary and ends without a terminal event. |
+| Pi | Non-zero subprocess exit yields `meridian/error/connectionClosed` with the exit code and captured stderr when present, then the iterator ends. Pi completion remains subject to its quiescence profile rather than raw EOF. |
 
 Tests for death classification must preserve that ordering: process exit and its code
 become observable before fake iterator exhaustion. Clean EOF is a different contract.
@@ -369,7 +372,10 @@ Touch every file in `HARNESS_EXTENSION_TOUCHPOINTS` (listed in `__init__.py`):
 7. `launch_spec.py:_enforce_spawn_params_accounting()` — update handled fields
 8. `connections/<new_harness>_<transport>.py`
 9. `projections/permission_flags.py`
-10. `semantics.py:terminal_outcome()`
+
+The bundle created in step 2 must also register its per-adapter `HarnessSemantics`
+table and payload resolver. Shared `semantics.py` is intentionally not an extension
+touchpoint.
 
 Missing any of these causes `ImportError` or `ValueError` at startup — the drift
 guards make omissions loud.

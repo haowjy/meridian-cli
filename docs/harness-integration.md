@@ -392,13 +392,15 @@ non-None, the drain breaks.
 class PiConnection(HarnessConnection[ResolvedLaunchSpec]):
     async def start(self, config, spec): ...
     async def stop(self): ...
-    async def events(self) -> AsyncIterator[HarnessEvent]: ...
+    async def events(self) -> AsyncIterator[RawHarnessEvent]: ...
     async def send_cancel(self): ...        # Signal the process
     async def send_user_message(self): ...  # Raise ConnectionNotReady in Phase 1
 ```
 
 **Event stream reading**: Read JSONL lines from `process.stdout`,
-parse each as JSON, extract `type` field, emit `HarnessEvent(event_type, payload, harness_id)`.
+parse each as JSON, extract `type` field, and emit the open transport envelope
+`RawHarnessEvent(event_type, payload, harness_id)`. Unknown upstream names and payload
+fields remain persistable.
 
 **stderr handling**: Redirect `stderr` to `<spawn_dir>/stderr.log`. Never parse stderr
 for structured data — it's diagnostic only.
@@ -414,14 +416,13 @@ for graceful shutdown, then SIGKILL/`process.kill()`.
 
 ### 1.6 Event Semantics
 
-**File: `src/meridian/lib/harness/semantics.py`**
+**File: the adapter's `HarnessBundle` registration**
 
-Three functions must handle the new harness:
-
-**`terminal_outcome(event)`** — classifies whether an event completes a spawn drain:
+Register a `HarnessSemantics` port with a declarative event-name table. Use the small
+payload resolver only for outcomes that depend on event content:
 
 ```python
-if event.harness_id == HarnessId.PI.value and event.event_type == "agent_end":
+def resolve_pi_terminal(event: RawHarnessEvent) -> TerminalEventOutcome | None:
     messages = event.payload.get("messages", [])
     last_assistant = next(
         (m for m in reversed(messages) if m.get("role") == "assistant"), None
@@ -431,28 +432,26 @@ if event.harness_id == HarnessId.PI.value and event.event_type == "agent_end":
     return TerminalEventOutcome(status="succeeded", exit_code=0)
 ```
 
-**`activity_transition(event)`** — maps events to `"turn_active"` or `"idle"`:
-
 ```python
-if event.harness_id == HarnessId.PI.value:
-    if event.event_type in {"agent_start", "turn_start", "message_start",
-                             "message_update", "tool_execution_start",
-                             "tool_execution_update"}:
-        return "turn_active"
-    if event.event_type in {"turn_end", "agent_end"}:
-        return "idle"
+PI_SEMANTICS = HarnessSemantics(
+    event_classes={
+        "agent_start": frozenset({SemanticClass.TURN_ACTIVE}),
+        "turn_start": frozenset({SemanticClass.TURN_ACTIVE}),
+        "turn_end": frozenset({SemanticClass.IDLE}),
+        "agent_end": frozenset({
+            SemanticClass.IDLE,
+            SemanticClass.SIGNAL_CLEARED,
+            SemanticClass.TERMINAL_PAYLOAD,
+        }),
+        MERIDIAN_CONNECTION_CLOSED_EVENT: frozenset({SemanticClass.TERMINAL_PAYLOAD}),
+    },
+    payload_resolver=resolve_pi_terminal,
+)
 ```
 
-**`clears_signal(event)`** — which event clears a pending user signal:
-
-```python
-if event.harness_id == HarnessId.PI.value:
-    return event.event_type == "agent_end"
-```
-
-**Golden rule of semantics**: `event_type` is NOT globally unique. Always qualify
-by `event.harness_id` first. `turn/completed` is Codex; OpenCode uses
-`session.idle` for the same semantic.
+The shared normalizer selects the bundle by `HarnessId` before it reads `event_type`.
+Never add a harness-specific branch to `semantics.py`. Synthetic transport events use
+the reserved `meridian/` namespace.
 
 If the harness can multiplex child work on the same stream, also expose
 `HarnessConnection.primary_event_scope`. The scope identifies the parent conversation

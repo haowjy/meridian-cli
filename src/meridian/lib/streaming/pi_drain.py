@@ -48,7 +48,7 @@ from meridian.lib.streaming.pi_work_ledger import (
 )
 
 if TYPE_CHECKING:
-    from meridian.lib.harness.connections.base import HarnessConnection, HarnessEvent
+    from meridian.lib.harness.connections.base import HarnessConnection, RawHarnessEvent
     from meridian.lib.harness.semantics import TerminalEventOutcome
     from meridian.lib.launch.launch_types import ResolvedLaunchSpec
     from meridian.lib.streaming.spawn_session import DrainOutcome
@@ -99,7 +99,7 @@ class PiCompletionEvidence:
         self._next_descendant_poll_at = None
 
     async def observe_event(
-        self, event: HarnessEvent, transition: str | None
+        self, event: RawHarnessEvent, transition: str | None
     ) -> EvidenceEventDecision:
         duplicate = self.lifecycle_tracker.observe(event)
         if duplicate:
@@ -121,7 +121,7 @@ class PiCompletionEvidence:
             profile.after_observed_event(transition)
         return EvidenceEventDecision()
 
-    def note_event_persisted(self, event: HarnessEvent) -> EvidenceEventDecision:
+    def note_event_persisted(self, event: RawHarnessEvent) -> EvidenceEventDecision:
         profile = self._profile
         activity = profile.note_persisted_activity(event) if profile is not None else None
         lifecycle_error = self.lifecycle_tracker.lifecycle_tracking_invalidated_error
@@ -414,15 +414,15 @@ class PiDrainCoordinator:
     def next_timeout(self) -> float | None:
         return self._coordinator.next_timeout()
 
-    async def observe_event(self, event: HarnessEvent, transition: str | None) -> bool:
+    async def observe_event(self, event: RawHarnessEvent, transition: str | None) -> bool:
         return await self._coordinator.observe_event(event, transition)
 
-    def note_event_persisted(self, event: HarnessEvent) -> DrainLoopDecision:
+    def note_event_persisted(self, event: RawHarnessEvent) -> DrainLoopDecision:
         return self._coordinator.note_event_persisted(event)
 
     async def handle_terminal_event(
         self,
-        event: HarnessEvent,
+        event: RawHarnessEvent,
         outcome: TerminalEventOutcome,
         action: DrainAction,
     ) -> DrainTerminalDecision:

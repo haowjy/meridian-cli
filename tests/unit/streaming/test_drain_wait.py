@@ -6,7 +6,7 @@ import asyncio
 
 import pytest
 
-from meridian.lib.harness.connections.base import HarnessEvent
+from meridian.lib.harness.connections.base import RawHarnessEvent
 from meridian.lib.streaming.drain_wait import DrainInputWaiter
 from meridian.lib.streaming.spawn_drain_loop import resolve_terminal_outcome
 from meridian.lib.streaming.spawn_session import DrainOutcome
@@ -22,7 +22,7 @@ class _FailingDiskDrain:
 
 async def _never_events():  # type: ignore[no-untyped-def]
     await asyncio.sleep(60)
-    yield HarnessEvent(event_type="never", harness_id="pi", payload={})
+    yield RawHarnessEvent(event_type="never", harness_id="pi", payload={})
 
 
 @pytest.mark.asyncio

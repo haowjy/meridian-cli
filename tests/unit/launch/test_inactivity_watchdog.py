@@ -9,7 +9,7 @@ import pytest
 
 from meridian.lib.core.domain import Spawn
 from meridian.lib.core.types import HarnessId, ModelId, SpawnId
-from meridian.lib.harness.connections.base import ConnectionConfig, HarnessEvent
+from meridian.lib.harness.connections.base import ConnectionConfig, RawHarnessEvent
 from meridian.lib.launch import streaming_runner as _sr_mod
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.safety.permissions import UnsafeNoOpPermissionResolver
@@ -51,8 +51,8 @@ class _FakeManager:
     async def start_heartbeat(self, _spawn_id: SpawnId) -> None:
         return None
 
-    def subscribe(self, _spawn_id: SpawnId) -> asyncio.Queue[HarnessEvent | None]:
-        queue: asyncio.Queue[HarnessEvent | None] = asyncio.Queue()
+    def subscribe(self, _spawn_id: SpawnId) -> asyncio.Queue[RawHarnessEvent | None]:
+        queue: asyncio.Queue[RawHarnessEvent | None] = asyncio.Queue()
         queue.put_nowait(None)
         return queue
 

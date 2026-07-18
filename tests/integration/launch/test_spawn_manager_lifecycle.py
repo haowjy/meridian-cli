@@ -16,7 +16,7 @@ from meridian.lib.core.types import HarnessId, SpawnId, TransportId
 from meridian.lib.harness.connections.base import (
     ConnectionCapabilities,
     ConnectionConfig,
-    HarnessEvent,
+    RawHarnessEvent,
     StopResult,
 )
 from meridian.lib.harness.control_action import ControlActionCoordinator
@@ -229,7 +229,7 @@ async def test_wait_for_completion_survives_cleanup_without_private_hooks(
             return None
 
         async def events(self):  # type: ignore[no-untyped-def]
-            yield HarnessEvent(
+            yield RawHarnessEvent(
                 event_type="item.completed",
                 harness_id="codex",
                 payload={
@@ -334,8 +334,8 @@ async def test_backpressure_drop_emits_runtime_telemetry(tmp_path: Path) -> None
         ),
     )
 
-    first = HarnessEvent(event_type="first", harness_id="codex", payload={})
-    second = HarnessEvent(event_type="second", harness_id="codex", payload={})
+    first = RawHarnessEvent(event_type="first", harness_id="codex", payload={})
+    second = RawHarnessEvent(event_type="second", harness_id="codex", payload={})
     manager._fan_out_event(spawn_id, first)
     manager._fan_out_event(spawn_id, second)
 
@@ -568,7 +568,7 @@ async def test_spawn_manager_serializes_control_actions_and_persists_transitions
             while self.state != "stopped":
                 await asyncio.sleep(0.01)
                 if False:
-                    yield HarnessEvent(event_type="noop", payload={}, harness_id="codex")
+                    yield RawHarnessEvent(event_type="noop", payload={}, harness_id="codex")
 
     monkeypatch.setattr(spawn_manager_module, "ControlSocketServer", FakeControlSocketServer)
     monkeypatch.setattr(

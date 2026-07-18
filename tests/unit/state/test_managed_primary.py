@@ -1,9 +1,9 @@
-from meridian.lib.harness.connections.base import HarnessEvent
+from meridian.lib.harness.connections.base import RawHarnessEvent
 from meridian.lib.state.managed_primary import ManagedPrimaryCausalTracker
 
 
-def _event(event_type: str, payload: dict[str, object]) -> HarnessEvent:
-    return HarnessEvent(event_type=event_type, payload=payload, harness_id="codex")
+def _event(event_type: str, payload: dict[str, object]) -> RawHarnessEvent:
+    return RawHarnessEvent(event_type=event_type, payload=payload, harness_id="codex")
 
 
 def test_causal_tracker_carries_turn_request_item_correlation() -> None:

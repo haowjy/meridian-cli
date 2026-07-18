@@ -95,8 +95,9 @@ parent signals, or supply the parent report.
   parent inherited `Agent` grants cannot bypass the Mars `agent_copy` boundary.
 - `__init__.py` — `HARNESS_EXTENSION_TOUCHPOINTS` and `ensure_bootstrap()`.
   Read before adding a harness — lists every file that must be touched.
-- `semantics.py` — `terminal_outcome()`, `activity_transition()`, `clears_signal()`.
-  Cross-harness event classification.
+- `semantics.py` — the generic `HarnessSemantics` port, closed semantic union, and
+  dispatch-by-`HarnessId` lookup. Event-name tables and payload resolvers live beside
+  each adapter's `HarnessBundle` registration.
 - `common.py` — shared extraction helpers used by adapters.
 - `transcript.py` — cross-harness session read path. `TranscriptMessage` (with
   `tool_call: ToolCall | None` and `is_tool_result: bool`), `ToolCall` (canonical
@@ -124,8 +125,10 @@ end-to-end with Pi as the worked example. Covers probing, adapter, projection,
 extraction, connection, semantics, wrapper/runtime, session parity, model/catalog,
 and verification.
 
-Touch every file in `HARNESS_EXTENSION_TOUCHPOINTS` (`__init__.py`). Missing any
-causes `ImportError` or `ValueError` at startup — the drift guards make omissions loud.
+Touch every file in `HARNESS_EXTENSION_TOUCHPOINTS` (`__init__.py`). The adapter's
+bundle registration must include its `HarnessSemantics` table; adding a harness never
+adds cases to shared `semantics.py`. Missing a port causes construction or bootstrap to
+fail loudly.
 See [.context/CONTEXT.md](.context/CONTEXT.md) for the full checklist.
 
 ## Anti-Patterns

@@ -32,8 +32,8 @@ from meridian.lib.harness.connections.base import (
     ConnectionNotReady,
     ConnectionState,
     HarnessConnection,
-    HarnessEvent,
     ObserverEndpoint,
+    RawHarnessEvent,
     StopProgressCallback,
     StopResult,
     reap_on_ownership_transfer_failure,
@@ -405,7 +405,7 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
             accepted_statuses=self._ACTION_SUCCESS_STATUSES,
         )
 
-    async def events(self) -> AsyncIterator[HarnessEvent]:
+    async def events(self) -> AsyncIterator[RawHarnessEvent]:
         if self._state not in ("connected", "stopping"):
             return
         if self._session_id is None:
@@ -951,7 +951,7 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
         *,
         sse_event_type: str | None,
         sse_data_lines: list[str],
-    ) -> tuple[HarnessEvent | None, str | None]:
+    ) -> tuple[RawHarnessEvent | None, str | None]:
         if not line:
             event = self._flush_sse_event(
                 sse_event_type=sse_event_type,
@@ -982,7 +982,7 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
         *,
         sse_event_type: str | None,
         sse_data_lines: list[str],
-    ) -> HarnessEvent | None:
+    ) -> RawHarnessEvent | None:
         if not sse_data_lines:
             return None
         payload_text = "\n".join(sse_data_lines)
@@ -999,7 +999,7 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
         *,
         raw_text: str,
         event_type_hint: str | None = None,
-    ) -> HarnessEvent | None:
+    ) -> RawHarnessEvent | None:
         try:
             parsed = json.loads(json_text)
         except json.JSONDecodeError:
@@ -1019,7 +1019,7 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
 
         raw_event_type = payload.get("type", event_type_hint or "unknown")
         event_type = raw_event_type if isinstance(raw_event_type, str) else "unknown"
-        event = HarnessEvent(
+        event = RawHarnessEvent(
             event_type=event_type,
             payload=payload,
             harness_id=HarnessId.OPENCODE.value,
@@ -1104,7 +1104,7 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
             return False
         return process.returncode is not None
 
-    def _process_exit_event(self) -> HarnessEvent | None:
+    def _process_exit_event(self) -> RawHarnessEvent | None:
         if self._state in {"stopping", "stopped"}:
             return None
         process = self._process
@@ -1116,9 +1116,9 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
         if stderr_excerpt:
             detail = f"{detail}\n\nOpenCode subprocess stderr:\n{stderr_excerpt}"
         self._set_failed()
-        return HarnessEvent(
-            event_type="error/connectionClosed",
-            payload={"type": "error/connectionClosed", "message": detail},
+        return RawHarnessEvent(
+            event_type="meridian/error/connectionClosed",
+            payload={"type": "meridian/error/connectionClosed", "message": detail},
             harness_id=self.harness_id.value,
         )
 

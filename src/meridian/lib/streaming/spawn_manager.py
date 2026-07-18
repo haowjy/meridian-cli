@@ -15,7 +15,7 @@ from meridian.lib.core.domain import SpawnStatus
 from meridian.lib.core.spawn_lifecycle import TERMINAL_SPAWN_STATUSES
 from meridian.lib.core.types import SpawnId
 from meridian.lib.harness.connections.base import (
-    HarnessEvent,
+    RawHarnessEvent,
     reap_on_ownership_transfer_failure,
 )
 from meridian.lib.harness.control_action import (
@@ -357,7 +357,7 @@ class SpawnManager:
             return True
         return session.raw_terminal_frames_authoritative
 
-    def subscribe(self, spawn_id: SpawnId) -> asyncio.Queue[HarnessEvent | None] | None:
+    def subscribe(self, spawn_id: SpawnId) -> asyncio.Queue[RawHarnessEvent | None] | None:
         """Attach one subscriber queue to the spawn, or return None if unavailable."""
 
         session = self._sessions.get(spawn_id)
@@ -785,7 +785,7 @@ class SpawnManager:
         exit_code: int,
         error: str | None,
     ) -> None:
-        terminal_event = HarnessEvent(
+        terminal_event = RawHarnessEvent(
             event_type="cancelled",
             payload={
                 "type": "cancelled",
@@ -810,7 +810,7 @@ class SpawnManager:
     ) -> None:
         """Emit a synthetic turn boundary event for persistent drain sessions."""
 
-        synthetic = HarnessEvent(
+        synthetic = RawHarnessEvent(
             event_type=TURN_BOUNDARY_EVENT_TYPE,
             harness_id="meridian",
             payload={
@@ -833,7 +833,7 @@ class SpawnManager:
                 )
         self._fan_out_event(spawn_id, synthetic)
 
-    def emit_event(self, spawn_id: SpawnId, event: HarnessEvent) -> None:
+    def emit_event(self, spawn_id: SpawnId, event: RawHarnessEvent) -> None:
         """Persist and publish one manager-authored harness event."""
 
         history_writer = self._history_writers.get(spawn_id)
@@ -912,7 +912,7 @@ class SpawnManager:
         with path.open("rb") as handle:
             return sum(1 for _ in handle)
 
-    def _fan_out_event(self, spawn_id: SpawnId, event: HarnessEvent | None) -> None:
+    def _fan_out_event(self, spawn_id: SpawnId, event: RawHarnessEvent | None) -> None:
         session = self._sessions.get(spawn_id)
         if session is None or session.subscriber is None:
             return

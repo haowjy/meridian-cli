@@ -23,7 +23,7 @@ from meridian.lib.harness.common import (
     extract_session_id_from_artifacts_with_patterns,
     extract_usage_from_artifacts,
 )
-from meridian.lib.harness.connections.base import HarnessEvent
+from meridian.lib.harness.connections.base import RawHarnessEvent
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 
 from .base import HarnessExtractor, session_from_mapping_with_keys
@@ -69,7 +69,7 @@ def _detect_primary_session_id(
 class CodexHarnessExtractor(HarnessExtractor[ResolvedLaunchSpec]):
     """Extractor implementation for Codex artifacts and events."""
 
-    def detect_session_id_from_event(self, event: HarnessEvent) -> str | None:
+    def detect_session_id_from_event(self, event: RawHarnessEvent) -> str | None:
         return session_from_mapping_with_keys(
             event.payload,
             (

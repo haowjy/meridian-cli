@@ -39,9 +39,9 @@ async def test_claude_process_death_emits_diagnostic_event_before_eof(
 
     event = await anext(events)
 
-    assert event.event_type == "error/connectionClosed"
+    assert event.event_type == "meridian/error/connectionClosed"
     assert event.payload == {
-        "type": "error/connectionClosed",
+        "type": "meridian/error/connectionClosed",
         "message": (
             "Claude subprocess exited with code 17.\n\n"
             "Claude subprocess stderr:\n"

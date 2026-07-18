@@ -9,7 +9,7 @@ import re
 import sqlite3
 from datetime import datetime
 from pathlib import Path
-from typing import ClassVar
+from typing import ClassVar, cast
 
 from meridian.lib.core.domain import TokenUsage
 from meridian.lib.core.types import HarnessId, SpawnId, TransportId
@@ -40,11 +40,13 @@ from meridian.lib.harness.bundle import (
     project_subprocess_spec,
     register_harness_bundle,
 )
+from meridian.lib.harness.connections.base import RawHarnessEvent
 from meridian.lib.harness.connections.opencode_http import OpenCodeConnection
 from meridian.lib.harness.extractors.opencode import OPENCODE_EXTRACTOR
 from meridian.lib.harness.launch_types import SessionSeed
 from meridian.lib.harness.opencode_report import (
     extract_opencode_report,
+    extract_opencode_session_id,
     extract_opencode_session_id_from_artifacts,
 )
 from meridian.lib.harness.opencode_storage import (
@@ -57,6 +59,14 @@ from meridian.lib.harness.projections.project_opencode_streaming import (
 )
 from meridian.lib.harness.projections.project_opencode_subprocess import (
     project_opencode_spec_to_cli_args,
+)
+from meridian.lib.harness.semantics import (
+    MERIDIAN_CONNECTION_CLOSED_EVENT,
+    HarnessSemantics,
+    SemanticClass,
+    TerminalEventOutcome,
+    connection_closed_outcome,
+    stringify_terminal_error,
 )
 from meridian.lib.launch.composition import (
     ComposedLaunchContent,
@@ -540,6 +550,57 @@ class OpenCodeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         return extract_opencode_report(artifacts, spawn_id)
 
 
+def _resolve_opencode_terminal(event: RawHarnessEvent) -> TerminalEventOutcome | None:
+    if event.event_type == MERIDIAN_CONNECTION_CLOSED_EVENT:
+        return connection_closed_outcome(event)
+    if event.event_type != "session.error":
+        return None
+    properties = event.payload.get("properties")
+    error = (
+        stringify_terminal_error(cast("dict[str, object]", properties))
+        if isinstance(properties, dict)
+        else stringify_terminal_error(event.payload.get("error"))
+    )
+    return TerminalEventOutcome(
+        status="failed",
+        exit_code=1,
+        error=error or "opencode_session_error",
+    )
+
+
+OPENCODE_SEMANTICS = HarnessSemantics(
+    event_classes={
+        "agent_message_chunk": frozenset({SemanticClass.TURN_ACTIVE}),
+        "agent_thought_chunk": frozenset({SemanticClass.TURN_ACTIVE}),
+        "tool_call": frozenset({SemanticClass.TURN_ACTIVE}),
+        "tool_call_update": frozenset({SemanticClass.TURN_ACTIVE}),
+        "session.idle": frozenset(
+            {
+                SemanticClass.IDLE,
+                SemanticClass.SIGNAL_CLEARED,
+                SemanticClass.TERMINAL_SUCCESS,
+            }
+        ),
+        "session.error": frozenset(
+            {SemanticClass.SIGNAL_CLEARED, SemanticClass.TERMINAL_PAYLOAD}
+        ),
+        MERIDIAN_CONNECTION_CLOSED_EVENT: frozenset({SemanticClass.TERMINAL_PAYLOAD}),
+    },
+    payload_resolver=_resolve_opencode_terminal,
+    scoped_events=frozenset(
+        {
+            "agent_message_chunk",
+            "agent_thought_chunk",
+            "tool_call",
+            "tool_call_update",
+            "session.idle",
+            "session.error",
+        }
+    ),
+    scope_id_resolver=extract_opencode_session_id,
+)
+
+
 register_harness_bundle(
     HarnessBundle(
         harness_id=HarnessId.OPENCODE,
@@ -554,5 +615,6 @@ register_harness_bundle(
                 bootstrap_payload=project_opencode_spec_to_session_payload_for_project,
             ),
         ),
+        semantics=OPENCODE_SEMANTICS,
     )
 )

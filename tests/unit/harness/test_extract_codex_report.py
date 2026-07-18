@@ -54,7 +54,7 @@ def test_extract_codex_report_rejects_message_before_started_command(tmp_path: P
                 },
             },
             {
-                "event_type": "error/connectionClosed",
+                "event_type": "meridian/error/connectionClosed",
                 "payload": {"message": "no close frame received or sent"},
             },
         ],

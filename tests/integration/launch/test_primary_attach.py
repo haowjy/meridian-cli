@@ -15,8 +15,8 @@ from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.connections.base import (
     ConnectionCapabilities,
     ConnectionConfig,
-    HarnessEvent,
     ObserverEndpoint,
+    RawHarnessEvent,
 )
 from meridian.lib.launch.constants import HISTORY_FILENAME, PRIMARY_META_FILENAME
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
@@ -78,7 +78,7 @@ class FakeManagedConnection:
     def __init__(
         self,
         *,
-        events: list[HarnessEvent],
+        events: list[RawHarnessEvent],
         session_id: str = "thread-123",
         subprocess_pid: int = 913,
         port_bind_failures: int = 0,
@@ -315,7 +315,7 @@ class FailingEventConnection(FakeManagedConnection):
         if self._stream_closed is not None:
             self._stream_closed.set()
         if False:
-            yield HarnessEvent(event_type="unreachable", payload={}, harness_id="opencode")
+            yield RawHarnessEvent(event_type="unreachable", payload={}, harness_id="opencode")
 
 
 def _read_metadata(spawn_dir: Path) -> dict[str, object]:
@@ -765,12 +765,12 @@ async def test_primary_attach_writes_valid_jsonl_events(tmp_path: Path) -> None:
     spawn_dir = tmp_path / "spawns" / "p902"
     connection = FakeManagedConnection(
         events=[
-            HarnessEvent(
+            RawHarnessEvent(
                 event_type="turn/started",
                 payload={"turnId": "t1"},
                 harness_id="codex",
             ),
-            HarnessEvent(
+            RawHarnessEvent(
                 event_type="turn/completed",
                 payload={"turnId": "t1"},
                 harness_id="codex",
@@ -828,12 +828,12 @@ async def test_primary_attach_activity_transitions_update_metadata(
     )
     connection = FakeManagedConnection(
         events=[
-            HarnessEvent(
+            RawHarnessEvent(
                 event_type="turn/started",
                 payload={"turnId": "turn-7"},
                 harness_id="codex",
             ),
-            HarnessEvent(
+            RawHarnessEvent(
                 event_type="turn/completed",
                 payload={"turnId": "turn-7"},
                 harness_id="codex",

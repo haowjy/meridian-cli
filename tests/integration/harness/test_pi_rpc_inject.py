@@ -15,7 +15,7 @@ import pytest
 from meridian.cli import spawn_inject as spawn_inject_module
 from meridian.lib.config.settings import load_config
 from meridian.lib.core.types import HarnessId, SpawnId
-from meridian.lib.harness.connections.base import ConnectionConfig, HarnessEvent, StopResult
+from meridian.lib.harness.connections.base import ConnectionConfig, RawHarnessEvent, StopResult
 from meridian.lib.harness.connections.pi_rpc import PiRpcConnection
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.launch.request import SpawnRequest
@@ -119,7 +119,7 @@ async def test_immediate_background_inject_waits_for_real_control_endpoint(
         session_id = "delayed-background"
 
         def __init__(self) -> None:
-            self._events: asyncio.Queue[HarnessEvent | None] = asyncio.Queue()
+            self._events: asyncio.Queue[RawHarnessEvent | None] = asyncio.Queue()
 
         async def events(self):  # type: ignore[no-untyped-def]
             while True:
@@ -131,7 +131,7 @@ async def test_immediate_background_inject_waits_for_real_control_endpoint(
         async def send_user_message(self, message: str) -> None:
             received_messages.append(message)
             await self._events.put(
-                HarnessEvent(
+                RawHarnessEvent(
                     event_type="turn/completed",
                     harness_id="codex",
                     payload={"status": "succeeded", "exit_code": 0},

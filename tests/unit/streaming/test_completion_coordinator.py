@@ -28,7 +28,7 @@ from meridian.lib.streaming.drain_policy import DrainAction
 from tests.support.fakes import FakeClock
 
 if TYPE_CHECKING:
-    from meridian.lib.harness.connections.base import HarnessEvent
+    from meridian.lib.harness.connections.base import RawHarnessEvent
 
 _SUCCESS = TerminalEventOutcome(status="succeeded", exit_code=0)
 _TIMEOUT = TerminalEventOutcome(status="timed_out", exit_code=1, error="deadline")
@@ -88,12 +88,12 @@ class _Evidence:
         return
 
     async def observe_event(
-        self, event: HarnessEvent, transition: str | None
+        self, event: RawHarnessEvent, transition: str | None
     ) -> EvidenceEventDecision:
         del event, transition
         return EvidenceEventDecision()
 
-    def note_event_persisted(self, event: HarnessEvent) -> EvidenceEventDecision:
+    def note_event_persisted(self, event: RawHarnessEvent) -> EvidenceEventDecision:
         del event
         if self.persisted_decisions:
             return self.persisted_decisions.popleft()

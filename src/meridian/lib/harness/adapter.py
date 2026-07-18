@@ -290,7 +290,11 @@ class McpConfig(BaseModel):
 
 
 class StreamEvent(BaseModel):
-    """Structured stream event parsed from harness output."""
+    """Open subprocess-stream observation parsed from unpinned harness output.
+
+    This legacy execution-path envelope deliberately accepts unknown event names.
+    Connection events use ``RawHarnessEvent`` and per-bundle semantic normalization.
+    """
 
     model_config = ConfigDict(frozen=True)
 

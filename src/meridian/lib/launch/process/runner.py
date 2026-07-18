@@ -35,9 +35,9 @@ from meridian.lib.harness.bundle import get_harness_bundle
 from meridian.lib.harness.connections import get_connection_class
 from meridian.lib.harness.connections.base import (
     HarnessConnection,
-    HarnessEvent,
     PrimaryRuntimeEventSurface,
     PrimaryRuntimeRequestPolicy,
+    RawHarnessEvent,
 )
 from meridian.lib.harness.cost import estimate_usage_cost
 from meridian.lib.harness.extractors.pi import detect_pi_session_discovery_from_session_files
@@ -728,7 +728,7 @@ def _create_managed_primary_connection(
                 "Managed primary runtime request surfacing requires connection event stream"
             )
 
-        async def _event_sink(event: HarnessEvent) -> None:
+        async def _event_sink(event: RawHarnessEvent) -> None:
             await connection_ref["connection"].inject_runtime_event(event)
 
         request_handler = None

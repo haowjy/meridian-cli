@@ -14,7 +14,7 @@ from meridian.lib.harness.claude_utils import extract_session_id_from_args
 from meridian.lib.harness.connections.base import (
     ConnectionCapabilities,
     ConnectionConfig,
-    HarnessEvent,
+    RawHarnessEvent,
 )
 from meridian.lib.harness.launch_spec import ResolvedLaunchSpec
 from meridian.lib.harness.registry import HarnessRegistry
@@ -96,7 +96,7 @@ class _ClaudeSeedPersistenceConnection:
         return None
 
     async def events(self):  # type: ignore[no-untyped-def]
-        yield HarnessEvent(
+        yield RawHarnessEvent(
             event_type="result",
             harness_id="claude",
             payload={"type": "result", "result": "seeded claude complete"},
@@ -164,7 +164,7 @@ class _OpenCodeSeedPortConnection:
         return None
 
     async def events(self):  # type: ignore[no-untyped-def]
-        yield HarnessEvent(
+        yield RawHarnessEvent(
             event_type="result",
             harness_id="opencode",
             payload={"type": "result", "result": "seeded opencode complete"},
@@ -234,7 +234,7 @@ class _OpenCodeConnectSessionConnection:
         return None
 
     async def events(self):  # type: ignore[no-untyped-def]
-        yield HarnessEvent(
+        yield RawHarnessEvent(
             event_type="result",
             harness_id="opencode",
             payload={"type": "result", "result": "connect opencode complete"},

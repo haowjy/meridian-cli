@@ -20,7 +20,11 @@ import psutil
 import structlog
 
 from meridian.lib.core.types import HarnessId, SpawnId
-from meridian.lib.harness.connections.base import ConnectionConfig, HarnessConnection, HarnessEvent
+from meridian.lib.harness.connections.base import (
+    ConnectionConfig,
+    HarnessConnection,
+    RawHarnessEvent,
+)
 from meridian.lib.harness.connections.errors import PortBindError
 from meridian.lib.harness.semantics import activity_transition
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
@@ -420,7 +424,7 @@ class PrimaryAttachLauncher:
         finally:
             self._history_writer = None
 
-    def _update_activity_from_event(self, event: HarnessEvent) -> None:
+    def _update_activity_from_event(self, event: RawHarnessEvent) -> None:
         """Update activity state based on connection events."""
 
         activity = activity_transition(

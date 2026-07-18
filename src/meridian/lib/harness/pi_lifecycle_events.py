@@ -6,7 +6,7 @@ from collections.abc import Sequence
 from typing import Any, Final
 
 from meridian.lib.core.types import SpawnId
-from meridian.lib.harness.connections.base import HarnessConnection, HarnessEvent
+from meridian.lib.harness.connections.base import HarnessConnection, RawHarnessEvent
 
 PI_SUPPORTED_LIFECYCLE_SCHEMA_VERSION: Final[int] = 1
 PI_CANONICAL_LIFECYCLE_TYPE_PREFIXES: Final[tuple[str, ...]] = (
@@ -36,7 +36,7 @@ def build_pi_phase_event(
     connection: HarnessConnection[Any],
     phase: str,
     **data: object,
-) -> HarnessEvent:
+) -> RawHarnessEvent:
     """Build one Meridian-authored Pi lifecycle phase event."""
 
     payload: dict[str, object] = {
@@ -46,7 +46,7 @@ def build_pi_phase_event(
         "schema_version": PI_SUPPORTED_LIFECYCLE_SCHEMA_VERSION,
     }
     payload.update((key, value) for key, value in data.items() if value is not None)
-    return HarnessEvent(
+    return RawHarnessEvent(
         event_type=PI_PHASE_EVENT_TYPE,
         harness_id=connection.harness_id.value,
         payload=payload,
@@ -82,7 +82,7 @@ def normalize_pi_lifecycle_label(raw: str) -> str:
     return raw.strip().lower().replace("-", "_").replace("/", ".")
 
 
-def pi_lifecycle_event_label_candidates(event: HarnessEvent) -> tuple[str, ...]:
+def pi_lifecycle_event_label_candidates(event: RawHarnessEvent) -> tuple[str, ...]:
     candidates: list[str] = []
     event_type = normalize_pi_lifecycle_label(event.event_type)
     if event_type:

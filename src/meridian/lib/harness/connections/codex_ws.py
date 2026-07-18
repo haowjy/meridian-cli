@@ -41,11 +41,11 @@ from meridian.lib.harness.connections.base import (
     ConnectionNotReady,
     ConnectionState,
     HarnessConnection,
-    HarnessEvent,
     HarnessRequest,
     InteractiveHandler,
     ObserverEndpoint,
     PrimaryRuntimeRequestPolicy,
+    RawHarnessEvent,
     ServerRequestHandler,
     StopProgressCallback,
     StopResult,
@@ -231,7 +231,7 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
         self._next_request_id = 1
         self._pending_requests: dict[int, asyncio.Future[dict[str, object]]] = {}
         self._hitl_requests: dict[str, object] = {}
-        self._event_queue: asyncio.Queue[HarnessEvent | None] = asyncio.Queue()
+        self._event_queue: asyncio.Queue[RawHarnessEvent | None] = asyncio.Queue()
         self._liveness = BackendLivenessPolicy(
             timeout_seconds=lambda: self._LIVENESS_TIMEOUT_SECONDS,
             now=lambda: _time.monotonic(),
@@ -476,7 +476,7 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
         self,
         *,
         policy: PrimaryRuntimeRequestPolicy,
-        event_sink: Callable[[HarnessEvent], Awaitable[None]] | None = None,
+        event_sink: Callable[[RawHarnessEvent], Awaitable[None]] | None = None,
         request_handler: ServerRequestHandler | None = None,
     ) -> None:
         if policy in (
@@ -495,7 +495,7 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
             return
         raise ValueError(f"Unsupported Codex primary runtime request policy: {policy}")
 
-    async def inject_runtime_event(self, event: HarnessEvent) -> None:
+    async def inject_runtime_event(self, event: RawHarnessEvent) -> None:
         await self._event_queue.put(event)
 
     async def stop(
@@ -580,7 +580,7 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
         self._transition("stopping")
         await self._close_ws()
 
-    async def events(self) -> AsyncIterator[HarnessEvent]:
+    async def events(self) -> AsyncIterator[RawHarnessEvent]:
         while True:
             event = await self._event_queue.get()
             if event is None:
@@ -742,8 +742,8 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
                         self._emit_startup_phase(StartupPhase.HARNESS_FAILED)
                         self._transition("failed")
                         await self._event_queue.put(
-                            HarnessEvent(
-                                event_type="error/connectionClosed",
+                            RawHarnessEvent(
+                                event_type="meridian/error/connectionClosed",
                                 payload={"message": message},
                                 harness_id=self.harness_id.value,
                                 raw_text=None,
@@ -814,8 +814,8 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
                 self._emit_startup_phase(StartupPhase.HARNESS_FAILED)
                 self._transition("failed")
                 await self._event_queue.put(
-                    HarnessEvent(
-                        event_type="error/connectionClosed",
+                    RawHarnessEvent(
+                        event_type="meridian/error/connectionClosed",
                         payload={"message": str(exc)},
                         harness_id=self.harness_id.value,
                         raw_text=None,
@@ -970,7 +970,7 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
             return
 
         await self._event_queue.put(
-            HarnessEvent(
+            RawHarnessEvent(
                 event_type="warning/unsupportedServerRequest",
                 payload={"method": method, "params": payload},
                 harness_id=self.harness_id.value,
@@ -999,7 +999,7 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
             method,
         )
         await self._event_queue.put(
-            HarnessEvent(
+            RawHarnessEvent(
                 event_type="warning/approvalRejected",
                 payload={
                     "reason": "confirm_mode",
@@ -1027,7 +1027,7 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
             await self._resolve_server_request(payload)
         self._update_turn_state(method=method, payload=payload)
         await self._event_queue.put(
-            HarnessEvent(
+            RawHarnessEvent(
                 event_type=method,
                 payload=payload,
                 harness_id=self.harness_id.value,
@@ -1327,7 +1327,7 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
         return method_obj, cast("dict[str, object]", payload_obj)
 
     def _update_turn_state(self, *, method: str, payload: dict[str, object]) -> None:
-        event = HarnessEvent(
+        event = RawHarnessEvent(
             event_type=method,
             payload=payload,
             harness_id=HarnessId.CODEX.value,

@@ -33,7 +33,7 @@ from meridian.lib.streaming.drain_policy import (
 from meridian.lib.streaming.pi_quiescence import PiQuiescenceTracker
 
 if TYPE_CHECKING:
-    from meridian.lib.harness.connections.base import HarnessEvent
+    from meridian.lib.harness.connections.base import RawHarnessEvent
     from meridian.lib.harness.semantics import TerminalEventOutcome
     from meridian.lib.streaming.spawn_session import DrainOutcome
 
@@ -272,7 +272,7 @@ class PiCompletionProfile:
             ),
         )
 
-    def note_persisted_activity(self, event: HarnessEvent) -> EvidenceActivity | None:
+    def note_persisted_activity(self, event: RawHarnessEvent) -> EvidenceActivity | None:
         if not self.quiescence_enabled or not self.micro_drain_active:
             return None
         self.micro_drain_event_count += 1
@@ -286,7 +286,7 @@ class PiCompletionProfile:
 
     def observe_terminal_event(
         self,
-        event: HarnessEvent,
+        event: RawHarnessEvent,
         outcome: TerminalEventOutcome,
     ) -> None:
         del event

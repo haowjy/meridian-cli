@@ -2,7 +2,7 @@
 
 Session ID, token usage, and report extraction from harness output. One extractor
 per harness, serving both the subprocess path (artifacts on disk) and the streaming
-path (live `HarnessEvent` objects).
+path (live `RawHarnessEvent` objects).
 
 ## Mental Model
 
@@ -45,5 +45,5 @@ and to every implementation together.
 
 - [../.context/CONTEXT.md](../.context/CONTEXT.md) — `observe_session_id()` priority
   chain that drives when and how extractor methods are called.
-- [../connections/AGENTS.md](../connections/AGENTS.md) — `HarnessEvent` that
+- [../connections/AGENTS.md](../connections/AGENTS.md) — `RawHarnessEvent` that
   `detect_session_id_from_event` receives.

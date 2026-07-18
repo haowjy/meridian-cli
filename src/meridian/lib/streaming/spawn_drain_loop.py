@@ -9,7 +9,7 @@ from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
 
 from meridian.lib.core.types import SpawnId
-from meridian.lib.harness.connections.base import HarnessEvent
+from meridian.lib.harness.connections.base import RawHarnessEvent
 from meridian.lib.state.history import HarnessHistoryWriter
 from meridian.lib.streaming.completion_contracts import CompletionCleanupRequest
 from meridian.lib.streaming.drain_coordinator import (
@@ -39,7 +39,7 @@ logger = logging.getLogger(__name__)
 PublishTerminal = Callable[
     [SpawnId, SpawnSession, DrainOutcome, CompletionCleanupRequest | None], DrainOutcome
 ]
-FanOutEvent = Callable[[SpawnId, HarnessEvent], None]
+FanOutEvent = Callable[[SpawnId, RawHarnessEvent], None]
 FanOutTurnBoundary = Callable[[SpawnId, "TerminalEventOutcome"], Awaitable[None]]
 
 
@@ -346,7 +346,7 @@ def _next_timeout(coordinator: DrainCoordinator | None) -> float | None:
 
 async def _observe_event(
     coordinator: DrainCoordinator | None,
-    event: HarnessEvent,
+    event: RawHarnessEvent,
     transition: str | None,
 ) -> bool:
     if coordinator is None:
@@ -356,7 +356,7 @@ async def _observe_event(
 
 def _note_event_persisted(
     coordinator: DrainCoordinator | None,
-    event: HarnessEvent,
+    event: RawHarnessEvent,
 ) -> DrainLoopDecision:
     if coordinator is None:
         return DrainLoopDecision()
@@ -365,7 +365,7 @@ def _note_event_persisted(
 
 async def _handle_terminal_event(
     coordinator: DrainCoordinator | None,
-    event: HarnessEvent,
+    event: RawHarnessEvent,
     outcome: TerminalEventOutcome,
     action: DrainAction,
 ) -> DrainTerminalDecision:

@@ -10,7 +10,7 @@ import pytest
 
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.connections import cursor_subprocess as cursor_subprocess_module
-from meridian.lib.harness.connections.base import ConnectionConfig, HarnessEvent
+from meridian.lib.harness.connections.base import ConnectionConfig, RawHarnessEvent
 from meridian.lib.harness.connections.cursor_subprocess import CursorSubprocessConnection
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.safety.permissions import UnsafeNoOpPermissionResolver
@@ -59,7 +59,7 @@ class _FakeProcess:
             raise self.kill_error
 
 
-async def _collect_events(connection: CursorSubprocessConnection) -> list[HarnessEvent]:
+async def _collect_events(connection: CursorSubprocessConnection) -> list[RawHarnessEvent]:
     return [event async for event in connection.events()]
 
 
@@ -113,7 +113,7 @@ async def test_cursor_events_emit_protocol_mismatch_when_first_payload_invalid(
     events = await _collect_events(connection)
 
     assert len(events) == 1
-    assert events[0].event_type == "error/connectionClosed"
+    assert events[0].event_type == "meridian/error/connectionClosed"
     assert "protocol mismatch" in str(events[0].payload.get("message", "")).lower()
     assert connection.state == "failed"
 
@@ -130,7 +130,7 @@ async def test_cursor_events_emit_error_on_nonzero_exit() -> None:
     events = await _collect_events(connection)
 
     assert len(events) == 1
-    assert events[0].event_type == "error/connectionClosed"
+    assert events[0].event_type == "meridian/error/connectionClosed"
     assert events[0].payload["message"] == "Cursor subprocess exited with code 7."
     assert connection.state == "failed"
 

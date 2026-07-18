@@ -106,7 +106,7 @@ from meridian.lib.utils.time import minutes_to_seconds
 
 if TYPE_CHECKING:
     from meridian.lib.core.lifecycle import SpawnLifecycleService
-    from meridian.lib.harness.connections.base import HarnessEvent
+    from meridian.lib.harness.connections.base import RawHarnessEvent
     from meridian.lib.state.spawn.model import CancelIntent
 
 _DEFAULT_CONFIG = MeridianConfig()
@@ -459,7 +459,7 @@ async def _sleep_retry_backoff_or_cancel(
         await asyncio.sleep(min(0.1, remaining))
 
 
-def _line_from_harness_event(event: HarnessEvent) -> str:
+def _line_from_harness_event(event: RawHarnessEvent) -> str:
     if event.raw_text is not None and event.raw_text.strip():
         return event.raw_text
     payload: dict[str, object] = dict(event.payload)
@@ -470,7 +470,7 @@ def _line_from_harness_event(event: HarnessEvent) -> str:
 def _observe_budget_from_event(
     *,
     budget_tracker: LiveBudgetTracker | None,
-    event: HarnessEvent,
+    event: RawHarnessEvent,
 ) -> BudgetBreach | None:
     if budget_tracker is None:
         return None
@@ -511,7 +511,7 @@ def _emit_stream_event(
 
 async def _consume_subscriber_events(
     *,
-    subscriber: asyncio.Queue[HarnessEvent | None],
+    subscriber: asyncio.Queue[RawHarnessEvent | None],
     budget_tracker: LiveBudgetTracker | None,
     budget_signal: asyncio.Event,
     budget_breach_holder: list[BudgetBreach | None],
@@ -671,7 +671,7 @@ async def run_streaming_spawn(
     consume_task: asyncio.Task[None] | None = None
     terminal_event_future: asyncio.Future[TerminalEventOutcome] | None = None
     terminal_outcome: TerminalEventOutcome | None = None
-    subscriber: asyncio.Queue[HarnessEvent | None] | None = None
+    subscriber: asyncio.Queue[RawHarnessEvent | None] | None = None
     run_spec = spec
     spawn_store.update_spawn(
         runtime_root,
@@ -820,7 +820,7 @@ async def _run_streaming_attempt(
     )
     terminal_event_capture: asyncio.Future[TerminalEventOutcome] | None = None
     primary_scope_tracker: PrimaryEventScopeTracker | None = None
-    subscriber: asyncio.Queue[HarnessEvent | None] | None = None
+    subscriber: asyncio.Queue[RawHarnessEvent | None] | None = None
     connection: HarnessConnection[Any] | None = None
     drain_exit_code = DEFAULT_INFRA_EXIT_CODE
     drain_error: str | None = None

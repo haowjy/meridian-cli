@@ -10,7 +10,7 @@ from meridian.lib.core.types import HarnessId, SpawnId, TransportId
 from meridian.lib.harness.connections.base import (
     ConnectionCapabilities,
     ConnectionConfig,
-    HarnessEvent,
+    RawHarnessEvent,
 )
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.launch.resolve import resolve_startup_timeout_seconds
@@ -123,7 +123,7 @@ async def test_streaming_runner_signal_cancel_invokes_send_cancel_once(
             while True:
                 await asyncio.sleep(3600)
                 if False:
-                    yield HarnessEvent(
+                    yield RawHarnessEvent(
                         event_type="noop",
                         payload={},
                         harness_id="codex",

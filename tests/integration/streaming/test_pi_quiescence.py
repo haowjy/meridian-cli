@@ -10,7 +10,7 @@ import pytest
 
 from meridian.lib.core.types import SpawnId
 from meridian.lib.harness.connections.base import (
-    HarnessEvent,
+    RawHarnessEvent,
     StopProgressCallback,
     StopResult,
 )
@@ -97,7 +97,7 @@ async def test_spawn_manager_pi_primary_role_does_not_auto_stop_at_quiescence(
     tmp_path: Path,
 ) -> None:
     class _OpenPrimaryPiConnection(_FakePiConnection):
-        def __init__(self, events: list[HarnessEvent]) -> None:
+        def __init__(self, events: list[RawHarnessEvent]) -> None:
             super().__init__(events)
             self._closed = asyncio.Event()
 
