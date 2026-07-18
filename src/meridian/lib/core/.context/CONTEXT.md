@@ -2,10 +2,15 @@
 
 ## ID Types (`types.py`)
 
-`SpawnId`, `ModelId`, `ArtifactKey`, `SchemaVersion` are `NewType` aliases
+`SpawnId`, `ModelId`, `ChatId`, `HarnessSessionId`, `ArtifactKey`, and
+`SchemaVersion` are `NewType` aliases
 over `str` / `int`. Zero runtime cost; mypy catches pass-the-wrong-id bugs
 statically. Use them on function signatures wherever spawn or model IDs are
 passed — don't accept `str` when you mean `SpawnId`.
+
+Persisted `ChatId` and `HarnessSessionId` values pass through the shared
+`normalize_optional_identity()` strip-or-None function independently at the spawn
+`state.json` and session JSONL parse boundaries.
 
 `HarnessId` and `TransportId` are defined here.
 

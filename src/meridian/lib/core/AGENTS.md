@@ -15,7 +15,7 @@ deliberate exception that wires policy surfaces to launch and persistence.
 
 ## Key Rules
 
-- **Use `SpawnId`, `ModelId`, `ArtifactKey` — not `str`.** These are `NewType` aliases over `str`. Zero runtime cost; mypy catches wrong-ID bugs statically. Accept them on function signatures anywhere a spawn or model ID passes through.
+- **Use `SpawnId`, `ModelId`, `ChatId`, `HarnessSessionId`, `ArtifactKey` — not `str`.** These are `NewType` aliases over `str`. Zero runtime cost; pyright catches wrong-ID bugs statically. Persisted chat and harness-session IDs additionally use `normalize_optional_identity()` at each parse boundary.
 - **`RuntimeOverrides`: use `None` to mean "not set", never `""` or `0`.** `resolve(*layers)` returns first-non-None per field. An empty string at a high-precedence layer wins over a meaningful value at a lower one.
 - **`child_env_overrides()` is the only correct way to produce child-process `MERIDIAN_*` env vars.** Every launch path routes through it. `ALLOWED_CHILD_ENV_KEYS` enforces the allowed set — `validate_child_env_keys()` raises on unknown keys.
 - **`is_root_side_effect_process()` is fail-closed.** A malformed non-empty `MERIDIAN_DEPTH` returns `False`. Root-only side effects (e.g., the reaper) must not run inside delegated agent processes. When in doubt, fail closed.
@@ -24,7 +24,7 @@ deliberate exception that wires policy surfaces to launch and persistence.
 
 ## Entry Points
 
-- `types.py` — `SpawnId`, `ModelId`, `ArtifactKey`, `SchemaVersion` (typed IDs)
+- `types.py` — typed IDs and persisted identity normalization
 - `overrides.py` — `RuntimeOverrides`, `resolve(*layers)` (config precedence merge)
 - `resolved_context.py` — `ResolvedContext.from_environment()` (authoritative runtime env for one process)
 - `child_env.py` — `child_env_overrides()`, `ALLOWED_CHILD_ENV_KEYS`, `validate_child_env_keys()`
