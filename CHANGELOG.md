@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.3.42] - 2026-07-18
+
 ### Changed
 - Child launches now use only the inherited-environment policy; the unused
   parallel sanitized-environment allowlist path has been removed.
