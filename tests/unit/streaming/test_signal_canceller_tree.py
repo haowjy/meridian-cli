@@ -34,7 +34,7 @@ def _make_record(
         skills=(),
         skill_paths=(),
         harness=None,
-        kind="spawn",
+        kind="child",
         desc=None,
         work_id=None,
         harness_session_id=None,
