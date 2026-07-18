@@ -109,7 +109,7 @@ class SessionUpdateEvent(BaseModel):
     v: int = 1
     event: Literal["update"] = "update"
     chat_id: ChatId
-    harness_session_id: HarnessSessionId | None
+    harness_session_id: HarnessSessionId | None = None
     session_instance_id: str = ""
     claude_config_dir: str | None = None
     active_work_id: str | None = None
