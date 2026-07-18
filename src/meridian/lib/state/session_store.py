@@ -10,7 +10,6 @@ from typing import IO, Any, Literal, NamedTuple, cast
 from pydantic import BaseModel, ConfigDict, ValidationError, field_validator
 
 from meridian.lib.core.types import ChatId, HarnessSessionId, normalize_optional_identity
-
 from meridian.lib.platform.locking import (
     acquire_file_lock,
     lock_file,
