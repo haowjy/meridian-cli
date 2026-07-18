@@ -158,6 +158,26 @@ def test_doctor_prune_only_prunes_current_project_artifacts(
     assert other_spawn.exists()
 
 
+def test_doctor_artifact_retention_preserves_quarantine_and_prunes_stale_row(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root, stale_spawn, _, _ = _seed_pruning_layout(tmp_path, monkeypatch)
+    (project_root / "meridian.toml").write_text(
+        '[project]\nid = "current-project-uuid"\n', encoding="utf-8"
+    )
+    runtime_root = stale_spawn.parent.parent
+    quarantined_spawn = runtime_root / "spawns" / "p2"
+    _write_text(quarantined_spawn / "state.json", "{}\n")
+    _set_tree_mtime(quarantined_spawn, 1_600_000_000.0)
+
+    result = doctor_sync(DoctorInput(project_root=project_root.as_posix(), prune=True))
+
+    assert result.pruned_spawn_artifacts == 1
+    assert not stale_spawn.exists()
+    assert quarantined_spawn.exists()
+
+
 def test_doctor_local_mode_skips_cross_project_enumeration(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -264,6 +284,26 @@ def test_global_prune_cannot_unlink_live_session_lock_inode(tmp_path: Path) -> N
         if process.is_alive():
             process.terminate()
             process.join(5)
+
+
+def test_quarantine_only_project_is_not_pruned(tmp_path: Path) -> None:
+    user_home = tmp_path / "user-home"
+    runtime_root = user_home / "projects" / "project-uuid"
+    quarantined_spawn = runtime_root / "spawns" / "p1"
+    _write_text(quarantined_spawn / "state.json", "{}\n")
+    _set_tree_mtime(runtime_root, 1_600_000_000.0)
+
+    assert scan_orphan_project_dirs(user_home, retention_days=0, now=2_000_000_000.0) == []
+
+    orphan = OrphanProjectDir(
+        uuid=runtime_root.name,
+        path=runtime_root.as_posix(),
+        size_bytes=0,
+        last_activity="1970-01-01T00:00:00+00:00",
+        reason="stale",
+    )
+    assert prune_orphan_project_dirs([orphan]) == 0
+    assert runtime_root.exists()
 
 
 def test_global_prune_rejects_lock_directory_supplied_directly(tmp_path: Path) -> None:

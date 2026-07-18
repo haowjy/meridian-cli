@@ -131,9 +131,12 @@ def scan_orphan_project_dirs(
             continue
 
         size_bytes, latest_mtime = _tree_activity(project_dir)
+        spawn_scan = spawn_store.list_spawns(project_dir)
+        if spawn_scan.quarantines:
+            continue
         active_spawns = [
             spawn
-            for spawn in spawn_store.list_spawns(project_dir).records
+            for spawn in spawn_scan.records
             if is_active_spawn_status(spawn.status)
         ]
         if active_spawns:
@@ -260,9 +263,12 @@ def prune_orphan_project_dirs(orphans: list[OrphanProjectDir]) -> int:
         with try_lock_file(paths.project_lifetime_flock, reentrant=False) as lifetime_handle:
             if lifetime_handle is None:
                 continue
+            spawn_scan = spawn_store.list_spawns(runtime_root)
+            if spawn_scan.quarantines:
+                continue
             active_spawns = [
                 spawn
-                for spawn in spawn_store.list_spawns(runtime_root).records
+                for spawn in spawn_scan.records
                 if is_active_spawn_status(spawn.status)
             ]
             if active_spawns:

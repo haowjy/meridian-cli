@@ -266,8 +266,14 @@ def doctor_sync(payload: DoctorInput) -> DoctorOutput:
         if orphan_runs > 0:
             repaired.append("orphan_runs")
 
-    spawns = spawn_store.list_spawns(runtime_root).records
-    active_spawn_ids = {spawn.id for spawn in spawns if is_active_spawn_status(spawn.status)}
+    spawn_scan = spawn_store.list_spawns(runtime_root)
+    spawns = spawn_scan.records
+    active_spawn_ids = {
+        spawn.id for spawn in spawns if is_active_spawn_status(spawn.status)
+    }
+    protected_spawn_ids = active_spawn_ids | {
+        quarantine.spawn_id for quarantine in spawn_scan.quarantines
+    }
     orphan_project_dirs: list[OrphanProjectDir] = []
     if payload.global_:
         if not is_root_side_effect_process():
@@ -279,7 +285,7 @@ def doctor_sync(payload: DoctorInput) -> DoctorOutput:
     stale_spawn_artifacts = scan_stale_spawn_artifacts(
         runtime_root,
         retention_days,
-        active_spawn_ids,
+        protected_spawn_ids,
         now,
     )
 
