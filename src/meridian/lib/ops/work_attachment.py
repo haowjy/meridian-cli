@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from meridian.lib.state import session_store, work_repository, work_store
+from meridian.lib.state import session_store, work_repository
+from meridian.lib.state.work_state import slugify
 
 
 def session_exists(runtime_root: Path, chat_id: str) -> bool:
@@ -57,4 +58,4 @@ def preview_launch_work_id(
     candidate = (explicit_work_id or "").strip() or (context_work_id or "").strip() or None
     if candidate is None:
         return None
-    return work_store.slugify(candidate) or None
+    return slugify(candidate) or None

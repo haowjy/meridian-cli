@@ -60,6 +60,7 @@ from meridian.lib.state.primary_meta import (
 from meridian.lib.state.spawn.model import SpawnRecord
 from meridian.lib.state.spawn_signals import SpawnSignalKind, write_spawn_signal
 from meridian.lib.state.spawn_tree import collect_descendants, descendant_id_set
+from meridian.lib.state.work_state import slugify
 from meridian.lib.telemetry.init import setup_telemetry
 from meridian.lib.telemetry.observer import register_spawn_telemetry_observer
 from meridian.lib.telemetry.router import emit_telemetry
@@ -109,7 +110,6 @@ from .query import (
 )
 
 _WAIT_PROGRESS_INTERVAL_SECS = 5.0
-
 
 
 def _looks_like_spawn_ref(ref: str) -> bool:
@@ -234,7 +234,7 @@ def _missing_follow_up_session_error(source_ref: str) -> str:
 
 
 def _validate_exact_work_id(work_id: str) -> str:
-    normalized = work_store.slugify(work_id)
+    normalized = slugify(work_id)
     if not normalized or normalized != work_id:
         raise ValueError(
             f"Invalid work item name '{work_id}'. "
@@ -454,9 +454,7 @@ def spawn_create_sync(
             matched_policy_rule=getattr(prepared_request, "matched_policy_rule", None),
             fallback_chain=tuple(getattr(prepared_request, "fallback_chain", ()) or ()),
             terminal_surface_mode=(
-                terminal_surface_mode.value
-                if terminal_surface_mode is not None
-                else None
+                terminal_surface_mode.value if terminal_surface_mode is not None else None
             ),
             project_root=authority.project_root.as_posix(),
             project_root_source=authority.project_root_source,
@@ -685,7 +683,6 @@ async def spawn_children(
     )
 
 
-
 def spawn_stats_sync(
     payload: SpawnStatsInput,
     ctx: RuntimeContext | None = None,
@@ -706,9 +703,7 @@ def spawn_stats_sync(
         from meridian.lib.state.session_identity import spawn_matches_exact_session
 
         wanted_session = payload.session.strip()
-        all_spawns = [
-            row for row in all_spawns if spawn_matches_exact_session(row, wanted_session)
-        ]
+        all_spawns = [row for row in all_spawns if spawn_matches_exact_session(row, wanted_session)]
 
     if payload.spawn_id is not None:
         root_id = payload.spawn_id.strip()
@@ -1466,10 +1461,7 @@ def _discover_pending_spawns(
         if row.status in ACTIVE_SPAWN_STATUSES
         and row.id != exclude_spawn_id
         and (descendant_ids is None or row.id in descendant_ids)
-        and (
-            descendant_ids is not None
-            or spawn_matches_owner_chat(row, chat_id or "")
-        )
+        and (descendant_ids is not None or spawn_matches_owner_chat(row, chat_id or ""))
     ]
     pending.sort(key=lambda row: row.id)
     return pending
@@ -2096,9 +2088,7 @@ def spawn_fork_sync(
 
     inherited_skills = (
         resolved_reference.source_skills
-        if payload.inherit_source_skills
-        and requested_agent is None
-        and not payload.agent_opt_out
+        if payload.inherit_source_skills and requested_agent is None and not payload.agent_opt_out
         else payload.skills
     )
 
