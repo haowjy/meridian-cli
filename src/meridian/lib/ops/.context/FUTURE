@@ -1,2 +1,4 @@
 prune_orphan_project_dirs deletes an entire runtime root that may contain the in-root spawns.jsonl.flock; a concurrent spawn operation could see the lock inode deleted. Pre-existing, out of P4a scope.
 If addressed, design an external/stable lock identity via refactor-by-design (do not relocate spawns_flock ad hoc).
+
+[#454] Identity-free read resolution is scattered: resolve_runtime_root_or_none and resolve_runtime_root_for_read are duplicate aliases; spawn/query.py repeats `runtime_root or resolve_runtime_root_for_read(...)` ~11x; each op invents its own empty-vs-not-found behavior. Resolve one RuntimeReadContext at the operation boundary (runtime_root: Path | None), preserve project/context authority unconditionally, delete the aliases. Behavior regression already fixed in #388; this is the structural half. (B1-arch)

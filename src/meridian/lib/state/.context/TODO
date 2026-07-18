@@ -10,3 +10,10 @@
   move synchronous projection reads off the async event-loop thread with
   `asyncio.to_thread()`. Reads now have a bounded lock wait, but can still block
   the loop for up to that bound when a projection writer is wedged.
+- [#454] state↔ops import cycle for identity migration: user_paths.py
+  dynamically imports ops/migration.py, which imports back into state identity;
+  legacy-id reading is duplicated in both. #388's B2 already removed the
+  lock_held cross-cycle flag and the unlocked writer; the residual is
+  structural — move the identity-transition mechanism into a state-owned
+  project_identity module and leave ops with only active-spawn policy + CLI
+  rendering. (B3)
