@@ -58,10 +58,19 @@ from meridian.lib.harness.common import (
     extract_claude_report,
     extract_session_id_from_artifacts_with_patterns,
 )
+from meridian.lib.harness.connections.base import RawHarnessEvent
 from meridian.lib.harness.connections.claude_ws import ClaudeConnection
 from meridian.lib.harness.extractors.claude import CLAUDE_EXTRACTOR
 from meridian.lib.harness.launch_types import SessionSeed
 from meridian.lib.harness.projections.project_claude import project_claude_spec_to_cli_args
+from meridian.lib.harness.semantics import (
+    MERIDIAN_CONNECTION_CLOSED_EVENT,
+    HarnessSemantics,
+    SemanticClass,
+    TerminalEventOutcome,
+    connection_closed_outcome,
+    stringify_terminal_error,
+)
 from meridian.lib.launch.claude_session_access import resolve_claude_session_access_source
 from meridian.lib.launch.composition import (
     ComposedLaunchContent,
@@ -587,6 +596,45 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         return False
 
 
+def _resolve_claude_terminal(event: RawHarnessEvent) -> TerminalEventOutcome | None:
+    if event.event_type == MERIDIAN_CONNECTION_CLOSED_EVENT:
+        return connection_closed_outcome(event)
+    if bool(event.payload.get("is_error")):
+        error = (
+            stringify_terminal_error(event.payload.get("result"))
+            or stringify_terminal_error(event.payload.get("error"))
+            or "claude_result_error"
+        )
+        return TerminalEventOutcome(status="failed", exit_code=1, error=error)
+
+    subtype = str(event.payload.get("subtype", "")).strip().lower()
+    terminal_reason = str(event.payload.get("terminal_reason", "")).strip().lower()
+    if subtype in {"", "success"} and terminal_reason in {"", "completed"}:
+        return TerminalEventOutcome(status="succeeded", exit_code=0)
+    if terminal_reason == "completed":
+        return TerminalEventOutcome(status="succeeded", exit_code=0)
+
+    error = stringify_terminal_error(event.payload.get("result"))
+    if subtype not in {"", "success"}:
+        error = error or f"claude_result_{subtype}"
+    elif terminal_reason:
+        error = error or f"claude_terminal_{terminal_reason}"
+    else:
+        error = error or "claude_result_unknown"
+    return TerminalEventOutcome(status="failed", exit_code=1, error=error)
+
+
+CLAUDE_SEMANTICS = HarnessSemantics(
+    event_classes={
+        "result": frozenset(
+            {SemanticClass.TERMINAL_PAYLOAD, SemanticClass.SIGNAL_CLEARED}
+        ),
+        MERIDIAN_CONNECTION_CLOSED_EVENT: frozenset({SemanticClass.TERMINAL_PAYLOAD}),
+    },
+    payload_resolver=_resolve_claude_terminal,
+)
+
+
 register_harness_bundle(
     HarnessBundle(
         harness_id=HarnessId.CLAUDE,
@@ -597,5 +645,6 @@ register_harness_bundle(
         projections=HarnessProjectionPorts(
             subprocess_cli_args=project_claude_spec_to_cli_args,
         ),
+        semantics=CLAUDE_SEMANTICS,
     )
 )

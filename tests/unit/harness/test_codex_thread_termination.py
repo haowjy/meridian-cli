@@ -3,7 +3,7 @@ from pathlib import Path
 
 from meridian.lib.core.types import ArtifactKey, SpawnId
 from meridian.lib.harness.common import extract_codex_report
-from meridian.lib.harness.connections.base import HarnessEvent
+from meridian.lib.harness.connections.base import RawHarnessEvent
 from meridian.lib.harness.semantics import (
     PrimaryEventScopeTracker,
     activity_transition,
@@ -18,19 +18,19 @@ MAIN_THREAD = "thread-main"
 SUB_THREAD = "thread-sub"
 
 
-def _codex_event(event_type: str, payload: dict[str, object]) -> HarnessEvent:
-    return HarnessEvent(
+def _codex_event(event_type: str, payload: dict[str, object]) -> RawHarnessEvent:
+    return RawHarnessEvent(
         event_type=event_type,
         payload=payload,
         harness_id="codex",
     )
 
 
-def _opencode_event(event_type: str, session_id: str | None) -> HarnessEvent:
+def _opencode_event(event_type: str, session_id: str | None) -> RawHarnessEvent:
     properties: dict[str, object] = {}
     if session_id is not None:
         properties["sessionID"] = session_id
-    return HarnessEvent(
+    return RawHarnessEvent(
         event_type=event_type,
         payload={"type": event_type, "properties": properties},
         harness_id="opencode",

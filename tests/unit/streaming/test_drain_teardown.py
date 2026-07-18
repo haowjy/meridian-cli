@@ -7,7 +7,7 @@ from typing import Any
 import pytest
 
 from meridian.lib.core.types import HarnessId, SpawnId
-from meridian.lib.harness.connections.base import HarnessEvent, StopResult
+from meridian.lib.harness.connections.base import RawHarnessEvent, StopResult
 from meridian.lib.streaming.drain_teardown import DefaultDrainSessionTeardown
 from meridian.lib.streaming.pi_drain_teardown import PiDrainSessionTeardown
 from meridian.lib.streaming.spawn_session import DrainOutcome
@@ -64,10 +64,10 @@ async def test_pi_teardown_emits_exact_cleanup_phase_sequence(
     expected_statuses: list[str],
 ) -> None:
     connection = _StopConnection(escalated=escalated, error=error)
-    emitted: list[HarnessEvent] = []
+    emitted: list[RawHarnessEvent] = []
     spawn_id = SpawnId("p-teardown")
 
-    def emit_event(target_id: SpawnId, event: HarnessEvent) -> None:
+    def emit_event(target_id: SpawnId, event: RawHarnessEvent) -> None:
         assert target_id == spawn_id
         emitted.append(event)
 

@@ -18,7 +18,7 @@ from meridian.lib.harness.common import (
     extract_usage_from_artifacts,
     iter_nested_dicts,
 )
-from meridian.lib.harness.connections.base import HarnessEvent
+from meridian.lib.harness.connections.base import RawHarnessEvent
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 
 from .base import HarnessExtractor, normalize_harness_event_type, session_from_mapping_with_keys
@@ -45,7 +45,7 @@ def _find_session_id(payload: Mapping[str, object]) -> str | None:
 class CursorHarnessExtractor(HarnessExtractor[ResolvedLaunchSpec]):
     """Extractor implementation for Cursor artifacts and events."""
 
-    def detect_session_id_from_event(self, event: HarnessEvent) -> str | None:
+    def detect_session_id_from_event(self, event: RawHarnessEvent) -> str | None:
         return _find_session_id(event.payload)
 
     def detect_session_id_from_artifacts(

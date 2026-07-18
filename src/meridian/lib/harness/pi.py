@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import ClassVar
+from typing import ClassVar, cast
 
 from meridian.lib.config.settings import resolve_pi_harness_profile
 from meridian.lib.core.domain import TokenUsage
@@ -33,6 +33,7 @@ from meridian.lib.harness.bundle import (
     HarnessProjectionPorts,
     register_harness_bundle,
 )
+from meridian.lib.harness.connections.base import RawHarnessEvent
 from meridian.lib.harness.connections.pi_rpc import PiRpcConnection
 from meridian.lib.harness.extractors.pi import (
     PI_EXTRACTOR,
@@ -59,6 +60,14 @@ from meridian.lib.harness.projections.project_pi_native_tui import (
 )
 from meridian.lib.harness.projections.project_pi_rpc import (
     project_pi_spec_to_cli_args,
+)
+from meridian.lib.harness.semantics import (
+    MERIDIAN_CONNECTION_CLOSED_EVENT,
+    HarnessSemantics,
+    SemanticClass,
+    TerminalEventOutcome,
+    connection_closed_outcome,
+    stringify_terminal_error,
 )
 from meridian.lib.launch.composition import (
     ComposedLaunchContent,
@@ -427,6 +436,59 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         return None
 
 
+def _resolve_pi_terminal(event: RawHarnessEvent) -> TerminalEventOutcome | None:
+    if event.event_type == MERIDIAN_CONNECTION_CLOSED_EVENT:
+        return connection_closed_outcome(event)
+    if event.event_type == "response":
+        command = str(event.payload.get("command", "")).strip().lower()
+        is_inject_response = event.payload.get("meridian_control_action") == "inject"
+        if command == "prompt" and event.payload.get("success") is False and not is_inject_response:
+            error = stringify_terminal_error(event.payload.get("error")) or "pi_prompt_rejected"
+            return TerminalEventOutcome(status="failed", exit_code=1, error=error)
+        return None
+
+    messages_obj = event.payload.get("messages")
+    if isinstance(messages_obj, list):
+        for message_obj in reversed(cast("list[object]", messages_obj)):
+            if not isinstance(message_obj, dict):
+                continue
+            message = cast("dict[str, object]", message_obj)
+            if str(message.get("role", "")).strip().lower() != "assistant":
+                continue
+            stop_reason = str(message.get("stopReason", "")).strip().lower()
+            if stop_reason == "error":
+                return TerminalEventOutcome(status="failed", exit_code=1, error="pi_stop_error")
+            if stop_reason in {"abort", "aborted", "cancel", "cancelled", "canceled"}:
+                return TerminalEventOutcome(
+                    status="cancelled", exit_code=130, error="cancelled"
+                )
+            break
+    return TerminalEventOutcome(status="succeeded", exit_code=0)
+
+
+PI_SEMANTICS = HarnessSemantics(
+    event_classes={
+        "agent_start": frozenset({SemanticClass.TURN_ACTIVE}),
+        "turn_start": frozenset({SemanticClass.TURN_ACTIVE}),
+        "message_start": frozenset({SemanticClass.TURN_ACTIVE}),
+        "message_update": frozenset({SemanticClass.TURN_ACTIVE}),
+        "tool_execution_start": frozenset({SemanticClass.TURN_ACTIVE}),
+        "tool_execution_update": frozenset({SemanticClass.TURN_ACTIVE}),
+        "turn_end": frozenset({SemanticClass.IDLE}),
+        "agent_end": frozenset(
+            {
+                SemanticClass.IDLE,
+                SemanticClass.SIGNAL_CLEARED,
+                SemanticClass.TERMINAL_PAYLOAD,
+            }
+        ),
+        "response": frozenset({SemanticClass.TERMINAL_PAYLOAD}),
+        MERIDIAN_CONNECTION_CLOSED_EVENT: frozenset({SemanticClass.TERMINAL_PAYLOAD}),
+    },
+    payload_resolver=_resolve_pi_terminal,
+)
+
+
 register_harness_bundle(
     HarnessBundle(
         harness_id=HarnessId.PI,
@@ -437,5 +499,6 @@ register_harness_bundle(
         projections=HarnessProjectionPorts(
             subprocess_cli_args=_project_pi_subprocess_cli_args,
         ),
+        semantics=PI_SEMANTICS,
     )
 )

@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from meridian.lib.core.domain import SpawnStatus
-from meridian.lib.harness.connections.base import HarnessEvent
+from meridian.lib.harness.connections.base import RawHarnessEvent
 
 if TYPE_CHECKING:
     from meridian.lib.harness.connections.base import HarnessConnection
@@ -35,7 +35,7 @@ class SpawnSession:
 
     connection: HarnessConnection[Any]
     drain_task: asyncio.Task[None]
-    subscriber: asyncio.Queue[HarnessEvent | None] | None
+    subscriber: asyncio.Queue[RawHarnessEvent | None] | None
     control_server: ControlSocketServer
     started_monotonic: float
     completion_future: asyncio.Future[DrainOutcome]

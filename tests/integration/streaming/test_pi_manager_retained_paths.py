@@ -187,6 +187,6 @@ async def test_spawn_manager_process_exit_classifies_private_bash_as_tracked_wor
         assert outcome is not None
         assert outcome.status == "failed"
         assert outcome.error == "pi_process_exited_with_tracked_children"
-        assert history_has_event(tmp_path, spawn_id, "error/connectionClosed")
+        assert history_has_event(tmp_path, spawn_id, "meridian/error/connectionClosed")
     finally:
         await manager.stop_spawn(spawn_id)

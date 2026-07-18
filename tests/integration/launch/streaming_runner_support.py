@@ -15,7 +15,7 @@ from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.connections.base import (
     ConnectionCapabilities,
     ConnectionConfig,
-    HarnessEvent,
+    RawHarnessEvent,
     StopProgressCallback,
     StopResult,
 )
@@ -148,7 +148,7 @@ class _ReportThenHangConnection:
             "# Done\n\nWatchdog fallback completed.\n",
             encoding="utf-8",
         )
-        yield HarnessEvent(
+        yield RawHarnessEvent(
             event_type="item/completed",
             harness_id="codex",
             payload={
@@ -279,7 +279,7 @@ class _OpenCodeTerminalWithScopeConnection:
         spawn_dir = resolve_spawn_log_dir(project_root, self._spawn_id)
         spawn_dir.mkdir(parents=True, exist_ok=True)
         (spawn_dir / "report.md").write_text("# Done\n\nOpenCode completed.\n", encoding="utf-8")
-        yield HarnessEvent(
+        yield RawHarnessEvent(
             event_type=self.terminal_event_type,
             harness_id=self.harness.value,
             payload={
@@ -370,7 +370,7 @@ class _ResidentDeadlineConnection:
         _ = message
 
     async def events(self):  # type: ignore[no-untyped-def]
-        yield HarnessEvent(
+        yield RawHarnessEvent(
             event_type="turn/completed",
             harness_id="codex",
             payload={"threadId": self._session_id, "turnId": "turn-1"},
@@ -409,7 +409,7 @@ class _ResidentRearmRetryConnection(_ResidentDeadlineConnection):
         write_spawn_signal(type(self).runtime_root, self._spawn_id, "rearm")
         if self._attempt_index == 1:
             write_spawn_signal(type(self).runtime_root, self._spawn_id, "done")
-        yield HarnessEvent(
+        yield RawHarnessEvent(
             event_type="turn/completed",
             harness_id="codex",
             payload={"threadId": self._session_id, "turnId": f"turn-{self._attempt_index}"},
@@ -418,7 +418,7 @@ class _ResidentRearmRetryConnection(_ResidentDeadlineConnection):
 
 class _ScriptedRetryOpenCodeConnection:
     starts = 0
-    first_attempt_events: tuple[HarnessEvent, ...] = ()
+    first_attempt_events: tuple[RawHarnessEvent, ...] = ()
     session_id_value = "session-scripted-retry-opencode"
     subprocess_pid_value = 8383
 
@@ -426,7 +426,7 @@ class _ScriptedRetryOpenCodeConnection:
     def reset(
         cls,
         *,
-        first_attempt_events: tuple[HarnessEvent, ...],
+        first_attempt_events: tuple[RawHarnessEvent, ...],
         session_id: str,
         subprocess_pid: int,
     ) -> None:
@@ -503,7 +503,7 @@ class _ScriptedRetryOpenCodeConnection:
             for event in type(self).first_attempt_events:
                 yield event
             return
-        yield HarnessEvent(
+        yield RawHarnessEvent(
             event_type="session.idle",
             harness_id="opencode",
             payload={"type": "session.idle", "sessionID": self.session_id},

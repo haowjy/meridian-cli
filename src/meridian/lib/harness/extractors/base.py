@@ -9,7 +9,7 @@ from typing import Generic, Protocol, TypeVar, cast, runtime_checkable
 from meridian.lib.core.domain import TokenUsage
 from meridian.lib.core.types import SpawnId
 from meridian.lib.harness.adapter import ArtifactStore, SpawnExtractor
-from meridian.lib.harness.connections.base import HarnessEvent
+from meridian.lib.harness.connections.base import RawHarnessEvent
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 
 ExtractorSpecT = TypeVar("ExtractorSpecT", bound=ResolvedLaunchSpec, contravariant=True)
@@ -19,7 +19,7 @@ ExtractorSpecT = TypeVar("ExtractorSpecT", bound=ResolvedLaunchSpec, contravaria
 class HarnessExtractor(SpawnExtractor, Protocol, Generic[ExtractorSpecT]):
     """Harness-owned extraction surface shared by subprocess and streaming."""
 
-    def detect_session_id_from_event(self, event: HarnessEvent) -> str | None:
+    def detect_session_id_from_event(self, event: RawHarnessEvent) -> str | None:
         """Best-effort extraction from one live event frame."""
         ...
 

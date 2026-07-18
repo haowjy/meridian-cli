@@ -43,7 +43,7 @@ from meridian.lib.streaming.drain_coordinator import (
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
-    from meridian.lib.harness.connections.base import HarnessConnection, HarnessEvent
+    from meridian.lib.harness.connections.base import HarnessConnection, RawHarnessEvent
     from meridian.lib.harness.connections.resident_backend import ResidentBackendControl
     from meridian.lib.streaming.drain_policy import DrainAction
 
@@ -82,12 +82,12 @@ class _ResidentCompletionEvidence:
         self._next_due = None
 
     async def observe_event(
-        self, event: HarnessEvent, transition: str | None
+        self, event: RawHarnessEvent, transition: str | None
     ) -> EvidenceEventDecision:
         del event, transition
         return EvidenceEventDecision()
 
-    def note_event_persisted(self, event: HarnessEvent) -> EvidenceEventDecision:
+    def note_event_persisted(self, event: RawHarnessEvent) -> EvidenceEventDecision:
         del event
         return EvidenceEventDecision()
 
@@ -453,16 +453,16 @@ class ResidentDrainCoordinator:
         self._profile.observe_activity_transition(transition)
         self._coordinator.note_activity_transition(transition)
 
-    async def observe_event(self, event: HarnessEvent, transition: str | None) -> bool:
+    async def observe_event(self, event: RawHarnessEvent, transition: str | None) -> bool:
         self._profile.observe_activity_transition(transition)
         return await self._coordinator.observe_event(event, transition)
 
-    def note_event_persisted(self, event: HarnessEvent) -> DrainLoopDecision:
+    def note_event_persisted(self, event: RawHarnessEvent) -> DrainLoopDecision:
         return self._coordinator.note_event_persisted(event)
 
     async def handle_terminal_event(
         self,
-        event: HarnessEvent,
+        event: RawHarnessEvent,
         outcome: TerminalEventOutcome,
         action: DrainAction,
     ) -> DrainTerminalDecision:

@@ -15,7 +15,7 @@ from meridian.lib.config.settings import load_config
 from meridian.lib.core.domain import Spawn
 from meridian.lib.core.execution_policy import ResolvedExecutionPolicy
 from meridian.lib.core.types import HarnessId, ModelId, SpawnId, TransportId
-from meridian.lib.harness.connections.base import HarnessEvent
+from meridian.lib.harness.connections.base import RawHarnessEvent
 from meridian.lib.harness.registry import HarnessRegistry
 from meridian.lib.launch import bundle_adapter
 from meridian.lib.launch.request import RetryPolicy
@@ -350,7 +350,7 @@ async def test_execute_with_streaming_does_not_retry_authoritative_terminal_fail
     fake_heartbeat.set_clock(fake_clock)
     _ScriptedRetryOpenCodeConnection.reset(
         first_attempt_events=(
-            HarnessEvent(
+            RawHarnessEvent(
                 event_type="session.error",
                 harness_id="opencode",
                 payload={

@@ -46,11 +46,13 @@ from meridian.lib.harness.codex_rollout import (
 )
 from meridian.lib.harness.common import (
     extract_codex_report,
+    extract_codex_thread_id,
     extract_session_id_from_artifacts_with_patterns,
 )
 from meridian.lib.harness.connections.base import (
     PrimaryRuntimeEventSurface,
     PrimaryRuntimeRequestPolicy,
+    RawHarnessEvent,
 )
 from meridian.lib.harness.connections.codex_ws import CodexConnection
 from meridian.lib.harness.extractors.codex import CODEX_EXTRACTOR
@@ -60,6 +62,14 @@ from meridian.lib.harness.projections.project_codex_streaming import (
 )
 from meridian.lib.harness.projections.project_codex_subprocess import (
     project_codex_spec_to_cli_args,
+)
+from meridian.lib.harness.semantics import (
+    MERIDIAN_CONNECTION_CLOSED_EVENT,
+    HarnessSemantics,
+    SemanticClass,
+    TerminalEventOutcome,
+    TerminalOutcomeCause,
+    connection_closed_outcome,
 )
 from meridian.lib.launch.composition import (
     ComposedLaunchContent,
@@ -521,6 +531,35 @@ class CodexAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         return extract_codex_report(artifacts, spawn_id)
 
 
+def _resolve_codex_terminal(event: RawHarnessEvent) -> TerminalEventOutcome | None:
+    if event.event_type == MERIDIAN_CONNECTION_CLOSED_EVENT:
+        return connection_closed_outcome(
+            event,
+            cause=TerminalOutcomeCause.REPLACEABLE_TRANSPORT_CLOSE,
+        )
+    return None
+
+
+CODEX_SEMANTICS = HarnessSemantics(
+    event_classes={
+        "turn/started": frozenset({SemanticClass.TURN_ACTIVE}),
+        "turn/completed": frozenset(
+            {
+                SemanticClass.IDLE,
+                SemanticClass.SIGNAL_CLEARED,
+                SemanticClass.TERMINAL_SUCCESS,
+            }
+        ),
+        MERIDIAN_CONNECTION_CLOSED_EVENT: frozenset({SemanticClass.TERMINAL_PAYLOAD}),
+    },
+    payload_resolver=_resolve_codex_terminal,
+    scoped_events=frozenset({"turn/started", "turn/completed"}),
+    scope_id_resolver=extract_codex_thread_id,
+    primary_scope_event="turn/started",
+    primary_scope_unscoped_events_match=True,
+)
+
+
 register_harness_bundle(
     HarnessBundle(
         harness_id=HarnessId.CODEX,
@@ -535,5 +574,6 @@ register_harness_bundle(
                 bootstrap_payload=project_codex_spec_to_thread_request_for_project,
             ),
         ),
+        semantics=CODEX_SEMANTICS,
     )
 )

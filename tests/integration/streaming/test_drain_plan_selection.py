@@ -7,7 +7,7 @@ from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, cast
 
 from meridian.lib.core.types import HarnessId, SpawnId
-from meridian.lib.harness.connections.base import ConnectionConfig, HarnessEvent
+from meridian.lib.harness.connections.base import ConnectionConfig, RawHarnessEvent
 from meridian.lib.streaming.drain_coordinator import DrainPlan
 from meridian.lib.streaming.drain_policy import (
     PiRpcQuiescenceDrainPolicy,
@@ -94,16 +94,16 @@ def test_spawn_manager_authored_event_emission_order(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    calls: list[tuple[str, HarnessEvent]] = []
+    calls: list[tuple[str, RawHarnessEvent]] = []
     spawn_id = SpawnId("p-pi-phase")
     manager = SpawnManager(runtime_root=tmp_path, project_root=tmp_path)
 
     class _Writer:
-        def write(self, event: HarnessEvent) -> None:
+        def write(self, event: RawHarnessEvent) -> None:
             calls.append(("persist", event))
 
     class _Observers:
-        def dispatch(self, target_spawn_id: SpawnId, event: HarnessEvent) -> None:
+        def dispatch(self, target_spawn_id: SpawnId, event: RawHarnessEvent) -> None:
             assert target_spawn_id == spawn_id
             calls.append(("dispatch", event))
 
@@ -117,7 +117,7 @@ def test_spawn_manager_authored_event_emission_order(
         ) -> None:
             assert layer == "drain"
             assert label == "meridian_authored"
-            event = HarnessEvent(
+            event = RawHarnessEvent(
                 event_type="meridian.authored",
                 harness_id="meridian",
                 payload=data,
@@ -127,9 +127,9 @@ def test_spawn_manager_authored_event_emission_order(
 
     manager._history_writers[spawn_id] = cast("Any", _Writer())
     manager._observers = cast("Any", _Observers())
-    def _fan_out(target_spawn_id: SpawnId, event: HarnessEvent | None) -> None:
+    def _fan_out(target_spawn_id: SpawnId, event: RawHarnessEvent | None) -> None:
         assert target_spawn_id == spawn_id
-        calls.append(("fan_out", cast("HarnessEvent", event)))
+        calls.append(("fan_out", cast("RawHarnessEvent", event)))
 
     def _get_tracer(target_spawn_id: SpawnId) -> _Tracer:
         assert target_spawn_id == spawn_id
@@ -138,7 +138,7 @@ def test_spawn_manager_authored_event_emission_order(
     monkeypatch.setattr(manager, "_fan_out_event", _fan_out)
     monkeypatch.setattr(manager, "get_tracer", _get_tracer)
 
-    authored_event = HarnessEvent(
+    authored_event = RawHarnessEvent(
         event_type="meridian.authored",
         harness_id="meridian",
         payload={"type": "meridian.authored", "spawn_id": "p-pi-phase"},
@@ -152,7 +152,7 @@ def test_spawn_manager_authored_event_emission_order(
         "fan_out",
         "trace",
     ]
-    expected = HarnessEvent(
+    expected = RawHarnessEvent(
         event_type="meridian.authored",
         harness_id="meridian",
         payload={"type": "meridian.authored", "spawn_id": "p-pi-phase"},

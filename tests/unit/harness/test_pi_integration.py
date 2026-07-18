@@ -13,7 +13,11 @@ import pytest
 
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.connections import pi_rpc as pi_rpc_module
-from meridian.lib.harness.connections.base import ConnectionConfig, ConnectionNotReady, HarnessEvent
+from meridian.lib.harness.connections.base import (
+    ConnectionConfig,
+    ConnectionNotReady,
+    RawHarnessEvent,
+)
 from meridian.lib.harness.connections.pi_rpc import PiRpcConnection
 from meridian.lib.harness.semantics import activity_transition, clears_signal, terminal_outcome
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
@@ -28,7 +32,7 @@ _PI_HELP_SURFACE = (
     "PI_CODING_AGENT_SESSION_DIR"
 )
 
-def _is_pi_phase_event(event: HarnessEvent) -> bool:
+def _is_pi_phase_event(event: RawHarnessEvent) -> bool:
     return event.event_type == "meridian.pi.lifecycle.phase"
 
 
@@ -99,7 +103,7 @@ def test_pi_rpc_connection_surfaces_stdout_parse_diagnostics(
 
 
 def test_pi_semantics_terminal_outcome_and_activity_mapping() -> None:
-    success_event = HarnessEvent(
+    success_event = RawHarnessEvent(
         event_type="agent_end",
         harness_id="pi",
         payload={
@@ -111,7 +115,7 @@ def test_pi_semantics_terminal_outcome_and_activity_mapping() -> None:
             ]
         },
     )
-    error_event = HarnessEvent(
+    error_event = RawHarnessEvent(
         event_type="agent_end",
         harness_id="pi",
         payload={
@@ -123,7 +127,7 @@ def test_pi_semantics_terminal_outcome_and_activity_mapping() -> None:
             ]
         },
     )
-    cancelled_event = HarnessEvent(
+    cancelled_event = RawHarnessEvent(
         event_type="agent_end",
         harness_id="pi",
         payload={
@@ -144,13 +148,16 @@ def test_pi_semantics_terminal_outcome_and_activity_mapping() -> None:
     assert terminal_outcome(cancelled_event).status == "cancelled"
     assert terminal_outcome(cancelled_event).error == "cancelled"
     assert activity_transition(
-        HarnessEvent(event_type="message_update", harness_id="pi", payload={})
+        RawHarnessEvent(event_type="message_update", harness_id="pi", payload={})
     ) == "turn_active"
     assert (
-        activity_transition(HarnessEvent(event_type="agent_end", harness_id="pi", payload={}))
+        activity_transition(RawHarnessEvent(event_type="agent_end", harness_id="pi", payload={}))
         == "idle"
     )
-    assert clears_signal(HarnessEvent(event_type="agent_end", harness_id="pi", payload={})) is True
+    assert (
+        clears_signal(RawHarnessEvent(event_type="agent_end", harness_id="pi", payload={}))
+        is True
+    )
 
 
 @pytest.mark.asyncio
@@ -460,7 +467,7 @@ async def test_pi_rpc_connection_ignores_non_lifecycle_stderr_lines_but_logs_the
     )
 
     event_iter = connection.events()
-    non_phase_events: list[HarnessEvent] = []
+    non_phase_events: list[RawHarnessEvent] = []
     while True:
         event = await _next_non_phase_event(event_iter)
         non_phase_events.append(event)
@@ -842,7 +849,7 @@ async def test_pi_rpc_connection_surfaces_stderr_on_early_exit_before_first_even
     error_events = [
         event
         for event in events
-        if event.event_type == "error/connectionClosed"
+        if event.event_type == "meridian/error/connectionClosed"
     ]
     assert error_events
     message = str(error_events[0].payload.get("message", ""))

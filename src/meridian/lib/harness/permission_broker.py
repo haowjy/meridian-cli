@@ -13,8 +13,8 @@ from typing import Any, Literal, cast
 
 from meridian.lib.harness.connections.base import (
     HarnessConnection,
-    HarnessEvent,
     HarnessRequest,
+    RawHarnessEvent,
     ServerRequestHandler,
 )
 from meridian.lib.state.atomic import append_durable_jsonl_line, atomic_write_text
@@ -72,7 +72,7 @@ class PermissionBroker(ServerRequestHandler):
         self,
         *,
         spawn_dir: Path,
-        event_sink: Callable[[HarnessEvent], Awaitable[None]] | None = None,
+        event_sink: Callable[[RawHarnessEvent], Awaitable[None]] | None = None,
         policy_hook: PermissionTransitionSink | None = None,
         auto_reject_runtime_requests: bool = False,
     ) -> None:
@@ -376,7 +376,7 @@ def _utc_now_iso() -> str:
     return datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
 
 
-def _transition_to_event(transition: PermissionTransition) -> HarnessEvent | None:
+def _transition_to_event(transition: PermissionTransition) -> RawHarnessEvent | None:
     payload: dict[str, object] = {
         "request_id": transition.request_id,
         "request_type": transition.request_type,
@@ -384,7 +384,7 @@ def _transition_to_event(transition: PermissionTransition) -> HarnessEvent | Non
     }
     if transition.status == "pending":
         payload["params"] = transition.payload
-        return HarnessEvent(
+        return RawHarnessEvent(
             event_type="request/opened",
             payload=payload,
             harness_id="codex",
@@ -393,7 +393,7 @@ def _transition_to_event(transition: PermissionTransition) -> HarnessEvent | Non
     if transition.status == "resolved":
         if transition.resolution:
             payload.update(transition.resolution)
-        return HarnessEvent(
+        return RawHarnessEvent(
             event_type="request/resolved",
             payload=payload,
             harness_id="codex",
@@ -402,7 +402,7 @@ def _transition_to_event(transition: PermissionTransition) -> HarnessEvent | Non
     if transition.status == "failed":
         if transition.error is not None:
             payload["error"] = transition.error
-        return HarnessEvent(
+        return RawHarnessEvent(
             event_type="request/failed",
             payload=payload,
             harness_id="codex",
@@ -411,7 +411,7 @@ def _transition_to_event(transition: PermissionTransition) -> HarnessEvent | Non
     if transition.status == "cancelled":
         if transition.error is not None:
             payload["reason"] = transition.error
-        return HarnessEvent(
+        return RawHarnessEvent(
             event_type="request/cancelled",
             payload=payload,
             harness_id="codex",

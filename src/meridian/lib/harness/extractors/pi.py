@@ -16,7 +16,7 @@ from meridian.lib.harness.common import (
     _coerce_optional_int,  # pyright: ignore[reportPrivateUsage]
     _iter_json_lines_artifact,  # pyright: ignore[reportPrivateUsage]
 )
-from meridian.lib.harness.connections.base import HarnessEvent
+from meridian.lib.harness.connections.base import RawHarnessEvent
 from meridian.lib.harness.pi_paths import resolve_pi_spawn_session_root
 from meridian.lib.launch.constants import HISTORY_FILENAME
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
@@ -319,7 +319,7 @@ def _read_artifact_text(artifacts: ArtifactStore, spawn_id: SpawnId, name: str) 
 class PiHarnessExtractor(HarnessExtractor[ResolvedLaunchSpec]):
     """Extractor implementation for Pi artifacts and events."""
 
-    def detect_session_id_from_event(self, event: HarnessEvent) -> str | None:
+    def detect_session_id_from_event(self, event: RawHarnessEvent) -> str | None:
         if event.event_type != "session":
             return None
         session_id = event.payload.get("id")

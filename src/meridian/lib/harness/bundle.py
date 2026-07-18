@@ -12,6 +12,7 @@ from meridian.lib.core.types import HarnessId, TransportId
 from meridian.lib.harness.adapter import BootstrapMode, HarnessAdapter, HarnessContract
 from meridian.lib.harness.connections.base import HarnessConnection
 from meridian.lib.harness.extractors.base import HarnessExtractor
+from meridian.lib.harness.semantics import HarnessSemantics
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec, SpecT
 
 ProjectorSpecT = TypeVar("ProjectorSpecT", bound=ResolvedLaunchSpec, contravariant=True)
@@ -62,6 +63,7 @@ class HarnessBundle(Generic[SpecT]):
     extractor: HarnessExtractor[SpecT]
     connections: Mapping[TransportId, type[HarnessConnection[SpecT]]]
     projections: HarnessProjectionPorts[SpecT]
+    semantics: HarnessSemantics
 
 
 _REGISTRY: dict[HarnessId, HarnessBundle[Any]] = {}
@@ -83,6 +85,12 @@ def register_harness_bundle(bundle: HarnessBundle[Any]) -> None:
         raise TypeError(
             f"HarnessBundle for {bundle.harness_id} has invalid extractor "
             f"{type(raw_extractor).__name__}; expected HarnessExtractor"
+        )
+
+    raw_semantics: object = bundle.semantics
+    if not isinstance(raw_semantics, HarnessSemantics):  # pyright: ignore[reportUnnecessaryIsInstance]
+        raise TypeError(
+            f"HarnessBundle for {bundle.harness_id} is missing a valid HarnessSemantics port"
         )
 
     if not bundle.connections:
@@ -139,6 +147,7 @@ def register_harness_bundle(bundle: HarnessBundle[Any]) -> None:
         extractor=bundle.extractor,
         connections=frozen_connections,
         projections=bundle.projections,
+        semantics=bundle.semantics,
     )
 
 

@@ -11,10 +11,10 @@ from meridian.lib.harness.pi_lifecycle_events import build_pi_phase_event
 from meridian.lib.streaming.drain_teardown import TeardownReport
 
 if TYPE_CHECKING:
-    from meridian.lib.harness.connections.base import HarnessConnection, HarnessEvent
+    from meridian.lib.harness.connections.base import HarnessConnection, RawHarnessEvent
     from meridian.lib.streaming.spawn_session import DrainOutcome
 
-EmitEvent = Callable[[SpawnId, "HarnessEvent"], None]
+EmitEvent = Callable[[SpawnId, "RawHarnessEvent"], None]
 
 
 @dataclass(frozen=True)

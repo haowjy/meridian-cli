@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Literal, Protocol
 from meridian.lib.harness.semantics import TerminalEventOutcome
 
 if TYPE_CHECKING:
-    from meridian.lib.harness.connections.base import HarnessEvent
+    from meridian.lib.harness.connections.base import RawHarnessEvent
     from meridian.lib.streaming.drain_policy import DrainAction
 
 
@@ -196,10 +196,10 @@ class CompletionEvidence(Protocol):
     async def stop(self) -> None: ...
 
     async def observe_event(
-        self, event: HarnessEvent, transition: str | None
+        self, event: RawHarnessEvent, transition: str | None
     ) -> EvidenceEventDecision: ...
 
-    def note_event_persisted(self, event: HarnessEvent) -> EvidenceEventDecision: ...
+    def note_event_persisted(self, event: RawHarnessEvent) -> EvidenceEventDecision: ...
 
     async def assess(self, trigger: AssessmentTrigger) -> WorkAssessment: ...
 

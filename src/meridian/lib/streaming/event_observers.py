@@ -9,18 +9,18 @@ from contextlib import suppress
 from typing import Protocol
 
 from meridian.lib.core.types import SpawnId
-from meridian.lib.harness.connections.base import HarnessEvent
+from meridian.lib.harness.connections.base import RawHarnessEvent
 
 logger = logging.getLogger(__name__)
 _OBSERVER_SHUTDOWN_TIMEOUT_SECONDS = 5.0
 
-HarnessEventCallback = Callable[[HarnessEvent], Awaitable[None] | None]
+HarnessEventCallback = Callable[[RawHarnessEvent], Awaitable[None] | None]
 
 
 class EventObserver(Protocol):
     """Post-persist observer for one spawn's harness events."""
 
-    async def on_event(self, spawn_id: SpawnId, event: HarnessEvent) -> None:
+    async def on_event(self, spawn_id: SpawnId, event: RawHarnessEvent) -> None:
         """Observe one persisted harness event."""
         ...
 
@@ -35,7 +35,7 @@ class CallbackObserver:
     def __init__(self, callback: HarnessEventCallback) -> None:
         self._callback = callback
 
-    async def on_event(self, spawn_id: SpawnId, event: HarnessEvent) -> None:
+    async def on_event(self, spawn_id: SpawnId, event: RawHarnessEvent) -> None:
         """Dispatch one event to the wrapped callback."""
 
         _ = spawn_id
@@ -66,7 +66,7 @@ class QueuedObserver:
     ) -> None:
         self._observer = observer
         self._spawn_id = spawn_id
-        self._queue: asyncio.Queue[HarnessEvent | None] = asyncio.Queue(maxsize=max_buffer)
+        self._queue: asyncio.Queue[RawHarnessEvent | None] = asyncio.Queue(maxsize=max_buffer)
         self._task = asyncio.create_task(self._drain())
         self._completion_signaled = False
 
@@ -82,7 +82,7 @@ class QueuedObserver:
 
         return self._observer
 
-    def enqueue(self, event: HarnessEvent) -> None:
+    def enqueue(self, event: RawHarnessEvent) -> None:
         """Queue one event without blocking; drop and warn if full."""
 
         try:
@@ -159,7 +159,7 @@ class EventObserverRegistry:
         else:
             self._observers.pop(spawn_id, None)
 
-    def dispatch(self, spawn_id: SpawnId, event: HarnessEvent) -> None:
+    def dispatch(self, spawn_id: SpawnId, event: RawHarnessEvent) -> None:
         """Non-blocking enqueue to all observers registered for a spawn."""
 
         for queued in self._observers.get(spawn_id, []):

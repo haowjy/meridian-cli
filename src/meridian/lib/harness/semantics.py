@@ -1,22 +1,23 @@
-"""Pure semantic interpretation helpers for harness events."""
+"""Harness event normalization through per-bundle semantic ports."""
 
 from __future__ import annotations
 
 import json
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import TYPE_CHECKING, Literal, cast
+from types import MappingProxyType
+from typing import TYPE_CHECKING, Literal
 
 from meridian.lib.core.domain import SpawnStatus
 from meridian.lib.core.types import HarnessId
-from meridian.lib.harness.common import extract_codex_thread_id
-from meridian.lib.harness.opencode_report import extract_opencode_session_id
 
 if TYPE_CHECKING:
-    from meridian.lib.harness.connections.base import HarnessEvent
+    from meridian.lib.harness.connections.base import RawHarnessEvent
 
 
 ActivityState = Literal["turn_active", "idle"]
+MERIDIAN_CONNECTION_CLOSED_EVENT = "meridian/error/connectionClosed"
 
 
 class TerminalOutcomeCause(StrEnum):
@@ -42,28 +43,49 @@ class PrimaryEventScope:
     unscoped_events_match: bool = False
 
 
-def codex_primary_event_scope(thread_id: str | None) -> PrimaryEventScope | None:
-    normalized = (thread_id or "").strip()
-    if not normalized:
-        return None
-    return PrimaryEventScope(
-        harness_id=HarnessId.CODEX,
-        scope_id=normalized,
-        unscoped_events_match=True,
-    )
+@dataclass(frozen=True)
+class ActivitySemanticEvent:
+    """Closed semantic variant describing UI activity."""
+
+    kind: Literal["activity"] = field(default="activity", init=False)
+    state: ActivityState = "idle"
 
 
-def opencode_primary_event_scope(session_id: str | None) -> PrimaryEventScope | None:
-    normalized = (session_id or "").strip()
-    if not normalized:
-        return None
-    return PrimaryEventScope(
-        harness_id=HarnessId.OPENCODE,
-        scope_id=normalized,
-    )
+@dataclass(frozen=True)
+class TerminalSemanticEvent:
+    """Closed semantic variant describing a terminal outcome."""
+
+    outcome: TerminalEventOutcome
+    kind: Literal["terminal"] = field(default="terminal", init=False)
 
 
-def _stringify_terminal_error(error: object) -> str | None:
+@dataclass(frozen=True)
+class SignalClearedSemanticEvent:
+    """Closed semantic variant describing acknowledgement of a user signal."""
+
+    kind: Literal["signal_cleared"] = field(default="signal_cleared", init=False)
+
+
+type SemanticEvent = ActivitySemanticEvent | TerminalSemanticEvent | SignalClearedSemanticEvent
+
+
+class SemanticClass(StrEnum):
+    """Declarative semantic classes registered by a harness bundle."""
+
+    TURN_ACTIVE = "turn_active"
+    IDLE = "idle"
+    SIGNAL_CLEARED = "signal_cleared"
+    TERMINAL_SUCCESS = "terminal_success"
+    TERMINAL_PAYLOAD = "terminal_payload"
+
+
+type PayloadSemanticResolver = Callable[["RawHarnessEvent"], TerminalEventOutcome | None]
+type ScopeIdResolver = Callable[[dict[str, object]], str | None]
+
+
+def stringify_terminal_error(error: object) -> str | None:
+    """Render an arbitrary upstream error payload for durable state."""
+
     if error is None:
         return None
     if isinstance(error, str):
@@ -77,271 +99,246 @@ def _stringify_terminal_error(error: object) -> str | None:
     return normalized or None
 
 
-def _event_scope_id(event: HarnessEvent, scope: PrimaryEventScope) -> str | None:
-    if event.harness_id != scope.harness_id.value:
+def connection_closed_outcome(
+    event: RawHarnessEvent,
+    *,
+    cause: TerminalOutcomeCause | None = None,
+) -> TerminalEventOutcome:
+    """Build the shared outcome for a Meridian synthetic connection close."""
+
+    error = stringify_terminal_error(event.payload.get("message")) or "connection_closed"
+    return TerminalEventOutcome(status="failed", exit_code=1, error=error, cause=cause)
+
+
+def codex_primary_event_scope(thread_id: str | None) -> PrimaryEventScope | None:
+    """Build Codex's primary-thread scope from a transport observation."""
+
+    normalized = (thread_id or "").strip()
+    if not normalized:
         return None
-    if scope.harness_id is HarnessId.CODEX:
-        return extract_codex_thread_id(event.payload)
-    if scope.harness_id is HarnessId.OPENCODE:
-        return extract_opencode_session_id(event.payload)
-    return None
+    return PrimaryEventScope(
+        harness_id=HarnessId.CODEX,
+        scope_id=normalized,
+        unscoped_events_match=True,
+    )
 
 
-def event_matches_primary_scope(
-    event: HarnessEvent,
+def opencode_primary_event_scope(session_id: str | None) -> PrimaryEventScope | None:
+    """Build OpenCode's primary-session scope from its launch response."""
+
+    normalized = (session_id or "").strip()
+    if not normalized:
+        return None
+    return PrimaryEventScope(harness_id=HarnessId.OPENCODE, scope_id=normalized)
+
+
+@dataclass(frozen=True)
+class HarnessSemantics:
+    """Per-harness port from open raw events to the closed semantic union."""
+
+    event_classes: Mapping[str, frozenset[SemanticClass]]
+    payload_resolver: PayloadSemanticResolver | None = None
+    scoped_events: frozenset[str] = frozenset()
+    scope_id_resolver: ScopeIdResolver | None = None
+    primary_scope_event: str | None = None
+    primary_scope_unscoped_events_match: bool = False
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "event_classes",
+            MappingProxyType(dict(self.event_classes)),
+        )
+        if any(not classes for classes in self.event_classes.values()):
+            raise ValueError("HarnessSemantics event classes must not be empty")
+        if (
+            any(
+                SemanticClass.TERMINAL_PAYLOAD in classes
+                for classes in self.event_classes.values()
+            )
+            and self.payload_resolver is None
+        ):
+            raise ValueError("terminal_payload event requires a payload_resolver")
+        if not self.scoped_events.issubset(self.event_classes):
+            raise ValueError("scoped events must be declared in event_classes")
+        if self.scoped_events and self.scope_id_resolver is None:
+            raise ValueError("scoped semantic events require a scope_id_resolver")
+        if self.primary_scope_event is not None and self.scope_id_resolver is None:
+            raise ValueError("primary scope observation requires a scope_id_resolver")
+        if (
+            self.primary_scope_event is not None
+            and self.primary_scope_event not in self.event_classes
+        ):
+            raise ValueError("primary scope event must be declared in event_classes")
+
+    def normalize(
+        self,
+        event: RawHarnessEvent,
+        *,
+        primary_event_scope: PrimaryEventScope | None = None,
+    ) -> tuple[SemanticEvent, ...]:
+        """Normalize one known event; unknown upstream names remain ignorable."""
+
+        classes = self.event_classes.get(event.event_type)
+        if classes is None or not self._matches_scope(event, primary_event_scope):
+            return ()
+
+        normalized: list[SemanticEvent] = []
+        if SemanticClass.TURN_ACTIVE in classes:
+            normalized.append(ActivitySemanticEvent(state="turn_active"))
+        if SemanticClass.IDLE in classes:
+            normalized.append(ActivitySemanticEvent(state="idle"))
+        if SemanticClass.SIGNAL_CLEARED in classes:
+            normalized.append(SignalClearedSemanticEvent())
+        if SemanticClass.TERMINAL_SUCCESS in classes:
+            normalized.append(
+                TerminalSemanticEvent(TerminalEventOutcome(status="succeeded", exit_code=0))
+            )
+        if SemanticClass.TERMINAL_PAYLOAD in classes:
+            if self.payload_resolver is None:
+                raise RuntimeError("terminal_payload event has no payload resolver")
+            outcome = self.payload_resolver(event)
+            if outcome is not None:
+                normalized.append(TerminalSemanticEvent(outcome))
+        return tuple(normalized)
+
+    def observe_primary_scope(self, event: RawHarnessEvent) -> PrimaryEventScope | None:
+        if event.event_type != self.primary_scope_event or self.scope_id_resolver is None:
+            return None
+        try:
+            harness_id = HarnessId(event.harness_id)
+        except ValueError:
+            return None
+        scope_id = self.scope_id_resolver(event.payload)
+        if scope_id is None:
+            return None
+        return PrimaryEventScope(
+            harness_id=harness_id,
+            scope_id=scope_id,
+            unscoped_events_match=self.primary_scope_unscoped_events_match,
+        )
+
+    def _matches_scope(
+        self,
+        event: RawHarnessEvent,
+        primary_event_scope: PrimaryEventScope | None,
+    ) -> bool:
+        if event.event_type not in self.scoped_events or primary_event_scope is None:
+            return True
+        if event.harness_id != primary_event_scope.harness_id.value:
+            return True
+        assert self.scope_id_resolver is not None
+        event_scope_id = self.scope_id_resolver(event.payload)
+        if event_scope_id is None:
+            return primary_event_scope.unscoped_events_match
+        return event_scope_id == primary_event_scope.scope_id
+
+
+def normalize_event(
+    event: RawHarnessEvent,
     *,
-    primary_event_scope: PrimaryEventScope | None,
-) -> bool:
-    if primary_event_scope is None:
-        return True
-    if event.harness_id != primary_event_scope.harness_id.value:
-        return True
-    event_scope_id = _event_scope_id(event, primary_event_scope)
-    if event_scope_id is None:
-        return primary_event_scope.unscoped_events_match
-    return event_scope_id == primary_event_scope.scope_id
+    primary_event_scope: PrimaryEventScope | None = None,
+) -> tuple[SemanticEvent, ...]:
+    """Dispatch by harness identity before interpreting the raw event name."""
 
+    try:
+        harness_id = HarnessId(event.harness_id)
+    except ValueError:
+        return ()
 
-def _codex_turn_completes_session(
-    event: HarnessEvent,
-    *,
-    primary_event_scope: PrimaryEventScope | None,
-) -> bool:
-    return (
-        event.harness_id == HarnessId.CODEX.value
-        and event.event_type == "turn/completed"
-        and event_matches_primary_scope(event, primary_event_scope=primary_event_scope)
+    # Lazy imports preserve the load-bearing adapter bootstrap order.
+    from meridian.lib.harness import ensure_bootstrap
+    from meridian.lib.harness.bundle import get_harness_bundle
+
+    ensure_bootstrap()
+    return get_harness_bundle(harness_id).semantics.normalize(
+        event,
+        primary_event_scope=primary_event_scope,
     )
 
 
 def terminal_outcome(
-    event: HarnessEvent,
+    event: RawHarnessEvent,
     *,
     primary_event_scope: PrimaryEventScope | None = None,
 ) -> TerminalEventOutcome | None:
-    """Classify whether a harness event completes a spawn drain."""
-
-    if _codex_turn_completes_session(
-        event,
-        primary_event_scope=primary_event_scope,
-    ):
-        return TerminalEventOutcome(status="succeeded", exit_code=0)
-
-    if event.event_type == "error/connectionClosed":
-        error = _stringify_terminal_error(event.payload.get("message")) or "connection_closed"
-        cause = (
-            TerminalOutcomeCause.REPLACEABLE_TRANSPORT_CLOSE
-            if event.harness_id == HarnessId.CODEX.value
-            else None
-        )
-        return TerminalEventOutcome(
-            status="failed",
-            exit_code=1,
-            error=error,
-            cause=cause,
-        )
-
-    if event.harness_id == HarnessId.CLAUDE.value and event.event_type == "result":
-        if bool(event.payload.get("is_error")):
-            error = (
-                _stringify_terminal_error(event.payload.get("result"))
-                or _stringify_terminal_error(event.payload.get("error"))
-                or "claude_result_error"
-            )
-            return TerminalEventOutcome(status="failed", exit_code=1, error=error)
-
-        subtype = str(event.payload.get("subtype", "")).strip().lower()
-        terminal_reason = str(event.payload.get("terminal_reason", "")).strip().lower()
-        if subtype in {"", "success"} and terminal_reason in {"", "completed"}:
-            return TerminalEventOutcome(status="succeeded", exit_code=0)
-        if terminal_reason == "completed":
-            return TerminalEventOutcome(status="succeeded", exit_code=0)
-
-        error = _stringify_terminal_error(event.payload.get("result"))
-        if subtype not in {"", "success"}:
-            error = error or f"claude_result_{subtype}"
-        elif terminal_reason:
-            error = error or f"claude_terminal_{terminal_reason}"
-        else:
-            error = error or "claude_result_unknown"
-        return TerminalEventOutcome(status="failed", exit_code=1, error=error)
-
-    if event.harness_id == HarnessId.CURSOR.value and event.event_type == "result":
-        if bool(event.payload.get("is_error")):
-            error = (
-                _stringify_terminal_error(event.payload.get("result"))
-                or _stringify_terminal_error(event.payload.get("error"))
-                or "cursor_result_error"
-            )
-            return TerminalEventOutcome(status="failed", exit_code=1, error=error)
-
-        subtype = str(event.payload.get("subtype", "")).strip().lower()
-        if subtype in {"", "success"}:
-            return TerminalEventOutcome(status="succeeded", exit_code=0)
-
-        error = _stringify_terminal_error(event.payload.get("result"))
-        return TerminalEventOutcome(
-            status="failed",
-            exit_code=1,
-            error=error or f"cursor_result_{subtype}",
-        )
-
-    if event.harness_id == HarnessId.OPENCODE.value:
-        if not event_matches_primary_scope(event, primary_event_scope=primary_event_scope):
-            return None
-        if event.event_type == "session.idle":
-            return TerminalEventOutcome(status="succeeded", exit_code=0)
-
-        if event.event_type == "session.error":
-            properties = event.payload.get("properties")
-            error = (
-                _stringify_terminal_error(cast("dict[str, object]", properties))
-                if isinstance(properties, dict)
-                else _stringify_terminal_error(event.payload.get("error"))
-            )
-            return TerminalEventOutcome(
-                status="failed",
-                exit_code=1,
-                error=error or "opencode_session_error",
-            )
-
-    if event.harness_id == HarnessId.PI.value and event.event_type == "agent_end":
-        messages_obj = event.payload.get("messages")
-        if isinstance(messages_obj, list):
-            for message_obj in reversed(cast("list[object]", messages_obj)):
-                if not isinstance(message_obj, dict):
-                    continue
-                message = cast("dict[str, object]", message_obj)
-                if str(message.get("role", "")).strip().lower() != "assistant":
-                    continue
-                stop_reason = str(message.get("stopReason", "")).strip().lower()
-                if stop_reason == "error":
-                    return TerminalEventOutcome(
-                        status="failed",
-                        exit_code=1,
-                        error="pi_stop_error",
-                    )
-                if stop_reason in {"abort", "aborted", "cancel", "cancelled", "canceled"}:
-                    return TerminalEventOutcome(
-                        status="cancelled",
-                        exit_code=130,
-                        error="cancelled",
-                    )
-                return TerminalEventOutcome(status="succeeded", exit_code=0)
-        return TerminalEventOutcome(status="succeeded", exit_code=0)
-
-    if event.harness_id == HarnessId.PI.value and event.event_type == "response":
-        command = str(event.payload.get("command", "")).strip().lower()
-        is_inject_response = event.payload.get("meridian_control_action") == "inject"
-        if command == "prompt" and event.payload.get("success") is False and not is_inject_response:
-            error = _stringify_terminal_error(event.payload.get("error")) or "pi_prompt_rejected"
-            return TerminalEventOutcome(status="failed", exit_code=1, error=error)
-
+    for semantic in normalize_event(event, primary_event_scope=primary_event_scope):
+        if isinstance(semantic, TerminalSemanticEvent):
+            return semantic.outcome
     return None
 
 
 def activity_transition(
-    event: HarnessEvent,
+    event: RawHarnessEvent,
     *,
     primary_event_scope: PrimaryEventScope | None = None,
 ) -> ActivityState | None:
-    """Return primary UI activity transition caused by a harness event."""
-
-    if event.event_type in {
-        "turn/started",  # Codex
-        "agent_message_chunk",  # OpenCode: assistant text streaming
-        "agent_thought_chunk",  # OpenCode: reasoning streaming
-        "tool_call",  # OpenCode: tool invocation
-        "tool_call_update",  # OpenCode: tool result
-    }:
-        if not event_matches_primary_scope(event, primary_event_scope=primary_event_scope):
-            return None
-        return "turn_active"
-    if event.event_type == "turn/completed":
-        if _codex_turn_completes_session(
-            event,
-            primary_event_scope=primary_event_scope,
-        ):
-            return "idle"
-        return None
-    if event.event_type == "session.idle":
-        if not event_matches_primary_scope(event, primary_event_scope=primary_event_scope):
-            return None
-        return "idle"
-    if event.harness_id == HarnessId.PI.value:
-        if event.event_type in {
-            "agent_start",
-            "turn_start",
-            "message_start",
-            "message_update",
-            "tool_execution_start",
-            "tool_execution_update",
-        }:
-            return "turn_active"
-        if event.event_type in {"turn_end", "agent_end"}:
-            return "idle"
+    for semantic in normalize_event(event, primary_event_scope=primary_event_scope):
+        if isinstance(semantic, ActivitySemanticEvent):
+            return semantic.state
     return None
 
 
 def clears_signal(
-    event: HarnessEvent,
+    event: RawHarnessEvent,
     *,
     primary_event_scope: PrimaryEventScope | None = None,
 ) -> bool:
-    """Return whether an event clears a pending user signal for its harness."""
-
-    if event.harness_id in {HarnessId.CLAUDE.value, HarnessId.CURSOR.value}:
-        return event.event_type == "result"
-    if event.harness_id == HarnessId.CODEX.value:
-        return _codex_turn_completes_session(
-            event,
-            primary_event_scope=primary_event_scope,
-        )
-    if event.harness_id == HarnessId.OPENCODE.value:
-        return (
-            event.event_type in {"session.idle", "session.error"}
-            and event_matches_primary_scope(event, primary_event_scope=primary_event_scope)
-        )
-    if event.harness_id == HarnessId.PI.value:
-        return event.event_type == "agent_end"
-    return False
+    return any(
+        isinstance(semantic, SignalClearedSemanticEvent)
+        for semantic in normalize_event(event, primary_event_scope=primary_event_scope)
+    )
 
 
 @dataclass
 class PrimaryEventScopeTracker:
-    """Track the primary event scope for drain classification."""
+    """Track the primary scope declared by the event's harness bundle."""
 
     primary_event_scope: PrimaryEventScope | None = field(default=None)
 
-    def observe(self, event: HarnessEvent) -> None:
-        if event.harness_id != HarnessId.CODEX.value or event.event_type != "turn/started":
-            return
+    def observe(self, event: RawHarnessEvent) -> None:
         if self.primary_event_scope is not None:
             return
-        thread_id = extract_codex_thread_id(event.payload)
-        scope = codex_primary_event_scope(thread_id)
-        if scope is not None:
-            self.primary_event_scope = scope
+        try:
+            harness_id = HarnessId(event.harness_id)
+        except ValueError:
+            return
+        from meridian.lib.harness import ensure_bootstrap
+        from meridian.lib.harness.bundle import get_harness_bundle
 
-    def terminal_outcome(self, event: HarnessEvent) -> TerminalEventOutcome | None:
+        ensure_bootstrap()
+        self.primary_event_scope = get_harness_bundle(
+            harness_id
+        ).semantics.observe_primary_scope(event)
+
+    def terminal_outcome(self, event: RawHarnessEvent) -> TerminalEventOutcome | None:
         self.observe(event)
         return terminal_outcome(event, primary_event_scope=self.primary_event_scope)
 
-    def activity_transition(self, event: HarnessEvent) -> ActivityState | None:
+    def activity_transition(self, event: RawHarnessEvent) -> ActivityState | None:
         self.observe(event)
         return activity_transition(event, primary_event_scope=self.primary_event_scope)
 
 
-
 __all__ = [
+    "MERIDIAN_CONNECTION_CLOSED_EVENT",
+    "ActivitySemanticEvent",
     "ActivityState",
+    "HarnessSemantics",
     "PrimaryEventScope",
     "PrimaryEventScopeTracker",
+    "SemanticClass",
+    "SemanticEvent",
+    "SignalClearedSemanticEvent",
     "TerminalEventOutcome",
+    "TerminalOutcomeCause",
+    "TerminalSemanticEvent",
     "activity_transition",
     "clears_signal",
     "codex_primary_event_scope",
-    "event_matches_primary_scope",
+    "connection_closed_outcome",
+    "normalize_event",
     "opencode_primary_event_scope",
+    "stringify_terminal_error",
     "terminal_outcome",
 ]

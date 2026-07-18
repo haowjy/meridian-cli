@@ -56,6 +56,6 @@ async def test_codex_reader_reports_abnormal_close() -> None:
 
     event = await connection._event_queue.get()
     assert event is not None
-    assert event.event_type == "error/connectionClosed"
+    assert event.event_type == "meridian/error/connectionClosed"
     assert "1011" in str(event.payload["message"])
     assert await connection._event_queue.get() is None

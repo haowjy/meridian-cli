@@ -13,7 +13,7 @@ from meridian.lib.streaming.drain_teardown import (
 )
 
 if TYPE_CHECKING:
-    from meridian.lib.harness.connections.base import HarnessEvent
+    from meridian.lib.harness.connections.base import RawHarnessEvent
     from meridian.lib.harness.semantics import TerminalEventOutcome
     from meridian.lib.streaming.completion_contracts import CompletionCleanupRequest
     from meridian.lib.streaming.spawn_session import DrainOutcome
@@ -105,13 +105,13 @@ class DrainCoordinator(Protocol):
 
     def next_timeout(self) -> float | None: ...
 
-    async def observe_event(self, event: HarnessEvent, transition: str | None) -> bool: ...
+    async def observe_event(self, event: RawHarnessEvent, transition: str | None) -> bool: ...
 
-    def note_event_persisted(self, event: HarnessEvent) -> DrainLoopDecision: ...
+    def note_event_persisted(self, event: RawHarnessEvent) -> DrainLoopDecision: ...
 
     async def handle_terminal_event(
         self,
-        event: HarnessEvent,
+        event: RawHarnessEvent,
         outcome: TerminalEventOutcome,
         action: DrainAction,
     ) -> DrainTerminalDecision: ...
