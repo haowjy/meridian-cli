@@ -42,7 +42,7 @@ def migrate_legacy_project_identity(
     *,
     lock_held: bool = False,
 ) -> MigrationResult:
-    """Move repo-local identity into ``meridian.toml``, writing identity last."""
+    """Move repo-local identity into ``meridian.toml`` resumably."""
 
     existing_id = get_project_id(project_root)
     legacy_id = _read_legacy_id(project_root)
@@ -56,7 +56,15 @@ def migrate_legacy_project_identity(
             blocking_reason="meridian.toml and .meridian/id contain different project IDs",
         )
 
-    blocking_spawns = _get_active_spawns(legacy_id)
+    try:
+        blocking_spawns = _get_active_spawns(legacy_id)
+    except Exception as exc:
+        return MigrationResult(
+            status="blocked",
+            old_id=legacy_id,
+            new_id=existing_id,
+            blocking_reason=f"Could not verify active spawns: {exc}",
+        )
     if blocking_spawns:
         return MigrationResult(
             status="blocked",
@@ -64,8 +72,9 @@ def migrate_legacy_project_identity(
             blocking_reason=f"Active spawns: {', '.join(blocking_spawns)}",
         )
 
-    # The user-home context/runtime roots already use this ID. Identity is the
-    # only authoritative write and therefore remains last among durable writes.
+    # The legacy ID is the transition's completion marker. Keep it until the
+    # committed identity and all generated legacy stragglers are settled so an
+    # interrupted migration remains discoverable and safe to retry.
     if existing_id is None:
         if lock_held:
             _write_project_id_unlocked(project_root, legacy_id)
@@ -77,8 +86,8 @@ def migrate_legacy_project_identity(
     legacy_gitignore = legacy_dir / ".gitignore"
     removed_id = legacy_identity.exists()
     removed_gitignore = legacy_gitignore.exists()
-    legacy_identity.unlink(missing_ok=True)
     legacy_gitignore.unlink(missing_ok=True)
+    legacy_identity.unlink(missing_ok=True)
     with suppress(OSError):
         legacy_dir.rmdir()
 
@@ -107,15 +116,12 @@ def _try_move_dir(src: Path, dst: Path) -> bool:
 
 
 def _get_active_spawns(project_id: str) -> list[str]:
-    """Return active spawn IDs, failing open exactly as the legacy migration did."""
-    try:
-        from meridian.lib.state.spawn_store import ACTIVE_SPAWN_STATUSES, list_spawns
+    """Return active spawn IDs; callers must block migration if this check fails."""
+    from meridian.lib.state.spawn_store import ACTIVE_SPAWN_STATUSES, list_spawns
 
-        runtime_root = get_project_home(project_id)
-        if not runtime_root.exists():
-            return []
-        return [
-            spawn.id for spawn in list_spawns(runtime_root) if spawn.status in ACTIVE_SPAWN_STATUSES
-        ]
-    except Exception:
+    runtime_root = get_project_home(project_id)
+    if not runtime_root.exists():
         return []
+    return [
+        spawn.id for spawn in list_spawns(runtime_root) if spawn.status in ACTIVE_SPAWN_STATUSES
+    ]
