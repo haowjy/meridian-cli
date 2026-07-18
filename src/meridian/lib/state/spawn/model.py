@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from collections.abc import Mapping
+from typing import Any, Literal, Self, override
 
 from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
@@ -34,6 +35,26 @@ _AUTHORITATIVE_ORIGIN_VALUES: tuple[SpawnOrigin, ...] = (
 AUTHORITATIVE_ORIGINS: frozenset[SpawnOrigin] = frozenset(_AUTHORITATIVE_ORIGIN_VALUES)
 
 
+class _RevalidatedFrozenModel(BaseModel):
+    """Frozen model whose copies pass the same validation as construction."""
+
+    @override
+    def model_copy(
+        self,
+        *,
+        update: Mapping[str, Any] | None = None,
+        deep: bool = False,
+    ) -> Self:
+        del deep  # Validation reconstructs the complete model graph.
+        unknown_fields = set(update or ()).difference(type(self).model_fields)
+        if unknown_fields:
+            raise ValueError(f"unknown copy fields: {sorted(unknown_fields)}")
+        payload = self.model_dump(round_trip=True)
+        if update is not None:
+            payload.update(update)
+        return type(self).model_validate(payload)
+
+
 class CancelIntent(BaseModel):
     """Durable spawn-level cancellation request."""
 
@@ -45,7 +66,7 @@ class CancelIntent(BaseModel):
     requested_by: Literal["user", "system"] = "user"
 
 
-class RunnerExitFacts(BaseModel):
+class RunnerExitFacts(_RevalidatedFrozenModel):
     """Complete runner-resolved terminal intent, persisted before finalization."""
 
     model_config = ConfigDict(frozen=True)
@@ -56,7 +77,7 @@ class RunnerExitFacts(BaseModel):
     exited_at: str
 
 
-class TerminalFacts(BaseModel):
+class TerminalFacts(_RevalidatedFrozenModel):
     """Complete persisted facts for a finalized spawn."""
 
     model_config = ConfigDict(frozen=True)
@@ -77,7 +98,7 @@ class TerminalFacts(BaseModel):
     origin: SpawnOrigin
 
 
-class SpawnStateFields(BaseModel):
+class SpawnStateFields(_RevalidatedFrozenModel):
     """Fields shared by the stored and prompt-bearing state projections."""
 
     model_config = ConfigDict(frozen=True)
