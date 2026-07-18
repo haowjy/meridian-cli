@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
 
+from meridian.lib.core.types import SpawnId
 from meridian.lib.state.atomic import atomic_write_text
 from meridian.lib.state.paths import (
     resolve_project_runtime_root_for_write,
@@ -78,7 +79,7 @@ def write_spawn_scope_task_dir(
         payload = {"task_dir": task_dir.expanduser().resolve().as_posix()}
     return mutate_published_spawn_artifact(
         runtime_root,
-        spawn_id,
+        SpawnId(spawn_id),
         lambda: atomic_write_text(path, json.dumps(payload, separators=(",", ":"))),
     )
 

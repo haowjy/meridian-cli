@@ -322,12 +322,12 @@ def execute_spawn_background(
     warning = request.warning
     context_from_resolved = request.context_from
     launch_command = _build_background_worker_command(
-        spawn_id=spawn_id_text,
+        spawn_id=context.spawn.spawn_id,
         project_paths=project_paths,
     )
     _record_launch_boundary_observation(
         context.runtime_root,
-        spawn_id_text,
+        context.spawn.spawn_id,
         event=EVENT_PARENT_LAUNCH_ATTEMPT,
         stage="parent_prepare",
         parent_pid=os.getpid(),
@@ -354,7 +354,7 @@ def execute_spawn_background(
     except Exception as exc:
         _record_launch_boundary_observation(
             context.runtime_root,
-            spawn_id_text,
+            context.spawn.spawn_id,
             event=EVENT_PARENT_LAUNCH_FAILED,
             stage="persist_worker_request",
             parent_pid=os.getpid(),
@@ -437,7 +437,7 @@ def execute_spawn_background(
     except OSError as exc:
         _record_launch_boundary_observation(
             context.runtime_root,
-            spawn_id_text,
+            context.spawn.spawn_id,
             event=EVENT_PARENT_LAUNCH_FAILED,
             stage="popen",
             parent_pid=os.getpid(),
@@ -482,7 +482,7 @@ def execute_spawn_background(
 
     _record_launch_boundary_observation(
         context.runtime_root,
-        spawn_id_text,
+        context.spawn.spawn_id,
         event=EVENT_PARENT_LAUNCH_SPAWNED,
         stage="popen",
         parent_pid=os.getpid(),

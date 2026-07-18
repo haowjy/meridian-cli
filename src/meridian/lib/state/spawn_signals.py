@@ -40,7 +40,7 @@ def write_spawn_signal(
     timestamp = datetime.now(UTC).isoformat().replace("+00:00", "Z")
     return mutate_published_spawn_artifact(
         runtime_root,
-        spawn_id,
+        SpawnId(spawn_id),
         lambda: atomic_write_text(
             spawn_signal_path(runtime_root, spawn_id, kind),
             f"{timestamp}\n",

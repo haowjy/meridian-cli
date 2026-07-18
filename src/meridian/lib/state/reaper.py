@@ -141,7 +141,7 @@ def _collect_artifact_snapshot(
             record.runner_pid,
             created_after_epoch=runner_created_at_epoch,
         )
-    launch_boundary = read_launch_boundary_summary(runtime_root, record.id)
+    launch_boundary = read_launch_boundary_summary(runtime_root, SpawnId(record.id))
     return ArtifactSnapshot(
         started_epoch=started_epoch,
         last_activity_epoch=last_activity_epoch,
@@ -462,7 +462,7 @@ def _record_orphan_finalize_evidence(
     try:
         mutate_published_spawn_artifact(
             runtime_root,
-            record.id,
+            SpawnId(record.id),
             lambda: atomic_write_text(
                 evidence_path,
                 json.dumps(evidence, separators=(",", ":"), sort_keys=True) + "\n",

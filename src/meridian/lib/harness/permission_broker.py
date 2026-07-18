@@ -11,6 +11,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal, cast
 
+from meridian.lib.core.types import SpawnId
 from meridian.lib.harness.connections.base import (
     HarnessConnection,
     HarnessRequest,
@@ -79,7 +80,7 @@ class PermissionBroker(ServerRequestHandler):
     ) -> None:
         self._spawn_dir = spawn_dir
         self._runtime_root = spawn_dir.parent.parent
-        self._spawn_id = spawn_dir.name
+        self._spawn_id = SpawnId(spawn_dir.name)
         self._event_sink = event_sink
         self._policy_hook = policy_hook
         self._auto_reject_runtime_requests = auto_reject_runtime_requests
