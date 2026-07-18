@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from meridian.lib.state.paths import resolve_project_paths
 from meridian.lib.state.user_paths import (
     get_or_create_project_id,
     get_project_home,
@@ -34,22 +33,12 @@ def derive_runtime_root_from_project(
 ) -> Path | None:
     """Derive runtime state root from project identity without reading ``_MERIDIAN_RUNTIME_DIR``."""
 
-    project_paths = resolve_project_paths(project_root)
-    project_state_dir = project_paths.root_dir
     if for_write:
-        return get_project_home(get_or_create_project_id(project_state_dir))
+        return get_project_home(get_or_create_project_id(project_root))
 
-    project_id = read_project_id(project_state_dir)
+    project_id = read_project_id(project_root)
     if project_id is not None:
-        candidate_runtime_root = get_project_home(project_id)
-        if (
-            not root_has_runtime_state(candidate_runtime_root)
-            and root_has_runtime_state(project_state_dir)
-        ):
-            return project_state_dir
-        return candidate_runtime_root
-    if root_has_runtime_state(project_state_dir):
-        return project_state_dir
+        return get_project_home(project_id)
     return None
 
 

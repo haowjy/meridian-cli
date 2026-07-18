@@ -10,7 +10,7 @@ from meridian.lib.ops.config import (
     config_init_sync,
     ensure_runtime_state_bootstrap_sync,
 )
-from meridian.lib.state.paths import resolve_project_runtime_root
+from meridian.lib.state.paths import resolve_project_runtime_root_for_write
 
 
 def _repo(tmp_path: Path) -> Path:
@@ -34,7 +34,9 @@ def test_config_init_creates_meridian_toml_and_is_idempotent(
     assert first.path == config_path.as_posix()
     assert second.path == config_path.as_posix()
     assert config_path.is_file()
-    assert config_path.read_text(encoding="utf-8") == "[defaults]\nmax_depth = 7\n"
+    content = config_path.read_text(encoding="utf-8")
+    assert content.startswith("[defaults]\nmax_depth = 7\n")
+    assert "[project]" in content
     assert not (project_root / "mars.toml").exists()
     assert not (project_root / ".mars").exists()
 
@@ -71,7 +73,7 @@ def test_config_init_uses_env_project_root_when_path_not_provided(
     assert not (env_project_root / "mars.toml").exists()
 
 
-def test_runtime_bootstrap_does_not_create_meridian_toml(
+def test_runtime_bootstrap_creates_identity_without_repo_local_state(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -80,18 +82,18 @@ def test_runtime_bootstrap_does_not_create_meridian_toml(
     monkeypatch.setenv("MERIDIAN_HOME", user_state_root.as_posix())
 
     ensure_runtime_state_bootstrap_sync(project_root)
-    runtime_root = resolve_project_runtime_root(project_root)
+    runtime_root = resolve_project_runtime_root_for_write(project_root)
 
-    assert (project_root / ".meridian").is_dir()
-    assert (project_root / ".meridian" / ".gitignore").is_file()
-    assert not (project_root / ".meridian" / "artifacts").exists()
-    assert not (project_root / ".meridian" / "cache").exists()
-    assert not (project_root / ".meridian" / "spawns").exists()
-    project_uuid = (project_root / ".meridian" / "id").read_text(encoding="utf-8").strip()
+    import tomllib
+
+    assert not (project_root / ".meridian").exists()
+    project_uuid = tomllib.loads(
+        (project_root / "meridian.toml").read_text(encoding="utf-8")
+    )["project"]["id"]
     assert runtime_root == user_state_root / "projects" / project_uuid
     assert runtime_root.is_dir()
     assert (runtime_root / "spawns").is_dir()
-    assert not (project_root / "meridian.toml").exists()
+    assert (project_root / "meridian.toml").is_file()
     assert not (project_root / ".mars").exists()
     assert not (project_root / "mars.toml").exists()
 
@@ -136,8 +138,7 @@ def test_runtime_bootstrap_skips_context_dirs_for_git_backed_sources(
 
     ensure_runtime_state_bootstrap_sync(project_root)
 
-    # Root .meridian directory is created
-    assert (project_root / ".meridian").is_dir()
+    assert not (project_root / ".meridian").exists()
 
     # Git-backed context directories are NOT created (no clone exists yet)
     assert not clone_path.exists()

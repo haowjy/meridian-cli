@@ -356,19 +356,15 @@ def test_build_config_surface_uses_authority_project_config_paths_after_env_chan
     )
 
 
-def test_runtime_authority_for_read_falls_back_to_project_state_in_plain_directory(
+def test_runtime_authority_for_read_is_unresolved_in_plain_directory(
     tmp_path: Path,
 ) -> None:
     project_root = tmp_path / "plain-project"
     nested = project_root / "docs"
-    runtime_root = project_root / ".meridian"
     nested.mkdir(parents=True)
-    runtime_root.mkdir()
-    (runtime_root / "id").write_text("project-uuid", encoding="utf-8")
-    (runtime_root / "spawns.jsonl").write_text("", encoding="utf-8")
 
     authority = resolve_runtime_authority_for_read(project_root, execution_cwd=nested)
 
     assert authority.project_root == project_root.resolve()
-    assert authority.runtime_root == runtime_root.resolve()
-    assert authority.runtime_root_source in {"project-state", "project-state-fallback"}
+    assert authority.runtime_root is None
+    assert authority.runtime_root_source == "unresolved"

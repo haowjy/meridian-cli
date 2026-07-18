@@ -5,6 +5,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Changed
+- Project identity now lives in committed `meridian.toml` `[project] id` and is
+  created with a preserving, concurrency-safe TOML append.
 - Environment boundary coverage now locks the public max-depth cap, public hook
   payload, and internal Pi transport names together across their runtime seams.
 - Child launches now expose one public project identity, `MERIDIAN_PROJECT_DIR`;
