@@ -412,6 +412,8 @@ def resolve_session_reference(
 
     resolved_runtime_root = runtime_root or resolve_runtime_root_for_read(project_root)
     if resolved_runtime_root is None:
+        if not _SPAWN_REF_RE.fullmatch(normalized) and not _CHAT_REF_RE.fullmatch(normalized):
+            return _resolve_untracked_reference(project_root, normalized)
         raise ValueError(f"Session reference '{normalized}' not found")
     if _SPAWN_REF_RE.fullmatch(normalized):
         result = _resolve_spawn_reference(resolved_runtime_root, normalized, project_root)
