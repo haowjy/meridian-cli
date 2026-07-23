@@ -160,7 +160,9 @@ qualify by `event.harness_id`.
 
 Key mappings:
 - Claude: `result` event with `is_error=True` → failed; `subtype in ("", "success")` and `terminal_reason in ("", "completed")` → succeeded
-- Codex: main-thread `turn/completed` → succeeded; `meridian/error/connectionClosed` → failed
+- Codex: main-thread `turn/completed` resolves nested `turn.status` — `completed`/absent
+  → succeeded/0, `failed` → failed/1 with upstream error, `interrupted` → cancelled/130,
+  unknown → failed/1 diagnostic; `meridian/error/connectionClosed` → failed
 - OpenCode: parent-session `session.idle` → succeeded; parent-session `session.error` → failed
 - Cursor: `meridian/error/connectionClosed` → failed; no explicit success event — stdout EOF
   + process exit code 0 is the success boundary (see `CursorSubprocessConnection.events()`).

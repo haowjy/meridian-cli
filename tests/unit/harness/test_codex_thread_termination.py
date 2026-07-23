@@ -64,6 +64,57 @@ def test_single_thread_turn_completed_stays_terminal_without_thread_id() -> None
     assert outcome.status == "succeeded"
 
 
+def test_failed_turn_completed_normalizes_nested_codex_error() -> None:
+    event = _codex_event(
+        "turn/completed",
+        {
+            "threadId": MAIN_THREAD,
+            "turn": {
+                "status": "failed",
+                "error": {
+                    "message": "The requested model is not supported.",
+                    "codexErrorInfo": {"type": "other"},
+                },
+            },
+        },
+    )
+
+    outcome = normalize_event(event).semantics.terminal
+
+    assert outcome is not None
+    assert outcome.status == "failed"
+    assert outcome.exit_code == 1
+    assert outcome.error == "The requested model is not supported."
+
+
+def test_interrupted_turn_completed_normalizes_as_cancelled() -> None:
+    event = _codex_event(
+        "turn/completed",
+        {"turn": {"status": "interrupted"}},
+    )
+
+    outcome = normalize_event(event).semantics.terminal
+
+    assert outcome is not None
+    assert outcome.status == "cancelled"
+    assert outcome.exit_code == 130
+    assert outcome.error == "interrupted"
+
+
+def test_unknown_turn_completed_status_normalizes_as_failed() -> None:
+    event = _codex_event(
+        "turn/completed",
+        {"turn": {"status": "inProgress"}},
+    )
+
+    outcome = normalize_event(event).semantics.terminal
+
+    assert outcome is not None
+    assert outcome.status == "failed"
+    assert outcome.exit_code == 1
+    assert outcome.error == "unexpected_codex_turn_status:inProgress"
+
+
 def test_opencode_child_session_terminal_events_do_not_complete_parent_scope() -> None:
     parent_scope = PrimaryEventScope(HarnessId.OPENCODE, "ses_parent")
     child_idle = _opencode_event("session.idle", "ses_child")

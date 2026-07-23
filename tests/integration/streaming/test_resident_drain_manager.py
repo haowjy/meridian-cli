@@ -48,6 +48,39 @@ async def test_codex_terminal_success_without_live_children_finalizes_immediatel
     finally:
         await manager.stop_spawn(spawn_id)
 
+
+@pytest.mark.asyncio
+async def test_codex_failed_turn_completed_preserves_terminal_error(
+    tmp_path: Path,
+) -> None:
+    spawn_id = SpawnId("p1")
+    start_row(tmp_path, str(spawn_id), HarnessId.CODEX, None)
+    connection = FakeResidentConnection(HarnessId.CODEX)
+    manager = await start_manager(tmp_path, connection, spawn_id=spawn_id)
+
+    connection.emit(
+        resident_event(
+            HarnessId.CODEX,
+            "turn/completed",
+            {
+                "turn": {
+                    "status": "failed",
+                    "error": {"message": "The requested model is not supported."},
+                }
+            },
+        )
+    )
+
+    try:
+        outcome = await manager.wait_for_completion(spawn_id)
+        assert outcome is not None
+        assert outcome.status == "failed"
+        assert outcome.exit_code == 1
+        assert outcome.error == "The requested model is not supported."
+    finally:
+        await manager.stop_spawn(spawn_id)
+
+
 @pytest.mark.asyncio
 async def test_codex_backend_death_with_pending_success_preserves_resident_reason(
     tmp_path: Path,

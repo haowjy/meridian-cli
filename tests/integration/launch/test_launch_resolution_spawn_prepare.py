@@ -484,6 +484,7 @@ def test_spawn_prepare_headless_deny_error_names_denied_harness(
         model="gpt-5.4",
         harness=HarnessId.CODEX,
     )
+    monkeypatch.delenv("_MERIDIAN_HARNESS", raising=False)
 
     with pytest.raises(ValueError) as exc_info:
         build_launch_context(

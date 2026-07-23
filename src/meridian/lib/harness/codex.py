@@ -70,6 +70,7 @@ from meridian.lib.harness.semantics import (
     TerminalEventOutcome,
     TerminalOutcomeCause,
     connection_closed_outcome,
+    stringify_terminal_error,
 )
 from meridian.lib.launch.composition import (
     ComposedLaunchContent,
@@ -537,7 +538,38 @@ def _resolve_codex_terminal(event: RawHarnessEvent) -> TerminalEventOutcome | No
             event,
             cause=TerminalOutcomeCause.REPLACEABLE_TRANSPORT_CLOSE,
         )
-    return None
+    if event.event_type != "turn/completed":
+        return None
+
+    turn = event.payload.get("turn")
+    turn_payload = cast("dict[str, object]", turn) if isinstance(turn, dict) else None
+    turn_status = turn_payload.get("status") if turn_payload is not None else None
+    if turn_payload is None or turn_status == "completed":
+        return TerminalEventOutcome(status=SpawnStatus.SUCCEEDED, exit_code=0)
+    if turn_status == "failed":
+        assert turn_payload is not None
+        error: object = turn_payload.get("error")
+        error_payload = cast("dict[str, object]", error) if isinstance(error, dict) else None
+        preferred_error = error_payload.get("message") if error_payload is not None else None
+        return TerminalEventOutcome(
+            status=SpawnStatus.FAILED,
+            exit_code=1,
+            error=stringify_terminal_error(preferred_error)
+            or stringify_terminal_error(cast("object", error)),
+        )
+    if turn_status == "interrupted":
+        return TerminalEventOutcome(
+            status=SpawnStatus.CANCELLED,
+            exit_code=130,
+            error="interrupted",
+        )
+    # A status-less turn is malformed. Fail loudly: false failures are visible;
+    # hidden failures are not. A missing turn remains success for older payloads.
+    return TerminalEventOutcome(
+        status=SpawnStatus.FAILED,
+        exit_code=1,
+        error=f"unexpected_codex_turn_status:{turn_status}",
+    )
 
 
 CODEX_SEMANTICS = HarnessSemantics(
@@ -550,7 +582,10 @@ CODEX_SEMANTICS = HarnessSemantics(
         ),
         MERIDIAN_CONNECTION_CLOSED_EVENT: EventSemantics(),
     },
-    payload_resolvers={MERIDIAN_CONNECTION_CLOSED_EVENT: _resolve_codex_terminal},
+    payload_resolvers={
+        "turn/completed": _resolve_codex_terminal,
+        MERIDIAN_CONNECTION_CLOSED_EVENT: _resolve_codex_terminal,
+    },
     scoped_events=frozenset({"turn/started", "turn/completed"}),
     scope_id_resolver=extract_codex_thread_id,
 )
