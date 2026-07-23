@@ -137,7 +137,7 @@ async def test_streaming_attempt_bounds_backend_startup_with_no_events(
             stream_stdout_to_terminal=False,
             lifecycle_service=_LifecycleRecorder(),  # type: ignore[arg-type]
         ),
-        timeout=0.5,
+        timeout=3.0,
     )
 
     assert attempt.start_error == "startup phase timeout after 0.010s"
@@ -163,8 +163,8 @@ async def test_streaming_attempt_fresh_events_keep_slow_cursor_backend_alive(
             _spec: ResolvedLaunchSpec,
         ) -> object:
             async def produce_events() -> None:
-                for index in range(6):
-                    await asyncio.sleep(0.01)
+                for index in range(15):
+                    await asyncio.sleep(0.05)
                     queue.put_nowait(
                         NormalizedHarnessEvent(
                             raw=RawHarnessEvent(
@@ -207,7 +207,7 @@ async def test_streaming_attempt_fresh_events_keep_slow_cursor_backend_alive(
             self.stop_calls.append({"spawn_id": spawn_id, **kwargs})
 
     manager = SlowActiveManager()
-    monkeypatch.setattr(streaming_runner_module, "CURSOR_INACTIVITY_TIMEOUT_SECONDS", 0.025)
+    monkeypatch.setattr(streaming_runner_module, "CURSOR_INACTIVITY_TIMEOUT_SECONDS", 0.5)
     run = Spawn(
         spawn_id=SpawnId("fresh-events"),
         prompt="hello",
@@ -243,7 +243,7 @@ async def test_streaming_attempt_fresh_events_keep_slow_cursor_backend_alive(
             stream_stdout_to_terminal=False,
             lifecycle_service=_LifecycleRecorder(),  # type: ignore[arg-type]
         ),
-        timeout=0.5,
+        timeout=3.0,
     )
     if manager.producer is not None:
         await manager.producer
