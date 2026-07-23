@@ -128,6 +128,19 @@ def _load_written_files(project_root: Path, spawn_id: str) -> tuple[str, ...]:
         return ()
 
 
+def _session_context_from(
+    project_root: Path,
+    chat_id: str,
+    session: session_store.SessionRecord | None,
+) -> SessionContextRef | None:
+    primary_row = _select_primary_spawn_for_session(project_root, chat_id)
+    if primary_row is not None:
+        return _session_context_ref(primary_row, project_root)
+    if session is not None:
+        return _session_context_ref_from_record(session)
+    return None
+
+
 def resolve_context_ref(project_root: Path, ref: str) -> ContextRef:
     """Resolve one --from value to concrete prior context payload."""
 
@@ -144,22 +157,22 @@ def resolve_context_ref(project_root: Path, ref: str) -> ContextRef:
             raise ValueError(f"Spawn '{spawn_id}' not found")
         return _spawn_context_ref(spawn_row, project_root)
     if _SESSION_REF_RE.fullmatch(normalized) or _is_tracked_session(project_root, normalized):
-        primary_row = _select_primary_spawn_for_session(project_root, normalized)
-        if primary_row is not None:
-            return _session_context_ref(primary_row, project_root)
         runtime_root = resolve_runtime_root_for_read(project_root)
         session = (
             session_store.get_session_record(runtime_root, normalized)
             if runtime_root is not None
             else None
         )
-        if session is not None:
-            if not (session.harness_session_id or "").strip():
+        context_ref = _session_context_from(project_root, normalized, session)
+        if context_ref is not None:
+            if context_ref.primary_spawn_id is None and not (
+                session and (session.harness_session_id or "").strip()
+            ):
                 raise ValueError(
                     f"Session '{normalized}' exists but no transcript is available yet "
                     "(no harness session id recorded)."
                 )
-            return _session_context_ref_from_record(session)
+            return context_ref
         raise ValueError(f"No primary spawn found for session '{normalized}'")
 
     runtime_root = resolve_runtime_root_for_read(project_root)
@@ -169,10 +182,9 @@ def resolve_context_ref(project_root: Path, ref: str) -> ContextRef:
         else None
     )
     if session is not None:
-        primary_row = _select_primary_spawn_for_session(project_root, session.chat_id)
-        if primary_row is not None:
-            return _session_context_ref(primary_row, project_root)
-        return _session_context_ref_from_record(session)
+        context_ref = _session_context_from(project_root, session.chat_id, session)
+        assert context_ref is not None
+        return context_ref
 
     spawn_id = resolve_spawn_reference(project_root, normalized)
     row = read_spawn_row(project_root, spawn_id)

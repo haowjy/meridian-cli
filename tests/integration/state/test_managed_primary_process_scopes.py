@@ -401,7 +401,6 @@ def test_reaper_preserve_then_reclaim_reuses_same_scope_records(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("_MERIDIAN_DEPTH", "0")
     runtime_root, spawn_id = _create_primary_spawn(tmp_path)
     session_id = "session-1"
     scope_records = (
