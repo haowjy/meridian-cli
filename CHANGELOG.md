@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.3.47] - 2026-07-23
+
 ### Removed
 - Shrank the surviving unit suites to their functional cores: the unit tier
   is now 30 files / ~200 pure-logic cases running in under 2 seconds.
