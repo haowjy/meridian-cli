@@ -1,6 +1,12 @@
 # Unit Tests
 
-Pure logic, no real I/O. Parsers, state machines, policy resolution, formatters.
+Pure functional cores: parsers, state machines, policy resolution, and
+formatters. No real filesystem, subprocess, network, or OS behavior.
+
+A coherent security suite may stay here when light in-process dry-run
+composition and temporary config scaffolding are necessary to prove one
+fail-closed boundary. Keep the suite whole; this is a narrow security
+exception, not permission for general wiring tests.
 
 Mirror `src/meridian/lib/` structure under `tests/unit/`.
 
