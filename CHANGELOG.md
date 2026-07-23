@@ -10,6 +10,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Removed redundant unit suites and moved filesystem, process, and platform
   coverage to honest integration/platform tiers. Functional-core shrinking
   follows in a separate phase.
+- Shrank the surviving unit suites to their functional cores: the unit tier
+  is now 30 files / ~200 pure-logic cases running in under 2 seconds.
 
 ## [0.3.45] - 2026-07-23
 
