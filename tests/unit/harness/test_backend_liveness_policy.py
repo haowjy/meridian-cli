@@ -2,19 +2,17 @@
 
 from __future__ import annotations
 
-import asyncio
-import time
-
-import pytest
+from typing import TYPE_CHECKING
 
 from meridian.lib.harness.connections import liveness as liveness_module
 from meridian.lib.harness.connections.liveness import (
     BackendLivenessPolicy,
-    EventStreamLivenessTimeout,
     LivenessDecision,
 )
-from tests.support.async_determinism import AsyncDeterminism, assert_still_pending
 from tests.support.fakes import FakeClock
+
+if TYPE_CHECKING:
+    import pytest
 
 
 def _policy(
@@ -160,139 +158,3 @@ def test_evaluate_awaiting_done_does_not_suppress_backend_dead(
 
     assert policy.evaluate() == LivenessDecision.BACKEND_DEAD
     assert policy.healthy is False
-
-
-@pytest.mark.asyncio
-async def test_wait_for_activity_suppresses_during_turn(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    determinism = AsyncDeterminism(start=0.0)
-    determinism.install(monkeypatch)
-    determinism.install_on_running_loop(monkeypatch)
-    monkeypatch.setattr(liveness_module, "is_process_alive", lambda *_args, **_kwargs: True)
-    policy = BackendLivenessPolicy(
-        timeout_seconds=lambda: 0.05,
-        now=determinism.clock.monotonic,
-        backend_pid=lambda: 4242,
-        backend_birth_time=lambda: 0.0,
-    )
-    policy.mark_activity()
-    policy.signal_turn_started("turn-1")
-
-    gate = asyncio.Event()
-
-    async def blocked() -> str:
-        await gate.wait()
-        return "done"
-
-    task = asyncio.create_task(policy.wait_for_activity(blocked()))
-    await assert_still_pending(task)
-
-    await determinism.sleep(0.1)
-    await assert_still_pending(task)
-
-    gate.set()
-    assert await task == "done"
-
-
-@pytest.mark.asyncio
-async def test_wait_for_activity_raises_on_stream_stalled(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(liveness_module, "is_process_alive", lambda *_args, **_kwargs: True)
-    policy = BackendLivenessPolicy(
-        timeout_seconds=lambda: 0.05,
-        now=time.monotonic,
-        backend_pid=lambda: 4242,
-        backend_birth_time=lambda: 0.0,
-    )
-    policy.mark_activity()
-
-    gate = asyncio.Event()
-
-    async def blocked() -> None:
-        await gate.wait()
-
-    with pytest.raises(EventStreamLivenessTimeout):
-        await policy.wait_for_activity(blocked())
-
-
-@pytest.mark.asyncio
-async def test_wait_for_activity_resolves_after_multiple_suppress_windows(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    determinism = AsyncDeterminism(start=0.0)
-    determinism.install(monkeypatch)
-    determinism.install_on_running_loop(monkeypatch)
-    monkeypatch.setattr(liveness_module, "is_process_alive", lambda *_args, **_kwargs: True)
-    policy = BackendLivenessPolicy(
-        timeout_seconds=lambda: 0.05,
-        now=determinism.clock.monotonic,
-        backend_pid=lambda: 4242,
-        backend_birth_time=lambda: 0.0,
-    )
-    policy.mark_activity()
-    policy.signal_turn_started("turn-1")
-
-    gate = asyncio.Event()
-
-    async def blocked() -> str:
-        await determinism.sleep(0.15)
-        gate.set()
-        return "done"
-
-    task = asyncio.create_task(policy.wait_for_activity(blocked()))
-    await gate.wait()
-    assert await task == "done"
-
-
-@pytest.mark.asyncio
-async def test_wait_for_activity_raises_on_backend_dead(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(liveness_module, "is_process_alive", lambda *_args, **_kwargs: False)
-    policy = BackendLivenessPolicy(
-        timeout_seconds=lambda: 0.05,
-        now=time.monotonic,
-        backend_pid=lambda: 4242,
-        backend_birth_time=lambda: 0.0,
-    )
-    policy.mark_activity()
-
-    gate = asyncio.Event()
-
-    async def blocked() -> None:
-        await gate.wait()
-
-    with pytest.raises(EventStreamLivenessTimeout):
-        await policy.wait_for_activity(blocked())
-
-
-@pytest.mark.asyncio
-async def test_wait_for_activity_retrieves_child_exception_when_cancelled(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    policy = BackendLivenessPolicy(
-        timeout_seconds=lambda: 10.0,
-        now=time.monotonic,
-        backend_pid=lambda: 4242,
-        backend_birth_time=lambda: 0.0,
-    )
-    policy.mark_activity()
-    loop = asyncio.get_running_loop()
-    child: asyncio.Future[None] = loop.create_future()
-
-    async def fake_wait(
-        fs: set[asyncio.Future[None]],
-        timeout: float | None = None,
-    ) -> tuple[set[asyncio.Future[None]], set[asyncio.Future[None]]]:
-        _ = fs, timeout
-        child.set_exception(RuntimeError("normal close raced with teardown"))
-        raise asyncio.CancelledError
-
-    monkeypatch.setattr(liveness_module.asyncio, "wait", fake_wait)
-
-    with pytest.raises(asyncio.CancelledError):
-        await policy.wait_for_activity(child)
-
-    assert child._log_traceback is False

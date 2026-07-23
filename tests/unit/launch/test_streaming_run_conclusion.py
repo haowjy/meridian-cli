@@ -1,15 +1,10 @@
 # qa-validated: pi-rpc-quiescence
 import signal
-from pathlib import Path
 
 from meridian.lib.core.domain import TokenUsage
-from meridian.lib.core.types import SpawnId
-from meridian.lib.launch.constants import REPORT_FILENAME
 from meridian.lib.launch.extract import (
     FinalizeExtraction,
-    FinalizeReportKind,
     classify_finalize_report,
-    enrich_finalize,
 )
 from meridian.lib.launch.report import ExtractedReport, ReportSource
 from meridian.lib.launch.streaming_runner import (
@@ -17,21 +12,6 @@ from meridian.lib.launch.streaming_runner import (
     _AttemptRuntime,
     _inactivity_terminal_outcome,
 )
-from meridian.lib.state.artifact_store import InMemoryStore, make_artifact_key
-
-
-class _NoReportExtractor:
-    def extract_usage(self, artifacts: InMemoryStore, spawn_id: SpawnId) -> TokenUsage:
-        _ = artifacts, spawn_id
-        return TokenUsage()
-
-    def extract_session_id(self, artifacts: InMemoryStore, spawn_id: SpawnId) -> str | None:
-        _ = artifacts, spawn_id
-        return None
-
-    def extract_report(self, artifacts: InMemoryStore, spawn_id: SpawnId) -> str | None:
-        _ = artifacts, spawn_id
-        return None
 
 
 def _attempt(
@@ -106,32 +86,6 @@ def test_terminal_facts_do_not_treat_synthetic_failure_report_as_completion() ->
     assert facts.cancellation_observed is True
 
 
-def test_enrich_finalize_marks_synthetic_failure_report_not_durable(tmp_path: Path) -> None:
-    spawn_id = SpawnId("p-cancel-failure-report")
-    artifacts = InMemoryStore()
-
-    extraction = enrich_finalize(
-        artifacts=artifacts,
-        extractor=_NoReportExtractor(),
-        spawn_id=spawn_id,
-        log_dir=tmp_path,
-        failure_reason="Cursor subprocess exited with code 130.",
-    )
-
-    report = artifacts.get(make_artifact_key(spawn_id, REPORT_FILENAME)).decode()
-    conclusion = StreamingRunConclusion(
-        exit_code=130,
-        failure_reason="cancelled",
-        extracted=extraction,
-        cancellation_observed=True,
-    )
-
-    assert report.startswith("# Spawn failed")
-    assert extraction.report_kind is FinalizeReportKind.SYNTHETIC_FAILURE
-    assert extraction.durable_report_completion is False
-    assert conclusion.terminal_facts(received_signal=None).durable_report_completion is False
-
-
 def test_terminal_facts_treat_signal_without_terminal_as_cancelled() -> None:
     conclusion = StreamingRunConclusion(exit_code=0, failure_reason=None)
 
@@ -184,48 +138,3 @@ def test_inactivity_terminal_outcome_applied_to_conclusion_without_retry() -> No
     assert conclusion.exit_code == 1
     assert conclusion.failure_reason == "stalled"
     assert conclusion.retries_attempted == 0
-
-
-def test_scope_pi_session_dir_for_spawn_updates_env_and_creates_directory(tmp_path: Path) -> None:
-    from meridian.lib.launch.env import scope_pi_session_dir_for_spawn
-
-    session_root = tmp_path / "sessions"
-    child_env = {"PI_CODING_AGENT_SESSION_DIR": str(session_root)}
-
-    scope_pi_session_dir_for_spawn(
-        child_env=child_env,
-        spawn_id=SpawnId("p-pi-scope"),
-    )
-
-    scoped = Path(child_env["PI_CODING_AGENT_SESSION_DIR"])
-    assert scoped == session_root / "p-pi-scope"
-    assert scoped.is_dir()
-
-
-def test_scope_pi_session_dir_for_spawn_is_noop_without_session_root() -> None:
-    from meridian.lib.launch.env import scope_pi_session_dir_for_spawn
-
-    child_env: dict[str, str] = {}
-
-    scope_pi_session_dir_for_spawn(
-        child_env=child_env,
-        spawn_id=SpawnId("p-pi-scope-noop"),
-    )
-
-    assert child_env == {}
-
-
-def test_scope_pi_session_dir_for_spawn_is_idempotent_for_already_scoped_path(
-    tmp_path: Path,
-) -> None:
-    from meridian.lib.launch.env import scope_pi_session_dir_for_spawn
-
-    scoped_root = tmp_path / "sessions" / "p-pi-scope-idempotent"
-    child_env = {"PI_CODING_AGENT_SESSION_DIR": str(scoped_root)}
-
-    scope_pi_session_dir_for_spawn(
-        child_env=child_env,
-        spawn_id=SpawnId("p-pi-scope-idempotent"),
-    )
-
-    assert Path(child_env["PI_CODING_AGENT_SESSION_DIR"]) == scoped_root

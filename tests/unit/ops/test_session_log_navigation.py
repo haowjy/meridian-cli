@@ -1,162 +1,134 @@
-"""Unit tests for deterministic session log entry navigation windows."""
+"""Pure session transcript segment and navigation contracts."""
 
 from __future__ import annotations
 
-import json
-from pathlib import Path
+from typing import Any
 
 import pytest
 
-from meridian.lib.core.util import FormatContext
-from meridian.lib.ops.session_log import SessionLogInput, session_log_sync
+from meridian.lib.harness.transcript import parse_transcript_events_with_prologues
+from meridian.lib.ops import session_log, session_render
+from meridian.lib.ops.session_log import SessionLogEntry, SessionLogEntryMessage, SessionLogOutput
+from meridian.lib.ops.session_transcript import (
+    AbsoluteTranscriptEntry,
+    build_segment_entries,
+    flatten_transcript_segments,
+    group_transcript_entries,
+)
 
 
-def _event(role: str, text: str) -> str:
-    return json.dumps(
-        {"type": role, "message": {"content": [{"type": "text", "text": text}]}}
+def _event(role: str, text: str) -> dict[str, Any]:
+    return {"type": role, "message": {"content": [{"type": "text", "text": text}]}}
+
+
+def _entries(
+    *, handoff: str | None = "handoff summary"
+) -> tuple[tuple[AbsoluteTranscriptEntry, ...], ...]:
+    boundary: dict[str, Any] = {"type": "system", "subtype": "compact_boundary"}
+    if handoff is not None:
+        boundary["summary"] = handoff
+    parsed = parse_transcript_events_with_prologues(
+        [
+            {"type": "system", "content": "initial prompt"},
+            _event("user", "s0-u1"),
+            _event("assistant", "s0-a1"),
+            boundary,
+            _event("user", "s1-u1"),
+            _event("assistant", "s1-a1"),
+        ]
+    )
+    messages = flatten_transcript_segments(parsed.segments)
+    return build_segment_entries(
+        segments=parsed.segments,
+        segment_setups=parsed.segment_setups,
+        interaction_entries=group_transcript_entries(messages),
     )
 
 
-def _system_event(text: str) -> str:
-    return json.dumps({"type": "system", "content": text})
+def test_segment_selection_resolves_current_previous_and_explicit_index() -> None:
+    resolve = session_log._resolve_segment_index
+
+    assert resolve(total_segments=3, segment=None) == 2
+    assert resolve(total_segments=3, segment="previous") == 1
+    assert resolve(total_segments=3, segment="0") == 0
+    with pytest.raises(ValueError, match="out of range"):
+        resolve(total_segments=3, segment="3")
 
 
-def _tool_use(name: str, command: str) -> str:
-    return json.dumps(
-        {
-            "type": "assistant",
-            "message": {
-                "content": [
-                    {"type": "tool_use", "name": name, "input": {"command": command}}
-                ]
-            },
-        }
+def test_local_windows_preserve_segment_ordinals_and_navigation() -> None:
+    current = _entries()[1]
+
+    tail = session_render.window_from_tail(current, tail=2, first_ordinal=0)
+    page = session_render.window_from_from_limit(
+        current, start_ordinal=0, limit=2, first_ordinal=0
+    )
+    before = session_render.window_from_before_limit(
+        current, before_ordinal=2, limit=1, first_ordinal=0
     )
 
+    assert [entry.ordinal for entry in tail.entries] == [1, 2]
+    assert tail.previous_from == 0
+    assert [entry.ordinal for entry in page.entries] == [0, 1]
+    assert page.next_from == 2
+    assert [entry.ordinal for entry in before.entries] == [1]
 
-def _tool_result(text: str) -> str:
-    return json.dumps(
-        {
-            "type": "user",
-            "message": {"content": [{"type": "tool_result", "content": text}]},
-        }
+
+def test_global_window_uses_global_ordinals_across_segments() -> None:
+    all_entries = tuple(entry for segment in _entries() for entry in segment)
+    page = session_render.window_from_around_context(
+        all_entries,
+        around_ordinal=3,
+        context=1,
+        first_ordinal=0,
+        ordinal_getter=lambda entry: entry.global_ordinal,
     )
 
-
-def _write_session_file(path: Path) -> None:
-    lines = [
-        _event("user", "u1"),
-        _event("assistant", "a1"),
-        _event("user", "u2"),
-        _tool_use("bash", "ls"),
-        _tool_result("result"),
-        _event("assistant", "a2"),
-        _event("user", "u3"),
-        _event("assistant", "a3"),
-        _event("user", "u4"),
-        _event("assistant", "a4"),
+    assert [entry.global_ordinal for entry in page.entries] == [2, 3, 4]
+    assert [(entry.segment_index, entry.content) for entry in page.entries] == [
+        (0, "s0-a1"),
+        (1, "handoff summary"),
+        (1, "s1-u1"),
     ]
-    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
-def _write_large_session_file(path: Path) -> str:
+def test_decoded_handoff_becomes_the_next_segment_setup_slot() -> None:
+    segments = _entries()
+
+    assert segments[0][0].content == "initial prompt"
+    assert segments[1][0].ordinal == 0
+    assert segments[1][0].global_ordinal == 3
+    assert segments[1][0].content == "handoff summary"
+    assert segments[1][0].is_placeholder is False
+
+
+def test_missing_handoff_reserves_the_segment_boundary_slot() -> None:
+    current = _entries(handoff=None)[1]
+
+    assert [entry.ordinal for entry in current] == [0, 1, 2]
+    assert current[0].is_placeholder is True
+    assert current[0].content.startswith("[compaction handoff slot reserved:")
+
+
+def test_window_validation_rejects_invalid_ordinals_and_limits() -> None:
+    current = _entries()[1]
+
+    with pytest.raises(ValueError, match="--tail must be >= 0"):
+        session_render.window_from_tail(current, tail=-1, first_ordinal=0)
+    with pytest.raises(ValueError, match="--limit must be >= 0"):
+        session_render.window_from_from_limit(
+            current, start_ordinal=0, limit=-1, first_ordinal=0
+        )
+    with pytest.raises(ValueError, match="out of range"):
+        session_render.window_from_around_context(
+            current, around_ordinal=4, context=0, first_ordinal=0
+        )
+
+
+def test_format_text_truncates_oversized_in_memory_entry() -> None:
     large_text = "\n".join(f"line {index}" for index in range(1, 121))
-    lines = [
-        _event("user", "u1"),
-        _event("assistant", large_text),
-    ]
-    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    return large_text
-
-
-def _write_compacted_session_file(path: Path, *, include_handoff: bool) -> None:
-    boundary: dict[str, object] = {"type": "system", "subtype": "compact_boundary"}
-    if include_handoff:
-        boundary["summary"] = "handoff summary"
-    lines = [
-        _system_event("initial system prompt"),
-        _event("user", "u1"),
-        _event("assistant", "a1"),
-        json.dumps(boundary),
-        _event("user", "u2"),
-        _event("assistant", "a2"),
-    ]
-    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-
-
-def _write_three_segment_session_file(path: Path) -> None:
-    lines = [
-        _system_event("initial system prompt"),
-        _event("user", "s0-u1"),
-        _event("assistant", "s0-a1"),
-        json.dumps(
-            {"type": "system", "subtype": "compact_boundary", "summary": "handoff to segment 1"}
-        ),
-        _event("user", "s1-u1"),
-        _event("assistant", "s1-a1"),
-        json.dumps(
-            {"type": "system", "subtype": "compact_boundary", "summary": "handoff to segment 2"}
-        ),
-        _event("user", "s2-u1"),
-        _event("assistant", "s2-a1"),
-    ]
-    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-
-
-def test_session_log_default_shows_recent_five_entries_in_current_segment(tmp_path: Path) -> None:
-    session_file = tmp_path / "session.jsonl"
-    _write_session_file(session_file)
-
-    output = session_log_sync(SessionLogInput(file_path=session_file.as_posix()))
-
-    assert output.showing == "4-8"
-    assert output.segment_index == 0
-    assert output.segment_entries == 9
-    assert [entry.index for entry in output.entries] == [4, 5, 6, 7, 8]
-    assert output.hints == ("Use --full to show the entire selected segment.",)
-    assert output.previous_command is not None
-    assert "--segment 0" in output.previous_command
-    assert "--from 1" in output.previous_command
-    assert "--limit 5" in output.previous_command
-
-
-def test_session_log_full_shows_entire_selected_segment(tmp_path: Path) -> None:
-    session_file = tmp_path / "session.jsonl"
-    _write_session_file(session_file)
-
-    output = session_log_sync(SessionLogInput(file_path=session_file.as_posix(), full=True))
-
-    assert output.showing == "0-8"
-    assert [entry.index for entry in output.entries] == [0, 1, 2, 3, 4, 5, 6, 7, 8]
-    assert output.entries[0].content.startswith("[prologue slot reserved:")
-    assert output.hints == ()
-
-
-def test_session_log_entry_grouping_closes_on_tool_result(tmp_path: Path) -> None:
-    session_file = tmp_path / "session.jsonl"
-    _write_session_file(session_file)
-
-    output = session_log_sync(SessionLogInput(file_path=session_file.as_posix(), full=True))
-
-    tool_entry = output.entries[3]
-    assert tool_entry.index == 3
-    assert tool_entry.role == "mixed"
-    assert [message.role for message in tool_entry.messages] == ["user", "assistant", "user"]
-    assert tool_entry.segment_start_message == 3
-    assert tool_entry.segment_end_message == 5
-
-
-def test_session_log_header_preserves_requested_ref_when_resolved_id_differs() -> None:
-    from meridian.lib.ops.session_log import (
-        SessionLogEntry,
-        SessionLogEntryMessage,
-        SessionLogOutput,
-    )
-
     output = SessionLogOutput(
-        session_id="harness-session-123",
-        requested_ref="p2490",
-        source="codex transcript",
+        session_id="session-1",
+        source="synthetic transcript",
         total_entries=1,
         total_segments=1,
         showing="1-1",
@@ -167,366 +139,18 @@ def test_session_log_header_preserves_requested_ref_when_resolved_id_differs() -
                 segment_start_message=1,
                 segment_end_message=1,
                 role="assistant",
-                content="done",
+                content=large_text,
                 messages=(
                     SessionLogEntryMessage(
                         segment_message=1,
                         role="assistant",
-                        content="done",
+                        content=large_text,
                     ),
                 ),
             ),
         ),
     )
 
-    assert output.format_text(FormatContext(verbosity=1)).splitlines()[0] == (
-        "Session p2490 (codex transcript: harness-session-123) — "
-        "showing 1-1 of 1 entry"
-    )
-
-
-def test_session_log_tail_and_segment_window_are_deterministic(tmp_path: Path) -> None:
-    session_file = tmp_path / "session.jsonl"
-    _write_session_file(session_file)
-
-    tail_output = session_log_sync(SessionLogInput(file_path=session_file.as_posix(), tail=1))
-    assert [entry.index for entry in tail_output.entries] == [8]
-
-    around_output = session_log_sync(
-        SessionLogInput(file_path=session_file.as_posix(), around_ordinal=3, context=1)
-    )
-    assert [entry.index for entry in around_output.entries] == [2, 3, 4]
-    assert around_output.next_command is not None
-    assert "--segment 0 --from 5 --limit 3" in around_output.next_command
-
-
-def test_session_log_segment_local_from_zero_reads_prologue_slot(tmp_path: Path) -> None:
-    session_file = tmp_path / "session-compacted.jsonl"
-    _write_compacted_session_file(session_file, include_handoff=False)
-
-    output = session_log_sync(
-        SessionLogInput(
-            file_path=session_file.as_posix(),
-            segment="previous",
-            from_ordinal=0,
-            limit=1,
-        )
-    )
-
-    assert output.segment_index == 0
-    assert [entry.index for entry in output.entries] == [0]
-    assert output.entries[0].content == "initial system prompt"
-
-
-def test_session_log_from_zero_defaults_to_current_segment_prologue(tmp_path: Path) -> None:
-    session_file = tmp_path / "session-compacted.jsonl"
-    _write_compacted_session_file(session_file, include_handoff=True)
-
-    output = session_log_sync(
-        SessionLogInput(
-            file_path=session_file.as_posix(),
-            from_ordinal=0,
-            limit=1,
-        )
-    )
-
-    assert output.segment_index == 1
-    assert [entry.index for entry in output.entries] == [0]
-    assert output.entries[0].content == "handoff summary"
-
-
-def test_session_log_segment_handoff_slot_reserved_when_missing(tmp_path: Path) -> None:
-    session_file = tmp_path / "session-compacted.jsonl"
-    _write_compacted_session_file(session_file, include_handoff=False)
-
-    output = session_log_sync(
-        SessionLogInput(
-            file_path=session_file.as_posix(),
-            segment="current",
-            from_ordinal=0,
-            limit=1,
-        )
-    )
-
-    assert output.segment_index == 1
-    assert [entry.index for entry in output.entries] == [0]
-    assert output.entries[0].content.startswith("[compaction handoff slot reserved:")
-
-
-def test_session_log_segment_handoff_slot_uses_extractable_content(tmp_path: Path) -> None:
-    session_file = tmp_path / "session-compacted.jsonl"
-    _write_compacted_session_file(session_file, include_handoff=True)
-
-    output = session_log_sync(
-        SessionLogInput(
-            file_path=session_file.as_posix(),
-            segment="current",
-            full=True,
-        )
-    )
-
-    assert output.segment_index == 1
-    assert output.showing == "0-2"
-    assert [entry.index for entry in output.entries] == [0, 1, 2]
-    assert output.entries[0].content == "handoff summary"
-
-
-def test_session_log_consumes_synthetic_handoff_without_duplicate_interaction(
-    tmp_path: Path,
-) -> None:
-    session_file = tmp_path / "session-compacted.jsonl"
-    lines = [
-        _event("assistant", "segment0"),
-        json.dumps({"type": "system", "subtype": "compact_boundary"}),
-        json.dumps(
-            {
-                "type": "user",
-                "isSynthetic": True,
-                "message": {"content": [{"type": "text", "text": "synthetic handoff"}]},
-            }
-        ),
-        _event("assistant", "segment1"),
-    ]
-    session_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
-
-    output = session_log_sync(
-        SessionLogInput(
-            file_path=session_file.as_posix(),
-            segment="current",
-            full=True,
-        )
-    )
-
-    assert output.segment_index == 1
-    assert [entry.index for entry in output.entries] == [0, 1]
-    assert output.entries[0].content == "synthetic handoff"
-    assert output.entries[1].content == "segment1"
-
-
-def test_session_log_global_absolute_window_uses_global_ordinals_across_segments(
-    tmp_path: Path,
-) -> None:
-    session_file = tmp_path / "session-compacted.jsonl"
-    _write_compacted_session_file(session_file, include_handoff=True)
-
-    output = session_log_sync(
-        SessionLogInput(
-            file_path=session_file.as_posix(),
-            global_scope=True,
-            around_ordinal=3,
-            context=0,
-        )
-    )
-
-    assert output.segment_index is None
-    assert output.showing == "3-3"
-    assert [entry.index for entry in output.entries] == [3]
-    assert output.entries[0].segment == 1
-    assert output.entries[0].content == "handoff summary"
-    assert output.previous_command is not None
-    assert "--global --from 2 --limit 1" in output.previous_command
-    assert output.next_command is not None
-    assert "--global --from 4 --limit 1" in output.next_command
-
-
-def test_session_log_bare_selectors_default_to_current_segment_local(tmp_path: Path) -> None:
-    session_file = tmp_path / "session-compacted.jsonl"
-    _write_compacted_session_file(session_file, include_handoff=True)
-
-    output = session_log_sync(
-        SessionLogInput(
-            file_path=session_file.as_posix(),
-            around_ordinal=1,
-            context=0,
-        )
-    )
-
-    assert output.segment_index == 1
-    assert output.showing == "1-1"
-    assert [entry.index for entry in output.entries] == [1]
-    assert output.entries[0].content == "u2"
-    assert output.previous_command is not None
-    assert "--segment 1 --from 0 --limit 1" in output.previous_command
-
-
-def test_session_log_global_from_zero_reads_first_global_entry(tmp_path: Path) -> None:
-    session_file = tmp_path / "session-compacted.jsonl"
-    _write_compacted_session_file(session_file, include_handoff=True)
-
-    output = session_log_sync(
-        SessionLogInput(
-            file_path=session_file.as_posix(),
-            global_scope=True,
-            from_ordinal=0,
-            limit=1,
-        )
-    )
-
-    assert output.segment_index is None
-    assert output.showing == "0-0"
-    assert [entry.index for entry in output.entries] == [0]
-    assert output.entries[0].segment == 0
-    assert output.entries[0].content == "initial system prompt"
-
-
-def test_session_log_global_from_uses_global_entry_ordinals(tmp_path: Path) -> None:
-    session_file = tmp_path / "session-compacted.jsonl"
-    _write_compacted_session_file(session_file, include_handoff=True)
-
-    output = session_log_sync(
-        SessionLogInput(
-            file_path=session_file.as_posix(),
-            global_scope=True,
-            from_ordinal=2,
-            limit=1,
-        )
-    )
-
-    assert output.segment_index is None
-    assert output.showing == "2-2"
-    assert [entry.index for entry in output.entries] == [2]
-    assert output.entries[0].content == "a1"
-
-
-def test_session_log_global_from_reaches_later_segment_reserved_entry(tmp_path: Path) -> None:
-    session_file = tmp_path / "session-compacted.jsonl"
-    _write_compacted_session_file(session_file, include_handoff=True)
-
-    output = session_log_sync(
-        SessionLogInput(
-            file_path=session_file.as_posix(),
-            global_scope=True,
-            from_ordinal=3,
-            limit=1,
-        )
-    )
-
-    assert output.segment_index is None
-    assert output.showing == "3-3"
-    assert [entry.index for entry in output.entries] == [3]
-    assert output.entries[0].segment == 1
-    assert output.entries[0].content == "handoff summary"
-
-
-def test_session_log_rejects_global_with_segment(tmp_path: Path) -> None:
-    session_file = tmp_path / "session-compacted.jsonl"
-    _write_compacted_session_file(session_file, include_handoff=True)
-
-    with pytest.raises(ValueError, match="cannot be combined"):
-        session_log_sync(
-            SessionLogInput(
-                file_path=session_file.as_posix(),
-                global_scope=True,
-                segment="current",
-                from_ordinal=1,
-                limit=1,
-            )
-        )
-
-
-def test_session_log_rejects_conflicting_selectors(tmp_path: Path) -> None:
-    session_file = tmp_path / "session.jsonl"
-    _write_session_file(session_file)
-
-    with pytest.raises(ValueError, match="cannot be combined"):
-        session_log_sync(
-            SessionLogInput(
-                file_path=session_file.as_posix(),
-                from_ordinal=2,
-                limit=1,
-                tail=1,
-            )
-        )
-
-    with pytest.raises(ValueError, match="cannot be combined"):
-        session_log_sync(
-            SessionLogInput(
-                file_path=session_file.as_posix(),
-                full=True,
-                tail=1,
-            )
-        )
-
-
-def test_session_log_rejects_global_without_window_selector(tmp_path: Path) -> None:
-    session_file = tmp_path / "session.jsonl"
-    _write_session_file(session_file)
-
-    with pytest.raises(ValueError, match="requires --from, --before, or --around"):
-        session_log_sync(
-            SessionLogInput(
-                file_path=session_file.as_posix(),
-                global_scope=True,
-            )
-        )
-
-
-@pytest.mark.parametrize(
-    (
-        "from_ordinal",
-        "previous_command_fragment",
-        "next_command_fragment",
-        "previous_segment_fragment",
-        "next_segment_fragment",
-    ),
-    [
-        (0, None, "--segment 1 --from 2 --limit 2", "--segment 0 --from 1 --limit 2", None),
-        (1, "--segment 1 --from 0 --limit 2", None, None, "--segment 2 --from 0 --limit 2"),
-    ],
-)
-def test_session_log_boundary_hints_include_adjacent_segment_commands(
-    tmp_path: Path,
-    from_ordinal: int,
-    previous_command_fragment: str | None,
-    next_command_fragment: str | None,
-    previous_segment_fragment: str | None,
-    next_segment_fragment: str | None,
-) -> None:
-    session_file = tmp_path / "session-three-segments.jsonl"
-    _write_three_segment_session_file(session_file)
-
-    output = session_log_sync(
-        SessionLogInput(
-            file_path=session_file.as_posix(),
-            segment="1",
-            from_ordinal=from_ordinal,
-            limit=2,
-        )
-    )
-
-    for command, fragment in (
-        (output.previous_command, previous_command_fragment),
-        (output.next_command, next_command_fragment),
-        (output.previous_segment_command, previous_segment_fragment),
-        (output.next_segment_command, next_segment_fragment),
-    ):
-        if fragment is None:
-            assert command is None
-        else:
-            assert command is not None
-            assert fragment in command
-
-
-def test_session_log_truncates_oversized_content_by_default(tmp_path: Path) -> None:
-    session_file = tmp_path / "session-large.jsonl"
-    large_text = _write_large_session_file(session_file)
-
-    output = session_log_sync(SessionLogInput(file_path=session_file.as_posix(), full=True))
-
-    assert output.entries[2].messages[0].content == large_text
-    rendered = output.format_text()
-    assert "truncated:" in rendered
-    assert "rerun with --no-truncate" in rendered
-
-
-def test_session_log_no_truncate_preserves_full_content(tmp_path: Path) -> None:
-    session_file = tmp_path / "session-large.jsonl"
-    large_text = _write_large_session_file(session_file)
-
-    output = session_log_sync(
-        SessionLogInput(file_path=session_file.as_posix(), full=True, truncate=False)
-    )
-
-    assert output.entries[2].messages[0].content == large_text
-    assert output.entries[2].content == large_text
-    assert "truncated:" not in output.format_text()
+    assert output.entries[0].content == large_text
+    assert "truncated:" in output.format_text()
+    assert "rerun with --no-truncate" in output.format_text()

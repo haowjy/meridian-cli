@@ -1,9 +1,9 @@
 # Testing
 
 Prefer smoke tests over unit tests. Too many unit tests is bad when you're
-constantly refactoring. Unit tests are for logic that's hard to smoke test —
-signals, concurrency, security/env sanitization, sync engine algorithms, parsing
-edge cases.
+constantly refactoring. Unit tests protect pure functional cores that are hard
+to exercise through the CLI: policy and state transitions, concurrency
+decisions, security/env sanitization, algorithms, and parsing edges.
 
 ## Running
 
@@ -15,16 +15,25 @@ uv run meridian                # Smoke test the CLI directly
 ## Where Tests Go
 
 ```
-tests/unit/         Pure logic, no I/O. <2s total.
-tests/integration/  Real filesystem, subprocesses, cross-module wiring.
-tests/contract/     API shapes and type contracts that must not drift.
-tests/platform/     OS-specific behavior (Windows vs POSIX).
-tests/smoke/        Markdown guides for manual CLI verification.
+tests/unit/         Pure functional cores. <2s total.
+tests/integration/  Real seams: filesystem, subprocesses, cross-module wiring.
+tests/contract/     API payload/retry shapes and type contracts that must not drift.
+tests/platform/     OS behavior: signals, process scope, encoding, locking.
+tests/smoke/        Markdown guides for CLI-visible behavior.
 ```
 
-## Available Fakes
+Mock choreography around a real seam does not make a unit test. Exercise that
+seam in integration and stub only the external boundary. The narrow exception
+for a coherent fail-closed security suite is defined in
+[`unit/AGENTS.md`](unit/AGENTS.md).
 
-`tests/support/fakes.py`: `FakeClock`, `FakeHeartbeat`.
+## Shared Test Support
+
+Search `tests/support/` before adding a local fake. Common helpers include
+`fakes.py` for clocks and heartbeats, `async_determinism.py` for bounded async
+observation, `executables.py` for CLI preflight stubs, `process_race.py` for
+cross-process contention, and adapter-specific support in `opencode.py`,
+`pi.py`, and `resident_drain.py`.
 For spawn state, prefer state helpers (`create_lifecycle_service`,
 `spawn_store.get_spawn`) or direct `state.json` assertions.
 
@@ -53,6 +62,11 @@ Tests that spawn the real CLI (e.g. `test_spawn_prompt_input.py`) need a stub
 harness binary on `PATH`. Mars validates harness installation even for `--dry-run`,
 so the test fails with `pre_init_failed` on CI runners that have no harness binaries.
 Use `tests/support/executables.prepend_fake_executables` to inject stubs.
+
+For a fake executable that logs argv or emits fixed output, prefer a POSIX
+`sh` shim over a cold Python process. Starting the child does not prove the shim
+reached its observable action: bounded-poll for the expected log or state before
+teardown instead of sleeping or stopping immediately.
 
 ## Module Reload and Class Identity
 
