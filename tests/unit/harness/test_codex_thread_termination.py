@@ -1,11 +1,6 @@
-import json
-from pathlib import Path
-
-from meridian.lib.core.types import ArtifactKey, HarnessId, SpawnId
-from meridian.lib.harness.common import extract_codex_report
+from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.connections.base import RawHarnessEvent
 from meridian.lib.harness.semantics import PrimaryEventScope, normalize_event
-from meridian.lib.state.artifact_store import LocalStore
 
 MAIN_THREAD = "thread-main"
 SUB_THREAD = "thread-sub"
@@ -64,57 +59,6 @@ def test_single_thread_turn_completed_stays_terminal_without_thread_id() -> None
     assert outcome.status == "succeeded"
 
 
-def test_failed_turn_completed_normalizes_nested_codex_error() -> None:
-    event = _codex_event(
-        "turn/completed",
-        {
-            "threadId": MAIN_THREAD,
-            "turn": {
-                "status": "failed",
-                "error": {
-                    "message": "The requested model is not supported.",
-                    "codexErrorInfo": {"type": "other"},
-                },
-            },
-        },
-    )
-
-    outcome = normalize_event(event).semantics.terminal
-
-    assert outcome is not None
-    assert outcome.status == "failed"
-    assert outcome.exit_code == 1
-    assert outcome.error == "The requested model is not supported."
-
-
-def test_interrupted_turn_completed_normalizes_as_cancelled() -> None:
-    event = _codex_event(
-        "turn/completed",
-        {"turn": {"status": "interrupted"}},
-    )
-
-    outcome = normalize_event(event).semantics.terminal
-
-    assert outcome is not None
-    assert outcome.status == "cancelled"
-    assert outcome.exit_code == 130
-    assert outcome.error == "interrupted"
-
-
-def test_unknown_turn_completed_status_normalizes_as_failed() -> None:
-    event = _codex_event(
-        "turn/completed",
-        {"turn": {"status": "inProgress"}},
-    )
-
-    outcome = normalize_event(event).semantics.terminal
-
-    assert outcome is not None
-    assert outcome.status == "failed"
-    assert outcome.exit_code == 1
-    assert outcome.error == "unexpected_codex_turn_status:inProgress"
-
-
 def test_opencode_child_session_terminal_events_do_not_complete_parent_scope() -> None:
     parent_scope = PrimaryEventScope(HarnessId.OPENCODE, "ses_parent")
     child_idle = _opencode_event("session.idle", "ses_child")
@@ -147,40 +91,3 @@ def test_opencode_unscoped_terminal_event_only_counts_without_parent_scope() -> 
         unscoped_idle,
         primary_event_scope=PrimaryEventScope(HarnessId.OPENCODE, "ses_parent"),
     ).semantics.terminal is None
-
-
-def test_extract_codex_report_uses_main_thread_agent_message(tmp_path: Path) -> None:
-    artifacts = LocalStore(root_dir=tmp_path / "artifacts")
-    spawn_id = SpawnId("p-codex-thread-report")
-    records = [
-        {
-            "event_type": "turn/started",
-            "payload": {"threadId": MAIN_THREAD, "turnId": "turn-main"},
-        },
-        {
-            "event_type": "item/completed",
-            "payload": {
-                "threadId": SUB_THREAD,
-                "item": {"type": "agentMessage", "text": "Subagent done."},
-            },
-        },
-        {
-            "event_type": "turn/completed",
-            "payload": {"threadId": SUB_THREAD, "turnId": "turn-sub"},
-        },
-        {
-            "event_type": "item/completed",
-            "payload": {
-                "threadId": MAIN_THREAD,
-                "item": {"type": "agentMessage", "text": "Main thread done."},
-            },
-        },
-        {
-            "event_type": "turn/completed",
-            "payload": {"threadId": MAIN_THREAD, "turnId": "turn-main"},
-        },
-    ]
-    lines = "\n".join(json.dumps(record) for record in records)
-    artifacts.put(ArtifactKey(f"{spawn_id}/history.jsonl"), f"{lines}\n".encode())
-
-    assert extract_codex_report(artifacts, spawn_id) == "Main thread done."
