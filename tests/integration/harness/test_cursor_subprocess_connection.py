@@ -35,26 +35,60 @@ def _install_cursor(
     command_log = tmp_path / "cursor-commands.jsonl"
     cursor = tmp_path / "fake-bin" / "cursor"
     cursor.write_text(
-        "#!/usr/bin/env python3\n"
-        "import json, os, sys, time\n"
-        "args = sys.argv[1:]\n"
-        "with open(os.environ['CURSOR_COMMAND_LOG'], 'a', encoding='utf-8') as log:\n"
-        "    log.write(json.dumps(args) + '\\n')\n"
-        "if args == ['agent', 'create-chat']:\n"
-        "    if os.environ.get('CURSOR_CREATE_CHAT_PID'):\n"
-        "        with open(os.environ['CURSOR_CREATE_CHAT_PID'], 'w') as pid_file:\n"
-        "            pid_file.write(str(os.getpid()))\n"
-        f"    if {create_chat_hangs!r}:\n"
-        "        time.sleep(60)\n"
-        f"    print({_MINTED_ID!r}, flush=True)\n"
-        f"    raise SystemExit({create_chat_exit})\n"
-        "print(json.dumps({'type': 'system', 'sessionId': 'fake-agent'}), flush=True)\n"
-        "time.sleep(0.05)\n",
+        "#!/bin/sh\n"
+        "line=\n"
+        "separator=\n"
+        'for arg in "$@"; do\n'
+        '    line="${line}${separator}\\"${arg}\\""\n'
+        "    separator=,\n"
+        "done\n"
+        'printf \'[%s]\\n\' "$line" >> "$CURSOR_COMMAND_LOG"\n'
+        'if [ "$1" = agent ] && [ "$2" = create-chat ]; then\n'
+        '    if [ -n "${CURSOR_CREATE_CHAT_PID:-}" ]; then\n'
+        '        printf \'%s\\n\' "$$" > "$CURSOR_CREATE_CHAT_PID"\n'
+        "    fi\n"
+        f"    {'while :; do :; done' if create_chat_hangs else ':'}\n"
+        f"    printf '%s\\n' '{_MINTED_ID}'\n"
+        f"    exit {create_chat_exit}\n"
+        "fi\n"
+        "printf '%s\\n' '{\"type\":\"system\",\"sessionId\":\"fake-agent\"}'\n"
+        "while :; do :; done\n",
         encoding="utf-8",
     )
     cursor.chmod(0o755)
     monkeypatch.setenv("CURSOR_COMMAND_LOG", str(command_log))
     return command_log
+
+
+def _contains_fragment(command: list[str], fragment: tuple[str, ...]) -> bool:
+    width = len(fragment)
+    return any(tuple(command[index : index + width]) == fragment for index in range(len(command)))
+
+
+async def _wait_for_commands(
+    command_log: Path,
+    *,
+    count: int,
+    required_fragments: tuple[tuple[str, ...], ...],
+) -> list[list[str]]:
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + 2.0
+    commands: list[list[str]] = []
+    while loop.time() < deadline:
+        if command_log.exists():
+            try:
+                commands = [
+                    json.loads(line) for line in command_log.read_text().splitlines()
+                ]
+            except json.JSONDecodeError:
+                commands = []
+            if len(commands) >= count and all(
+                any(_contains_fragment(command, fragment) for command in commands)
+                for fragment in required_fragments
+            ):
+                return commands
+        await asyncio.sleep(0.01)
+    pytest.fail(f"Timed out waiting for {count} Cursor commands; observed {commands!r}")
 
 
 def _start_record(runtime_root: Path, spawn_id: SpawnId) -> None:
@@ -126,15 +160,27 @@ async def test_cursor_create_chat_and_resume_reuse_session_with_store_attributio
     fresh = await _start(tmp_path, fresh_id)
     assert fresh.session_id == _MINTED_ID
     assert str(spawn_store.get_spawn(tmp_path, fresh_id).harness_session_id) == _MINTED_ID
+    await _wait_for_commands(
+        command_log,
+        count=2,
+        required_fragments=(("agent", "create-chat"), ("--resume", _MINTED_ID)),
+    )
     await fresh.stop()
 
     resume_id = SpawnId("p-cursor-resume")
     resumed = await _start(tmp_path, resume_id, continue_session_id=_RESUMED_ID)
     assert resumed.session_id == _RESUMED_ID
     assert str(spawn_store.get_spawn(tmp_path, resume_id).harness_session_id) == _RESUMED_ID
+    commands = await _wait_for_commands(
+        command_log,
+        count=3,
+        required_fragments=(
+            ("--resume", _MINTED_ID),
+            ("--resume", _RESUMED_ID),
+        ),
+    )
     await resumed.stop()
 
-    commands = [json.loads(line) for line in command_log.read_text().splitlines()]
     assert commands[0] == ["agent", "create-chat"]
     agent_commands = [command for command in commands if command != ["agent", "create-chat"]]
     assert len(agent_commands) == 2
@@ -155,9 +201,13 @@ async def test_cursor_nonzero_create_chat_falls_back_to_unresumed_agent(
     assert spawn_store.get_spawn(
         tmp_path, SpawnId("p-cursor-fallback")
     ).harness_session_id is None
+    commands = await _wait_for_commands(
+        command_log,
+        count=2,
+        required_fragments=(("agent", "create-chat"), ("--output-format", "stream-json")),
+    )
     await connection.stop()
 
-    commands = [json.loads(line) for line in command_log.read_text().splitlines()]
     assert commands[0] == ["agent", "create-chat"]
     assert "--resume" not in commands[1]
 
@@ -186,7 +236,11 @@ async def test_cursor_hung_create_chat_is_killed_then_launches_unresumed(
     with pytest.raises(ProcessLookupError):
         os.kill(pid, 0)
 
+    commands = await _wait_for_commands(
+        command_log,
+        count=2,
+        required_fragments=(("agent", "create-chat"), ("--output-format", "stream-json")),
+    )
     await connection.stop()
-    commands = [json.loads(line) for line in command_log.read_text().splitlines()]
     assert commands[0] == ["agent", "create-chat"]
     assert "--resume" not in commands[1]
