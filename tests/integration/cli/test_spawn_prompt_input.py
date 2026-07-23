@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
@@ -65,3 +66,52 @@ def test_spawn_with_reference_does_not_read_silent_open_stdin(
             process.stdin.close()
 
     assert return_code == 0
+
+
+@pytest.mark.integration
+@posix_only
+def test_spawn_prompt_file_stdin_reaches_dry_run_prompt(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = tmp_path / "project"
+    (project_root / ".meridian").mkdir(parents=True)
+    (project_root / ".meridian" / "id").write_text("prompt-stdin-test", encoding="utf-8")
+    (project_root / "meridian.toml").write_text(
+        "[spawn]\ndeny_headless_harnesses = []\n",
+        encoding="utf-8",
+    )
+
+    prepend_fake_executables(monkeypatch, tmp_path, "codex")
+    env = os.environ.copy()
+    env["MERIDIAN_HOME"] = (tmp_path / "home").as_posix()
+    prompt = b"Prompt supplied on stdin.\nSecond line.\n"
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "meridian",
+            "--format",
+            "json",
+            "--harness",
+            "codex",
+            "spawn",
+            "-a",
+            "",
+            "--bg",
+            "--dry-run",
+            "--prompt-file",
+            "-",
+        ],
+        cwd=project_root,
+        env=env,
+        input=prompt,
+        capture_output=True,
+        timeout=3,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr.decode()
+    output = json.loads(result.stdout)
+    assert output["status"] == "dry-run"
+    assert output["composed_prompt"] == prompt.decode().strip()

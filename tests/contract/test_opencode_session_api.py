@@ -1,4 +1,4 @@
-"""OpenCode session API request-shape and retry integration coverage."""
+"""OpenCode session API request-shape and retry contract coverage."""
 
 from __future__ import annotations
 
