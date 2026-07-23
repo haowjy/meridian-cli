@@ -653,7 +653,6 @@ async def test_pi_spawn_manager_startup_diagnostics_report_outcome_and_marker(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _configure_extension_projection(monkeypatch, tmp_path)
-    monkeypatch.setattr(pi_rpc_module, "_FIRST_STDOUT_AFTER_INITIAL_PROMPT_TIMEOUT_SECONDS", 0.05)
     monkeypatch.setattr(pi_rpc_module, "_PROCESS_ABORT_GRACE_SECONDS", 0.01)
     monkeypatch.setattr(pi_rpc_module, "_PROCESS_KILL_GRACE_SECONDS", 0.01)
 
