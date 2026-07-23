@@ -244,3 +244,80 @@ def test_status_aggregates_active_writers_across_project_directories_and_legacy(
     assert status.segment_count == 3
     assert status.active_writers == ["p1.222", "p2.333"]
     assert status.legacy_segments == 1
+
+
+def _write_binary_tail_event(path: Path, event: str, extra: dict | None = None) -> None:
+    payload: dict = {"ts": "2026-05-01T00:00:00Z", "domain": "test", "event": event}
+    if extra:
+        payload.update(extra)
+    with path.open("ab") as file:
+        file.write((json.dumps(payload) + "\n").encode("utf-8"))
+
+
+def test_tail_events_keeps_byte_stable_offsets_across_handle_lifetimes(
+    tmp_path: Path,
+) -> None:
+    segment = tmp_path / "seg.jsonl"
+    events = tail_events(tmp_path, poll_interval=0.001)
+
+    _write_binary_tail_event(segment, "e1", {"msg": "€uro sign"})
+    results = [next(events)]
+    _write_binary_tail_event(segment, "e2", {"msg": "naïve"})
+    results.append(next(events))
+
+    assert results[0]["event"] == "e1"
+    assert results[0]["msg"] == "€uro sign"
+    assert results[1]["event"] == "e2"
+    assert results[1]["msg"] == "naïve"
+
+
+def test_tail_events_picks_up_segment_created_after_tail_start(tmp_path: Path) -> None:
+    events = tail_events(tmp_path, poll_interval=0.001)
+    segment = tmp_path / "new_seg.jsonl"
+    _write_binary_tail_event(segment, "fresh.event")
+
+    assert next(events)["event"] == "fresh.event"
+
+
+def test_tail_events_applies_domain_filter_in_binary_mode(tmp_path: Path) -> None:
+    segment = tmp_path / "seg.jsonl"
+    events = tail_events(tmp_path, domain="wanted", poll_interval=0.001)
+
+    _write_binary_tail_event(segment, "skip.event")
+    wanted = {
+        "ts": "2026-05-01T00:00:00Z",
+        "domain": "wanted",
+        "event": "keep.event",
+    }
+    with segment.open("ab") as file:
+        file.write((json.dumps(wanted) + "\n").encode("utf-8"))
+
+    assert next(events)["event"] == "keep.event"
+
+
+def test_tail_events_polls_until_new_data_arrives(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    import threading
+
+    segment = tmp_path / "seg.jsonl"
+    poll_entered = threading.Event()
+    real_sleep = time.sleep
+
+    def sleep_with_barrier(interval: float) -> None:
+        poll_entered.set()
+        real_sleep(interval)
+
+    monkeypatch.setattr("meridian.lib.telemetry.reader.time.sleep", sleep_with_barrier)
+
+    def writer() -> None:
+        assert poll_entered.wait(timeout=5.0), "tail_events never entered poll sleep"
+        _write_binary_tail_event(segment, "polled.event")
+
+    writer_thread = threading.Thread(target=writer, daemon=True)
+    writer_thread.start()
+    event = next(tail_events(tmp_path, poll_interval=0.001))
+    writer_thread.join(timeout=5.0)
+
+    assert event["event"] == "polled.event"
