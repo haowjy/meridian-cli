@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.3.45] - 2026-07-23
+
 ### Fixed
 - Denied headless harness spawns fail at submission with the policy error,
   before any spawn row exists. Previously `--bg` reported "submitted" and
