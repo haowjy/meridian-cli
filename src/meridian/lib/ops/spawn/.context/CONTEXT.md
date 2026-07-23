@@ -9,9 +9,9 @@ Depth is read from `_MERIDIAN_DEPTH` env var in the child. The reaper also check
 and skips reaping when inside a spawn. This is an ops-layer enforcement; `launch/` does not
 independently enforce depth.
 
-## Spawn Wait — Checkpoint vs Hard Timeout
+## Spawn Wait — Checkpoint, Hard Timeout, and Fail-Fast
 
-`spawn_wait_sync()` has two timeout modes:
+`spawn_wait_sync()` has three exit paths:
 
 **Checkpoint mode** (default, `timeout_explicit=False`): waits up to `checkpoint_seconds` (harness-
 aware yield interval), then returns a `SpawnWaitMultiOutput` with `checkpoint=True` and
@@ -20,6 +20,13 @@ pattern — agents get a periodic yield to check progress rather than blocking i
 
 **Hard timeout** (`timeout_explicit=True`): waits up to `timeout` minutes, then raises `TimeoutError`
 with an actionable message listing pending spawn IDs and suggested next commands.
+
+**Fail-fast** (`fail_fast=True`): after each poll, if any completed spawn has status `failed` or
+`timed_out` AND spawns are still pending, returns early with `fail_fast=True` and `pending_ids`
+in the output. `cancelled` does not trigger fail-fast. Snapshot consistency: the pending set is
+derived from the same re-read snapshot used to build the result, so a spawn that goes terminal
+during the re-read appears correctly in one category. If everything went terminal mid-snapshot,
+the normal completed output is returned instead of a fail-fast result.
 
 The yield interval is resolved from `_MERIDIAN_HARNESS` env var (parent harness's prompt-cache TTL
 awareness) unless `yield_after_secs` is explicitly passed.
