@@ -15,6 +15,7 @@ from meridian.lib.streaming.completion_contracts import (
     CompletionEvaluation,
     CompletionState,
     DiagnosticBlocker,
+    EvidenceActivity,
     EvidenceEventDecision,
     EvidenceFailure,
     NudgeUrgency,
@@ -137,6 +138,8 @@ class _Profile:
             return ProfileDecision(action="wait", reset_deadline=True)
         if context.deadline_expired:
             return ProfileDecision(action="cleanup", outcome=_TIMEOUT, cleanup_reason="deadline")
+        if context.evidence_activity is not None:
+            return ProfileDecision(action="stabilize", restart_stabilization=True)
         if context.state.phase == "stabilizing":
             if (
                 context.assessment.disposition == "ready"
@@ -185,6 +188,15 @@ class _Profile:
         return ProfileExitDecision(recorded_outcome=recorded_outcome)
 
 
+class _RetainingStabilizationProfile(_Profile):
+    def evaluate(self, context: CompletionEvaluation) -> ProfileDecision:
+        if context.state.phase == "stabilizing" and context.trigger == "aux_wake":
+            return ProfileDecision(action="hold_stabilization")
+        if context.state.phase == "stabilizing" and context.trigger == "timeout":
+            return ProfileDecision(action="abandon_candidate")
+        return super().evaluate(context)
+
+
 class _Cleanup:
     def __init__(self) -> None:
         self.calls: list[tuple[WorkAssessment, str]] = []
@@ -207,15 +219,25 @@ def _coordinator(
 
 
 @pytest.mark.asyncio
-async def test_candidate_free_policy_enters_waiting_with_a_deadline() -> None:
+@pytest.mark.parametrize(
+    ("candidate_free", "expected_phase", "expected_deadline"),
+    [(False, "running", None), (True, "waiting", 10.0)],
+)
+async def test_candidate_free_policy_controls_evaluation(
+    candidate_free: bool,
+    expected_phase: str,
+    expected_deadline: float | None,
+) -> None:
     clock = FakeClock()
-    coordinator, _ = _coordinator(clock, _Evidence(_ready()), _Profile(candidate_free=True))
+    coordinator, _ = _coordinator(
+        clock, _Evidence(_ready()), _Profile(candidate_free=candidate_free)
+    )
 
     decision = await coordinator.handle_timeout()
 
     assert decision.recorded_outcome is None
-    assert coordinator.state.phase == "waiting"
-    assert coordinator.deadline_monotonic == 10.0
+    assert coordinator.state.phase == expected_phase
+    assert coordinator.deadline_monotonic == expected_deadline
 
 
 @pytest.mark.asyncio
@@ -273,6 +295,67 @@ async def test_stabilization_completes_after_unchanged_ready_recheck() -> None:
 
     assert candidate.recorded_outcome is None
     assert completed.recorded_outcome == _SUCCESS
+
+
+@pytest.mark.asyncio
+async def test_stabilization_can_hold_then_abandon_candidate() -> None:
+    clock = FakeClock()
+    coordinator, _ = _coordinator(
+        clock,
+        _Evidence(_ready(7), _blocked(8), _blocked(8)),
+        _RetainingStabilizationProfile(stabilization=2.0),
+    )
+    await coordinator.handle_terminal_event(None, _SUCCESS, _TERMINATE)  # type: ignore[arg-type]
+    stabilization_at = coordinator.state.stabilization_at
+
+    clock.advance(1.0)
+    await coordinator.handle_aux_wake()
+    assert coordinator.state.stabilization_at == stabilization_at
+    assert coordinator.pending_outcome == _SUCCESS
+
+    clock.advance(1.0)
+    await coordinator.handle_timeout()
+    assert coordinator.state.phase == "waiting"
+    assert coordinator.pending_outcome is None
+
+
+@pytest.mark.asyncio
+async def test_changed_stabilization_generation_restarts_from_waiting() -> None:
+    clock = FakeClock()
+    coordinator, _ = _coordinator(
+        clock,
+        _Evidence(_ready(7), _ready(8), _ready(8)),
+        _Profile(stabilization=2.0),
+    )
+    await coordinator.handle_terminal_event(None, _SUCCESS, _TERMINATE)  # type: ignore[arg-type]
+
+    clock.advance(1.0)
+    await coordinator.after_event()
+    assert coordinator.state.phase == "waiting"
+    assert coordinator.state.stabilization_at is None
+
+    await coordinator.handle_timeout()
+    assert coordinator.state.phase == "stabilizing"
+    assert coordinator.state.stabilization_generation == 8
+
+
+@pytest.mark.asyncio
+async def test_persisted_activity_restarts_stabilization_window() -> None:
+    clock = FakeClock()
+    evidence = _Evidence(_ready(7), _ready(7))
+    evidence.persisted = EvidenceEventDecision(
+        activity=EvidenceActivity(code="persisted_event")
+    )
+    coordinator, _ = _coordinator(clock, evidence, _Profile(stabilization=2.0))
+    await coordinator.handle_terminal_event(None, _SUCCESS, _TERMINATE)  # type: ignore[arg-type]
+
+    clock.advance(1.0)
+    coordinator.note_event_persisted(None)  # type: ignore[arg-type]
+    await coordinator.handle_aux_wake()
+
+    assert coordinator.state.phase == "stabilizing"
+    assert coordinator.state.stabilization_generation == 7
+    assert coordinator.state.stabilization_at == 3.0
 
 
 @pytest.mark.asyncio
