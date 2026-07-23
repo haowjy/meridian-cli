@@ -538,9 +538,14 @@ def _resolve_codex_terminal(event: RawHarnessEvent) -> TerminalEventOutcome | No
             event,
             cause=TerminalOutcomeCause.REPLACEABLE_TRANSPORT_CLOSE,
         )
+    if event.event_type != "turn/completed":
+        return None
+
     turn = event.payload.get("turn")
     turn_payload = cast("dict[str, object]", turn) if isinstance(turn, dict) else None
     turn_status = turn_payload.get("status") if turn_payload is not None else None
+    if turn_payload is None or turn_status == "completed":
+        return TerminalEventOutcome(status=SpawnStatus.SUCCEEDED, exit_code=0)
     if turn_status == "failed":
         assert turn_payload is not None
         error: object = turn_payload.get("error")
@@ -552,21 +557,19 @@ def _resolve_codex_terminal(event: RawHarnessEvent) -> TerminalEventOutcome | No
             error=stringify_terminal_error(preferred_error)
             or stringify_terminal_error(cast("object", error)),
         )
-    if event.event_type == "turn/completed":
-        if turn_payload is None or turn_status == "completed":
-            return TerminalEventOutcome(status=SpawnStatus.SUCCEEDED, exit_code=0)
-        if turn_status == "interrupted":
-            return TerminalEventOutcome(
-                status=SpawnStatus.CANCELLED,
-                exit_code=130,
-                error="interrupted",
-            )
+    if turn_status == "interrupted":
         return TerminalEventOutcome(
-            status=SpawnStatus.FAILED,
-            exit_code=1,
-            error=f"unexpected_codex_turn_status:{turn_status}",
+            status=SpawnStatus.CANCELLED,
+            exit_code=130,
+            error="interrupted",
         )
-    return None
+    # A status-less turn is malformed. Fail loudly: false failures are visible;
+    # hidden failures are not. A missing turn remains success for older payloads.
+    return TerminalEventOutcome(
+        status=SpawnStatus.FAILED,
+        exit_code=1,
+        error=f"unexpected_codex_turn_status:{turn_status}",
+    )
 
 
 CODEX_SEMANTICS = HarnessSemantics(
