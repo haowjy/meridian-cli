@@ -7,19 +7,26 @@ from __future__ import annotations
 import asyncio
 import importlib
 import json
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import pytest
 
 from meridian.lib.core.domain import Spawn, TokenUsage
 from meridian.lib.core.types import HarnessId, ModelId, SpawnId, TransportId
+from meridian.lib.harness.connections.base import ConnectionConfig, RawHarnessEvent
+from meridian.lib.harness.launch_spec import ResolvedLaunchSpec
 from meridian.lib.harness.registry import HarnessRegistry
+from meridian.lib.harness.semantics import EventSemantics, NormalizedHarnessEvent
 from meridian.lib.launch import constants as launch_constants
 from meridian.lib.launch.extract import enrich_finalize, reset_finalize_attempt_artifacts
+from meridian.lib.safety.permissions import UnsafeNoOpPermissionResolver
 from meridian.lib.state import spawn_store
 from meridian.lib.state.artifact_store import LocalStore, make_artifact_key
 from meridian.lib.state.paths import resolve_project_runtime_root_for_write
+from meridian.lib.state.spawn.model import FOREGROUND_LAUNCH_MODE
 from meridian.lib.streaming import spawn_manager as spawn_manager_module
+from meridian.lib.streaming.spawn_session import DrainOutcome
 from tests.integration.launch.streaming_runner_support import (
     _build_request,
     _EndMonotonicFailsClock,
@@ -62,6 +69,188 @@ class _NoReportExtractor:
     def extract_report(self, artifacts: object, spawn_id: SpawnId) -> str | None:
         _ = artifacts, spawn_id
         return None
+
+
+@dataclass
+class _LifecycleRecorder:
+    calls: list[str] = field(default_factory=list)
+
+    def mark_running(self, *_args: object, **_kwargs: object) -> None:
+        self.calls.append("mark_running")
+
+    def record_exited(self, *_args: object, **_kwargs: object) -> None:
+        self.calls.append("record_exited")
+
+
+@pytest.mark.asyncio
+async def test_streaming_attempt_bounds_backend_startup_with_no_events(
+    tmp_path: Path,
+) -> None:
+    start_cancelled = asyncio.Event()
+
+    class HangingStartupManager:
+        def get_connection(self, _spawn_id: SpawnId) -> None:
+            return None
+
+        async def start_spawn(
+            self,
+            _config: ConnectionConfig,
+            _spec: ResolvedLaunchSpec,
+        ) -> object:
+            try:
+                await asyncio.Event().wait()
+            finally:
+                start_cancelled.set()
+            raise AssertionError("unreachable")
+
+    run = Spawn(
+        spawn_id=SpawnId("startup-hang"),
+        prompt="hello",
+        model=ModelId("gpt-5.3-codex"),
+        status="running",
+    )
+    attempt = await asyncio.wait_for(
+        streaming_runner_module._run_streaming_attempt(
+            run=run,
+            runtime_root=tmp_path,
+            launch_mode=FOREGROUND_LAUNCH_MODE,
+            log_dir=tmp_path / "logs",
+            manager=HangingStartupManager(),  # type: ignore[arg-type]
+            config=ConnectionConfig(
+                spawn_id=run.spawn_id,
+                harness_id=HarnessId.CODEX,
+                prompt=run.prompt,
+                control_root=tmp_path,
+                child_env={},
+            ),
+            run_spec=ResolvedLaunchSpec(
+                model=str(run.model),
+                harness=HarnessId.CODEX,
+                permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
+            ),
+            budget_tracker=None,
+            signal_event=asyncio.Event(),
+            received_signal=[None],
+            timeout_seconds=None,
+            startup_timeout_seconds=0.01,
+            event_observer=None,
+            stream_stdout_to_terminal=False,
+            lifecycle_service=_LifecycleRecorder(),  # type: ignore[arg-type]
+        ),
+        timeout=0.5,
+    )
+
+    assert attempt.start_error == "startup phase timeout after 0.010s"
+    assert start_cancelled.is_set()
+
+
+@pytest.mark.asyncio
+async def test_streaming_attempt_fresh_events_keep_slow_cursor_backend_alive(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    queue: asyncio.Queue[NormalizedHarnessEvent | None] = asyncio.Queue()
+    completion = asyncio.Event()
+
+    class SlowActiveManager:
+        def __init__(self) -> None:
+            self.stop_calls: list[dict[str, object]] = []
+            self.producer: asyncio.Task[None] | None = None
+
+        async def start_spawn(
+            self,
+            _config: ConnectionConfig,
+            _spec: ResolvedLaunchSpec,
+        ) -> object:
+            async def produce_events() -> None:
+                for index in range(6):
+                    await asyncio.sleep(0.01)
+                    queue.put_nowait(
+                        NormalizedHarnessEvent(
+                            raw=RawHarnessEvent(
+                                event_type="assistant/analysis",
+                                harness_id=HarnessId.CURSOR.value,
+                                payload={"index": index},
+                            ),
+                            semantics=EventSemantics(activity="turn_active"),
+                        )
+                    )
+                completion.set()
+                queue.put_nowait(None)
+
+            self.producer = asyncio.create_task(produce_events())
+            return type("Connection", (), {"subprocess_pid": None})()
+
+        def raw_terminal_frames_are_authoritative(self, _spawn_id: SpawnId) -> bool:
+            return False
+
+        async def start_heartbeat(self, _spawn_id: SpawnId) -> None:
+            return None
+
+        def subscribe(
+            self,
+            _spawn_id: SpawnId,
+        ) -> asyncio.Queue[NormalizedHarnessEvent | None]:
+            return queue
+
+        async def wait_for_completion(self, _spawn_id: SpawnId) -> DrainOutcome:
+            await completion.wait()
+            return DrainOutcome(status="succeeded", exit_code=0)
+
+        def unsubscribe(self, _spawn_id: SpawnId) -> None:
+            return None
+
+        def get_connection(self, _spawn_id: SpawnId) -> None:
+            return None
+
+        async def stop_spawn(self, spawn_id: SpawnId, **kwargs: object) -> None:
+            self.stop_calls.append({"spawn_id": spawn_id, **kwargs})
+
+    manager = SlowActiveManager()
+    monkeypatch.setattr(streaming_runner_module, "CURSOR_INACTIVITY_TIMEOUT_SECONDS", 0.025)
+    run = Spawn(
+        spawn_id=SpawnId("fresh-events"),
+        prompt="hello",
+        model=ModelId("composer-2.5"),
+        status="running",
+    )
+
+    attempt = await asyncio.wait_for(
+        streaming_runner_module._run_streaming_attempt(
+            run=run,
+            runtime_root=tmp_path,
+            launch_mode=FOREGROUND_LAUNCH_MODE,
+            log_dir=tmp_path / "logs",
+            manager=manager,  # type: ignore[arg-type]
+            config=ConnectionConfig(
+                spawn_id=run.spawn_id,
+                harness_id=HarnessId.CURSOR,
+                prompt=run.prompt,
+                control_root=tmp_path,
+                child_env={},
+            ),
+            run_spec=ResolvedLaunchSpec(
+                model=str(run.model),
+                harness=HarnessId.CURSOR,
+                permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
+            ),
+            budget_tracker=None,
+            signal_event=asyncio.Event(),
+            received_signal=[None],
+            timeout_seconds=None,
+            startup_timeout_seconds=0.1,
+            event_observer=None,
+            stream_stdout_to_terminal=False,
+            lifecycle_service=_LifecycleRecorder(),  # type: ignore[arg-type]
+        ),
+        timeout=0.5,
+    )
+    if manager.producer is not None:
+        await manager.producer
+
+    assert attempt.drain_exit_code == 0
+    assert attempt.terminated_by_inactivity is False
+    assert manager.stop_calls == []
 
 
 def test_retry_preserves_completed_attempt_artifacts(tmp_path: Path) -> None:
