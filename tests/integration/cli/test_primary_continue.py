@@ -22,8 +22,8 @@ from meridian.lib.launch import LaunchRequest, LaunchResult, launch_primary
 from meridian.lib.launch.process import ProcessOutcome
 from meridian.lib.launch.request import SessionRequest
 from meridian.lib.launch.types import SessionMode
-from meridian.lib.state import session_store, spawn_store
-from meridian.lib.state.paths import resolve_project_runtime_root_for_write
+from meridian.lib.state import session_store, spawn_store, work_repository, work_store
+from meridian.lib.state.paths import resolve_project_paths, resolve_project_runtime_root_for_write
 from tests.support.launch import stub_bundle_request_and_resolve
 
 
@@ -254,6 +254,58 @@ def test_primary_continue_does_not_inherit_ambient_work(
     assert context.binding.work_id is None
     assert "MERIDIAN_ACTIVE_WORK_ID" not in context.binding.environment.child_context_env
     assert context.task_cwd == source_task_dir
+
+
+def test_primary_continue_with_stale_work_task_dir_falls_back_without_mutating_work(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    source_task_dir = tmp_path / "deleted-worktree"
+    source_task_dir.mkdir()
+    runtime_root = _state_root(project_root)
+    project_state_dir = resolve_project_paths(project_root).root_dir
+    work_repository.create_work_item(project_state_dir, "source-work")
+    work_repository.update_work_item_task_dir(
+        project_state_dir,
+        "source-work",
+        task_dir=source_task_dir.as_posix(),
+    )
+    _seed_primary_spawn(
+        runtime_root,
+        spawn_id="p46",
+        harness_session_id="session-46",
+        work_id="source-work",
+        task_cwd=source_task_dir.as_posix(),
+        launch_policy_snapshot=LaunchPolicySnapshot(model="gpt-5.3-codex", harness="codex"),
+    )
+    work_before = work_store.get_active_work_item(project_state_dir, "source-work")
+    source_task_dir.rmdir()
+    contexts: list[Any] = []
+    real_bind_launch_context = launch_context.bind_launch_context
+
+    def bind_launch_context(*args: Any, **kwargs: Any) -> Any:
+        context = real_bind_launch_context(*args, **kwargs)
+        contexts.append(context)
+        return context
+
+    monkeypatch.setattr(launch_context, "bind_launch_context", bind_launch_context)
+
+    output = _run_primary_continue(project_root, "p46", dry_run=True)
+
+    assert output.warning is not None
+    assert source_task_dir.as_posix() in output.warning
+    assert "falling back to the normal launch directory" in output.warning
+    context = contexts[0]
+    assert context.execution_cwd == project_root.resolve()
+    assert context.task_cwd is None
+    assert context.work_id == "source-work"
+    assert context.binding.work_id == "source-work"
+    work_after = work_store.get_active_work_item(project_state_dir, "source-work")
+    assert work_after == work_before
+    assert work_after is not None
+    assert work_after.task_dir == source_task_dir.as_posix()
 
 
 @pytest.mark.parametrize(
