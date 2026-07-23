@@ -46,7 +46,7 @@ def _clean_meridian_runtime_env(
 
     session_home = os.environ.get("MERIDIAN_HOME")
     for key in tuple(os.environ):
-        if key.upper().startswith("MERIDIAN_"):
+        if key.upper().startswith(("MERIDIAN_", "_MERIDIAN_")):
             monkeypatch.delenv(key, raising=False)
 
     if session_home is not None:
