@@ -243,7 +243,7 @@ dead spawn's private bash record may remain `running` post-mortem and is not aut
 ## S11: Malformed coordination state fails closed
 
 Do not corrupt a normal smoke environment. Malformed lifecycle parsing is covered by
-`tests/unit/harness/test_pi_integration.py`; unreadable/private-disk evidence and
+`tests/integration/harness/test_pi_integration.py`; unreadable/private-disk evidence and
 recovery behavior are covered under `tests/integration/streaming/`.
 
 The contract is typed unknown evidence—not an empty/no-work snapshot. A completion

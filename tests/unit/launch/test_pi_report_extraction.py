@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from meridian.lib.core.types import SpawnId
+from meridian.lib.core.types import ArtifactKey, SpawnId
 from meridian.lib.harness.extractors.pi import PI_EXTRACTOR
 from meridian.lib.launch.constants import HISTORY_FILENAME
 from meridian.lib.launch.errors import should_retry
@@ -15,9 +15,19 @@ from meridian.lib.launch.report import (
     extract_pi_failure_from_history,
 )
 from meridian.lib.launch.streaming_runner import StreamingRunConclusion, _AttemptRuntime
-from tests.unit.harness.test_extract_opencode_report import _MemoryArtifactStore
 
 _FIXTURES = Path(__file__).resolve().parents[2] / "fixtures" / "pi"
+
+
+class _MemoryArtifactStore:
+    def __init__(self, payloads: dict[str, bytes]) -> None:
+        self._payloads = payloads
+
+    def get(self, key: ArtifactKey) -> bytes:
+        return self._payloads[str(key)]
+
+    def exists(self, key: ArtifactKey) -> bool:
+        return str(key) in self._payloads
 
 
 def _store_from_fixture(name: str, spawn_id: SpawnId) -> _MemoryArtifactStore:
