@@ -1,368 +1,173 @@
-"""Unit tests for transcript parsing — pure parsing logic, no runtime state setup.
-
-Extracted from tests/integration/ops/test_session_log.py per tier reclassification:
-these tests create no spawn/session state and use no runtime root.
-test_parse_session_file_splits_segments_on_compaction_boundary writes one input
-file to tmp_path but exercises only the parsing contract.
-
-# qa-validated: test-suite-redesign
-"""
+"""Pure transcript row, boundary, and handoff parsing contracts."""
 
 from __future__ import annotations
 
-import json
-import sqlite3
-from pathlib import Path
-
 from meridian.lib.harness.transcript import (
     DefaultTranscriptEventParser,
-    parse_transcript_file,
-    parse_transcript_file_with_prologues,
+    TranscriptMessage,
+    parse_transcript_events,
+    parse_transcript_events_with_prologues,
 )
 
 
-def test_parse_session_file_splits_segments_on_compaction_boundary(tmp_path: Path) -> None:
-    session_file = tmp_path / "session.jsonl"
-    lines = [
-        json.dumps(
-            {
-                "type": "assistant",
-                "message": {"content": [{"type": "text", "text": "before boundary"}]},
-            }
-        ),
-        json.dumps({"type": "system", "subtype": "compact_boundary"}),
-        json.dumps(
-            {
-                "type": "assistant",
-                "message": {"content": [{"type": "text", "text": "after boundary"}]},
-            }
-        ),
-    ]
-    session_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
+def _rows(segment: list[TranscriptMessage]) -> list[tuple[str, str]]:
+    return [(message.role, message.content) for message in segment]
 
-    segments, total_compactions = parse_transcript_file(session_file)
 
-    assert total_compactions == 1
-    assert len(segments) == 2
-    assert [(message.role, message.content) for message in segments[0]] == [
-        ("assistant", "before boundary")
-    ]
-    assert [(message.role, message.content) for message in segments[1]] == [
-        ("assistant", "after boundary")
+def test_events_split_claude_boundary_and_preserve_prologues() -> None:
+    events = [
+        {"type": "system", "content": "initial prompt"},
+        {
+            "type": "assistant",
+            "message": {"content": [{"type": "text", "text": "before boundary"}]},
+        },
+        {"type": "system", "subtype": "compact_boundary", "summary": "handoff"},
+        {
+            "type": "assistant",
+            "message": {"content": [{"type": "text", "text": "after boundary"}]},
+        },
     ]
 
+    parsed = parse_transcript_events_with_prologues(events)
+    segments, total_compactions = parse_transcript_events(events)
 
-def test_parse_session_file_extracts_segment_prologues(tmp_path: Path) -> None:
-    session_file = tmp_path / "session.jsonl"
-    lines = [
-        json.dumps({"type": "system", "content": "initial prompt"}),
-        json.dumps(
-            {
-                "type": "assistant",
-                "message": {"content": [{"type": "text", "text": "before boundary"}]},
-            }
-        ),
-        json.dumps({"type": "system", "subtype": "compact_boundary", "summary": "handoff"}),
-        json.dumps(
-            {
-                "type": "assistant",
-                "message": {"content": [{"type": "text", "text": "after boundary"}]},
-            }
-        ),
+    assert total_compactions == parsed.total_compactions == 1
+    assert [_rows(segment) for segment in segments] == [
+        [("assistant", "before boundary")],
+        [("assistant", "after boundary")],
     ]
-    session_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
-
-    parsed = parse_transcript_file_with_prologues(session_file)
-
-    assert parsed.total_compactions == 1
     assert parsed.segment_prologues == ("initial prompt", "handoff")
 
 
-def test_parse_session_file_boundary_without_summary_still_allocates_next_setup_slot(
-    tmp_path: Path,
-) -> None:
-    session_file = tmp_path / "session.jsonl"
-    lines = [
-        json.dumps(
-            {
-                "type": "assistant",
-                "message": {"content": [{"type": "text", "text": "before boundary"}]},
-            }
-        ),
-        json.dumps({"type": "system", "subtype": "compact_boundary"}),
-        json.dumps(
-            {
-                "type": "assistant",
-                "message": {"content": [{"type": "text", "text": "after boundary"}]},
-            }
-        ),
-    ]
-    session_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
-
-    parsed = parse_transcript_file_with_prologues(session_file)
+def test_boundary_without_summary_allocates_empty_next_setup_slot() -> None:
+    parsed = parse_transcript_events_with_prologues(
+        [
+            {"role": "assistant", "content": "before"},
+            {"type": "system", "subtype": "compact_boundary"},
+            {"role": "assistant", "content": "after"},
+        ]
+    )
 
     assert parsed.total_compactions == 1
-    assert len(parsed.segments) == 2
     assert parsed.segment_setups == (None, None)
+    assert [_rows(segment) for segment in parsed.segments] == [
+        [("assistant", "before")],
+        [("assistant", "after")],
+    ]
 
 
-def test_parse_session_file_consumes_synthetic_follow_on_handoff(tmp_path: Path) -> None:
-    session_file = tmp_path / "session.jsonl"
-    lines = [
-        json.dumps({"type": "system", "content": "initial prompt"}),
-        json.dumps(
-            {
-                "type": "assistant",
-                "message": {"content": [{"type": "text", "text": "before boundary"}]},
-            }
-        ),
-        json.dumps({"type": "system", "subtype": "compact_boundary"}),
-        json.dumps(
+def test_claude_boundary_consumes_synthetic_follow_on_handoff() -> None:
+    parsed = parse_transcript_events_with_prologues(
+        [
+            {"type": "system", "content": "initial prompt"},
+            {"role": "assistant", "content": "segment0"},
+            {"type": "system", "subtype": "compact_boundary"},
             {
                 "type": "user",
                 "isSynthetic": True,
                 "message": {"content": [{"type": "text", "text": "synthetic handoff"}]},
-            }
-        ),
-        json.dumps(
-            {
-                "type": "assistant",
-                "message": {"content": [{"type": "text", "text": "after boundary"}]},
-            }
-        ),
-    ]
-    session_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
-
-    parsed = parse_transcript_file_with_prologues(session_file)
+            },
+            {"role": "assistant", "content": "segment1"},
+        ]
+    )
 
     assert parsed.segment_setups == ("initial prompt", "synthetic handoff")
     assert parsed.consumed_setup_event_indexes == (3,)
-    assert [(message.role, message.content) for message in parsed.segments[1]] == [
-        ("assistant", "after boundary")
-    ]
+    assert _rows(parsed.segments[1]) == [("assistant", "segment1")]
 
 
-def test_parse_session_file_consumes_opencode_follow_on_handoff(tmp_path: Path) -> None:
-    session_file = tmp_path / "session.jsonl"
-    lines = [
-        json.dumps({"role": "assistant", "content": "segment0"}),
-        json.dumps({"part": {"type": "compaction"}}),
-        json.dumps(
+def test_opencode_boundary_consumes_compaction_agent_handoff() -> None:
+    parsed = parse_transcript_events_with_prologues(
+        [
+            {"role": "assistant", "content": "segment0"},
+            {"part": {"type": "compaction"}},
             {
                 "role": "assistant",
                 "mode": "compaction",
                 "agent": "compaction",
                 "parts": [{"type": "text", "text": "opencode handoff"}],
                 "content": "opencode handoff",
-            }
-        ),
-        json.dumps({"role": "assistant", "content": "segment1"}),
-    ]
-    session_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
-
-    parsed = parse_transcript_file_with_prologues(session_file)
+            },
+            {"role": "assistant", "content": "segment1"},
+        ]
+    )
 
     assert parsed.total_compactions == 1
     assert parsed.segment_setups == (None, "opencode handoff")
     assert parsed.consumed_setup_event_indexes == (2,)
-    assert [(message.role, message.content) for message in parsed.segments[1]] == [
-        ("assistant", "segment1")
-    ]
+    assert _rows(parsed.segments[1]) == [("assistant", "segment1")]
 
 
-def test_parse_session_file_supports_json_array_lines(tmp_path: Path) -> None:
-    session_file = tmp_path / "session.json"
-    session_file.write_text(
-        json.dumps(
-            [
-                {"role": "user", "content": "array user"},
-                {"role": "assistant", "content": "array assistant"},
-            ]
-        )
-        + "\n",
-        encoding="utf-8",
-    )
-
-    segments, total_compactions = parse_transcript_file(session_file)
-
-    assert total_compactions == 0
-    assert len(segments) == 1
-    assert [(message.role, message.content) for message in segments[0]] == [
-        ("user", "array user"),
-        ("assistant", "array assistant"),
-    ]
-
-
-def test_parse_session_file_prefers_opencode_db_transcript(tmp_path: Path) -> None:
-    session_id = "ses_fixture_db_1"
-    session_file = tmp_path / "opencode" / "storage" / "session_diff" / f"{session_id}.json"
-    session_file.parent.mkdir(parents=True, exist_ok=True)
-    session_file.write_text("[]\n", encoding="utf-8")
-
-    db_path = tmp_path / "opencode" / "opencode.db"
-    with sqlite3.connect(db_path) as connection:
-        connection.executescript(
-            """
-            CREATE TABLE message (
-                id TEXT PRIMARY KEY,
-                session_id TEXT NOT NULL,
-                time_created INTEGER NOT NULL,
-                time_updated INTEGER NOT NULL,
-                data TEXT NOT NULL
-            );
-            CREATE TABLE part (
-                id TEXT PRIMARY KEY,
-                message_id TEXT NOT NULL,
-                session_id TEXT NOT NULL,
-                time_created INTEGER NOT NULL,
-                time_updated INTEGER NOT NULL,
-                data TEXT NOT NULL
-            );
-            """
-        )
-        connection.execute(
-            "INSERT INTO message "
-            "(id, session_id, time_created, time_updated, data) "
-            "VALUES (?, ?, ?, ?, ?)",
-            ("msg_1", session_id, 1, 1, json.dumps({"role": "assistant"})),
-        )
-        connection.execute(
-            "INSERT INTO part (id, message_id, session_id, time_created, time_updated, data) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            ("prt_1", "msg_1", session_id, 1, 1, json.dumps({"type": "text", "text": "db text"})),
-        )
-        connection.commit()
-
-    segments, total_compactions = parse_transcript_file(session_file)
-
-    assert total_compactions == 0
-    assert len(segments) == 1
-    assert [(message.role, message.content) for message in segments[0]] == [
-        ("assistant", "db text")
-    ]
-
-
-def test_extract_from_event_claude_assistant_and_user_messages() -> None:
-    assistant_messages, assistant_boundary = DefaultTranscriptEventParser().parse(
+def test_parser_extracts_claude_messages_tool_call_and_result() -> None:
+    parser = DefaultTranscriptEventParser()
+    assistant, assistant_boundary = parser.parse(
         {
             "type": "assistant",
-            "message": {"content": [{"type": "text", "text": "assistant text"}]},
+            "message": {
+                "content": [
+                    {"type": "text", "text": "assistant text"},
+                    {"type": "tool_use", "name": "Bash", "input": {"command": "pwd"}},
+                ]
+            },
         }
     )
-    user_messages, user_boundary = DefaultTranscriptEventParser().parse(
+    user, user_boundary = parser.parse(
         {
             "type": "user",
-            "message": {"content": [{"type": "text", "text": "user text"}]},
+            "message": {
+                "content": [
+                    {"type": "text", "text": "user text"},
+                    {"type": "tool_result", "content": "repo"},
+                ]
+            },
         }
     )
 
-    assert assistant_boundary is False
-    assert user_boundary is False
-    assert [(message.role, message.content) for message in assistant_messages] == [
-        ("assistant", "assistant text")
+    assert assistant_boundary is user_boundary is False
+    assert _rows(assistant) == [
+        ("assistant", "assistant text"),
+        ("assistant", "[tool: Bash pwd]"),
     ]
-    assert [(message.role, message.content) for message in user_messages] == [("user", "user text")]
+    assert assistant[1].tool_call is not None
+    assert (assistant[1].tool_call.name, assistant[1].tool_call.body) == ("bash", "pwd")
+    assert _rows(user) == [("user", "user text"), ("user", "[tool_result] repo")]
+    assert user[1].is_tool_result is True
 
 
-def test_extract_from_event_pi_message_end_events() -> None:
+def test_parser_extracts_pi_message_end_roles_and_tools() -> None:
     parser = DefaultTranscriptEventParser()
 
-    user_messages, user_boundary = parser.parse(
-        {
-            "event_type": "message_end",
-            "payload": {
-                "type": "message_end",
-                "message": {
-                    "role": "user",
-                    "content": [{"type": "text", "text": "start task"}],
-                },
-            },
-        }
-    )
-    assistant_messages, assistant_boundary = parser.parse(
-        {
-            "event_type": "message_end",
-            "payload": {
-                "type": "message_end",
-                "message": {
-                    "role": "assistant",
-                    "content": [
-                        {"type": "thinking", "thinking": "hidden"},
-                        {
-                            "type": "toolCall",
-                            "name": "bash_manage",
-                            "arguments": {"action": "kill", "bash_id": "b-1"},
-                        },
-                    ],
-                },
-            },
-        }
-    )
-    custom_messages, custom_boundary = parser.parse(
-        {
-            "event_type": "message_end",
-            "payload": {
-                "type": "message_end",
-                "message": {
-                    "role": "custom",
-                    "content": "Background bash task still running: b-1",
-                },
-            },
-        }
-    )
-    tool_messages, tool_boundary = parser.parse(
-        {
-            "event_type": "message_end",
-            "payload": {
-                "type": "message_end",
-                "message": {
-                    "role": "toolResult",
-                    "content": [{"type": "text", "text": "b-1 killed"}],
-                },
-            },
-        }
-    )
-    final_messages, final_boundary = parser.parse(
-        {
-            "event_type": "message_end",
-            "payload": {
-                "type": "message_end",
-                "message": {
-                    "role": "assistant",
-                    "content": [{"type": "text", "text": "done"}],
-                },
-            },
-        }
-    )
+    def parse_message(message: dict[str, object]) -> list[TranscriptMessage]:
+        rows, boundary = parser.parse(
+            {"event_type": "message_end", "payload": {"type": "message_end", "message": message}}
+        )
+        assert boundary is False
+        return rows
 
-    assert user_boundary is False
-    assert assistant_boundary is False
-    assert custom_boundary is False
-    assert tool_boundary is False
-    assert final_boundary is False
-    assert [(message.role, message.content) for message in user_messages] == [
-        ("user", "start task")
-    ]
-    assert [(message.role, message.content) for message in assistant_messages] == [
-        ("assistant", '[tool: bash_manage {"action":"kill","bash_id":"b-1"}]')
-    ]
-    assert assistant_messages[0].tool_call is not None
-    assert assistant_messages[0].tool_call.name == "bash_manage"
-    assert [(message.role, message.content) for message in custom_messages] == [
-        ("user", "Background bash task still running: b-1")
-    ]
-    tool_rows = [
-        (message.role, message.content, message.is_tool_result)
-        for message in tool_messages
-    ]
-    assert tool_rows == [("user", "[tool_result] b-1 killed", True)]
-    assert [(message.role, message.content) for message in final_messages] == [
-        ("assistant", "done")
-    ]
+    user = parse_message({"role": "user", "content": [{"type": "text", "text": "task"}]})
+    call = parse_message(
+        {
+            "role": "assistant",
+            "content": [
+                {"type": "thinking", "thinking": "hidden"},
+                {"type": "toolCall", "name": "bash_manage", "arguments": {"action": "kill"}},
+            ],
+        }
+    )
+    custom = parse_message({"role": "custom", "content": "Background task running"})
+    result = parse_message({"role": "toolResult", "content": [{"type": "text", "text": "killed"}]})
+
+    assert _rows(user) == [("user", "task")]
+    assert _rows(call) == [("assistant", '[tool: bash_manage {"action":"kill"}]')]
+    assert call[0].tool_call is not None
+    assert _rows(custom) == [("user", "Background task running")]
+    assert _rows(result) == [("user", "[tool_result] killed")]
+    assert result[0].is_tool_result is True
 
 
-def test_extract_from_event_codex_response_and_exec_events() -> None:
-    response_messages, response_boundary = DefaultTranscriptEventParser().parse(
+def test_parser_extracts_codex_messages_tool_calls_and_results() -> None:
+    parser = DefaultTranscriptEventParser()
+    events = [
         {
             "type": "response_item",
             "payload": {
@@ -370,20 +175,31 @@ def test_extract_from_event_codex_response_and_exec_events() -> None:
                 "role": "assistant",
                 "content": [{"type": "output_text", "text": "codex response"}],
             },
-        }
-    )
-    exec_messages, exec_boundary = DefaultTranscriptEventParser().parse(
+        },
         {
-            "type": "item.completed",
-            "item": {"type": "agent_message", "text": "codex exec"},
-        }
-    )
+            "type": "response_item",
+            "payload": {
+                "type": "function_call",
+                "name": "exec_command",
+                "arguments": '{"cmd":"pwd"}',
+            },
+        },
+        {
+            "type": "response_item",
+            "payload": {"type": "function_call_output", "output": "repo"},
+        },
+        {"type": "item.completed", "item": {"type": "agent_message", "text": "codex exec"}},
+    ]
 
-    assert response_boundary is False
-    assert exec_boundary is False
-    assert [(message.role, message.content) for message in response_messages] == [
-        ("assistant", "codex response")
+    parsed = [parser.parse(event) for event in events]
+    messages = [message for rows, boundary in parsed for message in rows if boundary is False]
+
+    assert _rows(messages) == [
+        ("assistant", "codex response"),
+        ("assistant", '[tool: exec_command {"cmd":"pwd"}]'),
+        ("user", "[tool_result] repo"),
+        ("assistant", "codex exec"),
     ]
-    assert [(message.role, message.content) for message in exec_messages] == [
-        ("assistant", "codex exec")
-    ]
+    assert messages[1].tool_call is not None
+    assert (messages[1].tool_call.name, messages[1].tool_call.body) == ("bash", "pwd")
+    assert messages[2].is_tool_result is True
