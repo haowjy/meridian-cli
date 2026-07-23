@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.3.44] - 2026-07-23
+
 ### Fixed
 - `--continue` no longer crashes when the work item's saved task dir was
   deleted or replaced by a file: warns and launches from project root. The
