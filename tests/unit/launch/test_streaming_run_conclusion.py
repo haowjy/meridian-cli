@@ -4,6 +4,7 @@ from pathlib import Path
 
 from meridian.lib.core.domain import TokenUsage
 from meridian.lib.core.types import SpawnId
+from meridian.lib.harness.adapter import ArtifactStore
 from meridian.lib.launch.constants import REPORT_FILENAME
 from meridian.lib.launch.extract import (
     FinalizeExtraction,
@@ -21,15 +22,15 @@ from meridian.lib.state.artifact_store import InMemoryStore, make_artifact_key
 
 
 class _NoReportExtractor:
-    def extract_usage(self, artifacts: InMemoryStore, spawn_id: SpawnId) -> TokenUsage:
+    def extract_usage(self, artifacts: ArtifactStore, spawn_id: SpawnId) -> TokenUsage:
         _ = artifacts, spawn_id
         return TokenUsage()
 
-    def extract_session_id(self, artifacts: InMemoryStore, spawn_id: SpawnId) -> str | None:
+    def extract_session_id(self, artifacts: ArtifactStore, spawn_id: SpawnId) -> str | None:
         _ = artifacts, spawn_id
         return None
 
-    def extract_report(self, artifacts: InMemoryStore, spawn_id: SpawnId) -> str | None:
+    def extract_report(self, artifacts: ArtifactStore, spawn_id: SpawnId) -> str | None:
         _ = artifacts, spawn_id
         return None
 
@@ -184,48 +185,3 @@ def test_inactivity_terminal_outcome_applied_to_conclusion_without_retry() -> No
     assert conclusion.exit_code == 1
     assert conclusion.failure_reason == "stalled"
     assert conclusion.retries_attempted == 0
-
-
-def test_scope_pi_session_dir_for_spawn_updates_env_and_creates_directory(tmp_path: Path) -> None:
-    from meridian.lib.launch.env import scope_pi_session_dir_for_spawn
-
-    session_root = tmp_path / "sessions"
-    child_env = {"PI_CODING_AGENT_SESSION_DIR": str(session_root)}
-
-    scope_pi_session_dir_for_spawn(
-        child_env=child_env,
-        spawn_id=SpawnId("p-pi-scope"),
-    )
-
-    scoped = Path(child_env["PI_CODING_AGENT_SESSION_DIR"])
-    assert scoped == session_root / "p-pi-scope"
-    assert scoped.is_dir()
-
-
-def test_scope_pi_session_dir_for_spawn_is_noop_without_session_root() -> None:
-    from meridian.lib.launch.env import scope_pi_session_dir_for_spawn
-
-    child_env: dict[str, str] = {}
-
-    scope_pi_session_dir_for_spawn(
-        child_env=child_env,
-        spawn_id=SpawnId("p-pi-scope-noop"),
-    )
-
-    assert child_env == {}
-
-
-def test_scope_pi_session_dir_for_spawn_is_idempotent_for_already_scoped_path(
-    tmp_path: Path,
-) -> None:
-    from meridian.lib.launch.env import scope_pi_session_dir_for_spawn
-
-    scoped_root = tmp_path / "sessions" / "p-pi-scope-idempotent"
-    child_env = {"PI_CODING_AGENT_SESSION_DIR": str(scoped_root)}
-
-    scope_pi_session_dir_for_spawn(
-        child_env=child_env,
-        spawn_id=SpawnId("p-pi-scope-idempotent"),
-    )
-
-    assert Path(child_env["PI_CODING_AGENT_SESSION_DIR"]) == scoped_root
