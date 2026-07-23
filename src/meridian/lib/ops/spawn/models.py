@@ -1282,7 +1282,10 @@ class SpawnWaitMultiOutput(BaseModel):
             details = self.model_copy(
                 update={"fail_fast": False, "pending_ids": ()}
             ).format_text(effective_ctx)
-            summary = f"Fail-fast: {failed_ids} failed. Still pending: {pending_ids}."
+            summary = (
+                f"Fail-fast: {failed_ids} failed or timed out. "
+                f"Still pending: {pending_ids}."
+            )
             return f"{summary}\n\n{details}" if details else summary
         if not self.spawns:
             return ""

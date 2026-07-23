@@ -345,6 +345,75 @@ def test_spawn_wait_fail_fast_returns_failed_and_pending_spawns(tmp_path: Path) 
         str(failed_id): "failed",
         str(pending_id): "running",
     }
+    assert (
+        output.format_text().splitlines()[0]
+        == "Fail-fast: p-failed failed or timed out. Still pending: p-pending."
+    )
+
+
+def test_spawn_wait_fail_fast_uses_one_snapshot_when_pending_spawn_finishes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    runtime_root = _state_root(project_root)
+    failed_id = spawn_store.start_spawn(
+        runtime_root,
+        spawn_id="p-failed",
+        chat_id="c-wait-race",
+        model="gpt-5.4",
+        agent="coder",
+        harness="codex",
+        prompt="fail",
+    )
+    spawn_store.finalize_spawn(runtime_root, failed_id, "failed", 1, origin="runner")
+    finishing_id = spawn_store.start_spawn(
+        runtime_root,
+        spawn_id="p-finishing",
+        chat_id="c-wait-race",
+        model="gpt-5.4",
+        agent="coder",
+        harness="codex",
+        prompt="finish during snapshot",
+    )
+
+    original_read_spawn_row = spawn_api.read_spawn_row
+    finishing_reads = 0
+
+    def _finish_before_snapshot_read(*args, **kwargs):
+        nonlocal finishing_reads
+        spawn_id = args[1]
+        if spawn_id == str(finishing_id):
+            finishing_reads += 1
+            if finishing_reads == 2:
+                spawn_store.finalize_spawn(
+                    runtime_root,
+                    finishing_id,
+                    "succeeded",
+                    0,
+                    origin="runner",
+                )
+        return original_read_spawn_row(*args, **kwargs)
+
+    monkeypatch.setattr(spawn_api, "read_spawn_row", _finish_before_snapshot_read)
+
+    output = spawn_api.spawn_wait_sync(
+        SpawnWaitInput(
+            project_root=project_root.as_posix(),
+            spawn_ids=(str(failed_id), str(finishing_id)),
+            fail_fast=True,
+            yield_after_secs=0,
+        )
+    )
+
+    assert finishing_reads == 2
+    assert not output.fail_fast
+    assert output.pending_ids == ()
+    assert {spawn.spawn_id: spawn.status for spawn in output.spawns} == {
+        str(failed_id): "failed",
+        str(finishing_id): "succeeded",
+    }
 
 
 def test_spawn_status_omits_report_body_until_requested(tmp_path: Path) -> None:

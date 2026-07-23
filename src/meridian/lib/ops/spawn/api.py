@@ -1778,12 +1778,14 @@ def spawn_wait_sync(
                 row for row in completed_rows.values() if row.status in FAILURE_SPAWN_STATUSES
             )
             if payload.fail_fast and failed_rows and pending:
-                pending_ids = tuple(sorted(pending))
                 snapshot_rows = dict(completed_rows)
-                for spawn_id in pending_ids:
+                for spawn_id in tuple(pending):
                     row = read_spawn_row(project_root, spawn_id, runtime_root=runtime_root)
-                    if row is not None:
-                        snapshot_rows[spawn_id] = row
+                    if row is None:
+                        if has_explicit_ids:
+                            raise ValueError(f"Spawn '{spawn_id}' not found")
+                        continue
+                    snapshot_rows[spawn_id] = row
                 details = tuple(
                     detail_from_row(
                         project_root=project_root,
@@ -1793,6 +1795,13 @@ def spawn_wait_sync(
                     )
                     for spawn_id in spawn_ids
                     if spawn_id in snapshot_rows
+                )
+                pending_ids = tuple(
+                    sorted(
+                        detail.spawn_id
+                        for detail in details
+                        if not _spawn_is_terminal(detail.status)
+                    )
                 )
                 _update_pi_wait_observation(
                     runtime_root=runtime_root,
@@ -1804,6 +1813,8 @@ def spawn_wait_sync(
                         if _spawn_is_terminal(detail.status)
                     ),
                 )
+                if not pending_ids:
+                    return _build_wait_multi_output(details)
                 return _build_wait_multi_output(
                     details,
                     fail_fast=True,
