@@ -1,57 +1,52 @@
 # qa-validated: reaper-escape-fix-test-cleanup
-"""Focused tests for spawn-scope cleanup and session-lease preservation."""
+"""Integration coverage for persisted spawn-scope cleanup."""
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
-from unittest.mock import MagicMock
 
 import psutil as _psutil
 import pytest
 
 from meridian.lib.core.process_cleanup import (
-    should_skip_cleanup,
     terminate_recorded_spawn_scopes,
     terminate_spawn_scopes,
 )
+from meridian.lib.core.types import SpawnId
 from meridian.lib.platform.process_scope.base import CleanupResult, ProcessScopeSnapshot
+from meridian.lib.state import spawn_store
+from meridian.lib.state.process_scope_projection import (
+    is_scope_released,
+    mark_scope_released,
+    record_scope,
+)
 from meridian.lib.state.spawn.model import SpawnRecord
 
 
-def _record(
-    spawn_id: str = "spawn-1",
+def _persist_spawn(
+    runtime_root: Path,
     *,
+    spawn_id: str = "spawn-1",
     worker_pid: int | None = 321,
 ) -> SpawnRecord:
-    return SpawnRecord(
-        id=spawn_id,
+    spawn_store.start_spawn(
+        runtime_root,
+        spawn_id=spawn_id,
         chat_id="chat-1",
-        parent_id=None,
         model="gpt-5.4",
         agent="coder",
-        agent_path=None,
-        skills=(),
-        skill_paths=(),
         harness="codex",
         kind="child",
-        desc="test spawn",
-        work_id="work-1",
-        goal="goal",
-        harness_session_id="session-1",
-        execution_cwd="/tmp/project",
-        claude_config_dir=None,
-        launch_mode="background",
+        prompt="hello",
         worker_pid=worker_pid,
         runner_pid=111,
-        runner_created_at_epoch=None,
-        status="running",
-        prompt="hello",
         started_at="2026-05-01T00:00:00Z",
-        last_attempt_exited_at=None,
-        last_attempt_exit_code=None,
-        runner_exit=None,
-        terminal=None,
+        status="running",
     )
+    record = spawn_store.get_spawn(runtime_root, spawn_id)
+    assert record is not None
+    return record
 
 
 def _scope(
@@ -76,160 +71,162 @@ def _scope(
     )
 
 
-def _cleanup_result(scope_id: str, root_pid: int, reason: str) -> CleanupResult:
+def _cleanup_result(
+    scope_id: str,
+    root_pid: int,
+    reason: str,
+    grace_seconds: float,
+) -> CleanupResult:
     return CleanupResult(
         scope_id=scope_id,
         root_pid=root_pid,
         descendant_count=2,
         reason=reason,
-        grace_seconds=5.0,
+        grace_seconds=grace_seconds,
         kill_escalated=False,
         degraded_fallback=False,
         skip_reason=None,
     )
 
 
-def test_terminate_spawn_scopes_uses_persisted_scopes_and_marks_released(
-    monkeypatch,
+def test_terminate_spawn_scopes_reads_persisted_scopes_and_marks_released(
+    monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
     from meridian.lib.core import process_cleanup
 
+    record = _persist_spawn(tmp_path)
     scopes = [_scope("backend", pid=101), _scope("worker", pid=202)]
-    released: list[tuple[str, str]] = []
+    for scope in scopes:
+        record_scope(tmp_path, SpawnId(record.id), scope)
     terminate_calls: list[tuple[int, float, str, str]] = []
 
-    monkeypatch.setattr(process_cleanup, "read_scopes_from_disk", lambda root, spawn_id: scopes)
-    monkeypatch.setattr(
-        process_cleanup, "is_scope_released", lambda root, spawn_id, scope_id: False
-    )
-    monkeypatch.setattr(
-        process_cleanup,
-        "mark_scope_released",
-        lambda root, spawn_id, scope_id: released.append((str(spawn_id), scope_id)),
-    )
-
-    def _terminate_scope_sync(scope, *, grace_seconds: float, reason: str):
+    def _terminate_scope_sync(
+        scope: ProcessScopeSnapshot,
+        *,
+        grace_seconds: float,
+        reason: str,
+    ) -> CleanupResult:
         terminate_calls.append(
             (scope.root_pid, scope.root_created_at_epoch, reason, scope.scope_id)
         )
-        return _cleanup_result(scope.scope_id, scope.root_pid, reason)
+        return _cleanup_result(scope.scope_id, scope.root_pid, reason, grace_seconds)
 
     monkeypatch.setattr(process_cleanup, "terminate_scope_sync", _terminate_scope_sync)
 
-    results = terminate_spawn_scopes(tmp_path, _record(), reason="reaper", grace_seconds=4.0)
+    results = terminate_spawn_scopes(tmp_path, record, reason="reaper", grace_seconds=4.0)
 
     assert [result.scope_id for result in results] == ["backend", "worker"]
     assert terminate_calls == [
         (101, 10.0, "reaper", "backend"),
         (202, 10.0, "reaper", "worker"),
     ]
-    assert released == [
-        ("spawn-1", scopes[0].release_id),
-        ("spawn-1", scopes[1].release_id),
-    ]
+    assert all(
+        is_scope_released(tmp_path, SpawnId(record.id), scope.release_id)
+        for scope in scopes
+    )
 
 
-def test_terminate_spawn_scopes_skips_released_and_active_session_leases(
-    monkeypatch,
+def test_terminate_spawn_scopes_skips_persisted_release_and_active_session_lease(
+    monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
     from meridian.lib.core import process_cleanup
 
-    scopes = [
-        _scope("released", pid=101),
-        _scope("leased", owner_policy="session_owned", owner_id="session-9", pid=202),
-    ]
-
-    monkeypatch.setattr(process_cleanup, "read_scopes_from_disk", lambda root, spawn_id: scopes)
-    monkeypatch.setattr(
-        process_cleanup,
-        "is_scope_released",
-        lambda root, spawn_id, release_id: release_id == scopes[0].release_id,
+    record = _persist_spawn(tmp_path)
+    released = _scope("released", pid=101)
+    leased = _scope(
+        "leased",
+        owner_policy="session_owned",
+        owner_id="session-9",
+        pid=202,
     )
+    for scope in (released, leased):
+        record_scope(tmp_path, SpawnId(record.id), scope)
+    mark_scope_released(tmp_path, SpawnId(record.id), released.release_id)
     monkeypatch.setattr(
         process_cleanup.psutil,
         "Process",
         lambda pid: type("LiveProc", (), {"create_time": lambda self: 10.0})(),
     )
 
-    def _unexpected(*args, **kwargs):
+    def _unexpected(*args: object, **kwargs: object) -> CleanupResult:
         raise AssertionError("terminate_scope_sync should not be called for skipped scopes")
 
     monkeypatch.setattr(process_cleanup, "terminate_scope_sync", _unexpected)
 
-    results = terminate_spawn_scopes(tmp_path, _record(), reason="reaper", grace_seconds=4.0)
+    results = terminate_spawn_scopes(tmp_path, record, reason="reaper", grace_seconds=4.0)
 
     assert [(result.scope_id, result.skip_reason) for result in results] == [
         ("released", "already_released"),
         ("leased", "active_session_lease"),
     ]
+    assert not is_scope_released(tmp_path, SpawnId(record.id), leased.release_id)
 
 
 def test_terminate_spawn_scopes_falls_back_to_legacy_worker_pid(
-    monkeypatch,
+    monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
     from meridian.lib.core import process_cleanup
 
-    legacy_result = CleanupResult(
-        scope_id="legacy_worker",
-        root_pid=321,
-        descendant_count=0,
-        reason="reaper",
-        grace_seconds=5.0,
-        kill_escalated=False,
-        degraded_fallback=False,
-        skip_reason=None,
-    )
-
-    monkeypatch.setattr(process_cleanup, "read_scopes_from_disk", lambda root, spawn_id: [])
+    record = _persist_spawn(tmp_path, worker_pid=321)
+    legacy_result = _cleanup_result("legacy_worker", 321, "reaper", 5.0)
     monkeypatch.setattr(process_cleanup, "terminate_tree_sync", lambda **kwargs: legacy_result)
 
-    results = terminate_spawn_scopes(tmp_path, _record(worker_pid=321), reason="reaper")
+    results = terminate_spawn_scopes(tmp_path, record, reason="reaper")
 
     assert results == [legacy_result]
 
 
 def test_terminate_recorded_spawn_scopes_does_not_run_legacy_worker_fallback(
-    monkeypatch,
+    monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
     from meridian.lib.core import process_cleanup
 
-    monkeypatch.setattr(process_cleanup, "read_scopes_from_disk", lambda root, spawn_id: [])
+    record = _persist_spawn(tmp_path, worker_pid=321)
 
-    def _unexpected(**kwargs):
+    def _unexpected(**kwargs: object) -> CleanupResult:
         raise AssertionError("legacy worker fallback should not run")
 
     monkeypatch.setattr(process_cleanup, "terminate_tree_sync", _unexpected)
 
-    results = terminate_recorded_spawn_scopes(
-        tmp_path,
-        _record(worker_pid=321),
-        reason="cancel",
-    )
+    results = terminate_recorded_spawn_scopes(tmp_path, record, reason="cancel")
 
     assert results == []
 
 
 @pytest.mark.parametrize(
-    ("process_factory", "root_created_at_epoch", "expected"),
+    ("process_factory", "root_created_at_epoch", "expected_skip"),
     [
         (lambda: (_ for _ in ()).throw(_psutil.NoSuchProcess(pid=12345)), 10.0, False),
-        (lambda: MagicMock(create_time=MagicMock(return_value=99_999.0)), 1_000_000.0, False),
-        (lambda: MagicMock(create_time=MagicMock(return_value=1_000_000.1)), 1_000_000.0, True),
+        (
+            lambda: type("ReusedProc", (), {"create_time": lambda self: 99_999.0})(),
+            1_000_000.0,
+            False,
+        ),
+        (
+            lambda: type(
+                "LiveProc", (), {"create_time": lambda self: 1_000_000.1}
+            )(),
+            1_000_000.0,
+            True,
+        ),
     ],
+    ids=["dead", "birth-mismatch", "birth-match"],
 )
-def test_should_skip_cleanup_validates_session_owned_process_liveness(
-    monkeypatch,
-    process_factory,
+def test_session_lease_cleanup_uses_birth_checked_os_liveness(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    process_factory: Callable[[], object],
     root_created_at_epoch: float,
-    expected: bool,
+    expected_skip: bool,
 ) -> None:
-    """Session-owned scopes are preserved only while the validated root process is alive."""
+    """Only a live, birth-matched session lease survives persisted cleanup."""
     from meridian.lib.core import process_cleanup
 
+    record = _persist_spawn(tmp_path)
     scope = _scope(
         "backend",
         owner_policy="session_owned",
@@ -237,18 +234,27 @@ def test_should_skip_cleanup_validates_session_owned_process_liveness(
         pid=12345,
         root_created_at_epoch=root_created_at_epoch,
     )
-    record = _record()
+    record_scope(tmp_path, SpawnId(record.id), scope)
+    monkeypatch.setattr(process_cleanup.psutil, "Process", lambda _pid: process_factory())
+    terminated: list[str] = []
 
-    def _process(_pid: int):
-        return process_factory()
+    def _terminate_scope_sync(
+        candidate: ProcessScopeSnapshot,
+        *,
+        grace_seconds: float,
+        reason: str,
+    ) -> CleanupResult:
+        terminated.append(candidate.release_id)
+        return _cleanup_result(
+            candidate.scope_id, candidate.root_pid, reason, grace_seconds
+        )
 
-    monkeypatch.setattr(process_cleanup.psutil, "Process", _process)
+    monkeypatch.setattr(process_cleanup, "terminate_scope_sync", _terminate_scope_sync)
 
-    assert should_skip_cleanup(scope, record) is expected
+    [result] = terminate_spawn_scopes(tmp_path, record, reason="reaper")
 
-
-def test_should_skip_cleanup_spawn_owned_never_skips() -> None:
-    """Spawn-owned scopes should always be eligible for cleanup."""
-    scope = _scope("worker", owner_policy="spawn_owned", owner_id="spawn-1", pid=55555)
-
-    assert should_skip_cleanup(scope, _record()) is False
+    assert (result.skip_reason == "active_session_lease") is expected_skip
+    assert terminated == ([] if expected_skip else [scope.release_id])
+    assert is_scope_released(tmp_path, SpawnId(record.id), scope.release_id) is (
+        not expected_skip
+    )

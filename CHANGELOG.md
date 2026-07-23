@@ -5,8 +5,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Removed
-- Unit tier now pure functional core: ~45 redundant files removed, ~26
-  filesystem/process/platform suites moved to integration or platform tiers.
+- Removed redundant unit suites and moved filesystem, process, and platform
+  coverage to honest integration/platform tiers. Functional-core shrinking
+  follows in a separate phase.
 
 ## [0.3.45] - 2026-07-23
 
