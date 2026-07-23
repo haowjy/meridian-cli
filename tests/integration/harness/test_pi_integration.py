@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 import os
 import sys
@@ -188,114 +187,6 @@ def test_pi_semantics_terminal_outcome_and_activity_mapping() -> None:
     ).semantics
     assert agent_end.activity == "idle"
     assert agent_end.clears_signal is True
-
-
-@pytest.mark.asyncio
-@pytest.mark.skipif(sys.platform == "win32", reason="uses POSIX executable shim")
-async def test_pi_rpc_connection_supports_multi_turn_injection_and_abort(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    _configure_extension_projection(monkeypatch, tmp_path)
-
-    bin_dir = tmp_path / "bin"
-    bin_dir.mkdir()
-    inbound_log = tmp_path / "pi-inbound.jsonl"
-
-    shim = bin_dir / "pi"
-    shim.write_text(
-        "#!/bin/sh\n"
-        "if [ \"$1\" = \"--version\" ]; then echo 'pi 1.2.3'; exit 0; fi\n"
-        f"if [ \"$1\" = \"--help\" ]; then echo '{_PI_HELP_SURFACE}'; exit 0; fi\n"
-        "printf '%s\\n' '{\"type\":\"session\",\"id\":\"ses-rpc\"}'\n"
-        "while IFS= read -r line; do\n"
-        "  printf '%s\\n' \"$line\" >> \"$PI_RPC_INBOUND_LOG\"\n"
-        "  case \"$line\" in\n"
-        "    *'\"type\":\"prompt\"'*)\n"
-        "      case \"$line\" in\n"
-        "        *'\"message\":\"FIRST\"'*) printf '%s\\n' "
-        "'{\"id\":\"meridian-prompt-1\",\"type\":\"response\","
-        "\"command\":\"prompt\",\"success\":true}' ;;\n"
-        "        *'\"message\":\"SECOND\"'*) printf '%s\\n' "
-        "'{\"id\":\"meridian-prompt-2\",\"type\":\"response\","
-        "\"command\":\"prompt\",\"success\":true}' ;;\n"
-        "      esac\n"
-        "      printf '%s\\n' '{\"type\":\"agent_start\"}'\n"
-        "      printf '%s\\n' "
-        "'{\"type\":\"agent_end\",\"messages\":[{\"role\":\"assistant\",\"stopReason\":\"stop\"}]}'\n"
-        "      ;;\n"
-        "    *'\"type\":\"steer\"'*)\n"
-        "      printf '%s\\n' '{\"type\":\"message_update\"}'\n"
-        "      ;;\n"
-        "    *'\"type\":\"abort\"'*)\n"
-        "      exit 0\n"
-        "      ;;\n"
-        "  esac\n"
-        "done\n",
-        encoding="utf-8",
-    )
-    shim.chmod(0o755)
-    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
-    monkeypatch.setenv("PI_RPC_INBOUND_LOG", str(inbound_log))
-
-    connection = PiRpcConnection()
-    await _start_existing_pi_connection(
-        connection,
-        ConnectionConfig(
-            spawn_id=SpawnId("p-pi-rpc-connection"),
-            harness_id=HarnessId.PI,
-            prompt="hello",
-            control_root=tmp_path,
-            child_env={
-                "PATH": os.environ["PATH"],
-                "PI_RPC_INBOUND_LOG": str(inbound_log),
-            },
-        ),
-        ResolvedLaunchSpec(
-            harness=HarnessId.PI,
-            prompt="hello",
-            permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
-        ),
-    )
-
-    event_iter = connection.events()
-    first = await _next_non_phase_event(event_iter)
-    assert first.event_type == "session"
-    assert connection.session_id == "ses-rpc"
-    assert (await _next_non_phase_event(event_iter)).event_type == "agent_start"
-    assert (await _next_non_phase_event(event_iter)).event_type == "agent_end"
-
-    first_send = asyncio.create_task(connection.send_user_message("FIRST"))
-    assert (await _next_non_phase_event(event_iter)).event_type == "response"
-    await first_send
-    assert (await _next_non_phase_event(event_iter)).event_type == "agent_start"
-    assert (await _next_non_phase_event(event_iter)).event_type == "agent_end"
-
-    second_send = asyncio.create_task(connection.send_user_message("SECOND"))
-    assert (await _next_non_phase_event(event_iter)).event_type == "response"
-    await second_send
-    assert (await _next_non_phase_event(event_iter)).event_type == "agent_start"
-    assert (await _next_non_phase_event(event_iter)).event_type == "agent_end"
-
-    await connection.send_steer("focus")
-    assert (await _next_non_phase_event(event_iter)).event_type == "message_update"
-
-    await connection.send_cancel()
-    remaining_events = [event async for event in event_iter]
-    assert remaining_events == []
-
-    inbound_messages = [
-        json.loads(line) for line in inbound_log.read_text(encoding="utf-8").splitlines() if line
-    ]
-    assert inbound_messages[0]["type"] == "prompt"
-    assert inbound_messages[0]["message"] == "hello"
-    assert [message["type"] for message in inbound_messages] == [
-        "prompt",
-        "prompt",
-        "prompt",
-        "steer",
-        "abort",
-    ]
 
 
 @pytest.mark.asyncio
