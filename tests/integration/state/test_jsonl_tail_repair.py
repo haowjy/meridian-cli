@@ -4,6 +4,7 @@ import json
 import os
 import stat
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 
@@ -16,6 +17,9 @@ from meridian.lib.state.atomic import (
 )
 from meridian.lib.state.spawn_store import start_spawn
 from tests.conftest import posix_only
+
+if TYPE_CHECKING:
+    from pytest import MonkeyPatch
 
 
 def test_permission_journal_repairs_torn_tail_before_append(tmp_path: Path) -> None:
@@ -205,3 +209,24 @@ def test_repair_jsonl_tail_does_not_create_parent_dir(tmp_path: Path) -> None:
     repair_jsonl_tail(path)
 
     assert not path.parent.exists()
+
+
+def test_append_durable_jsonl_line_succeeds_when_repair_replace_fails(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    path = tmp_path / "journal.jsonl"
+    torn = b'{"id":1,"kind":"start"}\n{"id":2,"kind":"to'
+    path.write_bytes(torn)
+    new_line = '{"id":3,"kind":"new"}\n'
+
+    import meridian.lib.platform.atomic as platform_atomic
+
+    def _deny_replace(src: os.PathLike[str] | str, dst: os.PathLike[str] | str) -> None:
+        raise PermissionError("open file blocks replace on Windows")
+
+    monkeypatch.setattr(platform_atomic.os, "replace", _deny_replace)
+
+    append_durable_jsonl_line(path, new_line)
+
+    assert path.read_bytes() == torn + new_line.encode("utf-8")
