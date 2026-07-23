@@ -34,6 +34,7 @@ from meridian.lib.streaming.drain_coordinator import (
     DrainExitDecision,
     DrainLoopDecision,
     DrainPlan,
+    DrainTerminalDecision,
 )
 from meridian.lib.streaming.drain_wait import _cancel_task
 from meridian.lib.streaming.event_observers import EventObserverRegistry
@@ -143,6 +144,16 @@ class _Coordinator:
     def note_event_persisted(self, event: RawHarnessEvent) -> DrainLoopDecision:
         self._calls.append(("noted", event))
         return DrainLoopDecision()
+
+    async def handle_terminal_event(
+        self,
+        event: RawHarnessEvent,
+        outcome: Any,
+        action: Any,
+    ) -> DrainTerminalDecision:
+        del action
+        self._calls.append(("terminal", event))
+        return DrainTerminalDecision(recorded_outcome=outcome)
 
     async def after_event(self) -> DrainLoopDecision:
         return DrainLoopDecision()
@@ -394,6 +405,27 @@ async def test_tenth_history_write_failure_aborts_without_delivery() -> None:
     assert outcomes[0].error == (
         "Aborted drain loop after repeated output persistence failures"
     )
+
+
+@pytest.mark.asyncio
+async def test_codex_interrupted_turn_publishes_cancelled_drain_outcome() -> None:
+    interrupted = RawHarnessEvent(
+        event_type="turn/completed",
+        harness_id="codex",
+        payload={"turn": {"status": "interrupted"}},
+    )
+    outcomes: list[DrainOutcome] = []
+
+    await _run_drain(
+        [interrupted],
+        [WriteResult(success=True, seq=0)],
+        outcomes=outcomes,
+    )
+
+    assert len(outcomes) == 1
+    assert outcomes[0].status == "cancelled"
+    assert outcomes[0].exit_code == 130
+    assert outcomes[0].error == "interrupted"
 
 
 @pytest.mark.asyncio

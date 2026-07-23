@@ -540,7 +540,9 @@ def _resolve_codex_terminal(event: RawHarnessEvent) -> TerminalEventOutcome | No
         )
     turn = event.payload.get("turn")
     turn_payload = cast("dict[str, object]", turn) if isinstance(turn, dict) else None
-    if turn_payload is not None and turn_payload.get("status") == "failed":
+    turn_status = turn_payload.get("status") if turn_payload is not None else None
+    if turn_status == "failed":
+        assert turn_payload is not None
         error: object = turn_payload.get("error")
         error_payload = cast("dict[str, object]", error) if isinstance(error, dict) else None
         preferred_error = error_payload.get("message") if error_payload is not None else None
@@ -551,7 +553,19 @@ def _resolve_codex_terminal(event: RawHarnessEvent) -> TerminalEventOutcome | No
             or stringify_terminal_error(cast("object", error)),
         )
     if event.event_type == "turn/completed":
-        return TerminalEventOutcome(status=SpawnStatus.SUCCEEDED, exit_code=0)
+        if turn_payload is None or turn_status == "completed":
+            return TerminalEventOutcome(status=SpawnStatus.SUCCEEDED, exit_code=0)
+        if turn_status == "interrupted":
+            return TerminalEventOutcome(
+                status=SpawnStatus.CANCELLED,
+                exit_code=130,
+                error="interrupted",
+            )
+        return TerminalEventOutcome(
+            status=SpawnStatus.FAILED,
+            exit_code=1,
+            error=f"unexpected_codex_turn_status:{turn_status}",
+        )
     return None
 
 
