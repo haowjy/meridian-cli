@@ -4,6 +4,20 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+- `--continue` no longer crashes when the work item's saved task dir was
+  deleted or replaced by a file: warns and launches from project root. The
+  work item keeps its saved task dir. (#450)
+- `spawn --from` accepts raw harness session ids, matching `--continue`. (#457)
+- Tests no longer break when run from inside a Meridian session: the test
+  env clears inherited `_MERIDIAN_*` vars. (#456)
+- Pi stderr test no longer flakes under CI load (removed 50ms timeout
+  override).
+
+### Removed
+- Five redundant unit test files (project-root wrappers, Windows path
+  handling, display labels, startup classify, spawn action output).
+
 ## [0.3.43] - 2026-07-18
 
 ### Changed
