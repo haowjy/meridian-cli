@@ -13,10 +13,16 @@ test_reaper_managed_primary.py.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import Any, cast
+
+import pytest
 
 import meridian.lib.ops.spawn.api as spawn_api
+from meridian.lib.core.lifecycle import SpawnLifecycleService
+from meridian.lib.core.spawn_service import SpawnApplicationService
+from meridian.lib.core.types import SpawnId
 from meridian.lib.ops.spawn.models import SpawnCancelInput
+from meridian.lib.state import spawn_store, spawn_tree
 from tests.integration.state.conftest import (
     _OLD_STARTED_AT,
     _create_spawn,
@@ -29,9 +35,6 @@ from tests.integration.state.conftest import (
     recording_managed_primary_terminations,
     recording_scope_cleanup,
 )
-
-if TYPE_CHECKING:
-    import pytest
 
 
 def _patch_spawn_cancel_runtime_resolution(
@@ -52,6 +55,103 @@ def _patch_spawn_cancel_runtime_resolution(
         "meridian.lib.ops.spawn.api.resolve_spawn_reference",
         lambda _project_root, _spawn_id: spawn_id,
     )
+
+
+def _start_descendant(
+    runtime_root: Path,
+    spawn_id: str,
+    *,
+    parent_id: str | None = None,
+    launch_mode: str = "foreground",
+) -> None:
+    spawn_store.start_spawn(
+        runtime_root,
+        spawn_id=spawn_id,
+        chat_id=spawn_id,
+        parent_id=parent_id,
+        model="gpt-5.4",
+        agent="coder",
+        harness="codex",
+        prompt=f"prompt {spawn_id}",
+        status="running",
+        launch_mode=launch_mode,
+    )
+
+
+def _spawn_service(runtime_root: Path) -> SpawnApplicationService:
+    return SpawnApplicationService(
+        runtime_root,
+        SpawnLifecycleService(runtime_root),
+    )
+
+
+@pytest.mark.asyncio
+async def test_cancel_descendants_rescans_for_newly_appearing_descendant(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime_root = tmp_path / ".meridian"
+    _start_descendant(runtime_root, "p1")
+    _start_descendant(runtime_root, "p2", parent_id="p1")
+    service = _spawn_service(runtime_root)
+    original_active_descendants = spawn_tree.active_descendants
+    scans = 0
+
+    def active_descendants(runtime_root_arg: Path, root_id: SpawnId | str):
+        nonlocal scans
+        scans += 1
+        if scans == 2:
+            _start_descendant(runtime_root, "p3", parent_id="p2")
+        return original_active_descendants(runtime_root_arg, root_id)
+
+    monkeypatch.setattr(spawn_tree, "active_descendants", active_descendants)
+
+    reaped_ids = await service.cancel_descendants(SpawnId("p1"))
+
+    child = spawn_store.get_spawn(runtime_root, "p2")
+    grandchild = spawn_store.get_spawn(runtime_root, "p3")
+    assert child is not None
+    assert child.status == "cancelled"
+    assert grandchild is not None
+    assert grandchild.status == "cancelled"
+    assert reaped_ids == {"p2", "p3"}
+
+
+@pytest.mark.asyncio
+async def test_cancel_descendants_reports_only_proven_terminal_descendants(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime_root = tmp_path / ".meridian"
+    _start_descendant(runtime_root, "p1")
+    _start_descendant(runtime_root, "p2", parent_id="p1", launch_mode="app")
+    _start_descendant(runtime_root, "p3", parent_id="p1")
+
+    class NonterminatingManager:
+        async def stop_spawn(self, *_args: object, **_kwargs: object) -> None:
+            return None
+
+    service = SpawnApplicationService(
+        runtime_root,
+        SpawnLifecycleService(runtime_root),
+        spawn_manager=cast("Any", NonterminatingManager()),
+    )
+
+    async def never_terminal(*_args: object, **_kwargs: object) -> Any:
+        return None
+
+    monkeypatch.setattr(service, "_wait_for_terminal", never_terminal)
+
+    reaped_ids = await service.cancel_descendants(SpawnId("p1"))
+
+    nonterminal = spawn_store.get_spawn(runtime_root, "p2")
+    terminal = spawn_store.get_spawn(runtime_root, "p3")
+    assert nonterminal is not None
+    assert nonterminal.status == "running"
+    assert nonterminal.cancel_intent is not None
+    assert terminal is not None
+    assert terminal.status == "cancelled"
+    assert reaped_ids == {"p3"}
 
 
 def test_cancel_orphan_primary_after_passive_reconcile_still_terminates(

@@ -20,6 +20,22 @@ uv run meridian spawn -a reviewer -p "Write hello world" --dry-run --json
 - [ ] `model` field present
 - [ ] `terminal_surface_mode == "pty_mediated"`
 
+## Pi RPC/native projection and runtime guidance
+
+```bash
+uv run meridian spawn --harness pi -m openai-codex/gpt-5.4-mini \
+  -p "Pi projection check" --dry-run --json
+uv run meridian --harness pi --dry-run --json
+```
+
+- [ ] Spawned `cli_command` begins with `pi --mode rpc`; native primary argv begins
+      with `pi` and omits `--mode rpc`
+- [ ] RPC argv contains `--no-extensions` plus `-e` for
+      `meridian-spawn-watch`; native argv contains `-e` for both
+      `managed-bash` and `meridian-spawn-watch`
+- [ ] With an incompatible Pi binary, the command fails before launch with guidance
+      to run `pi update` or set `MERIDIAN_PI_BINARY` to a compatible binary
+
 ## Goal contract preview
 
 ```bash

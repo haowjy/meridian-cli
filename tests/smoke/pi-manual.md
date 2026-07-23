@@ -34,6 +34,30 @@ Use a cheap model (e.g. `openai-codex/gpt-5.4-mini`) for plumbing checks.
 
 ---
 
+## Runtime and argv gate
+
+Before the happy path, inspect both launch shapes:
+
+```bash
+pi --version
+pi --help
+uv run meridian spawn --harness pi -m openai-codex/gpt-5.4-mini \
+  -p 'argv check' --dry-run --json
+uv run meridian --harness pi --dry-run --json
+```
+
+Expect:
+
+- Spawned/RPC `cli_command` starts with `pi --mode rpc`; the native primary command
+  starts with `pi` and does **not** contain `--mode rpc`.
+- Both commands load the required Meridian extension entrypoints with `-e`: spawned
+  runs include `meridian-spawn-watch`, and the native primary also includes
+  `managed-bash`. The RPC command isolates extension loading with `--no-extensions`.
+- If `pi --help` lacks the required RPC/extension flags, Meridian refuses the launch
+  and says to run `pi update` or set `MERIDIAN_PI_BINARY` to a compatible Pi binary.
+
+---
+
 ## Happy path
 
 ```bash
