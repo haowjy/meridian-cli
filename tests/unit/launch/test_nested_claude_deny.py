@@ -180,6 +180,8 @@ def test_agent_copy_exception_keeps_generic_agent_only(
 
     allowed = _tool_flag_entries(context.binding.argv, "--allowedTools")
     disallowed = _tool_flag_entries(context.binding.argv, "--disallowedTools")
+    assert context.resolved_request.tools is not None
+    assert context.resolved_request.tools["task"] == "deny"
     assert "Agent" in allowed
     assert "Agent" not in disallowed
     assert {
@@ -187,4 +189,10 @@ def test_agent_copy_exception_keeps_generic_agent_only(
         "Agent(Plan)",
         "Agent(General-purpose)",
         "Agent(general-purpose)",
+        "TaskCreate",
+        "TaskGet",
+        "TaskList",
+        "TaskOutput",
+        "TaskStop",
+        "TaskUpdate",
     }.issubset(disallowed)
