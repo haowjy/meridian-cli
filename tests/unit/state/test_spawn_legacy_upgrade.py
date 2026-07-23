@@ -113,11 +113,16 @@ def test_terminal_flat_rows_preserve_success_and_failure_facts() -> None:
     ):
         restored = _upgrade(_terminal_v2(status, exit_code, error))
 
+        assert restored.status == status
         assert restored.runner_exit is not None
         assert restored.runner_exit.status == status
         assert restored.runner_exit.exit_code == exit_code
+        assert restored.runner_exit.exited_at == "2026-07-01T00:01:59Z"
         assert restored.terminal is not None
         assert restored.terminal.exit_code == exit_code
+        assert restored.terminal.finished_at == "2026-07-01T00:02:00Z"
+        assert restored.terminal.published_at == "2026-07-01T00:02:01Z"
+        assert restored.terminal.total_cost_usd == 0.25
         assert restored.terminal.error == error
 
 
@@ -151,6 +156,18 @@ def test_missing_publication_time_backfills_finish_time() -> None:
 
     assert restored.terminal is not None
     assert restored.terminal.published_at == restored.terminal.finished_at
+
+
+def test_incomplete_terminal_reports_quarantine_rule_and_fields() -> None:
+    row = _terminal_v2("succeeded", 0, None)
+    row.pop("finished_at")
+    row.pop("published_at")
+
+    with pytest.raises(LegacySpawnStateUpgradeError) as quarantined:
+        upgrade_legacy_spawn_state(row)
+
+    assert quarantined.value.rule == "incomplete_terminal"
+    assert quarantined.value.fields == ("finished_at",)
 
 
 def test_unknown_legacy_field_is_rejected_without_data_loss() -> None:
