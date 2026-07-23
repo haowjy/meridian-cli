@@ -278,5 +278,3 @@ async def test_create_session_with_retry_resume_retries_404_then_succeeds() -> N
 
     assert session_id == "sess-parent"
     assert len(connection.requests) == 3
-
-
