@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 
 import pytest
 
@@ -14,12 +13,18 @@ from meridian.lib.launch.report import (
     extract_pi_failure_from_history,
 )
 
-_FIXTURES = Path(__file__).resolve().parents[2] / "fixtures" / "pi"
 _ = _PI_EXTRACTOR  # Initialize harness modules before importing launch.report in isolation.
 
 
-def test_extract_pi_failure_from_prompt_rejection_fixture() -> None:
-    history = (_FIXTURES / "history_prompt_rejection.jsonl").read_text(encoding="utf-8")
+def test_extract_pi_failure_from_prompt_rejection() -> None:
+    history = "\n".join(
+        (
+            '{"event_type":"meridian.pi.lifecycle.phase","payload":{"phase":"initial_prompt_sent"}}',
+            '{"event_type":"response","payload":{"command":"prompt","success":false,'
+            '"error":"No API key configured"}}',
+            '{"event_type":"meridian.pi.lifecycle.phase","payload":{"phase":"cleanup_completed"}}',
+        )
+    )
 
     assert extract_pi_failure_from_history(history) == "No API key configured"
 
