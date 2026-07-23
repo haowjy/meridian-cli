@@ -193,6 +193,40 @@ def test_git_autosync_syncs_and_pushes_changes(
     assert status.strip() == ""
 
 
+def test_git_autosync_ignores_hostile_repo_scoped_git_environment(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    git_env = isolated_git_env(global_config_path=tmp_path / "gitconfig")
+    remote, work = _seed_remote(tmp_path, env=git_env)
+    _configure_clone_override(tmp_path, monkeypatch, repo_url=str(remote), clone_path=work)
+
+    decoy = tmp_path / "decoy"
+    _init_commit_repo(decoy, env=git_env)
+    intended_before = _git("rev-parse", "HEAD", cwd=work, env=git_env).stdout.strip()
+    decoy_before = _git("rev-parse", "HEAD", cwd=decoy, env=git_env).stdout.strip()
+    (work / "keep.txt").write_text("intended repository change\n", encoding="utf-8")
+
+    monkeypatch.setenv("GIT_DIR", str(decoy / ".git"))
+    monkeypatch.setenv("GIT_WORK_TREE", str(decoy))
+
+    result = GitAutosync().execute(
+        _context(work),
+        _hook(remote="", options={"path": str(work)}),
+    )
+
+    assert result.outcome == "success"
+    intended_after = _git("rev-parse", "HEAD", cwd=work, env=git_env).stdout.strip()
+    decoy_after = _git("rev-parse", "HEAD", cwd=decoy, env=git_env).stdout.strip()
+    assert intended_after != intended_before
+    assert decoy_after == decoy_before
+    assert (
+        _git("show", "HEAD:keep.txt", cwd=work, env=git_env).stdout
+        == "intended repository change\n"
+    )
+    assert _git("status", "--porcelain", cwd=decoy, env=git_env).stdout == ""
+
+
 def test_git_autosync_first_time_clone_does_not_fail_when_lock_created(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
