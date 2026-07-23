@@ -4,6 +4,16 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+- Denied headless harness spawns fail at submission with the policy error,
+  before any spawn row exists. Previously `--bg` reported "submitted" and
+  the denial surfaced seconds later as a generic launch failure. (#442)
+- Codex turns that fail (e.g. unsupported model 400) now record a failed
+  spawn with the upstream error, not `succeeded` with exit 0. Interrupted
+  turns record `cancelled`/exit 130. (#448)
+- Succeeded terminal outcomes can no longer carry an error or nonzero exit
+  code — invalid combinations are rejected at construction.
+
 ## [0.3.44] - 2026-07-23
 
 ### Fixed
