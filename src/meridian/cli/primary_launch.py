@@ -254,10 +254,11 @@ def run_primary_launch(
         if requested_work_id is None:
             requested_work_id = continue_contract.work_id
         launch_task_dir = continue_contract.task_dir
-        if launch_task_dir is not None and not Path(launch_task_dir).exists():
+        if launch_task_dir is not None and not Path(launch_task_dir).is_dir():
             continue_warning = _merge_warnings(
                 continue_warning,
-                f"Continued session's task_dir no longer exists: {launch_task_dir}; "
+                f"Continued session's task_dir is unavailable or not a directory: "
+                f"{launch_task_dir}; "
                 "falling back to the normal launch directory.",
             )
             launch_task_dir = project_root.as_posix()

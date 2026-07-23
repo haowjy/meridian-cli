@@ -256,9 +256,11 @@ def test_primary_continue_does_not_inherit_ambient_work(
     assert context.task_cwd == source_task_dir
 
 
+@pytest.mark.parametrize("replacement", ["missing", "file"])
 def test_primary_continue_with_stale_work_task_dir_falls_back_without_mutating_work(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    replacement: str,
 ) -> None:
     project_root = tmp_path / "repo"
     project_root.mkdir()
@@ -282,6 +284,8 @@ def test_primary_continue_with_stale_work_task_dir_falls_back_without_mutating_w
     )
     work_before = work_store.get_active_work_item(project_state_dir, "source-work")
     source_task_dir.rmdir()
+    if replacement == "file":
+        source_task_dir.write_text("replacement", encoding="utf-8")
     contexts: list[Any] = []
     real_bind_launch_context = launch_context.bind_launch_context
 
