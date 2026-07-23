@@ -1015,6 +1015,13 @@ def _spawn_wait(
             ),
         ),
     ] = None,
+    fail_fast: Annotated[
+        bool,
+        Parameter(
+            name="--fail-fast",
+            help="Return as soon as any spawn fails, listing spawns still pending.",
+        ),
+    ] = False,
     verbose: Annotated[
         bool,
         Parameter(name="--verbose", help="Enable verbose wait status output.", show=True),
@@ -1047,6 +1054,7 @@ def _spawn_wait(
             timeout=timeout,
             yield_after_secs=yield_after_secs,
             timeout_explicit=timeout is not None,
+            fail_fast=fail_fast,
             verbose=verbose,
             quiet=quiet,
             include_report_body=report,

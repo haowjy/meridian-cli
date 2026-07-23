@@ -23,6 +23,7 @@ from meridian.lib.ops.spawn.models import (
     SpawnShowInput,
     SpawnStatsInput,
     SpawnStatusInput,
+    SpawnWaitInput,
 )
 from meridian.lib.state import spawn_store
 from meridian.lib.state.paths import resolve_project_runtime_root_for_write
@@ -302,6 +303,48 @@ def test_spawn_list_and_status_surface_timed_out_status(tmp_path: Path) -> None:
     assert listed.spawns[0].status == "timed_out"
     assert status.status == "timed_out"
     assert status.exit_code == 1
+
+
+def test_spawn_wait_fail_fast_returns_failed_and_pending_spawns(tmp_path: Path) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    runtime_root = _state_root(project_root)
+    failed_id = spawn_store.start_spawn(
+        runtime_root,
+        spawn_id="p-failed",
+        chat_id="c-wait",
+        model="gpt-5.4",
+        agent="coder",
+        harness="codex",
+        prompt="fail",
+    )
+    spawn_store.finalize_spawn(runtime_root, failed_id, "failed", 1, origin="runner")
+    pending_id = spawn_store.start_spawn(
+        runtime_root,
+        spawn_id="p-pending",
+        chat_id="c-wait",
+        model="gpt-5.4",
+        agent="coder",
+        harness="codex",
+        prompt="keep running",
+    )
+
+    output = spawn_api.spawn_wait_sync(
+        SpawnWaitInput(
+            project_root=project_root.as_posix(),
+            spawn_ids=(str(failed_id), str(pending_id)),
+            fail_fast=True,
+            yield_after_secs=0,
+        )
+    )
+
+    assert output.fail_fast
+    assert output.any_failed
+    assert output.pending_ids == (str(pending_id),)
+    assert {spawn.spawn_id: spawn.status for spawn in output.spawns} == {
+        str(failed_id): "failed",
+        str(pending_id): "running",
+    }
 
 
 def test_spawn_status_omits_report_body_until_requested(tmp_path: Path) -> None:

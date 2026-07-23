@@ -1239,6 +1239,7 @@ class SpawnWaitInput(BaseModel):
     yield_after_secs: float | None = None
     timeout_explicit: bool = False
     poll_interval_secs: float | None = None
+    fail_fast: bool = False
     verbose: bool = False
     quiet: bool = False
     include_report_body: bool = False
@@ -1255,6 +1256,8 @@ class SpawnWaitMultiOutput(BaseModel):
     cancelled_runs: int
     timed_out_runs: int = 0
     any_failed: bool
+    fail_fast: bool = False
+    pending_ids: tuple[str, ...] = ()
     checkpoint: bool = False
     checkpoint_pending_ids: tuple[str, ...] = ()
     checkpoint_chat_id: str | None = None
@@ -1269,6 +1272,18 @@ class SpawnWaitMultiOutput(BaseModel):
         effective_ctx = ctx or FormatContext()
         if self.checkpoint:
             return self._format_checkpoint_text()
+        if self.fail_fast:
+            failed_ids = ", ".join(
+                spawn.spawn_id
+                for spawn in self.spawns
+                if spawn.status in {"failed", "timed_out"}
+            )
+            pending_ids = ", ".join(self.pending_ids)
+            details = self.model_copy(
+                update={"fail_fast": False, "pending_ids": ()}
+            ).format_text(effective_ctx)
+            summary = f"Fail-fast: {failed_ids} failed. Still pending: {pending_ids}."
+            return f"{summary}\n\n{details}" if details else summary
         if not self.spawns:
             return ""
         if len(self.spawns) == 1:
@@ -1334,6 +1349,9 @@ class SpawnWaitMultiOutput(BaseModel):
             "timed_out_runs": self.timed_out_runs,
             "any_failed": self.any_failed,
         }
+        if self.fail_fast:
+            wire["fail_fast"] = True
+            wire["pending_ids"] = list(self.pending_ids)
         if self.checkpoint:
             wire["checkpoint"] = True
             wire["checkpoint_pending_ids"] = list(self.checkpoint_pending_ids)

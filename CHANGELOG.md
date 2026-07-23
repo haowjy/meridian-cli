@@ -8,6 +8,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `meridian spawn` now rejects bare positional prompts that closely resemble
   spawn subcommands and suggests the intended command. Explicit prompt flags
   remain literal. (#321)
+- `meridian spawn wait --fail-fast` now returns on the first failed or timed-out
+  spawn and reports the spawns that remain pending. (#458)
 
 ## [0.3.47] - 2026-07-23
 
