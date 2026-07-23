@@ -188,6 +188,38 @@ def _resolve_spawn_prompt(
     raise ValueError("prompt required: pass -p/--prompt or --prompt-file")
 
 
+def _edit_distance(left: str, right: str) -> int:
+    """Return the Levenshtein distance between two short CLI tokens."""
+    previous = list(range(len(right) + 1))
+    for left_index, left_char in enumerate(left, start=1):
+        current = [left_index]
+        for right_index, right_char in enumerate(right, start=1):
+            current.append(
+                min(
+                    current[-1] + 1,
+                    previous[right_index] + 1,
+                    previous[right_index - 1] + (left_char != right_char),
+                )
+            )
+        previous = current
+    return previous[-1]
+
+
+def _validate_positional_spawn_prompt(
+    prompt: str | None,
+    *,
+    subcommands: frozenset[str],
+) -> None:
+    if prompt is None or not prompt or any(char.isspace() for char in prompt):
+        return
+    closest = min(subcommands, key=lambda command: (_edit_distance(prompt, command), command))
+    if _edit_distance(prompt, closest) <= 2:
+        raise ValueError(
+            f"Unknown spawn subcommand '{prompt}'; "
+            f"did you mean 'meridian spawn {closest}'?"
+        )
+
+
 def _shared_launch_input_kwargs(
     *,
     dry_run: bool,
@@ -234,7 +266,16 @@ def _shared_launch_input_kwargs(
 
 
 def _spawn_create(
+    subcommands: frozenset[str],
     emit: Any,
+    positional_prompt: Annotated[
+        str | None,
+        Parameter(
+            name="prompt",
+            help="Inline literal prompt.",
+        ),
+    ] = None,
+    *,
     prompt: Annotated[
         str | None,
         Parameter(
@@ -590,8 +631,11 @@ def _spawn_create(
         phase="prompt_resolution",
         launcher_pid=os.getpid(),
     )
+    _validate_positional_spawn_prompt(positional_prompt, subcommands=subcommands)
+    if positional_prompt is not None and prompt is not None:
+        raise ValueError("cannot specify both a positional prompt and -p/--prompt")
     resolved_prompt = _resolve_spawn_prompt(
-        prompt,
+        prompt if prompt is not None else positional_prompt,
         prompt_file,
         has_files=bool(references),
         is_continue=resolved_continue_from is not None,
@@ -1212,7 +1256,6 @@ def register_spawn_commands(app: App, emit: Emitter) -> tuple[set[str], dict[str
             "meridian.spawn.wait": _SPAWN_WAIT_HELP_EPILOGUE,
         },
         emit=emit,
-        default_handler=partial(_spawn_create, emit),
     )
     app.command(
         partial(_spawn_done, emit),
@@ -1246,4 +1289,8 @@ def register_spawn_commands(app: App, emit: Emitter) -> tuple[set[str], dict[str
         help="Removed. Use `meridian session log ID`.",
         show=False,
     )
+    registered.add("spawn.log")
+    descriptions["meridian.spawn.log"] = "Removed. Use `meridian session log ID`."
+    subcommands = frozenset(command.removeprefix("spawn.") for command in registered)
+    app.default(partial(_spawn_create, subcommands, emit))
     return registered, descriptions

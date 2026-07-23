@@ -4,6 +4,11 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+- `meridian spawn` now rejects bare positional prompts that closely resemble
+  spawn subcommands and suggests the intended command. Explicit prompt flags
+  remain literal. (#321)
+
 ## [0.3.47] - 2026-07-23
 
 ### Removed
