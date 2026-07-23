@@ -162,6 +162,18 @@ def resolve_context_ref(project_root: Path, ref: str) -> ContextRef:
             return _session_context_ref_from_record(session)
         raise ValueError(f"No primary spawn found for session '{normalized}'")
 
+    runtime_root = resolve_runtime_root_for_read(project_root)
+    session = (
+        session_store.resolve_session_ref(runtime_root, normalized)
+        if runtime_root is not None
+        else None
+    )
+    if session is not None:
+        primary_row = _select_primary_spawn_for_session(project_root, session.chat_id)
+        if primary_row is not None:
+            return _session_context_ref(primary_row, project_root)
+        return _session_context_ref_from_record(session)
+
     spawn_id = resolve_spawn_reference(project_root, normalized)
     row = read_spawn_row(project_root, spawn_id)
     if row is None:

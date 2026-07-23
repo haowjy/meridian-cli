@@ -46,7 +46,7 @@ LAUNCH_EXAMPLES: tuple[tuple[str, str], ...] = (
 LAUNCH_REF_NOTES = (
     "  continue/fork refs: chat id (c123), spawn id (p123), "
     "or raw harness session id\n"
-    "  --from refs: chat id (c123) or spawn id (p123)\n"
+    "  --from refs: chat id (c123), spawn id (p123), or raw harness session id\n"
     "  --fork preserves agent/model/skills identity. --fork-fresh allows\n"
     "  identity changes and may reduce prompt-cache locality. --from starts\n"
     "  fresh with prior context as reference material only."
