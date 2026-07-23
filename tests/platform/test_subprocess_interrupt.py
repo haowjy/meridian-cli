@@ -5,8 +5,6 @@ from __future__ import annotations
 import signal
 from unittest.mock import patch
 
-import pytest
-
 from meridian.lib.launch.process import subprocess_launcher
 from meridian.lib.launch.process.subprocess_launcher import _wait_for_process
 
@@ -44,7 +42,6 @@ class _FakeProcess:
         self.send_signal_args.append(sig)
 
 
-@pytest.mark.unit
 def test_interrupt_while_running_posix_sends_sigint() -> None:
     """On POSIX, KeyboardInterrupt with live process sends SIGINT, not terminate."""
     process = _FakeProcess(running=True, wait_exit_code=1, raise_interrupt=True)
@@ -57,7 +54,6 @@ def test_interrupt_while_running_posix_sends_sigint() -> None:
     assert result == 1
 
 
-@pytest.mark.unit
 def test_interrupt_while_running_windows_calls_terminate() -> None:
     """On Windows, KeyboardInterrupt with live process calls terminate(), not send_signal."""
     process = _FakeProcess(running=True, wait_exit_code=1, raise_interrupt=True)
@@ -70,7 +66,6 @@ def test_interrupt_while_running_windows_calls_terminate() -> None:
     assert result == 1
 
 
-@pytest.mark.unit
 def test_interrupt_while_already_exited_returns_130() -> None:
     """KeyboardInterrupt after process exits: return 130 without any signal."""
     process = _FakeProcess(running=False, wait_exit_code=0, raise_interrupt=True)
@@ -82,7 +77,6 @@ def test_interrupt_while_already_exited_returns_130() -> None:
     assert process.send_signal_args == []
 
 
-@pytest.mark.unit
 def test_normal_exit_returns_exit_code() -> None:
     """Happy path: wait() returns the process exit code directly."""
     process = _FakeProcess(running=True, wait_exit_code=42)

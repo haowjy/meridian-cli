@@ -1,10 +1,10 @@
-"""Unit tests for posix.py process-group scope terminator.
+"""Platform tests for the POSIX process-group scope terminator.
 
 Focuses on the dead-root / dissolved-PGID degraded path (PROC-004):
 if the wrapper process dies before cleanup runs, descendant processes that
 stayed in the same PGID should still be caught via the secondary orphan scan.
 
-Classified unit: all psutil.Process, os.killpg, and _scan_by_pgid calls are
+Classified platform: all psutil.Process, os.killpg, and _scan_by_pgid calls are
 fully mocked — no real I/O.
 
 # qa-validated: test-suite-redesign
@@ -13,7 +13,6 @@ fully mocked — no real I/O.
 from __future__ import annotations
 
 import os
-import sys
 from dataclasses import dataclass
 from unittest.mock import MagicMock, patch
 
@@ -22,8 +21,7 @@ import pytest
 
 from meridian.lib.platform.process_scope import posix
 from meridian.lib.platform.process_scope.base import PROCESS_BIRTH_UNKNOWN_EPOCH, CleanupResult
-
-posix_only = pytest.mark.skipif(sys.platform == "win32", reason="POSIX-only test")
+from tests.conftest import posix_only
 
 # ---------------------------------------------------------------------------
 # helpers

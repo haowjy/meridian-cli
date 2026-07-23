@@ -1,4 +1,4 @@
-"""Unit tests for the Windows Job Object process-scope terminator."""
+"""Platform tests for the Windows Job Object process-scope terminator."""
 
 from __future__ import annotations
 
