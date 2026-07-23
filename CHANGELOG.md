@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.3.46] - 2026-07-23
+
 ### Removed
 - Removed redundant unit suites and moved filesystem, process, and platform
   coverage to honest integration/platform tiers. Functional-core shrinking
