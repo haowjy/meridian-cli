@@ -1,7 +1,6 @@
 """Session log selector validation at the transcript I/O boundary."""
 
 import json
-import re
 from pathlib import Path
 
 import pytest
@@ -78,5 +77,7 @@ def test_session_log_rejects_conflicting_selectors(
         {"file_path": transcript.as_posix(), **selectors}
     )
 
-    with pytest.raises(ValueError, match=re.escape(message)):
+    with pytest.raises(ValueError) as exc_info:
         session_log_sync(payload)
+
+    assert str(exc_info.value) == message
