@@ -4,15 +4,17 @@ from __future__ import annotations
 
 import signal
 import subprocess
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-import pytest
-
-from meridian.lib.platform import IS_WINDOWS, detached_process
+from meridian.lib.platform import detached_process
 from meridian.lib.platform.process_scope.base import ProcessScopeSnapshot
+from tests.conftest import posix_only
+
+if TYPE_CHECKING:
+    import pytest
 
 
-@pytest.mark.skipif(IS_WINDOWS, reason="Linux prctl parent-death preexec is POSIX-only")
+@posix_only
 def test_detached_subprocess_config_links_linux_parent_death_preexec(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

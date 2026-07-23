@@ -1,8 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-
-import pytest
+from typing import TYPE_CHECKING
 
 from meridian.lib.launch.process.ports import (
     LaunchedProcess,
@@ -17,8 +16,10 @@ from meridian.lib.launch.process.runner import (
 from meridian.lib.launch.process.subprocess_launcher import SubprocessProcessLauncher
 from meridian.lib.launch.process.windows_launcher import WindowsConsoleLauncher
 
+if TYPE_CHECKING:
+    import pytest
 
-@pytest.mark.unit
+
 def test_select_process_launcher_uses_windows_console_launcher(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -43,7 +44,6 @@ def test_select_process_launcher_uses_windows_console_launcher(
     assert selected.contract.captures_output_to_artifact is False
 
 
-@pytest.mark.unit
 def test_select_process_launcher_with_capture_uses_subprocess_on_windows(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -68,7 +68,6 @@ def test_select_process_launcher_with_capture_uses_subprocess_on_windows(
     assert selected.contract.captures_output_to_artifact is True
 
 
-@pytest.mark.unit
 def test_select_process_launcher_non_windows_uses_posix_pty_when_available(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -92,7 +91,6 @@ def test_select_process_launcher_non_windows_uses_posix_pty_when_available(
     assert selected.contract.platform_family == "posix"
 
 
-@pytest.mark.unit
 def test_select_process_launcher_non_windows_falls_back_to_subprocess(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -116,7 +114,6 @@ def test_select_process_launcher_non_windows_falls_back_to_subprocess(
     assert selected.contract.platform_family == "portable"
 
 
-@pytest.mark.unit
 def test_windows_console_launcher_forces_console_inheritance(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

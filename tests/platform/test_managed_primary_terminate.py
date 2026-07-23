@@ -1,4 +1,4 @@
-"""Unit tests for terminate_managed_primary_processes birth-match signaling."""
+"""Platform tests for terminate_managed_primary_processes birth-match signaling."""
 
 from __future__ import annotations
 
