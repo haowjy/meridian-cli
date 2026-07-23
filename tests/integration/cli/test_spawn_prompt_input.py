@@ -119,7 +119,7 @@ def test_spawn_prompt_file_stdin_reaches_dry_run_prompt(
 
 @pytest.mark.integration
 @posix_only
-def test_spawn_rejects_subcommand_typo_but_accepts_unrelated_bare_prompt(
+def test_spawn_rejects_subcommand_shaped_prompts_and_suggests_transposition(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -142,8 +142,8 @@ def test_spawn_rejects_subcommand_typo_but_accepts_unrelated_bare_prompt(
         "spawn",
     ]
 
-    typo = subprocess.run(
-        [*base_command, "statsu"],
+    unknown = subprocess.run(
+        [*base_command, "list-agents"],
         cwd=project_root,
         env=env,
         text=True,
@@ -151,8 +151,8 @@ def test_spawn_rejects_subcommand_typo_but_accepts_unrelated_bare_prompt(
         timeout=3,
         check=False,
     )
-    prompt = subprocess.run(
-        [*base_command, "investigate", "-a", "", "--bg", "--dry-run", "--format", "json"],
+    typo = subprocess.run(
+        [*base_command, "wiat"],
         cwd=project_root,
         env=env,
         text=True,
@@ -161,7 +161,17 @@ def test_spawn_rejects_subcommand_typo_but_accepts_unrelated_bare_prompt(
         check=False,
     )
     explicit_prompt = subprocess.run(
-        [*base_command, "-p", "statsu", "-a", "", "--bg", "--dry-run", "--format", "json"],
+        [
+            *base_command,
+            "-p",
+            "list-agents",
+            "-a",
+            "",
+            "--bg",
+            "--dry-run",
+            "--format",
+            "json",
+        ],
         cwd=project_root,
         env=env,
         text=True,
@@ -170,9 +180,57 @@ def test_spawn_rejects_subcommand_typo_but_accepts_unrelated_bare_prompt(
         check=False,
     )
 
+    assert unknown.returncode != 0
+    assert (
+        "unknown spawn subcommand 'list-agents'\n"
+        "To force a literal one-word prompt, use --prompt."
+    ) in unknown.stderr
     assert typo.returncode != 0
-    assert "did you mean 'meridian spawn stats'?" in typo.stderr.lower()
-    assert prompt.returncode == 0, prompt.stderr
-    assert json.loads(prompt.stdout)["composed_prompt"] == "investigate"
+    assert "did you mean 'meridian spawn wait'?" in typo.stderr
     assert explicit_prompt.returncode == 0, explicit_prompt.stderr
-    assert json.loads(explicit_prompt.stdout)["composed_prompt"] == "statsu"
+    assert json.loads(explicit_prompt.stdout)["composed_prompt"] == "list-agents"
+
+
+@pytest.mark.integration
+@posix_only
+def test_spawn_accepts_positional_prompt_that_does_not_match_subcommand_shape(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = tmp_path / "project"
+    (project_root / ".meridian").mkdir(parents=True)
+    (project_root / ".meridian" / "id").write_text("prompt-shape-test", encoding="utf-8")
+    (project_root / "meridian.toml").write_text(
+        "[spawn]\ndeny_headless_harnesses = []\n",
+        encoding="utf-8",
+    )
+    prepend_fake_executables(monkeypatch, tmp_path, "codex")
+    env = os.environ.copy()
+    env["MERIDIAN_HOME"] = (tmp_path / "home").as_posix()
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "meridian",
+            "--harness",
+            "codex",
+            "spawn",
+            "wait?",
+            "-a",
+            "",
+            "--bg",
+            "--dry-run",
+            "--format",
+            "json",
+        ],
+        cwd=project_root,
+        env=env,
+        text=True,
+        capture_output=True,
+        timeout=3,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout)["composed_prompt"] == "wait?"

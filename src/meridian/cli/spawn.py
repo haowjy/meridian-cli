@@ -2,6 +2,7 @@
 
 import asyncio
 import os
+import re
 import sys
 from collections.abc import Callable
 from functools import partial
@@ -189,20 +190,32 @@ def _resolve_spawn_prompt(
 
 
 def _edit_distance(left: str, right: str) -> int:
-    """Return the Levenshtein distance between two short CLI tokens."""
-    previous = list(range(len(right) + 1))
+    """Return the adjacent-transposition-aware edit distance for two CLI tokens."""
+    distances = [[0] * (len(right) + 1) for _ in range(len(left) + 1)]
+    for left_index in range(len(left) + 1):
+        distances[left_index][0] = left_index
+    for right_index in range(len(right) + 1):
+        distances[0][right_index] = right_index
+
     for left_index, left_char in enumerate(left, start=1):
-        current = [left_index]
         for right_index, right_char in enumerate(right, start=1):
-            current.append(
-                min(
-                    current[-1] + 1,
-                    previous[right_index] + 1,
-                    previous[right_index - 1] + (left_char != right_char),
-                )
+            distances[left_index][right_index] = min(
+                distances[left_index - 1][right_index] + 1,
+                distances[left_index][right_index - 1] + 1,
+                distances[left_index - 1][right_index - 1]
+                + (left_char != right_char),
             )
-        previous = current
-    return previous[-1]
+            if (
+                left_index > 1
+                and right_index > 1
+                and left_char == right[right_index - 2]
+                and left[left_index - 2] == right_char
+            ):
+                distances[left_index][right_index] = min(
+                    distances[left_index][right_index],
+                    distances[left_index - 2][right_index - 2] + 1,
+                )
+    return distances[-1][-1]
 
 
 def _validate_positional_spawn_prompt(
@@ -210,14 +223,22 @@ def _validate_positional_spawn_prompt(
     *,
     subcommands: frozenset[str],
 ) -> None:
-    if prompt is None or not prompt or any(char.isspace() for char in prompt):
+    if (
+        prompt is None
+        or prompt in subcommands
+        or re.fullmatch(r"[a-z][a-z-]*", prompt) is None
+    ):
         return
     closest = min(subcommands, key=lambda command: (_edit_distance(prompt, command), command))
-    if _edit_distance(prompt, closest) <= 2:
-        raise ValueError(
-            f"Unknown spawn subcommand '{prompt}'; "
-            f"did you mean 'meridian spawn {closest}'?"
-        )
+    suggestion = (
+        f"; did you mean 'meridian spawn {closest}'?"
+        if _edit_distance(prompt, closest) <= 2
+        else ""
+    )
+    raise ValueError(
+        f"unknown spawn subcommand '{prompt}'{suggestion}\n"
+        "To force a literal one-word prompt, use --prompt."
+    )
 
 
 def _shared_launch_input_kwargs(
