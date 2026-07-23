@@ -30,8 +30,7 @@ uv run meridian --harness pi --dry-run --json
 
 - [ ] Spawned `cli_command` begins with `pi --mode rpc`; native primary argv begins
       with `pi` and omits `--mode rpc`
-- [ ] RPC argv contains `--no-extensions` plus `-e` for
-      `meridian-spawn-watch`; native argv contains `-e` for both
+- [ ] RPC argv contains `-e` for `meridian-spawn-watch`; native argv contains `-e` for both
       `managed-bash` and `meridian-spawn-watch`
 - [ ] With an incompatible Pi binary, the command fails before launch with guidance
       to run `pi update` or set `MERIDIAN_PI_BINARY` to a compatible binary

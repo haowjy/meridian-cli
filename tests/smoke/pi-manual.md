@@ -25,7 +25,7 @@ Prerequisites:
 - **Spawn session files:** `~/.meridian/meridian-pi/sessions/<spawn-id>/` (or under
   `MERIDIAN_HOME` when set)
 - **Meridian extension bundles:** `~/.meridian/pi/extensions/` (or package `dist/extensions`);
-  default launches use `--no-extensions` plus explicit `-e` to those bundles only
+  Meridian launches pass the required bundle entrypoints explicitly with `-e`
 
 Optional: `. tests/smoke/scripts/pi-setup.sh --isolated-state` sets
 `_MERIDIAN_PI_STATE_DIR` to a temp dir for extension disk state only.
@@ -52,7 +52,7 @@ Expect:
   starts with `pi` and does **not** contain `--mode rpc`.
 - Both commands load the required Meridian extension entrypoints with `-e`: spawned
   runs include `meridian-spawn-watch`, and the native primary also includes
-  `managed-bash`. The RPC command isolates extension loading with `--no-extensions`.
+  `managed-bash`.
 - If `pi --help` lacks the required RPC/extension flags, Meridian refuses the launch
   and says to run `pi update` or set `MERIDIAN_PI_BINARY` to a compatible Pi binary.
 
