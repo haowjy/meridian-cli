@@ -1,24 +1,23 @@
-import json
-from pathlib import Path
+"""Strict in-memory acceptance and quarantine matrix for legacy spawn rows."""
+
+from __future__ import annotations
+
 from typing import Any
 
 import pytest
+from pydantic import ValidationError
 
-from meridian.lib.state.spawn import repository
-from meridian.lib.state.spawn.repository import (
-    Applied,
-    SpawnStateQuarantined,
-    read_state,
-    write_state_locked,
+from meridian.lib.state.spawn.legacy import (
+    LegacySpawnStateUpgradeError,
+    upgrade_legacy_spawn_state,
 )
+from meridian.lib.state.spawn.repository import StoredSpawnState
 
 
-def _v2_flat(spawn_id: str = "p1", *, status: str = "running") -> dict[str, Any]:
-    """Return the complete field set written by origin/main's v2 repository."""
-
+def _v2_flat(*, status: str = "running") -> dict[str, Any]:
     return {
         "v": 2,
-        "id": spawn_id,
+        "id": "p1",
         "chat_id": "c1",
         "owner_chat_id": None,
         "parent_id": None,
@@ -71,7 +70,7 @@ def _v2_flat(spawn_id: str = "p1", *, status: str = "running") -> dict[str, Any]
     }
 
 
-def _terminal_v2(status: str, *, exit_code: int, error: str | None) -> dict[str, Any]:
+def _terminal_v2(status: str, exit_code: int, error: str | None) -> dict[str, Any]:
     row = _v2_flat(status=status)
     row.update(
         runner_exit_code=exit_code,
@@ -94,267 +93,109 @@ def _terminal_v2(status: str, *, exit_code: int, error: str | None) -> dict[str,
     return row
 
 
-def _write_row(spawns_dir: Path, row: dict[str, Any]) -> Path:
-    state_path = spawns_dir / row["id"] / "state.json"
-    state_path.parent.mkdir(parents=True)
-    state_path.write_text(json.dumps(row), encoding="utf-8")
-    return state_path
+def _upgrade(row: dict[str, Any]) -> StoredSpawnState:
+    return StoredSpawnState.model_validate(upgrade_legacy_spawn_state(row))
 
 
-@pytest.mark.parametrize(
-    ("row", "expected_error"),
-    [
-        (_v2_flat(), None),
-        (_terminal_v2("succeeded", exit_code=0, error=None), None),
-        (_terminal_v2("failed", exit_code=9, error="backend failed"), "backend failed"),
-    ],
-)
-def test_v2_flat_rows_parse_as_strict_v3_models(
-    tmp_path: Path, row: dict[str, Any], expected_error: str | None
-) -> None:
-    spawns_dir = tmp_path / "spawns"
-    state_path = _write_row(spawns_dir, row)
+def test_active_flat_row_upgrades_to_strict_v3() -> None:
+    restored = _upgrade(_v2_flat())
 
-    restored = read_state(spawns_dir, "p1", include_prompt=False)
-
-    assert restored is not None
-    assert restored.status == row["status"]
-    if row["runner_exit_status"] is None:
-        assert restored.runner_exit is None
-    else:
-        assert restored.runner_exit is not None
-        assert restored.runner_exit.status == row["runner_exit_status"]
-        assert restored.runner_exit.exit_code == row["runner_exit_code"]
-        assert restored.runner_exit.exited_at == row["runner_exit_at"]
-    if row["status"] == "running":
-        assert restored.terminal is None
-    else:
-        assert restored.terminal is not None
-        assert restored.terminal.exit_code == row["exit_code"]
-        assert restored.terminal.finished_at == row["finished_at"]
-        assert restored.terminal.published_at == row["published_at"]
-        assert restored.terminal.error == expected_error
-    assert json.loads(state_path.read_text(encoding="utf-8"))["v"] == 2
+    assert restored.v == 3
+    assert restored.status == "running"
+    assert restored.runner_exit is None
+    assert restored.terminal is None
 
 
-def test_v2_nested_terminal_status_agreement_upgrades(tmp_path: Path) -> None:
-    spawns_dir = tmp_path / "spawns"
-    row = _terminal_v2("succeeded", exit_code=0, error=None)
-    terminal = {
-        "status": row["status"],
-        "exit_code": row["exit_code"],
-        "finished_at": row["finished_at"],
-        "published_at": row["published_at"],
-        "duration_secs": row["duration_secs"],
-        "total_cost_usd": row["total_cost_usd"],
-        "input_tokens": row["input_tokens"],
-        "output_tokens": row["output_tokens"],
-        "cache_read_input_tokens": row["cache_read_input_tokens"],
-        "cache_creation_input_tokens": row["cache_creation_input_tokens"],
-        "reasoning_tokens": row["reasoning_tokens"],
-        "cost_is_estimate": row["cost_is_estimate"],
-        "error": row["error"],
-        "origin": row["terminal_origin"],
-    }
-    for field in (
-        "finished_at", "published_at", "exit_code", "duration_secs", "total_cost_usd",
-        "input_tokens", "output_tokens", "cache_read_input_tokens",
-        "cache_creation_input_tokens", "reasoning_tokens", "cost_is_estimate", "error",
-        "terminal_origin",
+def test_terminal_flat_rows_preserve_success_and_failure_facts() -> None:
+    for status, exit_code, error in (
+        ("succeeded", 0, None),
+        ("failed", 9, "backend failed"),
     ):
-        row.pop(field)
-    row["runner_exit"] = {
-        "status": row.pop("runner_exit_status"),
-        "exit_code": row.pop("runner_exit_code"),
-        "error": row.pop("runner_exit_error"),
-        "exited_at": row.pop("runner_exit_at"),
-    }
-    row["terminal"] = terminal
-    _write_row(spawns_dir, row)
+        restored = _upgrade(_terminal_v2(status, exit_code, error))
 
-    restored = read_state(spawns_dir, "p1", include_prompt=False)
+        assert restored.runner_exit is not None
+        assert restored.runner_exit.status == status
+        assert restored.runner_exit.exit_code == exit_code
+        assert restored.terminal is not None
+        assert restored.terminal.exit_code == exit_code
+        assert restored.terminal.error == error
 
-    assert restored is not None
+
+def test_nested_v2_row_with_agreeing_terminal_status_upgrades() -> None:
+    row = upgrade_legacy_spawn_state(_terminal_v2("succeeded", 0, None))
+    row["v"] = 2
+    row["terminal"]["status"] = "succeeded"
+
+    restored = _upgrade(row)
+
     assert restored.terminal is not None
     assert restored.terminal.exit_code == 0
 
 
-def test_missing_version_dispatches_through_v2_upgrade(tmp_path: Path) -> None:
-    spawns_dir = tmp_path / "spawns"
+def test_missing_version_and_retired_revision_are_curated_legacy_inputs() -> None:
     row = _v2_flat()
     row.pop("v")
-    _write_row(spawns_dir, row)
-
-    restored = read_state(spawns_dir, "p1", include_prompt=False)
-
-    assert restored is not None
-    assert restored.status == "running"
-
-
-def test_retired_revision_field_is_deliberately_dropped(tmp_path: Path) -> None:
-    spawns_dir = tmp_path / "spawns"
-    row = _v2_flat()
     row["revision"] = 17
-    state_path = _write_row(spawns_dir, row)
 
-    restored = read_state(spawns_dir, "p1", include_prompt=False)
+    upgraded = upgrade_legacy_spawn_state(row)
 
-    assert restored is not None
-    assert restored.status == "running"
-    assert json.loads(state_path.read_text(encoding="utf-8"))["revision"] == 17
+    assert upgraded["v"] == 3
+    assert "revision" not in upgraded
 
 
-def test_terminal_row_without_published_at_backfills_finish_time(tmp_path: Path) -> None:
-    spawns_dir = tmp_path / "spawns"
-    row = _terminal_v2("succeeded", exit_code=0, error=None)
+def test_missing_publication_time_backfills_finish_time() -> None:
+    row = _terminal_v2("succeeded", 0, None)
     row.pop("published_at")
-    _write_row(spawns_dir, row)
 
-    restored = read_state(spawns_dir, "p1", include_prompt=False)
+    restored = _upgrade(row)
 
-    assert restored is not None
     assert restored.terminal is not None
     assert restored.terminal.published_at == restored.terminal.finished_at
 
 
-def test_terminal_row_without_finish_or_publication_time_quarantines(
-    tmp_path: Path,
-) -> None:
-    spawns_dir = tmp_path / "spawns"
-    row = _terminal_v2("succeeded", exit_code=0, error=None)
-    row.pop("finished_at")
-    row.pop("published_at")
-    _write_row(spawns_dir, row)
-
-    with pytest.raises(SpawnStateQuarantined) as quarantined:
-        read_state(spawns_dir, "p1")
-
-    errors = quarantined.value.report.validation_errors
-    assert "incomplete_terminal" in str(errors)
-    assert "finished_at" in str(errors)
-
-
-def test_unrecognized_legacy_field_still_quarantines(tmp_path: Path) -> None:
-    spawns_dir = tmp_path / "spawns"
+def test_unknown_legacy_field_is_rejected_without_data_loss() -> None:
     row = _v2_flat()
     row["not_a_curated_retired_field"] = "must not disappear"
-    _write_row(spawns_dir, row)
 
-    with pytest.raises(SpawnStateQuarantined) as quarantined:
-        read_state(spawns_dir, "p1")
-
-    errors = quarantined.value.report.validation_errors
-    assert "unknown_fields" in str(errors)
-    assert "not_a_curated_retired_field" in str(errors)
+    with pytest.raises(LegacySpawnStateUpgradeError, match="unknown_fields"):
+        upgrade_legacy_spawn_state(row)
 
 
-@pytest.mark.parametrize(
-    ("mutate", "reason"),
-    [
-        (lambda row: row.update(unknown_legacy_fact="x"), "unknown"),
-        (lambda row: row.update(exit_code=3), "non-terminal"),
-        (lambda row: row.update(runner_exit_status="failed"), "runner"),
-    ],
-)
-def test_ambiguous_v2_flat_rows_quarantine_with_reason(
-    tmp_path: Path, mutate: Any, reason: str
-) -> None:
-    spawns_dir = tmp_path / "spawns"
+def test_terminal_facts_on_active_status_are_rejected() -> None:
     row = _v2_flat()
-    mutate(row)
-    _write_row(spawns_dir, row)
+    row["exit_code"] = 3
 
-    with pytest.raises(SpawnStateQuarantined) as quarantined:
-        read_state(spawns_dir, "p1")
-
-    assert reason in str(quarantined.value.report.validation_errors).lower()
+    with pytest.raises(LegacySpawnStateUpgradeError, match="non_terminal_status"):
+        upgrade_legacy_spawn_state(row)
 
 
-def test_disagreeing_nested_terminal_status_quarantines_with_reason(tmp_path: Path) -> None:
-    spawns_dir = tmp_path / "spawns"
-    row = _v2_flat(status="succeeded")
+def test_partial_runner_exit_is_rejected() -> None:
+    row = _v2_flat()
+    row["runner_exit_status"] = "failed"
+
+    with pytest.raises(LegacySpawnStateUpgradeError, match="partial_runner_exit"):
+        upgrade_legacy_spawn_state(row)
+
+
+def test_disagreeing_nested_terminal_status_is_rejected() -> None:
+    row = upgrade_legacy_spawn_state(_terminal_v2("succeeded", 0, None))
+    row["v"] = 2
+    row["terminal"]["status"] = "failed"
+
+    with pytest.raises(LegacySpawnStateUpgradeError, match="disagree"):
+        upgrade_legacy_spawn_state(row)
+
+
+def test_nested_terminal_facts_on_active_status_fail_v3_validation() -> None:
+    row = upgrade_legacy_spawn_state(_v2_flat())
+    row["v"] = 2
     row["terminal"] = {
-        "status": "failed",
-        "exit_code": 1,
+        "status": "running",
+        "exit_code": 0,
         "finished_at": "2026-07-01T00:02:00Z",
         "published_at": "2026-07-01T00:02:01Z",
         "origin": "runner",
     }
-    _write_row(spawns_dir, row)
 
-    with pytest.raises(SpawnStateQuarantined) as quarantined:
-        read_state(spawns_dir, "p1")
-
-    assert "disagree" in str(quarantined.value.report.validation_errors).lower()
-
-
-def test_nested_terminal_facts_on_active_status_quarantine(tmp_path: Path) -> None:
-    spawns_dir = tmp_path / "spawns"
-    row = _v2_flat()
-    projection_fields = {
-        "runner_exit_code", "runner_exit_status", "runner_exit_error", "runner_exit_at",
-        "finished_at", "published_at", "exit_code", "duration_secs", "total_cost_usd",
-        "input_tokens", "output_tokens", "cache_read_input_tokens",
-        "cache_creation_input_tokens", "reasoning_tokens", "cost_is_estimate", "error",
-        "terminal_origin",
-    }
-    for field in set(row) & projection_fields:
-        row.pop(field)
-    row.update(
-        runner_exit=None,
-        terminal={
-            "status": "running",
-            "exit_code": 0,
-            "finished_at": "2026-07-01T00:02:00Z",
-            "published_at": "2026-07-01T00:02:01Z",
-            "origin": "runner",
-        },
-    )
-    _write_row(spawns_dir, row)
-
-    with pytest.raises(SpawnStateQuarantined) as quarantined:
-        read_state(spawns_dir, "p1")
-
-    assert "terminal status and terminal facts" in str(
-        quarantined.value.report.validation_errors
-    )
-
-
-def test_v3_rows_bypass_legacy_upgrader(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    spawns_dir = tmp_path / "spawns"
-    row = _v2_flat()
-    row["v"] = 3
-    for field in (
-        "runner_exit_code", "runner_exit_status", "runner_exit_error", "runner_exit_at",
-        "finished_at", "published_at", "exit_code", "duration_secs", "total_cost_usd",
-        "input_tokens", "output_tokens", "cache_read_input_tokens",
-        "cache_creation_input_tokens", "reasoning_tokens", "cost_is_estimate", "error",
-        "terminal_origin",
-    ):
-        row.pop(field)
-    row.update(runner_exit=None, terminal=None)
-    _write_row(spawns_dir, row)
-
-    def fail_if_called(_raw: dict[str, Any]) -> dict[str, Any]:
-        raise AssertionError("v3 must bypass the legacy upgrader")
-
-    monkeypatch.setattr(repository, "upgrade_legacy_spawn_state", fail_if_called)
-
-    assert read_state(spawns_dir, "p1", include_prompt=False) is not None
-
-
-def test_mutating_legacy_row_writes_v3_without_rewrite_on_read(tmp_path: Path) -> None:
-    spawns_dir = tmp_path / "spawns"
-    state_path = _write_row(spawns_dir, _v2_flat())
-
-    assert read_state(spawns_dir, "p1", include_prompt=False) is not None
-    assert json.loads(state_path.read_text(encoding="utf-8"))["v"] == 2
-
-    outcome = write_state_locked(
-        spawns_dir,
-        "p1",
-        lambda current: current.model_copy(update={"desc": "mutated"}),
-    )
-
-    assert isinstance(outcome, Applied)
-    assert json.loads(state_path.read_text(encoding="utf-8"))["v"] == 3
+    with pytest.raises(ValidationError, match="terminal status and terminal facts"):
+        _upgrade(row)

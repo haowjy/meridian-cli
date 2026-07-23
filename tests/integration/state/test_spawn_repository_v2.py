@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 import pytest
@@ -126,6 +127,27 @@ def test_write_state_locked_applies_mutator_under_per_spawn_lock(tmp_path: Path)
     assert committed.before.runner_pid == 456
     assert committed.after.runner_pid == 789
     assert committed.after.desc == "updated"
+
+
+def test_mutating_legacy_row_rewrites_it_as_v3(tmp_path: Path) -> None:
+    spawns_dir = tmp_path / "spawns"
+    _seed_state(spawns_dir, _record())
+    state_path = spawns_dir / "p1" / "state.json"
+    legacy = json.loads(state_path.read_text(encoding="utf-8"))
+    legacy["v"] = 2
+    state_path.write_text(json.dumps(legacy), encoding="utf-8")
+
+    assert read_state(spawns_dir, "p1", include_prompt=False) is not None
+    assert json.loads(state_path.read_text(encoding="utf-8"))["v"] == 2
+
+    outcome = write_state_locked(
+        spawns_dir,
+        "p1",
+        lambda current: current.model_copy(update={"desc": "mutated"}),
+    )
+
+    assert isinstance(outcome, Applied)
+    assert json.loads(state_path.read_text(encoding="utf-8"))["v"] == 3
 
 
 def test_write_state_locked_decline_preserves_state(tmp_path: Path) -> None:
