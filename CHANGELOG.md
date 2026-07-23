@@ -10,6 +10,10 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   remain literal. (#321)
 - `meridian spawn wait --fail-fast` now returns on the first failed or timed-out
   spawn and reports the spawns that remain pending. (#458)
+- State stores persist control and working-directory paths in a consistent
+  absolute, normalized form. (#211)
+- Telemetry segment reads and tails now share one truncation-tolerant JSONL
+  parser. (#139)
 
 ## [0.3.47] - 2026-07-23
 

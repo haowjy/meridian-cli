@@ -26,7 +26,7 @@ from meridian.lib.platform.locking import (
 from meridian.lib.state.atomic import atomic_write_text
 from meridian.lib.state.event_store import append_event, read_events, utc_now_iso
 from meridian.lib.state.liveness import is_process_alive
-from meridian.lib.state.paths import RuntimePaths
+from meridian.lib.state.paths import RuntimePaths, normalize_path_for_write
 
 
 class _SessionLockHandles(NamedTuple):
@@ -377,9 +377,9 @@ def start_session(
             kind=kind,
             harness=harness,
             harness_session_id=HarnessSessionId(harness_session_id),
-            control_root=control_root,
-            task_cwd=task_cwd,
-            execution_cwd=execution_cwd,
+            control_root=normalize_path_for_write(control_root),
+            task_cwd=normalize_path_for_write(task_cwd),
+            execution_cwd=normalize_path_for_write(execution_cwd),
             claude_config_dir=claude_config_dir,
             model=model,
             agent=agent,
