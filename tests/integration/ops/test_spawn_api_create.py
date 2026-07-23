@@ -6,6 +6,7 @@ Query/list/cancel/wait tests live in test_spawn_api_query.py.
 """
 
 import json
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -17,16 +18,98 @@ import meridian.lib.ops.spawn.pre_init as pre_init_module
 from meridian.lib.bootstrap.services import prepare_for_runtime_write
 from meridian.lib.core.context import RuntimeContext
 from meridian.lib.core.types import HarnessId
+from meridian.lib.launch import bundle_adapter
+from meridian.lib.launch.launch_types import ResolvedExecutionPolicy
 from meridian.lib.ops.spawn.models import SpawnCreateInput
-from meridian.lib.state import work_repository, work_store
+from meridian.lib.state import spawn_store, work_repository, work_store
 from meridian.lib.state.paths import resolve_project_paths
 from meridian.lib.telemetry import init_telemetry
 from tests.support.fakes import RecordingTelemetrySink, wait_for_telemetry
-from tests.support.launch import stub_bundle_request_and_resolve
+from tests.support.launch import FakeBundleResult, stub_bundle_request_and_resolve
 
 
 def _noop_setup_telemetry(**_kwargs: object) -> None:
     pass
+
+
+def test_background_headless_deny_rejects_before_reservation_without_affecting_allowed_spawn(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    (project_root / ".git").mkdir()
+    (project_root / "mars.toml").write_text("", encoding="utf-8")
+    (project_root / "meridian.toml").write_text(
+        '[spawn]\ndeny_headless_harnesses = ["codex"]\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("MERIDIAN_HOME", (tmp_path / "home").as_posix())
+    prepared = prepare_for_runtime_write(project_root)
+    worker_launches: list[tuple[object, ...]] = []
+    real_popen = subprocess.Popen
+
+    def _resolve_bundle(
+        request: bundle_adapter.BundleRequest,
+        *,
+        harness_registry: object,
+    ) -> FakeBundleResult:
+        _ = harness_registry
+        harness = HarnessId(request.harness_override or "codex")
+        model = request.model_override or "test-model"
+        return FakeBundleResult(
+            model=model,
+            model_token=model,
+            harness=harness,
+            harness_model=model,
+            execution_policy=ResolvedExecutionPolicy(),
+            provenance={"model_source": "cli", "harness_source": "cli"},
+        )
+
+    class _FakePopen:
+        pid = 42424
+
+    def _launch_worker(*args: object, **kwargs: object) -> object:
+        command = args[0] if args else kwargs.get("args")
+        if isinstance(command, tuple) and "meridian.lib.ops.spawn.execute_bg" in command:
+            worker_launches.append((*args, kwargs))
+            return _FakePopen()
+        return real_popen(*args, **kwargs)
+
+    monkeypatch.setattr(bundle_adapter, "request_and_resolve", _resolve_bundle)
+    monkeypatch.setattr(subprocess, "Popen", _launch_worker)
+
+    denied = spawn_api.spawn_create_sync(
+        SpawnCreateInput(
+            prompt="denied",
+            model="gpt-5.4",
+            harness="codex",
+            project_root=project_root.as_posix(),
+            background=True,
+        ),
+        prepared=prepared,
+    )
+    allowed = spawn_api.spawn_create_sync(
+        SpawnCreateInput(
+            prompt="allowed",
+            model="gemini-2.5-pro",
+            harness="opencode",
+            project_root=project_root.as_posix(),
+            background=True,
+        ),
+        prepared=prepared,
+    )
+
+    assert denied.status == "failed"
+    assert denied.spawn_id is None
+    assert denied.message is not None
+    assert "Headless spawns on the 'codex' harness are denied" in denied.message
+    assert allowed.status == "running"
+    assert allowed.spawn_id is not None
+    assert len(worker_launches) == 1
+    assert prepared.runtime_root is not None
+    rows = spawn_store.list_spawns(prepared.runtime_root).records
+    assert [row.id for row in rows] == [allowed.spawn_id]
 
 
 def test_spawn_create_dry_run_resolves_project_root_from_explicit_path(

@@ -635,6 +635,41 @@ def _resolve_deny_headless_harnesses(
     return tuple(load_config(project_paths.project_root).deny_headless_harnesses)
 
 
+def _enforce_headless_harness_policy(
+    *,
+    request: SpawnRequest,
+    harness: SubprocessHarness,
+    runtime: LaunchRuntime,
+    project_paths: ProjectConfigPaths,
+) -> None:
+    """Reject denied headless harnesses before a spawn can be persisted."""
+
+    if (
+        runtime.composition_surface != LaunchCompositionSurface.SPAWN_PREPARE
+        or harness.id.value not in _resolve_deny_headless_harnesses(runtime, project_paths)
+    ):
+        return
+
+    parent_harness = os.getenv("_MERIDIAN_HARNESS", "")
+    if parent_harness == harness.id.value:
+        agent_hint = (
+            f' Use your native Agent(subagent_type="{request.agent}") tool'
+            " to delegate instead."
+            if request.agent
+            else " Use your native Agent() tool to delegate instead."
+        )
+    else:
+        agent_hint = (
+            " Use a different model with '-m <model>' to route to an allowed harness,"
+            " or override with '--harness <harness>'."
+        )
+    raise ValueError(
+        f"Headless spawns on the '{harness.id.value}' harness are denied by "
+        f"'[spawn] deny_headless_harnesses' in meridian.toml."
+        f"{agent_hint}"
+    )
+
+
 def _missing_continue_session_error(source_ref: str | None) -> str:
     normalized_source = (source_ref or "").strip()
     if normalized_source:
@@ -1592,6 +1627,12 @@ def prepare_launch_surface(
             )
         }
     )
+    _enforce_headless_harness_policy(
+        request=resolved_request,
+        harness=harness,
+        runtime=runtime,
+        project_paths=project_paths,
+    )
     return PreparedLaunchSurface(
         request=resolved_request,
         harness=harness,
@@ -1877,30 +1918,13 @@ def bind_launch_context(
         if tools != resolved_request.tools:
             resolved_request = resolved_request.model_copy(update={"tools": tools})
 
-    if (
-        runtime.composition_surface == LaunchCompositionSurface.SPAWN_PREPARE
-        and harness.id.value in _resolve_deny_headless_harnesses(runtime, project_paths)
-    ):
-        parent_harness = os.getenv("_MERIDIAN_HARNESS", "")
-        if parent_harness == harness.id.value:
-            # Caller is on the same harness that's denied — suggest native delegation.
-            agent_hint = (
-                f' Use your native Agent(subagent_type="{resolved_request.agent}") tool'
-                " to delegate instead."
-                if resolved_request.agent
-                else " Use your native Agent() tool to delegate instead."
-            )
-        else:
-            # Caller is on a different harness — suggest switching model/harness.
-            agent_hint = (
-                " Use a different model with '-m <model>' to route to an allowed harness,"
-                " or override with '--harness <harness>'."
-            )
-        raise ValueError(
-            f"Headless spawns on the '{harness.id.value}' harness are denied by "
-            f"'[spawn] deny_headless_harnesses' in meridian.toml."
-            f"{agent_hint}"
-        )
+    # Defense in depth for persisted worker requests that bypassed preparation.
+    _enforce_headless_harness_policy(
+        request=resolved_request,
+        harness=harness,
+        runtime=runtime,
+        project_paths=project_paths,
+    )
 
     is_primary_launch = runtime.composition_surface == LaunchCompositionSurface.PRIMARY
     inject_task_cwd_instruction = directory_context.should_inject_task_cwd_instruction(
