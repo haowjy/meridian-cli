@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import sys
@@ -10,6 +11,7 @@ from pathlib import Path
 import pytest
 
 from meridian.lib.core.types import HarnessId, SpawnId
+from meridian.lib.harness.connections import cursor_subprocess
 from meridian.lib.harness.connections.base import ConnectionConfig
 from meridian.lib.harness.connections.cursor_subprocess import CursorSubprocessConnection
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
@@ -27,6 +29,7 @@ def _install_cursor(
     tmp_path: Path,
     *,
     create_chat_exit: int = 0,
+    create_chat_hangs: bool = False,
 ) -> Path:
     prepend_fake_executables(monkeypatch, tmp_path, "cursor")
     command_log = tmp_path / "cursor-commands.jsonl"
@@ -38,6 +41,11 @@ def _install_cursor(
         "with open(os.environ['CURSOR_COMMAND_LOG'], 'a', encoding='utf-8') as log:\n"
         "    log.write(json.dumps(args) + '\\n')\n"
         "if args == ['agent', 'create-chat']:\n"
+        "    if os.environ.get('CURSOR_CREATE_CHAT_PID'):\n"
+        "        with open(os.environ['CURSOR_CREATE_CHAT_PID'], 'w') as pid_file:\n"
+        "            pid_file.write(str(os.getpid()))\n"
+        f"    if {create_chat_hangs!r}:\n"
+        "        time.sleep(60)\n"
         f"    print({_MINTED_ID!r}, flush=True)\n"
         f"    raise SystemExit({create_chat_exit})\n"
         "print(json.dumps({'type': 'system', 'sessionId': 'fake-agent'}), flush=True)\n"
@@ -71,6 +79,12 @@ async def _start(
     continue_session_id: str | None = None,
 ) -> CursorSubprocessConnection:
     _start_record(tmp_path, spawn_id)
+    child_env = {
+        "PATH": os.environ["PATH"],
+        "CURSOR_COMMAND_LOG": os.environ["CURSOR_COMMAND_LOG"],
+    }
+    if create_chat_pid := os.environ.get("CURSOR_CREATE_CHAT_PID"):
+        child_env["CURSOR_CREATE_CHAT_PID"] = create_chat_pid
 
     def record_session(session_id: str) -> None:
         spawn_store.update_spawn(
@@ -87,10 +101,7 @@ async def _start(
             prompt="hello",
             control_root=tmp_path,
             runtime_root=tmp_path,
-            child_env={
-                "PATH": os.environ["PATH"],
-                "CURSOR_COMMAND_LOG": os.environ["CURSOR_COMMAND_LOG"],
-            },
+            child_env=child_env,
             session_id_observer=record_session,
         ),
         ResolvedLaunchSpec(
@@ -146,6 +157,36 @@ async def test_cursor_nonzero_create_chat_falls_back_to_unresumed_agent(
     ).harness_session_id is None
     await connection.stop()
 
+    commands = [json.loads(line) for line in command_log.read_text().splitlines()]
+    assert commands[0] == ["agent", "create-chat"]
+    assert "--resume" not in commands[1]
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(sys.platform == "win32", reason="uses POSIX executable shim")
+async def test_cursor_hung_create_chat_is_killed_then_launches_unresumed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    command_log = _install_cursor(monkeypatch, tmp_path, create_chat_hangs=True)
+    create_chat_pid = tmp_path / "create-chat.pid"
+    monkeypatch.setenv("CURSOR_CREATE_CHAT_PID", str(create_chat_pid))
+    monkeypatch.setattr(cursor_subprocess, "_CREATE_CHAT_TIMEOUT_SECONDS", 0.05)
+
+    connection = await asyncio.wait_for(
+        _start(tmp_path, SpawnId("p-cursor-hung-create-chat")),
+        timeout=1.0,
+    )
+    assert connection.session_id is None
+    assert spawn_store.get_spawn(
+        tmp_path, SpawnId("p-cursor-hung-create-chat")
+    ).harness_session_id is None
+
+    pid = int(create_chat_pid.read_text())
+    with pytest.raises(ProcessLookupError):
+        os.kill(pid, 0)
+
+    await connection.stop()
     commands = [json.loads(line) for line in command_log.read_text().splitlines()]
     assert commands[0] == ["agent", "create-chat"]
     assert "--resume" not in commands[1]
