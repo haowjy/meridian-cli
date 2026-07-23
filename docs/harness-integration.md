@@ -759,10 +759,10 @@ Run these in order. Each step gates the next.
 - [ ] Drift guards pass (both SpawnParams accounting and projection field coverage)
 
 ```bash
-uv run pytest tests/unit/harness/test_pi_projection.py
 uv run pytest tests/unit/harness/test_pi_extractor.py
-uv run pytest tests/unit/harness/test_pi_integration.py
-uv run pytest tests/unit/cli/test_bootstrap_pi_shortcut.py
+uv run pytest tests/integration/harness/test_pi_integration.py
+# Projection argv and CLI shortcut are covered by tests/smoke/spawn-dry-run.md
+# and tests/smoke/pi-manual.md
 ```
 
 ### Manual Pi smoke (real runtime)
@@ -869,9 +869,8 @@ src/meridian/lib/harness/extractors/pi.py                               # Artifa
 src/meridian/lib/harness/connections/pi_rpc.py                          # JSONL event drain
 src/meridian/pi_runtime/extensions/managed-bash/                        # Managed bash extension source
 src/meridian/pi_runtime/extensions/meridian-spawn-watch/                # Spawn watch extension source
-tests/unit/harness/test_pi_projection.py                                # Projection tests
 tests/unit/harness/test_pi_extractor.py                                 # Extractor tests
-tests/unit/harness/test_pi_integration.py                               # Integration tests
+tests/integration/harness/test_pi_integration.py                        # Integration tests
 ```
 
 ### Modified

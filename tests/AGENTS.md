@@ -61,4 +61,4 @@ object for every class defined in that module. If a unit test sharing the same
 xdist worker imported the class at collection time, `isinstance` and
 `pytest.raises` compare against the stale class object and fail. Reference
 symbols through the live module object instead of binding at import time. See
-`tests/unit/launch/test_inactivity_watchdog.py` for the pattern.
+`tests/integration/launch/test_streaming_runner_watchdog.py` for the pattern.
