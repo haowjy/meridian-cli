@@ -94,6 +94,17 @@ async def _collect_events(connection: CodexConnection) -> list[RawHarnessEvent]:
     return [event async for event in connection.events()]
 
 
+def _drain_raw_event_queue(
+    connection: CodexConnection,
+) -> list[RawHarnessEvent | None]:
+    queued: list[RawHarnessEvent | None] = []
+    while True:
+        try:
+            queued.append(connection._event_queue.get_nowait())
+        except asyncio.QueueEmpty:
+            return queued
+
+
 async def _collect_codex_events_under_fake_clock(
     determinism: AsyncDeterminism,
     connection: CodexConnection,
@@ -212,14 +223,51 @@ async def test_codex_backend_exit_and_reader_race_emit_one_enriched_close(
     websocket.fail.set()
     process.exit(23)
 
-    events = await _collect_events(connection)
     await asyncio.gather(reader, watcher)
+    terminal_sequence = _drain_raw_event_queue(connection)
 
-    assert len(events) == 1
-    assert events[0].event_type == "meridian/error/connectionClosed"
-    assert events[0].payload["backend_exit_code"] == 23
-    assert events[0].payload["backend_stderr_excerpt"] == "fatal vendor detail"
+    assert len(terminal_sequence) == 2
+    close_event = terminal_sequence[0]
+    assert close_event is not None
+    assert close_event.event_type == "meridian/error/connectionClosed"
+    assert close_event.payload["backend_exit_code"] == 23
+    assert close_event.payload["backend_stderr_excerpt"] == "fatal vendor detail"
+    assert terminal_sequence[1] is None
+    assert connection._event_queue.empty()
     assert connection.state == "failed"
+
+
+@pytest.mark.asyncio
+async def test_codex_backend_exit_watcher_closes_lingering_websocket(
+    tmp_path: Path,
+) -> None:
+    connection = CodexConnection()
+    connection._state = "connected"
+    process = _ControllableProcess()
+    connection._process = process  # type: ignore[assignment]
+    websocket = _FreezesAfterMessagesWebSocket([])
+    connection._ws = websocket
+    stderr_path = tmp_path / "stderr.log"
+    stderr_path.write_text("watcher-only failure\n", encoding="utf-8")
+    connection._stderr_log_path = stderr_path
+    reader = asyncio.create_task(connection._read_messages_loop())
+    watcher = asyncio.create_task(connection._watch_backend_exit())
+    await asyncio.sleep(0)
+
+    process.exit(31)
+    await watcher
+    terminal_sequence = _drain_raw_event_queue(connection)
+    reader.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await reader
+
+    assert len(terminal_sequence) == 2
+    close_event = terminal_sequence[0]
+    assert close_event is not None
+    assert close_event.payload["backend_exit_code"] == 31
+    assert close_event.payload["backend_stderr_excerpt"] == "watcher-only failure"
+    assert terminal_sequence[1] is None
+    assert connection._event_queue.empty()
 
 
 @pytest.mark.asyncio
@@ -245,3 +293,26 @@ async def test_codex_expected_stop_cancels_watcher_before_backend_termination() 
     assert process.wait_cancelled is True
     assert scope_handle.terminate_calls == 1
     assert connection.state == "stopped"
+
+
+@pytest.mark.asyncio
+async def test_codex_cleanup_failure_still_ends_expected_stop_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def _fail_parent_death_cleanup(_link: object) -> None:
+        raise OSError("watchdog reap failed")
+
+    monkeypatch.setattr(
+        codex_ws,
+        "release_parent_death_link",
+        _fail_parent_death_cleanup,
+    )
+    connection = CodexConnection()
+    connection._state = "connected"
+
+    await connection.stop(reason="test")
+
+    assert connection.state == "stopped"
+    assert connection._event_stream_ended is True
+    assert _drain_raw_event_queue(connection) == [None]
+    assert connection._event_queue.empty()
