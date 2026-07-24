@@ -569,13 +569,14 @@ def detail_from_row(
     include_report_body: bool,
     runtime_root: Path | None = None,
 ) -> SpawnDetailOutput:
-    report_path, report_body = read_report(
+    report_path, loaded_report_body = read_report(
         project_root,
         row.id,
-        include_body=include_report_body,
+        include_body=True,
         runtime_root=runtime_root,
     )
-    report_summary = report_body[:500] if report_body else None
+    report_summary = loaded_report_body[:500] if loaded_report_body else None
+    report_body = loaded_report_body if include_report_body else None
 
     last_message: str | None = None
     log_path: str | None = None

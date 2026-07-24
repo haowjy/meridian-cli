@@ -992,13 +992,18 @@ def _spawn_wait(
         Parameter(name="--quiet", help="Suppress wait progress output.", show=True),
     ] = False,
     report: Annotated[
-        bool,
+        bool | None,
         Parameter(
             name="--report",
-            help="Include full report body in output (default: enabled). Use --no-report to omit.",
+            help=(
+                "Include full report body. Enabled by default for text output "
+                "and disabled by default for JSON."
+            ),
         ),
-    ] = True,
+    ] = None,
 ) -> None:
+    output_format = _get_global_options().output.format
+    include_report_body = report if report is not None else output_format != "json"
     result = spawn_wait_sync(
         SpawnWaitInput(
             spawn_ids=spawn_ids,
@@ -1007,12 +1012,11 @@ def _spawn_wait(
             timeout_explicit=timeout is not None,
             verbose=verbose,
             quiet=quiet,
-            include_report_body=report,
+            include_report_body=include_report_body,
         ),
         sink=_current_output_sink(),
         prepared=_prepare_spawn_runtime_read(),
     )
-    output_format = _get_global_options().output.format
     if output_format != "json" and (metadata or verbose):
         emit(result.format_text(FormatContext(verbosity=1)))
     else:
