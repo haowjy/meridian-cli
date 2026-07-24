@@ -12,6 +12,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   and launches in its own POSIX process group.
 
 ### Fixed
+- Managed stdio launches now reap their provisional process tree when durable
+  scope registration fails or is cancelled.
 - Cursor process-scope termination can no longer target Meridian's own process
   group when cancelling or reaping a subprocess.
 - Claude failure excerpts are bounded to stderr from the current process launch,

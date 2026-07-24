@@ -884,4 +884,4 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
 PiConnection = PiRpcConnection
 
 
-__all__ = ["PiConnection", "PiRpcConnection"]
+__all__ = ["PiConnection", "PiRpcConnection", "PiRpcTimingPolicy"]

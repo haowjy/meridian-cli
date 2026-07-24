@@ -12,8 +12,14 @@ from pathlib import Path
 from typing import Final
 
 from meridian.lib.core.types import HarnessId
-from meridian.lib.harness.connections.base import ConnectionConfig
-from meridian.lib.harness.connections.managed_backend import register_spawn_owned_process
+from meridian.lib.harness.connections.base import (
+    ConnectionConfig,
+    reap_on_ownership_transfer_failure,
+)
+from meridian.lib.harness.connections.managed_backend import (
+    register_spawn_owned_process,
+    spawn_owned_process_handle,
+)
 from meridian.lib.harness.errors import HarnessBinaryNotFound
 from meridian.lib.platform import IS_WINDOWS
 from meridian.lib.platform.process_scope import ProcessScopeSnapshot, ScopedProcessHandle
@@ -185,6 +191,7 @@ async def launch_managed_stdio(
     stderr_log_path = spawn_dir / "stderr.log"
     stderr_handle = stderr_log_path.open("ab")
     stderr_read_offset = stderr_handle.tell()
+    provisional_scope_handle: ScopedProcessHandle | None = None
     try:
         try:
             process = await asyncio.create_subprocess_exec(
@@ -203,6 +210,12 @@ async def launch_managed_stdio(
                 error=exc,
                 binary_name=command[0],
             ) from exc
+        provisional_scope_handle = spawn_owned_process_handle(
+            spawn_id=config.spawn_id,
+            process=process,
+            scope_id="stdio",
+            role="harness_stdio",
+        )
         scope_handle = await register_spawn_owned_process(
             spawn_id=config.spawn_id,
             control_root=config.control_root,
@@ -213,6 +226,13 @@ async def launch_managed_stdio(
             persist=config.runtime_root is not None,
         )
     except BaseException:
+        if provisional_scope_handle is not None:
+            await reap_on_ownership_transfer_failure(
+                lambda: provisional_scope_handle.terminate(
+                    grace_seconds=kill_grace_seconds,
+                    reason=terminate_reason,
+                )
+            )
         with suppress(OSError):
             stderr_handle.flush()
         stderr_handle.close()
