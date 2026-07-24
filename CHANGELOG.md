@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.3.52] - 2026-07-24
+
 ### Fixed
 - `params.json` now refreshes after bind with the spawn's actual work/task
   dirs (`phase: "bound"`, `bound_work_dir`, `bound_task_dir`). Ambient child
