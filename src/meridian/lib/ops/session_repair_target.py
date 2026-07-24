@@ -8,6 +8,7 @@ from typing import NamedTuple
 
 from meridian.lib.harness.session_detection import infer_harness_from_untracked_session_ref
 from meridian.lib.ops.session_target import (
+    _config_root_hint,
     _detect_primary_session_id,
     _is_chat_ref,
     _is_spawn_ref,
@@ -33,6 +34,7 @@ def _repair_target_from_detected_session_id(
     project_root: Path,
     harness: str | None,
     detected_session_id: str,
+    config_root_hint: Path | None,
     invalid_reason: str,
     unavailable_reason: str,
 ) -> SessionRepairTarget:
@@ -47,6 +49,7 @@ def _repair_target_from_detected_session_id(
         project_root=project_root,
         session_id=detected_session_id,
         harness=harness,
+        config_root_hint=config_root_hint,
     )
     if transcript_target is not None:
         return SessionRepairTarget(
@@ -59,9 +62,6 @@ def _repair_target_from_detected_session_id(
         source=f"{harness or 'primary'} detected session id",
         reason=unavailable_reason,
     )
-
-
-
 
 def _resolve_repair_from_chat_id(
     *,
@@ -77,6 +77,10 @@ def _resolve_repair_from_chat_id(
     harness = session_record.harness.strip() or None
     if harness is None and primary_spawn is not None:
         harness = (primary_spawn.harness or "").strip() or None
+    config_root_hint = _config_root_hint(
+        session_record.claude_config_dir
+        or (primary_spawn.claude_config_dir if primary_spawn is not None else None)
+    )
 
     transcript_target = _resolve_transcript_from_candidates(
         project_root=project_root,
@@ -89,6 +93,7 @@ def _resolve_repair_from_chat_id(
                 else None
             ),
         ],
+        config_root_hint=config_root_hint,
     )
     if transcript_target is not None:
         return SessionRepairTarget(
@@ -107,6 +112,7 @@ def _resolve_repair_from_chat_id(
             project_root=project_root,
             harness=harness,
             detected_session_id=detected_session_id,
+            config_root_hint=config_root_hint,
             invalid_reason=(
                 f"Detected session id '{detected_session_id}' for chat '{chat_id}' "
                 "looks like a spawn id; refusing repair."
@@ -135,11 +141,13 @@ def _resolve_repair_from_spawn_id(
         raise ValueError(f"Spawn '{spawn_id}' not found")
 
     harness = (row.harness or "").strip() or None
+    config_root_hint = _config_root_hint(row.claude_config_dir)
     row_session_id = (row.harness_session_id or "").strip()
     transcript_target = _resolve_transcript_from_candidates(
         project_root=project_root,
         harness=harness,
         candidate_ids=[row_session_id if not _is_spawn_ref(row_session_id) else None],
+        config_root_hint=config_root_hint,
     )
     if transcript_target is not None:
         return SessionRepairTarget(
@@ -162,10 +170,13 @@ def _resolve_repair_from_spawn_id(
         if chat_record is not None:
             if harness is None:
                 harness = chat_record.harness.strip() or None
+            if config_root_hint is None:
+                config_root_hint = _config_root_hint(chat_record.claude_config_dir)
             transcript_target = _resolve_transcript_from_candidates(
                 project_root=project_root,
                 harness=harness,
                 candidate_ids=[_latest_harness_session_id(chat_record)],
+                config_root_hint=config_root_hint,
             )
             if transcript_target is not None:
                 return SessionRepairTarget(
@@ -183,6 +194,7 @@ def _resolve_repair_from_spawn_id(
                 else None
             )
         ],
+        config_root_hint=config_root_hint,
     )
     if transcript_target is not None:
         return SessionRepairTarget(
@@ -210,6 +222,7 @@ def _resolve_repair_from_spawn_id(
         project_root=project_root,
         harness=harness,
         detected_session_id=detected_session_id,
+        config_root_hint=config_root_hint,
         invalid_reason=(
             f"Detected session id '{detected_session_id}' for spawn "
             f"'{spawn_id}' looks like a spawn id; refusing repair."
@@ -232,6 +245,7 @@ def _resolve_repair_from_session_ref(
         project_root=project_root,
         session_id=session_ref,
         harness=harness,
+        config_root_hint=None,
     )
     if transcript_target is not None:
         return SessionRepairTarget(
