@@ -4,6 +4,15 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+- Second Pi stderr test no longer flakes under CI load: dropped the 50ms
+  `_FIRST_STDOUT_AFTER_INITIAL_PROMPT_TIMEOUT_SECONDS` override from
+  `test_pi_rpc_connection_surfaces_stderr_on_early_exit_before_first_event`,
+  the sibling missed by the v0.3.44 de-flake. Early-exit stderr now surfaces
+  via process-death detection instead of racing an artificial timeout. Also
+  removed that test's dead abort/kill grace overrides — the shim exits before
+  teardown, so those timers never engaged.
+
 ## [0.3.48] - 2026-07-24
 
 ### Fixed

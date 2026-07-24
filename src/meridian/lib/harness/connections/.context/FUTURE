@@ -1,0 +1,28 @@
+# connections/ — nice-to-have follow-ups
+
+[pi_rpc timing seam] Pi connection tests steer timing by monkeypatching
+module-private Final constants (_FIRST_STDOUT_AFTER_INITIAL_PROMPT_TIMEOUT_SECONDS,
+_PROCESS_ABORT_GRACE_SECONDS, _PROCESS_KILL_GRACE_SECONDS) in pi_rpc.py. This has
+produced two CI flakes: v0.3.44 (#459) removed a 50ms first-stdout override from
+test_pi_spawn_manager_startup_diagnostics_report_outcome_and_marker; the sibling
+test_pi_rpc_connection_surfaces_stderr_on_early_exit_before_first_event carried the
+same override and flaked again on the v0.3.48 release commit. Both fixes were
+per-instance.
+
+Remedy (NOT "inject the three constants into ConnectionConfig" — that just moves the
+race and bloats the shared launch boundary): make the first-event deadline explicit
+in the handshake model and stamp it when the initial prompt write succeeds (not when
+the consumer starts iterating events); inject an immutable per-connection timing
+policy / clock for focused unit tests; and keep abort/kill grace as process-management
+policy inside the managed-stdio helper (see the managed-stdio extraction note below),
+not as public config. Real-subprocess integration tests should use realistic deadlines
+rather than racing 10-50ms overrides. Track as a scoped issue.
+
+[managed-stdio seam] pi_rpc.py, claude_ws.py, and cursor_subprocess.py duplicate
+stderr-log ownership, subprocess creation, spawn-scope registration, PID/scope
+properties, termination escalation, and handle cleanup. Extract a focused
+managed_stdio helper (or a stdio variant of managed_backend.py) that owns the child
+process, durable scope, bounded stderr tail, and termination — keeping each adapter's
+wire protocol and graceful-abort semantics in place. Do NOT grow base.py into a
+stateful base class; it is a clean contracts module and the transports have materially
+different lifecycle rules.

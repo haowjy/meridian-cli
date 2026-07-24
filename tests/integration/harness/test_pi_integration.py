@@ -756,9 +756,6 @@ async def test_pi_rpc_connection_surfaces_stderr_on_early_exit_before_first_even
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _configure_extension_projection(monkeypatch, tmp_path)
-    monkeypatch.setattr(pi_rpc_module, "_FIRST_STDOUT_AFTER_INITIAL_PROMPT_TIMEOUT_SECONDS", 0.05)
-    monkeypatch.setattr(pi_rpc_module, "_PROCESS_ABORT_GRACE_SECONDS", 0.01)
-    monkeypatch.setattr(pi_rpc_module, "_PROCESS_KILL_GRACE_SECONDS", 0.01)
 
     spawn_id = SpawnId("p-pi-stderr-early-exit")
     crash_stderr = "TypeError: markAsUncloneable is not a function"
