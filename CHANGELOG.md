@@ -7,8 +7,11 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Changed
 - Pi failure extraction and output normalization now live with the Pi harness
   instead of the harness-agnostic launch layer.
+- Claude subprocess transport now uses the shared managed-stdio process lifecycle.
 
 ### Fixed
+- Claude failure excerpts are bounded to stderr from the current process launch,
+  excluding stale output left in reused spawn logs.
 - Pi failure details now read a bounded stderr tail from only the current
   process launch, excluding stale output left in reused spawn logs.
 - Pi first-response timing tests now use per-connection policies with realistic
