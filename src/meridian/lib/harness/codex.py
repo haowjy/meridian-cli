@@ -423,8 +423,14 @@ class CodexAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         _ = started_at_local_iso, expected_session_id
         return _detect_primary_session_id(project_root, started_at_epoch)
 
-    def resolve_session_file(self, *, project_root: Path, session_id: str) -> Path | None:
-        _ = project_root
+    def resolve_session_file(
+        self,
+        *,
+        project_root: Path,
+        session_id: str,
+        config_root_hint: Path | None = None,
+    ) -> Path | None:
+        _ = project_root, config_root_hint
         normalized_session_id = session_id.strip()
         if not normalized_session_id:
             return None

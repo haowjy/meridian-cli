@@ -579,11 +579,17 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         )
         return reconciled or normalized_current
 
-    def resolve_session_file(self, *, project_root: Path, session_id: str) -> Path | None:
+    def resolve_session_file(
+        self,
+        *,
+        project_root: Path,
+        session_id: str,
+        config_root_hint: Path | None = None,
+    ) -> Path | None:
         normalized_session_id = session_id.strip()
         if not normalized_session_id:
             return None
-        for project_dir in _candidate_claude_project_dirs(project_root):
+        for project_dir in _candidate_claude_project_dirs(project_root, config_root_hint):
             candidate = project_dir / f"{normalized_session_id}.jsonl"
             if candidate.is_file():
                 return candidate

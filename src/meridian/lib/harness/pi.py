@@ -343,8 +343,14 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
     def extract_report(self, artifacts: ArtifactStore, spawn_id: SpawnId) -> str | None:
         return PI_EXTRACTOR.extract_report(artifacts, spawn_id)
 
-    def resolve_session_file(self, *, project_root: Path, session_id: str) -> Path | None:
-        _ = project_root  # pi sessions are user-scoped, not project-scoped
+    def resolve_session_file(
+        self,
+        *,
+        project_root: Path,
+        session_id: str,
+        config_root_hint: Path | None = None,
+    ) -> Path | None:
+        _ = project_root, config_root_hint  # pi sessions are user-scoped
         normalized = session_id.strip()
         if not normalized:
             return None

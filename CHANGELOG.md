@@ -9,6 +9,11 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   dirs (`phase: "bound"`, `bound_work_dir`, `bound_task_dir`). Ambient child
   spawns previously showed the parent's work dir forever. Pre-bind crashes
   leave the file honestly marked `phase: "request"`. (#334)
+- `session log`/`search`/`export`/`repair` on tracked Claude sessions now
+  find transcripts by searching the session's recorded config dir, then
+  canonical `~/.claude`, then ambient `CLAUDE_CONFIG_DIR` — instead of
+  ambient-only. Works across bare session id, chat id, and spawn id refs.
+  Untracked lookups unchanged. (#171)
 
 ## [0.3.51] - 2026-07-24
 

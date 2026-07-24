@@ -252,6 +252,59 @@ def test_claude_adapter_uses_claude_config_dir_override(
     assert infer_harness_from_untracked_session_ref(project_root, override_session_id) == "claude"
 
 
+def test_claude_adapter_resolves_tracked_config_root_chain_in_trust_order(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    hint_root = tmp_path / "recorded"
+    canonical_root = tmp_path / "home" / ".claude"
+    ambient_root = tmp_path / "ambient"
+    monkeypatch.setenv("HOME", (tmp_path / "home").as_posix())
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", ambient_root.as_posix())
+
+    session_id = str(uuid4())
+    paths = [
+        root / "projects" / project_slug(project_root) / f"{session_id}.jsonl"
+        for root in (hint_root, canonical_root, ambient_root)
+    ]
+    for path in paths:
+        path.parent.mkdir(parents=True)
+        path.write_text(
+            json.dumps({"type": "agent-setting", "sessionId": session_id}) + "\n",
+            encoding="utf-8",
+        )
+
+    adapter = ClaudeAdapter()
+    assert (
+        adapter.resolve_session_file(
+            project_root=project_root,
+            session_id=session_id,
+            config_root_hint=hint_root,
+        )
+        == paths[0]
+    )
+    paths[0].unlink()
+    assert (
+        adapter.resolve_session_file(
+            project_root=project_root,
+            session_id=session_id,
+            config_root_hint=hint_root,
+        )
+        == paths[1]
+    )
+    paths[1].unlink()
+    assert (
+        adapter.resolve_session_file(
+            project_root=project_root,
+            session_id=session_id,
+            config_root_hint=hint_root,
+        )
+        == paths[2]
+    )
+
+
 @pytest.mark.parametrize(
     ("configured_root", "cwd_relative", "expected_suffix"),
     [

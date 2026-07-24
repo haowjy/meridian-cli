@@ -139,10 +139,12 @@ def _resolve_adapter_file_target(
     session_id: str,
     harness_id: HarnessId,
     adapter: SubprocessHarness,
+    config_root_hint: Path | None,
 ) -> SessionLogTarget | None:
     candidate = adapter.resolve_session_file(
         project_root=project_root,
         session_id=session_id,
+        config_root_hint=config_root_hint,
     )
     if candidate is None or not candidate.is_file():
         return None
@@ -173,6 +175,7 @@ def _resolve_harness_session_file(
     project_root: Path,
     session_id: str,
     harness: str | None,
+    config_root_hint: Path | None,
 ) -> SessionLogTarget:
     normalized_session_id = session_id.strip()
     if not normalized_session_id:
@@ -195,6 +198,7 @@ def _resolve_harness_session_file(
             session_id=normalized_session_id,
             harness_id=harness_id,
             adapter=adapter,
+            config_root_hint=config_root_hint,
         )
         if (
             harness_id == HarnessId.OPENCODE
@@ -222,6 +226,7 @@ def _resolve_harness_session_file(
             session_id=normalized_session_id,
             harness_id=harness_id,
             adapter=adapter,
+            config_root_hint=config_root_hint,
         )
         if (
             harness_id == HarnessId.OPENCODE
@@ -245,12 +250,14 @@ def _resolve_harness_transcript_target_or_none(
     project_root: Path,
     session_id: str,
     harness: str | None,
+    config_root_hint: Path | None,
 ) -> SessionLogTarget | None:
     try:
         return _resolve_harness_session_file(
             project_root=project_root,
             session_id=session_id,
             harness=harness,
+            config_root_hint=config_root_hint,
         )
     except FileNotFoundError:
         return None
@@ -539,6 +546,11 @@ def _latest_harness_session_id(record: session_store.SessionRecord) -> str | Non
     return normalized or None
 
 
+def _config_root_hint(value: str | None) -> Path | None:
+    normalized = (value or "").strip()
+    return Path(normalized).expanduser() if normalized else None
+
+
 def _read_chat_session_record(
     runtime_root: Path, chat_id: str
 ) -> session_store.SessionRecord | None:
@@ -553,6 +565,7 @@ def _resolve_transcript_from_candidates(
     project_root: Path,
     harness: str | None,
     candidate_ids: list[str | None],
+    config_root_hint: Path | None,
 ) -> SessionLogTarget | None:
     seen: set[str] = set()
     for candidate_id in candidate_ids:
@@ -564,6 +577,7 @@ def _resolve_transcript_from_candidates(
             project_root=project_root,
             session_id=normalized_candidate_id,
             harness=harness,
+            config_root_hint=config_root_hint,
         )
         if transcript_target is not None:
             return transcript_target
@@ -644,6 +658,10 @@ def _resolve_from_chat_id(
     normalized_harness = session_record.harness.strip() or None
     if normalized_harness is None and primary_spawn is not None and primary_spawn.harness:
         normalized_harness = primary_spawn.harness.strip() or None
+    config_root_hint = _config_root_hint(
+        session_record.claude_config_dir
+        or (primary_spawn.claude_config_dir if primary_spawn is not None else None)
+    )
 
     output_target = _running_managed_primary_output_target(
         runtime_root,
@@ -682,6 +700,7 @@ def _resolve_from_chat_id(
         project_root=project_root,
         harness=normalized_harness,
         candidate_ids=[normalized_session_id],
+        config_root_hint=config_root_hint,
     )
     if transcript_target is not None:
         output_target = _spawn_history_fallback_for_chat_ref(
@@ -703,6 +722,7 @@ def _resolve_from_chat_id(
             project_root=project_root,
             harness=normalized_harness,
             candidate_ids=[detected_session_id],
+            config_root_hint=config_root_hint,
         )
         if transcript_target is not None:
             output_target = _spawn_history_fallback_for_chat_ref(
@@ -727,6 +747,7 @@ def _resolve_from_chat_id(
         project_root=project_root,
         session_id=normalized_session_id,
         harness=normalized_harness,
+        config_root_hint=config_root_hint,
     )
 
 
@@ -782,6 +803,7 @@ def _resolve_from_spawn_id(
 
     session_id = (row.harness_session_id or "").strip()
     harness = (row.harness or "").strip() or None
+    config_root_hint = _config_root_hint(row.claude_config_dir)
 
     if not session_id and is_primary_spawn:
         primary_meta_session_id = read_primary_harness_session_id(runtime_root, spawn_id)
@@ -826,6 +848,8 @@ def _resolve_from_spawn_id(
                 session_id = (record.harness_session_id or "").strip()
                 if record.harness.strip():
                     harness = record.harness.strip()
+                if config_root_hint is None:
+                    config_root_hint = _config_root_hint(record.claude_config_dir)
             if not session_id:
                 raise ValueError(
                     f"Spawn '{spawn_id}' has no transcript available yet "
@@ -841,11 +865,14 @@ def _resolve_from_spawn_id(
         record = session_store.resolve_session_ref(runtime_root, session_id)
         if record is not None and record.harness.strip():
             harness = record.harness.strip()
+        if record is not None and config_root_hint is None:
+            config_root_hint = _config_root_hint(record.claude_config_dir)
 
     transcript_target = _resolve_transcript_from_candidates(
         project_root=project_root,
         harness=harness,
         candidate_ids=[session_id],
+        config_root_hint=config_root_hint,
     )
     if transcript_target is not None:
         output_target = _resolved_spawn_output_fallback_target(
@@ -870,6 +897,7 @@ def _resolve_from_spawn_id(
                 project_root=project_root,
                 harness=harness,
                 candidate_ids=[detected_session_id],
+                config_root_hint=config_root_hint,
             )
             if transcript_target is not None:
                 output_target = _resolved_spawn_output_fallback_target(
@@ -896,6 +924,7 @@ def _resolve_from_spawn_id(
             project_root=project_root,
             session_id=session_id,
             harness=harness,
+            config_root_hint=config_root_hint,
         )
 
     output_target = _target_from_spawn_output(
@@ -910,6 +939,7 @@ def _resolve_from_spawn_id(
         project_root=project_root,
         session_id=session_id,
         harness=harness,
+        config_root_hint=config_root_hint,
     )
 
 
@@ -927,6 +957,7 @@ def _resolve_from_session_ref(
             project_root=project_root,
             session_id=session_id,
             harness=harness,
+            config_root_hint=_config_root_hint(record.claude_config_dir),
         )
         output_target = _spawn_history_fallback_for_session_ref(
             project_root=project_root,
@@ -953,6 +984,7 @@ def _resolve_untracked_session_ref(
         project_root=project_root,
         session_id=session_ref,
         harness=str(inferred) if inferred is not None else None,
+        config_root_hint=None,
     )
 
 

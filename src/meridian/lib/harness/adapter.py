@@ -442,7 +442,13 @@ class SubprocessHarness(HarnessAdapter[ResolvedLaunchSpec], Protocol):
 
     def extract_report(self, artifacts: ArtifactStore, spawn_id: SpawnId) -> str | None: ...
 
-    def resolve_session_file(self, *, project_root: Path, session_id: str) -> Path | None: ...
+    def resolve_session_file(
+        self,
+        *,
+        project_root: Path,
+        session_id: str,
+        config_root_hint: Path | None = None,
+    ) -> Path | None: ...
 
     def seed_session(
         self,
@@ -721,6 +727,12 @@ class BaseHarnessAdapter(Generic[SpecT], ABC):
         _ = artifacts, spawn_id
         return None
 
-    def resolve_session_file(self, *, project_root: Path, session_id: str) -> Path | None:
-        _ = project_root, session_id
+    def resolve_session_file(
+        self,
+        *,
+        project_root: Path,
+        session_id: str,
+        config_root_hint: Path | None = None,
+    ) -> Path | None:
+        _ = project_root, session_id, config_root_hint
         return None
