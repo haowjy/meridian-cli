@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.3.49] - 2026-07-24
+
 ### Changed
 - Pi failure extraction and output normalization now live with the Pi harness
   instead of the harness-agnostic launch layer.
