@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.3.50] - 2026-07-24
+
 ### Changed
 - mars-agents bumped 0.10.5 → 0.10.6: package hooks declared on `session.end`
   now compile to Claude Code's real `SessionEnd` event instead of the
