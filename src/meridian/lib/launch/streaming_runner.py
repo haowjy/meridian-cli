@@ -290,7 +290,6 @@ def _append_runner_lifecycle_event(
 
 
 _ATTEMPT_STORE_ARTIFACTS = (
-    HISTORY_FILENAME,
     OUTPUT_FILENAME,
     STDERR_FILENAME,
     TOKENS_FILENAME,
@@ -334,9 +333,10 @@ def _preserve_attempt_artifacts(
 
     Commit point is ``os.replace(staging_dir, attempt_dir)``. A leftover
     ``attempt-N.tmp/`` from a crashed run is folded into ``attempt-N/`` when that
-    directory is absent; otherwise the staging dir is discarded. Artifact-store
-    copies and active-key deletion happen only after the filesystem commit so
-    retries never read stale attempt-scoped store keys.
+    directory is absent; otherwise the staging dir is discarded. Non-history
+    artifact-store copies and active-key deletion happen only after the
+    filesystem commit so retries never read stale attempt-scoped store keys.
+    History is already preserved by the disk move and is never mirrored.
     """
 
     attempt_prefix = f"attempt-{completed_attempt}"
@@ -387,18 +387,21 @@ def _persist_attempt_artifacts(
     log_dir: Path,
     secrets: tuple[SecretSpec, ...],
 ) -> None:
+    # History remains authoritative in the spawn tree. Redact it in place after
+    # the attempt has stopped rather than creating a second, redacted projection.
+    for name in (HISTORY_FILENAME, STDERR_FILENAME):
+        source = log_dir / name
+        if source.exists():
+            atomic_write_bytes(source, redact_secret_bytes(source.read_bytes(), secrets))
+
     for name in (
-        HISTORY_FILENAME,
         STDERR_FILENAME,
         TOKENS_FILENAME,
     ):
         source = log_dir / name
         if not source.exists():
             continue
-        payload = source.read_bytes()
-        if name in {HISTORY_FILENAME, STDERR_FILENAME}:
-            payload = redact_secret_bytes(payload, secrets)
-        artifacts.put(make_artifact_key(spawn_id, name), payload)
+        artifacts.put(make_artifact_key(spawn_id, name), source.read_bytes())
 
 
 def _retry_blocked_after_pi_child_started(

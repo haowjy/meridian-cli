@@ -894,7 +894,7 @@ def run_harness_process(
     primary_started_local_iso: str | None = None
     launch_child_cwd = control_root
     prelaunch_state = HarnessPrelaunchState()
-    artifacts = LocalStore(root_dir=runtime_root / "artifacts")
+    artifacts = LocalStore.for_runtime_root(runtime_root)
     spawn_service = build_spawn_application_service_from_roots(config_root, runtime_root)
     lifecycle_service = spawn_service.lifecycle
 

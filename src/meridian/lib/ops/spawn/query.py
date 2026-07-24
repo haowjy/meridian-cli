@@ -566,7 +566,7 @@ def read_written_files(
     resolved_runtime_root = runtime_root or resolve_runtime_root_for_read(project_root)
     if resolved_runtime_root is None:
         return ()
-    artifacts = LocalStore(root_dir=resolved_runtime_root / "artifacts")
+    artifacts = LocalStore.for_runtime_root(resolved_runtime_root)
     return extract_written_files(artifacts, SpawnId(spawn_id))
 
 

@@ -41,7 +41,6 @@ from tests.support.fakes import FakeClock, FakeHeartbeat
 _pi_extension_projection_fixture = _pi_extension_projection_fixture
 
 _STORE_ATTEMPT_FILES = (
-    launch_constants.HISTORY_FILENAME,
     launch_constants.OUTPUT_FILENAME,
     launch_constants.STDERR_FILENAME,
     launch_constants.TOKENS_FILENAME,
@@ -55,6 +54,35 @@ _DISK_ATTEMPT_FILES = (
     launch_constants.TOKENS_FILENAME,
     launch_constants.REPORT_FILENAME,
 )
+
+
+def test_attempt_finalization_keeps_only_redacted_spawn_history(tmp_path: Path) -> None:
+    runtime_root = tmp_path / "runtime"
+    log_dir = runtime_root / "spawns" / "p-history"
+    log_dir.mkdir(parents=True)
+    history_path = log_dir / launch_constants.HISTORY_FILENAME
+    history_path.write_text('{"content":"secret-value"}\n', encoding="utf-8")
+    artifacts = LocalStore.for_runtime_root(runtime_root)
+    secrets = (
+        streaming_runner_module.SecretSpec(key="API_TOKEN", value="secret-value"),
+    )
+
+    streaming_runner_module._persist_attempt_artifacts(
+        artifacts=artifacts,
+        spawn_id=SpawnId("p-history"),
+        log_dir=log_dir,
+        secrets=secrets,
+    )
+
+    assert history_path.read_text(encoding="utf-8") == (
+        '{"content":"[REDACTED:API_TOKEN]"}\n'
+    )
+    assert artifacts.get(
+        make_artifact_key("p-history", launch_constants.HISTORY_FILENAME)
+    ) == history_path.read_bytes()
+    assert not (
+        runtime_root / "artifacts" / "p-history" / launch_constants.HISTORY_FILENAME
+    ).exists()
 
 
 class _NoReportExtractor:
@@ -290,7 +318,10 @@ def test_retry_preserves_completed_attempt_artifacts(tmp_path: Path) -> None:
 def test_preserve_clears_active_history_before_retry_extraction(tmp_path: Path) -> None:
     log_dir = tmp_path / "spawns" / "r-stale-history"
     log_dir.mkdir(parents=True, exist_ok=True)
-    artifacts = LocalStore(root_dir=tmp_path / ".artifacts")
+    artifacts = LocalStore(
+        root_dir=tmp_path / ".artifacts",
+        spawn_root_dir=tmp_path / "spawns",
+    )
     spawn_id = SpawnId("r-stale-history")
     attempt_one_history = (
         b'{"role":"assistant","content":"attempt 1 durable completion report text"}\n'
@@ -298,7 +329,6 @@ def test_preserve_clears_active_history_before_retry_extraction(tmp_path: Path) 
     attempt_one_report = b"# Report\n\nattempt 1 durable completion\n"
     history_key = make_artifact_key(spawn_id, launch_constants.HISTORY_FILENAME)
     report_key = make_artifact_key(spawn_id, launch_constants.REPORT_FILENAME)
-    artifacts.put(history_key, attempt_one_history)
     artifacts.put(report_key, attempt_one_report)
     (log_dir / launch_constants.HISTORY_FILENAME).write_bytes(attempt_one_history)
     (log_dir / launch_constants.REPORT_FILENAME).write_bytes(attempt_one_report)
@@ -310,9 +340,9 @@ def test_preserve_clears_active_history_before_retry_extraction(tmp_path: Path) 
         completed_attempt=1,
     )
 
-    assert not artifacts.exists(history_key)
     attempt_one_history_key = make_artifact_key(spawn_id, "attempt-1/history.jsonl")
     assert artifacts.get(attempt_one_history_key) == attempt_one_history
+    assert not (tmp_path / ".artifacts" / str(spawn_id) / "attempt-1/history.jsonl").exists()
 
     reset_finalize_attempt_artifacts(
         artifacts=artifacts,
@@ -337,7 +367,10 @@ def test_preserve_clears_active_history_before_retry_extraction(tmp_path: Path) 
 def test_preserve_recovers_interrupted_rotation(tmp_path: Path) -> None:
     log_dir = tmp_path / "spawns" / "r-interrupted"
     log_dir.mkdir(parents=True, exist_ok=True)
-    artifacts = LocalStore(root_dir=tmp_path / ".artifacts")
+    artifacts = LocalStore(
+        root_dir=tmp_path / ".artifacts",
+        spawn_root_dir=tmp_path / "spawns",
+    )
     spawn_id = SpawnId("r-interrupted")
     staging_dir = log_dir / "attempt-1.tmp"
     staging_dir.mkdir(parents=True)
@@ -348,10 +381,6 @@ def test_preserve_recovers_interrupted_rotation(tmp_path: Path) -> None:
     (log_dir / launch_constants.STDERR_FILENAME).write_text(
         "late stderr\n",
         encoding="utf-8",
-    )
-    artifacts.put(
-        make_artifact_key(spawn_id, launch_constants.HISTORY_FILENAME),
-        b"active history\n",
     )
 
     streaming_runner_module._preserve_attempt_artifacts(
@@ -371,7 +400,10 @@ def test_preserve_recovers_interrupted_rotation(tmp_path: Path) -> None:
     history_key = make_artifact_key(spawn_id, launch_constants.HISTORY_FILENAME)
     attempt_one_history_key = make_artifact_key(spawn_id, "attempt-1/history.jsonl")
     assert not artifacts.exists(history_key)
-    assert artifacts.get(attempt_one_history_key) == b"active history\n"
+    assert artifacts.get(attempt_one_history_key) == b"staged history\n"
+    assert not artifacts.exists(
+        make_artifact_key(spawn_id, "attempt-1.tmp/history.jsonl")
+    )
 
 
 def test_preserve_discards_stale_staging_when_attempt_dir_exists(tmp_path: Path) -> None:

@@ -157,8 +157,8 @@ completed attempt's disk artifacts (`history.jsonl`, `stderr.log`, `report.md`,
 `runner-lifecycle.jsonl`, `last-observed-event.json`) into `attempt-N/` under the
 spawn log directory. The commit point is a single `os.replace(staging_dir,
 attempt_dir)` — crash-atomic via tmp dir staging. After the filesystem commit,
-artifact-store copies are made and active-attempt keys are deleted so the next
-attempt starts clean.
+non-history artifact-store copies are made and active-attempt keys are deleted
+so the next attempt starts clean. History remains solely in the spawn tree.
 
 Runner lifecycle and history diagnostics can execute after async boundaries. Their
 parent-creating writes use the published-spawn artifact mutation seam; never append
