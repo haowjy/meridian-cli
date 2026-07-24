@@ -9,6 +9,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   instead of the harness-agnostic launch layer.
 
 ### Fixed
+- Pi first-response timing tests now use per-connection policies with realistic
+  deadlines, avoiding process races while keeping the slow no-response case fast.
 - Second Pi stderr test no longer flakes under CI load: dropped the 50ms
   `_FIRST_STDOUT_AFTER_INITIAL_PROMPT_TIMEOUT_SECONDS` override from
   `test_pi_rpc_connection_surfaces_stderr_on_early_exit_before_first_event`,

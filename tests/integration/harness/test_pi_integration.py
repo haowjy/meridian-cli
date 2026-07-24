@@ -17,7 +17,7 @@ from meridian.lib.harness.connections.base import (
     ConnectionNotReady,
     RawHarnessEvent,
 )
-from meridian.lib.harness.connections.pi_rpc import PiRpcConnection
+from meridian.lib.harness.connections.pi_rpc import PiRpcConnection, PiRpcTimingPolicy
 from meridian.lib.harness.semantics import normalize_event
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.safety.permissions import UnsafeNoOpPermissionResolver
@@ -545,8 +545,16 @@ async def test_pi_spawn_manager_startup_diagnostics_report_outcome_and_marker(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _configure_extension_projection(monkeypatch, tmp_path)
-    monkeypatch.setattr(pi_rpc_module, "_PROCESS_ABORT_GRACE_SECONDS", 0.01)
-    monkeypatch.setattr(pi_rpc_module, "_PROCESS_KILL_GRACE_SECONDS", 0.01)
+
+    async def start_connection(
+        config: ConnectionConfig,
+        spec: ResolvedLaunchSpec,
+    ) -> PiRpcConnection:
+        connection = PiRpcConnection(
+            timing=PiRpcTimingPolicy(first_event_timeout_seconds=2.0)
+        )
+        await _start_existing_pi_connection(connection, config, spec)
+        return connection
 
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
@@ -581,7 +589,7 @@ async def test_pi_spawn_manager_startup_diagnostics_report_outcome_and_marker(
     manager = SpawnManager(
         runtime_root=tmp_path,
         project_root=tmp_path,
-        start_connection=_start_pi_connection,
+        start_connection=start_connection,
         control_server_factory=lambda _spawn_id, _socket_path, _manager: _NoopControlServer(),
     )
 
@@ -824,13 +832,6 @@ async def test_pi_rpc_malformed_line_does_not_satisfy_first_event_watchdog(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _configure_extension_projection(monkeypatch, tmp_path)
-    monkeypatch.setattr(
-        pi_rpc_module,
-        "_FIRST_STDOUT_AFTER_INITIAL_PROMPT_TIMEOUT_SECONDS",
-        0.2,
-    )
-    monkeypatch.setattr(pi_rpc_module, "_PROCESS_ABORT_GRACE_SECONDS", 0.5)
-    monkeypatch.setattr(pi_rpc_module, "_PROCESS_KILL_GRACE_SECONDS", 0.5)
 
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
@@ -847,7 +848,9 @@ async def test_pi_rpc_malformed_line_does_not_satisfy_first_event_watchdog(
     shim.chmod(0o755)
     monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
 
-    connection = PiRpcConnection()
+    connection = PiRpcConnection(
+        timing=PiRpcTimingPolicy(first_event_timeout_seconds=1.0)
+    )
     await _start_existing_pi_connection(
         connection,
         ConnectionConfig(

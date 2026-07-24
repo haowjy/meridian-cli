@@ -8,8 +8,9 @@ import logging
 import signal
 import time
 from asyncio.subprocess import PIPE, Process
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator, Callable, Sequence
 from contextlib import suppress
+from dataclasses import dataclass
 from io import BufferedWriter
 from pathlib import Path
 from typing import Final, Literal, NamedTuple, cast
@@ -57,8 +58,6 @@ from meridian.lib.state.paths import resolve_project_runtime_root_for_write, res
 logger = logging.getLogger(__name__)
 _HARNESS_NAME: Final = HarnessId.PI.value
 _STDOUT_READLINE_LIMIT: Final[int] = 10 * 1024 * 1024
-_PROCESS_ABORT_GRACE_SECONDS: Final[float] = 5.0
-_PROCESS_KILL_GRACE_SECONDS: Final[float] = 5.0
 _PARSE_ERROR_RAW_LINE_LIMIT: Final[int] = 2048
 _STDERR_SNIPPET_LIMIT: Final[int] = 4096
 _PI_PHASE_EVENT_TYPE: Final[str] = "meridian.pi.lifecycle.phase"
@@ -67,7 +66,6 @@ _PI_STREAM_CLOSED_BEFORE_FIRST_EVENT_REASON: Final[str] = (
     "pi_rpc_stream_closed_before_initial_response"
 )
 _PI_SPAWNED_PROMPT_REQUIRED_REASON: Final[str] = "pi_rpc_spawned_prompt_required"
-_FIRST_STDOUT_AFTER_INITIAL_PROMPT_TIMEOUT_SECONDS: Final[float] = 30.0
 _PI_SESSION_DIR_FLAG: Final[str] = "--session-dir"
 PI_SUBPROCESS_EXIT_ERROR_PREFIX: Final[str] = "Pi subprocess exited with code "
 _STREAM_LINE_KIND: Final[Literal["line"]] = "line"
@@ -90,6 +88,13 @@ class ParsedStdoutLine(NamedTuple):
 
     event: RawHarnessEvent | None
     is_protocol_event: bool
+
+
+@dataclass(frozen=True)
+class PiRpcTimingPolicy:
+    first_event_timeout_seconds: float = 30.0
+    abort_grace_seconds: float = 5.0
+    kill_grace_seconds: float = 5.0
 
 
 class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
@@ -121,7 +126,14 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
         "stopped": set(),
     }
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        timing: PiRpcTimingPolicy | None = None,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
+        self._timing = timing or PiRpcTimingPolicy()
+        self._clock = clock
         self._state: ConnectionState = "created"
         self._spawn_id: SpawnId = SpawnId("")
         self._process: Process | None = None
@@ -136,6 +148,7 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
         self._initial_prompt: str = ""
         self._initial_prompt_sent = False
         self._waiting_for_first_pi_event_after_prompt = False
+        self._first_event_deadline_monotonic: float | None = None
         self._first_pi_event_received = False
         self._session_event_seen = False
         self._harness_ready_emitted = False
@@ -196,6 +209,7 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
         self._initial_prompt = config.prompt
         self._initial_prompt_sent = not bool(config.prompt.strip())
         self._waiting_for_first_pi_event_after_prompt = False
+        self._first_event_deadline_monotonic = None
         self._first_pi_event_received = False
         self._session_event_seen = False
         self._harness_ready_emitted = False
@@ -227,9 +241,12 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
                     prompt_bytes=prompt_bytes,
                 )
                 self._waiting_for_first_pi_event_after_prompt = True
+                self._first_event_deadline_monotonic = (
+                    self._clock() + self._timing.first_event_timeout_seconds
+                )
                 self._queue_lifecycle_phase_event(
                     "waiting_for_first_pi_event_after_prompt",
-                    timeout_secs=_FIRST_STDOUT_AFTER_INITIAL_PROMPT_TIMEOUT_SECONDS,
+                    timeout_secs=self._timing.first_event_timeout_seconds,
                 )
             else:
                 self._queue_lifecycle_phase_event(
@@ -269,7 +286,7 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
 
         await self._send_abort_message()
         exited_during_abort_grace = await self._wait_for_process_exit(
-            timeout=_PROCESS_ABORT_GRACE_SECONDS
+            timeout=self._timing.abort_grace_seconds
         )
         stop_escalated = False
         if exited_during_abort_grace:
@@ -348,29 +365,23 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
                 )
             )
         ]
-        first_stdout_deadline_monotonic: float | None = None
-
         try:
             while self._pending_lifecycle_phase_events:
                 yield self._pending_lifecycle_phase_events.pop(0)
             while True:
-                now_monotonic = time.monotonic()
+                now_monotonic = self._clock()
                 try:
                     timeout_secs: float | None = None
                     if (
                         self._waiting_for_first_pi_event_after_prompt
                         and not self._first_pi_event_received
                     ):
-                        if first_stdout_deadline_monotonic is None:
-                            first_stdout_deadline_monotonic = (
-                                time.monotonic()
-                                + _FIRST_STDOUT_AFTER_INITIAL_PROMPT_TIMEOUT_SECONDS
-                            )
-                        timeout_secs = first_stdout_deadline_monotonic - now_monotonic
+                        deadline = self._first_event_deadline_monotonic
+                        if deadline is None:
+                            raise RuntimeError("Missing Pi first-event deadline")
+                        timeout_secs = deadline - now_monotonic
                         if timeout_secs <= 0:
                             raise TimeoutError
-                    else:
-                        first_stdout_deadline_monotonic = None
                     if timeout_secs is None:
                         stream_kind, payload = await stream_queue.get()
                     elif timeout_secs <= 0:
@@ -381,23 +392,24 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
                             timeout=timeout_secs,
                         )
                 except TimeoutError:
-                    now_monotonic = time.monotonic()
+                    now_monotonic = self._clock()
                     if (
                         not self._waiting_for_first_pi_event_after_prompt
                         or self._first_pi_event_received
                     ):
                         continue
                     if (
-                        first_stdout_deadline_monotonic is None
-                        or now_monotonic < first_stdout_deadline_monotonic
+                        self._first_event_deadline_monotonic is None
+                        or now_monotonic < self._first_event_deadline_monotonic
                     ):
                         continue
                     detail = self._failure_detail_with_stderr(_PI_FIRST_EVENT_TIMEOUT_REASON)
                     self._mark_failed(detail)
                     self._waiting_for_first_pi_event_after_prompt = False
+                    self._first_event_deadline_monotonic = None
                     yield self._lifecycle_phase_event(
                         "first_pi_event_timeout",
-                        timeout_secs=_FIRST_STDOUT_AFTER_INITIAL_PROMPT_TIMEOUT_SECONDS,
+                        timeout_secs=self._timing.first_event_timeout_seconds,
                     )
                     yield self._error_event(detail)
                     await self._terminate_process()
@@ -427,6 +439,7 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
                         and self._state not in {"stopping", "stopped"}
                     ):
                         self._waiting_for_first_pi_event_after_prompt = False
+                        self._first_event_deadline_monotonic = None
                         reason = (
                             pi_subprocess_exit_error(return_code)
                             if return_code not in (0, None)
@@ -469,6 +482,7 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
                     ):
                         self._first_pi_event_received = True
                         self._waiting_for_first_pi_event_after_prompt = False
+                        self._first_event_deadline_monotonic = None
                         yield self._lifecycle_phase_event(
                             "first_pi_event_received",
                             first_event_type=event.event_type,
@@ -882,7 +896,7 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
         self._scope_handle = None
         if scope_handle is not None and process.returncode is None:
             result = await scope_handle.terminate(
-                grace_seconds=_PROCESS_KILL_GRACE_SECONDS,
+                grace_seconds=self._timing.kill_grace_seconds,
                 reason="pi_connection_stop",
             )
             self._process = None
@@ -899,7 +913,10 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
             else:
                 process.send_signal(signal.SIGTERM)
             try:
-                await asyncio.wait_for(process.wait(), timeout=_PROCESS_KILL_GRACE_SECONDS)
+                await asyncio.wait_for(
+                    process.wait(),
+                    timeout=self._timing.kill_grace_seconds,
+                )
             except TimeoutError:
                 process.kill()
                 await process.wait()
