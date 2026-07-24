@@ -41,7 +41,12 @@ from meridian.lib.state.session_store import update_session_claude_config_dir
 from meridian.lib.state.spawn.model import SpawnRecord
 
 from ..runtime import OperationRuntime, runtime_context
-from .execute_init import LaunchUserInputError, _spawn_child_env
+from .execute_init import (
+    LaunchUserInputError,
+    ParamsRequestMetadata,
+    _spawn_child_env,
+    _write_params_json,
+)
 from .execute_session import (
     _resolve_session_continuation,
     _session_execution_context,
@@ -138,6 +143,7 @@ async def _prepare_execution_handoff(
     spawn_record: SpawnRecord | None,
     execution_cwd: str,
     work_id: str | None,
+    request_metadata: ParamsRequestMetadata,
     ctx: RuntimeContext | None,
     prepared: PreparedLaunchSurface | None = None,
 ) -> PreparedExecutionHandoff:
@@ -289,6 +295,20 @@ async def _prepare_execution_handoff(
             harness_registry=runtime.harness_registry,
             plan_overrides=run_env_overrides,
         )
+        try:
+            _write_params_json(
+                project_paths,
+                runtime_root,
+                spawn.spawn_id,
+                request_metadata=request_metadata,
+                binding=launch_context.binding,
+            )
+        except Exception:
+            logger.warning(
+                "Failed to refresh params.json",
+                spawn_id=str(spawn.spawn_id),
+                exc_info=True,
+            )
         write_projection_artifacts(
             log_dir=resolve_spawn_log_dir(
                 project_paths.project_root,
@@ -358,6 +378,7 @@ async def launch_prepared_spawn(
     runtime: OperationRuntime,
     runtime_root: Path,
     project_paths: ProjectConfigPaths,
+    request_metadata: ParamsRequestMetadata,
     spawn_record: SpawnRecord | None = None,
     execution_cwd: str,
     work_id: str | None = None,
@@ -384,6 +405,7 @@ async def launch_prepared_spawn(
             spawn_record=spawn_record,
             execution_cwd=execution_cwd,
             work_id=work_id,
+            request_metadata=request_metadata,
             ctx=ctx,
             prepared=prepared,
         )

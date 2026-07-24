@@ -18,6 +18,7 @@ from meridian.lib.core.resolved_context import ResolvedContext
 from meridian.lib.core.sink import OutputSink
 from meridian.lib.core.spawn_lifecycle import SpawnReservation
 from meridian.lib.core.types import ModelId, SpawnId
+from meridian.lib.launch.launch_types import ResolvedLaunchBinding
 from meridian.lib.launch.plan import build_spawn_mars_runtime
 from meridian.lib.launch.request import SpawnRequest, is_exact_continue_session
 from meridian.lib.launch.types import PrimarySessionMetadata
@@ -39,6 +40,31 @@ logger = structlog.get_logger(__name__)
 
 class LaunchUserInputError(ValueError):
     """Expected launch-input failure that should not emit traceback logging."""
+
+
+class ParamsRequestMetadata(BaseModel):
+    """Immutable request-time inputs retained across the bind boundary."""
+
+    model_config = ConfigDict(frozen=True)
+
+    model: str
+    harness: str
+    agent: str | None
+    agent_path: str
+    adhoc_agent_payload: str
+    appended_system_prompt: str | None
+    user_turn_content: str | None
+    desc: str
+    work_id: str | None
+    goal: str | None
+    prompt_length: int
+    reference_files: tuple[str, ...]
+    template_vars: dict[str, str]
+    skills: tuple[str, ...]
+    skill_paths: tuple[str, ...]
+    continue_session: str | None
+    continue_fork: bool
+    forked_from_chat_id: str | None
 
 
 class _SpawnContext(BaseModel):
@@ -295,14 +321,70 @@ def _announce_reserved_spawn(
     )
 
 
-def _write_params_json(
-    project_paths: ProjectConfigPaths,
-    runtime_root: Path,
-    spawn_id: SpawnId,
+def _build_params_request_metadata(
     request: SpawnRequest,
     *,
     desc: str = "",
     work_id: str | None = None,
+) -> ParamsRequestMetadata:
+    """Snapshot request metadata before any bind-time values exist."""
+
+    return ParamsRequestMetadata(
+        model=request.model or "",
+        harness=request.harness or "",
+        agent=request.agent,
+        agent_path=request.agent_metadata.get("session_agent_path") or "",
+        adhoc_agent_payload=request.prompt_payload.adhoc_agent_payload,
+        appended_system_prompt=request.prompt_payload.appended_system_prompt,
+        user_turn_content=request.prompt_payload.user_turn_content,
+        desc=desc,
+        work_id=work_id,
+        goal=request.goal,
+        prompt_length=len(request.prompt),
+        reference_files=request.reference_files,
+        template_vars=request.template_vars,
+        skills=request.skills,
+        skill_paths=request.skill_paths,
+        continue_session=request.session.requested_harness_session_id,
+        continue_fork=request.session.continue_fork,
+        forked_from_chat_id=request.session.forked_from_chat_id,
+    )
+
+
+def _params_payload(
+    request_metadata: ParamsRequestMetadata,
+    *,
+    binding: ResolvedLaunchBinding | None = None,
+) -> dict[str, Any]:
+    payload = request_metadata.model_dump(mode="json")
+    if binding is None:
+        payload["phase"] = "request"
+        return payload
+
+    run_params = binding.run_params
+    child_context_env = binding.environment.child_context_env
+    payload.update(
+        {
+            "phase": "bound",
+            "adhoc_agent_payload": run_params.adhoc_agent_payload,
+            "appended_system_prompt": run_params.appended_system_prompt,
+            "user_turn_content": run_params.user_turn_content,
+            "prompt_length": len(run_params.prompt),
+            "bound_work_id": binding.work_id,
+            "bound_work_dir": child_context_env.get("MERIDIAN_ACTIVE_WORK_DIR"),
+            "bound_task_dir": child_context_env.get("MERIDIAN_TASK_DIR"),
+        }
+    )
+    return payload
+
+
+def _write_params_json(
+    project_paths: ProjectConfigPaths,
+    runtime_root: Path,
+    spawn_id: SpawnId,
+    *,
+    request_metadata: ParamsRequestMetadata,
+    binding: ResolvedLaunchBinding | None = None,
 ) -> None:
     """Write resolved execution params to the spawn directory."""
     params_path = (
@@ -312,33 +394,16 @@ def _write_params_json(
         / "params.json"
     )
     params_path.parent.mkdir(parents=True, exist_ok=True)
-    params_payload = {
-        "model": request.model or "",
-        "harness": request.harness or "",
-        "agent": request.agent,
-        "agent_path": request.agent_metadata.get("session_agent_path") or "",
-        "adhoc_agent_payload": request.prompt_payload.adhoc_agent_payload,
-        "appended_system_prompt": request.prompt_payload.appended_system_prompt,
-        "user_turn_content": request.prompt_payload.user_turn_content,
-        "desc": desc,
-        "work_id": work_id,
-        "goal": request.goal,
-        "prompt_length": len(request.prompt),
-        "reference_files": list(request.reference_files),
-        "template_vars": request.template_vars,
-        "skills": list(request.skills),
-        "skill_paths": list(request.skill_paths),
-        "continue_session": request.session.requested_harness_session_id,
-        "continue_fork": request.session.continue_fork,
-        "forked_from_chat_id": request.session.forked_from_chat_id,
-    }
+    params_payload = _params_payload(request_metadata, binding=binding)
     atomic_write_text(params_path, json.dumps(params_payload, indent=2) + "\n")
 
 
 __all__ = [
     "LaunchUserInputError",
+    "ParamsRequestMetadata",
     "_SpawnContext",
     "_announce_reserved_spawn",
+    "_build_params_request_metadata",
     "_emit_subrun_event",
     "_materialize_spawn_work_item",
     "_reserve_spawn",

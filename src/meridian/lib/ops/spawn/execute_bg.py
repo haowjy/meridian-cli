@@ -35,6 +35,7 @@ from meridian.lib.telemetry.init import setup_telemetry
 from meridian.lib.telemetry.observer import register_spawn_telemetry_observer
 
 from ..runtime import OperationRuntime, build_runtime, resolve_runtime_root, runtime_context
+from .execute_init import ParamsRequestMetadata
 from .execute_runner import launch_prepared_spawn
 from .failure_policy import finalize_launch_failure, finalize_launch_failure_sync
 
@@ -57,6 +58,7 @@ class BackgroundWorkerLaunchRequest(BaseModel):
 
     request: SpawnRequest
     runtime: LaunchRuntime
+    request_metadata: ParamsRequestMetadata
 
 
 def _resolve_background_execution_cwd(
@@ -281,6 +283,7 @@ async def _execute_existing_spawn(
         runtime=runtime,
         runtime_root=runtime_root,
         project_paths=project_paths,
+        request_metadata=launch_request.request_metadata,
         spawn_record=spawn_record,
         execution_cwd=resolved_execution_cwd,
         work_id=spawn_record.work_id,

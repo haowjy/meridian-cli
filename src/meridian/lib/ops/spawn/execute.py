@@ -45,6 +45,7 @@ from .execute_bg import (
 )
 from .execute_init import (
     _announce_reserved_spawn,
+    _build_params_request_metadata,
     _emit_subrun_event,
     _materialize_spawn_work_item,
     _reserve_spawn,
@@ -312,14 +313,17 @@ def execute_spawn_background(
         runtime_root=context.runtime_root,
     )
     log_dir.mkdir(parents=True, exist_ok=True)
+    request_metadata = _build_params_request_metadata(
+        request,
+        desc=payload.desc,
+        work_id=context.work_id,
+    )
     try:
         _write_params_json(
             project_paths,
             context.runtime_root,
             context.spawn.spawn_id,
-            request,
-            desc=payload.desc,
-            work_id=context.work_id,
+            request_metadata=request_metadata,
         )
     except Exception:
         logger.warning("Failed to write params.json", spawn_id=spawn_id_text, exc_info=True)
@@ -354,6 +358,7 @@ def execute_spawn_background(
             BackgroundWorkerLaunchRequest(
                 request=persisted_request,
                 runtime=launch_runtime,
+                request_metadata=request_metadata,
             ),
         )
     except Exception as exc:
@@ -563,14 +568,17 @@ def execute_spawn_blocking(
 
     try:
         execution_cwd_str = initial_execution_cwd
+        request_metadata = _build_params_request_metadata(
+            request,
+            desc=payload.desc,
+            work_id=context.work_id,
+        )
         try:
             _write_params_json(
                 project_paths,
                 context.runtime_root,
                 spawn.spawn_id,
-                request,
-                desc=payload.desc,
-                work_id=context.work_id,
+                request_metadata=request_metadata,
             )
         except Exception:
             logger.warning(
@@ -600,6 +608,7 @@ def execute_spawn_blocking(
                 project_paths=project_paths,
                 execution_cwd=execution_cwd_str,
                 work_id=context.work_id,
+                request_metadata=request_metadata,
                 stream_stdout_to_terminal=stream_stdout_to_terminal,
                 stream_stderr_to_terminal=payload.stream,
                 event_observer=event_observer,

@@ -124,6 +124,7 @@ def test_background_headless_deny_rejects_before_reservation_without_affecting_a
         runtime_root=prepared.runtime_root,
     )
     params = json.loads((allowed_log_dir / "params.json").read_text(encoding="utf-8"))
+    assert params["phase"] == "request"
     assert params["model"] == "gemini-2.5-pro"
     assert params["harness"] == "opencode"
     assert params["prompt_length"] == len("allowed")

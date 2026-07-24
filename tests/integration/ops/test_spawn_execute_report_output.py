@@ -2,16 +2,19 @@
 
 from __future__ import annotations
 
+import json
 import subprocess
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 import meridian.lib.ops.spawn.execute as execute_module
 import meridian.lib.ops.spawn.execute_init as execute_init_module
+import meridian.lib.ops.spawn.execute_runner as execute_runner_module
 from meridian.lib.config.settings import load_config
 from meridian.lib.core.context import RuntimeContext
 from meridian.lib.core.lifecycle import LifecycleEvent, SpawnLifecycleService
 from meridian.lib.core.sink import OutputSink
+from meridian.lib.core.types import HarnessId
 from meridian.lib.launch.request import SpawnRequest
 from meridian.lib.ops.runtime import (
     OperationRuntime,
@@ -21,6 +24,8 @@ from meridian.lib.ops.runtime import (
 from meridian.lib.ops.spawn.models import SpawnCreateInput
 from meridian.lib.state import spawn_store, work_repository, work_store
 from meridian.lib.state.paths import resolve_project_paths
+from tests.support.executables import prepend_fake_executables
+from tests.support.launch import stub_bundle_request_and_resolve
 
 if TYPE_CHECKING:
     import pytest
@@ -179,6 +184,63 @@ def test_execute_spawn_blocking_notifies_spawn_id_before_launch(
 
     assert result.status == "succeeded"
     assert notifications == [str(result.spawn_id)]
+
+
+def test_execute_spawn_blocking_refreshes_params_with_bound_ambient_work_dir(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = _build_test_runtime(tmp_path, monkeypatch)
+    prepend_fake_executables(monkeypatch, tmp_path, "codex")
+    stub_bundle_request_and_resolve(
+        monkeypatch,
+        model="gpt-5.4",
+        harness=HarnessId.CODEX,
+    )
+
+    async def _fake_execute_with_streaming(
+        spawn: Any,
+        **kwargs: object,
+    ) -> int:
+        runtime_root = cast("Path", kwargs["runtime_root"])
+        spawn_store.finalize_spawn(
+            runtime_root,
+            str(spawn.spawn_id),
+            "succeeded",
+            0,
+            origin="runner",
+        )
+        return 0
+
+    monkeypatch.setattr(
+        execute_runner_module,
+        "execute_with_streaming",
+        _fake_execute_with_streaming,
+    )
+
+    result = execute_module.execute_spawn_blocking(
+        payload=SpawnCreateInput(prompt="run", desc="bound params"),
+        request=SpawnRequest(
+            prompt="run",
+            model="gpt-5.4",
+            harness="codex",
+        ),
+        runtime=runtime,
+        ctx=RuntimeContext(depth=1, spawn_id="p-parent"),
+    )
+
+    assert result.status == "succeeded"
+    assert result.spawn_id is not None
+    authority = resolve_runtime_authority_for_write(tmp_path / "repo")
+    assert authority.runtime_root is not None
+    params_path = authority.runtime_root / "spawns" / result.spawn_id / "params.json"
+    params = json.loads(params_path.read_text(encoding="utf-8"))
+    assert params["phase"] == "bound"
+    assert params["bound_work_id"] is None
+    assert params["bound_work_dir"] == (
+        authority.runtime_root / "spawns" / result.spawn_id / "work"
+    ).as_posix()
+    assert params["bound_task_dir"] == (tmp_path / "repo").as_posix()
 
 
 def test_execute_spawn_blocking_pre_init_failure_returns_failed_output(
