@@ -7,9 +7,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Changed
 - Sparse JSON defaults for noisy CLI outputs: `spawn show`/`spawn wait` JSON
   now carries `report_path` + a bounded `report_summary` instead of the full
-  `report_body` (opt back in with `--report`); `harness_session_id` is gone
+  `report_body` (opt back in with `--full`); `harness_session_id` is gone
   from default spawn/work JSON; `work show` JSON is a curated summary;
-  `hooks run` JSON hides stdout/stderr behind `--output`. Multi-ID
+  `hooks run` JSON hides stdout/stderr behind `--verbose`. Multi-ID
   `spawn show`/`status` use the same sparse shapes. Text output unchanged.
   (#113)
 
@@ -1231,7 +1231,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Changed
 - Pi lifecycle machine events now transport via append-only JSONL sidecar file (`pi-lifecycle-events.jsonl`) instead of stdout/stderr; extensions write via `fs.writeSync` append-mode fd, Python reads via `PiLifecycleEventTailer` with forced catch-up before quiescence decisions; no lifecycle JSON leaks to TUI or stderr.
 - Foreground `meridian spawn` and single-spawn `spawn wait` default to report-first compact output: status, report body, transcript command. Agent-mode defaults match compact text; explicit JSON carries report/transcript fields.
-- `spawn wait` includes report body by default; use `--no-report` to suppress it.
+- `spawn wait` includes report body by default; use `--no-full` to suppress it.
 - `--fork` is now identity-preserving on both primary and spawn CLIs. It rejects identity-shaping overrides with: `--fork preserves launch identity. Use --fork-fresh to change agent, model, or skills.`
 - Bare `--fork` now defaults to `$MERIDIAN_SPAWN_ID` inside Meridian-managed sessions. Outside a managed session it fails with: `Cannot infer --fork target: not inside a Meridian-managed session. Pass --fork REF explicitly.`
 - CLI argv normalization now rewrites bare/equals forms for `--fork` and `--fork-fresh` before bootstrap and Cyclopts parsing, so forms like `--fork`, `--fork=`, and `--fork --bg` parse consistently.
@@ -1694,7 +1694,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Pi lifecycle machine events now transport via append-only JSONL sidecar file (`pi-lifecycle-events.jsonl`) instead of stdout/stderr; extensions write via `fs.writeSync` append-mode fd, Python reads via `PiLifecycleEventTailer` with forced catch-up before quiescence decisions; no lifecycle JSON leaks to TUI or stderr.
 - Git autosync: extract `autosync_store.py` — single owner of `.meridian/autosync/` file layout. Eliminates duplicated path construction and JSON parsing across `git_autosync.py`, `sync_conflicts.py`, `context.py`.
 - Agent-mode CLI output defaults to text for all commands. Prior JSON defaults on `config.get`, `spawn.cancel`, `spawn.create`, `spawn.continue`, `spawn.wait`, `context`, `work.current` flipped to text. Explicit `--json` still available.
-- `spawn.wait` omits report body by default; pass `--report` to include. Report path always shown.
+- `spawn.wait` omits report body by default; pass `--full` to include. Report path always shown.
 - Lifecycle events (`meridian.spawn.start`, `meridian.spawn.done`) suppressed in agent mode for all commands. Human mode routes `TextSink.event()` to stderr.
 - `SpawnWaitMultiOutput` and `SpawnDetailOutput` now have sparse `to_cli_wire()` projections for explicit JSON; omit internal fields like `harness_session_id`, `log_path`, `process_exit_code`.
 - Background spawn output now explicitly instructs agents to wait: "You MUST run..." with machine-actionable fields `terminal`, `wait_required`, `wait_command` in JSON output.

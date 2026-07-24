@@ -184,7 +184,7 @@ def test_spawn_show_json_contract(
     )
     _assert_noisy_keys_absent(payload)
 
-    with_report = _run_json(project_root, env, "spawn", "show", "p1", "--report")
+    with_report = _run_json(project_root, env, "spawn", "show", "p1", "--full")
     assert with_report["report_body"] == "Completed the sparse JSON projection."
 
 
@@ -344,7 +344,7 @@ def test_hooks_run_json_contract(
         "hooks",
         "run",
         "projection-test",
-        "--output",
+        "--verbose",
     )
     assert with_output["stdout"] == "hook-output"
     assert with_output["stderr"] == "hook-error"

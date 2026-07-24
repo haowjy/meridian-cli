@@ -61,10 +61,10 @@ def _hooks_run(
             help="Optional event context to simulate (for example: spawn.finalized).",
         ),
     ] = None,
-    output: Annotated[
+    verbose: Annotated[
         bool,
         Parameter(
-            name="--output",
+            name="--verbose",
             help="Include captured stdout and stderr in JSON output.",
         ),
     ] = False,
@@ -75,7 +75,7 @@ def _hooks_run(
                 HookRunInput(
                     name=name,
                     event=event,
-                    include_output=output,
+                    include_output=verbose,
                     project_root=_resolved_project_root(),
                 )
             )
