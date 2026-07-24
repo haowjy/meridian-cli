@@ -5,6 +5,11 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Changed
+- mars-agents bumped 0.10.5 → 0.10.6: package hooks declared on `session.end`
+  now compile to Claude Code's real `SessionEnd` event instead of the
+  nonexistent `SessionStop` (mars-agents#129). Unblocks meridian-base 0.8.9's
+  `context-autosync` hook, which pushes stranded context-repo commits (work
+  docs, KB) at session end.
 - Sparse JSON defaults for noisy CLI outputs: `spawn show`/`spawn wait` JSON
   now carries `report_path` + a bounded `report_summary` instead of the full
   `report_body` (opt back in with `--full`); `harness_session_id` is gone
