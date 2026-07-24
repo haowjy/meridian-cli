@@ -6,14 +6,11 @@ import json
 
 import pytest
 
-from meridian.lib.harness.extractors.pi import PI_EXTRACTOR as _PI_EXTRACTOR
-from meridian.lib.launch.errors import should_retry
-from meridian.lib.launch.report import (
+from meridian.lib.harness.pi_failure import (
     compact_pi_failure_output,
     extract_pi_failure_from_history,
 )
-
-_ = _PI_EXTRACTOR  # Initialize harness modules before importing launch.report in isolation.
+from meridian.lib.launch.errors import should_retry
 
 
 def test_extract_pi_failure_from_prompt_rejection() -> None:

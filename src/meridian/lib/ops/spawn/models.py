@@ -150,6 +150,12 @@ class SpawnCreateInput(SpawnLaunchOptions):
 
 
 class SpawnActionOutput(BaseModel):
+    """Spawn action result with distinct CLI and implicit agent projections.
+
+    ``to_cli_wire()`` is the explicit JSON contract. ``to_agent_wire()`` is
+    intentionally narrower for implicit agent-mode background spawns.
+    """
+
     model_config = ConfigDict(frozen=True)
 
     command: str
@@ -314,10 +320,14 @@ class SpawnActionOutput(BaseModel):
                 wire["cli_command"] = list(self.cli_command)
         return wire
 
+    def to_cli_wire(self) -> dict[str, object]:
+        """Project the explicit CLI JSON contract."""
+        return self.to_wire()
+
     def to_agent_wire(self) -> dict[str, object]:
         """Project sparse JSON for implicit agent-mode consumers."""
         if not (self.background and self.status == "running"):
-            return self.to_wire()
+            return self.to_cli_wire()
 
         wire: dict[str, object] = {"status": self.status}
         if self.spawn_id is not None:
@@ -351,7 +361,7 @@ class SpawnActionOutput(BaseModel):
             return self
         if explicit_format is None:
             return self.to_agent_wire()
-        return self.to_wire()
+        return self.to_cli_wire()
 
     def format_text(self, ctx: FormatContext | None = None) -> str:
         effective_ctx = ctx or FormatContext()
@@ -901,8 +911,6 @@ class SpawnDetailOutput(BaseModel):
             wire["tui_pid"] = self.tui_pid
         if self.backend_port is not None:
             wire["backend_port"] = self.backend_port
-        if self.kind == "primary" and self.harness_session_id is not None:
-            wire["harness_session_id"] = self.harness_session_id
         if self.pi_lifecycle_phase is not None:
             wire["pi_lifecycle_phase"] = self.pi_lifecycle_phase
         if self.pi_cleanup_status is not None:
@@ -1239,6 +1247,7 @@ class SpawnWaitInput(BaseModel):
     yield_after_secs: float | None = None
     timeout_explicit: bool = False
     poll_interval_secs: float | None = None
+    fail_fast: bool = False
     verbose: bool = False
     quiet: bool = False
     include_report_body: bool = False
@@ -1255,6 +1264,8 @@ class SpawnWaitMultiOutput(BaseModel):
     cancelled_runs: int
     timed_out_runs: int = 0
     any_failed: bool
+    fail_fast: bool = False
+    pending_ids: tuple[str, ...] = ()
     checkpoint: bool = False
     checkpoint_pending_ids: tuple[str, ...] = ()
     checkpoint_chat_id: str | None = None
@@ -1269,6 +1280,21 @@ class SpawnWaitMultiOutput(BaseModel):
         effective_ctx = ctx or FormatContext()
         if self.checkpoint:
             return self._format_checkpoint_text()
+        if self.fail_fast:
+            failed_ids = ", ".join(
+                spawn.spawn_id
+                for spawn in self.spawns
+                if spawn.status in {"failed", "timed_out"}
+            )
+            pending_ids = ", ".join(self.pending_ids)
+            details = self.model_copy(
+                update={"fail_fast": False, "pending_ids": ()}
+            ).format_text(effective_ctx)
+            summary = (
+                f"Fail-fast: {failed_ids} failed or timed out. "
+                f"Still pending: {pending_ids}."
+            )
+            return f"{summary}\n\n{details}" if details else summary
         if not self.spawns:
             return ""
         if len(self.spawns) == 1:
@@ -1334,6 +1360,9 @@ class SpawnWaitMultiOutput(BaseModel):
             "timed_out_runs": self.timed_out_runs,
             "any_failed": self.any_failed,
         }
+        if self.fail_fast:
+            wire["fail_fast"] = True
+            wire["pending_ids"] = list(self.pending_ids)
         if self.checkpoint:
             wire["checkpoint"] = True
             wire["checkpoint_pending_ids"] = list(self.checkpoint_pending_ids)

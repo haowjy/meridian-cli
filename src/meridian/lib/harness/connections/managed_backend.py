@@ -30,6 +30,50 @@ from meridian.lib.state.paths import (
 from meridian.lib.state.process_scope_projection import record_scope
 
 
+def spawn_owned_process_handle(
+    *,
+    spawn_id: SpawnId,
+    process: asyncio.subprocess.Process,
+    scope_id: str,
+    role: str,
+    parent_death_linked: bool = False,
+    job_name: str | None = None,
+) -> ScopedProcessHandle:
+    """Capture process-tree termination facts for an already launched child."""
+
+    pid = process.pid
+    pgid: int | None = None
+    containment: str
+    if not IS_WINDOWS:
+        try:
+            pgid = os.getpgid(pid)
+            containment = "posix_pgid"
+        except OSError:
+            containment = "pid_tree_fallback"
+    else:
+        containment = "windows_job"
+
+    try:
+        birth_time = psutil.Process(pid).create_time()
+    except (psutil.NoSuchProcess, psutil.AccessDenied):
+        birth_time = PROCESS_BIRTH_UNKNOWN_EPOCH
+
+    snapshot = ProcessScopeSnapshot(
+        scope_id=scope_id,
+        owner_policy="spawn_owned",
+        owner_id=str(spawn_id),
+        role=role,
+        containment=containment,
+        root_pid=pid,
+        root_created_at_epoch=birth_time,
+        pgid=pgid,
+        job_name=job_name,
+        degraded_reason=None,
+        parent_death_linked=parent_death_linked,
+    )
+    return ScopedProcessHandle(process=process, snapshot=snapshot)
+
+
 @dataclass(frozen=True)
 class ManagedBackendConfig:
     """Inputs for launching a managed backend process."""
@@ -68,40 +112,17 @@ async def register_spawn_owned_process(
     resolved_runtime_root = runtime_root or resolve_project_runtime_root_for_write(
         control_root
     )
-    pid = process.pid
-    pgid: int | None = None
-    containment: str
-    if not IS_WINDOWS:
-        try:
-            pgid = os.getpgid(pid)
-            containment = "posix_pgid"
-        except OSError:
-            containment = "pid_tree_fallback"
-    else:
-        containment = "windows_job"
-
-    try:
-        birth_time = psutil.Process(pid).create_time()
-    except (psutil.NoSuchProcess, psutil.AccessDenied):
-        birth_time = PROCESS_BIRTH_UNKNOWN_EPOCH
-
-    snapshot = ProcessScopeSnapshot(
+    scope_handle = spawn_owned_process_handle(
+        spawn_id=spawn_id,
+        process=process,
         scope_id=scope_id,
-        owner_policy="spawn_owned",
-        owner_id=str(spawn_id),
         role=role,
-        containment=containment,
-        root_pid=pid,
-        root_created_at_epoch=birth_time,
-        pgid=pgid,
-        job_name=job_name,
-        degraded_reason=None,
         parent_death_linked=parent_death_linked,
+        job_name=job_name,
     )
-    scope_handle = ScopedProcessHandle(process=process, snapshot=snapshot)
     try:
         if persist:
-            record_scope(resolved_runtime_root, spawn_id, snapshot)
+            record_scope(resolved_runtime_root, spawn_id, scope_handle.snapshot)
     except BaseException:
         await scope_handle.terminate(reason="scope_registration_failed")
         raise
