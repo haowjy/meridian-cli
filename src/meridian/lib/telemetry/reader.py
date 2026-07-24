@@ -20,6 +20,19 @@ def _as_string_key_dict(value: object) -> dict[str, Any] | None:
     return cast("dict[str, Any]", value)
 
 
+def _parse_jsonl_line(line: str | bytes) -> dict[str, Any] | None:
+    if isinstance(line, bytes):
+        line = line.decode("utf-8", errors="replace")
+    line = line.strip()
+    if not line:
+        return None
+    try:
+        loaded = json.loads(line)
+    except (json.JSONDecodeError, ValueError):
+        return None
+    return _as_string_key_dict(loaded)
+
+
 def discover_segments(telemetry_dir: Path) -> list[Path]:
     """Return all JSONL segments sorted by mtime ascending."""
     if not telemetry_dir.is_dir():
@@ -67,14 +80,7 @@ def read_events(
     try:
         with path.open("r", encoding="utf-8") as file:
             for line in file:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    loaded = json.loads(line)
-                except (json.JSONDecodeError, ValueError):
-                    continue
-                envelope = _as_string_key_dict(loaded)
+                envelope = _parse_jsonl_line(line)
                 if envelope is None:
                     continue
                 if _matches_filters(
@@ -152,14 +158,7 @@ def _tail_events_from_offsets(
                     with segment.open("rb") as file:
                         file.seek(offset)
                         for raw_line in file:
-                            line = raw_line.decode("utf-8", errors="replace").strip()
-                            if not line:
-                                continue
-                            try:
-                                loaded = json.loads(line)
-                            except (json.JSONDecodeError, ValueError):
-                                continue
-                            envelope = _as_string_key_dict(loaded)
+                            envelope = _parse_jsonl_line(raw_line)
                             if envelope is None:
                                 continue
                             if _matches_filters(envelope, domain=domain, ids_filter=ids_filter):

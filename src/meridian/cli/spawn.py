@@ -2,6 +2,7 @@
 
 import asyncio
 import os
+import re
 import sys
 from collections.abc import Callable
 from functools import partial
@@ -188,6 +189,58 @@ def _resolve_spawn_prompt(
     raise ValueError("prompt required: pass -p/--prompt or --prompt-file")
 
 
+def _edit_distance(left: str, right: str) -> int:
+    """Return the adjacent-transposition-aware edit distance for two CLI tokens."""
+    distances = [[0] * (len(right) + 1) for _ in range(len(left) + 1)]
+    for left_index in range(len(left) + 1):
+        distances[left_index][0] = left_index
+    for right_index in range(len(right) + 1):
+        distances[0][right_index] = right_index
+
+    for left_index, left_char in enumerate(left, start=1):
+        for right_index, right_char in enumerate(right, start=1):
+            distances[left_index][right_index] = min(
+                distances[left_index - 1][right_index] + 1,
+                distances[left_index][right_index - 1] + 1,
+                distances[left_index - 1][right_index - 1]
+                + (left_char != right_char),
+            )
+            if (
+                left_index > 1
+                and right_index > 1
+                and left_char == right[right_index - 2]
+                and left[left_index - 2] == right_char
+            ):
+                distances[left_index][right_index] = min(
+                    distances[left_index][right_index],
+                    distances[left_index - 2][right_index - 2] + 1,
+                )
+    return distances[-1][-1]
+
+
+def _validate_positional_spawn_prompt(
+    prompt: str | None,
+    *,
+    subcommands: frozenset[str],
+) -> None:
+    if (
+        prompt is None
+        or prompt in subcommands
+        or re.fullmatch(r"[a-z][a-z-]*", prompt) is None
+    ):
+        return
+    closest = min(subcommands, key=lambda command: (_edit_distance(prompt, command), command))
+    suggestion = (
+        f"; did you mean 'meridian spawn {closest}'?"
+        if _edit_distance(prompt, closest) <= 2
+        else ""
+    )
+    raise ValueError(
+        f"unknown spawn subcommand '{prompt}'{suggestion}\n"
+        "To force a literal one-word prompt, use --prompt."
+    )
+
+
 def _shared_launch_input_kwargs(
     *,
     dry_run: bool,
@@ -234,7 +287,16 @@ def _shared_launch_input_kwargs(
 
 
 def _spawn_create(
+    subcommands: frozenset[str],
     emit: Any,
+    positional_prompt: Annotated[
+        str | None,
+        Parameter(
+            name="prompt",
+            help="Inline literal prompt.",
+        ),
+    ] = None,
+    *,
     prompt: Annotated[
         str | None,
         Parameter(
@@ -590,8 +652,11 @@ def _spawn_create(
         phase="prompt_resolution",
         launcher_pid=os.getpid(),
     )
+    _validate_positional_spawn_prompt(positional_prompt, subcommands=subcommands)
+    if positional_prompt is not None and prompt is not None:
+        raise ValueError("cannot specify both a positional prompt and -p/--prompt")
     resolved_prompt = _resolve_spawn_prompt(
-        prompt,
+        prompt if prompt is not None else positional_prompt,
         prompt_file,
         has_files=bool(references),
         is_continue=resolved_continue_from is not None,
@@ -810,24 +875,23 @@ def _spawn_show(
         bool,
         Parameter(name="--verbose", help="Include internal spawn diagnostics.", show=True),
     ] = False,
-    report: Annotated[
-        bool,
+    full: Annotated[
+        bool | None,
         Parameter(
-            name="--report",
-            help=(
-                "Include full spawn report body in output (default: enabled). "
-                "Use --no-report to omit."
-            ),
+            name="--full",
+            help="Include the full report body (default: summary in JSON, full in text).",
         ),
-    ] = True,
+    ] = None,
 ) -> None:
+    output_format = _get_global_options().output.format
+    include_report_body = full if full is not None else output_format != "json"
     _spawn_show_like(
         emit,
         spawn_ids=spawn_ids,
         verbose=verbose,
         build_input=lambda spawn_id: SpawnShowInput(
             spawn_id=spawn_id,
-            include_report_body=report,
+            include_report_body=include_report_body,
         ),
         handler=spawn_show_sync,
     )
@@ -843,11 +907,11 @@ def _spawn_status(
         bool,
         Parameter(name="--verbose", help="Include internal spawn diagnostics.", show=True),
     ] = False,
-    report: Annotated[
+    full: Annotated[
         bool,
         Parameter(
-            name="--report",
-            help="Include report body in output (default: disabled).",
+            name="--full",
+            help="Include the full report body (default: disabled).",
         ),
     ] = False,
 ) -> None:
@@ -857,7 +921,7 @@ def _spawn_status(
         verbose=verbose,
         build_input=lambda spawn_id: SpawnStatusInput(
             spawn_id=spawn_id,
-            include_report_body=report,
+            include_report_body=full,
         ),
         handler=spawn_status_sync,
     )
@@ -891,7 +955,7 @@ def _spawn_show_like(
         return
 
     if output_format == "json":
-        emit(list(results))
+        emit([result.to_cli_wire() for result in results])
         return
 
     fmt_ctx = FormatContext(verbosity=1) if verbose else None
@@ -971,6 +1035,13 @@ def _spawn_wait(
             ),
         ),
     ] = None,
+    fail_fast: Annotated[
+        bool,
+        Parameter(
+            name="--fail-fast",
+            help="Return as soon as any spawn fails, listing spawns still pending.",
+        ),
+    ] = False,
     verbose: Annotated[
         bool,
         Parameter(name="--verbose", help="Enable verbose wait status output.", show=True),
@@ -989,28 +1060,30 @@ def _spawn_wait(
         bool,
         Parameter(name="--quiet", help="Suppress wait progress output.", show=True),
     ] = False,
-    report: Annotated[
-        bool,
+    full: Annotated[
+        bool | None,
         Parameter(
-            name="--report",
-            help="Include full report body in output (default: enabled). Use --no-report to omit.",
+            name="--full",
+            help="Include the full report body (default: summary in JSON, full in text).",
         ),
-    ] = True,
+    ] = None,
 ) -> None:
+    output_format = _get_global_options().output.format
+    include_report_body = full if full is not None else output_format != "json"
     result = spawn_wait_sync(
         SpawnWaitInput(
             spawn_ids=spawn_ids,
             timeout=timeout,
             yield_after_secs=yield_after_secs,
             timeout_explicit=timeout is not None,
+            fail_fast=fail_fast,
             verbose=verbose,
             quiet=quiet,
-            include_report_body=report,
+            include_report_body=include_report_body,
         ),
         sink=_current_output_sink(),
         prepared=_prepare_spawn_runtime_read(),
     )
-    output_format = _get_global_options().output.format
     if output_format != "json" and (metadata or verbose):
         emit(result.format_text(FormatContext(verbosity=1)))
     else:
@@ -1212,7 +1285,6 @@ def register_spawn_commands(app: App, emit: Emitter) -> tuple[set[str], dict[str
             "meridian.spawn.wait": _SPAWN_WAIT_HELP_EPILOGUE,
         },
         emit=emit,
-        default_handler=partial(_spawn_create, emit),
     )
     app.command(
         partial(_spawn_done, emit),
@@ -1246,4 +1318,8 @@ def register_spawn_commands(app: App, emit: Emitter) -> tuple[set[str], dict[str
         help="Removed. Use `meridian session log ID`.",
         show=False,
     )
+    registered.add("spawn.log")
+    descriptions["meridian.spawn.log"] = "Removed. Use `meridian session log ID`."
+    subcommands = frozenset(command.removeprefix("spawn.") for command in registered)
+    app.default(partial(_spawn_create, subcommands, emit))
     return registered, descriptions

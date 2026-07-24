@@ -509,6 +509,31 @@ def test_empty_harness_session_id_normalizes_to_none_before_update(tmp_path: Pat
         session_store.stop_session(runtime_root, chat_id)
 
 
+def test_session_path_fields_are_normalized_at_write_boundary(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runtime_root = _state_root(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    chat_id = session_store.start_session(
+        runtime_root,
+        harness="codex",
+        harness_session_id="session-1",
+        model="gpt-5.4",
+        chat_id="c43",
+        control_root="project/./root/",
+        task_cwd=None,
+        execution_cwd="",
+    )
+    try:
+        record = session_store.get_session_record(runtime_root, chat_id)
+        assert record is not None
+        assert record.control_root == (tmp_path / "project/root").as_posix()
+        assert record.task_cwd is None
+        assert record.execution_cwd == ""
+    finally:
+        session_store.stop_session(runtime_root, chat_id)
+
+
 def test_cleanup_stale_primary_session_with_live_pid_is_not_cleaned(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

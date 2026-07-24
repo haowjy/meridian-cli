@@ -16,6 +16,74 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   as "backend dead" while a reparented child serves on. Diagnostic signal
   only — no kill/finalize decision changes. (#449)
 
+## [0.3.51] - 2026-07-24
+
+## [0.3.50] - 2026-07-24
+
+### Changed
+- mars-agents bumped 0.10.5 → 0.10.6: package hooks declared on `session.end`
+  now compile to Claude Code's real `SessionEnd` event instead of the
+  nonexistent `SessionStop` (mars-agents#129). Unblocks meridian-base 0.8.9's
+  `context-autosync` hook, which pushes stranded context-repo commits (work
+  docs, KB) at session end.
+- Sparse JSON defaults for noisy CLI outputs: `spawn show`/`spawn wait` JSON
+  now carries `report_path` + a bounded `report_summary` instead of the full
+  `report_body` (opt back in with `--full`); `harness_session_id` is gone
+  from default spawn/work JSON; `work show` JSON is a curated summary;
+  `hooks run` JSON hides stdout/stderr behind `--verbose`. Multi-ID
+  `spawn show`/`status` use the same sparse shapes. Text output unchanged.
+  (#113)
+- **Flag rename (breaking):** the previously shipped `--report`/`--no-report`
+  report opt-in on `spawn show`/`spawn status`/`spawn wait` is renamed to
+  `--full`/`--no-full`, matching `session log --full`. `--report` is no longer
+  accepted. `hooks run` gains a new `--verbose` flag to reveal captured
+  stdout/stderr in JSON. (#113)
+
+## [0.3.49] - 2026-07-24
+
+### Changed
+- Pi failure extraction and output normalization now live with the Pi harness
+  instead of the harness-agnostic launch layer.
+- Claude subprocess transport now uses the shared managed-stdio process lifecycle.
+- Cursor subprocess transport now uses the shared managed-stdio process lifecycle
+  and launches in its own POSIX process group.
+
+### Fixed
+- Managed stdio launches now reap their provisional process tree when durable
+  scope registration fails or is cancelled.
+- Cursor process-scope termination can no longer target Meridian's own process
+  group when cancelling or reaping a subprocess.
+- Claude failure excerpts are bounded to stderr from the current process launch,
+  excluding stale output left in reused spawn logs.
+- Pi failure details now read a bounded stderr tail from only the current
+  process launch, excluding stale output left in reused spawn logs.
+- Pi first-response timing tests now use per-connection policies with realistic
+  deadlines, avoiding process races while keeping the slow no-response case fast.
+- Second Pi stderr test no longer flakes under CI load: dropped the 50ms
+  `_FIRST_STDOUT_AFTER_INITIAL_PROMPT_TIMEOUT_SECONDS` override from
+  `test_pi_rpc_connection_surfaces_stderr_on_early_exit_before_first_event`,
+  the sibling missed by the v0.3.44 de-flake. Early-exit stderr now surfaces
+  via process-death detection instead of racing an artificial timeout. Also
+  removed that test's dead abort/kill grace overrides — the shim exits before
+  teardown, so those timers never engaged.
+- Malformed Pi stdout no longer bypasses the first-response watchdog; parse
+  diagnostics still surface without making the harness appear ready.
+- Pi processes that exit before their first event now report the real exit code
+  and stderr instead of being mislabeled as a first-response timeout.
+
+## [0.3.48] - 2026-07-24
+
+### Fixed
+- `meridian spawn` now rejects bare, subcommand-shaped one-word prompts that
+  are not registered spawn subcommands and suggests a nearby command when
+  possible. Explicit prompt flags remain literal. (#321)
+- `meridian spawn wait --fail-fast` now returns on the first failed or timed-out
+  spawn and reports the spawns that remain pending. (#458)
+- State stores persist control and working-directory paths in a consistent
+  absolute, normalized form. (#211)
+- Telemetry segment reads and tails now share one truncation-tolerant JSONL
+  parser. (#139)
+
 ## [0.3.47] - 2026-07-23
 
 ### Removed
