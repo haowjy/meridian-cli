@@ -92,6 +92,45 @@ def test_start_and_update_project_fields_round_trip(tmp_path: Path) -> None:
     assert row.runner_pid == 2222
 
 
+def test_spawn_path_fields_are_normalized_at_write_boundary(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runtime_root = _state_root(tmp_path)
+    monkeypatch.chdir(tmp_path)
+
+    spawn_id = str(
+        start_spawn(
+            runtime_root,
+            chat_id="c1",
+            model="gpt-5.4",
+            agent="coder",
+            harness="codex",
+            prompt="hello",
+            control_root="project/./root/",
+            task_cwd=None,
+            execution_cwd="project/root/../initial-task/",
+        )
+    )
+
+    row = get_spawn(runtime_root, spawn_id)
+    assert row is not None
+    assert row.control_root == (tmp_path / "project/root").as_posix()
+    assert row.task_cwd is None
+    assert row.execution_cwd == (tmp_path / "project/initial-task").as_posix()
+
+    update_spawn(
+        runtime_root,
+        spawn_id,
+        task_cwd="project/./updated-task/",
+        execution_cwd="project/updated-task/../execution/",
+    )
+
+    row = get_spawn(runtime_root, spawn_id)
+    assert row is not None
+    assert row.task_cwd == (tmp_path / "project/updated-task").as_posix()
+    assert row.execution_cwd == (tmp_path / "project/execution").as_posix()
+
+
 def test_invalid_persisted_status_is_reported_and_not_coerced(tmp_path: Path) -> None:
     runtime_root = _state_root(tmp_path)
     spawn_id = _start_test_spawn(runtime_root)

@@ -32,7 +32,7 @@ from meridian.lib.core.spawn_start import SpawnStartMetadata, derive_display_lab
 from meridian.lib.core.types import ChatId, HarnessSessionId, SpawnId
 from meridian.lib.state.atomic import atomic_publish_dir, atomic_write_text
 from meridian.lib.state.event_store import lock_file
-from meridian.lib.state.paths import RuntimePaths
+from meridian.lib.state.paths import RuntimePaths, normalize_path_for_write
 from meridian.lib.state.spawn.model import (
     AUTHORITATIVE_ORIGINS,
 )
@@ -334,9 +334,9 @@ def start_spawn(
                 if harness_session_id is not None
                 else None
             ),
-            control_root=control_root,
-            task_cwd=task_cwd,
-            execution_cwd=execution_cwd,
+            control_root=normalize_path_for_write(control_root),
+            task_cwd=normalize_path_for_write(task_cwd),
+            execution_cwd=normalize_path_for_write(execution_cwd),
             claude_config_dir=claude_config_dir,
             launch_mode=launch_mode,
             worker_pid=worker_pid,
@@ -433,11 +433,11 @@ def update_spawn(
         if harness_session_id is not None:
             updates["harness_session_id"] = harness_session_id
         if control_root is not None:
-            updates["control_root"] = control_root
+            updates["control_root"] = normalize_path_for_write(control_root)
         if task_cwd is not None:
-            updates["task_cwd"] = task_cwd
+            updates["task_cwd"] = normalize_path_for_write(task_cwd)
         if execution_cwd is not None:
-            updates["execution_cwd"] = execution_cwd
+            updates["execution_cwd"] = normalize_path_for_write(execution_cwd)
         if claude_config_dir is not None:
             updates["claude_config_dir"] = claude_config_dir
         if desc is not None:

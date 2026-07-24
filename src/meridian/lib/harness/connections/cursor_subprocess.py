@@ -9,7 +9,6 @@ import uuid
 from asyncio.subprocess import DEVNULL, PIPE, Process
 from collections.abc import AsyncIterator, Callable
 from contextlib import suppress
-from io import BufferedWriter
 from typing import Final, cast
 
 from meridian.lib.core.types import HarnessId, SpawnId
@@ -25,12 +24,14 @@ from meridian.lib.harness.connections.base import (
     reap_on_ownership_transfer_failure,
     validate_prompt_size,
 )
-from meridian.lib.harness.connections.managed_backend import register_spawn_owned_process
+from meridian.lib.harness.connections.managed_stdio import (
+    ManagedStdioProcess,
+    launch_managed_stdio,
+)
 from meridian.lib.harness.extractors.cursor import CURSOR_EXTRACTOR
 from meridian.lib.launch.constants import BASE_COMMAND_CURSOR_SUBPROCESS
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
-from meridian.lib.platform.process_scope import ProcessScopeSnapshot, ScopedProcessHandle
-from meridian.lib.state.paths import resolve_project_runtime_root_for_write, resolve_spawn_log_dir
+from meridian.lib.platform.process_scope import ProcessScopeSnapshot
 
 logger = logging.getLogger(__name__)
 
@@ -60,9 +61,7 @@ class CursorSubprocessConnection(HarnessConnection[ResolvedLaunchSpec]):
         self._spawn_id: SpawnId = SpawnId("")
         self._session_id: str | None = None
         self._session_id_observer: Callable[[str], None] | None = None
-        self._process: Process | None = None
-        self._scope_handle: ScopedProcessHandle | None = None
-        self._stderr_handle: BufferedWriter | None = None
+        self._child: ManagedStdioProcess | None = None
         self._event_stream_started = False
         self._protocol_validated = False
         self._stop_lock = asyncio.Lock()
@@ -89,15 +88,13 @@ class CursorSubprocessConnection(HarnessConnection[ResolvedLaunchSpec]):
 
     @property
     def subprocess_pid(self) -> int | None:
-        process = self._process
-        if process is None:
-            return None
-        return process.pid
+        child = self._child
+        return None if child is None else child.pid
 
     @property
     def scope_snapshot(self) -> ProcessScopeSnapshot | None:
-        handle = self._scope_handle
-        return None if handle is None else handle.snapshot
+        child = self._child
+        return None if child is None else child.scope_snapshot
 
     async def start(self, config: ConnectionConfig, spec: ResolvedLaunchSpec) -> None:
         if self._state != "created":
@@ -106,16 +103,6 @@ class CursorSubprocessConnection(HarnessConnection[ResolvedLaunchSpec]):
         validate_prompt_size(config)
         self._spawn_id = config.spawn_id
         self._set_state("starting")
-
-        spawn_dir = resolve_spawn_log_dir(
-            config.control_root,
-            config.spawn_id,
-            runtime_root=(
-                config.runtime_root
-                or resolve_project_runtime_root_for_write(config.control_root)
-            ),
-        )
-        self._stderr_handle = (spawn_dir / "stderr.log").open("ab")
 
         env = dict(config.child_env)
         self._session_id_observer = config.session_id_observer
@@ -139,23 +126,16 @@ class CursorSubprocessConnection(HarnessConnection[ResolvedLaunchSpec]):
         )
 
         try:
-            self._process = await asyncio.create_subprocess_exec(
-                *command,
-                cwd=str(config.control_root),
+            self._child = await launch_managed_stdio(
+                config=config,
+                harness_id=self.harness_id,
+                command=command,
                 env=env,
+                cwd=str(config.control_root),
                 stdin=DEVNULL,
-                stdout=PIPE,
-                stderr=self._stderr_handle,
-                limit=_STDOUT_READLINE_LIMIT,
-            )
-            self._scope_handle = await register_spawn_owned_process(
-                spawn_id=config.spawn_id,
-                control_root=config.control_root,
-                process=self._process,
-                scope_id="stdio",
-                role="harness_stdio",
-                runtime_root=config.runtime_root,
-                persist=config.runtime_root is not None,
+                stdout_limit=_STDOUT_READLINE_LIMIT,
+                kill_grace_seconds=_PROCESS_STOP_TIMEOUT_SECONDS,
+                terminate_reason="cursor_connection_stop",
             )
             self._set_state("connected")
         except BaseException:
@@ -197,10 +177,13 @@ class CursorSubprocessConnection(HarnessConnection[ResolvedLaunchSpec]):
             return
         if self._state != "failed":
             self._set_state("stopping")
-        await self._terminate_process()
+        child = self._child
+        if child is not None:
+            await child.terminate()
 
     async def events(self) -> AsyncIterator[RawHarnessEvent]:
-        process = self._process
+        child = self._child
+        process = None if child is None else child.process
         if process is None:
             return
         stdout = process.stdout
@@ -284,35 +267,12 @@ class CursorSubprocessConnection(HarnessConnection[ResolvedLaunchSpec]):
         self._state = next_state
 
     async def _cleanup_resources(self, *, terminate_process: bool) -> None:
+        child = self._child
+        if child is None:
+            return
         if terminate_process:
-            await self._terminate_process()
-        if self._stderr_handle is not None:
-            self._stderr_handle.close()
-            self._stderr_handle = None
-
-    async def _terminate_process(self) -> None:
-        process = self._process
-        if process is None:
-            return
-        scope_handle = self._scope_handle
-        self._scope_handle = None
-        if scope_handle is not None and process.returncode is None:
-            await scope_handle.terminate(
-                grace_seconds=_PROCESS_STOP_TIMEOUT_SECONDS,
-                reason="cursor_connection_stop",
-            )
-            self._process = None
-            return
-        if process.returncode is None:
-            with suppress(ProcessLookupError):
-                process.terminate()
-            try:
-                await asyncio.wait_for(process.wait(), timeout=_PROCESS_STOP_TIMEOUT_SECONDS)
-            except TimeoutError:
-                with suppress(ProcessLookupError):
-                    process.kill()
-                await process.wait()
-        self._process = None
+            await child.terminate()
+        child.close_stderr_handle()
 
     def _observe_session_id_from_event(self, event: RawHarnessEvent) -> None:
         detected = CURSOR_EXTRACTOR.detect_session_id_from_event(event)
