@@ -4,6 +4,20 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+- Sparse JSON defaults for noisy CLI outputs: `spawn show`/`spawn wait` JSON
+  now carries `report_path` + a bounded `report_summary` instead of the full
+  `report_body` (opt back in with `--full`); `harness_session_id` is gone
+  from default spawn/work JSON; `work show` JSON is a curated summary;
+  `hooks run` JSON hides stdout/stderr behind `--verbose`. Multi-ID
+  `spawn show`/`status` use the same sparse shapes. Text output unchanged.
+  (#113)
+- **Flag rename (breaking):** the previously shipped `--report`/`--no-report`
+  report opt-in on `spawn show`/`spawn status`/`spawn wait` is renamed to
+  `--full`/`--no-full`, matching `session log --full`. `--report` is no longer
+  accepted. `hooks run` gains a new `--verbose` flag to reveal captured
+  stdout/stderr in JSON. (#113)
+
 ## [0.3.49] - 2026-07-24
 
 ### Changed

@@ -150,6 +150,12 @@ class SpawnCreateInput(SpawnLaunchOptions):
 
 
 class SpawnActionOutput(BaseModel):
+    """Spawn action result with distinct CLI and implicit agent projections.
+
+    ``to_cli_wire()`` is the explicit JSON contract. ``to_agent_wire()`` is
+    intentionally narrower for implicit agent-mode background spawns.
+    """
+
     model_config = ConfigDict(frozen=True)
 
     command: str
@@ -314,10 +320,14 @@ class SpawnActionOutput(BaseModel):
                 wire["cli_command"] = list(self.cli_command)
         return wire
 
+    def to_cli_wire(self) -> dict[str, object]:
+        """Project the explicit CLI JSON contract."""
+        return self.to_wire()
+
     def to_agent_wire(self) -> dict[str, object]:
         """Project sparse JSON for implicit agent-mode consumers."""
         if not (self.background and self.status == "running"):
-            return self.to_wire()
+            return self.to_cli_wire()
 
         wire: dict[str, object] = {"status": self.status}
         if self.spawn_id is not None:
@@ -351,7 +361,7 @@ class SpawnActionOutput(BaseModel):
             return self
         if explicit_format is None:
             return self.to_agent_wire()
-        return self.to_wire()
+        return self.to_cli_wire()
 
     def format_text(self, ctx: FormatContext | None = None) -> str:
         effective_ctx = ctx or FormatContext()
@@ -901,8 +911,6 @@ class SpawnDetailOutput(BaseModel):
             wire["tui_pid"] = self.tui_pid
         if self.backend_port is not None:
             wire["backend_port"] = self.backend_port
-        if self.kind == "primary" and self.harness_session_id is not None:
-            wire["harness_session_id"] = self.harness_session_id
         if self.pi_lifecycle_phase is not None:
             wire["pi_lifecycle_phase"] = self.pi_lifecycle_phase
         if self.pi_cleanup_status is not None:

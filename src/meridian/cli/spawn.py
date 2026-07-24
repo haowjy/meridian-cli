@@ -875,24 +875,23 @@ def _spawn_show(
         bool,
         Parameter(name="--verbose", help="Include internal spawn diagnostics.", show=True),
     ] = False,
-    report: Annotated[
-        bool,
+    full: Annotated[
+        bool | None,
         Parameter(
-            name="--report",
-            help=(
-                "Include full spawn report body in output (default: enabled). "
-                "Use --no-report to omit."
-            ),
+            name="--full",
+            help="Include the full report body (default: summary in JSON, full in text).",
         ),
-    ] = True,
+    ] = None,
 ) -> None:
+    output_format = _get_global_options().output.format
+    include_report_body = full if full is not None else output_format != "json"
     _spawn_show_like(
         emit,
         spawn_ids=spawn_ids,
         verbose=verbose,
         build_input=lambda spawn_id: SpawnShowInput(
             spawn_id=spawn_id,
-            include_report_body=report,
+            include_report_body=include_report_body,
         ),
         handler=spawn_show_sync,
     )
@@ -908,11 +907,11 @@ def _spawn_status(
         bool,
         Parameter(name="--verbose", help="Include internal spawn diagnostics.", show=True),
     ] = False,
-    report: Annotated[
+    full: Annotated[
         bool,
         Parameter(
-            name="--report",
-            help="Include report body in output (default: disabled).",
+            name="--full",
+            help="Include the full report body (default: disabled).",
         ),
     ] = False,
 ) -> None:
@@ -922,7 +921,7 @@ def _spawn_status(
         verbose=verbose,
         build_input=lambda spawn_id: SpawnStatusInput(
             spawn_id=spawn_id,
-            include_report_body=report,
+            include_report_body=full,
         ),
         handler=spawn_status_sync,
     )
@@ -956,7 +955,7 @@ def _spawn_show_like(
         return
 
     if output_format == "json":
-        emit(list(results))
+        emit([result.to_cli_wire() for result in results])
         return
 
     fmt_ctx = FormatContext(verbosity=1) if verbose else None
@@ -1061,14 +1060,16 @@ def _spawn_wait(
         bool,
         Parameter(name="--quiet", help="Suppress wait progress output.", show=True),
     ] = False,
-    report: Annotated[
-        bool,
+    full: Annotated[
+        bool | None,
         Parameter(
-            name="--report",
-            help="Include full report body in output (default: enabled). Use --no-report to omit.",
+            name="--full",
+            help="Include the full report body (default: summary in JSON, full in text).",
         ),
-    ] = True,
+    ] = None,
 ) -> None:
+    output_format = _get_global_options().output.format
+    include_report_body = full if full is not None else output_format != "json"
     result = spawn_wait_sync(
         SpawnWaitInput(
             spawn_ids=spawn_ids,
@@ -1078,12 +1079,11 @@ def _spawn_wait(
             fail_fast=fail_fast,
             verbose=verbose,
             quiet=quiet,
-            include_report_body=report,
+            include_report_body=include_report_body,
         ),
         sink=_current_output_sink(),
         prepared=_prepare_spawn_runtime_read(),
     )
-    output_format = _get_global_options().output.format
     if output_format != "json" and (metadata or verbose):
         emit(result.format_text(FormatContext(verbosity=1)))
     else:

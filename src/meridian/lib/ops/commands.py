@@ -576,7 +576,7 @@ _OP_SPECS: tuple[ExtensionCommandSpec, ...] = (
         command_id="status",
         summary=(
             "Show spawn status, duration, model, and report path. "
-            "Use --report to include report text."
+            "Use --full to include report text."
         ),
         handler=spawn_status,
         sync_handler=spawn_status_sync,
