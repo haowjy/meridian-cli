@@ -308,6 +308,7 @@ class WorkShowOutput(BaseModel):
             "description": self.description,
             "created_at": self.created_at,
             "work_dir": self.work_dir,
+            "task_dir": self.task_dir,
             "spawns": [
                 {
                     "id": spawn.id,
