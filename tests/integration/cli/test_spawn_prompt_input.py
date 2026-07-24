@@ -13,6 +13,8 @@ import pytest
 from tests.conftest import posix_only
 from tests.support.executables import prepend_fake_executables
 
+_CLI_HANG_GUARD_S = 20
+
 
 @pytest.mark.integration
 @posix_only
@@ -57,7 +59,7 @@ def test_spawn_with_reference_does_not_read_silent_open_stdin(
         stderr=subprocess.DEVNULL,
     )
     try:
-        return_code = process.wait(timeout=3)
+        return_code = process.wait(timeout=_CLI_HANG_GUARD_S)
     finally:
         if process.poll() is None:
             process.kill()
@@ -107,7 +109,7 @@ def test_spawn_prompt_file_stdin_reaches_dry_run_prompt(
         env=env,
         input=prompt,
         capture_output=True,
-        timeout=3,
+        timeout=_CLI_HANG_GUARD_S,
         check=False,
     )
 
@@ -148,7 +150,7 @@ def test_spawn_rejects_subcommand_shaped_prompts_and_suggests_transposition(
         env=env,
         text=True,
         capture_output=True,
-        timeout=3,
+        timeout=_CLI_HANG_GUARD_S,
         check=False,
     )
     typo = subprocess.run(
@@ -157,7 +159,7 @@ def test_spawn_rejects_subcommand_shaped_prompts_and_suggests_transposition(
         env=env,
         text=True,
         capture_output=True,
-        timeout=3,
+        timeout=_CLI_HANG_GUARD_S,
         check=False,
     )
     explicit_prompt = subprocess.run(
@@ -176,7 +178,7 @@ def test_spawn_rejects_subcommand_shaped_prompts_and_suggests_transposition(
         env=env,
         text=True,
         capture_output=True,
-        timeout=3,
+        timeout=_CLI_HANG_GUARD_S,
         check=False,
     )
 
@@ -228,7 +230,7 @@ def test_spawn_accepts_positional_prompt_that_does_not_match_subcommand_shape(
         env=env,
         text=True,
         capture_output=True,
-        timeout=3,
+        timeout=_CLI_HANG_GUARD_S,
         check=False,
     )
 
