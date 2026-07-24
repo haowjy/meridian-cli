@@ -78,6 +78,15 @@ the repository never imports the projection. Cross-leaf operations belong in the
 order above. Reaper claims consume one immutable projection snapshot containing
 both scopes and released IDs, read under a single projection-lock acquisition.
 
+## Write-Boundary Path Normalization
+
+`normalize_path_for_write()` in `paths.py` normalizes path strings to stable absolute
+form (`os.path.abspath(os.path.normpath(...))`) at the write boundary. Applied to
+`control_root`, `task_cwd`, and `execution_cwd` in both `spawn_store` and
+`session_store`. Other path-like fields (`claude_config_dir`, `agent_path`,
+`skill_paths`) are not yet normalized; see `.context/FUTURE` for the scope-out.
+New persisted path fields should use this helper at their write site.
+
 ## Atomic Write Contract
 
 State-facing writes go through `atomic.py`, which delegates file replacement to the

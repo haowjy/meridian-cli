@@ -5,12 +5,9 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import os
 import signal
-from asyncio.subprocess import PIPE, Process
+from asyncio.subprocess import PIPE
 from collections.abc import AsyncIterator
-from io import BufferedWriter
-from pathlib import Path
 from typing import TYPE_CHECKING, Final, cast
 
 if TYPE_CHECKING:
@@ -31,8 +28,10 @@ from meridian.lib.harness.connections.base import (
     reap_on_ownership_transfer_failure,
     validate_prompt_size,
 )
-from meridian.lib.harness.connections.managed_backend import register_spawn_owned_process
-from meridian.lib.harness.errors import HarnessBinaryNotFound
+from meridian.lib.harness.connections.managed_stdio import (
+    ManagedStdioProcess,
+    launch_managed_stdio,
+)
 from meridian.lib.harness.semantics import EventSemantics
 from meridian.lib.launch.constants import BASE_COMMAND_CLAUDE_STREAMING
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
@@ -43,15 +42,13 @@ from meridian.lib.observability.trace_helpers import (
     trace_wire_send,
 )
 from meridian.lib.platform import IS_WINDOWS
-from meridian.lib.platform.process_scope import ProcessScopeSnapshot, ScopedProcessHandle
-from meridian.lib.state.paths import resolve_project_runtime_root_for_write, resolve_spawn_log_dir
+from meridian.lib.platform.process_scope import ProcessScopeSnapshot
 
 logger = logging.getLogger(__name__)
 
 _PROCESS_KILL_GRACE_SECONDS: Final[float] = 10.0
 _STDOUT_READLINE_LIMIT: Final[int] = 128 * 1024 * 1024  # 128 MiB
 _VERSION_CHECK_TIMEOUT_SECONDS: Final[float] = 5.0
-_STDERR_MAX_BYTES: Final[int] = 16 * 1024
 _TESTED_VERSION_PREFIXES: Final[tuple[str, ...]] = ("1.", "2.")
 _HARNESS_NAME: Final[str] = HarnessId.CLAUDE.value
 
@@ -97,12 +94,9 @@ class ClaudeConnection(HarnessConnection[ResolvedLaunchSpec]):
         self._state: ConnectionState = "created"
         self._spawn_id: SpawnId = SpawnId("")
         self._config: ConnectionConfig | None = None
-        self._process: Process | None = None
-        self._scope_handle: ScopedProcessHandle | None = None
+        self._child: ManagedStdioProcess | None = None
         self._send_lock = asyncio.Lock()
         self._stop_lock = asyncio.Lock()
-        self._stderr_handle: BufferedWriter | None = None
-        self._stderr_log_path: Path | None = None
         self._protocol_validated = False
         self._event_stream_started = False
         self._tracer: DebugTracer | None = None
@@ -132,15 +126,13 @@ class ClaudeConnection(HarnessConnection[ResolvedLaunchSpec]):
 
     @property
     def subprocess_pid(self) -> int | None:
-        process = self._process
-        if process is None:
-            return None
-        return process.pid
+        child = self._child
+        return None if child is None else child.pid
 
     @property
     def scope_snapshot(self) -> ProcessScopeSnapshot | None:
-        handle = self._scope_handle
-        return None if handle is None else handle.snapshot
+        child = self._child
+        return None if child is None else child.scope_snapshot
 
     async def start(self, config: ConnectionConfig, spec: ResolvedLaunchSpec) -> None:
         """Launch Claude subprocess and send the initial user prompt via stdin."""
@@ -227,7 +219,8 @@ class ClaudeConnection(HarnessConnection[ResolvedLaunchSpec]):
     async def events(self) -> AsyncIterator[RawHarnessEvent]:
         """Yield RawHarnessEvent objects read line-by-line from Claude stdout."""
 
-        process = self._process
+        child = self._child
+        process = None if child is None else child.process
         if process is None:
             return
         stdout = process.stdout
@@ -363,49 +356,19 @@ class ClaudeConnection(HarnessConnection[ResolvedLaunchSpec]):
         return None
 
     async def _start_subprocess(self, config: ConnectionConfig, spec: ResolvedLaunchSpec) -> None:
-        spawn_dir = resolve_spawn_log_dir(
-            config.control_root,
-            config.spawn_id,
-            runtime_root=(
-                config.runtime_root
-                or resolve_project_runtime_root_for_write(config.control_root)
-            ),
-        )
-
-        stderr_path = spawn_dir / "stderr.log"
-        self._stderr_log_path = stderr_path
-        self._stderr_handle = stderr_path.open("ab")
-
         command = self._build_command(config, spec)
-
         env = dict(config.child_env)
-
-        try:
-            self._process = await asyncio.create_subprocess_exec(
-                *command,
-                cwd=str(config.control_root),
-                env=env,
-                stdin=PIPE,
-                stdout=PIPE,
-                stderr=self._stderr_handle,
-                limit=_STDOUT_READLINE_LIMIT,
-                start_new_session=not IS_WINDOWS,
-            )
-            self._scope_handle = await register_spawn_owned_process(
-                spawn_id=config.spawn_id,
-                control_root=config.control_root,
-                process=self._process,
-                scope_id="stdio",
-                role="harness_stdio",
-                runtime_root=config.runtime_root,
-                persist=config.runtime_root is not None,
-            )
-        except (FileNotFoundError, NotADirectoryError) as exc:
-            raise HarnessBinaryNotFound.from_os_error(
-                harness_id=self.harness_id,
-                error=exc,
-                binary_name=command[0],
-            ) from exc
+        self._child = await launch_managed_stdio(
+            config=config,
+            harness_id=self.harness_id,
+            command=command,
+            env=env,
+            cwd=str(config.control_root),
+            stdin=PIPE,
+            stdout_limit=_STDOUT_READLINE_LIMIT,
+            kill_grace_seconds=_PROCESS_KILL_GRACE_SECONDS,
+            terminate_reason="claude_connection_stop",
+        )
 
     def _build_command(self, config: ConnectionConfig, spec: ResolvedLaunchSpec) -> list[str]:
         _ = config
@@ -425,7 +388,8 @@ class ClaudeConnection(HarnessConnection[ResolvedLaunchSpec]):
         await self._send_json({"type": "user", "message": {"role": "user", "content": text}})
 
     async def _send_json(self, payload: dict[str, object]) -> None:
-        process = self._process
+        child = self._child
+        process = None if child is None else child.process
         if process is None or process.stdin is None:
             raise ConnectionNotReady("Claude subprocess stdin is not available.")
 
@@ -436,7 +400,8 @@ class ClaudeConnection(HarnessConnection[ResolvedLaunchSpec]):
             await process.stdin.drain()
 
     async def _signal_process(self, sig: signal.Signals) -> None:
-        process = self._process
+        child = self._child
+        process = None if child is None else child.process
         if process is None or process.returncode is not None:
             return
         trace_wire_send(self._tracer, "signal_sent", "", signal=sig.name)
@@ -448,56 +413,16 @@ class ClaudeConnection(HarnessConnection[ResolvedLaunchSpec]):
             process.send_signal(sig)
 
     async def _cleanup_resources(self, *, terminate_process: bool) -> None:
+        child = self._child
+        if child is None:
+            return
         if terminate_process:
-            await self._terminate_process()
-        self._close_log_handles()
-
-    async def _terminate_process(self) -> None:
-        process = self._process
-        if process is None:
-            return
-        scope_handle = self._scope_handle
-        self._scope_handle = None
-        if scope_handle is not None and process.returncode is None:
-            await scope_handle.terminate(
-                grace_seconds=_PROCESS_KILL_GRACE_SECONDS,
-                reason="claude_connection_stop",
-            )
-            self._process = None
-            return
-        if process.returncode is None:
-            # Close stdin to signal no more input; then terminate if needed.
-            if process.stdin is not None:
-                try:
-                    process.stdin.close()
-                except Exception:
-                    logger.debug("Failed to close Claude subprocess stdin", exc_info=True)
-            process.terminate()
-            try:
-                await asyncio.wait_for(process.wait(), timeout=_PROCESS_KILL_GRACE_SECONDS)
-            except TimeoutError:
-                process.kill()
-                await process.wait()
-        self._process = None
-
-    def _close_log_handles(self) -> None:
-        if self._stderr_handle is not None:
-            self._stderr_handle.close()
-            self._stderr_handle = None
-        self._stderr_log_path = None
+            await child.terminate()
+        child.close_stderr_handle()
 
     def _read_stderr_excerpt(self) -> str:
-        if self._stderr_handle is not None:
-            self._stderr_handle.flush()
-        path = self._stderr_log_path
-        if path is None or not path.exists():
-            return ""
-        with path.open("rb") as handle:
-            handle.seek(0, os.SEEK_END)
-            end_offset = handle.tell()
-            handle.seek(max(0, end_offset - _STDERR_MAX_BYTES), os.SEEK_SET)
-            data = handle.read()
-        return data.decode("utf-8", errors="replace").strip()
+        child = self._child
+        return "" if child is None else child.read_stderr_tail() or ""
 
     def _parse_stdout_line(self, line: str) -> list[RawHarnessEvent]:
         """Parse one line of NDJSON from Claude stdout into RawHarnessEvent objects."""

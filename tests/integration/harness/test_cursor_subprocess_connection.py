@@ -158,6 +158,8 @@ async def test_cursor_create_chat_and_resume_reuse_session_with_store_attributio
 
     fresh_id = SpawnId("p-cursor-fresh")
     fresh = await _start(tmp_path, fresh_id)
+    assert fresh.subprocess_pid is not None
+    assert os.getpgid(fresh.subprocess_pid) != os.getpgrp()
     assert fresh.session_id == _MINTED_ID
     assert str(spawn_store.get_spawn(tmp_path, fresh_id).harness_session_id) == _MINTED_ID
     await _wait_for_commands(

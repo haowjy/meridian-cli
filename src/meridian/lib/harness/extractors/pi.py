@@ -17,10 +17,13 @@ from meridian.lib.harness.common import (
     _iter_json_lines_artifact,  # pyright: ignore[reportPrivateUsage]
 )
 from meridian.lib.harness.connections.base import RawHarnessEvent
+from meridian.lib.harness.pi_failure import (
+    compact_pi_failure_output,
+    extract_pi_failure_from_history,
+)
 from meridian.lib.harness.pi_paths import resolve_pi_spawn_session_root
 from meridian.lib.launch.constants import HISTORY_FILENAME
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
-from meridian.lib.launch.report import compact_pi_failure_output, extract_pi_failure_from_history
 from meridian.lib.platform import IS_WINDOWS
 
 from .base import HarnessExtractor

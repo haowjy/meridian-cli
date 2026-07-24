@@ -70,6 +70,8 @@ an awaited startup boundary, artifact opens and guarded scope registration fail 
   `register_spawn_owned_process` helper also serves stdio children (Claude, Pi,
   Cursor) — its placement here is accepted naming debt ahead of #424's layering
   split.
+- `managed_stdio.py` — spawn-lifetime stdio child ownership, durable scope
+  registration, termination escalation, and bounded current-launch stderr tails.
 - `__init__.py` — `get_connection_class(harness_id, transport_id)`.
 
 ## Depth

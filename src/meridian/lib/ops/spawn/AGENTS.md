@@ -33,6 +33,10 @@ nested processes also read it to skip reaping side effects.
 - Without args (no-arg form): scoped to the current `_MERIDIAN_DEPTH` — waits for
   spawns created at this nesting level only, not grandchild spawns.
 
+`--fail-fast` exits as soon as any spawn reaches `failed` or `timed_out`, reporting
+which spawns failed and which are still pending. `cancelled` does not trigger
+fail-fast (cancellation keeps existing aggregate-exit behavior).
+
 Checkpoint polling respects the depth-appropriate yield interval (read from
 `_MERIDIAN_HARNESS` env — the orchestrator's own harness prompt-cache TTL).
 

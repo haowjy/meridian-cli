@@ -28,8 +28,11 @@ stdout is not the quiescence authority.
 **Pi startup requires an initial prompt.** Unlike other harnesses that can start in a
 listening state, spawned Pi RPC sessions must receive an initial user message. The
 connection validates this (`_validate_initial_prompt_requirement()`) and enforces a
-30-second timeout for the first stdout event after the prompt
-(`_FIRST_STDOUT_AFTER_INITIAL_PROMPT_TIMEOUT_SECONDS`).
+first-event timeout (default 30 s) after the prompt. The timeout value, abort grace,
+and kill grace are carried by a frozen `PiRpcTimingPolicy` injected at the
+`PiRpcConnection` constructor. The deadline is stamped at prompt-write success, not at
+the consumer's first `events()` iteration. Tests inject policies with short timeouts
+through the constructor; there are no module-level timing Finals to monkeypatch.
 
 **Pi injected prompts are acknowledged commands.** Every prompt carries an RPC `id`
 and `streamingBehavior: "followUp"`; the field is valid whether Pi is busy or idle.
