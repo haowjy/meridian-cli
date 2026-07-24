@@ -109,6 +109,7 @@ class HookRunInput(BaseModel):
 
     name: str
     event: HookEventName | None = None
+    include_output: bool = False
     project_root: str | None = None
 
 
@@ -132,6 +133,39 @@ class HookRunOutput(BaseModel):
     hook: str
     event: HookEventName
     result: HookRunResult
+    include_output: bool = False
+
+    def to_cli_wire(self) -> dict[str, object]:
+        """Project hook outcome, optionally including captured process output."""
+        wire: dict[str, object] = {
+            "hook": self.hook,
+            "event": self.event,
+            "outcome": self.result.outcome,
+            "success": self.result.success,
+            "skipped": self.result.skipped,
+            "skip_reason": self.result.skip_reason,
+            "error": self.result.error,
+            "exit_code": self.result.exit_code,
+            "duration_ms": self.result.duration_ms,
+        }
+        if self.include_output:
+            wire["stdout"] = self.result.stdout
+            wire["stderr"] = self.result.stderr
+        return wire
+
+    def to_cli_output(
+        self,
+        *,
+        format: str,
+        explicit_format: str | None,
+        agent_mode: bool,
+    ) -> object:
+        """CLI output protocol: project only JSON output."""
+        _ = explicit_format
+        _ = agent_mode
+        if format != "json":
+            return self
+        return self.to_cli_wire()
 
     def format_text(self, ctx: FormatContext | None = None) -> str:
         _ = ctx
@@ -365,6 +399,7 @@ def hooks_run_sync(payload: HookRunInput) -> HookRunOutput:
         hook=effective_hook.name,
         event=effective_hook.event,
         result=_result_to_output(result),
+        include_output=payload.include_output,
     )
 
 

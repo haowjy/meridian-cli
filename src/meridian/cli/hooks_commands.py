@@ -61,6 +61,13 @@ def _hooks_run(
             help="Optional event context to simulate (for example: spawn.finalized).",
         ),
     ] = None,
+    output: Annotated[
+        bool,
+        Parameter(
+            name="--output",
+            help="Include captured stdout and stderr in JSON output.",
+        ),
+    ] = False,
 ) -> None:
     with manual_hook_authority_scope(suppress=should_suppress_manual_hook_authority()):
         emit(
@@ -68,6 +75,7 @@ def _hooks_run(
                 HookRunInput(
                     name=name,
                     event=event,
+                    include_output=output,
                     project_root=_resolved_project_root(),
                 )
             )

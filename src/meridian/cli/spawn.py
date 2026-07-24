@@ -811,23 +811,25 @@ def _spawn_show(
         Parameter(name="--verbose", help="Include internal spawn diagnostics.", show=True),
     ] = False,
     report: Annotated[
-        bool,
+        bool | None,
         Parameter(
             name="--report",
             help=(
-                "Include full spawn report body in output (default: enabled). "
-                "Use --no-report to omit."
+                "Include full spawn report body. Enabled by default for text "
+                "output and disabled by default for JSON."
             ),
         ),
-    ] = True,
+    ] = None,
 ) -> None:
+    output_format = _get_global_options().output.format
+    include_report_body = report if report is not None else output_format != "json"
     _spawn_show_like(
         emit,
         spawn_ids=spawn_ids,
         verbose=verbose,
         build_input=lambda spawn_id: SpawnShowInput(
             spawn_id=spawn_id,
-            include_report_body=report,
+            include_report_body=include_report_body,
         ),
         handler=spawn_show_sync,
     )

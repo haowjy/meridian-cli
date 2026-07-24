@@ -300,6 +300,52 @@ class WorkShowOutput(BaseModel):
     worktree_exists: bool | None = None  # None = no worktree; True/False = exists/missing
     worktree_pending: bool = False  # creation interrupted
 
+    def to_cli_wire(self) -> dict[str, object]:
+        """Project work identity and summary-only related records."""
+        wire: dict[str, object] = {
+            "name": self.name,
+            "status": self.status,
+            "description": self.description,
+            "created_at": self.created_at,
+            "work_dir": self.work_dir,
+            "spawns": [
+                {
+                    "id": spawn.id,
+                    "status": spawn.status,
+                    "model": spawn.model,
+                    "desc": spawn.desc,
+                }
+                for spawn in self.spawns
+            ],
+            "sessions": [
+                {
+                    "chat_id": session.chat_id,
+                    "harness": session.harness,
+                    "status": session.status,
+                    "model": session.model,
+                    "agent": session.agent,
+                }
+                for session in self.sessions
+            ],
+        }
+        if self.goal is not None:
+            wire["goal"] = self.goal
+        return wire
+
+    def to_cli_output(
+        self,
+        *,
+        format: str,
+        explicit_format: str | None,
+        agent_mode: bool,
+    ) -> object:
+        """CLI output protocol: project only JSON output."""
+        _ = explicit_format
+        _ = agent_mode
+        if format != "json":
+            return self
+        return self.to_cli_wire()
+
     def format_text(self, ctx: FormatContext | None = None) -> str:
         _ = ctx
 
