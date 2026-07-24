@@ -38,9 +38,34 @@ def _claude_project_dir(project_root: Path) -> Path:
     return _claude_projects_root() / project_slug(project_root)
 
 
-def candidate_claude_project_dirs(project_root: Path) -> list[Path]:
-    """Return the exact Claude project directory for this project root."""
-    return [_claude_projects_root() / project_slug(project_root)]
+def _dedupe_roots(*roots: Path | None) -> tuple[Path, ...]:
+    unique_roots: list[Path] = []
+    seen: set[Path] = set()
+    for root in roots:
+        if root is None:
+            continue
+        resolved = root.resolve()
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        unique_roots.append(root)
+    return tuple(unique_roots)
+
+
+def candidate_claude_project_dirs(
+    project_root: Path,
+    config_root_hint: Path | None = None,
+) -> list[Path]:
+    """Return Claude project directories ordered by transcript lookup trust."""
+    slug = project_slug(project_root)
+    if config_root_hint is None:
+        return [_claude_config_root() / "projects" / slug]
+    roots = _dedupe_roots(
+        config_root_hint,
+        get_home_path() / ".claude",
+        _claude_config_root(),
+    )
+    return [root / "projects" / slug for root in roots]
 
 
 def _read_claude_session_id(path: Path) -> str | None:
@@ -322,4 +347,3 @@ def detect_primary_session_id(
     except OSError:
         logger.debug("Failed to verify Claude session file", exc_info=True)
     return None
-

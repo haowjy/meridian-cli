@@ -8,7 +8,7 @@ import time
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, TypedDict, cast
 
 import structlog
 
@@ -28,6 +28,7 @@ from meridian.lib.launch.constants import (
     OUTPUT_FILENAME,
 )
 from meridian.lib.platform.locking import lock_file
+from meridian.lib.platform.process_scope import is_pgid_reachable
 from meridian.lib.platform.process_scope.base import ProcessScopeSnapshot
 from meridian.lib.state.atomic import atomic_write_text
 from meridian.lib.state.launch_boundary import LaunchBoundarySummary, read_launch_boundary_summary
@@ -88,6 +89,31 @@ class ArtifactSnapshot:
     durable_report_completion: bool
     runner_pid_alive: bool
     launch_boundary: LaunchBoundarySummary
+
+
+class ScopeLiveness(TypedDict):
+    """Best-effort liveness projection for a process containment scope."""
+
+    root_alive: bool
+    pgid_reachable: bool | None
+    likely_serving: bool
+
+
+def scope_liveness(scope: ProcessScopeSnapshot) -> ScopeLiveness:
+    """Project root identity and group reachability into one diagnostic view."""
+
+    root_alive = is_process_alive(
+        scope.root_pid,
+        created_after_epoch=(scope.root_created_at_epoch or None),
+    )
+    pgid_reachable = (
+        is_pgid_reachable(scope.pgid) if scope.pgid is not None else None
+    )
+    return {
+        "root_alive": root_alive,
+        "pgid_reachable": pgid_reachable,
+        "likely_serving": root_alive or pgid_reachable is True,
+    }
 
 
 def _runner_exit_at_epoch(runner_exit_at: str | None) -> float | None:
@@ -326,21 +352,34 @@ def decide_reconciliation(
 
 
 def _log_orphan_primary_diagnostics(
+    runtime_root: Path,
     record: SpawnRecord,
     snapshot: ArtifactSnapshot,
     managed_snapshot: ManagedPrimarySnapshot | None,
 ) -> None:
     if managed_snapshot is not None:
         metadata = managed_snapshot.metadata
+        scopes = read_scopes_from_disk(runtime_root, SpawnId(record.id))
         launcher_pid = metadata.launcher_pid
         launcher_alive = managed_snapshot.launcher_pid_alive if launcher_pid is not None else None
+        backend_scope = next(
+            (scope for scope in scopes if scope.root_pid == metadata.backend_pid),
+            None,
+        )
+        backend_liveness = (
+            scope_liveness(backend_scope) if backend_scope is not None else None
+        )
         backend_alive = (
-            is_process_alive(
-                metadata.backend_pid,
-                created_after_epoch=managed_snapshot.started_epoch,
+            backend_liveness["likely_serving"]
+            if backend_liveness is not None
+            else (
+                is_process_alive(
+                    metadata.backend_pid,
+                    created_after_epoch=managed_snapshot.started_epoch,
+                )
+                if metadata.backend_pid is not None
+                else None
             )
-            if metadata.backend_pid is not None
-            else None
         )
         tui_alive = (
             is_process_alive(
@@ -358,6 +397,16 @@ def _log_orphan_primary_diagnostics(
             launcher_alive=launcher_alive,
             backend_pid=metadata.backend_pid,
             backend_alive=backend_alive,
+            backend_root_alive=(
+                backend_liveness["root_alive"]
+                if backend_liveness is not None
+                else backend_alive
+            ),
+            backend_pgid_reachable=(
+                backend_liveness["pgid_reachable"]
+                if backend_liveness is not None
+                else None
+            ),
             tui_pid=metadata.tui_pid,
             tui_alive=tui_alive,
             activity=metadata.activity,
@@ -411,15 +460,14 @@ def _record_orphan_finalize_evidence(
     ]
     child_processes: list[dict[str, object]] = []
     for scope in scopes:
+        liveness = scope_liveness(scope)
         child_processes.append(
             {
                 "scope_id": scope.scope_id,
                 "role": scope.role,
                 "pid": scope.root_pid,
-                "alive": is_process_alive(
-                    scope.root_pid,
-                    created_after_epoch=(scope.root_created_at_epoch or None),
-                ),
+                **liveness,
+                "alive": liveness["likely_serving"],
             }
         )
 
@@ -430,7 +478,7 @@ def _record_orphan_finalize_evidence(
             None,
         )
         worker_alive = (
-            bool(matching_scope["alive"])
+            bool(matching_scope["likely_serving"])
             if matching_scope is not None
             else is_process_alive(record.worker_pid, created_after_epoch=snapshot.started_epoch)
         )
@@ -451,7 +499,7 @@ def _record_orphan_finalize_evidence(
         },
         "child_processes": child_processes,
         "worker_or_backend_alive": worker_alive is True
-        or any(bool(item["alive"]) for item in child_processes),
+        or any(bool(item["likely_serving"]) for item in child_processes),
         "heartbeat_age_secs": (
             max(0.0, now - heartbeat_epoch) if heartbeat_epoch is not None else None
         ),
@@ -838,7 +886,12 @@ def reconcile_active_spawn(
     if decision.error == "orphan_primary" and (
         managed_snapshot is not None or _is_potential_managed_primary(record)
     ):
-        _log_orphan_primary_diagnostics(record, generic_snapshot, managed_snapshot)
+        _log_orphan_primary_diagnostics(
+            runtime_root,
+            record,
+            generic_snapshot,
+            managed_snapshot,
+        )
     return _cleanup_after_finalize(
         runtime_root,
         _finalize_failed(

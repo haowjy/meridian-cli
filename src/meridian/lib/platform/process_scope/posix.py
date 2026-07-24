@@ -1,16 +1,38 @@
 """POSIX process-group scope adapter.
 
-Importable on Windows, but all functions raise RuntimeError if called there.
+Importable on Windows, but process-group operations are POSIX-only.
 """
 
 from __future__ import annotations
 
+import os
 from contextlib import suppress
 
 import psutil
 
 from meridian.lib.platform import IS_WINDOWS
 from meridian.lib.platform.process_scope.base import CleanupResult, birth_time_unverified
+
+
+def is_pgid_reachable(pgid: int) -> bool:
+    """Return whether signal 0 can reach a POSIX process group.
+
+    This is deliberately weaker than an "alive" check: process-group IDs have
+    no birth-time reuse guard, and signal 0 also succeeds for groups containing
+    only zombies. Use this as best-effort diagnostics, never process identity.
+    """
+
+    if pgid <= 0:
+        return False
+    try:
+        os.killpg(pgid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+    return True
 
 
 def _scan_by_pgid(pgid: int) -> list[psutil.Process]:
@@ -20,8 +42,6 @@ def _scan_by_pgid(pgid: int) -> list[psutil.Process]:
     root process is already dead and the normal PGID-kill path produced a
     ProcessLookupError (group dissolved before SIGTERM landed).
     """
-    import os
-
     result: list[psutil.Process] = []
     for proc in psutil.process_iter(["pid"]):
         with suppress(psutil.NoSuchProcess, psutil.AccessDenied, OSError):
@@ -66,7 +86,6 @@ def terminate_pgid(
             degraded_fallback=True,
         )
 
-    import os
     import signal
 
     # --- PID reuse guard (PROC-006) --- fail-closed for confirmed reuse only.
@@ -161,4 +180,4 @@ def terminate_pgid(
     )
 
 
-__all__ = ["terminate_pgid"]
+__all__ = ["is_pgid_reachable", "terminate_pgid"]

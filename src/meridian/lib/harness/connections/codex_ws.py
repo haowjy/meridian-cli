@@ -85,7 +85,8 @@ from meridian.lib.state.paths import resolve_project_runtime_root_for_write, res
 _DEFAULT_CONNECT_TIMEOUT_SECONDS = 30.0
 _DEFAULT_REQUEST_TIMEOUT_SECONDS = 30.0
 _STOP_WAIT_TIMEOUT_SECONDS = 5.0
-_STARTUP_STDERR_MAX_BYTES = 16 * 1024
+_PROCESS_EXIT_DIAGNOSTIC_WAIT_SECONDS = 0.1
+_STDERR_EXCERPT_MAX_BYTES = 16 * 1024
 _ADDRESS_IN_USE_MARKERS: Final[tuple[str, ...]] = (
     "address already in use",
     "address in use",
@@ -217,8 +218,10 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
         self._process: Process | None = None
         self._ws: Any | None = None
         self._reader_task: asyncio.Task[None] | None = None
+        self._backend_exit_task: asyncio.Task[None] | None = None
         self._send_lock = asyncio.Lock()
         self._stop_lock = asyncio.Lock()
+        self._terminal_lock = asyncio.Lock()
         self._stderr_handle: BufferedWriter | None = None
         self._stderr_log_path: Path | None = None
         self._stderr_read_offset = 0
@@ -244,6 +247,7 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
         self._signal_in_flight = False
         self._primary_observer_mode = False
         self._startup_emitter: StartupPhaseEmitter | None = None
+        self._event_stream_ended = False
 
     @property
     def state(self) -> ConnectionState:
@@ -360,6 +364,7 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
         self._pending_requests = {}
         self._hitl_requests = {}
         self._event_queue = asyncio.Queue()
+        self._event_stream_ended = False
         self._current_turn_id = None
         self._thread_id = None
         self._liveness.reset()
@@ -413,6 +418,7 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
                 ws_url,
                 timeout_seconds=self._connect_timeout(),
             )
+            self._backend_exit_task = asyncio.create_task(self._watch_backend_exit())
             self._reader_task = asyncio.create_task(self._read_messages_loop())
 
             await self._request(
@@ -739,17 +745,7 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
                         f"{self._LIVENESS_TIMEOUT_SECONDS:.1f}s without events"
                     )
                     logger.warning(message)
-                    if self._state in {"starting", "connected"}:
-                        self._emit_startup_phase(StartupPhase.HARNESS_FAILED)
-                        self._transition("failed")
-                        await self._event_queue.put(
-                            RawHarnessEvent(
-                                event_type="meridian/error/connectionClosed",
-                                payload={"message": message},
-                                harness_id=self.harness_id.value,
-                                raw_text=None,
-                            )
-                        )
+                    await self._emit_connection_closed_once({"message": message})
                     return
                 except Exception as exc:
                     if _is_clean_websocket_close(exc):
@@ -812,67 +808,195 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
                 )
         except Exception as exc:
             if self._state in {"starting", "connected"}:
-                self._emit_startup_phase(StartupPhase.HARNESS_FAILED)
-                self._transition("failed")
-                await self._event_queue.put(
-                    RawHarnessEvent(
-                        event_type="meridian/error/connectionClosed",
-                        payload={"message": str(exc)},
-                        harness_id=self.harness_id.value,
-                        raw_text=None,
+                await self._emit_connection_closed_once(
+                    await self._connection_closed_payload(
+                        str(exc),
+                        wait_for_process=True,
                     )
                 )
         finally:
             self._fail_pending_requests(RuntimeError("Codex websocket closed"))
             await self._clear_stale_hitl_requests(reason="websocket_closed")
+            if not self._event_stream_ended:
+                payload = await self._connection_closed_payload(
+                    "Codex websocket closed",
+                    wait_for_process=True,
+                )
+                await self._emit_connection_closed_once(
+                    payload if "backend_exit_code" in payload else None
+                )
+
+    async def _watch_backend_exit(self) -> None:
+        process = self._process
+        if process is None:
+            return
+        try:
+            return_code = await process.wait()
+            if self._state not in {"starting", "connected"}:
+                return
+            await self._emit_connection_closed_once(
+                self._backend_exit_payload(return_code)
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.warning("Codex backend-exit watcher failed", exc_info=True)
+
+    async def _connection_closed_payload(
+        self,
+        message: str,
+        *,
+        wait_for_process: bool,
+    ) -> dict[str, object]:
+        process = self._process
+        if wait_for_process and process is not None and process.returncode is None:
+            with contextlib.suppress(TimeoutError, Exception):
+                await asyncio.wait_for(
+                    asyncio.shield(process.wait()),
+                    timeout=_PROCESS_EXIT_DIAGNOSTIC_WAIT_SECONDS,
+                )
+        return_code = process.returncode if process is not None else None
+        if return_code is None:
+            return {"message": message}
+        return self._backend_exit_payload(return_code)
+
+    def _backend_exit_payload(self, return_code: int) -> dict[str, object]:
+        stderr_excerpt = self._read_stderr_excerpt()
+        detail = f"Codex app-server exited with code {return_code}."
+        if stderr_excerpt:
+            detail = f"{detail}\n\nCodex app-server stderr:\n{stderr_excerpt}"
+        return {
+            "message": detail,
+            "backend_exit_code": return_code,
+            "backend_stderr_excerpt": stderr_excerpt,
+        }
+
+    async def _emit_connection_closed_once(
+        self,
+        payload: dict[str, object] | None,
+    ) -> None:
+        """Emit at most one close event and terminate the event stream once.
+
+        ``None`` is the clean/expected-shutdown path. Shutdown changes state
+        before cleanup, so a racing watcher cannot report intentional process
+        termination as backend death.
+        """
+
+        async with self._terminal_lock:
+            if self._event_stream_ended:
+                return
+            if payload is not None and self._state in {"starting", "connected"}:
+                self._emit_startup_phase(StartupPhase.HARNESS_FAILED)
+                self._transition("failed")
+                message = str(payload.get("message") or "Codex connection closed")
+                self._fail_pending_requests(RuntimeError(message))
+                await self._event_queue.put(
+                    RawHarnessEvent(
+                        event_type="meridian/error/connectionClosed",
+                        payload=payload,
+                        harness_id=self.harness_id.value,
+                        raw_text=None,
+                    )
+                )
             await self._event_queue.put(None)
+            self._event_stream_ended = True
 
     async def _cleanup_resources(self, *, mark_stopped: bool) -> None:
-        await self._close_ws()
+        try:
+            if self._backend_exit_task is not None:
+                self._backend_exit_task.cancel()
+                try:
+                    await self._backend_exit_task
+                except asyncio.CancelledError:
+                    pass
+                except Exception:
+                    logger.warning("Codex backend-exit watcher cleanup failed", exc_info=True)
+                self._backend_exit_task = None
 
-        if self._reader_task is not None:
-            self._reader_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError, Exception):
-                await self._reader_task
-            self._reader_task = None
+            await self._close_ws()
 
-        scope_handle = self._scope_handle
-        self._scope_handle = None
-        process = self._process
-        self._process = None
+            if self._reader_task is not None:
+                self._reader_task.cancel()
+                try:
+                    await self._reader_task
+                except asyncio.CancelledError:
+                    pass
+                except Exception:
+                    logger.warning("Codex websocket reader cleanup failed", exc_info=True)
+                self._reader_task = None
 
-        if scope_handle is not None and process is not None and process.returncode is None:
-            await scope_handle.terminate(
-                grace_seconds=_STOP_WAIT_TIMEOUT_SECONDS,
-                reason="stop_called",
-            )
-        elif process is not None and process.returncode is None:
-            # Legacy fallback when scope handle was never created (e.g. start()
-            # failed before subprocess was launched).
-            process.terminate()
+            scope_handle = self._scope_handle
+            self._scope_handle = None
+            process = self._process
+            self._process = None
+
+            if scope_handle is not None and process is not None and process.returncode is None:
+                try:
+                    await scope_handle.terminate(
+                        grace_seconds=_STOP_WAIT_TIMEOUT_SECONDS,
+                        reason="stop_called",
+                    )
+                except Exception:
+                    logger.warning("Codex process-scope cleanup failed", exc_info=True)
+            elif process is not None and process.returncode is None:
+                # Legacy fallback when scope registration did not complete.
+                try:
+                    process.terminate()
+                    try:
+                        await asyncio.wait_for(
+                            process.wait(),
+                            timeout=_STOP_WAIT_TIMEOUT_SECONDS,
+                        )
+                    except TimeoutError:
+                        process.kill()
+                        await process.wait()
+                except Exception:
+                    logger.warning("Codex subprocess cleanup failed", exc_info=True)
+
+            parent_death_link = self._parent_death_link
+            self._parent_death_link = None
             try:
-                await asyncio.wait_for(process.wait(), timeout=_STOP_WAIT_TIMEOUT_SECONDS)
-            except TimeoutError:
-                process.kill()
-                await process.wait()
+                await asyncio.to_thread(
+                    release_parent_death_link,
+                    parent_death_link,
+                )
+            except Exception:
+                logger.warning("Codex parent-death link cleanup failed", exc_info=True)
 
-        await asyncio.to_thread(release_parent_death_link, self._parent_death_link)
-        self._parent_death_link = None
-        self._fail_pending_requests(RuntimeError("Codex connection stopped"))
-        await self._clear_stale_hitl_requests(reason="connection_stopped")
-        self._clear_turn_liveness_signals()
-        self._thread_id = None
-        self._cancel_requested = False
-        self._signal_in_flight = False
-        self._liveness.signal_request_resolved("cancel")
-        self._launch_spec = None
-        self._codex_home = None
-        self._startup_emitter = None
-        self._close_log_handles()
+            try:
+                self._fail_pending_requests(RuntimeError("Codex connection stopped"))
+            except Exception:
+                logger.warning("Codex pending-request cleanup failed", exc_info=True)
+            try:
+                await self._clear_stale_hitl_requests(reason="connection_stopped")
+            except Exception:
+                logger.warning("Codex HITL request cleanup failed", exc_info=True)
+            try:
+                self._clear_turn_liveness_signals()
+                self._liveness.signal_request_resolved("cancel")
+            except Exception:
+                logger.warning("Codex liveness cleanup failed", exc_info=True)
 
-        if mark_stopped:
-            self._transition("stopped")
-            await self._event_queue.put(None)
+            self._thread_id = None
+            self._cancel_requested = False
+            self._signal_in_flight = False
+            self._launch_spec = None
+            self._codex_home = None
+            self._startup_emitter = None
+            self._close_log_handles()
+        except Exception:
+            # Last-resort containment for cleanup state added in the future.
+            # Known teardown operations above are isolated individually so one
+            # failure does not skip the remaining cleanup steps.
+            logger.warning("Codex resource cleanup failed", exc_info=True)
+        finally:
+            if mark_stopped:
+                try:
+                    self._transition("stopped")
+                except Exception:
+                    logger.warning("Codex final state normalization failed", exc_info=True)
+                    self._state = "stopped"
+                await self._emit_connection_closed_once(None)
 
     async def _close_ws(self) -> None:
         ws = self._ws
@@ -880,8 +1004,10 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
             return
 
         self._ws = None
-        with contextlib.suppress(Exception):
+        try:
             await ws.close()
+        except Exception:
+            logger.warning("Codex websocket close failed", exc_info=True)
 
     async def _send_json(self, payload: dict[str, object]) -> None:
         ws = self._ws
@@ -1114,16 +1240,20 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
                 future.set_exception(error)
 
     def _close_log_handles(self) -> None:
-        if self._stderr_handle is not None:
-            self._stderr_handle.close()
-            self._stderr_handle = None
+        stderr_handle = self._stderr_handle
+        self._stderr_handle = None
         self._stderr_log_path = None
         self._stderr_read_offset = 0
+        if stderr_handle is not None:
+            try:
+                stderr_handle.close()
+            except Exception:
+                logger.warning("Codex stderr log cleanup failed", exc_info=True)
 
     def _startup_exit_exception(self) -> Exception:
         process = self._process
         exit_code = process.returncode if process is not None else None
-        stderr_excerpt = self._read_startup_stderr_excerpt()
+        stderr_excerpt = self._read_stderr_excerpt()
         if _looks_like_address_in_use(stderr_excerpt):
             return PortBindError(
                 "Codex app-server failed to bind websocket port "
@@ -1136,22 +1266,26 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
             )
         return RuntimeError(f"Codex app-server exited before websocket connect (exit={exit_code})")
 
-    def _read_startup_stderr_excerpt(self) -> str:
+    def _read_stderr_excerpt(self) -> str:
         stderr_handle = self._stderr_handle
         if stderr_handle is not None:
-            stderr_handle.flush()
+            with contextlib.suppress(OSError, ValueError):
+                stderr_handle.flush()
 
         path = self._stderr_log_path
-        if path is None or not path.exists():
+        if path is None:
             return ""
 
-        with path.open("rb") as handle:
-            handle.seek(0, os.SEEK_END)
-            end_offset = handle.tell()
-            start_offset = min(self._stderr_read_offset, end_offset)
-            read_offset = max(start_offset, end_offset - _STARTUP_STDERR_MAX_BYTES)
-            handle.seek(read_offset, os.SEEK_SET)
-            data = handle.read(max(0, end_offset - read_offset))
+        try:
+            with path.open("rb") as handle:
+                handle.seek(0, os.SEEK_END)
+                end_offset = handle.tell()
+                start_offset = min(self._stderr_read_offset, end_offset)
+                read_offset = max(start_offset, end_offset - _STDERR_EXCERPT_MAX_BYTES)
+                handle.seek(read_offset, os.SEEK_SET)
+                data = handle.read(max(0, end_offset - read_offset))
+        except OSError:
+            return ""
         return data.decode("utf-8", errors="replace").strip()
 
     def _resident_backend_dead(self) -> bool:
