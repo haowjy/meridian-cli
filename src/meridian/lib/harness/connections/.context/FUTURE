@@ -26,3 +26,17 @@ process, durable scope, bounded stderr tail, and termination — keeping each ad
 wire protocol and graceful-abort semantics in place. Do NOT grow base.py into a
 stateful base class; it is a clean contracts module and the transports have materially
 different lifecycle rules.
+
+[pi_rpc bounded stderr read] _read_stderr_snippet (pi_rpc.py ~787-803) Path.read_text()s
+the entire stderr.log and runs stack compaction over all of it before truncating to
+4096 chars — a runaway Pi process can block the event loop / spend memory exactly on the
+failure path. Claude/Codex/OpenCode use bounded binary tail reads and record the
+current-launch offset. Record the stderr offset when the file is opened and read only a
+bounded tail from the current launch, decoding with replacement, then compact that.
+(Natural to fold into the managed-stdio seam above.)
+
+[pi_rpc failure-formatting boundary leak] pi_rpc.py imports compact_pi_failure_output
+from lib.launch.report (pi_rpc.py:46, 800) — Pi-specific presentation living in the
+upward, harness-agnostic launch layer. Move Pi failure normalization into a harness-owned
+module (e.g. harness/pi_failure.py or the Pi extractor surface); the launch report path
+should consume it through the existing harness bundle/extractor boundary.
