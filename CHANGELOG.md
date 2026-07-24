@@ -4,6 +4,13 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+- `session log`/`search`/`export`/`repair` on tracked Claude sessions now
+  find transcripts by searching the session's recorded config dir, then
+  canonical `~/.claude`, then ambient `CLAUDE_CONFIG_DIR` — instead of
+  ambient-only. Works across bare session id, chat id, and spawn id refs.
+  Untracked lookups unchanged. (#171)
+
 ## [0.3.47] - 2026-07-23
 
 ### Removed
