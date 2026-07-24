@@ -535,8 +535,14 @@ class OpenCodeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         )
         return _detect_primary_session_id(project_root, started_at_epoch, local_iso)
 
-    def resolve_session_file(self, *, project_root: Path, session_id: str) -> Path | None:
-        _ = project_root
+    def resolve_session_file(
+        self,
+        *,
+        project_root: Path,
+        session_id: str,
+        config_root_hint: Path | None = None,
+    ) -> Path | None:
+        _ = project_root, config_root_hint
         return resolve_opencode_session_file(session_id=session_id)
 
     def extract_session_id(self, artifacts: ArtifactStore, spawn_id: SpawnId) -> str | None:

@@ -635,3 +635,60 @@ def test_session_log_resolves_claude_session_file_from_claude_config_dir_env(
     assert [(message.role, message.content) for message in output.messages] == [
         ("assistant", "claude env override transcript")
     ]
+
+
+@pytest.mark.parametrize("ref", ["claude-canonical-session", "c1", "p1"])
+def test_session_log_resolves_tracked_claude_session_from_canonical_root(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+    ref: str,
+) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    runtime_root = resolve_project_runtime_root_for_write(project_root)
+    runtime_root.mkdir(parents=True, exist_ok=True)
+
+    home = tmp_path / "home"
+    recorded_config_root = tmp_path / "recorded-overlay"
+    ambient_config_root = tmp_path / "unrelated-overlay"
+    monkeypatch.setenv("HOME", home.as_posix())
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", ambient_config_root.as_posix())
+
+    session_id = "claude-canonical-session"
+    _write_claude_session(
+        config_root=home / ".claude",
+        project_root=project_root,
+        session_id=session_id,
+        assistant_text="claude canonical transcript",
+    )
+    session_store.start_session(
+        runtime_root,
+        harness="claude",
+        harness_session_id=session_id,
+        model="claude-opus",
+        chat_id="c1",
+        claude_config_dir=recorded_config_root.as_posix(),
+        spawn_id="p1",
+    )
+    spawn_store.start_spawn(
+        runtime_root,
+        chat_id="c1",
+        model="claude-opus",
+        agent="coder",
+        harness="claude",
+        prompt="hello",
+        spawn_id="p1",
+        harness_session_id=session_id,
+        claude_config_dir=recorded_config_root.as_posix(),
+        started_at="2026-04-11T00:00:00Z",
+    )
+
+    output = session_log_sync(
+        SessionLogInput(ref=ref, project_root=project_root.as_posix(), tail=5)
+    )
+
+    assert output.session_id == session_id
+    assert output.source == "claude transcript"
+    assert [(message.role, message.content) for message in output.messages] == [
+        ("assistant", "claude canonical transcript")
+    ]
