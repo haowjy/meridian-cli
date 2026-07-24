@@ -175,7 +175,7 @@ def _resolve_harness_session_file(
     project_root: Path,
     session_id: str,
     harness: str | None,
-    config_root_hint: Path | None,
+    config_root_hint: Path | None = None,
 ) -> SessionLogTarget:
     normalized_session_id = session_id.strip()
     if not normalized_session_id:
@@ -250,7 +250,7 @@ def _resolve_harness_transcript_target_or_none(
     project_root: Path,
     session_id: str,
     harness: str | None,
-    config_root_hint: Path | None,
+    config_root_hint: Path | None = None,
 ) -> SessionLogTarget | None:
     try:
         return _resolve_harness_session_file(
@@ -565,7 +565,7 @@ def _resolve_transcript_from_candidates(
     project_root: Path,
     harness: str | None,
     candidate_ids: list[str | None],
-    config_root_hint: Path | None,
+    config_root_hint: Path | None = None,
 ) -> SessionLogTarget | None:
     seen: set[str] = set()
     for candidate_id in candidate_ids:
