@@ -1,6 +1,5 @@
-"""Process liveness and POSIX process-group diagnostic probes."""
+"""Process liveness probes."""
 
-import os
 import time
 from pathlib import Path
 
@@ -9,27 +8,6 @@ import psutil
 from meridian.lib.platform.process_scope.base import birth_time_unverified
 
 _PID_REUSE_GUARD_SECS = 30.0
-
-
-def is_pgid_reachable(pgid: int) -> bool:
-    """Return whether signal 0 can reach a POSIX process group.
-
-    This is deliberately weaker than an "alive" check: process-group IDs have
-    no birth-time reuse guard, and signal 0 also succeeds for groups containing
-    only zombies. Use this as best-effort diagnostics, never process identity.
-    """
-
-    if pgid <= 0:
-        return False
-    try:
-        os.killpg(pgid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True
-    except OSError:
-        return False
-    return True
 
 
 def is_process_alive(pid: int, created_after_epoch: float | None = None) -> bool:

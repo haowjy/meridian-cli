@@ -94,17 +94,6 @@ def connection_closed_outcome(
     """Build the shared outcome for a Meridian synthetic connection close."""
 
     error = stringify_terminal_error(event.payload.get("message")) or "connection_closed"
-    backend_exit_code = event.payload.get("backend_exit_code")
-    stderr_excerpt = stringify_terminal_error(
-        event.payload.get("backend_stderr_excerpt")
-    )
-    diagnostics: list[str] = []
-    if isinstance(backend_exit_code, int):
-        diagnostics.append(f"backend exit code: {backend_exit_code}")
-    if stderr_excerpt and stderr_excerpt not in error:
-        diagnostics.append(f"backend stderr:\n{stderr_excerpt}")
-    if diagnostics:
-        error = f"{error}\n\n" + "\n\n".join(diagnostics)
     return TerminalEventOutcome(status=SpawnStatus.FAILED, exit_code=1, error=error, cause=cause)
 
 

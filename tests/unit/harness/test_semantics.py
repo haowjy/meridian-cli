@@ -26,12 +26,15 @@ def test_succeeded_terminal_outcome_rejects_failure_evidence(
         TerminalEventOutcome(status="succeeded", exit_code=exit_code, error=error)
 
 
-def test_connection_closed_outcome_includes_backend_diagnostics() -> None:
+def test_connection_closed_outcome_uses_preformatted_message() -> None:
     outcome = connection_closed_outcome(
         RawHarnessEvent(
             event_type="meridian/error/connectionClosed",
             payload={
-                "message": "transport closed",
+                "message": (
+                    "Codex app-server exited with code 23.\n\n"
+                    "Codex app-server stderr:\nfatal vendor detail"
+                ),
                 "backend_exit_code": 23,
                 "backend_stderr_excerpt": "fatal vendor detail",
             },
@@ -41,8 +44,7 @@ def test_connection_closed_outcome_includes_backend_diagnostics() -> None:
     )
 
     assert outcome.error == (
-        "transport closed\n\n"
-        "backend exit code: 23\n\n"
-        "backend stderr:\nfatal vendor detail"
+        "Codex app-server exited with code 23.\n\n"
+        "Codex app-server stderr:\nfatal vendor detail"
     )
     assert outcome.cause is TerminalOutcomeCause.REPLACEABLE_TRANSPORT_CLOSE

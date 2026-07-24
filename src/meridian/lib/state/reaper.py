@@ -28,10 +28,11 @@ from meridian.lib.launch.constants import (
     OUTPUT_FILENAME,
 )
 from meridian.lib.platform.locking import lock_file
+from meridian.lib.platform.process_scope import is_pgid_reachable
 from meridian.lib.platform.process_scope.base import ProcessScopeSnapshot
 from meridian.lib.state.atomic import atomic_write_text
 from meridian.lib.state.launch_boundary import LaunchBoundarySummary, read_launch_boundary_summary
-from meridian.lib.state.liveness import is_pgid_reachable, is_process_alive
+from meridian.lib.state.liveness import is_process_alive
 from meridian.lib.state.managed_primary import (
     ManagedPrimaryReconciliationStrategy,
     ManagedPrimarySnapshot,

@@ -230,6 +230,10 @@ async def test_codex_backend_exit_and_reader_race_emit_one_enriched_close(
     close_event = terminal_sequence[0]
     assert close_event is not None
     assert close_event.event_type == "meridian/error/connectionClosed"
+    assert close_event.payload["message"] == (
+        "Codex app-server exited with code 23.\n\n"
+        "Codex app-server stderr:\nfatal vendor detail"
+    )
     assert close_event.payload["backend_exit_code"] == 23
     assert close_event.payload["backend_stderr_excerpt"] == "fatal vendor detail"
     assert terminal_sequence[1] is None

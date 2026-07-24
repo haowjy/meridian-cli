@@ -19,6 +19,7 @@ from meridian.lib.platform.process_scope.fallback import (
     terminate_tree,
     terminate_tree_sync,
 )
+from meridian.lib.platform.process_scope.posix import is_pgid_reachable
 
 logger = structlog.get_logger(__name__)
 
@@ -79,6 +80,7 @@ __all__ = [
     "CleanupResult",
     "ProcessScopeSnapshot",
     "ScopedProcessHandle",
+    "is_pgid_reachable",
     "terminate_scope_sync",
     "terminate_tree",
     "terminate_tree_sync",
