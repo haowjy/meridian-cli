@@ -104,6 +104,10 @@ parent signals, or supply the parent report.
   optional payload resolvers. `normalize_event()` dispatches by `HarnessId` before
   event name and returns raw evidence with its one normalized descriptor; shared
   `semantics.py` contains no harness event names.
+- `pi_failure.py` — Pi failure output formatting (`compact_pi_failure_output`) and
+  history-based failure extraction (`extract_pi_failure_from_history`). Harness-owned;
+  consumed by `connections/pi_rpc.py` (stderr compaction), `extractors/pi.py` (report
+  extraction), and `launch/report.py` (spawn report Pi failure path).
 - `common.py` — shared extraction helpers used by adapters.
 - `transcript.py` — cross-harness session read path. `TranscriptMessage` (with
   `tool_call: ToolCall | None` and `is_tool_result: bool`), `ToolCall` (canonical
