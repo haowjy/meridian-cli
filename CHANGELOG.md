@@ -4,6 +4,12 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+- `params.json` now refreshes after bind with the spawn's actual work/task
+  dirs (`phase: "bound"`, `bound_work_dir`, `bound_task_dir`). Ambient child
+  spawns previously showed the parent's work dir forever. Pre-bind crashes
+  leave the file honestly marked `phase: "request"`. (#334)
+
 ## [0.3.47] - 2026-07-23
 
 ### Removed
