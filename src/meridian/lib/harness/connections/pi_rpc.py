@@ -31,6 +31,7 @@ from meridian.lib.harness.connections.base import (
 )
 from meridian.lib.harness.connections.managed_backend import register_spawn_owned_process
 from meridian.lib.harness.errors import HarnessBinaryNotFound
+from meridian.lib.harness.pi_failure import compact_pi_failure_output
 from meridian.lib.harness.pi_lifecycle_events import (
     PI_CANONICAL_LIFECYCLE_TYPE_PREFIXES,
     PI_SUPPORTED_LIFECYCLE_SCHEMA_VERSION,
@@ -43,7 +44,6 @@ from meridian.lib.harness.pi_runtime_resolver import (
 )
 from meridian.lib.launch.constants import BASE_COMMAND_PI_SUBPROCESS
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
-from meridian.lib.launch.report import compact_pi_failure_output
 from meridian.lib.observability.trace_helpers import (
     trace_parse_error,
     trace_state_change,
