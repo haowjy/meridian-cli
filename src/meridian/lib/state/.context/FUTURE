@@ -1,0 +1,7 @@
+# state/ — nice-to-have follow-ups
+
+[#211 follow-up] normalize_path_for_write (paths.py) is applied only to
+control_root/task_cwd/execution_cwd at spawn/session write sites. Other
+persisted path-like fields (claude_config_dir, agent_path, skill_paths) still
+accept raw strings — extend the same write-boundary normalization if their
+consumers ever compare or dedupe on path equality.

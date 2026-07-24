@@ -1,5 +1,6 @@
 """Filesystem path helpers for file-authoritative Meridian state."""
 
+import os
 import tomllib
 from pathlib import Path
 from typing import Self, cast
@@ -11,6 +12,14 @@ from meridian.lib.config.project_paths import ProjectConfigPaths
 from meridian.lib.config.project_root import resolve_user_config_path
 from meridian.lib.core.types import SpawnId
 from meridian.lib.state.user_paths import get_or_create_project_id, get_project_id, get_user_home
+
+
+def normalize_path_for_write(path: str | None) -> str | None:
+    """Return a stable absolute form for a path persisted in state."""
+
+    if not path:
+        return path
+    return os.path.abspath(os.path.normpath(path))
 
 
 class RuntimePaths(BaseModel):

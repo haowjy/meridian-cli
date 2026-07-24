@@ -1521,7 +1521,12 @@ def _emit_wait_set(
     sink.status("\n".join(lines))
 
 
-def _build_wait_multi_output(results: tuple[SpawnDetailOutput, ...]) -> SpawnWaitMultiOutput:
+def _build_wait_multi_output(
+    results: tuple[SpawnDetailOutput, ...],
+    *,
+    fail_fast: bool = False,
+    pending_ids: tuple[str, ...] = (),
+) -> SpawnWaitMultiOutput:
     total_runs = len(results)
     succeeded_runs = sum(1 for run in results if run.status == "succeeded")
     failed_runs = sum(1 for run in results if run.status == "failed")
@@ -1547,6 +1552,8 @@ def _build_wait_multi_output(results: tuple[SpawnDetailOutput, ...]) -> SpawnWai
         cancelled_runs=cancelled_runs,
         timed_out_runs=timed_out_runs,
         any_failed=any_failed,
+        fail_fast=fail_fast,
+        pending_ids=pending_ids,
         spawn_id=spawn_id,
         status=status,
         exit_code=exit_code,
@@ -1766,6 +1773,53 @@ def spawn_wait_sync(
                 if _spawn_is_terminal(row.status):
                     completed_rows[spawn_id] = row
                     pending.remove(spawn_id)
+
+            failed_rows = tuple(
+                row for row in completed_rows.values() if row.status in FAILURE_SPAWN_STATUSES
+            )
+            if payload.fail_fast and failed_rows and pending:
+                snapshot_rows = dict(completed_rows)
+                for spawn_id in tuple(pending):
+                    row = read_spawn_row(project_root, spawn_id, runtime_root=runtime_root)
+                    if row is None:
+                        if has_explicit_ids:
+                            raise ValueError(f"Spawn '{spawn_id}' not found")
+                        continue
+                    snapshot_rows[spawn_id] = row
+                details = tuple(
+                    detail_from_row(
+                        project_root=project_root,
+                        row=snapshot_rows[spawn_id],
+                        include_report_body=payload.include_report_body,
+                        runtime_root=runtime_root,
+                    )
+                    for spawn_id in spawn_ids
+                    if spawn_id in snapshot_rows
+                )
+                pending_ids = tuple(
+                    sorted(
+                        detail.spawn_id
+                        for detail in details
+                        if not _spawn_is_terminal(detail.status)
+                    )
+                )
+                _update_pi_wait_observation(
+                    runtime_root=runtime_root,
+                    parent_spawn_id=parent_wait_observer_id,
+                    waiting_remove=spawn_ids,
+                    observed_add=tuple(
+                        detail.spawn_id
+                        for detail in details
+                        if _spawn_is_terminal(detail.status)
+                    ),
+                )
+                if not pending_ids:
+                    return _build_wait_multi_output(details)
+                return _build_wait_multi_output(
+                    details,
+                    fail_fast=True,
+                    pending_ids=pending_ids,
+                )
 
             if not pending:
                 details = tuple(

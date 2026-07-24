@@ -28,6 +28,7 @@ argv
 - **`root_source = RootSource.ARGV`** commands (e.g. `meridian init [path]`) defer bootstrap until after argument parsing. They call `prepare_for_project_write(arg_derived_root)` themselves — they don't receive a pre-prepared context.
 - **`validate_fork_mode()` is the single place for fork/from/continue conflict checks.** `spawn.py` and `primary_launch.py` both call it and consume `ForkModeResolution`. Do not re-implement conflict logic or ref resolution in handlers.
 - **`normalize_optional_value_flags()` runs before everything.** It rewrites bare `--fork`/`--fork-fresh`/`--from` to `--fork __SELF__` so Cyclopts always receives a value. Never call Cyclopts on raw argv containing these flags.
+- **Positional-prompt subcommand guard.** `_validate_positional_spawn_prompt()` in `spawn.py` rejects bare positional prompts that look like a subcommand (`^[a-z][a-z-]*$` single token) but are not in the registered subcommand set. The subcommand set is derived from the commands registered with Cyclopts, not hardcoded. `-p`/`--prompt`/`--prompt-file` bypass this guard and accept any string. The did-you-mean hint uses Damerau-Levenshtein (adjacent-transposition-aware) distance.
 
 ## Invocation Classes
 
@@ -63,6 +64,7 @@ argv
 - Don't mutate shared `App` objects for help profile selection — `HelpProfile` is selected at build time per invocation.
 - Don't re-implement fork/continue/from conflict checks in handlers — call `validate_fork_mode()` and use `ForkModeResolution`.
 - Don't push the identity lock (`--fork` + model/agent/skills conflict) into the ops layer — it's CLI ergonomic policy, not an ops invariant.
+- Don't hardcode subcommand names in the positional-prompt guard — derive the set from registered commands so new subcommands are automatically covered.
 
 ## Related
 
