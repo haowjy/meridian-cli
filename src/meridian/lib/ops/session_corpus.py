@@ -22,7 +22,6 @@ def _runtime_has_session_data(runtime_root: Path) -> bool:
     return runtime_root.is_dir() and (
         (runtime_root / "sessions.jsonl").is_file()
         or any((runtime_root / "spawns").glob("p*"))
-        or any((runtime_root / "artifacts").glob("p*"))
     )
 
 
