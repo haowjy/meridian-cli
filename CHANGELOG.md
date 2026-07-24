@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.3.48] - 2026-07-24
+
 ### Fixed
 - `meridian spawn` now rejects bare, subcommand-shaped one-word prompts that
   are not registered spawn subcommands and suggests a nearby command when
