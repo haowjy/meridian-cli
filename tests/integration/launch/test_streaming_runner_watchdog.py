@@ -85,6 +85,23 @@ def test_attempt_finalization_keeps_only_redacted_spawn_history(tmp_path: Path) 
     ).exists()
 
 
+def test_runtime_artifact_store_falls_back_to_legacy_history_copy(tmp_path: Path) -> None:
+    runtime_root = tmp_path / "runtime"
+    legacy_path = runtime_root / "artifacts" / "p-history" / "history.jsonl"
+    legacy_path.parent.mkdir(parents=True)
+    legacy_path.write_bytes(b"legacy history\n")
+    artifacts = LocalStore.for_runtime_root(runtime_root)
+    history_key = make_artifact_key("p-history", launch_constants.HISTORY_FILENAME)
+
+    assert artifacts.get(history_key) == b"legacy history\n"
+
+    live_path = runtime_root / "spawns" / "p-history" / "history.jsonl"
+    live_path.parent.mkdir(parents=True)
+    live_path.write_bytes(b"authoritative history\n")
+
+    assert artifacts.get(history_key) == b"authoritative history\n"
+
+
 class _NoReportExtractor:
     def extract_usage(self, artifacts: object, spawn_id: SpawnId) -> TokenUsage:
         _ = artifacts, spawn_id
