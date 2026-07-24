@@ -1,4 +1,4 @@
-"""Cross-platform process liveness via psutil."""
+"""Process liveness probes."""
 
 import time
 from pathlib import Path

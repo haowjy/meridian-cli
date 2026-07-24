@@ -42,6 +42,13 @@ that have reparented to PID 1. `SIGTERM` to the root PID only reaches the root â
 it's already dead, reparented children escape entirely. Use POSIX containment when
 available; psutil fallback is accepted as degraded.
 
+Scope roots are launch shims and therefore identify what Meridian launched; they are
+not guaranteed to remain the serving backend process. The PGID is the cleanup handle
+that contains shim descendants, including reparented children. Reaper diagnostics
+report `pgid_reachable` as best-effort evidence only: signal 0 counts zombies, has no
+process-group birth-time reuse guard, and cannot see a child that changes its own
+process group.
+
 ## Legacy Windows Job Object Handle Lifetime
 
 `assign_to_new_job(pid)` returns `(job_name, job_handle)`. The handle must stay alive â€”
