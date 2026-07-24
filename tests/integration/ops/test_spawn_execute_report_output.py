@@ -235,12 +235,14 @@ def test_execute_spawn_blocking_refreshes_params_with_bound_ambient_work_dir(
     assert authority.runtime_root is not None
     params_path = authority.runtime_root / "spawns" / result.spawn_id / "params.json"
     params = json.loads(params_path.read_text(encoding="utf-8"))
-    assert params["phase"] == "bound"
-    assert params["bound_work_id"] is None
-    assert params["bound_work_dir"] == (
+    bound_work_dir = (
         authority.runtime_root / "spawns" / result.spawn_id / "work"
     ).as_posix()
+    assert params["phase"] == "bound"
+    assert params["bound_work_id"] is None
+    assert params["bound_work_dir"] == bound_work_dir
     assert params["bound_task_dir"] == (tmp_path / "repo").as_posix()
+    assert bound_work_dir in params["appended_system_prompt"]
 
 
 def test_execute_spawn_blocking_pre_init_failure_returns_failed_output(
