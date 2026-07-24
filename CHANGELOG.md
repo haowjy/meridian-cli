@@ -5,8 +5,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Changed
-- Pi failure-output normalization now lives with the Pi harness instead of the
-  harness-agnostic launch layer.
+- Pi failure extraction and output normalization now live with the Pi harness
+  instead of the harness-agnostic launch layer.
 
 ### Fixed
 - Second Pi stderr test no longer flakes under CI load: dropped the 50ms

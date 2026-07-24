@@ -13,7 +13,10 @@ from meridian.lib.core.spawn_lifecycle import (
 )
 from meridian.lib.core.types import SpawnId
 from meridian.lib.harness.adapter import SpawnExtractor
-from meridian.lib.harness.pi_failure import compact_pi_failure_output
+from meridian.lib.harness.pi_failure import (
+    extract_pi_failure_from_history,
+    is_pi_lifecycle_noise_payload,
+)
 from meridian.lib.launch.constants import HISTORY_FILENAME, OUTPUT_FILENAME
 from meridian.lib.state.artifact_store import ArtifactStore
 
@@ -21,26 +24,6 @@ from .artifact_io import read_artifact_text
 
 ReportSource = Literal["report_md", "assistant_message", "failure_reason", "pi_failure"]
 _LOGGER = logging.getLogger(__name__)
-_PI_LIFECYCLE_PHASE_EVENT = "meridian.pi.lifecycle.phase"
-_PI_LIFECYCLE_NOISE_PHASES = frozenset(
-    {
-        "cleanup_running",
-        "cleanup_completed",
-        "cleanup_escalated",
-        "cleanup_failed",
-        "process_spawned",
-        "initial_prompt_sent",
-        "waiting_for_first_pi_event_after_prompt",
-        "first_pi_event_received",
-        "first_pi_event_timeout",
-        "first_pi_event_eof_before_response",
-        "no_initial_prompt",
-        "session_event_seen",
-        "session_event_absent",
-        "quiescence_micro_drain_started",
-        "waiting_for_tracked_children",
-    }
-)
 
 
 class ExtractedReport(BaseModel):
@@ -48,14 +31,6 @@ class ExtractedReport(BaseModel):
 
     content: str | None
     source: ReportSource | None
-
-
-def _event_name(payload: dict[str, object]) -> str:
-    return (
-        str(payload.get("event_type", payload.get("event", payload.get("type", ""))))
-        .strip()
-        .lower()
-    )
 
 
 def _is_terminal_control_frame(text: str) -> bool:
@@ -143,67 +118,6 @@ def _unwrap_history_payload(record: dict[str, object]) -> dict[str, object]:
     return record
 
 
-def _is_pi_lifecycle_noise_payload(payload: dict[str, object]) -> bool:
-    event_type = _event_name(payload)
-    if event_type != _PI_LIFECYCLE_PHASE_EVENT:
-        inner_type = str(payload.get("type", "")).strip().lower()
-        if inner_type != _PI_LIFECYCLE_PHASE_EVENT:
-            return False
-    phase = str(payload.get("phase", "")).strip().lower()
-    return phase in _PI_LIFECYCLE_NOISE_PHASES or (
-        phase == "finalized" and not payload.get("error")
-    )
-
-
-def _pi_failure_from_payload(payload: dict[str, object]) -> str | None:
-    event_type = _event_name(payload)
-    if event_type == "response":
-        command = str(payload.get("command", "")).strip().lower()
-        is_inject_response = payload.get("meridian_control_action") == "inject"
-        if command == "prompt" and payload.get("success") is False and not is_inject_response:
-            error = _text_from_value(payload.get("error"))
-            return error or "pi_prompt_rejected"
-    if event_type == _PI_LIFECYCLE_PHASE_EVENT:
-        phase = str(payload.get("phase", "")).strip().lower()
-        if phase == "finalized":
-            error = _text_from_value(payload.get("error"))
-            if error:
-                return error
-    if event_type == "error":
-        message = _text_from_value(payload.get("message"))
-        if message:
-            return message
-    nested = payload.get("payload")
-    if isinstance(nested, dict):
-        return _pi_failure_from_payload(cast("dict[str, object]", nested))
-    return None
-
-
-def extract_pi_failure_from_history(output_lines: str) -> str | None:
-    last_failure: str | None = None
-    for line in output_lines.splitlines():
-        stripped = line.strip()
-        if not stripped:
-            continue
-        try:
-            payload_obj: object = json.loads(stripped)
-        except json.JSONDecodeError:
-            continue
-        record = _history_record_payload(payload_obj)
-        if record is None:
-            continue
-        event_type = str(record.get("event_type", "")).strip().lower()
-        payload = _unwrap_history_payload(record)
-        if event_type and _event_name(payload) != event_type:
-            merged = dict(payload)
-            merged.setdefault("type", event_type)
-            payload = merged
-        failure = _pi_failure_from_payload(payload)
-        if failure:
-            last_failure = compact_pi_failure_output(failure)
-    return last_failure
-
-
 def _extract_last_assistant_message(output_lines: str) -> str | None:
     last_assistant: str | None = None
     last_text_line: str | None = None
@@ -219,7 +133,7 @@ def _extract_last_assistant_message(output_lines: str) -> str | None:
         record = _history_record_payload(payload_obj)
         if record is not None:
             payload = _unwrap_history_payload(record)
-            if _is_pi_lifecycle_noise_payload(payload):
+            if is_pi_lifecycle_noise_payload(payload):
                 continue
             if is_control_report_payload(payload):
                 continue
