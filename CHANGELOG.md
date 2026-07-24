@@ -8,8 +8,12 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Pi failure extraction and output normalization now live with the Pi harness
   instead of the harness-agnostic launch layer.
 - Claude subprocess transport now uses the shared managed-stdio process lifecycle.
+- Cursor subprocess transport now uses the shared managed-stdio process lifecycle
+  and launches in its own POSIX process group.
 
 ### Fixed
+- Cursor process-scope termination can no longer target Meridian's own process
+  group when cancelling or reaping a subprocess.
 - Claude failure excerpts are bounded to stderr from the current process launch,
   excluding stale output left in reused spawn logs.
 - Pi failure details now read a bounded stderr tail from only the current

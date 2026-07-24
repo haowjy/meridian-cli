@@ -1,8 +1,1 @@
 # connections/ — nice-to-have follow-ups
-
-[managed-stdio seam] Migrate claude_ws.py and cursor_subprocess.py onto the
-managed_stdio helper now used by pi_rpc.py. The helper owns stderr-log and subprocess
-lifetime, durable scope registration, termination escalation, and bounded stderr
-tails; each adapter keeps its wire protocol and graceful-abort semantics. Do NOT grow
-base.py into a stateful base class; it is a clean contracts module and the transports
-have materially different lifecycle rules.
