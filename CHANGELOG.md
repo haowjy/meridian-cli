@@ -12,6 +12,10 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   via process-death detection instead of racing an artificial timeout. Also
   removed that test's dead abort/kill grace overrides — the shim exits before
   teardown, so those timers never engaged.
+- Malformed Pi stdout no longer bypasses the first-response watchdog; parse
+  diagnostics still surface without making the harness appear ready.
+- Pi processes that exit before their first event now report the real exit code
+  and stderr instead of being mislabeled as a first-response timeout.
 
 ## [0.3.48] - 2026-07-24
 

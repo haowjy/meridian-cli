@@ -12,7 +12,7 @@ from collections.abc import AsyncIterator, Sequence
 from contextlib import suppress
 from io import BufferedWriter
 from pathlib import Path
-from typing import Final, Literal, cast
+from typing import Final, Literal, NamedTuple, cast
 
 from meridian.lib.core.telemetry import StartupPhase, StartupPhaseEmitter
 from meridian.lib.core.types import HarnessId, SpawnId
@@ -63,6 +63,9 @@ _PARSE_ERROR_RAW_LINE_LIMIT: Final[int] = 2048
 _STDERR_SNIPPET_LIMIT: Final[int] = 4096
 _PI_PHASE_EVENT_TYPE: Final[str] = "meridian.pi.lifecycle.phase"
 _PI_FIRST_EVENT_TIMEOUT_REASON: Final[str] = "pi_rpc_no_response_after_initial_prompt"
+_PI_STREAM_CLOSED_BEFORE_FIRST_EVENT_REASON: Final[str] = (
+    "pi_rpc_stream_closed_before_initial_response"
+)
 _PI_SPAWNED_PROMPT_REQUIRED_REASON: Final[str] = "pi_rpc_spawned_prompt_required"
 _FIRST_STDOUT_AFTER_INITIAL_PROMPT_TIMEOUT_SECONDS: Final[float] = 30.0
 _PI_SESSION_DIR_FLAG: Final[str] = "--session-dir"
@@ -80,6 +83,13 @@ def pi_subprocess_exit_error(return_code: int) -> str:
 def is_pi_subprocess_exit_error(error: str | None) -> bool:
     """Whether an error originated from the canonical Pi process-exit failure."""
     return error is not None and error.startswith(PI_SUBPROCESS_EXIT_ERROR_PREFIX)
+
+
+class ParsedStdoutLine(NamedTuple):
+    """A parsed stdout event and whether it belongs to the Pi protocol."""
+
+    event: RawHarnessEvent | None
+    is_protocol_event: bool
 
 
 class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
@@ -417,7 +427,12 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
                         and self._state not in {"stopping", "stopped"}
                     ):
                         self._waiting_for_first_pi_event_after_prompt = False
-                        detail = self._failure_detail_with_stderr(_PI_FIRST_EVENT_TIMEOUT_REASON)
+                        reason = (
+                            pi_subprocess_exit_error(return_code)
+                            if return_code not in (0, None)
+                            else _PI_STREAM_CLOSED_BEFORE_FIRST_EVENT_REASON
+                        )
+                        detail = self._failure_detail_with_stderr(reason)
                         self._mark_failed(detail)
                         yield self._lifecycle_phase_event(
                             "first_pi_event_eof_before_response",
@@ -442,30 +457,32 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
                     continue
 
                 trace_wire_recv(self._tracer, "stdout_line", raw_text, bytes=len(line_bytes))
-                event = self._parse_stdout_line(raw_text)
+                parsed = self._parse_stdout_line(raw_text)
+                event = parsed.event
                 if event is None:
                     continue
-                self._emit_harness_ready_once()
-                if (
-                    self._waiting_for_first_pi_event_after_prompt
-                    and not self._first_pi_event_received
-                ):
-                    self._first_pi_event_received = True
-                    self._waiting_for_first_pi_event_after_prompt = False
-                    yield self._lifecycle_phase_event(
-                        "first_pi_event_received",
-                        first_event_type=event.event_type,
-                    )
-                if event.event_type == "session":
-                    session_id = event.payload.get("id")
-                    if isinstance(session_id, str) and session_id.strip():
-                        self._session_id = session_id.strip()
-                    if not self._session_event_seen:
-                        self._session_event_seen = True
+                if parsed.is_protocol_event:
+                    self._emit_harness_ready_once()
+                    if (
+                        self._waiting_for_first_pi_event_after_prompt
+                        and not self._first_pi_event_received
+                    ):
+                        self._first_pi_event_received = True
+                        self._waiting_for_first_pi_event_after_prompt = False
                         yield self._lifecycle_phase_event(
-                            "session_event_seen",
-                            session_id=self._session_id,
+                            "first_pi_event_received",
+                            first_event_type=event.event_type,
                         )
+                    if event.event_type == "session":
+                        session_id = event.payload.get("id")
+                        if isinstance(session_id, str) and session_id.strip():
+                            self._session_id = session_id.strip()
+                        if not self._session_event_seen:
+                            self._session_event_seen = True
+                            yield self._lifecycle_phase_event(
+                                "session_event_seen",
+                                session_id=self._session_id,
+                            )
                 yield event
             if not self._session_event_seen:
                 yield self._lifecycle_phase_event("session_event_absent")
@@ -581,25 +598,31 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
             rewritten.extend((_PI_SESSION_DIR_FLAG, session_dir))
         return rewritten
 
-    def _parse_stdout_line(self, line: str) -> RawHarnessEvent | None:
+    def _parse_stdout_line(self, line: str) -> ParsedStdoutLine:
         payload_text = line.strip()
         if not payload_text:
-            return None
+            return ParsedStdoutLine(None, False)
         try:
             payload_obj = json.loads(payload_text)
         except json.JSONDecodeError:
             logger.warning("Skipping malformed Pi stdout line: %s", payload_text)
             trace_parse_error(self._tracer, "pi", payload_text, error="malformed_json")
-            return self._lifecycle_parse_error_event(
-                reason="malformed_json",
-                raw_line=payload_text,
+            return ParsedStdoutLine(
+                self._lifecycle_parse_error_event(
+                    reason="malformed_json",
+                    raw_line=payload_text,
+                ),
+                False,
             )
         if not isinstance(payload_obj, dict):
             logger.warning("Skipping non-object Pi stdout line: %s", payload_text)
             trace_parse_error(self._tracer, "pi", payload_text, error="non_object")
-            return self._lifecycle_parse_error_event(
-                reason="non_object",
-                raw_line=payload_text,
+            return ParsedStdoutLine(
+                self._lifecycle_parse_error_event(
+                    reason="non_object",
+                    raw_line=payload_text,
+                ),
+                False,
             )
 
         payload = cast("dict[str, object]", payload_obj)
@@ -607,9 +630,12 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
         if not isinstance(event_type, str) or not event_type.strip():
             logger.warning("Skipping Pi stdout line without string 'type': %s", payload_text)
             trace_parse_error(self._tracer, "pi", payload_text, error="missing_type")
-            return self._lifecycle_parse_error_event(
-                reason="missing_type",
-                raw_line=payload_text,
+            return ParsedStdoutLine(
+                self._lifecycle_parse_error_event(
+                    reason="missing_type",
+                    raw_line=payload_text,
+                ),
+                False,
             )
         normalized_type = event_type.strip()
         if normalized_type.startswith(PI_CANONICAL_LIFECYCLE_TYPE_PREFIXES):
@@ -618,7 +644,7 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
                 "disk-backed task state is authoritative: %s",
                 normalized_type,
             )
-            return None
+            return ParsedStdoutLine(None, False)
         if self._has_unsupported_lifecycle_schema_version(
             event_type=normalized_type,
             payload=payload,
@@ -629,22 +655,28 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
                 payload_text,
                 error="unsupported_schema_version",
             )
-            return self._lifecycle_parse_error_event(
-                reason="unsupported_schema_version",
-                error="unsupported_schema_version",
-                raw_type=normalized_type,
-                raw_line=payload_text,
+            return ParsedStdoutLine(
+                self._lifecycle_parse_error_event(
+                    reason="unsupported_schema_version",
+                    error="unsupported_schema_version",
+                    raw_type=normalized_type,
+                    raw_line=payload_text,
+                ),
+                False,
             )
 
         if normalized_type == "response" and self._resolve_prompt_ack(payload):
             payload = dict(payload)
             payload["meridian_control_action"] = "inject"
 
-        return RawHarnessEvent(
-            event_type=normalized_type,
-            payload=payload,
-            harness_id=_HARNESS_NAME,
-            raw_text=line,
+        return ParsedStdoutLine(
+            RawHarnessEvent(
+                event_type=normalized_type,
+                payload=payload,
+                harness_id=_HARNESS_NAME,
+                raw_text=line,
+            ),
+            True,
         )
 
     def _resolve_prompt_ack(self, payload: dict[str, object]) -> bool:

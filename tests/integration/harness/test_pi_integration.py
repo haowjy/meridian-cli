@@ -125,12 +125,13 @@ def test_pi_rpc_connection_surfaces_stdout_parse_diagnostics(
     line: str,
     expected_reason: str,
 ) -> None:
-    event = PiRpcConnection()._parse_stdout_line(line)
+    parsed = PiRpcConnection()._parse_stdout_line(line)
 
-    assert event is not None
-    assert event.event_type == "meridian.lifecycle.parse_error"
-    assert event.payload["reason"] == expected_reason
-    assert event.harness_id == HarnessId.PI.value
+    assert parsed.event is not None
+    assert parsed.event.event_type == "meridian.lifecycle.parse_error"
+    assert parsed.event.payload["reason"] == expected_reason
+    assert parsed.event.harness_id == HarnessId.PI.value
+    assert parsed.is_protocol_event is False
 
 
 
@@ -814,6 +815,123 @@ async def test_pi_rpc_connection_surfaces_stderr_on_early_exit_before_first_even
         / "stderr.log"
     )
     assert crash_stderr in stderr_log.read_text(encoding="utf-8")
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(sys.platform == "win32", reason="uses POSIX executable shim")
+async def test_pi_rpc_malformed_line_does_not_satisfy_first_event_watchdog(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _configure_extension_projection(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        pi_rpc_module,
+        "_FIRST_STDOUT_AFTER_INITIAL_PROMPT_TIMEOUT_SECONDS",
+        0.2,
+    )
+    monkeypatch.setattr(pi_rpc_module, "_PROCESS_ABORT_GRACE_SECONDS", 0.5)
+    monkeypatch.setattr(pi_rpc_module, "_PROCESS_KILL_GRACE_SECONDS", 0.5)
+
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    shim = bin_dir / "pi"
+    shim.write_text(
+        "#!/bin/sh\n"
+        "if [ \"$1\" = \"--version\" ]; then echo 'pi 1.2.3'; exit 0; fi\n"
+        f"if [ \"$1\" = \"--help\" ]; then echo '{_PI_HELP_SURFACE}'; exit 0; fi\n"
+        "read -r _prompt_line || true\n"
+        "printf '%s\\n' '{bad json'\n"
+        "sleep 5\n",
+        encoding="utf-8",
+    )
+    shim.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
+
+    connection = PiRpcConnection()
+    await _start_existing_pi_connection(
+        connection,
+        ConnectionConfig(
+            spawn_id=SpawnId("p-pi-malformed-first-event"),
+            harness_id=HarnessId.PI,
+            prompt="hello",
+            control_root=tmp_path,
+            child_env={},
+            pi_session_role="spawned",
+        ),
+        ResolvedLaunchSpec(
+            harness=HarnessId.PI,
+            prompt="hello",
+            permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
+        ),
+    )
+
+    events = [event async for event in connection.events()]
+
+    assert any(
+        event.event_type == "meridian.lifecycle.parse_error" for event in events
+    )
+    error_messages = [
+        str(event.payload.get("message", ""))
+        for event in events
+        if event.event_type == "meridian/error/connectionClosed"
+    ]
+    assert error_messages
+    assert pi_rpc_module._PI_FIRST_EVENT_TIMEOUT_REASON in error_messages[0]
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(sys.platform == "win32", reason="uses POSIX executable shim")
+async def test_pi_rpc_nonzero_exit_before_first_event_reports_exit_code(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _configure_extension_projection(monkeypatch, tmp_path)
+
+    crash_stderr = "Pi crashed before its first response"
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    shim = bin_dir / "pi"
+    shim.write_text(
+        "#!/bin/sh\n"
+        "if [ \"$1\" = \"--version\" ]; then echo 'pi 1.2.3'; exit 0; fi\n"
+        f"if [ \"$1\" = \"--help\" ]; then echo '{_PI_HELP_SURFACE}'; exit 0; fi\n"
+        "read -r _prompt_line || true\n"
+        f"printf '%s\\n' '{crash_stderr}' >&2\n"
+        "exit 7\n",
+        encoding="utf-8",
+    )
+    shim.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
+
+    connection = PiRpcConnection()
+    await _start_existing_pi_connection(
+        connection,
+        ConnectionConfig(
+            spawn_id=SpawnId("p-pi-exit-before-first-event"),
+            harness_id=HarnessId.PI,
+            prompt="hello",
+            control_root=tmp_path,
+            child_env={},
+            pi_session_role="spawned",
+        ),
+        ResolvedLaunchSpec(
+            harness=HarnessId.PI,
+            prompt="hello",
+            permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
+        ),
+    )
+
+    events = [event async for event in connection.events()]
+    error_messages = [
+        str(event.payload.get("message", ""))
+        for event in events
+        if event.event_type == "meridian/error/connectionClosed"
+    ]
+
+    assert error_messages
+    assert pi_rpc_module.pi_subprocess_exit_error(7) in error_messages[0]
+    assert pi_rpc_module._PI_FIRST_EVENT_TIMEOUT_REASON not in error_messages[0]
+    assert crash_stderr in error_messages[0]
 
 
 @pytest.mark.asyncio
