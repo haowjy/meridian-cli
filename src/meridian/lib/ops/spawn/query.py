@@ -299,6 +299,27 @@ def read_report(
     return report_path.as_posix(), text
 
 
+def read_report_summary(
+    project_root: Path,
+    spawn_id: str,
+    *,
+    runtime_root: Path | None = None,
+) -> tuple[str | None, str | None]:
+    """Read at most the byte window needed for a 500-character report prefix."""
+    resolved_runtime_root = runtime_root or resolve_runtime_root_for_read(project_root)
+    if resolved_runtime_root is None:
+        return None, None
+    report_path = resolved_runtime_root / "spawns" / spawn_id / "report.md"
+    if not report_path.is_file():
+        return None, None
+    # A UTF-8 code point uses at most four bytes. Ignoring an incomplete trailing
+    # code point makes a byte-window read safe without reading the rest of the file.
+    with report_path.open("rb") as report_file:
+        prefix = report_file.read(500 * 4)
+    summary = prefix.decode("utf-8", errors="ignore").strip()[:500] or None
+    return report_path.as_posix(), summary
+
+
 def read_report_text(
     project_root: Path,
     spawn_id: str,
@@ -569,14 +590,21 @@ def detail_from_row(
     include_report_body: bool,
     runtime_root: Path | None = None,
 ) -> SpawnDetailOutput:
-    report_path, loaded_report_body = read_report(
-        project_root,
-        row.id,
-        include_body=True,
-        runtime_root=runtime_root,
-    )
-    report_summary = loaded_report_body[:500] if loaded_report_body else None
-    report_body = loaded_report_body if include_report_body else None
+    if include_report_body:
+        report_path, report_body = read_report(
+            project_root,
+            row.id,
+            include_body=True,
+            runtime_root=runtime_root,
+        )
+        report_summary = report_body[:500] if report_body else None
+    else:
+        report_path, report_summary = read_report_summary(
+            project_root,
+            row.id,
+            runtime_root=runtime_root,
+        )
+        report_body = None
 
     last_message: str | None = None
     log_path: str | None = None

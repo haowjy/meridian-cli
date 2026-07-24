@@ -893,7 +893,7 @@ def _spawn_show_like(
         return
 
     if output_format == "json":
-        emit(list(results))
+        emit([result.to_cli_wire() for result in results])
         return
 
     fmt_ctx = FormatContext(verbosity=1) if verbose else None

@@ -42,11 +42,11 @@ def cli_project(
     yield project_root, env, runtime_root
 
 
-def _run_json(
+def _invoke_json(
     project_root: Path,
     env: dict[str, str],
     *args: str,
-) -> dict[str, Any]:
+) -> object:
     result = subprocess.run(
         [sys.executable, "-m", "meridian", "--format", "json", *args],
         cwd=project_root,
@@ -57,8 +57,27 @@ def _run_json(
         check=False,
     )
     assert result.returncode == 0, result.stderr
-    payload = json.loads(result.stdout)
+    return json.loads(result.stdout)
+
+
+def _run_json(
+    project_root: Path,
+    env: dict[str, str],
+    *args: str,
+) -> dict[str, Any]:
+    payload = _invoke_json(project_root, env, *args)
     assert isinstance(payload, dict)
+    return payload
+
+
+def _run_json_list(
+    project_root: Path,
+    env: dict[str, str],
+    *args: str,
+) -> list[dict[str, Any]]:
+    payload = _invoke_json(project_root, env, *args)
+    assert isinstance(payload, list)
+    assert all(isinstance(item, dict) for item in payload)
     return payload
 
 
@@ -72,10 +91,15 @@ def _assert_noisy_keys_absent(payload: object) -> None:
             _assert_noisy_keys_absent(value)
 
 
-def _seed_terminal_spawn(runtime_root: Path, project_root: Path) -> None:
+def _seed_terminal_spawn(
+    runtime_root: Path,
+    project_root: Path,
+    *,
+    spawn_id: str = "p1",
+) -> None:
     spawn_store.start_spawn(
         runtime_root,
-        spawn_id="p1",
+        spawn_id=spawn_id,
         chat_id="c1",
         model="gpt-5.4",
         agent="implementer",
@@ -89,13 +113,13 @@ def _seed_terminal_spawn(runtime_root: Path, project_root: Path) -> None:
     )
     spawn_store.finalize_spawn(
         runtime_root,
-        "p1",
+        spawn_id,
         "succeeded",
         0,
         origin="runner",
         duration_secs=1.25,
     )
-    report_path = runtime_root / "spawns" / "p1" / "report.md"
+    report_path = runtime_root / "spawns" / spawn_id / "report.md"
     report_path.write_text("Completed the sparse JSON projection.\n", encoding="utf-8")
 
 
@@ -166,6 +190,30 @@ def test_spawn_show_json_contract(
 
 @pytest.mark.integration
 @posix_only
+def test_spawn_show_multi_id_json_contract(
+    cli_project: tuple[Path, dict[str, str], Path],
+) -> None:
+    project_root, env, runtime_root = cli_project
+    _seed_terminal_spawn(runtime_root, project_root, spawn_id="p1")
+    _seed_terminal_spawn(runtime_root, project_root, spawn_id="p2")
+
+    payload = _run_json_list(project_root, env, "spawn", "show", "p1", "p2")
+
+    assert [item["spawn_id"] for item in payload] == ["p1", "p2"]
+    for item in payload:
+        assert {
+            "spawn_id",
+            "status",
+            "model",
+            "harness",
+            "report_path",
+            "report_summary",
+        } <= item.keys()
+    _assert_noisy_keys_absent(payload)
+
+
+@pytest.mark.integration
+@posix_only
 def test_spawn_status_json_contract(
     cli_project: tuple[Path, dict[str, str], Path],
 ) -> None:
@@ -177,6 +225,30 @@ def test_spawn_status_json_contract(
     assert {"spawn_id", "status", "model", "harness", "report_path", "report_summary"} <= (
         payload.keys()
     )
+    _assert_noisy_keys_absent(payload)
+
+
+@pytest.mark.integration
+@posix_only
+def test_spawn_status_multi_id_json_contract(
+    cli_project: tuple[Path, dict[str, str], Path],
+) -> None:
+    project_root, env, runtime_root = cli_project
+    _seed_terminal_spawn(runtime_root, project_root, spawn_id="p1")
+    _seed_terminal_spawn(runtime_root, project_root, spawn_id="p2")
+
+    payload = _run_json_list(project_root, env, "spawn", "status", "p1", "p2")
+
+    assert [item["spawn_id"] for item in payload] == ["p1", "p2"]
+    for item in payload:
+        assert {
+            "spawn_id",
+            "status",
+            "model",
+            "harness",
+            "report_path",
+            "report_summary",
+        } <= item.keys()
     _assert_noisy_keys_absent(payload)
 
 
