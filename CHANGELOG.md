@@ -4,6 +4,18 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+- Codex backend death mid-turn now records the exit code and a stderr
+  excerpt in the terminal error instead of generic transport text
+  ("no close frame received or sent"). Exactly one close event is emitted
+  even when the exit watcher and socket reader race, and expected shutdown
+  never reports backend death. Teardown failures can no longer leave event
+  consumers hanging without a stream sentinel. (#449)
+- Reaper diagnostics for managed backends now report PGID reachability
+  alongside root-PID aliveness. A launcher-shim root exiting no longer reads
+  as "backend dead" while a reparented child serves on. Diagnostic signal
+  only — no kill/finalize decision changes. (#449)
+
 ## [0.3.47] - 2026-07-23
 
 ### Removed
