@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+from pathlib import Path
 
 import pytest
 
@@ -19,14 +20,39 @@ class _FakeProcess:
     returncode: int | None = None
 
 
-class _RecordingScopeHandle:
+class _ControllableProcess:
+    pid = 4243
+
     def __init__(self) -> None:
+        self.returncode: int | None = None
+        self._exited = asyncio.Event()
+        self.wait_cancelled = False
+
+    async def wait(self) -> int:
+        try:
+            await self._exited.wait()
+        except asyncio.CancelledError:
+            self.wait_cancelled = True
+            raise
+        assert self.returncode is not None
+        return self.returncode
+
+    def exit(self, returncode: int) -> None:
+        self.returncode = returncode
+        self._exited.set()
+
+
+class _RecordingScopeHandle:
+    def __init__(self, process: _ControllableProcess | None = None) -> None:
         self.terminate_calls = 0
+        self._process = process
 
     async def terminate(self, *, grace_seconds: float, reason: str) -> None:
         _ = reason
         assert grace_seconds > 0
         self.terminate_calls += 1
+        if self._process is not None:
+            self._process.exit(-15)
 
 
 class _FreezesAfterMessagesWebSocket:
@@ -45,6 +71,23 @@ class _FreezesAfterMessagesWebSocket:
 
     async def close(self) -> None:
         self.closed = True
+
+
+class _FailingWebSocket:
+    def __init__(self) -> None:
+        self.closed = False
+        self.fail = asyncio.Event()
+
+    def __aiter__(self) -> _FailingWebSocket:
+        return self
+
+    async def __anext__(self) -> str:
+        await self.fail.wait()
+        raise RuntimeError("socket disappeared")
+
+    async def close(self) -> None:
+        self.closed = True
+        self.fail.set()
 
 
 async def _collect_events(connection: CodexConnection) -> list[RawHarnessEvent]:
@@ -146,5 +189,59 @@ async def test_codex_stop_terminates_scope_when_reader_task_already_failed() -> 
 
     await connection.stop(reason="test")
 
+    assert scope_handle.terminate_calls == 1
+    assert connection.state == "stopped"
+
+
+@pytest.mark.asyncio
+async def test_codex_backend_exit_and_reader_race_emit_one_enriched_close(
+    tmp_path: Path,
+) -> None:
+    connection = CodexConnection()
+    connection._state = "connected"
+    process = _ControllableProcess()
+    connection._process = process  # type: ignore[assignment]
+    websocket = _FailingWebSocket()
+    connection._ws = websocket
+    stderr_path = tmp_path / "stderr.log"
+    stderr_path.write_text("fatal vendor detail\n", encoding="utf-8")
+    connection._stderr_log_path = stderr_path
+
+    reader = asyncio.create_task(connection._read_messages_loop())
+    watcher = asyncio.create_task(connection._watch_backend_exit())
+    websocket.fail.set()
+    process.exit(23)
+
+    events = await _collect_events(connection)
+    await asyncio.gather(reader, watcher)
+
+    assert len(events) == 1
+    assert events[0].event_type == "meridian/error/connectionClosed"
+    assert events[0].payload["backend_exit_code"] == 23
+    assert events[0].payload["backend_stderr_excerpt"] == "fatal vendor detail"
+    assert connection.state == "failed"
+
+
+@pytest.mark.asyncio
+async def test_codex_expected_stop_cancels_watcher_before_backend_termination() -> None:
+    connection = CodexConnection()
+    connection._state = "connected"
+    process = _ControllableProcess()
+    connection._process = process  # type: ignore[assignment]
+    websocket = _FailingWebSocket()
+    connection._ws = websocket
+    scope_handle = _RecordingScopeHandle(process)
+    connection._scope_handle = scope_handle  # type: ignore[assignment]
+    connection._backend_exit_task = asyncio.create_task(
+        connection._watch_backend_exit()
+    )
+    connection._reader_task = asyncio.create_task(connection._read_messages_loop())
+    await asyncio.sleep(0)
+
+    await connection.stop(reason="test")
+    events = await _collect_events(connection)
+
+    assert events == []
+    assert process.wait_cancelled is True
     assert scope_handle.terminate_calls == 1
     assert connection.state == "stopped"
