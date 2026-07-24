@@ -9,6 +9,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   instead of the harness-agnostic launch layer.
 
 ### Fixed
+- Pi failure details now read a bounded stderr tail from only the current
+  process launch, excluding stale output left in reused spawn logs.
 - Pi first-response timing tests now use per-connection policies with realistic
   deadlines, avoiding process races while keeping the slow no-response case fast.
 - Second Pi stderr test no longer flakes under CI load: dropped the 50ms

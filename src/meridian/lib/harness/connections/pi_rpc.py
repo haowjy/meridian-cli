@@ -5,14 +5,10 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import signal
 import time
-from asyncio.subprocess import PIPE, Process
+from asyncio.subprocess import PIPE
 from collections.abc import AsyncIterator, Callable, Sequence
-from contextlib import suppress
 from dataclasses import dataclass
-from io import BufferedWriter
-from pathlib import Path
 from typing import Final, Literal, NamedTuple, cast
 
 from meridian.lib.core.telemetry import StartupPhase, StartupPhaseEmitter
@@ -30,8 +26,10 @@ from meridian.lib.harness.connections.base import (
     reap_on_ownership_transfer_failure,
     validate_prompt_size,
 )
-from meridian.lib.harness.connections.managed_backend import register_spawn_owned_process
-from meridian.lib.harness.errors import HarnessBinaryNotFound
+from meridian.lib.harness.connections.managed_stdio import (
+    ManagedStdioProcess,
+    launch_managed_stdio,
+)
 from meridian.lib.harness.pi_failure import compact_pi_failure_output
 from meridian.lib.harness.pi_lifecycle_events import (
     PI_CANONICAL_LIFECYCLE_TYPE_PREFIXES,
@@ -51,9 +49,7 @@ from meridian.lib.observability.trace_helpers import (
     trace_wire_recv,
     trace_wire_send,
 )
-from meridian.lib.platform import IS_WINDOWS
-from meridian.lib.platform.process_scope import ProcessScopeSnapshot, ScopedProcessHandle
-from meridian.lib.state.paths import resolve_project_runtime_root_for_write, resolve_spawn_log_dir
+from meridian.lib.platform.process_scope import ProcessScopeSnapshot
 
 logger = logging.getLogger(__name__)
 _HARNESS_NAME: Final = HarnessId.PI.value
@@ -136,10 +132,7 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
         self._clock = clock
         self._state: ConnectionState = "created"
         self._spawn_id: SpawnId = SpawnId("")
-        self._process: Process | None = None
-        self._scope_handle: ScopedProcessHandle | None = None
-        self._stderr_handle: BufferedWriter | None = None
-        self._stderr_log_path: Path | None = None
+        self._child: ManagedStdioProcess | None = None
         self._event_stream_started = False
         self._session_id: str | None = None
         self._tracer = None
@@ -183,15 +176,11 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
 
     @property
     def subprocess_pid(self) -> int | None:
-        process = self._process
-        if process is None:
-            return None
-        return process.pid
+        return None if self._child is None else self._child.pid
 
     @property
     def scope_snapshot(self) -> ProcessScopeSnapshot | None:
-        handle = self._scope_handle
-        return None if handle is None else handle.snapshot
+        return None if self._child is None else self._child.scope_snapshot
 
     async def start(self, config: ConnectionConfig, spec: ResolvedLaunchSpec) -> None:
         if self._state != "created":
@@ -285,7 +274,8 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
             self._set_state("stopping")
 
         await self._send_abort_message()
-        exited_during_abort_grace = await self._wait_for_process_exit(
+        child = self._child
+        exited_during_abort_grace = child is None or await child.wait_for_exit(
             timeout=self._timing.abort_grace_seconds
         )
         stop_escalated = False
@@ -344,7 +334,10 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
         await self._send_abort_message()
 
     async def events(self) -> AsyncIterator[RawHarnessEvent]:
-        process = self._process
+        child = self._child
+        if child is None:
+            return
+        process = child.process
         if process is None or process.stdout is None:
             return
         if self._event_stream_started:
@@ -412,7 +405,7 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
                         timeout_secs=self._timing.first_event_timeout_seconds,
                     )
                     yield self._error_event(detail)
-                    await self._terminate_process()
+                    await child.terminate()
                     break
                 except Exception as exc:
                     if self._state not in {"stopping", "stopped"}:
@@ -452,7 +445,7 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
                             return_code=return_code,
                         )
                         yield self._error_event(detail)
-                        await self._terminate_process()
+                        await child.terminate()
                         break
                     if return_code != 0 and self._state not in {"stopping", "stopped"}:
                         detail = self._failure_detail_with_stderr(
@@ -508,19 +501,6 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
             await self._cleanup_resources(terminate_process=False)
 
     async def _start_subprocess(self, config: ConnectionConfig, spec: ResolvedLaunchSpec) -> None:
-        spawn_dir = resolve_spawn_log_dir(
-            config.control_root,
-            config.spawn_id,
-            runtime_root=(
-                config.runtime_root
-                or resolve_project_runtime_root_for_write(config.control_root)
-            ),
-        )
-
-        stderr_path = spawn_dir / "stderr.log"
-        self._stderr_log_path = stderr_path
-        self._stderr_handle = stderr_path.open("ab")
-
         command = project_subprocess_spec(
             self.harness_id,
             spec,
@@ -540,33 +520,17 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
         command[0] = resolved_runtime.binary_path
         self._launch_command = tuple(command)
         self._launch_cwd = str(config.control_root)
-
-        try:
-            self._process = await asyncio.create_subprocess_exec(
-                *command,
-                cwd=self._launch_cwd,
-                env=env,
-                stdin=PIPE,
-                stdout=PIPE,
-                stderr=self._stderr_handle,
-                limit=_STDOUT_READLINE_LIMIT,
-                start_new_session=not IS_WINDOWS,
-            )
-            self._scope_handle = await register_spawn_owned_process(
-                spawn_id=config.spawn_id,
-                control_root=config.control_root,
-                process=self._process,
-                scope_id="stdio",
-                role="harness_stdio",
-                runtime_root=config.runtime_root,
-                persist=config.runtime_root is not None,
-            )
-        except (FileNotFoundError, NotADirectoryError) as exc:
-            raise HarnessBinaryNotFound.from_os_error(
-                harness_id=self.harness_id,
-                error=exc,
-                binary_name=command[0],
-            ) from exc
+        self._child = await launch_managed_stdio(
+            config=config,
+            harness_id=self.harness_id,
+            command=command,
+            env=env,
+            cwd=self._launch_cwd,
+            stdin=PIPE,
+            stdout_limit=_STDOUT_READLINE_LIMIT,
+            kill_grace_seconds=self._timing.kill_grace_seconds,
+            terminate_reason="pi_connection_stop",
+        )
 
     async def _read_stdio_stream(
         self,
@@ -760,7 +724,8 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
         if self._state != "connected":
             raise ConnectionNotReady("Pi RPC connection is not ready for send operations.")
 
-        process = self._process
+        child = self._child
+        process = None if child is None else child.process
         if process is None or process.stdin is None or process.returncode is not None:
             raise ConnectionNotReady("Pi RPC subprocess is not available for writes.")
 
@@ -776,7 +741,8 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
         if self._abort_sent:
             return
 
-        process = self._process
+        child = self._child
+        process = None if child is None else child.process
         if process is None or process.returncode is not None:
             return
         if process.stdin is None:
@@ -809,16 +775,6 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
             return
         raise ValueError(_PI_SPAWNED_PROMPT_REQUIRED_REASON)
 
-    async def _wait_for_process_exit(self, *, timeout: float) -> bool:
-        process = self._process
-        if process is None or process.returncode is not None:
-            return True
-        try:
-            await asyncio.wait_for(process.wait(), timeout=timeout)
-            return True
-        except TimeoutError:
-            return False
-
     def _set_state(self, next_state: ConnectionState) -> None:
         if next_state == self._state:
             return
@@ -831,22 +787,16 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
         self._state = next_state
 
     def _read_stderr_snippet(self) -> str | None:
-        if self._stderr_handle is not None:
-            with suppress(OSError):
-                self._stderr_handle.flush()
-        stderr_path = self._stderr_log_path
-        if stderr_path is None or not stderr_path.is_file():
+        child = self._child
+        if child is None:
             return None
-        try:
-            raw = stderr_path.read_text(encoding="utf-8", errors="replace").strip()
-        except OSError:
+        tail = child.read_stderr_tail()
+        if not tail:
             return None
-        if not raw:
-            return None
-        raw = compact_pi_failure_output(raw)
-        if len(raw) <= _STDERR_SNIPPET_LIMIT:
-            return raw
-        return f"{raw[:_STDERR_SNIPPET_LIMIT]}…<truncated>"
+        compacted = compact_pi_failure_output(tail)
+        if len(compacted) <= _STDERR_SNIPPET_LIMIT:
+            return compacted
+        return f"{compacted[:_STDERR_SNIPPET_LIMIT]}…<truncated>"
 
     def _failure_detail_with_stderr(self, detail: str) -> str:
         stderr_snippet = self._read_stderr_snippet()
@@ -873,9 +823,11 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
         self._fail_pending_prompt_acks()
         stop_escalated = False
         if terminate_process:
-            stop_escalated = await self._terminate_process()
-        if not self._events_stream_active:
-            self._close_log_handles()
+            child = self._child
+            if child is not None:
+                stop_escalated = await child.terminate()
+        if not self._events_stream_active and self._child is not None:
+            self._child.close_stderr_handle()
         return stop_escalated
 
     def _fail_pending_prompt_acks(self) -> None:
@@ -887,48 +839,6 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
                     )
                 )
 
-    async def _terminate_process(self) -> bool:
-        process = self._process
-        if process is None:
-            return False
-        stop_escalated = False
-        scope_handle = self._scope_handle
-        self._scope_handle = None
-        if scope_handle is not None and process.returncode is None:
-            result = await scope_handle.terminate(
-                grace_seconds=self._timing.kill_grace_seconds,
-                reason="pi_connection_stop",
-            )
-            self._process = None
-            return result.kill_escalated
-        if process.returncode is None:
-            stop_escalated = True
-            if process.stdin is not None:
-                try:
-                    process.stdin.close()
-                except Exception:
-                    logger.debug("Failed to close Pi RPC subprocess stdin", exc_info=True)
-            if IS_WINDOWS:
-                process.terminate()
-            else:
-                process.send_signal(signal.SIGTERM)
-            try:
-                await asyncio.wait_for(
-                    process.wait(),
-                    timeout=self._timing.kill_grace_seconds,
-                )
-            except TimeoutError:
-                process.kill()
-                await process.wait()
-        self._process = None
-        return stop_escalated
-
-    def _close_log_handles(self) -> None:
-        if self._stderr_handle is not None:
-            with suppress(OSError):
-                self._stderr_handle.flush()
-            self._stderr_handle.close()
-            self._stderr_handle = None
     def _emit_startup_phase(self, phase: StartupPhase) -> None:
         emitter = self._startup_emitter
         if emitter is not None:

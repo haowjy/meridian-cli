@@ -768,6 +768,7 @@ async def test_pi_rpc_connection_surfaces_stderr_on_early_exit_before_first_even
 
     spawn_id = SpawnId("p-pi-stderr-early-exit")
     crash_stderr = "TypeError: markAsUncloneable is not a function"
+    prior_launch_stderr = "sentinel from a prior Pi launch"
 
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
@@ -784,6 +785,17 @@ async def test_pi_rpc_connection_surfaces_stderr_on_early_exit_before_first_even
     )
     shim.chmod(0o755)
     monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
+
+    stderr_log = (
+        resolve_spawn_log_dir(
+            tmp_path,
+            spawn_id,
+            runtime_root=resolve_project_runtime_root_for_write(tmp_path),
+        )
+        / "stderr.log"
+    )
+    stderr_log.parent.mkdir(parents=True)
+    stderr_log.write_text(f"{prior_launch_stderr}\n", encoding="utf-8")
 
     connection = PiRpcConnection()
     await _start_existing_pi_connection(
@@ -812,16 +824,9 @@ async def test_pi_rpc_connection_surfaces_stderr_on_early_exit_before_first_even
     assert error_events
     message = str(error_events[0].payload.get("message", ""))
     assert crash_stderr in message
+    assert prior_launch_stderr not in message
     assert "Pi subprocess stderr:" in message
 
-    stderr_log = (
-        resolve_spawn_log_dir(
-            tmp_path,
-            spawn_id,
-            runtime_root=resolve_project_runtime_root_for_write(tmp_path),
-        )
-        / "stderr.log"
-    )
     assert crash_stderr in stderr_log.read_text(encoding="utf-8")
 
 
