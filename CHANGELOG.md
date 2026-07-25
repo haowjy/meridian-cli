@@ -4,6 +4,15 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Remove the unused and ineffective spawn artifact redaction pipeline, avoiding
+  whole-history reads and rewrites during finalization.
+- Keep one authoritative spawn history under `spawns/<id>/history.jsonl` while
+  retaining read compatibility with legacy `artifacts/` copies.
+- Remove a spawn's legacy artifact directory when retention prunes its
+  authoritative aggregate.
+
 ## [0.3.53] - 2026-07-25
 
 ### Fixed
@@ -25,13 +34,6 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   lossless envelope metadata and omitting empty causal fields.
 - Preserve malformed harness wire text in bounded history metadata instead of
   discarding the only available diagnostic evidence.
-- Remove the unused and ineffective spawn artifact redaction pipeline, avoiding
-  whole-history reads and rewrites during finalization.
-- Keep one authoritative spawn history under `spawns/<id>/history.jsonl` while
-  retaining read compatibility with legacy `artifacts/` copies.
-- Remove a spawn's legacy artifact directory when retention prunes its
-  authoritative aggregate.
-
 ## [0.3.52] - 2026-07-24
 
 ### Fixed
