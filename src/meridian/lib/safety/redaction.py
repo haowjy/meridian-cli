@@ -33,7 +33,12 @@ def redact_secrets(text: str, secrets: tuple[SecretSpec, ...]) -> str:
 def redact_secret_bytes(data: bytes, secrets: tuple[SecretSpec, ...]) -> bytes:
     """Byte wrapper around redaction for streamed logs."""
 
-    if not secrets:
+    encoded_secrets = tuple(
+        secret.value.encode("utf-8")
+        for secret in secrets
+        if secret.value
+    )
+    if not encoded_secrets or not any(secret in data for secret in encoded_secrets):
         return data
     decoded = data.decode("utf-8", errors="replace")
     return redact_secrets(decoded, secrets).encode("utf-8")
