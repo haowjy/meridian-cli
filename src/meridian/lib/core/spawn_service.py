@@ -52,7 +52,7 @@ from meridian.lib.launch.resolve import (
 )
 from meridian.lib.launch.types import PrimarySessionMetadata
 from meridian.lib.state import spawn_store
-from meridian.lib.state.liveness import is_process_alive
+from meridian.lib.state.liveness import is_process_alive, is_process_alive_with_birth
 from meridian.lib.state.paths import RuntimePaths
 from meridian.lib.state.spawn.model import APP_LAUNCH_MODE, LaunchMode, SpawnKind, SpawnOrigin
 from meridian.lib.state.spawn.repository import Applied, Declined
@@ -78,7 +78,21 @@ def _is_live_managed_primary(runtime_root: Path, record: SpawnRecord) -> bool:
         return False
     from meridian.lib.state.session_store import is_session_lease_owner_alive
 
-    return is_session_lease_owner_alive(runtime_root, str(record.chat_id))
+    if is_session_lease_owner_alive(runtime_root, str(record.chat_id)):
+        return True
+
+    from meridian.lib.state.primary_meta import read_primary_metadata
+
+    metadata = read_primary_metadata(runtime_root, record.id)
+    return bool(
+        metadata is not None
+        and metadata.managed_backend
+        and metadata.launcher_pid is not None
+        and is_process_alive_with_birth(
+            metadata.launcher_pid,
+            metadata.launcher_birth_epoch,
+        )
+    )
 
 
 def _live_primary_cancel_refusal(record: SpawnRecord) -> str:

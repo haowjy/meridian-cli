@@ -358,6 +358,99 @@ def test_spawn_cancel_refuses_live_managed_primary_without_force(
     assert _get_spawn(runtime_root, spawn_id).cancel_intent is None
 
 
+@pytest.mark.parametrize("lease_content", [None, "{corrupt"], ids=["missing", "corrupt"])
+def test_spawn_cancel_refuses_process_verified_live_primary_without_readable_lease(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    lease_content: str | None,
+) -> None:
+    runtime_root, spawn_id = _create_spawn(
+        tmp_path,
+        kind="primary",
+        started_at=_OLD_STARTED_AT,
+    )
+    _write_primary_meta(
+        runtime_root,
+        spawn_id,
+        launcher_pid=8201,
+        launcher_birth_epoch=8201.0,
+        backend_pid=None,
+        tui_pid=None,
+        activity="idle",
+    )
+    if lease_content is not None:
+        lease_path = runtime_root / "sessions" / "c1.lease.json"
+        lease_path.parent.mkdir(parents=True, exist_ok=True)
+        lease_path.write_text(lease_content, encoding="utf-8")
+    _patch_spawn_cancel_runtime_resolution(
+        monkeypatch,
+        runtime_root=runtime_root,
+        spawn_id=spawn_id,
+    )
+    monkeypatch.setattr(
+        "meridian.lib.core.spawn_service.is_process_alive_with_birth",
+        lambda pid, birth: pid == 8201 and birth == 8201.0,
+    )
+
+    output = spawn_api.spawn_cancel_sync(
+        SpawnCancelInput(
+            spawn_id=spawn_id,
+            project_root=tmp_path.as_posix(),
+        )
+    )
+
+    assert output.status == "failed"
+    assert output.exit_code == 1
+    assert output.error is not None
+    assert "live managed primary" in output.error
+    assert _get_spawn(runtime_root, spawn_id).cancel_intent is None
+
+
+def test_spawn_cancel_allows_dead_managed_primary_without_lease(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime_root, spawn_id = _create_spawn(
+        tmp_path,
+        kind="primary",
+        status="queued",
+        runner_pid=None,
+        started_at=_OLD_STARTED_AT,
+    )
+    _write_primary_meta(
+        runtime_root,
+        spawn_id,
+        launcher_pid=8202,
+        backend_pid=None,
+        tui_pid=None,
+        activity="idle",
+    )
+    _patch_spawn_cancel_runtime_resolution(
+        monkeypatch,
+        runtime_root=runtime_root,
+        spawn_id=spawn_id,
+    )
+    monkeypatch.setattr(
+        "meridian.lib.core.spawn_service.is_process_alive_with_birth",
+        lambda _pid, _birth: False,
+    )
+    monkeypatch.setattr(
+        "meridian.lib.core.spawn_service.is_process_alive",
+        lambda *_args, **_kwargs: False,
+    )
+
+    output = spawn_api.spawn_cancel_sync(
+        SpawnCancelInput(
+            spawn_id=spawn_id,
+            project_root=tmp_path.as_posix(),
+        )
+    )
+
+    assert output.status == "cancelled"
+    assert output.exit_code == 130
+    assert _get_spawn(runtime_root, spawn_id).status == "cancelled"
+
+
 @pytest.mark.parametrize(
     ("force", "lease_owner_alive"),
     [(True, True), (False, False)],
