@@ -74,20 +74,27 @@ class HarnessHistoryWriter:
 
         causal = self._causal_tracker.derive(event)
         timestamp = self.clock.utc_now_iso()
-        envelope = {
+        envelope: dict[str, object] = {
             "seq": self._seq,
             "byte_offset": self._byte_offset,
             "timestamp": timestamp,
-            "turn_id": causal.turn_id,
-            "item_id": causal.item_id,
-            "request_id": causal.request_id,
             "interrupt_epoch": causal.interrupt_epoch,
-            "stale_after_interrupt": causal.stale_after_interrupt,
             "event_type": event.event_type,
             "harness_id": event.harness_id,
             "payload": event.payload,
-            "raw_text": event.raw_text,
         }
+        for key, value in (
+            ("turn_id", causal.turn_id),
+            ("item_id", causal.item_id),
+            ("request_id", causal.request_id),
+        ):
+            if value is not None:
+                envelope[key] = value
+        if causal.stale_after_interrupt:
+            envelope["stale_after_interrupt"] = True
+        meta = _wire_envelope_meta(event)
+        if meta:
+            envelope["meta"] = meta
         line = json.dumps(envelope, separators=(",", ":"), sort_keys=True) + "\n"
 
         assigned_seq = self._seq
@@ -203,6 +210,31 @@ class HarnessHistoryWriter:
                     harness_id=harness_id,
                 )
             )
+
+
+def _wire_envelope_meta(event: RawHarnessEvent) -> dict[str, object]:
+    """Return wire fields not already represented by the normalized payload."""
+
+    if event.raw_text is None:
+        return {}
+    try:
+        parsed = json.loads(event.raw_text)
+    except (json.JSONDecodeError, TypeError):
+        return {}
+    if not isinstance(parsed, dict):
+        return {}
+
+    wire = cast("dict[str, object]", parsed)
+    for payload_key in ("payload", "params"):
+        if wire.get(payload_key) == event.payload:
+            return {key: value for key, value in wire.items() if key != payload_key}
+    if wire == event.payload:
+        return {}
+    return {
+        key: value
+        for key, value in wire.items()
+        if key not in event.payload or event.payload[key] != value
+    }
 
 
 def iter_history_events(path: Path) -> Iterator[dict[str, Any]]:

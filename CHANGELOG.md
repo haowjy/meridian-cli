@@ -9,6 +9,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Refuse to cancel live managed primary sessions unless `spawn cancel --force` is explicit.
 - Restore terminal mouse, alternate-screen, and cursor modes after a primary TUI exits.
 - Stop cancel waits as soon as the target process scope exits.
+- Reduce new spawn histories by replacing duplicated raw wire text with its
+  lossless envelope metadata and omitting empty causal fields.
+- Skip the history redaction pass when a spawn has no configured secrets.
 
 ## [0.3.52] - 2026-07-24
 

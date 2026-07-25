@@ -10,6 +10,10 @@ from meridian.lib.state.history import (
     read_history_range,
 )
 
+_WIRE_ENVELOPE_FIXTURE = (
+    Path(__file__).parents[2] / "fixtures" / "history" / "wire_envelopes.jsonl"
+)
+
 
 def _event(index: int) -> RawHarnessEvent:
     return RawHarnessEvent(
@@ -142,6 +146,82 @@ def test_writer_resume_discards_truncated_tail_before_append(tmp_path: Path) -> 
     assert len(raw_lines) == 2
     assert [json.loads(line)["seq"] for line in raw_lines] == [0, 1]
     assert all('"bad"' not in line for line in raw_lines)
+
+
+def test_writer_promotes_real_wire_envelopes_losslessly(tmp_path: Path) -> None:
+    fixture_records = [
+        json.loads(line)
+        for line in _WIRE_ENVELOPE_FIXTURE.read_text(encoding="utf-8").splitlines()
+    ]
+    assert {record["harness_id"] for record in fixture_records} == {
+        "claude",
+        "codex",
+        "cursor",
+        "opencode",
+        "pi",
+    }
+
+    history_path = tmp_path / "history.jsonl"
+    writer = HarnessHistoryWriter(history_path)
+    for record in fixture_records:
+        writer.write(
+            RawHarnessEvent(
+                event_type=record["event_type"],
+                harness_id=record["harness_id"],
+                payload=record["payload"],
+                raw_text=json.dumps(record["wire"], separators=(",", ":")),
+            )
+        )
+
+    written_records = read_history_range(history_path)
+    for fixture, written in zip(fixture_records, written_records, strict=True):
+        wire = fixture["wire"]
+        payload_key = next(
+            (
+                key
+                for key in ("payload", "params")
+                if key in wire and wire[key] == fixture["payload"]
+            ),
+            None,
+        )
+        reconstructed = dict(written.get("meta", {}))
+        if payload_key is None:
+            reconstructed.update(written["payload"])
+        else:
+            reconstructed[payload_key] = written["payload"]
+
+        assert reconstructed == wire
+        assert "raw_text" not in written
+        assert "request_id" not in written
+        assert "item_id" not in written
+        assert "turn_id" not in written
+        assert "stale_after_interrupt" not in written
+
+
+def test_reader_accepts_old_raw_text_and_new_meta_records(tmp_path: Path) -> None:
+    history_path = tmp_path / "history.jsonl"
+    old_record = {
+        "seq": 0,
+        "event_type": "thread/started",
+        "harness_id": "codex",
+        "payload": {"threadId": "thread-old"},
+        "raw_text": '{"method":"thread/started","params":{"threadId":"thread-old"}}',
+    }
+    new_record = {
+        "seq": 1,
+        "event_type": "thread/started",
+        "harness_id": "codex",
+        "payload": {"threadId": "thread-new"},
+        "meta": {"method": "thread/started"},
+    }
+    history_path.write_text(
+        f"{json.dumps(old_record)}\n{json.dumps(new_record)}\n",
+        encoding="utf-8",
+    )
+
+    assert read_history_range(history_path) == [old_record, new_record]
+
+
 def test_iter_history_events_tolerates_truncated_or_corrupt_lines(tmp_path: Path) -> None:
     history_path = tmp_path / "history.jsonl"
     history_path.parent.mkdir(parents=True, exist_ok=True)
@@ -220,7 +300,7 @@ def test_writer_adds_causal_fields_and_marks_stale_after_interrupt(tmp_path: Pat
     assert events[-1]["seq"] == 4
     assert events[-1]["turn_id"] == "turn-old"
     assert events[-1]["item_id"] == "item-1"
-    assert events[-1]["request_id"] is None
+    assert "request_id" not in events[-1]
     assert events[-1]["interrupt_epoch"] == 1
     assert events[-1]["stale_after_interrupt"] is True
 
