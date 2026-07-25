@@ -9,6 +9,7 @@ import sys
 import time
 from contextlib import suppress
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -16,6 +17,36 @@ from meridian.lib.platform import IS_WINDOWS, pty
 
 _ENABLED_MODES = b"\x1b[?1000h\x1b[?1002h\x1b[?1003h\x1b[?1006h\x1b[?1049h\x1b[?25l"
 _RESTORED_MODES = b"\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l\x1b[?1049l\x1b[?25h"
+
+
+@pytest.mark.skipif(IS_WINDOWS, reason="PTY relay is POSIX-only")
+def test_non_tty_stdout_does_not_receive_terminal_restore(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from meridian.lib.launch.process import pty_launcher
+
+    monkeypatch.setattr(pty_launcher.sys, "stdin", SimpleNamespace(fileno=lambda: 10))
+    monkeypatch.setattr(pty_launcher.sys, "stdout", SimpleNamespace(fileno=lambda: 11))
+    monkeypatch.setattr(pty_launcher, "_install_winsize_forwarding", lambda **_kwargs: lambda: None)
+    monkeypatch.setattr(pty_launcher.os, "isatty", lambda _fd: False)
+    monkeypatch.setattr(
+        pty_launcher.select,
+        "select",
+        lambda *_args, **_kwargs: ([12], [], []),
+    )
+    monkeypatch.setattr(pty_launcher.os, "read", lambda _fd, _size: b"")
+    writes: list[tuple[int, bytes]] = []
+    monkeypatch.setattr(pty_launcher.os, "write", lambda fd, data: writes.append((fd, data)))
+    monkeypatch.setattr(pty_launcher.os, "waitpid", lambda _pid, _options: (99, 0))
+
+    exit_code = pty_launcher._copy_primary_pty_output(
+        child_pid=99,
+        master_fd=12,
+        output_log_path=None,
+    )
+
+    assert exit_code == 0
+    assert writes == []
 
 
 @pytest.mark.skipif(IS_WINDOWS, reason="PTY relay is POSIX-only")

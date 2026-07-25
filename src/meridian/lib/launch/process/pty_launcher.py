@@ -136,8 +136,9 @@ def _copy_primary_pty_output(
         restore_resize()
         if saved_tty_attrs is not None:
             termios.tcsetattr(stdin_fd, termios.TCSADRAIN, saved_tty_attrs)
-        with suppress(OSError):
-            os.write(stdout_fd, _TERMINAL_RESTORE_SEQUENCE)
+        if os.isatty(stdout_fd):
+            with suppress(OSError):
+                os.write(stdout_fd, _TERMINAL_RESTORE_SEQUENCE)
 
     _, status = os.waitpid(child_pid, 0)
     return os.waitstatus_to_exitcode(status)
