@@ -13,6 +13,7 @@ test_reaper_managed_primary.py.
 from __future__ import annotations
 
 import json
+import time
 from pathlib import Path
 from typing import Any, cast
 
@@ -414,6 +415,52 @@ def test_spawn_cancel_allows_forced_or_dead_managed_primary(
     latest = _get_spawn(runtime_root, spawn_id)
     assert latest.status == "cancelled"
     assert latest.cancel_intent is not None
+
+
+def test_spawn_cancel_returns_promptly_when_managed_primary_is_already_dead(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime_root, spawn_id = _create_spawn(
+        tmp_path,
+        kind="primary",
+        runner_pid=None,
+        started_at=_OLD_STARTED_AT,
+    )
+    _write_session_lease(runtime_root)
+    _write_primary_meta(
+        runtime_root,
+        spawn_id,
+        launcher_pid=None,
+        backend_pid=None,
+        tui_pid=None,
+        activity="idle",
+    )
+    _patch_spawn_cancel_runtime_resolution(
+        monkeypatch,
+        runtime_root=runtime_root,
+        spawn_id=spawn_id,
+    )
+    monkeypatch.setattr(
+        "meridian.lib.state.session_store.is_process_alive",
+        lambda _pid: False,
+    )
+    monkeypatch.setattr(
+        "meridian.lib.core.spawn_service.is_process_alive",
+        lambda *_args, **_kwargs: False,
+    )
+
+    started = time.monotonic()
+    output = spawn_api.spawn_cancel_sync(
+        SpawnCancelInput(
+            spawn_id=spawn_id,
+            project_root=tmp_path.as_posix(),
+        )
+    )
+    elapsed = time.monotonic() - started
+
+    assert output.status == "cancelled"
+    assert elapsed < 0.5
 
 
 def test_spawn_cancel_managed_primary_queued_converges_to_terminal(
