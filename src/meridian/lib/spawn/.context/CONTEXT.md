@@ -23,10 +23,10 @@ project-level — because archived visibility is per-user, not per-project.
 
 ## Contracts
 
-**Locking.** `read_archived_spawns()` and `write_archived_spawns()` both acquire
-`archived_spawns.flock` before reading or writing. Do not read or write
-`archived_spawns.json` without holding this lock. The write path uses
-`atomic_write_text()` (tmp+rename) inside the flock.
+**Locking.** `read_archived_spawns()` takes a shared lock at
+`<runtime_root>/locks/archived-spawns.lock`. All writes go through
+`mutate_archived_spawns()`, which holds a non-reentrant exclusive lock across the
+read-modify-write and publishes with `atomic_write_text()`.
 
 **Idempotent writes.** `archive_spawn()` reads, adds, writes — it is idempotent.
 Calling it twice for the same spawn ID leaves the file unchanged on the second call.
