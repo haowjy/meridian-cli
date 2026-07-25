@@ -94,11 +94,10 @@ from meridian.lib.launch.streaming.heartbeat import FileHeartbeat, HeartbeatTouc
 from meridian.lib.launch.streaming.terminal_arbitrator import TriggerKind, arbitrate_terminal
 from meridian.lib.safety.budget import Budget, BudgetBreach, LiveBudgetTracker
 from meridian.lib.safety.guardrails import run_guardrails
-from meridian.lib.safety.redaction import SecretSpec, redact_secret_bytes
 from meridian.lib.state import paths as state_paths
 from meridian.lib.state import spawn_store
 from meridian.lib.state.artifact_store import ArtifactStore, make_artifact_key
-from meridian.lib.state.atomic import append_text_line, atomic_write_bytes
+from meridian.lib.state.atomic import append_text_line
 from meridian.lib.state.paths import resolve_spawn_log_dir
 from meridian.lib.state.spawn.model import (
     BACKGROUND_LAUNCH_MODE,
@@ -290,7 +289,6 @@ def _append_runner_lifecycle_event(
 
 
 _ATTEMPT_STORE_ARTIFACTS = (
-    HISTORY_FILENAME,
     OUTPUT_FILENAME,
     STDERR_FILENAME,
     TOKENS_FILENAME,
@@ -368,6 +366,7 @@ def _preserve_attempt_artifacts(
 
     for name in _ATTEMPT_STORE_ARTIFACTS:
         artifacts.delete(make_artifact_key(spawn_id, name))
+    artifacts.delete(make_artifact_key(spawn_id, HISTORY_FILENAME))
 
 
 def _scope_pi_session_dir_for_spawn(
@@ -385,20 +384,15 @@ def _persist_attempt_artifacts(
     artifacts: ArtifactStore,
     spawn_id: SpawnId,
     log_dir: Path,
-    secrets: tuple[SecretSpec, ...],
 ) -> None:
     for name in (
-        HISTORY_FILENAME,
         STDERR_FILENAME,
         TOKENS_FILENAME,
     ):
         source = log_dir / name
         if not source.exists():
             continue
-        payload = source.read_bytes()
-        if secrets and name in {HISTORY_FILENAME, STDERR_FILENAME}:
-            payload = redact_secret_bytes(payload, secrets)
-        artifacts.put(make_artifact_key(spawn_id, name), payload)
+        artifacts.put(make_artifact_key(spawn_id, name), source.read_bytes())
 
 
 def _retry_blocked_after_pi_child_started(
@@ -1032,7 +1026,6 @@ async def execute_with_streaming(
     space_spent_usd: float = 0.0,
     guardrails: tuple[Path, ...] = (),
     guardrail_timeout_seconds: float = DEFAULT_GUARDRAIL_TIMEOUT_SECONDS,
-    secrets: tuple[SecretSpec, ...] = (),
     harness_session_id_observer: Callable[[str], None] | None = None,
     event_observer: Callable[[StreamEvent], None] | None = None,
     stream_stdout_to_terminal: bool = False,
@@ -1332,7 +1325,6 @@ async def execute_with_streaming(
                         artifacts=artifacts,
                         spawn_id=run.spawn_id,
                         text=attempt.start_error,
-                        secrets=secrets,
                     )
                 attempt_cancelled = False
                 if attempt.timed_out:
@@ -1355,12 +1347,10 @@ async def execute_with_streaming(
                     artifacts=artifacts,
                     spawn_id=run.spawn_id,
                     log_dir=log_dir,
-                    secrets=secrets,
                 )
                 if report_path.exists():
-                    redacted_report = redact_secret_bytes(report_path.read_bytes(), secrets)
-                    atomic_write_bytes(report_path, redacted_report)
-                    artifacts.put(make_artifact_key(run.spawn_id, REPORT_FILENAME), redacted_report)
+                    report_bytes = report_path.read_bytes()
+                    artifacts.put(make_artifact_key(run.spawn_id, REPORT_FILENAME), report_bytes)
 
                 streaming_extractor = StreamingExtractor(
                     connection=attempt.connection,
@@ -1378,7 +1368,6 @@ async def execute_with_streaming(
                     model_id=run.model,
                     harness_id=resolved_harness_id,
                     project_root=project_root,
-                    secrets=secrets,
                     failure_reason=conclusion.failure_reason,
                 )
                 conclusion.extracted = extraction
@@ -1516,7 +1505,6 @@ async def execute_with_streaming(
                         artifacts=artifacts,
                         spawn_id=run.spawn_id,
                         text=guardrail_text,
-                        secrets=secrets,
                     )
 
                     if _retry_blocked_after_pi_child_started(

@@ -1,18 +1,17 @@
 # lib/safety/
 
-Four enforcement subsystems consumed by the launch layer: cost budget tracking,
-post-run guardrails, tool permission resolution, and secret redaction. Each is
+Three enforcement subsystems consumed by the launch layer: cost budget tracking,
+post-run guardrails, and tool permission resolution. Each is
 independent — no module imports another except through carefully managed lazy imports
 that prevent circular dependencies.
 
 ## Mental Model
 
-All four subsystems enforce constraints on what a spawn can do or expose:
+All three subsystems enforce constraints on what a spawn can do:
 
 - **Budget** — streaming cost enforcement; terminates if spend exceeds limit
 - **Guardrails** — post-run scripts that verify or audit after spawn completes
 - **Permissions** — translates sandbox/approval intent into harness-specific flags
-- **Redaction** — strips credentials from output before it reaches logs or users
 
 The launch layer assembles these; none of them drives the spawn itself.
 
@@ -33,10 +32,6 @@ sequentially even if one fails; all failures are collected into `GuardrailResult
 **Guardrail env sanitization is a security boundary.** The child environment strips
 every key matching `MERIDIAN_SECRET_*` before passing env to any guardrail script.
 Repo scripts are untrusted. Do not weaken this.
-
-**Secret redaction uses longest-first ordering.** If a shorter secret is a substring
-of a longer one, longest-first prevents the shorter secret from partially redacting
-the longer secret's placeholder, producing garbage output.
 
 **Do not hoist the lazy import in `budget.py`.** `extract_cost_usd_from_json_line`
 imports `harness.common` lazily to break a circular dependency: `safety.budget` →
@@ -61,12 +56,11 @@ Tools compilation preserves scoped patterns where the target harness supports th
 - `budget.py` — `LiveBudgetTracker`, `Budget`, `BudgetBreach`
 - `guardrails.py` — `run_guardrails()`
 - `permissions.py` — `PermissionConfig`, `build_permission_resolver()`
-- `redaction.py` — `redact_secrets()`, `redact_secret_bytes()`
 
 ## Depth
 
 → [.context/CONTEXT.md](.context/CONTEXT.md) — budget cost field ordering, guardrail
-command resolution by platform, permission resolver table, redaction edge cases,
+command resolution by platform, permission resolver table,
 circular import dependency map
 
 ## Related

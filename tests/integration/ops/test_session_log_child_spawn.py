@@ -14,7 +14,11 @@ import pytest
 from meridian.lib.launch.constants import HISTORY_FILENAME
 from meridian.lib.ops.session_export import SessionExportInput, session_export_sync
 from meridian.lib.ops.session_log import SessionLogInput, session_log_sync
+from meridian.lib.ops.session_search import SessionSearchInput, session_search_sync
+from meridian.lib.ops.session_target import spawn_output_path_for_target
+from meridian.lib.ops.spawn.query import detail_from_row
 from meridian.lib.state import session_store, spawn_store
+from meridian.lib.state.artifact_store import LocalStore, make_artifact_key
 from meridian.lib.state.paths import resolve_project_runtime_root_for_write
 
 
@@ -251,6 +255,82 @@ def test_session_log_active_child_spawn_prefers_live_output(tmp_path: Path) -> N
     assert output.source == "spawn p42 output"
     assert [(message.role, message.content) for message in output.messages] == [
         ("assistant", "live child progress")
+    ]
+
+
+def test_all_spawn_history_read_paths_agree_on_canonical_content(tmp_path: Path) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    runtime_root = resolve_project_runtime_root_for_write(project_root)
+    spawn_store.start_spawn(
+        runtime_root,
+        spawn_id="p42",
+        chat_id="c42",
+        model="gpt-5.4",
+        agent="coder",
+        harness="codex",
+        prompt="do thing",
+        harness_session_id="missing-native-session",
+        status="running",
+    )
+    canonical_events = (
+        {
+            "event_type": "meridian.pi.lifecycle.phase",
+            "payload": {"phase": "canonical_phase"},
+        },
+        {
+            "event_type": "item/completed",
+            "harness_id": "codex",
+            "payload": {"item": {"type": "agentMessage", "text": "canonical marker"}},
+        },
+    )
+    legacy_events = (
+        {
+            "event_type": "meridian.pi.lifecycle.phase",
+            "payload": {"phase": "legacy_phase"},
+        },
+        {
+            "event_type": "item/completed",
+            "harness_id": "codex",
+            "payload": {"item": {"type": "agentMessage", "text": "legacy marker"}},
+        },
+    )
+    _write_spawn_output(runtime_root, "p42", *canonical_events)
+    _write_spawn_output(runtime_root, "p42", *legacy_events, artifact=True)
+
+    artifacts = LocalStore(root_dir=runtime_root / "artifacts")
+    history_key = make_artifact_key("p42", HISTORY_FILENAME)
+    row = spawn_store.get_spawn(runtime_root, "p42")
+    assert row is not None
+    detail = detail_from_row(
+        project_root=project_root,
+        row=row,
+        include_report_body=False,
+        runtime_root=runtime_root,
+    )
+    log = session_log_sync(
+        SessionLogInput(ref="p42", project_root=project_root.as_posix(), tail=5)
+    )
+    search = session_search_sync(
+        SessionSearchInput(
+            ref="p42",
+            query="canonical marker",
+            project_root=project_root.as_posix(),
+        )
+    )
+
+    assert spawn_output_path_for_target(runtime_root, "p42") == (
+        runtime_root / "spawns" / "p42" / HISTORY_FILENAME
+    )
+    assert b"canonical marker" in artifacts.get(history_key)
+    assert b"legacy marker" not in artifacts.get(history_key)
+    assert artifacts.list_artifacts("p42").count(history_key) == 1
+    assert detail.pi_lifecycle_phase == "canonical_phase"
+    assert [(message.role, message.content) for message in log.messages] == [
+        ("assistant", "canonical marker")
+    ]
+    assert [match.content_preview for match in search.matches] == [
+        "[[canonical marker]]"
     ]
 
 

@@ -57,7 +57,7 @@ config entry. If adding a feature requires editing 10 files, the abstraction is 
 | `lib/config/` | Config loading and layering |
 | `lib/spawn/` | Archive overlay: UI visibility flag for terminal spawns |
 | `lib/streaming/` | Harness output streaming, event parsing |
-| `lib/safety/` | Budget enforcement, guardrails, secret redaction |
+| `lib/safety/` | Budget enforcement, guardrails, permission resolution |
 | `lib/context/` | Context resolution (KB, strategy, work directories) |
 | `lib/hooks/` | Hook dispatch, config layering, built-in hooks |
 | `lib/extensions/` | Extension command registry |

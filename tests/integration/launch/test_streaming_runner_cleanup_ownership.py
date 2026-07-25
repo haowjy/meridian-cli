@@ -32,33 +32,22 @@ from tests.support.fakes import FakeClock, FakeHeartbeat
 _pi_extension_projection_fixture = _pi_extension_projection_fixture
 
 
-def test_persist_attempt_artifacts_skips_redaction_without_secrets(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    spawn_id = SpawnId("p-redaction")
-    history = b'{"event_type":"turn/completed"}\n'
-    (tmp_path / "history.jsonl").write_bytes(history)
-    artifacts = InMemoryStore()
-
-    def _unexpected_redaction(*_args: object, **_kwargs: object) -> bytes:
-        raise AssertionError("redaction should not run without secrets")
-
-    monkeypatch.setattr(
-        "meridian.lib.launch.streaming_runner.redact_secret_bytes",
-        _unexpected_redaction,
-    )
-
+def test_persist_attempt_artifacts_does_not_mirror_history(tmp_path: Path) -> None:
     from meridian.lib.launch import streaming_runner
+
+    spawn_id = SpawnId("p-single-history")
+    (tmp_path / "history.jsonl").write_bytes(b'{"event_type":"turn/completed"}\n')
+    (tmp_path / "stderr.log").write_bytes(b"diagnostic\n")
+    artifacts = InMemoryStore()
 
     streaming_runner._persist_attempt_artifacts(
         artifacts=artifacts,
         spawn_id=spawn_id,
         log_dir=tmp_path,
-        secrets=(),
     )
 
-    assert artifacts.get(make_artifact_key(spawn_id, "history.jsonl")) == history
+    assert not artifacts.exists(make_artifact_key(spawn_id, "history.jsonl"))
+    assert artifacts.get(make_artifact_key(spawn_id, "stderr.log")) == b"diagnostic\n"
 
 
 @pytest.mark.asyncio

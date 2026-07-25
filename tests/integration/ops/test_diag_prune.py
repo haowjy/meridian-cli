@@ -91,6 +91,10 @@ def _seed_pruning_layout(
     current_root = user_home / "projects" / current_uuid
     current_spawn = current_root / "spawns" / "p1"
     _write_text(current_spawn / "history.jsonl", '{"event":"start"}\n')
+    _write_text(
+        current_root / "artifacts" / "p1" / "history.jsonl",
+        '{"event":"legacy mirror"}\n',
+    )
     _set_tree_mtime(current_spawn, 1_600_000_000.0)
     _set_path_mtime(current_root, 1_900_000_000.0)
 
@@ -154,6 +158,7 @@ def test_doctor_prune_only_prunes_current_project_artifacts(
     assert result.orphan_project_dirs == ()
     assert result.stale_spawn_artifacts and result.stale_spawn_artifacts[0].spawn_id == "p1"
     assert not current_spawn.exists()
+    assert not (current_spawn.parent.parent / "artifacts" / "p1").exists()
     assert orphan_root.exists(), "orphan dir should NOT be pruned without --global"
     assert other_spawn.exists()
 

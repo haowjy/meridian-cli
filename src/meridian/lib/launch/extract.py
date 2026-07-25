@@ -22,7 +22,6 @@ from meridian.lib.launch.constants import (
     TOKENS_FILENAME,
 )
 from meridian.lib.launch.report import ExtractedReport, extract_or_fallback_report
-from meridian.lib.safety.redaction import SecretSpec, redact_secrets
 from meridian.lib.state.artifact_store import ArtifactStore
 from meridian.lib.state.atomic import atomic_write_text
 
@@ -78,12 +77,10 @@ def _persist_report(
     spawn_id: SpawnId,
     log_dir: Path,
     extracted: ExtractedReport,
-    secrets: tuple[SecretSpec, ...],
 ) -> Path | None:
     if extracted.content is None:
         return None
 
-    redacted_content = redact_secrets(extracted.content, secrets)
     target = log_dir / REPORT_FILENAME
     report_key = ArtifactKey(f"{spawn_id}/{REPORT_FILENAME}")
     if extracted.source in {"assistant_message", "failure_reason", "pi_failure"}:
@@ -92,14 +89,14 @@ def _persist_report(
             if extracted.source in {"failure_reason", "pi_failure"}
             else "# Report"
         )
-        wrapped = f"{heading}\n\n{redacted_content.strip()}\n"
+        wrapped = f"{heading}\n\n{extracted.content.strip()}\n"
         atomic_write_text(target, wrapped)
         artifacts.put(report_key, wrapped.encode("utf-8"))
         return target
 
     # The harness may have written report.md directly. Ensure both filesystem and artifact
     # views are populated so downstream readers can consume a single source.
-    text = redacted_content
+    text = extracted.content
     atomic_write_text(target, text)
     artifacts.put(report_key, text.encode("utf-8"))
     return target
@@ -147,7 +144,6 @@ def enrich_finalize(
     model_id: str | None = None,
     harness_id: HarnessId | str | None = None,
     project_root: Path | None = None,
-    secrets: tuple[SecretSpec, ...] = (),
     failure_reason: str | None = None,
 ) -> FinalizeExtraction:
     """Spawn all extraction steps and return one enriched finalization payload."""
@@ -170,7 +166,6 @@ def enrich_finalize(
         spawn_id=spawn_id,
         log_dir=log_dir,
         extracted=report,
-        secrets=secrets,
     )
 
     return FinalizeExtraction(
