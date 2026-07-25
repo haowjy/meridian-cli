@@ -19,6 +19,8 @@ from meridian.lib.state.spawn_aggregate import mutate_published_spawn_artifact
 logger = logging.getLogger(__name__)
 
 _LAST_OBSERVED_EVENT_CHECKPOINT_INTERVAL_SECONDS = 1.0
+_RAW_UNPARSED_MAX_LENGTH = 4096
+_RAW_UNPARSED_TRUNCATION_MARKER = "\n[truncated by Meridian]"
 
 
 @dataclass(frozen=True)
@@ -220,9 +222,9 @@ def _wire_envelope_meta(event: RawHarnessEvent) -> dict[str, object]:
     try:
         parsed = json.loads(event.raw_text)
     except (json.JSONDecodeError, TypeError):
-        return {}
+        return {"raw_unparsed": _bounded_unparsed_wire(event.raw_text)}
     if not isinstance(parsed, dict):
-        return {}
+        return {"raw_unparsed": _bounded_unparsed_wire(event.raw_text)}
 
     wire = cast("dict[str, object]", parsed)
     for payload_key in ("payload", "params"):
@@ -235,6 +237,13 @@ def _wire_envelope_meta(event: RawHarnessEvent) -> dict[str, object]:
         for key, value in wire.items()
         if key not in event.payload or event.payload[key] != value
     }
+
+
+def _bounded_unparsed_wire(raw_text: str) -> str:
+    if len(raw_text) <= _RAW_UNPARSED_MAX_LENGTH:
+        return raw_text
+    prefix_length = _RAW_UNPARSED_MAX_LENGTH - len(_RAW_UNPARSED_TRUNCATION_MARKER)
+    return raw_text[:prefix_length] + _RAW_UNPARSED_TRUNCATION_MARKER
 
 
 def iter_history_events(path: Path) -> Iterator[dict[str, Any]]:

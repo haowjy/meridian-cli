@@ -198,7 +198,62 @@ def test_writer_promotes_real_wire_envelopes_losslessly(tmp_path: Path) -> None:
         assert "stale_after_interrupt" not in written
 
 
-def test_reader_accepts_old_raw_text_and_new_meta_records(tmp_path: Path) -> None:
+def test_writer_preserves_unparseable_wire_text(tmp_path: Path) -> None:
+    history_path = tmp_path / "history.jsonl"
+    raw_text = "not valid JSON"
+
+    result = HarnessHistoryWriter(history_path).write(
+        RawHarnessEvent(
+            event_type="meridian/error",
+            harness_id="pi",
+            payload={"error": "invalid JSON"},
+            raw_text=raw_text,
+        )
+    )
+
+    assert result.success is True
+    assert read_history_range(history_path)[0]["meta"] == {"raw_unparsed": raw_text}
+
+
+def test_writer_preserves_non_object_wire_text(tmp_path: Path) -> None:
+    history_path = tmp_path / "history.jsonl"
+    raw_text = '"just a string"'
+
+    result = HarnessHistoryWriter(history_path).write(
+        RawHarnessEvent(
+            event_type="meridian/error",
+            harness_id="cursor",
+            payload={"error": "unexpected wire value"},
+            raw_text=raw_text,
+        )
+    )
+
+    assert result.success is True
+    assert read_history_range(history_path)[0]["meta"] == {"raw_unparsed": raw_text}
+
+
+def test_writer_caps_unparseable_wire_text_with_visible_marker(tmp_path: Path) -> None:
+    history_path = tmp_path / "history.jsonl"
+    raw_text = "x" * 5000
+
+    result = HarnessHistoryWriter(history_path).write(
+        RawHarnessEvent(
+            event_type="meridian/error",
+            harness_id="pi",
+            payload={"error": "oversized invalid JSON"},
+            raw_text=raw_text,
+        )
+    )
+
+    assert result.success is True
+    stored = read_history_range(history_path)[0]["meta"]["raw_unparsed"]
+    assert isinstance(stored, str)
+    assert len(stored) == 4096
+    assert stored.endswith("\n[truncated by Meridian]")
+    assert raw_text.startswith(stored.removesuffix("\n[truncated by Meridian]"))
+
+
+def test_reader_accepts_all_wire_metadata_shapes(tmp_path: Path) -> None:
     history_path = tmp_path / "history.jsonl"
     old_record = {
         "seq": 0,
@@ -214,12 +269,38 @@ def test_reader_accepts_old_raw_text_and_new_meta_records(tmp_path: Path) -> Non
         "payload": {"threadId": "thread-new"},
         "meta": {"method": "thread/started"},
     }
+    unparsed_record = {
+        "seq": 2,
+        "event_type": "meridian/error",
+        "harness_id": "pi",
+        "payload": {"error": "invalid JSON"},
+        "meta": {"raw_unparsed": "not valid JSON"},
+    }
+    metadata_free_record = {
+        "seq": 3,
+        "event_type": "message",
+        "harness_id": "opencode",
+        "payload": {"text": "hello"},
+    }
     history_path.write_text(
-        f"{json.dumps(old_record)}\n{json.dumps(new_record)}\n",
+        "".join(
+            f"{json.dumps(record)}\n"
+            for record in (
+                old_record,
+                new_record,
+                unparsed_record,
+                metadata_free_record,
+            )
+        ),
         encoding="utf-8",
     )
 
-    assert read_history_range(history_path) == [old_record, new_record]
+    assert read_history_range(history_path) == [
+        old_record,
+        new_record,
+        unparsed_record,
+        metadata_free_record,
+    ]
 
 
 def test_iter_history_events_tolerates_truncated_or_corrupt_lines(tmp_path: Path) -> None:

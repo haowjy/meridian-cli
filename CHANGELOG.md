@@ -11,6 +11,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Stop cancel waits as soon as the target process scope exits.
 - Reduce new spawn histories by replacing duplicated raw wire text with its
   lossless envelope metadata and omitting empty causal fields.
+- Preserve malformed harness wire text in bounded history metadata instead of
+  discarding the only available diagnostic evidence.
 - Skip the history redaction pass when a spawn has no configured secrets.
 
 ## [0.3.52] - 2026-07-24
