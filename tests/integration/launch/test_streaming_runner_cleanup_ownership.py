@@ -15,7 +15,7 @@ from meridian.lib.harness.registry import HarnessRegistry
 from meridian.lib.launch.request import SpawnRequest
 from meridian.lib.platform.process_scope import fallback as process_scope_fallback
 from meridian.lib.state import spawn_store
-from meridian.lib.state.artifact_store import InMemoryStore, LocalStore, make_artifact_key
+from meridian.lib.state.artifact_store import LocalStore
 from meridian.lib.state.paths import resolve_project_runtime_root_for_write
 from meridian.lib.streaming import spawn_manager as spawn_manager_module
 from tests.integration.launch.streaming_runner_support import (
@@ -30,35 +30,6 @@ from tests.integration.launch.streaming_runner_support import (
 from tests.support.fakes import FakeClock, FakeHeartbeat
 
 _pi_extension_projection_fixture = _pi_extension_projection_fixture
-
-
-def test_persist_attempt_artifacts_skips_redaction_without_secrets(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    spawn_id = SpawnId("p-redaction")
-    history = b'{"event_type":"turn/completed"}\n'
-    (tmp_path / "history.jsonl").write_bytes(history)
-    artifacts = InMemoryStore()
-
-    def _unexpected_redaction(*_args: object, **_kwargs: object) -> bytes:
-        raise AssertionError("redaction should not run without secrets")
-
-    monkeypatch.setattr(
-        "meridian.lib.launch.streaming_runner.redact_secret_bytes",
-        _unexpected_redaction,
-    )
-
-    from meridian.lib.launch import streaming_runner
-
-    streaming_runner._persist_attempt_artifacts(
-        artifacts=artifacts,
-        spawn_id=spawn_id,
-        log_dir=tmp_path,
-        secrets=(),
-    )
-
-    assert artifacts.get(make_artifact_key(spawn_id, "history.jsonl")) == history
 
 
 @pytest.mark.asyncio

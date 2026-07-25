@@ -1,6 +1,6 @@
 # lib/safety/ — Context
 
-Four focused subsystems consumed by the launch layer. None depends on another
+Three focused subsystems consumed by the launch layer. None depends on another
 except through lazy imports that break circular dependency cycles.
 
 ## Budget Enforcement (`budget.py`)
@@ -67,21 +67,6 @@ The resolver translates intent into harness flags.
 **`resolve_permission_pipeline()` in this module** is a re-export shim that delegates
 to `lib/launch/permissions.py`. The launch layer owns the actual pipeline.
 `PermissionConfig` and the resolver types live here.
-
-## Secret Redaction (`redaction.py`)
-
-`redact_secrets(text, secrets)` and `redact_secret_bytes(data, secrets)` replace
-secret values with `[REDACTED:<key>]` placeholders.
-
-**Ordering:** secrets sorted longest-first before replacement. Prevents a shorter
-secret that is a substring of a longer one from partially redacting the longer
-secret's placeholder.
-
-**Empty value guard:** secrets with empty `value` are skipped.
-
-`redact_secret_bytes` decodes bytes as UTF-8 with `errors="replace"`, redacts, and
-re-encodes. Non-UTF-8 input bytes become replacement characters — the output may
-differ from input in byte length.
 
 ## Circular Import Constraints
 

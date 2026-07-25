@@ -19,7 +19,6 @@ from meridian.lib.launch.constants import OUTPUT_FILENAME, STDERR_FILENAME
 from meridian.lib.platform.terminate import terminate_tree as _terminate_tree
 from meridian.lib.safety.budget import BudgetBreach
 from meridian.lib.safety.guardrails import GuardrailFailure
-from meridian.lib.safety.redaction import SecretSpec, redact_secret_bytes
 from meridian.lib.state import spawn_store
 from meridian.lib.state.artifact_store import ArtifactStore, make_artifact_key
 from meridian.lib.state.atomic import atomic_write_bytes
@@ -72,13 +71,12 @@ def append_text_to_stderr_artifact(
     artifacts: ArtifactStore,
     spawn_id: SpawnId,
     text: str,
-    secrets: tuple[SecretSpec, ...],
 ) -> None:
     key = make_artifact_key(spawn_id, STDERR_FILENAME)
     existing = artifacts.get(key).decode("utf-8", errors="ignore") if artifacts.exists(key) else ""
     prefix = "\n" if existing and not existing.endswith("\n") else ""
     combined = f"{existing}{prefix}{text}\n"
-    artifacts.put(key, redact_secret_bytes(combined.encode("utf-8"), secrets))
+    artifacts.put(key, combined.encode("utf-8"))
 
 
 def artifact_is_zero_bytes(
@@ -164,7 +162,6 @@ async def capture_stdout_stream(
     reader: asyncio.StreamReader,
     output_file: Path,
     *,
-    secrets: tuple[SecretSpec, ...],
     line_observer: Callable[[bytes], None] | None,
     parse_stream_event: Callable[[str], StreamEvent | None] | None = None,
     event_observer: Callable[[StreamEvent], None] | None = None,
@@ -175,11 +172,10 @@ async def capture_stdout_stream(
 
     with output_file.open("wb") as handle:
         async for raw_line in _iter_stream_lines(reader):
-            redacted_line = redact_secret_bytes(raw_line, secrets)
             if line_observer is not None:
-                line_observer(redacted_line)
+                line_observer(raw_line)
 
-            line_text = redacted_line.decode("utf-8", errors="replace")
+            line_text = raw_line.decode("utf-8", errors="replace")
             if parse_stream_event is not None and event_observer is not None:
                 try:
                     parsed_event = parse_stream_event(line_text)
@@ -198,9 +194,9 @@ async def capture_stdout_stream(
 
             parsed_tokens = _extract_tokens_payload(raw_line)
             if parsed_tokens is not None:
-                last_tokens_payload = redact_secret_bytes(parsed_tokens, secrets)
+                last_tokens_payload = parsed_tokens
 
-            handle.write(redacted_line)
+            handle.write(raw_line)
             handle.flush()
 
     return last_tokens_payload
@@ -210,7 +206,6 @@ async def capture_stderr_stream(
     reader: asyncio.StreamReader,
     stderr_file: Path,
     *,
-    secrets: tuple[SecretSpec, ...],
     stream_to_terminal: bool = False,
     chunk_size: int = DEFAULT_STREAM_READ_CHUNK_SIZE,
 ) -> bytes:
@@ -222,12 +217,11 @@ async def capture_stderr_stream(
             chunk = await reader.read(chunk_size)
             if not chunk:
                 break
-            redacted_chunk = redact_secret_bytes(chunk, secrets)
-            handle.write(redacted_chunk)
+            handle.write(chunk)
             handle.flush()
-            buffer.extend(redacted_chunk)
+            buffer.extend(chunk)
             if stream_to_terminal:
-                sys.stderr.write(redacted_chunk.decode("utf-8", errors="replace"))
+                sys.stderr.write(chunk.decode("utf-8", errors="replace"))
                 sys.stderr.flush()
 
     return bytes(buffer)
