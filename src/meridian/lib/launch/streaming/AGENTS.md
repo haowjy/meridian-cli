@@ -14,9 +14,9 @@ resulting outcome. The streaming runner acts on this decision to finalize the sp
 Terminal triggers have a priority order — if multiple fire simultaneously, the
 highest-priority trigger wins. Trigger priority is documented in `.context/CONTEXT.md`.
 
-**`heartbeat.py`** — `FileHeartbeat` touches a file on a fixed interval while a
-spawn is alive. The reaper in `lib/state/reaper.py` reads heartbeat age to determine
-if a spawn is orphaned (heartbeat age > 120s means the runner may be dead).
+**`heartbeat.py`** — `FileHeartbeat.touch()` performs one file timestamp update.
+The streaming runner owns periodic scheduling. The reaper in `lib/state/reaper.py`
+reads heartbeat age to determine if a spawn is orphaned.
 
 ## Key Rules
 
@@ -24,18 +24,13 @@ if a spawn is orphaned (heartbeat age > 120s means the runner may be dead).
 trigger fires, then cancels the others. Do not call it multiple times for the same
 spawn.
 
-**`FileHeartbeat` must be started and stopped as a context manager** (or via
-`start()`/`stop()`). A heartbeat that is never stopped continues touching the file
-after the spawn finishes, delaying orphan detection.
-
-**The grace window matters.** After the harness sends a terminal event, there is a
-brief window to receive any late terminal frames before the arbitrator cuts off.
-Do not remove the grace window — late frames contain finalization data.
+**`FileHeartbeat` does not schedule itself.** Call `touch()` from the streaming
+runner's heartbeat loop; the class has no lifecycle or context-manager API.
 
 ## Depth
 
 → [.context/CONTEXT.md](.context/CONTEXT.md) — trigger priority order, arbitration
-   semantics, grace window timing, heartbeat file location.
+   semantics, and heartbeat file behavior.
 
 ## Related
 

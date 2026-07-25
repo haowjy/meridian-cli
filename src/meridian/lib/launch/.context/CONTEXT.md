@@ -157,31 +157,11 @@ inside `prepare_launch_surface()`:
 only for `ops/spawn/prepare.py` dry-run display (needs a real argv for `cli_command`).
 Do not set `REQUIRED` on execution paths.
 
-### Model-Policy Overlay Composition (`policies.py`)
+### Mars Launch-Bundle Policy Resolution (`policies.py`)
 
-**Overlay prepends; does not replace.** `effective_model_policies()` in
-`compiler.py` builds the
-combined policy list as:
-
-```python
-(*overlay_rules, *profile_rules)
-```
-
-Overlay rules (from `AgentOverlayConfig.model_policies`) get first-match priority.
-Profile rules apply for tokens the overlay doesn't match. When the overlay is absent
-or has no `model_policies`, profile rules stand alone.
-
-**Harness-availability fallback** walks the combined list in order, skipping rules
-where `no_fallback=True` or `match_type == "model-glob"`. The first candidate whose
-harness is available wins. Source: `_fallback_candidates_from_policies()`.
-
-**Fallback chain** (`compiler_result.fallback_chain`) contains only rules with
-`match_type` in `{alias, model}` and `no_fallback=False`, preserving list order.
-Source: `_effective_fallback_chain()`.
-
-**Demoted base candidate.** When a policy rule transformed the primary result (e.g.,
-matched an alias rule and rerouted the harness), the pre-transformation base is tried
-first as a fallback before walking the policy list. Source: `_demoted_base_candidate()`.
+`PRIMARY` and `SPAWN_PREPARE` share `_resolve_policy_from_bundle()`. Mars resolves
+the model, harness, and fallback chain; Meridian applies the returned launch bundle
+rather than reconstructing profile policy composition or fallback ordering.
 
 ### _MERIDIAN_HARNESS Child Env
 

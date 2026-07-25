@@ -10,17 +10,13 @@ Priority order (highest to lowest):
 2. **Budget exceeded** — token or cost budget exhausted → `status: failed`, `error: budget_exceeded`
 3. **Timeout** — wall-clock timeout → `status: failed`, `exit_code: 3`, `error: timeout`
 4. **Watchdog** — watchdog reports spawn stopped → `stop_required: False`, no synthetic status
-5. **Completion** — drain loop completed; opens a grace window for a late terminal frame
-6. **Signal** — SIGINT/SIGTERM; lowest precedence — if completion already resolved, completion wins
+5. **Inactivity** — inactivity watchdog reports spawn stopped → `stop_required: False`, no synthetic status
+6. **Completion** — drain loop completed
+7. **Signal** — SIGINT/SIGTERM; lowest precedence — if completion already resolved, completion wins
 
-### Completion Grace Window
-
-When `completion_task` wins the race and no terminal frame has arrived, `_completion_grace()`
-waits up to `grace_seconds` (default 0.5s) for a late `terminal_event_future`. This handles
-the common case where the harness emits a terminal event just after the drain loop signals
-completion. If the grace window expires without a terminal frame, `ArbitrationDecision` has
-`stop_required=False` and no synthetic status — the caller determines final state from the
-drain outcome.
+When completion wins, `_completion_decision()` in `terminal_arbitrator.py` immediately
+uses an already-finished terminal frame or returns a completion decision. It does not
+wait for a later frame.
 
 ### Watchdog Noop
 
@@ -29,8 +25,9 @@ The caller must not treat this as a termination — the watchdog observed nothin
 
 ### Optional Triggers
 
-`timeout_task`, `budget_task`, and `watchdog_task` are optional (pass `None` to exclude from race).
-Their absence does not affect the priority ordering of the remaining triggers.
+`timeout_task`, `budget_task`, `watchdog_task`, and `inactivity_task` are optional
+(pass `None` to exclude from the race). Their absence does not affect the priority
+ordering of the remaining triggers.
 
 ## FileHeartbeat
 

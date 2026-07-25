@@ -72,10 +72,13 @@ may contain active work, so those paths skip it rather than deleting live data.
 ## Locked Mutation Model
 
 Every published-spawn mutation calls `write_state_locked()`. It acquires the stable
-per-spawn lock at `locks/spawns/<id>.lock` (outside the spawn artifact directory,
-never unlinked), re-reads `state.json`, applies a pure mutator, and writes
-atomically. There is no public unlocked write path — the prior two-tier model
-(owner writes without lock / external writes with lock) was collapsed in PR #422.
+per-spawn lock at `locks/spawns/<id>.lock`, outside the spawn artifact directory,
+re-reads `state.json`, applies a pure mutator, and writes atomically. Lock lifetime
+and orphan cleanup follow the parent
+[`state/.context/CONTEXT.md`](../../.context/CONTEXT.md#platform-locking); this page does
+not restate that contract. There is no public unlocked write path — the prior
+two-tier model (owner writes without lock / external writes with lock) was collapsed
+in PR #422.
 
 The conformance guard `tests/contract/test_state_write_conformance.py` rejects new
 raw writes to authoritative state files at CI.
@@ -187,6 +190,6 @@ quarantine signal that migration and retention depend on to fail closed.
 ## Related
 
 - [`../AGENTS.md`](../AGENTS.md) — entry points
-- [`../.context/CONTEXT.md`](../.context/CONTEXT.md) — parent state module contracts
+- [`../../.context/CONTEXT.md`](../../.context/CONTEXT.md) — parent state module contracts
 - `$MERIDIAN_CONTEXT_KB_DIR/architecture/spawn-finalization.md` — finalization authority lattice, `runner_exit_*` invariant, and reaper contract
 - `$MERIDIAN_CONTEXT_KB_DIR/architecture/state-system.md` — per-spawn state layout, locking, and reconciliation model

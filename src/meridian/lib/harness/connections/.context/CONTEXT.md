@@ -182,7 +182,7 @@ Both are 10 MiB uniform across adapters:
 
 Claude CLI supports `--input-format stream-json --output-format stream-json` for
 bidirectional NDJSON over process pipes. This avoids a local HTTP server or WebSocket
-listener. The `_ws.py` filename predates this transport and was kept to avoid churn.
+listener.
 
 ### Codex: Port Pre-Reservation
 

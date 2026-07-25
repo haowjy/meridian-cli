@@ -122,21 +122,6 @@ Use `LaunchArgvIntent.SPEC_ONLY` on execution paths. `LaunchArgvIntent.REQUIRED`
 `ops/spawn/prepare.py` dry-run display (needs real argv for `cli_command`). **Do not set
 `REQUIRED` on execution paths.**
 
-## Model-Policy Overlay Semantics
-
-Overlay rules (from `AgentOverlayConfig.model_policies`) **prepend** to profile rules —
-they do not replace them. Effective list = overlay rules first, profile rules second.
-First rule whose selector matches wins; later rules with the same selector are silently
-unreachable.
-
-Harness-availability fallback walks the combined list in order, skipping rules with
-`no_fallback=True` and rules with `match_type == "model-glob"` (always excluded).
-The demoted base candidate (pre-policy-transform) is tried before the policy list
-when a policy rule caused the primary harness selection.
-
-Source: `compiler.py:effective_model_policies()`, `policies.py:_fallback_candidates_from_policies()`.
-Detail: [.context/CONTEXT.md](.context/CONTEXT.md#model-policy-overlay-composition-policiespy).
-
 ## Startup Watchdog
 
 `_start_spawn_with_timeout()` in `streaming_runner.py` wraps the entire pre-connect
@@ -208,8 +193,8 @@ See [.context/CONTEXT.md](.context/CONTEXT.md#why-user-turn-not-system-prompt) f
    injection, reference loading and anchor semantics (`kb:` prefix, `@` unsupported),
    worktree path assignment vs managed ownership separation, workspace projection
    detail, env injection, background worker trust model, _MERIDIAN_HARNESS child env
-   behavior, exact continue replay contract, full invariant table, model-policy
-   overlay composition and fallback chain rules, user-turn context threading
+   behavior, exact continue replay contract, full invariant table, Mars launch-bundle
+   policy resolution, user-turn context threading
    (`resolve_task_context_inputs()`) and why prior-context goes in the user turn.
 
 ## Related

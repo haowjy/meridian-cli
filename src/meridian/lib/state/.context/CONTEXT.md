@@ -145,11 +145,12 @@ for non-empty report content that is not a terminal control frame (`cancelled`/`
 JSON) and is not a `# Spawn failed` generated markdown wrapper. Used by both reaper
 and cancel convergence paths.
 
-`_completion_or_cancel_decision()` centralizes durable-completion-vs-cancel precedence
-for the reaper: if a durable report exists, the spawn resolves `succeeded` regardless
-of cancel intent; otherwise pending cancel intent resolves `cancelled` with the intent's
-exit code and error. Call this helper rather than branching on completion and cancel
-independently; a late cancel must not downgrade a completed spawn.
+`reconciliation.py:completion_or_cancel_decision()` centralizes
+durable-completion-vs-cancel precedence for reconciliation callers: if a durable
+report exists, the spawn resolves `succeeded` regardless of cancel intent; otherwise
+pending cancel intent resolves `cancelled` with the intent's exit code and error.
+Call this helper rather than branching on completion and cancel independently; a
+late cancel must not downgrade a completed spawn.
 
 **Managed-primary orphan cleanup:**
 

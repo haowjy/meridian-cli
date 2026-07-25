@@ -49,25 +49,6 @@ separate CLI invocations and prevent alias updates from being picked up.
 4. If found in all-models list → return `AliasEntry` with empty alias (direct model ID passthrough)
 5. If not found → return `AliasEntry` with the input as model ID and unresolved harness
 
-### Agent Profile Model-Policy Parsing Rules (`agent.py`)
-
-**`models:`** — raises `ValueError` at parse time. Removed; use `model-policies:` for
-per-model overrides.
-
-**`fanout:`** — raises `ValueError` at parse time. Not supported; profiles express
-fallback candidates via ordered `model-policies` list rules instead.
-
-**`fallback-order:`** in a `model-policies` rule — raises `ValueError`. Fallback
-order is implicit from rule list position; remove this key.
-
-**`no-fallback: true`** — opt-out on individual `model-policies` rules. Rules with
-this set are excluded from harness-availability fallback. `model-glob` rules are
-always `no_fallback = True`, hardcoded in `_parse_model_policies()` regardless of
-what the profile declares.
-
-**First-match wins.** Duplicate rules with the same selector are silently unreachable —
-no parse error. The first matching rule in list order wins.
-
 ### AliasEntry
 
 `AliasEntry.harness` property: returns `resolved_harness` if mars provided it;

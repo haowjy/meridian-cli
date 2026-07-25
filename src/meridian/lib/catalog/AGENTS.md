@@ -39,19 +39,6 @@ guess.
 discard at operation end. Do not share across operations — cache is intentionally
 scoped.
 
-## Anti-Patterns
-
-**Don't use `fanout:` in profile frontmatter.** It raises `ValueError` at parse time.
-Express fallback candidates as ordered `model-policies` list rules instead — list
-position is fallback order.
-
-**Don't use `fallback-order:` in `model-policies` rules.** It raises `ValueError`.
-Remove the key; fallback order is implicit from rule list position.
-
-**Don't assume `model-glob` rules participate in harness-availability fallback.**
-They are always `no_fallback = True` and are skipped by the fallback walk regardless
-of what the profile declares.
-
 ## Fallback: `.mars/models-merged.json`
 
 When the mars binary is unavailable, `load_mars_aliases()` reads
@@ -78,8 +65,7 @@ agent = load_agent_profile(project_root, "coder")
 ## Depth
 
 → [.context/CONTEXT.md](.context/CONTEXT.md) — mars subprocess integration, resolve vs
-list asymmetry, `MarsResultCache` scoping contract, fallback to merged JSON,
-model-policy parsing rules
+list asymmetry, `MarsResultCache` scoping contract, and fallback to merged JSON
 
 ## Related
 

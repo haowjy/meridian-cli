@@ -61,7 +61,7 @@ module and run inside that transaction.
 
 - `settings.py` — `MeridianConfig`, `load_config()`: start here
 - `schema.py` — `config_field()`, `ConfigOptionMeta`: field metadata and parse helpers
-- `project_root.py` — `resolve_project_root()`, `resolve_user_config_path()`
+- `project_root.py` — `resolve_project_root_resolution()`, `resolve_user_config_path()`
 - `context_config.py` — `ContextConfig`, `ContextSourceType`: context path schema
 - `catalog.py` — `build_option_catalog()`: introspects `MeridianConfig` for CLI/docs
 
