@@ -7,6 +7,7 @@ from contextlib import ExitStack
 from pathlib import Path
 from typing import IO, Any, Literal, NamedTuple, cast
 
+import psutil
 from pydantic import BaseModel, ConfigDict, ValidationError
 
 from meridian.lib.core.types import (
@@ -25,7 +26,7 @@ from meridian.lib.platform.locking import (
 )
 from meridian.lib.state.atomic import atomic_write_text
 from meridian.lib.state.event_store import append_event, read_events, utc_now_iso
-from meridian.lib.state.liveness import is_process_alive
+from meridian.lib.state.liveness import is_process_alive_with_birth
 from meridian.lib.state.paths import RuntimePaths, normalize_path_for_write
 
 
@@ -175,36 +176,51 @@ def _generation_matches(expected: str, actual: str) -> bool:
     return normalized_expected == normalized_actual
 
 
-def _read_session_lease_data(paths: RuntimePaths, chat_id: str) -> tuple[bool, str, int | None]:
+def _read_session_lease_data(
+    paths: RuntimePaths,
+    chat_id: str,
+) -> tuple[bool, str, int | None, float | None]:
     lease_path = _session_lease_path(paths, chat_id)
     if not lease_path.is_file():
-        return (False, "", None)
+        return (False, "", None, None)
     try:
         payload = json.loads(lease_path.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, OSError):
-        return (False, "", None)
+        return (False, "", None, None)
     if not isinstance(payload, dict):
-        return (False, "", None)
+        return (False, "", None, None)
     payload_dict = cast("dict[str, Any]", payload)
     generation = payload_dict.get("session_instance_id")
     owner_pid = payload_dict.get("owner_pid")
+    owner_created_at_epoch = payload_dict.get("owner_created_at_epoch")
     parsed_owner_pid = (
         owner_pid if isinstance(owner_pid, int) and not isinstance(owner_pid, bool) else None
     )
+    parsed_owner_created_at_epoch = (
+        float(owner_created_at_epoch)
+        if isinstance(owner_created_at_epoch, int | float)
+        and not isinstance(owner_created_at_epoch, bool)
+        else None
+    )
     if isinstance(generation, str):
-        return (True, generation, parsed_owner_pid)
-    return (True, "", parsed_owner_pid)
+        return (True, generation, parsed_owner_pid, parsed_owner_created_at_epoch)
+    return (True, "", parsed_owner_pid, parsed_owner_created_at_epoch)
 
 
 def _read_session_lease(paths: RuntimePaths, chat_id: str) -> tuple[bool, str]:
-    lease_exists, generation, _owner_pid = _read_session_lease_data(paths, chat_id)
+    lease_exists, generation, _owner_pid, _owner_birth = _read_session_lease_data(paths, chat_id)
     return (lease_exists, generation)
 
 
 def _write_session_lease(paths: RuntimePaths, chat_id: str, session_instance_id: str) -> None:
+    try:
+        owner_created_at_epoch: float | None = psutil.Process(os.getpid()).create_time()
+    except (psutil.NoSuchProcess, psutil.AccessDenied, OSError):
+        owner_created_at_epoch = None
     payload = {
         "chat_id": chat_id,
         "owner_pid": os.getpid(),
+        "owner_created_at_epoch": owner_created_at_epoch,
         "session_instance_id": session_instance_id,
     }
     atomic_write_text(
@@ -514,10 +530,18 @@ def has_live_session_leases(runtime_root: Path) -> bool:
         return False
     for lease_path in paths.sessions_dir.glob("*.lease.json"):
         chat_id = lease_path.name.removesuffix(".lease.json")
-        _exists, _generation, owner_pid = _read_session_lease_data(paths, chat_id)
-        if owner_pid is not None and is_process_alive(owner_pid):
+        _exists, _generation, owner_pid, owner_birth = _read_session_lease_data(paths, chat_id)
+        if owner_pid is not None and is_process_alive_with_birth(owner_pid, owner_birth):
             return True
     return False
+
+
+def is_session_lease_owner_alive(runtime_root: Path, chat_id: str) -> bool:
+    """Return whether one session's lease names a currently live owner process."""
+
+    paths = RuntimePaths.from_root_dir(runtime_root)
+    _exists, _generation, owner_pid, owner_birth = _read_session_lease_data(paths, chat_id)
+    return owner_pid is not None and is_process_alive_with_birth(owner_pid, owner_birth)
 
 
 def list_active_session_records(runtime_root: Path) -> list[SessionRecord]:
@@ -705,15 +729,18 @@ def cleanup_stale_sessions(runtime_root: Path) -> StaleSessionCleanup:
             stopped_at = utc_now_iso()
             for chat_id, _lock_path, _ in stale:
                 existing = records.get(chat_id)
-                lease_exists, lease_session_instance_id, lease_owner_pid = _read_session_lease_data(
-                    paths, chat_id
-                )
+                (
+                    lease_exists,
+                    lease_session_instance_id,
+                    lease_owner_pid,
+                    lease_owner_birth,
+                ) = _read_session_lease_data(paths, chat_id)
                 if (
                     existing is not None
                     and existing.kind == "primary"
                     and lease_exists
                     and lease_owner_pid is not None
-                    and is_process_alive(lease_owner_pid)
+                    and is_process_alive_with_birth(lease_owner_pid, lease_owner_birth)
                 ):
                     continue
                 stop_session_instance_id = lease_session_instance_id

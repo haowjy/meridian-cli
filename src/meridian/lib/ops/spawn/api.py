@@ -1030,6 +1030,17 @@ async def spawn_subagents(
 
 
 def _spawn_cancel_output_from_outcome(outcome: CancelOutcome) -> SpawnActionOutput:
+    if outcome.status in {"queued", "running"} and not outcome.finalizing:
+        return SpawnActionOutput(
+            command="spawn.cancel",
+            status="failed",
+            spawn_id=outcome.spawn_id,
+            message=f"Cancellation of spawn '{outcome.spawn_id}' did not converge.",
+            error=f"Spawn remained {outcome.status} after cancellation.",
+            model=outcome.model,
+            harness_id=outcome.harness,
+            exit_code=1,
+        )
     if outcome.already_terminal:
         message = f"Spawn '{outcome.spawn_id}' is already {outcome.status}."
     elif outcome.finalizing:
@@ -1242,7 +1253,7 @@ async def _spawn_cancel_impl(
         setup_telemetry(runtime_root=runtime_root, logical_owner=cancel_owner)
     register_spawn_telemetry_observer()
     try:
-        outcome = await spawn_service.cancel(SpawnId(spawn_id))
+        outcome = await spawn_service.cancel(SpawnId(spawn_id), force=payload.force)
     except RuntimeError as exc:
         return SpawnActionOutput(
             command="spawn.cancel",
@@ -1334,6 +1345,7 @@ def spawn_cancel_all_sync(
                 SpawnCancelInput(
                     spawn_id=row.id,
                     project_root=project_root.as_posix(),
+                    force=payload.include_primaries,
                 ),
                 sink=sink,
                 prepared=prepared,

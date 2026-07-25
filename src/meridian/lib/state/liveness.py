@@ -10,6 +10,12 @@ from meridian.lib.platform.process_scope.base import birth_time_unverified
 _PID_REUSE_GUARD_SECS = 30.0
 
 
+def _is_running_non_zombie(proc: psutil.Process) -> bool:
+    """Return process liveness suitable for cancellation convergence."""
+
+    return proc.is_running() and proc.status() != psutil.STATUS_ZOMBIE
+
+
 def is_process_alive(pid: int, created_after_epoch: float | None = None) -> bool:
     """Check if a PID is alive, with create_time guard for PID reuse."""
     if not psutil.pid_exists(pid):
@@ -23,7 +29,7 @@ def is_process_alive(pid: int, created_after_epoch: float | None = None) -> bool
             and proc.create_time() > created_after_epoch + _PID_REUSE_GUARD_SECS
         ):
             return False
-        return proc.is_running()
+        return _is_running_non_zombie(proc)
     except psutil.NoSuchProcess:
         return False
     except psutil.AccessDenied:
@@ -42,7 +48,7 @@ def is_process_alive_with_birth(pid: int, birth_epoch: float | None) -> bool:
         proc = psutil.Process(pid)
         if abs(proc.create_time() - birth_epoch) > 1.0:
             return False
-        return proc.is_running()
+        return _is_running_non_zombie(proc)
     except psutil.NoSuchProcess:
         return False
     except psutil.AccessDenied:

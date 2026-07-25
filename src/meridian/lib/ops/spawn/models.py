@@ -745,6 +745,7 @@ class SpawnCancelInput(BaseModel):
 
     spawn_id: str
     project_root: str | None = None
+    force: bool = False
 
 
 class SpawnCancelAllInput(BaseModel):

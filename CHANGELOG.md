@@ -4,6 +4,29 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Refuse to cancel process-verified live managed primary sessions unless
+  `spawn cancel --force` is explicit, even when their session lease is missing
+  or corrupt.
+- Validate a session lease owner's process birth time as well as its PID before
+  treating the lease as live.
+- Restore terminal mouse, alternate-screen, and cursor modes after a primary TUI exits.
+- Keep redirected primary output byte-clean by emitting terminal restore modes
+  only when stdout is a TTY.
+- End primary PTY forwarding cleanly when stdout closes instead of leaking a
+  `BrokenPipeError`.
+- Stop cancel waits as soon as the target process scope exits.
+- Treat zombie processes as exited during cancellation convergence, and report
+  cancellation as failed rather than successful when a spawn remains running.
+- Reduce new spawn histories by replacing duplicated raw wire text with its
+  lossless envelope metadata and omitting empty causal fields.
+- Preserve malformed harness wire text in bounded history metadata instead of
+  discarding the only available diagnostic evidence.
+- Skip the history redaction pass when a spawn has no configured secrets.
+- Preserve arbitrary artifact bytes when configured secrets do not occur in
+  the data.
+
 ## [0.3.52] - 2026-07-24
 
 ### Fixed

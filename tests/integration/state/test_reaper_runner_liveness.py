@@ -31,6 +31,9 @@ class _FakeRunnerProcess:
     def is_running(self) -> bool:
         return self._running
 
+    def status(self) -> str:
+        return "running"
+
 
 def _patch_runner_process(
     monkeypatch: pytest.MonkeyPatch,

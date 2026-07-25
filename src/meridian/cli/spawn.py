@@ -993,10 +993,18 @@ def _spawn_stats(
 def _spawn_cancel(
     emit: Any,
     spawn_id: str,
+    force: Annotated[
+        bool,
+        Parameter(
+            name="--force",
+            help="Cancel even when the target is a live managed primary session.",
+        ),
+    ] = False,
 ) -> None:
     result = spawn_cancel_sync(
         SpawnCancelInput(
             spawn_id=spawn_id,
+            force=force,
         ),
         sink=_current_output_sink(),
         prepared=_prepare_spawn_runtime_write(),

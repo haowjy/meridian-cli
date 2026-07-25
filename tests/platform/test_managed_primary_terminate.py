@@ -29,6 +29,9 @@ def test_terminate_managed_primary_processes_skips_birth_mismatch(monkeypatch) -
         def is_running(self) -> bool:
             return True
 
+        def status(self) -> str:
+            return "running"
+
         def terminate(self) -> None:
             terminated_pids.append(self.pid)
 
@@ -68,6 +71,9 @@ def test_terminate_managed_primary_processes_signals_only_exact_birth_match(monk
 
         def is_running(self) -> bool:
             return True
+
+        def status(self) -> str:
+            return "running"
 
         def terminate(self) -> None:
             terminated_pids.append(self.pid)

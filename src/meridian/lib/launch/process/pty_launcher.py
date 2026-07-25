@@ -16,6 +16,15 @@ from meridian.lib.platform import IS_WINDOWS, fcntl, pty, select, termios, tty
 
 from .ports import LaunchedProcess, ProcessLauncher
 
+_TERMINAL_RESTORE_SEQUENCE = (
+    b"\x1b[?1000l"
+    b"\x1b[?1002l"
+    b"\x1b[?1003l"
+    b"\x1b[?1006l"
+    b"\x1b[?1049l"
+    b"\x1b[?25h"
+)
+
 
 def can_use_pty() -> bool:
     return not IS_WINDOWS and sys.stdin.isatty() and sys.stdout.isatty()
@@ -115,7 +124,10 @@ def _copy_primary_pty_output(
                     if output_handle is not None:
                         output_handle.write(chunk)
                         output_handle.flush()
-                    os.write(stdout_fd, chunk)
+                    try:
+                        os.write(stdout_fd, chunk)
+                    except BrokenPipeError:
+                        break
 
                 if stdin_open and stdin_fd in ready:
                     data = os.read(stdin_fd, 1024)
@@ -127,6 +139,9 @@ def _copy_primary_pty_output(
         restore_resize()
         if saved_tty_attrs is not None:
             termios.tcsetattr(stdin_fd, termios.TCSADRAIN, saved_tty_attrs)
+        if os.isatty(stdout_fd):
+            with suppress(OSError):
+                os.write(stdout_fd, _TERMINAL_RESTORE_SEQUENCE)
 
     _, status = os.waitpid(child_pid, 0)
     return os.waitstatus_to_exitcode(status)

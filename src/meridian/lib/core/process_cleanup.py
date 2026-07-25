@@ -18,6 +18,7 @@ from meridian.lib.platform.process_scope.base import (
     ProcessScopeSnapshot,
     birth_time_unverified,
 )
+from meridian.lib.state.liveness import is_process_alive, is_process_alive_with_birth
 from meridian.lib.state.process_scope_projection import (
     is_scope_released,
     mark_scope_released,
@@ -26,6 +27,28 @@ from meridian.lib.state.process_scope_projection import (
 from meridian.lib.state.spawn.model import SpawnRecord
 
 logger = structlog.get_logger(__name__)
+
+
+def _wait_for_scope_exit(scope: ProcessScopeSnapshot, *, timeout: float) -> None:
+    """Wait only while a scope's recorded root process is still alive."""
+
+    import time
+
+    deadline = time.monotonic() + max(0.0, timeout)
+    while True:
+        if birth_time_unverified(scope.root_created_at_epoch):
+            alive = is_process_alive(scope.root_pid)
+        else:
+            alive = is_process_alive_with_birth(
+                scope.root_pid,
+                scope.root_created_at_epoch,
+            )
+        if not alive:
+            return
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return
+        time.sleep(min(0.05, remaining))
 
 
 def terminate_recorded_spawn_scopes(
@@ -282,8 +305,6 @@ def cancel_managed_primary(
     Idempotent — already-released scopes are skipped. Safe to call even when
     primary_metadata is not available (falls back to scope records only).
     """
-    import time
-
     scopes = read_scopes_from_disk(runtime_root, SpawnId(spawn_record.id))
     results: list[CleanupResult] = []
     spawn_id = SpawnId(spawn_record.id)
@@ -309,9 +330,11 @@ def cancel_managed_primary(
             )
             results.append(result)
 
-    # 2. Brief pause to let launcher-driven shutdown propagate.
-    if results:
-        time.sleep(1.0)
+    # 2. Let launcher-driven shutdown propagate, but stop waiting as soon as
+    # the launcher scope is actually gone.
+    launcher_scope = next((scope for scope in scopes if scope.scope_id == "launcher"), None)
+    if results and launcher_scope is not None:
+        _wait_for_scope_exit(launcher_scope, timeout=1.0)
 
     # 3. Terminate backend and TUI if still unreleased.
     for scope in scopes:

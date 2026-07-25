@@ -804,10 +804,10 @@ async def test_primary_attach_writes_valid_jsonl_events(tmp_path: Path) -> None:
         assert row["harness_id"] == "codex"
         assert isinstance(row["seq"], int)
         assert isinstance(row["byte_offset"], int)
-        assert row["item_id"] is None
-        assert row["request_id"] is None
+        assert "item_id" not in row
+        assert "request_id" not in row
         assert row["interrupt_epoch"] == 0
-        assert row["stale_after_interrupt"] is False
+        assert "stale_after_interrupt" not in row
 
 
 @pytest.mark.asyncio

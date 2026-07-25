@@ -396,7 +396,7 @@ def _persist_attempt_artifacts(
         if not source.exists():
             continue
         payload = source.read_bytes()
-        if name in {HISTORY_FILENAME, STDERR_FILENAME}:
+        if secrets and name in {HISTORY_FILENAME, STDERR_FILENAME}:
             payload = redact_secret_bytes(payload, secrets)
         artifacts.put(make_artifact_key(spawn_id, name), payload)
 
