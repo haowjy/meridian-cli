@@ -4,6 +4,14 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- Mars 0.12.0. Package hooks must ship per-target native fragments; the old
+  `events`/`matcher` schema is rejected at config load. Upgrade packages to
+  `meridian-base >=0.10.0` before syncing. Package cleanup now preserves
+  handwritten files and non-empty directories, and `mars.lock` upgrades to the
+  ownership-aware v3 format on first sync.
+
 ## [0.3.54] - 2026-07-25
 
 ### Fixed
