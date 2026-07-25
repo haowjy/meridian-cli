@@ -12,6 +12,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   handwritten files and non-empty directories, and `mars.lock` upgrades to the
   ownership-aware v3 format on first sync.
 
+## [0.3.55] - 2026-07-25
+
 ## [0.3.54] - 2026-07-25
 
 ### Fixed
