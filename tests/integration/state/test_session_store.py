@@ -272,13 +272,18 @@ def test_cleanup_stale_primary_session_with_dead_pid_is_cleaned(
             {
                 "chat_id": chat_id,
                 "owner_pid": 43210,
+                "owner_created_at_epoch": 43210.0,
                 "session_instance_id": session_generation,
             }
         ),
         encoding="utf-8",
     )
 
-    monkeypatch.setattr(session_store, "is_process_alive", lambda _pid: False)
+    monkeypatch.setattr(
+        session_store,
+        "is_process_alive_with_birth",
+        lambda _pid, _birth: False,
+    )
 
     cleanup = session_store.cleanup_stale_sessions(runtime_root)
     assert cleanup.cleaned_ids == (chat_id,)
@@ -376,15 +381,48 @@ def test_cleanup_cannot_delete_concurrently_restarted_session(
     try:
         assert cleanup.cleaned_ids == (chat_id,)
         assert session_store._SESSION_LOCK_HANDLES.get(registry_key) is restarted[0]
-        lease_exists, lease_generation, _owner_pid = session_store._read_session_lease_data(
-            session_store.RuntimePaths.from_root_dir(runtime_root), chat_id
+        lease_exists, lease_generation, _owner_pid, owner_birth = (
+            session_store._read_session_lease_data(
+                session_store.RuntimePaths.from_root_dir(runtime_root), chat_id
+            )
         )
         assert lease_exists
         assert lease_generation == restarted[0].session_instance_id
+        assert owner_birth is not None
     finally:
         session_store._SESSION_LOCK_HANDLES.pop(registry_key, None)
         session_store.release_file_lock(restarted[0].session)
         session_store.release_file_lock(restarted[0].project_lifetime)
+
+
+def test_session_lease_with_recycled_pid_is_not_live(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime_root = _state_root(tmp_path)
+    sessions_dir = runtime_root / "sessions"
+    sessions_dir.mkdir(parents=True)
+    (sessions_dir / "c-recycled.lease.json").write_text(
+        json.dumps(
+            {
+                "chat_id": "c-recycled",
+                "owner_pid": 8123,
+                "owner_created_at_epoch": 100.0,
+                "session_instance_id": "stale-generation",
+            }
+        ),
+        encoding="utf-8",
+    )
+    observed: list[tuple[int, float | None]] = []
+
+    def birth_liveness(pid: int, birth: float | None) -> bool:
+        observed.append((pid, birth))
+        return False
+
+    monkeypatch.setattr(session_store, "is_process_alive_with_birth", birth_liveness)
+
+    assert session_store.is_session_lease_owner_alive(runtime_root, "c-recycled") is False
+    assert observed == [(8123, 100.0)]
 
 
 @pytest.mark.skipif(os.name != "posix", reason="requires a POSIX subprocess and SIGKILL")
@@ -557,13 +595,18 @@ def test_cleanup_stale_primary_session_with_live_pid_is_not_cleaned(
             {
                 "chat_id": chat_id,
                 "owner_pid": 54321,
+                "owner_created_at_epoch": 54321.0,
                 "session_instance_id": session_generation,
             }
         ),
         encoding="utf-8",
     )
 
-    monkeypatch.setattr(session_store, "is_process_alive", lambda _pid: True)
+    monkeypatch.setattr(
+        session_store,
+        "is_process_alive_with_birth",
+        lambda pid, birth: pid == 54321 and birth == 54321.0,
+    )
 
     cleanup = session_store.cleanup_stale_sessions(runtime_root)
     assert cleanup.cleaned_ids == ()
@@ -612,12 +655,17 @@ def test_cleanup_unlinks_cleaned_session_locks(
             {
                 "chat_id": live_chat_id,
                 "owner_pid": 54321,
+                "owner_created_at_epoch": 54321.0,
                 "session_instance_id": "live-generation",
             }
         ),
         encoding="utf-8",
     )
-    monkeypatch.setattr(session_store, "is_process_alive", lambda _pid: True)
+    monkeypatch.setattr(
+        session_store,
+        "is_process_alive_with_birth",
+        lambda pid, birth: pid == 54321 and birth == 54321.0,
+    )
 
     cleanup = session_store.cleanup_stale_sessions(runtime_root)
 

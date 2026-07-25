@@ -66,6 +66,7 @@ def _write_primary_session_with_lease(
             {
                 "chat_id": chat_id,
                 "owner_pid": owner_pid,
+                "owner_created_at_epoch": float(owner_pid),
                 "session_instance_id": generation,
             }
         ),
@@ -141,7 +142,11 @@ def test_stale_session_repair_reclaims_matching_session_owned_scope(
         pid=7001,
         created_at=123.0,
     )
-    monkeypatch.setattr(session_store, "is_process_alive", lambda _pid: False)
+    monkeypatch.setattr(
+        session_store,
+        "is_process_alive_with_birth",
+        lambda _pid, _birth: False,
+    )
     monkeypatch.setattr(process_cleanup.psutil, "Process", lambda _pid: _FakeProcess(123.0))
     killed: list[int] = []
 
@@ -179,7 +184,11 @@ def test_stale_session_repair_pid_reuse_result_does_not_kill_scope(
         pid=7002,
         created_at=123.0,
     )
-    monkeypatch.setattr(session_store, "is_process_alive", lambda _pid: False)
+    monkeypatch.setattr(
+        session_store,
+        "is_process_alive_with_birth",
+        lambda _pid, _birth: False,
+    )
     monkeypatch.setattr(process_cleanup.psutil, "Process", lambda _pid: _FakeProcess(999.0))
     killed: list[int] = []
 
@@ -215,7 +224,11 @@ def test_stale_session_repair_unknown_birth_does_not_kill_live_scope(
         pid=7004,
         created_at=PROCESS_BIRTH_UNKNOWN_EPOCH,
     )
-    monkeypatch.setattr(session_store, "is_process_alive", lambda _pid: False)
+    monkeypatch.setattr(
+        session_store,
+        "is_process_alive_with_birth",
+        lambda _pid, _birth: False,
+    )
     monkeypatch.setattr(process_cleanup.psutil, "Process", lambda _pid: _FakeProcess(123.0))
 
     def _terminate_scope_sync(
@@ -250,7 +263,11 @@ def test_live_session_repair_does_not_reclaim_session_owned_scope(
         pid=7003,
         created_at=123.0,
     )
-    monkeypatch.setattr(session_store, "is_process_alive", lambda _pid: True)
+    monkeypatch.setattr(
+        session_store,
+        "is_process_alive_with_birth",
+        lambda pid, birth: pid == 9003 and birth == 9003.0,
+    )
     monkeypatch.setattr(
         process_cleanup.psutil,
         "Process",

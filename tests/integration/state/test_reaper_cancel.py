@@ -87,7 +87,13 @@ def _spawn_service(runtime_root: Path) -> SpawnApplicationService:
     )
 
 
-def _write_session_lease(runtime_root: Path, *, chat_id: str = "c1", owner_pid: int = 8101) -> None:
+def _write_session_lease(
+    runtime_root: Path,
+    *,
+    chat_id: str = "c1",
+    owner_pid: int = 8101,
+    owner_birth: float = 8101.0,
+) -> None:
     sessions_dir = runtime_root / "sessions"
     sessions_dir.mkdir(parents=True, exist_ok=True)
     (sessions_dir / f"{chat_id}.lease.json").write_text(
@@ -95,6 +101,7 @@ def _write_session_lease(runtime_root: Path, *, chat_id: str = "c1", owner_pid: 
             {
                 "chat_id": chat_id,
                 "owner_pid": owner_pid,
+                "owner_created_at_epoch": owner_birth,
                 "session_instance_id": "session-instance-1",
             }
         ),
@@ -336,8 +343,8 @@ def test_spawn_cancel_refuses_live_managed_primary_without_force(
         spawn_id=spawn_id,
     )
     monkeypatch.setattr(
-        "meridian.lib.state.session_store.is_process_alive",
-        lambda pid: pid == 8101,
+        "meridian.lib.state.session_store.is_process_alive_with_birth",
+        lambda pid, birth: pid == 8101 and birth == 8101.0,
     )
 
     output = spawn_api.spawn_cancel_sync(
@@ -485,8 +492,8 @@ def test_spawn_cancel_allows_forced_or_dead_managed_primary(
         spawn_id=spawn_id,
     )
     monkeypatch.setattr(
-        "meridian.lib.state.session_store.is_process_alive",
-        lambda pid: pid == 8101 and lease_owner_alive,
+        "meridian.lib.state.session_store.is_process_alive_with_birth",
+        lambda pid, birth: pid == 8101 and birth == 8101.0 and lease_owner_alive,
     )
     monkeypatch.setattr(
         "meridian.lib.core.spawn_service.is_process_alive",
@@ -535,8 +542,8 @@ def test_spawn_cancel_returns_promptly_when_managed_primary_is_already_dead(
         spawn_id=spawn_id,
     )
     monkeypatch.setattr(
-        "meridian.lib.state.session_store.is_process_alive",
-        lambda _pid: False,
+        "meridian.lib.state.session_store.is_process_alive_with_birth",
+        lambda _pid, _birth: False,
     )
     monkeypatch.setattr(
         "meridian.lib.core.spawn_service.is_process_alive",
