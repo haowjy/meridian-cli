@@ -1242,7 +1242,7 @@ async def _spawn_cancel_impl(
         setup_telemetry(runtime_root=runtime_root, logical_owner=cancel_owner)
     register_spawn_telemetry_observer()
     try:
-        outcome = await spawn_service.cancel(SpawnId(spawn_id))
+        outcome = await spawn_service.cancel(SpawnId(spawn_id), force=payload.force)
     except RuntimeError as exc:
         return SpawnActionOutput(
             command="spawn.cancel",
@@ -1334,6 +1334,7 @@ def spawn_cancel_all_sync(
                 SpawnCancelInput(
                     spawn_id=row.id,
                     project_root=project_root.as_posix(),
+                    force=payload.include_primaries,
                 ),
                 sink=sink,
                 prepared=prepared,

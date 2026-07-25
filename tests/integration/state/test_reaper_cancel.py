@@ -12,6 +12,7 @@ test_reaper_managed_primary.py.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any, cast
 
@@ -82,6 +83,21 @@ def _spawn_service(runtime_root: Path) -> SpawnApplicationService:
     return SpawnApplicationService(
         runtime_root,
         SpawnLifecycleService(runtime_root),
+    )
+
+
+def _write_session_lease(runtime_root: Path, *, chat_id: str = "c1", owner_pid: int = 8101) -> None:
+    sessions_dir = runtime_root / "sessions"
+    sessions_dir.mkdir(parents=True, exist_ok=True)
+    (sessions_dir / f"{chat_id}.lease.json").write_text(
+        json.dumps(
+            {
+                "chat_id": chat_id,
+                "owner_pid": owner_pid,
+                "session_instance_id": "session-instance-1",
+            }
+        ),
+        encoding="utf-8",
     )
 
 
@@ -301,6 +317,103 @@ def test_spawn_cancel_managed_primary_signals_launcher_first(
     assert latest.cancel_intent is not None
     assert latest.cancel_intent.exit_code == 130
     assert latest.cancel_intent.error == "cancelled"
+
+
+def test_spawn_cancel_refuses_live_managed_primary_without_force(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime_root, spawn_id = _create_spawn(
+        tmp_path,
+        kind="primary",
+        started_at=_OLD_STARTED_AT,
+    )
+    _write_session_lease(runtime_root)
+    _patch_spawn_cancel_runtime_resolution(
+        monkeypatch,
+        runtime_root=runtime_root,
+        spawn_id=spawn_id,
+    )
+    monkeypatch.setattr(
+        "meridian.lib.state.session_store.is_process_alive",
+        lambda pid: pid == 8101,
+    )
+
+    output = spawn_api.spawn_cancel_sync(
+        SpawnCancelInput(
+            spawn_id=spawn_id,
+            project_root=tmp_path.as_posix(),
+        )
+    )
+
+    assert output.status == "failed"
+    assert output.exit_code == 1
+    assert output.error is not None
+    assert "live managed primary" in output.error
+    assert "agent: tester" in output.error
+    assert "chat: c1" in output.error
+    assert "uptime:" in output.error
+    assert f"meridian spawn cancel {spawn_id} --force" in output.error
+    assert _get_spawn(runtime_root, spawn_id).cancel_intent is None
+
+
+@pytest.mark.parametrize(
+    ("force", "lease_owner_alive"),
+    [(True, True), (False, False)],
+    ids=["force-live-primary", "dead-primary-without-force"],
+)
+def test_spawn_cancel_allows_forced_or_dead_managed_primary(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    force: bool,
+    lease_owner_alive: bool,
+) -> None:
+    runtime_root, spawn_id = _create_spawn(
+        tmp_path,
+        kind="primary",
+        status="queued",
+        runner_pid=None,
+        started_at=_OLD_STARTED_AT,
+    )
+    _write_session_lease(runtime_root)
+    _write_primary_meta(
+        runtime_root,
+        spawn_id,
+        launcher_pid=None,
+        backend_pid=None,
+        tui_pid=None,
+        activity="idle",
+    )
+    _patch_spawn_cancel_runtime_resolution(
+        monkeypatch,
+        runtime_root=runtime_root,
+        spawn_id=spawn_id,
+    )
+    monkeypatch.setattr(
+        "meridian.lib.state.session_store.is_process_alive",
+        lambda pid: pid == 8101 and lease_owner_alive,
+    )
+    monkeypatch.setattr(
+        "meridian.lib.core.spawn_service.is_process_alive",
+        lambda *_args, **_kwargs: False,
+    )
+    monkeypatch.setattr("meridian.lib.core.spawn_service._MANAGED_CANCEL_GRACE_SECS", 0.01)
+    monkeypatch.setattr("meridian.lib.core.spawn_service._MANAGED_CANCEL_FALLBACK_WAIT_SECS", 0.01)
+
+    output = spawn_api.spawn_cancel_sync(
+        SpawnCancelInput(
+            spawn_id=spawn_id,
+            project_root=tmp_path.as_posix(),
+            force=force,
+        )
+    )
+
+    assert output.status == "cancelled"
+    assert output.exit_code == 130
+    latest = _get_spawn(runtime_root, spawn_id)
+    assert latest.status == "cancelled"
+    assert latest.cancel_intent is not None
 
 
 def test_spawn_cancel_managed_primary_queued_converges_to_terminal(

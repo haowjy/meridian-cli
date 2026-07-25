@@ -71,6 +71,33 @@ if TYPE_CHECKING:
 _WAIT_POLL_INTERVAL_SECS = 0.1
 _MANAGED_CANCEL_GRACE_SECS = 5.0
 _MANAGED_CANCEL_FALLBACK_WAIT_SECS = 1.0
+
+
+def _is_live_managed_primary(runtime_root: Path, record: SpawnRecord) -> bool:
+    if record.kind != "primary" or record.chat_id is None:
+        return False
+    from meridian.lib.state.session_store import is_session_lease_owner_alive
+
+    return is_session_lease_owner_alive(runtime_root, str(record.chat_id))
+
+
+def _live_primary_cancel_refusal(record: SpawnRecord) -> str:
+    agent = (record.agent or "unknown").strip() or "unknown"
+    chat_id = str(record.chat_id) if record.chat_id is not None else "unknown"
+    uptime = "unknown"
+    if record.started_at is not None:
+        started_epoch = iso_timestamp_to_epoch(record.started_at)
+        if started_epoch is not None:
+            elapsed = max(0, int(time.time() - started_epoch))
+            hours, remainder = divmod(elapsed, 3600)
+            minutes, seconds = divmod(remainder, 60)
+            uptime = f"{hours}h {minutes}m" if hours else f"{minutes}m {seconds}s"
+    return (
+        f"Refusing to cancel live managed primary '{record.id}' "
+        f"(agent: {agent}, chat: {chat_id}, uptime: {uptime}). "
+        f"To end this interactive session anyway, pass --force: "
+        f"meridian spawn cancel {record.id} --force"
+    )
 _MAX_REAP_PASSES = 4
 logger = structlog.get_logger()
 
@@ -525,6 +552,7 @@ class SpawnApplicationService:
         spawn_id: SpawnId,
         *,
         requested_by: Literal["user", "system"] = "user",
+        force: bool = False,
     ) -> CancelOutcome:
         """Cancel a spawn through the shared surface-neutral pipeline."""
         lock = await self._locks.acquire(str(spawn_id))
@@ -533,6 +561,8 @@ class SpawnApplicationService:
             if self.is_terminal(record.status):
                 self._cleanup_orphan_managed_primary(spawn_id, record)
                 return _cancel_outcome_from_record(str(spawn_id), record, already_terminal=True)
+            if not force and _is_live_managed_primary(self._runtime_root, record):
+                raise RuntimeError(_live_primary_cancel_refusal(record))
 
             record = (
                 await asyncio.to_thread(
@@ -606,7 +636,10 @@ class SpawnApplicationService:
             if not descendants:
                 return reaped_ids
             results = await asyncio.gather(
-                *(self.cancel(SpawnId(d.id), requested_by="system") for d in descendants),
+                *(
+                    self.cancel(SpawnId(d.id), requested_by="system", force=False)
+                    for d in descendants
+                ),
                 return_exceptions=True,
             )
             for descendant, result in zip(descendants, results, strict=True):

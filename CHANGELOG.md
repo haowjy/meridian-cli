@@ -4,6 +4,10 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Refuse to cancel live managed primary sessions unless `spawn cancel --force` is explicit.
+
 ## [0.3.52] - 2026-07-24
 
 ### Fixed
