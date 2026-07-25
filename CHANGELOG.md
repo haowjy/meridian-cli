@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.3.53] - 2026-07-25
+
 ### Fixed
 
 - Refuse to cancel process-verified live managed primary sessions unless
