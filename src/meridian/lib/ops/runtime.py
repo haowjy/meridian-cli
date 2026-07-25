@@ -102,7 +102,7 @@ class OperationRuntime(BaseModel):
             authority=prepared.authority,
             config=prepared.config,
             harness_registry=harness_registry,
-            artifacts=LocalStore(root_dir=prepared.runtime_root / "artifacts"),
+            artifacts=LocalStore.for_runtime_root(prepared.runtime_root),
             sink=sink or NullSink(),
         )
 
@@ -285,7 +285,7 @@ def build_runtime_from_root_and_config(
         authority=resolved_authority,
         config=config,
         harness_registry=get_default_harness_registry(),
-        artifacts=LocalStore(root_dir=resolved_authority.runtime_root / "artifacts"),
+        artifacts=LocalStore.for_runtime_root(resolved_authority.runtime_root),
         sink=sink or NullSink(),
     )
 

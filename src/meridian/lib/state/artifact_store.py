@@ -47,18 +47,41 @@ class LocalStore(BaseModel):
     model_config = ConfigDict()
 
     root_dir: Path
+    spawn_root_dir: Path | None = None
+
+    @classmethod
+    def for_runtime_root(cls, runtime_root: Path) -> "LocalStore":
+        """Build a store whose history reads use the authoritative spawn tree."""
+
+        return cls(
+            root_dir=runtime_root / "artifacts",
+            spawn_root_dir=runtime_root / "spawns",
+        )
+
+    def _history_read_path(self, rel: Path) -> Path | None:
+        if self.spawn_root_dir is None or rel.name != "history.jsonl":
+            return None
+        candidate = self.spawn_root_dir / rel
+        return candidate if candidate.is_file() else None
 
     def put(self, key: ArtifactKey, data: bytes) -> None:
         rel = _normalize_key(key)
+        if self.spawn_root_dir is not None and rel.name == "history.jsonl":
+            raise ValueError("Spawn history is authoritative in the spawn tree.")
         target = self.root_dir / rel
         atomic_write_bytes(target, data)
 
     def get(self, key: ArtifactKey) -> bytes:
         rel = _normalize_key(key)
+        history_path = self._history_read_path(rel)
+        if history_path is not None:
+            return history_path.read_bytes()
         return (self.root_dir / rel).read_bytes()
 
     def exists(self, key: ArtifactKey) -> bool:
         rel = _normalize_key(key)
+        if self._history_read_path(rel) is not None:
+            return True
         return (self.root_dir / rel).exists()
 
     def delete(self, key: ArtifactKey) -> None:

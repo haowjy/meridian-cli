@@ -4,6 +4,10 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+- Spawn history now has one authoritative copy under `spawns/<id>/history.jsonl`;
+  finalization no longer mirrors the full log into the artifact store.
+
 ## [0.3.52] - 2026-07-24
 
 ### Fixed

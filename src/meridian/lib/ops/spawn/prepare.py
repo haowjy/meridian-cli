@@ -246,7 +246,7 @@ def build_create_payload(
                 authority=resolved_authority,
                 config=config,
                 harness_registry=harness_registry,
-                artifacts=LocalStore(root_dir=preview_root / "artifacts"),
+                artifacts=LocalStore.for_runtime_root(preview_root),
             )
         composition_dry_run = payload.dry_run
         preview_runtime = build_spawn_mars_runtime(

@@ -74,8 +74,10 @@ history, launch/reaper diagnostics, failure sentinels, and harness journals use 
 seam. Heartbeats never create a missing parent directory and stop after deletion.
 The spawn repository and process-scope projection are persistence leaves with a
 one-way dependency: the projection may use repository reads and lock paths, while
-the repository never imports the projection. Cross-leaf operations belong in the aggregate `spawn_aggregate.py`; in particular, published-spawn deletion owns the lock
-order above. Reaper claims consume one immutable projection snapshot containing
+the repository never imports the projection. Cross-leaf operations belong in the
+aggregate `spawn_aggregate.py`; in particular, published-spawn deletion owns the
+lock order above and removes both `spawns/<id>/` and any legacy
+`artifacts/<id>/` directory. Reaper claims consume one immutable projection snapshot containing
 both scopes and released IDs, read under a single projection-lock acquisition.
 
 ## Write-Boundary Path Normalization

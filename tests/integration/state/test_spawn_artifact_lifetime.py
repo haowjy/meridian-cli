@@ -75,6 +75,26 @@ def test_late_failure_sentinel_does_not_recreate_deleted_spawn(tmp_path: Path) -
     assert not spawn_dir.exists()
 
 
+def test_spawn_deletion_removes_legacy_artifact_store_directory(tmp_path: Path) -> None:
+    runtime_root = tmp_path / "runtime"
+    spawn_id = "p1"
+    spawn_dir = runtime_root / "spawns" / spawn_id
+    artifact_dir = runtime_root / "artifacts" / spawn_id
+    _start_test_spawn(runtime_root, spawn_id, status="running")
+    finalize_spawn(runtime_root, spawn_id, "succeeded", 0, origin="runner")
+    artifact_dir.mkdir(parents=True)
+    (artifact_dir / "history.jsonl").write_text("legacy mirror\n", encoding="utf-8")
+
+    assert delete_published_spawn(
+        runtime_root,
+        spawn_id,
+        can_delete=lambda record: record is not None,
+    )
+
+    assert not spawn_dir.exists()
+    assert not artifact_dir.exists()
+
+
 def test_failure_sentinel_refuses_non_failed_spawn(tmp_path: Path) -> None:
     runtime_root = tmp_path / "runtime"
     spawn_id = "p1"

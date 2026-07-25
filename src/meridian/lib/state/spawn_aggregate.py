@@ -63,6 +63,19 @@ def _restore_spawn_artifact_permissions(
         raise exc_info from error
 
 
+def _remove_spawn_tree(path: Path) -> bool:
+    if not path.exists() and not path.is_symlink():
+        return True
+    try:
+        if path.is_symlink():
+            path.unlink()
+        else:
+            shutil.rmtree(path, onexc=_restore_spawn_artifact_permissions)
+    except OSError:
+        return False
+    return True
+
+
 def delete_published_spawn(
     runtime_root: Path,
     spawn_id: SpawnId | str,
@@ -83,6 +96,7 @@ def delete_published_spawn(
     if not is_safe_spawn_dir_name(resolved_spawn_id):
         raise ValueError(f"Invalid spawn ID: {resolved_spawn_id}")
     spawn_dir = paths.spawns_dir / resolved_spawn_id
+    artifact_dir = runtime_root / "artifacts" / resolved_spawn_id
 
     # Global order: spawn state, then process-scope projection.
     with (
@@ -96,8 +110,8 @@ def delete_published_spawn(
             return False
         if not spawn_dir.exists():
             return False
-        try:
-            shutil.rmtree(spawn_dir, onexc=_restore_spawn_artifact_permissions)
-        except OSError:
+        # Remove the legacy projection first so a partial failure cannot leave
+        # it behind after its authoritative spawn row is gone.
+        if not _remove_spawn_tree(artifact_dir):
             return False
-        return True
+        return _remove_spawn_tree(spawn_dir)
