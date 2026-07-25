@@ -29,6 +29,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   whole-history reads and rewrites during finalization.
 - Keep one authoritative spawn history under `spawns/<id>/history.jsonl` while
   retaining read compatibility with legacy `artifacts/` copies.
+- Remove a spawn's legacy artifact directory when retention prunes its
+  authoritative aggregate.
 
 ## [0.3.52] - 2026-07-24
 

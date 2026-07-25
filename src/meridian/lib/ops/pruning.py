@@ -299,6 +299,9 @@ def prune_stale_spawn_artifacts(stale: list[StaleSpawnArtifact]) -> SpawnArtifac
         runtime_roots.add(runtime_root)
         paths = RuntimePaths.from_root_dir(runtime_root)
         with lock_file(paths.spawns_flock):
+            legacy_artifact_dir = runtime_root / "artifacts" / artifact.spawn_id
+            if legacy_artifact_dir.exists() and not _prune_dir(legacy_artifact_dir):
+                continue
             if spawn_store.delete_published_spawn(
                 runtime_root,
                 artifact.spawn_id,
