@@ -13,6 +13,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   treating the lease as live.
 - Restore terminal mouse, alternate-screen, and cursor modes after a primary TUI exits.
 - Stop cancel waits as soon as the target process scope exits.
+- Treat zombie processes as exited during cancellation convergence, and report
+  cancellation as failed rather than successful when a spawn remains running.
 - Reduce new spawn histories by replacing duplicated raw wire text with its
   lossless envelope metadata and omitting empty causal fields.
 - Preserve malformed harness wire text in bounded history metadata instead of

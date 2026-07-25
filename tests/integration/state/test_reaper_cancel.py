@@ -21,7 +21,7 @@ import pytest
 
 import meridian.lib.ops.spawn.api as spawn_api
 from meridian.lib.core.lifecycle import SpawnLifecycleService
-from meridian.lib.core.spawn_service import SpawnApplicationService
+from meridian.lib.core.spawn_service import CancelOutcome, SpawnApplicationService
 from meridian.lib.core.types import SpawnId
 from meridian.lib.ops.spawn.models import SpawnCancelInput
 from meridian.lib.state import spawn_store, spawn_tree
@@ -610,3 +610,18 @@ def test_spawn_cancel_managed_primary_queued_converges_to_terminal(
     assert latest.terminal is not None
     assert latest.terminal.error == "cancelled"
     assert latest.terminal.origin == "cancel"
+
+
+def test_spawn_cancel_reports_nonconverged_running_outcome_as_failure() -> None:
+    output = spawn_api._spawn_cancel_output_from_outcome(
+        CancelOutcome(
+            spawn_id="p-running",
+            status="running",
+            origin="cancel",
+            exit_code=130,
+        )
+    )
+
+    assert output.status == "failed"
+    assert output.exit_code == 1
+    assert output.error == "Spawn remained running after cancellation."
