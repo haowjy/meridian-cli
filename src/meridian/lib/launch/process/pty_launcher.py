@@ -124,7 +124,10 @@ def _copy_primary_pty_output(
                     if output_handle is not None:
                         output_handle.write(chunk)
                         output_handle.flush()
-                    os.write(stdout_fd, chunk)
+                    try:
+                        os.write(stdout_fd, chunk)
+                    except BrokenPipeError:
+                        break
 
                 if stdin_open and stdin_fd in ready:
                     data = os.read(stdin_fd, 1024)

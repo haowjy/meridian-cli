@@ -14,6 +14,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Restore terminal mouse, alternate-screen, and cursor modes after a primary TUI exits.
 - Keep redirected primary output byte-clean by emitting terminal restore modes
   only when stdout is a TTY.
+- End primary PTY forwarding cleanly when stdout closes instead of leaking a
+  `BrokenPipeError`.
 - Stop cancel waits as soon as the target process scope exits.
 - Treat zombie processes as exited during cancellation convergence, and report
   cancellation as failed rather than successful when a spawn remains running.
