@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-07-25
+
 ### Changed
 
 - Mars 0.12.0. Package hooks must ship per-target native fragments; the old
