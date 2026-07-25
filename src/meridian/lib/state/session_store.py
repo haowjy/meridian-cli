@@ -520,6 +520,14 @@ def has_live_session_leases(runtime_root: Path) -> bool:
     return False
 
 
+def is_session_lease_owner_alive(runtime_root: Path, chat_id: str) -> bool:
+    """Return whether one session's lease names a currently live owner process."""
+
+    paths = RuntimePaths.from_root_dir(runtime_root)
+    _exists, _generation, owner_pid = _read_session_lease_data(paths, chat_id)
+    return owner_pid is not None and is_process_alive(owner_pid)
+
+
 def list_active_session_records(runtime_root: Path) -> list[SessionRecord]:
     """Return materialized records for active sessions."""
 

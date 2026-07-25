@@ -71,6 +71,35 @@ if TYPE_CHECKING:
 _WAIT_POLL_INTERVAL_SECS = 0.1
 _MANAGED_CANCEL_GRACE_SECS = 5.0
 _MANAGED_CANCEL_FALLBACK_WAIT_SECS = 1.0
+
+
+def _is_live_managed_primary(runtime_root: Path, record: SpawnRecord) -> bool:
+    if record.kind != "primary" or record.chat_id is None:
+        return False
+    from meridian.lib.state.session_store import is_session_lease_owner_alive
+
+    return is_session_lease_owner_alive(runtime_root, str(record.chat_id))
+
+
+def _live_primary_cancel_refusal(record: SpawnRecord) -> str:
+    agent = (record.agent or "unknown").strip() or "unknown"
+    chat_id = str(record.chat_id) if record.chat_id is not None else "unknown"
+    uptime = "unknown"
+    if record.started_at is not None:
+        started_epoch = iso_timestamp_to_epoch(record.started_at)
+        if started_epoch is not None:
+            elapsed = max(0, int(time.time() - started_epoch))
+            hours, remainder = divmod(elapsed, 3600)
+            minutes, seconds = divmod(remainder, 60)
+            uptime = f"{hours}h {minutes}m" if hours else f"{minutes}m {seconds}s"
+    return (
+        f"Refusing to cancel live managed primary '{record.id}' "
+        f"(agent: {agent}, chat: {chat_id}, uptime: {uptime}). "
+        f"To end this interactive session anyway, pass --force: "
+        f"meridian spawn cancel {record.id} --force"
+    )
+
+
 _MAX_REAP_PASSES = 4
 logger = structlog.get_logger()
 
@@ -525,6 +554,7 @@ class SpawnApplicationService:
         spawn_id: SpawnId,
         *,
         requested_by: Literal["user", "system"] = "user",
+        force: bool = False,
     ) -> CancelOutcome:
         """Cancel a spawn through the shared surface-neutral pipeline."""
         lock = await self._locks.acquire(str(spawn_id))
@@ -533,6 +563,8 @@ class SpawnApplicationService:
             if self.is_terminal(record.status):
                 self._cleanup_orphan_managed_primary(spawn_id, record)
                 return _cancel_outcome_from_record(str(spawn_id), record, already_terminal=True)
+            if not force and _is_live_managed_primary(self._runtime_root, record):
+                raise RuntimeError(_live_primary_cancel_refusal(record))
 
             record = (
                 await asyncio.to_thread(
@@ -563,6 +595,18 @@ class SpawnApplicationService:
                 runtime_root=self._runtime_root,
                 manager=self._spawn_manager,
             ).cancel(spawn_id)
+
+        latest_after_delivery = self.get_spawn(spawn_id) or record
+        if not _has_live_execution_owner(latest_after_delivery, primary_metadata):
+            lock = await self._locks.acquire(str(spawn_id))
+            async with lock:
+                latest_after_delivery = self.get_spawn(spawn_id) or latest_after_delivery
+                converged = await self._force_cancel_convergence(
+                    spawn_id,
+                    latest_after_delivery,
+                )
+                if converged is not None:
+                    return _cancel_outcome_from_record(str(spawn_id), converged)
 
         terminal = await self._wait_for_terminal(spawn_id, timeout=1.0)
         if terminal is not None:
@@ -606,7 +650,10 @@ class SpawnApplicationService:
             if not descendants:
                 return reaped_ids
             results = await asyncio.gather(
-                *(self.cancel(SpawnId(d.id), requested_by="system") for d in descendants),
+                *(
+                    self.cancel(SpawnId(d.id), requested_by="system", force=False)
+                    for d in descendants
+                ),
                 return_exceptions=True,
             )
             for descendant, result in zip(descendants, results, strict=True):
@@ -736,28 +783,30 @@ class SpawnApplicationService:
             launcher_pid, created_after_epoch=started_epoch
         )
         if launcher_alive:
+            assert launcher_pid is not None
             terminate_managed_primary_processes(
                 primary_metadata,
                 include_launcher=True,
                 include_runtime_children=False,
             )
-        else:
-            terminate_managed_primary_processes(
-                primary_metadata,
-                include_launcher=False,
-            )
-
-        latest = await self._wait_for_terminal(
-            spawn_id,
-            timeout=_MANAGED_CANCEL_GRACE_SECS,
-        )
-        if latest is None and launcher_alive:
-            terminate_managed_primary_processes(
-                primary_metadata,
-                include_launcher=False,
-            )
-            latest = await self._wait_for_terminal(
+            latest = await self._wait_for_terminal_or_process_exit(
                 spawn_id,
+                pid=launcher_pid,
+                created_after_epoch=started_epoch,
+                timeout=_MANAGED_CANCEL_GRACE_SECS,
+            )
+        else:
+            latest = None
+
+        if latest is None:
+            terminate_managed_primary_processes(
+                primary_metadata,
+                include_launcher=False,
+            )
+            latest = await self._wait_for_terminal_or_execution_exit(
+                spawn_id,
+                record=record,
+                primary_metadata=primary_metadata,
                 timeout=_MANAGED_CANCEL_FALLBACK_WAIT_SECS,
             )
 
@@ -802,6 +851,46 @@ class SpawnApplicationService:
             latest,
             finalizing=latest.status == "finalizing",
         )
+
+    async def _wait_for_terminal_or_process_exit(
+        self,
+        spawn_id: SpawnId,
+        *,
+        pid: int,
+        created_after_epoch: float | None,
+        timeout: float,
+    ) -> SpawnRecord | None:
+        deadline = time.monotonic() + max(0.0, timeout)
+        while True:
+            current = self.get_spawn(spawn_id)
+            if current is not None and self.is_terminal(current.status):
+                return current
+            if not is_process_alive(pid, created_after_epoch=created_after_epoch):
+                return None
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return None
+            await asyncio.sleep(min(_WAIT_POLL_INTERVAL_SECS, remaining))
+
+    async def _wait_for_terminal_or_execution_exit(
+        self,
+        spawn_id: SpawnId,
+        *,
+        record: SpawnRecord,
+        primary_metadata: PrimaryMetadata,
+        timeout: float,
+    ) -> SpawnRecord | None:
+        deadline = time.monotonic() + max(0.0, timeout)
+        while True:
+            current = self.get_spawn(spawn_id)
+            if current is not None and self.is_terminal(current.status):
+                return current
+            if not _has_live_execution_owner(current or record, primary_metadata):
+                return None
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return None
+            await asyncio.sleep(min(_WAIT_POLL_INTERVAL_SECS, remaining))
 
     async def complete_spawn(
         self,
