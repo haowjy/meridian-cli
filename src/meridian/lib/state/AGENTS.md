@@ -35,6 +35,8 @@ meridian.toml
     process_scopes.json             — durable process identities + release markers
     reaper_cleanup_claim.json       — pending finalize-first cleanup targets
     heartbeat · report.md · stderr.log · params.json · tokens.json
+  artifacts/<spawn_id>/             — legacy auxiliary store; old history
+                                      copies remain read-compatible
 
 <context.work root>/<slug>/         ← context-resolved, NOT repo-local
   __status.json                     — mutable per-work-item metadata
@@ -115,6 +117,10 @@ Use the correct resolver — they have different side effects:
 
 Using `*_for_write()` on a read path creates `meridian.toml` identity in untouched checkouts,
 triggering project setup side effects in CI.
+
+Spawn-history reads go through `resolve_spawn_history_path()`: the authoritative
+`spawns/<id>/history.jsonl` always wins, with `artifacts/<id>/history.jsonl` as a
+legacy fallback. `LocalStore` uses the same resolver for get/exists/list.
 
 ## Reconciliation Behavior
 

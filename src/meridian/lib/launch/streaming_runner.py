@@ -97,7 +97,7 @@ from meridian.lib.safety.guardrails import run_guardrails
 from meridian.lib.state import paths as state_paths
 from meridian.lib.state import spawn_store
 from meridian.lib.state.artifact_store import ArtifactStore, make_artifact_key
-from meridian.lib.state.atomic import append_text_line, atomic_write_bytes
+from meridian.lib.state.atomic import append_text_line
 from meridian.lib.state.paths import resolve_spawn_log_dir
 from meridian.lib.state.spawn.model import (
     BACKGROUND_LAUNCH_MODE,
@@ -289,7 +289,6 @@ def _append_runner_lifecycle_event(
 
 
 _ATTEMPT_STORE_ARTIFACTS = (
-    HISTORY_FILENAME,
     OUTPUT_FILENAME,
     STDERR_FILENAME,
     TOKENS_FILENAME,
@@ -367,6 +366,7 @@ def _preserve_attempt_artifacts(
 
     for name in _ATTEMPT_STORE_ARTIFACTS:
         artifacts.delete(make_artifact_key(spawn_id, name))
+    artifacts.delete(make_artifact_key(spawn_id, HISTORY_FILENAME))
 
 
 def _scope_pi_session_dir_for_spawn(
@@ -386,7 +386,6 @@ def _persist_attempt_artifacts(
     log_dir: Path,
 ) -> None:
     for name in (
-        HISTORY_FILENAME,
         STDERR_FILENAME,
         TOKENS_FILENAME,
     ):
@@ -1351,7 +1350,6 @@ async def execute_with_streaming(
                 )
                 if report_path.exists():
                     report_bytes = report_path.read_bytes()
-                    atomic_write_bytes(report_path, report_bytes)
                     artifacts.put(make_artifact_key(run.spawn_id, REPORT_FILENAME), report_bytes)
 
                 streaming_extractor = StreamingExtractor(

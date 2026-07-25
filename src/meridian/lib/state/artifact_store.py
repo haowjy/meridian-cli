@@ -7,7 +7,9 @@ from typing import Protocol, cast
 from pydantic import BaseModel, ConfigDict, PrivateAttr
 
 from meridian.lib.core.types import ArtifactKey, SpawnId
+from meridian.lib.launch.constants import HISTORY_FILENAME
 from meridian.lib.state.atomic import atomic_write_bytes
+from meridian.lib.state.paths import resolve_spawn_history_path
 
 
 class ArtifactStore(Protocol):
@@ -48,6 +50,17 @@ class LocalStore(BaseModel):
 
     root_dir: Path
 
+    def _read_path(self, rel: Path) -> Path:
+        if len(rel.parts) >= 2 and rel.name == HISTORY_FILENAME:
+            resolved = resolve_spawn_history_path(
+                self.root_dir.parent,
+                rel.parts[0],
+                relative_path=Path(*rel.parts[1:]),
+            )
+            if resolved is not None:
+                return resolved
+        return self.root_dir / rel
+
     def put(self, key: ArtifactKey, data: bytes) -> None:
         rel = _normalize_key(key)
         target = self.root_dir / rel
@@ -55,11 +68,11 @@ class LocalStore(BaseModel):
 
     def get(self, key: ArtifactKey) -> bytes:
         rel = _normalize_key(key)
-        return (self.root_dir / rel).read_bytes()
+        return self._read_path(rel).read_bytes()
 
     def exists(self, key: ArtifactKey) -> bool:
         rel = _normalize_key(key)
-        return (self.root_dir / rel).exists()
+        return self._read_path(rel).exists()
 
     def delete(self, key: ArtifactKey) -> None:
         rel = _normalize_key(key)
@@ -69,15 +82,20 @@ class LocalStore(BaseModel):
 
     def list_artifacts(self, spawn_id: str) -> list[ArtifactKey]:
         base = self.root_dir / spawn_id
-        if not base.exists():
-            return []
+        artifacts: set[ArtifactKey] = set()
+        if base.is_dir():
+            for path in sorted(base.rglob("*")):
+                if not path.is_file():
+                    continue
+                artifacts.add(ArtifactKey(path.relative_to(self.root_dir).as_posix()))
 
-        artifacts: list[ArtifactKey] = []
-        for path in sorted(base.rglob("*")):
-            if not path.is_file():
-                continue
-            artifacts.append(ArtifactKey(path.relative_to(self.root_dir).as_posix()))
-        return artifacts
+        canonical_base = self.root_dir.parent / "spawns" / spawn_id
+        if canonical_base.is_dir():
+            for path in canonical_base.rglob(HISTORY_FILENAME):
+                if path.is_file():
+                    relative = path.relative_to(canonical_base)
+                    artifacts.add(ArtifactKey(f"{spawn_id}/{relative.as_posix()}"))
+        return sorted(artifacts, key=str)
 
 
 class InMemoryStore(BaseModel):

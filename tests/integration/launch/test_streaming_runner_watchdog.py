@@ -41,7 +41,6 @@ from tests.support.fakes import FakeClock, FakeHeartbeat
 _pi_extension_projection_fixture = _pi_extension_projection_fixture
 
 _STORE_ATTEMPT_FILES = (
-    launch_constants.HISTORY_FILENAME,
     launch_constants.OUTPUT_FILENAME,
     launch_constants.STDERR_FILENAME,
     launch_constants.TOKENS_FILENAME,
@@ -283,6 +282,9 @@ def test_retry_preserves_completed_attempt_artifacts(tmp_path: Path) -> None:
         assert artifacts.get(make_artifact_key(spawn_id, f"attempt-1/{name}")) == (
             b"persisted attempt data\n"
         )
+    assert artifacts.get(
+        make_artifact_key(spawn_id, "attempt-1/history.jsonl")
+    ) == b"attempt data\n"
     assert durable_path.exists()
     assert not (log_dir / "attempt-1.tmp").exists()
 
@@ -371,7 +373,7 @@ def test_preserve_recovers_interrupted_rotation(tmp_path: Path) -> None:
     history_key = make_artifact_key(spawn_id, launch_constants.HISTORY_FILENAME)
     attempt_one_history_key = make_artifact_key(spawn_id, "attempt-1/history.jsonl")
     assert not artifacts.exists(history_key)
-    assert artifacts.get(attempt_one_history_key) == b"active history\n"
+    assert artifacts.get(attempt_one_history_key) == b"staged history\n"
 
 
 def test_preserve_discards_stale_staging_when_attempt_dir_exists(tmp_path: Path) -> None:

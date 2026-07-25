@@ -27,6 +27,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   discarding the only available diagnostic evidence.
 - Remove the unused and ineffective spawn artifact redaction pipeline, avoiding
   whole-history reads and rewrites during finalization.
+- Keep one authoritative spawn history under `spawns/<id>/history.jsonl` while
+  retaining read compatibility with legacy `artifacts/` copies.
 
 ## [0.3.52] - 2026-07-24
 

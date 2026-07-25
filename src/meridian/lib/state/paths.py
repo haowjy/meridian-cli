@@ -416,3 +416,40 @@ def spawn_output_path(runtime_root: Path, spawn_id: SpawnId | str) -> Path:
     from meridian.lib.launch.constants import HISTORY_FILENAME
 
     return RuntimePaths.from_root_dir(runtime_root).spawns_dir / str(spawn_id) / HISTORY_FILENAME
+
+
+def resolve_spawn_history_path(
+    runtime_root: Path,
+    spawn_id: SpawnId | str,
+    *,
+    relative_path: Path | None = None,
+) -> Path | None:
+    """Resolve authoritative spawn history, falling back to a legacy artifact copy."""
+
+    from meridian.lib.launch.constants import HISTORY_FILENAME
+
+    history_path = relative_path or Path(HISTORY_FILENAME)
+    canonical = RuntimePaths.from_root_dir(runtime_root).spawns_dir / str(spawn_id) / history_path
+    if canonical.is_file():
+        return canonical
+    legacy = runtime_root / "artifacts" / str(spawn_id) / history_path
+    return legacy if legacy.is_file() else None
+
+
+def resolve_spawn_output_path(runtime_root: Path, spawn_id: SpawnId | str) -> Path | None:
+    """Resolve spawn transcript output with canonical history taking precedence."""
+
+    from meridian.lib.launch.constants import OUTPUT_FILENAME
+
+    history = resolve_spawn_history_path(runtime_root, spawn_id)
+    if history is not None:
+        return history
+    for candidate in (
+        RuntimePaths.from_root_dir(runtime_root).spawns_dir
+        / str(spawn_id)
+        / OUTPUT_FILENAME,
+        runtime_root / "artifacts" / str(spawn_id) / OUTPUT_FILENAME,
+    ):
+        if candidate.is_file():
+            return candidate
+    return None

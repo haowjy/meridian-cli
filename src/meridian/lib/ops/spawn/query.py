@@ -10,11 +10,12 @@ from typing import NamedTuple, cast
 from meridian.lib.core.depth import is_root_side_effect_process
 from meridian.lib.core.spawn_lifecycle import is_active_spawn_status
 from meridian.lib.harness.pi_lifecycle_events import PI_PHASE_EVENT_TYPE as _PI_PHASE_EVENT_TYPE
-from meridian.lib.launch.constants import OUTPUT_FILENAME
+from meridian.lib.launch.constants import HISTORY_FILENAME, OUTPUT_FILENAME
 from meridian.lib.ops.reference import resolve_spawn_ref
 from meridian.lib.ops.runtime import resolve_runtime_root_for_read
 from meridian.lib.state import session_identity, spawn_store
 from meridian.lib.state.liveness import is_process_alive
+from meridian.lib.state.paths import resolve_spawn_history_path
 from meridian.lib.state.reaper import (
     SPAWN_HEARTBEAT_WINDOW_SECS,
     SPAWN_POST_RUNNER_EXIT_FINALIZATION_GRACE_SECS,
@@ -34,7 +35,7 @@ _ASSISTANT_ROLE_MARKER_RE = re.compile(r"^(assistant|codex)$", re.IGNORECASE)
 _LOG_ROLE_MARKER_RE = re.compile(r"^(user|assistant|codex|exec)$", re.IGNORECASE)
 _NESTED_READ_ACTIVITY_ARTIFACTS: tuple[str, ...] = (
     "heartbeat",
-    "history.jsonl",
+    HISTORY_FILENAME,
     OUTPUT_FILENAME,
     "bash-records.json",
     "stderr.log",
@@ -72,8 +73,14 @@ def _iso_to_epoch(raw_value: str | None) -> float | None:
 def _has_recent_spawn_activity(runtime_root: Path, spawn_id: str, now: float) -> bool:
     spawn_dir = runtime_root / "spawns" / spawn_id
     for artifact_name in _NESTED_READ_ACTIVITY_ARTIFACTS:
+        if artifact_name == HISTORY_FILENAME:
+            artifact_path = resolve_spawn_history_path(runtime_root, spawn_id)
+            if artifact_path is None:
+                continue
+        else:
+            artifact_path = spawn_dir / artifact_name
         try:
-            mtime_epoch = (spawn_dir / artifact_name).stat().st_mtime
+            mtime_epoch = artifact_path.stat().st_mtime
         except OSError:
             continue
         if now - mtime_epoch <= _NESTED_READ_HEARTBEAT_WINDOW_SECS:
@@ -444,8 +451,8 @@ def _latest_pi_lifecycle_phase(
     resolved_runtime_root = runtime_root or resolve_runtime_root_for_read(project_root)
     if resolved_runtime_root is None:
         return None
-    history_path = resolved_runtime_root / "spawns" / spawn_id / "history.jsonl"
-    if not history_path.is_file():
+    history_path = resolve_spawn_history_path(resolved_runtime_root, spawn_id)
+    if history_path is None:
         return None
 
     last_phase: str | None = None
@@ -481,8 +488,8 @@ def _pi_cleanup_telemetry(
     resolved_runtime_root = runtime_root or resolve_runtime_root_for_read(project_root)
     if resolved_runtime_root is None:
         return _PiCleanupTelemetry(None, None, None, None)
-    history_path = resolved_runtime_root / "spawns" / spawn_id / "history.jsonl"
-    if not history_path.is_file():
+    history_path = resolve_spawn_history_path(resolved_runtime_root, spawn_id)
+    if history_path is None:
         return _PiCleanupTelemetry(None, None, None, None)
 
     status_rank: dict[str, int] = {"running": 0, "completed": 1, "escalated": 2, "failed": 3}
@@ -579,8 +586,7 @@ def spawn_session_log_available(
     """Return whether ``meridian session log`` can resolve content for one spawn."""
     if (harness_session_id or "").strip():
         return True
-    history_path = runtime_root / "spawns" / spawn_id / "history.jsonl"
-    return history_path.is_file()
+    return resolve_spawn_history_path(runtime_root, spawn_id) is not None
 
 
 def detail_from_row(
