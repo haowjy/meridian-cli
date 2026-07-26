@@ -37,6 +37,7 @@ mars.local.toml
 # mars-generated output (regenerate with `meridian mars sync`)
 .claude/agents/
 .claude/skills/
+.claude/hooks/
 
 # Local Pi runtime install/build artifacts
 src/meridian/pi_runtime/node_modules/
