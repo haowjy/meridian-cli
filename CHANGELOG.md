@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-07-26
+
 ### Changed
 
 - CI no longer runs an unsupported native-Windows lane, and platform docs now
