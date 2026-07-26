@@ -92,5 +92,5 @@ guard, POSIX group kill mechanics, Windows Job Object handle lifetime
 ## Related
 
 - `../state/user_paths.py` — uses `get_home_path()` for state root resolution
-- `../harness/claude.py` — uses `IS_WINDOWS` for signal routing (SIGINT vs terminate)
-- `../state/atomic.py` — Windows vs POSIX fsync behavior
+- `../launch/signals.py` — uses `IS_WINDOWS` for direct-process vs process-group signals
+- `atomic.py` — Windows vs POSIX fsync behavior

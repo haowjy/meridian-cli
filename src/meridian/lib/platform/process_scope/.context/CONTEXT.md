@@ -12,7 +12,7 @@ Two dispatch entry points share the same routing logic but serve different call 
 # Async callers (launch paths)
 ScopedProcessHandle.terminate()
   ├── containment == "posix_pgid"        → posix.terminate_pgid()
-  ├── containment == "windows_job"       → fallback (handle threading pending)
+  ├── containment == "windows_job"       → legacy psutil fallback
   └── containment == "pid_tree_fallback" → fallback.terminate_tree()
 
 # Sync callers (reaper, cancel, session-exit) — same dispatch, sync I/O
@@ -64,8 +64,9 @@ a live Python object; letting it get garbage-collected releases the containment
 boundary early.
 
 Current status: `ScopedProcessHandle` with `containment="windows_job"` falls
-back to psutil tree kill because handle threading into the handle is not yet
-wired through. `degraded_fallback=True` in the result flags this path.
+back to psutil tree kill because the Job Object handle is not connected to the
+scope handle. This branch is unsupported and untested; no support work is
+planned. `degraded_fallback=True` in the result flags this path.
 
 ### Fallback Path Limitations
 

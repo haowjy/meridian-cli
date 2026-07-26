@@ -12,7 +12,7 @@ do not extend it as product support.
 | `containment` | Backend | Mechanism |
 |---|---|---|
 | `posix_pgid` | `posix.py` | `os.killpg()` — kills the entire process group |
-| `windows_job` | currently falls back | Windows Job Object (handle threading pending) |
+| `windows_job` | legacy fallback | Job Object helpers exist; dispatch uses the psutil fallback |
 | `pid_tree_fallback` | `fallback.py` | psutil tree snapshot + SIGTERM → SIGKILL |
 
 ## Key Rules
@@ -68,7 +68,7 @@ event loop is running.
 ## Depth
 
 → [.context/CONTEXT.md](.context/CONTEXT.md) — PID reuse guard mechanics (PROC-006),
-POSIX orphan sweep (PROC-004), Windows handle threading status, fallback snapshot race
+POSIX orphan sweep (PROC-004), legacy Job Object status, fallback snapshot race
 
 → [../.context/CONTEXT.md](../.context/CONTEXT.md) — parent platform invariants and import rules
 
