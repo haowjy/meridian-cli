@@ -37,8 +37,8 @@ not merely fixed:
    modeled on `finalize_spawn`'s mutator pattern. Public read/write pairs that compose into
    RMW disappear from the API.
 2. **Lock identity**: stable lock inodes outside destructible resource directories /
-   never-unlink protocol, portable to Windows; one parameterized lock primitive (reentrancy,
-   timeout, shared mode) replacing the three implementations.
+   never-unlink protocol for the supported POSIX platforms; one parameterized lock
+   primitive (reentrancy, timeout, shared mode) replacing the three implementations.
 3. **Reaper ordering**: finalize-first, with **at-least-once idempotent** cleanup — not
    exactly-once kill gating, which breaks crash-onlyness.
 4. **One atomic-replace context manager** in a dependency-neutral platform layer, serving
@@ -60,16 +60,14 @@ path buys nothing (verified in the A refute pass).
 spawn dirs containing `state.lock` while holding only `spawns_flock` (`pruning.py:253-258`) —
 external writers serialize on `state.lock` (`repository.py:303`). Split-brain reproduced on
 POSIX. Panel corrections shape the remedy: revalidation alone is insufficient (a cleaner can
-unlink after another process validated), and "only unlink while holding" is not portable —
-Windows requires closing handles before deletion (`session_store.py:806-813`). Target: lock
-inodes live outside destructible directories (or are never unlinked; session cleanup deletes
-the lease, keeps the lock inode); fold revalidation into one parameterized primitive that
-absorbs `session_store`'s private copy (deleted) and `plugin_api/fs.py:15-92` (delegates —
-the primitive must grow timeout + shared mode; `fs.py:12` already imports `lib.platform`, so
-no new boundary breach).
+unlink after another process validated). Target: lock inodes live outside destructible
+directories (or are never unlinked; session cleanup deletes the lease, keeps the lock inode);
+fold revalidation into one parameterized primitive that absorbs `session_store`'s private
+copy (deleted) and `plugin_api/fs.py:15-92` (delegates — the primitive must grow timeout +
+shared mode; `fs.py:12` already imports `lib.platform`, so no new boundary breach).
 
-Windows calibration (2026-07-17): keep the existing branches working, but optimize the
-protocol for the supported POSIX platforms; do not add Windows-specific machinery or tests.
+Platform boundary (2026-07-17): acceptance criteria cover the supported POSIX platforms.
+Legacy native-Windows branches are untested and must not drive new machinery or tests.
 
 **One atomic-replace primitive; fix live drift** `[48]` + `[66]` drift half
 `autosync_store._atomic_write_text` (`autosync_store.py:443-446`) is fixed-tmp-name,
@@ -83,10 +81,10 @@ generalized atomic-replacement **context manager in a dependency-neutral platfor
 through the open handle). `autosync_store`'s stdlib-only constraint (`autosync_store.py:1-8`)
 is consciously relaxed to plugin-api-only, or the writer is injected by `git_autosync` —
 either preserves the standalone-plugin extraction story. Same issue fixes the confirmed
-drift sites: `failure.json` raw write (`lifecycle.py:1028-1035` — best-effort diagnostic, but
-wrong layer; move to a state-owned module with atomic replace) and the Windows `control.port`
-file (`control_socket.py:73` — consumed cross-process by `cli/spawn_inject.py:81,109`, whose
-reader fails hard on torn content; atomic publish, no fsync needed — ephemeral).
+drift site: `failure.json` raw write (`lifecycle.py:1028-1035` — best-effort diagnostic, but
+wrong layer; move to a state-owned module with atomic replace). The legacy native-Windows
+`control.port` branch (`control_socket.py:73`) is also a known raw-write site, but it is
+outside this POSIX plan's acceptance criteria.
 
 ### 2. Store seams (each independent; all sit on the foundations)
 
