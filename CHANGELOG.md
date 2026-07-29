@@ -9,6 +9,12 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Mars passthrough commands now report the invoking Meridian version so package
   compatibility constraints can be enforced.
 
+### Changed
+
+- Bump pinned `mars-agents` to 0.13.0, which enforces `requires-mars` and
+  `requires-meridian` engine version constraints — the feature this
+  `MERIDIAN_VERSION` export activates.
+
 ## [0.4.1] - 2026-07-26
 
 ### Changed
