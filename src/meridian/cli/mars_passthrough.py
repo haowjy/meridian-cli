@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TextIO
 
+from meridian import __version__
 from meridian.lib.ops.mars import resolve_mars_executable
 
 
@@ -105,7 +106,11 @@ def execute_mars_passthrough(
     # With MERIDIAN_PROJECT_DIR set, parse_mars_passthrough injects --root to the
     # launcher project; Mars runs under Meridian management for all passthrough commands.
     run_kwargs: dict[str, object] = {
-        "env": {**os.environ, "MERIDIAN_MANAGED": os.environ.get("MERIDIAN_MANAGED", "1")},
+        "env": {
+            **os.environ,
+            "MERIDIAN_MANAGED": os.environ.get("MERIDIAN_MANAGED", "1"),
+            "MERIDIAN_VERSION": __version__,
+        },
     }
     try:
         if request.wants_json:
