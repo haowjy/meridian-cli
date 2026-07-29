@@ -176,6 +176,12 @@ ENV_VARS: tuple[EnvVar, ...] = (
         EnvSubtype.INTER_TOOL,
         "Marks invocation through Meridian for mars-agents.",
     ),
+    EnvVar(
+        "MERIDIAN_VERSION",
+        EnvTier.PUBLIC,
+        EnvSubtype.INTER_TOOL,
+        "Reports the invoking Meridian version to mars-agents.",
+    ),
     # Internal handles.
     _internal_handle("_MERIDIAN_DEPTH", "Current delegated spawn depth."),
     _internal_handle("_MERIDIAN_PARENT_SPAWN_ID", "Parent spawn identifier."),
