@@ -19,6 +19,7 @@ from meridian.lib.bootstrap.services import prepare_for_runtime_write
 from meridian.lib.core.context import RuntimeContext
 from meridian.lib.core.types import HarnessId
 from meridian.lib.launch import bundle_adapter
+from meridian.lib.launch.cwd import WorkTaskDirMissing
 from meridian.lib.launch.launch_types import ResolvedExecutionPolicy
 from meridian.lib.ops.spawn.models import SpawnCreateInput
 from meridian.lib.state import spawn_store, work_repository, work_store
@@ -496,3 +497,109 @@ def test_spawn_create_dry_run_uses_ambient_work_item_task_dir(
     assert result.task_cwd == ambient_task_dir.as_posix()
     assert result.reference_anchor == ambient_task_dir.as_posix()
     assert result.task_cwd_work_item == work.name
+
+
+def test_spawn_create_stale_ambient_work_falls_back_with_warning(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    (project_root / ".git").mkdir()
+    (project_root / "mars.toml").write_text("", encoding="utf-8")
+    monkeypatch.chdir(project_root)
+    stub_bundle_request_and_resolve(
+        monkeypatch,
+        model="gpt-5.4-mini",
+        harness=HarnessId.CODEX,
+    )
+    project_state_dir = resolve_project_paths(project_root).root_dir
+    work = work_repository.create_work_item(project_state_dir, "stale-work", "", None)
+    stale = tmp_path / "removed-worktree"
+    work_repository.update_work_item_task_dir(
+        project_state_dir, work.name, task_dir=stale.as_posix()
+    )
+
+    result = spawn_api.spawn_create_sync(
+        SpawnCreateInput(
+            prompt="run",
+            model="gpt-5.4-mini",
+            project_root=project_root.as_posix(),
+            dry_run=True,
+        ),
+        ctx=RuntimeContext(work_id=work.name),
+    )
+
+    assert result.status == "dry-run"
+    assert result.task_cwd == project_root.resolve().as_posix()
+    assert result.task_cwd_source == "ambient-work-authority-root"
+    assert result.task_cwd_work_item == work.name
+    assert result.warning is not None
+    assert stale.as_posix() in result.warning
+
+
+def test_spawn_create_explicit_task_dir_wins_before_stale_ambient_derivation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    (project_root / ".git").mkdir()
+    (project_root / "mars.toml").write_text("", encoding="utf-8")
+    explicit = tmp_path / "explicit-worktree"
+    explicit.mkdir()
+    monkeypatch.chdir(project_root)
+    stub_bundle_request_and_resolve(
+        monkeypatch,
+        model="gpt-5.4-mini",
+        harness=HarnessId.CODEX,
+    )
+    project_state_dir = resolve_project_paths(project_root).root_dir
+    work = work_repository.create_work_item(project_state_dir, "stale-work", "", None)
+    stale = tmp_path / "removed-worktree"
+    work_repository.update_work_item_task_dir(
+        project_state_dir, work.name, task_dir=stale.as_posix()
+    )
+
+    result = spawn_api.spawn_create_sync(
+        SpawnCreateInput(
+            prompt="run",
+            model="gpt-5.4-mini",
+            project_root=project_root.as_posix(),
+            task_dir=explicit.as_posix(),
+            dry_run=True,
+        ),
+        ctx=RuntimeContext(work_id=work.name),
+    )
+
+    assert result.status == "dry-run"
+    assert result.task_cwd == explicit.resolve().as_posix()
+    assert result.task_cwd_source == "explicit-task-dir"
+    assert result.warning is None or stale.as_posix() not in result.warning
+
+
+def test_spawn_create_unresolvable_work_task_dir_has_distinct_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    (project_root / ".git").mkdir()
+    (project_root / "mars.toml").write_text("", encoding="utf-8")
+
+    def _raise(*_args: object, **_kwargs: object) -> object:
+        raise WorkTaskDirMissing("stale task dir and missing project root")
+
+    monkeypatch.setattr(spawn_api, "build_create_payload", _raise)
+
+    result = spawn_api.spawn_create_sync(
+        SpawnCreateInput(
+            prompt="run",
+            model="gpt-5.4-mini",
+            project_root=project_root.as_posix(),
+            dry_run=True,
+        )
+    )
+
+    assert result.status == "failed"
+    assert result.error == "work_task_dir_missing"

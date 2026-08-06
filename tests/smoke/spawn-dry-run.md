@@ -190,6 +190,18 @@ uv run meridian spawn -a reviewer -p "prefer explicit task dir" \
 - [ ] `task_cwd_source == "explicit-task-dir"`
 - [ ] resolved `reference_files` entry points at `$OVERRIDE_DIR/override.md`
 
+## Removed work-item task_dir falls back; explicit override still wins
+
+```bash
+rm -rf "$TASK_DIR"
+uv run meridian spawn -a reviewer -p "stale worktree" --work smoke-task-dir --dry-run --json
+uv run meridian spawn -a reviewer -p "override stale worktree" \
+  --work smoke-task-dir --task-dir "$OVERRIDE_DIR" --dry-run --json
+```
+- [ ] First command exits 0, reports the project root as `task_cwd`, and includes a warning naming `$TASK_DIR`
+- [ ] First command reports `task_cwd_source == "explicit-work-authority-root"`
+- [ ] Second command exits 0 with `task_cwd == "$OVERRIDE_DIR"` and no stale-path warning
+
 ## --task-dir requires existing directory
 
 ```bash

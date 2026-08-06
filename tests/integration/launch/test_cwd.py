@@ -31,6 +31,13 @@ def _work_with_task_dir(state_dir: Path, tmp_path: Path, name: str) -> str:
     return item.name
 
 
+def _work_with_stale_task_dir(state_dir: Path, tmp_path: Path, name: str) -> tuple[str, Path]:
+    item = work_repository.create_work_item(state_dir, name, "", None)
+    stale = tmp_path / f"{name}-removed-task-dir"
+    work_repository.update_work_item_task_dir(state_dir, item.name, task_dir=stale.as_posix())
+    return item.name, stale.resolve()
+
+
 def _publish_spawn(project_root: Path, spawn_id: str = "p1") -> None:
     start_spawn(
         resolve_project_runtime_root_for_write(project_root),
@@ -56,6 +63,24 @@ def test_resolve_task_cwd_uses_explicit_task_dir_override_first(tmp_path: Path) 
 
     assert resolved.task_cwd == explicit.resolve()
     assert resolved.source == "explicit-task-dir"
+
+
+def test_resolve_task_cwd_explicit_task_dir_wins_over_stale_work_item(tmp_path: Path) -> None:
+    authority_root, state_dir = _roots(tmp_path)
+    work_id, _ = _work_with_stale_task_dir(state_dir, tmp_path, "stale-work")
+    explicit = tmp_path / "explicit-task"
+    explicit.mkdir()
+
+    resolved = resolve_task_cwd(
+        authority_root,
+        project_state_dir=state_dir,
+        explicit_task_dir=explicit,
+        ambient_work_id=work_id,
+    )
+
+    assert resolved.task_cwd == explicit.resolve()
+    assert resolved.source == "explicit-task-dir"
+    assert resolved.warning is None
 
 
 def test_resolve_task_cwd_rejects_missing_explicit_task_dir(tmp_path: Path) -> None:
@@ -114,6 +139,23 @@ def test_resolve_task_cwd_ambient_work_uses_task_dir(tmp_path: Path) -> None:
     assert resolved.task_cwd == (tmp_path / "ambient-work-task-dir").resolve()
     assert resolved.source == "ambient-work-task-dir"
     assert resolved.work_item == ambient_id
+
+
+def test_resolve_task_cwd_stale_ambient_work_falls_back_with_warning(tmp_path: Path) -> None:
+    authority_root, state_dir = _roots(tmp_path)
+    work_id, stale = _work_with_stale_task_dir(state_dir, tmp_path, "stale-work")
+
+    resolved = resolve_task_cwd(
+        authority_root,
+        project_state_dir=state_dir,
+        ambient_work_id=work_id,
+    )
+
+    assert resolved.task_cwd == authority_root.resolve()
+    assert resolved.source == "ambient-work-authority-root"
+    assert resolved.work_item == work_id
+    assert resolved.warning is not None
+    assert stale.as_posix() in resolved.warning
 
 
 def test_resolve_task_cwd_uses_caller_cwd_outside_project_tree(tmp_path: Path) -> None:
@@ -336,3 +378,19 @@ def test_resolve_effective_task_dir_tombstone_skips_inherited(tmp_path: Path) ->
         task_dir=project_root.resolve(),
         source="project-root",
     )
+
+
+def test_resolve_effective_task_dir_stale_work_falls_back_with_warning(tmp_path: Path) -> None:
+    project_root, state_dir = _roots(tmp_path)
+    work_id, stale = _work_with_stale_task_dir(state_dir, tmp_path, "stale-work")
+
+    effective = resolve_effective_task_dir(
+        project_root=project_root,
+        project_state_dir=state_dir,
+        work_id=work_id,
+    )
+
+    assert effective.task_dir == project_root.resolve()
+    assert effective.source == "project-root"
+    assert effective.warning is not None
+    assert stale.as_posix() in effective.warning

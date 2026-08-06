@@ -193,6 +193,7 @@ class TaskDirOutput(BaseModel):
     task_dir: str
     source: str
     spawn_id: str | None = None
+    warning: str | None = None
 
     def format_text(self, ctx: FormatContext | None = None) -> str:
         _ = ctx
@@ -347,6 +348,7 @@ def _resolve_effective_task_dir_output() -> TaskDirOutput:
         task_dir=effective.task_dir.as_posix(),
         source=effective.source,
         spawn_id=str(runtime_ctx.spawn_id) if runtime_ctx.spawn_id is not None else None,
+        warning=effective.warning,
     )
 
 

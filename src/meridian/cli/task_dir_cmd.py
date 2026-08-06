@@ -23,7 +23,12 @@ Emitter = Callable[[Any], None]
 
 
 def _task_dir_query(emit: Emitter) -> None:
-    emit(task_dir_sync(TaskDirInput()))
+    from meridian.cli.main import current_output_sink
+
+    output = task_dir_sync(TaskDirInput())
+    if output.warning:
+        current_output_sink().warning(output.warning)
+    emit(output)
 
 
 def _task_dir_set(

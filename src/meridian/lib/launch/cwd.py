@@ -17,6 +17,7 @@ class EffectiveTaskDir:
 
     task_dir: Path
     source: Literal["scope", "work-item", "inherited", "project-root"]
+    warning: str | None = None
 
 
 @dataclass(frozen=True)
@@ -26,6 +27,11 @@ class TaskCwdResolution:
     task_cwd: Path
     source: str
     work_item: str | None
+    warning: str | None = None
+
+
+class WorkTaskDirMissing(Exception):
+    """No usable fallback exists for a stale work-item task directory."""
 
 
 @dataclass(frozen=True)
@@ -87,17 +93,22 @@ def _active_task_dir_for_item(
     return Path(item.task_dir).expanduser().resolve()
 
 
-def _validated_task_dir(
+def _stale_work_task_dir_warning(
     *,
     task_dir: Path,
     work_id: str,
-) -> Path:
-    if task_dir.is_dir():
-        return task_dir
-    raise ValueError(
-        f"Work item '{work_id}' has a configured task_dir that does not exist.\n"
-        f"  task_dir: {task_dir}\n"
-        "Use --task-dir to set a valid directory for this work item."
+) -> str:
+    return (
+        f"Work item '{work_id}' has a configured task_dir that does not exist: "
+        f"{task_dir}. Falling back without changing work state."
+    )
+
+
+def _require_fallback_root(project_root: Path, warning: str) -> Path:
+    if project_root.is_dir():
+        return project_root
+    raise WorkTaskDirMissing(
+        f"{warning}\nNo fallback project directory exists: {project_root}"
     )
 
 
@@ -158,21 +169,37 @@ def resolve_effective_task_dir(
             work_id=normalized_work_id,
         )
         if work_path is not None:
-            return EffectiveTaskDir(
-                task_dir=_validated_task_dir(
-                    task_dir=work_path,
-                    work_id=normalized_work_id,
-                ),
-                source="work-item",
+            if work_path.is_dir():
+                return EffectiveTaskDir(task_dir=work_path, source="work-item")
+            warning = _stale_work_task_dir_warning(
+                task_dir=work_path,
+                work_id=normalized_work_id,
             )
+        else:
+            warning = None
+    else:
+        warning = None
 
     if not skip_inherited and inherited_task_dir is not None:
-        resolved_inherited = _validated_inherited_task_dir(inherited_task_dir)
-        return EffectiveTaskDir(task_dir=resolved_inherited, source="inherited")
+        if warning is None:
+            resolved_inherited = _validated_inherited_task_dir(inherited_task_dir)
+            return EffectiveTaskDir(task_dir=resolved_inherited, source="inherited")
+        resolved_inherited = inherited_task_dir.expanduser().resolve()
+        if resolved_inherited.is_dir():
+            return EffectiveTaskDir(
+                task_dir=resolved_inherited,
+                source="inherited",
+                warning=warning,
+            )
 
     return EffectiveTaskDir(
-        task_dir=resolved_project_root,
+        task_dir=(
+            _require_fallback_root(resolved_project_root, warning)
+            if warning is not None
+            else resolved_project_root
+        ),
         source="project-root",
+        warning=warning,
     )
 
 
@@ -251,29 +278,39 @@ def resolve_task_cwd(
                 source="explicit-work-authority-root",
                 work_item=selected_work_id,
             )
-        return TaskCwdResolution(
-            task_cwd=_validated_task_dir(
-                task_dir=explicit_path,
-                work_id=selected_work_id,
-            ),
-            source="explicit-work-task-dir",
-            work_item=selected_work_id,
+        if explicit_path.is_dir():
+            return TaskCwdResolution(
+                task_cwd=explicit_path,
+                source="explicit-work-task-dir",
+                work_item=selected_work_id,
+            )
+        stale_warning = _stale_work_task_dir_warning(
+            task_dir=explicit_path,
+            work_id=selected_work_id,
         )
+    else:
+        stale_warning = None
 
     inherited_override = (
         str(inherited_task_dir).strip() if inherited_task_dir is not None else ""
     )
     if inherited_override:
-        inherited_path = _validated_inherited_task_dir(
-            Path(inherited_override).expanduser().resolve()
-        )
-        return TaskCwdResolution(
-            task_cwd=inherited_path,
-            source="inherited-task-dir",
-            work_item=ambient_selected_work_id,
-        )
+        inherited_candidate = Path(inherited_override).expanduser().resolve()
+        if stale_warning is None:
+            inherited_path = _validated_inherited_task_dir(inherited_candidate)
+        elif inherited_candidate.is_dir():
+            inherited_path = inherited_candidate
+        else:
+            inherited_path = None
+        if inherited_path is not None:
+            return TaskCwdResolution(
+                task_cwd=inherited_path,
+                source="inherited-task-dir",
+                work_item=selected_work_id or ambient_selected_work_id,
+                warning=stale_warning,
+            )
 
-    if ambient_selected_work_id is not None:
+    if selected_work_id is None and ambient_selected_work_id is not None:
         ambient_path = _active_task_dir_for_item(
             project_state_dir=project_state_dir,
             work_id=ambient_selected_work_id,
@@ -284,13 +321,15 @@ def resolve_task_cwd(
                 source="ambient-work-authority-root",
                 work_item=ambient_selected_work_id,
             )
-        return TaskCwdResolution(
-            task_cwd=_validated_task_dir(
-                task_dir=ambient_path,
-                work_id=ambient_selected_work_id,
-            ),
-            source="ambient-work-task-dir",
-            work_item=ambient_selected_work_id,
+        if ambient_path.is_dir():
+            return TaskCwdResolution(
+                task_cwd=ambient_path,
+                source="ambient-work-task-dir",
+                work_item=ambient_selected_work_id,
+            )
+        stale_warning = _stale_work_task_dir_warning(
+            task_dir=ambient_path,
+            work_id=ambient_selected_work_id,
         )
 
     inferred_caller_cwd = _infer_caller_cwd_outside_project(
@@ -301,11 +340,25 @@ def resolve_task_cwd(
         return TaskCwdResolution(
             task_cwd=inferred_caller_cwd,
             source="ambient-cwd",
-            work_item=None,
+            work_item=selected_work_id or ambient_selected_work_id,
+            warning=stale_warning,
         )
 
     return TaskCwdResolution(
-        task_cwd=resolved_authority_root,
-        source="authority-root",
-        work_item=None,
+        task_cwd=(
+            _require_fallback_root(resolved_authority_root, stale_warning)
+            if stale_warning is not None
+            else resolved_authority_root
+        ),
+        source=(
+            "explicit-work-authority-root"
+            if selected_work_id is not None
+            else (
+                "ambient-work-authority-root"
+                if ambient_selected_work_id is not None
+                else "authority-root"
+            )
+        ),
+        work_item=selected_work_id or ambient_selected_work_id,
+        warning=stale_warning,
     )

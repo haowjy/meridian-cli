@@ -61,6 +61,32 @@ def test_task_dir_query_uses_inherited_env_when_no_scope(
     assert output.source == "inherited"
 
 
+def test_task_dir_query_stale_work_falls_back_with_warning(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = _seed_project(tmp_path)
+    monkeypatch.chdir(project_root)
+    runtime = build_runtime(project_root)
+    item = work_repository.create_work_item(
+        runtime.authority.project_state_dir, "stale-work", "", None
+    )
+    stale = tmp_path / "removed-worktree"
+    work_repository.update_work_item_task_dir(
+        runtime.authority.project_state_dir,
+        item.name,
+        task_dir=stale.as_posix(),
+    )
+    monkeypatch.setenv("MERIDIAN_ACTIVE_WORK_ID", item.name)
+
+    output = task_dir_sync(TaskDirInput())
+
+    assert output.task_dir == project_root.resolve().as_posix()
+    assert output.source == "project-root"
+    assert output.warning is not None
+    assert stale.as_posix() in output.warning
+
+
 def test_task_dir_set_then_query_reflects_scope_override(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
