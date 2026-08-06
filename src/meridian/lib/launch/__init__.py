@@ -178,9 +178,16 @@ def launch_primary(
     )
     request_updates = dict(launch_resolution.request_updates)
     request_updates["work_id_hint"] = effective_work_id
-    spawn_request = build_primary_spawn_request(request=request).model_copy(
-        update=request_updates
-    )
+    spawn_request = build_primary_spawn_request(request=request)
+    request_updates["warning"] = "\n".join(
+        warning
+        for warning in (
+            spawn_request.warning,
+            launch_resolution.task_cwd_resolution.warning,
+        )
+        if warning
+    ) or None
+    spawn_request = spawn_request.model_copy(update=request_updates)
     prepared_policy = compile_prepared_policy_surface(
         request=spawn_request,
         runtime=runtime,

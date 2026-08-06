@@ -154,7 +154,7 @@ def build_create_payload(
         )
         inherited_for_child = (
             None
-            if _is_exact_continue(payload)
+            if _is_exact_continue(payload) or (payload.task_dir or "").strip()
             else derive_inheritable_task_dir(
                 project_root=project_root,
                 project_state_dir=project_state_dir,
@@ -221,7 +221,15 @@ def build_create_payload(
             goal=payload.goal,
             work_id_hint=resolved_work_id_hint,
             inherited_context_work_id=launch_resolution.context_work_id,
-            warning=preflight_warning.strip() if preflight_warning is not None else None,
+            warning="\n".join(
+                warning
+                for warning in (
+                    preflight_warning.strip() if preflight_warning is not None else None,
+                    launch_resolution.task_cwd_resolution.warning,
+                )
+                if warning
+            )
+            or None,
             authority_root=launch_resolution.directory_context.authority_root.as_posix(),
             task_cwd=launch_resolution.directory_context.logical_task_cwd.as_posix(),
             reference_anchor=launch_resolution.directory_context.reference_anchor.as_posix(),

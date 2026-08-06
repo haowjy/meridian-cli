@@ -419,6 +419,27 @@ def test_patched_cli_serve_list_stop_gc(
     assert "Garbage-collected 0" in capsys.readouterr().out
 
 
+def test_artifact_list_routes_url_warning_through_cli_sink(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    def unavailable_dns_name() -> str:
+        raise service.ArtifactError("tailscale unavailable")
+
+    monkeypatch.setattr(store, "serves_path", lambda: tmp_path / "serves.json")
+    store.save_serves([_serve("report", 50000)])
+    monkeypatch.setattr(service, "tailscale_dns_name", unavailable_dns_name)
+    monkeypatch.setattr(service, "pid_alive", lambda _pid, _created: True)
+
+    _invoke_artifact(["list"])
+
+    captured = capsys.readouterr()
+    assert "report" in captured.out
+    assert "Warning:" not in captured.out
+    assert captured.err == "warning: artifact URLs unavailable: tailscale unavailable\n"
+
+
 @pytest.mark.parametrize("slug", ["", "/", "..", "a/b", " white ", "a--b", "x\nroot"])
 def test_invalid_persisted_slugs_are_dropped_without_tailscale_calls(
     slug: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

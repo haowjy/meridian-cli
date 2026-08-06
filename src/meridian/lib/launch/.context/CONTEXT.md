@@ -234,6 +234,22 @@ Resolution priority in `resolve_task_cwd()`:
 5. caller cwd when outside the project tree (`source="ambient-cwd"`)
 6. authority root default
 
+**Stale task_dir fallback.** When a work item's configured `task_dir` no longer
+exists on disk (the common case after a worktree is removed post-merge),
+resolution skips the stale tier with a warning and falls through to the next
+valid tier. The fallback is read-time only — work state is never mutated on a
+read path. `WorkTaskDirMissing` is raised only when even the fallback
+`authority_root` does not exist; it is mapped to error name
+`work_task_dir_missing` at the pre-init boundary in `ops/spawn/pre_init.py`.
+Both `resolve_task_cwd()` and `resolve_effective_task_dir()` implement this.
+
+**Warning threading.** `TaskCwdResolution.warning` carries the stale-path
+warning from `resolve_task_cwd()`. Callers must explicitly merge it into
+`SpawnRequest.warning` because `launch_resolution.request_updates` does not
+include it. Both `launch_primary()` in `__init__.py` and `build_create_payload()`
+in `ops/spawn/prepare.py` perform this merge. Omitting the merge silently drops
+the warning — a trap for any new caller of `resolve_launch_inputs()`.
+
 ### Reference Loading and Anchor Semantics
 
 `reference.py` owns `-f` reference file loading and template substitution.
@@ -259,6 +275,16 @@ files produce a warning instead.
 Launch uses a work item's `task_dir` as its logical task cwd. Persisted
 `WorktreeMetadata` is state/display metadata only; launch does not provision or
 manage git worktrees.
+
+**Premature-derivation trap in `ops/spawn/prepare.py`.** `build_create_payload()`
+derives the parent's inheritable task dir via `derive_inheritable_task_dir()`
+before calling `resolve_launch_inputs()`. That derivation calls
+`resolve_effective_task_dir()`, which can raise on a stale work-item path.
+When an explicit `--task-dir` flag is present, `build_create_payload()` skips
+the derivation entirely (sets `inherited_for_child = None`) so the stale value
+never blocks an explicit override. Without this skip, the stale-path exception
+fires before the explicit flag reaches `resolve_task_cwd()`, breaking the
+documented config-precedence rule that CLI flags always win.
 
 ### Workspace Projection
 

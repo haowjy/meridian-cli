@@ -381,8 +381,6 @@ class SpawnActionOutput(BaseModel):
         if self.duration_secs is not None:
             duration_suffix = f" ({self.duration_secs:.1f}s)"
         lines = [f"{self.spawn_id} {self.status}{duration_suffix}"]
-        if self.warning:
-            lines.append(f"Warning: {self.warning}")
         if self.error:
             lines.append(f"Error: {self.error}")
         if self._has_distinct_task_cwd():
@@ -417,10 +415,7 @@ class SpawnActionOutput(BaseModel):
             and self.spawn_id
             and not self.message
         ):
-            text = _background_wait_note(self.spawn_id)
-            if self.warning:
-                text = f"{text}\nWarning: {self.warning}"
-            return text
+            return _background_wait_note(self.spawn_id)
 
         lines: list[str] = []
         if self.message:
@@ -471,8 +466,6 @@ class SpawnActionOutput(BaseModel):
                 lines.append(goal_contract_preview)
         if self.error:
             lines.append(f"Error: {self.error}")
-        if self.warning:
-            lines.append(f"Warning: {self.warning}")
         if self.cli_command:
             lines.append(shlex.join(self.cli_command))
         if self.exit_code is not None:

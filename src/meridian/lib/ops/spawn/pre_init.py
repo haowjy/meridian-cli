@@ -7,6 +7,7 @@ from typing import TypeVar
 
 import structlog
 
+from meridian.lib.launch.cwd import WorkTaskDirMissing
 from meridian.lib.launch.request import SpawnRequest
 
 from .models import SpawnActionOutput, SpawnCreateInput
@@ -87,6 +88,20 @@ def pre_init_failed_output(
     )
 
 
+def work_task_dir_missing_output(
+    *,
+    payload: SpawnCreateInput,
+    exc: WorkTaskDirMissing,
+    request: SpawnRequest | None = None,
+) -> SpawnActionOutput:
+    return _pre_init_output(
+        payload=payload,
+        request=request,
+        message=f"Work task directory is missing and no fallback is available: {exc}",
+        error="work_task_dir_missing",
+    )
+
+
 def unexpected_pre_init_failed_output(
     *,
     payload: SpawnCreateInput,
@@ -112,6 +127,13 @@ def run_pre_init_boundary(
 ) -> _T | SpawnActionOutput:
     try:
         return operation()
+    except WorkTaskDirMissing as exc:
+        failure_payload = payload() if callable(payload) else payload
+        return work_task_dir_missing_output(
+            payload=failure_payload,
+            request=request,
+            exc=exc,
+        )
     except PreInitFailure as exc:
         failure_payload = payload() if callable(payload) else payload
         return pre_init_failed_output(payload=failure_payload, request=request, exc=exc)

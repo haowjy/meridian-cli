@@ -203,7 +203,7 @@ def format_missing_skills_warning(missing_skills: tuple[str, ...]) -> str:
     expected_lines.extend(f"         {path}" for path in expected_paths[1:])
     return "\n".join(
         (
-            f"Warning: Skipped unavailable skills: {', '.join(missing_skills)}",
+            f"Skipped unavailable skills: {', '.join(missing_skills)}",
             *expected_lines,
             "Run `meridian mars sync` to install missing skills.",
         )

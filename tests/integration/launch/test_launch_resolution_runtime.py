@@ -339,6 +339,53 @@ def test_primary_launch_resolves_reference_files_from_explicit_task_dir(
     assert "project shadow" not in prompt
 
 
+@pytest.mark.parametrize("work_source", ["explicit", "ambient"])
+def test_primary_launch_stale_work_task_dir_warning_reaches_dry_run_result(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    work_source: str,
+) -> None:
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    monkeypatch.chdir(project_root)
+    _write_minimal_mars_config(project_root)
+    project_state_dir = resolve_project_paths(project_root).root_dir
+    work = work_repository.create_work_item(project_state_dir, "stale-work", "", None)
+    stale = tmp_path / "removed-worktree"
+    work_repository.update_work_item_task_dir(
+        project_state_dir,
+        work.name,
+        task_dir=stale.as_posix(),
+    )
+    stub_bundle_request_and_resolve(
+        monkeypatch,
+        model="gpt-5.4-mini",
+        harness=HarnessId.CODEX,
+    )
+    monkeypatch.delenv("MERIDIAN_TASK_DIR", raising=False)
+    if work_source == "ambient":
+        monkeypatch.setenv("MERIDIAN_ACTIVE_WORK_ID", work.name)
+        explicit_work_id = None
+    else:
+        monkeypatch.delenv("MERIDIAN_ACTIVE_WORK_ID", raising=False)
+        explicit_work_id = work.name
+
+    result = launch_primary(
+        project_root=project_root,
+        request=PrimaryLaunchRequest(
+            model="gpt-5.4-mini",
+            harness=HarnessId.CODEX.value,
+            work_id=explicit_work_id,
+            dry_run=True,
+        ),
+        harness_registry=get_default_harness_registry(),
+    )
+
+    assert result.warning is not None
+    assert stale.as_posix() in result.warning
+    assert f"Using {project_root.resolve()} instead" in result.warning
+
+
 def test_primary_launch_invalid_reference_does_not_create_explicit_work(
     tmp_path: Path,
 ) -> None:
