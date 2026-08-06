@@ -11,12 +11,13 @@ from pathlib import Path
 
 import pytest
 
+from meridian import __version__
 from tests.conftest import posix_only
 
 
 @pytest.mark.integration
 @posix_only
-def test_mars_passthrough_streams_and_propagates_exit_with_managed_env(
+def test_mars_passthrough_streams_and_propagates_exit_with_meridian_env(
     tmp_path: Path,
 ) -> None:
     runtime_root = tmp_path / "runtime"
@@ -34,7 +35,8 @@ def test_mars_passthrough_streams_and_propagates_exit_with_managed_env(
         "import json, os, sys\n"
         "with open(os.environ['MARS_RECORD'], 'w', encoding='utf-8') as record:\n"
         "    payload = {'argv': sys.argv[1:], "
-        "'managed': os.environ.get('MERIDIAN_MANAGED')}\n"
+        "'managed': os.environ.get('MERIDIAN_MANAGED'), "
+        "'version': os.environ.get('MERIDIAN_VERSION')}\n"
         "    json.dump(payload, record)\n"
         "print('mars stdout', flush=True)\n"
         "print('mars stderr', file=sys.stderr, flush=True)\n"
@@ -64,4 +66,5 @@ def test_mars_passthrough_streams_and_propagates_exit_with_managed_env(
     assert json.loads(record_path.read_text()) == {
         "argv": ["models", "list"],
         "managed": "1",
+        "version": __version__,
     }

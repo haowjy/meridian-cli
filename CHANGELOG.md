@@ -10,6 +10,19 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   has disappeared, honor explicit `--task-dir` overrides, and report a structured
   `work_task_dir_missing` error instead of crashing `task-dir` when no fallback exists.
 
+## [0.4.2] - 2026-07-29
+
+### Added
+
+- Mars passthrough commands now report the invoking Meridian version so package
+  compatibility constraints can be enforced.
+
+### Changed
+
+- Bump pinned `mars-agents` to 0.13.0, which enforces `requires-mars` and
+  `requires-meridian` engine version constraints — the feature this
+  `MERIDIAN_VERSION` export activates.
+
 ## [0.4.1] - 2026-07-26
 
 ### Changed
