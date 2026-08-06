@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
 
+import meridian.lib.ops.context as context_ops
 from meridian.lib.ops.context import (
     TaskDirClearInput,
     TaskDirInput,
@@ -85,6 +87,87 @@ def test_task_dir_query_stale_work_falls_back_with_warning(
     assert output.source == "project-root"
     assert output.warning is not None
     assert stale.as_posix() in output.warning
+
+
+def test_task_dir_cli_stale_work_warns_and_prints_fallback(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    project_root = _seed_project(tmp_path)
+    monkeypatch.chdir(project_root)
+    runtime = build_runtime(project_root)
+    item = work_repository.create_work_item(
+        runtime.authority.project_state_dir, "stale-cli-work", "", None
+    )
+    stale = tmp_path / "removed-cli-worktree"
+    work_repository.update_work_item_task_dir(
+        runtime.authority.project_state_dir,
+        item.name,
+        task_dir=stale.as_posix(),
+    )
+    monkeypatch.setenv("MERIDIAN_ACTIVE_WORK_ID", item.name)
+    monkeypatch.delenv("MERIDIAN_TASK_DIR", raising=False)
+
+    from meridian.cli.main import main
+
+    with pytest.raises(SystemExit) as exc_info:
+        main(["task-dir"])
+
+    assert exc_info.value.code == 0
+    captured = capsys.readouterr()
+    assert captured.out.strip() == project_root.resolve().as_posix()
+    assert f"Falling back to {project_root.resolve()}" in captured.err
+    assert captured.err.startswith("warning:")
+
+
+@pytest.mark.parametrize("json_mode", [False, True], ids=["human", "json"])
+def test_task_dir_cli_unresolvable_work_returns_named_error_without_traceback(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    json_mode: bool,
+) -> None:
+    project_root = _seed_project(tmp_path)
+    monkeypatch.chdir(project_root)
+    runtime = build_runtime(project_root)
+    item = work_repository.create_work_item(
+        runtime.authority.project_state_dir, "missing-root-work", "", None
+    )
+    stale = tmp_path / "removed-worktree"
+    work_repository.update_work_item_task_dir(
+        runtime.authority.project_state_dir,
+        item.name,
+        task_dir=stale.as_posix(),
+    )
+    missing_root = tmp_path / "removed-project-root"
+    authority = runtime.authority.model_copy(update={"project_root": missing_root})
+    monkeypatch.setattr(
+        context_ops,
+        "resolve_runtime_authority_for_read",
+        lambda: authority,
+    )
+    monkeypatch.setenv("MERIDIAN_ACTIVE_WORK_ID", item.name)
+    monkeypatch.delenv("MERIDIAN_TASK_DIR", raising=False)
+
+    from meridian.cli.main import main
+
+    argv = ["--json", "task-dir"] if json_mode else ["task-dir"]
+    with pytest.raises(SystemExit) as exc_info:
+        main(argv)
+
+    assert exc_info.value.code == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "Traceback" not in captured.err
+    assert stale.as_posix() in captured.err
+    assert missing_root.as_posix() in captured.err
+    if json_mode:
+        error = json.loads(captured.err)
+        assert error["error"] == "work_task_dir_missing"
+        assert "No fallback project directory exists" in error["message"]
+    else:
+        assert captured.err.startswith("error:")
 
 
 def test_task_dir_set_then_query_reflects_scope_override(

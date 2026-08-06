@@ -73,6 +73,7 @@ from meridian.cli.startup.policy import TelemetryMode as StartupTelemetryMode
 from meridian.cli.utils import parse_csv_list
 from meridian.lib.core.sink import OutputSink
 from meridian.lib.core.util import FormatContext
+from meridian.lib.launch.cwd import WorkTaskDirMissing
 from meridian.lib.telemetry import emit_telemetry
 
 if TYPE_CHECKING:
@@ -828,11 +829,17 @@ def _operation_error_message(exc: Exception) -> str:
     return exc.__class__.__name__
 
 
-def _emit_error(message: str, *, exit_code: int = 1) -> None:
+def _emit_error(
+    message: str, *, exit_code: int = 1, name: str | None = None
+) -> None:
     """Emit an error via the active sink and exit."""
 
     sink, flush_after = _resolve_sink(_GLOBAL_OPTIONS.get())
-    sink.error(message, exit_code=exit_code)
+    named_error = getattr(sink, "named_error", None)
+    if name is not None and callable(named_error):
+        named_error(name, message, exit_code=exit_code)
+    else:
+        sink.error(message, exit_code=exit_code)
     if flush_after:
         flush_sink(sink)
     raise SystemExit(exit_code)
@@ -1172,6 +1179,11 @@ def _main_impl(argv: Sequence[str] | None = None) -> None:
                     raise
                 except TimeoutError as exc:
                     _emit_error(_operation_error_message(exc), exit_code=124)
+                except WorkTaskDirMissing as exc:
+                    _emit_error(
+                        _operation_error_message(exc),
+                        name="work_task_dir_missing",
+                    )
                 except (KeyError, ValueError, FileNotFoundError, OSError, RuntimeError) as exc:
                     _emit_error(_operation_error_message(exc))
         finally:

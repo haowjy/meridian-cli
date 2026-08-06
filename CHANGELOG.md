@@ -4,6 +4,12 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Fall back with a destination-naming warning when a work item's task directory
+  has disappeared, honor explicit `--task-dir` overrides, and report a structured
+  `work_task_dir_missing` error instead of crashing `task-dir` when no fallback exists.
+
 ## [0.4.1] - 2026-07-26
 
 ### Changed

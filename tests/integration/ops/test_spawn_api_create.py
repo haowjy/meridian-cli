@@ -15,12 +15,13 @@ from structlog.testing import capture_logs
 
 import meridian.lib.ops.spawn.api as spawn_api
 import meridian.lib.ops.spawn.pre_init as pre_init_module
+import meridian.lib.ops.spawn.prepare as spawn_prepare
 from meridian.lib.bootstrap.services import prepare_for_runtime_write
 from meridian.lib.core.context import RuntimeContext
 from meridian.lib.core.types import HarnessId
 from meridian.lib.launch import bundle_adapter
-from meridian.lib.launch.cwd import WorkTaskDirMissing
 from meridian.lib.launch.launch_types import ResolvedExecutionPolicy
+from meridian.lib.ops.runtime import build_runtime
 from meridian.lib.ops.spawn.models import SpawnCreateInput
 from meridian.lib.state import spawn_store, work_repository, work_store
 from meridian.lib.state.paths import resolve_project_paths, resolve_spawn_log_dir
@@ -586,20 +587,43 @@ def test_spawn_create_unresolvable_work_task_dir_has_distinct_error(
     project_root.mkdir()
     (project_root / ".git").mkdir()
     (project_root / "mars.toml").write_text("", encoding="utf-8")
-
-    def _raise(*_args: object, **_kwargs: object) -> object:
-        raise WorkTaskDirMissing("stale task dir and missing project root")
-
-    monkeypatch.setattr(spawn_api, "build_create_payload", _raise)
+    runtime = build_runtime(project_root)
+    project_paths = resolve_project_paths(project_root)
+    work = work_repository.create_work_item(
+        project_paths.root_dir, "unresolvable-work", "", None
+    )
+    stale = tmp_path / "removed-worktree"
+    work_repository.update_work_item_task_dir(
+        project_paths.root_dir,
+        work.name,
+        task_dir=stale.as_posix(),
+    )
+    missing_root = tmp_path / "removed-project-root"
+    missing_authority = runtime.authority.model_copy(update={"project_root": missing_root})
+    monkeypatch.setattr(
+        spawn_api,
+        "resolve_runtime_authority_for_read",
+        lambda _project_root: missing_authority,
+    )
+    monkeypatch.setattr(
+        spawn_prepare,
+        "resolve_runtime_authority_for_read",
+        lambda _project_root: missing_authority,
+    )
+    monkeypatch.setattr(spawn_api, "resolve_project_paths", lambda _root: project_paths)
+    monkeypatch.setattr(spawn_prepare, "resolve_project_paths", lambda _root: project_paths)
 
     result = spawn_api.spawn_create_sync(
         SpawnCreateInput(
             prompt="run",
             model="gpt-5.4-mini",
-            project_root=project_root.as_posix(),
+            project_root=missing_root.as_posix(),
+            work=work.name,
             dry_run=True,
         )
     )
 
     assert result.status == "failed"
     assert result.error == "work_task_dir_missing"
+    assert stale.as_posix() in result.message
+    assert missing_root.as_posix() in result.message

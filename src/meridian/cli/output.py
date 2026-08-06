@@ -133,6 +133,10 @@ class TextSink:
         _ = exit_code
         print(f"error: {message}", file=self._stderr)
 
+    def named_error(self, name: str, message: str, exit_code: int = 1) -> None:
+        _ = name
+        self.error(message, exit_code=exit_code)
+
     def heartbeat(self, message: str) -> None:
         print(message, file=self._stderr, flush=True)
 
@@ -176,6 +180,13 @@ class JsonSink:
 
     def error(self, message: str, exit_code: int = 1) -> None:
         payload = {"error": message, "exit_code": exit_code}
+        print(
+            json.dumps(_to_json_value(payload), separators=(",", ":")),
+            file=self._stderr,
+        )
+
+    def named_error(self, name: str, message: str, exit_code: int = 1) -> None:
+        payload = {"error": name, "message": message, "exit_code": exit_code}
         print(
             json.dumps(_to_json_value(payload), separators=(",", ":")),
             file=self._stderr,
