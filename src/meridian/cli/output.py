@@ -176,7 +176,10 @@ class JsonSink:
         self._has_result = True
 
     def status(self, message: str) -> None:
-        print(message, file=self._stderr)
+        print(
+            json.dumps({"status": message}, separators=(",", ":")),
+            file=self._stderr,
+        )
 
     def warning(self, message: str) -> None:
         print(
@@ -202,7 +205,11 @@ class JsonSink:
         )
 
     def heartbeat(self, message: str) -> None:
-        print(message, file=self._stderr, flush=True)
+        print(
+            json.dumps({"heartbeat": message}, separators=(",", ":")),
+            file=self._stderr,
+            flush=True,
+        )
 
     def event(self, payload: dict[str, Any]) -> None:
         if not self._emit_events:
