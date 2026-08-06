@@ -1,0 +1,7 @@
+# FUTURE — src/meridian/cli
+
+- Warning output inconsistency: `meridian task-dir` emits lowercase
+  `warning: ...` on stderr (output.py sinks), while human-format spawn
+  dry-run prints `Warning: ...` on stdout. Unify casing and stream for
+  warnings across CLI surfaces. Surfaced during #482 probe (work item
+  release-patch-482-481).
