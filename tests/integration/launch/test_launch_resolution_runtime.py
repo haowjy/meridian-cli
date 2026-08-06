@@ -383,7 +383,7 @@ def test_primary_launch_stale_work_task_dir_warning_reaches_dry_run_result(
 
     assert result.warning is not None
     assert stale.as_posix() in result.warning
-    assert f"Falling back to {project_root.resolve()}" in result.warning
+    assert f"Using {project_root.resolve()} instead" in result.warning
 
 
 def test_primary_launch_invalid_reference_does_not_create_explicit_work(

@@ -98,16 +98,16 @@ def _stale_work_task_dir_message(
     task_dir: Path,
     work_id: str,
 ) -> str:
-    return (
-        f"Work item '{work_id}' has a configured task_dir that does not exist: "
-        f"{task_dir}."
-    )
+    return f"Work item '{work_id}' task_dir no longer exists: {task_dir}."
 
 
 def _fallback_warning(message: str | None, destination: Path) -> str | None:
     if message is None:
         return None
-    return f"{message} Falling back to {destination} (work state unchanged)."
+    return (
+        f"{message} Using {destination} instead; "
+        "run 'meridian work task-dir <dir>' to update it."
+    )
 
 
 def _require_fallback_root(project_root: Path, message: str) -> Path:

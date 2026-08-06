@@ -117,7 +117,7 @@ def test_task_dir_cli_stale_work_warns_and_prints_fallback(
     assert exc_info.value.code == 0
     captured = capsys.readouterr()
     assert captured.out.strip() == project_root.resolve().as_posix()
-    assert f"Falling back to {project_root.resolve()}" in captured.err
+    assert f"Using {project_root.resolve()} instead" in captured.err
     assert captured.err.startswith("warning:")
 
 
