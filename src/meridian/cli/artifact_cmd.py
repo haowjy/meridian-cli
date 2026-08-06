@@ -112,7 +112,7 @@ def cmd_artifact_list(
     ] = "text",
 ) -> None:
     """List recorded artifact serves without changing state."""
-    from meridian.cli.main import get_global_options
+    from meridian.cli.main import current_output_sink, get_global_options
 
     serves = load_serves()
     effective_fmt = "json" if get_global_options().output.format == "json" else fmt
@@ -129,7 +129,7 @@ def cmd_artifact_list(
         dns_name = service.tailscale_dns_name()
     except (service.ArtifactError, OSError) as exc:
         dns_name = None
-        print(f"Warning: artifact URLs unavailable: {exc}", file=sys.stderr)
+        current_output_sink().warning(f"artifact URLs unavailable: {exc}")
     print(f"{'SLUG':<22} {'LOCAL':<7} {'ALIVE':<6} {'AGE':<8} {'TTL':<11} {'DIRECTORY':<30} URL")
     for serve in serves:
         created = _created_at(serve)

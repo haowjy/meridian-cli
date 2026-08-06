@@ -835,11 +835,7 @@ def _emit_error(
     """Emit an error via the active sink and exit."""
 
     sink, flush_after = _resolve_sink(_GLOBAL_OPTIONS.get())
-    named_error = getattr(sink, "named_error", None)
-    if name is not None and callable(named_error):
-        named_error(name, message, exit_code=exit_code)
-    else:
-        sink.error(message, exit_code=exit_code)
+    sink.error(message, exit_code=exit_code, name=name)
     if flush_after:
         flush_sink(sink)
     raise SystemExit(exit_code)

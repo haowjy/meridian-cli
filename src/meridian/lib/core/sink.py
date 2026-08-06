@@ -11,7 +11,13 @@ class OutputSink(Protocol):
 
     def warning(self, message: str) -> None: ...
 
-    def error(self, message: str, exit_code: int = 1) -> None: ...
+    def error(
+        self,
+        message: str,
+        *,
+        exit_code: int = 1,
+        name: str | None = None,
+    ) -> None: ...
 
     def heartbeat(self, message: str) -> None: ...
 
@@ -28,8 +34,14 @@ class NullSink:
     def warning(self, message: str) -> None:
         _ = message
 
-    def error(self, message: str, exit_code: int = 1) -> None:
-        _ = (message, exit_code)
+    def error(
+        self,
+        message: str,
+        *,
+        exit_code: int = 1,
+        name: str | None = None,
+    ) -> None:
+        _ = (message, exit_code, name)
 
     def heartbeat(self, message: str) -> None:
         _ = message

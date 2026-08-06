@@ -129,13 +129,16 @@ class TextSink:
     def warning(self, message: str) -> None:
         print(f"warning: {message}", file=self._stderr)
 
-    def error(self, message: str, exit_code: int = 1) -> None:
-        _ = exit_code
+    def error(
+        self,
+        message: str,
+        *,
+        exit_code: int = 1,
+        name: str | None = None,
+    ) -> None:
+        """Emit a human error; ``name`` is intentionally JSON-only metadata."""
+        _ = (exit_code, name)
         print(f"error: {message}", file=self._stderr)
-
-    def named_error(self, name: str, message: str, exit_code: int = 1) -> None:
-        _ = name
-        self.error(message, exit_code=exit_code)
 
     def heartbeat(self, message: str) -> None:
         print(message, file=self._stderr, flush=True)
@@ -176,17 +179,23 @@ class JsonSink:
         print(message, file=self._stderr)
 
     def warning(self, message: str) -> None:
-        print(f"warning: {message}", file=self._stderr)
-
-    def error(self, message: str, exit_code: int = 1) -> None:
-        payload = {"error": message, "exit_code": exit_code}
         print(
-            json.dumps(_to_json_value(payload), separators=(",", ":")),
+            json.dumps({"warning": message}, separators=(",", ":")),
             file=self._stderr,
         )
 
-    def named_error(self, name: str, message: str, exit_code: int = 1) -> None:
-        payload = {"error": name, "message": message, "exit_code": exit_code}
+    def error(
+        self,
+        message: str,
+        *,
+        exit_code: int = 1,
+        name: str | None = None,
+    ) -> None:
+        payload = (
+            {"error": message, "exit_code": exit_code}
+            if name is None
+            else {"error": name, "message": message, "exit_code": exit_code}
+        )
         print(
             json.dumps(_to_json_value(payload), separators=(",", ":")),
             file=self._stderr,

@@ -142,6 +142,21 @@ def _spawn_create_exit_code(result: SpawnActionOutput) -> int:
     return 1
 
 
+def _emit_spawn_warnings(*results: SpawnActionOutput) -> None:
+    """Emit human-mode action warnings through the CLI sink.
+
+    JSON results retain their structured ``warning`` fields without also writing
+    unstructured warning text to stderr.
+    """
+
+    if _get_global_options().output.format == "json":
+        return
+    sink = _current_output_sink()
+    for result in results:
+        if result.warning:
+            sink.warning(result.warning)
+
+
 def _read_prompt_from_stdin() -> str:
     if sys.stdin.isatty():
         raise ValueError("--prompt-file - requires stdin to be piped or redirected")
@@ -738,6 +753,7 @@ def _spawn_create(
             on_spawn_id=_foreground_spawn_id_notifier(quiet=quiet),
         )
     output_format = _get_global_options().output.format
+    _emit_spawn_warnings(result)
     if output_format != "json" and metadata:
         detailed_output = _spawn_create_metadata_output(result)
         if detailed_output is not None:
@@ -1009,6 +1025,7 @@ def _spawn_cancel(
         sink=_current_output_sink(),
         prepared=_prepare_spawn_runtime_write(),
     )
+    _emit_spawn_warnings(result)
     emit(result)
     if result.status == "failed":
         raise SystemExit(1)
@@ -1185,6 +1202,7 @@ def _spawn_cancel_all(
         sink=_current_output_sink(),
         prepared=_prepare_spawn_runtime_write(),
     )
+    _emit_spawn_warnings(*result.results)
     emit(result)
     if result.failed_count:
         raise SystemExit(1)
@@ -1203,6 +1221,7 @@ def _spawn_done(
         sink=_current_output_sink(),
         prepared=_prepare_spawn_runtime_write(),
     )
+    _emit_spawn_warnings(result)
     emit(result)
     if result.status == "failed":
         raise SystemExit(1)
@@ -1221,6 +1240,7 @@ def _spawn_rearm(
         sink=_current_output_sink(),
         prepared=_prepare_spawn_runtime_write(),
     )
+    _emit_spawn_warnings(result)
     emit(result)
     if result.status == "failed":
         raise SystemExit(1)

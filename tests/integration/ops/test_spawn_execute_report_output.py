@@ -46,8 +46,14 @@ class RecordingOutputSink:
     def warning(self, message: str) -> None:
         _ = message
 
-    def error(self, message: str, exit_code: int = 1) -> None:
-        _ = (message, exit_code)
+    def error(
+        self,
+        message: str,
+        *,
+        exit_code: int = 1,
+        name: str | None = None,
+    ) -> None:
+        _ = (message, exit_code, name)
 
     def heartbeat(self, message: str) -> None:
         _ = message

@@ -9,6 +9,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Fall back with a destination-naming warning when a work item's task directory
   has disappeared, honor explicit `--task-dir` overrides, and report a structured
   `work_task_dir_missing` error instead of crashing `task-dir` when no fallback exists.
+- Emit CLI warnings consistently as `warning:` on stderr, and give structured JSON
+  errors a stable machine-readable error name.
 
 ## [0.4.2] - 2026-07-29
 

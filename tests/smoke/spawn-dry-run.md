@@ -198,7 +198,9 @@ uv run meridian spawn -a reviewer -p "stale worktree" --work smoke-task-dir --dr
 uv run meridian spawn -a reviewer -p "override stale worktree" \
   --work smoke-task-dir --task-dir "$OVERRIDE_DIR" --dry-run --json
 ```
-- [ ] First command exits 0, reports the project root as `task_cwd`, and includes a warning naming both stale `$TASK_DIR` and the project-root fallback destination
+- [ ] First command exits 0, reports the project root as `task_cwd`, and includes a
+      structured `warning` field naming both stale `$TASK_DIR` and the project-root
+      fallback destination; JSON mode writes no extra warning text to stderr
 - [ ] First command reports `task_cwd_source == "explicit-work-authority-root"`
 - [ ] Second command exits 0 with `task_cwd == "$OVERRIDE_DIR"` and no stale-path warning
 
