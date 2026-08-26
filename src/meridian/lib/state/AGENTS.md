@@ -17,8 +17,6 @@ meridian.toml
 
 ~/.meridian/projects/<id>/          ← user runtime, never committed
   sessions.jsonl                    — session events (append-only)
-  sessions-append-state.json        — derived append-chain certificate
-  sessions-index.sqlite3            — derived current-session projection
   locks/spawns/<spawn_id>.lock      — stable per-spawn external-writer lock
   locks/process-scopes/<spawn_id>.lock
                                     — stable process-scope sidecar mutation lock
@@ -61,25 +59,6 @@ Spawn state lives in individual `state.json` files (`spawns/<id>/state.json`),
 not a global event log, so status reads stay O(1) instead of replaying O(n) events.
 The layout originated in the v2 migration; published rows now use schema v3.
 
-## Session Index
-
-`sessions.jsonl` remains authoritative. `session_index.py` incrementally projects
-complete events into `sessions-index.sqlite3` under `sessions.jsonl.flock` so direct
-session reads and recent primary pages do not replay the journal. Session writers
-atomically refresh a derived append-chain certificate after each durable event; the
-index accepts suffix growth only inside the same certified epoch. Replacement,
-truncate/rewrite, schema mismatch, or database corruption deletes/rebuilds the
-projection. An incomplete final JSONL record is ignored without advancing the offset.
-If the index is busy or cannot be rebuilt, session reads promptly fall back to the
-truncation-tolerant journal projection without deleting a merely busy index.
-
-The index is metadata-only: transcript summaries and full-text search are separate
-features. `session_aggregate.py` joins historical primary spawn rows into the
-projection and records the published-spawn generation; publication invalidates cached
-negative results. New launches persist `spawn_id` in the session journal directly.
-Never write information only to the index unless it is reproducible from another
-authoritative state file.
-
 ## Spawn Mutation Seam
 
 Every update to a published spawn calls `write_state_locked()`. It acquires
@@ -99,9 +78,9 @@ history, launch/reaper diagnostics, failure sentinels, and harness journals use 
 seam. Heartbeats never create a missing parent directory and stop after deletion.
 The spawn repository and process-scope projection are persistence leaves with a
 one-way dependency: the projection may use repository reads and lock paths, while
-the repository never imports the projection. Cross-leaf operations belong in explicit
-aggregate modules (`spawn_aggregate.py`, `session_aggregate.py`); in particular,
-published-spawn deletion owns the lock order above. Reaper claims consume one immutable projection snapshot containing
+the repository never imports the projection. Cross-leaf operations belong in
+`spawn_aggregate.py`; in particular, published-spawn deletion owns the lock order
+above. Reaper claims consume one immutable projection snapshot containing
 both scopes and released IDs, read under a single projection-lock acquisition.
 
 ## Write-Boundary Path Normalization
@@ -170,10 +149,7 @@ Both paths share liveness rules in `reaper.py` and completion/cancel precedence 
 - `spawn_aggregate.py` — published-row deletion and spawn-owned artifact lifetime guard.
 - `work_state.py` / `work_store.py` / `work_repository.py` — work-item models and
   codec, pure reads, and the single locked mutation repository, respectively.
-- `session_store.py` — Session event model, journal writes, and read policy.
-- `session_journal.py` — Certified append boundary for authoritative session events.
-- `session_index.py` — Rebuildable direct/recent session projection.
-- `session_aggregate.py` — Historical session/spawn relationship projection.
+- `session_store.py` — Session event log and read projection.
 - `atomic.py` — atomic write primitives. All state writes use these.
 - `reaper.py` — read-only `reconcile_spawns()` projection and root-only
   `reconcile_active_spawn()` repair.

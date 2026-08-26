@@ -19,10 +19,7 @@ from meridian.lib.harness.opencode_transcript import opencode_db_session_exists
 from meridian.lib.harness.pi_paths import resolve_pi_spawn_session_root
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.harness.session_detection import infer_harness_from_untracked_session_ref
-from meridian.lib.ops.spawn.query import (
-    read_latest_primary_spawn_for_chat_read_only,
-    read_spawn_row_read_only,
-)
+from meridian.lib.ops.spawn.query import read_spawn_row_read_only
 from meridian.lib.state import session_identity, session_store, spawn_store
 from meridian.lib.state.paths import resolve_spawn_output_path
 from meridian.lib.state.primary_meta import (
@@ -481,16 +478,9 @@ def _spawn_history_fallback_for_chat_ref(
     primary_spawn: SpawnRecord | None,
     related_spawns: Sequence[SpawnRecord] | None = None,
 ) -> SessionLogTarget | None:
-    if primary_spawn is not None:
-        output_target = _target_from_spawn_output(
-            runtime_root,
-            display_id=display_id,
-            spawn_id=primary_spawn.id,
-        )
-        if output_target is not None:
-            return output_target
-
     candidates: list[SpawnRecord] = []
+    if primary_spawn is not None:
+        candidates.append(primary_spawn)
     if related_spawns is None:
         candidates.extend(
             reversed(
@@ -525,27 +515,26 @@ def _spawn_history_fallback_for_chat_ref(
     return None
 
 
-def _primary_spawn_for_chat(
-    project_root: Path,
+def _legacy_spawns_for_chats(
     runtime_root: Path,
-    chat_id: str,
-    spawn_id: str | None = None,
-) -> SpawnRecord | None:
-    normalized_spawn_id = (spawn_id or "").strip()
-    if normalized_spawn_id:
-        direct = spawn_store.get_spawn(runtime_root, normalized_spawn_id)
-        if (
-            direct is not None
-            and direct.kind == "primary"
-            and session_identity.spawn_owner_chat_id(direct) == chat_id
-        ):
-            return direct
-        return None
-    return read_latest_primary_spawn_for_chat_read_only(
-        project_root,
-        chat_id,
-        runtime_root=runtime_root,
-    )
+    chat_ids: set[str],
+) -> tuple[dict[str, SpawnRecord], dict[str, list[SpawnRecord]]]:
+    primary_spawns: dict[str, SpawnRecord] = {}
+    related_spawns: dict[str, list[SpawnRecord]] = {
+        chat_id: [] for chat_id in chat_ids
+    }
+    if not chat_ids:
+        return primary_spawns, related_spawns
+
+    for spawn in spawn_store.list_spawns(runtime_root).records:
+        raw_owner_chat_id = session_identity.spawn_owner_chat_id(spawn)
+        owner_chat_id = str(raw_owner_chat_id) if raw_owner_chat_id is not None else ""
+        if spawn.kind == "primary" and owner_chat_id in chat_ids:
+            primary_spawns[owner_chat_id] = spawn
+        exact_chat_id = str(spawn.chat_id) if spawn.chat_id is not None else ""
+        for related_chat_id in {exact_chat_id, owner_chat_id} & chat_ids:
+            related_spawns[related_chat_id].append(spawn)
+    return primary_spawns, related_spawns
 
 
 def _latest_harness_session_id(record: session_store.SessionRecord) -> str | None:
@@ -772,19 +761,27 @@ def _resolve_from_chat_id(
     session_record = _read_chat_session_record(runtime_root, chat_id)
     if session_record is None:
         raise ValueError(f"Chat '{chat_id}' not found")
-    primary_spawn = _primary_spawn_for_chat(
-        project_root,
+    primary_spawn = session_identity.get_recorded_primary_spawn_for_owner_chat(
         runtime_root,
         chat_id,
         session_record.spawn_id,
     )
+    if primary_spawn is not None:
+        related_spawns: Sequence[SpawnRecord] = ()
+    else:
+        primary_spawns, legacy_related_spawns = _legacy_spawns_for_chats(
+            runtime_root,
+            {chat_id},
+        )
+        primary_spawn = primary_spawns.get(chat_id)
+        related_spawns = legacy_related_spawns.get(chat_id, ())
     return _resolve_from_chat_state(
         project_root=project_root,
         runtime_root=runtime_root,
         chat_id=chat_id,
         session_record=session_record,
         primary_spawn=primary_spawn,
-        related_spawns=() if primary_spawn is not None else None,
+        related_spawns=related_spawns,
     )
 
 
@@ -804,46 +801,24 @@ def iter_chat_session_log_targets(
             {chat_id for chat_id in normalized_chat_ids if chat_id},
         )
     }
-    wanted_chat_ids = set(normalized_chat_ids)
     primary_spawns: dict[str, SpawnRecord] = {}
-    related_spawns: dict[str, list[SpawnRecord]] = {
-        chat_id: [] for chat_id in wanted_chat_ids
-    }
-    missing_relationships: set[str] = set()
-    unreadable_relationships: set[str] = set()
+    legacy_scan_ids: set[str] = set()
     for chat_id, record in records.items():
-        spawn_id = (record.spawn_id or "").strip()
-        if not spawn_id:
-            missing_relationships.add(chat_id)
-            continue
-        spawn = spawn_store.get_spawn(runtime_root, spawn_id)
-        if (
-            spawn is not None
-            and spawn.kind == "primary"
-            and session_identity.spawn_owner_chat_id(spawn) == chat_id
-        ):
-            primary_spawns[chat_id] = spawn
+        primary_spawn = session_identity.get_recorded_primary_spawn_for_owner_chat(
+            runtime_root,
+            chat_id,
+            record.spawn_id,
+        )
+        if primary_spawn is None:
+            legacy_scan_ids.add(chat_id)
         else:
-            unreadable_relationships.add(chat_id)
+            primary_spawns[chat_id] = primary_spawn
 
-    legacy_scan_ids = set(unreadable_relationships)
-    if missing_relationships and not session_store.primary_spawn_backfill_is_current(
-        runtime_root
-    ):
-        legacy_scan_ids.update(missing_relationships)
-    if legacy_scan_ids:
-        for spawn in spawn_store.list_spawns(runtime_root).records:
-            raw_owner_chat_id = session_identity.spawn_owner_chat_id(spawn)
-            owner_chat_id = (
-                str(raw_owner_chat_id) if raw_owner_chat_id is not None else ""
-            )
-            exact_chat_id = str(spawn.chat_id) if spawn.chat_id is not None else ""
-            if spawn.kind == "primary" and owner_chat_id in legacy_scan_ids:
-                primary_spawns[owner_chat_id] = spawn
-            for related_chat_id in (
-                {exact_chat_id, owner_chat_id} & legacy_scan_ids
-            ):
-                related_spawns[related_chat_id].append(spawn)
+    legacy_primary_spawns, legacy_related_spawns = _legacy_spawns_for_chats(
+        runtime_root,
+        legacy_scan_ids,
+    )
+    primary_spawns.update(legacy_primary_spawns)
 
     for chat_id in normalized_chat_ids:
         session_record = records.get(chat_id)
@@ -861,7 +836,7 @@ def iter_chat_session_log_targets(
                 chat_id=chat_id,
                 session_record=session_record,
                 primary_spawn=primary_spawns.get(chat_id),
-                related_spawns=related_spawns.get(chat_id, ()),
+                related_spawns=legacy_related_spawns.get(chat_id, ()),
             )
         except (ValueError, FileNotFoundError, OSError) as exc:
             yield ChatSessionLogTargetResolution(chat_id, None, str(exc))

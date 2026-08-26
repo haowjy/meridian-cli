@@ -13,14 +13,11 @@ import json
 import multiprocessing
 import os
 import signal
-import sqlite3
-import time
 from pathlib import Path
 
 import pytest
 
-from meridian.lib.state import session_journal, session_store
-from meridian.lib.state.paths import RuntimePaths
+from meridian.lib.state import session_store
 from tests.conftest import posix_only
 
 
@@ -71,30 +68,25 @@ def _write_session_start(
     harness: str = "codex",
     kind: str = "spawn",
 ) -> None:
-    event = session_store.SessionStartEvent.model_validate(
-        {
-            "v": 1,
-            "event": "start",
-            "chat_id": chat_id,
-            "kind": kind,
-            "harness": harness,
-            "harness_session_id": f"{chat_id}-thread",
-            "model": "gpt-5.4",
-            "session_instance_id": session_instance_id,
-            "started_at": "2026-03-01T00:00:00Z",
-        }
-    )
-    session_journal.append_session_event(RuntimePaths.from_root_dir(runtime_root), event)
-
-
-def test_recent_primary_page_is_empty_without_a_session_journal(tmp_path: Path) -> None:
-    runtime_root = _state_root(tmp_path)
-
-    page = session_store.list_recent_primary_session_records(runtime_root, limit=5)
-
-    assert page.records == ()
-    assert page.total_count == 0
-    assert page.live_chat_ids == frozenset()
+    with (runtime_root / "sessions.jsonl").open("a", encoding="utf-8") as handle:
+        handle.write(
+            json.dumps(
+                {
+                    "v": 1,
+                    "event": "start",
+                    "chat_id": chat_id,
+                    "kind": kind,
+                    "harness": harness,
+                    "harness_session_id": f"{chat_id}-thread",
+                    "model": "gpt-5.4",
+                    "session_instance_id": session_instance_id,
+                    "started_at": "2026-03-01T00:00:00Z",
+                },
+                separators=(",", ":"),
+                sort_keys=True,
+            )
+            + "\n"
+        )
 
 
 def test_persisted_session_identities_are_normalized_at_parse(tmp_path: Path) -> None:
@@ -782,287 +774,3 @@ def test_work_attachment_history_ignores_malformed_session_update(tmp_path: Path
     attached = session_store.chat_ids_ever_attached_to_work(runtime_root, "work-1")
 
     assert attached == set()
-
-
-def test_session_index_builds_once_then_ingests_only_new_events(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    runtime_root = _state_root(tmp_path)
-    _write_session_start(
-        runtime_root=runtime_root,
-        chat_id="c1",
-        session_instance_id="gen-1",
-        kind="primary",
-    )
-    _write_session_start(
-        runtime_root=runtime_root,
-        chat_id="c2",
-        session_instance_id="gen-2",
-        kind="primary",
-    )
-
-    first = session_store.list_recent_primary_session_records(runtime_root, limit=1)
-
-    assert [record.chat_id for record in first.records] == ["c2"]
-    assert first.total_count == 2
-    index_path = runtime_root / "sessions-index.sqlite3"
-    assert index_path.is_file()
-    assert index_path.stat().st_mode & 0o777 == 0o600
-
-    reduced_events = 0
-    real_reducer = session_store._session_payload_after_event
-
-    def counting_reducer(current, event):
-        nonlocal reduced_events
-        reduced_events += 1
-        return real_reducer(current, event)
-
-    monkeypatch.setattr(session_store, "_session_payload_after_event", counting_reducer)
-
-    unchanged = session_store.list_recent_primary_session_records(runtime_root, limit=1)
-    assert [record.chat_id for record in unchanged.records] == ["c2"]
-    assert reduced_events == 0
-
-    _write_session_start(
-        runtime_root=runtime_root,
-        chat_id="c3",
-        session_instance_id="gen-3",
-        kind="primary",
-    )
-    updated = session_store.list_recent_primary_session_records(runtime_root, limit=1)
-
-    assert [record.chat_id for record in updated.records] == ["c3"]
-    assert updated.total_count == 3
-    assert reduced_events == 1
-
-
-def test_session_index_recovers_from_corruption_without_losing_authority(
-    tmp_path: Path,
-) -> None:
-    runtime_root = _state_root(tmp_path)
-    _write_session_start(
-        runtime_root=runtime_root,
-        chat_id="c7",
-        session_instance_id="gen-7",
-        kind="primary",
-    )
-    assert session_store.get_session_record(runtime_root, "c7") is not None
-
-    (runtime_root / "sessions-index.sqlite3").write_bytes(b"not sqlite")
-
-    recovered = session_store.get_session_record(runtime_root, "c7")
-    assert recovered is not None
-    assert recovered.chat_id == "c7"
-
-
-def test_session_reads_fall_back_when_index_cannot_be_created(tmp_path: Path) -> None:
-    runtime_root = _state_root(tmp_path)
-    _write_session_start(
-        runtime_root=runtime_root,
-        chat_id="c8",
-        session_instance_id="gen-8",
-        kind="primary",
-    )
-    (runtime_root / "sessions-index.sqlite3").mkdir()
-
-    record = session_store.get_session_record(runtime_root, "c8")
-
-    assert record is not None
-    assert record.chat_id == "c8"
-
-
-def test_session_index_rebuilds_after_authoritative_journal_replacement(tmp_path: Path) -> None:
-    runtime_root = _state_root(tmp_path)
-    _write_session_start(
-        runtime_root=runtime_root,
-        chat_id="c1",
-        session_instance_id="gen-1",
-        kind="primary",
-    )
-    _write_session_start(
-        runtime_root=runtime_root,
-        chat_id="c2",
-        session_instance_id="gen-2",
-        kind="primary",
-    )
-    assert session_store.list_recent_primary_session_records(runtime_root, limit=5).total_count == 2
-
-    (runtime_root / "sessions.jsonl").write_text("", encoding="utf-8")
-    _write_session_start(
-        runtime_root=runtime_root,
-        chat_id="c9",
-        session_instance_id="gen-9",
-        kind="primary",
-    )
-
-    rebuilt = session_store.list_recent_primary_session_records(runtime_root, limit=5)
-    assert [record.chat_id for record in rebuilt.records] == ["c9"]
-    assert rebuilt.total_count == 1
-
-
-@pytest.mark.parametrize("replacement_count", [1, 3])
-def test_session_index_rebuilds_after_same_inode_journal_rewrite(
-    tmp_path: Path,
-    replacement_count: int,
-) -> None:
-    runtime_root = _state_root(tmp_path)
-    _write_session_start(
-        runtime_root=runtime_root,
-        chat_id="c1",
-        session_instance_id="gen-1",
-        kind="primary",
-    )
-    assert session_store.get_session_record(runtime_root, "c1") is not None
-    journal = runtime_root / "sessions.jsonl"
-    original_stat = journal.stat()
-    original_bytes = journal.read_bytes()
-
-    if replacement_count == 1:
-        replacement_bytes = original_bytes.replace(b"c1", b"c8")
-        assert len(replacement_bytes) == len(original_bytes)
-    else:
-        replacement_root = _state_root(tmp_path / "replacement")
-        for index in range(replacement_count):
-            _write_session_start(
-                runtime_root=replacement_root,
-                chat_id=f"c{index + 8}",
-                session_instance_id=f"replacement-{index}",
-                kind="primary",
-            )
-        replacement_bytes = (replacement_root / "sessions.jsonl").read_bytes()
-        assert len(replacement_bytes) > len(original_bytes)
-    journal.write_bytes(replacement_bytes)
-    if replacement_count == 1:
-        os.utime(
-            journal,
-            ns=(original_stat.st_atime_ns, original_stat.st_mtime_ns),
-        )
-
-    assert journal.stat().st_ino == original_stat.st_ino
-    rebuilt = session_store.list_recent_primary_session_records(runtime_root, limit=5)
-    assert {record.chat_id for record in rebuilt.records} == {
-        f"c{index + 8}" for index in range(replacement_count)
-    }
-    assert rebuilt.total_count == replacement_count
-
-
-def test_session_index_rebuilds_when_rewrite_preserves_indexed_tail(
-    tmp_path: Path,
-) -> None:
-    runtime_root = _state_root(tmp_path)
-    for index in range(1, 41):
-        _write_session_start(
-            runtime_root=runtime_root,
-            chat_id=f"c{index}",
-            session_instance_id=f"gen-{index}",
-            kind="primary",
-        )
-    initial = session_store.list_recent_primary_session_records(runtime_root, limit=50)
-    assert initial.total_count == 40
-    journal = runtime_root / "sessions.jsonl"
-    original = journal.read_bytes()
-    assert len(original) > 4096
-
-    rewritten = original.replace(b'"chat_id":"c1"', b'"chat_id":"c0"', 1)
-    assert rewritten[-4096:] == original[-4096:]
-    journal.write_bytes(rewritten)
-    _write_session_start(
-        runtime_root=runtime_root,
-        chat_id="c41",
-        session_instance_id="gen-41",
-        kind="primary",
-    )
-
-    rebuilt = session_store.list_recent_primary_session_records(runtime_root, limit=50)
-    chat_ids = {record.chat_id for record in rebuilt.records}
-    assert rebuilt.total_count == 41
-    assert "c0" in chat_ids
-    assert "c1" not in chat_ids
-    assert "c41" in chat_ids
-
-
-def test_recent_primary_page_has_same_tie_order_when_index_is_unavailable(
-    tmp_path: Path,
-) -> None:
-    runtime_root = _state_root(tmp_path)
-    for index in range(1, 4):
-        _write_session_start(
-            runtime_root=runtime_root,
-            chat_id=f"c{index}",
-            session_instance_id=f"gen-{index}",
-            kind="primary",
-        )
-
-    indexed = session_store.list_recent_primary_session_records(runtime_root, limit=2)
-    index_path = runtime_root / "sessions-index.sqlite3"
-    index_path.unlink()
-    index_path.mkdir()
-    fallback = session_store.list_recent_primary_session_records(runtime_root, limit=2)
-
-    assert [record.chat_id for record in indexed.records] == ["c3", "c2"]
-    assert fallback.records == indexed.records
-    assert fallback.total_count == indexed.total_count == 3
-
-
-def test_busy_session_index_falls_back_promptly_without_deleting_it(tmp_path: Path) -> None:
-    runtime_root = _state_root(tmp_path)
-    _write_session_start(
-        runtime_root=runtime_root,
-        chat_id="c1",
-        session_instance_id="gen-1",
-        kind="primary",
-    )
-    assert session_store.get_session_record(runtime_root, "c1") is not None
-    index_path = runtime_root / "sessions-index.sqlite3"
-
-    with sqlite3.connect(index_path) as blocker:
-        blocker.execute("BEGIN EXCLUSIVE")
-        started = time.monotonic()
-        page = session_store.list_recent_primary_session_records(runtime_root, limit=1)
-        elapsed = time.monotonic() - started
-
-    assert [record.chat_id for record in page.records] == ["c1"]
-    assert elapsed < 1
-    assert index_path.is_file()
-
-
-def test_session_index_ignores_partial_tail_until_record_is_complete(tmp_path: Path) -> None:
-    runtime_root = _state_root(tmp_path)
-    _write_session_start(
-        runtime_root=runtime_root,
-        chat_id="c1",
-        session_instance_id="gen-1",
-        kind="primary",
-    )
-    assert session_store.list_recent_primary_session_records(runtime_root, limit=5).total_count == 1
-
-    event = json.dumps(
-        {
-            "v": 1,
-            "event": "start",
-            "chat_id": "c2",
-            "kind": "primary",
-            "harness": "codex",
-            "harness_session_id": "c2-thread",
-            "model": "gpt-5.4",
-            "session_instance_id": "gen-2",
-            "started_at": "2026-03-01T00:01:00Z",
-        },
-        separators=(",", ":"),
-        sort_keys=True,
-    ).encode()
-    split = len(event) // 2
-    with (runtime_root / "sessions.jsonl").open("ab") as handle:
-        handle.write(event[:split])
-
-    partial = session_store.list_recent_primary_session_records(runtime_root, limit=5)
-    assert [record.chat_id for record in partial.records] == ["c1"]
-    assert partial.total_count == 1
-
-    with (runtime_root / "sessions.jsonl").open("ab") as handle:
-        handle.write(event[split:] + b"\n")
-
-    complete = session_store.list_recent_primary_session_records(runtime_root, limit=5)
-    assert [record.chat_id for record in complete.records] == ["c2", "c1"]
-    assert complete.total_count == 2

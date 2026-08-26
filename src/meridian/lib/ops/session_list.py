@@ -13,6 +13,7 @@ from meridian.lib.ops.reference_recovery import recover_recorded_chat_harness_se
 from meridian.lib.ops.runtime import async_from_sync, resolve_roots_for_read
 from meridian.lib.ops.session_reentry import SessionReentryDecision, decide_reentry
 from meridian.lib.state import session_store, work_store
+from meridian.lib.state.paths import RuntimePaths
 
 
 class SessionListInput(BaseModel):
@@ -20,6 +21,11 @@ class SessionListInput(BaseModel):
 
     project_root: str | None = None
     limit: int = Field(default=50, gt=0)
+
+
+def _chat_recency_key(chat_id: str) -> tuple[int, str]:
+    suffix = chat_id[1:] if chat_id.startswith("c") else ""
+    return (int(suffix), chat_id) if suffix.isdigit() else (-1, chat_id)
 
 
 class SessionListRow(BaseModel):
@@ -95,12 +101,31 @@ def session_list_sync(
     if roots is None:
         return SessionListOutput()
 
-    page = session_store.list_recent_primary_session_records(
-        roots.runtime_root,
-        limit=payload.limit,
+    records = [
+        record
+        for record in session_store.list_all_session_records(roots.runtime_root)
+        if record.kind == "primary"
+    ]
+    sessions_dir = RuntimePaths.from_root_dir(roots.runtime_root).sessions_dir
+    lease_chat_ids = {
+        path.name.removesuffix(".lease.json")
+        for path in sessions_dir.glob("*.lease.json")
+    }
+    live_chat_ids = {
+        record.chat_id
+        for record in records
+        if record.chat_id in lease_chat_ids
+        and session_store.is_session_lease_owner_alive(roots.runtime_root, record.chat_id)
+    }
+    records.sort(
+        key=lambda record: (
+            record.chat_id in live_chat_ids,
+            record.stopped_at or record.started_at,
+            _chat_recency_key(record.chat_id),
+        ),
+        reverse=True,
     )
-    visible_records = page.records
-    live_chat_ids = page.live_chat_ids
+    visible_records = records[: payload.limit]
     recorded_harness_sessions = recover_recorded_chat_harness_session_ids(
         roots.runtime_root,
         visible_records,
@@ -132,7 +157,7 @@ def session_list_sync(
             )
         )
 
-    return SessionListOutput(rows=tuple(rows), total_count=page.total_count)
+    return SessionListOutput(rows=tuple(rows), total_count=len(records))
 
 
 session_list = async_from_sync(session_list_sync)

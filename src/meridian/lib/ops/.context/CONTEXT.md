@@ -213,18 +213,13 @@ durably recorded harness session id and may therefore resume or fork.
 `recover_recorded_chat_harness_session_ids()` and `session_reentry.py` uses its
 single-chat counterpart from `reference_recovery.py`. Both check the session
 store, primary spawn row, and `primary_meta.json`, but never perform native
-transcript discovery. `session_list.py` gets its live-first, limited page from the
-rebuildable session index before enriching visible records; the batch recovery
-form must keep at most one spawn-state scan for legacy rows without a recorded
-primary `spawn_id`. New primary launches persist that relationship and use direct
-spawn reads; a published-spawn generation invalidates legacy negative backfills.
-Likewise, `iter_session_subset_search()` resolves the whole requested subset with one
-indexed session query and bounded direct spawn reads. Ordinary readable relationships
-never trigger a global spawn scan. One batch-wide legacy scan is reserved for an
-unreadable recorded primary relationship (missing row, wrong kind, or wrong owning
-chat), so deep search can still recover related legacy histories; a missing relationship
-scans only while its generation-aware backfill is stale. Listing carries an advisory
-action for the UI; Enter re-reads the same durable authorities plus lease liveness. Using the general
+transcript discovery. `session_list.py` orders and limits lightweight session
+records before enriching the visible page. Recovery and subset search replay the
+session journal once, use recorded primary `spawn_id` relationships for direct
+reads, and perform at most one fallback global spawn scan for missing or invalid
+legacy relationships. A scan per missing session would make startup scale as
+sessions × spawns. Listing carries an advisory action for the UI; Enter
+re-reads the same durable authorities plus lease liveness. Using the general
 resolver in only one path can make the displayed verb disagree with the action
 even when no lease changed.
 

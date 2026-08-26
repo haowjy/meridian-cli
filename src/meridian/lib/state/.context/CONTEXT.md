@@ -15,8 +15,6 @@ meridian.toml
 ~/.meridian/projects/<id>/          ← user runtime, never committed
   sessions.jsonl                    — all session events, append-only
   sessions.jsonl.flock
-  sessions-append-state.json        — derived append-chain certificate
-  sessions-index.sqlite3            — rebuildable current-session projection
   session-id-counter                — monotonic c1, c2, …
   sessions/                         — per-session lock + lease files
   spawn-id-counter                  — monotonic p1, p2, …
@@ -57,33 +55,13 @@ the v2 migration; published rows now use schema v3.
 
 ### Session State
 
-Sessions remain event-sourced JSONL (`sessions.jsonl`), which is authoritative.
-`session_index.py` maintains a rebuildable SQLite projection for direct record reads
-and bounded recent-primary queries. It incrementally consumes only complete JSONL
-records and rebuilds after source replacement/truncate-rewrite, schema mismatch, or
-index corruption. `session_journal.py` certifies each ordinary append against the
-previous source state; the index accepts a suffix only while that append epoch remains
-continuous. Any external rewrite, missing certificate update, or crash between the
-event and certificate forces a safe rebuild. Index synchronization and journal appends
-share `sessions.jsonl.flock`; a busy or unavailable index promptly falls back to the
-journal rather than making derived state authoritative.
-`session_aggregate.py` backfills historical primary `spawn_id` values from
-authoritative spawn rows. Its generation marker changes when a spawn row publishes,
-so a prior negative scan cannot suppress a later valid relationship. New primary
-launches append the relationship to the session journal.
-
-The store exposes distinct read shapes rather than one replay API:
-
-| Read | Normal path | Fallback |
-|---|---|---|
-| `get_session_record()` | Direct indexed chat-ID lookup | Journal projection |
-| `get_session_records()` | One indexed requested-subset query | Journal projection |
-| `list_recent_primary_session_records()` | Indexed live-first page plus total count | Journal projection and sort |
-| `list_all_session_records()` | Full index projection | Journal projection |
-
-Event-history questions that cannot be answered from the current-record projection,
-such as `chat_ids_ever_attached_to_work()`, intentionally replay the journal. Bounded
-transcript-target recovery is ops policy; see
+Sessions remain event-sourced JSONL (`sessions.jsonl`). Reads replay the
+truncation-tolerant journal into current records; session browse orders and limits
+those lightweight records before enriching the visible page. New primary launches
+also append their canonical `spawn_id` relationship. Current recovery and transcript
+target reads use it directly to avoid global spawn scans; the official SQLite index
+planned in 0.4.0 can reuse the same authority. Until that index becomes the shared
+state-layer read path, browse does not own a separate projection. See `.context/TODO` and
 [ops/.context/CONTEXT.md](../../ops/.context/CONTEXT.md).
 
 ## Contracts
