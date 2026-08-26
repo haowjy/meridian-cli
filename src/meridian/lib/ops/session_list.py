@@ -103,16 +103,34 @@ def session_list_sync(
         path.name.removesuffix(".lease.json")
         for path in sessions_dir.glob("*.lease.json")
     }
+    live_chat_ids = {
+        record.chat_id
+        for record in records
+        if record.chat_id in lease_chat_ids
+        and session_store.is_session_lease_owner_alive(roots.runtime_root, record.chat_id)
+    }
+    records.sort(
+        key=lambda record: (
+            record.chat_id in live_chat_ids,
+            record.stopped_at or record.started_at,
+        ),
+        reverse=True,
+    )
+    visible_records = records[: payload.limit]
     recorded_harness_sessions = recover_recorded_chat_harness_session_ids(
         roots.runtime_root,
-        records,
+        visible_records,
     )
+    work_labels = {
+        work_id: _work_label(roots.project_state_dir, work_id)
+        for work_id in {
+            record.active_work_id for record in visible_records if record.active_work_id
+        }
+    }
 
     rows: list[SessionListRow] = []
-    for record in records:
-        live = record.chat_id in lease_chat_ids and session_store.is_session_lease_owner_alive(
-            roots.runtime_root, record.chat_id
-        )
+    for record in visible_records:
+        live = record.chat_id in live_chat_ids
         rows.append(
             SessionListRow(
                 chat_id=record.chat_id,
@@ -125,13 +143,12 @@ def session_list_sync(
                 ),
                 agent=record.agent,
                 model=record.model,
-                work_label=_work_label(roots.project_state_dir, record.active_work_id),
+                work_label=work_labels.get(record.active_work_id or "", ""),
                 task_cwd=record.task_cwd or record.execution_cwd or "",
             )
         )
 
-    rows.sort(key=lambda row: (row.live, row.activity_at), reverse=True)
-    return SessionListOutput(rows=tuple(rows[: payload.limit]), total_count=len(rows))
+    return SessionListOutput(rows=tuple(rows), total_count=len(records))
 
 
 session_list = async_from_sync(session_list_sync)

@@ -8,6 +8,7 @@ mutation or repair writes happen during resolution.
 from __future__ import annotations
 
 import re
+from collections.abc import Iterator, Sequence
 from datetime import datetime
 from pathlib import Path
 from typing import Literal, NamedTuple
@@ -53,6 +54,12 @@ class SessionLogTarget(NamedTuple):
     file_path: Path | None
     source: str
     sources: tuple[TranscriptSource, ...]
+
+
+class ChatSessionLogTargetResolution(NamedTuple):
+    chat_id: str
+    target: SessionLogTarget | None
+    error: str | None = None
 
 
 def _is_chat_ref(runtime_root: Path, value: str) -> bool:
@@ -472,18 +479,29 @@ def _spawn_history_fallback_for_chat_ref(
     display_id: str,
     chat_id: str,
     primary_spawn: SpawnRecord | None,
+    related_spawns: Sequence[SpawnRecord] | None = None,
 ) -> SessionLogTarget | None:
     candidates: list[SpawnRecord] = []
     if primary_spawn is not None:
         candidates.append(primary_spawn)
-    candidates.extend(
-        reversed(
-            session_identity.list_spawns_for_exact_session(runtime_root, chat_id).records
+    if related_spawns is None:
+        candidates.extend(
+            reversed(
+                session_identity.list_spawns_for_exact_session(runtime_root, chat_id).records
+            )
         )
-    )
-    candidates.extend(
-        reversed(session_identity.list_spawns_for_owner_chat(runtime_root, chat_id).records)
-    )
+        candidates.extend(
+            reversed(session_identity.list_spawns_for_owner_chat(runtime_root, chat_id).records)
+        )
+    else:
+        candidates.extend(
+            row for row in reversed(related_spawns) if row.chat_id == chat_id
+        )
+        candidates.extend(
+            row
+            for row in reversed(related_spawns)
+            if session_identity.spawn_owner_chat_id(row) == chat_id
+        )
 
     seen: set[str] = set()
     for row in candidates:
@@ -620,16 +638,15 @@ def _skip_primary_default_root_detection(
     return configured_session_dir != default_session_dir
 
 
-def _resolve_from_chat_id(
+def _resolve_from_chat_state(
     *,
     project_root: Path,
     runtime_root: Path,
     chat_id: str,
+    session_record: session_store.SessionRecord,
+    primary_spawn: SpawnRecord | None,
+    related_spawns: Sequence[SpawnRecord] | None = None,
 ) -> SessionLogTarget:
-    session_record = _read_chat_session_record(runtime_root, chat_id)
-    if session_record is None:
-        raise ValueError(f"Chat '{chat_id}' not found")
-    primary_spawn = _primary_spawn_for_chat(project_root, runtime_root, chat_id)
     normalized_harness = session_record.harness.strip() or None
     if normalized_harness is None and primary_spawn is not None and primary_spawn.harness:
         normalized_harness = primary_spawn.harness.strip() or None
@@ -683,6 +700,7 @@ def _resolve_from_chat_id(
             display_id=chat_id,
             chat_id=chat_id,
             primary_spawn=primary_spawn,
+            related_spawns=related_spawns,
         )
         return _with_sources(transcript_target, output_target)
 
@@ -705,6 +723,7 @@ def _resolve_from_chat_id(
                 display_id=chat_id,
                 chat_id=chat_id,
                 primary_spawn=primary_spawn,
+                related_spawns=related_spawns,
             )
             return _with_sources(transcript_target, output_target)
 
@@ -724,6 +743,76 @@ def _resolve_from_chat_id(
         harness=normalized_harness,
         config_root_hint=config_root_hint,
     )
+
+
+def _resolve_from_chat_id(
+    *,
+    project_root: Path,
+    runtime_root: Path,
+    chat_id: str,
+) -> SessionLogTarget:
+    session_record = _read_chat_session_record(runtime_root, chat_id)
+    if session_record is None:
+        raise ValueError(f"Chat '{chat_id}' not found")
+    return _resolve_from_chat_state(
+        project_root=project_root,
+        runtime_root=runtime_root,
+        chat_id=chat_id,
+        session_record=session_record,
+        primary_spawn=_primary_spawn_for_chat(project_root, runtime_root, chat_id),
+    )
+
+
+def iter_chat_session_log_targets(
+    *,
+    project_root: Path,
+    runtime_root: Path,
+    chat_ids: Sequence[str],
+) -> Iterator[ChatSessionLogTargetResolution]:
+    """Resolve an ordered chat subset with one session and spawn-state scan."""
+
+    normalized_chat_ids = tuple(chat_id.strip() for chat_id in chat_ids)
+    records = {
+        record.chat_id: record
+        for record in session_store.get_session_records(
+            runtime_root,
+            {chat_id for chat_id in normalized_chat_ids if chat_id},
+        )
+    }
+    wanted_chat_ids = set(normalized_chat_ids)
+    primary_spawns: dict[str, SpawnRecord] = {}
+    related_spawns: dict[str, list[SpawnRecord]] = {
+        chat_id: [] for chat_id in wanted_chat_ids
+    }
+    for spawn in spawn_store.list_spawns(runtime_root).records:
+        owner_chat_id = session_identity.spawn_owner_chat_id(spawn)
+        if spawn.kind == "primary" and owner_chat_id in wanted_chat_ids:
+            primary_spawns[owner_chat_id] = spawn
+        for related_chat_id in {spawn.chat_id, owner_chat_id} & wanted_chat_ids:
+            related_spawns[related_chat_id].append(spawn)
+
+    for chat_id in normalized_chat_ids:
+        session_record = records.get(chat_id)
+        if session_record is None:
+            yield ChatSessionLogTargetResolution(
+                chat_id,
+                None,
+                f"Chat '{chat_id}' not found",
+            )
+            continue
+        try:
+            target = _resolve_from_chat_state(
+                project_root=project_root,
+                runtime_root=runtime_root,
+                chat_id=chat_id,
+                session_record=session_record,
+                primary_spawn=primary_spawns.get(chat_id),
+                related_spawns=related_spawns.get(chat_id, ()),
+            )
+        except (ValueError, FileNotFoundError, OSError) as exc:
+            yield ChatSessionLogTargetResolution(chat_id, None, str(exc))
+            continue
+        yield ChatSessionLogTargetResolution(chat_id, target)
 
 
 def _spawn_linked_chat_session(
@@ -1004,7 +1093,9 @@ def resolve_session_log_target(
 
 
 __all__ = [
+    "ChatSessionLogTargetResolution",
     "SessionLogTarget",
+    "iter_chat_session_log_targets",
     "resolve_session_log_target",
     "spawn_output_path_for_target",
 ]

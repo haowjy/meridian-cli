@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import meridian.lib.ops.session_list as session_list_module
 from meridian.lib.ops.session_list import SessionListInput, session_list_sync
 from meridian.lib.ops.session_reentry import Blocked, Fork, Resume, resolve_session_reentry
 from meridian.lib.ops.session_search import iter_session_subset_search
@@ -214,6 +215,53 @@ def test_session_list_scans_spawn_state_once_for_missing_ids(
     assert scan_count == 1
 
 
+def test_session_list_enriches_only_the_visible_limit(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    project_root, runtime_root = _project_roots(tmp_path)
+    project_state_dir = resolve_project_paths(project_root).root_dir
+    chat_ids: list[str] = []
+    for index in range(3):
+        work_id = f"browse-page-{index}"
+        work_repository.create_work_item(project_state_dir, work_id)
+        chat_id = session_store.start_session(
+            runtime_root,
+            harness="codex",
+            harness_session_id=f"{index + 1:08d}-1111-4111-8111-111111111111",
+            model="gpt-5.4",
+            kind="primary",
+        )
+        session_store.update_session_work_id(runtime_root, chat_id, work_id)
+        if index < 2:
+            session_store.stop_session(runtime_root, chat_id)
+        chat_ids.append(chat_id)
+
+    recovered_batches: list[tuple[str, ...]] = []
+    real_recover = session_list_module.recover_recorded_chat_harness_session_ids
+
+    def recording_recover(runtime_root: Path, sessions):
+        recovered_batches.append(tuple(record.chat_id for record in sessions))
+        return real_recover(runtime_root, sessions)
+
+    monkeypatch.setattr(
+        session_list_module,
+        "recover_recorded_chat_harness_session_ids",
+        recording_recover,
+    )
+
+    try:
+        output = session_list_sync(
+            SessionListInput(project_root=project_root.as_posix(), limit=1)
+        )
+    finally:
+        session_store.stop_session(runtime_root, chat_ids[-1])
+
+    assert output.total_count == 3
+    assert [row.chat_id for row in output.rows] == [chat_ids[-1]]
+    assert recovered_batches == [(chat_ids[-1],)]
+
+
 def test_subset_search_is_ordered_and_failure_isolated(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -250,6 +298,23 @@ def test_subset_search_is_ordered_and_failure_isolated(
         session_id=other_id,
         text="something unrelated",
     )
+    record_scan_count = 0
+    spawn_scan_count = 0
+    real_get_session_records = session_store.get_session_records
+    real_list_spawns = spawn_store.list_spawns
+
+    def counting_get_session_records(*args, **kwargs):
+        nonlocal record_scan_count
+        record_scan_count += 1
+        return real_get_session_records(*args, **kwargs)
+
+    def counting_list_spawns(*args, **kwargs):
+        nonlocal spawn_scan_count
+        spawn_scan_count += 1
+        return real_list_spawns(*args, **kwargs)
+
+    monkeypatch.setattr(session_store, "get_session_records", counting_get_session_records)
+    monkeypatch.setattr(spawn_store, "list_spawns", counting_list_spawns)
 
     steps = list(
         iter_session_subset_search(
@@ -263,3 +328,5 @@ def test_subset_search_is_ordered_and_failure_isolated(
     assert steps[0].matched is False and steps[0].error is None
     assert steps[1].matched is False and steps[1].error
     assert steps[2].matched is True and steps[2].error is None
+    assert record_scan_count == 1
+    assert spawn_scan_count == 1

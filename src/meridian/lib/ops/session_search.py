@@ -13,9 +13,13 @@ from meridian.lib.ops.runtime import (
     async_from_sync,
     resolve_project_authority,
     resolve_roots_for_read,
+    resolve_runtime_authority_for_read,
 )
 from meridian.lib.ops.session_corpus import resolve_session_search_corpus
-from meridian.lib.ops.session_target import resolve_session_log_target
+from meridian.lib.ops.session_target import (
+    iter_chat_session_log_targets,
+    resolve_session_log_target,
+)
 from meridian.lib.ops.session_transcript import (
     AbsoluteTranscriptEntry,
     ParsedSessionTranscript,
@@ -102,12 +106,31 @@ def iter_session_subset_search(
     if not normalized_query:
         raise ValueError("query must not be empty")
 
-    for chat_id in chat_ids:
+    authority = resolve_runtime_authority_for_read(project_root)
+    if authority.runtime_root is None:
+        for chat_id in chat_ids:
+            yield SubsetSearchStep(chat_id, False, f"Chat '{chat_id}' not found")
+        return
+
+    targets = iter_chat_session_log_targets(
+        project_root=authority.project_root,
+        runtime_root=authority.runtime_root,
+        chat_ids=chat_ids,
+    )
+    for resolution in targets:
+        if resolution.target is None:
+            yield SubsetSearchStep(
+                resolution.chat_id,
+                False,
+                resolution.error or "transcript not found",
+            )
+            continue
         try:
-            transcript = read_session_transcript(
-                ref=chat_id,
-                file_path=None,
-                project_root=project_root,
+            transcript = parse_session_target(
+                project_root=authority.project_root,
+                runtime_root=authority.runtime_root,
+                target=resolution.target,
+                route=route_for_corpus_target(resolution.target),
             )
             matched = any(
                 not (entry.kind == "setup" and entry.is_placeholder)
@@ -115,9 +138,9 @@ def iter_session_subset_search(
                 for entry in transcript.all_entries
             )
         except (ValueError, FileNotFoundError, OSError) as exc:
-            yield SubsetSearchStep(chat_id, False, str(exc))
+            yield SubsetSearchStep(resolution.chat_id, False, str(exc))
             continue
-        yield SubsetSearchStep(chat_id, matched)
+        yield SubsetSearchStep(resolution.chat_id, matched)
 
 
 def _build_preview(content: str, *, query: str, limit: int = _PREVIEW_LIMIT) -> str:
