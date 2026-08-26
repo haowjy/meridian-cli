@@ -15,8 +15,10 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Open the session browser promptly in projects with large session and spawn
   histories by enriching only the visible `--limit` page and resolving deep-search
   targets with one session/spawn scan per search.
-- Show session-browser column headers and keep rows aligned across varying
-  agent and model label lengths.
+- Show session-browser column headers and keep rows aligned by terminal display
+  width across varying and Unicode agent/model labels.
+- Keep preview and transcript-search workers available after a request fails
+  instead of leaving the picker stuck in a loading state.
 - Materialize Codex forks from complete, validated rollout records and remove
   the published fork if Codex thread registration fails.
 - Fall back with a destination-naming warning when a work item's task directory

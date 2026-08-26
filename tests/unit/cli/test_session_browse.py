@@ -4,6 +4,7 @@ import os
 from datetime import UTC, datetime
 
 import pytest
+from prompt_toolkit.utils import get_cwidth
 
 from meridian.cli.browse import render as browse_render
 from meridian.cli.browse.model import (
@@ -139,7 +140,12 @@ def test_list_places_scroll_cursor_on_highlighted_row() -> None:
         if style == "[SetCursorPosition]"
     ]
     assert len(cursor_markers) == 1
-    assert "c15" in fragments[cursor_markers[0] + 1][1]
+    selected_line: list[str] = []
+    for _style, text in fragments[cursor_markers[0] + 1 :]:
+        if text == "\n":
+            break
+        selected_line.append(text)
+    assert "c15" in "".join(selected_line)
 
 
 def test_list_renders_older_count_as_nonselectable_trailer() -> None:
@@ -169,6 +175,26 @@ def test_list_header_and_rows_share_fixed_column_starts() -> None:
     work_column = header.index("WORK")
     assert lines[0][work_column:].startswith("session-browse")
     assert lines[1][work_column:].startswith("auth-refactor")
+
+
+def test_list_columns_use_terminal_display_width() -> None:
+    row = _row("c123", work="工作").model_copy(
+        update={"agent": "审查员", "model": "模型"}
+    )
+    model = BrowseModel((row,))
+
+    header = _text(browse_render.render_list_header(model, 100))
+    rendered = _text(render_list(model, 100)).splitlines()[0]
+
+    header_work_column = get_cwidth(header[: header.index("WORK")])
+    row_work_column = get_cwidth(rendered[: rendered.index("工作")])
+    assert row_work_column == header_work_column
+
+
+def test_live_marker_receives_live_style() -> None:
+    fragments = render_list(BrowseModel((_row("c123", live=True),)), 100)
+
+    assert any(text == "●" and "class:live" in style for style, text in fragments)
 
 
 def test_narrow_list_header_omits_hidden_columns() -> None:

@@ -7,7 +7,7 @@ from typing import Literal
 
 from meridian.lib.ops.session_list import SessionListRow
 
-type BrowseMode = Literal["list", "search-input", "searching"]
+type BrowseMode = Literal["list", "search-input", "searching", "search-results"]
 
 
 @dataclass(frozen=True)
@@ -82,7 +82,7 @@ class BrowseModel:
     search_query: str = ""
     search_scanned: int = 0
     search_total: int = 0
-    search_matches: frozenset[str] | None = None
+    search_matches: frozenset[str] = frozenset()
     preview_chat_id: str | None = None
     preview_lines: tuple[str, ...] = ()
     preview_loading: bool = False
@@ -98,7 +98,7 @@ class BrowseModel:
                 for row in rows
                 if needle in row.filter_text or _subsequence(needle, row.filter_text)
             )
-        if self.search_matches is not None:
+        if self.mode == "search-results":
             rows = tuple(row for row in rows if row.chat_id in self.search_matches)
         return rows
 
@@ -119,12 +119,12 @@ class BrowseModel:
         if isinstance(key, Interrupt):
             return Quit(130)
         if isinstance(key, Escape):
-            if self.mode != "list" or self.search_matches is not None:
+            if self.mode != "list":
                 self.mode = "list"
                 self.search_query = ""
                 self.search_scanned = 0
                 self.search_total = 0
-                self.search_matches = None
+                self.search_matches = frozenset()
                 self.highlight = 0
                 self._clear_inline()
                 self._clamp()
@@ -134,7 +134,7 @@ class BrowseModel:
             if self.mode == "list":
                 self.mode = "search-input"
                 self.search_query = ""
-                self.search_matches = None
+                self.search_matches = frozenset()
                 self._clear_inline()
             elif self.mode == "search-input":
                 self.search_query += "/"
@@ -154,36 +154,37 @@ class BrowseModel:
                 self._clear_inline()
                 self._clamp()
             return None
-        if isinstance(key, Character):
-            if not key.value.isprintable() or len(key.value) != 1:
-                return None
-            if self.mode == "searching":
-                return None
+        if isinstance(key, Enter):
             if self.mode == "search-input":
-                self.search_query += key.value
-                return None
-            if not self.rows:
-                return Quit() if key.value == "q" else None
-            if key.value == "q" and not self.filter_text:
-                return Quit()
-            self.filter_text += key.value
-            self.highlight = 0
-            self._clear_inline()
-            self._clamp()
+                query = self.search_query.strip()
+                if not query:
+                    return None
+                chat_ids = tuple(row.chat_id for row in self.visible_rows)
+                self.mode = "searching"
+                self.search_scanned = 0
+                self.search_total = len(chat_ids)
+                self.search_matches = frozenset()
+                self._clear_inline()
+                return StartSearch(query, chat_ids)
+            row = self.highlighted_row
+            return Activate(row.chat_id) if row is not None else None
+        value = key.value
+        if not value.isprintable() or len(value) != 1:
+            return None
+        if self.mode in {"searching", "search-results"}:
             return None
         if self.mode == "search-input":
-            query = self.search_query.strip()
-            if not query:
-                return None
-            chat_ids = tuple(row.chat_id for row in self.visible_rows)
-            self.mode = "searching"
-            self.search_scanned = 0
-            self.search_total = len(chat_ids)
-            self.search_matches = None
-            self._clear_inline()
-            return StartSearch(query, chat_ids)
-        row = self.highlighted_row
-        return Activate(row.chat_id) if row is not None else None
+            self.search_query += value
+            return None
+        if not self.rows:
+            return Quit() if value == "q" else None
+        if value == "q" and not self.filter_text:
+            return Quit()
+        self.filter_text += value
+        self.highlight = 0
+        self._clear_inline()
+        self._clamp()
+        return None
 
     def apply_preview(self, chat_id: str, lines: tuple[str, ...]) -> None:
         if self.highlighted_row is None or self.highlighted_row.chat_id != chat_id:
@@ -204,8 +205,18 @@ class BrowseModel:
         self.search_scanned = total
         self.search_total = total
         self.search_matches = matched_chat_ids
+        self.mode = "search-results"
         self.highlight = 0
         self._clamp()
+
+    def apply_search_failed(self, reason: str) -> None:
+        if self.mode != "searching":
+            return
+        self.mode = "list"
+        self.search_scanned = 0
+        self.search_total = 0
+        self.search_matches = frozenset()
+        self.inline_message = f"search failed: {reason}"
 
     def apply_blocked(self, chat_id: str, reason: str) -> None:
         self.inline_message = f"{chat_id}: {reason}"

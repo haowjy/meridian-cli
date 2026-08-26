@@ -14,7 +14,13 @@ from prompt_toolkit.input.defaults import create_pipe_input
 from prompt_toolkit.output import DummyOutput
 
 from meridian.cli.browse import tui as browse_tui
-from meridian.cli.browse.tui import Lane, SearchProgress, SearchRequest, run_browse_picker
+from meridian.cli.browse.tui import (
+    Lane,
+    LaneFailure,
+    SearchProgress,
+    SearchRequest,
+    run_browse_picker,
+)
 from meridian.lib.ops.session_list import SessionListOutput, SessionListRow
 from meridian.lib.ops.session_reentry import Blocked, Resume
 from meridian.lib.ops.session_search import SubsetSearchStep
@@ -116,6 +122,28 @@ def test_lane_discards_completion_from_replaced_request() -> None:
         lane.close()
 
     assert results == [second]
+
+
+def test_lane_reports_failure_and_serves_the_next_request() -> None:
+    invalidated = threading.Event()
+
+    def worker(request: str, _current, post) -> None:
+        if request == "bad":
+            raise RuntimeError("preview exploded")
+        post(request)
+
+    lane: Lane[str, str] = Lane(worker, invalidated.set)
+    try:
+        lane.submit("bad")
+        assert invalidated.wait(timeout=1)
+        invalidated.clear()
+        assert list(lane.drain()) == [LaneFailure("preview exploded")]
+
+        lane.submit("good")
+        assert invalidated.wait(timeout=1)
+        assert list(lane.drain()) == ["good"]
+    finally:
+        lane.close()
 
 
 def test_search_worker_does_not_open_next_transcript_after_cancellation(

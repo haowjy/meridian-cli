@@ -53,6 +53,11 @@ LaneWorker = Callable[
 ]
 
 
+@dataclass(frozen=True)
+class LaneFailure:
+    message: str
+
+
 class Lane(Generic[RequestT, ResultT]):
     """Latest-only request slot with identity-based stale completion removal."""
 
@@ -62,7 +67,7 @@ class Lane(Generic[RequestT, ResultT]):
         self._slot: RequestT | None = None
         self._condition = threading.Condition()
         self._shutdown = False
-        self._mailbox: SimpleQueue[tuple[RequestT, ResultT]] = SimpleQueue()
+        self._mailbox: SimpleQueue[tuple[RequestT, ResultT | LaneFailure]] = SimpleQueue()
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
 
@@ -80,7 +85,7 @@ class Lane(Generic[RequestT, ResultT]):
         with self._condition:
             return self._slot is request and not self._shutdown
 
-    def drain(self) -> Iterator[ResultT]:
+    def drain(self) -> Iterator[ResultT | LaneFailure]:
         while True:
             try:
                 request, result = self._mailbox.get_nowait()
@@ -110,12 +115,18 @@ class Lane(Generic[RequestT, ResultT]):
             assert request is not None
             current = partial(self.is_current, request)
             post = partial(self._post, request)
-            self._worker(request, current, post)
+            try:
+                self._worker(request, current, post)
+            except Exception as exc:
+                self._post(request, LaneFailure(str(exc) or type(exc).__name__))
             processed = request
 
-    def _post(self, request: RequestT, result: ResultT) -> None:
-        self._mailbox.put((request, result))
-        self._invalidate()
+    def _post(self, request: RequestT, result: ResultT | LaneFailure) -> None:
+        with self._condition:
+            if self._slot is not request or self._shutdown:
+                return
+            self._mailbox.put((request, result))
+            self._invalidate()
 
 
 @dataclass(frozen=True)
@@ -254,9 +265,16 @@ class _BrowseController:
 
     def drain(self) -> None:
         for result in self._preview_lane.drain():
-            self.model.apply_preview(result.chat_id, result.lines)
+            if isinstance(result, LaneFailure):
+                request = self._preview_request
+                if request is not None:
+                    self.model.apply_preview(request.chat_id, (result.message,))
+            else:
+                self.model.apply_preview(result.chat_id, result.lines)
         for result in self._search_lane.drain():
-            if isinstance(result, SearchProgress):
+            if isinstance(result, LaneFailure):
+                self.model.apply_search_failed(result.message)
+            elif isinstance(result, SearchProgress):
                 self.model.apply_search_progress(result.scanned, result.total)
             else:
                 self.model.apply_search_done(result.matched_chat_ids, result.total)
@@ -314,27 +332,22 @@ def run_browse_picker(
         return dimensions.columns, dimensions.rows
 
     def status_text():
-        controller.drain()
         width, _height = size()
         return render_status(controller.model, width)
 
     def list_text():
-        controller.drain()
         width, _height = size()
         return render_list(controller.model, width)
 
     def list_header_text():
-        controller.drain()
         width, _height = size()
         return render_list_header(controller.model, width)
 
     def preview_text():
-        controller.drain()
         width, height = size()
         return render_preview(controller.model, width, max(1, height // 2 - 2))
 
     def footer_text():
-        controller.drain()
         width, _height = size()
         return render_footer(controller.model, width)
 
@@ -415,6 +428,7 @@ def run_browse_picker(
         key_bindings=bindings,
         full_screen=True,
         style=style,
+        before_render=lambda _app: controller.drain(),
         input=input,
         output=output,
     )
@@ -430,4 +444,4 @@ def run_browse_picker(
     return None
 
 
-__all__ = ["Lane", "run_browse_picker"]
+__all__ = ["Lane", "LaneFailure", "run_browse_picker"]

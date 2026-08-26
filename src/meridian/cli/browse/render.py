@@ -7,6 +7,8 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from prompt_toolkit.formatted_text import StyleAndTextTuples
 
+from prompt_toolkit.utils import get_cwidth
+
 from meridian.cli.browse.model import BrowseModel
 from meridian.lib.core.formatting import relative_time
 from meridian.lib.ops.session_reentry import Blocked, Fork, SessionReentryDecision
@@ -21,25 +23,35 @@ _MODEL_WIDTH = 16
 def _clip(value: str, width: int) -> str:
     if width <= 0:
         return ""
-    if len(value) <= width:
+    if get_cwidth(value) <= width:
         return value
     if width == 1:
         return "…"
-    return value[: width - 1].rstrip() + "…"
+    target_width = width - get_cwidth("…")
+    clipped: list[str] = []
+    used_width = 0
+    for character in value:
+        character_width = get_cwidth(character)
+        if used_width + character_width > target_width:
+            break
+        clipped.append(character)
+        used_width += character_width
+    return "".join(clipped).rstrip() + "…"
 
 
 def _cell(value: str, width: int) -> str:
-    return f"{_clip(value, width):<{width}}"
+    clipped = _clip(value, width)
+    return clipped + " " * max(0, width - get_cwidth(clipped))
 
 
 def render_status(model: BrowseModel, width: int) -> StyleAndTextTuples:
-    if model.mode in {"search-input", "searching"}:
+    if model.mode in {"search-input", "searching", "search-results"}:
         label = f"search: {model.search_query}"
         if model.mode == "searching":
-            if model.search_matches is None:
-                progress = f"scanned {model.search_scanned}/{model.search_total}"
-            else:
-                progress = f"{len(model.search_matches)} of {model.search_total} match"
+            progress = f"scanned {model.search_scanned}/{model.search_total}"
+            label = f"{label}  {progress}"
+        elif model.mode == "search-results":
+            progress = f"{len(model.search_matches)} of {model.search_total} match"
             label = f"{label}  {progress}"
     else:
         label = f"filter: {model.filter_text}"
@@ -85,9 +97,11 @@ def render_list(model: BrowseModel, width: int) -> StyleAndTextTuples:
                 f"{_cell(row.model or '—', _MODEL_WIDTH)} {row.work_label or '—'}"
             )
         style = "class:selected" if selected else "class:row"
-        fragments.append((style, _clip(line, width)))
-        if row.live:
-            fragments.append(("class:live", ""))
+        clipped_line = _clip(line, width)
+        fragments.append((style, clipped_line[:2]))
+        live_style = f"{style} class:live" if row.live else style
+        fragments.append((live_style, clipped_line[2:3]))
+        fragments.append((style, clipped_line[3:]))
         fragments.append(("", "\n"))
     if model.older_count:
         hint = f"+{model.older_count} older · raise --limit to see more"
@@ -128,10 +142,10 @@ def render_footer(model: BrowseModel, width: int) -> StyleAndTextTuples:
     action = _action_hint(row.reentry) if row is not None else ""
     if model.mode == "search-input":
         text = "type query · [enter] search · [esc] back"
-    elif model.mode == "searching" and model.search_matches is None:
+    elif model.mode == "searching":
         parts = ("searching transcripts", action, "[esc] cancel")
         text = " · ".join(part for part in parts if part)
-    elif model.mode == "searching":
+    elif model.mode == "search-results":
         text = " · ".join(part for part in ("search results", action, "[esc] back") if part)
     elif row is None:
         text = "[q]/[esc] quit"
