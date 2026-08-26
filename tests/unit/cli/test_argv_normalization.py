@@ -47,6 +47,8 @@ def test_normalize_optional_value_flags(argv: list[str], expected: list[str]) ->
         ),
         (["-C", "/tmp/project", "--continue"], ["session", "browse", "-C", "/tmp/project"]),
         (["--continue", "c9"], ["--continue", "c9"]),
+        (["--", "--continue"], ["--", "--continue"]),
+        (["spawn", "--", "--continue"], ["spawn", "--", "--continue"]),
         (["mars", "--continue"], ["mars", "--continue"]),
     ],
 )

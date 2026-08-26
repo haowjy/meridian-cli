@@ -50,6 +50,8 @@ def canonicalize_argv(argv: Sequence[str]) -> list[str]:
 
     bare_continue_index: int | None = None
     for index, token in enumerate(argv):
+        if token == "--":
+            break
         if token == "--continue=":
             bare_continue_index = index
             break

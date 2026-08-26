@@ -44,6 +44,8 @@ def render_list(model: BrowseModel, width: int) -> StyleAndTextTuples:
     fragments: StyleAndTextTuples = []
     for index, row in enumerate(rows):
         selected = index == model.highlight
+        if selected:
+            fragments.append(("[SetCursorPosition]", ""))
         marker = "▸" if selected else " "
         live = "●" if row.live else " "
         age = relative_time(row.activity_at).removesuffix(" ago")

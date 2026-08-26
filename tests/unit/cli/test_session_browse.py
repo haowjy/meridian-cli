@@ -104,6 +104,21 @@ def test_blocked_and_rendered_action_hints() -> None:
     assert "c2: no harness session" in _text(render_footer(model, 100))
 
 
+def test_list_places_scroll_cursor_on_highlighted_row() -> None:
+    model = BrowseModel(tuple(_row(f"c{index}") for index in range(20)))
+    model.highlight = 15
+
+    fragments = render_list(model, 80)
+
+    cursor_markers = [
+        index
+        for index, (style, _text_value) in enumerate(fragments)
+        if style == "[SetCursorPosition]"
+    ]
+    assert len(cursor_markers) == 1
+    assert "c15" in fragments[cursor_markers[0] + 1][1]
+
+
 @pytest.mark.parametrize(
     ("kwargs", "expected_type"),
     [
