@@ -784,7 +784,7 @@ def _resolve_from_chat_id(
         chat_id=chat_id,
         session_record=session_record,
         primary_spawn=primary_spawn,
-        related_spawns=() if session_record.spawn_id else None,
+        related_spawns=() if primary_spawn is not None else None,
     )
 
 
