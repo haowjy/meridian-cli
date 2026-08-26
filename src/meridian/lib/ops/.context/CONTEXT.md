@@ -209,13 +209,16 @@ spawn rows. Operations that accept `--from` or `-f` go through this.
 
 Session browse has a narrower authority question: whether a primary chat has a
 durably recorded harness session id and may therefore resume or fork.
-`session_list.py` and `session_reentry.py` must both use
-`recover_recorded_chat_harness_session_id()` from `reference_recovery.py`. It
-checks the session store, primary spawn row, and `primary_meta.json`, but never
-performs native transcript discovery. Listing carries an advisory action for the
-UI; Enter re-reads the same durable authorities plus lease liveness. Using the
-general resolver in only one path can make the displayed verb disagree with the
-action even when no lease changed.
+`session_list.py` uses the batch
+`recover_recorded_chat_harness_session_ids()` and `session_reentry.py` uses its
+single-chat counterpart from `reference_recovery.py`. Both check the session
+store, primary spawn row, and `primary_meta.json`, but never perform native
+transcript discovery. The batch form must keep one spawn-state scan for the
+whole listing; a scan per missing session makes startup scale as sessions ×
+spawns. Listing carries an advisory action for the UI; Enter re-reads the same
+durable authorities plus lease liveness. Using the general resolver in only one
+path can make the displayed verb disagree with the action even when no lease
+changed.
 
 ### Logging Convention
 
