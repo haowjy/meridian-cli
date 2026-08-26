@@ -38,6 +38,7 @@ from meridian.cli.browse.model import (
 from meridian.cli.browse.render import (
     render_footer,
     render_list,
+    render_list_header,
     render_preview,
     render_status,
 )
@@ -322,6 +323,11 @@ def run_browse_picker(
         width, _height = size()
         return render_list(controller.model, width)
 
+    def list_header_text():
+        controller.drain()
+        width, _height = size()
+        return render_list_header(controller.model, width)
+
     def preview_text():
         controller.drain()
         width, height = size()
@@ -374,6 +380,10 @@ def run_browse_picker(
         controller.handle(Character(event.data))
 
     list_window = Window(FormattedTextControl(list_text), wrap_lines=False)
+    list_header = ConditionalContainer(
+        Window(FormattedTextControl(list_header_text), height=1, wrap_lines=False),
+        filter=Condition(lambda: bool(controller.model.visible_rows)),
+    )
     preview_window = ConditionalContainer(
         Window(FormattedTextControl(preview_text), wrap_lines=False),
         filter=Condition(lambda: size()[0] >= 60),
@@ -381,6 +391,7 @@ def run_browse_picker(
     root = HSplit(
         (
             Window(FormattedTextControl(status_text), height=1),
+            list_header,
             list_window,
             preview_window,
             Window(FormattedTextControl(footer_text), height=1),
@@ -389,6 +400,7 @@ def run_browse_picker(
     style = Style.from_dict(
         {
             "status": "bold",
+            "list-header": "bold fg:ansibrightblack",
             "selected": "reverse",
             "live": "fg:ansigreen",
             "preview-title": "bold",

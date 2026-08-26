@@ -11,6 +11,12 @@ from meridian.cli.browse.model import BrowseModel
 from meridian.lib.core.formatting import relative_time
 from meridian.lib.ops.session_reentry import Blocked, Fork, SessionReentryDecision
 
+_WIDE_LIST_WIDTH = 60
+_CHAT_ID_WIDTH = 7
+_AGE_WIDTH = 4
+_AGENT_WIDTH = 12
+_MODEL_WIDTH = 16
+
 
 def _clip(value: str, width: int) -> str:
     if width <= 0:
@@ -20,6 +26,10 @@ def _clip(value: str, width: int) -> str:
     if width == 1:
         return "…"
     return value[: width - 1].rstrip() + "…"
+
+
+def _cell(value: str, width: int) -> str:
+    return f"{_clip(value, width):<{width}}"
 
 
 def render_status(model: BrowseModel, width: int) -> StyleAndTextTuples:
@@ -36,6 +46,19 @@ def render_status(model: BrowseModel, width: int) -> StyleAndTextTuples:
     return [("class:status", _clip(label, width))]
 
 
+def render_list_header(model: BrowseModel, width: int) -> StyleAndTextTuples:
+    if not model.visible_rows:
+        return []
+    if width < _WIDE_LIST_WIDTH:
+        line = f"    {_cell('C-ID', _CHAT_ID_WIDTH)} {_cell('AGE', _AGE_WIDTH)} WORK"
+    else:
+        line = (
+            f"    {_cell('C-ID', _CHAT_ID_WIDTH)} {_cell('AGE', _AGE_WIDTH)} "
+            f"{_cell('AGENT', _AGENT_WIDTH)} {_cell('MODEL', _MODEL_WIDTH)} WORK"
+        )
+    return [("class:list-header", _clip(line, width))]
+
+
 def render_list(model: BrowseModel, width: int) -> StyleAndTextTuples:
     rows = model.visible_rows
     if not rows:
@@ -49,12 +72,17 @@ def render_list(model: BrowseModel, width: int) -> StyleAndTextTuples:
         marker = "▸" if selected else " "
         live = "●" if row.live else " "
         age = relative_time(row.activity_at).removesuffix(" ago")
-        if width < 60:
-            line = f"{marker} {live} {row.chat_id:<5} {age:<4} {row.work_label or '—'}"
+        prefix = f"{marker} {live} "
+        if width < _WIDE_LIST_WIDTH:
+            line = (
+                f"{prefix}{_cell(row.chat_id, _CHAT_ID_WIDTH)} "
+                f"{_cell(age, _AGE_WIDTH)} {row.work_label or '—'}"
+            )
         else:
             line = (
-                f"{marker} {live} {row.chat_id:<5} {age:<4} "
-                f"{(row.agent or '—'):<10} {(row.model or '—'):<10} {row.work_label or '—'}"
+                f"{prefix}{_cell(row.chat_id, _CHAT_ID_WIDTH)} {_cell(age, _AGE_WIDTH)} "
+                f"{_cell(row.agent or '—', _AGENT_WIDTH)} "
+                f"{_cell(row.model or '—', _MODEL_WIDTH)} {row.work_label or '—'}"
             )
         style = "class:selected" if selected else "class:row"
         fragments.append((style, _clip(line, width)))
@@ -114,4 +142,10 @@ def render_footer(model: BrowseModel, width: int) -> StyleAndTextTuples:
     return [("class:footer", _clip(text, width))]
 
 
-__all__ = ["render_footer", "render_list", "render_preview", "render_status"]
+__all__ = [
+    "render_footer",
+    "render_list",
+    "render_list_header",
+    "render_preview",
+    "render_status",
+]

@@ -14,6 +14,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - Open the session browser promptly in projects with large session and spawn
   histories.
+- Show session-browser column headers and keep rows aligned across varying
+  agent and model label lengths.
 - Materialize Codex forks from complete, validated rollout records and remove
   the published fork if Codex thread registration fails.
 - Fall back with a destination-naming warning when a work item's task directory

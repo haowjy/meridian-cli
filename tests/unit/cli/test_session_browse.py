@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 
 import pytest
 
+from meridian.cli.browse import render as browse_render
 from meridian.cli.browse.model import (
     Activate,
     Backspace,
@@ -152,6 +153,34 @@ def test_list_renders_older_count_as_nonselectable_trailer() -> None:
 
     model.older_count = 0
     assert "older" not in _text(render_list(model, 80))
+
+
+def test_list_header_and_rows_share_fixed_column_starts() -> None:
+    first = _row("c123", work="session-browse").model_copy(
+        update={"agent": "product-lead-extra", "model": "claude-fable-5-extra"}
+    )
+    second = _row("c124", work="auth-refactor")
+    model = BrowseModel((first, second))
+
+    header = _text(browse_render.render_list_header(model, 100))
+    lines = _text(render_list(model, 100)).splitlines()
+
+    assert all(title in header for title in ("C-ID", "AGE", "AGENT", "MODEL", "WORK"))
+    work_column = header.index("WORK")
+    assert lines[0][work_column:].startswith("session-browse")
+    assert lines[1][work_column:].startswith("auth-refactor")
+
+
+def test_narrow_list_header_omits_hidden_columns() -> None:
+    model = BrowseModel((_row("c123", work="session-browse"),))
+
+    header = _text(browse_render.render_list_header(model, 50))
+
+    assert "C-ID" in header
+    assert "AGE" in header
+    assert "WORK" in header
+    assert "AGENT" not in header
+    assert "MODEL" not in header
 
 
 @pytest.mark.parametrize(
