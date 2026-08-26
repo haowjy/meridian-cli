@@ -6,6 +6,7 @@ import os
 import re
 import sqlite3
 import time
+from contextlib import suppress
 from pathlib import Path
 from typing import ClassVar, cast
 from uuid import uuid4
@@ -104,6 +105,52 @@ def _fork_rollout_path(*, source_path: Path, source_session_id: str, new_session
     if source_session_id in source_name:
         return source_path.with_name(source_name.replace(source_session_id, new_session_id, 1))
     return source_path.with_name(f"{source_path.stem}-{new_session_id}{source_path.suffix}")
+
+
+def _reconcile_failed_codex_fork(
+    *,
+    connection: sqlite3.Connection | None,
+    db_path: Path,
+    new_session_id: str | None,
+    target_rollout_path: Path | None,
+    original_error: Exception,
+) -> bool:
+    """Reconcile an ambiguous DB outcome before compensating the rollout."""
+
+    if connection is not None:
+        with suppress(sqlite3.Error):
+            connection.rollback()
+    if new_session_id is None or target_rollout_path is None or not target_rollout_path.exists():
+        return False
+
+    try:
+        check_connection = sqlite3.connect(str(db_path), timeout=10)
+        try:
+            committed = (
+                check_connection.execute(
+                    "SELECT 1 FROM threads WHERE id = ?",
+                    (new_session_id,),
+                ).fetchone()
+                is not None
+            )
+        finally:
+            check_connection.close()
+    except sqlite3.Error as reconciliation_error:
+        raise RuntimeError(
+            "Failed to reconcile Codex fork registration; preserving the rollout at "
+            f"{target_rollout_path}: {reconciliation_error}"
+        ) from original_error
+
+    if committed:
+        return True
+    try:
+        target_rollout_path.unlink(missing_ok=True)
+    except OSError as cleanup_error:
+        raise RuntimeError(
+            f"Failed to remove unregistered Codex fork rollout {target_rollout_path}: "
+            f"{cleanup_error}"
+        ) from original_error
+    return False
 
 
 def _resolve_rollout_session_id(path: Path, resolved_repo: Path) -> str | None:
@@ -439,7 +486,8 @@ class CodexAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
 
         db_path = _codex_home() / "state_5.sqlite"
         connection: sqlite3.Connection | None = None
-        published_rollout_path: Path | None = None
+        new_session_id: str | None = None
+        target_rollout_path: Path | None = None
         try:
             connection = sqlite3.connect(str(db_path), timeout=10)
             connection.row_factory = sqlite3.Row
@@ -468,7 +516,6 @@ class CodexAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
                 target_path=target_rollout_path,
                 new_session_id=new_session_id,
             )
-            published_rollout_path = target_rollout_path
 
             # Codex owns this schema. Clone source row and only patch Meridian-relevant
             # fields to reduce coupling to Codex-internal table evolution.
@@ -491,13 +538,27 @@ class CodexAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             )
             connection.commit()
             return new_session_id
-        except (FileNotFoundError, ValueError):
-            if published_rollout_path is not None:
-                published_rollout_path.unlink(missing_ok=True)
+        except (FileNotFoundError, ValueError) as exc:
+            if _reconcile_failed_codex_fork(
+                connection=connection,
+                db_path=db_path,
+                new_session_id=new_session_id,
+                target_rollout_path=target_rollout_path,
+                original_error=exc,
+            ):
+                assert new_session_id is not None
+                return new_session_id
             raise
         except (OSError, RuntimeError, json.JSONDecodeError, sqlite3.Error) as exc:
-            if published_rollout_path is not None:
-                published_rollout_path.unlink(missing_ok=True)
+            if _reconcile_failed_codex_fork(
+                connection=connection,
+                db_path=db_path,
+                new_session_id=new_session_id,
+                target_rollout_path=target_rollout_path,
+                original_error=exc,
+            ):
+                assert new_session_id is not None
+                return new_session_id
             raise RuntimeError(f"Failed to fork Codex session: {exc}") from exc
         finally:
             if connection is not None:

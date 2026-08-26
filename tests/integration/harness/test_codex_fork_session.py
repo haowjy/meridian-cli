@@ -5,11 +5,14 @@ from __future__ import annotations
 import json
 import sqlite3
 import stat
+import threading
 from pathlib import Path
+from typing import Any
 from uuid import UUID
 
 import pytest
 
+from meridian.lib.harness import codex as codex_module
 from meridian.lib.harness.codex import CodexAdapter
 from meridian.lib.platform import IS_WINDOWS
 
@@ -176,10 +179,25 @@ def test_codex_fork_session_drops_partial_live_tail(
         tmp_path=tmp_path,
         source_session_id=source_session_id,
     )
-    with source_rollout_path.open("ab") as handle:
-        handle.write(b'{"type":"response_item","payload":{"type":"message"')
+    partial_written = threading.Event()
+    finish_write = threading.Event()
 
-    forked_session_id = CodexAdapter().fork_session(source_session_id)
+    def paused_writer() -> None:
+        with source_rollout_path.open("ab") as handle:
+            handle.write(b'{"type":"response_item","payload":{"type":"message"')
+            handle.flush()
+            partial_written.set()
+            assert finish_write.wait(timeout=2)
+
+    writer = threading.Thread(target=paused_writer)
+    writer.start()
+    assert partial_written.wait(timeout=2)
+    try:
+        forked_session_id = CodexAdapter().fork_session(source_session_id)
+    finally:
+        finish_write.set()
+        writer.join(timeout=2)
+    assert not writer.is_alive()
 
     connection = sqlite3.connect(db_path)
     forked_row = connection.execute(
@@ -191,6 +209,49 @@ def test_codex_fork_session_drops_partial_live_tail(
     assert len(forked_lines) == 2
     assert all(line.endswith(b"\n") for line in forked_lines)
     assert all(isinstance(json.loads(line), dict) for line in forked_lines)
+
+
+def test_codex_fork_session_reconciles_commit_ack_loss(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    source_session_id = "11111111-1111-4111-8111-111111111111"
+    db_path, _source_rollout_path = _setup_codex_state(
+        monkeypatch=monkeypatch,
+        tmp_path=tmp_path,
+        source_session_id=source_session_id,
+    )
+    real_connect = sqlite3.connect
+
+    class CommitThenRaise(sqlite3.Connection):
+        def commit(self) -> None:
+            super().commit()
+            raise sqlite3.OperationalError("ack lost after commit")
+
+    connect_count = 0
+
+    def connect(
+        database: str,
+        timeout: float = 5.0,
+        **kwargs: Any,
+    ) -> sqlite3.Connection:
+        nonlocal connect_count
+        connect_count += 1
+        if connect_count == 1:
+            kwargs["factory"] = CommitThenRaise
+        return real_connect(database, timeout=timeout, **kwargs)
+
+    monkeypatch.setattr(codex_module.sqlite3, "connect", connect)
+
+    forked_session_id = CodexAdapter().fork_session(source_session_id)
+
+    connection = real_connect(db_path)
+    forked_row = connection.execute(
+        "SELECT rollout_path FROM threads WHERE id = ?", (forked_session_id,)
+    ).fetchone()
+    connection.close()
+    assert forked_row is not None
+    assert Path(forked_row[0]).is_file()
 
 
 def test_codex_fork_session_rejects_invalid_complete_record(
