@@ -42,6 +42,10 @@ def test_normalize_optional_value_flags(argv: list[str], expected: list[str]) ->
         (["--continue="], ["session", "browse"]),
         (["--continue", "--plain"], ["session", "browse", "--plain"]),
         (
+            ["--continue", "--limit", "1"],
+            ["session", "browse", "--limit", "1"],
+        ),
+        (
             ["--continue", "--config", "/tmp/config.toml"],
             ["session", "browse", "--config", "/tmp/config.toml"],
         ),

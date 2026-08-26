@@ -19,6 +19,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   width across varying and Unicode agent/model labels.
 - Keep preview and transcript-search workers available after a request fails
   instead of leaving the picker stuck in a loading state.
+- Preserve browse options such as `--limit 1` when bare `--continue` opens the
+  session browser.
 - Materialize Codex forks from complete, validated rollout records and remove
   the published fork if Codex thread registration fails.
 - Fall back with a destination-naming warning when a work item's task directory

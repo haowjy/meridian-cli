@@ -215,9 +215,15 @@ def test_plain_browse_and_bare_continue_are_identical(tmp_path) -> None:
     session_store.stop_session(runtime_root, chat_id)
 
     browse = _run_meridian(
-        ["session", "browse", "--plain"], cwd=project_root, meridian_home=meridian_home
+        ["session", "browse", "--plain", "--limit", "1"],
+        cwd=project_root,
+        meridian_home=meridian_home,
     )
-    bare = _run_meridian(["--continue"], cwd=project_root, meridian_home=meridian_home)
+    bare = _run_meridian(
+        ["--continue", "--plain", "--limit", "1"],
+        cwd=project_root,
+        meridian_home=meridian_home,
+    )
 
     assert browse.returncode == bare.returncode == 0
     assert browse.stderr == bare.stderr == ""

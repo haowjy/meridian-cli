@@ -65,7 +65,7 @@ def canonicalize_argv(argv: Sequence[str]) -> list[str]:
     if bare_continue_index is not None:
         remaining = list(argv)
         remaining.pop(bare_continue_index)
-        if first_positional_token(remaining) is None:
+        if first_positional_token(argv[:bare_continue_index]) is None:
             return ["session", "browse", *normalize_optional_value_flags(remaining)]
 
     return normalize_optional_value_flags(argv)
