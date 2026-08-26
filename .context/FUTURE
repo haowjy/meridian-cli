@@ -1,0 +1,10 @@
+# FUTURE — nice-to-have follow-ups
+
+- `src/meridian/lib/state/` + `src/meridian/cli/browse/`: SQLite-backed
+  session index (planned next minor). Replaces v1 session-browse live
+  scans with indexed metadata + derived per-chat summaries (row labels
+  from transcript content: last user message, etc. — explicitly deferred
+  from session-browse v1). When it lands, amend the "Files as authority /
+  No databases" constraint in AGENTS.md to state the new relationship
+  between JSONL state and the index. Origin: session-browse requirements
+  (work spawn p5886, chat c5810).
