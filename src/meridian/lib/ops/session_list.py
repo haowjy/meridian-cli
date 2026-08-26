@@ -9,7 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from meridian.lib.core.context import RuntimeContext
 from meridian.lib.core.formatting import relative_time, tabular
 from meridian.lib.core.util import FormatContext
-from meridian.lib.ops.reference_recovery import recover_recorded_chat_harness_session_id
+from meridian.lib.ops.reference_recovery import recover_recorded_chat_harness_session_ids
 from meridian.lib.ops.runtime import async_from_sync, resolve_roots_for_read
 from meridian.lib.ops.session_reentry import SessionReentryDecision, decide_reentry
 from meridian.lib.state import session_store, work_store
@@ -103,6 +103,10 @@ def session_list_sync(
         path.name.removesuffix(".lease.json")
         for path in sessions_dir.glob("*.lease.json")
     }
+    recorded_harness_sessions = recover_recorded_chat_harness_session_ids(
+        roots.runtime_root,
+        records,
+    )
 
     rows: list[SessionListRow] = []
     for record in records:
@@ -117,12 +121,7 @@ def session_list_sync(
                 reentry=decide_reentry(
                     chat_id=record.chat_id,
                     live=live,
-                    has_harness_session=recover_recorded_chat_harness_session_id(
-                        roots.runtime_root,
-                        record.chat_id,
-                        session=record,
-                    )
-                    is not None,
+                    has_harness_session=record.chat_id in recorded_harness_sessions,
                 ),
                 agent=record.agent,
                 model=record.model,

@@ -8,6 +8,7 @@ write back based on their own verification policies.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
@@ -156,21 +157,72 @@ def recover_recorded_chat_harness_session_id(
         records = session_store.get_session_records(runtime_root, {chat_id})
         resolved_session = records[0] if records else None
     if resolved_session is not None:
-        session_id = _latest_harness_session_id(resolved_session)
-        if session_id:
-            return RecoveryResult(
-                harness_session_id=session_id,
-                provenance=RecoveryProvenance.SESSION_STORE,
-                supporting_chat_id=chat_id,
-            )
+        recovered = _recover_from_session_record(resolved_session)
+        if recovered is not None:
+            return recovered
 
     primary_spawn = _primary_spawn_for_chat(runtime_root, chat_id)
     if primary_spawn is None:
         return None
-    recovered = _recover_from_spawn_row(runtime_root, primary_spawn.id)
-    if recovered is not None:
-        return recovered
-    return _recover_from_primary_meta(runtime_root, primary_spawn.id, chat_id)
+    return _recover_from_primary_spawn(runtime_root, primary_spawn, chat_id)
+
+
+def recover_recorded_chat_harness_session_ids(
+    runtime_root: Path,
+    sessions: Sequence[session_store.SessionRecord],
+) -> dict[str, RecoveryResult]:
+    """Resolve durable harness IDs for many chats with one spawn-state scan."""
+
+    results: dict[str, RecoveryResult] = {}
+    unresolved: set[str] = set()
+    for session in sessions:
+        recovered = _recover_from_session_record(session)
+        if recovered is None:
+            unresolved.add(session.chat_id)
+        else:
+            results[session.chat_id] = recovered
+    if not unresolved:
+        return results
+
+    primary_spawns: dict[str, SpawnRecord] = {}
+    for spawn in spawn_store.list_spawns(runtime_root).records:
+        owner_chat_id = session_identity.spawn_owner_chat_id(spawn)
+        if spawn.kind == "primary" and owner_chat_id in unresolved:
+            primary_spawns[owner_chat_id] = spawn
+
+    for chat_id, spawn in primary_spawns.items():
+        recovered = _recover_from_primary_spawn(runtime_root, spawn, chat_id)
+        if recovered is not None:
+            results[chat_id] = recovered
+    return results
+
+
+def _recover_from_session_record(
+    session: session_store.SessionRecord,
+) -> RecoveryResult | None:
+    session_id = _latest_harness_session_id(session)
+    if session_id is None:
+        return None
+    return RecoveryResult(
+        harness_session_id=session_id,
+        provenance=RecoveryProvenance.SESSION_STORE,
+        supporting_chat_id=session.chat_id,
+    )
+
+
+def _recover_from_primary_spawn(
+    runtime_root: Path,
+    spawn: SpawnRecord,
+    chat_id: str,
+) -> RecoveryResult | None:
+    session_id = _normalize(spawn.harness_session_id)
+    if session_id is not None:
+        return RecoveryResult(
+            harness_session_id=session_id,
+            provenance=RecoveryProvenance.SPAWN_ROW,
+            supporting_chat_id=chat_id,
+        )
+    return _recover_from_primary_meta(runtime_root, spawn.id, chat_id)
 
 
 def _recover_from_spawn_row(runtime_root: Path, spawn_id: str) -> RecoveryResult | None:
@@ -319,4 +371,5 @@ __all__ = [
     "RecoveryResult",
     "recover_harness_session_id",
     "recover_recorded_chat_harness_session_id",
+    "recover_recorded_chat_harness_session_ids",
 ]

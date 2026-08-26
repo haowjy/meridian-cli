@@ -178,6 +178,42 @@ def test_list_and_reentry_block_when_all_recorded_ids_are_missing(tmp_path: Path
         session_store.stop_session(runtime_root, chat_id)
 
 
+def test_session_list_scans_spawn_state_once_for_missing_ids(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    project_root, runtime_root = _project_roots(tmp_path)
+    chat_ids = [
+        session_store.start_session(
+            runtime_root,
+            harness="codex",
+            harness_session_id="",
+            model="gpt-5.4",
+            kind="primary",
+        )
+        for _ in range(3)
+    ]
+    real_list_spawns = spawn_store.list_spawns
+    scan_count = 0
+
+    def counting_list_spawns(*args, **kwargs):
+        nonlocal scan_count
+        scan_count += 1
+        return real_list_spawns(*args, **kwargs)
+
+    monkeypatch.setattr(spawn_store, "list_spawns", counting_list_spawns)
+    try:
+        output = session_list_sync(
+            SessionListInput(project_root=project_root.as_posix())
+        )
+    finally:
+        for chat_id in chat_ids:
+            session_store.stop_session(runtime_root, chat_id)
+
+    assert {row.chat_id for row in output.rows} == set(chat_ids)
+    assert scan_count == 1
+
+
 def test_subset_search_is_ordered_and_failure_isolated(
     tmp_path: Path, monkeypatch
 ) -> None:
