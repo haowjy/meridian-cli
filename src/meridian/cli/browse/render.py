@@ -104,7 +104,8 @@ def render_list(model: BrowseModel, width: int) -> StyleAndTextTuples:
         fragments.append((style, clipped_line[3:]))
         fragments.append(("", "\n"))
     if model.older_count:
-        hint = f"+{model.older_count} older · raise --limit to see more"
+        shown = len(model.rows)
+        hint = f"({shown} of {shown + model.older_count} shown — use --limit to see more)"
         fragments.append(("class:hint", _clip(hint, width)))
     return fragments
 

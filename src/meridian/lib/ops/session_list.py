@@ -71,7 +71,10 @@ class SessionListOutput(BaseModel):
         )
         output = tabular(rows)
         if self.older_count:
-            output += f"\n+{self.older_count} older · raise --limit to see more"
+            output += (
+                f"\n({len(self.rows)} of {self.total_count} shown — "
+                "use --limit to see more)"
+            )
         return output
 
 

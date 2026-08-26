@@ -102,7 +102,7 @@ def test_session_list_is_primary_only_live_first_and_capped(tmp_path: Path) -> N
     assert row.live is True
     assert row.reentry == Fork(live_chat)
     assert row.work_label == "browse-feature"
-    assert "+1 older · raise --limit to see more" in output.format_text()
+    assert "(1 of 2 shown — use --limit to see more)" in output.format_text()
 
 
 def test_session_reentry_rechecks_live_lease(tmp_path: Path) -> None:

@@ -153,7 +153,7 @@ def test_list_renders_older_count_as_nonselectable_trailer() -> None:
 
     fragments = render_list(model, 80)
 
-    assert "+7 older · raise --limit to see more" in _text(fragments)
+    assert "(1 of 8 shown — use --limit to see more)" in _text(fragments)
     assert fragments[-1][0] == "class:hint"
     assert sum(style == "[SetCursorPosition]" for style, _ in fragments) == 1
 

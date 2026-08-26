@@ -102,7 +102,7 @@ def _session_browse(
     emit: Emitter,
     limit: Annotated[
         int,
-        Parameter(name="--limit", help="Maximum recent sessions to list."),
+        Parameter(name="--limit", help="Maximum number of sessions to return."),
     ] = 50,
     plain: Annotated[
         bool,
