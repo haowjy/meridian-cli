@@ -9,7 +9,7 @@ if TYPE_CHECKING:
 
 from meridian.cli.browse.model import BrowseModel
 from meridian.lib.core.formatting import relative_time
-from meridian.lib.ops.session_reentry import Blocked, Fork
+from meridian.lib.ops.session_reentry import Blocked, Fork, SessionReentryDecision
 
 
 def _clip(value: str, width: int) -> str:
@@ -61,6 +61,9 @@ def render_list(model: BrowseModel, width: int) -> StyleAndTextTuples:
         if row.live:
             fragments.append(("class:live", ""))
         fragments.append(("", "\n"))
+    if model.older_count:
+        hint = f"+{model.older_count} older · raise --limit to see more"
+        fragments.append(("class:hint", _clip(hint, width)))
     return fragments
 
 
@@ -80,19 +83,34 @@ def render_preview(model: BrowseModel, width: int, height: int) -> StyleAndTextT
     return fragments
 
 
+def _action_hint(decision: SessionReentryDecision) -> str:
+    if isinstance(decision, Fork):
+        return "[enter] fork → new session (live)"
+    if isinstance(decision, Blocked):
+        return decision.reason
+    return "[enter] resume"
+
+
 def render_footer(model: BrowseModel, width: int) -> StyleAndTextTuples:
     if model.inline_message:
-        text = f"{model.inline_message} · [esc] quit"
+        escape_action = "quit" if model.mode == "list" else "back"
+        text = f"{model.inline_message} · [esc] {escape_action}"
         return [("class:error", _clip(text, width))]
     row = model.highlighted_row
-    if row is None:
+    action = _action_hint(row.reentry) if row is not None else ""
+    if model.mode == "search-input":
+        text = "type query · [enter] search · [esc] back"
+    elif model.mode == "searching" and model.search_matches is None:
+        parts = ("searching transcripts", action, "[esc] cancel")
+        text = " · ".join(part for part in parts if part)
+    elif model.mode == "searching":
+        text = " · ".join(part for part in ("search results", action, "[esc] back") if part)
+    elif row is None:
         text = "[q]/[esc] quit"
-    elif isinstance(row.reentry, Fork):
-        text = "type to filter · / search · [enter] fork → new session (live) · [esc] quit"
     elif isinstance(row.reentry, Blocked):
-        text = f"{row.reentry.reason} · [esc] quit"
+        text = f"{action} · [esc] quit"
     else:
-        text = "type to filter · / search · [enter] resume · [esc] quit"
+        text = f"type to filter · / search · {action} · [esc] quit"
     return [("class:footer", _clip(text, width))]
 
 

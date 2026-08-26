@@ -14,6 +14,7 @@ import pytest
 
 from meridian.lib.harness import codex as codex_module
 from meridian.lib.harness.codex import CodexAdapter
+from meridian.lib.harness.codex_rollout import materialize_fork_rollout
 from meridian.lib.platform import IS_WINDOWS
 
 
@@ -167,6 +168,60 @@ def test_codex_fork_session_copies_rollout_and_inserts_thread(
     assert json.loads(source_lines[0])["payload"]["id"] == source_session_id
     assert json.loads(forked_lines[0])["payload"]["id"] == forked_session_id
     assert json.loads(forked_lines[1]) == json.loads(source_lines[1])
+
+
+def test_materialize_fork_rollout_streams_bounded_lines(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    source_session_id = "11111111-1111-4111-8111-111111111111"
+    new_session_id = "22222222-2222-4222-8222-222222222222"
+    _db_path, source_path = _setup_codex_state(
+        monkeypatch=monkeypatch,
+        tmp_path=tmp_path,
+        source_session_id=source_session_id,
+    )
+    target_path = source_path.with_name("forked.jsonl")
+    real_open = Path.open
+    read_sizes: list[int] = []
+
+    class ReadlineOnly:
+        def __init__(self, handle) -> None:
+            self._handle = handle
+
+        def __enter__(self):
+            self._handle.__enter__()
+            return self
+
+        def __exit__(self, *args: object) -> object:
+            return self._handle.__exit__(*args)
+
+        def fileno(self) -> int:
+            return self._handle.fileno()
+
+        def readline(self, size: int = -1) -> bytes:
+            assert size >= 0
+            read_sizes.append(size)
+            return self._handle.readline(size)
+
+        def read(self, _size: int = -1) -> bytes:
+            raise AssertionError("rollout materialization must not read the full snapshot")
+
+    def guarded_open(path: Path, *args: object, **kwargs: object):
+        handle = real_open(path, *args, **kwargs)
+        return ReadlineOnly(handle) if path == source_path else handle
+
+    monkeypatch.setattr(Path, "open", guarded_open)
+
+    materialize_fork_rollout(
+        source_path=source_path,
+        target_path=target_path,
+        new_session_id=new_session_id,
+    )
+
+    assert len(read_sizes) == 2
+    assert read_sizes[1] < read_sizes[0]
+    assert json.loads(target_path.read_bytes().splitlines()[0])["payload"]["id"] == new_session_id
 
 
 def test_codex_fork_session_drops_partial_live_tail(

@@ -9,6 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from meridian.lib.core.context import RuntimeContext
 from meridian.lib.core.formatting import relative_time, tabular
 from meridian.lib.core.util import FormatContext
+from meridian.lib.ops.reference_recovery import recover_recorded_chat_harness_session_id
 from meridian.lib.ops.runtime import async_from_sync, resolve_roots_for_read
 from meridian.lib.ops.session_reentry import SessionReentryDecision, decide_reentry
 from meridian.lib.state import session_store, work_store
@@ -81,12 +82,6 @@ def _work_label(runtime_root: Path, work_id: str | None) -> str:
     return item.name if item is not None else work_id
 
 
-def _has_harness_session(record: session_store.SessionRecord) -> bool:
-    return any(value.strip() for value in record.harness_session_ids) or bool(
-        (record.harness_session_id or "").strip()
-    )
-
-
 def session_list_sync(
     payload: SessionListInput,
     ctx: RuntimeContext | None = None,
@@ -122,7 +117,12 @@ def session_list_sync(
                 reentry=decide_reentry(
                     chat_id=record.chat_id,
                     live=live,
-                    has_harness_session=_has_harness_session(record),
+                    has_harness_session=recover_recorded_chat_harness_session_id(
+                        roots.runtime_root,
+                        record.chat_id,
+                        session=record,
+                    )
+                    is not None,
                 ),
                 agent=record.agent,
                 model=record.model,

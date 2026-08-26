@@ -75,6 +75,7 @@ def _subsequence(needle: str, haystack: str) -> bool:
 @dataclass
 class BrowseModel:
     rows: tuple[SessionListRow, ...]
+    older_count: int = 0
     filter_text: str = ""
     mode: BrowseMode = "list"
     highlight: int = 0
@@ -86,6 +87,7 @@ class BrowseModel:
     preview_lines: tuple[str, ...] = ()
     preview_loading: bool = False
     inline_message: str | None = None
+
     @property
     def visible_rows(self) -> tuple[SessionListRow, ...]:
         needle = self.filter_text.strip().lower()

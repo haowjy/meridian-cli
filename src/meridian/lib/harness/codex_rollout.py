@@ -40,34 +40,35 @@ def materialize_fork_rollout(
 
     with source_path.open("rb") as source_handle:
         source_stat = os.fstat(source_handle.fileno())
-        snapshot = source_handle.read(source_stat.st_size)
-
-    complete_end = snapshot.rfind(b"\n") + 1
-    if complete_end == 0:
-        raise RuntimeError(f"Codex rollout has no complete records: {source_path}")
-    lines = snapshot[:complete_end].splitlines(keepends=True)
-    if not lines:
-        raise RuntimeError(f"Codex rollout file is empty: {source_path}")
-
-    rewritten_first = _rewritten_session_meta(lines[0], new_session_id)
-    for line_number, line in enumerate(lines[1:], start=2):
-        try:
-            json.loads(line)
-        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-            raise RuntimeError(
-                f"Codex rollout line {line_number} is not valid JSON."
-            ) from exc
-
-    source_mode = stat.S_IMODE(source_stat.st_mode)
-    with atomic_replace(
-        target_path,
-        mode="wb",
-        encoding=None,
-        permissions=source_mode,
-    ) as target_handle:
-        target_handle.write(rewritten_first)
-        for line in lines[1:]:
-            target_handle.write(line)
+        remaining = source_stat.st_size
+        source_mode = stat.S_IMODE(source_stat.st_mode)
+        with atomic_replace(
+            target_path,
+            mode="wb",
+            encoding=None,
+            permissions=source_mode,
+        ) as target_handle:
+            line_number = 0
+            while remaining > 0:
+                line = source_handle.readline(remaining)
+                if not line:
+                    break
+                remaining -= len(line)
+                if not line.endswith(b"\n"):
+                    break
+                line_number += 1
+                if line_number == 1:
+                    target_handle.write(_rewritten_session_meta(line, new_session_id))
+                    continue
+                try:
+                    json.loads(line)
+                except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+                    raise RuntimeError(
+                        f"Codex rollout line {line_number} is not valid JSON."
+                    ) from exc
+                target_handle.write(line)
+            if line_number == 0:
+                raise RuntimeError(f"Codex rollout has no complete records: {source_path}")
 
 
 def resolve_codex_home(launch_env: Mapping[str, str]) -> Path:

@@ -13,9 +13,11 @@ import pytest
 from prompt_toolkit.input.defaults import create_pipe_input
 from prompt_toolkit.output import DummyOutput
 
-from meridian.cli.browse.tui import Lane, run_browse_picker
+from meridian.cli.browse import tui as browse_tui
+from meridian.cli.browse.tui import Lane, SearchProgress, SearchRequest, run_browse_picker
 from meridian.lib.ops.session_list import SessionListOutput, SessionListRow
 from meridian.lib.ops.session_reentry import Blocked, Resume
+from meridian.lib.ops.session_search import SubsetSearchStep
 from meridian.lib.state import session_store
 
 
@@ -114,6 +116,38 @@ def test_lane_discards_completion_from_replaced_request() -> None:
         lane.close()
 
     assert results == [second]
+
+
+def test_search_worker_does_not_open_next_transcript_after_cancellation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    opened: list[str] = []
+
+    def iter_steps(*, project_root: str, chat_ids: tuple[str, ...], query: str):
+        _ = project_root, query
+        for chat_id in chat_ids:
+            opened.append(chat_id)
+            yield SubsetSearchStep(chat_id, matched=False)
+
+    monkeypatch.setattr(
+        "meridian.lib.ops.session_search.iter_session_subset_search", iter_steps
+    )
+    active = True
+    posted: list[object] = []
+
+    def post(result: object) -> None:
+        nonlocal active
+        posted.append(result)
+        active = False
+
+    browse_tui._search_worker("/tmp/project")(
+        SearchRequest("needle", ("c1", "c2")),
+        lambda: active,
+        post,
+    )
+
+    assert opened == ["c1"]
+    assert posted == [SearchProgress(1, 2)]
 
 
 def _run_meridian(args: list[str], *, cwd: Path, meridian_home: Path):

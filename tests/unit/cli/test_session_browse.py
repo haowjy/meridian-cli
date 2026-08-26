@@ -104,6 +104,28 @@ def test_blocked_and_rendered_action_hints() -> None:
     assert "c2: no harness session" in _text(render_footer(model, 100))
 
 
+def test_footer_matches_search_mode_controls() -> None:
+    model = BrowseModel((_row("c1"),))
+    assert "type to filter" in _text(render_footer(model, 120))
+
+    model.handle_key(Search())
+    search_input = _text(render_footer(model, 120))
+    assert search_input == "type query · [enter] search · [esc] back"
+
+    model.handle_key(Character("n"))
+    assert model.handle_key(Enter()) == StartSearch("n", ("c1",))
+    scanning = _text(render_footer(model, 120))
+    assert "searching transcripts" in scanning
+    assert "[enter] resume" in scanning
+    assert "[esc] cancel" in scanning
+
+    model.apply_search_done(frozenset({"c1"}), 1)
+    results = _text(render_footer(model, 120))
+    assert "search results" in results
+    assert "[enter] resume" in results
+    assert "[esc] back" in results
+
+
 def test_list_places_scroll_cursor_on_highlighted_row() -> None:
     model = BrowseModel(tuple(_row(f"c{index}") for index in range(20)))
     model.highlight = 15
@@ -117,6 +139,19 @@ def test_list_places_scroll_cursor_on_highlighted_row() -> None:
     ]
     assert len(cursor_markers) == 1
     assert "c15" in fragments[cursor_markers[0] + 1][1]
+
+
+def test_list_renders_older_count_as_nonselectable_trailer() -> None:
+    model = BrowseModel((_row("c1"),), older_count=7)
+
+    fragments = render_list(model, 80)
+
+    assert "+7 older · raise --limit to see more" in _text(fragments)
+    assert fragments[-1][0] == "class:hint"
+    assert sum(style == "[SetCursorPosition]" for style, _ in fragments) == 1
+
+    model.older_count = 0
+    assert "older" not in _text(render_list(model, 80))
 
 
 @pytest.mark.parametrize(

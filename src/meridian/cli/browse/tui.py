@@ -188,16 +188,18 @@ def _search_worker(project_root: str) -> LaneWorker[SearchRequest, SearchResult]
 
         matches: set[str] = set()
         total = len(request.chat_ids)
-        for scanned, step in enumerate(
-            iter_session_subset_search(
-                project_root=project_root,
-                chat_ids=request.chat_ids,
-                query=request.query,
-            ),
-            start=1,
-        ):
-            if not current():
-                return
+        steps = iter_session_subset_search(
+            project_root=project_root,
+            chat_ids=request.chat_ids,
+            query=request.query,
+        )
+        scanned = 0
+        while current():
+            try:
+                step = next(steps)
+            except StopIteration:
+                break
+            scanned += 1
             if step.matched:
                 matches.add(step.chat_id)
             post(SearchProgress(scanned, total))
@@ -215,7 +217,7 @@ class _BrowseController:
         project_root: str,
         resolve_reentry: Callable[[str], SessionReentryDecision],
     ) -> None:
-        self.model = BrowseModel(listing.rows)
+        self.model = BrowseModel(listing.rows, older_count=listing.older_count)
         self._resolve_reentry = resolve_reentry
         self._app: Application[SessionReentryDecision | None] | None = None
         self._preview_lane = Lane(_preview_worker(project_root), self.invalidate)
@@ -393,6 +395,7 @@ def run_browse_picker(
             "footer": "fg:ansibrightblack",
             "error": "fg:ansired",
             "empty": "italic",
+            "hint": "fg:ansibrightblack",
         }
     )
     app = Application(

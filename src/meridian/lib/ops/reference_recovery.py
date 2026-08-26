@@ -53,11 +53,9 @@ def _latest_harness_session_id(record: session_store.SessionRecord) -> str | Non
 
 
 def _primary_spawn_for_chat(
-    project_root: Path,
     runtime_root: Path,
     chat_id: str,
 ) -> SpawnRecord | None:
-    _ = project_root
     spawns = session_identity.list_spawns_for_owner_chat(runtime_root, chat_id)
     primary_spawns = [row for row in spawns.records if row.kind == "primary"]
     if not primary_spawns:
@@ -145,19 +143,34 @@ def _detect_primary_harness_session_id(
     return detected_harness_session_id
 
 
-def _recover_from_session_store(runtime_root: Path, chat_id: str) -> RecoveryResult | None:
-    records = session_store.get_session_records(runtime_root, {chat_id})
-    if not records:
+def recover_recorded_chat_harness_session_id(
+    runtime_root: Path,
+    chat_id: str,
+    *,
+    session: session_store.SessionRecord | None = None,
+) -> RecoveryResult | None:
+    """Resolve a chat's durable harness ID without native transcript detection."""
+
+    resolved_session = session
+    if resolved_session is None:
+        records = session_store.get_session_records(runtime_root, {chat_id})
+        resolved_session = records[0] if records else None
+    if resolved_session is not None:
+        session_id = _latest_harness_session_id(resolved_session)
+        if session_id:
+            return RecoveryResult(
+                harness_session_id=session_id,
+                provenance=RecoveryProvenance.SESSION_STORE,
+                supporting_chat_id=chat_id,
+            )
+
+    primary_spawn = _primary_spawn_for_chat(runtime_root, chat_id)
+    if primary_spawn is None:
         return None
-    session = records[0]
-    session_id = _latest_harness_session_id(session)
-    if session_id:
-        return RecoveryResult(
-            harness_session_id=session_id,
-            provenance=RecoveryProvenance.SESSION_STORE,
-            supporting_chat_id=chat_id,
-        )
-    return None
+    recovered = _recover_from_spawn_row(runtime_root, primary_spawn.id)
+    if recovered is not None:
+        return recovered
+    return _recover_from_primary_meta(runtime_root, primary_spawn.id, chat_id)
 
 
 def _recover_from_spawn_row(runtime_root: Path, spawn_id: str) -> RecoveryResult | None:
@@ -195,7 +208,7 @@ def _recover_from_detection(
 ) -> RecoveryResult | None:
     if chat_id is None:
         return None
-    primary_spawn = _primary_spawn_for_chat(project_root, runtime_root, chat_id)
+    primary_spawn = _primary_spawn_for_chat(runtime_root, chat_id)
     if primary_spawn is None:
         return None
     detected = _detect_primary_harness_session_id(
@@ -251,15 +264,9 @@ def recover_harness_session_id(
 
     # Chat reference
     if normalized_ref.startswith("c") and normalized_ref[1:].isdigit():
-        result = _recover_from_session_store(runtime_root, normalized_ref)
+        result = recover_recorded_chat_harness_session_id(runtime_root, normalized_ref)
         if result is not None:
             return result
-
-        primary_spawn = _primary_spawn_for_chat(project_root, runtime_root, normalized_ref)
-        if primary_spawn is not None:
-            result = _recover_from_primary_meta(runtime_root, primary_spawn.id, normalized_ref)
-            if result is not None:
-                return result
 
         return _recover_from_detection(
             project_root=project_root,
@@ -311,4 +318,5 @@ __all__ = [
     "RecoveryProvenance",
     "RecoveryResult",
     "recover_harness_session_id",
+    "recover_recorded_chat_harness_session_id",
 ]

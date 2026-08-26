@@ -4,9 +4,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from meridian.lib.ops.reference import resolve_session_reference
+from meridian.lib.ops.reference_recovery import recover_recorded_chat_harness_session_id
 from meridian.lib.ops.runtime import resolve_roots_for_read
-from meridian.lib.state.session_store import is_session_lease_owner_alive
+from meridian.lib.state.session_store import (
+    get_session_record,
+    is_session_lease_owner_alive,
+)
 
 
 @dataclass(frozen=True)
@@ -45,15 +48,18 @@ def resolve_session_reentry(project_root: str, chat_id: str) -> SessionReentryDe
     roots = resolve_roots_for_read(project_root)
     if roots is None:
         return Blocked("session is no longer available")
-    reference = resolve_session_reference(
-        roots.project_root,
-        chat_id,
-        runtime_root=roots.runtime_root,
-    )
+    record = get_session_record(roots.runtime_root, chat_id)
+    if record is None or record.kind != "primary":
+        return Blocked("session is no longer available")
     return decide_reentry(
         chat_id=chat_id,
         live=is_session_lease_owner_alive(roots.runtime_root, chat_id),
-        has_harness_session=reference.authoritative_harness_session_id is not None,
+        has_harness_session=recover_recorded_chat_harness_session_id(
+            roots.runtime_root,
+            chat_id,
+            session=record,
+        )
+        is not None,
     )
 
 

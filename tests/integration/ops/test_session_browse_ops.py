@@ -4,9 +4,9 @@ import json
 from pathlib import Path
 
 from meridian.lib.ops.session_list import SessionListInput, session_list_sync
-from meridian.lib.ops.session_reentry import Fork, Resume, resolve_session_reentry
+from meridian.lib.ops.session_reentry import Blocked, Fork, Resume, resolve_session_reentry
 from meridian.lib.ops.session_search import iter_session_subset_search
-from meridian.lib.state import session_store, work_repository
+from meridian.lib.state import primary_meta, session_store, spawn_store, work_repository
 from meridian.lib.state.paths import resolve_project_paths, resolve_project_runtime_root_for_write
 
 
@@ -119,6 +119,63 @@ def test_session_reentry_rechecks_live_lease(tmp_path: Path) -> None:
     session_store.stop_session(runtime_root, chat_id)
 
     assert resolve_session_reentry(project_root.as_posix(), chat_id) == Resume(chat_id)
+
+
+def test_list_and_reentry_share_recorded_primary_metadata_recovery(tmp_path: Path) -> None:
+    project_root, runtime_root = _project_roots(tmp_path)
+    harness_session_id = "45454545-4545-4545-8545-454545454545"
+    chat_id = session_store.start_session(
+        runtime_root,
+        harness="codex",
+        harness_session_id="",
+        model="gpt-5.4",
+        kind="primary",
+        spawn_id="p42",
+    )
+    spawn_store.start_spawn(
+        runtime_root,
+        spawn_id="p42",
+        chat_id=chat_id,
+        model="gpt-5.4",
+        agent="coder",
+        harness="codex",
+        kind="primary",
+        prompt="primary",
+    )
+    primary_meta.write_primary_metadata(
+        runtime_root / "spawns" / "p42",
+        primary_meta.PrimaryMetadata(harness_session_id=harness_session_id),
+    )
+
+    live_listing = session_list_sync(SessionListInput(project_root=project_root.as_posix()))
+    live_row = next(row for row in live_listing.rows if row.chat_id == chat_id)
+    assert live_row.reentry == Fork(chat_id)
+    assert resolve_session_reentry(project_root.as_posix(), chat_id) == Fork(chat_id)
+
+    session_store.stop_session(runtime_root, chat_id)
+
+    stopped_listing = session_list_sync(SessionListInput(project_root=project_root.as_posix()))
+    stopped_row = next(row for row in stopped_listing.rows if row.chat_id == chat_id)
+    assert stopped_row.reentry == Resume(chat_id)
+    assert resolve_session_reentry(project_root.as_posix(), chat_id) == Resume(chat_id)
+
+
+def test_list_and_reentry_block_when_all_recorded_ids_are_missing(tmp_path: Path) -> None:
+    project_root, runtime_root = _project_roots(tmp_path)
+    chat_id = session_store.start_session(
+        runtime_root,
+        harness="codex",
+        harness_session_id="",
+        model="gpt-5.4",
+        kind="primary",
+    )
+    try:
+        listing = session_list_sync(SessionListInput(project_root=project_root.as_posix()))
+        row = next(row for row in listing.rows if row.chat_id == chat_id)
+        assert isinstance(row.reentry, Blocked)
+        assert isinstance(resolve_session_reentry(project_root.as_posix(), chat_id), Blocked)
+    finally:
+        session_store.stop_session(runtime_root, chat_id)
 
 
 def test_subset_search_is_ordered_and_failure_isolated(
