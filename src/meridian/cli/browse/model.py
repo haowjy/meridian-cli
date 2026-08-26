@@ -82,6 +82,7 @@ class BrowseModel:
     search_query: str = ""
     search_scanned: int = 0
     search_total: int = 0
+    search_unavailable: int = 0
     search_matches: frozenset[str] = frozenset()
     preview_chat_id: str | None = None
     preview_lines: tuple[str, ...] = ()
@@ -124,6 +125,7 @@ class BrowseModel:
                 self.search_query = ""
                 self.search_scanned = 0
                 self.search_total = 0
+                self.search_unavailable = 0
                 self.search_matches = frozenset()
                 self.highlight = 0
                 self._clear_inline()
@@ -163,6 +165,7 @@ class BrowseModel:
                 self.mode = "searching"
                 self.search_scanned = 0
                 self.search_total = len(chat_ids)
+                self.search_unavailable = 0
                 self.search_matches = frozenset()
                 self._clear_inline()
                 return StartSearch(query, chat_ids)
@@ -193,17 +196,24 @@ class BrowseModel:
         self.preview_lines = lines
         self.preview_loading = False
 
-    def apply_search_progress(self, scanned: int, total: int) -> None:
+    def apply_search_progress(self, scanned: int, total: int, unavailable: int = 0) -> None:
         if self.mode != "searching":
             return
         self.search_scanned = scanned
         self.search_total = total
+        self.search_unavailable = unavailable
 
-    def apply_search_done(self, matched_chat_ids: frozenset[str], total: int) -> None:
+    def apply_search_done(
+        self,
+        matched_chat_ids: frozenset[str],
+        total: int,
+        unavailable: int = 0,
+    ) -> None:
         if self.mode != "searching":
             return
         self.search_scanned = total
         self.search_total = total
+        self.search_unavailable = unavailable
         self.search_matches = matched_chat_ids
         self.mode = "search-results"
         self.highlight = 0
@@ -215,6 +225,7 @@ class BrowseModel:
         self.mode = "list"
         self.search_scanned = 0
         self.search_total = 0
+        self.search_unavailable = 0
         self.search_matches = frozenset()
         self.inline_message = f"search failed: {reason}"
 

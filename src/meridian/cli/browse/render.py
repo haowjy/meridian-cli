@@ -52,6 +52,8 @@ def render_status(model: BrowseModel, width: int) -> StyleAndTextTuples:
             label = f"{label}  {progress}"
         elif model.mode == "search-results":
             progress = f"{len(model.search_matches)} of {model.search_total} match"
+            if model.search_unavailable:
+                progress += f" · {model.search_unavailable} unavailable"
             label = f"{label}  {progress}"
     else:
         label = f"filter: {model.filter_text}"

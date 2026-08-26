@@ -128,6 +128,19 @@ def test_footer_matches_search_mode_controls() -> None:
     assert "[esc] back" in results
 
 
+def test_search_status_reports_unavailable_transcripts() -> None:
+    model = BrowseModel((_row("c1"), _row("c2")))
+    model.handle_key(Search())
+    model.handle_key(Character("n"))
+    assert model.handle_key(Enter()) == StartSearch("n", ("c1", "c2"))
+
+    model.apply_search_done(frozenset({"c1"}), 2, unavailable=1)
+
+    status = _text(browse_render.render_status(model, 120))
+    assert "1 of 2 match" in status
+    assert "1 unavailable" in status
+
+
 def test_list_places_scroll_cursor_on_highlighted_row() -> None:
     model = BrowseModel(tuple(_row(f"c{index}") for index in range(20)))
     model.highlight = 15

@@ -150,12 +150,14 @@ class SearchRequest:
 class SearchProgress:
     scanned: int
     total: int
+    unavailable: int = 0
 
 
 @dataclass(frozen=True)
 class SearchDone:
     matched_chat_ids: frozenset[str]
     total: int
+    unavailable: int = 0
 
 
 type SearchResult = SearchProgress | SearchDone
@@ -199,6 +201,7 @@ def _search_worker(project_root: str) -> LaneWorker[SearchRequest, SearchResult]
         from meridian.lib.ops.session_search import iter_session_subset_search
 
         matches: set[str] = set()
+        unavailable = 0
         total = len(request.chat_ids)
         steps = iter_session_subset_search(
             project_root=project_root,
@@ -214,9 +217,11 @@ def _search_worker(project_root: str) -> LaneWorker[SearchRequest, SearchResult]
             scanned += 1
             if step.matched:
                 matches.add(step.chat_id)
-            post(SearchProgress(scanned, total))
+            if step.error is not None:
+                unavailable += 1
+            post(SearchProgress(scanned, total, unavailable))
         if current():
-            post(SearchDone(frozenset(matches), total))
+            post(SearchDone(frozenset(matches), total, unavailable))
 
     return work
 
@@ -275,9 +280,17 @@ class _BrowseController:
             if isinstance(result, LaneFailure):
                 self.model.apply_search_failed(result.message)
             elif isinstance(result, SearchProgress):
-                self.model.apply_search_progress(result.scanned, result.total)
+                self.model.apply_search_progress(
+                    result.scanned,
+                    result.total,
+                    result.unavailable,
+                )
             else:
-                self.model.apply_search_done(result.matched_chat_ids, result.total)
+                self.model.apply_search_done(
+                    result.matched_chat_ids,
+                    result.total,
+                    result.unavailable,
+                )
                 self._preview_request = None
                 self._request_preview()
 
