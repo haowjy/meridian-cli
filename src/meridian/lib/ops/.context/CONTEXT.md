@@ -219,9 +219,12 @@ form must keep at most one spawn-state scan for legacy rows without a recorded
 primary `spawn_id`. New primary launches persist that relationship and use direct
 spawn reads; a published-spawn generation invalidates legacy negative backfills.
 Likewise, `iter_session_subset_search()` resolves the whole requested subset with one
-indexed session query and bounded direct spawn reads, scanning spawn state only when
-the session index itself is unavailable. Listing carries an advisory action for the UI; Enter
-re-reads the same durable authorities plus lease liveness. Using the general
+indexed session query and bounded direct spawn reads. Ordinary readable relationships
+never trigger a global spawn scan. One batch-wide legacy scan is reserved for an
+unreadable recorded primary relationship (missing row, wrong kind, or wrong owning
+chat), so deep search can still recover related legacy histories; a missing relationship
+scans only while its generation-aware backfill is stale. Listing carries an advisory
+action for the UI; Enter re-reads the same durable authorities plus lease liveness. Using the general
 resolver in only one path can make the displayed verb disagree with the action
 even when no lease changed.
 
@@ -264,5 +267,7 @@ discovery stays in ops and artifact presence checking stays in the store.
 
 ## Lateral Links
 
-- `../../launch/.context/CONTEXT.md` — mechanism layer ops/spawn drives
-- `../../spawn/.context/CONTEXT.md` — archive visibility ops/spawn reads
+- [launch/.context/CONTEXT.md](../../launch/.context/CONTEXT.md) — mechanism layer
+  ops/spawn drives
+- [spawn/.context/CONTEXT.md](../../spawn/.context/CONTEXT.md) — archive visibility
+  ops/spawn reads

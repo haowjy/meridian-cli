@@ -55,10 +55,11 @@ Work items live under the `[context.work]` root (default
 `work_state.py` — **never** the project repo. See `docs/configuration.md` for
 context-path resolution.
 
-## Spawn State: V2 Per-Spawn Files
+## Spawn State: Per-Spawn Files
 
 Spawn state lives in individual `state.json` files (`spawns/<id>/state.json`),
 not a global event log, so status reads stay O(1) instead of replaying O(n) events.
+The layout originated in the v2 migration; published rows now use schema v3.
 
 ## Session Index
 

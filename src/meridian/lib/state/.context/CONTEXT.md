@@ -10,6 +10,8 @@ State splits across two roots:
 meridian.toml
   [project] id                      — committed machine-managed project identity
 
+~/.meridian/projects/.locks/<id>.lock
+                                    — project-lifetime gate outside deletable root
 ~/.meridian/projects/<id>/          ← user runtime, never committed
   sessions.jsonl                    — all session events, append-only
   sessions.jsonl.flock
@@ -26,13 +28,17 @@ meridian.toml
   spawns/
     .staging/<unique>/              — complete unpublished spawn row
     <id>/
-      state.json                    — authoritative spawn state (v2)
+      state.json                    — authoritative spawn state (schema v3)
       starting-prompt.md            — prompt body (written once)
       history.jsonl                 — primary output artifact (seq-enveloped events)
+      attempt-N/                    — preserved retry evidence
+      last-observed-event.json      — last harness event and counters
+      runner-lifecycle.jsonl        — runner lifecycle breadcrumbs
+      finalize-evidence.json        — orphan-time liveness snapshot
+      process_scopes.json           — durable process identities
+      reaper_cleanup_claim.json     — pending finalize-first cleanup targets
       heartbeat · report.md · stderr.log · params.json · tokens.json
-      inbound.jsonl                 — injected user messages
-      control.sock                  — active-session control socket
-  artifacts/                        — LocalStore blob store
+  artifacts/<spawn-id>/             — legacy auxiliary history fallback
 
 <context.work root>/<slug>/         ← context-resolved, not repo-local
   __status.json                     — mutable per-work-item metadata
@@ -43,10 +49,11 @@ The project ID in `meridian.toml` `[project] id` is the key that maps to
 `~/.meridian/projects/<id>/`. Projects can be moved or renamed without losing
 runtime history.
 
-### Spawn State: V2 Per-Spawn Files
+### Spawn State: Per-Spawn Files
 
 Spawn state lives in individual `spawns/<id>/state.json` files so status reads are
-O(1) instead of replaying an O(n) global event log.
+O(1) instead of replaying an O(n) global event log. The directory layout came from
+the v2 migration; published rows now use schema v3.
 
 ### Session State
 
@@ -64,6 +71,20 @@ journal rather than making derived state authoritative.
 authoritative spawn rows. Its generation marker changes when a spawn row publishes,
 so a prior negative scan cannot suppress a later valid relationship. New primary
 launches append the relationship to the session journal.
+
+The store exposes distinct read shapes rather than one replay API:
+
+| Read | Normal path | Fallback |
+|---|---|---|
+| `get_session_record()` | Direct indexed chat-ID lookup | Journal projection |
+| `get_session_records()` | One indexed requested-subset query | Journal projection |
+| `list_recent_primary_session_records()` | Indexed live-first page plus total count | Journal projection and sort |
+| `list_all_session_records()` | Full index projection | Journal projection |
+
+Event-history questions that cannot be answered from the current-record projection,
+such as `chat_ids_ever_attached_to_work()`, intentionally replay the journal. Bounded
+transcript-target recovery is ops policy; see
+[ops/.context/CONTEXT.md](../../ops/.context/CONTEXT.md).
 
 ## Contracts
 
