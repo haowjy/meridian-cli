@@ -810,6 +810,7 @@ def iter_chat_session_log_targets(
         chat_id: [] for chat_id in wanted_chat_ids
     }
     missing_relationships: set[str] = set()
+    unreadable_relationships: set[str] = set()
     for chat_id, record in records.items():
         spawn_id = (record.spawn_id or "").strip()
         if not spawn_id:
@@ -822,20 +823,25 @@ def iter_chat_session_log_targets(
             and session_identity.spawn_owner_chat_id(spawn) == chat_id
         ):
             primary_spawns[chat_id] = spawn
+        else:
+            unreadable_relationships.add(chat_id)
 
+    legacy_scan_ids = set(unreadable_relationships)
     if missing_relationships and not session_store.primary_spawn_backfill_is_current(
         runtime_root
     ):
+        legacy_scan_ids.update(missing_relationships)
+    if legacy_scan_ids:
         for spawn in spawn_store.list_spawns(runtime_root).records:
             raw_owner_chat_id = session_identity.spawn_owner_chat_id(spawn)
             owner_chat_id = (
                 str(raw_owner_chat_id) if raw_owner_chat_id is not None else ""
             )
             exact_chat_id = str(spawn.chat_id) if spawn.chat_id is not None else ""
-            if spawn.kind == "primary" and owner_chat_id in missing_relationships:
+            if spawn.kind == "primary" and owner_chat_id in legacy_scan_ids:
                 primary_spawns[owner_chat_id] = spawn
             for related_chat_id in (
-                {exact_chat_id, owner_chat_id} & missing_relationships
+                {exact_chat_id, owner_chat_id} & legacy_scan_ids
             ):
                 related_spawns[related_chat_id].append(spawn)
 

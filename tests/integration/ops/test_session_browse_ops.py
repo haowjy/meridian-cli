@@ -440,3 +440,65 @@ def test_subset_search_is_ordered_and_failure_isolated(
     assert steps[2].matched is True and steps[2].error is None
     assert record_scan_count == 1
     assert spawn_scan_count == 0
+
+
+def test_subset_search_recovers_history_when_recorded_primary_spawn_is_missing(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    project_root, runtime_root = _project_roots(tmp_path)
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", home.as_posix())
+    harness_session_id = "77777777-7777-4777-8777-777777777777"
+    chat_id = session_store.start_session(
+        runtime_root,
+        harness="codex",
+        harness_session_id=harness_session_id,
+        model="gpt-5.4",
+        kind="primary",
+        spawn_id="p404",
+    )
+    session_store.stop_session(runtime_root, chat_id)
+    _write_codex_rollout(
+        home=home,
+        project_root=project_root,
+        session_id=harness_session_id,
+        text="",
+    )
+    spawn_store.start_spawn(
+        runtime_root,
+        spawn_id="p43",
+        chat_id=chat_id,
+        model="gpt-5.4",
+        agent="coder",
+        harness="codex",
+        prompt="related child",
+    )
+    (runtime_root / "spawns" / "p43" / "history.jsonl").write_text(
+        json.dumps(
+            {
+                "event_type": "response_item",
+                "payload": {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [
+                        {"type": "output_text", "text": "legacy history needle"}
+                    ],
+                },
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    steps = list(
+        iter_session_subset_search(
+            project_root=project_root.as_posix(),
+            chat_ids=(chat_id,),
+            query="needle",
+        )
+    )
+
+    assert len(steps) == 1
+    assert steps[0].matched is True
+    assert steps[0].error is None
