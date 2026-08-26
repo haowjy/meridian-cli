@@ -772,8 +772,8 @@ def iter_chat_session_log_targets(
     """Resolve an ordered chat subset with one session and spawn-state scan."""
 
     normalized_chat_ids = tuple(chat_id.strip() for chat_id in chat_ids)
-    records = {
-        record.chat_id: record
+    records: dict[str, session_store.SessionRecord] = {
+        str(record.chat_id): record
         for record in session_store.get_session_records(
             runtime_root,
             {chat_id for chat_id in normalized_chat_ids if chat_id},
@@ -785,10 +785,12 @@ def iter_chat_session_log_targets(
         chat_id: [] for chat_id in wanted_chat_ids
     }
     for spawn in spawn_store.list_spawns(runtime_root).records:
-        owner_chat_id = session_identity.spawn_owner_chat_id(spawn)
+        raw_owner_chat_id = session_identity.spawn_owner_chat_id(spawn)
+        owner_chat_id = str(raw_owner_chat_id) if raw_owner_chat_id is not None else ""
         if spawn.kind == "primary" and owner_chat_id in wanted_chat_ids:
             primary_spawns[owner_chat_id] = spawn
-        for related_chat_id in {spawn.chat_id, owner_chat_id} & wanted_chat_ids:
+        exact_chat_id = str(spawn.chat_id) if spawn.chat_id is not None else ""
+        for related_chat_id in {exact_chat_id, owner_chat_id} & wanted_chat_ids:
             related_spawns[related_chat_id].append(spawn)
 
     for chat_id in normalized_chat_ids:
