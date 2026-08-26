@@ -70,6 +70,7 @@ from meridian.lib.state.session_store import (
     stop_session,
     update_session_claude_config_dir,
     update_session_harness_id,
+    update_session_spawn_id,
     update_session_work_id,
 )
 from meridian.lib.state.spawn.model import FOREGROUND_LAUNCH_MODE
@@ -859,6 +860,7 @@ def run_harness_process(
     start_session_fn: Callable[..., str] = start_session,
     stop_session_fn: Callable[..., None] = stop_session,
     update_session_harness_id_fn: Callable[..., None] = update_session_harness_id,
+    update_session_spawn_id_fn: Callable[..., None] = update_session_spawn_id,
     update_session_work_id_fn: Callable[..., None] = update_session_work_id,
     get_session_active_work_id_fn: Callable[[Path, str], str | None] = get_session_active_work_id,
 ) -> ProcessOutcome:
@@ -957,6 +959,11 @@ def run_harness_process(
                             status=SpawnStatus.QUEUED,
                         )
                     )
+                )
+                update_session_spawn_id_fn(
+                    runtime_root,
+                    chat_id,
+                    str(primary_spawn_id),
                 )
                 forked_session_id: str | None = None
                 if should_fork:

@@ -13,8 +13,10 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Fixed
 
 - Open the session browser promptly in projects with large session and spawn
-  histories by enriching only the visible `--limit` page and resolving deep-search
-  targets with one session/spawn scan per search.
+  histories by incrementally indexing authoritative session events, querying only
+  the visible `--limit` page, and resolving deep-search targets in one batch.
+- Record each new primary session's canonical spawn relationship so browse,
+  preview, and re-entry can use direct state reads instead of global recovery scans.
 - Show session-browser column headers and keep rows aligned by terminal display
   width across varying and Unicode agent/model labels.
 - Keep preview and transcript-search workers available after a request fails

@@ -1,7 +1,8 @@
 # lib/state/ — State Layer
 
-File-backed authority for all Meridian runtime state. No database, no service,
-no in-memory objects that survive process death. If it's not on disk, it doesn't exist.
+File-backed authority for all Meridian runtime state. No service or in-memory
+object survives process death. SQLite is permitted only as a rebuildable projection;
+authoritative state must remain independently recoverable from its source files.
 
 ## Roots
 
@@ -16,6 +17,7 @@ meridian.toml
 
 ~/.meridian/projects/<id>/          ← user runtime, never committed
   sessions.jsonl                    — session events (append-only)
+  sessions-index.sqlite3            — derived current-session projection
   locks/spawns/<spawn_id>.lock      — stable per-spawn external-writer lock
   locks/process-scopes/<spawn_id>.lock
                                     — stable process-scope sidecar mutation lock
@@ -56,6 +58,22 @@ context-path resolution.
 
 Spawn state lives in individual `state.json` files (`spawns/<id>/state.json`),
 not a global event log, so status reads stay O(1) instead of replaying O(n) events.
+
+## Session Index
+
+`sessions.jsonl` remains authoritative. `session_index.py` incrementally projects
+complete events into `sessions-index.sqlite3` under `sessions.jsonl.flock` so direct
+session reads and recent primary pages do not replay the journal. The index stores its
+source inode, byte offset, and mtime; replacement, truncation, schema mismatch, or
+database corruption deletes/rebuilds the projection. An incomplete final JSONL record
+is ignored without advancing the offset. If the index cannot be rebuilt, session reads
+fall back to the truncation-tolerant journal projection.
+
+The index is metadata-only: transcript summaries and full-text search are separate
+features. On first build it also joins historical primary spawn rows into the
+projection; new launches persist `spawn_id` in the session journal directly. Never
+write information only to the index unless it is reproducible from another
+authoritative state file.
 
 ## Spawn Mutation Seam
 
@@ -146,7 +164,8 @@ Both paths share liveness rules in `reaper.py` and completion/cancel precedence 
 - `spawn_aggregate.py` — published-row deletion and spawn-owned artifact lifetime guard.
 - `work_state.py` / `work_store.py` / `work_repository.py` — work-item models and
   codec, pure reads, and the single locked mutation repository, respectively.
-- `session_store.py` — Session event log.
+- `session_store.py` — Session event model, journal writes, and read policy.
+- `session_index.py` — Rebuildable direct/recent session projection.
 - `atomic.py` — atomic write primitives. All state writes use these.
 - `reaper.py` — read-only `reconcile_spawns()` projection and root-only
   `reconcile_active_spawn()` repair.

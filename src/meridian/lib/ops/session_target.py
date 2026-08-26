@@ -522,7 +522,17 @@ def _primary_spawn_for_chat(
     project_root: Path,
     runtime_root: Path,
     chat_id: str,
+    spawn_id: str | None = None,
 ) -> SpawnRecord | None:
+    normalized_spawn_id = (spawn_id or "").strip()
+    if normalized_spawn_id:
+        direct = spawn_store.get_spawn(runtime_root, normalized_spawn_id)
+        if (
+            direct is not None
+            and direct.kind == "primary"
+            and session_identity.spawn_owner_chat_id(direct) == chat_id
+        ):
+            return direct
     return read_latest_primary_spawn_for_chat_read_only(
         project_root,
         chat_id,
@@ -759,7 +769,12 @@ def _resolve_from_chat_id(
         runtime_root=runtime_root,
         chat_id=chat_id,
         session_record=session_record,
-        primary_spawn=_primary_spawn_for_chat(project_root, runtime_root, chat_id),
+        primary_spawn=_primary_spawn_for_chat(
+            project_root,
+            runtime_root,
+            chat_id,
+            session_record.spawn_id,
+        ),
     )
 
 
@@ -777,6 +792,7 @@ def iter_chat_session_log_targets(
         for record in session_store.get_session_records(
             runtime_root,
             {chat_id for chat_id in normalized_chat_ids if chat_id},
+            backfill_spawn_ids=False,
         )
     }
     wanted_chat_ids = set(normalized_chat_ids)

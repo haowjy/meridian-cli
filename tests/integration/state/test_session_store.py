@@ -774,3 +774,161 @@ def test_work_attachment_history_ignores_malformed_session_update(tmp_path: Path
     attached = session_store.chat_ids_ever_attached_to_work(runtime_root, "work-1")
 
     assert attached == set()
+
+
+def test_session_index_builds_once_then_ingests_only_new_events(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime_root = _state_root(tmp_path)
+    _write_session_start(
+        runtime_root=runtime_root,
+        chat_id="c1",
+        session_instance_id="gen-1",
+        kind="primary",
+    )
+    _write_session_start(
+        runtime_root=runtime_root,
+        chat_id="c2",
+        session_instance_id="gen-2",
+        kind="primary",
+    )
+
+    first = session_store.list_recent_primary_session_records(runtime_root, limit=1)
+
+    assert [record.chat_id for record in first.records] == ["c2"]
+    assert first.total_count == 2
+    index_path = runtime_root / "sessions-index.sqlite3"
+    assert index_path.is_file()
+    assert index_path.stat().st_mode & 0o777 == 0o600
+
+    reduced_events = 0
+    real_reducer = session_store._session_payload_after_event
+
+    def counting_reducer(current, event):
+        nonlocal reduced_events
+        reduced_events += 1
+        return real_reducer(current, event)
+
+    monkeypatch.setattr(session_store, "_session_payload_after_event", counting_reducer)
+
+    unchanged = session_store.list_recent_primary_session_records(runtime_root, limit=1)
+    assert [record.chat_id for record in unchanged.records] == ["c2"]
+    assert reduced_events == 0
+
+    _write_session_start(
+        runtime_root=runtime_root,
+        chat_id="c3",
+        session_instance_id="gen-3",
+        kind="primary",
+    )
+    updated = session_store.list_recent_primary_session_records(runtime_root, limit=1)
+
+    assert [record.chat_id for record in updated.records] == ["c3"]
+    assert updated.total_count == 3
+    assert reduced_events == 1
+
+
+def test_session_index_recovers_from_corruption_without_losing_authority(
+    tmp_path: Path,
+) -> None:
+    runtime_root = _state_root(tmp_path)
+    _write_session_start(
+        runtime_root=runtime_root,
+        chat_id="c7",
+        session_instance_id="gen-7",
+        kind="primary",
+    )
+    assert session_store.get_session_record(runtime_root, "c7") is not None
+
+    (runtime_root / "sessions-index.sqlite3").write_bytes(b"not sqlite")
+
+    recovered = session_store.get_session_record(runtime_root, "c7")
+    assert recovered is not None
+    assert recovered.chat_id == "c7"
+
+
+def test_session_reads_fall_back_when_index_cannot_be_created(tmp_path: Path) -> None:
+    runtime_root = _state_root(tmp_path)
+    _write_session_start(
+        runtime_root=runtime_root,
+        chat_id="c8",
+        session_instance_id="gen-8",
+        kind="primary",
+    )
+    (runtime_root / "sessions-index.sqlite3").mkdir()
+
+    record = session_store.get_session_record(runtime_root, "c8")
+
+    assert record is not None
+    assert record.chat_id == "c8"
+
+
+def test_session_index_rebuilds_after_authoritative_journal_replacement(tmp_path: Path) -> None:
+    runtime_root = _state_root(tmp_path)
+    _write_session_start(
+        runtime_root=runtime_root,
+        chat_id="c1",
+        session_instance_id="gen-1",
+        kind="primary",
+    )
+    _write_session_start(
+        runtime_root=runtime_root,
+        chat_id="c2",
+        session_instance_id="gen-2",
+        kind="primary",
+    )
+    assert session_store.list_recent_primary_session_records(runtime_root, limit=5).total_count == 2
+
+    (runtime_root / "sessions.jsonl").write_text("", encoding="utf-8")
+    _write_session_start(
+        runtime_root=runtime_root,
+        chat_id="c9",
+        session_instance_id="gen-9",
+        kind="primary",
+    )
+
+    rebuilt = session_store.list_recent_primary_session_records(runtime_root, limit=5)
+    assert [record.chat_id for record in rebuilt.records] == ["c9"]
+    assert rebuilt.total_count == 1
+
+
+def test_session_index_ignores_partial_tail_until_record_is_complete(tmp_path: Path) -> None:
+    runtime_root = _state_root(tmp_path)
+    _write_session_start(
+        runtime_root=runtime_root,
+        chat_id="c1",
+        session_instance_id="gen-1",
+        kind="primary",
+    )
+    assert session_store.list_recent_primary_session_records(runtime_root, limit=5).total_count == 1
+
+    event = json.dumps(
+        {
+            "v": 1,
+            "event": "start",
+            "chat_id": "c2",
+            "kind": "primary",
+            "harness": "codex",
+            "harness_session_id": "c2-thread",
+            "model": "gpt-5.4",
+            "session_instance_id": "gen-2",
+            "started_at": "2026-03-01T00:01:00Z",
+        },
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode()
+    split = len(event) // 2
+    with (runtime_root / "sessions.jsonl").open("ab") as handle:
+        handle.write(event[:split])
+
+    partial = session_store.list_recent_primary_session_records(runtime_root, limit=5)
+    assert [record.chat_id for record in partial.records] == ["c1"]
+    assert partial.total_count == 1
+
+    with (runtime_root / "sessions.jsonl").open("ab") as handle:
+        handle.write(event[split:] + b"\n")
+
+    complete = session_store.list_recent_primary_session_records(runtime_root, limit=5)
+    assert [record.chat_id for record in complete.records] == ["c2", "c1"]
+    assert complete.total_count == 2

@@ -13,6 +13,7 @@ meridian.toml
 ~/.meridian/projects/<id>/          ← user runtime, never committed
   sessions.jsonl                    — all session events, append-only
   sessions.jsonl.flock
+  sessions-index.sqlite3            — rebuildable current-session projection
   session-id-counter                — monotonic c1, c2, …
   sessions/                         — per-session lock + lease files
   spawn-id-counter                  — monotonic p1, p2, …
@@ -48,9 +49,14 @@ O(1) instead of replaying an O(n) global event log.
 
 ### Session State
 
-Sessions remain event-sourced JSONL (`sessions.jsonl`). The session log is
-substantially smaller than spawn history and does not suffer the same O(n)
-performance problem. No v2 migration for sessions.
+Sessions remain event-sourced JSONL (`sessions.jsonl`), which is authoritative.
+`session_index.py` maintains a rebuildable SQLite projection for direct record reads
+and bounded recent-primary queries. It incrementally consumes only complete JSONL
+records and rebuilds after source replacement/truncation, schema mismatch, or index
+corruption. Index synchronization and journal appends share `sessions.jsonl.flock`;
+index failure falls back to the journal rather than making derived state authoritative.
+Historical primary `spawn_id` values are backfilled from authoritative spawn rows on
+index rebuild; new primary launches append the relationship to the session journal.
 
 ## Contracts
 

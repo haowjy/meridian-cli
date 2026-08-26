@@ -24,6 +24,7 @@ from meridian.lib.platform.locking import (
     try_lock_file,
     unlink_validated_lock,
 )
+from meridian.lib.state import session_index
 from meridian.lib.state.atomic import atomic_write_text
 from meridian.lib.state.event_store import append_event, read_events, utc_now_iso
 from meridian.lib.state.liveness import is_process_alive_with_birth
@@ -108,6 +109,7 @@ class SessionUpdateEvent(BaseModel):
     session_instance_id: str = ""
     claude_config_dir: str | None = None
     active_work_id: str | None = None
+    spawn_id: str | None = None
 
 type SessionEvent = SessionStartEvent | SessionStopEvent | SessionUpdateEvent
 type MaterializedCleanupScope = str
@@ -116,6 +118,12 @@ type MaterializedCleanupScope = str
 class StaleSessionCleanup(NamedTuple):
     cleaned_ids: tuple[str, ...]
     materialized_scopes: tuple[MaterializedCleanupScope, ...]
+
+
+class SessionRecordPage(NamedTuple):
+    records: tuple[SessionRecord, ...]
+    total_count: int
+    live_chat_ids: frozenset[str]
 
 
 def _parse_event(payload: dict[str, Any]) -> SessionEvent | None:
@@ -238,7 +246,7 @@ def _session_instance_for_event(paths: RuntimePaths, runtime_root: Path, chat_id
     if lease_session_instance_id.strip():
         return lease_session_instance_id
 
-    record = _records_by_session(runtime_root).get(chat_id)
+    record = _indexed_record(runtime_root, chat_id)
     if record is None:
         return ""
     return record.session_instance_id
@@ -262,63 +270,140 @@ def reserve_chat_id(runtime_root: Path) -> str:
         return f"c{next_value}"
 
 
+def _apply_session_event(
+    existing: SessionRecord | None,
+    event: SessionEvent,
+) -> SessionRecord | None:
+    if isinstance(event, SessionStartEvent):
+        return _record_from_start_event(event)
+    if existing is None:
+        return None
+    if not _generation_matches(existing.session_instance_id, event.session_instance_id):
+        return existing
+    if isinstance(event, SessionStopEvent):
+        return existing.model_copy(
+            update={
+                "stopped_at": (
+                    event.stopped_at if event.stopped_at is not None else existing.stopped_at
+                ),
+                "session_instance_id": event.session_instance_id
+                or existing.session_instance_id,
+            }
+        )
+
+    session_ids = existing.harness_session_ids
+    harness_session_id = existing.harness_session_id
+    updated_work_id = existing.active_work_id
+    claude_config_dir = existing.claude_config_dir
+    spawn_id = existing.spawn_id
+    session_instance_id = existing.session_instance_id
+    if event.harness_session_id is not None:
+        if event.harness_session_id not in session_ids:
+            session_ids = (*session_ids, event.harness_session_id)
+        harness_session_id = event.harness_session_id
+    if event.session_instance_id.strip():
+        session_instance_id = event.session_instance_id
+    if event.active_work_id is not None:
+        normalized_work_id = event.active_work_id.strip()
+        updated_work_id = normalized_work_id or None
+    if event.claude_config_dir is not None:
+        normalized_config_dir = event.claude_config_dir.strip()
+        claude_config_dir = normalized_config_dir or None
+    if event.spawn_id is not None:
+        normalized_spawn_id = event.spawn_id.strip()
+        spawn_id = normalized_spawn_id or None
+    return existing.model_copy(
+        update={
+            "harness_session_id": harness_session_id,
+            "harness_session_ids": session_ids,
+            "session_instance_id": session_instance_id,
+            "active_work_id": updated_work_id,
+            "claude_config_dir": claude_config_dir,
+            "spawn_id": spawn_id,
+        }
+    )
+
+
+def _session_payload_after_event(
+    current_payload: session_index.SessionPayload | None,
+    event_payload: session_index.SessionPayload,
+) -> session_index.SessionPayload | None:
+    event = _parse_event(event_payload)
+    if event is None:
+        return current_payload
+    existing = (
+        SessionRecord.model_validate(current_payload)
+        if current_payload is not None
+        else None
+    )
+    updated = _apply_session_event(existing, event)
+    return updated.model_dump(mode="json") if updated is not None else None
+
+
+def _backfill_primary_spawn_ids(
+    runtime_root: Path,
+    payloads: list[session_index.SessionPayload],
+) -> list[session_index.SessionPayload]:
+    records = [SessionRecord.model_validate(payload) for payload in payloads]
+    missing_chat_ids = {record.chat_id for record in records if not record.spawn_id}
+    if not missing_chat_ids:
+        return []
+
+    from meridian.lib.state import session_identity, spawn_store
+
+    primary_spawns: dict[str, str] = {}
+    for spawn in spawn_store.list_spawns(runtime_root).records:
+        owner_chat_id = session_identity.spawn_owner_chat_id(spawn)
+        if (
+            spawn.kind == "primary"
+            and owner_chat_id is not None
+            and owner_chat_id in missing_chat_ids
+        ):
+            primary_spawns[owner_chat_id] = spawn.id
+
+    return [
+        record.model_copy(update={"spawn_id": primary_spawns[record.chat_id]}).model_dump(
+            mode="json"
+        )
+        for record in records
+        if not record.spawn_id and record.chat_id in primary_spawns
+    ]
+
+
 def _records_by_session(runtime_root: Path) -> dict[str, SessionRecord]:
     paths = RuntimePaths.from_root_dir(runtime_root)
     records: dict[str, SessionRecord] = {}
-
     for event in read_events(paths.sessions_jsonl, _parse_event):
-        if isinstance(event, SessionStartEvent):
-            record = _record_from_start_event(event)
-            records[record.chat_id] = record
-            continue
-        if isinstance(event, SessionStopEvent):
-            existing = records.get(event.chat_id)
-            if existing is None:
-                continue
-            if not _generation_matches(existing.session_instance_id, event.session_instance_id):
-                continue
-            records[event.chat_id] = existing.model_copy(
-                update={
-                    "stopped_at": event.stopped_at
-                    if event.stopped_at is not None
-                    else existing.stopped_at,
-                    "session_instance_id": event.session_instance_id
-                    or existing.session_instance_id,
-                }
-            )
-            continue
         existing = records.get(event.chat_id)
-        if existing is None:
-            continue
-        if not _generation_matches(existing.session_instance_id, event.session_instance_id):
-            continue
-        session_ids = existing.harness_session_ids
-        harness_session_id = existing.harness_session_id
-        updated_work_id = existing.active_work_id
-        claude_config_dir = existing.claude_config_dir
-        session_instance_id = existing.session_instance_id
-        if event.harness_session_id is not None:
-            if event.harness_session_id not in session_ids:
-                session_ids = (*session_ids, event.harness_session_id)
-            harness_session_id = event.harness_session_id
-        if event.session_instance_id.strip():
-            session_instance_id = event.session_instance_id
-        if event.active_work_id is not None:
-            normalized_work_id = event.active_work_id.strip()
-            updated_work_id = normalized_work_id or None
-        if event.claude_config_dir is not None:
-            normalized_config_dir = event.claude_config_dir.strip()
-            claude_config_dir = normalized_config_dir or None
-        records[event.chat_id] = existing.model_copy(
-            update={
-                "harness_session_id": harness_session_id,
-                "harness_session_ids": session_ids,
-                "session_instance_id": session_instance_id,
-                "active_work_id": updated_work_id,
-                "claude_config_dir": claude_config_dir,
-            }
-        )
+        updated = _apply_session_event(existing, event)
+        if updated is not None:
+            records[event.chat_id] = updated
     return records
+
+
+def _indexed_records(runtime_root: Path) -> list[SessionRecord]:
+    try:
+        payloads = session_index.list_session_payloads(
+            runtime_root,
+            _session_payload_after_event,
+            _backfill_primary_spawn_ids,
+        )
+        return [SessionRecord.model_validate(payload) for payload in payloads]
+    except (ValidationError, session_index.SessionIndexUnavailable):
+        return list(_records_by_session(runtime_root).values())
+
+
+def _indexed_record(runtime_root: Path, chat_id: str) -> SessionRecord | None:
+    try:
+        payload = session_index.get_session_payload(
+            runtime_root,
+            chat_id,
+            _session_payload_after_event,
+            _backfill_primary_spawn_ids,
+        )
+        return SessionRecord.model_validate(payload) if payload is not None else None
+    except (ValidationError, session_index.SessionIndexUnavailable):
+        return _records_by_session(runtime_root).get(chat_id)
 
 
 def _session_sort_key(chat_id: str) -> tuple[int, str]:
@@ -484,6 +569,24 @@ def update_session_work_id(runtime_root: Path, chat_id: str, work_id: str | None
     )
 
 
+def update_session_spawn_id(runtime_root: Path, chat_id: str, spawn_id: str) -> None:
+    """Record the canonical primary spawn relationship for a session."""
+
+    paths = RuntimePaths.from_root_dir(runtime_root)
+    event = SessionUpdateEvent(
+        chat_id=ChatId(chat_id),
+        harness_session_id=None,
+        session_instance_id=_session_instance_for_event(paths, runtime_root, chat_id),
+        spawn_id=spawn_id.strip(),
+    )
+    append_event(
+        paths.sessions_jsonl,
+        paths.sessions_flock,
+        event,
+        exclude_none=True,
+    )
+
+
 def update_session_claude_config_dir(
     runtime_root: Path,
     chat_id: str,
@@ -547,7 +650,9 @@ def is_session_lease_owner_alive(runtime_root: Path, chat_id: str) -> bool:
 def list_active_session_records(runtime_root: Path) -> list[SessionRecord]:
     """Return materialized records for active sessions."""
 
-    records = _records_by_session(runtime_root)
+    records: dict[str, SessionRecord] = {
+        record.chat_id: record for record in _indexed_records(runtime_root)
+    }
     return [
         record
         for chat_id in list_active_sessions(runtime_root)
@@ -558,13 +663,61 @@ def list_active_session_records(runtime_root: Path) -> list[SessionRecord]:
 def list_all_session_records(runtime_root: Path) -> list[SessionRecord]:
     """Return all materialized records, including stopped sessions."""
 
-    return list(_records_by_session(runtime_root).values())
+    return _indexed_records(runtime_root)
 
 
 def get_session_record(runtime_root: Path, chat_id: str) -> SessionRecord | None:
     """Return a materialized record for one chat ID, if present."""
 
-    return _records_by_session(runtime_root).get(chat_id)
+    return _indexed_record(runtime_root, chat_id)
+
+
+def list_recent_primary_session_records(
+    runtime_root: Path,
+    *,
+    limit: int,
+) -> SessionRecordPage:
+    """Return one indexed, live-first page of recent primary sessions."""
+
+    if limit <= 0:
+        raise ValueError("limit must be positive")
+    paths = RuntimePaths.from_root_dir(runtime_root)
+    live_chat_ids = {
+        lease_path.name.removesuffix(".lease.json")
+        for lease_path in paths.sessions_dir.glob("*.lease.json")
+        if is_session_lease_owner_alive(
+            runtime_root,
+            lease_path.name.removesuffix(".lease.json"),
+        )
+    }
+    try:
+        payloads, total_count = session_index.list_recent_primary_payloads(
+            runtime_root,
+            limit=limit,
+            live_chat_ids=live_chat_ids,
+            reducer=_session_payload_after_event,
+            backfill=_backfill_primary_spawn_ids,
+        )
+        records = tuple(SessionRecord.model_validate(payload) for payload in payloads)
+        return SessionRecordPage(records, total_count, frozenset(live_chat_ids))
+    except (ValidationError, session_index.SessionIndexUnavailable):
+        records = [
+            record
+            for record in _records_by_session(runtime_root).values()
+            if record.kind == "primary"
+        ]
+        records.sort(
+            key=lambda record: (
+                record.chat_id in live_chat_ids,
+                record.stopped_at or record.started_at,
+            ),
+            reverse=True,
+        )
+        return SessionRecordPage(
+            tuple(records[:limit]),
+            len(records),
+            frozenset(live_chat_ids),
+        )
 
 
 def list_active_sessions_for_work_id(runtime_root: Path, work_id: str) -> list[str]:
@@ -603,35 +756,51 @@ def chat_ids_ever_attached_to_work(runtime_root: Path, work_id: str) -> set[str]
     return set(read_events(paths.sessions_jsonl, _parse_work_attachment))
 
 
-def get_session_records(runtime_root: Path, chat_ids: set[str]) -> list[SessionRecord]:
+def get_session_records(
+    runtime_root: Path,
+    chat_ids: set[str],
+    *,
+    backfill_spawn_ids: bool = True,
+) -> list[SessionRecord]:
     """Return materialized records for a set of Meridian chat/session IDs."""
 
     if not chat_ids:
         return []
-    records = _records_by_session(runtime_root)
-    return [
-        records[chat_id]
-        for chat_id in sorted(
-            {chat_id.strip() for chat_id in chat_ids if chat_id.strip()},
-            key=_session_sort_key,
+    normalized = {chat_id.strip() for chat_id in chat_ids if chat_id.strip()}
+    try:
+        payloads = session_index.get_session_payloads(
+            runtime_root,
+            normalized,
+            _session_payload_after_event,
+            _backfill_primary_spawn_ids if backfill_spawn_ids else None,
         )
-        if chat_id in records
-    ]
+        records = [SessionRecord.model_validate(payload) for payload in payloads]
+    except (ValidationError, session_index.SessionIndexUnavailable):
+        by_session = _records_by_session(runtime_root)
+        records = [by_session[chat_id] for chat_id in normalized if chat_id in by_session]
+    return sorted(records, key=lambda record: _session_sort_key(record.chat_id))
+
+
+def primary_spawn_backfill_complete(runtime_root: Path) -> bool:
+    """Return whether the current index resolved every historical primary spawn."""
+
+    try:
+        return session_index.primary_spawn_backfill_complete(
+            runtime_root,
+            _session_payload_after_event,
+            _backfill_primary_spawn_ids,
+        )
+    except session_index.SessionIndexUnavailable:
+        return False
 
 
 def get_last_session(runtime_root: Path) -> SessionRecord | None:
     """Return the most recently started session record in a state root."""
 
-    paths = RuntimePaths.from_root_dir(runtime_root)
-    last_session_id: str | None = None
-    for event in read_events(paths.sessions_jsonl, _parse_event):
-        if not isinstance(event, SessionStartEvent):
-            continue
-        last_session_id = event.chat_id
-
-    if last_session_id is None:
+    records = _indexed_records(runtime_root)
+    if not records:
         return None
-    return _records_by_session(runtime_root).get(last_session_id)
+    return max(records, key=lambda record: (record.started_at, _session_sort_key(record.chat_id)))
 
 
 def resolve_session_ref(runtime_root: Path, ref: str) -> SessionRecord | None:
@@ -641,8 +810,11 @@ def resolve_session_ref(runtime_root: Path, ref: str) -> SessionRecord | None:
     if not normalized:
         return None
 
-    records = _records_by_session(runtime_root)
-    matches = [record for record in records.values() if normalized in record.harness_session_ids]
+    matches = [
+        record
+        for record in _indexed_records(runtime_root)
+        if normalized in record.harness_session_ids
+    ]
     if not matches:
         return None
     return max(matches, key=lambda item: (item.started_at, _session_sort_key(item.chat_id)))
@@ -651,7 +823,7 @@ def resolve_session_ref(runtime_root: Path, ref: str) -> SessionRecord | None:
 def get_session_active_work_id(runtime_root: Path, chat_id: str) -> str | None:
     """Return the active work item ID for a session, or None."""
 
-    record = _records_by_session(runtime_root).get(chat_id)
+    record = _indexed_record(runtime_root, chat_id)
     if record is None:
         return None
     return record.active_work_id
@@ -660,7 +832,7 @@ def get_session_active_work_id(runtime_root: Path, chat_id: str) -> str | None:
 def get_session_harness_id(runtime_root: Path, chat_id: str) -> str | None:
     """Return harness session ID for a Meridian session ID."""
 
-    record = _records_by_session(runtime_root).get(chat_id)
+    record = _indexed_record(runtime_root, chat_id)
     if record is None:
         return None
     return record.harness_session_id
@@ -669,7 +841,7 @@ def get_session_harness_id(runtime_root: Path, chat_id: str) -> str | None:
 def get_session_harness_ids(runtime_root: Path, chat_id: str) -> tuple[str, ...]:
     """Return all harness session IDs observed for a Meridian session ID."""
 
-    record = _records_by_session(runtime_root).get(chat_id)
+    record = _indexed_record(runtime_root, chat_id)
     if record is None:
         return ()
     return record.harness_session_ids

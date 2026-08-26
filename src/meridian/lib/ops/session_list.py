@@ -13,7 +13,6 @@ from meridian.lib.ops.reference_recovery import recover_recorded_chat_harness_se
 from meridian.lib.ops.runtime import async_from_sync, resolve_roots_for_read
 from meridian.lib.ops.session_reentry import SessionReentryDecision, decide_reentry
 from meridian.lib.state import session_store, work_store
-from meridian.lib.state.paths import RuntimePaths
 
 
 class SessionListInput(BaseModel):
@@ -96,30 +95,12 @@ def session_list_sync(
     if roots is None:
         return SessionListOutput()
 
-    records = [
-        record
-        for record in session_store.list_all_session_records(roots.runtime_root)
-        if record.kind == "primary"
-    ]
-    sessions_dir = RuntimePaths.from_root_dir(roots.runtime_root).sessions_dir
-    lease_chat_ids = {
-        path.name.removesuffix(".lease.json")
-        for path in sessions_dir.glob("*.lease.json")
-    }
-    live_chat_ids = {
-        record.chat_id
-        for record in records
-        if record.chat_id in lease_chat_ids
-        and session_store.is_session_lease_owner_alive(roots.runtime_root, record.chat_id)
-    }
-    records.sort(
-        key=lambda record: (
-            record.chat_id in live_chat_ids,
-            record.stopped_at or record.started_at,
-        ),
-        reverse=True,
+    page = session_store.list_recent_primary_session_records(
+        roots.runtime_root,
+        limit=payload.limit,
     )
-    visible_records = records[: payload.limit]
+    visible_records = page.records
+    live_chat_ids = page.live_chat_ids
     recorded_harness_sessions = recover_recorded_chat_harness_session_ids(
         roots.runtime_root,
         visible_records,
@@ -151,7 +132,7 @@ def session_list_sync(
             )
         )
 
-    return SessionListOutput(rows=tuple(rows), total_count=len(records))
+    return SessionListOutput(rows=tuple(rows), total_count=page.total_count)
 
 
 session_list = async_from_sync(session_list_sync)

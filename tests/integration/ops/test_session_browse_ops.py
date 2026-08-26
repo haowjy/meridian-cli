@@ -131,7 +131,6 @@ def test_list_and_reentry_share_recorded_primary_metadata_recovery(tmp_path: Pat
         harness_session_id="",
         model="gpt-5.4",
         kind="primary",
-        spawn_id="p42",
     )
     spawn_store.start_spawn(
         runtime_root,
@@ -159,6 +158,48 @@ def test_list_and_reentry_share_recorded_primary_metadata_recovery(tmp_path: Pat
     stopped_row = next(row for row in stopped_listing.rows if row.chat_id == chat_id)
     assert stopped_row.reentry == Resume(chat_id)
     assert resolve_session_reentry(project_root.as_posix(), chat_id) == Resume(chat_id)
+
+
+def test_recorded_primary_spawn_id_avoids_global_spawn_recovery_scan(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    project_root, runtime_root = _project_roots(tmp_path)
+    chat_id = session_store.start_session(
+        runtime_root,
+        harness="codex",
+        harness_session_id="",
+        model="gpt-5.4",
+        kind="primary",
+        spawn_id="p42",
+    )
+    spawn_store.start_spawn(
+        runtime_root,
+        spawn_id="p42",
+        chat_id=chat_id,
+        model="gpt-5.4",
+        agent="coder",
+        harness="codex",
+        kind="primary",
+        prompt="primary",
+        harness_session_id="42424242-4242-4242-8242-424242424242",
+    )
+    backfilled = session_store.get_session_record(runtime_root, chat_id)
+    assert backfilled is not None
+    assert backfilled.spawn_id == "p42"
+
+    def fail_global_scan(*_args, **_kwargs):
+        raise AssertionError("direct primary relationship should avoid list_spawns")
+
+    monkeypatch.setattr(spawn_store, "list_spawns", fail_global_scan)
+    try:
+        listing = session_list_sync(
+            SessionListInput(project_root=project_root.as_posix(), limit=1)
+        )
+        assert listing.rows[0].reentry == Fork(chat_id)
+        assert resolve_session_reentry(project_root.as_posix(), chat_id) == Fork(chat_id)
+    finally:
+        session_store.stop_session(runtime_root, chat_id)
 
 
 def test_list_and_reentry_block_when_all_recorded_ids_are_missing(tmp_path: Path) -> None:

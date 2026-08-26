@@ -143,6 +143,9 @@ def test_run_harness_process_fresh_claude_primary_seeds_session_id(
     spawns = list_spawns(launch_context.runtime_root)
     assert len(spawns.records) == 1
     assert spawns.records[0].harness_session_id == seeded_id
+    session = session_store.get_session_record(launch_context.runtime_root, outcome.chat_id)
+    assert session is not None
+    assert session.spawn_id == spawns.records[0].id
 
 
 @pytest.mark.slow
