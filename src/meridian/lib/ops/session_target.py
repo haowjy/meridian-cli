@@ -481,9 +481,16 @@ def _spawn_history_fallback_for_chat_ref(
     primary_spawn: SpawnRecord | None,
     related_spawns: Sequence[SpawnRecord] | None = None,
 ) -> SessionLogTarget | None:
-    candidates: list[SpawnRecord] = []
     if primary_spawn is not None:
-        candidates.append(primary_spawn)
+        output_target = _target_from_spawn_output(
+            runtime_root,
+            display_id=display_id,
+            spawn_id=primary_spawn.id,
+        )
+        if output_target is not None:
+            return output_target
+
+    candidates: list[SpawnRecord] = []
     if related_spawns is None:
         candidates.extend(
             reversed(
@@ -533,6 +540,7 @@ def _primary_spawn_for_chat(
             and session_identity.spawn_owner_chat_id(direct) == chat_id
         ):
             return direct
+        return None
     return read_latest_primary_spawn_for_chat_read_only(
         project_root,
         chat_id,
@@ -764,17 +772,19 @@ def _resolve_from_chat_id(
     session_record = _read_chat_session_record(runtime_root, chat_id)
     if session_record is None:
         raise ValueError(f"Chat '{chat_id}' not found")
+    primary_spawn = _primary_spawn_for_chat(
+        project_root,
+        runtime_root,
+        chat_id,
+        session_record.spawn_id,
+    )
     return _resolve_from_chat_state(
         project_root=project_root,
         runtime_root=runtime_root,
         chat_id=chat_id,
         session_record=session_record,
-        primary_spawn=_primary_spawn_for_chat(
-            project_root,
-            runtime_root,
-            chat_id,
-            session_record.spawn_id,
-        ),
+        primary_spawn=primary_spawn,
+        related_spawns=() if session_record.spawn_id else None,
     )
 
 
@@ -784,7 +794,7 @@ def iter_chat_session_log_targets(
     runtime_root: Path,
     chat_ids: Sequence[str],
 ) -> Iterator[ChatSessionLogTargetResolution]:
-    """Resolve an ordered chat subset with one session and spawn-state scan."""
+    """Resolve an ordered chat subset with bounded direct state reads."""
 
     normalized_chat_ids = tuple(chat_id.strip() for chat_id in chat_ids)
     records: dict[str, session_store.SessionRecord] = {
@@ -792,7 +802,6 @@ def iter_chat_session_log_targets(
         for record in session_store.get_session_records(
             runtime_root,
             {chat_id for chat_id in normalized_chat_ids if chat_id},
-            backfill_spawn_ids=False,
         )
     }
     wanted_chat_ids = set(normalized_chat_ids)
@@ -800,14 +809,35 @@ def iter_chat_session_log_targets(
     related_spawns: dict[str, list[SpawnRecord]] = {
         chat_id: [] for chat_id in wanted_chat_ids
     }
-    for spawn in spawn_store.list_spawns(runtime_root).records:
-        raw_owner_chat_id = session_identity.spawn_owner_chat_id(spawn)
-        owner_chat_id = str(raw_owner_chat_id) if raw_owner_chat_id is not None else ""
-        if spawn.kind == "primary" and owner_chat_id in wanted_chat_ids:
-            primary_spawns[owner_chat_id] = spawn
-        exact_chat_id = str(spawn.chat_id) if spawn.chat_id is not None else ""
-        for related_chat_id in {exact_chat_id, owner_chat_id} & wanted_chat_ids:
-            related_spawns[related_chat_id].append(spawn)
+    missing_relationships: set[str] = set()
+    for chat_id, record in records.items():
+        spawn_id = (record.spawn_id or "").strip()
+        if not spawn_id:
+            missing_relationships.add(chat_id)
+            continue
+        spawn = spawn_store.get_spawn(runtime_root, spawn_id)
+        if (
+            spawn is not None
+            and spawn.kind == "primary"
+            and session_identity.spawn_owner_chat_id(spawn) == chat_id
+        ):
+            primary_spawns[chat_id] = spawn
+
+    if missing_relationships and not session_store.primary_spawn_backfill_is_current(
+        runtime_root
+    ):
+        for spawn in spawn_store.list_spawns(runtime_root).records:
+            raw_owner_chat_id = session_identity.spawn_owner_chat_id(spawn)
+            owner_chat_id = (
+                str(raw_owner_chat_id) if raw_owner_chat_id is not None else ""
+            )
+            exact_chat_id = str(spawn.chat_id) if spawn.chat_id is not None else ""
+            if spawn.kind == "primary" and owner_chat_id in missing_relationships:
+                primary_spawns[owner_chat_id] = spawn
+            for related_chat_id in (
+                {exact_chat_id, owner_chat_id} & missing_relationships
+            ):
+                related_spawns[related_chat_id].append(spawn)
 
     for chat_id in normalized_chat_ids:
         session_record = records.get(chat_id)

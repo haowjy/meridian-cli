@@ -52,11 +52,15 @@ O(1) instead of replaying an O(n) global event log.
 Sessions remain event-sourced JSONL (`sessions.jsonl`), which is authoritative.
 `session_index.py` maintains a rebuildable SQLite projection for direct record reads
 and bounded recent-primary queries. It incrementally consumes only complete JSONL
-records and rebuilds after source replacement/truncation, schema mismatch, or index
-corruption. Index synchronization and journal appends share `sessions.jsonl.flock`;
-index failure falls back to the journal rather than making derived state authoritative.
-Historical primary `spawn_id` values are backfilled from authoritative spawn rows on
-index rebuild; new primary launches append the relationship to the session journal.
+records and rebuilds after source replacement/truncate-rewrite, schema mismatch, or
+index corruption. A bounded checkpoint at the indexed record boundary distinguishes
+append growth from a same-inode rewrite. Index synchronization and journal appends
+share `sessions.jsonl.flock`; a busy or unavailable index promptly falls back to the
+journal rather than making derived state authoritative.
+`session_aggregate.py` backfills historical primary `spawn_id` values from
+authoritative spawn rows. Its generation marker changes when a spawn row publishes,
+so a prior negative scan cannot suppress a later valid relationship. New primary
+launches append the relationship to the session journal.
 
 ## Contracts
 

@@ -14,9 +14,11 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - Open the session browser promptly in projects with large session and spawn
   histories by incrementally indexing authoritative session events, querying only
-  the visible `--limit` page, and resolving deep-search targets in one batch.
+  the visible `--limit` page, and resolving preview and deep-search targets with
+  bounded direct reads after a one-time legacy backfill.
 - Record each new primary session's canonical spawn relationship so browse,
-  preview, and re-entry can use direct state reads instead of global recovery scans.
+  preview, and re-entry can use direct state reads instead of global recovery scans;
+  invalidate negative legacy backfills when new spawn rows publish.
 - Show session-browser column headers and keep rows aligned by terminal display
   width across varying and Unicode agent/model labels.
 - Keep preview and transcript-search workers available after a request fails

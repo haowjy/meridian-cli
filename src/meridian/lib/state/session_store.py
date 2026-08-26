@@ -24,7 +24,7 @@ from meridian.lib.platform.locking import (
     try_lock_file,
     unlink_validated_lock,
 )
-from meridian.lib.state import session_index
+from meridian.lib.state import session_aggregate, session_index
 from meridian.lib.state.atomic import atomic_write_text
 from meridian.lib.state.event_store import append_event, read_events, utc_now_iso
 from meridian.lib.state.liveness import is_process_alive_with_birth
@@ -340,36 +340,6 @@ def _session_payload_after_event(
     return updated.model_dump(mode="json") if updated is not None else None
 
 
-def _backfill_primary_spawn_ids(
-    runtime_root: Path,
-    payloads: list[session_index.SessionPayload],
-) -> list[session_index.SessionPayload]:
-    records = [SessionRecord.model_validate(payload) for payload in payloads]
-    missing_chat_ids = {record.chat_id for record in records if not record.spawn_id}
-    if not missing_chat_ids:
-        return []
-
-    from meridian.lib.state import session_identity, spawn_store
-
-    primary_spawns: dict[str, str] = {}
-    for spawn in spawn_store.list_spawns(runtime_root).records:
-        owner_chat_id = session_identity.spawn_owner_chat_id(spawn)
-        if (
-            spawn.kind == "primary"
-            and owner_chat_id is not None
-            and owner_chat_id in missing_chat_ids
-        ):
-            primary_spawns[owner_chat_id] = spawn.id
-
-    return [
-        record.model_copy(update={"spawn_id": primary_spawns[record.chat_id]}).model_dump(
-            mode="json"
-        )
-        for record in records
-        if not record.spawn_id and record.chat_id in primary_spawns
-    ]
-
-
 def _records_by_session(runtime_root: Path) -> dict[str, SessionRecord]:
     paths = RuntimePaths.from_root_dir(runtime_root)
     records: dict[str, SessionRecord] = {}
@@ -386,7 +356,7 @@ def _indexed_records(runtime_root: Path) -> list[SessionRecord]:
         payloads = session_index.list_session_payloads(
             runtime_root,
             _session_payload_after_event,
-            _backfill_primary_spawn_ids,
+            session_aggregate.PRIMARY_SPAWN_BACKFILL,
         )
         return [SessionRecord.model_validate(payload) for payload in payloads]
     except (ValidationError, session_index.SessionIndexUnavailable):
@@ -399,7 +369,7 @@ def _indexed_record(runtime_root: Path, chat_id: str) -> SessionRecord | None:
             runtime_root,
             chat_id,
             _session_payload_after_event,
-            _backfill_primary_spawn_ids,
+            session_aggregate.PRIMARY_SPAWN_BACKFILL,
         )
         return SessionRecord.model_validate(payload) if payload is not None else None
     except (ValidationError, session_index.SessionIndexUnavailable):
@@ -696,7 +666,7 @@ def list_recent_primary_session_records(
             limit=limit,
             live_chat_ids=live_chat_ids,
             reducer=_session_payload_after_event,
-            backfill=_backfill_primary_spawn_ids,
+            backfill=session_aggregate.PRIMARY_SPAWN_BACKFILL,
         )
         records = tuple(SessionRecord.model_validate(payload) for payload in payloads)
         return SessionRecordPage(records, total_count, frozenset(live_chat_ids))
@@ -710,6 +680,7 @@ def list_recent_primary_session_records(
             key=lambda record: (
                 record.chat_id in live_chat_ids,
                 record.stopped_at or record.started_at,
+                _session_sort_key(record.chat_id),
             ),
             reverse=True,
         )
@@ -759,8 +730,6 @@ def chat_ids_ever_attached_to_work(runtime_root: Path, work_id: str) -> set[str]
 def get_session_records(
     runtime_root: Path,
     chat_ids: set[str],
-    *,
-    backfill_spawn_ids: bool = True,
 ) -> list[SessionRecord]:
     """Return materialized records for a set of Meridian chat/session IDs."""
 
@@ -772,7 +741,7 @@ def get_session_records(
             runtime_root,
             normalized,
             _session_payload_after_event,
-            _backfill_primary_spawn_ids if backfill_spawn_ids else None,
+            session_aggregate.PRIMARY_SPAWN_BACKFILL,
         )
         records = [SessionRecord.model_validate(payload) for payload in payloads]
     except (ValidationError, session_index.SessionIndexUnavailable):
@@ -781,14 +750,14 @@ def get_session_records(
     return sorted(records, key=lambda record: _session_sort_key(record.chat_id))
 
 
-def primary_spawn_backfill_complete(runtime_root: Path) -> bool:
-    """Return whether the current index resolved every historical primary spawn."""
+def primary_spawn_backfill_is_current(runtime_root: Path) -> bool:
+    """Return whether indexed spawn discovery covers current published rows."""
 
     try:
-        return session_index.primary_spawn_backfill_complete(
+        return session_index.primary_spawn_backfill_is_current(
             runtime_root,
             _session_payload_after_event,
-            _backfill_primary_spawn_ids,
+            session_aggregate.PRIMARY_SPAWN_BACKFILL,
         )
     except session_index.SessionIndexUnavailable:
         return False

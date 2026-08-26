@@ -7,6 +7,8 @@ import os
 import sqlite3
 from collections.abc import Callable, Collection
 from contextlib import suppress
+from dataclasses import dataclass
+from hashlib import blake2b
 from pathlib import Path
 from typing import Any, cast
 
@@ -18,11 +20,24 @@ type SessionReducer = Callable[
     [SessionPayload | None, SessionPayload],
     SessionPayload | None,
 ]
-type SessionBackfill = Callable[[Path, list[SessionPayload]], list[SessionPayload]]
+@dataclass(frozen=True)
+class SessionBackfillResult:
+    payloads: list[SessionPayload]
+    generation_before: str
+    generation_after: str
 
-_SCHEMA_VERSION = 2
+
+@dataclass(frozen=True)
+class SessionBackfill:
+    generation: Callable[[Path], str]
+    enrich: Callable[[Path, list[SessionPayload]], SessionBackfillResult]
+
+_SCHEMA_VERSION = 3
 _SOURCE_META_KEYS = ("source_dev", "source_ino", "source_offset", "source_mtime_ns")
-_SPAWN_BACKFILL_KEY = "primary_spawn_backfill_v1"
+_SOURCE_CHECKPOINT_KEY = "source_checkpoint_v1"
+_SPAWN_BACKFILL_KEY = "primary_spawn_backfill_generation_v1"
+_CHECKPOINT_BYTES = 4096
+_SQLITE_TIMEOUT_SECONDS = 0.05
 
 
 class SessionIndexUnavailable(OSError):
@@ -44,7 +59,7 @@ def _source_state(path: Path) -> tuple[int, int, int, int]:
 
 
 def _connect(path: Path) -> sqlite3.Connection:
-    connection = sqlite3.connect(path, timeout=10)
+    connection = sqlite3.connect(path, timeout=_SQLITE_TIMEOUT_SECONDS)
     try:
         os.chmod(path, 0o600)
     except OSError:
@@ -100,6 +115,7 @@ def _metadata(connection: sqlite3.Connection) -> dict[str, str]:
 
 def _write_source_metadata(
     connection: sqlite3.Connection,
+    source_path: Path,
     source_state: tuple[int, int, int, int],
     *,
     offset: int,
@@ -110,11 +126,25 @@ def _write_source_metadata(
         "source_ino": str(ino),
         "source_offset": str(offset),
         "source_mtime_ns": str(mtime_ns),
+        _SOURCE_CHECKPOINT_KEY: _source_checkpoint(source_path, offset),
     }
     connection.executemany(
         "INSERT OR REPLACE INTO metadata(key, value) VALUES (?, ?)",
         values.items(),
     )
+
+
+def _source_checkpoint(source_path: Path, offset: int) -> str:
+    """Fingerprint the indexed tail so truncate/rewrite cannot masquerade as append."""
+
+    digest = blake2b(digest_size=16)
+    if offset <= 0 or not source_path.is_file():
+        return digest.hexdigest()
+    start = max(0, offset - _CHECKPOINT_BYTES)
+    with source_path.open("rb") as handle:
+        handle.seek(start)
+        digest.update(handle.read(offset - start))
+    return digest.hexdigest()
 
 
 def _upsert_payload(connection: sqlite3.Connection, payload: SessionPayload) -> None:
@@ -126,7 +156,7 @@ def _upsert_payload(connection: sqlite3.Connection, payload: SessionPayload) -> 
         raise sqlite3.DatabaseError("session projection is missing identity fields")
     if not isinstance(started_at, str):
         raise sqlite3.DatabaseError("session projection is missing started_at")
-    activity_at = stopped_at if isinstance(stopped_at, str) else started_at
+    activity_at = stopped_at if isinstance(stopped_at, str) and stopped_at else started_at
     connection.execute(
         """
         INSERT OR REPLACE INTO sessions(
@@ -230,7 +260,7 @@ def _rebuild(
             start_offset=0,
             reducer=reducer,
         )
-        _write_source_metadata(connection, source_state, offset=offset)
+        _write_source_metadata(connection, source_path, source_state, offset=offset)
     except Exception:
         connection.rollback()
         raise
@@ -252,10 +282,15 @@ def _sync(
 
     dev, ino, size, mtime_ns = source_state
     recorded_dev, recorded_ino, offset, recorded_mtime_ns = recorded
+    recorded_checkpoint = metadata.get(_SOURCE_CHECKPOINT_KEY)
     if (
         (dev, ino) != (recorded_dev, recorded_ino)
         or size < offset
         or (size == offset and mtime_ns != recorded_mtime_ns)
+        or (
+            size > offset
+            and recorded_checkpoint != _source_checkpoint(source_path, offset)
+        )
     ):
         _rebuild(connection, source_path, source_state, reducer)
         return
@@ -270,7 +305,12 @@ def _sync(
             start_offset=offset,
             reducer=reducer,
         )
-        _write_source_metadata(connection, source_state, offset=updated_offset)
+        _write_source_metadata(
+            connection,
+            source_path,
+            source_state,
+            offset=updated_offset,
+        )
     except Exception:
         connection.rollback()
         raise
@@ -284,25 +324,35 @@ def _ensure_spawn_backfill(
 ) -> None:
     if backfill is None:
         return
-    complete = connection.execute(
-        "SELECT 1 FROM metadata WHERE key = ?",
+    generation = backfill.generation(runtime_root)
+    completed_generation = connection.execute(
+        "SELECT value FROM metadata WHERE key = ?",
         (_SPAWN_BACKFILL_KEY,),
     ).fetchone()
-    if complete is not None:
+    if (
+        completed_generation is not None
+        and cast("str", completed_generation["value"]) == generation
+    ):
         return
     rows = connection.execute(
         "SELECT record_json FROM sessions WHERE kind = 'primary'"
     ).fetchall()
     payloads = _decode_rows(rows)
-    enriched = backfill(runtime_root, payloads)
+    result = backfill.enrich(runtime_root, payloads)
     connection.execute("BEGIN IMMEDIATE")
     try:
-        for payload in enriched:
+        for payload in result.payloads:
             _upsert_payload(connection, payload)
-        connection.execute(
-            "INSERT OR REPLACE INTO metadata(key, value) VALUES (?, '1')",
-            (_SPAWN_BACKFILL_KEY,),
-        )
+        if result.generation_before == result.generation_after:
+            connection.execute(
+                "INSERT OR REPLACE INTO metadata(key, value) VALUES (?, ?)",
+                (_SPAWN_BACKFILL_KEY, result.generation_after),
+            )
+        else:
+            connection.execute(
+                "DELETE FROM metadata WHERE key = ?",
+                (_SPAWN_BACKFILL_KEY,),
+            )
     except Exception:
         connection.rollback()
         raise
@@ -313,6 +363,13 @@ def _reset(path: Path) -> None:
     for candidate in (path, Path(f"{path}-journal"), Path(f"{path}-wal"), Path(f"{path}-shm")):
         with suppress(OSError):
             candidate.unlink(missing_ok=True)
+
+
+def _is_busy_error(exc: sqlite3.OperationalError) -> bool:
+    return getattr(exc, "sqlite_errorcode", None) in {
+        sqlite3.SQLITE_BUSY,
+        sqlite3.SQLITE_LOCKED,
+    } or any(token in str(exc).lower() for token in ("busy", "locked"))
 
 
 def _read(
@@ -338,10 +395,16 @@ def _read(
                     _sync(connection, paths.sessions_jsonl, reducer)
                     _ensure_spawn_backfill(connection, runtime_root, backfill)
                     return query(connection)
+            except sqlite3.OperationalError as exc:
+                if _is_busy_error(exc):
+                    raise SessionIndexUnavailable(str(exc)) from exc
+                _reset(paths.session_index_db)
+                if attempt:
+                    raise SessionIndexUnavailable(str(exc)) from exc
             except (
                 json.JSONDecodeError,
                 OSError,
-                sqlite3.Error,
+                sqlite3.DatabaseError,
                 UnicodeDecodeError,
                 ValueError,
             ) as exc:
@@ -486,23 +549,28 @@ def list_recent_primary_payloads(
     )
 
 
-def primary_spawn_backfill_complete(
+def primary_spawn_backfill_is_current(
     runtime_root: Path,
     reducer: SessionReducer,
     backfill: SessionBackfill,
 ) -> bool:
+    """Return whether spawn discovery covers the current published generation."""
+
     def query(connection: sqlite3.Connection) -> bool:
         row = connection.execute(
-            "SELECT 1 FROM metadata WHERE key = ?",
+            "SELECT value FROM metadata WHERE key = ?",
             (_SPAWN_BACKFILL_KEY,),
         ).fetchone()
-        return row is not None
+        return row is not None and cast("str", row["value"]) == backfill.generation(
+            runtime_root
+        )
 
     return cast("bool", _read(runtime_root, reducer, query, backfill=backfill))
 
 
 __all__ = [
     "SessionBackfill",
+    "SessionBackfillResult",
     "SessionIndexUnavailable",
     "SessionPayload",
     "SessionReducer",
@@ -510,5 +578,5 @@ __all__ = [
     "get_session_payloads",
     "list_recent_primary_payloads",
     "list_session_payloads",
-    "primary_spawn_backfill_complete",
+    "primary_spawn_backfill_is_current",
 ]

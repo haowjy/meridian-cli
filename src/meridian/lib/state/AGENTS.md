@@ -64,15 +64,17 @@ not a global event log, so status reads stay O(1) instead of replaying O(n) even
 `sessions.jsonl` remains authoritative. `session_index.py` incrementally projects
 complete events into `sessions-index.sqlite3` under `sessions.jsonl.flock` so direct
 session reads and recent primary pages do not replay the journal. The index stores its
-source inode, byte offset, and mtime; replacement, truncation, schema mismatch, or
-database corruption deletes/rebuilds the projection. An incomplete final JSONL record
-is ignored without advancing the offset. If the index cannot be rebuilt, session reads
-fall back to the truncation-tolerant journal projection.
+source inode, byte offset, mtime, and a bounded prefix-tail checkpoint; replacement,
+truncate/rewrite, schema mismatch, or database corruption deletes/rebuilds the
+projection. An incomplete final JSONL record is ignored without advancing the offset.
+If the index is busy or cannot be rebuilt, session reads promptly fall back to the
+truncation-tolerant journal projection without deleting a merely busy index.
 
 The index is metadata-only: transcript summaries and full-text search are separate
-features. On first build it also joins historical primary spawn rows into the
-projection; new launches persist `spawn_id` in the session journal directly. Never
-write information only to the index unless it is reproducible from another
+features. `session_aggregate.py` joins historical primary spawn rows into the
+projection and records the published-spawn generation; publication invalidates cached
+negative results. New launches persist `spawn_id` in the session journal directly.
+Never write information only to the index unless it is reproducible from another
 authoritative state file.
 
 ## Spawn Mutation Seam
@@ -94,8 +96,9 @@ history, launch/reaper diagnostics, failure sentinels, and harness journals use 
 seam. Heartbeats never create a missing parent directory and stop after deletion.
 The spawn repository and process-scope projection are persistence leaves with a
 one-way dependency: the projection may use repository reads and lock paths, while
-the repository never imports the projection. Cross-leaf operations belong in the aggregate `spawn_aggregate.py`; in particular, published-spawn deletion owns the lock
-order above. Reaper claims consume one immutable projection snapshot containing
+the repository never imports the projection. Cross-leaf operations belong in explicit
+aggregate modules (`spawn_aggregate.py`, `session_aggregate.py`); in particular,
+published-spawn deletion owns the lock order above. Reaper claims consume one immutable projection snapshot containing
 both scopes and released IDs, read under a single projection-lock acquisition.
 
 ## Write-Boundary Path Normalization
@@ -166,6 +169,7 @@ Both paths share liveness rules in `reaper.py` and completion/cancel precedence 
   codec, pure reads, and the single locked mutation repository, respectively.
 - `session_store.py` — Session event model, journal writes, and read policy.
 - `session_index.py` — Rebuildable direct/recent session projection.
+- `session_aggregate.py` — Historical session/spawn relationship projection.
 - `atomic.py` — atomic write primitives. All state writes use these.
 - `reaper.py` — read-only `reconcile_spawns()` projection and root-only
   `reconcile_active_spawn()` repair.

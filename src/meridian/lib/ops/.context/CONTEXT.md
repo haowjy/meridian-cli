@@ -217,9 +217,10 @@ transcript discovery. `session_list.py` gets its live-first, limited page from t
 rebuildable session index before enriching visible records; the batch recovery
 form must keep at most one spawn-state scan for legacy rows without a recorded
 primary `spawn_id`. New primary launches persist that relationship and use direct
-spawn reads. Likewise, `iter_session_subset_search()` resolves the whole requested
-subset with one indexed session query and at most one spawn-state scan before
-parsing transcripts. Listing carries an advisory action for the UI; Enter
+spawn reads; a published-spawn generation invalidates legacy negative backfills.
+Likewise, `iter_session_subset_search()` resolves the whole requested subset with one
+indexed session query and bounded direct spawn reads, scanning spawn state only when
+the session index itself is unavailable. Listing carries an advisory action for the UI; Enter
 re-reads the same durable authorities plus lease liveness. Using the general
 resolver in only one path can make the displayed verb disagree with the action
 even when no lease changed.

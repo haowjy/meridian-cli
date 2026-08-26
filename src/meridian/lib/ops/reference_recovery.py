@@ -67,6 +67,7 @@ def _primary_spawn_for_chat(
             and session_identity.spawn_owner_chat_id(direct) == chat_id
         ):
             return direct
+        return None
     spawns = session_identity.list_spawns_for_owner_chat(runtime_root, chat_id)
     primary_spawns = [row for row in spawns.records if row.kind == "primary"]
     if not primary_spawns:
@@ -171,8 +172,19 @@ def recover_recorded_chat_harness_session_id(
         if recovered is not None:
             return recovered
 
-    recorded_spawn_id = resolved_session.spawn_id if resolved_session is not None else None
-    if not recorded_spawn_id and session_store.primary_spawn_backfill_complete(runtime_root):
+    if resolved_session is None:
+        return None
+    recorded_spawn_id = resolved_session.spawn_id
+    if not recorded_spawn_id:
+        refreshed = session_store.get_session_record(runtime_root, chat_id)
+        if refreshed is not None:
+            recovered = _recover_from_session_record(refreshed)
+            if recovered is not None:
+                return recovered
+            recorded_spawn_id = refreshed.spawn_id
+    if not recorded_spawn_id and session_store.primary_spawn_backfill_is_current(
+        runtime_root
+    ):
         return None
     primary_spawn = _primary_spawn_for_chat(
         runtime_root,
@@ -190,9 +202,26 @@ def recover_recorded_chat_harness_session_ids(
 ) -> dict[str, RecoveryResult]:
     """Resolve durable harness IDs for many chats with one spawn-state scan."""
 
+    records = {session.chat_id: session for session in sessions}
+    missing_relationships = {
+        str(session.chat_id)
+        for session in sessions
+        if not (session.spawn_id or "").strip()
+    }
+    if missing_relationships:
+        records.update(
+            {
+                session.chat_id: session
+                for session in session_store.get_session_records(
+                    runtime_root,
+                    missing_relationships,
+                )
+            }
+        )
+
     results: dict[str, RecoveryResult] = {}
-    unresolved: set[str] = set()
-    for session in sessions:
+    unresolved_without_spawn_id: set[str] = set()
+    for session in records.values():
         recovered = _recover_from_session_record(session)
         if recovered is not None:
             results[session.chat_id] = recovered
@@ -212,22 +241,17 @@ def recover_recorded_chat_harness_session_ids(
                 )
                 if recovered is not None:
                     results[session.chat_id] = recovered
-                    continue
-        unresolved.add(session.chat_id)
-    if not unresolved:
+            continue
+        unresolved_without_spawn_id.add(session.chat_id)
+    if not unresolved_without_spawn_id:
         return results
-    unresolved_sessions = {
-        session.chat_id: session for session in sessions if session.chat_id in unresolved
-    }
-    if all(not session.spawn_id for session in unresolved_sessions.values()) and (
-        session_store.primary_spawn_backfill_complete(runtime_root)
-    ):
+    if session_store.primary_spawn_backfill_is_current(runtime_root):
         return results
 
     primary_spawns: dict[str, SpawnRecord] = {}
     for spawn in spawn_store.list_spawns(runtime_root).records:
         owner_chat_id = session_identity.spawn_owner_chat_id(spawn)
-        if spawn.kind == "primary" and owner_chat_id in unresolved:
+        if spawn.kind == "primary" and owner_chat_id in unresolved_without_spawn_id:
             primary_spawns[owner_chat_id] = spawn
 
     for chat_id, spawn in primary_spawns.items():

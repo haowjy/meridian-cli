@@ -202,6 +202,74 @@ def test_recorded_primary_spawn_id_avoids_global_spawn_recovery_scan(
         session_store.stop_session(runtime_root, chat_id)
 
 
+def test_recorded_primary_spawn_without_harness_id_does_not_scan_globally(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    project_root, runtime_root = _project_roots(tmp_path)
+    chat_id = session_store.start_session(
+        runtime_root,
+        harness="codex",
+        harness_session_id="",
+        model="gpt-5.4",
+        kind="primary",
+        spawn_id="p42",
+    )
+    spawn_store.start_spawn(
+        runtime_root,
+        spawn_id="p42",
+        chat_id=chat_id,
+        model="gpt-5.4",
+        agent="coder",
+        harness="codex",
+        kind="primary",
+        prompt="primary",
+    )
+    assert session_store.get_session_record(runtime_root, chat_id) is not None
+
+    def fail_global_scan(*_args, **_kwargs):
+        raise AssertionError("a canonical primary row must bound failed recovery")
+
+    monkeypatch.setattr(spawn_store, "list_spawns", fail_global_scan)
+    try:
+        listing = session_list_sync(
+            SessionListInput(project_root=project_root.as_posix(), limit=1)
+        )
+        assert isinstance(listing.rows[0].reentry, Blocked)
+        assert isinstance(resolve_session_reentry(project_root.as_posix(), chat_id), Blocked)
+    finally:
+        session_store.stop_session(runtime_root, chat_id)
+
+
+def test_spawn_publication_invalidates_negative_historical_backfill(tmp_path: Path) -> None:
+    _project_root, runtime_root = _project_roots(tmp_path)
+    chat_id = session_store.start_session(
+        runtime_root,
+        harness="codex",
+        harness_session_id="",
+        model="gpt-5.4",
+        kind="primary",
+    )
+    initial = session_store.get_session_record(runtime_root, chat_id)
+    assert initial is not None and initial.spawn_id is None
+
+    spawn_store.start_spawn(
+        runtime_root,
+        spawn_id="p42",
+        chat_id=chat_id,
+        model="gpt-5.4",
+        agent="coder",
+        harness="codex",
+        kind="primary",
+        prompt="primary",
+        harness_session_id="42424242-4242-4242-8242-424242424242",
+    )
+
+    refreshed = session_store.get_session_record(runtime_root, chat_id)
+    assert refreshed is not None
+    assert refreshed.spawn_id == "p42"
+
+
 def test_list_and_reentry_block_when_all_recorded_ids_are_missing(tmp_path: Path) -> None:
     project_root, runtime_root = _project_roots(tmp_path)
     chat_id = session_store.start_session(
@@ -339,6 +407,7 @@ def test_subset_search_is_ordered_and_failure_isolated(
         session_id=other_id,
         text="something unrelated",
     )
+    session_store.get_session_records(runtime_root, {matching_chat, other_chat})
     record_scan_count = 0
     spawn_scan_count = 0
     real_get_session_records = session_store.get_session_records
@@ -370,4 +439,4 @@ def test_subset_search_is_ordered_and_failure_isolated(
     assert steps[1].matched is False and steps[1].error
     assert steps[2].matched is True and steps[2].error is None
     assert record_scan_count == 1
-    assert spawn_scan_count == 1
+    assert spawn_scan_count == 0

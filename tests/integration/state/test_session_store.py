@@ -13,6 +13,8 @@ import json
 import multiprocessing
 import os
 import signal
+import sqlite3
+import time
 from pathlib import Path
 
 import pytest
@@ -901,6 +903,92 @@ def test_session_index_rebuilds_after_authoritative_journal_replacement(tmp_path
     rebuilt = session_store.list_recent_primary_session_records(runtime_root, limit=5)
     assert [record.chat_id for record in rebuilt.records] == ["c9"]
     assert rebuilt.total_count == 1
+
+
+@pytest.mark.parametrize("replacement_count", [1, 3])
+def test_session_index_rebuilds_after_same_inode_journal_rewrite(
+    tmp_path: Path,
+    replacement_count: int,
+) -> None:
+    runtime_root = _state_root(tmp_path)
+    _write_session_start(
+        runtime_root=runtime_root,
+        chat_id="c1",
+        session_instance_id="gen-1",
+        kind="primary",
+    )
+    assert session_store.get_session_record(runtime_root, "c1") is not None
+    journal = runtime_root / "sessions.jsonl"
+    original_inode = journal.stat().st_ino
+    original_bytes = journal.read_bytes()
+
+    if replacement_count == 1:
+        replacement_bytes = original_bytes.replace(b"c1", b"c8")
+        assert len(replacement_bytes) == len(original_bytes)
+    else:
+        replacement_root = _state_root(tmp_path / "replacement")
+        for index in range(replacement_count):
+            _write_session_start(
+                runtime_root=replacement_root,
+                chat_id=f"c{index + 8}",
+                session_instance_id=f"replacement-{index}",
+                kind="primary",
+            )
+        replacement_bytes = (replacement_root / "sessions.jsonl").read_bytes()
+        assert len(replacement_bytes) > len(original_bytes)
+    journal.write_bytes(replacement_bytes)
+
+    assert journal.stat().st_ino == original_inode
+    rebuilt = session_store.list_recent_primary_session_records(runtime_root, limit=5)
+    assert {record.chat_id for record in rebuilt.records} == {
+        f"c{index + 8}" for index in range(replacement_count)
+    }
+    assert rebuilt.total_count == replacement_count
+
+
+def test_recent_primary_page_has_same_tie_order_when_index_is_unavailable(
+    tmp_path: Path,
+) -> None:
+    runtime_root = _state_root(tmp_path)
+    for index in range(1, 4):
+        _write_session_start(
+            runtime_root=runtime_root,
+            chat_id=f"c{index}",
+            session_instance_id=f"gen-{index}",
+            kind="primary",
+        )
+
+    indexed = session_store.list_recent_primary_session_records(runtime_root, limit=2)
+    index_path = runtime_root / "sessions-index.sqlite3"
+    index_path.unlink()
+    index_path.mkdir()
+    fallback = session_store.list_recent_primary_session_records(runtime_root, limit=2)
+
+    assert [record.chat_id for record in indexed.records] == ["c3", "c2"]
+    assert fallback.records == indexed.records
+    assert fallback.total_count == indexed.total_count == 3
+
+
+def test_busy_session_index_falls_back_promptly_without_deleting_it(tmp_path: Path) -> None:
+    runtime_root = _state_root(tmp_path)
+    _write_session_start(
+        runtime_root=runtime_root,
+        chat_id="c1",
+        session_instance_id="gen-1",
+        kind="primary",
+    )
+    assert session_store.get_session_record(runtime_root, "c1") is not None
+    index_path = runtime_root / "sessions-index.sqlite3"
+
+    with sqlite3.connect(index_path) as blocker:
+        blocker.execute("BEGIN EXCLUSIVE")
+        started = time.monotonic()
+        page = session_store.list_recent_primary_session_records(runtime_root, limit=1)
+        elapsed = time.monotonic() - started
+
+    assert [record.chat_id for record in page.records] == ["c1"]
+    assert elapsed < 1
+    assert index_path.is_file()
 
 
 def test_session_index_ignores_partial_tail_until_record_is_complete(tmp_path: Path) -> None:
