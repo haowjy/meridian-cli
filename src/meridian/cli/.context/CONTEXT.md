@@ -207,6 +207,22 @@ argv
                           └── validate_fork_mode()  ← conflict checks + ref resolution
 ```
 
+## Session Browse Presentation and Handoff
+
+`session_cmd.py` resolves the presentation before it lists sessions or imports
+`prompt_toolkit`: non-TTY output, `--plain`, and empty or `dumb` terminals print
+the plain table; interactive use inside a managed Meridian session is refused.
+This keeps supervisor ownership explicit rather than presenting a picker that
+cannot safely transfer the process.
+
+The full-screen application lives in `browse/`: `model.py` owns pure state
+transitions, `render.py` produces width-aware formatted text, and `tui.py` binds
+keys and latest-only preview/search lanes. Lane workers publish results through
+`Application.invalidate()` and never mutate rendered state directly. Enter asks
+`session_reentry.py` for a fresh authoritative decision, then returns that typed
+decision from `Application.run()`. The command handler performs `os.execv()` only
+after the application and its worker lanes have closed.
+
 ## Related KB
 
 KB lives at `$MERIDIAN_CONTEXT_KB_DIR` (see `meridian context kb`):

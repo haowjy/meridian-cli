@@ -28,6 +28,7 @@ argv
 - **`root_source = RootSource.ARGV`** commands (e.g. `meridian init [path]`) defer bootstrap until after argument parsing. They call `prepare_for_project_write(arg_derived_root)` themselves — they don't receive a pre-prepared context.
 - **`validate_fork_mode()` is the single place for fork/from/continue conflict checks.** `spawn.py` and `primary_launch.py` both call it and consume `ForkModeResolution`. Do not re-implement conflict logic or ref resolution in handlers.
 - **`canonicalize_argv()` runs before every classifier.** It normalizes bare `--fork`/`--fork-fresh`/`--from` values and routes bare `--continue` to `session browse`. Never classify or call Cyclopts on raw argv containing these flags.
+- **Session browse keeps process transfer outside the TUI.** `session_cmd.py` selects plain, interactive, or refused presentation before loading `cli/browse/`. The picker returns a typed re-entry decision; only the handler may `exec` it after the full-screen application has closed.
 - **Positional-prompt subcommand guard.** `_validate_positional_spawn_prompt()` in `spawn.py` rejects bare positional prompts that look like a subcommand (`^[a-z][a-z-]*$` single token) but are not in the registered subcommand set. The subcommand set is derived from the commands registered with Cyclopts, not hardcoded. `-p`/`--prompt`/`--prompt-file` bypass this guard and accept any string. The did-you-mean hint uses Damerau-Levenshtein (adjacent-transposition-aware) distance.
 
 ## Invocation Classes
@@ -52,6 +53,7 @@ argv
 - `entrypoint.py` — `main()`: trivial fast paths (help/version), delegates to `main.py`
 - `main.py` — full dispatch via `_register_commands_for_invocation()`
 - `app_tree.py` — Cyclopts app objects without command implementations
+- `session_cmd.py` / `browse/` — presentation gate and full-screen session picker
 - `argv_normalization.py` — pre-classifier canonicalization of session-initiation flags; `validate_fork_mode()`; `ForkModeResolution`
 - `startup/catalog.py` — `COMMAND_CATALOG`, `CommandDescriptor`
 - `startup/classify.py` — `classify_invocation()`
