@@ -64,7 +64,7 @@ not a global event log, so status reads stay O(1) instead of replaying O(n) even
 `sessions.jsonl` remains authoritative. `session_index.py` incrementally projects
 complete events into `sessions-index.sqlite3` under `sessions.jsonl.flock` so direct
 session reads and recent primary pages do not replay the journal. The index stores its
-source inode, byte offset, mtime, and a bounded prefix-tail checkpoint; replacement,
+source inode, byte offset, timestamps, and a bounded prefix-tail checkpoint; replacement,
 truncate/rewrite, schema mismatch, or database corruption deletes/rebuilds the
 projection. An incomplete final JSONL record is ignored without advancing the offset.
 If the index is busy or cannot be rebuilt, session reads promptly fall back to the

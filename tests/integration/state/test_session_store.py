@@ -919,7 +919,7 @@ def test_session_index_rebuilds_after_same_inode_journal_rewrite(
     )
     assert session_store.get_session_record(runtime_root, "c1") is not None
     journal = runtime_root / "sessions.jsonl"
-    original_inode = journal.stat().st_ino
+    original_stat = journal.stat()
     original_bytes = journal.read_bytes()
 
     if replacement_count == 1:
@@ -937,8 +937,13 @@ def test_session_index_rebuilds_after_same_inode_journal_rewrite(
         replacement_bytes = (replacement_root / "sessions.jsonl").read_bytes()
         assert len(replacement_bytes) > len(original_bytes)
     journal.write_bytes(replacement_bytes)
+    if replacement_count == 1:
+        os.utime(
+            journal,
+            ns=(original_stat.st_atime_ns, original_stat.st_mtime_ns),
+        )
 
-    assert journal.stat().st_ino == original_inode
+    assert journal.stat().st_ino == original_stat.st_ino
     rebuilt = session_store.list_recent_primary_session_records(runtime_root, limit=5)
     assert {record.chat_id for record in rebuilt.records} == {
         f"c{index + 8}" for index in range(replacement_count)

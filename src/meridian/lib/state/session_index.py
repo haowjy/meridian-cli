@@ -33,7 +33,13 @@ class SessionBackfill:
     enrich: Callable[[Path, list[SessionPayload]], SessionBackfillResult]
 
 _SCHEMA_VERSION = 3
-_SOURCE_META_KEYS = ("source_dev", "source_ino", "source_offset", "source_mtime_ns")
+_SOURCE_META_KEYS = (
+    "source_dev",
+    "source_ino",
+    "source_offset",
+    "source_mtime_ns",
+    "source_ctime_ns",
+)
 _SOURCE_CHECKPOINT_KEY = "source_checkpoint_v1"
 _SPAWN_BACKFILL_KEY = "primary_spawn_backfill_generation_v1"
 _CHECKPOINT_BYTES = 4096
@@ -50,12 +56,12 @@ def _chat_order(chat_id: str) -> int:
     return 2**63 - 1
 
 
-def _source_state(path: Path) -> tuple[int, int, int, int]:
+def _source_state(path: Path) -> tuple[int, int, int, int, int]:
     try:
         stat = path.stat()
     except FileNotFoundError:
-        return (0, 0, 0, 0)
-    return (stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns)
+        return (0, 0, 0, 0, 0)
+    return (stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns)
 
 
 def _connect(path: Path) -> sqlite3.Connection:
@@ -116,16 +122,17 @@ def _metadata(connection: sqlite3.Connection) -> dict[str, str]:
 def _write_source_metadata(
     connection: sqlite3.Connection,
     source_path: Path,
-    source_state: tuple[int, int, int, int],
+    source_state: tuple[int, int, int, int, int],
     *,
     offset: int,
 ) -> None:
-    dev, ino, _size, mtime_ns = source_state
+    dev, ino, _size, mtime_ns, ctime_ns = source_state
     values = {
         "source_dev": str(dev),
         "source_ino": str(ino),
         "source_offset": str(offset),
         "source_mtime_ns": str(mtime_ns),
+        "source_ctime_ns": str(ctime_ns),
         _SOURCE_CHECKPOINT_KEY: _source_checkpoint(source_path, offset),
     }
     connection.executemany(
@@ -244,7 +251,7 @@ def _ingest_complete_lines(
 def _rebuild(
     connection: sqlite3.Connection,
     source_path: Path,
-    source_state: tuple[int, int, int, int],
+    source_state: tuple[int, int, int, int, int],
     reducer: SessionReducer,
 ) -> None:
     connection.execute("BEGIN IMMEDIATE")
@@ -280,13 +287,16 @@ def _sync(
         _rebuild(connection, source_path, source_state, reducer)
         return
 
-    dev, ino, size, mtime_ns = source_state
-    recorded_dev, recorded_ino, offset, recorded_mtime_ns = recorded
+    dev, ino, size, mtime_ns, ctime_ns = source_state
+    recorded_dev, recorded_ino, offset, recorded_mtime_ns, recorded_ctime_ns = recorded
     recorded_checkpoint = metadata.get(_SOURCE_CHECKPOINT_KEY)
     if (
         (dev, ino) != (recorded_dev, recorded_ino)
         or size < offset
-        or (size == offset and mtime_ns != recorded_mtime_ns)
+        or (
+            size == offset
+            and (mtime_ns, ctime_ns) != (recorded_mtime_ns, recorded_ctime_ns)
+        )
         or (
             size > offset
             and recorded_checkpoint != _source_checkpoint(source_path, offset)
