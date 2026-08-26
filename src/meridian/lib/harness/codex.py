@@ -5,7 +5,6 @@ import logging
 import os
 import re
 import sqlite3
-import stat
 import time
 from pathlib import Path
 from typing import ClassVar, cast
@@ -42,6 +41,7 @@ from meridian.lib.harness.bundle import (
 )
 from meridian.lib.harness.codex_rollout import (
     CODEX_ROLLOUT_FILENAME_RE,
+    materialize_fork_rollout,
     resolve_rollout_session_id,
 )
 from meridian.lib.harness.common import (
@@ -87,7 +87,6 @@ from meridian.lib.launch.constants import (
 )
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec, TerminalSurfaceMode
 from meridian.lib.platform import get_home_path
-from meridian.lib.platform.atomic import atomic_replace
 from meridian.lib.safety.permissions import PermissionConfig
 
 logger = logging.getLogger(__name__)
@@ -98,36 +97,6 @@ def _codex_home() -> Path:
     if configured_home:
         return Path(configured_home).expanduser()
     return get_home_path() / ".codex"
-
-
-def _rewrite_forked_session_meta(line: str, new_session_id: str) -> str:
-    try:
-        payload_obj = json.loads(line)
-    except json.JSONDecodeError as exc:
-        raise RuntimeError("Codex rollout first line is not valid JSON.") from exc
-    if not isinstance(payload_obj, dict):
-        raise RuntimeError("Codex rollout first line must be a JSON object.")
-    payload_dict_obj = cast("dict[str, object]", payload_obj)
-    payload = payload_dict_obj.get("payload")
-    if payload_dict_obj.get("type") != "session_meta" or not isinstance(payload, dict):
-        raise RuntimeError("Codex rollout first line must be a session_meta payload.")
-
-    payload_dict = cast("dict[str, object]", payload)
-    payload_dict["id"] = new_session_id
-    payload_dict_obj["payload"] = payload_dict
-    return json.dumps(payload_dict_obj) + "\n"
-
-
-def _copy_rollout_atomic(*, source_path: Path, target_path: Path, new_session_id: str) -> None:
-    with source_path.open("r", encoding="utf-8") as source_handle:
-        source_mode = stat.S_IMODE(os.fstat(source_handle.fileno()).st_mode)
-        with atomic_replace(target_path, permissions=source_mode) as target_handle:
-            first_line = source_handle.readline()
-            if not first_line:
-                raise RuntimeError(f"Codex rollout file is empty: {source_path}")
-            target_handle.write(_rewrite_forked_session_meta(first_line, new_session_id))
-            for line in source_handle:
-                target_handle.write(line)
 
 
 def _fork_rollout_path(*, source_path: Path, source_session_id: str, new_session_id: str) -> Path:
@@ -470,6 +439,7 @@ class CodexAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
 
         db_path = _codex_home() / "state_5.sqlite"
         connection: sqlite3.Connection | None = None
+        published_rollout_path: Path | None = None
         try:
             connection = sqlite3.connect(str(db_path), timeout=10)
             connection.row_factory = sqlite3.Row
@@ -487,20 +457,18 @@ class CodexAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
                 raise RuntimeError("Codex threads.rollout_path must be a string.")
 
             source_rollout_path = Path(source_rollout_path_raw).expanduser()
-            if not source_rollout_path.is_file():
-                raise FileNotFoundError(f"Codex rollout file not found: {source_rollout_path}")
-
             new_session_id = str(uuid4())
             target_rollout_path = _fork_rollout_path(
                 source_path=source_rollout_path,
                 source_session_id=normalized_source_session_id,
                 new_session_id=new_session_id,
             )
-            _copy_rollout_atomic(
+            materialize_fork_rollout(
                 source_path=source_rollout_path,
                 target_path=target_rollout_path,
                 new_session_id=new_session_id,
             )
+            published_rollout_path = target_rollout_path
 
             # Codex owns this schema. Clone source row and only patch Meridian-relevant
             # fields to reduce coupling to Codex-internal table evolution.
@@ -524,8 +492,12 @@ class CodexAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             connection.commit()
             return new_session_id
         except (FileNotFoundError, ValueError):
+            if published_rollout_path is not None:
+                published_rollout_path.unlink(missing_ok=True)
             raise
         except (OSError, RuntimeError, json.JSONDecodeError, sqlite3.Error) as exc:
+            if published_rollout_path is not None:
+                published_rollout_path.unlink(missing_ok=True)
             raise RuntimeError(f"Failed to fork Codex session: {exc}") from exc
         finally:
             if connection is not None:

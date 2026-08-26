@@ -1,6 +1,11 @@
 """CLI command handlers for session.* operations."""
 
+from __future__ import annotations
+
+import os
+import sys
 from collections.abc import Callable
+from dataclasses import dataclass
 from functools import partial
 from typing import Annotated, Any, Protocol
 
@@ -8,10 +13,13 @@ from cyclopts import App, Parameter
 
 from meridian.cli.ext_registration import register_extension_cli_group
 from meridian.cli.utils import cli_project_root_posix
+from meridian.lib.core.depth import is_managed_meridian_session
 from meridian.lib.core.util import FormatContext
 from meridian.lib.extensions.registry import get_first_party_registry
 from meridian.lib.ops.session_export import SessionExportInput, session_export_sync
+from meridian.lib.ops.session_list import SessionListInput, session_list_sync
 from meridian.lib.ops.session_log import SessionLogInput, session_log_sync
+from meridian.lib.ops.session_reentry import Fork, Resume, SessionReentryDecision
 from meridian.lib.ops.session_repair import SessionRepairInput, repair_session_reference_sync
 from meridian.lib.ops.session_search import SessionSearchInput, session_search_sync
 
@@ -25,6 +33,113 @@ def _session_project_root(file_path: str | None) -> str | None:
 
 class Emitter(Protocol):
     def __call__(self, payload: Any, *, format_ctx: FormatContext | None = None) -> None: ...
+
+
+@dataclass(frozen=True)
+class Plain:
+    pass
+
+
+@dataclass(frozen=True)
+class Interactive:
+    pass
+
+
+@dataclass(frozen=True)
+class Refused:
+    reason: str
+
+
+type BrowsePresentation = Plain | Interactive | Refused
+
+
+def resolve_browse_presentation(
+    *,
+    plain: bool,
+    stdin_tty: bool,
+    stdout_tty: bool,
+    term: str | None,
+    managed: bool,
+    ambient_chat: str | None,
+) -> BrowsePresentation:
+    """Collapse terminal and managed-session predicates into one presentation."""
+
+    if plain or not stdin_tty or not stdout_tty or not (term or "").strip():
+        return Plain()
+    if (term or "").strip().lower() == "dumb":
+        return Plain()
+    if managed:
+        chat = (ambient_chat or "").strip()
+        location = f" session {chat}" if chat else " a managed session"
+        return Refused(
+            f"already inside{location} — run from a fresh terminal, or use --plain to list"
+        )
+    return Interactive()
+
+
+def _exec_decision(
+    decision: SessionReentryDecision,
+    *,
+    project_root: str,
+    config_file: str | None = None,
+    exec_fn: Callable[[str, list[str]], Any] = os.execv,
+) -> None:
+    """Replace the picker process with the selected primary-session action."""
+
+    if not isinstance(decision, (Resume, Fork)):
+        raise ValueError("blocked session decisions cannot be executed")
+    verb = "--fork" if isinstance(decision, Fork) else "--continue"
+    argv = [sys.executable, "-m", "meridian", "-C", project_root]
+    if config_file:
+        argv.extend(("--config", config_file))
+    argv.extend((verb, decision.chat_id))
+    sys.stdout.flush()
+    sys.stderr.flush()
+    exec_fn(sys.executable, argv)
+
+
+def _session_browse(
+    emit: Emitter,
+    limit: Annotated[
+        int,
+        Parameter(name="--limit", help="Maximum recent sessions to list."),
+    ] = 50,
+    plain: Annotated[
+        bool,
+        Parameter(name="--plain", help="Print a table instead of opening the picker."),
+    ] = False,
+) -> None:
+    presentation = resolve_browse_presentation(
+        plain=plain,
+        stdin_tty=sys.stdin.isatty(),
+        stdout_tty=sys.stdout.isatty(),
+        term=os.environ.get("TERM"),
+        managed=is_managed_meridian_session(),
+        ambient_chat=os.environ.get("MERIDIAN_CHAT_ID"),
+    )
+    project_root = cli_project_root_posix()
+    if isinstance(presentation, Refused):
+        print(f"error: {presentation.reason}", file=sys.stderr)
+        raise SystemExit(2)
+    listing = session_list_sync(SessionListInput(project_root=project_root, limit=limit))
+    if isinstance(presentation, Plain):
+        emit(listing)
+        return
+
+    from meridian.cli.browse import run_browse_picker
+    from meridian.lib.ops.session_reentry import resolve_session_reentry
+
+    decision = run_browse_picker(
+        listing,
+        project_root,
+        partial(resolve_session_reentry, project_root),
+    )
+    if decision is not None:
+        _exec_decision(
+            decision,
+            project_root=project_root,
+            config_file=os.environ.get("MERIDIAN_CONFIG"),
+        )
 
 
 def _session_log(
@@ -263,6 +378,7 @@ def register_session_commands(app: App, emit: Emitter) -> tuple[set[str], dict[s
     """Register session CLI commands using registry metadata as source of truth."""
 
     handlers: dict[str, Callable[[], Callable[..., None]]] = {
+        "meridian.session.browse": lambda: partial(_session_browse, emit),
         "meridian.session.log": lambda: partial(_session_log, emit),
         "meridian.session.export": lambda: partial(_session_export, emit),
         "meridian.session.search": lambda: partial(_session_search, emit),

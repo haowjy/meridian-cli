@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
+from meridian.cli.argv_normalization import canonicalize_argv
 from meridian.cli.bootstrap import first_positional_token, meridian_managed_env_default
 from meridian.cli.mode import extract_forced_render_mode, is_agent_render_mode, resolve_render_mode
 from meridian.cli.startup.catalog import COMMAND_CATALOG
@@ -42,7 +43,7 @@ def _main_impl() -> None:
             if hasattr(stream, "reconfigure"):
                 stream.reconfigure(encoding="utf-8", errors="replace")
 
-    args = sys.argv[1:]
+    args = canonicalize_argv(sys.argv[1:])
 
     # Keep classifier import/use on this startup-cheap path so command catalog
     # regressions surface before the full CLI tree is loaded.

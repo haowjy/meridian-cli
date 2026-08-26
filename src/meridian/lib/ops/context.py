@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import cast
 
@@ -16,6 +15,7 @@ from meridian.lib.context.resolver import (
     resolve_context_paths,
 )
 from meridian.lib.core.context import RuntimeContext
+from meridian.lib.core.formatting import relative_time
 from meridian.lib.core.resolved_context import ResolvedContext
 from meridian.lib.core.util import FormatContext
 from meridian.lib.hooks.builtin.autosync_store import read_status
@@ -410,33 +410,6 @@ def _extra_context_config(config: ContextConfig) -> dict[str, ArbitraryContextCo
     return parsed
 
 
-def _relative_time(iso_str: str) -> str:
-    """Format an ISO timestamp as a compact relative time string."""
-
-    try:
-        normalized = iso_str.strip()
-        if normalized.endswith("Z"):
-            normalized = normalized[:-1] + "+00:00"
-        parsed = datetime.fromisoformat(normalized)
-        if parsed.tzinfo is None:
-            parsed = parsed.replace(tzinfo=UTC)
-        now = datetime.now(UTC)
-        delta = max(0, int((now - parsed).total_seconds()))
-    except (TypeError, ValueError):
-        return iso_str
-
-    if delta < 60:
-        return f"{delta}s ago"
-    minutes = delta // 60
-    if minutes < 60:
-        return f"{minutes}m ago"
-    hours = minutes // 60
-    if hours < 24:
-        return f"{hours}h ago"
-    days = hours // 24
-    return f"{days}d ago"
-
-
 def _sync_status_for_context(context_root: Path, *, runtime_root: Path) -> str | None:
     """Return compact sync status text for one context root."""
     status = read_status(context_root, runtime_root=runtime_root)
@@ -446,7 +419,7 @@ def _sync_status_for_context(context_root: Path, *, runtime_root: Path) -> str |
     state_info = "unknown"
     if status.state is not None:
         if status.state.last_sync:
-            state_info = f"{status.state.outcome}, {_relative_time(status.state.last_sync)}"
+            state_info = f"{status.state.outcome}, {relative_time(status.state.last_sync)}"
         else:
             state_info = status.state.outcome
 

@@ -8,11 +8,14 @@ from meridian.cli.argv_normalization import (
     FROM_INFERENCE_ERROR,
     SELF_FORK_REF_SENTINEL,
     ForkModeResolution,
+    canonicalize_argv,
     normalize_optional_value_flags,
     resolve_fork_ref,
     resolve_optional_ref,
     validate_fork_mode,
 )
+from meridian.cli.startup.catalog import COMMAND_CATALOG, StartupClass
+from meridian.cli.startup.classify import classify_invocation
 
 
 @pytest.mark.parametrize(
@@ -30,6 +33,39 @@ from meridian.cli.argv_normalization import (
 )
 def test_normalize_optional_value_flags(argv: list[str], expected: list[str]) -> None:
     assert normalize_optional_value_flags(argv) == expected
+
+
+@pytest.mark.parametrize(
+    ("argv", "expected"),
+    [
+        (["--continue"], ["session", "browse"]),
+        (["--continue="], ["session", "browse"]),
+        (["--continue", "--plain"], ["session", "browse", "--plain"]),
+        (
+            ["--continue", "--config", "/tmp/config.toml"],
+            ["session", "browse", "--config", "/tmp/config.toml"],
+        ),
+        (["-C", "/tmp/project", "--continue"], ["session", "browse", "-C", "/tmp/project"]),
+        (["--continue", "c9"], ["--continue", "c9"]),
+        (["mars", "--continue"], ["mars", "--continue"]),
+    ],
+)
+def test_canonicalize_argv_routes_bare_continue(
+    argv: list[str], expected: list[str]
+) -> None:
+    canonical = canonicalize_argv(argv)
+
+    assert canonical == expected
+    assert canonicalize_argv(canonical) == expected
+
+
+def test_bare_continue_classifies_as_runtime_read() -> None:
+    descriptor = classify_invocation(canonicalize_argv(["--continue"]), COMMAND_CATALOG)
+
+    assert descriptor is not None
+    assert descriptor.command_path == ("session", "browse")
+    assert descriptor.startup_class is StartupClass.READ_RUNTIME
+    assert descriptor.bootstrap_plan.auto_init_cwd is False
 
 
 def test_resolve_fork_ref_self_sentinel(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -40,6 +40,35 @@ class ForkModeResolution:
     resolved_context_from: tuple[str, ...] = ()
 
 
+def canonicalize_argv(argv: Sequence[str]) -> list[str]:
+    """Return the single canonical argv shape used by startup and dispatch."""
+
+    from meridian.cli.bootstrap import first_positional_token
+
+    if first_positional_token(argv) == "mars":
+        return list(argv)
+
+    bare_continue_index: int | None = None
+    for index, token in enumerate(argv):
+        if token == "--continue=":
+            bare_continue_index = index
+            break
+        if token != "--continue":
+            continue
+        has_value = index + 1 < len(argv) and not argv[index + 1].startswith("-")
+        if not has_value:
+            bare_continue_index = index
+            break
+
+    if bare_continue_index is not None:
+        remaining = list(argv)
+        remaining.pop(bare_continue_index)
+        if first_positional_token(remaining) is None:
+            return ["session", "browse", *normalize_optional_value_flags(remaining)]
+
+    return normalize_optional_value_flags(argv)
+
+
 def normalize_optional_value_flags(argv: Sequence[str]) -> list[str]:
     """Normalize optional-value flags so Cyclopts always sees a value token.
 

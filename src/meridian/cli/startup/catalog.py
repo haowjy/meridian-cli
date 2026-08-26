@@ -377,6 +377,11 @@ _COMMAND_DESCRIPTORS: tuple[CommandDescriptor, ...] = (
         "Search spawn reports.",
         extension_ref="meridian.report.search",
     ),
+    _read_runtime(
+        ("session", "browse"),
+        "Browse recent sessions; resume stopped or fork live ones.",
+        extension_ref="meridian.session.browse",
+    ),
     _read_runtime(("session", "log"), "Show session log.", extension_ref="meridian.session.log"),
     _read_runtime(
         ("session", "export"), "Export session log.", extension_ref="meridian.session.export"

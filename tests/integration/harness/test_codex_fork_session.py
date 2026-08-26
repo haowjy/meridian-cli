@@ -166,6 +166,56 @@ def test_codex_fork_session_copies_rollout_and_inserts_thread(
     assert json.loads(forked_lines[1]) == json.loads(source_lines[1])
 
 
+def test_codex_fork_session_drops_partial_live_tail(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    source_session_id = "11111111-1111-4111-8111-111111111111"
+    db_path, source_rollout_path = _setup_codex_state(
+        monkeypatch=monkeypatch,
+        tmp_path=tmp_path,
+        source_session_id=source_session_id,
+    )
+    with source_rollout_path.open("ab") as handle:
+        handle.write(b'{"type":"response_item","payload":{"type":"message"')
+
+    forked_session_id = CodexAdapter().fork_session(source_session_id)
+
+    connection = sqlite3.connect(db_path)
+    forked_row = connection.execute(
+        "SELECT rollout_path FROM threads WHERE id = ?", (forked_session_id,)
+    ).fetchone()
+    connection.close()
+    assert forked_row is not None
+    forked_lines = Path(forked_row[0]).read_bytes().splitlines(keepends=True)
+    assert len(forked_lines) == 2
+    assert all(line.endswith(b"\n") for line in forked_lines)
+    assert all(isinstance(json.loads(line), dict) for line in forked_lines)
+
+
+def test_codex_fork_session_rejects_invalid_complete_record(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    source_session_id = "11111111-1111-4111-8111-111111111111"
+    db_path, source_rollout_path = _setup_codex_state(
+        monkeypatch=monkeypatch,
+        tmp_path=tmp_path,
+        source_session_id=source_session_id,
+    )
+    with source_rollout_path.open("ab") as handle:
+        handle.write(b"not-json\n")
+
+    with pytest.raises(RuntimeError, match="line 3 is not valid JSON"):
+        CodexAdapter().fork_session(source_session_id)
+
+    connection = sqlite3.connect(db_path)
+    total_rows = connection.execute("SELECT COUNT(*) FROM threads").fetchone()
+    connection.close()
+    assert total_rows is not None and total_rows[0] == 1
+    assert len(list(source_rollout_path.parent.glob("rollout-*.jsonl"))) == 1
+
+
 def test_codex_fork_session_replace_failure_leaves_no_partial_target(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -200,7 +250,7 @@ def test_codex_fork_session_replace_failure_leaves_no_partial_target(
     assert total_rows is not None and total_rows[0] == 1
 
 
-def test_codex_fork_session_inserts_after_rollout_is_durable(
+def test_codex_fork_session_removes_rollout_when_db_insert_fails(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -233,9 +283,7 @@ def test_codex_fork_session_inserts_after_rollout_is_durable(
     with pytest.raises(RuntimeError, match="Failed to fork Codex session: insert blocked"):
         CodexAdapter().fork_session(source_session_id)
 
-    assert expected_target_path.is_file()
-    forked_meta = json.loads(expected_target_path.read_text(encoding="utf-8").splitlines()[0])
-    assert forked_meta["payload"]["id"] == forked_session_id
+    assert not expected_target_path.exists()
 
     connection = sqlite3.connect(db_path)
     total_rows = connection.execute("SELECT COUNT(*) FROM threads").fetchone()

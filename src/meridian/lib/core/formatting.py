@@ -7,6 +7,8 @@ This module lives in lib/core so it can be used by lib-layer result
 models without reaching up into the CLI layer.
 """
 
+from datetime import UTC, datetime
+
 
 def tabular(rows: list[list[str]], sep: str = "  ") -> str:
     """Align columns by max width per column.
@@ -36,3 +38,28 @@ def kv_block(pairs: list[tuple[str, str | None]]) -> str:
     'Spawn: r1\\nStatus: done'
     """
     return "\n".join(f"{k}: {v}" for k, v in pairs if v is not None)
+
+
+def relative_time(iso_str: str) -> str:
+    """Format an ISO timestamp as a compact relative time string."""
+
+    try:
+        normalized = iso_str.strip()
+        if normalized.endswith("Z"):
+            normalized = normalized[:-1] + "+00:00"
+        parsed = datetime.fromisoformat(normalized)
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=UTC)
+        delta = max(0, int((datetime.now(UTC) - parsed).total_seconds()))
+    except (AttributeError, TypeError, ValueError):
+        return iso_str
+
+    if delta < 60:
+        return f"{delta}s ago"
+    minutes = delta // 60
+    if minutes < 60:
+        return f"{minutes}m ago"
+    hours = minutes // 60
+    if hours < 24:
+        return f"{hours}h ago"
+    return f"{hours // 24}d ago"

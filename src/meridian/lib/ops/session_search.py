@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator, Sequence
+from typing import NamedTuple
+
 from pydantic import BaseModel, ConfigDict
 
 from meridian.lib.core.context import RuntimeContext
@@ -25,6 +28,12 @@ from meridian.lib.state import session_store
 
 _PREVIEW_LIMIT = 200
 _OPEN_CONTEXT = 5
+
+
+class SubsetSearchStep(NamedTuple):
+    chat_id: str
+    matched: bool
+    error: str | None = None
 
 
 class SessionSearchInput(BaseModel):
@@ -82,6 +91,33 @@ class SessionSearchOutput(BaseModel):
 
 def _normalize_content(value: str) -> str:
     return " ".join(value.split())
+
+
+def iter_session_subset_search(
+    *, project_root: str, chat_ids: Sequence[str], query: str
+) -> Iterator[SubsetSearchStep]:
+    """Yield one isolated matched/error step for each requested primary chat."""
+
+    normalized_query = query.strip().lower()
+    if not normalized_query:
+        raise ValueError("query must not be empty")
+
+    for chat_id in chat_ids:
+        try:
+            transcript = read_session_transcript(
+                ref=chat_id,
+                file_path=None,
+                project_root=project_root,
+            )
+            matched = any(
+                not (entry.kind == "setup" and entry.is_placeholder)
+                and normalized_query in _normalize_content(entry.content).lower()
+                for entry in transcript.all_entries
+            )
+        except (ValueError, FileNotFoundError, OSError) as exc:
+            yield SubsetSearchStep(chat_id, False, str(exc))
+            continue
+        yield SubsetSearchStep(chat_id, matched)
 
 
 def _build_preview(content: str, *, query: str, limit: int = _PREVIEW_LIMIT) -> str:
@@ -278,6 +314,8 @@ __all__ = [
     "SessionSearchInput",
     "SessionSearchMatch",
     "SessionSearchOutput",
+    "SubsetSearchStep",
+    "iter_session_subset_search",
     "session_search",
     "session_search_sync",
 ]

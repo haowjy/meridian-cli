@@ -29,7 +29,7 @@ from meridian.cli.app_tree import (
     work_app,
     workspace_app,
 )
-from meridian.cli.argv_normalization import normalize_optional_value_flags
+from meridian.cli.argv_normalization import canonicalize_argv
 from meridian.cli.bootstrap import (
     extract_global_options as _bootstrap_extract_global_options,
 )
@@ -1033,8 +1033,7 @@ def _main_impl(argv: Sequence[str] | None = None) -> None:
     from meridian.lib.core.logging import configure_logging
 
     args = list(sys.argv[1:] if argv is None else argv)
-    if _bootstrap_first_positional_token(args) != "mars":
-        args = normalize_optional_value_flags(args)
+    args = canonicalize_argv(args)
 
     json_mode = "--json" in args
     if not json_mode and "--format" in args:
