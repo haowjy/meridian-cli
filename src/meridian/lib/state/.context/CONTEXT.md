@@ -13,6 +13,7 @@ meridian.toml
 ~/.meridian/projects/<id>/          ← user runtime, never committed
   sessions.jsonl                    — all session events, append-only
   sessions.jsonl.flock
+  sessions-append-state.json        — derived append-chain certificate
   sessions-index.sqlite3            — rebuildable current-session projection
   session-id-counter                — monotonic c1, c2, …
   sessions/                         — per-session lock + lease files
@@ -53,8 +54,10 @@ Sessions remain event-sourced JSONL (`sessions.jsonl`), which is authoritative.
 `session_index.py` maintains a rebuildable SQLite projection for direct record reads
 and bounded recent-primary queries. It incrementally consumes only complete JSONL
 records and rebuilds after source replacement/truncate-rewrite, schema mismatch, or
-index corruption. A bounded checkpoint at the indexed record boundary distinguishes
-append growth from a same-inode rewrite. Index synchronization and journal appends
+index corruption. `session_journal.py` certifies each ordinary append against the
+previous source state; the index accepts a suffix only while that append epoch remains
+continuous. Any external rewrite, missing certificate update, or crash between the
+event and certificate forces a safe rebuild. Index synchronization and journal appends
 share `sessions.jsonl.flock`; a busy or unavailable index promptly falls back to the
 journal rather than making derived state authoritative.
 `session_aggregate.py` backfills historical primary `spawn_id` values from

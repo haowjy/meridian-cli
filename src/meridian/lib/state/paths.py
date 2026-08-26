@@ -36,6 +36,7 @@ class RuntimePaths(BaseModel):
     spawns_flock: Path
     sessions_jsonl: Path
     sessions_flock: Path
+    sessions_append_state: Path
     session_index_db: Path
     hooks_last_run_dir: Path
     hook_locks_dir: Path
@@ -84,6 +85,7 @@ class RuntimePaths(BaseModel):
             spawns_flock=root_dir / "spawns.jsonl.flock",
             sessions_jsonl=root_dir / "sessions.jsonl",
             sessions_flock=root_dir / "sessions.jsonl.flock",
+            sessions_append_state=root_dir / "sessions-append-state.json",
             session_index_db=root_dir / "sessions-index.sqlite3",
             hooks_last_run_dir=root_dir / "hooks" / "last-run",
             hook_locks_dir=root_dir / "locks" / "hooks",

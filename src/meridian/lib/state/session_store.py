@@ -24,7 +24,7 @@ from meridian.lib.platform.locking import (
     try_lock_file,
     unlink_validated_lock,
 )
-from meridian.lib.state import session_aggregate, session_index
+from meridian.lib.state import session_aggregate, session_index, session_journal
 from meridian.lib.state.atomic import atomic_write_text
 from meridian.lib.state.event_store import append_event, read_events, utc_now_iso
 from meridian.lib.state.liveness import is_process_alive_with_birth
@@ -340,6 +340,20 @@ def _session_payload_after_event(
     return updated.model_dump(mode="json") if updated is not None else None
 
 
+def _append_session_event(
+    paths: RuntimePaths,
+    event: SessionEvent,
+    *,
+    exclude_none: bool = False,
+) -> None:
+    session_journal.append_session_event(
+        paths,
+        event,
+        exclude_none=exclude_none,
+        append_event_fn=append_event,
+    )
+
+
 def _records_by_session(runtime_root: Path) -> dict[str, SessionRecord]:
     paths = RuntimePaths.from_root_dir(runtime_root)
     records: dict[str, SessionRecord] = {}
@@ -466,7 +480,7 @@ def start_session(
             spawn_id=spawn_id,
         )
         with lock_file(paths.sessions_flock):
-            append_event(paths.sessions_jsonl, paths.sessions_flock, event)
+            _append_session_event(paths, event)
             _write_session_lease(paths, resolved_chat_id, session_instance_id)
     except Exception:
         if handle is not None:
@@ -493,9 +507,8 @@ def stop_session(runtime_root: Path, chat_id: str) -> None:
         stopped_at=utc_now_iso(),
     )
     with lock_file(paths.sessions_flock):
-        append_event(
-            paths.sessions_jsonl,
-            paths.sessions_flock,
+        _append_session_event(
+            paths,
             event,
             exclude_none=True,
         )
@@ -512,9 +525,8 @@ def update_session_harness_id(runtime_root: Path, chat_id: str, harness_session_
         harness_session_id=HarnessSessionId(harness_session_id),
         session_instance_id=_session_instance_for_event(paths, runtime_root, chat_id),
     )
-    append_event(
-        paths.sessions_jsonl,
-        paths.sessions_flock,
+    _append_session_event(
+        paths,
         event,
         exclude_none=True,
     )
@@ -531,9 +543,8 @@ def update_session_work_id(runtime_root: Path, chat_id: str, work_id: str | None
         session_instance_id=_session_instance_for_event(paths, runtime_root, chat_id),
         active_work_id=normalized_work_id,
     )
-    append_event(
-        paths.sessions_jsonl,
-        paths.sessions_flock,
+    _append_session_event(
+        paths,
         event,
         exclude_none=True,
     )
@@ -549,9 +560,8 @@ def update_session_spawn_id(runtime_root: Path, chat_id: str, spawn_id: str) -> 
         session_instance_id=_session_instance_for_event(paths, runtime_root, chat_id),
         spawn_id=spawn_id.strip(),
     )
-    append_event(
-        paths.sessions_jsonl,
-        paths.sessions_flock,
+    _append_session_event(
+        paths,
         event,
         exclude_none=True,
     )
@@ -571,9 +581,8 @@ def update_session_claude_config_dir(
         session_instance_id=_session_instance_for_event(paths, runtime_root, chat_id),
         claude_config_dir=claude_config_dir,
     )
-    append_event(
-        paths.sessions_jsonl,
-        paths.sessions_flock,
+    _append_session_event(
+        paths,
         event,
         exclude_none=True,
     )
@@ -898,9 +907,8 @@ def cleanup_stale_sessions(runtime_root: Path) -> StaleSessionCleanup:
                         )
                     )
                 ):
-                    append_event(
-                        paths.sessions_jsonl,
-                        paths.sessions_flock,
+                    _append_session_event(
+                        paths,
                         SessionStopEvent(
                             chat_id=ChatId(chat_id),
                             session_instance_id=stop_session_instance_id,

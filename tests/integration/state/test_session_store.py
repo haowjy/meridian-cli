@@ -19,7 +19,8 @@ from pathlib import Path
 
 import pytest
 
-from meridian.lib.state import session_store
+from meridian.lib.state import session_journal, session_store
+from meridian.lib.state.paths import RuntimePaths
 from tests.conftest import posix_only
 
 
@@ -70,25 +71,20 @@ def _write_session_start(
     harness: str = "codex",
     kind: str = "spawn",
 ) -> None:
-    with (runtime_root / "sessions.jsonl").open("a", encoding="utf-8") as handle:
-        handle.write(
-            json.dumps(
-                {
-                    "v": 1,
-                    "event": "start",
-                    "chat_id": chat_id,
-                    "kind": kind,
-                    "harness": harness,
-                    "harness_session_id": f"{chat_id}-thread",
-                    "model": "gpt-5.4",
-                    "session_instance_id": session_instance_id,
-                    "started_at": "2026-03-01T00:00:00Z",
-                },
-                separators=(",", ":"),
-                sort_keys=True,
-            )
-            + "\n"
-        )
+    event = session_store.SessionStartEvent.model_validate(
+        {
+            "v": 1,
+            "event": "start",
+            "chat_id": chat_id,
+            "kind": kind,
+            "harness": harness,
+            "harness_session_id": f"{chat_id}-thread",
+            "model": "gpt-5.4",
+            "session_instance_id": session_instance_id,
+            "started_at": "2026-03-01T00:00:00Z",
+        }
+    )
+    session_journal.append_session_event(RuntimePaths.from_root_dir(runtime_root), event)
 
 
 def test_recent_primary_page_is_empty_without_a_session_journal(tmp_path: Path) -> None:
@@ -949,6 +945,41 @@ def test_session_index_rebuilds_after_same_inode_journal_rewrite(
         f"c{index + 8}" for index in range(replacement_count)
     }
     assert rebuilt.total_count == replacement_count
+
+
+def test_session_index_rebuilds_when_rewrite_preserves_indexed_tail(
+    tmp_path: Path,
+) -> None:
+    runtime_root = _state_root(tmp_path)
+    for index in range(1, 41):
+        _write_session_start(
+            runtime_root=runtime_root,
+            chat_id=f"c{index}",
+            session_instance_id=f"gen-{index}",
+            kind="primary",
+        )
+    initial = session_store.list_recent_primary_session_records(runtime_root, limit=50)
+    assert initial.total_count == 40
+    journal = runtime_root / "sessions.jsonl"
+    original = journal.read_bytes()
+    assert len(original) > 4096
+
+    rewritten = original.replace(b'"chat_id":"c1"', b'"chat_id":"c0"', 1)
+    assert rewritten[-4096:] == original[-4096:]
+    journal.write_bytes(rewritten)
+    _write_session_start(
+        runtime_root=runtime_root,
+        chat_id="c41",
+        session_instance_id="gen-41",
+        kind="primary",
+    )
+
+    rebuilt = session_store.list_recent_primary_session_records(runtime_root, limit=50)
+    chat_ids = {record.chat_id for record in rebuilt.records}
+    assert rebuilt.total_count == 41
+    assert "c0" in chat_ids
+    assert "c1" not in chat_ids
+    assert "c41" in chat_ids
 
 
 def test_recent_primary_page_has_same_tie_order_when_index_is_unavailable(

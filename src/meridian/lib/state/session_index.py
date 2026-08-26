@@ -8,11 +8,11 @@ import sqlite3
 from collections.abc import Callable, Collection
 from contextlib import suppress
 from dataclasses import dataclass
-from hashlib import blake2b
 from pathlib import Path
 from typing import Any, cast
 
 from meridian.lib.platform.locking import lock_file
+from meridian.lib.state import session_journal
 from meridian.lib.state.paths import RuntimePaths
 
 type SessionPayload = dict[str, Any]
@@ -40,9 +40,8 @@ _SOURCE_META_KEYS = (
     "source_mtime_ns",
     "source_ctime_ns",
 )
-_SOURCE_CHECKPOINT_KEY = "source_checkpoint_v1"
+_SOURCE_EPOCH_KEY = "source_append_epoch"
 _SPAWN_BACKFILL_KEY = "primary_spawn_backfill_generation_v1"
-_CHECKPOINT_BYTES = 4096
 _SQLITE_TIMEOUT_SECONDS = 0.05
 
 
@@ -54,14 +53,6 @@ def _chat_order(chat_id: str) -> int:
     if chat_id.startswith("c") and chat_id[1:].isdigit():
         return int(chat_id[1:])
     return 2**63 - 1
-
-
-def _source_state(path: Path) -> tuple[int, int, int, int, int]:
-    try:
-        stat = path.stat()
-    except FileNotFoundError:
-        return (0, 0, 0, 0, 0)
-    return (stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns)
 
 
 def _connect(path: Path) -> sqlite3.Connection:
@@ -122,37 +113,23 @@ def _metadata(connection: sqlite3.Connection) -> dict[str, str]:
 def _write_source_metadata(
     connection: sqlite3.Connection,
     source_path: Path,
-    source_state: tuple[int, int, int, int, int],
+    source_state: session_journal.JournalSourceState,
     *,
     offset: int,
 ) -> None:
-    dev, ino, _size, mtime_ns, ctime_ns = source_state
+    paths = RuntimePaths.from_root_dir(source_path.parent)
     values = {
-        "source_dev": str(dev),
-        "source_ino": str(ino),
+        "source_dev": str(source_state.dev),
+        "source_ino": str(source_state.ino),
         "source_offset": str(offset),
-        "source_mtime_ns": str(mtime_ns),
-        "source_ctime_ns": str(ctime_ns),
-        _SOURCE_CHECKPOINT_KEY: _source_checkpoint(source_path, offset),
+        "source_mtime_ns": str(source_state.mtime_ns),
+        "source_ctime_ns": str(source_state.ctime_ns),
+        _SOURCE_EPOCH_KEY: session_journal.certified_epoch(paths, source_state) or "",
     }
     connection.executemany(
         "INSERT OR REPLACE INTO metadata(key, value) VALUES (?, ?)",
         values.items(),
     )
-
-
-def _source_checkpoint(source_path: Path, offset: int) -> str:
-    """Fingerprint the indexed tail so truncate/rewrite cannot masquerade as append."""
-
-    digest = blake2b(digest_size=16)
-    if offset <= 0 or not source_path.is_file():
-        return digest.hexdigest()
-    start = max(0, offset - _CHECKPOINT_BYTES)
-    with source_path.open("rb") as handle:
-        handle.seek(start)
-        digest.update(handle.read(offset - start))
-    return digest.hexdigest()
-
 
 def _upsert_payload(connection: sqlite3.Connection, payload: SessionPayload) -> None:
     chat_id = payload.get("chat_id")
@@ -251,7 +228,7 @@ def _ingest_complete_lines(
 def _rebuild(
     connection: sqlite3.Connection,
     source_path: Path,
-    source_state: tuple[int, int, int, int, int],
+    source_state: session_journal.JournalSourceState,
     reducer: SessionReducer,
 ) -> None:
     connection.execute("BEGIN IMMEDIATE")
@@ -279,7 +256,7 @@ def _sync(
     source_path: Path,
     reducer: SessionReducer,
 ) -> None:
-    source_state = _source_state(source_path)
+    source_state = session_journal.source_state(source_path)
     metadata = _metadata(connection)
     try:
         recorded = tuple(int(metadata[key]) for key in _SOURCE_META_KEYS)
@@ -287,9 +264,13 @@ def _sync(
         _rebuild(connection, source_path, source_state, reducer)
         return
 
-    dev, ino, size, mtime_ns, ctime_ns = source_state
+    dev, ino = source_state.dev, source_state.ino
+    size, mtime_ns, ctime_ns = (
+        source_state.size,
+        source_state.mtime_ns,
+        source_state.ctime_ns,
+    )
     recorded_dev, recorded_ino, offset, recorded_mtime_ns, recorded_ctime_ns = recorded
-    recorded_checkpoint = metadata.get(_SOURCE_CHECKPOINT_KEY)
     if (
         (dev, ino) != (recorded_dev, recorded_ino)
         or size < offset
@@ -297,14 +278,15 @@ def _sync(
             size == offset
             and (mtime_ns, ctime_ns) != (recorded_mtime_ns, recorded_ctime_ns)
         )
-        or (
-            size > offset
-            and recorded_checkpoint != _source_checkpoint(source_path, offset)
-        )
     ):
         _rebuild(connection, source_path, source_state, reducer)
         return
     if size == offset:
+        return
+    paths = RuntimePaths.from_root_dir(source_path.parent)
+    current_epoch = session_journal.certified_epoch(paths, source_state)
+    if not current_epoch or current_epoch != metadata.get(_SOURCE_EPOCH_KEY):
+        _rebuild(connection, source_path, source_state, reducer)
         return
 
     connection.execute("BEGIN IMMEDIATE")

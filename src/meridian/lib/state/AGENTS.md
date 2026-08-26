@@ -17,6 +17,7 @@ meridian.toml
 
 ~/.meridian/projects/<id>/          ← user runtime, never committed
   sessions.jsonl                    — session events (append-only)
+  sessions-append-state.json        — derived append-chain certificate
   sessions-index.sqlite3            — derived current-session projection
   locks/spawns/<spawn_id>.lock      — stable per-spawn external-writer lock
   locks/process-scopes/<spawn_id>.lock
@@ -63,8 +64,9 @@ not a global event log, so status reads stay O(1) instead of replaying O(n) even
 
 `sessions.jsonl` remains authoritative. `session_index.py` incrementally projects
 complete events into `sessions-index.sqlite3` under `sessions.jsonl.flock` so direct
-session reads and recent primary pages do not replay the journal. The index stores its
-source inode, byte offset, timestamps, and a bounded prefix-tail checkpoint; replacement,
+session reads and recent primary pages do not replay the journal. Session writers
+atomically refresh a derived append-chain certificate after each durable event; the
+index accepts suffix growth only inside the same certified epoch. Replacement,
 truncate/rewrite, schema mismatch, or database corruption deletes/rebuilds the
 projection. An incomplete final JSONL record is ignored without advancing the offset.
 If the index is busy or cannot be rebuilt, session reads promptly fall back to the
@@ -168,6 +170,7 @@ Both paths share liveness rules in `reaper.py` and completion/cancel precedence 
 - `work_state.py` / `work_store.py` / `work_repository.py` — work-item models and
   codec, pure reads, and the single locked mutation repository, respectively.
 - `session_store.py` — Session event model, journal writes, and read policy.
+- `session_journal.py` — Certified append boundary for authoritative session events.
 - `session_index.py` — Rebuildable direct/recent session projection.
 - `session_aggregate.py` — Historical session/spawn relationship projection.
 - `atomic.py` — atomic write primitives. All state writes use these.
