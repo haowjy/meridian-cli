@@ -121,8 +121,8 @@ default behavior, and the init flow has no confirmation prompts or `--yes` optio
 ## Session Initiation Argument Handling
 
 `argv_normalization.py` is the central hub for `--fork`, `--fork-fresh`, `--from`,
-and `--continue` argument handling. It runs before bootstrap and before Cyclopts
-parsing.
+and `--continue` argument handling. `canonicalize_argv()` runs before every
+startup classifier and before Cyclopts parsing.
 
 ### The Sentinel: `SELF_FORK_REF_SENTINEL = "__SELF__"`
 
@@ -143,9 +143,9 @@ collision risk. `SYNTHETIC_VALUE_TOKENS` (a `frozenset` containing `__SELF__`)
 is imported by `bootstrap.py` so it can skip synthetic values during
 passthrough-args splitting and positional-token detection.
 
-`normalize_optional_value_flags()` is called in `main()` before bootstrap and
-before Cyclopts parsing. The `mars` command is exempted (its args pass through
-verbatim).
+`canonicalize_argv()` owns the optional-value normalization and the bare
+`--continue` rewrite to `session browse`. It is idempotent, runs in both the thin
+entrypoint and direct `main()` path, and leaves `mars` arguments verbatim.
 
 ### Ref Resolution: `resolve_optional_ref(raw_ref, *, flag_name)`
 
@@ -200,7 +200,7 @@ ForkModeResolution
 
 ```
 argv
-  └── normalize_optional_value_flags()     ← rewrites bare/equals forms, inserts __SELF__
+  └── canonicalize_argv()                  ← routes bare --continue; normalizes refs
         └── _extract_global_options()      ← strips global flags, returns cleaned argv
               └── _split_passthrough_args() ← splits at --, skips SYNTHETIC_VALUE_TOKENS
                     └── Cyclopts parse      ← always sees a value for optional-value flags
