@@ -288,28 +288,10 @@ request handler:
 - Spawn paths: `AutoAcceptHandler` (auto-approves all)
 - Managed-primary attach: `InteractiveHandler` (surfaces as durable events)
 
-### Codex: Live-Fork Rollout Corruption (known bug, fix pending)
+### Codex: Live-Fork Snapshot Contract
 
-`CodexHarness.fork_session` copies the live rollout JSONL without
-coordination with the writer. When the source session is mid-write, the copy
-clones a partial final line — an unterminated JSON record. The insert into
-Codex's `state_5.sqlite` succeeds because the DB row does not validate
-rollout content. Corruption surfaces when the forked session is later resumed
-and the harness tries to parse the last record.
-
-This was probe-proven during the session-browse design (2026-08). Codex is the
-only harness where Meridian materializes the fork transcript; Claude, OpenCode,
-and Pi delegate fork to the harness binary.
-
-**Required fix:** `materialize_fork_rollout(...)` in `codex_rollout.py`:
-`fstat` the open source descriptor for a snapshot bound, copy only through the
-last newline at or before the bound (complete records only), validate each
-line as JSON, atomic publish via tmp+rename, and DB-insert compensation
-(delete published rollout on commit failure).
-
-Any work on `fork_session` or `codex_rollout.py` must address this before
-fork-on-live can ship. See KB `lessons/harness-integration.md` for the full
-lesson.
+→ [Codex live-fork snapshot](codex-live-fork.md) — snapshot, publication, and
+registration contract for materialized Codex forks.
 
 ### OpenCode: Workspace Env Merging
 

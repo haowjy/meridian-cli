@@ -207,6 +207,16 @@ gets `depth_exceeded_output()` instead of a new spawn. The reaper also checks
 This resolves spawn IDs (e.g., `p123`), chat IDs, and bare references to canonical
 spawn rows. Operations that accept `--from` or `-f` go through this.
 
+Session browse has a narrower authority question: whether a primary chat has a
+durably recorded harness session id and may therefore resume or fork.
+`session_list.py` and `session_reentry.py` must both use
+`recover_recorded_chat_harness_session_id()` from `reference_recovery.py`. It
+checks the session store, primary spawn row, and `primary_meta.json`, but never
+performs native transcript discovery. Listing carries an advisory action for the
+UI; Enter re-reads the same durable authorities plus lease liveness. Using the
+general resolver in only one path can make the displayed verb disagree with the
+action even when no lease changed.
+
 ### Logging Convention
 
 `ops/` uses `structlog.get_logger()` throughout. Do not use stdlib `logging` —

@@ -39,10 +39,10 @@ spawn. The reaper also reads `_MERIDIAN_DEPTH` and skips reaping when nested.
 
 ## Operation Categories
 
-**Session:** `session_transcript.py`, `session_log.py`, `session_log_render.py`
-(pure rendering — clean/raw modes, tool collapsing, content pipeline),
-`session_render.py`, `session_search.py`, `session_target.py`, `session_export.py`,
-`session_repair.py`.
+**Session:** `session_list.py`, `session_reentry.py`, `session_transcript.py`,
+`session_log.py`, `session_log_render.py` (pure rendering — clean/raw modes, tool
+collapsing, content pipeline), `session_render.py`, `session_search.py`,
+`session_target.py`, `session_export.py`, `session_repair.py`.
 
 **Work and workspace:** `work_lifecycle.py`, `work_attachment.py`,
 `work_dashboard.py`, `workspace.py`.
