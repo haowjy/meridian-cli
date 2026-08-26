@@ -213,12 +213,15 @@ durably recorded harness session id and may therefore resume or fork.
 `recover_recorded_chat_harness_session_ids()` and `session_reentry.py` uses its
 single-chat counterpart from `reference_recovery.py`. Both check the session
 store, primary spawn row, and `primary_meta.json`, but never perform native
-transcript discovery. The batch form must keep one spawn-state scan for the
-whole listing; a scan per missing session makes startup scale as sessions ×
-spawns. Listing carries an advisory action for the UI; Enter re-reads the same
-durable authorities plus lease liveness. Using the general resolver in only one
-path can make the displayed verb disagree with the action even when no lease
-changed.
+transcript discovery. `session_list.py` orders and limits lightweight session
+records before enriching the visible page; the batch recovery form must keep one
+spawn-state scan for that page. A scan per missing session makes startup scale as
+sessions × spawns. Likewise, `iter_session_subset_search()` resolves the whole
+requested subset with one session-state scan and one spawn-state scan before
+parsing transcripts. Listing carries an advisory action for the UI; Enter
+re-reads the same durable authorities plus lease liveness. Using the general
+resolver in only one path can make the displayed verb disagree with the action
+even when no lease changed.
 
 ### Logging Convention
 
