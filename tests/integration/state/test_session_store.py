@@ -89,6 +89,16 @@ def _write_session_start(
         )
 
 
+def test_recent_primary_page_is_empty_without_a_session_journal(tmp_path: Path) -> None:
+    runtime_root = _state_root(tmp_path)
+
+    page = session_store.list_recent_primary_session_records(runtime_root, limit=5)
+
+    assert page.records == ()
+    assert page.total_count == 0
+    assert page.live_chat_ids == frozenset()
+
+
 def test_persisted_session_identities_are_normalized_at_parse(tmp_path: Path) -> None:
     runtime_root = _state_root(tmp_path)
     _write_session_start(

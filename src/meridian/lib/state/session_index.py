@@ -84,6 +84,9 @@ def _initialize_schema(connection: sqlite3.Connection) -> None:
         """
     )
     if version == 0:
+        connection.execute(
+            "INSERT OR IGNORE INTO metadata(key, value) VALUES ('primary_count', '0')"
+        )
         connection.execute(f"PRAGMA user_version = {_SCHEMA_VERSION}")
     connection.commit()
 
