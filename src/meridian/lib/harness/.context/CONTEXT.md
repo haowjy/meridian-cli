@@ -288,6 +288,11 @@ request handler:
 - Spawn paths: `AutoAcceptHandler` (auto-approves all)
 - Managed-primary attach: `InteractiveHandler` (surfaces as durable events)
 
+### Codex: Live-Fork Snapshot Contract
+
+→ [Codex live-fork snapshot](codex-live-fork.md) — snapshot, publication, and
+registration contract for materialized Codex forks.
+
 ### OpenCode: Workspace Env Merging
 
 OpenCode workspace projection goes through `OPENCODE_CONFIG_CONTENT` (JSON env

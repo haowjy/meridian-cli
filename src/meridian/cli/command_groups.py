@@ -55,10 +55,10 @@ _GROUP_HELP: dict[str, GroupHelp] = {
         agent_core_subcommands=('wait', 'show', 'list', 'inject', 'files', 'cancel'),
     ),
     "session": GroupHelp(
-        summary='Inspect transcripts and progress logs.',
+        summary='Browse sessions or inspect transcripts and progress logs.',
         long_help="Read back what a session did — its conversation and progress logs — to recover a\nsubagent's reasoning or find what was decided.\n\nRefs take three forms: chat ids (c123), spawn ids (p123), or raw harness session\nids. Commands default to $MERIDIAN_CHAT_ID (inherited from the spawning session),\nso omitting the ref inspects the top-level primary session at every depth; pass an\nexplicit spawn id to read one spawn's transcript.",
         agent_notes="Use `session search` to find transcript text; each hit prints a deterministic\nOpen command you can run directly. Cross compaction boundaries with `session log\n--segment previous` or `--global --around N`.\n\nRecover decisions across a work item's sessions with `meridian work sessions\nWORK_ID --all`.",
-        agent_subcommands=('log', 'search', 'export'),
+        agent_subcommands=('browse', 'log', 'search', 'export'),
     ),
     "work": GroupHelp(
         summary='Work item dashboard and coordination.',

@@ -3,16 +3,72 @@
 from __future__ import annotations
 
 import json
+import os
 import re
+import stat
 from collections.abc import Mapping
 from pathlib import Path
 from typing import cast
 
 from meridian.lib.platform import get_home_path
+from meridian.lib.platform.atomic import atomic_replace
 
 CODEX_ROLLOUT_FILENAME_RE = re.compile(
     r"^rollout-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-(?P<session_id>[0-9a-fA-F-]{36})\.jsonl$"
 )
+
+
+def _rewritten_session_meta(line: bytes, new_session_id: str) -> bytes:
+    try:
+        payload_obj = json.loads(line)
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise RuntimeError("Codex rollout first line is not valid JSON.") from exc
+    if not isinstance(payload_obj, dict):
+        raise RuntimeError("Codex rollout first line must be a JSON object.")
+    payload_dict = cast("dict[str, object]", payload_obj)
+    payload = payload_dict.get("payload")
+    if payload_dict.get("type") != "session_meta" or not isinstance(payload, dict):
+        raise RuntimeError("Codex rollout first line must be a session_meta payload.")
+    cast("dict[str, object]", payload)["id"] = new_session_id
+    return (json.dumps(payload_dict) + "\n").encode()
+
+
+def materialize_fork_rollout(
+    *, source_path: Path, target_path: Path, new_session_id: str
+) -> None:
+    """Publish a line-valid snapshot of a possibly live Codex rollout."""
+
+    with source_path.open("rb") as source_handle:
+        source_stat = os.fstat(source_handle.fileno())
+        remaining = source_stat.st_size
+        source_mode = stat.S_IMODE(source_stat.st_mode)
+        with atomic_replace(
+            target_path,
+            mode="wb",
+            encoding=None,
+            permissions=source_mode,
+        ) as target_handle:
+            line_number = 0
+            while remaining > 0:
+                line = source_handle.readline(remaining)
+                if not line:
+                    break
+                remaining -= len(line)
+                if not line.endswith(b"\n"):
+                    break
+                line_number += 1
+                if line_number == 1:
+                    target_handle.write(_rewritten_session_meta(line, new_session_id))
+                    continue
+                try:
+                    json.loads(line)
+                except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+                    raise RuntimeError(
+                        f"Codex rollout line {line_number} is not valid JSON."
+                    ) from exc
+                target_handle.write(line)
+            if line_number == 0:
+                raise RuntimeError(f"Codex rollout has no complete records: {source_path}")
 
 
 def resolve_codex_home(launch_env: Mapping[str, str]) -> Path:

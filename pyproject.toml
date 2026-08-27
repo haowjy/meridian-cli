@@ -27,6 +27,7 @@ dependencies = [
   "mars-agents==0.13.0",
   "mcp>=1.0",
   "pathspec>=1.1.0",
+  "prompt-toolkit>=3.0,<4",
   "psutil>=7.2.2",
   "pydantic>=2.12",
   "pydantic-settings>=2.13",

@@ -1,0 +1,6 @@
+# FUTURE — nice-to-have follow-ups
+
+- `src/meridian/cli/browse/`: derived per-chat transcript summaries and
+  precomputed full-text indexing remain deferred to the official SQLite session
+  index planned for 0.4.0. Do not add an interim browse-owned cache or index.
+  Origin: session-browse requirements (work spawn p5886, chat c5810).

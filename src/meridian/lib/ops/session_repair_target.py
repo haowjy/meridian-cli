@@ -13,13 +13,16 @@ from meridian.lib.ops.session_target import (
     _is_chat_ref,
     _is_spawn_ref,
     _latest_harness_session_id,
-    _primary_spawn_for_chat,
     _primary_transcript_unavailable_message,
     _read_chat_session_record,
     _resolve_harness_transcript_target_or_none,
     _resolve_transcript_from_candidates,
 )
-from meridian.lib.ops.spawn.query import read_spawn_row_read_only
+from meridian.lib.ops.spawn.query import (
+    read_latest_primary_spawn_for_chat_read_only,
+    read_spawn_row_read_only,
+)
+from meridian.lib.state import session_identity
 from meridian.lib.state.primary_meta import read_primary_harness_session_id
 
 
@@ -73,7 +76,17 @@ def _resolve_repair_from_chat_id(
     if session_record is None:
         raise ValueError(f"Chat '{chat_id}' not found")
 
-    primary_spawn = _primary_spawn_for_chat(project_root, runtime_root, chat_id)
+    primary_spawn = session_identity.get_recorded_primary_spawn_for_owner_chat(
+        runtime_root,
+        chat_id,
+        session_record.spawn_id,
+    )
+    if primary_spawn is None:
+        primary_spawn = read_latest_primary_spawn_for_chat_read_only(
+            project_root,
+            chat_id,
+            runtime_root=runtime_root,
+        )
     harness = session_record.harness.strip() or None
     if harness is None and primary_spawn is not None:
         harness = (primary_spawn.harness or "").strip() or None

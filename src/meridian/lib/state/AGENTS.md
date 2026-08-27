@@ -1,7 +1,8 @@
 # lib/state/ — State Layer
 
-File-backed authority for all Meridian runtime state. No database, no service,
-no in-memory objects that survive process death. If it's not on disk, it doesn't exist.
+File-backed authority for all Meridian runtime state. No service or in-memory
+object survives process death. SQLite is permitted only as a rebuildable projection;
+authoritative state must remain independently recoverable from its source files.
 
 ## Roots
 
@@ -52,10 +53,11 @@ Work items live under the `[context.work]` root (default
 `work_state.py` — **never** the project repo. See `docs/configuration.md` for
 context-path resolution.
 
-## Spawn State: V2 Per-Spawn Files
+## Spawn State: Per-Spawn Files
 
 Spawn state lives in individual `state.json` files (`spawns/<id>/state.json`),
 not a global event log, so status reads stay O(1) instead of replaying O(n) events.
+The layout originated in the v2 migration; published rows now use schema v3.
 
 ## Spawn Mutation Seam
 
@@ -76,8 +78,9 @@ history, launch/reaper diagnostics, failure sentinels, and harness journals use 
 seam. Heartbeats never create a missing parent directory and stop after deletion.
 The spawn repository and process-scope projection are persistence leaves with a
 one-way dependency: the projection may use repository reads and lock paths, while
-the repository never imports the projection. Cross-leaf operations belong in the aggregate `spawn_aggregate.py`; in particular, published-spawn deletion owns the lock
-order above. Reaper claims consume one immutable projection snapshot containing
+the repository never imports the projection. Cross-leaf operations belong in
+`spawn_aggregate.py`; in particular, published-spawn deletion owns the lock order
+above. Reaper claims consume one immutable projection snapshot containing
 both scopes and released IDs, read under a single projection-lock acquisition.
 
 ## Write-Boundary Path Normalization
@@ -146,7 +149,7 @@ Both paths share liveness rules in `reaper.py` and completion/cancel precedence 
 - `spawn_aggregate.py` — published-row deletion and spawn-owned artifact lifetime guard.
 - `work_state.py` / `work_store.py` / `work_repository.py` — work-item models and
   codec, pure reads, and the single locked mutation repository, respectively.
-- `session_store.py` — Session event log.
+- `session_store.py` — Session event log and read projection.
 - `atomic.py` — atomic write primitives. All state writes use these.
 - `reaper.py` — read-only `reconcile_spawns()` projection and root-only
   `reconcile_active_spawn()` repair.

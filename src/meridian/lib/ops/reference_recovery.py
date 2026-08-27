@@ -8,6 +8,7 @@ write back based on their own verification policies.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
@@ -53,11 +54,9 @@ def _latest_harness_session_id(record: session_store.SessionRecord) -> str | Non
 
 
 def _primary_spawn_for_chat(
-    project_root: Path,
     runtime_root: Path,
     chat_id: str,
 ) -> SpawnRecord | None:
-    _ = project_root
     spawns = session_identity.list_spawns_for_owner_chat(runtime_root, chat_id)
     primary_spawns = [row for row in spawns.records if row.kind == "primary"]
     if not primary_spawns:
@@ -145,19 +144,111 @@ def _detect_primary_harness_session_id(
     return detected_harness_session_id
 
 
-def _recover_from_session_store(runtime_root: Path, chat_id: str) -> RecoveryResult | None:
-    records = session_store.get_session_records(runtime_root, {chat_id})
-    if not records:
+def recover_recorded_chat_harness_session_id(
+    runtime_root: Path,
+    chat_id: str,
+    *,
+    session: session_store.SessionRecord | None = None,
+) -> RecoveryResult | None:
+    """Resolve a chat's durable harness ID without native transcript detection."""
+
+    resolved_session = session
+    if resolved_session is None:
+        records = session_store.get_session_records(runtime_root, {chat_id})
+        resolved_session = records[0] if records else None
+    if resolved_session is not None:
+        recovered = _recover_from_session_record(resolved_session)
+        if recovered is not None:
+            return recovered
+
+    primary_spawn = (
+        session_identity.get_recorded_primary_spawn_for_owner_chat(
+            runtime_root,
+            chat_id,
+            resolved_session.spawn_id,
+        )
+        if resolved_session is not None
+        else None
+    )
+    if primary_spawn is None:
+        primary_spawn = _primary_spawn_for_chat(runtime_root, chat_id)
+    if primary_spawn is None:
         return None
-    session = records[0]
+    return _recover_from_primary_spawn(runtime_root, primary_spawn, chat_id)
+
+
+def recover_recorded_chat_harness_session_ids(
+    runtime_root: Path,
+    sessions: Sequence[session_store.SessionRecord],
+) -> dict[str, RecoveryResult]:
+    """Resolve durable harness IDs for many chats with one spawn-state scan."""
+
+    results: dict[str, RecoveryResult] = {}
+    legacy_scan_ids: set[str] = set()
+    for session in sessions:
+        recovered = _recover_from_session_record(session)
+        if recovered is not None:
+            results[session.chat_id] = recovered
+            continue
+
+        primary_spawn = session_identity.get_recorded_primary_spawn_for_owner_chat(
+            runtime_root,
+            session.chat_id,
+            session.spawn_id,
+        )
+        if primary_spawn is None:
+            legacy_scan_ids.add(session.chat_id)
+            continue
+        recovered = _recover_from_primary_spawn(
+            runtime_root,
+            primary_spawn,
+            session.chat_id,
+        )
+        if recovered is not None:
+            results[session.chat_id] = recovered
+
+    if not legacy_scan_ids:
+        return results
+
+    primary_spawns: dict[str, SpawnRecord] = {}
+    for spawn in spawn_store.list_spawns(runtime_root).records:
+        owner_chat_id = session_identity.spawn_owner_chat_id(spawn)
+        if spawn.kind == "primary" and owner_chat_id in legacy_scan_ids:
+            primary_spawns[owner_chat_id] = spawn
+
+    for chat_id, spawn in primary_spawns.items():
+        recovered = _recover_from_primary_spawn(runtime_root, spawn, chat_id)
+        if recovered is not None:
+            results[chat_id] = recovered
+    return results
+
+
+def _recover_from_session_record(
+    session: session_store.SessionRecord,
+) -> RecoveryResult | None:
     session_id = _latest_harness_session_id(session)
-    if session_id:
+    if session_id is None:
+        return None
+    return RecoveryResult(
+        harness_session_id=session_id,
+        provenance=RecoveryProvenance.SESSION_STORE,
+        supporting_chat_id=session.chat_id,
+    )
+
+
+def _recover_from_primary_spawn(
+    runtime_root: Path,
+    spawn: SpawnRecord,
+    chat_id: str,
+) -> RecoveryResult | None:
+    session_id = _normalize(spawn.harness_session_id)
+    if session_id is not None:
         return RecoveryResult(
             harness_session_id=session_id,
-            provenance=RecoveryProvenance.SESSION_STORE,
+            provenance=RecoveryProvenance.SPAWN_ROW,
             supporting_chat_id=chat_id,
         )
-    return None
+    return _recover_from_primary_meta(runtime_root, spawn.id, chat_id)
 
 
 def _recover_from_spawn_row(runtime_root: Path, spawn_id: str) -> RecoveryResult | None:
@@ -195,7 +286,7 @@ def _recover_from_detection(
 ) -> RecoveryResult | None:
     if chat_id is None:
         return None
-    primary_spawn = _primary_spawn_for_chat(project_root, runtime_root, chat_id)
+    primary_spawn = _primary_spawn_for_chat(runtime_root, chat_id)
     if primary_spawn is None:
         return None
     detected = _detect_primary_harness_session_id(
@@ -251,15 +342,9 @@ def recover_harness_session_id(
 
     # Chat reference
     if normalized_ref.startswith("c") and normalized_ref[1:].isdigit():
-        result = _recover_from_session_store(runtime_root, normalized_ref)
+        result = recover_recorded_chat_harness_session_id(runtime_root, normalized_ref)
         if result is not None:
             return result
-
-        primary_spawn = _primary_spawn_for_chat(project_root, runtime_root, normalized_ref)
-        if primary_spawn is not None:
-            result = _recover_from_primary_meta(runtime_root, primary_spawn.id, normalized_ref)
-            if result is not None:
-                return result
 
         return _recover_from_detection(
             project_root=project_root,
@@ -311,4 +396,6 @@ __all__ = [
     "RecoveryProvenance",
     "RecoveryResult",
     "recover_harness_session_id",
+    "recover_recorded_chat_harness_session_id",
+    "recover_recorded_chat_harness_session_ids",
 ]

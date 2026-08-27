@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator, Sequence
+from typing import NamedTuple
+
 from pydantic import BaseModel, ConfigDict
 
 from meridian.lib.core.context import RuntimeContext
@@ -10,9 +13,13 @@ from meridian.lib.ops.runtime import (
     async_from_sync,
     resolve_project_authority,
     resolve_roots_for_read,
+    resolve_runtime_authority_for_read,
 )
 from meridian.lib.ops.session_corpus import resolve_session_search_corpus
-from meridian.lib.ops.session_target import resolve_session_log_target
+from meridian.lib.ops.session_target import (
+    iter_chat_session_log_targets,
+    resolve_session_log_target,
+)
 from meridian.lib.ops.session_transcript import (
     AbsoluteTranscriptEntry,
     ParsedSessionTranscript,
@@ -25,6 +32,12 @@ from meridian.lib.state import session_store
 
 _PREVIEW_LIMIT = 200
 _OPEN_CONTEXT = 5
+
+
+class SubsetSearchStep(NamedTuple):
+    chat_id: str
+    matched: bool
+    error: str | None = None
 
 
 class SessionSearchInput(BaseModel):
@@ -82,6 +95,52 @@ class SessionSearchOutput(BaseModel):
 
 def _normalize_content(value: str) -> str:
     return " ".join(value.split())
+
+
+def iter_session_subset_search(
+    *, project_root: str, chat_ids: Sequence[str], query: str
+) -> Iterator[SubsetSearchStep]:
+    """Yield one isolated matched/error step for each requested primary chat."""
+
+    normalized_query = query.strip().lower()
+    if not normalized_query:
+        raise ValueError("query must not be empty")
+
+    authority = resolve_runtime_authority_for_read(project_root)
+    if authority.runtime_root is None:
+        for chat_id in chat_ids:
+            yield SubsetSearchStep(chat_id, False, f"Chat '{chat_id}' not found")
+        return
+
+    targets = iter_chat_session_log_targets(
+        project_root=authority.project_root,
+        runtime_root=authority.runtime_root,
+        chat_ids=chat_ids,
+    )
+    for resolution in targets:
+        if resolution.target is None:
+            yield SubsetSearchStep(
+                resolution.chat_id,
+                False,
+                resolution.error or "transcript not found",
+            )
+            continue
+        try:
+            transcript = parse_session_target(
+                project_root=authority.project_root,
+                runtime_root=authority.runtime_root,
+                target=resolution.target,
+                route=route_for_corpus_target(resolution.target),
+            )
+            matched = any(
+                not (entry.kind == "setup" and entry.is_placeholder)
+                and normalized_query in _normalize_content(entry.content).lower()
+                for entry in transcript.all_entries
+            )
+        except (ValueError, FileNotFoundError, OSError) as exc:
+            yield SubsetSearchStep(resolution.chat_id, False, str(exc))
+            continue
+        yield SubsetSearchStep(resolution.chat_id, matched)
 
 
 def _build_preview(content: str, *, query: str, limit: int = _PREVIEW_LIMIT) -> str:
@@ -278,6 +337,8 @@ __all__ = [
     "SessionSearchInput",
     "SessionSearchMatch",
     "SessionSearchOutput",
+    "SubsetSearchStep",
+    "iter_session_subset_search",
     "session_search",
     "session_search_sync",
 ]

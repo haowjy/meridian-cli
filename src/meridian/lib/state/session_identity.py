@@ -71,6 +71,27 @@ def get_owner_chat_for_session(
     return session_owner_chat_id(runtime_root, record)
 
 
+def get_recorded_primary_spawn_for_owner_chat(
+    runtime_root: Path,
+    owner_chat_id: str,
+    spawn_id: str | None,
+) -> SpawnRecord | None:
+    """Read and validate a session's recorded primary-spawn relationship."""
+
+    normalized_owner_chat_id = normalize_optional_identity(owner_chat_id)
+    normalized_spawn_id = normalize_optional_identity(spawn_id)
+    if normalized_owner_chat_id is None or normalized_spawn_id is None:
+        return None
+    row = spawn_store.get_spawn(runtime_root, normalized_spawn_id)
+    if (
+        row is None
+        or row.kind != "primary"
+        or not spawn_matches_owner_chat(row, normalized_owner_chat_id)
+    ):
+        return None
+    return row
+
+
 def is_tracked_chat_ref(runtime_root: Path, ref: str) -> bool:
     """Return whether ``ref`` is a Meridian chat/session id in this runtime root."""
 
@@ -151,6 +172,7 @@ def list_spawns_for_exact_session(
 
 __all__ = [
     "get_owner_chat_for_session",
+    "get_recorded_primary_spawn_for_owner_chat",
     "get_session_record_for_spawn",
     "is_tracked_chat_ref",
     "list_spawns_for_exact_session",

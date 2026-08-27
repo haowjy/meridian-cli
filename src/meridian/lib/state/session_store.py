@@ -108,6 +108,7 @@ class SessionUpdateEvent(BaseModel):
     session_instance_id: str = ""
     claude_config_dir: str | None = None
     active_work_id: str | None = None
+    spawn_id: str | None = None
 
 type SessionEvent = SessionStartEvent | SessionStopEvent | SessionUpdateEvent
 type MaterializedCleanupScope = str
@@ -296,6 +297,7 @@ def _records_by_session(runtime_root: Path) -> dict[str, SessionRecord]:
         harness_session_id = existing.harness_session_id
         updated_work_id = existing.active_work_id
         claude_config_dir = existing.claude_config_dir
+        spawn_id = existing.spawn_id
         session_instance_id = existing.session_instance_id
         if event.harness_session_id is not None:
             if event.harness_session_id not in session_ids:
@@ -309,6 +311,9 @@ def _records_by_session(runtime_root: Path) -> dict[str, SessionRecord]:
         if event.claude_config_dir is not None:
             normalized_config_dir = event.claude_config_dir.strip()
             claude_config_dir = normalized_config_dir or None
+        if event.spawn_id is not None:
+            normalized_spawn_id = event.spawn_id.strip()
+            spawn_id = normalized_spawn_id or None
         records[event.chat_id] = existing.model_copy(
             update={
                 "harness_session_id": harness_session_id,
@@ -316,6 +321,7 @@ def _records_by_session(runtime_root: Path) -> dict[str, SessionRecord]:
                 "session_instance_id": session_instance_id,
                 "active_work_id": updated_work_id,
                 "claude_config_dir": claude_config_dir,
+                "spawn_id": spawn_id,
             }
         )
     return records
@@ -475,6 +481,24 @@ def update_session_work_id(runtime_root: Path, chat_id: str, work_id: str | None
         harness_session_id=None,
         session_instance_id=_session_instance_for_event(paths, runtime_root, chat_id),
         active_work_id=normalized_work_id,
+    )
+    append_event(
+        paths.sessions_jsonl,
+        paths.sessions_flock,
+        event,
+        exclude_none=True,
+    )
+
+
+def update_session_spawn_id(runtime_root: Path, chat_id: str, spawn_id: str) -> None:
+    """Record the canonical primary spawn relationship for a session."""
+
+    paths = RuntimePaths.from_root_dir(runtime_root)
+    event = SessionUpdateEvent(
+        chat_id=ChatId(chat_id),
+        harness_session_id=None,
+        session_instance_id=_session_instance_for_event(paths, runtime_root, chat_id),
+        spawn_id=spawn_id.strip(),
     )
     append_event(
         paths.sessions_jsonl,

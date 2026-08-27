@@ -4,8 +4,25 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- Add `meridian session browse`, a full-screen recent-session picker with
+  metadata filtering, transcript search and preview, safe resume/fork actions,
+  a plain table fallback, and equivalent bare `--continue` routing.
+
 ### Fixed
 
+- Open the session browser promptly in projects with large session and spawn
+  histories by enriching only the visible `--limit` page and resolving deep-search
+  targets with one session replay and at most one spawn scan per search.
+- Show session-browser column headers and keep rows aligned by terminal display
+  width across varying and Unicode agent/model labels.
+- Keep preview and transcript-search workers available after a request fails
+  instead of leaving the picker stuck in a loading state.
+- Preserve browse options such as `--limit 1` when bare `--continue` opens the
+  session browser.
+- Materialize Codex forks from complete, validated rollout records and remove
+  the published fork if Codex thread registration fails.
 - Fall back with a destination-naming warning when a work item's task directory
   has disappeared, honor explicit `--task-dir` overrides, and report a structured
   `work_task_dir_missing` error instead of crashing `task-dir` when no fallback exists.

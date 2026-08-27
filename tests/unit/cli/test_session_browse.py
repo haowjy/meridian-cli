@@ -1,0 +1,284 @@
+from __future__ import annotations
+
+import os
+from datetime import UTC, datetime
+
+import pytest
+from prompt_toolkit.utils import get_cwidth
+
+from meridian.cli.browse import render as browse_render
+from meridian.cli.browse.model import (
+    Activate,
+    Backspace,
+    BrowseModel,
+    Character,
+    Enter,
+    Escape,
+    Interrupt,
+    Move,
+    Quit,
+    Search,
+    StartSearch,
+)
+from meridian.cli.browse.render import render_footer, render_list
+from meridian.cli.session_cmd import (
+    Interactive,
+    Plain,
+    Refused,
+    _exec_decision,
+    resolve_browse_presentation,
+)
+from meridian.lib.ops.session_list import SessionListRow
+from meridian.lib.ops.session_reentry import Blocked, Fork, Resume
+
+
+def _row(chat_id: str, *, live: bool = False, work: str = "") -> SessionListRow:
+    return SessionListRow(
+        chat_id=chat_id,
+        activity_at=datetime.now(UTC).isoformat(),
+        live=live,
+        reentry=Fork(chat_id) if live else Resume(chat_id),
+        agent="coder",
+        model="gpt",
+        work_label=work,
+        task_cwd=f"/tmp/{work or chat_id}",
+    )
+
+
+def _text(fragments: list[tuple[str, str]]) -> str:
+    return "".join(fragment for _style, fragment in fragments)
+
+
+def test_filter_navigation_and_activation() -> None:
+    model = BrowseModel((_row("c1", work="alpha"), _row("c2", work="beta")))
+
+    for character in "beta":
+        assert model.handle_key(Character(character)) is None
+
+    assert [row.chat_id for row in model.visible_rows] == ["c2"]
+    assert model.handle_key(Enter()) == Activate("c2")
+    model.handle_key(Backspace())
+    assert model.filter_text == "bet"
+
+
+def test_quit_key_table() -> None:
+    model = BrowseModel((_row("c1"),))
+    assert model.handle_key(Character("q")) == Quit()
+
+    model.filter_text = "a"
+    assert model.handle_key(Character("q")) is None
+    assert model.filter_text == "aq"
+    assert model.handle_key(Escape()) == Quit()
+    assert model.handle_key(Interrupt()) == Quit(130)
+
+    empty = BrowseModel(())
+    assert empty.handle_key(Character("x")) is None
+    assert empty.handle_key(Character("q")) == Quit()
+
+
+def test_search_transitions_and_result_narrowing() -> None:
+    model = BrowseModel((_row("c1"), _row("c2")))
+
+    model.handle_key(Search())
+    for character in "needle":
+        model.handle_key(Character(character))
+    assert model.handle_key(Enter()) == StartSearch("needle", ("c1", "c2"))
+
+    model.apply_search_progress(1, 2)
+    model.apply_search_done(frozenset({"c2"}), 2)
+    assert [row.chat_id for row in model.visible_rows] == ["c2"]
+    assert model.handle_key(Move(1)) is None
+    assert model.handle_key(Escape()) is None
+    assert [row.chat_id for row in model.visible_rows] == ["c1", "c2"]
+
+
+def test_blocked_and_rendered_action_hints() -> None:
+    live = _row("c1", live=True)
+    blocked = _row("c2").model_copy(
+        update={"reentry": Blocked("no harness session recorded; cannot resume or fork")}
+    )
+    model = BrowseModel((live, blocked))
+
+    assert "fork → new session" in _text(render_footer(model, 100))
+    assert "●" in _text(render_list(model, 100))
+    model.highlight = 1
+    model.apply_blocked("c2", "no harness session recorded; cannot resume or fork")
+    assert "c2: no harness session" in _text(render_footer(model, 100))
+
+
+def test_footer_matches_search_mode_controls() -> None:
+    model = BrowseModel((_row("c1"),))
+    assert "type to filter" in _text(render_footer(model, 120))
+
+    model.handle_key(Search())
+    search_input = _text(render_footer(model, 120))
+    assert search_input == "type query · [enter] search · [esc] back"
+
+    model.handle_key(Character("n"))
+    assert model.handle_key(Enter()) == StartSearch("n", ("c1",))
+    scanning = _text(render_footer(model, 120))
+    assert "searching transcripts" in scanning
+    assert "[enter] resume" in scanning
+    assert "[esc] cancel" in scanning
+
+    model.apply_search_done(frozenset({"c1"}), 1)
+    results = _text(render_footer(model, 120))
+    assert "search results" in results
+    assert "[enter] resume" in results
+    assert "[esc] back" in results
+
+
+def test_search_status_reports_unavailable_transcripts() -> None:
+    model = BrowseModel((_row("c1"), _row("c2")))
+    model.handle_key(Search())
+    model.handle_key(Character("n"))
+    assert model.handle_key(Enter()) == StartSearch("n", ("c1", "c2"))
+
+    model.apply_search_done(frozenset({"c1"}), 2, unavailable=1)
+
+    status = _text(browse_render.render_status(model, 120))
+    assert "1 of 2 match" in status
+    assert "1 unavailable" in status
+
+
+def test_list_places_scroll_cursor_on_highlighted_row() -> None:
+    model = BrowseModel(tuple(_row(f"c{index}") for index in range(20)))
+    model.highlight = 15
+
+    fragments = render_list(model, 80)
+
+    cursor_markers = [
+        index
+        for index, (style, _text_value) in enumerate(fragments)
+        if style == "[SetCursorPosition]"
+    ]
+    assert len(cursor_markers) == 1
+    selected_line: list[str] = []
+    for _style, text in fragments[cursor_markers[0] + 1 :]:
+        if text == "\n":
+            break
+        selected_line.append(text)
+    assert "c15" in "".join(selected_line)
+
+
+def test_list_renders_older_count_as_nonselectable_trailer() -> None:
+    model = BrowseModel((_row("c1"),), older_count=7)
+
+    fragments = render_list(model, 80)
+
+    assert "(1 of 8 shown — use --limit to see more)" in _text(fragments)
+    assert fragments[-1][0] == "class:hint"
+    assert sum(style == "[SetCursorPosition]" for style, _ in fragments) == 1
+
+    model.older_count = 0
+    assert "older" not in _text(render_list(model, 80))
+
+
+def test_list_header_and_rows_share_fixed_column_starts() -> None:
+    first = _row("c123", work="session-browse").model_copy(
+        update={"agent": "product-lead-extra", "model": "claude-fable-5-extra"}
+    )
+    second = _row("c124", work="auth-refactor")
+    model = BrowseModel((first, second))
+
+    header = _text(browse_render.render_list_header(model, 100))
+    lines = _text(render_list(model, 100)).splitlines()
+
+    assert all(title in header for title in ("C-ID", "AGE", "AGENT", "MODEL", "WORK"))
+    work_column = header.index("WORK")
+    assert lines[0][work_column:].startswith("session-browse")
+    assert lines[1][work_column:].startswith("auth-refactor")
+
+
+def test_list_columns_use_terminal_display_width() -> None:
+    row = _row("c123", work="工作").model_copy(
+        update={"agent": "审查员", "model": "模型"}
+    )
+    model = BrowseModel((row,))
+
+    header = _text(browse_render.render_list_header(model, 100))
+    rendered = _text(render_list(model, 100)).splitlines()[0]
+
+    header_work_column = get_cwidth(header[: header.index("WORK")])
+    row_work_column = get_cwidth(rendered[: rendered.index("工作")])
+    assert row_work_column == header_work_column
+
+
+def test_live_marker_receives_live_style() -> None:
+    fragments = render_list(BrowseModel((_row("c123", live=True),)), 100)
+
+    assert any(text == "●" and "class:live" in style for style, text in fragments)
+
+
+def test_narrow_list_header_omits_hidden_columns() -> None:
+    model = BrowseModel((_row("c123", work="session-browse"),))
+
+    header = _text(browse_render.render_list_header(model, 50))
+
+    assert "C-ID" in header
+    assert "AGE" in header
+    assert "WORK" in header
+    assert "AGENT" not in header
+    assert "MODEL" not in header
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "expected_type"),
+    [
+        ({"plain": True}, Plain),
+        ({"stdin_tty": False}, Plain),
+        ({"stdout_tty": False}, Plain),
+        ({"term": "dumb"}, Plain),
+        ({"term": None}, Plain),
+        ({"managed": True}, Refused),
+        ({}, Interactive),
+    ],
+)
+def test_resolve_browse_presentation(kwargs: dict[str, object], expected_type: type) -> None:
+    inputs: dict[str, object] = {
+        "plain": False,
+        "stdin_tty": True,
+        "stdout_tty": True,
+        "term": "xterm-256color",
+        "managed": False,
+        "ambient_chat": "c98",
+    }
+    inputs.update(kwargs)
+
+    result = resolve_browse_presentation(**inputs)  # type: ignore[arg-type]
+
+    assert isinstance(result, expected_type)
+    if isinstance(result, Refused):
+        assert "session c98" in result.reason
+
+
+@pytest.mark.parametrize(
+    ("decision", "verb"),
+    [(Resume("c123"), "--continue"), (Fork("c123"), "--fork")],
+)
+def test_exec_decision_builds_primary_invocation(decision, verb: str) -> None:
+    called: list[tuple[str, list[str]]] = []
+
+    _exec_decision(
+        decision,
+        project_root="/tmp/project",
+        config_file="/tmp/config.toml",
+        exec_fn=lambda executable, argv: called.append((executable, argv)),
+    )
+
+    assert called == [
+        (
+            os.sys.executable,
+            [
+                os.sys.executable,
+                "-m",
+                "meridian",
+                "-C",
+                "/tmp/project",
+                "--config",
+                "/tmp/config.toml",
+                verb,
+                "c123",
+            ],
+        )
+    ]

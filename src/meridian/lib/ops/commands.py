@@ -93,6 +93,12 @@ from meridian.lib.ops.session_export import (
     session_export,
     session_export_sync,
 )
+from meridian.lib.ops.session_list import (
+    SessionListInput,
+    SessionListOutput,
+    session_list,
+    session_list_sync,
+)
 from meridian.lib.ops.session_log import (
     SessionLogInput,
     SessionLogOutput,
@@ -412,6 +418,18 @@ _OP_SPECS: tuple[ExtensionCommandSpec, ...] = (
         output_type=ReportShowOutput,
         cli_group="report",
         cli_name="show",
+    ),
+    ExtensionCommandSpec.from_op(
+        extension_id="meridian.session",
+        command_id="browse",
+        summary="Browse recent sessions; resume stopped or fork live ones.",
+        handler=session_list,
+        sync_handler=session_list_sync,
+        input_type=SessionListInput,
+        output_type=SessionListOutput,
+        cli_group="session",
+        cli_name="browse",
+        surfaces=frozenset({ExtensionSurface.CLI}),
     ),
     ExtensionCommandSpec.from_op(
         extension_id="meridian.session",
