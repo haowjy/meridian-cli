@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.4.3] - 2026-08-27
+
 ### Added
 
 - Add `meridian session browse`, a full-screen recent-session picker with
