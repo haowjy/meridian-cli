@@ -4,6 +4,10 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- Bump pinned `mars-agents` to 0.13.1 for configurable models.dev catalog ingest (`settings.catalog_providers`) and the default xAI/OpenRouter allowlist.
+
 ## [0.4.3] - 2026-08-27
 
 ### Added
