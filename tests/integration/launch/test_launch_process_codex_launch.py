@@ -18,8 +18,11 @@ import pytest
 
 from meridian.lib.config.settings import load_config
 from meridian.lib.core.types import HarnessId
+from meridian.lib.harness.connections.base import ObserverEndpoint
+from meridian.lib.harness.passthrough.codex import CodexPassthrough
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.launch.context import build_launch_context
+from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.launch.process import runner as process_runner
 from meridian.lib.launch.process.ports import ProcessLauncher
 from meridian.lib.launch.process.primary_attach import (
@@ -36,6 +39,7 @@ from meridian.lib.launch.request import (
     SpawnRequest,
 )
 from meridian.lib.launch.types import SessionMode
+from meridian.lib.safety.permissions import UnsafeNoOpPermissionResolver
 from meridian.lib.state import session_store
 from meridian.lib.state.spawn_store import get_spawn, list_spawns
 from tests.support.launch import assert_task_cwd_instruction, stub_bundle_request_and_resolve
@@ -96,6 +100,46 @@ def _build_primary_launch_context(
         dry_run=True,
     )
     return launch_context, harness_registry
+
+
+@pytest.mark.parametrize(
+    ("prompt", "expected_tail"),
+    [("continue here", ("continue here",)), (" \t", ())],
+)
+def test_codex_managed_attach_does_not_override_remote_permissions(
+    tmp_path: Path,
+    prompt: str,
+    expected_tail: tuple[str, ...],
+) -> None:
+    connection: Any = type(
+        "FakeConnection",
+        (),
+        {
+            "observer_endpoint": ObserverEndpoint(
+                transport="ws",
+                url="ws://127.0.0.1:43123",
+                host="127.0.0.1",
+                port=43123,
+            ),
+        },
+    )()
+    spec = ResolvedLaunchSpec(
+        prompt="",
+        user_turn_content=prompt,
+        projected_roots=(tmp_path / "sibling",),
+        permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
+    )
+
+    command = CodexPassthrough().build_tui_command(connection, spec)("thread-123")
+
+    assert command == (
+        "codex",
+        "resume",
+        "thread-123",
+        "--remote",
+        "ws://127.0.0.1:43123",
+        *expected_tail,
+    )
 
 
 @pytest.mark.slow

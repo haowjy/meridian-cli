@@ -43,13 +43,10 @@ def _build_codex_attach_command(
     session_id: str,
     ws_url: str,
     prompt: str | None,
-    projected_roots: tuple[Path, ...],
 ) -> tuple[str, ...]:
     """Build `codex resume {session_id} --remote {ws_url} [prompt]`."""
 
     command = ["codex", "resume", session_id, "--remote", ws_url]
-    for root in projected_roots:
-        command.extend(("--add-dir", root.as_posix()))
     if prompt and prompt.strip():
         command.append(prompt)
     return tuple(command)
@@ -89,7 +86,6 @@ class CodexPassthrough:
             session_id=session_id,
             ws_url=_require_observer_endpoint_url(connection, transport="ws"),
             prompt=spec.user_turn_content,
-            projected_roots=spec.projected_roots,
         )
 
 
