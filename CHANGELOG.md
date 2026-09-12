@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.4.5] - 2026-09-12
+
 ### Fixed
 
 - Keep Codex managed-primary remote attach from overriding app-server workspace permissions with rejected `--add-dir` flags.
