@@ -63,7 +63,7 @@ Each existing root is projected at launch time in deterministic order: committed
 |---|---|
 | Claude Code | `--add-dir <path>` flag per root |
 | Codex (subprocess) | `--add-dir <path>` flag per root |
-| Codex (managed primary) | `-c sandbox_workspace_write.writable_roots=[...]` on app-server launch **and** `--add-dir <path>` on `codex resume --remote` TUI attach |
+| Codex (managed primary) | `-c sandbox_workspace_write.writable_roots=[...]` on app-server launch; `codex resume --remote` attaches without a permission override |
 | OpenCode | `OPENCODE_CONFIG_CONTENT` env with `permission.external_directory` entries; merged into any pre-existing parent config |
 | Other harnesses | `unsupported:requires_config_generation` |
 

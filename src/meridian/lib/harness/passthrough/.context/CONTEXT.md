@@ -47,14 +47,17 @@ and the caller retries with a new port. This is the intended path — do not cat
 
 `_build_codex_attach_command` produces:
 ```
-codex resume <session_id> --remote <ws_url> [--add-dir <root> ...]
+codex resume <session_id> --remote <ws_url> [prompt]
 ```
 
-`--add-dir` entries come from `spec.projected_roots`. The WebSocket URL comes from
+The attach command must not include permission overrides such as `--add-dir`; Codex
+0.154 rejects them with `resume --remote`. Workspace roots are projected independently
+to the managed app-server configuration. The WebSocket URL comes from
 `connection.observer_endpoint.url` — the connection must be in a state where
 `observer_endpoint` is set (not None) before this is called. `build_tui_command()`
 calls `_require_observer_endpoint_url(connection, transport="ws")`, which raises
-`PassthroughError` if the endpoint is absent or has the wrong transport type.
+`PassthroughError` if the endpoint is absent or has the wrong transport type. A
+non-blank `spec.user_turn_content` remains the final optional argument.
 
 ### OpenCode: TUI Command Shape
 

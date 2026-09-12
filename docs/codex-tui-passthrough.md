@@ -15,17 +15,24 @@ This gives Meridian a real Codex thread ID, managed startup telemetry, and hidde
 
 ## Workspace Roots
 
-Configured `[workspace.*]` roots reach the remote TUI, not just the app-server.
-
-When Meridian builds the `codex resume --remote` attach command it appends `--add-dir <path>` for every entry in `projected_roots`:
+Configured `[workspace.*]` roots are projected when Meridian launches the managed
+app-server:
 
 ```
-codex resume <session-id> --remote ws://127.0.0.1:<port> \
-  --add-dir /abs/path/sibling-repo \
-  --add-dir /abs/path/other-repo
+codex app-server \
+  -c 'sandbox_workspace_write.writable_roots=["/abs/path/sibling-repo"]' \
+  --listen ws://127.0.0.1:<port>
 ```
 
-This matters because Codex's remote-TUI mode sends per-turn sandbox policy constructed from the TUI's local permission profile. Without the `--add-dir` flags the remote TUI's per-turn overrides would narrow writable scope below what the app-server was originally configured with, causing approval prompts or write failures for paths that should be freely writable.
+The remote TUI attach command does not repeat those roots:
+
+```
+codex resume <session-id> --remote ws://127.0.0.1:<port>
+```
+
+Codex 0.154 rejects `--add-dir` on `resume --remote` because it would override the
+remote session's permission configuration. Subprocess `codex exec` launches still
+receive their independent `--add-dir` projection.
 
 Roots are deduplicated and resolved to absolute paths before projection. Paths that do not exist on disk are skipped and surfaced as findings: committed entries emit `workspace_missing_root`, and missing local-only entries emit `workspace_local_missing_root`.
 
