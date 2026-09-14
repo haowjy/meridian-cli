@@ -535,7 +535,7 @@ def _config_root_hint(value: str | None) -> Path | None:
 def _read_chat_session_record(
     runtime_root: Path, chat_id: str
 ) -> session_store.SessionRecord | None:
-    records = session_store.get_session_records(runtime_root, {chat_id})
+    records = HistoryIndex(runtime_root).sessions(chat_ids={chat_id})
     if not records:
         return None
     return records[0]
