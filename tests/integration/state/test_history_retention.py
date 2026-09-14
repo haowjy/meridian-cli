@@ -648,3 +648,56 @@ def test_child_binding_preserves_cross_owner_fork_and_native_identity(tmp_path: 
         )
     finally:
         session_store.stop_session(root, chat)
+
+
+@pytest.mark.parametrize("with_session", [False, True])
+def test_restored_snapshot_recapture_preserves_portable_digest(
+    tmp_path: Path, with_session: bool
+) -> None:
+    from meridian.lib.state import session_store
+
+    root = tmp_path / "source"
+    key = _terminal(root)
+    if with_session:
+        chat = session_store.start_session(
+            root, harness="codex", harness_session_id="native", model="test", spawn_id=key
+        )
+        session_store.stop_session(root, chat)
+    original = archive_history(root, destination=tmp_path / "first", refs=(key,), apply=True)
+    first = Path(original.archives[0])
+    first_record = verify_archive(first).records[0]
+    restored_root = tmp_path / "restored"
+    # Force local aliases to differ from the origin aliases.
+    _terminal(restored_root)
+    restored = restore_archive(restored_root, first, (str(first_record.history_id),))
+    second = archive_history(
+        restored_root, destination=tmp_path / "second", refs=restored, apply=True
+    )
+    second_archive = Path(second.archives[0])
+    second_record = verify_archive(second_archive).records[0]
+    assert second_record.portable_digest == first_record.portable_digest
+    assert second_record.required_files == first_record.required_files
+    target = tmp_path / "target"
+    first_alias = restore_archive(target, first, (str(first_record.history_id),))
+    assert restore_archive(target, second_archive, (str(first_record.history_id),)) == first_alias
+
+
+def test_historical_session_updates_are_refused(tmp_path: Path) -> None:
+    from meridian.lib.state import session_store
+
+    root = tmp_path / "source"
+    key = _terminal(root)
+    output = archive_history(root, destination=tmp_path / "zips", refs=(key,), apply=True)
+    fresh = tmp_path / "fresh"
+    local = restore_archive(fresh, Path(output.archives[0]), output.reclaimed)[0]
+    row = spawn_store.get_spawn(fresh, local)
+    assert row is not None and row.chat_id is not None
+    before = (fresh / "sessions.jsonl").read_bytes()
+    with pytest.raises(ValueError, match="Historical"):
+        session_store.update_session_work_id(fresh, row.chat_id, "changed")
+    assert (fresh / "sessions.jsonl").read_bytes() == before
+    event = json.loads(before)
+    event["record"]["active_work_id"] = "foreign-edit"
+    (fresh / "sessions.jsonl").write_text(json.dumps(event) + "\n")
+    with pytest.raises(ValueError, match="metadata changed"):
+        restore_archive(fresh, Path(output.archives[0]), output.reclaimed)

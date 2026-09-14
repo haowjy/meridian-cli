@@ -234,6 +234,36 @@ def portable_digest(
     )
 
 
+def restored_record(
+    directory: Path,
+    files: tuple[Member, ...],
+    session: SessionRecord | None,
+) -> ArchivedRecord:
+    """Validate local inert projections before recovering original portable facts."""
+    saved = json.loads((directory / "restored-from.json").read_bytes())
+    metadata = {member.name: member.sha256 for member in files}
+    if (
+        metadata.get("state.json") != saved["state_sha256"]
+        or metadata.get("record.json") != saved["provenance_sha256"]
+        or session is None
+        or digest(canonical(session.model_dump(mode="json"))) != saved["session_sha256"]
+    ):
+        raise ValueError(f"Restored metadata changed: {directory.name}")
+    original = ArchivedRecord.model_validate_json((directory / "record.json").read_bytes())
+    if (
+        original.portable_digest != saved["portable_digest"]
+        or portable_digest(original.state, original.files, original.session)
+        != original.portable_digest
+    ):
+        raise ValueError(f"Restored provenance changed: {directory.name}")
+    excluded = {"state.json", "record.json"}
+    if tuple(m for m in files if m.name not in excluded) != tuple(
+        m for m in original.files if m.name not in excluded
+    ):
+        raise ValueError(f"Restored content changed: {directory.name}")
+    return original
+
+
 def capture_record(
     directory: Path,
     state: SpawnRecord,
@@ -249,7 +279,6 @@ def capture_record(
     required = ("state.json", "history.jsonl") + (
         ("starting-prompt.md",) if stored.prompt_length is not None else ()
     )
-    portable = portable_digest(state, files, session)
     fingerprint = digest(
         canonical(
             {
@@ -258,6 +287,25 @@ def capture_record(
             }
         )
     )
+    if state.record_mode == "historical":
+        original = restored_record(directory, files, session)
+        # The local historical session may be synthetic. Preserve absence as well
+        # as original recovery facts; aliases are the only locally rebound fields.
+        session = (
+            original.session.model_copy(
+                update={
+                    "chat_id": state.chat_id,
+                    "spawn_id": state.id,
+                    "session_instance_id": state.session_instance_id,
+                }
+            )
+            if original.session
+            else None
+        )
+        activity = original.activity
+        if portable_digest(state, files, session) != original.portable_digest:
+            raise ValueError(f"Restored portable facts changed: {state.history_id}")
+    portable = portable_digest(state, files, session)
     return ArchivedRecord(
         history_id=state.history_id,
         state=state,
@@ -574,7 +622,7 @@ def archive_locations(
     """
     available: list[ArchiveLocation] = []
     errors: list[str] = []
-    seen: set[tuple[Path, str]] = set()
+    seen: set[tuple[Path, UUID, str]] = set()
     for receipt in receipts:
         directories = (
             (destination, Path(receipt.destination))
@@ -584,12 +632,12 @@ def archive_locations(
         for directory in directories:
             if deadline is not None and time.monotonic() >= deadline:
                 raise TimeoutError("Archive location resolution exceeded the query budget")
+            key = (directory / receipt.zip_name, receipt.location_id, receipt.manifest_sha256)
+            if key in seen:
+                continue
+            seen.add(key)
             try:
                 path = archive_path(receipt, directory)
-                key = (path, receipt.manifest_sha256)
-                if key in seen:
-                    continue
-                seen.add(key)
                 verify_archive(path, full=full, manifest_sha256=receipt.manifest_sha256)
                 available.append(ArchiveLocation(receipt, path))
             except ARCHIVE_READ_ERRORS as exc:

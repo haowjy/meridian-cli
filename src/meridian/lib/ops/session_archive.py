@@ -95,10 +95,15 @@ class SessionArchiveOutput(BaseModel):
         )
         if self.limited:
             lines.append("Pass reached the configured bundle limit; repeat for remaining records.")
+        snapshots: dict[tuple[str, str, bool], list[HistorySnapshot]] = {}
         for snapshot in self.snapshots:
-            state = "current" if snapshot.current else "snapshot only"
-            lines.append(f"History {snapshot.history_id} [{state}] {snapshot.portable_digest}")
-            lines.append(f"  ZIP {snapshot.archive_id}: {snapshot.path}")
+            snapshots.setdefault(
+                (snapshot.history_id, snapshot.portable_digest, snapshot.current), []
+            ).append(snapshot)
+        for (history_id, portable_digest, current), locations in snapshots.items():
+            state = "current" if current else "snapshot only"
+            lines.append(f"History {history_id} [{state}] {portable_digest}")
+            lines.extend(f"  ZIP {row.archive_id}: {row.path}" for row in locations)
         lines.extend(f"Protected: {key}" for key in self.protected)
         lines.extend(f"Error: {error}" for error in self.errors)
         return "\n".join(lines)

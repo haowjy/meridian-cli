@@ -40,6 +40,13 @@ def _append_session_event(
 ) -> None:
     changes = HistoryChanges(data_path.parent)
     with lock_file(changes.mutation_lock, mode="shared"), lock_file(lock_path):
+        if isinstance(event, (SessionUpdateEvent, SessionStopEvent)):
+            for record in list_session_generations(data_path.parent):
+                if (record.chat_id, record.session_instance_id) == (
+                    event.chat_id,
+                    event.session_instance_id,
+                ) and record.record_mode == "historical":
+                    raise ValueError("Historical sessions are inert and cannot be mutated")
         changes.mark(HistorySource(kind="sessions"))
         meta_path = data_path.with_suffix(".meta.json")
         if not meta_path.exists():
@@ -320,6 +327,13 @@ def project_session_event(records: dict[str, SessionRecord], event: SessionEvent
         record = _record_from_start_event(event)
         records[record.chat_id] = record
         return
+    existing = records.get(event.chat_id)
+    if (
+        existing is not None
+        and existing.record_mode == "historical"
+        and _generation_matches(existing.session_instance_id, event.session_instance_id)
+    ):
+        raise ValueError("Historical session authority contains a mutation")
     if isinstance(event, SessionStopEvent):
         existing = records.get(event.chat_id)
         if existing is None:
@@ -482,21 +496,21 @@ def start_session(
                     update={"forked_from_history_id": source.history_id if source else None}
                 )
             if spawn_id is not None:
+                from meridian.lib.state.spawn.model import SpawnRecord
                 from meridian.lib.state.spawn.repository import Applied, write_state_locked
 
-                binding = write_state_locked(
-                    paths.spawns_dir,
-                    spawn_id,
-                    lambda current: current.model_copy(
+                def bind(current: SpawnRecord) -> SpawnRecord:
+                    return current.model_copy(
                         update={
                             "chat_id": event.chat_id,
                             "session_instance_id": event.session_instance_id,
-                            "forked_from_history_id": (
-                                event.forked_from_history_id or current.forked_from_history_id
-                            ),
+                            "forked_from_history_id": event.forked_from_history_id
+                            or current.forked_from_history_id,
                         }
-                    ),
-                    allow_terminal_overwrite=True,
+                    )
+
+                binding = write_state_locked(
+                    paths.spawns_dir, spawn_id, bind, allow_terminal_overwrite=True
                 )
                 if isinstance(binding, Applied):
                     event = event.model_copy(

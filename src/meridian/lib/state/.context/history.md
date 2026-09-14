@@ -63,3 +63,12 @@ revalidates aliases/history conflicts, publishes the staged aggregate and append
 the historical session. Historical guards belong in persistence/control seams,
 not just the CLI.
 Original source metadata remains provenance, not executable process ownership.
+
+Restored session generations are immutable at their append boundary as well as
+in replay. Restore provenance binds the exact local state and historical session;
+recapture validates those projections and all retained content before reusing
+original portable session facts (including absence). Synthetic local sessions
+never become new portable metadata. Existing-copy restore hashes under the shared
+root gate and source lock, then rechecks POSIX inode/change-time and membership
+witnesses plus exact session metadata under the short exclusive gate. Witnesses
+only detect changes after checksum verification; they do not replace checksums.

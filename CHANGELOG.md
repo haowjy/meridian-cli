@@ -4,8 +4,6 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-- Preserve requested fork ancestry from reservation through child-session binding, and include work-filter discovery in the shared search deadline.
-
 ### Added
 
 - Give new spawn records relocation-stable history IDs and monotonic state revisions.
@@ -13,6 +11,11 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Add opt-in verified ZIP retention, direct archive reads, selective inert restore, and explicit archived-content search.
 
 ### Fixed
+
+- Preserve snapshot identity and required prompts across restore/archive round trips.
+- Reject historical-session mutations and explain historical launch rejection.
+- Verify repeat restores without blocking unrelated writers; group equivalent ZIP locations.
+- Bind child fork ancestry before launch; include work discovery in the search deadline.
 
 - Reject restore conflicts in session recovery metadata, even when local transcript bytes match.
 - Honor explicit reselection of a previously imported history snapshot.

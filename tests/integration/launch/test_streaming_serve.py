@@ -9,6 +9,7 @@ import pytest
 from meridian.cli import streaming_serve as streaming_serve_module
 from meridian.lib.core.types import HarnessId
 from meridian.lib.launch.launch_types import ResolvedExecutionPolicy
+from meridian.lib.launch.request import SessionRequest
 from meridian.lib.launch.resolve import resolve_startup_timeout_seconds
 from meridian.lib.ops.runtime import resolve_runtime_root
 from meridian.lib.state.spawn_store import get_spawn
@@ -45,7 +46,7 @@ def _fake_launch_context(
             skills=(),
             skill_paths=(),
             execution_policy=ResolvedExecutionPolicy(),
-            session=SimpleNamespace(requested_harness_session_id=None),
+            session=SessionRequest(),
             agent_metadata={
                 "appended_system_prompt": system,
                 "session_agent_path": str(child_cwd / "agent.md"),

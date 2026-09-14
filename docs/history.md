@@ -81,7 +81,9 @@ archive UUID, selects only requested histories, preserves the ZIP, and assigns
 new local aliases, printed alongside each history UUID. Browse labels these rows
 as historical. Restored state is historical: foreign processes, leases and
 harness continuation identifiers cannot become live. Repeating restore is safe;
-conflicting changed content is rejected rather than overwritten.
+conflicting changed content or session metadata is rejected rather than overwritten.
+Unchanged restored records can be archived again without changing portable snapshot
+identity. Synthetic local session metadata is not promoted into portable facts.
 
 Content search excludes archives unless explicitly requested. Search budgets and
 unavailable-content errors are reported as incomplete results, not “no matches.”

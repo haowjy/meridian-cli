@@ -250,6 +250,10 @@ def _resolve_spawn_reference(
     if row is None:
         return _resolve_untracked_reference(project_root, ref)
 
+    if row.record_mode == "historical":
+        raise ValueError(
+            "Historical records are inert; read or export the transcript instead."
+        )
     harness_session_id = _normalize_optional(row.harness_session_id)
     stored_harness = _normalize_optional(row.harness)
     source_execution_cwd = _normalize_optional(getattr(row, "task_cwd", None)) or row.execution_cwd
@@ -298,6 +302,10 @@ def _reference_from_session(
     project_root: Path,
     harness_session_id: str | None,
 ) -> ResolvedSessionReference:
+    if session.record_mode == "historical":
+        raise ValueError(
+            "Historical sessions are inert; read or export the transcript instead."
+        )
     source_history_id = session.history_id
     if source_history_id is None and session.spawn_id:
         linked = spawn_store.get_spawn(runtime_root, session.spawn_id)

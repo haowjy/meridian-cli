@@ -27,9 +27,11 @@ from meridian.lib.state.retention_archive import (
     _location,
     append_receipt,
     archive_manifest_digest,
+    canonical,
     digest,
     inventory,
     portable_digest,
+    restored_record,
     safe_member_name,
     verify_archive,
 )
@@ -96,37 +98,54 @@ def _historical_session(
     )
 
 
-def _verify_existing(directory: Path, record: ArchivedRecord) -> None:
-    marker = directory / "restored-from.json"
+def _verify_existing(
+    directory: Path, record: ArchivedRecord, *, pending_session: SessionRecord | None = None
+) -> None:
     actual = inventory(directory)
-    if not marker.exists():
-        current = read_state(directory.parent, directory.name, include_prompt=False)
-        assert current is not None
-        session = session_records_for_spawns(directory.parent.parent, (current,)).get(current.id)
+    current = read_state(directory.parent, directory.name, include_prompt=False)
+    assert current is not None
+    session = session_records_for_spawns(directory.parent.parent, (current,)).get(current.id)
+    if current.record_mode != "historical":
         if (
             actual != record.files
             or portable_digest(current, actual, session) != record.portable_digest
         ):
             raise ValueError(f"History identity conflict: {record.history_id}")
         return
-    saved = json.loads(marker.read_text())
-    if saved["portable_digest"] != record.portable_digest:
+    original = restored_record(directory, actual, session or pending_session)
+    if original.portable_digest != record.portable_digest:
         raise ValueError(f"History identity conflict: {record.history_id}")
-    state_member = next(member for member in actual if member.name == "state.json")
-    provenance_member = next((member for member in actual if member.name == "record.json"), None)
-    if (
-        state_member.sha256 != saved["state_sha256"]
-        or provenance_member is None
-        or provenance_member.sha256 != saved["provenance_sha256"]
-    ):
-        raise ValueError(f"Restored metadata changed: {record.history_id}")
-    # Restore changes only local lifecycle and provenance. All content must match,
-    # including membership: additional files are a conflict, not silently ignored.
-    excluded = {"state.json", "record.json"}
-    if tuple(m for m in actual if m.name not in excluded) != tuple(
-        m for m in record.files if m.name not in excluded
-    ):
-        raise ValueError(f"Restored content changed: {record.history_id}")
+
+
+def _existing_witness(directory: Path) -> tuple[object, ...]:
+    """Cheap publication witness, never a replacement for content verification.
+
+    POSIX inode/change timestamps detect replacement, append and membership changes
+    between source-locked hashing and the short exclusive publication gate. Include
+    directories and provenance; only metadata is read under the global gate.
+    """
+    paths = (directory, *sorted(directory.rglob("*")))
+    files = tuple(
+        (
+            str(path.relative_to(directory)),
+            info.st_dev,
+            info.st_ino,
+            info.st_mode,
+            info.st_nlink,
+            info.st_size,
+            info.st_mtime_ns,
+            info.st_ctime_ns,
+        )
+        for path in paths
+        for info in (path.lstat(),)
+    )
+    current = read_state(directory.parent, directory.name, include_prompt=False)
+    session = (
+        session_records_for_spawns(directory.parent.parent, (current,)).get(current.id)
+        if current is not None
+        else None
+    )
+    return files, current, session
 
 
 def _stage_record(
@@ -187,7 +206,12 @@ def _stage_record(
             else None,
         }
     )
-    atomic_write_text(stage / "state.json", record_to_stored_state(state).model_dump_json())
+    stored = record_to_stored_state(state)
+    if "starting-prompt.md" in record.required_files:
+        stored = stored.model_copy(
+            update={"prompt_length": len((stage / "starting-prompt.md").read_text())}
+        )
+    atomic_write_text(stage / "state.json", stored.model_dump_json())
     atomic_write_text(stage / "record.json", record.model_dump_json())
     atomic_write_text(
         stage / "restored-from.json",
@@ -195,6 +219,7 @@ def _stage_record(
             {
                 "archive_id": str(archive_id),
                 "portable_digest": record.portable_digest,
+                "session_sha256": digest(canonical(plan.session.model_dump(mode="json"))),
                 "state_sha256": digest((stage / "state.json").read_bytes()),
                 "provenance_sha256": digest((stage / "record.json").read_bytes()),
             }
@@ -243,15 +268,12 @@ def restore_archive(root: Path, archive_path: Path, refs: tuple[str, ...]) -> tu
             plan_path = plans / f"{record.history_id}.json"
             with lock_file(changes.mutation_lock):
                 existing = _existing_record(root, record.history_id)
-                if existing is not None and not plan_path.exists():
-                    _verify_existing(root / "spawns" / existing.id, record)
-                    restored.append(existing.id)
-                    continue
+                plan = None
                 if plan_path.exists():
                     plan = RestorePlan.model_validate_json(plan_path.read_bytes())
                     if plan.portable_digest != record.portable_digest:
                         raise ValueError("Unfinished restore conflicts with selected content")
-                else:
+                elif existing is None:
                     local_id = str(reserve_spawn_id(root))
                     chat_id = reserve_chat_id(root)
                     generation = uuid4().hex
@@ -263,39 +285,55 @@ def restore_archive(root: Path, archive_path: Path, refs: tuple[str, ...]) -> tu
                         session=_historical_session(record, chat_id, local_id, generation),
                     )
                     atomic_write_text(plan_path, plan.model_dump_json())
-                destination = root / "spawns" / plan.local_id
-                source = HistorySource(kind="spawn", key=plan.local_id)
-                source_lock = source.lock_path(root)
+                if plan is None:
+                    assert existing is not None
+                    local_id = existing.id
+                else:
+                    local_id = plan.local_id
+                if existing is not None and existing.id != local_id:
+                    raise ValueError("Restore publication alias conflict")
+                destination = root / "spawns" / local_id
+                source = HistorySource(kind="spawn", key=local_id)
                 destination.parent.mkdir(parents=True, exist_ok=True)
-            stage = (
-                None
-                if existing is not None
-                else _stage_record(root, archive_path, manifest.archive_id, record, plan)
-            )
+            stage = None
+            witness = None
+            if existing is not None:
+                with (
+                    lock_file(changes.mutation_lock, mode="shared"),
+                    lock_file(source.lock_path(root)),
+                ):
+                    before = _existing_witness(destination)
+                    _verify_existing(
+                        destination, record, pending_session=plan.session if plan else None
+                    )
+                    witness = _existing_witness(destination)
+                    if before != witness:
+                        raise ValueError("Restore source changed during verification; retry")
+            else:
+                assert plan is not None
+                stage = _stage_record(root, archive_path, manifest.archive_id, record, plan)
             with lock_file(changes.mutation_lock):
-                # Writers may have progressed while external bytes were staged.
-                existing = _existing_record(root, record.history_id)
-                if existing is not None and existing.id != plan.local_id:
-                    raise ValueError("Restore history identity changed during staging")
-                with lock_file(source_lock):
-                    current = read_state(root / "spawns", plan.local_id, include_prompt=False)
-                    if current is not None:
-                        if (
-                            current.history_id != record.history_id
-                            or current.record_mode != "historical"
-                        ):
-                            raise ValueError("Restore publication alias conflict")
-                        _verify_existing(destination, record)
-                    else:
-                        if stage is None:
-                            raise ValueError(
-                                "Existing restore disappeared; retry from its durable plan"
-                            )
+                # Content was checked under its source lock, not the global gate.
+                # Reject any publication or metadata change since that check.
+                current = _existing_record(root, record.history_id)
+                if witness is not None:
+                    if (
+                        current is None
+                        or current.id != local_id
+                        or _existing_witness(destination) != witness
+                    ):
+                        raise ValueError("Restore source changed after verification; retry")
+                else:
+                    if current is not None or destination.exists():
+                        raise ValueError("Restore publication alias conflict")
+                    assert stage is not None
+                    with lock_file(source.lock_path(root)):
                         changes.mark(source)
                         atomic_publish_dir(stage, destination)
-                append_historical_session(root, plan.session)
-                plan_path.unlink()
-                restored.append(plan.local_id)
+                if plan is not None:
+                    append_historical_session(root, plan.session)
+                    plan_path.unlink()
+                restored.append(local_id)
         # Keep a local receipt so copying only the ZIP also reconstructs catalog facts.
         location_id = _location(archive_path.parent)
         append_receipt(
