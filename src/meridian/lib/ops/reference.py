@@ -16,6 +16,7 @@ from meridian.lib.ops.reference_recovery import (
 )
 from meridian.lib.ops.runtime import resolve_runtime_root_for_read
 from meridian.lib.state import primary_meta, session_identity, session_store, spawn_store
+from meridian.lib.state.history_index import HistoryIndex, indexed_spawn_scan
 from meridian.lib.state.paths import resolve_spawn_log_dir
 from meridian.lib.state.spawn.model import SpawnRecord
 
@@ -94,9 +95,9 @@ def resolve_spawn_ref(runtime_root: Path, ref: str) -> SpawnId | None:
     if spawn is not None:
         return SpawnId(spawn.id)
 
-    matches = list(session_identity.list_spawns_for_owner_chat(runtime_root, ref).records)
+    matches = list(indexed_spawn_scan(runtime_root, owner_chat_id=ref).records)
     if not matches:
-        matches = list(spawn_store.list_spawns(runtime_root, chat_id=ref).records)
+        matches = list(indexed_spawn_scan(runtime_root, chat_id=ref).records)
     if matches:
         matches.sort(key=lambda item: item.started_at or "", reverse=True)
         return SpawnId(matches[0].id)
@@ -113,7 +114,7 @@ def _latest_harness_session_id(record: session_store.SessionRecord) -> str | Non
 
 
 def _latest_primary_spawn_id_for_chat(runtime_root: Path, chat_id: str) -> str | None:
-    rows = session_identity.list_spawns_for_owner_chat(runtime_root, chat_id)
+    rows = indexed_spawn_scan(runtime_root, owner_chat_id=chat_id)
     primary_rows = [row for row in rows.records if row.kind == "primary"]
     if not primary_rows:
         return None
@@ -289,7 +290,7 @@ def _resolve_spawn_reference(
 def _resolve_chat_reference(
     runtime_root: Path, ref: str, project_root: Path
 ) -> ResolvedSessionReference:
-    records = session_store.get_session_records(runtime_root, {ref})
+    records = HistoryIndex(runtime_root).sessions(chat_ids={ref})
     if not records:
         return _resolve_untracked_reference(project_root, ref)
 

@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from meridian.lib.core.spawn_lifecycle import is_active_spawn_status
-from meridian.lib.state import session_store, spawn_store
+from meridian.lib.state.history_index import HistoryIndex, indexed_spawn_scan
 
 
 def work_session_chat_ids(
@@ -29,13 +29,11 @@ def work_session_chat_ids(
 
     chat_ids: set[str] = set()
     if include_all:
-        chat_ids.update(
-            session_store.chat_ids_ever_attached_to_work(runtime_root, normalized_work_id)
-        )
+        chat_ids.update(HistoryIndex(runtime_root).work_chat_ids(normalized_work_id))
         for spawn in reconcile_spawns(
             project_root,
             runtime_root,
-            spawn_store.list_spawns(runtime_root),
+            indexed_spawn_scan(runtime_root, work_id=normalized_work_id),
         ).records:
             if (spawn.work_id or "").strip() != normalized_work_id:
                 continue
@@ -44,13 +42,15 @@ def work_session_chat_ids(
                 chat_ids.add(chat_id)
         return chat_ids
 
-    for record in session_store.list_active_session_records(runtime_root):
+    for record in HistoryIndex(runtime_root).sessions():
+        if record.stopped_at is not None or record.record_mode == "historical":
+            continue
         if record.active_work_id == normalized_work_id:
             chat_ids.add(record.chat_id)
     for spawn in reconcile_spawns(
         project_root,
         runtime_root,
-        spawn_store.list_spawns(runtime_root),
+        indexed_spawn_scan(runtime_root, work_id=normalized_work_id),
     ).records:
         if spawn.kind == "primary":
             continue

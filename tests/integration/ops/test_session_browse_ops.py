@@ -105,7 +105,8 @@ def test_session_list_is_primary_only_live_first_and_capped(tmp_path: Path) -> N
     assert "(1 of 2 shown — use --limit to see more)" in output.format_text()
 
 
-def test_session_list_breaks_equal_timestamp_ties_by_chat_id(tmp_path: Path) -> None:
+def test_session_list_breaks_equal_timestamp_ties_by_chat_id(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(session_store, "utc_now_iso", lambda: "2026-09-01T00:00:00Z")
     project_root, runtime_root = _project_roots(tmp_path)
     chat_ids = [
         session_store.start_session(
@@ -285,7 +286,7 @@ def test_list_and_reentry_block_when_all_recorded_ids_are_missing(tmp_path: Path
         session_store.stop_session(runtime_root, chat_id)
 
 
-def test_session_list_scans_spawn_state_once_for_missing_ids(
+def test_session_list_uses_index_for_missing_ids(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
@@ -318,7 +319,7 @@ def test_session_list_scans_spawn_state_once_for_missing_ids(
             session_store.stop_session(runtime_root, chat_id)
 
     assert {row.chat_id for row in output.rows} == set(chat_ids)
-    assert scan_count == 1
+    assert scan_count == 0
 
 
 def test_session_list_enriches_only_the_visible_limit(
@@ -434,8 +435,8 @@ def test_subset_search_is_ordered_and_failure_isolated(
     assert steps[0].matched is False and steps[0].error is None
     assert steps[1].matched is False and steps[1].error
     assert steps[2].matched is True and steps[2].error is None
-    assert record_scan_count == 1
-    assert spawn_scan_count == 1
+    assert record_scan_count == 0
+    assert spawn_scan_count == 0
 
 
 def test_subset_search_uses_recorded_primary_spawn_without_global_scan(

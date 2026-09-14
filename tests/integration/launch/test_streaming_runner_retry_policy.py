@@ -142,11 +142,13 @@ async def test_execute_with_streaming_attempt_timeout_survives_pi_abort(
     assert row.terminal.exit_code == 3
     assert row.terminal.error == "timeout"
     history_path = runtime_root / "spawns" / str(run.spawn_id) / "history.jsonl"
-    history = [json.loads(line) for line in history_path.read_text().splitlines()]
+    from meridian.lib.state.history import iter_history_events
+
+    history = list(iter_history_events(history_path))
     finalized = [
         event
         for event in history
-        if event["event_type"] == "meridian.pi.lifecycle.phase"
+        if event.get("event_type") == "meridian.pi.lifecycle.phase"
         and event["payload"].get("phase") == "finalized"
     ]
     assert finalized[-1]["payload"]["status"] == "timed_out"
@@ -157,7 +159,7 @@ async def test_execute_with_streaming_attempt_timeout_survives_pi_abort(
     cleanup_phases = [
         event["payload"]["phase"]
         for event in history
-        if event["event_type"] == "meridian.pi.lifecycle.phase"
+        if event.get("event_type") == "meridian.pi.lifecycle.phase"
         and str(event["payload"].get("phase", "")).startswith("cleanup_")
     ]
     assert cleanup_phases == ["cleanup_running", "cleanup_completed"]

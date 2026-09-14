@@ -14,6 +14,7 @@ from meridian.lib.ops.runtime import (
 )
 from meridian.lib.ops.spawn.query import resolve_spawn_reference
 from meridian.lib.state import spawn_store
+from meridian.lib.state.history_index import indexed_spawn_scan
 
 
 def _resolve_target_spawn_id(
@@ -165,7 +166,7 @@ def report_search_sync(
         if runtime_root is None:
             return ReportSearchOutput(results=())
         spawn_ids = tuple(
-            row.id for row in reversed(spawn_store.list_spawns(runtime_root).records)
+            row.id for row in reversed(indexed_spawn_scan(runtime_root).records)
         )
 
     matches: list[ReportSearchResult] = []

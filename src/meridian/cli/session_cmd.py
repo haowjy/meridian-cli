@@ -16,7 +16,16 @@ from meridian.cli.utils import cli_project_root_posix
 from meridian.lib.core.depth import is_managed_meridian_session
 from meridian.lib.core.util import FormatContext
 from meridian.lib.extensions.registry import get_first_party_registry
+from meridian.lib.ops.session_archive import (
+    SessionArchiveInput,
+    SessionImportInput,
+    SessionRestoreInput,
+    session_archive_sync,
+    session_import_sync,
+    session_restore_sync,
+)
 from meridian.lib.ops.session_export import SessionExportInput, session_export_sync
+from meridian.lib.ops.session_index import SessionIndexInput, session_index_sync
 from meridian.lib.ops.session_list import SessionListInput, session_list_sync
 from meridian.lib.ops.session_log import SessionLogInput, session_log_sync
 from meridian.lib.ops.session_reentry import Fork, Resume, SessionReentryDecision
@@ -312,9 +321,7 @@ def _session_search(
     ref: Annotated[
         str,
         Parameter(
-            help=(
-                "Optional session reference. If omitted, searches across the selected corpus."
-            )
+            help=("Optional session reference. If omitted, searches across the selected corpus.")
         ),
     ] = "",
     file_path: Annotated[
@@ -335,6 +342,7 @@ def _session_search(
         bool,
         Parameter(name="--workspace", help="Search current project plus workspace roots."),
     ] = False,
+    include_archives: Annotated[bool, Parameter(name="--include-archives")] = False,
     global_scope: Annotated[
         bool,
         Parameter(name="--global", help="Search all local Meridian runtime roots."),
@@ -344,6 +352,7 @@ def _session_search(
         session_search_sync(
             SessionSearchInput(
                 query=query,
+                include_archives=include_archives,
                 ref=ref,
                 file_path=file_path,
                 work_id=work_id,
@@ -374,10 +383,80 @@ def _session_repair(
     )
 
 
+def _session_archive(
+    emit: Emitter,
+    refs: Annotated[tuple[str, ...], Parameter(help="History IDs, spawn IDs, or chat IDs.")] = (),
+    destination: Annotated[str | None, Parameter(name="--destination")] = None,
+    eligible: Annotated[bool, Parameter(name="--eligible")] = False,
+    list_archives: Annotated[bool, Parameter(name="--list")] = False,
+    apply: Annotated[bool, Parameter(name="--apply")] = False,
+    after_days: Annotated[int | None, Parameter(name="--after-days")] = None,
+) -> None:
+    emit(
+        session_archive_sync(
+            SessionArchiveInput(
+                project_root=cli_project_root_posix(),
+                refs=refs,
+                destination=destination,
+                eligible=eligible,
+                list_archives=list_archives,
+                apply=apply,
+                after_days=after_days,
+            )
+        )
+    )
+
+
+def _session_import(emit: Emitter, archive: str) -> None:
+    emit(
+        session_import_sync(
+            SessionImportInput(project_root=cli_project_root_posix(), archive=archive)
+        )
+    )
+
+
+def _session_restore(
+    emit: Emitter,
+    refs: Annotated[tuple[str, ...], Parameter(help="History IDs or origin aliases.")],
+    archive: Annotated[str, Parameter(name="--archive")],
+) -> None:
+    emit(
+        session_restore_sync(
+            SessionRestoreInput(
+                project_root=cli_project_root_posix(),
+                refs=refs,
+                archive=archive,
+            )
+        )
+    )
+
+
+def _session_index(
+    emit: Emitter,
+    action: str = "status",
+    reset: Annotated[bool, Parameter(name="--reset")] = False,
+) -> None:
+    emit(
+        session_index_sync(
+            SessionIndexInput.model_validate(
+                {
+                    "project_root": cli_project_root_posix(),
+                    "action": action,
+                    "reset": reset,
+                }
+            )
+        )
+    )
+
+
 def register_session_commands(app: App, emit: Emitter) -> tuple[set[str], dict[str, str]]:
     """Register session CLI commands using registry metadata as source of truth."""
 
     handlers: dict[str, Callable[[], Callable[..., None]]] = {
+        "meridian.session.archive": lambda: partial(_session_archive, emit),
+        "meridian.session.import": lambda: partial(_session_import, emit),
+        "meridian.session.restore": lambda: partial(_session_restore, emit),
+        "meridian.session.index": lambda: partial(_session_index, emit),
         "meridian.session.browse": lambda: partial(_session_browse, emit),
         "meridian.session.log": lambda: partial(_session_log, emit),
         "meridian.session.export": lambda: partial(_session_export, emit),

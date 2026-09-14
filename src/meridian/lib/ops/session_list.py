@@ -11,9 +11,11 @@ from meridian.lib.core.formatting import relative_time, tabular
 from meridian.lib.core.util import FormatContext
 from meridian.lib.ops.reference_recovery import recover_recorded_chat_harness_session_ids
 from meridian.lib.ops.runtime import async_from_sync, resolve_roots_for_read
-from meridian.lib.ops.session_reentry import SessionReentryDecision, decide_reentry
+from meridian.lib.ops.session_reentry import Blocked, SessionReentryDecision, decide_reentry
 from meridian.lib.state import session_store, work_store
+from meridian.lib.state.history_index import HistoryIndex
 from meridian.lib.state.paths import RuntimePaths
+from meridian.lib.state.spawn.model import SpawnRecord
 
 
 class SessionListInput(BaseModel):
@@ -23,15 +25,11 @@ class SessionListInput(BaseModel):
     limit: int = Field(default=50, gt=0)
 
 
-def _chat_recency_key(chat_id: str) -> tuple[int, str]:
-    suffix = chat_id[1:] if chat_id.startswith("c") else ""
-    return (int(suffix), chat_id) if suffix.isdigit() else (-1, chat_id)
-
-
 class SessionListRow(BaseModel):
     model_config = ConfigDict(frozen=True, arbitrary_types_allowed=True)
 
     chat_id: str
+    archived: bool = False
     activity_at: str
     live: bool
     reentry: SessionReentryDecision
@@ -65,7 +63,7 @@ class SessionListOutput(BaseModel):
         rows = [["C-ID", "AGE", "LIVE", "AGENT", "MODEL", "WORK"]]
         rows.extend(
             [
-                row.chat_id,
+                row.chat_id + (" [ZIP]" if row.archived else ""),
                 relative_time(row.activity_at).removesuffix(" ago"),
                 "●" if row.live else "",
                 row.agent or "—",
@@ -76,10 +74,7 @@ class SessionListOutput(BaseModel):
         )
         output = tabular(rows)
         if self.older_count:
-            output += (
-                f"\n({len(self.rows)} of {self.total_count} shown — "
-                "use --limit to see more)"
-            )
+            output += f"\n({len(self.rows)} of {self.total_count} shown — use --limit to see more)"
         return output
 
 
@@ -101,44 +96,49 @@ def session_list_sync(
     if roots is None:
         return SessionListOutput()
 
-    records = [
-        record
-        for record in session_store.list_all_session_records(roots.runtime_root)
-        if record.kind == "primary"
-    ]
     sessions_dir = RuntimePaths.from_root_dir(roots.runtime_root).sessions_dir
-    lease_chat_ids = {
+    live_chat_ids = {
         path.name.removesuffix(".lease.json")
         for path in sessions_dir.glob("*.lease.json")
+        if session_store.is_session_lease_owner_alive(
+            roots.runtime_root, path.name.removesuffix(".lease.json")
+        )
     }
-    live_chat_ids = {
-        record.chat_id
-        for record in records
-        if record.chat_id in lease_chat_ids
-        and session_store.is_session_lease_owner_alive(roots.runtime_root, record.chat_id)
-    }
-    records.sort(
-        key=lambda record: (
-            record.chat_id in live_chat_ids,
-            record.stopped_at or record.started_at,
-            _chat_recency_key(record.chat_id),
-        ),
-        reverse=True,
+    visible_records, total_count = HistoryIndex(roots.runtime_root).recent_sessions(
+        limit=payload.limit, live_chat_ids=live_chat_ids
     )
-    visible_records = records[: payload.limit]
     recorded_harness_sessions = recover_recorded_chat_harness_session_ids(
         roots.runtime_root,
-        visible_records,
+        [record for record in visible_records if isinstance(record, session_store.SessionRecord)],
     )
+    work_ids = {
+        record.work_id if isinstance(record, SpawnRecord) else record.active_work_id
+        for record in visible_records
+    }
     work_labels = {
-        work_id: _work_label(roots.project_state_dir, work_id)
-        for work_id in {
-            record.active_work_id for record in visible_records if record.active_work_id
-        }
+        work_id: _work_label(roots.project_state_dir, work_id) for work_id in work_ids if work_id
     }
 
     rows: list[SessionListRow] = []
     for record in visible_records:
+        if isinstance(record, SpawnRecord):
+            ref = str(record.history_id)
+            rows.append(
+                SessionListRow(
+                    chat_id=ref,
+                    archived=True,
+                    activity_at=record.terminal.finished_at
+                    if record.terminal
+                    else record.started_at or "",
+                    live=False,
+                    reentry=Blocked(f"archived history; read with meridian session log {ref}"),
+                    agent=record.agent or "",
+                    model=record.model or "",
+                    work_label=work_labels.get(record.work_id or "", ""),
+                    task_cwd=record.task_cwd or record.execution_cwd or "",
+                )
+            )
+            continue
         live = record.chat_id in live_chat_ids
         rows.append(
             SessionListRow(
@@ -157,7 +157,7 @@ def session_list_sync(
             )
         )
 
-    return SessionListOutput(rows=tuple(rows), total_count=len(records))
+    return SessionListOutput(rows=tuple(rows), total_count=total_count)
 
 
 session_list = async_from_sync(session_list_sync)

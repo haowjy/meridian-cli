@@ -10,10 +10,17 @@ from pathlib import Path
 from typing import Any, cast
 
 from meridian.lib.core.clock import Clock, RealClock
+from meridian.lib.core.domain import TERMINAL_SPAWN_STATUSES
 from meridian.lib.core.types import SpawnId
 from meridian.lib.harness.connections.base import RawHarnessEvent
-from meridian.lib.state.atomic import append_text_line, atomic_write_text
+from meridian.lib.state.atomic import append_text_line, atomic_write_bytes, atomic_write_text
+from meridian.lib.state.history_changes import HistoryChanges, HistorySource
+from meridian.lib.state.history_codec import (
+    TranscriptHeader,
+    transcript_header,
+)
 from meridian.lib.state.managed_primary import ManagedPrimaryCausalTracker
+from meridian.lib.state.spawn.repository import read_state
 from meridian.lib.state.spawn_aggregate import mutate_published_spawn_artifact
 
 logger = logging.getLogger(__name__)
@@ -53,16 +60,62 @@ class HarnessHistoryWriter:
     def __post_init__(self) -> None:
         if (self.runtime_root is None) is not (self.spawn_id is None):
             raise ValueError("runtime_root and spawn_id must be provided together")
-        if not self.history_path.exists():
+        if self.runtime_root is not None and self.spawn_id is not None:
+            mutate_published_spawn_artifact(
+                self.runtime_root, SpawnId(self.spawn_id), self._initialize
+            )
+        else:
+            self._initialize()
+
+    def _mark_changed(self) -> None:
+        if self.runtime_root is None or self.spawn_id is None:
             return
-        content = self.history_path.read_bytes()
+        state = read_state(self.runtime_root / "spawns", self.spawn_id, include_prompt=False)
+        if state is None:
+            raise FileNotFoundError("spawn no longer published")
+        HistoryChanges(self.runtime_root).mark(
+            HistorySource(kind="spawn", key=self.spawn_id),
+            coalesce=state.status not in TERMINAL_SPAWN_STATUSES,
+        )
+
+    def _initialize(self) -> None:
+        content = self.history_path.read_bytes() if self.history_path.exists() else b""
+        header: TranscriptHeader | None = None
+        if not content and self.runtime_root is not None and self.spawn_id is not None:
+            state = read_state(self.runtime_root / "spawns", self.spawn_id, include_prompt=False)
+            if state is not None and state.history_id is not None:
+                header = transcript_header(state, self.runtime_root.name)
+                self._mark_changed()
+                content = (header.model_dump_json() + "\n").encode()
+                atomic_write_bytes(self.history_path, content)
         last_complete_line_end = content.rfind(b"\n") + 1
+        complete = content[:last_complete_line_end]
+        lines = complete.splitlines(keepends=True)
+        if lines:
+            try:
+                first = json.loads(lines[0])
+            except (ValueError, UnicodeDecodeError):
+                first = None
+            if isinstance(first, dict) and first.get("record") == "meridian.transcript":
+                header = TranscriptHeader.model_validate(first)
+                if self.runtime_root is not None and self.spawn_id is not None:
+                    state = read_state(
+                        self.runtime_root / "spawns", self.spawn_id, include_prompt=False
+                    )
+                    if state is not None and state.history_id != header.history_id:
+                        raise ValueError("Transcript history identity does not match its record")
+                offset = len(lines[0])
+                for seq, line in enumerate(lines[1:]):
+                    event = json.loads(line)
+                    if event.get("seq") != seq or event.get("byte_offset") != offset:
+                        raise ValueError("Noncontiguous portable transcript")
+                    offset += len(line)
         self._byte_offset = last_complete_line_end
-        self._seq = content[:last_complete_line_end].count(b"\n")
-        self._rehydrate_history_state(content[:last_complete_line_end])
+        self._seq = len(lines) - (1 if header else 0)
+        self._rehydrate_history_state(complete)
         if last_complete_line_end < len(content):
-            with self.history_path.open("r+b") as handle:
-                handle.truncate(last_complete_line_end)
+            self._mark_changed()
+            atomic_write_bytes(self.history_path, complete)
 
     @property
     def last_seq(self) -> int:
@@ -102,6 +155,7 @@ class HarnessHistoryWriter:
         assigned_seq = self._seq
 
         def _write_artifacts() -> None:
+            self._mark_changed()
             append_text_line(self.history_path, line)
             self._seq += 1
             self._byte_offset += len(line.encode("utf-8"))
@@ -144,9 +198,10 @@ class HarnessHistoryWriter:
         }
         now = self.clock.monotonic()
         last_checkpoint = self._last_marker_checkpoint_monotonic
-        if last_checkpoint is not None and (
-            now - last_checkpoint
-        ) < _LAST_OBSERVED_EVENT_CHECKPOINT_INTERVAL_SECONDS:
+        if (
+            last_checkpoint is not None
+            and (now - last_checkpoint) < _LAST_OBSERVED_EVENT_CHECKPOINT_INTERVAL_SECONDS
+        ):
             return
         try:
             atomic_write_text(
@@ -253,6 +308,8 @@ def iter_history_events(path: Path) -> Iterator[dict[str, Any]]:
         return
     with path.open("r", encoding="utf-8", errors="ignore") as handle:
         for line in handle:
+            if not line.endswith("\n"):
+                break
             stripped = line.strip()
             if not stripped:
                 continue
@@ -261,7 +318,7 @@ def iter_history_events(path: Path) -> Iterator[dict[str, Any]]:
             except json.JSONDecodeError:
                 # Crash-only tolerance for truncated/corrupt trailing lines.
                 continue
-            if isinstance(payload, dict):
+            if isinstance(payload, dict) and payload.get("record") != "meridian.transcript":
                 yield cast("dict[str, Any]", payload)
 
 
@@ -282,6 +339,8 @@ def iter_history_from_seq(
         return
     with path.open(encoding="utf-8") as handle:
         for line in handle:
+            if not line.endswith("\n"):
+                break
             stripped = line.strip()
             if not stripped:
                 continue
@@ -350,3 +409,48 @@ __all__ = [
     "read_history_range",
     "strip_seq_envelope",
 ]
+
+
+def ingest_portable_history(
+    runtime_root: Path,
+    spawn_id: str,
+    events: Iterator[dict[str, object]],
+) -> bool:
+    """Retain an otherwise harness-owned transcript once, after its process stops."""
+    from meridian.lib.platform.atomic import atomic_replace
+
+    def retain() -> None:
+        state = read_state(runtime_root / "spawns", spawn_id, include_prompt=False)
+        if state is None or state.history_id is None or state.status not in TERMINAL_SPAWN_STATUSES:
+            raise ValueError("Native transcript capture requires an identified terminal record")
+        path = runtime_root / "spawns" / spawn_id / "history.jsonl"
+        if path.exists():
+            return
+        header = transcript_header(state, runtime_root.name)
+        stamp = state.terminal.finished_at if state.terminal else state.started_at or ""
+        HistoryChanges(runtime_root).mark(HistorySource(kind="spawn", key=spawn_id))
+        with atomic_replace(path, mode="wb", encoding=None, permissions=0o600) as handle:
+            line = (header.model_dump_json() + "\n").encode()
+            handle.write(line)
+            offset = len(line)
+            for seq, payload in enumerate(events):
+                line = (
+                    json.dumps(
+                        {
+                            "seq": seq,
+                            "byte_offset": offset,
+                            "timestamp": stamp,
+                            "interrupt_epoch": 0,
+                            "event_type": "retained/native",
+                            "harness_id": state.harness,
+                            "payload": payload,
+                        },
+                        separators=(",", ":"),
+                        sort_keys=True,
+                    )
+                    + "\n"
+                ).encode()
+                handle.write(line)
+                offset += len(line)
+
+    return mutate_published_spawn_artifact(runtime_root, SpawnId(spawn_id), retain)

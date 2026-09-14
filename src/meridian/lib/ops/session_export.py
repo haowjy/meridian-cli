@@ -15,6 +15,7 @@ from meridian.lib.harness.transcript import TranscriptMessage
 from meridian.lib.ops.runtime import async_from_sync
 from meridian.lib.ops.session_transcript import read_session_transcript
 from meridian.lib.state import session_identity, session_store, spawn_store
+from meridian.lib.state.history_index import indexed_spawn_scan
 
 _TOOL_CALL_RE = re.compile(r"^\[tool:\s*(?P<name>[^\]\s]+)(?:\s+(?P<body>.*))?\]$", re.DOTALL)
 _TOOL_RESULT_PREFIX = "[tool_result]"
@@ -247,7 +248,7 @@ def _spawn_appendices(
         return []
     sections: list[str] = []
     seen: set[str] = set()
-    for spawn in spawn_store.list_spawns(runtime_root).records:
+    for spawn in indexed_spawn_scan(runtime_root).records:
         if spawn.id in seen:
             continue
         if spawn.kind == "primary":

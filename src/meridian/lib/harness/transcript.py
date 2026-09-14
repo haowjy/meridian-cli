@@ -102,16 +102,26 @@ def _preview(value: str, *, limit: int = _MAX_PREVIEW) -> str:
 
 
 # Harness tool names that map to shell execution.
-_EXEC_TOOL_NAMES: frozenset[str] = frozenset({
-    "exec_command", "shell", "terminal", "run_command",
-})
+_EXEC_TOOL_NAMES: frozenset[str] = frozenset(
+    {
+        "exec_command",
+        "shell",
+        "terminal",
+        "run_command",
+    }
+)
 
 # Harness tool names for stdin interaction.
 _STDIN_TOOL_NAMES: frozenset[str] = frozenset({"write_stdin"})
 
 # Keys that carry the "interesting" payload in a Claude-style tool input dict.
 _TOOL_BODY_KEYS: tuple[str, ...] = (
-    "file_path", "path", "command", "pattern", "description", "skill",
+    "file_path",
+    "path",
+    "command",
+    "pattern",
+    "description",
+    "skill",
 )
 
 
@@ -211,20 +221,32 @@ def _extract_claude_content(role: str, content: object) -> list[TranscriptMessag
             continue
         if role == "assistant" and block_type == "tool_use":
             marker, tool_call = _tool_use_summary(block)
-            messages.append(TranscriptMessage(
-                role=role, content=marker, tool_call=tool_call,
-            ))
+            messages.append(
+                TranscriptMessage(
+                    role=role,
+                    content=marker,
+                    tool_call=tool_call,
+                )
+            )
             continue
         if role == "assistant" and block_type in {"toolcall", "function_call", "functioncall"}:
             marker, tool_call = _pi_tool_call_summary(block)
-            messages.append(TranscriptMessage(
-                role=role, content=marker, tool_call=tool_call,
-            ))
+            messages.append(
+                TranscriptMessage(
+                    role=role,
+                    content=marker,
+                    tool_call=tool_call,
+                )
+            )
             continue
         if role == "user" and block_type == "tool_result":
-            messages.append(TranscriptMessage(
-                role=role, content=_tool_result_summary(block), is_tool_result=True,
-            ))
+            messages.append(
+                TranscriptMessage(
+                    role=role,
+                    content=_tool_result_summary(block),
+                    is_tool_result=True,
+                )
+            )
             continue
 
         text = text_from_value(block)
@@ -266,9 +288,13 @@ def _extract_pi_message_event(payload: dict[str, object]) -> list[TranscriptMess
     if role in {"toolresult", "tool_result"}:
         content = text_from_value(message.get("content"))
         if content:
-            return [TranscriptMessage(
-                role="user", content=f"[tool_result] {content}", is_tool_result=True,
-            )]
+            return [
+                TranscriptMessage(
+                    role="user",
+                    content=f"[tool_result] {content}",
+                    is_tool_result=True,
+                )
+            ]
         return [TranscriptMessage(role="user", content="[tool_result]", is_tool_result=True)]
     return []
 
@@ -319,12 +345,20 @@ def _extract_codex_response_item(payload: dict[str, object]) -> list[TranscriptM
     if item_type == "function_call_output":
         output = text_from_value(payload.get("output"))
         if output:
-            return [TranscriptMessage(
-                role="user", content=f"[tool_result] {output}", is_tool_result=True,
-            )]
-        return [TranscriptMessage(
-            role="user", content="[tool_result]", is_tool_result=True,
-        )]
+            return [
+                TranscriptMessage(
+                    role="user",
+                    content=f"[tool_result] {output}",
+                    is_tool_result=True,
+                )
+            ]
+        return [
+            TranscriptMessage(
+                role="user",
+                content="[tool_result]",
+                is_tool_result=True,
+            )
+        ]
 
     return []
 
@@ -341,9 +375,13 @@ def _extract_codex_exec_item(item: dict[str, object]) -> list[TranscriptMessage]
         output = text_from_value(item.get("aggregated_output") or item.get("aggregatedOutput"))
         command = text_from_value(item.get("command"))
         if output:
-            return [TranscriptMessage(
-                role="user", content=f"[tool_result] {output}", is_tool_result=True,
-            )]
+            return [
+                TranscriptMessage(
+                    role="user",
+                    content=f"[tool_result] {output}",
+                    is_tool_result=True,
+                )
+            ]
         if command:
             tool_call = ToolCall(name="bash", body=command)
             return [
@@ -361,12 +399,8 @@ class DefaultTranscriptEventParser(TranscriptEventParser):
     """Cross-harness event parser that normalizes Claude/Codex/OpenCode families."""
 
     def parse(self, event: dict[str, object]) -> tuple[list[TranscriptMessage], bool]:
+        event = _unwrap_seq_envelope(event)
         event_type = normalize_harness_event_type(event)
-
-        if "event_type" in event and isinstance(event.get("payload"), dict):
-            nested = dict(cast("dict[str, object]", event["payload"]))
-            nested.setdefault("event_type", event["event_type"])
-            return self.parse(nested)
 
         is_boundary = (
             event_type == "system"
@@ -402,11 +436,13 @@ class DefaultTranscriptEventParser(TranscriptEventParser):
             fallback_text = text_from_value(event.get("tool_use_result"))
             if role == "user" and fallback_text:
                 return (
-                    [TranscriptMessage(
-                        role="user",
-                        content=f"[tool_result] {fallback_text}",
-                        is_tool_result=True,
-                    )],
+                    [
+                        TranscriptMessage(
+                            role="user",
+                            content=f"[tool_result] {fallback_text}",
+                            is_tool_result=True,
+                        )
+                    ],
                     is_boundary,
                 )
             return ([], is_boundary)
@@ -497,7 +533,8 @@ def _provider_for_path(path: Path) -> TranscriptProvider:
 def _unwrap_seq_envelope(event: dict[str, object]) -> dict[str, object]:
     if "event_type" in event and isinstance(event.get("payload"), dict):
         nested = dict(cast("dict[str, object]", event["payload"]))
-        nested.setdefault("event_type", event["event_type"])
+        if event["event_type"] != "retained/native":
+            nested.setdefault("event_type", event["event_type"])
         return _unwrap_seq_envelope(nested)
     return event
 
@@ -616,9 +653,7 @@ def _parse_events_with_prologues(
             total_compactions += 1
             segments.append([])
             handoff = (
-                _extract_claude_boundary_handoff(normalized_event)
-                if is_claude_boundary
-                else None
+                _extract_claude_boundary_handoff(normalized_event) if is_claude_boundary else None
             )
             segment_setups.append(handoff)
             next_segment_index = len(segments) - 1
@@ -637,9 +672,7 @@ def _parse_events_with_prologues(
             segment_index, source = pending_follow_on_summary
             setup_text: str | None = None
             if source == "claude":
-                setup_text = _extract_claude_follow_on_handoff(
-                    normalized_event, extracted_messages
-                )
+                setup_text = _extract_claude_follow_on_handoff(normalized_event, extracted_messages)
             elif source == "opencode":
                 setup_text = _extract_opencode_follow_on_handoff(
                     normalized_event, extracted_messages
@@ -651,10 +684,9 @@ def _parse_events_with_prologues(
                 continue
 
         if segment_setups[-1] is None:
-            prologue = (
-                _extract_claude_system_prologue(normalized_event)
-                or _extract_opencode_db_system_prologue(normalized_event)
-            )
+            prologue = _extract_claude_system_prologue(
+                normalized_event
+            ) or _extract_opencode_db_system_prologue(normalized_event)
             if prologue:
                 segment_setups[-1] = prologue
 
@@ -679,7 +711,7 @@ def parse_transcript_events(
 
 
 def parse_transcript_events_with_prologues(
-    events: Sequence[dict[str, object]],
+    events: Iterable[dict[str, object]],
     *,
     parser: TranscriptEventParser | None = None,
 ) -> TranscriptParseResult:

@@ -167,9 +167,7 @@ def run_primary_launch(
     context_from_requested = (raw_from_target,) if raw_from_target else ()
     normalized_task_dir = (task_dir or "").strip() or None
     if resume_target is not None and normalized_task_dir is not None:
-        raise ValueError(
-            "--continue does not accept --task-dir. Use --fork --task-dir to diverge."
-        )
+        raise ValueError("--continue does not accept --task-dir. Use --fork --task-dir to diverge.")
     if resume_target is not None and work.strip():
         raise ValueError(
             "--continue does not accept --work. "
@@ -385,6 +383,11 @@ def run_primary_launch(
     )
 
     continue_chat_id = getattr(launch_result, "continue_chat_id", None)
+    history_warning = None
+    if not dry_run and continue_chat_id:
+        from meridian.lib.ops.session_archive import session_stop_maintenance
+
+        history_warning = session_stop_maintenance(project_root, continue_chat_id)
     return PrimaryLaunchOutput(
         message=_result_message(exit_code=launch_result.exit_code),
         exit_code=launch_result.exit_code,
@@ -403,6 +406,7 @@ def run_primary_launch(
         ),
         warning=_merge_warnings(
             continue_warning,
+            history_warning,
             launch_result.warning,
             _headless_claude_startup_warning(project_root),
         ),

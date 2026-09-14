@@ -10,7 +10,9 @@ from contextlib import suppress
 from pathlib import Path
 
 from meridian.lib.core.types import SpawnId
+from meridian.lib.platform.atomic import fsync_directory
 from meridian.lib.state.event_store import lock_file
+from meridian.lib.state.history_changes import HistoryChanges, HistorySource
 from meridian.lib.state.paths import RuntimePaths
 from meridian.lib.state.process_scope_projection import scope_projection_lock_path
 from meridian.lib.state.spawn.model import SpawnRecord
@@ -37,12 +39,16 @@ def mutate_published_spawn_artifact(
     if not is_safe_spawn_dir_name(resolved_spawn_id):
         raise ValueError(f"Invalid spawn ID: {resolved_spawn_id}")
 
-    with lock_file(
-        spawn_lock_path(paths.spawns_dir, resolved_spawn_id),
-        reentrant=False,
+    with (
+        lock_file(HistoryChanges(runtime_root).mutation_lock, mode="shared"),
+        lock_file(spawn_lock_path(paths.spawns_dir, resolved_spawn_id), reentrant=False),
     ):
         current = read_state(paths.spawns_dir, resolved_spawn_id, include_prompt=False)
-        if current is None or (can_mutate is not None and not can_mutate(current)):
+        if (
+            current is None
+            or current.record_mode == "historical"
+            or (can_mutate is not None and not can_mutate(current))
+        ):
             return False
         mutate()
         return True
@@ -85,7 +91,9 @@ def delete_published_spawn(
     spawn_dir = paths.spawns_dir / resolved_spawn_id
 
     # Global order: spawn state, then process-scope projection.
+    changes = HistoryChanges(runtime_root)
     with (
+        lock_file(changes.mutation_lock, mode="shared"),
         lock_file(spawn_lock_path(paths.spawns_dir, resolved_spawn_id)),
         lock_file(scope_projection_lock_path(runtime_root, resolved_spawn_id)),
     ):
@@ -96,8 +104,10 @@ def delete_published_spawn(
             return False
         if not spawn_dir.exists():
             return False
+        changes.mark(HistorySource(kind="spawn", key=resolved_spawn_id))
         try:
             shutil.rmtree(spawn_dir, onexc=_restore_spawn_artifact_permissions)
+            fsync_directory(spawn_dir.parent)
         except OSError:
             return False
         return True

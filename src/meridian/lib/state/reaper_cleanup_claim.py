@@ -14,6 +14,7 @@ from meridian.lib.platform.atomic import fsync_directory
 from meridian.lib.platform.locking import lock_file
 from meridian.lib.platform.process_scope.base import ProcessScopeSnapshot
 from meridian.lib.state.atomic import atomic_write_text
+from meridian.lib.state.history_changes import HistoryChanges
 from meridian.lib.state.process_scope_projection import (
     read_scope_projection,
     scope_snapshot_from_dict,
@@ -85,9 +86,16 @@ def claim_active_spawn_scopes(
     """Snapshot cleanup targets while coordinating with the spawn terminal CAS."""
     spawn_id_text = str(spawn_id)
     spawns_dir = runtime_root / "spawns"
-    with lock_file(spawn_lock_path(spawns_dir, spawn_id_text), reentrant=False):
+    with (
+        lock_file(HistoryChanges(runtime_root).mutation_lock, mode="shared"),
+        lock_file(spawn_lock_path(spawns_dir, spawn_id_text), reentrant=False),
+    ):
         current = read_state(spawns_dir, spawn_id_text)
-        if current is None or not is_active_spawn_status(current.status):
+        if (
+            current is None
+            or current.record_mode == "historical"
+            or not is_active_spawn_status(current.status)
+        ):
             return read_cleanup_claim(runtime_root, spawn_id)
         existing = read_cleanup_claim(runtime_root, spawn_id)
         projection = read_scope_projection(runtime_root, SpawnId(spawn_id_text))
@@ -116,7 +124,13 @@ def replace_cleanup_claim(
 ) -> None:
     """Replace or clear a claim under the spawn's stable mutation lock."""
     spawns_dir = runtime_root / "spawns"
-    with lock_file(spawn_lock_path(spawns_dir, str(spawn_id)), reentrant=False):
+    with (
+        lock_file(HistoryChanges(runtime_root).mutation_lock, mode="shared"),
+        lock_file(spawn_lock_path(spawns_dir, str(spawn_id)), reentrant=False),
+    ):
+        current = read_state(spawns_dir, str(spawn_id), include_prompt=False)
+        if current is None or current.record_mode == "historical":
+            return
         path = cleanup_claim_path(runtime_root, spawn_id)
         if scopes:
             _write_claim(path, scopes)

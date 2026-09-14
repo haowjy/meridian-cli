@@ -115,7 +115,7 @@ def get_session_record_for_spawn(
     if normalized_spawn_id is None:
         return None
 
-    for record in session_store.list_all_session_records(runtime_root):
+    for record in reversed(session_store.list_session_generations(runtime_root)):
         if record.spawn_id != normalized_spawn_id:
             continue
         if require_harness_session_id and record.harness_session_id is None:

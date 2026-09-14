@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import time
+import zipfile
+import zlib
 from collections.abc import Iterator, Sequence
 from typing import NamedTuple
 
@@ -23,12 +26,14 @@ from meridian.lib.ops.session_target import (
 from meridian.lib.ops.session_transcript import (
     AbsoluteTranscriptEntry,
     ParsedSessionTranscript,
+    TranscriptBudget,
+    TranscriptBudgetExceeded,
     build_session_log_command,
     parse_session_target,
     read_session_transcript,
     route_for_corpus_target,
 )
-from meridian.lib.state import session_store
+from meridian.lib.state.history_index import HistoryIndex
 
 _PREVIEW_LIMIT = 200
 _OPEN_CONTEXT = 5
@@ -50,6 +55,7 @@ class SessionSearchInput(BaseModel):
     work_id: str | None = None
     workspace: bool = False
     global_scope: bool = False
+    include_archives: bool = False
 
 
 class SessionSearchMatch(BaseModel):
@@ -72,14 +78,17 @@ class SessionSearchOutput(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     matches: tuple[SessionSearchMatch, ...]
+    truncated: bool = False
+    errors: tuple[str, ...] = ()
 
     def format_text(self, ctx: FormatContext | None = None) -> str:
         _ = ctx
-        if not self.matches:
-            return "Session search — no matches"
-
         match_label = "match" if len(self.matches) == 1 else "matches"
-        lines = [f"Session search — {len(self.matches)} {match_label}"]
+        lines = [
+            f"Session search — {len(self.matches)} {match_label}"
+            if self.matches
+            else "Session search — no matches"
+        ]
         for match in self.matches:
             lines.append("")
             lines.append(
@@ -90,6 +99,9 @@ class SessionSearchOutput(BaseModel):
             )
             lines.append(match.content_preview)
             lines.append(f"Open: {match.open_command}")
+        if self.truncated:
+            lines.append("Search truncated by content/time/match budget.")
+        lines.extend(self.errors)
         return "\n".join(lines)
 
 
@@ -137,7 +149,7 @@ def iter_session_subset_search(
                 and normalized_query in _normalize_content(entry.content).lower()
                 for entry in transcript.all_entries
             )
-        except (ValueError, FileNotFoundError, OSError) as exc:
+        except (ValueError, OSError, EOFError, zipfile.BadZipFile, zlib.error) as exc:
             yield SubsetSearchStep(resolution.chat_id, False, str(exc))
             continue
         yield SubsetSearchStep(resolution.chat_id, matched)
@@ -265,50 +277,57 @@ def _search_corpus(payload: SessionSearchInput, *, query: str) -> SessionSearchO
     )
 
     matches: list[SessionSearchMatch] = []
+    errors: list[str] = []
     query_lower = query.lower()
+    deadline = time.monotonic() + 2
+    budget = TranscriptBudget(deadline, 64 * 1024 * 1024)
+    truncated = False
     for scope in scopes:
-        records = session_store.list_all_session_records(scope.runtime_root)
-        for record in records:
-            if scope.chat_filter is not None and record.chat_id not in scope.chat_filter:
+        rows = HistoryIndex(scope.runtime_root).candidates(
+            include_archives=payload.include_archives
+        )
+        for row in rows:
+            if scope.chat_filter is not None and row.chat_id not in scope.chat_filter:
                 continue
-
+            if time.monotonic() >= deadline or len(matches) >= 100:
+                truncated = True
+                break
             project_root = scope.project_root or scope.runtime_root
             try:
                 target = resolve_session_log_target(
-                    ref=record.chat_id,
+                    ref=row.history_id if row.archived else row.local_id,
                     file_path=None,
                     project_root=project_root,
                     runtime_root=scope.runtime_root,
                 )
-            except (ValueError, FileNotFoundError, OSError):
-                continue
-
-            transcript = parse_session_target(
-                project_root=project_root,
-                runtime_root=scope.runtime_root,
-                target=target,
-                route=route_for_corpus_target(target),
-            )
-            matches.extend(
-                _matches_for_transcript(
+                if target.file_path is not None and not row.archived:
+                    size = target.file_path.stat().st_size
+                    if size > budget.remaining_bytes:
+                        truncated = True
+                        continue
+                transcript = parse_session_target(
+                    project_root=project_root,
+                    runtime_root=scope.runtime_root,
+                    target=target,
+                    route=route_for_corpus_target(target),
+                    budget=budget,
+                )
+                found = _matches_for_transcript(
                     transcript=transcript,
                     query=query,
                     query_lower=query_lower,
                     corpus=scope.label,
-                    chat_id=record.chat_id,
+                    chat_id=row.chat_id or row.local_id,
                 )
-            )
-
-    matches.sort(
-        key=lambda match: (
-            match.corpus,
-            match.chat_id,
-            match.segment,
-            match.entry_ordinal,
-            match.segment_start_message,
-        )
-    )
-    return SessionSearchOutput(matches=tuple(matches))
+                if len(found) > 100 - len(matches):
+                    truncated = True
+                matches.extend(found[: 100 - len(matches)])
+            except TranscriptBudgetExceeded:
+                truncated = True
+                break
+            except (ValueError, OSError, EOFError, zipfile.BadZipFile, zlib.error) as exc:
+                errors.append(f"{row.history_id}: {exc}")
+    return SessionSearchOutput(matches=tuple(matches), truncated=truncated, errors=tuple(errors))
 
 
 def session_search_sync(

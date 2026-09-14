@@ -80,6 +80,12 @@ class SpawnStateFields(BaseModel):
 
     id: str
     history_id: UUID | None = None
+    record_mode: Literal["live", "historical"] = "live"
+    session_instance_id: str | None = None
+    parent_history_id: UUID | None = None
+    owner_history_id: UUID | None = None
+    forked_from_history_id: UUID | None = None
+    retained_history_ids: tuple[UUID, ...] = ()
     state_revision: int = Field(default=0, ge=0)
     chat_id: OptionalPersistedChatId = None
     owner_chat_id: OptionalPersistedChatId = None

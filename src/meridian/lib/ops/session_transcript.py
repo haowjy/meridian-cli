@@ -2,6 +2,12 @@
 
 from __future__ import annotations
 
+import json
+import time
+import zipfile
+import zlib
+from collections.abc import Iterator
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, NamedTuple
 
@@ -10,8 +16,8 @@ from meridian.lib.harness.transcript import (
     ToolCall,
     TranscriptMessage,
     TranscriptParseResult,
-    parse_opencode_db_transcript_with_prologues,
-    parse_transcript_file_with_prologues,
+    iter_transcript_events,
+    parse_transcript_events_with_prologues,
 )
 from meridian.lib.ops.runtime import resolve_runtime_authority_for_read
 from meridian.lib.ops.session_target import (
@@ -261,17 +267,56 @@ def _route_from_request(
 
 
 def route_for_corpus_target(target: SessionLogTarget) -> SessionLogRoute:
+    if any(source.kind == "archive" for source in target.sources):
+        return SessionLogRoute(mode="ref", value=target.sources[0].history_id or target.session_id)
     if target.file_path is None:
         return SessionLogRoute(mode="ref", value=target.session_id)
     return SessionLogRoute(mode="file", value=str(target.file_path))
 
 
-def _parse_transcript_source(source: TranscriptSource) -> TranscriptParseResult:
-    if source.kind == "opencode_db":
-        return parse_opencode_db_transcript_with_prologues(source.session_id)
-    if source.path is None:
-        raise FileNotFoundError(f"Session file for '{source.session_id}' not found")
-    return parse_transcript_file_with_prologues(source.path)
+class TranscriptBudgetExceeded(RuntimeError):
+    """A bounded content search must stop before consuming another event."""
+
+
+@dataclass
+class TranscriptBudget:
+    deadline: float
+    remaining_bytes: int
+
+    def events(self, events: Iterator[dict[str, object]]) -> Iterator[dict[str, object]]:
+        for event in events:
+            self.remaining_bytes -= len(json.dumps(event, ensure_ascii=False).encode())
+            if self.remaining_bytes < 0 or time.monotonic() >= self.deadline:
+                raise TranscriptBudgetExceeded("Content/time budget reached")
+            yield event
+
+
+def iter_source_events(source: TranscriptSource) -> Iterator[dict[str, object]]:
+    if source.kind == "archive":
+        from uuid import UUID
+
+        from meridian.lib.state.retention_archive import iter_archived_events
+
+        if source.path is None or source.history_id is None:
+            raise ValueError("Incomplete archive locator")
+        yield from iter_archived_events(
+            source.path, UUID(source.history_id), source.manifest_sha256
+        )
+    elif source.kind == "opencode_db":
+        from meridian.lib.harness.opencode_transcript import iter_opencode_db_events
+
+        yield from iter_opencode_db_events(session_id=source.session_id)
+    else:
+        if source.path is None:
+            raise FileNotFoundError(f"Session file for '{source.session_id}' not found")
+        yield from iter_transcript_events(source.path)
+
+
+def _parse_transcript_source(
+    source: TranscriptSource, budget: TranscriptBudget | None = None
+) -> TranscriptParseResult:
+    events = iter_source_events(source)
+    return parse_transcript_events_with_prologues(budget.events(events) if budget else events)
 
 
 def _target_for_source(target: SessionLogTarget, source: TranscriptSource) -> SessionLogTarget:
@@ -297,16 +342,26 @@ def parse_session_target(
     runtime_root: Path | None,
     target: SessionLogTarget,
     route: SessionLogRoute,
+    budget: TranscriptBudget | None = None,
 ) -> ParsedSessionTranscript:
     parsed: TranscriptParseResult | None = None
     resolved_target = target
+    archive_errors: list[Exception] = []
     for source in target.sources:
-        candidate = _parse_transcript_source(source)
+        try:
+            candidate = _parse_transcript_source(source, budget)
+        except (ValueError, OSError, EOFError, zipfile.BadZipFile, zlib.error) as exc:
+            if source.kind != "archive":
+                raise
+            archive_errors.append(exc)
+            continue
         parsed = candidate
         resolved_target = _target_for_source(target, source)
         if _has_usable_interaction_content(candidate):
             break
     if parsed is None:
+        if archive_errors:
+            raise archive_errors[-1]
         raise FileNotFoundError(f"Session file for '{target.session_id}' not found")
 
     flattened = flatten_transcript_segments(parsed.segments)

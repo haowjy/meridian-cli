@@ -27,6 +27,7 @@ from meridian.lib.state.spawn.repository import (
     Applied,
     Declined,
     SpawnStateQuarantined,
+    StoredSpawnState,
     read_state,
     scan_spawn_ids,
 )
@@ -322,10 +323,9 @@ def test_start_spawn_publishes_only_a_complete_readable_row(
         stage_dir = staged_dirs[0]
         assert stage_dir.parent == paths.spawns_dir / ".staging"
         assert (stage_dir / "starting-prompt.md").read_text(encoding="utf-8") == "hello"
-        staged_row = read_state(stage_dir.parent, stage_dir.name)
-        assert staged_row is not None
+        staged_row = StoredSpawnState.model_validate_json((stage_dir / "state.json").read_bytes())
         assert staged_row.id == spawn_id
-        assert staged_row.prompt == "hello"
+        assert staged_row.prompt_length == len("hello")
     finally:
         release_publication_build.set()
         publisher.join(timeout=5)

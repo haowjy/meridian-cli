@@ -19,6 +19,7 @@ from meridian.lib.harness.pi_failure import (
 )
 from meridian.lib.launch.constants import HISTORY_FILENAME, OUTPUT_FILENAME
 from meridian.lib.state.artifact_store import ArtifactStore
+from meridian.lib.state.history_codec import current_attempt_lines
 
 from .artifact_io import read_artifact_text
 
@@ -121,7 +122,7 @@ def _unwrap_history_payload(record: dict[str, object]) -> dict[str, object]:
 def _extract_last_assistant_message(output_lines: str) -> str | None:
     last_assistant: str | None = None
     last_text_line: str | None = None
-    for line in output_lines.splitlines():
+    for line in current_attempt_lines(output_lines):
         stripped = line.strip()
         if not stripped:
             continue
@@ -152,7 +153,7 @@ def _extract_last_assistant_message(output_lines: str) -> str | None:
 
 def _normalized_history_lines(raw_lines: str) -> str:
     normalized: list[str] = []
-    for line in raw_lines.splitlines():
+    for line in current_attempt_lines(raw_lines):
         stripped = line.strip()
         if not stripped:
             continue

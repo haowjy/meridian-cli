@@ -17,6 +17,7 @@ from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.extractors.pi import detect_pi_session_id_from_session_files
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.state import primary_meta, session_identity, session_store, spawn_store
+from meridian.lib.state.history_index import HistoryIndex, indexed_spawn_scan
 from meridian.lib.state.spawn.model import SpawnRecord
 
 
@@ -57,7 +58,7 @@ def _primary_spawn_for_chat(
     runtime_root: Path,
     chat_id: str,
 ) -> SpawnRecord | None:
-    spawns = session_identity.list_spawns_for_owner_chat(runtime_root, chat_id)
+    spawns = indexed_spawn_scan(runtime_root, owner_chat_id=chat_id)
     primary_spawns = [row for row in spawns.records if row.kind == "primary"]
     if not primary_spawns:
         return None
@@ -88,7 +89,7 @@ def _detect_primary_harness_session_id(
     spawn_row: SpawnRecord,
     harness_hint: str | None,
 ) -> str | None:
-    if spawn_row.kind != "primary":
+    if spawn_row.record_mode == "historical" or spawn_row.kind != "primary":
         return None
     normalized_harness = (harness_hint or spawn_row.harness or "").strip().lower()
     if not normalized_harness:
@@ -154,7 +155,7 @@ def recover_recorded_chat_harness_session_id(
 
     resolved_session = session
     if resolved_session is None:
-        records = session_store.get_session_records(runtime_root, {chat_id})
+        records = HistoryIndex(runtime_root).sessions(chat_ids={chat_id})
         resolved_session = records[0] if records else None
     if resolved_session is not None:
         recovered = _recover_from_session_record(resolved_session)
@@ -211,7 +212,7 @@ def recover_recorded_chat_harness_session_ids(
         return results
 
     primary_spawns: dict[str, SpawnRecord] = {}
-    for spawn in spawn_store.list_spawns(runtime_root).records:
+    for spawn in indexed_spawn_scan(runtime_root, owner_chat_id=legacy_scan_ids).records:
         owner_chat_id = session_identity.spawn_owner_chat_id(spawn)
         if spawn.kind == "primary" and owner_chat_id in legacy_scan_ids:
             primary_spawns[owner_chat_id] = spawn
@@ -226,6 +227,8 @@ def recover_recorded_chat_harness_session_ids(
 def _recover_from_session_record(
     session: session_store.SessionRecord,
 ) -> RecoveryResult | None:
+    if session.record_mode == "historical":
+        return None
     session_id = _latest_harness_session_id(session)
     if session_id is None:
         return None
@@ -241,6 +244,8 @@ def _recover_from_primary_spawn(
     spawn: SpawnRecord,
     chat_id: str,
 ) -> RecoveryResult | None:
+    if spawn.record_mode == "historical":
+        return None
     session_id = _normalize(spawn.harness_session_id)
     if session_id is not None:
         return RecoveryResult(

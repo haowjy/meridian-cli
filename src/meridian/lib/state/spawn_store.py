@@ -33,6 +33,7 @@ from meridian.lib.core.spawn_start import SpawnStartMetadata, derive_display_lab
 from meridian.lib.core.types import ChatId, HarnessSessionId, SpawnId
 from meridian.lib.state.atomic import atomic_publish_dir, atomic_write_text
 from meridian.lib.state.event_store import lock_file
+from meridian.lib.state.history_changes import HistoryChanges, HistorySource
 from meridian.lib.state.paths import RuntimePaths, normalize_path_for_write
 from meridian.lib.state.spawn.model import (
     AUTHORITATIVE_ORIGINS,
@@ -195,17 +196,11 @@ def _resolve_start_metadata(
 
 def _ensure_staging_dir(paths: RuntimePaths) -> Path:
     staging_dir = paths.spawns_dir / ".staging"
-    if os.path.lexists(staging_dir) and (
-        staging_dir.is_symlink() or not staging_dir.is_dir()
-    ):
-        raise NotADirectoryError(
-            f"Spawn staging container must be a real directory: {staging_dir}"
-        )
+    if os.path.lexists(staging_dir) and (staging_dir.is_symlink() or not staging_dir.is_dir()):
+        raise NotADirectoryError(f"Spawn staging container must be a real directory: {staging_dir}")
     staging_dir.mkdir(parents=True, exist_ok=True)
     if staging_dir.is_symlink() or not staging_dir.is_dir():
-        raise NotADirectoryError(
-            f"Spawn staging container must be a real directory: {staging_dir}"
-        )
+        raise NotADirectoryError(f"Spawn staging container must be a real directory: {staging_dir}")
     return staging_dir
 
 
@@ -292,7 +287,8 @@ def start_spawn(
         launch_policy_snapshot or start_metadata.launch_policy_snapshot
     )
 
-    with lock_file(paths.spawns_flock):
+    changes = HistoryChanges(runtime_root)
+    with lock_file(changes.mutation_lock, mode="shared"), lock_file(paths.spawns_flock):
         if spawn_id is not None:
             explicit_spawn_id = str(spawn_id)
             if not _is_safe_spawn_dir_name(explicit_spawn_id):
@@ -305,7 +301,17 @@ def start_spawn(
             next_value = current + 1
             atomic_write_text(_spawn_counter_path(paths), f"{next_value}\n")
             resolved_spawn_id = SpawnId(f"p{next_value}")
+        from meridian.lib.state.session_store import get_session_record
+
+        parent = (
+            _read_state(paths.spawns_dir, parent_id, include_prompt=False) if parent_id else None
+        )
+        owner = get_session_record(runtime_root, owner_chat_id or chat_id)
         record = SpawnRecord(
+            session_instance_id=owner.session_instance_id if owner and kind == "primary" else None,
+            parent_history_id=parent.history_id if parent else None,
+            owner_history_id=owner.history_id if owner and kind != "primary" else None,
+            forked_from_history_id=owner.forked_from_history_id if owner else None,
             id=str(resolved_spawn_id),
             history_id=uuid4(),
             state_revision=1,
@@ -333,9 +339,7 @@ def start_spawn(
                 prompt=prompt,
             ),
             harness_session_id=(
-                HarnessSessionId(harness_session_id)
-                if harness_session_id is not None
-                else None
+                HarnessSessionId(harness_session_id) if harness_session_id is not None else None
             ),
             control_root=normalize_path_for_write(control_root),
             task_cwd=normalize_path_for_write(task_cwd),
@@ -365,7 +369,10 @@ def start_spawn(
             stage_dir / "state.json",
             stored_state.model_dump_json(indent=2) + "\n",
         )
-        atomic_publish_dir(stage_dir, spawn_dir)
+        source = HistorySource(kind="spawn", key=str(resolved_spawn_id))
+        with lock_file(source.lock_path(runtime_root)):
+            changes.mark(source)
+            atomic_publish_dir(stage_dir, spawn_dir)
         return resolved_spawn_id
 
 
