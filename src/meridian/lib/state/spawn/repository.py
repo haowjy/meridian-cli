@@ -12,6 +12,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal, Self, cast
+from uuid import uuid4
 
 from pydantic import ValidationError, model_validator
 
@@ -237,8 +238,19 @@ def write_state_locked(
             return Declined(snapshot=current, reason=updated.reason)
         if updated.id != spawn_id:
             raise ValueError("Locked state mutator must not change spawn id")
+        if (updated.history_id, updated.state_revision) != (
+            current.history_id,
+            current.state_revision,
+        ):
+            raise ValueError("Locked state mutator must not change history identity or revision")
         if current.status in TERMINAL_SPAWN_STATUSES and not allow_terminal_overwrite:
             raise ValueError(f"Refusing to overwrite terminal spawn state: {spawn_id}")
+        updated = updated.model_copy(
+            update={
+                "history_id": current.history_id or uuid4(),
+                "state_revision": current.state_revision + 1,
+            }
+        )
         _write_state(spawns_dir, updated)
         return Applied(before=current, after=updated)
 

@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal, cast
+from uuid import uuid4
 
 import psutil
 import structlog
@@ -306,6 +307,8 @@ def start_spawn(
             resolved_spawn_id = SpawnId(f"p{next_value}")
         record = SpawnRecord(
             id=str(resolved_spawn_id),
+            history_id=uuid4(),
+            state_revision=1,
             chat_id=ChatId(chat_id),
             owner_chat_id=ChatId(owner_chat_id) if owner_chat_id is not None else None,
             parent_id=parent_id,

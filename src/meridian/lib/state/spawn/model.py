@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 from typing import Literal
+from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from meridian.lib.core.domain import SpawnStatus, TerminalSpawnStatus
 from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
@@ -78,6 +79,8 @@ class SpawnStateFields(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     id: str
+    history_id: UUID | None = None
+    state_revision: int = Field(default=0, ge=0)
     chat_id: OptionalPersistedChatId = None
     owner_chat_id: OptionalPersistedChatId = None
     parent_id: str | None = None
