@@ -873,3 +873,34 @@ def test_archive_cleanup_allows_unrelated_history_writer(tmp_path: Path, monkeyp
     state = spawn_store.get_spawn(root, other)
     assert state is not None and state.desc == "during cleanup"
     assert verify_archive(Path(result.archives[0])).records
+
+
+def test_failed_retirement_sync_is_repaired_before_gc_and_ack(tmp_path: Path, monkeypatch) -> None:
+    from meridian.lib.state import spawn_aggregate
+    from meridian.lib.state.retention_archive import read_receipts, recover_archives
+
+    root = tmp_path / "runtime"
+    key = _terminal(root)
+    destination = tmp_path / "zips"
+    sync = spawn_aggregate.fsync_directory
+
+    def fail_source_parent(path: Path):
+        if path == root / "spawns":
+            raise OSError("source parent sync unavailable")
+        sync(path)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(spawn_aggregate, "fsync_directory", fail_source_parent)
+        result = archive_history(root, destination=destination, refs=(key,), apply=True)
+        assert not result.reclaimed and result.errors
+        retired = tuple((root / "spawns/.staging").iterdir())
+        assert len(retired) == 1
+        spawn_store.gc_abandoned_stages(root)
+        assert retired[0].exists()
+        assert recover_archives(root, destination)
+        assert not any(receipt.event == "reclaimed" for receipt in read_receipts(root))
+    spawn_store.gc_abandoned_stages(root)
+    assert not retired[0].exists()
+    assert not recover_archives(root, destination)
+    assert any(receipt.event == "reclaimed" for receipt in read_receipts(root))
+    assert verify_archive(Path(result.archives[0])).records

@@ -14,13 +14,13 @@ import time
 import unicodedata
 import zipfile
 import zlib
-from collections.abc import Generator, Iterable, Iterator
+from collections.abc import Callable, Generator, Iterable, Iterator
 from contextlib import contextmanager
 from pathlib import Path, PurePosixPath
-from typing import Literal, NamedTuple
+from typing import Any, Literal, NamedTuple
 from uuid import UUID, uuid4
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from meridian.lib.platform.atomic import fsync_directory
 from meridian.lib.platform.locking import lock_file
@@ -64,7 +64,15 @@ class ArchivedRecord(BaseModel):
     files: tuple[Member, ...]
     required_files: tuple[str, ...]
     portable_digest: str
-    capture_fingerprint: str
+
+    @model_validator(mode="before")
+    @classmethod
+    def _discard_replaced_capture_fingerprint(cls, value: Any) -> Any:
+        # Published ZIPs must remain readable after removing this derived field.
+        # It was never portable authority; new records no longer compute/store it.
+        if isinstance(value, dict) and "capture_fingerprint" in value:
+            return {key: item for key, item in value.items() if key != "capture_fingerprint"}
+        return value
 
 
 class ArchiveManifest(BaseModel):
@@ -330,14 +338,6 @@ def capture_record(
     required = ("state.json", "history.jsonl") + (
         ("starting-prompt.md",) if stored.prompt_length is not None else ()
     )
-    fingerprint = digest(
-        canonical(
-            {
-                "files": [member.model_dump() for member in files],
-                "session": session.model_dump(mode="json") if session else None,
-            }
-        )
-    )
     original = (
         restored_record(directory, files, session) if state.record_mode == "historical" else None
     )
@@ -346,7 +346,7 @@ def capture_record(
         session = original.session
         activity = original.activity
     if session is not None:
-        # Bind the exported capsule only AFTER raw authority validation/fingerprinting.
+        # Bind the exported capsule only AFTER raw authority validation.
         # Discovery lookup and publication witnesses must never infer these fields.
         session = session.model_copy(
             update={
@@ -367,7 +367,6 @@ def capture_record(
         files=files,
         required_files=required,
         portable_digest=portable,
-        capture_fingerprint=fingerprint,
     )
 
 
@@ -405,6 +404,8 @@ def verify_archive(
     *,
     full: bool = True,
     manifest_sha256: str | None = None,
+    history_id: UUID | None = None,
+    current: Callable[[], bool] | None = None,
 ) -> ArchiveManifest:
     with zipfile.ZipFile(path) as archive:
         infos = archive.infolist()
@@ -506,11 +507,21 @@ def verify_archive(
         # Independent capture-plan comparison prevents a self-consistent omission.
         if expected is not None and manifest.records != expected:
             raise ValueError("ZIP does not cover the selected source snapshots")
+        if history_id is not None and not any(
+            record.history_id == history_id for record in manifest.records
+        ):
+            raise ArchiveValidationError("Selected history is not covered by the ZIP")
         for member in manifest.members if full else ():
+            if history_id is not None and not member.name.startswith(
+                f"{_PREFIX}records/{history_id}/"
+            ):
+                continue
             checksum = hashlib.sha256()
             size = 0
             with archive.open(member.name) as handle:
                 while chunk := handle.read(1024 * 1024):
+                    if current is not None and not current():
+                        raise InterruptedError("Archive verification cancelled")
                     checksum.update(chunk)
                     size += len(chunk)
             if size != member.size or checksum.hexdigest() != member.sha256:
@@ -760,6 +771,7 @@ def import_archive(root: Path, path: Path, *, select: bool = True) -> ArchiveRec
 def recover_archives(root: Path, destination: Path) -> tuple[str, ...]:
     """Recover independent receipts; unavailable copies do not stall unrelated work."""
     from meridian.lib.state.spawn.repository import read_state
+    from meridian.lib.state.spawn_aggregate import sync_retirement_parents
 
     errors: list[str] = []
     with lock_file(root / "history-archives/archive.lock"):
@@ -817,5 +829,10 @@ def recover_archives(root: Path, destination: Path) -> tuple[str, ...]:
                     lock_file(source.lock_path(root)),
                 ):
                     if read_state(root / "spawns", record.state.id, include_prompt=False) is None:
+                        try:
+                            sync_retirement_parents(root / "spawns")
+                        except OSError as exc:
+                            errors.append(f"{record.history_id}: recovery deferred: {exc}")
+                            continue
                         append_receipt(root, completed)
     return tuple(errors)

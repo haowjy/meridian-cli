@@ -55,7 +55,10 @@ The final exclusive gate rechecks this witness and fresh dependency protection,
 not all file bytes. After verification, archive reclaim atomically retires the
 aggregate into existing spawn staging and syncs both parents; recursive cleanup
 runs only after root/spawn/scope locks are released. A failed parent sync leaves
-the prepared receipt and staging intact, without returning a cleanup handle. Partial removal
+the prepared receipt and staging intact, without returning a cleanup handle.
+GC snapshots retirement entries then syncs both parents before disposal; recovery
+syncs both parents before acknowledging an absent source. A persistent sync failure
+therefore leaves the retirement pending, without another journal or lifecycle. Partial removal
 there cannot hide the current ZIP. Startup staging GC may discard this residue;
 it contains no unique authority, unlike restore plans/stages. Published ZIPs never expire. Reclaim orders dependents before dependencies, before
 bundle limits, and refuses to retire a dependency while any loose record requires it.
@@ -76,8 +79,7 @@ Original source metadata remains provenance, not executable process ownership.
 
 Restored session generations are immutable at their append boundary as well as
 in replay. Exact session lookup returns raw authority, including nullable identity
-fields; only exported capsules enrich local linkage, after validation and capture
-fingerprinting. Restore provenance binds the exact local state and historical session;
+fields; only exported capsules enrich local linkage, after raw-authority validation. Restore provenance binds the exact local state and historical session;
 recapture validates those projections and all retained content before reusing
 original portable session facts (including absence). Synthetic local sessions
 never become new portable metadata. Existing-copy restore hashes under the shared

@@ -13,7 +13,6 @@ from uuid import uuid4
 
 from meridian.lib.core.types import SpawnId
 from meridian.lib.platform.atomic import fsync_directory
-from meridian.lib.state.atomic import atomic_publish_dir
 from meridian.lib.state.event_store import lock_file
 from meridian.lib.state.history_changes import HistoryChanges, HistorySource
 from meridian.lib.state.paths import RuntimePaths
@@ -89,6 +88,14 @@ class RetiredSpawn:
     path: Path
 
 
+def sync_retirement_parents(spawns_dir: Path) -> None:
+    """Repair an interrupted rename before disposing staging or acknowledging reclaim."""
+    staging = spawns_dir / ".staging"
+    if staging.exists():
+        fsync_directory(staging)
+    fsync_directory(spawns_dir)
+
+
 def _remove_published_spawn[T](
     runtime_root: Path,
     spawn_id: SpawnId | str,
@@ -160,8 +167,8 @@ def retire_published_spawn(
     def retire(directory: Path) -> RetiredSpawn:
         staging = ensure_spawn_staging_dir(RuntimePaths.from_root_dir(runtime_root))
         destination = staging / f"{directory.name}-retired-{uuid4().hex}"
-        atomic_publish_dir(directory, destination)
-        fsync_directory(directory.parent)
+        os.replace(directory, destination)
+        sync_retirement_parents(directory.parent)
         return RetiredSpawn(destination)
 
     return _remove_published_spawn(runtime_root, spawn_id, can_delete=can_delete, remove=retire)

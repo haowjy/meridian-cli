@@ -12,6 +12,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Repair interrupted retirement synchronization before GC or reclaim acknowledgement.
+
 - Verify retention sources under shared locks and clean retired artifacts without blocking history writers.
 
 - Keep browser content search loose-only by default; add explicit `browse --include-archives`.

@@ -76,7 +76,11 @@ from meridian.lib.state.spawn.transitions import (
     apply_record_exited,
     apply_runner_exit,
 )
-from meridian.lib.state.spawn_aggregate import delete_published_spawn, ensure_spawn_staging_dir
+from meridian.lib.state.spawn_aggregate import (
+    delete_published_spawn,
+    ensure_spawn_staging_dir,
+    sync_retirement_parents,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -209,6 +213,10 @@ def gc_abandoned_stages(runtime_root: Path) -> None:
             return
         try:
             entries = tuple(staging_dir.iterdir())
+            # Snapshot entries first: every captured retirement must precede
+            # the synchronization that makes it safe to discard after a crash.
+            if any("-retired-" in entry.name for entry in entries):
+                sync_retirement_parents(paths.spawns_dir)
         except OSError:
             return
         for entry in entries:
