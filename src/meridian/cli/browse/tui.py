@@ -145,6 +145,7 @@ class PreviewResult:
     chat_id: str
     lines: tuple[str, ...]
     status: str = ""
+    detail: str = ""
 
 
 @dataclass(frozen=True)
@@ -178,7 +179,7 @@ def _preview_worker(reader: SessionPreview) -> LaneWorker[PreviewRequest, Previe
     ) -> None:
         view = reader.refresh(request.identity, current)
         if view is not None and current():
-            post(PreviewResult(request.chat_id, view.lines, view.status))
+            post(PreviewResult(request.chat_id, view.lines, view.status, view.detail))
 
     return work
 
@@ -263,10 +264,12 @@ class _BrowseController:
         self._preview_request = request
         self.model.preview_loading = True
         self.model.preview_status = ""
+        self.model.preview_detail = ""
         cached = self._preview_reader.peek(request.identity)
         if cached is not None:
             self.model.apply_preview(row.chat_id, cached.lines)
             self.model.preview_status = cached.status
+            self.model.preview_detail = cached.detail
         self._preview_refresh_at = float("inf")
         self._preview_lane.submit(request)
 
@@ -279,6 +282,7 @@ class _BrowseController:
             else:
                 self.model.apply_preview(result.chat_id, result.lines)
                 self.model.preview_status = result.status
+                self.model.preview_detail = result.detail
             self._preview_refresh_at = time.monotonic() + 2
         row = self.model.highlighted_row
         if row is not None and row.live and time.monotonic() >= self._preview_refresh_at:

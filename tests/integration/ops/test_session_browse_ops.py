@@ -583,7 +583,10 @@ def test_preview_is_bounded_cached_and_rebuilt_from_loose_or_zip(tmp_path, monke
     assert reader.peek(identity) is None
 
 
-def test_preview_reparses_same_inode_rewrite_and_metadata_accepts_large_event(tmp_path) -> None:
+@pytest.mark.parametrize("unfinished", [False, True])
+def test_preview_reparses_same_inode_rewrite_and_metadata_accepts_large_event(
+    tmp_path, unfinished
+) -> None:
     from meridian.lib.ops.session_preview import PreviewIdentity, SessionPreview
     from meridian.lib.state.history import ingest_portable_history
     from meridian.lib.state.history_index import HistoryIndex
@@ -608,6 +611,9 @@ def test_preview_reparses_same_inode_rewrite_and_metadata_accepts_large_event(tm
     state = spawn_store.get_spawn(root, key)
     assert state is not None
     identity = PreviewIdentity(key, str(state.history_id))
+    if unfinished:
+        with (root / "spawns" / key / "history.jsonl").open("ab") as handle:
+            handle.write(b'{"unfinished":')
     reader = SessionPreview(str(project))
     before = reader.refresh(identity, lambda: True)
     assert before is not None and "PREFIX_A" in before.lines
@@ -657,7 +663,7 @@ def test_preview_verifies_required_archive_members_not_only_transcript(tmp_path)
     assert reader.peek(identity) is None
 
 
-@pytest.mark.parametrize("change", ["rebuild", "replace"])
+@pytest.mark.parametrize("change", ["rebuild", "replace", "rewrite"])
 def test_preview_rejects_changed_snapshot_at_publication(tmp_path, monkeypatch, change) -> None:
     from meridian.lib.ops.session_preview import PreviewIdentity, SessionPreview
     from meridian.lib.state.history import ingest_portable_history
@@ -670,7 +676,16 @@ def test_preview_rejects_changed_snapshot_at_publication(tmp_path, monkeypatch, 
         )
     )
     spawn_store.finalize_spawn(root, key, status="succeeded", exit_code=0, origin="runner")
-    ingest_portable_history(root, key, iter(({"role": "assistant", "content": "snapshot A"},)))
+    ingest_portable_history(
+        root,
+        key,
+        iter(
+            (
+                {"role": "assistant", "content": "snapshot A"},
+                {"role": "assistant", "content": "z" * 500},
+            )
+        ),
+    )
     state = spawn_store.get_spawn(root, key)
     assert state is not None
     identity = PreviewIdentity(key, str(state.history_id))
@@ -684,7 +699,11 @@ def test_preview_rejects_changed_snapshot_at_publication(tmp_path, monkeypatch, 
             path = root / "spawns" / key / "history.jsonl"
             replacement = path.with_suffix(".replacement")
             replacement.write_bytes(path.read_bytes().replace(b"snapshot A", b"snapshot B"))
-            replacement.replace(path)
+            if change == "rewrite":
+                with path.open("r+b") as handle:
+                    handle.write(replacement.read_bytes())
+            else:
+                replacement.replace(path)
         return original(index, *args, **kwargs)
 
     with monkeypatch.context() as patch:
@@ -695,7 +714,7 @@ def test_preview_rejects_changed_snapshot_at_publication(tmp_path, monkeypatch, 
     assert reader.peek(identity) is None
     fresh = reader.refresh(identity, lambda: True)
     assert fresh is not None and fresh.state == "current"
-    assert ("snapshot B" if change == "replace" else "snapshot A") in fresh.lines
+    assert ("snapshot B" if change != "rebuild" else "snapshot A") in fresh.lines
 
 
 def test_native_preview_does_not_follow_reused_chat_generation(tmp_path, monkeypatch) -> None:

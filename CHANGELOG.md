@@ -12,6 +12,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Keep preview freshness visible at narrow widths; reject same-size mutations at cache publication.
+
 - Show bounded cached browser previews immediately; refresh selected sources without replaying unchanged conversations.
 - Warm previews through explicit index rebuild; support metadata-only rebuild and oversized final events.
 

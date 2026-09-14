@@ -89,6 +89,7 @@ class BrowseModel:
     preview_lines: tuple[str, ...] = ()
     preview_loading: bool = False
     preview_status: str = ""
+    preview_detail: str = ""
     inline_message: str | None = None
 
     @property

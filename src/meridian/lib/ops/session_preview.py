@@ -56,6 +56,17 @@ class PreviewView:
             label += " · clipped"
         return label
 
+    @property
+    def detail(self) -> str:
+        parts: list[str] = []
+        if self.omitted_messages:
+            parts.append("earlier context omitted")
+        if self.clipped_text:
+            parts.append("text clipped")
+        if self.source:
+            parts.append(self.source)
+        return " · ".join(parts)
+
 
 class _Snapshot(BaseModel):
     model_config = ConfigDict(frozen=True)
@@ -63,6 +74,7 @@ class _Snapshot(BaseModel):
     selected: int
     preview: TranscriptPreview
     extent: int = 0
+    source_size: int = 0
     device: int = 0
     inode: int = 0
     tail: str = ""
@@ -129,8 +141,6 @@ class SessionPreview:
         return cached[2].view("updating", cached=True) if cached and cached[2] else None
 
     def refresh(self, identity: PreviewIdentity, current: Callable[[], bool]) -> PreviewView | None:
-        cached = self._cached(identity)
-        old = cached[2] if cached else None
         try:
 
             def generation_current() -> bool:
@@ -169,20 +179,22 @@ class SessionPreview:
                     return None
                 accumulator = PreviewAccumulator()
                 cursor = HistoryCursor()
-                device = inode = 0
+                device = inode = source_size = 0
                 tail = ""
                 managed = source.kind == "spawn_history" and source.path is not None
                 if managed:
                     assert source.path is not None
                     info = source.path.stat()
                     device, inode = info.st_dev, info.st_ino
+                    source_size = info.st_size
                     if (
                         old is not None
                         and old.selected == position
                         and old.device == device
                         and old.inode == inode
                         and 0 < old.extent <= info.st_size
-                        and (info.st_size > old.extent or old.signatures == signatures)
+                        and old.source_size > 0
+                        and (info.st_size > old.source_size or old.signatures == signatures)
                         and _tail(source.path, old.extent) == old.tail
                     ):
                         accumulator = PreviewAccumulator(old.preview)
@@ -223,6 +235,7 @@ class SessionPreview:
                     selected=position,
                     preview=accumulator.preview,
                     extent=cursor.extent,
+                    source_size=source_size,
                     device=device,
                     inode=inode,
                     tail=tail,
@@ -241,11 +254,6 @@ class SessionPreview:
             if latest_target.sources != target.sources:
                 return self.peek(identity) or PreviewView((), "updating")
             chosen = target.sources[snapshot.selected]
-            complete = tuple(_signature(source) for source in latest_target.sources) == signatures
-            if chosen.kind == "spawn_history" and chosen.path is not None:
-                complete &= snapshot.extent == chosen.path.stat().st_size
-            snapshot = snapshot.model_copy(update={"complete": complete})
-
             published_snapshot: _Snapshot = snapshot
 
             def prepare_value() -> str | None:
@@ -273,10 +281,20 @@ class SessionPreview:
                         and _tail(chosen.path, published_snapshot.extent) == published_snapshot.tail
                     ):
                         return None
+                    if (
+                        now[published_snapshot.selected] != signatures[published_snapshot.selected]
+                        and info.st_size <= published_snapshot.source_size
+                    ):
+                        return None
                     complete &= info.st_size == published_snapshot.extent
+                    published_snapshot = published_snapshot.model_copy(
+                        update={"source_size": info.st_size}
+                    )
                 elif not complete:
                     return None
-                published_snapshot = published_snapshot.model_copy(update={"complete": complete})
+                published_snapshot = published_snapshot.model_copy(
+                    update={"complete": complete, "signatures": now}
+                )
                 return published_snapshot.model_dump_json()
 
             if cached and self.index:

@@ -121,11 +121,14 @@ def render_preview(model: BrowseModel, width: int, height: int) -> StyleAndTextT
         lines = ("loading preview…",)
     else:
         lines = model.preview_lines or ("preview temporarily unavailable",)
-    visible = lines[-max(1, height - 1) :]
+    detail = model.preview_detail
+    visible = lines[-max(1, height - (2 if detail else 1)) :]
     header = f"{row.chat_id} · current segment"
     if model.preview_status:
-        header += f" · {model.preview_status}"
+        header = f"{model.preview_status} · {header}"
     fragments: StyleAndTextTuples = [("class:preview-title", _clip(header, width)), ("", "\n")]
+    if detail:
+        fragments.extend((("class:hint", _clip(detail, width)), ("", "\n")))
     for line in visible:
         fragments.extend((("class:preview", _clip(line, width)), ("", "\n")))
     return fragments
