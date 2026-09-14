@@ -117,6 +117,10 @@ def _session_browse(
         bool,
         Parameter(name="--plain", help="Print a table instead of opening the picker."),
     ] = False,
+    include_archives: Annotated[
+        bool,
+        Parameter(name="--include-archives", help="Include ZIP content in the picker's / search."),
+    ] = False,
 ) -> None:
     presentation = resolve_browse_presentation(
         plain=plain,
@@ -142,6 +146,7 @@ def _session_browse(
         listing,
         project_root,
         partial(resolve_session_reentry, project_root),
+        include_archives=include_archives,
     )
     if decision is not None:
         _exec_decision(

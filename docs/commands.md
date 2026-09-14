@@ -136,6 +136,7 @@ For managed Codex primary startup behavior, see [codex-tui-passthrough.md](codex
 | ------- | ----------- |
 | `meridian spawn report show ID` | Show one spawn's report |
 | `meridian spawn report search "query"` | Search across all spawn reports |
+| `meridian session browse [--include-archives]` | Browse recent sessions and previews; `/` searches loose content unless ZIPs are explicitly included |
 | `meridian session log REF` | Read a chat, spawn, harness session, or ZIP-backed history UUID |
 | `meridian session search "query" [REF]` | Search one session or a scoped corpus (`--workspace`, `--global`, `--work`); add `--include-archives` for ZIP content |
 | `meridian session index status` | Inspect/catch up the disposable history index |

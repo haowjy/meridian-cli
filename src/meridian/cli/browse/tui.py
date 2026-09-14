@@ -105,9 +105,7 @@ class Lane(Generic[RequestT, ResultT]):
         processed: RequestT | None = None
         while True:
             with self._condition:
-                while not self._shutdown and (
-                    self._slot is None or self._slot is processed
-                ):
+                while not self._shutdown and (self._slot is None or self._slot is processed):
                     self._condition.wait()
                 if self._shutdown:
                     return
@@ -233,8 +231,11 @@ class _BrowseController:
         listing: SessionListOutput,
         project_root: str,
         resolve_reentry: Callable[[str], SessionReentryDecision],
+        include_archives: bool,
     ) -> None:
-        self.model = BrowseModel(listing.rows, older_count=listing.older_count)
+        self.model = BrowseModel(
+            listing.rows, older_count=listing.older_count, include_archives=include_archives
+        )
         self._resolve_reentry = resolve_reentry
         self._app: Application[SessionReentryDecision | None] | None = None
         self._preview_lane = Lane(_preview_worker(project_root), self.invalidate)
@@ -328,6 +329,7 @@ def run_browse_picker(
     project_root: str,
     resolve_reentry: Callable[[str], SessionReentryDecision],
     *,
+    include_archives: bool = False,
     input: Input | None = None,
     output: Output | None = None,
 ) -> Resume | Fork | None:
@@ -338,6 +340,7 @@ def run_browse_picker(
         listing=listing,
         project_root=project_root,
         resolve_reentry=resolve_reentry,
+        include_archives=include_archives,
     )
 
     def size() -> tuple[int, int]:

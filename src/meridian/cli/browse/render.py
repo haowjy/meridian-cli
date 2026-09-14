@@ -46,7 +46,8 @@ def _cell(value: str, width: int) -> str:
 
 def render_status(model: BrowseModel, width: int) -> StyleAndTextTuples:
     if model.mode in {"search-input", "searching", "search-results"}:
-        label = f"search: {model.search_query}"
+        scope = "+ZIP" if model.include_archives else "loose"
+        label = f"search ({scope}): {model.search_query}"
         if model.mode == "searching":
             progress = f"scanned {model.search_scanned}/{model.search_total}"
             label = f"{label}  {progress}"

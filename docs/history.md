@@ -72,8 +72,13 @@ archives and do not justify deleting source history.
 meridian session import /mnt/history/meridian/meridian-history-UUID.zip
 meridian session log HISTORY_UUID
 meridian session search "phrase" --include-archives
+meridian session browse --include-archives
 meridian session restore HISTORY_UUID --archive /mnt/history/meridian/meridian-history-UUID.zip
 ```
+
+The browser always lists archived metadata and can preview a selected ZIP row.
+Its `/` content search excludes ZIPs unless started with `--include-archives`;
+the search status shows `loose` or `+ZIP`.
 
 Import explicitly selects a verified ZIP snapshot for direct reads without extracting it.
 Rebuild and automatic recovery discover orphan ZIPs as snapshot-only metadata;
