@@ -12,6 +12,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Honor explicit OpenCode models across native agent defaults; fail closed without silent launch fallback.
+- Preserve committed native model/variant on injection; show truthful managed-primary dry-runs and clean owned instructions.
 - Keep preview freshness visible at narrow widths; reject same-size mutations at cache publication.
 
 - Show bounded cached browser previews immediately; refresh selected sources without replaying unchanged conversations.

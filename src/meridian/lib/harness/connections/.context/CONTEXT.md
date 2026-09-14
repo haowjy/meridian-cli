@@ -228,3 +228,25 @@ their values with `<redacted>` before writing to history.
   extensions that write disk-backed coordination state
 - [../../../streaming/.context/CONTEXT.md](../../../streaming/.context/CONTEXT.md) — Pi
   quiescence drain policy that consumes disk state
+
+### OpenCode model and startup ownership
+
+Fresh explicit models use launch-local config only: validate available providers,
+effective config and the visible native primary agent; if its model conflicts,
+terminate the owned backend and restart once with that agent's model overridden.
+Revalidate before creating a session. One startup deadline covers both attempts;
+uncertain cleanup or rejected configuration fails without black-box fallback.
+The existing lifecycle gate spans initial process publication through connected
+state. Failure cleanup retains this gate even if its foreground wait expires;
+stop/new start cannot cross unfinished publication or mutate old cleanup's fields.
+Concurrent stop can wait for startup to settle; it never acknowledges a child that
+has not yet been published. Private instruction files are attempt-owned and removed
+by cleanup; inherited instruction paths are never removed or rewritten.
+
+Session creation and prompt submission use different native model shapes. Later
+HTTP injection observes committed native session agent/model/variant, including
+an explicit default variant; absent session fields fall back to the last native
+user message, never replayed launch settings. Unsent TUI-local changes are not
+observable, and GET/POST is not atomic against simultaneous TUI submission.
+Continue preserves native choice. Dry-run projects serve/inspection/bootstrap/
+attach without native observations or a misleading black-box command.

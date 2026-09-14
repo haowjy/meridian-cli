@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import json
 import logging
+from typing import cast
 
 from meridian.lib.harness.projections._guards import (
     check_projection_drift as _check_projection_drift,
@@ -115,6 +117,38 @@ def project_opencode_spec_to_serve_command(
     return command
 
 
+def opencode_model_parts(model: str) -> tuple[str, str]:
+    provider, separator, model_id = model.partition("/")
+    if not separator or not provider.strip() or not model_id.strip():
+        raise HarnessCapabilityMismatch(
+            "OpenCode requires a provider-qualified model: provider/model"
+        )
+    return provider, model_id
+
+
+def project_opencode_model_config(raw: str | None, model: str, agent: str | None = None) -> str:
+    """Launch-local override; preserve native agent fields and reject malformed input."""
+    opencode_model_parts(model)
+    parsed: object = json.loads(raw) if raw and raw.strip() else {}
+    if not isinstance(parsed, dict):
+        raise HarnessCapabilityMismatch("OpenCode config content must be a JSON object")
+    config = dict(cast("dict[str, object]", parsed))
+    config["model"] = model
+    if agent is not None:
+        agents = config.get("agent", {})
+        if not isinstance(agents, dict):
+            raise HarnessCapabilityMismatch("OpenCode agent configuration must be a JSON object")
+        agents = dict(cast("dict[str, object]", agents))
+        selected = agents.get(agent, {})
+        if not isinstance(selected, dict):
+            raise HarnessCapabilityMismatch(
+                "OpenCode selected-agent configuration must be a JSON object"
+            )
+        agents[agent] = {**cast("dict[str, object]", selected), "model": model}
+        config["agent"] = agents
+    return json.dumps(config, separators=(",", ":"))
+
+
 def project_opencode_spec_to_session_payload(spec: ResolvedLaunchSpec) -> dict[str, object]:
     """Build session-creation payload for the OpenCode HTTP API."""
 
@@ -129,8 +163,8 @@ def project_opencode_spec_to_session_payload(spec: ResolvedLaunchSpec) -> dict[s
     payload: dict[str, object] = {}
 
     if spec.model is not None:
-        payload["model"] = spec.model
-        payload["modelID"] = spec.model
+        provider, model_id = opencode_model_parts(spec.model)
+        payload["model"] = {"id": model_id, "providerID": provider}
 
     normalized_effort = (spec.effort or "").strip()
     if normalized_effort:

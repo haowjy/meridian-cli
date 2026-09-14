@@ -115,10 +115,17 @@ startup time by:
 
 Codex primary is managed-only. If managed startup fails, Meridian fails loudly instead of silently falling back to black-box Codex. This is deliberate: hidden instruction delivery and managed session tracking are the point of the command.
 
-OpenCode behavior is different:
+OpenCode managed-primary startup also fails loudly rather than falling back to
+black-box execution. An explicit provider/model selection is applied through
+launch-local configuration; a conflicting native primary-agent model triggers at
+most one verified backend replacement before session creation. Native config files
+are not edited. Dry-run describes serve, inspection, bootstrap and attach stages;
+it does not claim to know native-resolved defaults or an actual message model.
 
-- primary resume uses managed attach
-- other primary modes may still use black-box paths
+Continue preserves native choice. Later injected turns use the last committed
+native agent/model/variant, not the original launch model. Unsubmitted TUI-local
+selection changes are not observable through HTTP, and concurrent TUI submission
+is not atomic with Meridian's read-then-send.
 
 ## Cancellation and Process Cleanup
 

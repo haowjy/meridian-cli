@@ -1,10 +1,5 @@
 # qa-validated: test-suite-redesign
-"""OpenCode-specific launch tests and primary dry-run test.
-
-Verifies OpenCode projection manifest (system-field), managed path
-routing (resume and fork modes), fallback to black-box when managed
-backend fails, and the top-level launch_primary dry-run contract.
-"""
+"""OpenCode projections, managed launch failures, and non-executing primary plans."""
 
 from __future__ import annotations
 
@@ -51,7 +46,7 @@ def _write_minimal_mars_config(project_root: Path) -> None:
 def _stub_launch_bundle(monkeypatch: pytest.MonkeyPatch) -> None:
     stub_bundle_request_and_resolve(
         monkeypatch,
-        model="gemini-2.5-pro",
+        model="google/gemini-2.5-pro",
         harness=HarnessId.OPENCODE,
     )
 
@@ -130,16 +125,12 @@ def test_run_primary_attach_preserves_startup_failure_cause(
     assert isinstance(exc_info.value.__cause__, TimeoutError)
 
 
-
-
-
-
 @pytest.mark.slow
-def test_run_harness_process_managed_failure_falls_back_to_black_box(
+def test_run_harness_process_managed_failure_does_not_fall_back_to_black_box(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    """OpenCode can fall back to black-box when managed backend fails."""
+    """Model/managed startup failures must not silently launch a different mode."""
     monkeypatch.delenv("MERIDIAN_CHAT_ID", raising=False)
     project_root = tmp_path / "opencode-fallback"
     project_root.mkdir()
@@ -148,7 +139,7 @@ def test_run_harness_process_managed_failure_falls_back_to_black_box(
     launch_context, harness_registry = _build_primary_launch_context(
         project_root=project_root,
         harness_id=HarnessId.OPENCODE,
-        model="gemini-2.5-pro",
+        model="google/gemini-2.5-pro",
         execution_cwd=task_cwd,
         session=SessionRequest(
             requested_harness_session_id="existing-opencode-session",
@@ -208,23 +199,21 @@ def test_run_harness_process_managed_failure_falls_back_to_black_box(
 
     monkeypatch.setattr(opencode_adapter, "observe_session_id", lambda **kwargs: None)
 
-    outcome = run_harness_process(
-        launch_context,
-        harness_registry,
-        run_primary_attach_fn=failing_managed,
-        run_primary_process_with_capture_fn=fake_run_primary_process_with_capture,
-        stop_session_fn=lambda *args, **kwargs: None,
-        update_session_harness_id_fn=lambda *args, **kwargs: None,
-    )
+    with pytest.raises(PrimaryAttachError, match="managed startup error"):
+        run_harness_process(
+            launch_context,
+            harness_registry,
+            run_primary_attach_fn=failing_managed,
+            run_primary_process_with_capture_fn=fake_run_primary_process_with_capture,
+            stop_session_fn=lambda *args, **kwargs: None,
+            update_session_harness_id_fn=lambda *args, **kwargs: None,
+        )
 
     assert managed_calls == 1
-    assert black_box_calls == 1
+    assert black_box_calls == 0
     assert captured_spawn_dir is not None
-    assert not (captured_spawn_dir / PRIMARY_META_FILENAME).exists()
-    assert not (captured_spawn_dir / OUTPUT_FILENAME).exists()
-    assert captured_black_box_cwd == project_root
+    assert captured_black_box_cwd is None
     assert list(launch_context.runtime_root.rglob("tui.log")) == []
-    assert outcome.exit_code == 0
 
 
 def test_opencode_streaming_logs_effort_warning_without_failure(
@@ -233,16 +222,43 @@ def test_opencode_streaming_logs_effort_warning_without_failure(
     caplog.set_level("DEBUG")
     payload = project_opencode_spec_to_session_payload(
         ResolvedLaunchSpec(
-            model="gemini-2.5-pro",
+            model="google/gemini-2.5-pro",
             effort="medium",
             permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
         )
     )
 
-    assert payload["model"] == "gemini-2.5-pro"
-    assert payload["modelID"] == "gemini-2.5-pro"
+    assert payload["model"] == {"id": "gemini-2.5-pro", "providerID": "google"}
+    assert "modelID" not in payload
     assert "effort" not in payload
     assert (
-        "OpenCode streaming does not support effort override; ignoring effort=medium"
-        in caplog.text
+        "OpenCode streaming does not support effort override; ignoring effort=medium" in caplog.text
     )
+
+
+def test_managed_primary_dryrun_has_one_truthful_structured_plan(tmp_path: Path) -> None:
+    from meridian.cli.primary_launch import PrimaryLaunchOutput
+    from meridian.lib.launch import launch_primary
+    from meridian.lib.launch.types import LaunchRequest
+
+    _write_minimal_mars_config(tmp_path)
+    result = launch_primary(
+        project_root=tmp_path,
+        request=LaunchRequest(model="google/gemini-2.5-pro", harness="opencode", dry_run=True),
+        harness_registry=get_default_harness_registry(),
+    )
+    assert result.command == ()
+    plan = result.launch_plan
+    assert plan is not None
+    assert plan.backend_command[:2] == ("opencode", "serve")
+    assert plan.attach_command[:2] == ("opencode", "attach")
+    assert plan.bootstrap_payload["model"] == {"id": "gemini-2.5-pro", "providerID": "google"}
+    assert plan.requested_model == plan.model == "google/gemini-2.5-pro"
+    assert plan.native_observations == "unavailable (dry-run)"
+    output = PrimaryLaunchOutput(
+        message="dry-run", exit_code=0, command=result.command, launch_plan=plan
+    )
+    assert output.model_dump(mode="json")["command"] == []
+    assert "opencode serve" in output.format_text()
+    assert "GET /config/providers" in output.format_text()
+    assert "Native configuration and actual message model are unavailable" in output.format_text()

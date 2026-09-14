@@ -374,7 +374,7 @@ async def test_execute_with_streaming_does_not_retry_authoritative_terminal_fail
     run = Spawn(
         spawn_id=SpawnId("r-opencode-retryable"),
         prompt="hello",
-        model=ModelId("gpt-5.4"),
+        model=ModelId("openai/gpt-5.4"),
         status="queued",
     )
     spawn_store.start_spawn(
@@ -442,7 +442,7 @@ async def test_execute_with_streaming_retries_single_turn_close_without_terminal
     run = Spawn(
         spawn_id=SpawnId("r-opencode-close-without-terminal"),
         prompt="hello",
-        model=ModelId("gpt-5.4"),
+        model=ModelId("openai/gpt-5.4"),
         status="queued",
     )
     spawn_store.start_spawn(

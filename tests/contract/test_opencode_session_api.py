@@ -81,10 +81,8 @@ class _PayloadTimeoutOpenCodeConnection(OpenCodeConnection):
         _ = path, skip_body_on_statuses, tolerate_incomplete_body
         payload_dict = dict(payload)
         self.payloads.append(payload_dict)
-        if payload_dict:
-            await asyncio.Event().wait()
-            raise AssertionError("unreachable")
-        return 200, {"id": "sess-empty-fallback"}, "application/json"
+        await asyncio.Event().wait()
+        raise AssertionError("unreachable")
 
 
 @pytest.mark.asyncio
@@ -101,14 +99,14 @@ async def test_create_session_uses_spec_model_not_connection_config(tmp_path) ->
     session_id = await connection._create_session(
         ResolvedLaunchSpec(
             prompt="hello",
-            model="spec-model",
+            model="openai/spec-model",
             permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
         )
     )
 
     assert session_id == "sess-1"
-    assert connection.requests[0][1]["model"] == "spec-model"
-    assert connection.requests[0][1]["modelID"] == "spec-model"
+    assert connection.requests[0][1]["model"] == {"id": "spec-model", "providerID": "openai"}
+    assert "modelID" not in connection.requests[0][1]
 
 
 @pytest.mark.asyncio
@@ -134,7 +132,7 @@ async def test_create_session_forwards_agent_and_skills_from_opencode_launch_spe
     await connection._create_session(
         ResolvedLaunchSpec(
             prompt="hello",
-            model="gpt-5.3-codex",
+            model="openai/gpt-5.3-codex",
             agent_name="worker",
             skills=("skill-a", "skill-b"),
             permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
@@ -151,7 +149,7 @@ async def test_create_session_raises_when_continue_fork_requested() -> None:
     connection = _TestableOpenCodeConnection(responses=[])
     spec = ResolvedLaunchSpec(
         prompt="hello",
-        model="gpt-5.3-codex",
+        model="openai/gpt-5.3-codex",
         continue_session_id="sess-parent",
         continue_fork=True,
         permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
@@ -183,7 +181,7 @@ async def test_post_session_message_includes_system_field_when_present() -> None
     connection = _TestableOpenCodeConnection(responses=[(204, None, "")])
     connection._session_id = "sess-system"
 
-    await connection._post_session_message("user turn", system="system prompt")
+    await connection._post_session_message("user turn", system="system prompt", fresh=True)
 
     assert connection.requests == [
         (
@@ -197,19 +195,18 @@ async def test_post_session_message_includes_system_field_when_present() -> None
 
 
 @pytest.mark.asyncio
-async def test_session_creation_falls_back_when_projected_payload_hangs(
+async def test_session_creation_does_not_replay_when_projected_payload_hangs(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     determinism = AsyncDeterminism(start=0.0)
     determinism.install(monkeypatch, monotonic_modules=(opencode_http,))
     determinism.install_on_running_loop(monkeypatch)
     connection = _PayloadTimeoutOpenCodeConnection()
-    monkeypatch.setattr(OpenCodeConnection, "_SESSION_CREATE_PAYLOAD_TIMEOUT_SECONDS", 0.01)
 
     create_task = asyncio.create_task(
         connection._create_session_with_retry(
             ResolvedLaunchSpec(
-                model="gpt-5.5",
+                model="openai/gpt-5.5",
                 agent_name="prober",
                 permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
             ),
@@ -219,10 +216,10 @@ async def test_session_creation_falls_back_when_projected_payload_hangs(
     while not create_task.done():
         await determinism.sleep(0.01)
 
-    assert await create_task == "sess-empty-fallback"
+    with pytest.raises(TimeoutError):
+        await create_task
     assert connection.payloads == [
-        {"model": "gpt-5.5", "modelID": "gpt-5.5", "agent": "prober"},
-        {},
+        {"model": {"id": "gpt-5.5", "providerID": "openai"}, "agent": "prober"},
     ]
 
 
@@ -231,9 +228,8 @@ async def test_session_creation_falls_back_when_projected_payload_hangs(
     "first_response",
     [
         (404, None, ""),
-        ConnectionRefusedError("server not listening yet"),
     ],
-    ids=["404", "transport-error"],
+    ids=["404"],
 )
 async def test_create_session_with_retry_fresh_retries_then_succeeds(
     first_response: tuple[int, object | None, str] | ConnectionRefusedError,
@@ -246,7 +242,7 @@ async def test_create_session_with_retry_fresh_retries_then_succeeds(
     )
     spec = ResolvedLaunchSpec(
         prompt="hello",
-        model="gpt-5.3-codex",
+        model="openai/gpt-5.3-codex",
         permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
     )
 
@@ -269,7 +265,7 @@ async def test_create_session_with_retry_resume_retries_404_then_succeeds() -> N
     )
     spec = ResolvedLaunchSpec(
         prompt="hello",
-        model="gpt-5.3-codex",
+        model="openai/gpt-5.3-codex",
         continue_session_id="sess-parent",
         permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
     )
@@ -278,3 +274,175 @@ async def test_create_session_with_retry_resume_retries_404_then_succeeds() -> N
 
     assert session_id == "sess-parent"
     assert len(connection.requests) == 3
+
+
+@pytest.mark.asyncio
+async def test_create_session_uses_native_nested_model_and_never_drops_it():
+    spec = ResolvedLaunchSpec(
+        prompt="hello",
+        model="openai/gpt-test",
+        permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
+    )
+    connection = _TestableOpenCodeConnection(responses=[(200, {"id": "native"}, "")])
+    assert await connection._create_session(spec) == "native"
+    assert connection.requests == [
+        ("/session", {"model": {"id": "gpt-test", "providerID": "openai"}})
+    ]
+    rejected = _TestableOpenCodeConnection(responses=[(400, {"error": "invalid model"}, "")])
+    with pytest.raises(RuntimeError, match="rejected"):
+        await rejected._create_session(spec)
+    assert len(rejected.requests) == 1
+
+
+@pytest.mark.asyncio
+async def test_rejected_or_uncertain_session_creation_never_replays_empty_payload() -> None:
+    for response in ((400, {"error": "invalid model"}, ""), ConnectionResetError("lost reply")):
+        connection = _TestableOpenCodeConnection(responses=[response])
+        with pytest.raises((RuntimeError, ConnectionResetError)):
+            await connection._create_session_with_retry(
+                ResolvedLaunchSpec(
+                    model="openai/selected",
+                    permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
+                ),
+                timeout_seconds=1,
+            )
+        assert connection.requests == [
+            ("/session", {"model": {"id": "selected", "providerID": "openai"}})
+        ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("variant", ["high", "default"])
+async def test_followup_preserves_committed_native_model_agent_and_variant(variant) -> None:
+    connection = _TestableOpenCodeConnection(
+        responses=[(204, None, "")],
+        get_responses=[
+            (
+                200,
+                {
+                    "agent": "plan",
+                    "model": {"id": "switched", "providerID": "native", "variant": variant},
+                },
+                "",
+            )
+        ],
+    )
+    connection._session_id = "existing"
+    await connection._post_session_message("followup", model="openai/old-launch-model")
+    assert connection.requests[-1][1] == {
+        "parts": [{"type": "text", "text": "followup"}],
+        "agent": "plan",
+        "model": {"providerID": "native", "modelID": "switched"},
+        "variant": variant,
+    }
+
+
+@pytest.mark.asyncio
+async def test_selected_model_inspection_identifies_native_agent_conflict() -> None:
+    connection = _TestableOpenCodeConnection(
+        responses=[],
+        get_responses=[
+            (200, {"providers": [{"id": "openai", "models": {"selected": {}}}]}, ""),
+            (200, {"model": "openai/selected", "default_agent": "build"}, ""),
+            (
+                200,
+                [
+                    {
+                        "name": "build",
+                        "mode": "primary",
+                        "model": {"providerID": "other", "modelID": "conflicting"},
+                    }
+                ],
+                "",
+            ),
+        ],
+    )
+    assert await connection._inspect_selected_model("openai/selected") == "build"
+
+
+def test_model_config_override_preserves_unrelated_native_configuration() -> None:
+    import json
+
+    from meridian.lib.harness.projections.project_opencode_streaming import (
+        project_opencode_model_config,
+    )
+
+    config = {
+        "theme": "native",
+        "agent": {
+            "build": {"model": "old/model", "temperature": 0.2},
+            "plan": {"model": "other/model"},
+        },
+    }
+    projected = json.loads(
+        project_opencode_model_config(json.dumps(config), "openai/selected", agent="build")
+    )
+    assert projected == {
+        "theme": "native",
+        "model": "openai/selected",
+        "agent": {
+            "build": {"model": "openai/selected", "temperature": 0.2},
+            "plan": {"model": "other/model"},
+        },
+    }
+    assert config["agent"]["build"]["model"] == "old/model"
+
+
+@pytest.mark.asyncio
+async def test_followup_recovers_last_committed_user_choice_when_session_has_none() -> None:
+    connection = _TestableOpenCodeConnection(
+        responses=[(204, None, "")],
+        get_responses=[
+            (200, {"id": "existing"}, ""),
+            (
+                200,
+                [
+                    {
+                        "info": {
+                            "role": "user",
+                            "agent": "plan",
+                            "model": {
+                                "providerID": "native",
+                                "modelID": "last-choice",
+                                "variant": "high",
+                            },
+                        }
+                    },
+                    {"info": {"role": "assistant"}},
+                ],
+                "",
+            ),
+        ],
+    )
+    connection._session_id = "existing"
+    await connection._post_session_message("continue", model="openai/old-launch")
+    assert connection.requests[-1][1] == {
+        "parts": [{"type": "text", "text": "continue"}],
+        "agent": "plan",
+        "model": {"providerID": "native", "modelID": "last-choice"},
+        "variant": "high",
+    }
+
+
+@pytest.mark.asyncio
+async def test_private_instructions_are_owned_and_removed_on_stop(tmp_path) -> None:
+    import json
+
+    from meridian.lib.launch.workspace_projection import OPENCODE_CONFIG_CONTENT_ENV
+
+    inherited = tmp_path / "user-instructions.md"
+    inherited.write_text("user-owned")
+    env = {OPENCODE_CONFIG_CONTENT_ENV: json.dumps({"instructions": [str(inherited)]})}
+    connection = OpenCodeConnection()
+    connection._instruction_path = opencode_http._materialize_system_prompt("private", env)
+    owned = connection._instruction_path
+    assert owned is not None and owned.read_text() == "private"
+    assert json.loads(env[OPENCODE_CONFIG_CONTENT_ENV])["instructions"] == [
+        str(inherited),
+        str(owned),
+    ]
+    await connection.stop()
+    assert not owned.exists()
+    assert inherited.read_text() == "user-owned"
+    with pytest.raises(ValueError):
+        opencode_http._materialize_system_prompt(None, {OPENCODE_CONFIG_CONTENT_ENV: "{bad"})

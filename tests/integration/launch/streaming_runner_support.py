@@ -588,7 +588,7 @@ def _build_request() -> SpawnRequest:
 
 def _build_opencode_request() -> SpawnRequest:
     return SpawnRequest(
-        model="gpt-5.4",
+        model="openai/gpt-5.4",
         harness=HarnessId.OPENCODE.value,
         prompt="hello",
     )
