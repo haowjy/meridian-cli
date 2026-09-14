@@ -492,8 +492,9 @@ exception paths. Do not replicate this logic inline.
 
 ### Dry-run model resolution
 
-Primary/launch preparation forwards dry-run to the existing Mars bundle's
-`--no-refresh-models` option. Catalog-only routing must not run native availability
+Primary/launch preparation forwards dry-run to the existing Mars bundle and
+static alias-list `--no-refresh-models` options, including snapshot replay.
+OpenCode catalog-only routing must not run native availability
 probes or materialize a managed backend/session just to describe a launch. Normal
 execution retains its live availability behavior. This does not promise a wholly
 write-free CLI: telemetry/root/static-cache setup may still write local files.

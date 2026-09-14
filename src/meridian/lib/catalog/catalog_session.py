@@ -24,12 +24,12 @@ class CatalogSession:
 
     _project_root: Path
     _cache: MarsResultCache = field(default_factory=MarsResultCache, init=False)
-    _alias_map: dict[str, AliasEntry] | None = field(default=None, init=False)
+    _alias_map: dict[bool, dict[str, AliasEntry]]
 
     def __init__(self, project_root: Path, cache: MarsResultCache | None = None) -> None:
         self._project_root = project_root
         self._cache = cache or MarsResultCache()
-        self._alias_map = None
+        self._alias_map = {}
 
     @property
     def project_root(self) -> Path:
@@ -40,21 +40,25 @@ class CatalogSession:
         """Resolve alias to model entry, caching mars calls for this operation."""
         return resolve_model(name_or_alias, self._project_root, cache=self._cache)
 
-    def load_aliases(self) -> list[AliasEntry]:
+    def load_aliases(self, *, no_refresh_models: bool = False) -> list[AliasEntry]:
         """Load model aliases, caching mars calls for this operation."""
-        return load_merged_aliases(self._project_root, cache=self._cache)
+        return load_merged_aliases(
+            self._project_root,
+            cache=self._cache,
+            no_refresh_models=no_refresh_models,
+        )
 
-    def alias_map(self) -> dict[str, AliasEntry]:
+    def alias_map(self, *, no_refresh_models: bool = False) -> dict[str, AliasEntry]:
         """Return aliases indexed by alias name, memoized for this operation."""
-        if self._alias_map is None:
+        if no_refresh_models not in self._alias_map:
             by_alias: dict[str, AliasEntry] = {}
-            for item in self.load_aliases():
+            for item in self.load_aliases(no_refresh_models=no_refresh_models):
                 alias = item.alias.strip()
                 if not alias:
                     continue
                 by_alias[alias] = item
-            self._alias_map = by_alias
-        return self._alias_map
+            self._alias_map[no_refresh_models] = by_alias
+        return self._alias_map[no_refresh_models]
 
     def list_all_models(self) -> list[dict[str, object]] | None:
         """List all known models, caching mars calls for this operation."""
