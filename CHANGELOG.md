@@ -13,6 +13,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Fixed
 
 - Reject restore conflicts in session recovery metadata, even when local transcript bytes match.
+- Honor explicit reselection of a previously imported history snapshot.
 
 ## [0.4.5] - 2026-09-12
 

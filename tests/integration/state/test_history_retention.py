@@ -429,3 +429,100 @@ def test_restore_conflicts_with_changed_native_session_metadata(tmp_path: Path) 
     session_store.update_session_work_id(root, chat, "changed-after-capture")
     with pytest.raises(ValueError, match="identity conflict"):
         restore_archive(root, tmp_path / "zips" / receipt.zip_name, (str(state.history_id),))
+
+
+@pytest.mark.parametrize("damage", ["traversal", "duplicate", "missing", "changed", "extra"])
+def test_damaged_zip_cannot_publish_restore(tmp_path: Path, damage: str) -> None:
+    import warnings
+    import zipfile
+
+    root = tmp_path / "runtime"
+    key = _terminal(root)
+    result = archive_history(root, destination=tmp_path / "zips", refs=(key,), apply=True)
+    original = Path(result.archives[0])
+    damaged = tmp_path / f"{damage}.zip"
+    with zipfile.ZipFile(original) as source, zipfile.ZipFile(damaged, "w") as output:
+        for entry in source.infolist():
+            content = source.read(entry)
+            if entry.filename.endswith("aggregate/starting-prompt.md"):
+                if damage == "missing":
+                    continue
+                if damage == "changed":
+                    content = b"wrong"
+            output.writestr(entry, content)
+        if damage == "traversal":
+            output.writestr("../outside", "unsafe")
+        elif damage == "duplicate":
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", UserWarning)
+                output.writestr(source.infolist()[0], source.read(source.infolist()[0]))
+        elif damage == "extra":
+            output.writestr("unlisted.txt", "unexpected")
+    destination = tmp_path / "fresh"
+    with pytest.raises(ValueError):
+        restore_archive(destination, damaged, result.reclaimed)
+    assert not (destination / "spawns").exists()
+    assert verify_archive(original).records
+
+
+def test_explicit_import_can_reselect_a_previously_imported_snapshot(tmp_path: Path) -> None:
+    from meridian.lib.state.retention_archive import capture_record, import_archive, publish_archive
+
+    root = tmp_path / "runtime"
+    key = _terminal(root)
+    paths = []
+    for work in ("one", "two"):
+        spawn_store.update_spawn(root, key, work_id=work)
+        state = spawn_store.get_spawn(root, key)
+        assert state is not None and state.terminal is not None
+        record = capture_record(
+            root / "spawns" / key,
+            state.model_copy(update={"prompt": None}),
+            None,
+            state.terminal.finished_at,
+        )
+        receipt = publish_archive(root, tmp_path / work, (record,))
+        paths.append(tmp_path / work / receipt.zip_name)
+    fresh = tmp_path / "fresh"
+    import_archive(fresh, paths[0])
+    import_archive(fresh, paths[1])
+    import_archive(fresh, paths[0])
+    target = HistoryIndex(fresh).read_targets(str(record.history_id))[0]
+    assert target.state.work_id == "one"
+
+
+def test_selective_restore_does_not_select_unrequested_snapshots(tmp_path: Path) -> None:
+    from meridian.lib.state.retention_archive import capture_record, import_archive, publish_archive
+
+    root = tmp_path / "runtime"
+    keys = (_terminal(root), _terminal(root))
+    records = []
+    for key in keys:
+        state = spawn_store.get_spawn(root, key)
+        assert state is not None and state.terminal is not None
+        records.append(
+            capture_record(
+                root / "spawns" / key,
+                state.model_copy(update={"prompt": None}),
+                None,
+                state.terminal.finished_at,
+            )
+        )
+    older = publish_archive(root, tmp_path / "older", tuple(records))
+    spawn_store.update_spawn(root, keys[1], work_id="current-second")
+    state = spawn_store.get_spawn(root, keys[1])
+    assert state is not None and state.terminal is not None
+    current = capture_record(
+        root / "spawns" / keys[1],
+        state.model_copy(update={"prompt": None}),
+        None,
+        state.terminal.finished_at,
+    )
+    newer = publish_archive(root, tmp_path / "newer", (current,))
+    fresh = tmp_path / "fresh"
+    import_archive(fresh, tmp_path / "newer" / newer.zip_name)
+    restore_archive(fresh, tmp_path / "older" / older.zip_name, (str(records[0].history_id),))
+    assert (
+        HistoryIndex(fresh).read_targets(str(current.history_id))[0].state.work_id
+        == "current-second"
+    )

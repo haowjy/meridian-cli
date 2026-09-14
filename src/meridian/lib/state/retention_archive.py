@@ -380,14 +380,20 @@ def append_receipt(root: Path, receipt: ArchiveReceipt) -> None:
     changes = HistoryChanges(root)
     source = HistorySource(kind="catalog")
     with lock_file(changes.mutation_lock, mode="shared"), lock_file(source.lock_path(root)):
-        for existing in read_receipts(root):
-            if existing == receipt:
-                return
+        receipts = read_receipts(root)
+        for existing in receipts:
             if (
                 existing.archive_id == receipt.archive_id
                 and existing.manifest_sha256 != receipt.manifest_sha256
             ):
                 raise ValueError("Archive identity conflicts with an existing receipt")
+        if receipt in receipts:
+            heads = catalog_heads(receipts)
+            if receipt.event != "imported" or all(
+                heads.get(str(record.history_id)) == record.portable_digest
+                for record in receipt.records
+            ):
+                return
         changes.mark(source)
         metadata = root / "history-archives/catalog.meta.json"
         if not metadata.exists():
@@ -548,8 +554,7 @@ def import_archive(root: Path, path: Path, *, select: bool = True) -> ArchiveRec
             manifest_sha256=manifest_hash,
             records=manifest.records,
         )
-        if receipt not in read_receipts(root):
-            append_receipt(root, receipt)
+        append_receipt(root, receipt)
         return receipt
 
 
