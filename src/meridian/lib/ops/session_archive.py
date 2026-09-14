@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from graphlib import TopologicalSorter
 from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -109,7 +110,9 @@ class SessionArchiveOutput(BaseModel):
         return "\n".join(lines)
 
 
-def _protected(root: Path) -> tuple[dict[str, SpawnRecord], set[str]]:
+def _protected(
+    root: Path,
+) -> tuple[dict[str, SpawnRecord], set[str], dict[str, set[str]]]:
     scan = spawn_store.list_spawns(root)
     if scan.quarantines:
         raise ValueError("Cannot establish retention safety while spawn records are quarantined")
@@ -127,8 +130,6 @@ def _protected(root: Path) -> tuple[dict[str, SpawnRecord], set[str]]:
     by_history = {row.history_id: row.id for row in records.values() if row.history_id}
     protected: set[str] = set()
     for record in records.values():
-        if any(dependency not in by_history for dependency in record.retained_history_ids):
-            protected.add(record.id)
         if record.record_mode == "historical":
             continue
         scopes = read_scope_projection(root, SpawnId(record.id))
@@ -203,20 +204,11 @@ def _protected(root: Path) -> tuple[dict[str, SpawnRecord], set[str]]:
         }
         for record in records.values():
             if record.id in protected:
-                for history_id in (
-                    record.parent_history_id,
-                    record.owner_history_id,
-                    record.forked_from_history_id,
-                    *record.retained_history_ids,
-                ):
-                    if history_id is not None and history_id in by_history:
-                        protected.add(by_history[history_id])
-                if record.parent_id in records:
-                    protected.add(record.parent_id)
+                protected.update(edges[record.id])
             if record.chat_id in chats | fork_chats:
                 protected.add(record.id)
         changed = len(protected) != before
-    return records, protected
+    return records, protected, edges
 
 
 def archive_history(
@@ -245,8 +237,17 @@ def archive_history(
         # No omission-sensitive policy may start from an incomplete candidate set.
         candidates = HistoryIndex(root).spawns(oldest_first=True)
         with lock_file(changes.mutation_lock, mode="shared"):
-            _, protected = _protected(root)
+            _, protected, edges = _protected(root)
             sessions = session_records_for_spawns(root, candidates)
+        all_candidates = candidates
+        by_id = {row.id: row for row in candidates if row.id not in protected}
+        dependents: dict[str, set[str]] = {key: set() for key in by_id}
+        for key, targets in edges.items():
+            for target in targets:
+                if key in dependents and target in dependents:
+                    dependents[target].add(key)
+        # Apply bundle limits after dependency ordering, so small passes still progress.
+        candidates = [by_id[key] for key in TopologicalSorter(dependents).static_order()]
         selected: list[ArchivedRecord] = []
         errors: list[str] = list(recovery_errors)
         preparation_required: list[str] = []
@@ -256,7 +257,7 @@ def archive_history(
         matched = {
             ref
             for ref in refs
-            for row in candidates
+            for row in all_candidates
             if ref in {row.id, str(row.history_id), row.chat_id, row.owner_chat_id}
         }
         for receipt in read_receipts(root):
@@ -348,9 +349,21 @@ def archive_history(
         archive = archive_path(receipt)
         verify_archive(archive, tuple(selected))
         reclaimed: list[str] = []
-        for captured in selected:
+        pending = list(selected)
+        while pending:
             with lock_file(changes.mutation_lock):
-                records, protected_now = _protected(root)
+                records, protected_now, edges = _protected(root)
+                # Retire dependents first, including when their dependencies are older.
+                # An unselected or changed loose dependent keeps its dependency loose.
+                required = {target for targets in edges.values() for target in targets}
+                captured = next(
+                    (row for row in pending if row.state.id not in required | protected_now),
+                    None,
+                )
+                if captured is None:
+                    protected.update(row.state.id for row in pending)
+                    break
+                pending.remove(captured)
                 current = records.get(captured.state.id)
                 if current is None or current.id in protected_now:
                     continue

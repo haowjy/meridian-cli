@@ -52,12 +52,17 @@ sources. Reclaim-prepared receipts precede removal; loose locations win while
 both copies exist. After verification, archive reclaim atomically retires the
 aggregate into existing spawn staging before recursive cleanup. Partial removal
 there cannot hide the current ZIP. Startup staging GC may discard this residue;
-it contains no unique authority, unlike restore plans/stages. Published ZIPs never expire.
+it contains no unique authority, unlike restore plans/stages. Published ZIPs never expire. Reclaim orders dependents before dependencies, before
+bundle limits, and refuses to retire a dependency while any loose record requires it.
+The archive lock owns one destination staging name per runtime; retries clean only
+that runtime's unpublished ZIP, never another runtime's staging or a published ZIP.
 
 Restore extracts selected records into private stages outside ordinary spawn
 stage GC, verifies copied bytes, assigns new local aliases, and publishes inert
 historical state. A durable per-history restore plan spans publication/session
-append for retry. No PID, lease, scope or harness continuation becomes live.
+append for retry. Each plan owns its history-ID-named extraction stage; ordinary
+failures clean the stage, and retry discards crash residue before fresh extraction.
+No PID, lease, scope or harness continuation becomes live.
 External ZIP extraction and hashing run outside the root gate. The final gate
 revalidates aliases/history conflicts, publishes the staged aggregate and appends
 the historical session. Historical guards belong in persistence/control seams,

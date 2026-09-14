@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import shutil
 import zipfile
 from pathlib import Path
 from uuid import UUID, uuid4
@@ -94,7 +95,7 @@ def _historical_session(
         stopped_at=record.activity,
         session_instance_id=generation,
         spawn_id=spawn_id,
-        active_work_id=record.session.active_work_id if record.session else state.work_id,
+        active_work_id=state.work_id,
     )
 
 
@@ -149,10 +150,9 @@ def _existing_witness(directory: Path) -> tuple[object, ...]:
 
 
 def _stage_record(
-    root: Path, archive_path: Path, archive_id: UUID, record: ArchivedRecord, plan: RestorePlan
-) -> Path:
+    stage: Path, archive_path: Path, archive_id: UUID, record: ArchivedRecord, plan: RestorePlan
+) -> None:
     """Copy and hash external bytes without holding the root mutation gate."""
-    stage = root / "history-archives" / "staging" / f"restore-{uuid4().hex}"
     stage.mkdir(parents=True, mode=0o700)
     with zipfile.ZipFile(archive_path) as archive:
         for member in record.files:
@@ -225,7 +225,6 @@ def _stage_record(
             }
         ),
     )
-    return stage
 
 
 def _existing_record(root: Path, history_id: UUID) -> SpawnRecord | None:
@@ -295,45 +294,51 @@ def restore_archive(root: Path, archive_path: Path, refs: tuple[str, ...]) -> tu
                 destination = root / "spawns" / local_id
                 source = HistorySource(kind="spawn", key=local_id)
                 destination.parent.mkdir(parents=True, exist_ok=True)
-            stage = None
-            witness = None
-            if existing is not None:
-                with (
-                    lock_file(changes.mutation_lock, mode="shared"),
-                    lock_file(source.lock_path(root)),
-                ):
-                    before = _existing_witness(destination)
-                    _verify_existing(
-                        destination, record, pending_session=plan.session if plan else None
-                    )
-                    witness = _existing_witness(destination)
-                    if before != witness:
-                        raise ValueError("Restore source changed during verification; retry")
-            else:
-                assert plan is not None
-                stage = _stage_record(root, archive_path, manifest.archive_id, record, plan)
-            with lock_file(changes.mutation_lock):
-                # Content was checked under its source lock, not the global gate.
-                # Reject any publication or metadata change since that check.
-                current = _existing_record(root, record.history_id)
-                if witness is not None:
-                    if (
-                        current is None
-                        or current.id != local_id
-                        or _existing_witness(destination) != witness
+            # The durable plan owns a deterministic stage, including across process death.
+            stage = root / "history-archives/staging" / f"restore-{record.history_id}"
+            if stage.exists():
+                shutil.rmtree(stage)
+            try:
+                witness = None
+                if existing is not None:
+                    with (
+                        lock_file(changes.mutation_lock, mode="shared"),
+                        lock_file(source.lock_path(root)),
                     ):
-                        raise ValueError("Restore source changed after verification; retry")
+                        before = _existing_witness(destination)
+                        _verify_existing(
+                            destination, record, pending_session=plan.session if plan else None
+                        )
+                        witness = _existing_witness(destination)
+                        if before != witness:
+                            raise ValueError("Restore source changed during verification; retry")
                 else:
-                    if current is not None or destination.exists():
-                        raise ValueError("Restore publication alias conflict")
-                    assert stage is not None
-                    with lock_file(source.lock_path(root)):
-                        changes.mark(source)
-                        atomic_publish_dir(stage, destination)
-                if plan is not None:
-                    append_historical_session(root, plan.session)
-                    plan_path.unlink()
-                restored.append(local_id)
+                    assert plan is not None
+                    _stage_record(stage, archive_path, manifest.archive_id, record, plan)
+                with lock_file(changes.mutation_lock):
+                    # Content was checked under its source lock, not the global gate.
+                    # Reject any publication or metadata change since that check.
+                    current = _existing_record(root, record.history_id)
+                    if witness is not None:
+                        if (
+                            current is None
+                            or current.id != local_id
+                            or _existing_witness(destination) != witness
+                        ):
+                            raise ValueError("Restore source changed after verification; retry")
+                    else:
+                        if current is not None or destination.exists():
+                            raise ValueError("Restore publication alias conflict")
+                        with lock_file(source.lock_path(root)):
+                            changes.mark(source)
+                            atomic_publish_dir(stage, destination)
+                    if plan is not None:
+                        append_historical_session(root, plan.session)
+                        plan_path.unlink()
+                    restored.append(local_id)
+            finally:
+                if stage.exists():
+                    shutil.rmtree(stage)
         # Keep a local receipt so copying only the ZIP also reconstructs catalog facts.
         location_id = _location(archive_path.parent)
         append_receipt(

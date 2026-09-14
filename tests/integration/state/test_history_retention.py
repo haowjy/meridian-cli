@@ -723,3 +723,90 @@ def test_restore_checks_nullable_session_identity_without_enrichment(
     assert recapture.errors and "metadata changed" in recapture.errors[0]
     assert (fresh / "spawns" / local / "state.json").exists()
     assert verify_archive(archive).records
+
+
+def test_reclaim_orders_dependents_before_dependencies_and_preserves_unselected(tmp_path):
+    from meridian.lib.state.spawn.repository import write_state_locked
+
+    root = tmp_path / "runtime"
+    parent, child = _terminal(root), _terminal(root)
+    original = spawn_store.get_spawn(root, parent)
+    assert original is not None
+    write_state_locked(
+        root / "spawns",
+        child,
+        lambda row: row.model_copy(
+            update={"parent_id": parent, "parent_history_id": original.history_id}
+        ),
+        allow_terminal_overwrite=True,
+    )
+    only_parent = archive_history(root, destination=tmp_path / "zips", refs=(parent,), apply=True)
+    assert not only_parent.reclaimed
+    assert parent in only_parent.protected
+    assert spawn_store.get_spawn(root, parent) is not None
+    both = archive_history(root, destination=tmp_path / "zips", refs=(parent, child), apply=True)
+    assert len(both.reclaimed) == 2
+    assert spawn_store.get_spawn(root, parent) is None
+    assert spawn_store.get_spawn(root, child) is None
+
+
+def test_failed_archive_and_restore_stages_are_reclaimed_on_retry(tmp_path, monkeypatch):
+    from meridian.lib.state import retention_restore
+    from meridian.lib.state.retention_archive import capture_record, publish_archive
+
+    root = tmp_path / "runtime"
+    key = _terminal(root)
+    state = spawn_store.get_spawn(root, key)
+    assert state is not None
+    record = capture_record(root / "spawns" / key, state, None, state.started_at or "")
+    (root / "spawns" / key / "changed.txt").write_text("changed")
+    zips = tmp_path / "zips"
+    with pytest.raises(ValueError, match="Source changed"):
+        publish_archive(root, zips, (record,))
+    assert not list(zips.glob(".partial-*"))
+    archived = archive_history(root, destination=zips, refs=(key,), apply=True)
+    archive = Path(archived.archives[0])
+    destination = tmp_path / "restored"
+    with monkeypatch.context() as patch:
+
+        def fail_publication(*args, **kwargs):
+            raise OSError("publication failed")
+
+        patch.setattr(retention_restore, "atomic_publish_dir", fail_publication)
+        with pytest.raises(OSError, match="publication failed"):
+            restore_archive(destination, archive, (str(state.history_id),))
+    assert not list((destination / "history-archives/staging").glob("restore-*"))
+    assert list((destination / "history-archives/restores").glob("*.json"))
+    restored = restore_archive(destination, archive, (str(state.history_id),))
+    assert restore_archive(destination, archive, (str(state.history_id),)) == restored
+    assert archive.exists()
+
+
+def test_small_retention_passes_progress_through_dependency_chain(tmp_path):
+    from meridian.lib.config.settings import HistoryArchiveConfig
+    from meridian.lib.state.spawn.repository import write_state_locked
+
+    root = tmp_path / "runtime"
+    parent, child = _terminal(root), _terminal(root)
+    original = spawn_store.get_spawn(root, parent)
+    assert original is not None
+    write_state_locked(
+        root / "spawns",
+        child,
+        lambda row: row.model_copy(
+            update={"parent_id": parent, "parent_history_id": original.history_id}
+        ),
+        allow_terminal_overwrite=True,
+    )
+    for expected in (child, parent):
+        row = spawn_store.get_spawn(root, expected)
+        assert row is not None
+        result = archive_history(
+            root,
+            destination=tmp_path / "zips",
+            eligible=True,
+            after_days=0,
+            apply=True,
+            policy=HistoryArchiveConfig(max_records=1),
+        )
+        assert result.reclaimed == (str(row.history_id),)

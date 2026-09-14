@@ -12,6 +12,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Reclaim history dependents before their dependencies; keep unselected dependencies loose.
+- Clean failed archive/restore stages and recover owned staging paths on retry.
+
 - Document history commands, retention settings and environment overrides in the CLI references.
 
 - Detect cleared historical session identities during repeat restore and recapture.

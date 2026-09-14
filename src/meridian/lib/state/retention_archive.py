@@ -438,8 +438,6 @@ def verify_archive(
                     and TranscriptHeader.model_validate(header).history_id != record.history_id
                 ):
                     raise ValueError("Transcript identity does not match selected record")
-            if not {"state.json", "history.jsonl"} <= {m.name for m in record.files}:
-                raise ValueError("Missing required record members")
             for member in record.files:
                 relative = safe_member_name(member.name)
                 if PurePosixPath(relative).name in _EXCLUDED or PurePosixPath(relative).suffix in {
@@ -524,67 +522,79 @@ def publish_archive(
     destination: Path,
     records: tuple[ArchivedRecord, ...],
 ) -> ArchiveReceipt:
-    if not records:
-        raise ValueError("No records selected")
-    destination.mkdir(parents=True, exist_ok=True)
-    location_id = _location(destination)
-    for existing in reversed(read_receipts(root)):
-        if existing.records != records:
-            continue
+    with lock_file(root / "history-archives/archive.lock"):
+        if not records:
+            raise ValueError("No records selected")
+        destination.mkdir(parents=True, exist_ok=True)
+        location_id = _location(destination)
+        for existing in reversed(read_receipts(root)):
+            if existing.records != records:
+                continue
+            try:
+                path = archive_locations((existing,), destination=destination, full=True)[0].path
+                verify_archive(path, records)
+            except ARCHIVE_READ_ERRORS:
+                continue
+            reused = existing.model_copy(update={"destination": str(path.parent)})
+            append_receipt(root, reused)
+            return reused
+        archive_id = uuid4()
+        name = f"meridian-history-{archive_id}.zip"
+        # One unpublished ZIP per runtime, serialized by archive.lock.
+        stage = destination / f".partial-{digest(str(root.resolve()).encode())}"
+        stage.unlink(missing_ok=True)
+        members: list[Member] = []
         try:
-            path = archive_locations((existing,), destination=destination, full=True)[0].path
-            verify_archive(path, records)
-        except ARCHIVE_READ_ERRORS:
-            continue
-        reused = existing.model_copy(update={"destination": str(path.parent)})
-        append_receipt(root, reused)
-        return reused
-    archive_id = uuid4()
-    name = f"meridian-history-{archive_id}.zip"
-    stage = destination / f".partial-{archive_id}"
-    members: list[Member] = []
-    stage.touch(mode=0o600, exist_ok=False)
-    with zipfile.ZipFile(stage, "w", compression=zipfile.ZIP_DEFLATED, allowZip64=True) as archive:
-        for record in records:
-            prefix = f"{_PREFIX}records/{record.history_id}/"
-            metadata = record.model_dump_json().encode()
-            archive.writestr(prefix + "record.json", metadata)
-            members.append(
-                Member(name=prefix + "record.json", size=len(metadata), sha256=digest(metadata))
-            )
-            source = HistorySource(kind="spawn", key=record.state.id)
-            with lock_file(source.lock_path(root)):
-                directory = root / "spawns" / record.state.id
-                if inventory(directory) != record.files:
-                    raise ValueError("Source changed before archive capture")
-                for member in record.files:
-                    target = prefix + "aggregate/" + member.name
-                    archive.write(directory / member.name, target)
-                    members.append(member.model_copy(update={"name": target}))
-        manifest = ArchiveManifest(
-            archive_id=archive_id, created_at=utc_now_iso(), records=records, members=tuple(members)
+            stage.touch(mode=0o600, exist_ok=False)
+            with zipfile.ZipFile(
+                stage, "w", compression=zipfile.ZIP_DEFLATED, allowZip64=True
+            ) as archive:
+                for record in records:
+                    prefix = f"{_PREFIX}records/{record.history_id}/"
+                    metadata = record.model_dump_json().encode()
+                    archive.writestr(prefix + "record.json", metadata)
+                    members.append(
+                        Member(
+                            name=prefix + "record.json", size=len(metadata), sha256=digest(metadata)
+                        )
+                    )
+                    source = HistorySource(kind="spawn", key=record.state.id)
+                    with lock_file(source.lock_path(root)):
+                        directory = root / "spawns" / record.state.id
+                        if inventory(directory) != record.files:
+                            raise ValueError("Source changed before archive capture")
+                        for member in record.files:
+                            target = prefix + "aggregate/" + member.name
+                            archive.write(directory / member.name, target)
+                            members.append(member.model_copy(update={"name": target}))
+                manifest = ArchiveManifest(
+                    archive_id=archive_id,
+                    created_at=utc_now_iso(),
+                    records=records,
+                    members=tuple(members),
+                )
+                archive.writestr(_MANIFEST, manifest.model_dump_json().encode())
+            with stage.open("rb") as handle:
+                os.fsync(handle.fileno())
+            verified = verify_archive(stage, records)
+            # Hard-link publication is exclusive; no replace can overwrite an existing ZIP.
+            final = destination / name
+            os.link(stage, final)
+            fsync_directory(destination)
+        finally:
+            stage.unlink(missing_ok=True)
+        manifest_hash = archive_manifest_digest(final)
+        receipt = ArchiveReceipt(
+            event="published",
+            archive_id=verified.archive_id,
+            location_id=location_id,
+            destination=str(destination),
+            zip_name=name,
+            manifest_sha256=manifest_hash,
+            records=records,
         )
-        archive.writestr(_MANIFEST, manifest.model_dump_json().encode())
-    with stage.open("rb") as handle:
-        os.fsync(handle.fileno())
-    verified = verify_archive(stage, records)
-    # Hard-link publication is exclusive; no replace can overwrite an existing ZIP.
-    final = destination / name
-    os.link(stage, final)
-    fsync_directory(destination)
-    stage.unlink()
-    manifest_hash = archive_manifest_digest(final)
-    receipt = ArchiveReceipt(
-        event="published",
-        archive_id=verified.archive_id,
-        location_id=location_id,
-        destination=str(destination),
-        zip_name=name,
-        manifest_sha256=manifest_hash,
-        records=records,
-    )
-    append_receipt(root, receipt)
-    return receipt
+        append_receipt(root, receipt)
+        return receipt
 
 
 def archive_path(receipt: ArchiveReceipt, destination: Path | None = None) -> Path:
@@ -707,6 +717,10 @@ def recover_archives(root: Path, destination: Path) -> tuple[str, ...]:
     with lock_file(root / "history-archives/archive.lock"):
         receipts = read_receipts(root)
         if destination.is_dir():
+            # Only this runtime owns this unpublished path; other runtimes may publish here.
+            (destination / f".partial-{digest(str(root.resolve()).encode())}").unlink(
+                missing_ok=True
+            )
             location_id = _location(destination)
             known = {(row.zip_name, row.location_id) for row in receipts}
             for path in sorted(destination.glob("meridian-history-*.zip")):
