@@ -255,3 +255,95 @@ def test_large_loose_transcript_returns_early_matches_before_budget_exhaustion(
     assert result.matches and "early [[needle]]" in result.matches[0].content_preview
     assert result.truncated and not result.complete
     assert "incomplete" in result.format_text()
+
+
+def test_browse_subset_search_matches_portable_loose_and_zip_history(tmp_path, monkeypatch):
+    from meridian.lib.ops.session_archive import archive_history
+    from meridian.lib.ops.session_search import iter_session_subset_search
+    from meridian.lib.state import spawn_store
+    from meridian.lib.state.history import ingest_portable_history
+
+    monkeypatch.setenv("MERIDIAN_HOME", str(tmp_path / "home"))
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "meridian.toml").write_text('[project]\nid="subset"\n')
+    root = get_project_home("subset")
+    chat = session_store.start_session(
+        root, harness="codex", harness_session_id=None, model="test", kind="primary"
+    )
+    key = str(
+        spawn_store.start_spawn(
+            root,
+            chat_id=chat,
+            harness="codex",
+            model="test",
+            agent="",
+            prompt="hello",
+            kind="primary",
+        )
+    )
+    session_store.update_session_spawn_id(root, chat, key)
+    spawn_store.finalize_spawn(root, key, status="succeeded", exit_code=0, origin="runner")
+    ingest_portable_history(
+        root,
+        key,
+        iter(
+            [
+                {
+                    "type": "assistant",
+                    "message": {"content": [{"type": "text", "text": "portable needle"}]},
+                },
+            ]
+        ),
+    )
+    session_store.stop_session(root, chat)
+    row = spawn_store.get_spawn(root, key)
+    assert row is not None
+    loose = list(
+        iter_session_subset_search(project_root=str(project), chat_ids=[chat], query="needle")
+    )
+    assert len(loose) == 1 and loose[0].matched and loose[0].error is None
+    archived = archive_history(root, destination=tmp_path / "zips", refs=(key,), apply=True)
+    assert archived.reclaimed
+    steps = list(
+        iter_session_subset_search(
+            project_root=str(project),
+            chat_ids=[str(row.history_id), "c999"],
+            query="needle",
+        )
+    )
+    assert steps[0].matched and steps[0].error is None
+    assert not steps[1].matched and steps[1].error
+
+
+def test_damaged_index_reports_incomplete_search_but_exact_launch_ref_still_resolves(
+    tmp_path, monkeypatch
+):
+    from meridian.lib.ops.reference import resolve_session_reference
+    from meridian.lib.state.history_index import HistoryIndex
+
+    monkeypatch.setenv("MERIDIAN_HOME", str(tmp_path / "home"))
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "meridian.toml").write_text('[project]\nid="damaged"\n')
+    root = get_project_home("damaged")
+    chat = session_store.start_session(
+        root,
+        harness="codex",
+        harness_session_id="11111111-1111-1111-1111-111111111111",
+        model="test",
+    )
+    session_store.stop_session(root, chat)
+    expected = resolve_session_reference(project, chat, runtime_root=root)
+    index = HistoryIndex(root)
+    index.rebuild()
+    index.path.write_bytes(b"not a sqlite database")  # offline: no live connections
+    assert resolve_session_reference(project, chat, runtime_root=root) == expected
+    result = session_search_sync(SessionSearchInput(query="needle", project_root=str(project)))
+    assert not result.complete and result.errors
+    index.rebuild(reset=True)
+    (index.directory / "pending/GENERATION").write_text("invalid generation")
+    result = session_search_sync(
+        SessionSearchInput(query="needle", work_id="work", project_root=str(project))
+    )
+    assert not result.complete and result.errors

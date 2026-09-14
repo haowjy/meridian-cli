@@ -498,56 +498,65 @@ class HistoryIndex:
                         path.unlink()
             generation, _ = changes.capture(timeout=_remaining(deadline))
             self.directory.mkdir(parents=True, exist_ok=True)
-            stage = self.directory / f".build-{uuid4().hex}.sqlite3"
-            db = _connect(stage, fresh=True, timeout=_remaining(deadline))
-            build = str(uuid4())
+            # catchup_lock owns this disposable stage, including crash residue.
+            stage = self.directory / ".build.sqlite3"
+            for suffix in ("", "-journal"):
+                Path(str(stage) + suffix).unlink(missing_ok=True)
             try:
-                db.executescript(_SCHEMA)
-                db.execute("INSERT INTO meta VALUES (1,?,?)", (generation, build))
-                for key in scan_spawn_ids(self.root / "spawns"):
-                    with lock_file(
-                        HistorySource(kind="spawn", key=key).lock_path(self.root),
-                        timeout=_remaining(deadline),
-                    ):
-                        self._spawn(db, key)
-                for kind in ("sessions", "catalog"):
-                    source = HistorySource(kind=kind)
-                    with lock_file(source.lock_path(self.root), timeout=_remaining(deadline)):
-                        self._project(db, source)
-                _, target = changes.capture(timeout=_remaining(deadline))
-                acknowledged, pending, active = self._drain(db, target, deadline)
-                if pending:
-                    raise HistoryIndexIncomplete("Rebuild timed out resolving changed sources")
-                db.execute("ANALYZE")
-                db.commit()
-            finally:
-                db.close()
-            # The root gate is already held: ordinary readers must never take it
-            # while holding a database gate. Catchup/rebuild share catchup.lock.
-            with lock_file(self.database_lock, timeout=_remaining(deadline)):
-                if self.path.exists():
-                    try:
-                        old = _connect(self.path, timeout=_remaining(deadline))
+                db = _connect(stage, fresh=True, timeout=_remaining(deadline))
+                build = str(uuid4())
+                try:
+                    db.executescript(_SCHEMA)
+                    db.execute("INSERT INTO meta VALUES (1,?,?)", (generation, build))
+                    for key in scan_spawn_ids(self.root / "spawns"):
+                        with lock_file(
+                            HistorySource(kind="spawn", key=key).lock_path(self.root),
+                            timeout=_remaining(deadline),
+                        ):
+                            self._spawn(db, key)
+                    for kind in ("sessions", "catalog"):
+                        source = HistorySource(kind=kind)
+                        with lock_file(source.lock_path(self.root), timeout=_remaining(deadline)):
+                            self._project(db, source)
+                    _, target = changes.capture(timeout=_remaining(deadline))
+                    acknowledged, pending, active = self._drain(db, target, deadline)
+                    if pending:
+                        raise HistoryIndexIncomplete("Rebuild timed out resolving changed sources")
+                    db.execute("ANALYZE")
+                    db.commit()
+                finally:
+                    db.close()
+                # The root gate is already held: ordinary readers must never take it
+                # while holding a database gate. Catchup/rebuild share catchup.lock.
+                with lock_file(self.database_lock, timeout=_remaining(deadline)):
+                    if self.path.exists():
                         try:
-                            busy, _, _ = old.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
-                            if busy:
-                                raise HistoryIndexIncomplete("Readers still own the old WAL")
-                        finally:
-                            old.close()
-                    except sqlite3.DatabaseError as exc:
-                        # Only confirmed corruption is repairable here. Busy, I/O,
-                        # permission and disk-full errors must leave the index alone.
-                        code = getattr(exc, "sqlite_errorcode", 0) & 0xFF
-                        if code not in {sqlite3.SQLITE_CORRUPT, sqlite3.SQLITE_NOTADB}:
-                            raise
-                        preserved = self.directory / f"corrupt-{uuid4().hex}.sqlite3"
-                        for suffix in ("", "-wal", "-shm"):
-                            damaged = Path(str(self.path) + suffix)
-                            if damaged.exists():
-                                os.replace(damaged, Path(str(preserved) + suffix))
-                        fsync_directory(self.directory)
-                os.replace(stage, self.path)
-                fsync_directory(self.directory)
+                            old = _connect(self.path, timeout=_remaining(deadline))
+                            try:
+                                busy, _, _ = old.execute(
+                                    "PRAGMA wal_checkpoint(TRUNCATE)"
+                                ).fetchone()
+                                if busy:
+                                    raise HistoryIndexIncomplete("Readers still own the old WAL")
+                            finally:
+                                old.close()
+                        except sqlite3.DatabaseError as exc:
+                            # Only confirmed corruption is repairable here. Busy, I/O,
+                            # permission and disk-full errors must leave the index alone.
+                            code = getattr(exc, "sqlite_errorcode", 0) & 0xFF
+                            if code not in {sqlite3.SQLITE_CORRUPT, sqlite3.SQLITE_NOTADB}:
+                                raise
+                            preserved = self.directory / f"corrupt-{uuid4().hex}.sqlite3"
+                            for suffix in ("", "-wal", "-shm"):
+                                damaged = Path(str(self.path) + suffix)
+                                if damaged.exists():
+                                    os.replace(damaged, Path(str(preserved) + suffix))
+                            fsync_directory(self.directory)
+                    os.replace(stage, self.path)
+                    fsync_directory(self.directory)
+            finally:
+                for suffix in ("", "-journal"):
+                    Path(str(stage) + suffix).unlink(missing_ok=True)
             for marker in acknowledged:
                 changes.acknowledge(marker)
             return IndexCoverage(generation, build, True, activity_provisional=tuple(active))
@@ -710,7 +719,11 @@ class HistoryIndex:
             )
 
     def spawns(
-        self, *, oldest_first: bool = False, **filters: str | set[str] | None
+        self,
+        *,
+        oldest_first: bool = False,
+        related_chat_ids: set[str] | None = None,
+        **filters: str | set[str] | None,
     ) -> tuple[SpawnRecord, ...]:
         columns = {
             "chat_id": "chat",
@@ -722,6 +735,10 @@ class HistoryIndex:
         }
         conditions = ["archive_id IS NULL"]
         values: list[str] = []
+        if related_chat_ids is not None:
+            placeholders = ",".join("?" for _ in related_chat_ids)
+            conditions.append(f"(chat IN ({placeholders}) OR owner IN ({placeholders}))")
+            values.extend(sorted(related_chat_ids) * 2)
         for key, value in filters.items():
             if key not in columns:
                 raise ValueError(f"Unknown history filter: {key}")
@@ -813,6 +830,7 @@ def indexed_spawn_scan(
     runtime_root: Path,
     *,
     chat_id: str | None = None,
+    related_chat_ids: set[str] | None = None,
     owner_chat_id: str | set[str] | None = None,
     parent_id: str | None = None,
     work_id: str | None = None,
@@ -821,6 +839,10 @@ def indexed_spawn_scan(
     from meridian.lib.state.spawn_store import SpawnScan, _spawn_sort_key
 
     records = HistoryIndex(runtime_root).spawns(
-        chat_id=chat_id, owner_chat_id=owner_chat_id, parent_id=parent_id, work_id=work_id
+        chat_id=chat_id,
+        related_chat_ids=related_chat_ids,
+        owner_chat_id=owner_chat_id,
+        parent_id=parent_id,
+        work_id=work_id,
     )
     return SpawnScan(tuple(sorted(records, key=_spawn_sort_key)), ())

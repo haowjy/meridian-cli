@@ -486,9 +486,6 @@ def append_receipt(root: Path, receipt: ArchiveReceipt) -> None:
             ):
                 return
         changes.mark(source)
-        metadata = root / "history-archives/catalog.meta.json"
-        if not metadata.exists():
-            atomic_write_text(metadata, json.dumps({"version": 1, "source_id": str(uuid4())}))
         append_durable_jsonl_line(
             root / "history-archives/catalog.jsonl", receipt.model_dump_json() + "\n"
         )

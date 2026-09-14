@@ -810,3 +810,22 @@ def test_small_retention_passes_progress_through_dependency_chain(tmp_path):
             policy=HistoryArchiveConfig(max_records=1),
         )
         assert result.reclaimed == (str(row.history_id),)
+
+
+def test_failed_rebuilds_do_not_accumulate_unpublished_databases(tmp_path):
+    from meridian.lib.state.spawn.repository import SpawnStateQuarantined
+
+    root = tmp_path / "runtime"
+    key = _terminal(root)
+    state_path = root / "spawns" / key / "state.json"
+    state = state_path.read_bytes()
+    state_path.write_text("invalid state")
+    index = HistoryIndex(root)
+    for _ in range(3):
+        with pytest.raises(SpawnStateQuarantined):
+            index.rebuild()
+        assert not list(index.directory.glob(".build*"))
+        assert state_path.read_text() == "invalid state"
+    state_path.write_bytes(state)
+    assert index.rebuild().complete
+    assert [row.id for row in index.spawns()] == [key]

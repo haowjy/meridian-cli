@@ -8,7 +8,7 @@ mutation or repair writes happen during resolution.
 from __future__ import annotations
 
 import re
-from collections.abc import Iterator, Sequence
+from collections.abc import Sequence
 from datetime import datetime
 from pathlib import Path
 from typing import Literal, NamedTuple
@@ -54,12 +54,6 @@ class SessionLogTarget(NamedTuple):
     file_path: Path | None
     source: str
     sources: tuple[TranscriptSource, ...]
-
-
-class ChatSessionLogTargetResolution(NamedTuple):
-    chat_id: str
-    target: SessionLogTarget | None
-    error: str | None = None
 
 
 def _is_chat_ref(runtime_root: Path, value: str) -> bool:
@@ -477,25 +471,17 @@ def _spawn_history_fallback_for_chat_ref(
     display_id: str,
     chat_id: str,
     primary_spawn: SpawnRecord | None,
-    related_spawns: Sequence[SpawnRecord] | None = None,
+    related_spawns: Sequence[SpawnRecord],
 ) -> SessionLogTarget | None:
     candidates: list[SpawnRecord] = []
     if primary_spawn is not None:
         candidates.append(primary_spawn)
-    if related_spawns is None:
-        candidates.extend(
-            reversed(session_identity.list_spawns_for_exact_session(runtime_root, chat_id).records)
-        )
-        candidates.extend(
-            reversed(session_identity.list_spawns_for_owner_chat(runtime_root, chat_id).records)
-        )
-    else:
-        candidates.extend(row for row in reversed(related_spawns) if row.chat_id == chat_id)
-        candidates.extend(
-            row
-            for row in reversed(related_spawns)
-            if session_identity.spawn_owner_chat_id(row) == chat_id
-        )
+    candidates.extend(row for row in reversed(related_spawns) if row.chat_id == chat_id)
+    candidates.extend(
+        row
+        for row in reversed(related_spawns)
+        if session_identity.spawn_owner_chat_id(row) == chat_id
+    )
 
     seen: set[str] = set()
     for row in candidates:
@@ -521,7 +507,7 @@ def _legacy_spawns_for_chats(
     if not chat_ids:
         return primary_spawns, related_spawns
 
-    for spawn in indexed_spawn_scan(runtime_root).records:
+    for spawn in indexed_spawn_scan(runtime_root, related_chat_ids=chat_ids).records:
         raw_owner_chat_id = session_identity.spawn_owner_chat_id(spawn)
         owner_chat_id = str(raw_owner_chat_id) if raw_owner_chat_id is not None else ""
         if spawn.kind == "primary" and owner_chat_id in chat_ids:
@@ -647,7 +633,7 @@ def _resolve_from_chat_state(
     chat_id: str,
     session_record: session_store.SessionRecord,
     primary_spawn: SpawnRecord | None,
-    related_spawns: Sequence[SpawnRecord] | None = None,
+    related_spawns: Sequence[SpawnRecord],
 ) -> SessionLogTarget:
     normalized_harness = session_record.harness.strip() or None
     if normalized_harness is None and primary_spawn is not None and primary_spawn.harness:
@@ -778,64 +764,6 @@ def _resolve_from_chat_id(
         primary_spawn=primary_spawn,
         related_spawns=related_spawns,
     )
-
-
-def iter_chat_session_log_targets(
-    *,
-    project_root: Path,
-    runtime_root: Path,
-    chat_ids: Sequence[str],
-) -> Iterator[ChatSessionLogTargetResolution]:
-    """Resolve an ordered chat subset with bounded direct state reads."""
-
-    normalized_chat_ids = tuple(chat_id.strip() for chat_id in chat_ids)
-    records: dict[str, session_store.SessionRecord] = {
-        str(record.chat_id): record
-        for record in HistoryIndex(runtime_root).sessions(
-            chat_ids={chat_id for chat_id in normalized_chat_ids if chat_id}
-        )
-    }
-    primary_spawns: dict[str, SpawnRecord] = {}
-    legacy_scan_ids: set[str] = set()
-    for chat_id, record in records.items():
-        primary_spawn = session_identity.get_recorded_primary_spawn_for_owner_chat(
-            runtime_root,
-            chat_id,
-            record.spawn_id,
-        )
-        if primary_spawn is None:
-            legacy_scan_ids.add(chat_id)
-        else:
-            primary_spawns[chat_id] = primary_spawn
-
-    legacy_primary_spawns, legacy_related_spawns = _legacy_spawns_for_chats(
-        runtime_root,
-        legacy_scan_ids,
-    )
-    primary_spawns.update(legacy_primary_spawns)
-
-    for chat_id in normalized_chat_ids:
-        session_record = records.get(chat_id)
-        if session_record is None:
-            yield ChatSessionLogTargetResolution(
-                chat_id,
-                None,
-                f"Chat '{chat_id}' not found",
-            )
-            continue
-        try:
-            target = _resolve_from_chat_state(
-                project_root=project_root,
-                runtime_root=runtime_root,
-                chat_id=chat_id,
-                session_record=session_record,
-                primary_spawn=primary_spawns.get(chat_id),
-                related_spawns=legacy_related_spawns.get(chat_id, ()),
-            )
-        except (ValueError, FileNotFoundError, OSError) as exc:
-            yield ChatSessionLogTargetResolution(chat_id, None, str(exc))
-            continue
-        yield ChatSessionLogTargetResolution(chat_id, target)
 
 
 def _spawn_linked_chat_session(
@@ -1150,9 +1078,7 @@ def resolve_session_log_target(
 
 
 __all__ = [
-    "ChatSessionLogTargetResolution",
     "SessionLogTarget",
-    "iter_chat_session_log_targets",
     "resolve_session_log_target",
     "spawn_output_path_for_target",
 ]

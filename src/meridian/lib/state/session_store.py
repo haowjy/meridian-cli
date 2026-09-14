@@ -48,9 +48,6 @@ def _append_session_event(
                 ) and record.record_mode == "historical":
                     raise ValueError("Historical sessions are inert and cannot be mutated")
         changes.mark(HistorySource(kind="sessions"))
-        meta_path = data_path.with_suffix(".meta.json")
-        if not meta_path.exists():
-            atomic_write_text(meta_path, json.dumps({"version": 1, "source_id": str(uuid.uuid4())}))
         append_event(data_path, lock_path, event, exclude_none=exclude_none)
 
 
@@ -711,29 +708,6 @@ def list_active_sessions_for_work_id(runtime_root: Path, work_id: str) -> list[s
         for record in list_active_session_records(runtime_root)
         if record.active_work_id == normalized
     ]
-
-
-def chat_ids_ever_attached_to_work(runtime_root: Path, work_id: str) -> set[str]:
-    """Return session IDs from valid update events that attached to a work item."""
-
-    normalized_work_id = work_id.strip()
-    if not normalized_work_id:
-        return set()
-
-    paths = RuntimePaths.from_root_dir(runtime_root)
-
-    def _parse_work_attachment(payload: dict[str, Any]) -> str | None:
-        event = _parse_event(payload)
-        if not isinstance(event, SessionUpdateEvent):
-            return None
-        active_work_id = event.active_work_id
-        if active_work_id is None:
-            return None
-        if active_work_id.strip() != normalized_work_id:
-            return None
-        return event.chat_id
-
-    return set(read_events(paths.sessions_jsonl, _parse_work_attachment))
 
 
 def get_session_records(runtime_root: Path, chat_ids: set[str]) -> list[SessionRecord]:

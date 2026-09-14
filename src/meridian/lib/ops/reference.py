@@ -17,7 +17,7 @@ from meridian.lib.ops.reference_recovery import (
 )
 from meridian.lib.ops.runtime import resolve_runtime_root_for_read
 from meridian.lib.state import primary_meta, session_identity, session_store, spawn_store
-from meridian.lib.state.history_index import HistoryIndex, indexed_spawn_scan
+from meridian.lib.state.history_index import indexed_spawn_scan
 from meridian.lib.state.paths import resolve_spawn_log_dir
 from meridian.lib.state.spawn.model import SpawnRecord
 
@@ -251,9 +251,7 @@ def _resolve_spawn_reference(
         return _resolve_untracked_reference(project_root, ref)
 
     if row.record_mode == "historical":
-        raise ValueError(
-            "Historical records are inert; read or export the transcript instead."
-        )
+        raise ValueError("Historical records are inert; read or export the transcript instead.")
     harness_session_id = _normalize_optional(row.harness_session_id)
     stored_harness = _normalize_optional(row.harness)
     source_execution_cwd = _normalize_optional(getattr(row, "task_cwd", None)) or row.execution_cwd
@@ -303,9 +301,7 @@ def _reference_from_session(
     harness_session_id: str | None,
 ) -> ResolvedSessionReference:
     if session.record_mode == "historical":
-        raise ValueError(
-            "Historical sessions are inert; read or export the transcript instead."
-        )
+        raise ValueError("Historical sessions are inert; read or export the transcript instead.")
     source_history_id = session.history_id
     if source_history_id is None and session.spawn_id:
         linked = spawn_store.get_spawn(runtime_root, session.spawn_id)
@@ -355,10 +351,9 @@ def _reference_from_session(
 def _resolve_chat_reference(
     runtime_root: Path, ref: str, project_root: Path
 ) -> ResolvedSessionReference:
-    records = HistoryIndex(runtime_root).sessions(chat_ids={ref})
-    if not records:
+    session = session_store.get_session_record(runtime_root, ref)
+    if session is None:
         return _resolve_untracked_reference(project_root, ref)
-    session = records[0]
     return _reference_from_session(
         runtime_root, session, project_root, _latest_harness_session_id(session)
     )

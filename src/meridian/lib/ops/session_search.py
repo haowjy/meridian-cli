@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sqlite3
 import time
 import zipfile
 import zlib
@@ -19,10 +20,7 @@ from meridian.lib.ops.runtime import (
     resolve_runtime_authority_for_read,
 )
 from meridian.lib.ops.session_corpus import resolve_session_search_corpus
-from meridian.lib.ops.session_target import (
-    iter_chat_session_log_targets,
-    resolve_session_log_target,
-)
+from meridian.lib.ops.session_target import resolve_session_log_target
 from meridian.lib.ops.session_transcript import (
     AbsoluteTranscriptEntry,
     ParsedSessionTranscript,
@@ -130,25 +128,19 @@ def iter_session_subset_search(
             yield SubsetSearchStep(chat_id, False, f"Chat '{chat_id}' not found")
         return
 
-    targets = iter_chat_session_log_targets(
-        project_root=authority.project_root,
-        runtime_root=authority.runtime_root,
-        chat_ids=chat_ids,
-    )
-    for resolution in targets:
-        if resolution.target is None:
-            yield SubsetSearchStep(
-                resolution.chat_id,
-                False,
-                resolution.error or "transcript not found",
-            )
-            continue
+    for chat_id in chat_ids:
         try:
+            target = resolve_session_log_target(
+                ref=chat_id,
+                file_path=None,
+                project_root=authority.project_root,
+                runtime_root=authority.runtime_root,
+            )
             transcript = parse_session_target(
                 project_root=authority.project_root,
                 runtime_root=authority.runtime_root,
-                target=resolution.target,
-                route=route_for_corpus_target(resolution.target),
+                target=target,
+                route=route_for_corpus_target(target),
             )
             matched = any(
                 not (entry.kind == "setup" and entry.is_placeholder)
@@ -162,10 +154,11 @@ def iter_session_subset_search(
             zipfile.BadZipFile,
             zlib.error,
             HistoryIndexIncomplete,
+            sqlite3.Error,
         ) as exc:
-            yield SubsetSearchStep(resolution.chat_id, False, str(exc))
+            yield SubsetSearchStep(chat_id, False, str(exc))
             continue
-        yield SubsetSearchStep(resolution.chat_id, matched)
+        yield SubsetSearchStep(chat_id, matched)
 
 
 def _build_preview(content: str, *, query: str, limit: int = _PREVIEW_LIMIT) -> str:
@@ -291,7 +284,7 @@ def _search_corpus(payload: SessionSearchInput, *, query: str) -> SessionSearchO
             work_id=payload.work_id,
             deadline=deadline,
         )
-    except (OSError, HistoryIndexIncomplete) as exc:
+    except (ValueError, OSError, HistoryIndexIncomplete, sqlite3.Error) as exc:
         return SessionSearchOutput(matches=(), errors=(f"Corpus discovery: {exc}",))
 
     matches: list[SessionSearchMatch] = []
@@ -307,7 +300,7 @@ def _search_corpus(payload: SessionSearchInput, *, query: str) -> SessionSearchO
             rows = HistoryIndex(scope.runtime_root).candidates(
                 include_archives=payload.include_archives, deadline=deadline
             )
-        except (ValueError, OSError, HistoryIndexIncomplete) as exc:
+        except (ValueError, OSError, HistoryIndexIncomplete, sqlite3.Error) as exc:
             errors.append(f"{scope.label}: {exc}")
             continue
         for row in rows:
@@ -357,6 +350,7 @@ def _search_corpus(payload: SessionSearchInput, *, query: str) -> SessionSearchO
                 zipfile.BadZipFile,
                 zlib.error,
                 HistoryIndexIncomplete,
+                sqlite3.Error,
             ) as exc:
                 errors.append(f"{row.history_id}: {exc}")
     return SessionSearchOutput(matches=tuple(matches), truncated=truncated, errors=tuple(errors))
