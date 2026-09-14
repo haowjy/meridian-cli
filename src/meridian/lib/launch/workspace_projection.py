@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, Literal, cast
+from typing import Literal, cast
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -48,14 +48,13 @@ def _project_claude_workspace_args(roots: tuple[Path, ...]) -> tuple[str, ...]:
     return tuple(projected)
 
 
-def _coerce_external_directory_entries(raw: object) -> dict[str, str]:
+def _permission_rules(raw: object) -> dict[str, object]:
+    """Expand native scalar actions without losing last-match rule ordering."""
+    if isinstance(raw, str) and raw in {"allow", "deny", "ask"}:
+        return {"*": raw}
     if isinstance(raw, dict):
-        raw_mapping = cast("dict[Any, Any]", raw)
-        return {str(path): str(action) for path, action in raw_mapping.items()}
-    if isinstance(raw, list):
-        raw_list = cast("list[Any]", raw)
-        return {str(path): "allow" for path in raw_list}
-    return {}
+        return dict(cast("dict[str, object]", raw))
+    raise ValueError("OpenCode permissions must be an action or an ordered rule object")
 
 
 def _merge_opencode_workspace_config(
@@ -71,18 +70,15 @@ def _merge_opencode_workspace_config(
             raise ValueError("OPENCODE_CONFIG_CONTENT must be a JSON object")
         merged = dict(cast("dict[str, object]", parsed))
 
-    permission_raw = merged.get("permission")
-    permission: dict[str, object] = (
-        {str(key): value for key, value in cast("dict[Any, Any]", permission_raw).items()}
-        if isinstance(permission_raw, dict)
-        else {}
-    )
-    external_directory = _coerce_external_directory_entries(permission.get("external_directory"))
+    permission = _permission_rules(merged.get("permission", {}))
+    external_directory = _permission_rules(permission.get("external_directory", {}))
     for root in roots:
-        external_directory[root.as_posix() + "/**"] = "allow"
+        pattern = root.as_posix() + "/**"
+        external_directory.pop(pattern, None)
+        external_directory[pattern] = "allow"
     permission["external_directory"] = external_directory
     merged["permission"] = permission
-    return json.dumps(merged, separators=(",", ":"), sort_keys=True)
+    return json.dumps(merged, separators=(",", ":"))
 
 
 def project_workspace_roots(

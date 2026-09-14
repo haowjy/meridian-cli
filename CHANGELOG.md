@@ -12,6 +12,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Preserve native OpenCode permission denials and rule order when adding workspace roots.
+
 - Keep dry-run model resolution cache-only; reject malformed inherited OpenCode config before workspace projection can discard it.
 
 - Honor explicit OpenCode models across native agent defaults; fail closed without silent launch fallback.

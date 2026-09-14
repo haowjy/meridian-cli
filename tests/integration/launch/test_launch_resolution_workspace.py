@@ -295,7 +295,16 @@ def test_opencode_workspace_projection_merges_parent_env(
     assert "workspace_opencode_parent_env_suppressed" not in warning_codes
 
 
-@pytest.mark.parametrize("raw", ["{invalid-json", "[]", "null"])
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "{invalid-json",
+        "[]",
+        "null",
+        '{"permission":[]}',
+        '{"permission":{"external_directory":[]}}',
+    ],
+)
 def test_opencode_workspace_rejects_invalid_inherited_config(tmp_path, monkeypatch, raw) -> None:
     _write_minimal_mars_config(tmp_path)
     monkeypatch.setenv(OPENCODE_CONFIG_CONTENT_ENV, raw)
@@ -312,3 +321,43 @@ def test_opencode_workspace_rejects_invalid_inherited_config(tmp_path, monkeypat
             harness_registry=get_default_harness_registry(),
             dry_run=True,
         )
+
+
+@pytest.mark.parametrize(
+    "permission",
+    [
+        "deny",
+        {"external_directory": "deny", "edit": "deny"},
+        {"bash": "allow", "*": "deny"},
+    ],
+)
+def test_opencode_workspace_preserves_native_denials_and_rule_order(
+    tmp_path, monkeypatch, permission
+) -> None:
+    _write_minimal_mars_config(tmp_path)
+    monkeypatch.setenv(OPENCODE_CONFIG_CONTENT_ENV, json.dumps({"permission": permission}))
+    preview = build_launch_context(
+        spawn_id="preserve-native-permission",
+        request=SpawnRequest(prompt="test", model="google/gemini-2.5-pro", harness="opencode"),
+        runtime=LaunchRuntime(
+            argv_intent=LaunchArgvIntent.REQUIRED,
+            runtime_root=str(tmp_path / ".meridian"),
+            project_paths_project_root=str(tmp_path),
+            project_paths_execution_cwd=str(tmp_path),
+        ),
+        harness_registry=get_default_harness_registry(),
+        dry_run=True,
+    )
+    projected = json.loads(
+        preview.binding.environment.bind_env_overrides[OPENCODE_CONFIG_CONTENT_ENV]
+    )["permission"]
+    if permission == "deny":
+        assert list(projected) == ["*", "external_directory"]
+        assert projected["*"] == "deny"
+    elif "edit" in permission:
+        assert projected["edit"] == "deny"
+        assert projected["external_directory"]["*"] == "deny"
+    else:
+        assert list(projected) == ["bash", "*", "external_directory"]
+        assert projected["bash"] == "allow" and projected["*"] == "deny"
+    assert projected["external_directory"][str(tmp_path / ".meridian") + "/**"] == "allow"
