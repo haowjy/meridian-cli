@@ -66,13 +66,10 @@ def _merge_opencode_workspace_config(
     parent_raw = (parent_opencode_config_content or "").strip()
     merged: dict[str, object] = {}
     if parent_raw:
-        try:
-            parsed = json.loads(parent_raw)
-            if isinstance(parsed, dict):
-                parsed_mapping = cast("dict[Any, Any]", parsed)
-                merged = {str(key): value for key, value in parsed_mapping.items()}
-        except json.JSONDecodeError:
-            merged = {}
+        parsed: object = json.loads(parent_raw)
+        if not isinstance(parsed, dict):
+            raise ValueError("OPENCODE_CONFIG_CONTENT must be a JSON object")
+        merged = dict(cast("dict[str, object]", parsed))
 
     permission_raw = merged.get("permission")
     permission: dict[str, object] = (

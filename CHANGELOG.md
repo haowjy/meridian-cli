@@ -12,6 +12,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Keep dry-run model resolution cache-only; reject malformed inherited OpenCode config before workspace projection can discard it.
+
 - Honor explicit OpenCode models across native agent defaults; fail closed without silent launch fallback.
 - Preserve committed native model/variant on injection; show truthful managed-primary dry-runs and clean owned instructions.
 - Keep preview freshness visible at narrow widths; reject same-size mutations at cache publication.

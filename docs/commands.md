@@ -31,6 +31,11 @@ Full command surface. Use `--help` on any command for flags and options.
 | `meridian spawn children ID` | List direct child spawns |
 | `meridian spawn files ID` | List files changed by a spawn |
 
+OpenCode managed primaries honor explicit provider/model selections without editing
+native config. See [managed startup and failure behavior](codex-tui-passthrough.md#failure-behavior).
+`spawn inject` requires a streaming spawn control endpoint; a native primary TUI
+does not currently expose that endpoint ([#498](https://github.com/haowjy/meridian-cli/issues/498)).
+
 Common `spawn` flags:
 
 | Flag | Description |

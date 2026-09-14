@@ -121,6 +121,9 @@ launch-local configuration; a conflicting native primary-agent model triggers at
 most one verified backend replacement before session creation. Native config files
 are not edited. Dry-run describes serve, inspection, bootstrap and attach stages;
 it does not claim to know native-resolved defaults or an actual message model.
+Dry-run uses cached model resolution without native availability probes; normal
+launch still validates availability. CLI telemetry/cache setup may write local
+files. Invalid inherited OpenCode JSON is rejected, never silently discarded.
 
 Continue preserves native choice. Later injected turns use the last committed
 native agent/model/variant, not the original launch model. Unsubmitted TUI-local

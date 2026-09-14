@@ -98,9 +98,7 @@ def test_run_primary_attach_preserves_startup_failure_cause(
             pass
 
         async def run(self, **_kwargs: object) -> object:
-            raise TimeoutError(
-                "OpenCode session endpoint did not become ready within 12.0s"
-            )
+            raise TimeoutError("OpenCode session endpoint did not become ready within 12.0s")
 
     monkeypatch.setattr(runner_module, "PrimaryAttachLauncher", FailingPrimaryAttachLauncher)
 
@@ -236,17 +234,26 @@ def test_opencode_streaming_logs_effort_warning_without_failure(
     )
 
 
-def test_managed_primary_dryrun_has_one_truthful_structured_plan(tmp_path: Path) -> None:
+def test_managed_primary_dryrun_has_one_truthful_structured_plan(
+    tmp_path: Path, monkeypatch
+) -> None:
     from meridian.cli.primary_launch import PrimaryLaunchOutput
     from meridian.lib.launch import launch_primary
     from meridian.lib.launch.types import LaunchRequest
 
+    requests = stub_bundle_request_and_resolve(
+        monkeypatch, model="google/gemini-2.5-pro", harness=HarnessId.OPENCODE
+    )
     _write_minimal_mars_config(tmp_path)
     result = launch_primary(
         project_root=tmp_path,
         request=LaunchRequest(model="google/gemini-2.5-pro", harness="opencode", dry_run=True),
         harness_registry=get_default_harness_registry(),
     )
+    from meridian.lib.launch.bundle_adapter import _build_bundle_command
+
+    assert requests and requests[0].no_refresh_models
+    assert "--no-refresh-models" in _build_bundle_command(requests[0])
     assert result.command == ()
     plan = result.launch_plan
     assert plan is not None

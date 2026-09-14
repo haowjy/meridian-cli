@@ -293,3 +293,22 @@ def test_opencode_workspace_projection_merges_parent_env(
         assert payload["instructions"] == ["/tmp/system.md"]
         assert external_dirs["/existing/*"] == "ask"
     assert "workspace_opencode_parent_env_suppressed" not in warning_codes
+
+
+@pytest.mark.parametrize("raw", ["{invalid-json", "[]", "null"])
+def test_opencode_workspace_rejects_invalid_inherited_config(tmp_path, monkeypatch, raw) -> None:
+    _write_minimal_mars_config(tmp_path)
+    monkeypatch.setenv(OPENCODE_CONFIG_CONTENT_ENV, raw)
+    with pytest.raises(ValueError):
+        build_launch_context(
+            spawn_id="invalid-inherited-config",
+            request=SpawnRequest(prompt="test", model="google/gemini-2.5-pro", harness="opencode"),
+            runtime=LaunchRuntime(
+                argv_intent=LaunchArgvIntent.REQUIRED,
+                runtime_root=str(tmp_path / ".meridian"),
+                project_paths_project_root=str(tmp_path),
+                project_paths_execution_cwd=str(tmp_path),
+            ),
+            harness_registry=get_default_harness_registry(),
+            dry_run=True,
+        )

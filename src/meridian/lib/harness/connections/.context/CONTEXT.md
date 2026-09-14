@@ -243,7 +243,8 @@ Concurrent stop can wait for startup to settle; it never acknowledges a child th
 has not yet been published. Private instruction files are attempt-owned and removed
 by cleanup; inherited instruction paths are never removed or rewritten.
 
-Session creation and prompt submission use different native model shapes. Later
+Session creation nests `model={id,providerID}`; prompts use
+`model={modelID,providerID}` with `variant` at the prompt top level. Later
 HTTP injection observes committed native session agent/model/variant, including
 an explicit default variant; absent session fields fall back to the last native
 user message, never replayed launch settings. Unsent TUI-local changes are not

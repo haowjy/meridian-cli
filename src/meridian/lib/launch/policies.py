@@ -109,6 +109,7 @@ class SurfacePolicyInput:
     config: MeridianConfig
     harness_registry: HarnessRegistry
     skills_readonly: bool = True
+    models_readonly: bool = False
     requested_skills: tuple[str, ...] = ()
     policy_snapshot: LaunchPolicySnapshot | None = None
     agent_opt_out: bool = False
@@ -457,6 +458,7 @@ def _resolve_policy_from_bundle(surface: SurfacePolicyInput) -> ResolvedLaunchPo
         approval_override=explicit_user_overrides.approval,
         sandbox_override=explicit_user_overrides.sandbox,
         extra_skills=resolved_skill_names,
+        no_refresh_models=surface.models_readonly,
     )
     bundle_result = bundle_adapter.request_and_resolve(
         bundle_request,
