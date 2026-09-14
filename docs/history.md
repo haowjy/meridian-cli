@@ -57,7 +57,9 @@ preparation separately. Apply captures those records before final selection.
 
 Every ZIP is independently verified against both source selection and member
 bytes before originals can be removed. Changed sources retain their loose copy.
-Failures may leave a private partial ZIP or restore stage; these are not published
+Interrupted removal leaves the verified ZIP readable; disposable retirement
+residue is handled by existing startup staging cleanup. Failures may also leave
+a private partial ZIP or restore stage; these are not published
 archives and do not justify deleting source history.
 
 ## Read, transfer, and restore

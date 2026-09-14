@@ -76,7 +76,7 @@ from meridian.lib.state.spawn.transitions import (
     apply_record_exited,
     apply_runner_exit,
 )
-from meridian.lib.state.spawn_aggregate import delete_published_spawn
+from meridian.lib.state.spawn_aggregate import delete_published_spawn, ensure_spawn_staging_dir
 
 logger = structlog.get_logger(__name__)
 
@@ -194,18 +194,8 @@ def _resolve_start_metadata(
     )
 
 
-def _ensure_staging_dir(paths: RuntimePaths) -> Path:
-    staging_dir = paths.spawns_dir / ".staging"
-    if os.path.lexists(staging_dir) and (staging_dir.is_symlink() or not staging_dir.is_dir()):
-        raise NotADirectoryError(f"Spawn staging container must be a real directory: {staging_dir}")
-    staging_dir.mkdir(parents=True, exist_ok=True)
-    if staging_dir.is_symlink() or not staging_dir.is_dir():
-        raise NotADirectoryError(f"Spawn staging container must be a real directory: {staging_dir}")
-    return staging_dir
-
-
 def gc_abandoned_stages(runtime_root: Path) -> None:
-    """Best-effort cleanup of incomplete spawn publication stages."""
+    """Best-effort cleanup of unpublished buffers and verified-retention retirement residue."""
 
     paths = RuntimePaths.from_root_dir(runtime_root)
     staging_dir = paths.spawns_dir / ".staging"
@@ -360,7 +350,7 @@ def start_spawn(
             launch_policy_snapshot=resolved_launch_policy_snapshot,
         )
         spawn_dir = paths.spawns_dir / str(resolved_spawn_id)
-        staging_dir = _ensure_staging_dir(paths)
+        staging_dir = ensure_spawn_staging_dir(paths)
         stage_dir = staging_dir / f"{resolved_spawn_id}-{os.getpid()}-{secrets.token_hex(4)}"
         stage_dir.mkdir()
         atomic_write_text(stage_dir / "starting-prompt.md", prompt)

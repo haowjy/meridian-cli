@@ -8,9 +8,11 @@ import stat
 from collections.abc import Callable
 from contextlib import suppress
 from pathlib import Path
+from uuid import uuid4
 
 from meridian.lib.core.types import SpawnId
 from meridian.lib.platform.atomic import fsync_directory
+from meridian.lib.state.atomic import atomic_publish_dir
 from meridian.lib.state.event_store import lock_file
 from meridian.lib.state.history_changes import HistoryChanges, HistorySource
 from meridian.lib.state.paths import RuntimePaths
@@ -69,11 +71,22 @@ def _restore_spawn_artifact_permissions(
         raise exc_info from error
 
 
+def ensure_spawn_staging_dir(paths: RuntimePaths) -> Path:
+    staging_dir = paths.spawns_dir / ".staging"
+    if os.path.lexists(staging_dir) and (staging_dir.is_symlink() or not staging_dir.is_dir()):
+        raise NotADirectoryError(f"Spawn staging container must be a real directory: {staging_dir}")
+    staging_dir.mkdir(parents=True, exist_ok=True)
+    if staging_dir.is_symlink() or not staging_dir.is_dir():
+        raise NotADirectoryError(f"Spawn staging container must be a real directory: {staging_dir}")
+    return staging_dir
+
+
 def delete_published_spawn(
     runtime_root: Path,
     spawn_id: SpawnId | str,
     *,
     can_delete: SpawnDeletionPrecondition,
+    retire: bool = False,
 ) -> bool:
     """Delete one published spawn when its locked aggregate permits it.
 
@@ -81,7 +94,9 @@ def delete_published_spawn(
     leaves. Every published-row deletion routes through it. A cleanup claim
     prevents deletion because it is durable at-least-once intent: the reaper
     must finish or clear the claim before artifact retention may remove it.
-    Callers that also need ``spawns_flock`` must acquire it first.
+    Callers that also need ``spawns_flock`` must acquire it first. Verified ZIP
+    retention opts into atomic retirement before recursive cleanup, so an
+    interrupted removal cannot leave a partial loose record hiding its ZIP.
     """
 
     paths = RuntimePaths.from_root_dir(runtime_root)
@@ -106,8 +121,14 @@ def delete_published_spawn(
             return False
         changes.mark(HistorySource(kind="spawn", key=resolved_spawn_id))
         try:
-            shutil.rmtree(spawn_dir, onexc=_restore_spawn_artifact_permissions)
-            fsync_directory(spawn_dir.parent)
+            removal_dir = spawn_dir
+            if retire:
+                staging = ensure_spawn_staging_dir(paths)
+                removal_dir = staging / f"{resolved_spawn_id}-retired-{uuid4().hex}"
+                atomic_publish_dir(spawn_dir, removal_dir)
+                fsync_directory(paths.spawns_dir)
+            shutil.rmtree(removal_dir, onexc=_restore_spawn_artifact_permissions)
+            fsync_directory(removal_dir.parent)
         except OSError:
             return False
         return True

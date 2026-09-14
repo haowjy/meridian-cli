@@ -25,7 +25,7 @@ meridian.toml
   locks/launch-boundary/<spawn_id>.lock
                                     — stable launch-boundary append lock
   locks/gc.lock                     — lock-GC pass serialization
-  spawns/.staging/<unique>/         — complete row build before atomic publication
+  spawns/.staging/<unique>/         — unpublished builds and verified-archive retirement buffers
   spawns/<spawn_id>/
     state.json                      — authoritative spawn state (schema v3)
     history.jsonl                   — primary output artifact

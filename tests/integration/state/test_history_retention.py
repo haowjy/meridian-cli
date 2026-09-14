@@ -573,3 +573,24 @@ def test_unavailable_prepared_archive_does_not_stall_unrelated_retention(
     result = archive_history(root, destination=tmp_path / "second", refs=(second,), apply=True)
     assert result.reclaimed and any("recovery deferred" in error for error in result.errors)
     assert not (root / "spawns" / second).exists()
+
+
+def test_interrupted_recursive_reclaim_keeps_verified_zip_readable(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from meridian.lib.state import spawn_aggregate
+
+    root = tmp_path / "runtime"
+    key = _terminal(root)
+
+    def partial_removal(directory: Path, **kwargs):
+        (directory / "history.jsonl").unlink()
+        raise OSError("interrupted recursive removal")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(spawn_aggregate.shutil, "rmtree", partial_removal)
+        result = archive_history(root, destination=tmp_path / "zips", refs=(key,), apply=True)
+    assert result.errors
+    assert HistoryIndex(root).read_targets(result.selected[0])[0].archive_id is not None
+    assert verify_archive(Path(result.archives[0])).records
+    assert not (root / "spawns" / key).exists()

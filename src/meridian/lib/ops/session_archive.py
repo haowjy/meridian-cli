@@ -374,6 +374,7 @@ def archive_history(
                     if spawn_store.delete_published_spawn(
                         root,
                         current.id,
+                        retire=True,
                         can_delete=lambda row, captured=captured: (
                             row is not None and row.history_id == captured.history_id
                         ),
@@ -388,6 +389,10 @@ def archive_history(
                             ),
                         )
                         reclaimed.append(str(captured.history_id))
+                    else:
+                        errors.append(
+                            f"{current.id}: reclaim cleanup incomplete; verified ZIP retained"
+                        )
         HistoryIndex(root).catch_up()
         return SessionArchiveOutput(
             selected=tuple(str(row.history_id) for row in selected),

@@ -49,7 +49,10 @@ snapshots remain separate until reclaim intent or explicit import selects them. 
 append-only receipts. `ops/session_archive.py` owns eligibility and final
 root-exclusive protection/fingerprint revalidation. Publication never deletes
 sources. Reclaim-prepared receipts precede removal; loose locations win while
-both copies exist. Published ZIPs never expire.
+both copies exist. After verification, archive reclaim atomically retires the
+aggregate into existing spawn staging before recursive cleanup. Partial removal
+there cannot hide the current ZIP. Startup staging GC may discard this residue;
+it contains no unique authority, unlike restore plans/stages. Published ZIPs never expire.
 
 Restore extracts selected records into private stages outside ordinary spawn
 stage GC, verifies copied bytes, assigns new local aliases, and publishes inert

@@ -18,6 +18,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Keep early search matches when budgets expire; report incomplete searches explicitly.
 - Enforce one deadline across index lock waits and rebuild steps.
 - Resolve healthy ZIP copies consistently and stage restore bytes without blocking history writers.
+- Keep verified ZIPs readable when recursive cleanup is interrupted.
 - Show restored aliases and historical status in restore and browse output.
 
 ## [0.4.5] - 2026-09-12
