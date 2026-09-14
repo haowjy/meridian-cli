@@ -120,8 +120,8 @@ class HistoryCandidate(NamedTuple):
     activity: str
 
 
-def _connect(path: Path, *, fresh: bool = False) -> sqlite3.Connection:
-    db = sqlite3.connect(path, timeout=2)
+def _connect(path: Path, *, fresh: bool = False, timeout: float = 2) -> sqlite3.Connection:
+    db = sqlite3.connect(path, timeout=timeout)
     db.row_factory = sqlite3.Row
     try:
         db.execute("PRAGMA foreign_keys=ON")
@@ -474,23 +474,25 @@ class HistoryIndex:
         changes = HistoryChanges(self.root)
         deadline = time.monotonic() + timeout
         with (
-            lock_file(self.catchup_lock, timeout=timeout),
+            lock_file(self.catchup_lock, timeout=max(0, deadline - time.monotonic())),
             lock_file(
-                changes.mutation_lock, mode="exclusive" if reset else "shared", timeout=timeout
+                changes.mutation_lock,
+                mode="exclusive" if reset else "shared",
+                timeout=max(0, deadline - time.monotonic()),
             ),
         ):
             if reset:
                 # Full quiescent scan replaces unknown coordination; locks are never removed.
-                with lock_file(changes.marker_lock):
+                with lock_file(changes.marker_lock, timeout=max(0, deadline - time.monotonic())):
                     from meridian.lib.state.atomic import atomic_write_text
 
                     atomic_write_text(changes.directory / "GENERATION", str(uuid4()))
                     for path in changes.directory.glob("*.json"):
                         path.unlink()
-            generation, _ = changes.capture()
+            generation, _ = changes.capture(timeout=max(0, deadline - time.monotonic()))
             self.directory.mkdir(parents=True, exist_ok=True)
             stage = self.directory / f".build-{uuid4().hex}.sqlite3"
-            db = _connect(stage, fresh=True)
+            db = _connect(stage, fresh=True, timeout=max(0, deadline - time.monotonic()))
             build = str(uuid4())
             try:
                 db.executescript(_SCHEMA)
@@ -507,7 +509,7 @@ class HistoryIndex:
                         source.lock_path(self.root), timeout=max(0, deadline - time.monotonic())
                     ):
                         self._project(db, source)
-                _, target = changes.capture()
+                _, target = changes.capture(timeout=max(0, deadline - time.monotonic()))
                 acknowledged, pending, active = self._drain(db, target, deadline)
                 if pending:
                     raise HistoryIndexIncomplete("Rebuild timed out resolving changed sources")
@@ -520,7 +522,7 @@ class HistoryIndex:
             with lock_file(self.database_lock, timeout=max(0, deadline - time.monotonic())):
                 if self.path.exists():
                     try:
-                        old = _connect(self.path)
+                        old = _connect(self.path, timeout=max(0, deadline - time.monotonic()))
                         try:
                             busy, _, _ = old.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
                             if busy:
@@ -551,12 +553,16 @@ class HistoryIndex:
         changes = HistoryChanges(self.root)
         deadline = time.monotonic() + timeout
         with (
-            lock_file(self.catchup_lock, timeout=timeout),
-            lock_file(changes.mutation_lock, mode="shared", timeout=timeout),
-            lock_file(self.database_lock, mode="shared", timeout=timeout),
+            lock_file(self.catchup_lock, timeout=max(0, deadline - time.monotonic())),
+            lock_file(
+                changes.mutation_lock, mode="shared", timeout=max(0, deadline - time.monotonic())
+            ),
+            lock_file(
+                self.database_lock, mode="shared", timeout=max(0, deadline - time.monotonic())
+            ),
         ):
-            generation, target = changes.capture()
-            db = _connect(self.path)
+            generation, target = changes.capture(timeout=max(0, deadline - time.monotonic()))
+            db = _connect(self.path, timeout=max(0, deadline - time.monotonic()))
             try:
                 meta = db.execute("SELECT * FROM meta").fetchone()
                 if meta is None or meta["version"] != 1 or meta["generation"] != generation:
@@ -573,34 +579,29 @@ class HistoryIndex:
                 db.close()
 
     @contextmanager
-    def query(self) -> Generator[sqlite3.Connection]:
-        coverage = self.catch_up()
+    def query(self, *, deadline: float | None = None) -> Generator[sqlite3.Connection]:
+        deadline = time.monotonic() + 2 if deadline is None else deadline
+        coverage = self.catch_up(timeout=max(0, deadline - time.monotonic()))
         if not coverage.complete:
             raise HistoryIndexIncomplete(
                 f"History index has unresolved sources: {coverage.pending}"
             )
-        with lock_file(self.database_lock, mode="shared", timeout=2):
-            db = _connect(self.path)
+        with lock_file(
+            self.database_lock, mode="shared", timeout=max(0, deadline - time.monotonic())
+        ):
+            db = _connect(self.path, timeout=max(0, deadline - time.monotonic()))
             try:
                 yield db
             finally:
                 db.close()
 
     def read_targets(
-        self, ref: str, *, destination: Path | None = None
+        self, ref: str, *, destination: Path | None = None, deadline: float | None = None
     ) -> tuple[HistoryReadTarget, ...]:
-        import zipfile
-        import zlib
+        from meridian.lib.state.retention_archive import ArchiveReceipt, archive_locations
 
-        from meridian.lib.state.retention_archive import (
-            _MANIFEST,
-            ArchiveReceipt,
-            archive_path,
-            digest,
-            verify_archive,
-        )
-
-        with self.query() as db:
+        deadline = time.monotonic() + 2 if deadline is None else deadline
+        with self.query(deadline=deadline) as db:
             direct = db.execute(
                 "SELECT history_id FROM records WHERE history_id=?", (ref,)
             ).fetchone()
@@ -631,8 +632,7 @@ class HistoryIndex:
                 "WHERE history_id=l.history_id))) ORDER BY (l.kind='spawn') DESC,l.ordinal DESC",
                 (history_id,),
             ).fetchall()
-        errors: list[str] = []
-        available: list[HistoryReadTarget] = []
+        receipts: list[ArchiveReceipt] = []
         for location in locations:
             state = SpawnRecord.model_validate_json(location["record_json"])
             if location["kind"] == "spawn":
@@ -656,32 +656,21 @@ class HistoryIndex:
                 if state.status not in TERMINAL_SPAWN_STATUSES:
                     return ()
                 continue
-            receipt = ArchiveReceipt.model_validate_json(location["receipt_json"])
-            try:
-                if destination is None:
-                    path = archive_path(receipt)
-                else:
-                    try:
-                        path = archive_path(receipt, destination)
-                    except (ValueError, OSError):
-                        path = archive_path(receipt)
-                if not path.is_file():
-                    raise FileNotFoundError(f"Archive unavailable: {path}")
-                verify_archive(path, full=False)
-                with zipfile.ZipFile(path) as archive:
-                    if digest(archive.read(_MANIFEST)) != receipt.manifest_sha256:
-                        raise ValueError("Archive manifest does not match its receipt")
-                available.append(
-                    HistoryReadTarget(state, path, receipt.archive_id, receipt.manifest_sha256)
-                )
-            except (ValueError, OSError, EOFError, zipfile.BadZipFile, zlib.error) as exc:
-                errors.append(str(exc))
-        if not available and errors:
-            raise FileNotFoundError("; ".join(errors))
-        return tuple(available)
+            receipts.append(ArchiveReceipt.model_validate_json(location["receipt_json"]))
+        if not receipts:
+            return ()
+        return tuple(
+            HistoryReadTarget(
+                location.receipt.records[0].state,
+                location.path,
+                location.receipt.archive_id,
+                location.receipt.manifest_sha256,
+            )
+            for location in archive_locations(receipts, destination=destination, deadline=deadline)
+        )
 
-    def snapshots(self) -> tuple[HistorySnapshot, ...]:
-        from meridian.lib.state.retention_archive import ArchiveReceipt
+    def snapshots(self, *, destination: Path | None = None) -> tuple[HistorySnapshot, ...]:
+        from meridian.lib.state.retention_archive import ArchiveReceipt, archive_display_path
 
         with self.query() as db:
             rows = db.execute(
@@ -700,13 +689,15 @@ class HistoryIndex:
                     portable_digest=row["portable_digest"],
                     current=row["archive_id"] is not None
                     and row["portable_digest"] == row["current_digest"],
-                    path=str(Path(receipt.destination) / receipt.zip_name),
+                    path=str(archive_display_path(receipt, destination)),
                 )
             )
         return tuple(result)
 
-    def candidates(self, *, include_archives: bool = False) -> tuple[HistoryCandidate, ...]:
-        with self.query() as db:
+    def candidates(
+        self, *, include_archives: bool = False, deadline: float | None = None
+    ) -> tuple[HistoryCandidate, ...]:
+        with self.query(deadline=deadline) as db:
             rows = db.execute(
                 "SELECT history_id,local_id,chat,archive_id,activity FROM records "
                 + ("" if include_archives else "WHERE archive_id IS NULL ")

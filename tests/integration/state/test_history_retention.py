@@ -526,3 +526,50 @@ def test_selective_restore_does_not_select_unrequested_snapshots(tmp_path: Path)
         HistoryIndex(fresh).read_targets(str(current.history_id))[0].state.work_id
         == "current-second"
     )
+
+
+def test_missing_manifest_does_not_hide_healthy_equivalent_location(tmp_path: Path) -> None:
+    import shutil
+    import zipfile
+
+    from meridian.lib.state.retention_archive import import_archive
+
+    root = tmp_path / "runtime"
+    key = _terminal(root)
+    result = archive_history(root, destination=tmp_path / "first", refs=(key,), apply=True)
+    original = Path(result.archives[0])
+    second = tmp_path / "second"
+    second.mkdir()
+    copy = second / original.name
+    shutil.copyfile(original, copy)
+    import_archive(root, copy)
+    with zipfile.ZipFile(original) as source, zipfile.ZipFile(copy, "w") as output:
+        for entry in source.infolist():
+            if not entry.filename.endswith("manifest.json"):
+                output.writestr(entry, source.read(entry))
+    assert HistoryIndex(root).read_targets(result.reclaimed[0])[0].path == original
+
+
+def test_unavailable_prepared_archive_does_not_stall_unrelated_retention(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from meridian.lib.ops import session_archive
+
+    root = tmp_path / "runtime"
+    key = _terminal(root)
+    append = session_archive.append_receipt
+
+    def interrupt(root, receipt):
+        if receipt.event == "reclaimed":
+            raise RuntimeError("crash before reclaim completion receipt")
+        append(root, receipt)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(session_archive, "append_receipt", interrupt)
+        with pytest.raises(RuntimeError):
+            archive_history(root, destination=tmp_path / "first", refs=(key,), apply=True)
+    (tmp_path / "first").rename(tmp_path / "offline")
+    second = _terminal(root)
+    result = archive_history(root, destination=tmp_path / "second", refs=(second,), apply=True)
+    assert result.reclaimed and any("recovery deferred" in error for error in result.errors)
+    assert not (root / "spawns" / second).exists()

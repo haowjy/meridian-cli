@@ -1,6 +1,7 @@
 """Raw launch request DTOs persisted across prepare/execute boundaries."""
 
 from enum import StrEnum
+from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -46,6 +47,7 @@ class SessionRequest(BaseModel):
     source_claude_config_dir: str | None = None
     source_pi_session_dir: str | None = None
     forked_from_chat_id: str | None = None
+    forked_from_history_id: UUID | None = None
     continue_harness: str | None = None
     continue_source_tracked: bool = False
     continue_source_ref: str | None = None
@@ -56,14 +58,11 @@ def is_exact_continue_session(session: SessionRequest) -> bool:
     """True when a session request represents exact continuation, not fork/fresh."""
 
     primary_mode = ((session.primary_session_mode or "").strip().lower()) or None
-    return (
-        not session.continue_fork
-        and (
-            primary_mode == "resume"
-            or (
-                ((session.requested_harness_session_id or "").strip() != "")
-                and ((session.continue_source_ref or "").strip() != "")
-            )
+    return not session.continue_fork and (
+        primary_mode == "resume"
+        or (
+            ((session.requested_harness_session_id or "").strip() != "")
+            and ((session.continue_source_ref or "").strip() != "")
         )
     )
 

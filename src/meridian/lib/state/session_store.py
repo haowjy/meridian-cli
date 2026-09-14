@@ -427,6 +427,7 @@ def start_session(
     skills: tuple[str, ...] = (),
     skill_paths: tuple[str, ...] = (),
     forked_from_chat_id: str | None = None,
+    forked_from_history_id: uuid.UUID | None = None,
     control_root: str | None = None,
     task_cwd: str | None = None,
     execution_cwd: str | None = None,
@@ -468,12 +469,15 @@ def start_session(
                 ChatId(forked_from_chat_id) if forked_from_chat_id is not None else None
             ),
             spawn_id=spawn_id,
+            forked_from_history_id=forked_from_history_id,
         )
         with (
             lock_file(HistoryChanges(runtime_root).mutation_lock, mode="shared"),
             lock_file(paths.sessions_flock),
         ):
-            if forked_from_chat_id:
+            # Chat-only callers select the current generation. Resolved references
+            # carry their exact portable ancestor and must never be re-resolved.
+            if forked_from_chat_id and forked_from_history_id is None:
                 source = get_session_record(runtime_root, forked_from_chat_id)
                 event = event.model_copy(
                     update={"forked_from_history_id": source.history_id if source else None}

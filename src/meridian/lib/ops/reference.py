@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, replace
 from pathlib import Path
+from uuid import UUID
 
 from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
 from meridian.lib.core.types import SpawnId
@@ -36,6 +37,7 @@ class ResolvedSessionReference:
     source_skills: tuple[str, ...]
     source_work_id: str | None
     tracked: bool
+    source_history_id: UUID | None = None
     source_control_root: str | None = None
     source_execution_cwd: str | None = None
     source_claude_config_dir: str | None = None
@@ -205,6 +207,7 @@ def _build_tracked_reference(
     source_agent: str | None,
     source_skills: tuple[str, ...],
     source_work_id: str | None,
+    source_history_id: UUID | None = None,
     source_control_root: str | None = None,
     source_execution_cwd: str | None = None,
     source_claude_config_dir: str | None = None,
@@ -226,6 +229,7 @@ def _build_tracked_reference(
         harness_session_id=harness_session_id,
         harness=str(verified_harness) if verified_harness is not None else stored_harness,
         source_chat_id=source_chat_id,
+        source_history_id=source_history_id,
         source_model=source_model,
         source_agent=source_agent,
         source_skills=source_skills,
@@ -274,6 +278,7 @@ def _resolve_spawn_reference(
         harness_session_id=harness_session_id,
         stored_harness=stored_harness,
         source_chat_id=_normalize_optional(row.chat_id),
+        source_history_id=row.history_id,
         source_model=_normalize_optional(row.model),
         source_agent=_normalize_optional(row.agent),
         source_skills=row.skills,
@@ -287,36 +292,33 @@ def _resolve_spawn_reference(
     )
 
 
-def _resolve_chat_reference(
-    runtime_root: Path, ref: str, project_root: Path
+def _reference_from_session(
+    runtime_root: Path,
+    session: session_store.SessionRecord,
+    project_root: Path,
+    harness_session_id: str | None,
 ) -> ResolvedSessionReference:
-    records = HistoryIndex(runtime_root).sessions(chat_ids={ref})
-    if not records:
-        return _resolve_untracked_reference(project_root, ref)
-
-    session = records[0]
-    harness_session_id = _latest_harness_session_id(session)
     stored_harness = _normalize_optional(session.harness)
     source_pi_session_dir: str | None = None
-    if stored_harness == "pi":
+    if stored_harness == "pi" and session.kind == "primary" and session.spawn_id:
+        source_pi_session_dir = _read_primary_pi_session_dir(runtime_root, session.spawn_id)
+    elif stored_harness == "pi":
         owner_chat_id = session_identity.session_owner_chat_id(runtime_root, session)
         if owner_chat_id is not None:
             primary_spawn_id = _latest_primary_spawn_id_for_chat(runtime_root, owner_chat_id)
             if primary_spawn_id is not None:
-                source_pi_session_dir = _read_primary_pi_session_dir(
-                    runtime_root, primary_spawn_id
-                )
+                source_pi_session_dir = _read_primary_pi_session_dir(runtime_root, primary_spawn_id)
     return _build_tracked_reference(
         harness_session_id=harness_session_id,
         stored_harness=stored_harness,
         source_chat_id=session.chat_id,
+        source_history_id=session.history_id,
         source_model=_normalize_optional(session.model),
         source_agent=_normalize_optional(session.agent),
         source_skills=session.skills,
         source_work_id=_normalize_optional(session.active_work_id),
         source_control_root=(
-            _normalize_optional(getattr(session, "control_root", None))
-            or project_root.as_posix()
+            _normalize_optional(getattr(session, "control_root", None)) or project_root.as_posix()
         ),
         source_execution_cwd=(
             _normalize_optional(getattr(session, "task_cwd", None))
@@ -333,49 +335,26 @@ def _resolve_chat_reference(
     )
 
 
+def _resolve_chat_reference(
+    runtime_root: Path, ref: str, project_root: Path
+) -> ResolvedSessionReference:
+    records = HistoryIndex(runtime_root).sessions(chat_ids={ref})
+    if not records:
+        return _resolve_untracked_reference(project_root, ref)
+    session = records[0]
+    return _reference_from_session(
+        runtime_root, session, project_root, _latest_harness_session_id(session)
+    )
+
+
 def _resolve_harness_session_reference(
     runtime_root: Path, ref: str, project_root: Path
 ) -> ResolvedSessionReference:
     session = session_store.resolve_session_ref(runtime_root, ref)
     if session is None:
         return _resolve_untracked_reference(project_root, ref)
-
-    stored_harness_session_id = _normalize_optional(session.harness_session_id)
-    harness_session_id = stored_harness_session_id or ref
-    stored_harness = _normalize_optional(session.harness)
-    source_pi_session_dir: str | None = None
-    if stored_harness == "pi":
-        owner_chat_id = session_identity.session_owner_chat_id(runtime_root, session)
-        if owner_chat_id is not None:
-            primary_spawn_id = _latest_primary_spawn_id_for_chat(runtime_root, owner_chat_id)
-            if primary_spawn_id is not None:
-                source_pi_session_dir = _read_primary_pi_session_dir(
-                    runtime_root, primary_spawn_id
-                )
-    return _build_tracked_reference(
-        harness_session_id=harness_session_id,
-        stored_harness=stored_harness,
-        source_chat_id=session.chat_id,
-        source_model=_normalize_optional(session.model),
-        source_agent=_normalize_optional(session.agent),
-        source_skills=session.skills,
-        source_work_id=_normalize_optional(session.active_work_id),
-        source_control_root=(
-            _normalize_optional(getattr(session, "control_root", None))
-            or project_root.as_posix()
-        ),
-        source_execution_cwd=(
-            _normalize_optional(getattr(session, "task_cwd", None))
-            or session.execution_cwd
-            or project_root.as_posix()
-        ),
-        source_claude_config_dir=_normalize_optional(session.claude_config_dir),
-        source_pi_session_dir=source_pi_session_dir,
-        source_launch_policy_snapshot=_launch_policy_snapshot_for_session(
-            runtime_root,
-            session,
-        ),
-        project_root=project_root,
+    return _reference_from_session(
+        runtime_root, session, project_root, _normalize_optional(session.harness_session_id) or ref
     )
 
 

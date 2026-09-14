@@ -105,19 +105,36 @@ def is_tracked_chat_ref(runtime_root: Path, ref: str) -> bool:
 
 
 def session_records_for_spawns(
-    root: Path, records: Iterable[SpawnRecord] = ()
-) -> dict[str, session_store.SessionRecord]:
+    root: Path, records: Iterable[SpawnRecord]
+) -> dict[str, SessionRecord]:
+    """Resolve exact aggregate generations; ambiguous recovery metadata is a conflict."""
     generations = session_store.list_session_generations(root)
-    linked = {record.spawn_id: record for record in generations if record.spawn_id}
-    exact = {(record.chat_id, record.session_instance_id): record for record in generations}
+    linked: dict[str, list[SessionRecord]] = {}
+    for session in generations:
+        if session.spawn_id:
+            linked.setdefault(session.spawn_id, []).append(session)
+    exact = {(session.chat_id, session.session_instance_id): session for session in generations}
+    result: dict[str, SessionRecord] = {}
     for record in records:
-        if record.id not in linked and record.session_instance_id and record.chat_id is not None:
+        candidates = linked.get(record.id, [])
+        if record.session_instance_id and record.chat_id is not None:
             session = exact.get((record.chat_id, record.session_instance_id))
-            if session is not None:
-                linked[record.id] = session.model_copy(
-                    update={"spawn_id": record.id, "history_id": record.history_id}
-                )
-    return linked
+            if session is None and candidates:
+                raise ValueError(f"Session generation conflicts with history: {record.id}")
+            candidates = [session] if session is not None else []
+        if len(candidates) > 1:
+            raise ValueError(f"Ambiguous session metadata for history: {record.id}")
+        if candidates:
+            session = candidates[0]
+            if session.spawn_id not in {None, record.id} or session.history_id not in {
+                None,
+                record.history_id,
+            }:
+                raise ValueError(f"Session identity conflicts with history: {record.id}")
+            result[record.id] = session.model_copy(
+                update={"spawn_id": record.id, "history_id": record.history_id}
+            )
+    return result
 
 
 def get_session_record_for_spawn(

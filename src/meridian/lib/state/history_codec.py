@@ -89,7 +89,9 @@ def transcript_header(state: SpawnRecord, project_id: str) -> TranscriptHeader:
 def current_attempt_lines(raw: str) -> list[str]:
     """Lifecycle-only view; transcript rendering must retain earlier attempts."""
     lines: list[str] = []
-    for line in reversed(raw.splitlines()):
+    # A missing final newline is an uncommitted append, even if it parses as JSON.
+    committed = raw[: raw.rfind("\n") + 1]
+    for line in reversed(committed.splitlines()):
         try:
             event = json.loads(line)
         except ValueError:

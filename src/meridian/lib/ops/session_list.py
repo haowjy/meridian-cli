@@ -30,6 +30,7 @@ class SessionListRow(BaseModel):
 
     chat_id: str
     archived: bool = False
+    historical: bool = False
     activity_at: str
     live: bool
     reentry: SessionReentryDecision
@@ -63,7 +64,8 @@ class SessionListOutput(BaseModel):
         rows = [["C-ID", "AGE", "LIVE", "AGENT", "MODEL", "WORK"]]
         rows.extend(
             [
-                row.chat_id + (" [ZIP]" if row.archived else ""),
+                row.chat_id
+                + (" [ZIP]" if row.archived else " [historical]" if row.historical else ""),
                 relative_time(row.activity_at).removesuffix(" ago"),
                 "●" if row.live else "",
                 row.agent or "—",
@@ -143,9 +145,12 @@ def session_list_sync(
         rows.append(
             SessionListRow(
                 chat_id=record.chat_id,
+                historical=record.record_mode == "historical",
                 activity_at=record.stopped_at or record.started_at,
                 live=live,
-                reentry=decide_reentry(
+                reentry=Blocked("historical record; read-only, cannot resume or fork")
+                if record.record_mode == "historical"
+                else decide_reentry(
                     chat_id=record.chat_id,
                     live=live,
                     has_harness_session=record.chat_id in recorded_harness_sessions,

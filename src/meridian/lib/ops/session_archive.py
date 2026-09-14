@@ -21,6 +21,7 @@ from meridian.lib.state.reaper import scope_liveness
 from meridian.lib.state.retention_archive import (
     ArchivedRecord,
     append_receipt,
+    archive_locations,
     archive_path,
     capture_record,
     publish_archive,
@@ -57,6 +58,13 @@ class SessionImportInput(BaseModel):
     archive: str
 
 
+class RestoredHistory(BaseModel):
+    model_config = ConfigDict(frozen=True)
+    history_id: str
+    spawn_id: str
+    chat_id: str | None
+
+
 class SessionArchiveOutput(BaseModel):
     model_config = ConfigDict(frozen=True)
     selected: tuple[str, ...] = ()
@@ -64,6 +72,7 @@ class SessionArchiveOutput(BaseModel):
     reclaimed: tuple[str, ...] = ()
     archives: tuple[str, ...] = ()
     restored: tuple[str, ...] = ()
+    restored_histories: tuple[RestoredHistory, ...] = ()
     errors: tuple[str, ...] = ()
     preparation_required: tuple[str, ...] = ()
     limited: bool = False
@@ -76,6 +85,11 @@ class SessionArchiveOutput(BaseModel):
         ]
         lines.extend(f"Selected history: {key}" for key in self.selected)
         lines.extend(f"Archive: {path}" for path in self.archives)
+        lines.extend(
+            f"Restored history: {row.history_id} -> {row.spawn_id} / "
+            f"{row.chat_id or 'no chat'} [historical]"
+            for row in self.restored_histories
+        )
         lines.extend(
             f"Requires native capture (--apply): {key}" for key in self.preparation_required
         )
@@ -222,15 +236,14 @@ def archive_history(
         raise ValueError("Archive destination must be outside the runtime root")
     changes = HistoryChanges(root)
     with lock_file(root / "history-archives/archive.lock"):
-        if apply:
-            recover_archives(root, destination)
+        recovery_errors = recover_archives(root, destination) if apply else ()
         # No omission-sensitive policy may start from an incomplete candidate set.
         candidates = HistoryIndex(root).spawns(oldest_first=True)
         with lock_file(changes.mutation_lock, mode="shared"):
             _, protected = _protected(root)
             sessions = session_records_for_spawns(root, candidates)
         selected: list[ArchivedRecord] = []
-        errors: list[str] = []
+        errors: list[str] = list(recovery_errors)
         preparation_required: list[str] = []
         limited = False
         selected_bytes = 0
@@ -391,9 +404,16 @@ def session_archive_sync(payload: SessionArchiveInput) -> SessionArchiveOutput:
     if roots is None:
         raise ValueError("No project history")
     if payload.list_archives:
+        configured = (
+            payload.destination or load_config(roots.project_root).history.archive.destination
+        )
         if payload.refs or payload.apply or payload.eligible:
             raise ValueError("--list cannot be combined with archive selection or --apply")
-        return SessionArchiveOutput(snapshots=HistoryIndex(roots.runtime_root).snapshots())
+        return SessionArchiveOutput(
+            snapshots=HistoryIndex(roots.runtime_root).snapshots(
+                destination=Path(configured).expanduser() if configured else None
+            )
+        )
     config = load_config(roots.project_root).history.archive
     destination = payload.destination or config.destination
     if not destination:
@@ -416,24 +436,31 @@ def session_restore_sync(payload: SessionRestoreInput) -> SessionArchiveOutput:
     roots = resolve_roots_for_read(payload.project_root)
     if roots is None:
         raise ValueError("Initialize the destination project before restoring history")
-    from meridian.lib.state.retention_archive import archive_path, read_receipts
+    from meridian.lib.state.retention_archive import read_receipts
 
     archive = Path(payload.archive).expanduser()
     if not archive.is_file():
-        receipt = next(
-            (
-                row
-                for row in reversed(read_receipts(roots.runtime_root))
-                if str(row.archive_id) == payload.archive
-            ),
-            None,
+        receipts = tuple(
+            row
+            for row in reversed(read_receipts(roots.runtime_root))
+            if str(row.archive_id) == payload.archive
         )
-        if receipt is None:
+        if not receipts:
             raise ValueError("Archive path or identity not found")
-        archive = archive_path(receipt)
+        configured = load_config(roots.project_root).history.archive.destination
+        archive = archive_locations(
+            receipts, destination=Path(configured).expanduser() if configured else None, full=True
+        )[0].path
     restored = restore_archive(roots.runtime_root, archive, payload.refs)
     HistoryIndex(roots.runtime_root).catch_up()
-    return SessionArchiveOutput(restored=restored)
+    mappings = []
+    for key in restored:
+        row = read_state(roots.runtime_root / "spawns", key, include_prompt=False)
+        if row is not None:
+            mappings.append(
+                RestoredHistory(history_id=str(row.history_id), spawn_id=key, chat_id=row.chat_id)
+            )
+    return SessionArchiveOutput(restored=restored, restored_histories=tuple(mappings))
 
 
 def session_import_sync(payload: SessionImportInput) -> SessionArchiveOutput:

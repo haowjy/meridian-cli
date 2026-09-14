@@ -14,6 +14,10 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - Reject restore conflicts in session recovery metadata, even when local transcript bytes match.
 - Honor explicit reselection of a previously imported history snapshot.
+- Preserve exact fork ancestry across resumed generations and ignore torn retry output.
+- Keep early search matches when budgets expire; report incomplete searches explicitly.
+- Resolve healthy ZIP copies consistently and stage restore bytes without blocking history writers.
+- Show restored aliases and historical status in restore and browse output.
 
 ## [0.4.5] - 2026-09-12
 

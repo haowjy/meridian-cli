@@ -24,7 +24,7 @@ def _artifact_store_from_lines(
     spawn_id: SpawnId,
     lines: list[dict[str, object]],
 ) -> _MemoryArtifactStore:
-    encoded = "\n".join(json.dumps(line) for line in lines).encode("utf-8")
+    encoded = ("\n".join(json.dumps(line) for line in lines) + "\n").encode("utf-8")
     return _MemoryArtifactStore({f"{spawn_id}/output.jsonl": encoded})
 
 
@@ -135,4 +135,3 @@ def test_cursor_extractor_prefers_result_over_assistant_message() -> None:
     )
 
     assert CURSOR_EXTRACTOR.extract_report(store, spawn_id) == "terminal result text"
-

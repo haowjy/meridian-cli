@@ -96,9 +96,9 @@ class HistoryChanges:
         except ValueError as exc:
             raise HistoryCoordinationError("Invalid history marker generation") from exc
 
-    def capture(self) -> tuple[str, tuple[DirtySource, ...]]:
+    def capture(self, *, timeout: float | None = None) -> tuple[str, tuple[DirtySource, ...]]:
         """Capture a finite target without waiting for any source lock."""
-        with lock_file(self.marker_lock):
+        with lock_file(self.marker_lock, timeout=timeout):
             generation = self._generation()
             pending: list[DirtySource] = []
             for path in self.directory.glob("*.json"):

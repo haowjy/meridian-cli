@@ -20,7 +20,7 @@ class _MemoryArtifactStore:
 
 
 def _output_store(spawn_id: SpawnId, events: list[dict[str, object]]) -> _MemoryArtifactStore:
-    output = "\n".join(json.dumps(event) for event in events).encode()
+    output = ("\n".join(json.dumps(event) for event in events) + "\n").encode()
     return _MemoryArtifactStore({f"{spawn_id}/output.jsonl": output})
 
 

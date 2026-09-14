@@ -214,3 +214,44 @@ def test_session_search_corpus_resolves_tracked_claude_canonical_transcript(
 
     assert len(output.matches) == 1
     assert output.matches[0].corpus == "runtime:orphan-one"
+
+
+def test_large_loose_transcript_returns_early_matches_before_budget_exhaustion(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from meridian.lib.state import spawn_store
+    from meridian.lib.state.history import ingest_portable_history
+    from meridian.lib.state.history_index import HistoryIndex
+
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "meridian.toml").write_text('[project]\nid = "large-history"\n')
+    root = get_project_home("large-history")
+    key = spawn_store.start_spawn(
+        root, chat_id="c1", harness="codex", model="test", agent="", prompt="query"
+    )
+    spawn_store.finalize_spawn(root, key, status="succeeded", exit_code=0, origin="runner")
+    ingest_portable_history(
+        root,
+        key,
+        iter(
+            [
+                {
+                    "type": "assistant",
+                    "message": {"content": [{"type": "text", "text": "early needle"}]},
+                }
+            ]
+        ),
+    )
+    path = root / "spawns" / key / "history.jsonl"
+    padding = json.dumps({"type": "padding", "data": "x" * 4096}) + "\n"
+    with path.open("a") as handle:
+        for _ in range(16640):
+            handle.write(padding)
+    assert path.stat().st_size > 64 * 1024 * 1024
+    HistoryIndex(root).rebuild()
+    result = session_search_sync(SessionSearchInput(query="needle", project_root=str(project)))
+    assert result.matches and "early [[needle]]" in result.matches[0].content_preview
+    assert result.truncated and not result.complete
+    assert "incomplete" in result.format_text()

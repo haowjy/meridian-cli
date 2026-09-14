@@ -8,7 +8,7 @@ import zlib
 from collections.abc import Iterator, Sequence
 from typing import NamedTuple
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, computed_field
 
 from meridian.lib.core.context import RuntimeContext
 from meridian.lib.core.util import FormatContext
@@ -27,13 +27,12 @@ from meridian.lib.ops.session_transcript import (
     AbsoluteTranscriptEntry,
     ParsedSessionTranscript,
     TranscriptBudget,
-    TranscriptBudgetExceeded,
     build_session_log_command,
     parse_session_target,
     read_session_transcript,
     route_for_corpus_target,
 )
-from meridian.lib.state.history_index import HistoryIndex
+from meridian.lib.state.history_index import HistoryIndex, HistoryIndexIncomplete
 
 _PREVIEW_LIMIT = 200
 _OPEN_CONTEXT = 5
@@ -81,14 +80,21 @@ class SessionSearchOutput(BaseModel):
     truncated: bool = False
     errors: tuple[str, ...] = ()
 
+    @computed_field
+    @property
+    def complete(self) -> bool:
+        return not self.truncated and not self.errors
+
     def format_text(self, ctx: FormatContext | None = None) -> str:
         _ = ctx
         match_label = "match" if len(self.matches) == 1 else "matches"
-        lines = [
-            f"Session search — {len(self.matches)} {match_label}"
-            if self.matches
-            else "Session search — no matches"
-        ]
+        if not self.complete:
+            headline = f"Session search incomplete — {len(self.matches)} confirmed {match_label}"
+        elif self.matches:
+            headline = f"Session search — {len(self.matches)} {match_label}"
+        else:
+            headline = "Session search — no matches"
+        lines = [headline]
         for match in self.matches:
             lines.append("")
             lines.append(
@@ -149,7 +155,14 @@ def iter_session_subset_search(
                 and normalized_query in _normalize_content(entry.content).lower()
                 for entry in transcript.all_entries
             )
-        except (ValueError, OSError, EOFError, zipfile.BadZipFile, zlib.error) as exc:
+        except (
+            ValueError,
+            OSError,
+            EOFError,
+            zipfile.BadZipFile,
+            zlib.error,
+            HistoryIndexIncomplete,
+        ) as exc:
             yield SubsetSearchStep(resolution.chat_id, False, str(exc))
             continue
         yield SubsetSearchStep(resolution.chat_id, matched)
@@ -283,9 +296,16 @@ def _search_corpus(payload: SessionSearchInput, *, query: str) -> SessionSearchO
     budget = TranscriptBudget(deadline, 64 * 1024 * 1024)
     truncated = False
     for scope in scopes:
-        rows = HistoryIndex(scope.runtime_root).candidates(
-            include_archives=payload.include_archives
-        )
+        if time.monotonic() >= deadline:
+            truncated = True
+            break
+        try:
+            rows = HistoryIndex(scope.runtime_root).candidates(
+                include_archives=payload.include_archives, deadline=deadline
+            )
+        except (ValueError, OSError, HistoryIndexIncomplete) as exc:
+            errors.append(f"{scope.label}: {exc}")
+            continue
         for row in rows:
             if scope.chat_filter is not None and row.chat_id not in scope.chat_filter:
                 continue
@@ -299,12 +319,8 @@ def _search_corpus(payload: SessionSearchInput, *, query: str) -> SessionSearchO
                     file_path=None,
                     project_root=project_root,
                     runtime_root=scope.runtime_root,
+                    deadline=deadline,
                 )
-                if target.file_path is not None and not row.archived:
-                    size = target.file_path.stat().st_size
-                    if size > budget.remaining_bytes:
-                        truncated = True
-                        continue
                 transcript = parse_session_target(
                     project_root=project_root,
                     runtime_root=scope.runtime_root,
@@ -312,6 +328,11 @@ def _search_corpus(payload: SessionSearchInput, *, query: str) -> SessionSearchO
                     route=route_for_corpus_target(target),
                     budget=budget,
                 )
+                # Partial loose authority is useful. A partial ZIP member has not
+                # finished its checksum, so do not claim its matches as confirmed.
+                if budget.exhausted and row.archived:
+                    truncated = True
+                    break
                 found = _matches_for_transcript(
                     transcript=transcript,
                     query=query,
@@ -322,10 +343,17 @@ def _search_corpus(payload: SessionSearchInput, *, query: str) -> SessionSearchO
                 if len(found) > 100 - len(matches):
                     truncated = True
                 matches.extend(found[: 100 - len(matches)])
-            except TranscriptBudgetExceeded:
-                truncated = True
-                break
-            except (ValueError, OSError, EOFError, zipfile.BadZipFile, zlib.error) as exc:
+                if budget.exhausted:
+                    truncated = True
+                    break
+            except (
+                ValueError,
+                OSError,
+                EOFError,
+                zipfile.BadZipFile,
+                zlib.error,
+                HistoryIndexIncomplete,
+            ) as exc:
                 errors.append(f"{row.history_id}: {exc}")
     return SessionSearchOutput(matches=tuple(matches), truncated=truncated, errors=tuple(errors))
 

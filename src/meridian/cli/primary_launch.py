@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import shlex
 from pathlib import Path
+from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict
 
@@ -194,6 +195,7 @@ def run_primary_launch(
     continue_fork = False
     continue_warning: str | None = None
     forked_from_chat_id: str | None = None
+    forked_from_history_id: UUID | None = None
     source_control_root: str | None = None
     source_execution_cwd: str | None = None
     source_claude_config_dir: str | None = None
@@ -312,6 +314,7 @@ def run_primary_launch(
         continue_warning = resolved_fork.warning
         continue_fork = True
         forked_from_chat_id = resolved_fork.source_chat_id
+        forked_from_history_id = resolved_fork.source_history_id
         source_control_root = resolved_fork.source_control_root
         source_execution_cwd = resolved_fork.source_execution_cwd
         source_claude_config_dir = resolved_fork.source_claude_config_dir
@@ -371,6 +374,7 @@ def run_primary_launch(
                 continue_chat_id=continue_chat_id,
                 continue_fork=continue_fork,
                 forked_from_chat_id=forked_from_chat_id,
+                forked_from_history_id=forked_from_history_id,
                 source_control_root=source_control_root,
                 source_execution_cwd=source_execution_cwd,
                 source_claude_config_dir=source_claude_config_dir,

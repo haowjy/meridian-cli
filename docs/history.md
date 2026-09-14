@@ -76,10 +76,14 @@ wins while present. Offline selected content can use an equivalent verified copy
 but never silently falls back to an older, different snapshot. Use it
 again after moving a ZIP to update its locator. Restore accepts a path or known
 archive UUID, selects only requested histories, preserves the ZIP, and assigns
-new local aliases. Restored state is historical: foreign processes, leases and
+new local aliases, printed alongside each history UUID. Browse labels these rows
+as historical. Restored state is historical: foreign processes, leases and
 harness continuation identifiers cannot become live. Repeating restore is safe;
 conflicting changed content is rejected rather than overwritten.
 
 Content search excludes archives unless explicitly requested. Search budgets and
-unavailable-content errors are reported; a partial search is not “no matches.”
+unavailable-content errors are reported as incomplete results, not “no matches.”
+Matches already parsed from loose files survive budget exhaustion. A partial ZIP
+member has not completed its checksum, so its matches are withheld; confirmed
+matches from earlier complete records remain.
 The existing `spawn archive` visibility flag is separate from ZIP retention.

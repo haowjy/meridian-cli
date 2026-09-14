@@ -55,6 +55,7 @@ def session_scope(
         skills=metadata.skills,
         skill_paths=metadata.skill_paths,
         forked_from_chat_id=request.forked_from_chat_id,
+        forked_from_history_id=request.forked_from_history_id,
         control_root=control_root,
         task_cwd=task_cwd,
         execution_cwd=execution_cwd,

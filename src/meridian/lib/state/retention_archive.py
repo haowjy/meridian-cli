@@ -10,11 +10,13 @@ import hashlib
 import json
 import os
 import stat
+import time
 import unicodedata
 import zipfile
-from collections.abc import Iterator
+import zlib
+from collections.abc import Iterable, Iterator
 from pathlib import Path, PurePosixPath
-from typing import Literal
+from typing import Literal, NamedTuple
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -82,6 +84,28 @@ class ArchiveReceipt(BaseModel):
     zip_name: str
     manifest_sha256: str
     records: tuple[ArchivedRecord, ...]
+
+
+class ArchiveValidationError(ValueError):
+    """Archive structure cannot establish a complete, verified record."""
+
+
+class ArchiveUnavailable(FileNotFoundError):
+    """None of the selected equivalent locations can be read safely."""
+
+
+class ArchiveLocation(NamedTuple):
+    receipt: ArchiveReceipt
+    path: Path
+
+
+class _LocationMarker(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    version: Literal[1] = 1
+    location_id: UUID
+
+
+ARCHIVE_READ_ERRORS = (ValueError, OSError, EOFError, zipfile.BadZipFile, zlib.error)
 
 
 def digest(data: bytes) -> str:
@@ -250,20 +274,36 @@ def _location(destination: Path) -> UUID:
     path = destination / ".meridian-history-location.json"
     with lock_file(destination / ".meridian-history-location.lock"):
         if path.exists():
-            return UUID(json.loads(path.read_text())["location_id"])
+            return _LocationMarker.model_validate_json(path.read_bytes()).location_id
         location_id = uuid4()
         atomic_write_text(path, json.dumps({"version": 1, "location_id": str(location_id)}))
         return location_id
 
 
 def _member_bytes(archive: zipfile.ZipFile, name: str, *, limit: int) -> bytes:
-    if archive.getinfo(name).file_size > limit:
-        raise ValueError(f"Archive metadata exceeds limit: {name}")
-    return archive.read(name)
+    try:
+        if archive.getinfo(name).file_size > limit:
+            raise ArchiveValidationError(f"Archive metadata exceeds limit: {name}")
+        return archive.read(name)
+    except KeyError as exc:
+        raise ArchiveValidationError(f"Missing required archive member: {name}") from exc
+
+
+def archive_manifest_digest(path: Path) -> str:
+    """Bind later verification/extraction to the exact bounded manifest bytes."""
+    try:
+        with zipfile.ZipFile(path) as archive:
+            return digest(_member_bytes(archive, _MANIFEST, limit=_MAX_METADATA))
+    except (EOFError, zipfile.BadZipFile, zlib.error) as exc:
+        raise ArchiveValidationError(f"Unreadable archive manifest: {path}: {exc}") from exc
 
 
 def verify_archive(
-    path: Path, expected: tuple[ArchivedRecord, ...] | None = None, *, full: bool = True
+    path: Path,
+    expected: tuple[ArchivedRecord, ...] | None = None,
+    *,
+    full: bool = True,
+    manifest_sha256: str | None = None,
 ) -> ArchiveManifest:
     with zipfile.ZipFile(path) as archive:
         infos = archive.infolist()
@@ -289,9 +329,10 @@ def verify_archive(
                 raise ValueError("ZIP exceeds content limit")
             if info.file_size > max(1024 * 1024, info.compress_size * 10_000):
                 raise ValueError("Suspicious ZIP compression ratio")
-        manifest = ArchiveManifest.model_validate_json(
-            _member_bytes(archive, _MANIFEST, limit=_MAX_METADATA)
-        )
+        metadata = _member_bytes(archive, _MANIFEST, limit=_MAX_METADATA)
+        if manifest_sha256 is not None and digest(metadata) != manifest_sha256:
+            raise ArchiveValidationError("Archive manifest does not match its receipt")
+        manifest = ArchiveManifest.model_validate_json(metadata)
         if len({record.history_id for record in manifest.records}) != len(manifest.records):
             raise ValueError("Duplicate portable history identity")
         declared = {member.name: member for member in manifest.members}
@@ -334,6 +375,8 @@ def verify_archive(
                 raise ValueError("Session history identity differs from its aggregate")
             if record.session and record.session.spawn_id != record.state.id:
                 raise ValueError("Session metadata belongs to a different record")
+            if prefix + "aggregate/history.jsonl" not in names:
+                raise ArchiveValidationError("Missing required archive transcript")
             with archive.open(prefix + "aggregate/history.jsonl") as transcript:
                 first = transcript.readline(_MAX_METADATA + 1)
                 if len(first) > _MAX_METADATA:
@@ -439,11 +482,9 @@ def publish_archive(
         if existing.records != records:
             continue
         try:
-            path = archive_path(
-                existing, destination if existing.location_id == location_id else None
-            )
+            path = archive_locations((existing,), destination=destination, full=True)[0].path
             verify_archive(path, records)
-        except (ValueError, OSError, zipfile.BadZipFile):
+        except ARCHIVE_READ_ERRORS:
             continue
         reused = existing.model_copy(update={"destination": str(path.parent)})
         append_receipt(root, reused)
@@ -482,8 +523,7 @@ def publish_archive(
     os.link(stage, final)
     fsync_directory(destination)
     stage.unlink()
-    with zipfile.ZipFile(final) as archive:
-        manifest_hash = digest(archive.read(_MANIFEST))
+    manifest_hash = archive_manifest_digest(final)
     receipt = ArchiveReceipt(
         event="published",
         archive_id=verified.archive_id,
@@ -502,7 +542,7 @@ def archive_path(receipt: ArchiveReceipt, destination: Path | None = None) -> Pa
     marker = directory / ".meridian-history-location.json"
     if not marker.exists():
         raise FileNotFoundError(f"Archive destination offline: {directory}")
-    if UUID(json.loads(marker.read_text())["location_id"]) != receipt.location_id:
+    if _LocationMarker.model_validate_json(marker.read_bytes()).location_id != receipt.location_id:
         raise ValueError("Archive destination identity does not match receipt")
     safe_member_name(receipt.zip_name)
     if "/" in receipt.zip_name:
@@ -510,11 +550,60 @@ def archive_path(receipt: ArchiveReceipt, destination: Path | None = None) -> Pa
     return directory / receipt.zip_name
 
 
+def archive_display_path(receipt: ArchiveReceipt, destination: Path | None = None) -> Path:
+    """Display the configured remount when its location identity matches."""
+    if destination is not None:
+        try:
+            return archive_path(receipt, destination)
+        except (ValueError, OSError):
+            pass
+    return Path(receipt.destination) / receipt.zip_name
+
+
+def archive_locations(
+    receipts: Iterable[ArchiveReceipt],
+    *,
+    destination: Path | None = None,
+    full: bool = False,
+    deadline: float | None = None,
+) -> tuple[ArchiveLocation, ...]:
+    """Resolve only the supplied selection, checking every location against its receipt.
+
+    Callers select a history digest or an explicit archive UUID. This module owns
+    physical availability, remount hints and verification, never currentness.
+    """
+    available: list[ArchiveLocation] = []
+    errors: list[str] = []
+    seen: set[tuple[Path, str]] = set()
+    for receipt in receipts:
+        directories = (
+            (destination, Path(receipt.destination))
+            if destination
+            else (Path(receipt.destination),)
+        )
+        for directory in directories:
+            if deadline is not None and time.monotonic() >= deadline:
+                raise TimeoutError("Archive location resolution exceeded the query budget")
+            try:
+                path = archive_path(receipt, directory)
+                key = (path, receipt.manifest_sha256)
+                if key in seen:
+                    continue
+                seen.add(key)
+                verify_archive(path, full=full, manifest_sha256=receipt.manifest_sha256)
+                available.append(ArchiveLocation(receipt, path))
+            except ARCHIVE_READ_ERRORS as exc:
+                errors.append(f"{directory / receipt.zip_name}: {exc}")
+    if not available:
+        raise ArchiveUnavailable("; ".join(errors) or "No archive location is registered")
+    return tuple(available)
+
+
 def iter_archived_events(
     path: Path, history_id: UUID, manifest_sha256: str | None = None
 ) -> Iterator[dict[str, object]]:
     """Stream one verified member without reading/extracting other transcript bodies."""
-    manifest = verify_archive(path, full=False)
+    manifest = verify_archive(path, full=False, manifest_sha256=manifest_sha256)
     name = f"{_PREFIX}records/{history_id}/aggregate/history.jsonl"
     expected = next((member for member in manifest.members if member.name == name), None)
     if expected is None:
@@ -522,7 +611,10 @@ def iter_archived_events(
     checksum = hashlib.sha256()
     size = 0
     with zipfile.ZipFile(path) as archive:
-        if manifest_sha256 and digest(archive.read(_MANIFEST)) != manifest_sha256:
+        if (
+            manifest_sha256
+            and digest(_member_bytes(archive, _MANIFEST, limit=_MAX_METADATA)) != manifest_sha256
+        ):
             raise ValueError("Archive manifest does not match published receipt")
         with archive.open(name) as handle:
             for line in handle:
@@ -541,10 +633,9 @@ def import_archive(root: Path, path: Path, *, select: bool = True) -> ArchiveRec
     """Register a verified ZIP for direct reads; never extract or start anything."""
     path = path.expanduser().resolve()
     with lock_file(root / "history-archives/archive.lock"):
-        manifest = verify_archive(path)
+        manifest_hash = archive_manifest_digest(path)
+        manifest = verify_archive(path, manifest_sha256=manifest_hash)
         location_id = _location(path.parent)
-        with zipfile.ZipFile(path) as archive:
-            manifest_hash = digest(archive.read(_MANIFEST))
         receipt = ArchiveReceipt(
             event="imported" if select else "published",
             archive_id=manifest.archive_id,
@@ -558,10 +649,11 @@ def import_archive(root: Path, path: Path, *, select: bool = True) -> ArchiveRec
         return receipt
 
 
-def recover_archives(root: Path, destination: Path) -> None:
-    """Resume publication/reclaim transitions without deleting any published ZIP."""
+def recover_archives(root: Path, destination: Path) -> tuple[str, ...]:
+    """Recover independent receipts; unavailable copies do not stall unrelated work."""
     from meridian.lib.state.spawn.repository import read_state
 
+    errors: list[str] = []
     with lock_file(root / "history-archives/archive.lock"):
         receipts = read_receipts(root)
         if destination.is_dir():
@@ -569,7 +661,10 @@ def recover_archives(root: Path, destination: Path) -> None:
             known = {(row.zip_name, row.location_id) for row in receipts}
             for path in sorted(destination.glob("meridian-history-*.zip")):
                 if (path.name, location_id) not in known:
-                    import_archive(root, path, select=False)
+                    try:
+                        import_archive(root, path, select=False)
+                    except ARCHIVE_READ_ERRORS as exc:
+                        errors.append(f"{path}: {exc}")
         receipts = read_receipts(root)
         heads = catalog_heads(receipts)
         for receipt in receipts:
@@ -592,11 +687,23 @@ def recover_archives(root: Path, destination: Path) -> None:
                         is not None
                     ):
                         continue
-                    path = archive_path(receipt)
-                    manifest = verify_archive(path)
+                try:
+                    copies = (
+                        row for row in reversed(receipts) if row.archive_id == receipt.archive_id
+                    )
+                    location = archive_locations(copies, destination=destination, full=True)[0]
+                    manifest = verify_archive(
+                        location.path, manifest_sha256=receipt.manifest_sha256
+                    )
                     if record not in manifest.records:
-                        raise ValueError("Prepared reclaim is not covered by its ZIP")
-                    with zipfile.ZipFile(path) as archive:
-                        if digest(archive.read(_MANIFEST)) != receipt.manifest_sha256:
-                            raise ValueError("Prepared reclaim ZIP differs from its receipt")
-                    append_receipt(root, completed)
+                        raise ArchiveValidationError("Prepared reclaim is not covered by its ZIP")
+                except ARCHIVE_READ_ERRORS as exc:
+                    errors.append(f"{record.history_id}: recovery deferred: {exc}")
+                    continue
+                with (
+                    lock_file(changes.mutation_lock, mode="shared"),
+                    lock_file(source.lock_path(root)),
+                ):
+                    if read_state(root / "spawns", record.state.id, include_prompt=False) is None:
+                        append_receipt(root, completed)
+    return tuple(errors)

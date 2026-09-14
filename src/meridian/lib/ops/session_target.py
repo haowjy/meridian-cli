@@ -1070,13 +1070,13 @@ def _resolve_untracked_session_ref(*, project_root: Path, session_ref: str) -> S
 
 
 def indexed_history_target(
-    runtime_root: Path, ref: str, project_root: Path
+    runtime_root: Path, ref: str, project_root: Path, *, deadline: float | None = None
 ) -> SessionLogTarget | None:
     from meridian.lib.config.settings import load_config
 
     configured = load_config(project_root).history.archive.destination
     targets = HistoryIndex(runtime_root).read_targets(
-        ref, destination=Path(configured).expanduser() if configured else None
+        ref, destination=Path(configured).expanduser() if configured else None, deadline=deadline
     )
     if not targets:
         return None
@@ -1103,6 +1103,7 @@ def resolve_session_log_target(
     file_path: str | None,
     project_root: Path,
     runtime_root: Path | None,
+    deadline: float | None = None,
 ) -> SessionLogTarget:
     if file_path is not None and file_path.strip():
         return _resolve_file_target(file_path)
@@ -1112,7 +1113,9 @@ def resolve_session_log_target(
         raise ValueError("Session reference is required unless --file is provided")
 
     if runtime_root is not None:
-        indexed = indexed_history_target(runtime_root, normalized_ref, project_root)
+        indexed = indexed_history_target(
+            runtime_root, normalized_ref, project_root, deadline=deadline
+        )
         if indexed is not None:
             return indexed
 

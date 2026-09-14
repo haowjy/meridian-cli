@@ -2,7 +2,8 @@
 
 Files and immutable ZIPs own history. SQLite and dirty markers contain no unique
 domain facts. `history_index.py` alone projects sources, acknowledges markers,
-and selects among indexed locations. Lifecycle/control reads remain direct.
+and selects the current history digest. Archive byte mechanics alone resolve
+physical locations, remount hints and equivalent-copy verification. Lifecycle/control reads remain direct.
 
 ## Mutation and projection
 
@@ -54,5 +55,8 @@ Restore extracts selected records into private stages outside ordinary spawn
 stage GC, verifies copied bytes, assigns new local aliases, and publishes inert
 historical state. A durable per-history restore plan spans publication/session
 append for retry. No PID, lease, scope or harness continuation becomes live.
-Historical record guards belong in persistence/control seams, not just the CLI.
+External ZIP extraction and hashing run outside the root gate. The final gate
+revalidates aliases/history conflicts, publishes the staged aggregate and appends
+the historical session. Historical guards belong in persistence/control seams,
+not just the CLI.
 Original source metadata remains provenance, not executable process ownership.

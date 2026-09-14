@@ -274,20 +274,25 @@ def route_for_corpus_target(target: SessionLogTarget) -> SessionLogRoute:
     return SessionLogRoute(mode="file", value=str(target.file_path))
 
 
-class TranscriptBudgetExceeded(RuntimeError):
-    """A bounded content search must stop before consuming another event."""
-
-
 @dataclass
 class TranscriptBudget:
     deadline: float
     remaining_bytes: int
+    exhausted: bool = False
 
     def events(self, events: Iterator[dict[str, object]]) -> Iterator[dict[str, object]]:
-        for event in events:
+        while True:
+            if self.remaining_bytes <= 0 or time.monotonic() >= self.deadline:
+                self.exhausted = True
+                return
+            try:
+                event = next(events)
+            except StopIteration:
+                return
             self.remaining_bytes -= len(json.dumps(event, ensure_ascii=False).encode())
             if self.remaining_bytes < 0 or time.monotonic() >= self.deadline:
-                raise TranscriptBudgetExceeded("Content/time budget reached")
+                self.exhausted = True
+                return
             yield event
 
 
