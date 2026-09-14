@@ -16,6 +16,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Honor explicit reselection of a previously imported history snapshot.
 - Preserve exact fork ancestry across resumed generations and ignore torn retry output.
 - Keep early search matches when budgets expire; report incomplete searches explicitly.
+- Enforce one deadline across index lock waits and rebuild steps.
 - Resolve healthy ZIP copies consistently and stage restore bytes without blocking history writers.
 - Show restored aliases and historical status in restore and browse output.
 

@@ -120,6 +120,13 @@ class HistoryCandidate(NamedTuple):
     activity: str
 
 
+def _remaining(deadline: float) -> float:
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise TimeoutError("History index deadline exhausted")
+    return remaining
+
+
 def _connect(path: Path, *, fresh: bool = False, timeout: float = 2) -> sqlite3.Connection:
     db = sqlite3.connect(path, timeout=timeout)
     db.row_factory = sqlite3.Row
@@ -474,25 +481,25 @@ class HistoryIndex:
         changes = HistoryChanges(self.root)
         deadline = time.monotonic() + timeout
         with (
-            lock_file(self.catchup_lock, timeout=max(0, deadline - time.monotonic())),
+            lock_file(self.catchup_lock, timeout=_remaining(deadline)),
             lock_file(
                 changes.mutation_lock,
                 mode="exclusive" if reset else "shared",
-                timeout=max(0, deadline - time.monotonic()),
+                timeout=_remaining(deadline),
             ),
         ):
             if reset:
                 # Full quiescent scan replaces unknown coordination; locks are never removed.
-                with lock_file(changes.marker_lock, timeout=max(0, deadline - time.monotonic())):
+                with lock_file(changes.marker_lock, timeout=_remaining(deadline)):
                     from meridian.lib.state.atomic import atomic_write_text
 
                     atomic_write_text(changes.directory / "GENERATION", str(uuid4()))
                     for path in changes.directory.glob("*.json"):
                         path.unlink()
-            generation, _ = changes.capture(timeout=max(0, deadline - time.monotonic()))
+            generation, _ = changes.capture(timeout=_remaining(deadline))
             self.directory.mkdir(parents=True, exist_ok=True)
             stage = self.directory / f".build-{uuid4().hex}.sqlite3"
-            db = _connect(stage, fresh=True, timeout=max(0, deadline - time.monotonic()))
+            db = _connect(stage, fresh=True, timeout=_remaining(deadline))
             build = str(uuid4())
             try:
                 db.executescript(_SCHEMA)
@@ -500,16 +507,14 @@ class HistoryIndex:
                 for key in scan_spawn_ids(self.root / "spawns"):
                     with lock_file(
                         HistorySource(kind="spawn", key=key).lock_path(self.root),
-                        timeout=max(0, deadline - time.monotonic()),
+                        timeout=_remaining(deadline),
                     ):
                         self._spawn(db, key)
                 for kind in ("sessions", "catalog"):
                     source = HistorySource(kind=kind)
-                    with lock_file(
-                        source.lock_path(self.root), timeout=max(0, deadline - time.monotonic())
-                    ):
+                    with lock_file(source.lock_path(self.root), timeout=_remaining(deadline)):
                         self._project(db, source)
-                _, target = changes.capture(timeout=max(0, deadline - time.monotonic()))
+                _, target = changes.capture(timeout=_remaining(deadline))
                 acknowledged, pending, active = self._drain(db, target, deadline)
                 if pending:
                     raise HistoryIndexIncomplete("Rebuild timed out resolving changed sources")
@@ -519,10 +524,10 @@ class HistoryIndex:
                 db.close()
             # The root gate is already held: ordinary readers must never take it
             # while holding a database gate. Catchup/rebuild share catchup.lock.
-            with lock_file(self.database_lock, timeout=max(0, deadline - time.monotonic())):
+            with lock_file(self.database_lock, timeout=_remaining(deadline)):
                 if self.path.exists():
                     try:
-                        old = _connect(self.path, timeout=max(0, deadline - time.monotonic()))
+                        old = _connect(self.path, timeout=_remaining(deadline))
                         try:
                             busy, _, _ = old.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
                             if busy:
@@ -553,16 +558,12 @@ class HistoryIndex:
         changes = HistoryChanges(self.root)
         deadline = time.monotonic() + timeout
         with (
-            lock_file(self.catchup_lock, timeout=max(0, deadline - time.monotonic())),
-            lock_file(
-                changes.mutation_lock, mode="shared", timeout=max(0, deadline - time.monotonic())
-            ),
-            lock_file(
-                self.database_lock, mode="shared", timeout=max(0, deadline - time.monotonic())
-            ),
+            lock_file(self.catchup_lock, timeout=_remaining(deadline)),
+            lock_file(changes.mutation_lock, mode="shared", timeout=_remaining(deadline)),
+            lock_file(self.database_lock, mode="shared", timeout=_remaining(deadline)),
         ):
-            generation, target = changes.capture(timeout=max(0, deadline - time.monotonic()))
-            db = _connect(self.path, timeout=max(0, deadline - time.monotonic()))
+            generation, target = changes.capture(timeout=_remaining(deadline))
+            db = _connect(self.path, timeout=_remaining(deadline))
             try:
                 meta = db.execute("SELECT * FROM meta").fetchone()
                 if meta is None or meta["version"] != 1 or meta["generation"] != generation:
@@ -581,15 +582,13 @@ class HistoryIndex:
     @contextmanager
     def query(self, *, deadline: float | None = None) -> Generator[sqlite3.Connection]:
         deadline = time.monotonic() + 2 if deadline is None else deadline
-        coverage = self.catch_up(timeout=max(0, deadline - time.monotonic()))
+        coverage = self.catch_up(timeout=_remaining(deadline))
         if not coverage.complete:
             raise HistoryIndexIncomplete(
                 f"History index has unresolved sources: {coverage.pending}"
             )
-        with lock_file(
-            self.database_lock, mode="shared", timeout=max(0, deadline - time.monotonic())
-        ):
-            db = _connect(self.path, timeout=max(0, deadline - time.monotonic()))
+        with lock_file(self.database_lock, mode="shared", timeout=_remaining(deadline)):
+            db = _connect(self.path, timeout=_remaining(deadline))
             try:
                 yield db
             finally:
