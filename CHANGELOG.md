@@ -12,6 +12,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Detect cleared historical session identities during repeat restore and recapture.
+
 - Preserve snapshot identity and required prompts across restore/archive round trips.
 - Reject historical-session mutations and explain historical launch rejection.
 - Verify repeat restores without blocking unrelated writers; group equivalent ZIP locations.

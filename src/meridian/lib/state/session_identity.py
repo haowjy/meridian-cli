@@ -107,7 +107,11 @@ def is_tracked_chat_ref(runtime_root: Path, ref: str) -> bool:
 def session_records_for_spawns(
     root: Path, records: Iterable[SpawnRecord]
 ) -> dict[str, SessionRecord]:
-    """Resolve exact aggregate generations; ambiguous recovery metadata is a conflict."""
+    """Return unmodified authoritative generations; ambiguous linkage is a conflict.
+
+    Do not fill nullable identity fields here: capture fingerprints, historical
+    provenance and publication witnesses must detect changes to those fields too.
+    """
     generations = session_store.list_session_generations(root)
     linked: dict[str, list[SessionRecord]] = {}
     for session in generations:
@@ -131,9 +135,7 @@ def session_records_for_spawns(
                 record.history_id,
             }:
                 raise ValueError(f"Session identity conflicts with history: {record.id}")
-            result[record.id] = session.model_copy(
-                update={"spawn_id": record.id, "history_id": record.history_id}
-            )
+            result[record.id] = session
     return result
 
 

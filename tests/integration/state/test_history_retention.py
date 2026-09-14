@@ -701,3 +701,25 @@ def test_historical_session_updates_are_refused(tmp_path: Path) -> None:
     (fresh / "sessions.jsonl").write_text(json.dumps(event) + "\n")
     with pytest.raises(ValueError, match="metadata changed"):
         restore_archive(fresh, Path(output.archives[0]), output.reclaimed)
+
+
+@pytest.mark.parametrize("field", ["spawn_id", "history_id"])
+def test_restore_checks_nullable_session_identity_without_enrichment(
+    tmp_path: Path, field: str
+) -> None:
+    root = tmp_path / "source"
+    key = _terminal(root)
+    output = archive_history(root, destination=tmp_path / "zips", refs=(key,), apply=True)
+    archive = Path(output.archives[0])
+    fresh = tmp_path / "fresh"
+    local = restore_archive(fresh, archive, output.reclaimed)[0]
+    event = json.loads((fresh / "sessions.jsonl").read_bytes())
+    event["record"][field] = None
+    (fresh / "sessions.jsonl").write_text(json.dumps(event) + "\n")
+    with pytest.raises(ValueError, match="metadata changed"):
+        restore_archive(fresh, archive, output.reclaimed)
+    recapture = archive_history(fresh, destination=tmp_path / "second", refs=(local,), apply=True)
+    assert not recapture.reclaimed
+    assert recapture.errors and "metadata changed" in recapture.errors[0]
+    assert (fresh / "spawns" / local / "state.json").exists()
+    assert verify_archive(archive).records

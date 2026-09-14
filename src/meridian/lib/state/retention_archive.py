@@ -287,25 +287,27 @@ def capture_record(
             }
         )
     )
-    if state.record_mode == "historical":
-        original = restored_record(directory, files, session)
-        # The local historical session may be synthetic. Preserve absence as well
-        # as original recovery facts; aliases are the only locally rebound fields.
-        session = (
-            original.session.model_copy(
-                update={
-                    "chat_id": state.chat_id,
-                    "spawn_id": state.id,
-                    "session_instance_id": state.session_instance_id,
-                }
-            )
-            if original.session
-            else None
-        )
+    original = (
+        restored_record(directory, files, session) if state.record_mode == "historical" else None
+    )
+    if original is not None:
+        # A synthetic local session is not a new portable fact.
+        session = original.session
         activity = original.activity
-        if portable_digest(state, files, session) != original.portable_digest:
-            raise ValueError(f"Restored portable facts changed: {state.history_id}")
+    if session is not None:
+        # Bind the exported capsule only AFTER raw authority validation/fingerprinting.
+        # Discovery lookup and publication witnesses must never infer these fields.
+        session = session.model_copy(
+            update={
+                "chat_id": state.chat_id or session.chat_id,
+                "spawn_id": state.id,
+                "history_id": state.history_id,
+                "session_instance_id": state.session_instance_id or session.session_instance_id,
+            }
+        )
     portable = portable_digest(state, files, session)
+    if original is not None and portable != original.portable_digest:
+        raise ValueError(f"Restored portable facts changed: {state.history_id}")
     return ArchivedRecord(
         history_id=state.history_id,
         state=state,

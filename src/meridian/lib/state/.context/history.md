@@ -65,7 +65,9 @@ not just the CLI.
 Original source metadata remains provenance, not executable process ownership.
 
 Restored session generations are immutable at their append boundary as well as
-in replay. Restore provenance binds the exact local state and historical session;
+in replay. Exact session lookup returns raw authority, including nullable identity
+fields; only exported capsules enrich local linkage, after validation and capture
+fingerprinting. Restore provenance binds the exact local state and historical session;
 recapture validates those projections and all retained content before reusing
 original portable session facts (including absence). Synthetic local sessions
 never become new portable metadata. Existing-copy restore hashes under the shared
