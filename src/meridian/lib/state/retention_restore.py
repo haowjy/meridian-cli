@@ -29,9 +29,11 @@ from meridian.lib.state.retention_archive import (
     append_receipt,
     digest,
     inventory,
+    portable_digest,
     safe_member_name,
     verify_archive,
 )
+from meridian.lib.state.session_identity import session_records_for_spawns
 from meridian.lib.state.session_store import (
     SessionRecord,
     append_historical_session,
@@ -97,7 +99,13 @@ def _verify_existing(directory: Path, record: ArchivedRecord) -> None:
     marker = directory / "restored-from.json"
     actual = inventory(directory)
     if not marker.exists():
-        if actual != record.files:
+        current = read_state(directory.parent, directory.name, include_prompt=False)
+        assert current is not None
+        session = session_records_for_spawns(directory.parent.parent, (current,)).get(current.id)
+        if (
+            actual != record.files
+            or portable_digest(current, actual, session) != record.portable_digest
+        ):
             raise ValueError(f"History identity conflict: {record.history_id}")
         return
     saved = json.loads(marker.read_text())

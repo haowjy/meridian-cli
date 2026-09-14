@@ -12,10 +12,9 @@ import os
 import stat
 import unicodedata
 import zipfile
-from collections.abc import Generator, Iterator
-from contextlib import contextmanager
+from collections.abc import Iterator
 from pathlib import Path, PurePosixPath
-from typing import IO, Literal
+from typing import Literal
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -503,18 +502,6 @@ def archive_path(receipt: ArchiveReceipt, destination: Path | None = None) -> Pa
     if "/" in receipt.zip_name:
         raise ValueError("Archive filename must be a basename")
     return directory / receipt.zip_name
-
-
-@contextmanager
-def open_transcript(path: Path, history_id: UUID) -> Generator[IO[bytes]]:
-    manifest = verify_archive(path)
-    if history_id not in {record.history_id for record in manifest.records}:
-        raise KeyError(f"History not found in archive: {history_id}")
-    with (
-        zipfile.ZipFile(path) as archive,
-        archive.open(f"{_PREFIX}records/{history_id}/aggregate/history.jsonl") as handle,
-    ):
-        yield handle
 
 
 def iter_archived_events(

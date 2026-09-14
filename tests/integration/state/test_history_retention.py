@@ -404,3 +404,28 @@ def test_mounted_destination_hint_preserves_location_identity(tmp_path: Path) ->
         str(state.history_id), destination=tmp_path / "mount-two"
     )
     assert targets[0].path == tmp_path / "mount-two" / Path(result.archives[0]).name
+
+
+def test_restore_conflicts_with_changed_native_session_metadata(tmp_path: Path) -> None:
+    from meridian.lib.state import session_store
+    from meridian.lib.state.retention_archive import capture_record, publish_archive
+
+    root = tmp_path / "runtime"
+    key = _terminal(root)
+    chat = session_store.start_session(
+        root, harness="codex", harness_session_id="native", model="test", spawn_id=key
+    )
+    session_store.stop_session(root, chat)
+    state = spawn_store.get_spawn(root, key)
+    session = session_store.get_session_record(root, chat)
+    assert state is not None and state.terminal is not None and session is not None
+    record = capture_record(
+        root / "spawns" / key,
+        state.model_copy(update={"prompt": None}),
+        session,
+        state.terminal.finished_at,
+    )
+    receipt = publish_archive(root, tmp_path / "zips", (record,))
+    session_store.update_session_work_id(root, chat, "changed-after-capture")
+    with pytest.raises(ValueError, match="identity conflict"):
+        restore_archive(root, tmp_path / "zips" / receipt.zip_name, (str(state.history_id),))

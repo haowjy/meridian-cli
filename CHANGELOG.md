@@ -10,6 +10,10 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Index history discovery in rebuildable SQLite; preserve readable transcripts across retries and transfers.
 - Add opt-in verified ZIP retention, direct archive reads, selective inert restore, and explicit archived-content search.
 
+### Fixed
+
+- Reject restore conflicts in session recovery metadata, even when local transcript bytes match.
+
 ## [0.4.5] - 2026-09-12
 
 ### Fixed

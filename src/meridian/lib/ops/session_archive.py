@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -29,6 +28,7 @@ from meridian.lib.state.retention_archive import (
     recover_archives,
     verify_archive,
 )
+from meridian.lib.state.session_identity import session_records_for_spawns
 from meridian.lib.state.spawn.model import SpawnRecord
 from meridian.lib.state.spawn.repository import read_state, write_state_locked
 
@@ -88,22 +88,6 @@ class SessionArchiveOutput(BaseModel):
         lines.extend(f"Protected: {key}" for key in self.protected)
         lines.extend(f"Error: {error}" for error in self.errors)
         return "\n".join(lines)
-
-
-def _generations(
-    root: Path, records: Iterable[SpawnRecord] = ()
-) -> dict[str, session_store.SessionRecord]:
-    generations = session_store.list_session_generations(root)
-    linked = {record.spawn_id: record for record in generations if record.spawn_id}
-    exact = {(record.chat_id, record.session_instance_id): record for record in generations}
-    for record in records:
-        if record.id not in linked and record.session_instance_id and record.chat_id is not None:
-            session = exact.get((record.chat_id, record.session_instance_id))
-            if session is not None:
-                linked[record.id] = session.model_copy(
-                    update={"spawn_id": record.id, "history_id": record.history_id}
-                )
-    return linked
 
 
 def _protected(root: Path) -> tuple[dict[str, SpawnRecord], set[str]]:
@@ -244,7 +228,7 @@ def archive_history(
         candidates = HistoryIndex(root).spawns(oldest_first=True)
         with lock_file(changes.mutation_lock, mode="shared"):
             _, protected = _protected(root)
-            sessions = _generations(root, candidates)
+            sessions = session_records_for_spawns(root, candidates)
         selected: list[ArchivedRecord] = []
         errors: list[str] = []
         preparation_required: list[str] = []
@@ -357,7 +341,7 @@ def archive_history(
                     fresh = capture_record(
                         root / "spawns" / current.id,
                         current,
-                        _generations(root, (current,)).get(current.id),
+                        session_records_for_spawns(root, (current,)).get(current.id),
                         captured.activity,
                     )
                     if fresh.capture_fingerprint != captured.capture_fingerprint:

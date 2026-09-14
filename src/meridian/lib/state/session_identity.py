@@ -7,6 +7,7 @@ Two concepts:
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from pathlib import Path
 
 from meridian.lib.core.types import normalize_optional_identity
@@ -103,6 +104,22 @@ def is_tracked_chat_ref(runtime_root: Path, ref: str) -> bool:
     return session_store.get_session_record(runtime_root, normalized) is not None
 
 
+def session_records_for_spawns(
+    root: Path, records: Iterable[SpawnRecord] = ()
+) -> dict[str, session_store.SessionRecord]:
+    generations = session_store.list_session_generations(root)
+    linked = {record.spawn_id: record for record in generations if record.spawn_id}
+    exact = {(record.chat_id, record.session_instance_id): record for record in generations}
+    for record in records:
+        if record.id not in linked and record.session_instance_id and record.chat_id is not None:
+            session = exact.get((record.chat_id, record.session_instance_id))
+            if session is not None:
+                linked[record.id] = session.model_copy(
+                    update={"spawn_id": record.id, "history_id": record.history_id}
+                )
+    return linked
+
+
 def get_session_record_for_spawn(
     runtime_root: Path,
     spawn_id: str,
@@ -179,6 +196,7 @@ __all__ = [
     "list_spawns_for_owner_chat",
     "session_exact_chat_id",
     "session_owner_chat_id",
+    "session_records_for_spawns",
     "spawn_exact_chat_id",
     "spawn_matches_exact_session",
     "spawn_matches_owner_chat",
