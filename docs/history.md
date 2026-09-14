@@ -36,6 +36,10 @@ max_records = 256
 max_uncompressed_bytes = 1073741824
 ```
 
+Use a writable local or mounted destination that supports POSIX file locks,
+hard-link publication and fsync. Unsupported publication fails without reclaiming
+loose history.
+
 Automation runs a finite maintenance pass after a primary stops, at the configured interval (daily by default).
 It uses the same eligibility and verification mechanism as manual archiving.
 Active records and dependencies are protected. Published ZIPs are never expired.

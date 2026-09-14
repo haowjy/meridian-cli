@@ -136,8 +136,22 @@ For managed Codex primary startup behavior, see [codex-tui-passthrough.md](codex
 | ------- | ----------- |
 | `meridian spawn report show ID` | Show one spawn's report |
 | `meridian spawn report search "query"` | Search across all spawn reports |
-| `meridian session log REF` | Read conversation/progress logs for a chat, spawn, or harness session |
-| `meridian session search "query" [REF]` | Search one session or a scoped session corpus (`--workspace`, `--global`, `--work`) |
+| `meridian session log REF` | Read a chat, spawn, harness session, or ZIP-backed history UUID |
+| `meridian session search "query" [REF]` | Search one session or a scoped corpus (`--workspace`, `--global`, `--work`); add `--include-archives` for ZIP content |
+| `meridian session index status` | Inspect/catch up the disposable history index |
+| `meridian session index rebuild [--reset]` | Rebuild from authoritative files and available ZIPs; `--reset` repairs dirty-source coordination |
+| `meridian session archive REF... --destination PATH` | Plan retention of selected histories; add `--apply` to verify and reclaim loose copies |
+| `meridian session archive --eligible --destination PATH` | Plan retention by last activity (default 30 days); supports `--after-days` and `--apply` |
+| `meridian session archive --list` | Show current/snapshot ZIPs and their registered locations |
+| `meridian session import ZIP` | Select a verified transferred ZIP snapshot for direct reads |
+| `meridian session restore REF... --archive ZIP_OR_UUID` | Restore only selected histories with fresh inert local aliases; preserve the ZIP |
+
+Archive destinations can also come from configuration. Automation is off by
+default; active records and dependencies cannot be reclaimed. Published ZIPs
+are never automatically deleted. UI visibility archive is separate from ZIP
+retention. Search reports unavailable content or budget exhaustion as incomplete,
+not a clean negative. See [History storage and retention](history.md) for repair,
+configuration, transfer, conflict behavior and archive-integrity limits.
 
 ## Work Items
 

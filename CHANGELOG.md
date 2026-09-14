@@ -12,6 +12,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Document history commands, retention settings and environment overrides in the CLI references.
+
 - Detect cleared historical session identities during repeat restore and recapture.
 
 - Preserve snapshot identity and required prompts across restore/archive round trips.
