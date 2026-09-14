@@ -88,6 +88,7 @@ class SessionRecord(BaseModel):
 class SessionStartEvent(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
+    history_id: uuid.UUID | None = None
     v: int = 1
     event: Literal["start"] = "start"
     chat_id: PersistedChatId
@@ -179,6 +180,7 @@ def _parse_event(payload: dict[str, Any]) -> SessionEvent | None:
 def _record_from_start_event(event: SessionStartEvent) -> SessionRecord:
     return SessionRecord(
         chat_id=event.chat_id,
+        history_id=event.history_id,
         kind=event.kind,
         harness=event.harness,
         harness_session_id=event.harness_session_id,
@@ -471,10 +473,7 @@ def start_session(
             spawn_id=spawn_id,
             forked_from_history_id=forked_from_history_id,
         )
-        with (
-            lock_file(HistoryChanges(runtime_root).mutation_lock, mode="shared"),
-            lock_file(paths.sessions_flock),
-        ):
+        with lock_file(HistoryChanges(runtime_root).mutation_lock, mode="shared"):
             # Chat-only callers select the current generation. Resolved references
             # carry their exact portable ancestor and must never be re-resolved.
             if forked_from_chat_id and forked_from_history_id is None:
@@ -482,6 +481,30 @@ def start_session(
                 event = event.model_copy(
                     update={"forked_from_history_id": source.history_id if source else None}
                 )
+            if spawn_id is not None:
+                from meridian.lib.state.spawn.repository import Applied, write_state_locked
+
+                binding = write_state_locked(
+                    paths.spawns_dir,
+                    spawn_id,
+                    lambda current: current.model_copy(
+                        update={
+                            "chat_id": event.chat_id,
+                            "session_instance_id": event.session_instance_id,
+                            "forked_from_history_id": (
+                                event.forked_from_history_id or current.forked_from_history_id
+                            ),
+                        }
+                    ),
+                    allow_terminal_overwrite=True,
+                )
+                if isinstance(binding, Applied):
+                    event = event.model_copy(
+                        update={
+                            "history_id": binding.after.history_id,
+                            "forked_from_history_id": binding.after.forked_from_history_id,
+                        }
+                    )
             _append_session_event(paths.sessions_jsonl, paths.sessions_flock, event)
             _write_session_lease(paths, resolved_chat_id, session_instance_id)
     except Exception:

@@ -183,6 +183,7 @@ def _resolve_start_metadata(
             launch_policy_snapshot=launch_policy_snapshot,
         )
     return SpawnStartMetadata(
+        forked_from_history_id=metadata.forked_from_history_id,
         desc=metadata.desc if metadata.desc is not None else desc,
         work_id=metadata.work_id if metadata.work_id is not None else work_id,
         goal=metadata.goal if metadata.goal is not None else goal,
@@ -301,7 +302,10 @@ def start_spawn(
             session_instance_id=owner.session_instance_id if owner and kind == "primary" else None,
             parent_history_id=parent.history_id if parent else None,
             owner_history_id=owner.history_id if owner and kind != "primary" else None,
-            forked_from_history_id=owner.forked_from_history_id if owner else None,
+            forked_from_history_id=(
+                start_metadata.forked_from_history_id
+                or (owner.forked_from_history_id if owner and kind == "primary" else None)
+            ),
             id=str(resolved_spawn_id),
             history_id=uuid4(),
             state_revision=1,

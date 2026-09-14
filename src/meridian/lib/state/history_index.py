@@ -746,10 +746,16 @@ class HistoryIndex:
                 )
             )
 
-    def work_chat_ids(self, work_id: str) -> set[str]:
-        with self.query() as db:
+    def work_chat_ids(self, work_id: str, *, deadline: float | None = None) -> set[str]:
+        with self.query(deadline=deadline) as db:
             return {
-                row[0] for row in db.execute("SELECT chat FROM work_chats WHERE work=?", (work_id,))
+                row[0]
+                for row in db.execute(
+                    "SELECT chat FROM work_chats WHERE work=? "
+                    "UNION SELECT chat FROM records WHERE work=?",
+                    (work_id, work_id),
+                )
+                if row[0]
             }
 
     def recent_sessions(

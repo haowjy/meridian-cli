@@ -594,3 +594,57 @@ def test_interrupted_recursive_reclaim_keeps_verified_zip_readable(
     assert HistoryIndex(root).read_targets(result.selected[0])[0].archive_id is not None
     assert verify_archive(Path(result.archives[0])).records
     assert not (root / "spawns" / key).exists()
+
+
+def test_child_binding_preserves_cross_owner_fork_and_native_identity(tmp_path: Path) -> None:
+    from meridian.lib.core.spawn_start import SpawnStartMetadata
+    from meridian.lib.ops.reference import _reference_from_session
+    from meridian.lib.state import session_store
+
+    root = tmp_path / "runtime"
+    source_id = _terminal(root)
+    source = spawn_store.get_spawn(root, source_id)
+    assert source is not None
+    child_id = spawn_store.start_spawn(
+        root,
+        chat_id="c99",
+        owner_chat_id="c99",
+        model="test",
+        agent="coder",
+        harness="codex",
+        prompt="fork",
+        kind="child",
+        metadata=SpawnStartMetadata(forked_from_history_id=source.history_id),
+    )
+    # Reservation already protects the requested ancestor, before a session exists.
+    assert not archive_history(
+        root, destination=tmp_path / "zips", refs=(source_id,), apply=True
+    ).reclaimed
+    chat = session_store.start_session(
+        root,
+        harness="codex",
+        harness_session_id="native-child",
+        model="test",
+        spawn_id=child_id,
+        forked_from_history_id=source.history_id,
+    )
+    try:
+        row = spawn_store.get_spawn(root, child_id)
+        session = session_store.get_session_record(root, chat)
+        assert row is not None and session is not None
+        assert row.chat_id == chat and row.session_instance_id == session.session_instance_id
+        assert row.forked_from_history_id == source.history_id
+        assert session.history_id == row.history_id
+        assert (
+            _reference_from_session(root, session, tmp_path, "native-child").source_history_id
+            == row.history_id
+        )
+        # Exact linked rows also repair references without a session UUID.
+        assert (
+            _reference_from_session(
+                root, session.model_copy(update={"history_id": None}), tmp_path, "native-child"
+            ).source_history_id
+            == row.history_id
+        )
+    finally:
+        session_store.stop_session(root, chat)

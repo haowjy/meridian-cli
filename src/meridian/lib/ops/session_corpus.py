@@ -75,6 +75,7 @@ def resolve_session_search_corpus(
     workspace: bool,
     global_scope: bool,
     work_id: str | None,
+    deadline: float | None = None,
 ) -> tuple[SessionCorpusScope, ...]:
     """Resolve ordered search scope roots for session search."""
 
@@ -100,6 +101,7 @@ def resolve_session_search_corpus(
                 current_scope.runtime_root,
                 normalized_work_id,
                 include_all=True,
+                deadline=deadline,
             )
         )
         return (current_scope._replace(chat_filter=chat_filter),)

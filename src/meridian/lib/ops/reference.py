@@ -298,6 +298,15 @@ def _reference_from_session(
     project_root: Path,
     harness_session_id: str | None,
 ) -> ResolvedSessionReference:
+    source_history_id = session.history_id
+    if source_history_id is None and session.spawn_id:
+        linked = spawn_store.get_spawn(runtime_root, session.spawn_id)
+        if (
+            linked is not None
+            and linked.chat_id == session.chat_id
+            and (linked.session_instance_id in {None, session.session_instance_id})
+        ):
+            source_history_id = linked.history_id
     stored_harness = _normalize_optional(session.harness)
     source_pi_session_dir: str | None = None
     if stored_harness == "pi" and session.kind == "primary" and session.spawn_id:
@@ -312,7 +321,7 @@ def _reference_from_session(
         harness_session_id=harness_session_id,
         stored_harness=stored_harness,
         source_chat_id=session.chat_id,
-        source_history_id=session.history_id,
+        source_history_id=source_history_id,
         source_model=_normalize_optional(session.model),
         source_agent=_normalize_optional(session.agent),
         source_skills=session.skills,

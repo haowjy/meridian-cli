@@ -281,18 +281,22 @@ def _search_corpus(payload: SessionSearchInput, *, query: str) -> SessionSearchO
         else resolve_project_authority(payload.project_root).project_root
     )
     runtime_root = roots.runtime_root if roots is not None else None
-    scopes = resolve_session_search_corpus(
-        project_root=project_root,
-        runtime_root=runtime_root,
-        workspace=payload.workspace,
-        global_scope=payload.global_scope,
-        work_id=payload.work_id,
-    )
+    deadline = time.monotonic() + 2
+    try:
+        scopes = resolve_session_search_corpus(
+            project_root=project_root,
+            runtime_root=runtime_root,
+            workspace=payload.workspace,
+            global_scope=payload.global_scope,
+            work_id=payload.work_id,
+            deadline=deadline,
+        )
+    except (OSError, HistoryIndexIncomplete) as exc:
+        return SessionSearchOutput(matches=(), errors=(f"Corpus discovery: {exc}",))
 
     matches: list[SessionSearchMatch] = []
     errors: list[str] = []
     query_lower = query.lower()
-    deadline = time.monotonic() + 2
     budget = TranscriptBudget(deadline, 64 * 1024 * 1024)
     truncated = False
     for scope in scopes:

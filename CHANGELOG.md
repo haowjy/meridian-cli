@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- Preserve requested fork ancestry from reservation through child-session binding, and include work-filter discovery in the shared search deadline.
+
 ### Added
 
 - Give new spawn records relocation-stable history IDs and monotonic state revisions.

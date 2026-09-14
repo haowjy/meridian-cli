@@ -14,6 +14,7 @@ def work_session_chat_ids(
     work_id: str,
     *,
     include_all: bool,
+    deadline: float | None = None,
 ) -> set[str]:
     """Resolve chat IDs associated with a work item.
 
@@ -29,18 +30,7 @@ def work_session_chat_ids(
 
     chat_ids: set[str] = set()
     if include_all:
-        chat_ids.update(HistoryIndex(runtime_root).work_chat_ids(normalized_work_id))
-        for spawn in reconcile_spawns(
-            project_root,
-            runtime_root,
-            indexed_spawn_scan(runtime_root, work_id=normalized_work_id),
-        ).records:
-            if (spawn.work_id or "").strip() != normalized_work_id:
-                continue
-            chat_id = (spawn.chat_id or "").strip()
-            if chat_id:
-                chat_ids.add(chat_id)
-        return chat_ids
+        return HistoryIndex(runtime_root).work_chat_ids(normalized_work_id, deadline=deadline)
 
     for record in HistoryIndex(runtime_root).sessions():
         if record.stopped_at is not None or record.record_mode == "historical":
