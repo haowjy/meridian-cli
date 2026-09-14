@@ -47,10 +47,15 @@ snapshots remain separate until reclaim intent or explicit import selects them. 
 
 `retention_archive.py` owns inventory, ZIP bytes, independent verification and
 append-only receipts. `ops/session_archive.py` owns eligibility and final
-root-exclusive protection/fingerprint revalidation. Publication never deletes
+root-exclusive protection/witness revalidation. Publication never deletes
 sources. Reclaim-prepared receipts precede removal; loose locations win while
-both copies exist. After verification, archive reclaim atomically retires the
-aggregate into existing spawn staging before recursive cleanup. Partial removal
+both copies exist. Capture hashes under the shared root/source locks, bracketed by exact membership,
+POSIX change-time and raw session/state witnesses shared with repeat restore.
+The final exclusive gate rechecks this witness and fresh dependency protection,
+not all file bytes. After verification, archive reclaim atomically retires the
+aggregate into existing spawn staging and syncs both parents; recursive cleanup
+runs only after root/spawn/scope locks are released. A failed parent sync leaves
+the prepared receipt and staging intact, without returning a cleanup handle. Partial removal
 there cannot hide the current ZIP. Startup staging GC may discard this residue;
 it contains no unique authority, unlike restore plans/stages. Published ZIPs never expire. Reclaim orders dependents before dependencies, before
 bundle limits, and refuses to retire a dependency while any loose record requires it.

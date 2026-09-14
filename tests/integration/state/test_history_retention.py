@@ -269,7 +269,9 @@ def test_published_snapshot_is_reused_after_reclaim_interruption(
         raise RuntimeError("interrupted before loose deletion")
 
     with monkeypatch.context() as patch:
-        patch.setattr(spawn_store, "delete_published_spawn", interrupt)
+        from meridian.lib.ops import session_archive
+
+        patch.setattr(session_archive, "retire_published_spawn", interrupt)
         with pytest.raises(RuntimeError, match="interrupted"):
             archive_history(root, destination=destination, refs=(key,), apply=True)
     assert len(list(destination.glob("*.zip"))) == 1
@@ -829,3 +831,45 @@ def test_failed_rebuilds_do_not_accumulate_unpublished_databases(tmp_path):
     state_path.write_bytes(state)
     assert index.rebuild().complete
     assert [row.id for row in index.spawns()] == [key]
+
+
+def test_archive_cleanup_allows_unrelated_history_writer(tmp_path: Path, monkeypatch) -> None:
+    """A paused recursive delete must not hold the history mutation gate."""
+    import subprocess
+    import sys
+
+    from meridian.lib.state import spawn_aggregate
+
+    root = tmp_path / "runtime"
+    key = _terminal(root)
+    other = str(
+        spawn_store.start_spawn(
+            root, chat_id="c2", model="test", agent="coder", harness="codex", prompt="writer"
+        )
+    )
+    remove = spawn_aggregate.shutil.rmtree
+
+    def cleanup(directory: Path, **kwargs):
+        subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                "from pathlib import Path; import sys; "
+                "from meridian.lib.state import spawn_store; "
+                "from meridian.lib.state.spawn.repository import write_state_locked; "
+                "write_state_locked(Path(sys.argv[1]) / 'spawns', sys.argv[2], "
+                "lambda row: row.model_copy(update={'desc': 'during cleanup'}))",
+                str(root),
+                other,
+            ],
+            check=True,
+            timeout=5,
+        )
+        return remove(directory, **kwargs)
+
+    monkeypatch.setattr(spawn_aggregate.shutil, "rmtree", cleanup)
+    result = archive_history(root, destination=tmp_path / "zips", refs=(key,), apply=True)
+    assert result.reclaimed and not result.errors
+    state = spawn_store.get_spawn(root, other)
+    assert state is not None and state.desc == "during cleanup"
+    assert verify_archive(Path(result.archives[0])).records

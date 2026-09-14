@@ -21,6 +21,7 @@ from meridian.lib.state.process_scope_projection import read_scope_projection
 from meridian.lib.state.reaper import scope_liveness
 from meridian.lib.state.retention_archive import (
     ArchivedRecord,
+    SourceWitness,
     append_receipt,
     archive_locations,
     archive_path,
@@ -28,11 +29,14 @@ from meridian.lib.state.retention_archive import (
     publish_archive,
     read_receipts,
     recover_archives,
+    source_witness,
+    verified_source,
     verify_archive,
 )
 from meridian.lib.state.session_identity import session_records_for_spawns
 from meridian.lib.state.spawn.model import SpawnRecord
 from meridian.lib.state.spawn.repository import read_state, write_state_locked
+from meridian.lib.state.spawn_aggregate import cleanup_retired_spawn, retire_published_spawn
 
 
 class SessionArchiveInput(BaseModel):
@@ -249,6 +253,7 @@ def archive_history(
         # Apply bundle limits after dependency ordering, so small passes still progress.
         candidates = [by_id[key] for key in TopologicalSorter(dependents).static_order()]
         selected: list[ArchivedRecord] = []
+        witnesses: dict[str, SourceWitness] = {}
         errors: list[str] = list(recovery_errors)
         preparation_required: list[str] = []
         limited = False
@@ -314,29 +319,26 @@ def archive_history(
                 write_state_locked(
                     root / "spawns", candidate.id, lambda row: row, allow_terminal_overwrite=True
                 )
-            source = HistorySource(kind="spawn", key=candidate.id)
-            with lock_file(changes.mutation_lock, mode="shared"), lock_file(source.lock_path(root)):
-                state = read_state(root / "spawns", candidate.id, include_prompt=False)
-                if state is None:
-                    continue
-                try:
-                    activity = last_activity(
-                        state, sessions.get(state.id), transcript_activity(path, "")
-                    )
+            directory = root / "spawns" / candidate.id
+            try:
+                with verified_source(directory) as witness:
+                    state = witness.state
+                    if state is None:
+                        continue
+                    activity = last_activity(state, witness.session, transcript_activity(path, ""))
                     if eligible and datetime.fromisoformat(activity) > cutoff:
                         continue
-                    record = capture_record(
-                        root / "spawns" / state.id, state, sessions.get(state.id), activity
-                    )
-                except (ValueError, OSError) as exc:
-                    errors.append(f"{state.id}: {exc}")
-                    continue
-                size = sum(member.size for member in record.files)
-                if selected and selected_bytes + size > policy.max_uncompressed_bytes:
-                    limited = True
-                    break
-                selected.append(record)
-                selected_bytes += size
+                    record = capture_record(directory, state, witness.session, activity)
+            except (ValueError, OSError) as exc:
+                errors.append(f"{candidate.id}: {exc}")
+                continue
+            size = sum(member.size for member in record.files)
+            if selected and selected_bytes + size > policy.max_uncompressed_bytes:
+                limited = True
+                break
+            selected.append(record)
+            witnesses[record.state.id] = witness
+            selected_bytes += size
         if not apply or not selected:
             return SessionArchiveOutput(
                 selected=tuple(str(row.history_id) for row in selected),
@@ -369,13 +371,13 @@ def archive_history(
                     continue
                 source = HistorySource(kind="spawn", key=current.id)
                 with lock_file(source.lock_path(root)):
-                    fresh = capture_record(
-                        root / "spawns" / current.id,
-                        current,
-                        session_records_for_spawns(root, (current,)).get(current.id),
-                        captured.activity,
-                    )
-                    if fresh.capture_fingerprint != captured.capture_fingerprint:
+                    try:
+                        unchanged = (
+                            source_witness(root / "spawns" / current.id) == witnesses[current.id]
+                        )
+                    except OSError:
+                        unchanged = False
+                    if not unchanged:
                         errors.append(f"{current.id}: source changed; retained loose copy")
                         continue
                     # Publish current-location receipt BEFORE removal. A crash leaves
@@ -389,28 +391,22 @@ def archive_history(
                             }
                         ),
                     )
-                    if spawn_store.delete_published_spawn(
+                    retired = retire_published_spawn(
                         root,
                         current.id,
-                        retire=True,
                         can_delete=lambda row, captured=captured: (
                             row is not None and row.history_id == captured.history_id
                         ),
-                    ):
-                        append_receipt(
-                            root,
-                            receipt.model_copy(
-                                update={
-                                    "event": "reclaimed",
-                                    "records": (captured,),
-                                }
-                            ),
-                        )
-                        reclaimed.append(str(captured.history_id))
-                    else:
-                        errors.append(
-                            f"{current.id}: reclaim cleanup incomplete; verified ZIP retained"
-                        )
+                    )
+            # No root, spawn or process-scope locks span recursive cleanup.
+            if retired is not None and cleanup_retired_spawn(retired):
+                append_receipt(
+                    root,
+                    receipt.model_copy(update={"event": "reclaimed", "records": (captured,)}),
+                )
+                reclaimed.append(str(captured.history_id))
+            else:
+                errors.append(f"{current.id}: reclaim cleanup incomplete; verified ZIP retained")
         HistoryIndex(root).catch_up()
         return SessionArchiveOutput(
             selected=tuple(str(row.history_id) for row in selected),

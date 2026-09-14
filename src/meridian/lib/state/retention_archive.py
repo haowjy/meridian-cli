@@ -14,7 +14,8 @@ import time
 import unicodedata
 import zipfile
 import zlib
-from collections.abc import Iterable, Iterator
+from collections.abc import Generator, Iterable, Iterator
+from contextlib import contextmanager
 from pathlib import Path, PurePosixPath
 from typing import Literal, NamedTuple
 from uuid import UUID, uuid4
@@ -88,6 +89,56 @@ class ArchiveReceipt(BaseModel):
 
 class ArchiveValidationError(ValueError):
     """Archive structure cannot establish a complete, verified record."""
+
+
+class SourceWitness(NamedTuple):
+    files: tuple[tuple[object, ...], ...]
+    state: SpawnRecord | None
+    session: SessionRecord | None
+
+
+def source_witness(directory: Path) -> SourceWitness:
+    """Detect changes after hashing; never substitute metadata for checksums."""
+    from meridian.lib.state.session_identity import session_records_for_spawns
+    from meridian.lib.state.spawn.repository import read_state
+
+    paths = (directory, *sorted(directory.rglob("*")))
+    files = tuple(
+        (
+            str(path.relative_to(directory)),
+            info.st_dev,
+            info.st_ino,
+            info.st_mode,
+            info.st_nlink,
+            info.st_size,
+            info.st_mtime_ns,
+            info.st_ctime_ns,
+        )
+        for path in paths
+        for info in (path.lstat(),)
+    )
+    current = read_state(directory.parent, directory.name, include_prompt=False)
+    session = (
+        session_records_for_spawns(directory.parent.parent, (current,)).get(current.id)
+        if current is not None
+        else None
+    )
+    return SourceWitness(files, current, session)
+
+
+@contextmanager
+def verified_source(directory: Path) -> Generator[SourceWitness]:
+    """Hold source authority stable during verification without blocking other writers."""
+    root = directory.parent.parent
+    source = HistorySource(kind="spawn", key=directory.name)
+    with (
+        lock_file(HistoryChanges(root).mutation_lock, mode="shared"),
+        lock_file(source.lock_path(root)),
+    ):
+        witness = source_witness(directory)
+        yield witness
+        if source_witness(directory) != witness:
+            raise ValueError("Source changed during verification; retry")
 
 
 class ArchiveUnavailable(FileNotFoundError):

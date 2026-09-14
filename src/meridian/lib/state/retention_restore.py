@@ -34,6 +34,8 @@ from meridian.lib.state.retention_archive import (
     portable_digest,
     restored_record,
     safe_member_name,
+    source_witness,
+    verified_source,
     verify_archive,
 )
 from meridian.lib.state.session_identity import session_records_for_spawns
@@ -116,37 +118,6 @@ def _verify_existing(
     original = restored_record(directory, actual, session or pending_session)
     if original.portable_digest != record.portable_digest:
         raise ValueError(f"History identity conflict: {record.history_id}")
-
-
-def _existing_witness(directory: Path) -> tuple[object, ...]:
-    """Cheap publication witness, never a replacement for content verification.
-
-    POSIX inode/change timestamps detect replacement, append and membership changes
-    between source-locked hashing and the short exclusive publication gate. Include
-    directories and provenance; only metadata is read under the global gate.
-    """
-    paths = (directory, *sorted(directory.rglob("*")))
-    files = tuple(
-        (
-            str(path.relative_to(directory)),
-            info.st_dev,
-            info.st_ino,
-            info.st_mode,
-            info.st_nlink,
-            info.st_size,
-            info.st_mtime_ns,
-            info.st_ctime_ns,
-        )
-        for path in paths
-        for info in (path.lstat(),)
-    )
-    current = read_state(directory.parent, directory.name, include_prompt=False)
-    session = (
-        session_records_for_spawns(directory.parent.parent, (current,)).get(current.id)
-        if current is not None
-        else None
-    )
-    return files, current, session
 
 
 def _stage_record(
@@ -301,17 +272,10 @@ def restore_archive(root: Path, archive_path: Path, refs: tuple[str, ...]) -> tu
             try:
                 witness = None
                 if existing is not None:
-                    with (
-                        lock_file(changes.mutation_lock, mode="shared"),
-                        lock_file(source.lock_path(root)),
-                    ):
-                        before = _existing_witness(destination)
+                    with verified_source(destination) as witness:
                         _verify_existing(
                             destination, record, pending_session=plan.session if plan else None
                         )
-                        witness = _existing_witness(destination)
-                        if before != witness:
-                            raise ValueError("Restore source changed during verification; retry")
                 else:
                     assert plan is not None
                     _stage_record(stage, archive_path, manifest.archive_id, record, plan)
@@ -323,7 +287,7 @@ def restore_archive(root: Path, archive_path: Path, refs: tuple[str, ...]) -> tu
                         if (
                             current is None
                             or current.id != local_id
-                            or _existing_witness(destination) != witness
+                            or source_witness(destination) != witness
                         ):
                             raise ValueError("Restore source changed after verification; retry")
                     else:

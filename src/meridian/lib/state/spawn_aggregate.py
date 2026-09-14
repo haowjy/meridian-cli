@@ -7,6 +7,7 @@ import shutil
 import stat
 from collections.abc import Callable
 from contextlib import suppress
+from dataclasses import dataclass
 from pathlib import Path
 from uuid import uuid4
 
@@ -81,31 +82,30 @@ def ensure_spawn_staging_dir(paths: RuntimePaths) -> Path:
     return staging_dir
 
 
-def delete_published_spawn(
+@dataclass(frozen=True)
+class RetiredSpawn:
+    """Owned staging entry, returned only after durable namespace retirement."""
+
+    path: Path
+
+
+def _remove_published_spawn[T](
     runtime_root: Path,
     spawn_id: SpawnId | str,
     *,
     can_delete: SpawnDeletionPrecondition,
-    retire: bool = False,
-) -> bool:
-    """Delete one published spawn when its locked aggregate permits it.
-
-    This aggregate seam composes the spawn-state and process-scope persistence
-    leaves. Every published-row deletion routes through it. A cleanup claim
-    prevents deletion because it is durable at-least-once intent: the reaper
-    must finish or clear the claim before artifact retention may remove it.
-    Callers that also need ``spawns_flock`` must acquire it first. Verified ZIP
-    retention opts into atomic retirement before recursive cleanup, so an
-    interrupted removal cannot leave a partial loose record hiding its ZIP.
-    """
-
+    remove: Callable[[Path], T],
+) -> T | None:
+    """One ownership/lock seam for ordinary deletion and verified ZIP retirement."""
     paths = RuntimePaths.from_root_dir(runtime_root)
     resolved_spawn_id = str(spawn_id)
     if not is_safe_spawn_dir_name(resolved_spawn_id):
         raise ValueError(f"Invalid spawn ID: {resolved_spawn_id}")
     spawn_dir = paths.spawns_dir / resolved_spawn_id
 
-    # Global order: spawn state, then process-scope projection.
+    # Global order: root mutation, spawn state, then process-scope projection.
+    # Callers needing spawns_flock acquire it first. A durable reaper cleanup
+    # claim must be completed or cleared before artifact retention can remove it.
     changes = HistoryChanges(runtime_root)
     with (
         lock_file(changes.mutation_lock, mode="shared"),
@@ -116,19 +116,60 @@ def delete_published_spawn(
         if claim_path.exists() or not can_delete(
             read_state(paths.spawns_dir, resolved_spawn_id, include_prompt=False)
         ):
-            return False
+            return None
         if not spawn_dir.exists():
-            return False
+            return None
         changes.mark(HistorySource(kind="spawn", key=resolved_spawn_id))
         try:
-            removal_dir = spawn_dir
-            if retire:
-                staging = ensure_spawn_staging_dir(paths)
-                removal_dir = staging / f"{resolved_spawn_id}-retired-{uuid4().hex}"
-                atomic_publish_dir(spawn_dir, removal_dir)
-                fsync_directory(paths.spawns_dir)
-            shutil.rmtree(removal_dir, onexc=_restore_spawn_artifact_permissions)
-            fsync_directory(removal_dir.parent)
+            return remove(spawn_dir)
         except OSError:
-            return False
-        return True
+            # A rename may already have committed before synchronization failed.
+            # In that case leave staging and the caller's prepared ZIP receipt
+            # intact; never return a cleanup handle with uncertain durability.
+            return None
+
+
+def _remove_artifacts(directory: Path) -> bool:
+    shutil.rmtree(directory, onexc=_restore_spawn_artifact_permissions)
+    fsync_directory(directory.parent)
+    return True
+
+
+def delete_published_spawn(
+    runtime_root: Path,
+    spawn_id: SpawnId | str,
+    *,
+    can_delete: SpawnDeletionPrecondition,
+) -> bool:
+    """Delete ordinary published artifacts under their ownership locks."""
+    return bool(
+        _remove_published_spawn(
+            runtime_root, spawn_id, can_delete=can_delete, remove=_remove_artifacts
+        )
+    )
+
+
+def retire_published_spawn(
+    runtime_root: Path,
+    spawn_id: SpawnId | str,
+    *,
+    can_delete: SpawnDeletionPrecondition,
+) -> RetiredSpawn | None:
+    """Retire verified ZIP-backed authority; recursive cleanup belongs outside locks."""
+
+    def retire(directory: Path) -> RetiredSpawn:
+        staging = ensure_spawn_staging_dir(RuntimePaths.from_root_dir(runtime_root))
+        destination = staging / f"{directory.name}-retired-{uuid4().hex}"
+        atomic_publish_dir(directory, destination)
+        fsync_directory(directory.parent)
+        return RetiredSpawn(destination)
+
+    return _remove_published_spawn(runtime_root, spawn_id, can_delete=can_delete, remove=retire)
+
+
+def cleanup_retired_spawn(retired: RetiredSpawn) -> bool:
+    """Discard verified retirement residue, also safe after startup GC removed it."""
+    try:
+        return _remove_artifacts(retired.path)
+    except OSError:
+        return False
