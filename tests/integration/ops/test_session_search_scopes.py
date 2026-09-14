@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from meridian.lib.harness.claude import project_slug
 from meridian.lib.ops.session_search import SessionSearchInput, session_search_sync
 from meridian.lib.state import session_store
@@ -316,10 +318,12 @@ def test_browse_subset_search_matches_portable_loose_and_zip_history(tmp_path, m
     assert not steps[1].matched and steps[1].error
 
 
+@pytest.mark.parametrize("recorded_harness_id", [True, False])
 def test_damaged_index_reports_incomplete_search_but_exact_launch_ref_still_resolves(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, recorded_harness_id
 ):
     from meridian.lib.ops.reference import resolve_session_reference
+    from meridian.lib.state import spawn_store
     from meridian.lib.state.history_index import HistoryIndex
 
     monkeypatch.setenv("MERIDIAN_HOME", str(tmp_path / "home"))
@@ -330,9 +334,25 @@ def test_damaged_index_reports_incomplete_search_but_exact_launch_ref_still_reso
     chat = session_store.start_session(
         root,
         harness="codex",
-        harness_session_id="11111111-1111-1111-1111-111111111111",
+        harness_session_id="11111111-1111-1111-1111-111111111111" if recorded_harness_id else None,
         model="test",
+        kind="primary",
     )
+    if not recorded_harness_id:
+        # Deliberately unlinked primary: recover native ID and launch metadata from files.
+        key = str(
+            spawn_store.start_spawn(
+                root,
+                chat_id=chat,
+                model="test",
+                harness="codex",
+                kind="primary",
+                agent="",
+                prompt="hello",
+                harness_session_id="11111111-1111-1111-1111-111111111111",
+            )
+        )
+        spawn_store.finalize_spawn(root, key, status="succeeded", exit_code=0, origin="runner")
     session_store.stop_session(root, chat)
     expected = resolve_session_reference(project, chat, runtime_root=root)
     index = HistoryIndex(root)

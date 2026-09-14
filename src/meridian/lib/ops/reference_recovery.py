@@ -17,7 +17,7 @@ from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.extractors.pi import detect_pi_session_id_from_session_files
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.state import primary_meta, session_identity, session_store, spawn_store
-from meridian.lib.state.history_index import HistoryIndex, indexed_spawn_scan
+from meridian.lib.state.history_index import indexed_spawn_scan
 from meridian.lib.state.spawn.model import SpawnRecord
 
 
@@ -58,7 +58,7 @@ def _primary_spawn_for_chat(
     runtime_root: Path,
     chat_id: str,
 ) -> SpawnRecord | None:
-    spawns = indexed_spawn_scan(runtime_root, owner_chat_id=chat_id)
+    spawns = session_identity.list_spawns_for_owner_chat(runtime_root, chat_id)
     primary_spawns = [row for row in spawns.records if row.kind == "primary"]
     if not primary_spawns:
         return None
@@ -155,8 +155,7 @@ def recover_recorded_chat_harness_session_id(
 
     resolved_session = session
     if resolved_session is None:
-        records = HistoryIndex(runtime_root).sessions(chat_ids={chat_id})
-        resolved_session = records[0] if records else None
+        resolved_session = session_store.get_session_record(runtime_root, chat_id)
     if resolved_session is not None:
         recovered = _recover_from_session_record(resolved_session)
         if recovered is not None:

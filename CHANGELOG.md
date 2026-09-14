@@ -13,7 +13,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Fixed
 
 - Search browser previews through the shared loose/ZIP resolver without replaying session files per row.
-- Report incomplete discovery on SQLite failures; keep exact launch references file-backed.
+- Report incomplete discovery on SQLite failures; keep exact launch references and metadata recovery file-backed.
 - Remove unused log sidecars and replaced scan paths; clean failed index rebuild stages.
 
 - Reclaim history dependents before their dependencies; keep unselected dependencies loose.

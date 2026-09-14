@@ -116,7 +116,7 @@ def _latest_harness_session_id(record: session_store.SessionRecord) -> str | Non
 
 
 def _latest_primary_spawn_id_for_chat(runtime_root: Path, chat_id: str) -> str | None:
-    rows = indexed_spawn_scan(runtime_root, owner_chat_id=chat_id)
+    rows = session_identity.list_spawns_for_owner_chat(runtime_root, chat_id)
     primary_rows = [row for row in rows.records if row.kind == "primary"]
     if not primary_rows:
         return None
