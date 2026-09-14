@@ -29,6 +29,8 @@ class SessionListRow(BaseModel):
     model_config = ConfigDict(frozen=True, arbitrary_types_allowed=True)
 
     chat_id: str
+    history_id: str | None = None
+    session_generation: str = ""
     archived: bool = False
     historical: bool = False
     activity_at: str
@@ -128,6 +130,8 @@ def session_list_sync(
             rows.append(
                 SessionListRow(
                     chat_id=ref,
+                    history_id=ref,
+                    session_generation=record.session_instance_id or "",
                     archived=True,
                     activity_at=record.terminal.finished_at
                     if record.terminal
@@ -145,6 +149,10 @@ def session_list_sync(
         rows.append(
             SessionListRow(
                 chat_id=record.chat_id,
+                history_id=str(record.history_id) if record.history_id else None,
+                session_generation=record.session_instance_id
+                or record.harness_session_id
+                or record.started_at,
                 historical=record.record_mode == "historical",
                 activity_at=record.stopped_at or record.started_at,
                 live=live,

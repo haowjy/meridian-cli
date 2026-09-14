@@ -11,7 +11,7 @@ import json
 import os
 import sqlite3
 import time
-from collections.abc import Generator
+from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -47,6 +47,9 @@ if TYPE_CHECKING:
 
 _SCHEMA = """
 CREATE TABLE meta(version INTEGER NOT NULL, generation TEXT NOT NULL, build TEXT NOT NULL);
+CREATE TABLE previews(
+ key TEXT PRIMARY KEY, history_id TEXT, archive_digest TEXT, value TEXT NOT NULL
+);
 CREATE TABLE records(
  history_id TEXT PRIMARY KEY, local_id TEXT, chat TEXT, owner TEXT, parent TEXT,
  work TEXT, status TEXT NOT NULL, kind TEXT NOT NULL, started TEXT NOT NULL,
@@ -148,20 +151,23 @@ def _tail(path: Path, extent: int, count: int = 256) -> str:
 
 
 def transcript_activity(path: Path, fallback: str) -> str:
-    """Read the last complete event only; reject oversized tails, never guess age."""
+    """Read the last complete event, expanding for large events rather than guessing age."""
     if not path.exists():
         return canonical_time(fallback)
     with path.open("rb") as handle:
         handle.seek(0, os.SEEK_END)
         end = handle.tell()
-        handle.seek(max(0, end - 1024 * 1024))
-        chunk = handle.read()
-    finish = chunk.rfind(b"\n")
-    if finish < 0:
-        raise ValueError(f"Incomplete or oversized transcript tail: {path}")
-    start = chunk.rfind(b"\n", 0, finish) + 1
-    if not start and end > len(chunk):
-        raise ValueError(f"Oversized transcript event: {path}")
+        window = min(end, 1024 * 1024)
+        while True:
+            handle.seek(end - window)
+            chunk = handle.read(window)
+            finish = chunk.rfind(b"\n")
+            start = chunk.rfind(b"\n", 0, finish) + 1 if finish >= 0 else 0
+            if finish >= 0 and (start or window == end):
+                break
+            if window == end:
+                raise ValueError(f"Incomplete transcript tail: {path}")
+            window = min(end, window * 2)
     event = json.loads(chunk[start:finish])
     stamp = event.get("timestamp", event.get("created_at", fallback))
     stamps = [value for value in (fallback, stamp) if isinstance(value, str) and value]
@@ -507,7 +513,7 @@ class HistoryIndex:
                 build = str(uuid4())
                 try:
                     db.executescript(_SCHEMA)
-                    db.execute("INSERT INTO meta VALUES (1,?,?)", (generation, build))
+                    db.execute("INSERT INTO meta VALUES (2,?,?)", (generation, build))
                     for key in scan_spawn_ids(self.root / "spawns"):
                         with lock_file(
                             HistorySource(kind="spawn", key=key).lock_path(self.root),
@@ -575,18 +581,21 @@ class HistoryIndex:
             db = _connect(self.path, timeout=_remaining(deadline))
             try:
                 meta = db.execute("SELECT * FROM meta").fetchone()
-                if meta is None or meta["version"] != 1 or meta["generation"] != generation:
+                if meta is None or meta["generation"] != generation:
                     raise HistoryCoordinationError(
                         "History baseline generation mismatch; rebuild required"
                     )
-                acknowledged, pending, active = self._drain(db, target, deadline)
-                for marker in acknowledged:
-                    changes.acknowledge(marker)
-                return IndexCoverage(
-                    generation, meta["build"], not pending, tuple(pending), tuple(active)
-                )
+                if meta["version"] == 2:
+                    acknowledged, pending, active = self._drain(db, target, deadline)
+                    for marker in acknowledged:
+                        changes.acknowledge(marker)
+                    return IndexCoverage(
+                        generation, meta["build"], not pending, tuple(pending), tuple(active)
+                    )
             finally:
                 db.close()
+        # Schema changes replace only the disposable projection through normal rebuild.
+        return self.rebuild(timeout=_remaining(deadline))
 
     @contextmanager
     def query(self, *, deadline: float | None = None) -> Generator[sqlite3.Connection]:
@@ -600,6 +609,151 @@ class HistoryIndex:
             db = _connect(self.path, timeout=_remaining(deadline))
             try:
                 yield db
+            finally:
+                db.close()
+
+    def preview_references(self) -> tuple[tuple[str, str | None, str], ...]:
+        recent, _ = self.recent_sessions(limit=2**31 - 1, live_chat_ids=set())
+        references: list[tuple[str, str | None, str]] = []
+        seen: set[str] = set()
+        for row in recent:
+            history_id = str(row.history_id) if row.history_id else None
+            if isinstance(row, SpawnRecord):
+                ref, generation = str(row.history_id), row.session_instance_id or ""
+            else:
+                ref = row.chat_id
+                generation = row.session_instance_id or row.harness_session_id or row.started_at
+            references.append((ref, history_id, generation))
+            if history_id:
+                seen.add(history_id)
+        for record in self.spawns():
+            history_id = str(record.history_id)
+            if history_id not in seen:
+                references.append((history_id, history_id, record.session_instance_id or ""))
+        return tuple(references)
+
+    def preview_count(self) -> int:
+        with self.query() as db:
+            return sum(
+                self._preview_generation_matches(db, row[0])
+                and self._preview_binding_matches(db, row[1], row[2])
+                for row in db.execute(
+                    "SELECT key,history_id,archive_digest FROM previews"
+                ).fetchall()
+            )
+
+    def preview_cache(self, key: str) -> tuple[str, str | None] | None:
+        """Bounded cache-only lookup: never catch up metadata or open source content."""
+        if not self.path.exists():
+            return None
+        with lock_file(self.database_lock, mode="shared", timeout=0.005):
+            db = sqlite3.connect(self.path.resolve().as_uri() + "?mode=ro", uri=True, timeout=0.005)
+            try:
+                meta = db.execute("SELECT version,build FROM meta").fetchone()
+                if meta is None or meta[0] != 2:
+                    return None
+                row = db.execute(
+                    "SELECT history_id,archive_digest,value FROM previews WHERE key=?", (key,)
+                ).fetchone()
+                if (
+                    row is not None
+                    and self._preview_generation_matches(db, key)
+                    and self._preview_binding_matches(db, row[0], row[1])
+                ):
+                    return meta[1], row[2]
+                return meta[1], None
+            finally:
+                db.close()
+
+    @staticmethod
+    def _preview_generation_matches(db: sqlite3.Connection, key: str) -> bool:
+        history_id, generation, ref = json.loads(key)
+        if history_id is not None:
+            return True  # The portable UUID, not a reusable alias, resolves this source.
+        if not generation:
+            return False
+        row = db.execute(
+            "SELECT record_json FROM sessions WHERE chat=? ORDER BY ordinal DESC LIMIT 1", (ref,)
+        ).fetchone()
+        if row is None:
+            return False
+        session = SessionRecord.model_validate_json(row[0])
+        return generation == (
+            session.session_instance_id or session.harness_session_id or session.started_at
+        )
+
+    @staticmethod
+    def _preview_binding_matches(
+        db: sqlite3.Connection, history_id: str | None, archive_digest: str | None
+    ) -> bool:
+        if history_id is None:
+            return archive_digest is None
+        row = db.execute(
+            "SELECT r.archive_id,h.portable_digest FROM records r "
+            "LEFT JOIN archive_heads h ON h.history_id=r.history_id WHERE r.history_id=?",
+            (history_id,),
+        ).fetchone()
+        if row is None:
+            return False
+        return (
+            row[0] is None
+            if archive_digest is None
+            else row[0] is not None and row[1] == archive_digest
+        )
+
+    def selected_archive_digest(self, history_id: str) -> str | None:
+        with self.query() as db:
+            row = db.execute(
+                "SELECT portable_digest FROM archive_heads WHERE history_id=?", (history_id,)
+            ).fetchone()
+            return row[0] if row else None
+
+    def store_preview(
+        self,
+        key: str,
+        *,
+        build: str,
+        previous: str | None,
+        history_id: str | None,
+        archive_digest: str | None,
+        source: HistorySource,
+        prepare_value: Callable[[], str | None],
+    ) -> bool:
+        """Publish bounded derived content only into the generation that requested it."""
+        with (
+            lock_file(HistoryChanges(self.root).mutation_lock, mode="shared", timeout=0.1),
+            lock_file(self.database_lock, mode="shared", timeout=0.1),
+            lock_file(source.lock_path(self.root), timeout=0.1),
+        ):
+            db = _connect(self.path, timeout=0.1)
+            try:
+                db.execute("BEGIN IMMEDIATE")
+                meta = db.execute("SELECT build FROM meta").fetchone()
+                if (
+                    meta is None
+                    or meta[0] != build
+                    or not self._preview_generation_matches(db, key)
+                    or not self._preview_binding_matches(db, history_id, archive_digest)
+                ):
+                    return False
+                old = db.execute(
+                    "SELECT history_id,archive_digest,value FROM previews WHERE key=?", (key,)
+                ).fetchone()
+                if (old[2] if old else None) != previous and (
+                    old is None or self._preview_binding_matches(db, old[0], old[1])
+                ):
+                    return False
+                value = prepare_value()
+                if value is None:
+                    return False
+                if len(value.encode("utf-8")) > 64 * 1024:
+                    raise ValueError("Preview exceeds the bounded cache contract")
+                db.execute(
+                    "INSERT OR REPLACE INTO previews VALUES (?,?,?,?)",
+                    (key, history_id, archive_digest, value),
+                )
+                db.commit()
+                return True
             finally:
                 db.close()
 

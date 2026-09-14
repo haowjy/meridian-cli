@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
-from collections.abc import Iterator
+from collections.abc import Generator, Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, cast
@@ -301,22 +301,33 @@ def _bounded_unparsed_wire(raw_text: str) -> str:
     return raw_text[:prefix_length] + _RAW_UNPARSED_TRUNCATION_MARKER
 
 
-def iter_history_events(path: Path) -> Iterator[dict[str, Any]]:
-    """Yield seq-enveloped event dictionaries from a history JSONL file."""
+@dataclass
+class HistoryCursor:
+    """Complete-line byte extent for an append-only history projection."""
 
+    extent: int = 0
+
+
+def iter_history_events(
+    path: Path, *, cursor: HistoryCursor | None = None, end: int | None = None
+) -> Generator[dict[str, Any]]:
+    """Yield complete history events, optionally resuming a bounded byte snapshot."""
     if not path.exists():
         return
-    with path.open("r", encoding="utf-8", errors="ignore") as handle:
-        for line in handle:
-            if not line.endswith("\n"):
+    cursor = cursor if cursor is not None else HistoryCursor()
+    with path.open("rb") as handle:
+        handle.seek(cursor.extent)
+        while end is None or handle.tell() < end:
+            line = handle.readline(-1 if end is None else end - handle.tell())
+            if not line.endswith(b"\n"):
                 break
-            stripped = line.strip()
+            cursor.extent = handle.tell()
+            stripped = line.decode("utf-8", errors="ignore").strip()
             if not stripped:
                 continue
             try:
                 payload = json.loads(stripped)
             except json.JSONDecodeError:
-                # Crash-only tolerance for truncated/corrupt trailing lines.
                 continue
             if isinstance(payload, dict) and payload.get("record") != "meridian.transcript":
                 yield cast("dict[str, Any]", payload)

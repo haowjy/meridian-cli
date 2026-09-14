@@ -9,7 +9,8 @@ content. A bare JSONL file remains readable without the original harness.
 
 ```sh
 meridian session index status
-meridian session index rebuild
+meridian session index rebuild  # also warms bounded previews
+meridian session index rebuild --metadata-only  # discovery metadata only
 meridian session index rebuild --reset  # damaged dirty-source coordination
 ```
 
@@ -100,3 +101,16 @@ Matches already parsed from loose files survive budget exhaustion. A partial ZIP
 member has not completed its checksum, so its matches are withheld; confirmed
 matches from earlier complete records remain.
 The existing `spawn archive` visibility flag is separate from ZIP retention.
+
+## Browser previews
+
+Selection shows a cached snippet immediately when available, labeled updating
+until freshness is checked. Previews retain at most the latest ten normalized
+messages in the current segment (16 KiB message text, 2 KiB setup); clipping is
+labeled. Active selected sessions refresh every two seconds. This is not a full
+conversation index; full logs and content search still read authoritative content.
+
+A previously verified snippet can remain visible as `cached · archive offline`
+when its selected ZIP is unavailable. Corrupt/unreadable content is labeled
+unavailable, not current. Selecting a row or reading a ZIP never restores it.
+Restore remains an explicit action.

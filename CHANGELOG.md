@@ -12,6 +12,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Show bounded cached browser previews immediately; refresh selected sources without replaying unchanged conversations.
+- Warm previews through explicit index rebuild; support metadata-only rebuild and oversized final events.
+
 - Repair interrupted retirement synchronization before GC or reclaim acknowledgement.
 
 - Verify retention sources under shared locks and clean retired artifacts without blocking history writers.

@@ -140,7 +140,7 @@ For managed Codex primary startup behavior, see [codex-tui-passthrough.md](codex
 | `meridian session log REF` | Read a chat, spawn, harness session, or ZIP-backed history UUID |
 | `meridian session search "query" [REF]` | Search one session or a scoped corpus (`--workspace`, `--global`, `--work`); add `--include-archives` for ZIP content |
 | `meridian session index status` | Inspect/catch up the disposable history index |
-| `meridian session index rebuild [--reset]` | Rebuild from authoritative files and available ZIPs; `--reset` repairs dirty-source coordination |
+| `meridian session index rebuild [--reset] [--metadata-only]` | Rebuild from authoritative files and available ZIPs; `--reset` repairs dirty-source coordination; `--metadata-only` skips preview warming |
 | `meridian session archive REF... --destination PATH` | Plan retention of selected histories; add `--apply` to verify and reclaim loose copies |
 | `meridian session archive --eligible --destination PATH` | Plan retention by last activity (default 30 days); supports `--after-days` and `--apply` |
 | `meridian session archive --list` | Show current/snapshot ZIPs and their registered locations |

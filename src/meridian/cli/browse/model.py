@@ -88,6 +88,7 @@ class BrowseModel:
     preview_chat_id: str | None = None
     preview_lines: tuple[str, ...] = ()
     preview_loading: bool = False
+    preview_status: str = ""
     inline_message: str | None = None
 
     @property

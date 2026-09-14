@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from collections import defaultdict
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable, Generator, Iterator, Mapping
+from contextlib import closing
+from itertools import chain, groupby
 from pathlib import Path
 from typing import cast
 
@@ -51,10 +52,8 @@ class OpenCodeStorageTranscriptProvider:
     def __init__(
         self,
         *,
-        text_from_value: Callable[[object], str],
         iter_json_events: Callable[[Path], Iterator[dict[str, object]]],
     ) -> None:
-        self._text_from_value = text_from_value
         self._iter_json_events = iter_json_events
 
     def supports(self, path: Path) -> bool:
@@ -65,29 +64,23 @@ class OpenCodeStorageTranscriptProvider:
         )
 
     def iter_events(self, path: Path) -> Iterator[dict[str, object]]:
-        db_events = self._load_opencode_db_events(path)
-        if _has_interaction_events(db_events):
-            yield from db_events
-            return
+        database = opencode_db_for_session_file(path)
+        if database is not None:
+            # Probe source usability without retaining a conversation-sized list.
+            # The selected read itself is one SQLite snapshot.
+            with closing(iter_opencode_db_events(session_id=path.stem, db_path=database)) as events:
+                usable = any(_has_interaction_events([event]) for event in events)
+            if usable:
+                yield from iter_opencode_db_events(session_id=path.stem, db_path=database)
+                return
         yield from self._iter_json_events(path)
 
-    def _opencode_db_path_for_session_file(self, path: Path) -> Path | None:
-        if path.parent.name not in {"session_diff", "session"}:
-            return None
-        storage_root = path.parent.parent
-        if storage_root.name != "storage":
-            return None
-        return storage_root.parent / "opencode.db"
 
-    def _load_opencode_db_events(self, path: Path) -> list[dict[str, object]]:
-        session_id = path.stem.strip()
-        if not session_id:
-            return []
-
-        db_path = self._opencode_db_path_for_session_file(path)
-        if db_path is None:
-            return []
-        return list(iter_opencode_db_events(session_id=session_id, db_path=db_path))
+def opencode_db_for_session_file(path: Path) -> Path | None:
+    if path.parent.name not in {"session_diff", "session"}:
+        return None
+    storage_root = path.parent.parent
+    return storage_root.parent / "opencode.db" if storage_root.name == "storage" else None
 
 
 def _load_json_object(value: object) -> dict[str, object] | None:
@@ -245,7 +238,7 @@ def iter_opencode_db_events(
     session_id: str,
     db_path: Path | None = None,
     text_from_value: Callable[[object], str] | None = None,
-) -> Iterator[dict[str, object]]:
+) -> Generator[dict[str, object]]:
     """Yield transcript events for one OpenCode DB session."""
 
     normalized_session_id = session_id.strip()
@@ -256,73 +249,52 @@ def iter_opencode_db_events(
     if not resolved_db_path.is_file():
         return
 
-    try:
-        with sqlite3.connect(
-            f"file:{resolved_db_path}?mode=ro", uri=True, timeout=0.1
-        ) as connection:
-            message_rows = connection.execute(
-                """
-                SELECT id, data, time_created
-                FROM message
-                WHERE session_id = ?
-                ORDER BY time_created ASC, id ASC
-                """,
-                (normalized_session_id,),
-            ).fetchall()
-            part_rows = connection.execute(
-                """
-                SELECT message_id, data, time_created, id
-                FROM part
-                WHERE session_id = ?
-                ORDER BY time_created ASC, id ASC
-                """,
-                (normalized_session_id,),
-            ).fetchall()
-    except (OSError, sqlite3.Error):
-        return
-
-    parts_by_message: dict[str, list[dict[str, object]]] = defaultdict(list)
-    for message_id, part_data, _time_created, _part_id in part_rows:
-        normalized_message_id = str(message_id or "").strip()
-        if not normalized_message_id:
-            continue
-        part_obj = _load_json_object(part_data)
-        if part_obj is not None:
-            parts_by_message[normalized_message_id].append(part_obj)
-
     first_user_system_seen = False
     text_reader = text_from_value or _text_from_value
-    for message_id, message_data, _time_created in message_rows:
-        normalized_message_id = str(message_id or "").strip()
-        if not normalized_message_id:
-            continue
-        message_payload = _load_json_object(message_data)
-        if message_payload is None:
-            continue
-        role = str(message_payload.get("role", "")).strip().lower()
-        if role not in {"assistant", "user", "system"}:
-            continue
-
-        message_parts = parts_by_message.get(normalized_message_id, [])
-        if _is_compaction_message(message_payload):
-            yield {"part": {"type": "compaction"}}
-            yield _compaction_handoff_event(
-                message_payload=message_payload,
-                parts=message_parts,
+    yielded = False
+    try:
+        with closing(
+            sqlite3.connect(resolved_db_path.resolve().as_uri() + "?mode=ro", uri=True, timeout=0.1)
+        ) as connection:
+            connection.execute("BEGIN")
+            rows = connection.execute(
+                "SELECT m.id,m.data,p.data FROM message m LEFT JOIN part p "
+                "ON p.message_id=m.id AND p.session_id=m.session_id "
+                "WHERE m.session_id=? ORDER BY m.time_created,m.id,p.time_created,p.id",
+                (normalized_session_id,),
             )
-            continue
-
-        if role == "user" and not first_user_system_seen:
-            first_user_system_seen = True
-            system = text_reader(message_payload.get("system"))
-            if system:
-                yield {"opencode_db_setup": system}
-
-        yield from _message_events(
-            role=role,
-            parts=message_parts,
-            text_from_value=text_reader,
-        )
+            for _message_id, group in groupby(rows, key=lambda row: row[0]):
+                first = next(group)
+                message_payload = _load_json_object(first[1])
+                if message_payload is None:
+                    continue
+                role = str(message_payload.get("role", "")).strip().lower()
+                if role not in {"assistant", "user", "system"}:
+                    continue
+                message_parts = [
+                    part
+                    for row in chain((first,), group)
+                    if (part := _load_json_object(row[2])) is not None
+                ]
+                yielded = True
+                if _is_compaction_message(message_payload):
+                    yield {"part": {"type": "compaction"}}
+                    yield _compaction_handoff_event(
+                        message_payload=message_payload, parts=message_parts
+                    )
+                    continue
+                if role == "user" and not first_user_system_seen:
+                    first_user_system_seen = True
+                    system = text_reader(message_payload.get("system"))
+                    if system:
+                        yield {"opencode_db_setup": system}
+                yield from _message_events(
+                    role=role, parts=message_parts, text_from_value=text_reader
+                )
+    except (OSError, sqlite3.Error):
+        if yielded:
+            raise  # Do not report an interrupted snapshot as a complete transcript.
+        return
 
 
 def _text_from_value(value: object) -> str:
@@ -339,7 +311,6 @@ def extract_last_assistant_report_from_session_path(path: Path) -> str | None:
     """Return the last assistant message text for one OpenCode session file."""
 
     provider = OpenCodeStorageTranscriptProvider(
-        text_from_value=_text_from_value,
         iter_json_events=_empty_json_events,
     )
     last_assistant: str | None = None

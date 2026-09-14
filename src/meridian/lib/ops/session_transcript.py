@@ -6,7 +6,7 @@ import json
 import time
 import zipfile
 import zlib
-from collections.abc import Iterator
+from collections.abc import Generator, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, NamedTuple
@@ -296,7 +296,7 @@ class TranscriptBudget:
             yield event
 
 
-def iter_source_events(source: TranscriptSource) -> Iterator[dict[str, object]]:
+def iter_source_events(source: TranscriptSource) -> Generator[dict[str, object]]:
     if source.kind == "archive":
         from uuid import UUID
 

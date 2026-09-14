@@ -19,6 +19,7 @@ class SessionIndexInput(BaseModel):
     project_root: str | None = None
     action: Literal["status", "rebuild"] = "status"
     reset: bool = False
+    metadata_only: bool = False
 
 
 class SessionIndexOutput(BaseModel):
@@ -26,9 +27,17 @@ class SessionIndexOutput(BaseModel):
     baseline: str
     coverage: dict[str, object] | None = None
     pending_sources: int = 0
+    preview_cached: int = 0
+    preview_unavailable: int | None = None
 
     def format_text(self, ctx: object = None) -> str:
-        return f"History index: {self.baseline}; pending sources: {self.pending_sources}"
+        text = (
+            f"History index: {self.baseline}; pending sources: {self.pending_sources}; "
+            f"cached previews: {self.preview_cached}"
+        )
+        if self.preview_unavailable is not None:
+            text += f"; unavailable in warm pass: {self.preview_unavailable}"
+        return text
 
 
 def session_index_sync(payload: SessionIndexInput) -> SessionIndexOutput:
@@ -50,11 +59,24 @@ def session_index_sync(payload: SessionIndexInput) -> SessionIndexOutput:
     coverage = (
         index.rebuild(reset=payload.reset) if payload.action == "rebuild" else index.catch_up()
     )
+    unavailable: int | None = None
+    if payload.action == "rebuild" and not payload.metadata_only:
+        from meridian.lib.ops.session_preview import PreviewIdentity, SessionPreview
+
+        unavailable = 0
+        reader = SessionPreview(str(roots.project_root))
+        for ref, history_id, generation in index.preview_references():
+            identity = PreviewIdentity(ref, history_id, generation)
+            reader.refresh(identity, lambda: True)
+            if reader.peek(identity) is None:
+                unavailable += 1
     _, pending = HistoryChanges(roots.runtime_root).capture()
     return SessionIndexOutput(
         baseline="complete" if coverage.complete else "incomplete",
         coverage=asdict(coverage),
         pending_sources=len(pending),
+        preview_cached=index.preview_count(),
+        preview_unavailable=unavailable,
     )
 
 

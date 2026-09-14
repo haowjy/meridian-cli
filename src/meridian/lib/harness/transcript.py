@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Iterable, Iterator, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 from typing import NamedTuple, Protocol, cast
 
@@ -516,7 +517,6 @@ class HistoryJsonlTranscriptProvider(TranscriptProvider):
 _TRANSCRIPT_PROVIDERS: tuple[TranscriptProvider, ...] = (
     HistoryJsonlTranscriptProvider(),
     OpenCodeStorageTranscriptProvider(
-        text_from_value=text_from_value,
         iter_json_events=_iter_json_events,
     ),
     JsonlTranscriptProvider(),
@@ -630,6 +630,55 @@ def _extract_opencode_follow_on_handoff(
     return _join_message_content(extracted_messages)
 
 
+class NormalizedTranscriptEvent(NamedTuple):
+    messages: list[TranscriptMessage]
+    boundary: bool = False
+    consumed_setup: bool = False
+
+
+@dataclass
+class TranscriptNormalizer:
+    """Canonical resumable setup/compaction interpretation, independent of accumulation."""
+
+    setup: str | None = None
+    pending_summary: str | None = None
+
+    def feed(
+        self, event: dict[str, object], parser: TranscriptEventParser
+    ) -> NormalizedTranscriptEvent:
+        normalized_event = _unwrap_seq_envelope(event)
+        messages, parser_boundary = parser.parse(event)
+        opencode_boundary = _is_opencode_compaction_boundary(normalized_event)
+        claude_boundary = _is_claude_compaction_boundary(normalized_event)
+        if parser_boundary or opencode_boundary:
+            self.setup = (
+                _extract_claude_boundary_handoff(normalized_event) if claude_boundary else None
+            )
+            self.pending_summary = (
+                ("claude" if claude_boundary else "opencode" if opencode_boundary else None)
+                if self.setup is None
+                else None
+            )
+            return NormalizedTranscriptEvent([], boundary=True)
+
+        if self.pending_summary is not None:
+            setup = (
+                _extract_claude_follow_on_handoff(normalized_event, messages)
+                if self.pending_summary == "claude"
+                else _extract_opencode_follow_on_handoff(normalized_event, messages)
+            )
+            self.pending_summary = None
+            if setup:
+                self.setup = setup
+                return NormalizedTranscriptEvent([], consumed_setup=True)
+
+        if self.setup is None:
+            self.setup = _extract_claude_system_prologue(
+                normalized_event
+            ) or _extract_opencode_db_system_prologue(normalized_event)
+        return NormalizedTranscriptEvent(messages)
+
+
 def _parse_events_with_prologues(
     events: Iterable[dict[str, object]],
     *,
@@ -637,65 +686,21 @@ def _parse_events_with_prologues(
 ) -> TranscriptParseResult:
     segments: list[list[TranscriptMessage]] = [[]]
     segment_setups: list[str | None] = [None]
-    total_compactions = 0
     consumed_setup_event_indexes: list[int] = []
-    pending_follow_on_summary: tuple[int, str] | None = None
-
+    normalizer = TranscriptNormalizer()
     for event_index, event in enumerate(events):
-        normalized_event = _unwrap_seq_envelope(event)
-        extracted_messages, parser_boundary = parser.parse(event)
-
-        is_opencode_boundary = _is_opencode_compaction_boundary(normalized_event)
-        is_claude_boundary = _is_claude_compaction_boundary(normalized_event)
-        boundary = parser_boundary or is_opencode_boundary
-
-        if boundary:
-            total_compactions += 1
+        normalized = normalizer.feed(event, parser)
+        if normalized.boundary:
             segments.append([])
-            handoff = (
-                _extract_claude_boundary_handoff(normalized_event) if is_claude_boundary else None
-            )
-            segment_setups.append(handoff)
-            next_segment_index = len(segments) - 1
-            if handoff is None:
-                if is_claude_boundary:
-                    pending_follow_on_summary = (next_segment_index, "claude")
-                elif is_opencode_boundary:
-                    pending_follow_on_summary = (next_segment_index, "opencode")
-                else:
-                    pending_follow_on_summary = None
-            else:
-                pending_follow_on_summary = None
-            continue
-
-        if pending_follow_on_summary is not None:
-            segment_index, source = pending_follow_on_summary
-            setup_text: str | None = None
-            if source == "claude":
-                setup_text = _extract_claude_follow_on_handoff(normalized_event, extracted_messages)
-            elif source == "opencode":
-                setup_text = _extract_opencode_follow_on_handoff(
-                    normalized_event, extracted_messages
-                )
-            pending_follow_on_summary = None
-            if setup_text:
-                segment_setups[segment_index] = setup_text
-                consumed_setup_event_indexes.append(event_index)
-                continue
-
-        if segment_setups[-1] is None:
-            prologue = _extract_claude_system_prologue(
-                normalized_event
-            ) or _extract_opencode_db_system_prologue(normalized_event)
-            if prologue:
-                segment_setups[-1] = prologue
-
-        if extracted_messages:
-            segments[-1].extend(extracted_messages)
-
+            segment_setups.append(normalizer.setup)
+        else:
+            segment_setups[-1] = normalizer.setup
+            segments[-1].extend(normalized.messages)
+        if normalized.consumed_setup:
+            consumed_setup_event_indexes.append(event_index)
     return TranscriptParseResult(
         segments=segments,
-        total_compactions=total_compactions,
+        total_compactions=len(segments) - 1,
         segment_setups=tuple(segment_setups),
         consumed_setup_event_indexes=tuple(consumed_setup_event_indexes),
     )
@@ -773,3 +778,28 @@ __all__ = [
     "parse_transcript_file_with_prologues",
     "text_from_value",
 ]
+
+
+def transcript_revision(path: Path | None) -> tuple[tuple[int, ...] | None, ...]:
+    """Cheap provider freshness witness; OpenCode storage may be backed by a mutable DB."""
+    from meridian.lib.harness.opencode_transcript import (
+        opencode_db_for_session_file,
+        resolve_opencode_db_path,
+    )
+
+    paths = [] if path is None else [path]
+    if path is None or isinstance(_provider_for_path(path), OpenCodeStorageTranscriptProvider):
+        database = opencode_db_for_session_file(path) if path else resolve_opencode_db_path()
+        assert database is not None
+        paths.extend((database, Path(str(database) + "-wal")))
+    revisions: list[tuple[int, ...] | None] = []
+    for source in paths:
+        try:
+            info = source.stat()
+        except FileNotFoundError:
+            revisions.append(None)
+        else:
+            revisions.append(
+                (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
+            )
+    return tuple(revisions)

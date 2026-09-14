@@ -440,6 +440,7 @@ def _session_index(
     emit: Emitter,
     action: str = "status",
     reset: Annotated[bool, Parameter(name="--reset")] = False,
+    metadata_only: Annotated[bool, Parameter(name="--metadata-only")] = False,
 ) -> None:
     emit(
         session_index_sync(
@@ -448,6 +449,7 @@ def _session_index(
                     "project_root": cli_project_root_posix(),
                     "action": action,
                     "reset": reset,
+                    "metadata_only": metadata_only,
                 }
             )
         )

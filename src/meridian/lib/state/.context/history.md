@@ -1,7 +1,7 @@
 # Portable history and derived discovery
 
 Files and immutable ZIPs own history. SQLite and dirty markers contain no unique
-domain facts. `history_index.py` alone projects sources, acknowledges markers,
+domain facts. `history_index.py` alone projects metadata sources, acknowledges markers,
 and selects the current history digest. Archive byte mechanics alone resolve
 physical locations, remount hints and equivalent-copy verification. Lifecycle/control reads remain direct.
 
@@ -86,3 +86,25 @@ never become new portable metadata. Existing-copy restore hashes under the share
 root gate and source lock, then rechecks POSIX inode/change-time and membership
 witnesses plus exact session metadata under the short exclusive gate. Witnesses
 only detect changes after checksum verification; they do not replace checksums.
+
+## Bounded preview projection
+
+The same database holds disposable preview checkpoints separately from metadata.
+`ops/session_preview.py` selects sources and feeds the shared harness normalizer
+through a bounded accumulator; no independent transcript interpretation or FTS.
+Metadata catch-up/automatic rebuild do not warm bodies. Explicit rebuild warms
+through this path unless `--metadata-only`; metadata activity reads only the last
+complete event (which can itself be large), not a transcript projection.
+
+Selection reads eligible cache rows without catch-up or source access. Refresh
+parses outside locks, then publishes through root/database/source synchronization
+with build, generation, selected digest and source checks. Cached archived content
+must have passed required-member byte verification for that selected snapshot.
+Offline cache never substitutes a different snapshot; reading does not restore.
+
+Managed append-only streams reuse complete-line checkpoints; changed native files
+and OpenCode selected-session database snapshots reparse. Same-size edits, new
+inodes and truncation invalidate checkpoints. Tail witnesses assume controlled
+append-only growth, not arbitrary prefix edits plus append. External edits require
+explicit rebuild. The browser exposes stale/updating, unavailable/offline and
+clipping status, and refreshes an active selected row every two seconds.
