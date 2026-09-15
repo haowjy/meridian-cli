@@ -872,10 +872,14 @@ class HistoryIndex:
             references.append((ref, history_id, generation))
             if history_id:
                 seen.add(history_id)
-        for record in self.spawns():
-            history_id = str(record.history_id)
-            if history_id not in seen:
-                references.append((history_id, history_id, record.session_instance_id or ""))
+        with self.query() as db:
+            # Warming includes selected archived children, not only loose spawns
+            # and the primary-session browser's rows.
+            for history_id, generation in db.execute(
+                "SELECT history_id,json_extract(record_json,'$.session_instance_id') FROM records"
+            ):
+                if history_id not in seen:
+                    references.append((history_id, history_id, generation or ""))
         return tuple(references)
 
     def preview_count(self, *, preview_version: int, deadline: float | None = None) -> int:

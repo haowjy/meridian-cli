@@ -228,3 +228,49 @@ def test_pi_preview_preserves_branch_context_after_append(tmp_path: Path, monkey
     assert resumed is not None and resumed.state == "current"
     assert resumed.lines.count("first question") == resumed.lines.count("branch answer") == 1
     assert sum("parent changed" in line for line in resumed.lines) == 1
+
+
+def test_rebuild_warms_archived_children_and_counts_unsupported(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setenv("MERIDIAN_HOME", str(tmp_path / "home"))
+    project = tmp_path / "repo"
+    project.mkdir()
+    root = resolve_project_runtime_root_for_write(project)
+    keys: list[str] = []
+    for supported in (True, False):
+        key = spawn_store.start_spawn(
+            root, chat_id="c1", prompt="question", harness="pi", model="test", agent="coder"
+        )
+        keys.append(key)
+        spawn_store.finalize_spawn(root, key, status="succeeded", exit_code=0, origin="runner")
+        ingest_portable_history(
+            root,
+            key,
+            iter(
+                [
+                    {"type": "session", "version": 3, "id": "s", "cwd": str(project)},
+                    {
+                        "type": "message" if supported else "future_message",
+                        "id": "a",
+                        "parentId": None,
+                        "message": {"role": "assistant", "content": "archive warm content"},
+                    },
+                ]
+            ),
+        )
+    archived = archive_history(
+        root, destination=tmp_path / "archives", refs=tuple(keys), apply=True
+    )
+    assert len(archived.reclaimed) == 2
+    metadata = session_index_sync(
+        SessionIndexInput(
+            project_root=str(project),
+            action="rebuild",
+            metadata_only=True,
+        )
+    )
+    assert metadata.preview_cached == 0
+    warmed = session_index_sync(SessionIndexInput(project_root=str(project), action="rebuild"))
+    assert warmed.preview_cached == 1
+    assert warmed.preview_unavailable == 1
