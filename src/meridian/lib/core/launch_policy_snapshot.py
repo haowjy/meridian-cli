@@ -33,6 +33,7 @@ class LaunchPolicySnapshot(BaseModel):
     model_selection_requested_token: str | None = None
     model_selection_selected_token: str | None = None
     model_selection_canonical_id: str | None = None
+    model_selection_provider_constraint: str | None = None
     model_selection_harness_provenance: str | None = None
     model_selection_harness_model_id: str | None = None
     field_provenance: dict[str, str] = Field(default_factory=dict)

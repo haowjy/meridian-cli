@@ -62,7 +62,9 @@ def test_selection_order_and_dedup_do_not_rewrite_launch_history(tmp_path: Path)
         assert selected(tmp_path, "c1", generation, "p2", "astra")
         assert not selected(tmp_path, "c1", generation, "p1", "sol", attempt="retry")
         assert current(tmp_path) == "astra"
-        assert selected(tmp_path, "c1", generation, "p1", "sol", native="other", attempt="fresh-retry")
+        assert selected(
+            tmp_path, "c1", generation, "p1", "sol", native="other", attempt="fresh-retry"
+        )
         assert current(tmp_path, "other") == "sol"
         assert store.get_model_selection(tmp_path, "claude", "thread") is None
         assert store.get_session_record(tmp_path, "c1") == before

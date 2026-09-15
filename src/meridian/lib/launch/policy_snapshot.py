@@ -42,6 +42,7 @@ class ReplayedModelSelection:
     canonical_model_id: str
     harness_provenance: str
     harness_model_id: str | None = None
+    provider_constraint: str | None = None
 
 
 @dataclass(frozen=True)
@@ -113,6 +114,7 @@ def build_launch_policy_snapshot(
             else request.model_selection_requested_token or (request.model or "").strip() or None
         ),
         model_selection_canonical_id=request.model_selection_canonical_id,
+        model_selection_provider_constraint=request.model_selection_provider_constraint,
         model_selection_harness_provenance=request.model_selection_harness_provenance,
         model_selection_harness_model_id=(
             model_selection.harness_model_id if model_selection is not None else None
@@ -213,6 +215,7 @@ def _snapshot_model_selection(
         canonical_model_id=snapshot.model_selection_canonical_id or snapshot_model,
         harness_provenance=snapshot.model_selection_harness_provenance or "snapshot",
         harness_model_id=snapshot.model_selection_harness_model_id,
+        provider_constraint=snapshot.model_selection_provider_constraint,
     )
 
 

@@ -3,11 +3,19 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Protocol
+from pathlib import Path
+from typing import Literal, Protocol
 
 from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
 from meridian.lib.launch.policy_snapshot import managed_model_override_from_persisted_model
 from meridian.lib.launch.request import SessionRequest
+from meridian.lib.state.session_store import get_model_selection
+
+MODEL_OVERRIDE_WARNING = (
+    "Continuing with an explicit model override. Resumed context may need processing "
+    "without cached input, making the first response slower and potentially much more "
+    "expensive for a long conversation, or consuming more of your plan allowance."
+)
 
 
 def _present(value: str | None) -> str | None:
@@ -186,6 +194,8 @@ def build_continue_replay_contract(
     requested_agent: str | None = None,
     agent_opt_out: bool = False,
     fork: bool = False,
+    requested_model_override: str | None = None,
+    runtime_root: Path | None = None,
 ) -> ContinueReplayContract:
     """Build the normalized exact-continue contract from a resolved source."""
 
@@ -212,6 +222,29 @@ def build_continue_replay_contract(
         skills = ()
         passthrough_args = ()
 
+    recorded = (
+        get_model_selection(runtime_root, replay_harness, source.harness_session_id)
+        if runtime_root is not None and source.harness_session_id is not None and not fork
+        else None
+    )
+    provider_constraint = None
+    literal_model = False
+    selection_source: Literal[
+        "explicit_override", "recorded_selection", "initial_launch", "unknown"
+    ] = "initial_launch"
+    if requested_model_override is not None:
+        model = requested_model_override
+        selection_source = "explicit_override"
+    elif recorded is not None:
+        model = recorded.canonical_model_id or recorded.selected_token
+        provider_constraint = recorded.provider_constraint
+        literal_model = recorded.model_mode is not None
+        selection_source = "recorded_selection"
+    elif snapshot is not None:
+        model = snapshot.model_selection_canonical_id or model
+        provider_constraint = snapshot.model_selection_provider_constraint
+        literal_model = snapshot.model_selection_canonical_id is not None or model is None
+
     session = SessionRequest(
         requested_harness_session_id=source.harness_session_id,
         continue_harness=replay_harness,
@@ -224,6 +257,14 @@ def build_continue_replay_contract(
         source_execution_cwd=source.source_execution_cwd,
         source_claude_config_dir=source.source_claude_config_dir,
         source_pi_session_dir=source.source_pi_session_dir,
+        requested_model_override=requested_model_override,
+        continue_model_literal=literal_model,
+        continue_provider_constraint=provider_constraint,
+        continue_selected_token=(
+            recorded.selected_token if recorded is not None else
+            snapshot.model_selection_selected_token if snapshot is not None else None
+        ),
+        continue_selection_source=selection_source,
     )
 
     return ContinueReplayContract(

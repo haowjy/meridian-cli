@@ -6,6 +6,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- Primary continuation accepts explicit model overrides with a cache/cost warning; later resumes use the recorded selection and revalidate current target restrictions.
+
 - Session-log model-selection records preserve conversation-scoped intent, startup-attempt identity, and retry dedup without rewriting launch history.
 
 ### Changed

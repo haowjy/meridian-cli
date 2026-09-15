@@ -48,6 +48,7 @@ class BundleRequest:
     agent: str | None
     project_root: Path
     model_override: str | None = None
+    literal_model: bool = False
     harness_override: str | None = None
     excluded_harnesses: tuple[HarnessId, ...] = ()
     effort_override: str | None = None
@@ -70,6 +71,7 @@ class _BundleResult:
     selection_report: dict[str, object]
     model: str
     model_token: str
+    provider_constraint: str | None
     harness: HarnessId
     harness_model: str | None
     execution_policy: ResolvedExecutionPolicy
@@ -224,8 +226,10 @@ def _build_bundle_command(request: BundleRequest) -> list[str]:
 
     if request.agent:
         command.extend(["--agent", request.agent])
-    if request.model_override:
+    if request.model_override is not None:
         command.extend(["--model", request.model_override])
+    if request.literal_model:
+        command.append("--literal-model")
     if request.harness_override:
         command.extend(["--harness", request.harness_override])
     for harness in request.excluded_harnesses:
@@ -376,6 +380,7 @@ def _parse_bundle_payload(
         selection_report=report.model_dump(mode="json"),
         model=model,
         model_token=model_token,
+        provider_constraint=_normalize_str(routing.get("provider_constraint")) or None,
         harness=harness,
         harness_model=harness_model,
         execution_policy=execution_policy,

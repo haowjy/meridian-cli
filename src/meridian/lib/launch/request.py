@@ -1,6 +1,7 @@
 """Raw launch request DTOs persisted across prepare/execute boundaries."""
 
 from enum import StrEnum
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -50,6 +51,13 @@ class SessionRequest(BaseModel):
     continue_source_tracked: bool = False
     continue_source_ref: str | None = None
     primary_session_mode: str | None = None
+    requested_model_override: str | None = None
+    continue_model_literal: bool = False
+    continue_provider_constraint: str | None = None
+    continue_selected_token: str | None = None
+    continue_selection_source: Literal[
+        "explicit_override", "recorded_selection", "initial_launch", "unknown"
+    ] = "initial_launch"
 
 
 def is_exact_continue_session(session: SessionRequest) -> bool:
@@ -127,6 +135,7 @@ class SpawnRequest(BaseModel):
     skill_paths: tuple[str, ...] = ()
     model_selection_requested_token: str | None = None
     model_selection_canonical_id: str | None = None
+    model_selection_provider_constraint: str | None = None
     model_selection_harness_provenance: str | None = None
     matched_policy_rule: str | None = None
     selection_report: dict[str, object] | None = None

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import shlex
+import sys
 from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict
@@ -16,6 +17,7 @@ from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.launch import LaunchRequest, SessionMode, launch_primary
 from meridian.lib.launch.composition import PromptDocument
 from meridian.lib.launch.continue_replay import (
+    MODEL_OVERRIDE_WARNING,
     build_continue_replay_contract,
     continue_replay_source_from_reference,
 )
@@ -23,6 +25,7 @@ from meridian.lib.launch.request import SessionRequest
 from meridian.lib.launch.resolve import resolve_agent_launch_input
 from meridian.lib.ops.reference import ResolvedSessionReference, resolve_session_reference
 from meridian.lib.ops.spawn.models import normalize_goal
+from meridian.lib.state.paths import resolve_project_runtime_root
 
 
 def _headless_claude_startup_warning(project_root: Path) -> str | None:
@@ -109,7 +112,7 @@ def run_primary_launch(
     fork_ref: str | None,
     fork_fresh_ref: str | None,
     from_ref: str | None = None,
-    model: str,
+    model: str | None,
     harness: str | None,
     agent: str | None,
     work: str,
@@ -130,6 +133,12 @@ def run_primary_launch(
     supplemental_prompt_documents: tuple[PromptDocument, ...] = (),
     include_bootstrap_documents: bool = False,
 ) -> PrimaryLaunchOutput:
+    if continue_ref is not None and model is not None:
+        print(f"warning: {MODEL_OVERRIDE_WARNING}", file=sys.stderr)
+        if not model.strip():
+            raise ValueError("--model requires a non-empty model id or alias.")
+    model = model or ""
+
     def _result_message(*, exit_code: int) -> str:
         if dry_run:
             if resume_target is not None:
@@ -206,6 +215,7 @@ def run_primary_launch(
     continue_passthrough_args: tuple[str, ...] = ()
     output_forked_from: str | None = None
     session_mode = SessionMode.FRESH
+    continue_session = SessionRequest()
     explicit_harness = harness.strip() if harness is not None and harness.strip() else None
     agent_launch = resolve_agent_launch_input(agent)
     requested_model: str | None = model
@@ -215,8 +225,6 @@ def run_primary_launch(
     requested_work_id = work.strip() or None
     launch_task_dir = normalized_task_dir
     if resume_target is not None:
-        if model.strip():
-            raise ValueError("Cannot combine --continue with --model.")
         if skills:
             raise ValueError("Cannot combine --continue with --skills.")
         if passthrough:
@@ -242,7 +250,10 @@ def run_primary_launch(
             explicit_harness=explicit_harness,
             requested_agent=agent_launch.agent,
             agent_opt_out=agent_launch.agent_opt_out,
+            requested_model_override=model.strip() or None,
+            runtime_root=resolve_project_runtime_root(project_root),
         )
+        continue_session = continue_contract.session
         continue_harness_session_id = continue_contract.session.requested_harness_session_id
         continue_chat_id = continue_contract.session.continue_chat_id
         continue_harness = continue_contract.harness
@@ -379,6 +390,11 @@ def run_primary_launch(
                 source_pi_session_dir=source_pi_session_dir,
                 continue_source_tracked=continue_source_tracked,
                 continue_source_ref=continue_source_ref,
+                requested_model_override=continue_session.requested_model_override,
+                continue_model_literal=continue_session.continue_model_literal,
+                continue_provider_constraint=continue_session.continue_provider_constraint,
+                continue_selected_token=continue_session.continue_selected_token,
+                continue_selection_source=continue_session.continue_selection_source,
             ),
         ),
         harness_registry=harness_registry,

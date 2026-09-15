@@ -493,3 +493,15 @@ exception paths. Do not replicate this logic inline.
 
 - `../../ops/.context/CONTEXT.md` — how `ops/spawn/` drives this layer
 - `../../harness/` — adapters this layer calls into for `project_content()`, `preflight()`, `build_launch_argv()`
+
+### Primary continuation model selection
+
+Exact primary continuation revalidates its model and pinned harness through Mars
+before replaying non-routing policy. Explicit model input resolves normally; recorded
+canonical IDs use literal pins, including deliberate harness-default mode. Invocation
+snapshots update routing fields without rewriting their source snapshots. The primary
+accepted-running callback appends selection intent; its captured generation/startup
+attempt binds delayed native-ID observations. This records intent, not model execution.
+
+Primary adapters declare named-model resume support. Unsupported named resumes fail
+before native startup; a named selection never falls back to an empty model.
