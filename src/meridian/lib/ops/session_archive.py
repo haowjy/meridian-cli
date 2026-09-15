@@ -518,8 +518,8 @@ def materialize_native_history(project_root: Path, root: Path, spawn_id: str) ->
     ingest_portable_history(root, spawn_id, iter_source_events(source))
 
 
-def session_stop_maintenance(project_root: Path, chat_id: str) -> str | None:
-    """Finite optional policy after stop; no daemon, and no state-to-ops callback."""
+def session_stop_maintenance(project_root: Path, primary_spawn_id: str) -> str | None:
+    """Maintain the completed aggregate; latest chat may already name another run."""
     import time
 
     from meridian.lib.platform.locking import try_lock_file
@@ -529,9 +529,7 @@ def session_stop_maintenance(project_root: Path, chat_id: str) -> str | None:
     if roots is None:
         return None
     try:
-        session = session_store.get_session_record(roots.runtime_root, chat_id)
-        if session is not None and session.spawn_id:
-            materialize_native_history(project_root, roots.runtime_root, session.spawn_id)
+        materialize_native_history(project_root, roots.runtime_root, primary_spawn_id)
         config = load_config(project_root).history.archive
         if not config.automatic:
             return None

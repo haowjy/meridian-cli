@@ -246,9 +246,19 @@ def test_primary_continue_does_not_inherit_ambient_work(
         )
 
     monkeypatch.setattr("meridian.lib.launch.process.run_harness_process", run_harness_process)
+    maintained: list[str] = []
+
+    def maintain_history(project: Path, primary_spawn_id: str) -> None:
+        assert project == project_root
+        maintained.append(primary_spawn_id)
+
+    monkeypatch.setattr(
+        "meridian.lib.ops.session_archive.session_stop_maintenance", maintain_history
+    )
 
     _run_primary_continue(project_root, "p45")
 
+    assert maintained == ["p45-continue"]
     context = contexts[0]
     assert context.work_id is None
     assert context.binding.work_id is None

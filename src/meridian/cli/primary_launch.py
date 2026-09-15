@@ -408,10 +408,10 @@ def run_primary_launch(
 
     continue_chat_id = getattr(launch_result, "continue_chat_id", None)
     history_warning = None
-    if not dry_run and continue_chat_id:
+    if not dry_run and launch_result.primary_spawn_id:
         from meridian.lib.ops.session_archive import session_stop_maintenance
 
-        history_warning = session_stop_maintenance(project_root, continue_chat_id)
+        history_warning = session_stop_maintenance(project_root, launch_result.primary_spawn_id)
     return PrimaryLaunchOutput(
         message=_result_message(exit_code=launch_result.exit_code),
         exit_code=launch_result.exit_code,

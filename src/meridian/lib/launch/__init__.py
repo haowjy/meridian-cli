@@ -250,6 +250,7 @@ def launch_primary(
         exit_code=outcome.exit_code,
         continue_ref=continue_ref,
         continue_chat_id=outcome.chat_id,
+        primary_spawn_id=outcome.primary_spawn_id,
         warning=warning,
     )
 

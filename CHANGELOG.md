@@ -15,6 +15,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Read native Pi messages, compactions and branch annotations across logs, search, exports and previews.
 - Invalidate old parser previews and counts; report unsupported Pi rendering instead of empty success.
 - Keep incomplete Pi rendering visible in archived previews; diagnose malformed text and tool content.
+- Bind post-stop history capture to the completed spawn, even after its chat starts another run.
 
 - Give cold history indexes 15 seconds; remember failed initialization and recover through manual rebuild.
 - Reuse concurrent index builds; keep status cache-only and preserve warm search deadlines.

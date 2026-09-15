@@ -80,6 +80,7 @@ class LaunchResult(BaseModel):
     exit_code: int
     continue_ref: str | None = None
     continue_chat_id: str | None = None
+    primary_spawn_id: str | None = None
     warning: str | None = None
     terminal_surface_mode: str | None = None
 
