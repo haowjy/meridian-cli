@@ -84,17 +84,18 @@ agents (`Explore`, `Plan`, `General-purpose` / `general-purpose`) stay denied.
 
 Use `[spawn].deny_headless_harnesses` when a project should not launch
 headless subagents through specific harnesses. This applies to
-`meridian spawn`, including `meridian spawn -a <agent>` after the agent/model
-resolves to a harness.
+`meridian spawn`, including `meridian spawn -a <agent>`. Exclusions reach Mars
+before route selection; excluded harnesses are not auth-probed.
 
 ```toml
 [spawn]
 deny_headless_harnesses = ["claude"]
 ```
 
-With that setting, a Claude primary session can still run, but headless Claude
-spawns fail before launch. To completely avoid Claude-side delegation, combine
-it with no Claude `agent_copy`:
+With that setting, a Claude primary session can still run. Spawns try permitted
+routes and declared model backups instead of selecting Claude and rejecting it
+afterward. An explicit Claude harness pin fails; it cannot override the exclusion.
+To completely avoid Claude-side delegation, combine it with no Claude `agent_copy`:
 
 ```toml
 [settings.meridian.agent_copy]

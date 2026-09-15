@@ -47,6 +47,7 @@ class BundleRequest:
     project_root: Path
     model_override: str | None = None
     harness_override: str | None = None
+    excluded_harnesses: tuple[HarnessId, ...] = ()
     effort_override: str | None = None
     approval_override: str | None = None
     sandbox_override: str | None = None
@@ -224,6 +225,8 @@ def _build_bundle_command(request: BundleRequest) -> list[str]:
         command.extend(["--model", request.model_override])
     if request.harness_override:
         command.extend(["--harness", request.harness_override])
+    for harness in request.excluded_harnesses:
+        command.extend(["--exclude-harness", harness.value])
     if request.effort_override:
         command.extend(["--effort", request.effort_override])
     if request.approval_override:

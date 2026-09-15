@@ -453,6 +453,11 @@ def _resolve_policy_from_bundle(surface: SurfacePolicyInput) -> ResolvedLaunchPo
         project_root=project_root,
         model_override=bundle_model_override,
         harness_override=bundle_harness_override,
+        excluded_harnesses=(
+            tuple(HarnessId(name) for name in dict.fromkeys(surface.config.deny_headless_harnesses))
+            if surface.surface == LaunchCompositionSurface.SPAWN_PREPARE
+            else ()
+        ),
         effort_override=explicit_user_overrides.effort,
         approval_override=explicit_user_overrides.approval,
         sandbox_override=explicit_user_overrides.sandbox,

@@ -6,6 +6,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Pass headless harness exclusions to Mars before selection; keep primary routing and the final execution guard unchanged.
 - Fail durable JSONL appends when tail repair fails instead of silently losing the new event.
 
 ## [0.4.5] - 2026-09-12

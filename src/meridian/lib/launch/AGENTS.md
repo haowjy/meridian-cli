@@ -112,6 +112,9 @@ Three concentric layers, each defined by function scope:
 | `DIRECT` | No | Tests and truly pre-resolved `SpawnRequest` only |
 
 `DIRECT` does not mean “pass model to Mars”; it means skip policy and trust the request.
+`SPAWN_PREPARE` passes effective `deny_headless_harnesses` to Mars as caller
+exclusions before selection; `PRIMARY` does not. The final headless guard remains
+in place and does not select a replacement route.
 Production spawn paths that need Mars must use `build_spawn_mars_runtime` in `launch/plan.py`
 (`SPAWN_PREPARE` + config snapshot). Spawn uses **prepare-once / bind-twice**: `compose_spawn_launch_surface`
 once per operation, then `bind_spawn_launch_context` for preview (dry-run `REQUIRED` argv) and execute
