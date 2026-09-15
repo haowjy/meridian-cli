@@ -83,7 +83,7 @@ class _Snapshot(BaseModel):
     inode: int = 0
     tail: str = ""
     archive_digest: str | None = None
-    complete: bool = True
+    complete: bool = True  # Source read/consistency; rendering support is separate.
     source: str = ""
 
     def view(
@@ -268,7 +268,7 @@ class SessionPreview:
                 if not current() or not generation_current():
                     return None
                 now = tuple(_signature(source) for source in target.sources)
-                complete = now == signatures and published_snapshot.preview.rendering_reason is None
+                complete = now == signatures
                 if chosen.kind == "archive" and self.roots:
                     selected = catalog_heads(read_receipts(self.roots.runtime_root))
                     if selected.get(identity.history_id or "") != published_snapshot.archive_digest:

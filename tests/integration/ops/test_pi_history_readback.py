@@ -6,6 +6,7 @@ import json
 import sqlite3
 from pathlib import Path
 
+from meridian.lib.harness.connections.base import RawHarnessEvent
 from meridian.lib.harness.transcript_preview import TRANSCRIPT_PREVIEW_VERSION
 from meridian.lib.ops.session_archive import archive_history
 from meridian.lib.ops.session_export import SessionExportInput, session_export_sync
@@ -14,7 +15,7 @@ from meridian.lib.ops.session_log import SessionLogInput, session_log_sync
 from meridian.lib.ops.session_preview import PreviewIdentity, SessionPreview
 from meridian.lib.ops.session_search import SessionSearchInput, session_search_sync
 from meridian.lib.state import spawn_store
-from meridian.lib.state.history import ingest_portable_history
+from meridian.lib.state.history import HarnessHistoryWriter, ingest_portable_history
 from meridian.lib.state.history_index import HistoryIndex
 from meridian.lib.state.paths import resolve_project_runtime_root_for_write
 
@@ -149,3 +150,81 @@ def test_unsupported_pi_material_surfaces_incomplete_rendering(tmp_path: Path) -
     assert not search.complete and search.errors
     export = session_export_sync(SessionExportInput(file_path=str(path)))
     assert "rendering is incomplete" in export.markdown
+
+
+def test_unsupported_rendering_stays_visible_after_archiving(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("MERIDIAN_HOME", str(tmp_path / "home"))
+    project = tmp_path / "repo"
+    project.mkdir()
+    root = resolve_project_runtime_root_for_write(project)
+    key = spawn_store.start_spawn(
+        root, chat_id="c1", prompt="question", harness="pi", model="test", agent="coder"
+    )
+    spawn_store.finalize_spawn(root, key, status="succeeded", exit_code=0, origin="runner")
+    ingest_portable_history(
+        root,
+        key,
+        iter(
+            [
+                {"type": "session", "id": "s", "version": 3, "cwd": str(project)},
+                {"type": "future_message", "id": "a", "parentId": None},
+            ]
+        ),
+    )
+    record = spawn_store.get_spawn(root, key)
+    assert record is not None
+    identity = PreviewIdentity(key, str(record.history_id))
+    reader = SessionPreview(str(project))
+    loose = reader.refresh(identity, lambda: True)
+    assert loose is not None and loose.state == "unavailable"
+    result = archive_history(root, destination=tmp_path / "archives", refs=(key,), apply=True)
+    assert result.reclaimed
+    archived = reader.refresh(identity, lambda: True)
+    assert archived is not None and archived.state == "unavailable"
+    assert archived.lines == loose.lines
+    assert HistoryIndex(root).preview_count(preview_version=TRANSCRIPT_PREVIEW_VERSION) == 0
+
+
+def test_pi_preview_preserves_branch_context_after_append(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("MERIDIAN_HOME", str(tmp_path / "home"))
+    project = tmp_path / "repo"
+    project.mkdir()
+    root = resolve_project_runtime_root_for_write(project)
+    key = spawn_store.start_spawn(
+        root, chat_id="c1", prompt="question", harness="pi", model="test", agent="coder"
+    )
+    writer = HarnessHistoryWriter(
+        root / "spawns" / key / "history.jsonl", runtime_root=root, spawn_id=key
+    )
+    for payload in [
+        {"type": "session", "version": 3, "id": "s", "cwd": str(project)},
+        {
+            "type": "message",
+            "id": "a",
+            "parentId": None,
+            "message": {"role": "user", "content": "first question"},
+        },
+        {"type": "model_change", "id": "b", "parentId": "a", "modelId": "test"},
+    ]:
+        assert writer.write(RawHarnessEvent("retained/native", payload, "pi")).success
+    record = spawn_store.get_spawn(root, key)
+    assert record is not None
+    identity = PreviewIdentity(key, str(record.history_id))
+    first = SessionPreview(str(project)).refresh(identity, lambda: True)
+    assert first is not None and first.state == "current"
+    assert writer.write(
+        RawHarnessEvent(
+            "retained/native",
+            {
+                "type": "message",
+                "id": "c",
+                "parentId": "a",
+                "message": {"role": "assistant", "content": "branch answer"},
+            },
+            "pi",
+        )
+    ).success
+    resumed = SessionPreview(str(project)).refresh(identity, lambda: True)
+    assert resumed is not None and resumed.state == "current"
+    assert resumed.lines.count("first question") == resumed.lines.count("branch answer") == 1
+    assert sum("parent changed" in line for line in resumed.lines) == 1

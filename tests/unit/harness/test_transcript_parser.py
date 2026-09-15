@@ -102,7 +102,7 @@ def test_opencode_boundary_consumes_compaction_agent_handoff() -> None:
 
 def test_parser_extracts_claude_messages_tool_call_and_result() -> None:
     parser = DefaultTranscriptEventParser()
-    assistant, assistant_boundary = parser.parse(
+    assistant_event = parser.parse(
         {
             "type": "assistant",
             "message": {
@@ -113,7 +113,7 @@ def test_parser_extracts_claude_messages_tool_call_and_result() -> None:
             },
         }
     )
-    user, user_boundary = parser.parse(
+    user_event = parser.parse(
         {
             "type": "user",
             "message": {
@@ -125,7 +125,9 @@ def test_parser_extracts_claude_messages_tool_call_and_result() -> None:
         }
     )
 
-    assert assistant_boundary is user_boundary is False
+    assistant, user = assistant_event.messages, user_event.messages
+    assert assistant_event.boundary is user_event.boundary is False
+    assert assistant_event.rendering_reason is user_event.rendering_reason is None
     assert _rows(assistant) == [
         ("assistant", "assistant text"),
         ("assistant", "[tool: Bash pwd]"),
@@ -141,11 +143,12 @@ def test_parser_extracts_pi_message_end_roles_and_tools(event_type: str) -> None
     parser = DefaultTranscriptEventParser()
 
     def parse_message(message: dict[str, object]) -> list[TranscriptMessage]:
-        rows, boundary = parser.parse(
+        parsed_event = parser.parse(
             {"event_type": event_type, "payload": {"type": event_type, "message": message}}
         )
-        assert boundary is False
-        return rows
+        assert parsed_event.boundary is False
+        assert parsed_event.rendering_reason is None
+        return parsed_event.messages
 
     user = parse_message({"role": "user", "content": [{"type": "text", "text": "task"}]})
     call = parse_message(
@@ -195,7 +198,7 @@ def test_parser_extracts_codex_messages_tool_calls_and_results() -> None:
     ]
 
     parsed = [parser.parse(event) for event in events]
-    messages = [message for rows, boundary in parsed for message in rows if boundary is False]
+    messages = [message for event in parsed for message in event.messages if not event.boundary]
 
     assert _rows(messages) == [
         ("assistant", "codex response"),
@@ -353,3 +356,25 @@ def test_pi_preview_does_not_persist_unbounded_entry_identity() -> None:
     assert accumulator.preview.rendering_reason
     assert accumulator.preview.pi_previous_entry_id is None
     assert len(accumulator.preview.model_dump_json()) < 1000
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        {"role": "assistant", "content": [{"type": "text", "text": 42}]},
+        {"role": "assistant", "content": [{"type": "toolCall", "name": "bash", "arguments": 42}]},
+        {"role": "assistant", "content": [{"type": "toolCall", "name": None, "arguments": {}}]},
+        {"role": "bashExecution", "command": 42, "output": "output"},
+        {"role": "bashExecution", "command": "pwd", "output": None},
+    ],
+)
+def test_malformed_pi_material_is_not_certified_empty(message: dict[str, object]) -> None:
+    from meridian.lib.harness.transcript_preview import PreviewAccumulator
+
+    event = {"type": "message", "message": message}
+    parsed = parse_transcript_events_with_prologues([event])
+    assert parsed.rendering_reason
+    accumulator = PreviewAccumulator()
+    accumulator.feed(event)
+    assert accumulator.preview.rendering_reason
+    assert "No messages" not in "\n".join(accumulator.preview.lines())

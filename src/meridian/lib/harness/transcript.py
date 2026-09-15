@@ -54,11 +54,18 @@ class TranscriptParseResult(NamedTuple):
         return self.segment_setups
 
 
+class NormalizedTranscriptEvent(NamedTuple):
+    messages: list[TranscriptMessage]
+    boundary: bool = False
+    consumed_setup: bool = False
+    rendering_reason: str | None = None
+
+
 class TranscriptEventParser(Protocol):
     """Family parser for one transcript event dictionary."""
 
-    def parse(self, event: dict[str, object]) -> tuple[list[TranscriptMessage], bool]:
-        """Return extracted messages and compaction-boundary marker."""
+    def parse(self, event: dict[str, object]) -> NormalizedTranscriptEvent:
+        """Return extracted messages, boundaries and interpretation limits."""
         ...
 
 
@@ -277,36 +284,73 @@ def _pi_tool_call_summary(block: dict[str, object]) -> tuple[str, ToolCall]:
     return rendered, _normalize_tool(name, body)
 
 
-def _extract_pi_message_event(payload: dict[str, object]) -> list[TranscriptMessage]:
+def _extract_pi_message_event(payload: dict[str, object]) -> NormalizedTranscriptEvent:
+    """Interpret supported Pi material and diagnose omissions in the same pass."""
     raw_message = payload.get("message")
     if not isinstance(raw_message, dict):
-        return []
-
+        return NormalizedTranscriptEvent(
+            [], rendering_reason="Malformed Pi message; rendering is incomplete."
+        )
     message = cast("dict[str, object]", raw_message)
     role = str(message.get("role", "")).strip().lower()
-    if role in {"assistant", "user", "system"}:
-        return _extract_claude_content(role, message.get("content"))
-    if role == "custom":
-        return _extract_claude_content("user", message.get("content"))
+    reason = "Malformed Pi message content; rendering is incomplete."
     if role == "bashexecution":
-        command = text_from_value(message.get("command"))
-        output = text_from_value(message.get("output"))
-        return [
-            TranscriptMessage("user", f"[tool: bash {command}]", ToolCall("bash", command)),
-            TranscriptMessage("user", f"[tool_result] {output}", is_tool_result=True),
-        ]
-    if role in {"toolresult", "tool_result"}:
-        content = text_from_value(message.get("content"))
-        if content:
-            return [
-                TranscriptMessage(
-                    role="user",
-                    content=f"[tool_result] {content}",
-                    is_tool_result=True,
-                )
+        command, output = message.get("command"), message.get("output")
+        if not isinstance(command, str) or not isinstance(output, str):
+            return NormalizedTranscriptEvent([], rendering_reason=reason)
+        return NormalizedTranscriptEvent(
+            [
+                TranscriptMessage("user", f"[tool: bash {command}]", ToolCall("bash", command)),
+                TranscriptMessage("user", f"[tool_result] {output}", is_tool_result=True),
             ]
-        return [TranscriptMessage(role="user", content="[tool_result]", is_tool_result=True)]
-    return []
+        )
+    if role not in {"assistant", "user", "system", "custom", "toolresult", "tool_result"}:
+        return NormalizedTranscriptEvent(
+            [], rendering_reason="Unsupported Pi message role; rendering is incomplete."
+        )
+    content = message.get("content")
+    if not isinstance(content, (str, list)):
+        return NormalizedTranscriptEvent([], rendering_reason=reason)
+    blocks: list[object] = (
+        [{"type": "text", "text": content}]
+        if isinstance(content, str)
+        else cast("list[object]", content)
+    )
+    messages: list[TranscriptMessage] = []
+    rendering_reason: str | None = None
+    rendered_role = "user" if role in {"custom", "toolresult", "tool_result"} else role
+    for item in blocks:
+        if not isinstance(item, dict):
+            rendering_reason = reason
+            continue
+        block = cast("dict[str, object]", item)
+        block_type = block.get("type")
+        if block_type == "text":
+            text = block.get("text")
+            if not isinstance(text, str):
+                rendering_reason = reason
+            elif text.strip():
+                messages.append(TranscriptMessage(rendered_role, text.strip()))
+        elif block_type == "thinking" and role == "assistant":
+            if not isinstance(block.get("thinking"), str):
+                rendering_reason = reason
+        elif block_type == "toolCall" and role == "assistant":
+            name = block.get("name")
+            if (
+                not isinstance(name, str)
+                or not name.strip()
+                or not isinstance(block.get("arguments"), dict)
+            ):
+                rendering_reason = reason
+                continue
+            marker, tool = _pi_tool_call_summary(block)
+            messages.append(TranscriptMessage("assistant", marker, tool))
+        else:
+            rendering_reason = "Unsupported Pi message content; rendering is incomplete."
+    if role in {"toolresult", "tool_result"} and (messages or rendering_reason is None):
+        text = "\n".join(message.content for message in messages)
+        messages = [TranscriptMessage("user", f"[tool_result] {text}".strip(), is_tool_result=True)]
+    return NormalizedTranscriptEvent(messages, rendering_reason=rendering_reason)
 
 
 def _extract_codex_response_item(payload: dict[str, object]) -> list[TranscriptMessage]:
@@ -408,7 +452,7 @@ def _extract_codex_exec_item(item: dict[str, object]) -> list[TranscriptMessage]
 class DefaultTranscriptEventParser(TranscriptEventParser):
     """Cross-harness event parser that normalizes Claude/Codex/OpenCode families."""
 
-    def parse(self, event: dict[str, object]) -> tuple[list[TranscriptMessage], bool]:
+    def parse(self, event: dict[str, object]) -> NormalizedTranscriptEvent:
         event = _unwrap_seq_envelope(event)
         event_type = normalize_harness_event_type(event)
 
@@ -422,11 +466,9 @@ class DefaultTranscriptEventParser(TranscriptEventParser):
             if isinstance(data, dict):
                 nested_message = cast("dict[str, object]", data).get("message")
                 if isinstance(nested_message, dict):
-                    nested_messages, nested_boundary = self.parse(
-                        cast("dict[str, object]", nested_message)
-                    )
-                    return nested_messages, is_boundary or nested_boundary
-            return ([], is_boundary)
+                    nested = self.parse(cast("dict[str, object]", nested_message))
+                    return nested._replace(boundary=is_boundary or nested.boundary)
+            return NormalizedTranscriptEvent([], is_boundary)
 
         if event_type in {"assistant", "user"}:
             role = event_type
@@ -435,17 +477,19 @@ class DefaultTranscriptEventParser(TranscriptEventParser):
                 content = cast("dict[str, object]", message).get("content")
                 extracted = _extract_claude_content(role, content)
                 if extracted:
-                    return extracted, is_boundary
+                    return NormalizedTranscriptEvent(extracted, is_boundary)
             extracted = _extract_claude_content(role, event.get("content"))
             if extracted:
-                return extracted, is_boundary
+                return NormalizedTranscriptEvent(extracted, is_boundary)
             raw_text = message if isinstance(message, str) else event.get("text")
             text = text_from_value(raw_text)
             if text:
-                return ([TranscriptMessage(role=role, content=text)], is_boundary)
+                return NormalizedTranscriptEvent(
+                    [TranscriptMessage(role=role, content=text)], is_boundary
+                )
             fallback_text = text_from_value(event.get("tool_use_result"))
             if role == "user" and fallback_text:
-                return (
+                return NormalizedTranscriptEvent(
                     [
                         TranscriptMessage(
                             role="user",
@@ -455,34 +499,40 @@ class DefaultTranscriptEventParser(TranscriptEventParser):
                     ],
                     is_boundary,
                 )
-            return ([], is_boundary)
+            return NormalizedTranscriptEvent([], is_boundary)
 
         if event_type == "response_item":
             raw_payload = event.get("payload")
             if isinstance(raw_payload, dict):
                 extracted = _extract_codex_response_item(cast("dict[str, object]", raw_payload))
-                return (extracted, is_boundary)
+                return NormalizedTranscriptEvent(extracted, is_boundary)
             extracted = _extract_codex_response_item(event)
-            return (extracted, is_boundary)
+            return NormalizedTranscriptEvent(extracted, is_boundary)
 
         if event_type == "item.completed":
             item = event.get("item")
             if isinstance(item, dict):
-                return (_extract_codex_exec_item(cast("dict[str, object]", item)), is_boundary)
-            return ([], is_boundary)
+                return NormalizedTranscriptEvent(
+                    _extract_codex_exec_item(cast("dict[str, object]", item)), is_boundary
+                )
+            return NormalizedTranscriptEvent([], is_boundary)
 
-        if event_type in {"message", "message_end"} and isinstance(event.get("message"), dict):
-            return (_extract_pi_message_event(event), is_boundary)
+        if event_type == "message_end" or (event_type == "message" and "message" in event):
+            return _extract_pi_message_event(event)
         if event_type == "custom_message":
-            return (_extract_claude_content("user", event.get("content")), is_boundary)
+            return _extract_pi_message_event(
+                {"message": {"role": "custom", "content": event.get("content")}}
+            )
 
         role = str(event.get("role", "")).strip().lower()
         if role in {"assistant", "user", "system"}:
             text = text_from_value(event.get("content"))
             if text:
-                return ([TranscriptMessage(role=role, content=text)], is_boundary)
+                return NormalizedTranscriptEvent(
+                    [TranscriptMessage(role=role, content=text)], is_boundary
+                )
 
-        return ([], is_boundary)
+        return NormalizedTranscriptEvent([], is_boundary)
 
 
 class JsonlTranscriptProvider(TranscriptProvider):
@@ -641,12 +691,6 @@ def _extract_opencode_follow_on_handoff(
     return _join_message_content(extracted_messages)
 
 
-class NormalizedTranscriptEvent(NamedTuple):
-    messages: list[TranscriptMessage]
-    boundary: bool = False
-    consumed_setup: bool = False
-
-
 @dataclass
 class TranscriptNormalizer:
     """Canonical resumable setup/compaction interpretation, independent of accumulation."""
@@ -691,6 +735,8 @@ class TranscriptNormalizer:
             return None
         self.pi_session = True
         annotations: list[TranscriptMessage] = []
+        if event_type == "message" and "message" not in event:
+            self.rendering_reason = "Malformed Pi message; rendering is incomplete."
         if isinstance(entry_id, str) and len(entry_id) > 128:
             self.pi_previous_entry_id = None
             self.rendering_reason = "Unsupported Pi entry identity; rendering is incomplete."
@@ -743,45 +789,9 @@ class TranscriptNormalizer:
         self, event: dict[str, object], parser: TranscriptEventParser
     ) -> NormalizedTranscriptEvent:
         normalized_event = _unwrap_seq_envelope(event)
-        messages, parser_boundary = parser.parse(event)
-        event_type = normalize_harness_event_type(normalized_event)
-        if event_type in {"message", "message_end", "custom_message"}:
-            message = (
-                normalized_event
-                if event_type == "custom_message"
-                else normalized_event.get("message")
-            )
-            if isinstance(message, dict):
-                message = cast("dict[str, object]", message)
-                role = (
-                    "custom"
-                    if event_type == "custom_message"
-                    else str(message.get("role", "")).lower()
-                )
-                content = message.get("content")
-                if role not in {
-                    "user",
-                    "assistant",
-                    "system",
-                    "custom",
-                    "toolresult",
-                    "tool_result",
-                    "bashexecution",
-                }:
-                    self.rendering_reason = "Unsupported Pi message role; rendering is incomplete."
-                elif role != "bashexecution" and not isinstance(content, (str, list)):
-                    self.rendering_reason = "Malformed Pi message content; rendering is incomplete."
-                elif isinstance(content, list) and any(
-                    not isinstance(block, dict)
-                    or cast("dict[str, object]", block).get("type")
-                    not in ("text", "thinking", "toolCall")
-                    for block in cast("list[object]", content)
-                ):
-                    self.rendering_reason = (
-                        "Unsupported Pi message content; rendering is incomplete."
-                    )
-            elif self.pi_session:
-                self.rendering_reason = "Malformed Pi message; rendering is incomplete."
+        extracted = parser.parse(event)
+        messages, parser_boundary = extracted.messages, extracted.boundary
+        self.rendering_reason = extracted.rendering_reason or self.rendering_reason
         pi_event = self._pi_journal(normalized_event, messages)
         if pi_event is not None:
             return pi_event
