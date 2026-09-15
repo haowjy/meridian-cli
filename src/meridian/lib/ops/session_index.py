@@ -29,7 +29,6 @@ class SessionIndexOutput(BaseModel):
     schema_version: int | None = None
     coverage: dict[str, object] | None = None
     reason: str | None = None
-    warnings: tuple[str, ...] = ()
     pending_sources: int = 0
     preview_cached: int = 0
     preview_unavailable: int | None = None
@@ -43,8 +42,6 @@ class SessionIndexOutput(BaseModel):
             text += f"; unavailable in warm pass: {self.preview_unavailable}"
         if self.reason:
             text += f"\n{self.reason}"
-        if self.warnings:
-            text += "\n" + "\n".join(self.warnings)
         return text
 
 
@@ -93,7 +90,6 @@ def session_index_sync(payload: SessionIndexInput) -> SessionIndexOutput:
     return SessionIndexOutput(
         baseline="complete" if coverage.complete else "incomplete",
         coverage=asdict(coverage),
-        warnings=coverage.warnings,
         pending_sources=len(pending),
         preview_cached=index.preview_count(),
         preview_unavailable=unavailable,

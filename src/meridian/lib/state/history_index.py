@@ -605,11 +605,8 @@ class HistoryIndex:
             generation, build, True, activity_provisional=tuple(active)
         ), acknowledged
 
-    def _finish_rebuild(
-        self, coverage: IndexCoverage, acknowledged: list[DirtySource]
-    ) -> IndexCoverage:
-        # Publication has committed. Failures here must never latch initialization failure.
-        warnings: tuple[str, ...] = ()
+    def _clear_initialization_failure(self) -> tuple[str, ...]:
+        """Called under catchup ownership after verifying a compatible published baseline."""
         try:
             self.failure_path.unlink()
             fsync_directory(self.root)
@@ -620,6 +617,14 @@ class HistoryIndex:
                 "Index published, but its initialization-failure marker could not be cleared.",
             )
             logger.warning(warnings[0])
+            return warnings
+        return ()
+
+    def _finish_rebuild(
+        self, coverage: IndexCoverage, acknowledged: list[DirtySource]
+    ) -> IndexCoverage:
+        # Publication has committed. Failures here must never latch initialization failure.
+        warnings = self._clear_initialization_failure()
         for marker in acknowledged:
             HistoryChanges(self.root).acknowledge(marker)
         return IndexCoverage(
@@ -828,11 +833,12 @@ class HistoryIndex:
                     )
                 if meta["version"] != SCHEMA_VERSION:
                     raise HistoryIndexIncomplete("History index schema changed after preflight")
+                warnings = self._clear_initialization_failure()
                 acknowledged, pending, active, _ = self._drain(db, target, deadline)
                 for marker in acknowledged:
                     changes.acknowledge(marker)
                 return IndexCoverage(
-                    generation, meta["build"], not pending, tuple(pending), tuple(active)
+                    generation, meta["build"], not pending, tuple(pending), tuple(active), warnings
                 )
             finally:
                 db.close()

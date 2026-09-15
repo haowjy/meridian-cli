@@ -212,11 +212,16 @@ def test_failure_marker_write_and_clear_failures_are_truthful(tmp_path: Path, mo
             raise PermissionError("cannot clear")
         return original_unlink(path, *args, **kwargs)
 
-    monkeypatch.setattr(Path, "unlink", fail_clear)
-    coverage = index.rebuild()
-    assert coverage.complete and coverage.warnings
-    assert index.inspect().baseline == "current"
+    with monkeypatch.context() as patch:
+        patch.setattr(Path, "unlink", fail_clear)
+        coverage = index.rebuild()
+        assert coverage.complete and coverage.warnings
+        assert index.inspect().baseline == "current"
+    assert index.failure_path.exists()  # Status stays read-only, even after permission repair.
     assert index.spawns() == ()
+    assert not index.failure_path.exists()  # Warm catch-up repairs deferred cleanup.
+    index.path.unlink()
+    assert index.spawns() == ()  # Disposable DB loss must not revive a pre-success latch.
 
 
 def test_published_index_with_uncertain_fsync_is_not_overwritten(

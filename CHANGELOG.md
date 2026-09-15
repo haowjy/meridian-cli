@@ -15,6 +15,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Give cold history indexes 15 seconds; remember failed initialization and recover through manual rebuild.
 - Reuse concurrent index builds; keep status cache-only and preserve warm search deadlines.
 - Remember malformed history failures without masking cancellation or successful index publication.
+- Retry stale failure-marker cleanup on warm history reads; report cleanup warnings once.
 
 - Keep static alias lookup cache-only during dry-run, including continuation previews.
 

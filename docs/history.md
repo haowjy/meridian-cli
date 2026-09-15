@@ -39,6 +39,9 @@ require rebuild/import. Normal managed writes are discovered automatically.
 To remove index data manually, stop all users of that runtime first and remove
 only its `history-index/` directory. Do not remove `locks/` or unlink held locks.
 Deleting SQLite alone does not clear a remembered initialization failure.
+If a successful rebuild warns that its old failure marker could not be cleared,
+restore write access and run a normal history read or rebuild before deleting the
+index. Warm reads retry cleanup; read-only status does not.
 Use the coordinated command for online rebuild. An offline archive location does
 not erase locally retained archive metadata.
 

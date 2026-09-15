@@ -34,7 +34,9 @@ Busy, disk-full, permissions and ordinary I/O errors are not corruption recovery
 existing catch-up gate. Missing/older schemas get a separate 15-second automatic
 metadata phase and an under-lock recheck. A genuine owned-build failure is latched
 in `history-index-init-failure.json`; manual publication clears it before optional
-preview warming. Contention and cancellation are not persistent failures.
+preview warming. Failed marker cleanup warns; warm catch-up retries it under the
+same gate after verifying schema/generation. Status and cache-only reads never
+perform this cleanup. Contention and cancellation are not persistent failures.
 
 No-deadline reads initialize lazily, then begin the ordinary two-second budget.
 Caller-owned deadlines never start another implicit build. Corpus search enumerates
