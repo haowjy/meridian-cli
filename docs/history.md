@@ -5,7 +5,25 @@ rebuildable SQLite index accelerates discovery; it is not the only copy of histo
 Copy a complete record bundle to preserve lifecycle facts as well as transcript
 content. A bare JSONL file remains readable without the original harness.
 
-## Index repair
+## Index initialization and repair
+
+The first indexed operation builds a missing or older-schema index automatically,
+with a 15-second metadata budget and no progress bar. Normal warm queries keep
+their two-second budget; workspace/global search shares one initialization budget
+across its roots. These cooperative deadlines cannot interrupt a blocked filesystem
+call. Automatic initialization does not warm every preview or move history into SQLite.
+
+A genuine initialization failure is recorded outside the replaceable index directory.
+Later automatic requests report the failure instead of repeatedly starting over.
+Retry explicitly with `uv run meridian session index rebuild --metadata-only`;
+success clears the failure. Manual metadata projection has a 60-second budget,
+separate from archive import and optional preview warming. Cancellation and another
+initializer holding a lock do not create persistent failures.
+
+`session index status` inspects the schema, failure state and pending work without
+initializing or catching up the index. A current schema does not prove complete
+coverage. Newer unsupported schemas require an explicit decision to rebuild;
+they are never silently queried or automatically downgraded.
 
 ```sh
 meridian session index status
@@ -20,6 +38,7 @@ require rebuild/import. Normal managed writes are discovered automatically.
 
 To remove index data manually, stop all users of that runtime first and remove
 only its `history-index/` directory. Do not remove `locks/` or unlink held locks.
+Deleting SQLite alone does not clear a remembered initialization failure.
 Use the coordinated command for online rebuild. An offline archive location does
 not erase locally retained archive metadata.
 

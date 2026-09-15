@@ -17,6 +17,11 @@ from typing import IO, Any, Literal, cast
 
 from meridian.lib.platform import IS_WINDOWS, fcntl
 
+
+class FileLockTimeout(TimeoutError):
+    """A file-lock acquisition exhausted its wait, not the protected operation."""
+
+
 type LockMode = Literal["exclusive", "shared"]
 type _HeldLock = tuple[IO[bytes], int, LockMode]
 
@@ -222,7 +227,7 @@ def unlink_validated_lock(lock_path: Path, handle: IO[bytes]) -> bool:
 
 
 def _timeout_error(lock_path: Path, timeout: float | None, mode: LockMode) -> TimeoutError:
-    return TimeoutError(f"Could not acquire {mode} lock within {timeout}s: {lock_path}")
+    return FileLockTimeout(f"Could not acquire {mode} lock within {timeout}s: {lock_path}")
 
 
 def _acquire_lock(handle: IO[bytes], *, mode: LockMode, deadline: float | None) -> bool:
@@ -301,6 +306,7 @@ def _release_lock(handle: IO[bytes]) -> None:
 
 
 __all__ = [
+    "FileLockTimeout",
     "LockMode",
     "acquire_file_lock",
     "lock_file",

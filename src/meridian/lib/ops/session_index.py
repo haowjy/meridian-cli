@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from dataclasses import asdict
 from pathlib import Path
 from typing import Literal
@@ -11,7 +12,7 @@ from pydantic import BaseModel, ConfigDict
 from meridian.lib.config.settings import load_config
 from meridian.lib.ops.runtime import async_from_sync, resolve_roots_for_read
 from meridian.lib.state.history_changes import HistoryChanges
-from meridian.lib.state.history_index import HistoryIndex
+from meridian.lib.state.history_index import QUERY_TIMEOUT, HistoryIndex
 
 
 class SessionIndexInput(BaseModel):
@@ -25,7 +26,10 @@ class SessionIndexInput(BaseModel):
 class SessionIndexOutput(BaseModel):
     model_config = ConfigDict(frozen=True)
     baseline: str
+    schema_version: int | None = None
     coverage: dict[str, object] | None = None
+    reason: str | None = None
+    warnings: tuple[str, ...] = ()
     pending_sources: int = 0
     preview_cached: int = 0
     preview_unavailable: int | None = None
@@ -37,6 +41,10 @@ class SessionIndexOutput(BaseModel):
         )
         if self.preview_unavailable is not None:
             text += f"; unavailable in warm pass: {self.preview_unavailable}"
+        if self.reason:
+            text += f"\n{self.reason}"
+        if self.warnings:
+            text += "\n" + "\n".join(self.warnings)
         return text
 
 
@@ -45,8 +53,21 @@ def session_index_sync(payload: SessionIndexInput) -> SessionIndexOutput:
     if roots is None:
         return SessionIndexOutput(baseline="absent")
     index = HistoryIndex(roots.runtime_root)
-    if payload.action == "status" and not index.path.exists():
-        return SessionIndexOutput(baseline="absent")
+    if payload.action == "status":
+        deadline = time.monotonic() + QUERY_TIMEOUT
+        status = index.inspect(deadline=deadline)
+        _, pending = HistoryChanges(roots.runtime_root).inspect(
+            timeout=max(0.0, deadline - time.monotonic())
+        )
+        return SessionIndexOutput(
+            baseline=status.baseline,
+            schema_version=status.schema,
+            reason=status.reason,
+            pending_sources=len(pending),
+            preview_cached=(
+                index.preview_count(deadline=deadline) if status.baseline == "current" else 0
+            ),
+        )
     if payload.action == "rebuild":
         from meridian.lib.state.retention_archive import import_archive
 
@@ -56,11 +77,9 @@ def session_index_sync(payload: SessionIndexInput) -> SessionIndexOutput:
             if directory.is_dir():
                 for archive in sorted(directory.glob("meridian-history-*.zip")):
                     import_archive(roots.runtime_root, archive, select=False)
-    coverage = (
-        index.rebuild(reset=payload.reset) if payload.action == "rebuild" else index.catch_up()
-    )
+    coverage = index.rebuild(reset=payload.reset)
     unavailable: int | None = None
-    if payload.action == "rebuild" and not payload.metadata_only:
+    if not payload.metadata_only:
         from meridian.lib.ops.session_preview import PreviewIdentity, SessionPreview
 
         unavailable = 0
@@ -70,10 +89,11 @@ def session_index_sync(payload: SessionIndexInput) -> SessionIndexOutput:
             reader.refresh(identity, lambda: True)
             if reader.peek(identity) is None:
                 unavailable += 1
-    _, pending = HistoryChanges(roots.runtime_root).capture()
+    _, pending = HistoryChanges(roots.runtime_root).inspect()
     return SessionIndexOutput(
         baseline="complete" if coverage.complete else "incomplete",
         coverage=asdict(coverage),
+        warnings=coverage.warnings,
         pending_sources=len(pending),
         preview_cached=index.preview_count(),
         preview_unavailable=unavailable,

@@ -85,34 +85,50 @@ class HistoryChanges:
             marker = DirtySource(source=source, token=uuid4())
             atomic_write_text(self.directory / source.name, marker.model_dump_json() + "\n")
 
-    def _generation(self) -> str:
-        path = self.directory / "GENERATION"
+    def read_generation(self) -> str | None:
+        """Inspect coordination without creating a generation."""
         try:
-            return str(UUID(path.read_text().strip()))
+            return str(UUID((self.directory / "GENERATION").read_text().strip()))
         except FileNotFoundError:
+            return None
+        except (ValueError, OSError) as exc:
+            raise HistoryCoordinationError(
+                "Unreadable or invalid history marker generation; run session index rebuild --reset"
+            ) from exc
+
+    def _generation(self) -> str:
+        generation = self.read_generation()
+        if generation is None:
             generation = str(uuid4())
-            atomic_write_text(path, generation + "\n")
-            return generation
-        except ValueError as exc:
-            raise HistoryCoordinationError("Invalid history marker generation") from exc
+            atomic_write_text(self.directory / "GENERATION", generation + "\n")
+        return generation
+
+    def _pending(self) -> tuple[DirtySource, ...]:
+        pending: list[DirtySource] = []
+        for path in self.directory.glob("*.json"):
+            if not re.fullmatch(r"[0-9a-f]{64}\.json", path.name):
+                raise HistoryCoordinationError(f"Unknown history marker: {path}")
+            try:
+                marker = DirtySource.model_validate_json(path.read_bytes())
+                marker.source.lock_path(self.root)
+                if marker.source.name != path.name:
+                    raise ValueError("Marker source does not match filename")
+            except ValueError as exc:
+                raise HistoryCoordinationError(f"Invalid history marker: {path}") from exc
+            pending.append(marker)
+        return tuple(pending)
+
+    def inspect(
+        self, *, timeout: float | None = None
+    ) -> tuple[str | None, tuple[DirtySource, ...]]:
+        """Read coordination and pending work without initializing either."""
+        with lock_file(self.marker_lock, timeout=timeout):
+            return self.read_generation(), self._pending()
 
     def capture(self, *, timeout: float | None = None) -> tuple[str, tuple[DirtySource, ...]]:
         """Capture a finite target without waiting for any source lock."""
         with lock_file(self.marker_lock, timeout=timeout):
-            generation = self._generation()
-            pending: list[DirtySource] = []
-            for path in self.directory.glob("*.json"):
-                if not re.fullmatch(r"[0-9a-f]{64}\.json", path.name):
-                    raise HistoryCoordinationError(f"Unknown history marker: {path}")
-                try:
-                    marker = DirtySource.model_validate_json(path.read_bytes())
-                    marker.source.lock_path(self.root)
-                    if marker.source.name != path.name:
-                        raise ValueError("Marker source does not match filename")
-                except ValueError as exc:
-                    raise HistoryCoordinationError(f"Invalid history marker: {path}") from exc
-                pending.append(marker)
-            return generation, tuple(pending)
+            return self._generation(), self._pending()
 
     def acknowledge(self, marker: DirtySource) -> None:
         """After durable projection, remove only the token actually observed."""

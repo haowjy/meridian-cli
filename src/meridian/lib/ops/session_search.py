@@ -19,7 +19,7 @@ from meridian.lib.ops.runtime import (
     resolve_roots_for_read,
     resolve_runtime_authority_for_read,
 )
-from meridian.lib.ops.session_corpus import resolve_session_search_corpus
+from meridian.lib.ops.session_corpus import SessionCorpusScope, resolve_session_search_corpus
 from meridian.lib.ops.session_target import resolve_session_log_target
 from meridian.lib.ops.session_transcript import (
     AbsoluteTranscriptEntry,
@@ -30,7 +30,12 @@ from meridian.lib.ops.session_transcript import (
     read_session_transcript,
     route_for_corpus_target,
 )
-from meridian.lib.state.history_index import HistoryIndex, HistoryIndexIncomplete
+from meridian.lib.state.history_index import (
+    INITIALIZATION_TIMEOUT,
+    QUERY_TIMEOUT,
+    HistoryIndex,
+    HistoryIndexIncomplete,
+)
 
 _PREVIEW_LIMIT = 200
 _OPEN_CONTEXT = 5
@@ -274,7 +279,7 @@ def _search_corpus(payload: SessionSearchInput, *, query: str) -> SessionSearchO
         else resolve_project_authority(payload.project_root).project_root
     )
     runtime_root = roots.runtime_root if roots is not None else None
-    deadline = time.monotonic() + 2
+    deadline = time.monotonic() + QUERY_TIMEOUT
     try:
         scopes = resolve_session_search_corpus(
             project_root=project_root,
@@ -282,21 +287,47 @@ def _search_corpus(payload: SessionSearchInput, *, query: str) -> SessionSearchO
             workspace=payload.workspace,
             global_scope=payload.global_scope,
             work_id=payload.work_id,
-            deadline=deadline,
         )
     except (ValueError, OSError, HistoryIndexIncomplete, sqlite3.Error) as exc:
         return SessionSearchOutput(matches=(), errors=(f"Corpus discovery: {exc}",))
 
     matches: list[SessionSearchMatch] = []
     errors: list[str] = []
+    # All-warm preflight consumes the same query deadline. Only actual cold
+    # initialization starts a separate phase, shared across every runtime root.
+    initialization_deadline: float | None = None
+    available: list[SessionCorpusScope] = []
+    for scope in scopes:
+        try:
+            index = HistoryIndex(scope.runtime_root)
+            status = index.classify(
+                deadline=(deadline if initialization_deadline is None else initialization_deadline)
+            )
+            if status.baseline in {"absent", "outdated"}:
+                if initialization_deadline is None:
+                    initialization_deadline = time.monotonic() + INITIALIZATION_TIMEOUT
+                index.initialize(deadline=initialization_deadline)
+            available.append(scope)
+        except (ValueError, OSError, HistoryIndexIncomplete, sqlite3.Error) as exc:
+            errors.append(f"{scope.label}: {exc}")
+    if initialization_deadline is not None:
+        deadline = time.monotonic() + QUERY_TIMEOUT
     query_lower = query.lower()
     budget = TranscriptBudget(deadline, 64 * 1024 * 1024)
     truncated = False
-    for scope in scopes:
+    for scope in available:
         if time.monotonic() >= deadline:
             truncated = True
             break
         try:
+            if payload.work_id and payload.work_id.strip():
+                scope = scope._replace(
+                    chat_filter=frozenset(
+                        HistoryIndex(scope.runtime_root).work_chat_ids(
+                            payload.work_id.strip(), deadline=deadline
+                        )
+                    )
+                )
             rows = HistoryIndex(scope.runtime_root).candidates(
                 include_archives=payload.include_archives, deadline=deadline
             )

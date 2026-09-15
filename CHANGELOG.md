@@ -12,6 +12,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Give cold history indexes 15 seconds; remember failed initialization and recover through manual rebuild.
+- Reuse concurrent index builds; keep status cache-only and preserve warm search deadlines.
+
 - Keep static alias lookup cache-only during dry-run, including continuation previews.
 
 - Preserve native OpenCode permission denials and rule order when adding workspace roots.

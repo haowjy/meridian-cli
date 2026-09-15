@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import sqlite3
 import time
@@ -16,14 +17,15 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, NamedTuple
+from typing import TYPE_CHECKING, Any, Literal, NamedTuple
 from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from meridian.lib.core.domain import TERMINAL_SPAWN_STATUSES
 from meridian.lib.platform.atomic import fsync_directory
-from meridian.lib.platform.locking import lock_file
+from meridian.lib.platform.locking import FileLockTimeout, lock_file
+from meridian.lib.state.atomic import atomic_write_text
 from meridian.lib.state.history_changes import (
     DirtySource,
     HistoryChanges,
@@ -44,6 +46,13 @@ from meridian.lib.state.spawn.repository import read_state, scan_spawn_ids
 
 if TYPE_CHECKING:
     from meridian.lib.state.spawn_store import SpawnScan
+
+logger = logging.getLogger(__name__)
+
+SCHEMA_VERSION = 2
+INITIALIZATION_TIMEOUT = 15.0
+QUERY_TIMEOUT = 2.0
+_REBUILD_COMMAND = "uv run meridian session index rebuild --metadata-only"
 
 _SCHEMA = """
 CREATE TABLE meta(version INTEGER NOT NULL, generation TEXT NOT NULL, build TEXT NOT NULL);
@@ -97,6 +106,26 @@ class IndexCoverage:
     complete: bool
     pending: tuple[str, ...] = ()
     activity_provisional: tuple[str, ...] = ()
+    warnings: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class IndexStatus:
+    baseline: Literal["absent", "outdated", "current", "incompatible", "corrupt", "failed"]
+    schema: int | None = None
+    generation: str | None = None
+    build: str | None = None
+    reason: str | None = None
+
+
+class _InitializationFailure(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    format: Literal[1] = 1
+    target_schema: int
+    generation: str | None
+    code: Literal["timeout", "io", "sqlite", "authority"]
+    reason: str = Field(max_length=1024)
+    failed_at: str
 
 
 class HistorySnapshot(BaseModel):
@@ -457,11 +486,12 @@ class HistoryIndex:
         db: sqlite3.Connection,
         target: tuple[DirtySource, ...],
         deadline: float,
-    ) -> tuple[list[DirtySource], list[str], list[str]]:
+    ) -> tuple[list[DirtySource], list[str], list[str], bool]:
         changes = HistoryChanges(self.root)
         acknowledged: list[DirtySource] = []
         pending: list[str] = []
         active: list[str] = []
+        busy = False
         for marker in target:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
@@ -478,129 +508,324 @@ class HistoryIndex:
                         active.append(marker.source.key)
                     else:
                         acknowledged.append(current)
-            except TimeoutError:
+            except FileLockTimeout:
+                busy = True
                 pending.append(marker.source.name)
         db.commit()
-        return acknowledged, pending, active
+        return acknowledged, pending, active, busy
+
+    def _rebuild_locked(
+        self, *, reset: bool, deadline: float
+    ) -> tuple[IndexCoverage, list[DirtySource]]:
+        """Project and publish while the caller owns catchup and root mutation gates."""
+        changes = HistoryChanges(self.root)
+        if reset:
+            # Full quiescent scan replaces unknown coordination; locks are never removed.
+            with lock_file(changes.marker_lock, timeout=_remaining(deadline)):
+                atomic_write_text(changes.directory / "GENERATION", str(uuid4()))
+                for path in changes.directory.glob("*.json"):
+                    path.unlink()
+        generation, _ = changes.capture(timeout=_remaining(deadline))
+        self.directory.mkdir(parents=True, exist_ok=True)
+        # catchup_lock owns this disposable stage, including crash residue.
+        stage = self.directory / ".build.sqlite3"
+        for suffix in ("", "-journal"):
+            Path(str(stage) + suffix).unlink(missing_ok=True)
+        try:
+            db = _connect(stage, fresh=True, timeout=_remaining(deadline))
+            build = str(uuid4())
+            try:
+                db.executescript(_SCHEMA)
+                db.execute("INSERT INTO meta VALUES (?,?,?)", (SCHEMA_VERSION, generation, build))
+                for key in scan_spawn_ids(self.root / "spawns"):
+                    with lock_file(
+                        HistorySource(kind="spawn", key=key).lock_path(self.root),
+                        timeout=_remaining(deadline),
+                    ):
+                        self._spawn(db, key)
+                for kind in ("sessions", "catalog"):
+                    source = HistorySource(kind=kind)
+                    with lock_file(source.lock_path(self.root), timeout=_remaining(deadline)):
+                        self._project(db, source)
+                _, target = changes.capture(timeout=_remaining(deadline))
+                acknowledged, pending, active, busy = self._drain(db, target, deadline)
+                if pending:
+                    if busy:
+                        raise FileLockTimeout("History sources are busy")
+                    raise TimeoutError("History rebuild exhausted its remaining budget")
+                db.execute("ANALYZE")
+                db.commit()
+            finally:
+                db.close()
+            # The root gate is already held: ordinary readers must never take it
+            # while holding a database gate. Catchup/rebuild share catchup.lock.
+            with lock_file(self.database_lock, timeout=_remaining(deadline)):
+                if self.path.exists():
+                    try:
+                        old = _connect(self.path, timeout=_remaining(deadline))
+                        try:
+                            busy, _, _ = old.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
+                            if busy:
+                                raise FileLockTimeout("Readers still own the old WAL")
+                        finally:
+                            old.close()
+                    except sqlite3.DatabaseError as exc:
+                        # Only confirmed corruption is repairable here. Busy, I/O,
+                        # permission and disk-full errors must leave the index alone.
+                        code = getattr(exc, "sqlite_errorcode", 0) & 0xFF
+                        if code not in {sqlite3.SQLITE_CORRUPT, sqlite3.SQLITE_NOTADB}:
+                            raise
+                        preserved = self.directory / f"corrupt-{uuid4().hex}.sqlite3"
+                        for suffix in ("", "-wal", "-shm"):
+                            damaged = Path(str(self.path) + suffix)
+                            if damaged.exists():
+                                os.replace(damaged, Path(str(preserved) + suffix))
+                        fsync_directory(self.directory)
+                os.replace(stage, self.path)
+                fsync_directory(self.directory)
+        finally:
+            for suffix in ("", "-journal"):
+                Path(str(stage) + suffix).unlink(missing_ok=True)
+        return IndexCoverage(
+            generation, build, True, activity_provisional=tuple(active)
+        ), acknowledged
+
+    def _finish_rebuild(
+        self, coverage: IndexCoverage, acknowledged: list[DirtySource]
+    ) -> IndexCoverage:
+        # Publication has committed. Failures here must never latch initialization failure.
+        warnings: tuple[str, ...] = ()
+        try:
+            self.failure_path.unlink()
+            fsync_directory(self.root)
+        except FileNotFoundError:
+            pass
+        except OSError:
+            warnings = (
+                "Index published, but its initialization-failure marker could not be cleared.",
+            )
+            logger.warning(warnings[0])
+        for marker in acknowledged:
+            HistoryChanges(self.root).acknowledge(marker)
+        return IndexCoverage(
+            coverage.generation,
+            coverage.build,
+            True,
+            activity_provisional=coverage.activity_provisional,
+            warnings=warnings,
+        )
 
     def rebuild(self, *, reset: bool = False, timeout: float = 60) -> IndexCoverage:
-        changes = HistoryChanges(self.root)
         deadline = time.monotonic() + timeout
         with (
             lock_file(self.catchup_lock, timeout=_remaining(deadline)),
             lock_file(
-                changes.mutation_lock,
+                HistoryChanges(self.root).mutation_lock,
                 mode="exclusive" if reset else "shared",
                 timeout=_remaining(deadline),
             ),
         ):
-            if reset:
-                # Full quiescent scan replaces unknown coordination; locks are never removed.
-                with lock_file(changes.marker_lock, timeout=_remaining(deadline)):
-                    from meridian.lib.state.atomic import atomic_write_text
+            coverage, acknowledged = self._rebuild_locked(reset=reset, deadline=deadline)
+            return self._finish_rebuild(coverage, acknowledged)
 
-                    atomic_write_text(changes.directory / "GENERATION", str(uuid4()))
-                    for path in changes.directory.glob("*.json"):
-                        path.unlink()
-            generation, _ = changes.capture(timeout=_remaining(deadline))
-            self.directory.mkdir(parents=True, exist_ok=True)
-            # catchup_lock owns this disposable stage, including crash residue.
-            stage = self.directory / ".build.sqlite3"
-            for suffix in ("", "-journal"):
-                Path(str(stage) + suffix).unlink(missing_ok=True)
+    @property
+    def failure_path(self) -> Path:
+        return self.root / "history-index-init-failure.json"
+
+    def classify(self, *, deadline: float) -> IndexStatus:
+        """Read schema/identity only; never create SQLite or alter its journal mode."""
+        with lock_file(self.database_lock, mode="shared", timeout=_remaining(deadline)):
+            if not self.path.exists():
+                return IndexStatus("absent")
+            db = sqlite3.connect(
+                self.path.resolve().as_uri() + "?mode=ro", uri=True, timeout=_remaining(deadline)
+            )
             try:
-                db = _connect(stage, fresh=True, timeout=_remaining(deadline))
-                build = str(uuid4())
-                try:
-                    db.executescript(_SCHEMA)
-                    db.execute("INSERT INTO meta VALUES (2,?,?)", (generation, build))
-                    for key in scan_spawn_ids(self.root / "spawns"):
-                        with lock_file(
-                            HistorySource(kind="spawn", key=key).lock_path(self.root),
-                            timeout=_remaining(deadline),
-                        ):
-                            self._spawn(db, key)
-                    for kind in ("sessions", "catalog"):
-                        source = HistorySource(kind=kind)
-                        with lock_file(source.lock_path(self.root), timeout=_remaining(deadline)):
-                            self._project(db, source)
-                    _, target = changes.capture(timeout=_remaining(deadline))
-                    acknowledged, pending, active = self._drain(db, target, deadline)
-                    if pending:
-                        raise HistoryIndexIncomplete("Rebuild timed out resolving changed sources")
-                    db.execute("ANALYZE")
-                    db.commit()
-                finally:
-                    db.close()
-                # The root gate is already held: ordinary readers must never take it
-                # while holding a database gate. Catchup/rebuild share catchup.lock.
-                with lock_file(self.database_lock, timeout=_remaining(deadline)):
-                    if self.path.exists():
-                        try:
-                            old = _connect(self.path, timeout=_remaining(deadline))
-                            try:
-                                busy, _, _ = old.execute(
-                                    "PRAGMA wal_checkpoint(TRUNCATE)"
-                                ).fetchone()
-                                if busy:
-                                    raise HistoryIndexIncomplete("Readers still own the old WAL")
-                            finally:
-                                old.close()
-                        except sqlite3.DatabaseError as exc:
-                            # Only confirmed corruption is repairable here. Busy, I/O,
-                            # permission and disk-full errors must leave the index alone.
-                            code = getattr(exc, "sqlite_errorcode", 0) & 0xFF
-                            if code not in {sqlite3.SQLITE_CORRUPT, sqlite3.SQLITE_NOTADB}:
-                                raise
-                            preserved = self.directory / f"corrupt-{uuid4().hex}.sqlite3"
-                            for suffix in ("", "-wal", "-shm"):
-                                damaged = Path(str(self.path) + suffix)
-                                if damaged.exists():
-                                    os.replace(damaged, Path(str(preserved) + suffix))
-                            fsync_directory(self.directory)
-                    os.replace(stage, self.path)
-                    fsync_directory(self.directory)
+                row = db.execute("SELECT version,generation,build FROM meta").fetchone()
+                if row is None or not isinstance(row[0], int):
+                    return IndexStatus("corrupt", reason="Missing or invalid index metadata")
+                version, generation, build = row
+                baseline = (
+                    "current"
+                    if version == SCHEMA_VERSION
+                    else "outdated"
+                    if version < SCHEMA_VERSION
+                    else "incompatible"
+                )
+                reason = (
+                    f"Index schema {version} is newer than supported schema {SCHEMA_VERSION}."
+                    if baseline == "incompatible"
+                    else None
+                )
+                return IndexStatus(baseline, version, generation, build, reason)
+            except sqlite3.DatabaseError as exc:
+                code = getattr(exc, "sqlite_errorcode", 0) & 0xFF
+                if code not in {
+                    sqlite3.SQLITE_CORRUPT,
+                    sqlite3.SQLITE_NOTADB,
+                    sqlite3.SQLITE_ERROR,
+                }:
+                    raise
+                return IndexStatus("corrupt", reason="Unreadable index schema; rebuild required")
             finally:
-                for suffix in ("", "-journal"):
-                    Path(str(stage) + suffix).unlink(missing_ok=True)
-            for marker in acknowledged:
-                changes.acknowledge(marker)
-            return IndexCoverage(generation, build, True, activity_provisional=tuple(active))
+                db.close()
 
-    def catch_up(self, *, timeout: float = 2) -> IndexCoverage:
-        if not self.path.exists():
-            return self.rebuild(timeout=timeout)
+    def _failure_reason(self, generation: str | None) -> str | None:
+        try:
+            with self.failure_path.open("rb") as handle:
+                data = handle.read(16 * 1024 + 1)
+        except FileNotFoundError:
+            return None
+        try:
+            if len(data) > 16 * 1024:
+                raise ValueError("Oversized failure marker")
+            failure = _InitializationFailure.model_validate_json(data)
+        except ValueError:
+            return "Corrupt initialization-failure marker"
+        if failure.target_schema != SCHEMA_VERSION:
+            return None
+        if generation is not None and failure.generation not in {None, generation}:
+            return None
+        return failure.reason
+
+    @staticmethod
+    def _initialization_error(reason: str, *, persisted: bool = True) -> HistoryIndexIncomplete:
+        suppression = (
+            "Automatic initialization will not retry for this index generation."
+            if persisted
+            else "Could not persist failure suppression; automatic retries may recur."
+        )
+        return HistoryIndexIncomplete(
+            f"History index initialization failed: {reason}. {suppression} Run: {_REBUILD_COMMAND}"
+        )
+
+    def _check_current(self, status: IndexStatus) -> None:
+        if status.baseline != "current":
+            raise HistoryIndexIncomplete(
+                f"History index is {status.baseline}; initialization/rebuild required. "
+                f"Run: {_REBUILD_COMMAND}"
+            )
+        if status.generation != HistoryChanges(self.root).read_generation():
+            raise HistoryCoordinationError(
+                "History baseline generation mismatch; run session index rebuild --reset"
+            )
+
+    def inspect(self, *, deadline: float | None = None) -> IndexStatus:
+        deadline = time.monotonic() + QUERY_TIMEOUT if deadline is None else deadline
+        status = self.classify(deadline=deadline)
+        generation, _ = HistoryChanges(self.root).inspect(timeout=_remaining(deadline))
+        if status.baseline == "current":
+            self._check_current(status)
+        elif status.baseline in {"absent", "outdated"} and (
+            reason := self._failure_reason(generation)
+        ):
+            return IndexStatus(
+                "failed",
+                status.schema,
+                generation,
+                reason=str(self._initialization_error(reason)),
+            )
+        return status
+
+    def initialize(self, *, deadline: float) -> IndexCoverage | None:
+        """Explicit automatic-init phase; a corpus can share its deadline across roots."""
         changes = HistoryChanges(self.root)
-        deadline = time.monotonic() + timeout
+        with (
+            lock_file(self.catchup_lock, timeout=_remaining(deadline)),
+            lock_file(changes.mutation_lock, mode="shared", timeout=_remaining(deadline)),
+        ):
+            status = self.classify(deadline=deadline)
+            if status.baseline == "current":
+                self._check_current(status)
+                return None  # A peer already published while we waited.
+            if status.baseline not in {"absent", "outdated"}:
+                self._check_current(status)
+            generation = changes.read_generation()
+            if reason := self._failure_reason(generation):
+                raise self._initialization_error(reason)
+            # Initialize absent coordination only under the normal protected gate.
+            try:
+                generation, _ = changes.capture(timeout=_remaining(deadline))
+                coverage, acknowledged = self._rebuild_locked(reset=False, deadline=deadline)
+            except (FileLockTimeout, HistoryCoordinationError):
+                raise
+            except (OSError, ValueError, sqlite3.Error) as exc:
+                if isinstance(exc, sqlite3.Error) and (
+                    getattr(exc, "sqlite_errorcode", 0) & 0xFF
+                ) in {sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED}:
+                    raise
+                if isinstance(exc, TimeoutError):
+                    code, reason = (
+                        "timeout",
+                        "Metadata build exhausted its remaining initialization budget",
+                    )
+                elif isinstance(exc, OSError):
+                    code, reason = "io", f"Metadata I/O failure ({type(exc).__name__})"
+                elif isinstance(exc, sqlite3.Error):
+                    code, reason = "sqlite", "SQLite metadata projection failed"
+                else:
+                    code, reason = "authority", "Invalid authoritative history metadata"
+                failure = _InitializationFailure(
+                    target_schema=SCHEMA_VERSION,
+                    generation=generation,
+                    code=code,
+                    reason=reason,
+                    failed_at=datetime.now(UTC).isoformat(),
+                )
+                try:
+                    atomic_write_text(self.failure_path, failure.model_dump_json() + "\n")
+                except OSError:
+                    raise self._initialization_error(reason, persisted=False) from exc
+                raise self._initialization_error(reason) from exc
+            return self._finish_rebuild(coverage, acknowledged)
+
+    def _operation_deadline(self, deadline: float | None) -> float:
+        ordinary = time.monotonic() + QUERY_TIMEOUT if deadline is None else deadline
+        status = self.classify(deadline=ordinary)
+        if status.baseline in {"absent", "outdated"} and deadline is None:
+            self.initialize(deadline=time.monotonic() + INITIALIZATION_TIMEOUT)
+            return time.monotonic() + QUERY_TIMEOUT
+        self._check_current(status)
+        return ordinary
+
+    def catch_up(self, *, timeout: float | None = None) -> IndexCoverage:
+        deadline = self._operation_deadline(None if timeout is None else time.monotonic() + timeout)
+        return self._catch_up(deadline)
+
+    def _catch_up(self, deadline: float) -> IndexCoverage:
+        changes = HistoryChanges(self.root)
         with (
             lock_file(self.catchup_lock, timeout=_remaining(deadline)),
             lock_file(changes.mutation_lock, mode="shared", timeout=_remaining(deadline)),
             lock_file(self.database_lock, mode="shared", timeout=_remaining(deadline)),
         ):
-            generation, target = changes.capture(timeout=_remaining(deadline))
+            generation, target = changes.inspect(timeout=_remaining(deadline))
+            if generation is None or not self.path.exists():
+                raise HistoryIndexIncomplete(
+                    "History index changed after preflight; retry required"
+                )
             db = _connect(self.path, timeout=_remaining(deadline))
             try:
                 meta = db.execute("SELECT * FROM meta").fetchone()
                 if meta is None or meta["generation"] != generation:
                     raise HistoryCoordinationError(
-                        "History baseline generation mismatch; rebuild required"
+                        "History baseline generation mismatch; run session index rebuild --reset"
                     )
-                if meta["version"] == 2:
-                    acknowledged, pending, active = self._drain(db, target, deadline)
-                    for marker in acknowledged:
-                        changes.acknowledge(marker)
-                    return IndexCoverage(
-                        generation, meta["build"], not pending, tuple(pending), tuple(active)
-                    )
+                if meta["version"] != SCHEMA_VERSION:
+                    raise HistoryIndexIncomplete("History index schema changed after preflight")
+                acknowledged, pending, active, _ = self._drain(db, target, deadline)
+                for marker in acknowledged:
+                    changes.acknowledge(marker)
+                return IndexCoverage(
+                    generation, meta["build"], not pending, tuple(pending), tuple(active)
+                )
             finally:
                 db.close()
-        # Schema changes replace only the disposable projection through normal rebuild.
-        return self.rebuild(timeout=_remaining(deadline))
 
     @contextmanager
     def query(self, *, deadline: float | None = None) -> Generator[sqlite3.Connection]:
-        deadline = time.monotonic() + 2 if deadline is None else deadline
-        coverage = self.catch_up(timeout=_remaining(deadline))
+        deadline = self._operation_deadline(deadline)
+        coverage = self._catch_up(deadline)
         if not coverage.complete:
             raise HistoryIndexIncomplete(
                 f"History index has unresolved sources: {coverage.pending}"
@@ -632,15 +857,28 @@ class HistoryIndex:
                 references.append((history_id, history_id, record.session_instance_id or ""))
         return tuple(references)
 
-    def preview_count(self) -> int:
-        with self.query() as db:
-            return sum(
-                self._preview_generation_matches(db, row[0])
-                and self._preview_binding_matches(db, row[1], row[2])
-                for row in db.execute(
-                    "SELECT key,history_id,archive_digest FROM previews"
-                ).fetchall()
+    def preview_count(self, *, deadline: float | None = None) -> int:
+        """Read cached counts without initializing or catching up metadata."""
+        deadline = time.monotonic() + QUERY_TIMEOUT if deadline is None else deadline
+        with lock_file(self.database_lock, mode="shared", timeout=_remaining(deadline)):
+            if not self.path.exists():
+                return 0
+            db = sqlite3.connect(
+                self.path.resolve().as_uri() + "?mode=ro", uri=True, timeout=_remaining(deadline)
             )
+            try:
+                meta = db.execute("SELECT version FROM meta").fetchone()
+                if meta is None or meta[0] != SCHEMA_VERSION:
+                    return 0
+                return sum(
+                    self._preview_generation_matches(db, row[0])
+                    and self._preview_binding_matches(db, row[1], row[2])
+                    for row in db.execute(
+                        "SELECT key,history_id,archive_digest FROM previews"
+                    ).fetchall()
+                )
+            finally:
+                db.close()
 
     def preview_cache(self, key: str) -> tuple[str, str | None] | None:
         """Bounded cache-only lookup: never catch up metadata or open source content."""
@@ -650,7 +888,7 @@ class HistoryIndex:
             db = sqlite3.connect(self.path.resolve().as_uri() + "?mode=ro", uri=True, timeout=0.005)
             try:
                 meta = db.execute("SELECT version,build FROM meta").fetchone()
-                if meta is None or meta[0] != 2:
+                if meta is None or meta[0] != SCHEMA_VERSION:
                     return None
                 row = db.execute(
                     "SELECT history_id,archive_digest,value FROM previews WHERE key=?", (key,)
@@ -762,7 +1000,7 @@ class HistoryIndex:
     ) -> tuple[HistoryReadTarget, ...]:
         from meridian.lib.state.retention_archive import ArchiveReceipt, archive_locations
 
-        deadline = time.monotonic() + 2 if deadline is None else deadline
+        deadline = self._operation_deadline(deadline)
         with self.query(deadline=deadline) as db:
             direct = db.execute(
                 "SELECT history_id FROM records WHERE history_id=?", (ref,)

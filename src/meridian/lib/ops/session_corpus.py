@@ -7,7 +7,6 @@ from typing import NamedTuple
 
 from meridian.lib.config.workspace import get_projectable_roots, resolve_workspace_snapshot
 from meridian.lib.ops.runtime import resolve_runtime_authority_for_read
-from meridian.lib.ops.work_sessions import work_session_chat_ids
 from meridian.lib.state.user_paths import get_user_home
 
 
@@ -75,7 +74,6 @@ def resolve_session_search_corpus(
     workspace: bool,
     global_scope: bool,
     work_id: str | None,
-    deadline: float | None = None,
 ) -> tuple[SessionCorpusScope, ...]:
     """Resolve ordered search scope roots for session search."""
 
@@ -92,20 +90,6 @@ def resolve_session_search_corpus(
         if runtime_root is not None
         else None
     )
-    if normalized_work_id:
-        if current_scope is None:
-            return ()
-        chat_filter = frozenset(
-            work_session_chat_ids(
-                project_root,
-                current_scope.runtime_root,
-                normalized_work_id,
-                include_all=True,
-                deadline=deadline,
-            )
-        )
-        return (current_scope._replace(chat_filter=chat_filter),)
-
     scopes: list[SessionCorpusScope] = [current_scope] if current_scope is not None else []
     if workspace:
         scopes.extend(_workspace_scopes(project_root))

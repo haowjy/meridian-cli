@@ -28,6 +28,20 @@ index rebuild`; damaged coordination requires `--reset`. Offline deletion of
 `history-index/` is safe only after its runtime's users stop. Leave `locks/` alone.
 Busy, disk-full, permissions and ordinary I/O errors are not corruption recovery.
 
+## Initialization and read budgets
+
+`history_index.py` classifies schema through read-only SQLite before entering the
+existing catch-up gate. Missing/older schemas get a separate 15-second automatic
+metadata phase and an under-lock recheck. A genuine owned-build failure is latched
+in `history-index-init-failure.json`; manual publication clears it before optional
+preview warming. Contention and cancellation are not persistent failures.
+
+No-deadline reads initialize lazily, then begin the ordinary two-second budget.
+Caller-owned deadlines never start another implicit build. Corpus search enumerates
+roots without index access, shares one cold budget across roots, and starts its
+ordinary deadline after actual initialization; an all-warm pass never resets it.
+Status and cache counts inspect only; peeks keep their five-millisecond cache path.
+
 ## Identity and authority
 
 History UUID identifies one transcript, not a reusable cN alias. Sessions retain
