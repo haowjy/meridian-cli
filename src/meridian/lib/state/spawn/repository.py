@@ -12,12 +12,14 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal, Self, cast
+from uuid import uuid4
 
 from pydantic import ValidationError, model_validator
 
 from meridian.lib.core.domain import TERMINAL_SPAWN_STATUSES
 from meridian.lib.platform.locking import lock_file
 from meridian.lib.state.atomic import atomic_write_text
+from meridian.lib.state.history_changes import HistoryChanges, HistorySource
 from meridian.lib.state.spawn.legacy import (
     LegacySpawnStateUpgradeError,
     upgrade_legacy_spawn_state,
@@ -155,7 +157,22 @@ def _read_stored_state(spawns_dir: Path, spawn_id: str) -> StoredSpawnState | No
                 )
             raw = cast("dict[str, Any]", parsed)
             candidate = upgrade_legacy_spawn_state(raw) if raw.get("v", 2) == 2 else raw
-            return StoredSpawnState.model_validate(candidate)
+            stored = StoredSpawnState.model_validate(candidate)
+            if stored.id != spawn_id:
+                raise SpawnStateQuarantined(
+                    SpawnStateQuarantineReport(
+                        spawn_id=spawn_id,
+                        state_path=path,
+                        validation_errors=(
+                            {
+                                "type": "identity_mismatch",
+                                "loc": ("id",),
+                                "msg": "Spawn state ID does not match its directory",
+                            },
+                        ),
+                    )
+                )
+            return stored
         except (json.JSONDecodeError, LegacySpawnStateUpgradeError, ValidationError) as exc:
             if isinstance(exc, ValidationError):
                 errors: tuple[object, ...] = tuple(exc.errors(include_url=False))
@@ -228,17 +245,35 @@ def write_state_locked(
     second snapshot and then be clobbered by the outer mutation's stale result.
     """
 
-    with lock_file(spawn_lock_path(spawns_dir, spawn_id), reentrant=False):
+    changes = HistoryChanges(spawns_dir.parent)
+    with (
+        lock_file(changes.mutation_lock, mode="shared"),
+        lock_file(spawn_lock_path(spawns_dir, spawn_id), reentrant=False),
+    ):
         current = read_state(spawns_dir, spawn_id)
         if current is None:
             return Missing()
+        if current.record_mode == "historical":
+            raise ValueError("Historical records are inert and cannot be mutated")
         updated = mutator(current)
         if isinstance(updated, Decline):
             return Declined(snapshot=current, reason=updated.reason)
         if updated.id != spawn_id:
             raise ValueError("Locked state mutator must not change spawn id")
+        if (updated.history_id, updated.state_revision) != (
+            current.history_id,
+            current.state_revision,
+        ):
+            raise ValueError("Locked state mutator must not change history identity or revision")
         if current.status in TERMINAL_SPAWN_STATUSES and not allow_terminal_overwrite:
             raise ValueError(f"Refusing to overwrite terminal spawn state: {spawn_id}")
+        updated = updated.model_copy(
+            update={
+                "history_id": current.history_id or uuid4(),
+                "state_revision": current.state_revision + 1,
+            }
+        )
+        changes.mark(HistorySource(kind="spawn", key=spawn_id))
         _write_state(spawns_dir, updated)
         return Applied(before=current, after=updated)
 
@@ -247,9 +282,12 @@ def is_safe_spawn_dir_name(name: str) -> bool:
     separators = {"/", "\\", os.sep}
     if os.altsep is not None:
         separators.add(os.altsep)
-    return bool(name) and not name.startswith(".") and not any(
-        separator in name for separator in separators
+    return (
+        bool(name)
+        and not name.startswith(".")
+        and not any(separator in name for separator in separators)
     )
+
 
 def scan_spawn_ids(spawns_dir: Path) -> list[str]:
     """Return child directory names that contain a ``state.json`` file."""

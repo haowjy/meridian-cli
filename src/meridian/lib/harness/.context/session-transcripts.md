@@ -56,3 +56,28 @@ segments use it to avoid double-counting those events in the message stream.
 ## Related Context
 
 - [CONTEXT.md](CONTEXT.md) — shared harness contracts
+
+## Pi journals and rendering limits
+
+Pi native `message` and RPC `message_end` share message extraction. Native
+compactions create segments with recorded summaries; branch summaries and parent
+changes are typed annotations in append order, not reconstructed active context.
+The normalizer carries preceding-entry identity across preview checkpoints.
+Unknown material records/content set `rendering_reason`; consumers must not call
+that a complete empty rendering. Raw storage remains unchanged.
+
+## OpenCode raw transcript rows
+
+The DB provider emits `record=opencode.transcript`, version 1: one session row,
+message rows with their raw part rows, then unassociated session parts. All native
+columns and original payload strings survive; blobs use a typed base64 value.
+Session existence and the complete row read share one read-only transaction.
+Missing sources and DB errors must not become empty iteration. A present DB session
+wins over legacy JSON even when empty.
+
+Only the shared normalizer translates these records. It preserves initial-user
+setup and summary compactions across preview checkpoints; unsupported roles,
+parts and malformed material retain an explicit rendering reason. Rendering
+support is not native capture qualification: a consistent DB transaction can
+still contain unfinished work. Do not use normalized display events as capture
+input or treat iterator creation as completed source validation.

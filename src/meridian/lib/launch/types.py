@@ -7,6 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from meridian.lib.core.execution_policy import ResolvedExecutionPolicy
 from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
+from meridian.lib.harness.launch_types import ManagedPrimaryPreview
 from meridian.lib.launch.composition import PromptDocument
 from meridian.lib.launch.request import SessionRequest
 
@@ -74,10 +75,12 @@ class LaunchResult(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
+    launch_plan: ManagedPrimaryPreview | None = None
     command: tuple[str, ...]
     exit_code: int
     continue_ref: str | None = None
     continue_chat_id: str | None = None
+    primary_spawn_id: str | None = None
     warning: str | None = None
     terminal_surface_mode: str | None = None
 

@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import json
 from collections.abc import Iterable, Iterator, Sequence
+from dataclasses import dataclass
 from pathlib import Path
-from typing import NamedTuple, Protocol, cast
+from typing import Literal, NamedTuple, Protocol, cast
 
 from meridian.lib.harness.extractors.base import normalize_harness_event_type
 from meridian.lib.harness.opencode_transcript import (
     OpenCodeStorageTranscriptProvider,
+    interpret_opencode_record,
     iter_opencode_db_events,
 )
 from meridian.lib.launch.constants import HISTORY_FILENAME
@@ -37,6 +39,7 @@ class TranscriptMessage(NamedTuple):
     content: str
     tool_call: ToolCall | None = None
     is_tool_result: bool = False
+    kind: Literal["interaction", "annotation"] = "interaction"
 
 
 class TranscriptParseResult(NamedTuple):
@@ -44,6 +47,7 @@ class TranscriptParseResult(NamedTuple):
     total_compactions: int
     segment_setups: tuple[str | None, ...]
     consumed_setup_event_indexes: tuple[int, ...] = ()
+    rendering_reason: str | None = None
 
     @property
     def segment_prologues(self) -> tuple[str | None, ...]:
@@ -51,11 +55,18 @@ class TranscriptParseResult(NamedTuple):
         return self.segment_setups
 
 
+class NormalizedTranscriptEvent(NamedTuple):
+    messages: list[TranscriptMessage]
+    boundary: bool = False
+    consumed_setup: bool = False
+    rendering_reason: str | None = None
+
+
 class TranscriptEventParser(Protocol):
     """Family parser for one transcript event dictionary."""
 
-    def parse(self, event: dict[str, object]) -> tuple[list[TranscriptMessage], bool]:
-        """Return extracted messages and compaction-boundary marker."""
+    def parse(self, event: dict[str, object]) -> NormalizedTranscriptEvent:
+        """Return extracted messages, boundaries and interpretation limits."""
         ...
 
 
@@ -102,16 +113,26 @@ def _preview(value: str, *, limit: int = _MAX_PREVIEW) -> str:
 
 
 # Harness tool names that map to shell execution.
-_EXEC_TOOL_NAMES: frozenset[str] = frozenset({
-    "exec_command", "shell", "terminal", "run_command",
-})
+_EXEC_TOOL_NAMES: frozenset[str] = frozenset(
+    {
+        "exec_command",
+        "shell",
+        "terminal",
+        "run_command",
+    }
+)
 
 # Harness tool names for stdin interaction.
 _STDIN_TOOL_NAMES: frozenset[str] = frozenset({"write_stdin"})
 
 # Keys that carry the "interesting" payload in a Claude-style tool input dict.
 _TOOL_BODY_KEYS: tuple[str, ...] = (
-    "file_path", "path", "command", "pattern", "description", "skill",
+    "file_path",
+    "path",
+    "command",
+    "pattern",
+    "description",
+    "skill",
 )
 
 
@@ -211,20 +232,32 @@ def _extract_claude_content(role: str, content: object) -> list[TranscriptMessag
             continue
         if role == "assistant" and block_type == "tool_use":
             marker, tool_call = _tool_use_summary(block)
-            messages.append(TranscriptMessage(
-                role=role, content=marker, tool_call=tool_call,
-            ))
+            messages.append(
+                TranscriptMessage(
+                    role=role,
+                    content=marker,
+                    tool_call=tool_call,
+                )
+            )
             continue
         if role == "assistant" and block_type in {"toolcall", "function_call", "functioncall"}:
             marker, tool_call = _pi_tool_call_summary(block)
-            messages.append(TranscriptMessage(
-                role=role, content=marker, tool_call=tool_call,
-            ))
+            messages.append(
+                TranscriptMessage(
+                    role=role,
+                    content=marker,
+                    tool_call=tool_call,
+                )
+            )
             continue
         if role == "user" and block_type == "tool_result":
-            messages.append(TranscriptMessage(
-                role=role, content=_tool_result_summary(block), is_tool_result=True,
-            ))
+            messages.append(
+                TranscriptMessage(
+                    role=role,
+                    content=_tool_result_summary(block),
+                    is_tool_result=True,
+                )
+            )
             continue
 
         text = text_from_value(block)
@@ -252,25 +285,73 @@ def _pi_tool_call_summary(block: dict[str, object]) -> tuple[str, ToolCall]:
     return rendered, _normalize_tool(name, body)
 
 
-def _extract_pi_message_event(payload: dict[str, object]) -> list[TranscriptMessage]:
+def _extract_pi_message_event(payload: dict[str, object]) -> NormalizedTranscriptEvent:
+    """Interpret supported Pi material and diagnose omissions in the same pass."""
     raw_message = payload.get("message")
     if not isinstance(raw_message, dict):
-        return []
-
+        return NormalizedTranscriptEvent(
+            [], rendering_reason="Malformed Pi message; rendering is incomplete."
+        )
     message = cast("dict[str, object]", raw_message)
     role = str(message.get("role", "")).strip().lower()
-    if role in {"assistant", "user", "system"}:
-        return _extract_claude_content(role, message.get("content"))
-    if role == "custom":
-        return _extract_claude_content("user", message.get("content"))
-    if role in {"toolresult", "tool_result"}:
-        content = text_from_value(message.get("content"))
-        if content:
-            return [TranscriptMessage(
-                role="user", content=f"[tool_result] {content}", is_tool_result=True,
-            )]
-        return [TranscriptMessage(role="user", content="[tool_result]", is_tool_result=True)]
-    return []
+    reason = "Malformed Pi message content; rendering is incomplete."
+    if role == "bashexecution":
+        command, output = message.get("command"), message.get("output")
+        if not isinstance(command, str) or not isinstance(output, str):
+            return NormalizedTranscriptEvent([], rendering_reason=reason)
+        return NormalizedTranscriptEvent(
+            [
+                TranscriptMessage("user", f"[tool: bash {command}]", ToolCall("bash", command)),
+                TranscriptMessage("user", f"[tool_result] {output}", is_tool_result=True),
+            ]
+        )
+    if role not in {"assistant", "user", "system", "custom", "toolresult", "tool_result"}:
+        return NormalizedTranscriptEvent(
+            [], rendering_reason="Unsupported Pi message role; rendering is incomplete."
+        )
+    content = message.get("content")
+    if not isinstance(content, (str, list)):
+        return NormalizedTranscriptEvent([], rendering_reason=reason)
+    blocks: list[object] = (
+        [{"type": "text", "text": content}]
+        if isinstance(content, str)
+        else cast("list[object]", content)
+    )
+    messages: list[TranscriptMessage] = []
+    rendering_reason: str | None = None
+    rendered_role = "user" if role in {"custom", "toolresult", "tool_result"} else role
+    for item in blocks:
+        if not isinstance(item, dict):
+            rendering_reason = reason
+            continue
+        block = cast("dict[str, object]", item)
+        block_type = block.get("type")
+        if block_type == "text":
+            text = block.get("text")
+            if not isinstance(text, str):
+                rendering_reason = reason
+            elif text.strip():
+                messages.append(TranscriptMessage(rendered_role, text.strip()))
+        elif block_type == "thinking" and role == "assistant":
+            if not isinstance(block.get("thinking"), str):
+                rendering_reason = reason
+        elif block_type == "toolCall" and role == "assistant":
+            name = block.get("name")
+            if (
+                not isinstance(name, str)
+                or not name.strip()
+                or not isinstance(block.get("arguments"), dict)
+            ):
+                rendering_reason = reason
+                continue
+            marker, tool = _pi_tool_call_summary(block)
+            messages.append(TranscriptMessage("assistant", marker, tool))
+        else:
+            rendering_reason = "Unsupported Pi message content; rendering is incomplete."
+    if role in {"toolresult", "tool_result"} and (messages or rendering_reason is None):
+        text = "\n".join(message.content for message in messages)
+        messages = [TranscriptMessage("user", f"[tool_result] {text}".strip(), is_tool_result=True)]
+    return NormalizedTranscriptEvent(messages, rendering_reason=rendering_reason)
 
 
 def _extract_codex_response_item(payload: dict[str, object]) -> list[TranscriptMessage]:
@@ -319,12 +400,20 @@ def _extract_codex_response_item(payload: dict[str, object]) -> list[TranscriptM
     if item_type == "function_call_output":
         output = text_from_value(payload.get("output"))
         if output:
-            return [TranscriptMessage(
-                role="user", content=f"[tool_result] {output}", is_tool_result=True,
-            )]
-        return [TranscriptMessage(
-            role="user", content="[tool_result]", is_tool_result=True,
-        )]
+            return [
+                TranscriptMessage(
+                    role="user",
+                    content=f"[tool_result] {output}",
+                    is_tool_result=True,
+                )
+            ]
+        return [
+            TranscriptMessage(
+                role="user",
+                content="[tool_result]",
+                is_tool_result=True,
+            )
+        ]
 
     return []
 
@@ -341,9 +430,13 @@ def _extract_codex_exec_item(item: dict[str, object]) -> list[TranscriptMessage]
         output = text_from_value(item.get("aggregated_output") or item.get("aggregatedOutput"))
         command = text_from_value(item.get("command"))
         if output:
-            return [TranscriptMessage(
-                role="user", content=f"[tool_result] {output}", is_tool_result=True,
-            )]
+            return [
+                TranscriptMessage(
+                    role="user",
+                    content=f"[tool_result] {output}",
+                    is_tool_result=True,
+                )
+            ]
         if command:
             tool_call = ToolCall(name="bash", body=command)
             return [
@@ -360,13 +453,9 @@ def _extract_codex_exec_item(item: dict[str, object]) -> list[TranscriptMessage]
 class DefaultTranscriptEventParser(TranscriptEventParser):
     """Cross-harness event parser that normalizes Claude/Codex/OpenCode families."""
 
-    def parse(self, event: dict[str, object]) -> tuple[list[TranscriptMessage], bool]:
+    def parse(self, event: dict[str, object]) -> NormalizedTranscriptEvent:
+        event = _unwrap_seq_envelope(event)
         event_type = normalize_harness_event_type(event)
-
-        if "event_type" in event and isinstance(event.get("payload"), dict):
-            nested = dict(cast("dict[str, object]", event["payload"]))
-            nested.setdefault("event_type", event["event_type"])
-            return self.parse(nested)
 
         is_boundary = (
             event_type == "system"
@@ -378,11 +467,9 @@ class DefaultTranscriptEventParser(TranscriptEventParser):
             if isinstance(data, dict):
                 nested_message = cast("dict[str, object]", data).get("message")
                 if isinstance(nested_message, dict):
-                    nested_messages, nested_boundary = self.parse(
-                        cast("dict[str, object]", nested_message)
-                    )
-                    return nested_messages, is_boundary or nested_boundary
-            return ([], is_boundary)
+                    nested = self.parse(cast("dict[str, object]", nested_message))
+                    return nested._replace(boundary=is_boundary or nested.boundary)
+            return NormalizedTranscriptEvent([], is_boundary)
 
         if event_type in {"assistant", "user"}:
             role = event_type
@@ -391,50 +478,62 @@ class DefaultTranscriptEventParser(TranscriptEventParser):
                 content = cast("dict[str, object]", message).get("content")
                 extracted = _extract_claude_content(role, content)
                 if extracted:
-                    return extracted, is_boundary
+                    return NormalizedTranscriptEvent(extracted, is_boundary)
             extracted = _extract_claude_content(role, event.get("content"))
             if extracted:
-                return extracted, is_boundary
+                return NormalizedTranscriptEvent(extracted, is_boundary)
             raw_text = message if isinstance(message, str) else event.get("text")
             text = text_from_value(raw_text)
             if text:
-                return ([TranscriptMessage(role=role, content=text)], is_boundary)
+                return NormalizedTranscriptEvent(
+                    [TranscriptMessage(role=role, content=text)], is_boundary
+                )
             fallback_text = text_from_value(event.get("tool_use_result"))
             if role == "user" and fallback_text:
-                return (
-                    [TranscriptMessage(
-                        role="user",
-                        content=f"[tool_result] {fallback_text}",
-                        is_tool_result=True,
-                    )],
+                return NormalizedTranscriptEvent(
+                    [
+                        TranscriptMessage(
+                            role="user",
+                            content=f"[tool_result] {fallback_text}",
+                            is_tool_result=True,
+                        )
+                    ],
                     is_boundary,
                 )
-            return ([], is_boundary)
+            return NormalizedTranscriptEvent([], is_boundary)
 
         if event_type == "response_item":
             raw_payload = event.get("payload")
             if isinstance(raw_payload, dict):
                 extracted = _extract_codex_response_item(cast("dict[str, object]", raw_payload))
-                return (extracted, is_boundary)
+                return NormalizedTranscriptEvent(extracted, is_boundary)
             extracted = _extract_codex_response_item(event)
-            return (extracted, is_boundary)
+            return NormalizedTranscriptEvent(extracted, is_boundary)
 
         if event_type == "item.completed":
             item = event.get("item")
             if isinstance(item, dict):
-                return (_extract_codex_exec_item(cast("dict[str, object]", item)), is_boundary)
-            return ([], is_boundary)
+                return NormalizedTranscriptEvent(
+                    _extract_codex_exec_item(cast("dict[str, object]", item)), is_boundary
+                )
+            return NormalizedTranscriptEvent([], is_boundary)
 
-        if event_type == "message_end":
-            return (_extract_pi_message_event(event), is_boundary)
+        if event_type == "message_end" or (event_type == "message" and "message" in event):
+            return _extract_pi_message_event(event)
+        if event_type == "custom_message":
+            return _extract_pi_message_event(
+                {"message": {"role": "custom", "content": event.get("content")}}
+            )
 
         role = str(event.get("role", "")).strip().lower()
         if role in {"assistant", "user", "system"}:
             text = text_from_value(event.get("content"))
             if text:
-                return ([TranscriptMessage(role=role, content=text)], is_boundary)
+                return NormalizedTranscriptEvent(
+                    [TranscriptMessage(role=role, content=text)], is_boundary
+                )
 
-        return ([], is_boundary)
+        return NormalizedTranscriptEvent([], is_boundary)
 
 
 class JsonlTranscriptProvider(TranscriptProvider):
@@ -480,7 +579,6 @@ class HistoryJsonlTranscriptProvider(TranscriptProvider):
 _TRANSCRIPT_PROVIDERS: tuple[TranscriptProvider, ...] = (
     HistoryJsonlTranscriptProvider(),
     OpenCodeStorageTranscriptProvider(
-        text_from_value=text_from_value,
         iter_json_events=_iter_json_events,
     ),
     JsonlTranscriptProvider(),
@@ -497,7 +595,8 @@ def _provider_for_path(path: Path) -> TranscriptProvider:
 def _unwrap_seq_envelope(event: dict[str, object]) -> dict[str, object]:
     if "event_type" in event and isinstance(event.get("payload"), dict):
         nested = dict(cast("dict[str, object]", event["payload"]))
-        nested.setdefault("event_type", event["event_type"])
+        if event["event_type"] != "retained/native":
+            nested.setdefault("event_type", event["event_type"])
         return _unwrap_seq_envelope(nested)
     return event
 
@@ -593,6 +692,156 @@ def _extract_opencode_follow_on_handoff(
     return _join_message_content(extracted_messages)
 
 
+@dataclass
+class TranscriptNormalizer:
+    """Canonical resumable setup/compaction interpretation, independent of accumulation."""
+
+    setup: str | None = None
+    pending_summary: str | None = None
+    pi_session: bool = False
+    pi_previous_entry_id: str | None = None
+    rendering_reason: str | None = None
+    opencode_user_seen: bool = False
+
+    def _pi_journal(
+        self, event: dict[str, object], messages: list[TranscriptMessage]
+    ) -> NormalizedTranscriptEvent | None:
+        event_type = event.get("type")
+        if event_type == "session" and isinstance(event.get("id"), str) and "cwd" in event:
+            self.pi_session = True
+            self.pi_previous_entry_id = None
+            version = event.get("version", 1)
+            if type(version) is not int or version not in (1, 2, 3):
+                self.rendering_reason = "Unsupported Pi session version; rendering is incomplete."
+            return NormalizedTranscriptEvent([])
+        entry_id = event.get("id")
+        native_entry = isinstance(entry_id, str) and "parentId" in event
+        if not self.pi_session and not (
+            native_entry
+            and event_type
+            in (
+                "message",
+                "compaction",
+                "branch_summary",
+                "custom_message",
+                "model_change",
+                "thinking_level_change",
+                "custom",
+                "label",
+                "session_info",
+            )
+            and (event_type != "message" or isinstance(event.get("message"), dict))
+        ):
+            return None
+        if not native_entry and not isinstance(event_type, str):
+            return None
+        self.pi_session = True
+        annotations: list[TranscriptMessage] = []
+        if event_type == "message" and "message" not in event:
+            self.rendering_reason = "Malformed Pi message; rendering is incomplete."
+        if isinstance(entry_id, str) and len(entry_id) > 128:
+            self.pi_previous_entry_id = None
+            self.rendering_reason = "Unsupported Pi entry identity; rendering is incomplete."
+            native_entry = False
+        if native_entry:
+            if (
+                self.pi_previous_entry_id is not None
+                and event.get("parentId") != self.pi_previous_entry_id
+            ):
+                annotations.append(
+                    TranscriptMessage(
+                        "annotation",
+                        "Pi journal parent changed; continuing a different branch.",
+                        kind="annotation",
+                    )
+                )
+            self.pi_previous_entry_id = cast("str", entry_id)
+        if event_type == "compaction":
+            self.setup = text_from_value(event.get("summary")) or None
+            self.pending_summary = None
+            if not isinstance(event.get("summary"), str):
+                self.rendering_reason = (
+                    "Unsupported Pi compaction summary; rendering is incomplete."
+                )
+            return NormalizedTranscriptEvent(annotations, boundary=True)
+        if event_type == "branch_summary":
+            summary = text_from_value(event.get("summary"))
+            annotations.append(
+                TranscriptMessage(
+                    "annotation",
+                    f"Pi branch summary:\n{summary}",
+                    kind="annotation",
+                )
+            )
+            if not isinstance(event.get("summary"), str):
+                self.rendering_reason = "Unsupported Pi branch summary; rendering is incomplete."
+        elif event_type not in (
+            "message",
+            "custom_message",
+            "model_change",
+            "thinking_level_change",
+            "custom",
+            "label",
+            "session_info",
+        ):
+            self.rendering_reason = "Unsupported Pi journal entry; rendering is incomplete."
+        return NormalizedTranscriptEvent([*annotations, *messages])
+
+    def feed(
+        self, event: dict[str, object], parser: TranscriptEventParser
+    ) -> NormalizedTranscriptEvent:
+        normalized_event = _unwrap_seq_envelope(event)
+        if normalized_event.get("record") == "opencode.transcript":
+            events, is_user, reason = interpret_opencode_record(
+                normalized_event, include_user_setup=not self.opencode_user_seen
+            )
+            self.opencode_user_seen |= is_user
+            self.rendering_reason = reason or self.rendering_reason
+            messages: list[TranscriptMessage] = []
+            boundary = consumed_setup = False
+            for projected in events:
+                normalized = self.feed(projected, parser)
+                messages.extend(normalized.messages)
+                boundary |= normalized.boundary
+                consumed_setup |= normalized.consumed_setup
+            return NormalizedTranscriptEvent(messages, boundary, consumed_setup)
+        extracted = parser.parse(event)
+        messages, parser_boundary = extracted.messages, extracted.boundary
+        self.rendering_reason = extracted.rendering_reason or self.rendering_reason
+        pi_event = self._pi_journal(normalized_event, messages)
+        if pi_event is not None:
+            return pi_event
+        opencode_boundary = _is_opencode_compaction_boundary(normalized_event)
+        claude_boundary = _is_claude_compaction_boundary(normalized_event)
+        if parser_boundary or opencode_boundary:
+            self.setup = (
+                _extract_claude_boundary_handoff(normalized_event) if claude_boundary else None
+            )
+            self.pending_summary = (
+                ("claude" if claude_boundary else "opencode" if opencode_boundary else None)
+                if self.setup is None
+                else None
+            )
+            return NormalizedTranscriptEvent([], boundary=True)
+
+        if self.pending_summary is not None:
+            setup = (
+                _extract_claude_follow_on_handoff(normalized_event, messages)
+                if self.pending_summary == "claude"
+                else _extract_opencode_follow_on_handoff(normalized_event, messages)
+            )
+            self.pending_summary = None
+            if setup:
+                self.setup = setup
+                return NormalizedTranscriptEvent([], consumed_setup=True)
+
+        if self.setup is None:
+            self.setup = _extract_claude_system_prologue(
+                normalized_event
+            ) or _extract_opencode_db_system_prologue(normalized_event)
+        return NormalizedTranscriptEvent(messages)
+
+
 def _parse_events_with_prologues(
     events: Iterable[dict[str, object]],
     *,
@@ -600,72 +849,24 @@ def _parse_events_with_prologues(
 ) -> TranscriptParseResult:
     segments: list[list[TranscriptMessage]] = [[]]
     segment_setups: list[str | None] = [None]
-    total_compactions = 0
     consumed_setup_event_indexes: list[int] = []
-    pending_follow_on_summary: tuple[int, str] | None = None
-
+    normalizer = TranscriptNormalizer()
     for event_index, event in enumerate(events):
-        normalized_event = _unwrap_seq_envelope(event)
-        extracted_messages, parser_boundary = parser.parse(event)
-
-        is_opencode_boundary = _is_opencode_compaction_boundary(normalized_event)
-        is_claude_boundary = _is_claude_compaction_boundary(normalized_event)
-        boundary = parser_boundary or is_opencode_boundary
-
-        if boundary:
-            total_compactions += 1
-            segments.append([])
-            handoff = (
-                _extract_claude_boundary_handoff(normalized_event)
-                if is_claude_boundary
-                else None
-            )
-            segment_setups.append(handoff)
-            next_segment_index = len(segments) - 1
-            if handoff is None:
-                if is_claude_boundary:
-                    pending_follow_on_summary = (next_segment_index, "claude")
-                elif is_opencode_boundary:
-                    pending_follow_on_summary = (next_segment_index, "opencode")
-                else:
-                    pending_follow_on_summary = None
-            else:
-                pending_follow_on_summary = None
-            continue
-
-        if pending_follow_on_summary is not None:
-            segment_index, source = pending_follow_on_summary
-            setup_text: str | None = None
-            if source == "claude":
-                setup_text = _extract_claude_follow_on_handoff(
-                    normalized_event, extracted_messages
-                )
-            elif source == "opencode":
-                setup_text = _extract_opencode_follow_on_handoff(
-                    normalized_event, extracted_messages
-                )
-            pending_follow_on_summary = None
-            if setup_text:
-                segment_setups[segment_index] = setup_text
-                consumed_setup_event_indexes.append(event_index)
-                continue
-
-        if segment_setups[-1] is None:
-            prologue = (
-                _extract_claude_system_prologue(normalized_event)
-                or _extract_opencode_db_system_prologue(normalized_event)
-            )
-            if prologue:
-                segment_setups[-1] = prologue
-
-        if extracted_messages:
-            segments[-1].extend(extracted_messages)
-
+        normalized = normalizer.feed(event, parser)
+        if normalized.boundary:
+            segments.append(list(normalized.messages))
+            segment_setups.append(normalizer.setup)
+        else:
+            segment_setups[-1] = normalizer.setup
+            segments[-1].extend(normalized.messages)
+        if normalized.consumed_setup:
+            consumed_setup_event_indexes.append(event_index)
     return TranscriptParseResult(
         segments=segments,
-        total_compactions=total_compactions,
+        total_compactions=len(segments) - 1,
         segment_setups=tuple(segment_setups),
         consumed_setup_event_indexes=tuple(consumed_setup_event_indexes),
+        rendering_reason=normalizer.rendering_reason,
     )
 
 
@@ -679,7 +880,7 @@ def parse_transcript_events(
 
 
 def parse_transcript_events_with_prologues(
-    events: Sequence[dict[str, object]],
+    events: Iterable[dict[str, object]],
     *,
     parser: TranscriptEventParser | None = None,
 ) -> TranscriptParseResult:
@@ -717,7 +918,7 @@ def parse_opencode_db_transcript_with_prologues(
 ) -> TranscriptParseResult:
     resolved_parser = parser or DefaultTranscriptEventParser()
     return _parse_events_with_prologues(
-        iter_opencode_db_events(session_id=session_id, text_from_value=text_from_value),
+        iter_opencode_db_events(session_id=session_id),
         parser=resolved_parser,
     )
 
@@ -741,3 +942,28 @@ __all__ = [
     "parse_transcript_file_with_prologues",
     "text_from_value",
 ]
+
+
+def transcript_revision(path: Path | None) -> tuple[tuple[int, ...] | None, ...]:
+    """Cheap provider freshness witness; OpenCode storage may be backed by a mutable DB."""
+    from meridian.lib.harness.opencode_transcript import (
+        opencode_db_for_session_file,
+        resolve_opencode_db_path,
+    )
+
+    paths = [] if path is None else [path]
+    if path is None or isinstance(_provider_for_path(path), OpenCodeStorageTranscriptProvider):
+        database = opencode_db_for_session_file(path) if path else resolve_opencode_db_path()
+        assert database is not None
+        paths.extend((database, Path(str(database) + "-wal")))
+    revisions: list[tuple[int, ...] | None] = []
+    for source in paths:
+        try:
+            info = source.stat()
+        except FileNotFoundError:
+            revisions.append(None)
+        else:
+            revisions.append(
+                (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
+            )
+    return tuple(revisions)

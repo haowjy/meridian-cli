@@ -246,9 +246,19 @@ def test_primary_continue_does_not_inherit_ambient_work(
         )
 
     monkeypatch.setattr("meridian.lib.launch.process.run_harness_process", run_harness_process)
+    maintained: list[str] = []
+
+    def maintain_history(project: Path, primary_spawn_id: str) -> None:
+        assert project == project_root
+        maintained.append(primary_spawn_id)
+
+    monkeypatch.setattr(
+        "meridian.lib.ops.session_archive.session_stop_maintenance", maintain_history
+    )
 
     _run_primary_continue(project_root, "p45")
 
+    assert maintained == ["p45-continue"]
     context = contexts[0]
     assert context.work_id is None
     assert context.binding.work_id is None
@@ -418,3 +428,66 @@ def test_primary_exact_continue_without_source_task_ignores_ambient_task_dir(
     )
 
     assert task_cwds[0] != ambient_task_dir.as_posix()
+
+
+def test_fork_old_harness_generation_preserves_selected_history(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    root = _state_root(project_root)
+    source = session_store.start_session(
+        root,
+        harness="codex",
+        harness_session_id="older-native",
+        model="gpt-5.3-codex",
+        kind="primary",
+    )
+    first = spawn_store.start_spawn(
+        root,
+        chat_id=source,
+        model="gpt-5.3-codex",
+        agent="",
+        harness="codex",
+        prompt="old",
+        kind="primary",
+    )
+    session_store.update_session_spawn_id(root, source, first)
+    original = spawn_store.get_spawn(root, first)
+    session_store.stop_session(root, source)
+    source = session_store.start_session(
+        root,
+        chat_id=source,
+        harness="codex",
+        harness_session_id="newer-native",
+        model="gpt-5.3-codex",
+        kind="primary",
+    )
+    second = spawn_store.start_spawn(
+        root,
+        chat_id=source,
+        model="gpt-5.3-codex",
+        agent="",
+        harness="codex",
+        prompt="new",
+        kind="primary",
+    )
+    session_store.update_session_spawn_id(root, source, second)
+    session_store.stop_session(root, source)
+    requests = _record_primary_launch(monkeypatch)
+    _run_primary_continue(project_root, continue_ref=None, fork_ref="older-native", dry_run=True)
+    assert original is not None
+    assert requests[0].session.forked_from_history_id == original.history_id
+    from meridian.lib.launch.session_scope import session_scope
+    from meridian.lib.launch.types import PrimarySessionMetadata
+
+    with session_scope(
+        runtime_root=root,
+        metadata=PrimarySessionMetadata(
+            harness="codex", model="test", agent="", agent_path="", skills=(), skill_paths=()
+        ),
+        request=requests[0].session,
+        harness_session_id="fork-native",
+    ) as fork:
+        record = session_store.get_session_record(root, fork.chat_id)
+        assert record is not None and record.forked_from_history_id == original.history_id

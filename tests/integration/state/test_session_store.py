@@ -771,6 +771,8 @@ def test_work_attachment_history_ignores_malformed_session_update(tmp_path: Path
             + "\n"
         )
 
-    attached = session_store.chat_ids_ever_attached_to_work(runtime_root, "work-1")
+    from meridian.lib.state.history_index import HistoryIndex
+
+    attached = HistoryIndex(runtime_root).work_chat_ids("work-1")
 
     assert attached == set()

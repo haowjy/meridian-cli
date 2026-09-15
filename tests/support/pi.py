@@ -340,7 +340,9 @@ async def start_pi_manager(
 
 def read_history(runtime_root: Path, spawn_id: SpawnId) -> list[dict[str, Any]]:
     path = runtime_root / "spawns" / str(spawn_id) / "history.jsonl"
-    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line]
+    from meridian.lib.state.history import iter_history_events
+
+    return list(iter_history_events(path))
 
 
 def read_history_phases(runtime_root: Path, spawn_id: SpawnId) -> list[str]:

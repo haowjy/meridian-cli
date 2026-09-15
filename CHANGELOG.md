@@ -4,6 +4,75 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- Give new spawn records relocation-stable history IDs and monotonic state revisions.
+- Index history discovery in rebuildable SQLite; preserve readable transcripts across retries and transfers.
+- Add opt-in verified ZIP retention, direct archive reads, selective inert restore, and explicit archived-content search.
+
+### Fixed
+
+- Resolve native capture from the exact completed record; refuse discovery fallbacks and known active native owners.
+- Join capture ownership to exact-generation leases; keep legacy child-stream archive preparation working.
+- Preserve raw OpenCode session/message/part rows before rendering, including unknown material and orphan parts.
+- Keep DB failures distinct from empty sessions; render OpenCode summary compactions through shared readers.
+- Keep DB-only OpenCode reports working; diagnose malformed part types and avoid repeated session-wide part scans.
+
+- Read native Pi messages, compactions and branch annotations across logs, search, exports and previews.
+- Invalidate old parser previews and counts; report unsupported Pi rendering instead of empty success.
+- Keep incomplete Pi rendering visible in archived previews; diagnose malformed text and tool content.
+- Bind post-stop history capture to the completed spawn, even after its chat starts another run.
+- Warm archived child previews during index rebuild; count unsupported archived rendering as unavailable.
+
+- Give cold history indexes 15 seconds; remember failed initialization and recover through manual rebuild.
+- Reuse concurrent index builds; keep status cache-only and preserve warm search deadlines.
+- Remember malformed history failures without masking cancellation or successful index publication.
+- Retry stale failure-marker cleanup on warm history reads; report cleanup warnings once.
+
+- Keep static alias lookup cache-only during dry-run, including continuation previews.
+
+- Preserve native OpenCode permission denials and rule order when adding workspace roots.
+
+- Keep dry-run model resolution cache-only; reject malformed inherited OpenCode config before workspace projection can discard it.
+
+- Honor explicit OpenCode models across native agent defaults; fail closed without silent launch fallback.
+- Preserve committed native model/variant on injection; show truthful managed-primary dry-runs and clean owned instructions.
+- Keep preview freshness visible at narrow widths; reject same-size mutations at cache publication.
+
+- Show bounded cached browser previews immediately; refresh selected sources without replaying unchanged conversations.
+- Warm previews through explicit index rebuild; support metadata-only rebuild and oversized final events.
+
+- Repair interrupted retirement synchronization before GC or reclaim acknowledgement.
+
+- Verify retention sources under shared locks and clean retired artifacts without blocking history writers.
+
+- Keep browser content search loose-only by default; add explicit `browse --include-archives`.
+
+- Search browser previews through the shared loose/ZIP resolver without replaying session files per row.
+- Report incomplete discovery on SQLite failures; keep exact launch references and metadata recovery file-backed.
+- Remove unused log sidecars and replaced scan paths; clean failed index rebuild stages.
+
+- Reclaim history dependents before their dependencies; keep unselected dependencies loose.
+- Clean failed archive/restore stages and recover owned staging paths on retry.
+
+- Document history commands, retention settings and environment overrides in the CLI references.
+
+- Detect cleared historical session identities during repeat restore and recapture.
+
+- Preserve snapshot identity and required prompts across restore/archive round trips.
+- Reject historical-session mutations and explain historical launch rejection.
+- Verify repeat restores without blocking unrelated writers; group equivalent ZIP locations.
+- Bind child fork ancestry before launch; include work discovery in the search deadline.
+
+- Reject restore conflicts in session recovery metadata, even when local transcript bytes match.
+- Honor explicit reselection of a previously imported history snapshot.
+- Preserve exact fork ancestry across resumed generations and ignore torn retry output.
+- Keep early search matches when budgets expire; report incomplete searches explicitly.
+- Enforce one deadline across index lock waits and rebuild steps.
+- Resolve healthy ZIP copies consistently and stage restore bytes without blocking history writers.
+- Keep verified ZIPs readable when recursive cleanup is interrupted.
+- Show restored aliases and historical status in restore and browse output.
+
 ## [0.4.5] - 2026-09-12
 
 ### Fixed

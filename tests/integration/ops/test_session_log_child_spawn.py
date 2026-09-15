@@ -375,7 +375,7 @@ def test_session_log_child_spawn_falls_back_to_artifact_output_when_native_unava
     ]
 
 
-def test_session_log_chat_missing_harness_session_id_does_not_read_primary_spawn_output(
+def test_session_log_chat_reads_file_authority_without_harness_session_id(
     tmp_path: Path,
 ) -> None:
     project_root = tmp_path / "repo"
@@ -412,10 +412,12 @@ def test_session_log_chat_missing_harness_session_id_does_not_read_primary_spawn
             },
         )
 
-        with pytest.raises(ValueError):
-            session_log_sync(
-                SessionLogInput(ref=chat_id, project_root=project_root.as_posix(), tail=5)
-            )
+        output = session_log_sync(
+            SessionLogInput(ref=chat_id, project_root=project_root.as_posix(), tail=5)
+        )
+        assert [(message.role, message.content) for message in output.messages] == [
+            ("assistant", "primary live progress")
+        ]
     finally:
         session_store.stop_session(runtime_root, chat_id)
 

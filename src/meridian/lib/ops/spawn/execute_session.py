@@ -63,18 +63,11 @@ def _resolve_session_continuation(
     # the spawn row and chat row exist.  resolved_continue_fork=True is preserved
     # here so the executor knows a fork is needed.
 
-    return SessionRequest(
-        requested_harness_session_id=resolved_continue_harness_session_id,
-        continue_harness=request.session.continue_harness,
-        continue_source_tracked=request.session.continue_source_tracked,
-        continue_source_ref=request.session.continue_source_ref,
-        continue_chat_id=request.session.continue_chat_id,
-        continue_fork=resolved_continue_fork,
-        forked_from_chat_id=request.session.forked_from_chat_id,
-        source_control_root=request.session.source_control_root,
-        source_execution_cwd=request.session.source_execution_cwd,
-        source_claude_config_dir=request.session.source_claude_config_dir,
-        source_pi_session_dir=request.session.source_pi_session_dir,
+    return request.session.model_copy(
+        update={
+            "requested_harness_session_id": resolved_continue_harness_session_id,
+            "continue_fork": resolved_continue_fork,
+        }
     )
 
 

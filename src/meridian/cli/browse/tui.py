@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import threading
+import time
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from functools import partial
@@ -43,6 +44,7 @@ from meridian.cli.browse.render import (
     render_status,
 )
 from meridian.lib.ops.session_list import SessionListOutput
+from meridian.lib.ops.session_preview import PreviewIdentity, SessionPreview
 from meridian.lib.ops.session_reentry import Blocked, Fork, Resume, SessionReentryDecision
 
 RequestT = TypeVar("RequestT")
@@ -105,9 +107,7 @@ class Lane(Generic[RequestT, ResultT]):
         processed: RequestT | None = None
         while True:
             with self._condition:
-                while not self._shutdown and (
-                    self._slot is None or self._slot is processed
-                ):
+                while not self._shutdown and (self._slot is None or self._slot is processed):
                     self._condition.wait()
                 if self._shutdown:
                     return
@@ -132,12 +132,20 @@ class Lane(Generic[RequestT, ResultT]):
 @dataclass(frozen=True)
 class PreviewRequest:
     chat_id: str
+    history_id: str | None = None
+    generation: str = ""
+
+    @property
+    def identity(self) -> PreviewIdentity:
+        return PreviewIdentity(self.chat_id, self.history_id, self.generation)
 
 
 @dataclass(frozen=True)
 class PreviewResult:
     chat_id: str
     lines: tuple[str, ...]
+    status: str = ""
+    detail: str = ""
 
 
 @dataclass(frozen=True)
@@ -163,31 +171,15 @@ class SearchDone:
 type SearchResult = SearchProgress | SearchDone
 
 
-def _preview_worker(project_root: str) -> LaneWorker[PreviewRequest, PreviewResult]:
+def _preview_worker(reader: SessionPreview) -> LaneWorker[PreviewRequest, PreviewResult]:
     def work(
         request: PreviewRequest,
         current: Callable[[], bool],
         post: Callable[[PreviewResult], None],
     ) -> None:
-        from meridian.lib.ops.session_log import SessionLogInput, session_log_sync
-        from meridian.lib.ops.session_log_render import render_entry
-
-        try:
-            output = session_log_sync(
-                SessionLogInput(ref=request.chat_id, tail=10, project_root=project_root)
-            )
-            lines: list[str] = []
-            if output.source and "spawn" in output.source.lower():
-                lines.append(f"source: {output.source}")
-            for entry in output.entries:
-                rendered, _collapsed = render_entry(entry, clean=True, truncate=True)
-                lines.extend(rendered)
-            if not lines:
-                lines.append("preview temporarily unavailable")
-        except (ValueError, FileNotFoundError, OSError) as exc:
-            lines = [str(exc) or "transcript not found"]
-        if current():
-            post(PreviewResult(request.chat_id, tuple(lines)))
+        view = reader.refresh(request.identity, current)
+        if view is not None and current():
+            post(PreviewResult(request.chat_id, view.lines, view.status, view.detail))
 
     return work
 
@@ -233,11 +225,16 @@ class _BrowseController:
         listing: SessionListOutput,
         project_root: str,
         resolve_reentry: Callable[[str], SessionReentryDecision],
+        include_archives: bool,
     ) -> None:
-        self.model = BrowseModel(listing.rows, older_count=listing.older_count)
+        self.model = BrowseModel(
+            listing.rows, older_count=listing.older_count, include_archives=include_archives
+        )
         self._resolve_reentry = resolve_reentry
         self._app: Application[SessionReentryDecision | None] | None = None
-        self._preview_lane = Lane(_preview_worker(project_root), self.invalidate)
+        self._preview_reader = SessionPreview(project_root)
+        self._preview_lane = Lane(_preview_worker(self._preview_reader), self.invalidate)
+        self._preview_refresh_at = float("inf")
         self._search_lane = Lane(_search_worker(project_root), self.invalidate)
         self._preview_request: PreviewRequest | None = None
         self.interrupted = False
@@ -263,9 +260,17 @@ class _BrowseController:
             return
         if self._preview_request is not None and self._preview_request.chat_id == row.chat_id:
             return
-        request = PreviewRequest(row.chat_id)
+        request = PreviewRequest(row.chat_id, row.history_id, row.session_generation)
         self._preview_request = request
         self.model.preview_loading = True
+        self.model.preview_status = ""
+        self.model.preview_detail = ""
+        cached = self._preview_reader.peek(request.identity)
+        if cached is not None:
+            self.model.apply_preview(row.chat_id, cached.lines)
+            self.model.preview_status = cached.status
+            self.model.preview_detail = cached.detail
+        self._preview_refresh_at = float("inf")
         self._preview_lane.submit(request)
 
     def drain(self) -> None:
@@ -276,6 +281,13 @@ class _BrowseController:
                     self.model.apply_preview(request.chat_id, (result.message,))
             else:
                 self.model.apply_preview(result.chat_id, result.lines)
+                self.model.preview_status = result.status
+                self.model.preview_detail = result.detail
+            self._preview_refresh_at = time.monotonic() + 2
+        row = self.model.highlighted_row
+        if row is not None and row.live and time.monotonic() >= self._preview_refresh_at:
+            self._preview_request = None
+            self._request_preview()
         for result in self._search_lane.drain():
             if isinstance(result, LaneFailure):
                 self.model.apply_search_failed(result.message)
@@ -328,6 +340,7 @@ def run_browse_picker(
     project_root: str,
     resolve_reentry: Callable[[str], SessionReentryDecision],
     *,
+    include_archives: bool = False,
     input: Input | None = None,
     output: Output | None = None,
 ) -> Resume | Fork | None:
@@ -338,6 +351,7 @@ def run_browse_picker(
         listing=listing,
         project_root=project_root,
         resolve_reentry=resolve_reentry,
+        include_archives=include_archives,
     )
 
     def size() -> tuple[int, int]:
@@ -442,6 +456,7 @@ def run_browse_picker(
         full_screen=True,
         style=style,
         before_render=lambda _app: controller.drain(),
+        refresh_interval=0.25,
         input=input,
         output=output,
     )

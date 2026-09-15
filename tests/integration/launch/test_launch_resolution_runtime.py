@@ -468,6 +468,7 @@ def test_primary_launch_materializes_context_from_work(
     )
 
     assert result.exit_code == 0
+    assert result.primary_spawn_id == "p1"
     assert work_store.get_work_item(project_state_dir, "inherited-work") is not None
 
 

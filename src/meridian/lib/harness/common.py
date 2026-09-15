@@ -10,6 +10,7 @@ from meridian.lib.core.domain import TokenUsage
 from meridian.lib.core.types import ArtifactKey, SpawnId
 from meridian.lib.harness.adapter import ArtifactStore, StreamEvent
 from meridian.lib.launch.constants import HISTORY_FILENAME, OUTPUT_FILENAME
+from meridian.lib.state.history_codec import current_attempt_lines
 
 # ---------------------------------------------------------------------------
 # Shared helpers (from _common.py)
@@ -301,7 +302,7 @@ def _iter_json_lines_artifact(
     raw = artifacts.get(artifact_key)
     decoded = raw.decode("utf-8", errors="ignore")
     payloads: list[dict[str, object]] = []
-    for line in decoded.splitlines():
+    for line in current_attempt_lines(decoded):
         stripped = line.strip()
         if not stripped:
             continue

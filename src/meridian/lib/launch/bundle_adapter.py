@@ -51,6 +51,7 @@ class BundleRequest:
     approval_override: str | None = None
     sandbox_override: str | None = None
     extra_skills: tuple[str, ...] = ()
+    no_refresh_models: bool = False
 
 
 @dataclass(frozen=True)
@@ -218,6 +219,8 @@ def _build_bundle_command(request: BundleRequest) -> list[str]:
         str(request.project_root),
     ]
 
+    if request.no_refresh_models:
+        command.append("--no-refresh-models")
     if request.agent:
         command.extend(["--agent", request.agent])
     if request.model_override:

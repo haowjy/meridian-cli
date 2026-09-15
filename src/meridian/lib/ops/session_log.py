@@ -67,6 +67,7 @@ class SessionLogEntry(BaseModel):
     role: str
     content: str
     messages: tuple[SessionLogEntryMessage, ...]
+    kind: Literal["setup", "interaction", "annotation"] = "interaction"
 
 
 class SessionLogOutput(BaseModel):
@@ -176,6 +177,7 @@ def _entry_row_with_index(
         segment_start_message=entry.start_segment_message_index,
         segment_end_message=entry.end_segment_message_index,
         role=entry.role,
+        kind=entry.kind,
         content=entry.content,
         messages=tuple(
             _entry_message_row(message) for message in entry.messages
@@ -342,7 +344,7 @@ def session_log_sync(
     resolved_tail: int | None = None
     if not uses_window_selectors:
         interaction_entries = [
-            entry for entry in address_space.entries if entry.kind == "interaction"
+            entry for entry in address_space.entries if entry.kind != "setup"
         ]
         resolved_tail = None if payload.full else (payload.tail if payload.tail is not None else 5)
         page = window_from_tail(
@@ -456,7 +458,10 @@ def session_log_sync(
         next_command=next_command,
         previous_segment_command=previous_segment_command,
         next_segment_command=next_segment_command,
-        hints=_window_hints(payload, uses_absolute_window=uses_window_selectors),
+        hints=(
+            _window_hints(payload, uses_absolute_window=uses_window_selectors)
+            + ((parsed.rendering_reason,) if parsed.rendering_reason else ())
+        ),
         truncate=payload.truncate,
     )
 

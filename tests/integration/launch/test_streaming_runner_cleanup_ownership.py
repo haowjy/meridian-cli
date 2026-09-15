@@ -109,7 +109,7 @@ async def test_execute_with_streaming_routes_backend_cleanup_through_stop_spawn(
     run = Spawn(
         spawn_id=SpawnId(f"r-{harness_id.value}-cleanup"),
         prompt="hello",
-        model=ModelId("gpt-5.3-codex" if harness_id is HarnessId.CODEX else "gpt-5.4"),
+        model=ModelId("gpt-5.3-codex" if harness_id is HarnessId.CODEX else "openai/gpt-5.4"),
         status="queued",
     )
     spawn_store.start_spawn(

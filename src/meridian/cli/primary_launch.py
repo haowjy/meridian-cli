@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import json
 import shlex
 from pathlib import Path
+from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict
 
@@ -12,6 +14,7 @@ from meridian.cli.utils import missing_fork_session_error_with_discovery
 from meridian.lib.core.execution_policy import ResolvedExecutionPolicy
 from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
 from meridian.lib.core.util import FormatContext
+from meridian.lib.harness.launch_types import ManagedPrimaryPreview
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.launch import LaunchRequest, SessionMode, launch_primary
 from meridian.lib.launch.composition import PromptDocument
@@ -55,6 +58,7 @@ class PrimaryLaunchOutput(BaseModel):
     message: str
     exit_code: int
     command: tuple[str, ...] = ()
+    launch_plan: ManagedPrimaryPreview | None = None
     continue_ref: str | None = None
     continue_chat_id: str | None = None
     forked_from: str | None = None
@@ -67,6 +71,23 @@ class PrimaryLaunchOutput(BaseModel):
         lines: list[str] = []
         if self.warning:
             lines.append(f"warning: {self.warning}")
+        if self.launch_plan:
+            plan = self.launch_plan
+            lines.extend(
+                (self.message, "Managed primary launch (placeholders are resolved at startup):")
+            )
+            lines.append("Backend: " + shlex.join(plan.backend_command))
+            if plan.requested_model:
+                lines.append("Requested model: " + plan.requested_model)
+            if plan.model:
+                lines.append("Launch-local model: " + plan.model)
+            lines.extend(plan.steps)
+            lines.append(
+                f"Bootstrap: {plan.bootstrap_method} {plan.bootstrap_path} "
+                + json.dumps(plan.bootstrap_payload)
+            )
+            lines.append("Attach: " + shlex.join(plan.attach_command))
+            return "\n".join(lines)
         if self.command:
             if self.forked_from:
                 lines.append(f"{self.message} (from {self.forked_from})")
@@ -167,9 +188,7 @@ def run_primary_launch(
     context_from_requested = (raw_from_target,) if raw_from_target else ()
     normalized_task_dir = (task_dir or "").strip() or None
     if resume_target is not None and normalized_task_dir is not None:
-        raise ValueError(
-            "--continue does not accept --task-dir. Use --fork --task-dir to diverge."
-        )
+        raise ValueError("--continue does not accept --task-dir. Use --fork --task-dir to diverge.")
     if resume_target is not None and work.strip():
         raise ValueError(
             "--continue does not accept --work. "
@@ -196,6 +215,7 @@ def run_primary_launch(
     continue_fork = False
     continue_warning: str | None = None
     forked_from_chat_id: str | None = None
+    forked_from_history_id: UUID | None = None
     source_control_root: str | None = None
     source_execution_cwd: str | None = None
     source_claude_config_dir: str | None = None
@@ -314,6 +334,7 @@ def run_primary_launch(
         continue_warning = resolved_fork.warning
         continue_fork = True
         forked_from_chat_id = resolved_fork.source_chat_id
+        forked_from_history_id = resolved_fork.source_history_id
         source_control_root = resolved_fork.source_control_root
         source_execution_cwd = resolved_fork.source_execution_cwd
         source_claude_config_dir = resolved_fork.source_claude_config_dir
@@ -373,6 +394,7 @@ def run_primary_launch(
                 continue_chat_id=continue_chat_id,
                 continue_fork=continue_fork,
                 forked_from_chat_id=forked_from_chat_id,
+                forked_from_history_id=forked_from_history_id,
                 source_control_root=source_control_root,
                 source_execution_cwd=source_execution_cwd,
                 source_claude_config_dir=source_claude_config_dir,
@@ -385,10 +407,16 @@ def run_primary_launch(
     )
 
     continue_chat_id = getattr(launch_result, "continue_chat_id", None)
+    history_warning = None
+    if not dry_run and launch_result.primary_spawn_id:
+        from meridian.lib.ops.session_archive import session_stop_maintenance
+
+        history_warning = session_stop_maintenance(project_root, launch_result.primary_spawn_id)
     return PrimaryLaunchOutput(
         message=_result_message(exit_code=launch_result.exit_code),
         exit_code=launch_result.exit_code,
         command=launch_result.command if dry_run else (),
+        launch_plan=launch_result.launch_plan if dry_run else None,
         continue_ref=launch_result.continue_ref,
         continue_chat_id=continue_chat_id,
         forked_from=output_forked_from,
@@ -403,6 +431,7 @@ def run_primary_launch(
         ),
         warning=_merge_warnings(
             continue_warning,
+            history_warning,
             launch_result.warning,
             _headless_claude_startup_warning(project_root),
         ),

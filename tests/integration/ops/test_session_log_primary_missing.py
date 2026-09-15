@@ -304,7 +304,7 @@ def test_session_log_primary_spawn_missing_harness_session_id_reads_primary_meta
     assert primary_spawn.harness_session_id is None
 
 
-def test_session_log_primary_spawn_missing_harness_session_id_does_not_read_spawn_output(
+def test_session_log_primary_file_authority_needs_no_harness_session_id(
     tmp_path: Path,
 ) -> None:
     project_root = tmp_path / "repo"
@@ -333,11 +333,12 @@ def test_session_log_primary_spawn_missing_harness_session_id_does_not_read_spaw
         },
     )
 
-    with pytest.raises(ValueError) as exc:
-        session_log_sync(SessionLogInput(ref="p42", project_root=project_root.as_posix(), tail=5))
-    assert str(exc.value) == (
-        "Spawn 'p42' has no transcript available yet (no harness session id recorded)."
+    output = session_log_sync(
+        SessionLogInput(ref="p42", project_root=project_root.as_posix(), tail=5)
     )
+    assert [(message.role, message.content) for message in output.messages] == [
+        ("assistant", "primary live progress")
+    ]
 
 
 def test_session_log_primary_spawn_pi_never_created_skips_default_root_detection(

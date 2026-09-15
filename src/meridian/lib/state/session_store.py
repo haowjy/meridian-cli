@@ -26,8 +26,29 @@ from meridian.lib.platform.locking import (
 )
 from meridian.lib.state.atomic import atomic_write_text
 from meridian.lib.state.event_store import append_event, read_events, utc_now_iso
+from meridian.lib.state.history_changes import HistoryChanges, HistorySource
 from meridian.lib.state.liveness import is_process_alive_with_birth
 from meridian.lib.state.paths import RuntimePaths, normalize_path_for_write
+
+
+def _append_session_event(
+    data_path: Path,
+    lock_path: Path,
+    event: BaseModel,
+    *,
+    exclude_none: bool = False,
+) -> None:
+    changes = HistoryChanges(data_path.parent)
+    with lock_file(changes.mutation_lock, mode="shared"), lock_file(lock_path):
+        if isinstance(event, (SessionUpdateEvent, SessionStopEvent)):
+            for record in list_session_generations(data_path.parent):
+                if (record.chat_id, record.session_instance_id) == (
+                    event.chat_id,
+                    event.session_instance_id,
+                ) and record.record_mode == "historical":
+                    raise ValueError("Historical sessions are inert and cannot be mutated")
+        changes.mark(HistorySource(kind="sessions"))
+        append_event(data_path, lock_path, event, exclude_none=exclude_none)
 
 
 class _SessionLockHandles(NamedTuple):
@@ -43,6 +64,8 @@ class SessionRecord(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     chat_id: PersistedChatId
+    history_id: uuid.UUID | None = None
+    record_mode: Literal["live", "historical"] = "live"
     kind: Literal["primary", "spawn"]
     harness: str
     harness_session_id: OptionalPersistedHarnessSessionId
@@ -62,12 +85,14 @@ class SessionRecord(BaseModel):
     session_instance_id: str = ""
     active_work_id: str | None = None
     forked_from_chat_id: OptionalPersistedChatId = None
+    forked_from_history_id: uuid.UUID | None = None
     spawn_id: str | None = None
 
 
 class SessionStartEvent(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
+    history_id: uuid.UUID | None = None
     v: int = 1
     event: Literal["start"] = "start"
     chat_id: PersistedChatId
@@ -87,7 +112,9 @@ class SessionStartEvent(BaseModel):
     session_instance_id: str = ""
     started_at: str
     forked_from_chat_id: OptionalPersistedChatId = None
+    forked_from_history_id: uuid.UUID | None = None
     spawn_id: str | None = None
+
 
 class SessionStopEvent(BaseModel):
     model_config = ConfigDict(extra="ignore")
@@ -97,6 +124,7 @@ class SessionStopEvent(BaseModel):
     chat_id: PersistedChatId
     session_instance_id: str = ""
     stopped_at: str | None = None
+
 
 class SessionUpdateEvent(BaseModel):
     model_config = ConfigDict(extra="ignore")
@@ -109,8 +137,26 @@ class SessionUpdateEvent(BaseModel):
     claude_config_dir: str | None = None
     active_work_id: str | None = None
     spawn_id: str | None = None
+    history_id: uuid.UUID | None = None
 
-type SessionEvent = SessionStartEvent | SessionStopEvent | SessionUpdateEvent
+
+class SessionHistoricalEvent(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    event: Literal["historical_import"] = "historical_import"
+    record: SessionRecord
+
+    @property
+    def chat_id(self) -> str:
+        return self.record.chat_id
+
+    @property
+    def session_instance_id(self) -> str:
+        return self.record.session_instance_id
+
+
+type SessionEvent = (
+    SessionStartEvent | SessionStopEvent | SessionUpdateEvent | SessionHistoricalEvent
+)
 type MaterializedCleanupScope = str
 
 
@@ -122,6 +168,8 @@ class StaleSessionCleanup(NamedTuple):
 def _parse_event(payload: dict[str, Any]) -> SessionEvent | None:
     event_type = payload.get("event")
     try:
+        if event_type == "historical_import":
+            return SessionHistoricalEvent.model_validate(payload)
         if event_type == "start":
             return SessionStartEvent.model_validate(payload)
         if event_type == "stop":
@@ -136,6 +184,7 @@ def _parse_event(payload: dict[str, Any]) -> SessionEvent | None:
 def _record_from_start_event(event: SessionStartEvent) -> SessionRecord:
     return SessionRecord(
         chat_id=event.chat_id,
+        history_id=event.history_id,
         kind=event.kind,
         harness=event.harness,
         harness_session_id=event.harness_session_id,
@@ -157,6 +206,7 @@ def _record_from_start_event(event: SessionStartEvent) -> SessionRecord:
         session_instance_id=event.session_instance_id,
         active_work_id=None,
         forked_from_chat_id=event.forked_from_chat_id,
+        forked_from_history_id=event.forked_from_history_id,
         spawn_id=event.spawn_id,
     )
 
@@ -263,67 +313,83 @@ def reserve_chat_id(runtime_root: Path) -> str:
         return f"c{next_value}"
 
 
+def project_session_event(records: dict[str, SessionRecord], event: SessionEvent) -> None:
+    """Apply one authoritative event; shared by replay and incremental discovery."""
+    if isinstance(event, SessionHistoricalEvent):
+        if event.record.record_mode != "historical" or event.record.stopped_at is None:
+            raise ValueError("Historical imports must be inactive")
+        records[event.chat_id] = event.record
+        return
+    if isinstance(event, SessionStartEvent):
+        record = _record_from_start_event(event)
+        records[record.chat_id] = record
+        return
+    existing = records.get(event.chat_id)
+    if (
+        existing is not None
+        and existing.record_mode == "historical"
+        and _generation_matches(existing.session_instance_id, event.session_instance_id)
+    ):
+        raise ValueError("Historical session authority contains a mutation")
+    if isinstance(event, SessionStopEvent):
+        existing = records.get(event.chat_id)
+        if existing is None:
+            return
+        if not _generation_matches(existing.session_instance_id, event.session_instance_id):
+            return
+        records[event.chat_id] = existing.model_copy(
+            update={
+                "stopped_at": event.stopped_at
+                if event.stopped_at is not None
+                else existing.stopped_at,
+                "session_instance_id": event.session_instance_id or existing.session_instance_id,
+            }
+        )
+        return
+    existing = records.get(event.chat_id)
+    if existing is None:
+        return
+    if not _generation_matches(existing.session_instance_id, event.session_instance_id):
+        return
+    session_ids = existing.harness_session_ids
+    harness_session_id = existing.harness_session_id
+    updated_work_id = existing.active_work_id
+    claude_config_dir = existing.claude_config_dir
+    spawn_id = existing.spawn_id
+    session_instance_id = existing.session_instance_id
+    if event.harness_session_id is not None:
+        if event.harness_session_id not in session_ids:
+            session_ids = (*session_ids, event.harness_session_id)
+        harness_session_id = event.harness_session_id
+    if event.session_instance_id.strip():
+        session_instance_id = event.session_instance_id
+    if event.active_work_id is not None:
+        normalized_work_id = event.active_work_id.strip()
+        updated_work_id = normalized_work_id or None
+    if event.claude_config_dir is not None:
+        normalized_config_dir = event.claude_config_dir.strip()
+        claude_config_dir = normalized_config_dir or None
+    if event.spawn_id is not None:
+        normalized_spawn_id = event.spawn_id.strip()
+        spawn_id = normalized_spawn_id or None
+    records[event.chat_id] = existing.model_copy(
+        update={
+            "harness_session_id": harness_session_id,
+            "harness_session_ids": session_ids,
+            "session_instance_id": session_instance_id,
+            "active_work_id": updated_work_id,
+            "claude_config_dir": claude_config_dir,
+            "spawn_id": spawn_id,
+            "history_id": event.history_id or existing.history_id,
+        }
+    )
+
+
 def _records_by_session(runtime_root: Path) -> dict[str, SessionRecord]:
     paths = RuntimePaths.from_root_dir(runtime_root)
     records: dict[str, SessionRecord] = {}
-
     for event in read_events(paths.sessions_jsonl, _parse_event):
-        if isinstance(event, SessionStartEvent):
-            record = _record_from_start_event(event)
-            records[record.chat_id] = record
-            continue
-        if isinstance(event, SessionStopEvent):
-            existing = records.get(event.chat_id)
-            if existing is None:
-                continue
-            if not _generation_matches(existing.session_instance_id, event.session_instance_id):
-                continue
-            records[event.chat_id] = existing.model_copy(
-                update={
-                    "stopped_at": event.stopped_at
-                    if event.stopped_at is not None
-                    else existing.stopped_at,
-                    "session_instance_id": event.session_instance_id
-                    or existing.session_instance_id,
-                }
-            )
-            continue
-        existing = records.get(event.chat_id)
-        if existing is None:
-            continue
-        if not _generation_matches(existing.session_instance_id, event.session_instance_id):
-            continue
-        session_ids = existing.harness_session_ids
-        harness_session_id = existing.harness_session_id
-        updated_work_id = existing.active_work_id
-        claude_config_dir = existing.claude_config_dir
-        spawn_id = existing.spawn_id
-        session_instance_id = existing.session_instance_id
-        if event.harness_session_id is not None:
-            if event.harness_session_id not in session_ids:
-                session_ids = (*session_ids, event.harness_session_id)
-            harness_session_id = event.harness_session_id
-        if event.session_instance_id.strip():
-            session_instance_id = event.session_instance_id
-        if event.active_work_id is not None:
-            normalized_work_id = event.active_work_id.strip()
-            updated_work_id = normalized_work_id or None
-        if event.claude_config_dir is not None:
-            normalized_config_dir = event.claude_config_dir.strip()
-            claude_config_dir = normalized_config_dir or None
-        if event.spawn_id is not None:
-            normalized_spawn_id = event.spawn_id.strip()
-            spawn_id = normalized_spawn_id or None
-        records[event.chat_id] = existing.model_copy(
-            update={
-                "harness_session_id": harness_session_id,
-                "harness_session_ids": session_ids,
-                "session_instance_id": session_instance_id,
-                "active_work_id": updated_work_id,
-                "claude_config_dir": claude_config_dir,
-                "spawn_id": spawn_id,
-            }
-        )
+        project_session_event(records, event)
     return records
 
 
@@ -374,6 +440,7 @@ def start_session(
     skills: tuple[str, ...] = (),
     skill_paths: tuple[str, ...] = (),
     forked_from_chat_id: str | None = None,
+    forked_from_history_id: uuid.UUID | None = None,
     control_root: str | None = None,
     task_cwd: str | None = None,
     execution_cwd: str | None = None,
@@ -415,9 +482,41 @@ def start_session(
                 ChatId(forked_from_chat_id) if forked_from_chat_id is not None else None
             ),
             spawn_id=spawn_id,
+            forked_from_history_id=forked_from_history_id,
         )
-        with lock_file(paths.sessions_flock):
-            append_event(paths.sessions_jsonl, paths.sessions_flock, event)
+        with lock_file(HistoryChanges(runtime_root).mutation_lock, mode="shared"):
+            # Chat-only callers select the current generation. Resolved references
+            # carry their exact portable ancestor and must never be re-resolved.
+            if forked_from_chat_id and forked_from_history_id is None:
+                source = get_session_record(runtime_root, forked_from_chat_id)
+                event = event.model_copy(
+                    update={"forked_from_history_id": source.history_id if source else None}
+                )
+            if spawn_id is not None:
+                from meridian.lib.state.spawn.model import SpawnRecord
+                from meridian.lib.state.spawn.repository import Applied, write_state_locked
+
+                def bind(current: SpawnRecord) -> SpawnRecord:
+                    return current.model_copy(
+                        update={
+                            "chat_id": event.chat_id,
+                            "session_instance_id": event.session_instance_id,
+                            "forked_from_history_id": event.forked_from_history_id
+                            or current.forked_from_history_id,
+                        }
+                    )
+
+                binding = write_state_locked(
+                    paths.spawns_dir, spawn_id, bind, allow_terminal_overwrite=True
+                )
+                if isinstance(binding, Applied):
+                    event = event.model_copy(
+                        update={
+                            "history_id": binding.after.history_id,
+                            "forked_from_history_id": binding.after.forked_from_history_id,
+                        }
+                    )
+            _append_session_event(paths.sessions_jsonl, paths.sessions_flock, event)
             _write_session_lease(paths, resolved_chat_id, session_instance_id)
     except Exception:
         if handle is not None:
@@ -443,8 +542,11 @@ def stop_session(runtime_root: Path, chat_id: str) -> None:
         session_instance_id=session_instance_id,
         stopped_at=utc_now_iso(),
     )
-    with lock_file(paths.sessions_flock):
-        append_event(
+    with (
+        lock_file(HistoryChanges(runtime_root).mutation_lock, mode="shared"),
+        lock_file(paths.sessions_flock),
+    ):
+        _append_session_event(
             paths.sessions_jsonl,
             paths.sessions_flock,
             event,
@@ -463,7 +565,7 @@ def update_session_harness_id(runtime_root: Path, chat_id: str, harness_session_
         harness_session_id=HarnessSessionId(harness_session_id),
         session_instance_id=_session_instance_for_event(paths, runtime_root, chat_id),
     )
-    append_event(
+    _append_session_event(
         paths.sessions_jsonl,
         paths.sessions_flock,
         event,
@@ -482,7 +584,7 @@ def update_session_work_id(runtime_root: Path, chat_id: str, work_id: str | None
         session_instance_id=_session_instance_for_event(paths, runtime_root, chat_id),
         active_work_id=normalized_work_id,
     )
-    append_event(
+    _append_session_event(
         paths.sessions_jsonl,
         paths.sessions_flock,
         event,
@@ -494,13 +596,17 @@ def update_session_spawn_id(runtime_root: Path, chat_id: str, spawn_id: str) -> 
     """Record the canonical primary spawn relationship for a session."""
 
     paths = RuntimePaths.from_root_dir(runtime_root)
+    from meridian.lib.state.spawn.repository import read_state
+
+    spawn = read_state(paths.spawns_dir, spawn_id.strip(), include_prompt=False)
     event = SessionUpdateEvent(
         chat_id=ChatId(chat_id),
         harness_session_id=None,
         session_instance_id=_session_instance_for_event(paths, runtime_root, chat_id),
         spawn_id=spawn_id.strip(),
+        history_id=spawn.history_id if spawn is not None else None,
     )
-    append_event(
+    _append_session_event(
         paths.sessions_jsonl,
         paths.sessions_flock,
         event,
@@ -522,7 +628,7 @@ def update_session_claude_config_dir(
         session_instance_id=_session_instance_for_event(paths, runtime_root, chat_id),
         claude_config_dir=claude_config_dir,
     )
-    append_event(
+    _append_session_event(
         paths.sessions_jsonl,
         paths.sessions_flock,
         event,
@@ -560,11 +666,15 @@ def has_live_session_leases(runtime_root: Path) -> bool:
     return False
 
 
-def is_session_lease_owner_alive(runtime_root: Path, chat_id: str) -> bool:
-    """Return whether one session's lease names a currently live owner process."""
+def is_session_lease_owner_alive(
+    runtime_root: Path, chat_id: str, *, session_instance_id: str | None = None
+) -> bool:
+    """Check a live lease, optionally requiring the exact session generation."""
 
     paths = RuntimePaths.from_root_dir(runtime_root)
-    _exists, _generation, owner_pid, owner_birth = _read_session_lease_data(paths, chat_id)
+    _exists, generation, owner_pid, owner_birth = _read_session_lease_data(paths, chat_id)
+    if session_instance_id is not None and generation != session_instance_id:
+        return False
     return owner_pid is not None and is_process_alive_with_birth(owner_pid, owner_birth)
 
 
@@ -602,29 +712,6 @@ def list_active_sessions_for_work_id(runtime_root: Path, work_id: str) -> list[s
         for record in list_active_session_records(runtime_root)
         if record.active_work_id == normalized
     ]
-
-
-def chat_ids_ever_attached_to_work(runtime_root: Path, work_id: str) -> set[str]:
-    """Return session IDs from valid update events that attached to a work item."""
-
-    normalized_work_id = work_id.strip()
-    if not normalized_work_id:
-        return set()
-
-    paths = RuntimePaths.from_root_dir(runtime_root)
-
-    def _parse_work_attachment(payload: dict[str, Any]) -> str | None:
-        event = _parse_event(payload)
-        if not isinstance(event, SessionUpdateEvent):
-            return None
-        active_work_id = event.active_work_id
-        if active_work_id is None:
-            return None
-        if active_work_id.strip() != normalized_work_id:
-            return None
-        return event.chat_id
-
-    return set(read_events(paths.sessions_jsonl, _parse_work_attachment))
 
 
 def get_session_records(runtime_root: Path, chat_ids: set[str]) -> list[SessionRecord]:
@@ -665,8 +752,11 @@ def resolve_session_ref(runtime_root: Path, ref: str) -> SessionRecord | None:
     if not normalized:
         return None
 
-    records = _records_by_session(runtime_root)
-    matches = [record for record in records.values() if normalized in record.harness_session_ids]
+    matches = [
+        record
+        for record in list_session_generations(runtime_root)
+        if normalized in record.harness_session_ids
+    ]
     if not matches:
         return None
     return max(matches, key=lambda item: (item.started_at, _session_sort_key(item.chat_id)))
@@ -736,9 +826,7 @@ def cleanup_stale_sessions(runtime_root: Path) -> StaleSessionCleanup:
         for lock_path in paths.sessions_dir.glob("*.lock"):
             chat_id = lock_path.stem
             try:
-                handle = lock_stack.enter_context(
-                    lock_file(lock_path, timeout=0, reentrant=False)
-                )
+                handle = lock_stack.enter_context(lock_file(lock_path, timeout=0, reentrant=False))
             except TimeoutError:
                 continue
             stale.append((chat_id, lock_path, handle))
@@ -748,7 +836,10 @@ def cleanup_stale_sessions(runtime_root: Path) -> StaleSessionCleanup:
 
         cleaned_ids: list[str] = []
         stale_cleanup_scopes: list[str] = []
-        with lock_file(paths.sessions_flock):
+        with (
+            lock_file(HistoryChanges(runtime_root).mutation_lock, mode="shared"),
+            lock_file(paths.sessions_flock),
+        ):
             records = _records_by_session(runtime_root)
             stopped_at = utc_now_iso()
             for chat_id, _lock_path, _ in stale:
@@ -781,7 +872,7 @@ def cleanup_stale_sessions(runtime_root: Path) -> StaleSessionCleanup:
                         )
                     )
                 ):
-                    append_event(
+                    _append_session_event(
                         paths.sessions_jsonl,
                         paths.sessions_flock,
                         SessionStopEvent(
@@ -825,3 +916,36 @@ def cleanup_stale_sessions(runtime_root: Path) -> StaleSessionCleanup:
         cleaned_ids=tuple(sorted(cleaned_ids, key=_session_sort_key)),
         materialized_scopes=tuple(sorted(set(stale_cleanup_scopes))),
     )
+
+
+def append_historical_session(runtime_root: Path, record: SessionRecord) -> None:
+    paths = RuntimePaths.from_root_dir(runtime_root)
+    with (
+        lock_file(HistoryChanges(runtime_root).mutation_lock, mode="shared"),
+        lock_file(paths.sessions_flock),
+    ):
+        existing = _records_by_session(runtime_root).get(record.chat_id)
+        if existing is not None:
+            if existing == record:
+                return
+            raise ValueError("Historical session alias conflict")
+        _append_session_event(
+            paths.sessions_jsonl, paths.sessions_flock, SessionHistoricalEvent(record=record)
+        )
+
+
+def list_session_generations(runtime_root: Path) -> tuple[SessionRecord, ...]:
+    """All generations, including historical and legacy starts, in source order."""
+    generations: dict[tuple[str, str], dict[str, SessionRecord]] = {}
+    latest_blank: dict[str, str] = {}
+    for ordinal, event in enumerate(
+        read_events(RuntimePaths.from_root_dir(runtime_root).sessions_jsonl, _parse_event)
+    ):
+        generation = event.session_instance_id
+        if not generation:
+            if isinstance(event, SessionStartEvent):
+                latest_blank[event.chat_id] = f"legacy:{ordinal}"
+            generation = latest_blank.get(event.chat_id, "")
+        rows = generations.setdefault((event.chat_id, generation), {})
+        project_session_event(rows, event)
+    return tuple(record for rows in generations.values() for record in rows.values())

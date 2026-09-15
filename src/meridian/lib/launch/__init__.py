@@ -179,14 +179,17 @@ def launch_primary(
     request_updates = dict(launch_resolution.request_updates)
     request_updates["work_id_hint"] = effective_work_id
     spawn_request = build_primary_spawn_request(request=request)
-    request_updates["warning"] = "\n".join(
-        warning
-        for warning in (
-            spawn_request.warning,
-            launch_resolution.task_cwd_resolution.warning,
+    request_updates["warning"] = (
+        "\n".join(
+            warning
+            for warning in (
+                spawn_request.warning,
+                launch_resolution.task_cwd_resolution.warning,
+            )
+            if warning
         )
-        if warning
-    ) or None
+        or None
+    )
     spawn_request = spawn_request.model_copy(update=request_updates)
     prepared_policy = compile_prepared_policy_surface(
         request=spawn_request,
@@ -216,8 +219,18 @@ def launch_primary(
     warning = summarize_composition_warnings(preview_context.warnings)
 
     if request.dry_run:
+        from meridian.lib.harness.bundle import project_managed_primary_preview
+
+        launch_plan = project_managed_primary_preview(
+            preview_context.harness.id,
+            preview_context.binding.spec,
+            project_root=resolved_project_root,
+        )
+        if launch_plan is not None:
+            launch_plan = launch_plan.model_copy(update={"requested_model": request.model})
         return LaunchResult(
-            command=preview_context.binding.argv,
+            launch_plan=launch_plan,
+            command=() if launch_plan is not None else preview_context.binding.argv,
             exit_code=0,
             continue_ref=None,
             continue_chat_id=None,
@@ -237,6 +250,7 @@ def launch_primary(
         exit_code=outcome.exit_code,
         continue_ref=continue_ref,
         continue_chat_id=outcome.chat_id,
+        primary_spawn_id=outcome.primary_spawn_id,
         warning=warning,
     )
 

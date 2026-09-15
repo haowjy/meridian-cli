@@ -31,7 +31,7 @@ This package owns foreground and background child-spawn paths (not primary sessi
   No row created on resolution failure (SEAM-1).
 - `cancel()` — surface-neutral cancel pipeline: managed-primary, signal, finalizing races.
 - `complete_spawn()` — idempotent terminal seam; acquires per-spawn lock internally.
-- `archive()` — validates terminal state, delegates to `lib/spawn/`.
+- `archive()` — hides terminal spawns; distinct from verified ZIP retention.
 
 **Depth guard:** `api.py` checks `max_depth_reached()` before executing spawns. A
 spawn chain that hits the limit returns `depth_exceeded_output()` instead of a new
@@ -42,7 +42,14 @@ spawn. The reaper also reads `_MERIDIAN_DEPTH` and skips reaping when nested.
 **Session:** `session_list.py`, `session_reentry.py`, `session_transcript.py`,
 `session_log.py`, `session_log_render.py` (pure rendering — clean/raw modes, tool
 collapsing, content pipeline), `session_render.py`, `session_search.py`,
-`session_target.py`, `session_export.py`, `session_repair.py`.
+`session_target.py`, `session_export.py`, `session_repair.py`, `session_corpus.py`,
+`session_archive.py`, `session_index.py`.
+
+Discovery composes the shared `state/history_index.py` projection; lifecycle/control
+reads stay authoritative. `session_corpus.py` selects search roots and work scope.
+`session_archive.py` owns eligibility, dependency protection and the shared manual/
+automatic retention policy; ZIP bytes and inert restore live in `state/retention_*`.
+`session_index.py` coordinates explicit index inspection/rebuild, not another index.
 
 **Work and workspace:** `work_lifecycle.py`, `work_attachment.py`,
 `work_dashboard.py`, `workspace.py`.

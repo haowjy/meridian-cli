@@ -401,7 +401,7 @@ def test_session_log_renders_opencode_db_compaction_as_segment_handoff(
     ]
 
 
-def test_session_log_falls_back_to_legacy_opencode_json_when_db_has_no_messages(
+def test_session_log_preserves_positive_empty_opencode_db_over_legacy_json(
     tmp_path: Path,
     monkeypatch: MonkeyPatch,
 ) -> None:
@@ -447,9 +447,7 @@ def test_session_log_falls_back_to_legacy_opencode_json_when_db_has_no_messages(
 
     assert output.session_id == session_id
     assert output.source == "opencode transcript"
-    assert [(message.role, message.content) for message in output.messages] == [
-        ("assistant", "legacy JSON transcript")
-    ]
+    assert output.messages == ()
 
 
 def _write_spawn_history(runtime_root: Path, spawn_id: str, text: str) -> None:

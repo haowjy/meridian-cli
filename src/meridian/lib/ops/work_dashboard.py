@@ -12,7 +12,8 @@ from meridian.lib.core.spawn_start import resolve_spawn_display_label
 from meridian.lib.core.util import FormatContext
 from meridian.lib.ops.runtime import async_from_sync, resolve_roots_for_read, runtime_context
 from meridian.lib.ops.work_sessions import work_session_chat_ids
-from meridian.lib.state import session_store, spawn_store, work_store
+from meridian.lib.state import session_store, work_store
+from meridian.lib.state.history_index import indexed_spawn_scan
 from meridian.lib.state.spawn.model import SpawnRecord
 
 
@@ -480,7 +481,7 @@ def work_dashboard_sync(
     for spawn in reconcile_spawns(
         project_root,
         runtime_state_root,
-        spawn_store.list_spawns(runtime_state_root),
+        indexed_spawn_scan(runtime_state_root),
     ).records:
         if not is_active_spawn_status(spawn.status):
             continue
@@ -585,7 +586,7 @@ def work_show_sync(
         for spawn in reconcile_spawns(
             project_root,
             runtime_state_root,
-            spawn_store.list_spawns(runtime_state_root),
+            indexed_spawn_scan(runtime_state_root),
         ).records
         if _associated_with_work_item(
             spawn,

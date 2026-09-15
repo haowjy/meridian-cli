@@ -47,7 +47,7 @@ def test_spawn_prepare_opencode_keeps_all_references_inline(
     _write_minimal_mars_config(tmp_path)
     stub_bundle_request_and_resolve(
         monkeypatch,
-        model="gemini-2.5-pro",
+        model="google/gemini-2.5-pro",
         harness=HarnessId.OPENCODE,
         prompt_surface_inventory_prompt=(
             "# Meridian Agents\n\n"
@@ -58,7 +58,7 @@ def test_spawn_prepare_opencode_keeps_all_references_inline(
     write_agent(
         tmp_path,
         name="dev-orchestrator",
-        model="gemini-2.5-pro",
+        model="google/gemini-2.5-pro",
         harness="opencode",
         subagents=("reviewer",),
     )
@@ -73,7 +73,7 @@ def test_spawn_prepare_opencode_keeps_all_references_inline(
         request=SpawnRequest(
             prompt="task prompt",
             prompt_is_composed=False,
-            model="gemini-2.5-pro",
+            model="google/gemini-2.5-pro",
             harness="opencode",
             agent="dev-orchestrator",
             reference_files=(file_ref.as_posix(), dir_ref.as_posix()),

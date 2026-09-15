@@ -7,6 +7,7 @@ Two concepts:
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from pathlib import Path
 
 from meridian.lib.core.types import normalize_optional_identity
@@ -103,6 +104,41 @@ def is_tracked_chat_ref(runtime_root: Path, ref: str) -> bool:
     return session_store.get_session_record(runtime_root, normalized) is not None
 
 
+def session_records_for_spawns(
+    root: Path, records: Iterable[SpawnRecord]
+) -> dict[str, SessionRecord]:
+    """Return unmodified authoritative generations; ambiguous linkage is a conflict.
+
+    Do not fill nullable identity fields here: capture fingerprints, historical
+    provenance and publication witnesses must detect changes to those fields too.
+    """
+    generations = session_store.list_session_generations(root)
+    linked: dict[str, list[SessionRecord]] = {}
+    for session in generations:
+        if session.spawn_id:
+            linked.setdefault(session.spawn_id, []).append(session)
+    exact = {(session.chat_id, session.session_instance_id): session for session in generations}
+    result: dict[str, SessionRecord] = {}
+    for record in records:
+        candidates = linked.get(record.id, [])
+        if record.session_instance_id and record.chat_id is not None:
+            session = exact.get((record.chat_id, record.session_instance_id))
+            if session is None and candidates:
+                raise ValueError(f"Session generation conflicts with history: {record.id}")
+            candidates = [session] if session is not None else []
+        if len(candidates) > 1:
+            raise ValueError(f"Ambiguous session metadata for history: {record.id}")
+        if candidates:
+            session = candidates[0]
+            if session.spawn_id not in {None, record.id} or session.history_id not in {
+                None,
+                record.history_id,
+            }:
+                raise ValueError(f"Session identity conflicts with history: {record.id}")
+            result[record.id] = session
+    return result
+
+
 def get_session_record_for_spawn(
     runtime_root: Path,
     spawn_id: str,
@@ -115,7 +151,7 @@ def get_session_record_for_spawn(
     if normalized_spawn_id is None:
         return None
 
-    for record in session_store.list_all_session_records(runtime_root):
+    for record in reversed(session_store.list_session_generations(runtime_root)):
         if record.spawn_id != normalized_spawn_id:
             continue
         if require_harness_session_id and record.harness_session_id is None:
@@ -179,6 +215,7 @@ __all__ = [
     "list_spawns_for_owner_chat",
     "session_exact_chat_id",
     "session_owner_chat_id",
+    "session_records_for_spawns",
     "spawn_exact_chat_id",
     "spawn_matches_exact_session",
     "spawn_matches_owner_chat",

@@ -346,7 +346,7 @@ async def test_execute_with_streaming_uses_adapter_seed_port_not_harness_id(
     run = Spawn(
         spawn_id=SpawnId("r-opencode-seed-port"),
         prompt="hello",
-        model=ModelId("gpt-5.4"),
+        model=ModelId("openai/gpt-5.4"),
         status="queued",
     )
     spawn_store.start_spawn(
@@ -366,7 +366,7 @@ async def test_execute_with_streaming_uses_adapter_seed_port_not_harness_id(
         _execute_with_context(
             run,
             request=SpawnRequest(
-                model="gpt-5.4",
+                model="openai/gpt-5.4",
                 harness=HarnessId.OPENCODE.value,
                 prompt="hello",
             ),
@@ -409,7 +409,7 @@ async def test_execute_with_streaming_persists_opencode_session_id_at_connect(
     run = Spawn(
         spawn_id=SpawnId("r-opencode-connect-session"),
         prompt="hello",
-        model=ModelId("gpt-5.4"),
+        model=ModelId("openai/gpt-5.4"),
         status="queued",
     )
     spawn_store.start_spawn(
@@ -429,7 +429,7 @@ async def test_execute_with_streaming_persists_opencode_session_id_at_connect(
         _execute_with_context(
             run,
             request=SpawnRequest(
-                model="gpt-5.4",
+                model="openai/gpt-5.4",
                 harness=HarnessId.OPENCODE.value,
                 prompt="hello",
             ),
@@ -485,7 +485,7 @@ async def test_execute_with_streaming_persists_selected_task_cwd_on_projection_f
     run = Spawn(
         spawn_id=SpawnId("r-opencode-task-cwd-fallback"),
         prompt="hello",
-        model=ModelId("gpt-5.4"),
+        model=ModelId("openai/gpt-5.4"),
         status="queued",
     )
     spawn_store.start_spawn(
@@ -505,7 +505,7 @@ async def test_execute_with_streaming_persists_selected_task_cwd_on_projection_f
         _execute_with_context(
             run,
             request=SpawnRequest(
-                model="gpt-5.4",
+                model="openai/gpt-5.4",
                 harness=HarnessId.OPENCODE.value,
                 prompt="hello",
             ),

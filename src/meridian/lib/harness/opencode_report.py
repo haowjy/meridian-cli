@@ -251,19 +251,15 @@ def extract_opencode_session_id_from_artifacts(
     )
 
 def _extract_opencode_report_from_db(session_id: str) -> str | None:
-    from meridian.lib.harness.opencode_transcript import iter_opencode_db_events
+    from meridian.lib.harness.opencode_transcript import (
+        extract_last_assistant_report,
+        iter_opencode_db_events,
+        opencode_db_session_exists,
+    )
 
-    last_assistant: str | None = None
-    for event in iter_opencode_db_events(session_id=session_id):
-        role = str(event.get("role", "")).strip().lower()
-        mode = str(event.get("mode", "")).strip().lower()
-        agent = str(event.get("agent", "")).strip().lower()
-        if role != "assistant" or (mode == "compaction" and agent == "compaction"):
-            continue
-        content = extract_text(event.get("content"))
-        if content:
-            last_assistant = content
-    return last_assistant
+    if not opencode_db_session_exists(session_id=session_id):
+        return None
+    return extract_last_assistant_report(iter_opencode_db_events(session_id=session_id))
 
 def extract_opencode_report(artifacts: ArtifactStore, spawn_id: SpawnId) -> str | None:
     payloads = iter_json_lines_artifact(artifacts, spawn_id, OUTPUT_FILENAME)

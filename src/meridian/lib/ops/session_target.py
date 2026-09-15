@@ -8,11 +8,12 @@ mutation or repair writes happen during resolution.
 from __future__ import annotations
 
 import re
-from collections.abc import Iterator, Sequence
+from collections.abc import Sequence
 from datetime import datetime
 from pathlib import Path
 from typing import Literal, NamedTuple
 
+from meridian.lib.core.domain import TERMINAL_SPAWN_STATUSES
 from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.adapter import SubprocessHarness
 from meridian.lib.harness.opencode_transcript import opencode_db_session_exists
@@ -20,7 +21,8 @@ from meridian.lib.harness.pi_paths import resolve_pi_spawn_session_root
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.harness.session_detection import infer_harness_from_untracked_session_ref
 from meridian.lib.ops.spawn.query import read_spawn_row_read_only
-from meridian.lib.state import session_identity, session_store, spawn_store
+from meridian.lib.state import session_identity, session_store
+from meridian.lib.state.history_index import HistoryIndex, indexed_spawn_scan
 from meridian.lib.state.paths import resolve_spawn_output_path
 from meridian.lib.state.primary_meta import (
     is_managed_primary,
@@ -38,11 +40,13 @@ _PRIMARY_TRANSCRIPT_UNAVAILABLE_SUFFIX = (
 
 
 class TranscriptSource(NamedTuple):
-    kind: Literal["file", "opencode_db", "spawn_history"]
+    kind: Literal["file", "opencode_db", "spawn_history", "archive"]
     session_id: str
     harness: str | None
     source_label: str
     path: Path | None = None
+    history_id: str | None = None
+    manifest_sha256: str | None = None
 
 
 class SessionLogTarget(NamedTuple):
@@ -51,12 +55,6 @@ class SessionLogTarget(NamedTuple):
     file_path: Path | None
     source: str
     sources: tuple[TranscriptSource, ...]
-
-
-class ChatSessionLogTargetResolution(NamedTuple):
-    chat_id: str
-    target: SessionLogTarget | None
-    error: str | None = None
 
 
 def _is_chat_ref(runtime_root: Path, value: str) -> bool:
@@ -203,9 +201,8 @@ def _resolve_harness_session_file(
             adapter=adapter,
             config_root_hint=config_root_hint,
         )
-        if (
-            harness_id == HarnessId.OPENCODE
-            and opencode_db_session_exists(session_id=normalized_session_id)
+        if harness_id == HarnessId.OPENCODE and opencode_db_session_exists(
+            session_id=normalized_session_id
         ):
             return _with_sources(
                 _opencode_db_target(session_id=normalized_session_id),
@@ -231,9 +228,8 @@ def _resolve_harness_session_file(
             adapter=adapter,
             config_root_hint=config_root_hint,
         )
-        if (
-            harness_id == HarnessId.OPENCODE
-            and opencode_db_session_exists(session_id=normalized_session_id)
+        if harness_id == HarnessId.OPENCODE and opencode_db_session_exists(
+            session_id=normalized_session_id
         ):
             return _with_sources(
                 _opencode_db_target(session_id=normalized_session_id),
@@ -457,7 +453,7 @@ def _spawn_history_fallback_for_harness_session_id(
     normalized_session_id = harness_session_id.strip()
     if not normalized_session_id:
         return None
-    for row in reversed(spawn_store.list_spawns(runtime_root).records):
+    for row in reversed(indexed_spawn_scan(runtime_root).records):
         if (row.harness_session_id or "").strip() != normalized_session_id:
             continue
         output_target = _target_from_spawn_output(
@@ -476,29 +472,17 @@ def _spawn_history_fallback_for_chat_ref(
     display_id: str,
     chat_id: str,
     primary_spawn: SpawnRecord | None,
-    related_spawns: Sequence[SpawnRecord] | None = None,
+    related_spawns: Sequence[SpawnRecord],
 ) -> SessionLogTarget | None:
     candidates: list[SpawnRecord] = []
     if primary_spawn is not None:
         candidates.append(primary_spawn)
-    if related_spawns is None:
-        candidates.extend(
-            reversed(
-                session_identity.list_spawns_for_exact_session(runtime_root, chat_id).records
-            )
-        )
-        candidates.extend(
-            reversed(session_identity.list_spawns_for_owner_chat(runtime_root, chat_id).records)
-        )
-    else:
-        candidates.extend(
-            row for row in reversed(related_spawns) if row.chat_id == chat_id
-        )
-        candidates.extend(
-            row
-            for row in reversed(related_spawns)
-            if session_identity.spawn_owner_chat_id(row) == chat_id
-        )
+    candidates.extend(row for row in reversed(related_spawns) if row.chat_id == chat_id)
+    candidates.extend(
+        row
+        for row in reversed(related_spawns)
+        if session_identity.spawn_owner_chat_id(row) == chat_id
+    )
 
     seen: set[str] = set()
     for row in candidates:
@@ -520,13 +504,11 @@ def _legacy_spawns_for_chats(
     chat_ids: set[str],
 ) -> tuple[dict[str, SpawnRecord], dict[str, list[SpawnRecord]]]:
     primary_spawns: dict[str, SpawnRecord] = {}
-    related_spawns: dict[str, list[SpawnRecord]] = {
-        chat_id: [] for chat_id in chat_ids
-    }
+    related_spawns: dict[str, list[SpawnRecord]] = {chat_id: [] for chat_id in chat_ids}
     if not chat_ids:
         return primary_spawns, related_spawns
 
-    for spawn in spawn_store.list_spawns(runtime_root).records:
+    for spawn in indexed_spawn_scan(runtime_root, related_chat_ids=chat_ids).records:
         raw_owner_chat_id = session_identity.spawn_owner_chat_id(spawn)
         owner_chat_id = str(raw_owner_chat_id) if raw_owner_chat_id is not None else ""
         if spawn.kind == "primary" and owner_chat_id in chat_ids:
@@ -554,7 +536,7 @@ def _config_root_hint(value: str | None) -> Path | None:
 def _read_chat_session_record(
     runtime_root: Path, chat_id: str
 ) -> session_store.SessionRecord | None:
-    records = session_store.get_session_records(runtime_root, {chat_id})
+    records = HistoryIndex(runtime_root).sessions(chat_ids={chat_id})
     if not records:
         return None
     return records[0]
@@ -652,7 +634,7 @@ def _resolve_from_chat_state(
     chat_id: str,
     session_record: session_store.SessionRecord,
     primary_spawn: SpawnRecord | None,
-    related_spawns: Sequence[SpawnRecord] | None = None,
+    related_spawns: Sequence[SpawnRecord],
 ) -> SessionLogTarget:
     normalized_harness = session_record.harness.strip() or None
     if normalized_harness is None and primary_spawn is not None and primary_spawn.harness:
@@ -785,65 +767,6 @@ def _resolve_from_chat_id(
     )
 
 
-def iter_chat_session_log_targets(
-    *,
-    project_root: Path,
-    runtime_root: Path,
-    chat_ids: Sequence[str],
-) -> Iterator[ChatSessionLogTargetResolution]:
-    """Resolve an ordered chat subset with bounded direct state reads."""
-
-    normalized_chat_ids = tuple(chat_id.strip() for chat_id in chat_ids)
-    records: dict[str, session_store.SessionRecord] = {
-        str(record.chat_id): record
-        for record in session_store.get_session_records(
-            runtime_root,
-            {chat_id for chat_id in normalized_chat_ids if chat_id},
-        )
-    }
-    primary_spawns: dict[str, SpawnRecord] = {}
-    legacy_scan_ids: set[str] = set()
-    for chat_id, record in records.items():
-        primary_spawn = session_identity.get_recorded_primary_spawn_for_owner_chat(
-            runtime_root,
-            chat_id,
-            record.spawn_id,
-        )
-        if primary_spawn is None:
-            legacy_scan_ids.add(chat_id)
-        else:
-            primary_spawns[chat_id] = primary_spawn
-
-    legacy_primary_spawns, legacy_related_spawns = _legacy_spawns_for_chats(
-        runtime_root,
-        legacy_scan_ids,
-    )
-    primary_spawns.update(legacy_primary_spawns)
-
-    for chat_id in normalized_chat_ids:
-        session_record = records.get(chat_id)
-        if session_record is None:
-            yield ChatSessionLogTargetResolution(
-                chat_id,
-                None,
-                f"Chat '{chat_id}' not found",
-            )
-            continue
-        try:
-            target = _resolve_from_chat_state(
-                project_root=project_root,
-                runtime_root=runtime_root,
-                chat_id=chat_id,
-                session_record=session_record,
-                primary_spawn=primary_spawns.get(chat_id),
-                related_spawns=legacy_related_spawns.get(chat_id, ()),
-            )
-        except (ValueError, FileNotFoundError, OSError) as exc:
-            yield ChatSessionLogTargetResolution(chat_id, None, str(exc))
-            continue
-        yield ChatSessionLogTargetResolution(chat_id, target)
-
-
 def _spawn_linked_chat_session(
     *,
     runtime_root: Path,
@@ -865,10 +788,56 @@ def _resolve_from_spawn_id(
     project_root: Path,
     runtime_root: Path,
     spawn_id: str,
+    purpose: Literal["display", "capture"] = "display",
 ) -> SessionLogTarget:
     row = read_spawn_row_read_only(project_root, spawn_id, runtime_root=runtime_root)
     if row is None:
         raise ValueError(f"Spawn '{spawn_id}' not found")
+
+    if purpose == "capture":
+        if (
+            row.record_mode == "historical"
+            or row.status not in TERMINAL_SPAWN_STATUSES
+            or row.history_id is None
+        ):
+            raise ValueError("Capture preparation requires an identified terminal record")
+        if row.kind != "primary":
+            stream = _target_from_spawn_output(runtime_root, display_id=spawn_id, spawn_id=spawn_id)
+            if stream is None:
+                raise FileNotFoundError(f"No retained child stream available for {spawn_id}")
+            return stream
+        # Use only this aggregate and its exact session generation. A current chat,
+        # inferred harness or post-launch file discovery cannot establish binding.
+        session = session_identity.session_records_for_spawns(runtime_root, [row]).get(row.id)
+        native_ids = {
+            value.strip()
+            for value in (
+                row.harness_session_id,
+                read_primary_harness_session_id(runtime_root, row.id),
+                session.harness_session_id if session else None,
+            )
+            if value and value.strip()
+        }
+        harnesses = {
+            value.strip().lower()
+            for value in (row.harness, session.harness if session else None)
+            if value and value.strip()
+        }
+        if len(native_ids) > 1 or len(harnesses) > 1:
+            raise ValueError(f"Conflicting native identity for capture: {row.id}")
+        if not native_ids or not harnesses:
+            raise ValueError(f"Native capture requires exact native identity: {row.id}")
+        target = _resolve_harness_session_file(
+            project_root=project_root,
+            session_id=next(iter(native_ids)),
+            harness=next(iter(harnesses)),
+            config_root_hint=_config_root_hint(
+                row.claude_config_dir or (session.claude_config_dir if session else None)
+            ),
+        )
+        # The provider chooses one exact native source, including positive-empty DB
+        # sessions. Capture must not follow presentation's output/legacy fallbacks.
+        return _target_from_source(target.sources[0])
 
     is_primary_spawn = row.kind == "primary"
     is_managed_backend_primary = is_primary_spawn and is_managed_primary(runtime_root, spawn_id)
@@ -1065,9 +1034,7 @@ def _resolve_from_session_ref(
     return _with_sources(target, output_target)
 
 
-def _resolve_untracked_session_ref(
-    *, project_root: Path, session_ref: str
-) -> SessionLogTarget:
+def _resolve_untracked_session_ref(*, project_root: Path, session_ref: str) -> SessionLogTarget:
     inferred = infer_harness_from_untracked_session_ref(project_root, session_ref)
     return _resolve_harness_session_file(
         project_root=project_root,
@@ -1077,19 +1044,65 @@ def _resolve_untracked_session_ref(
     )
 
 
+def indexed_history_target(
+    runtime_root: Path, ref: str, project_root: Path, *, deadline: float | None = None
+) -> SessionLogTarget | None:
+    from meridian.lib.config.settings import load_config
+
+    configured = load_config(project_root).history.archive.destination
+    targets = HistoryIndex(runtime_root).read_targets(
+        ref, destination=Path(configured).expanduser() if configured else None, deadline=deadline
+    )
+    if not targets:
+        return None
+    sources = tuple(
+        TranscriptSource(
+            kind="archive" if target.archive_id else "spawn_history",
+            session_id=ref,
+            harness=target.state.harness,
+            source_label="Archived Meridian history"
+            if target.archive_id
+            else f"spawn {target.state.id} output",
+            path=target.path,
+            history_id=str(target.state.history_id) if target.state.history_id else None,
+            manifest_sha256=target.manifest_sha256,
+        )
+        for target in targets
+    )
+    return _target_from_source(sources[0])._replace(sources=sources)
+
+
 def resolve_session_log_target(
     *,
     ref: str,
     file_path: str | None,
     project_root: Path,
     runtime_root: Path | None,
+    deadline: float | None = None,
+    purpose: Literal["display", "capture"] = "display",
 ) -> SessionLogTarget:
+    if purpose == "capture":
+        if runtime_root is None or file_path or not _is_spawn_ref(ref.strip()):
+            raise ValueError("Native capture requires an exact local spawn reference")
+        return _resolve_from_spawn_id(
+            project_root=project_root,
+            runtime_root=runtime_root,
+            spawn_id=ref.strip(),
+            purpose=purpose,
+        )
     if file_path is not None and file_path.strip():
         return _resolve_file_target(file_path)
 
     normalized_ref = ref.strip()
     if not normalized_ref:
         raise ValueError("Session reference is required unless --file is provided")
+
+    if runtime_root is not None:
+        indexed = indexed_history_target(
+            runtime_root, normalized_ref, project_root, deadline=deadline
+        )
+        if indexed is not None:
+            return indexed
 
     if runtime_root is None:
         is_chat_id = normalized_ref.startswith("c") and normalized_ref[1:].isdigit()
@@ -1122,9 +1135,7 @@ def resolve_session_log_target(
 
 
 __all__ = [
-    "ChatSessionLogTargetResolution",
     "SessionLogTarget",
-    "iter_chat_session_log_targets",
     "resolve_session_log_target",
     "spawn_output_path_for_target",
 ]
