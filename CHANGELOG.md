@@ -6,6 +6,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- Native-ID continuation keeps the supplied ID; ambiguous harness ownership requires an explicit harness instead of choosing a different conversation.
 - Legacy continuation seeds the original session's initialized model, not a failed resume's snapshot; previews remain read-only and pruned snapshots retain partial history.
 - Spawn continuation accepts explicit model overrides with the same warning and recorded-selection replay as primary sessions; startup attempts bind selection and native identity together.
 - Primary continuation accepts explicit model overrides with a cache/cost warning; later resumes use the recorded selection and revalidate current target restrictions.

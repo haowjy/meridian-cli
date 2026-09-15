@@ -21,6 +21,7 @@ def infer_harness_from_untracked_session_ref(
         return None
 
     seen_harnesses: set[HarnessId] = set()
+    owners: set[HarnessId] = set()
     for harness_id, bundle in get_bundle_registry().items():
         seen_harnesses.add(harness_id)
         owns_untracked = cast(
@@ -31,7 +32,7 @@ def infer_harness_from_untracked_session_ref(
             project_root=project_root,
             session_ref=normalized,
         ):
-            return harness_id
+            owners.add(harness_id)
 
     active_registry = registry if registry is not None else get_default_harness_registry()
     for harness_id in active_registry.ids():
@@ -42,5 +43,9 @@ def infer_harness_from_untracked_session_ref(
         except TypeError:
             continue
         if adapter.owns_untracked_session(project_root=project_root, session_ref=normalized):
-            return harness_id
-    return None
+            owners.add(harness_id)
+    if len(owners) > 1:
+        raise ValueError(
+            "Native session reference is ambiguous across harnesses; specify --harness."
+        )
+    return next(iter(owners), None)

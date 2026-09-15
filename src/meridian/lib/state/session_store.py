@@ -950,17 +950,28 @@ def get_last_session(runtime_root: Path) -> SessionRecord | None:
     return _records_by_session(runtime_root).get(last_session_id)
 
 
-def resolve_session_ref(runtime_root: Path, ref: str) -> SessionRecord | None:
-    """Resolve session reference by harness session ID."""
+def resolve_session_ref(
+    runtime_root: Path, ref: str, *, harness: str | None = None,
+) -> SessionRecord | None:
+    """Resolve a native ID in its harness namespace; reject ambiguous ownership."""
 
     normalized = ref.strip()
     if not normalized:
         return None
 
     records = _records_by_session(runtime_root)
-    matches = [record for record in records.values() if normalized in record.harness_session_ids]
+    matches = [
+        record for record in records.values()
+        if normalized in record.harness_session_ids
+        and (harness is None or record.harness == harness)
+    ]
     if not matches:
         return None
+    if len({record.harness for record in matches}) > 1:
+        raise ValueError(
+            "Native session reference is ambiguous across harnesses. "
+            "Specify --harness or use a tracked chat/spawn reference."
+        )
     return max(matches, key=lambda item: (item.started_at, _session_sort_key(item.chat_id)))
 
 

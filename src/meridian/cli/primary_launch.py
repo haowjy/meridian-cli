@@ -98,11 +98,12 @@ def resolve_session_target(
     *,
     project_root: Path,
     continue_ref: str,
+    harness_hint: str | None = None,
 ) -> ResolvedSessionReference:
     normalized = continue_ref.strip()
     if not normalized:
         raise ValueError("--continue requires a non-empty session reference.")
-    return resolve_session_reference(project_root, normalized)
+    return resolve_session_reference(project_root, normalized, harness_hint=harness_hint)
 
 
 def run_primary_launch(
@@ -230,7 +231,7 @@ def run_primary_launch(
         if passthrough:
             raise ValueError("Cannot combine --continue with passthrough args (--).")
         resolved_continue = resolve_session_target(
-            project_root=project_root, continue_ref=resume_target
+            project_root=project_root, continue_ref=resume_target, harness_hint=harness,
         )
         if resolved_continue.missing_harness_session_id:
             raise ValueError(
