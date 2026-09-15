@@ -136,7 +136,9 @@ def test_status_and_counts_do_not_build_or_drain(tmp_path: Path, monkeypatch) ->
     )
     index = HistoryIndex(tmp_path)
     assert session_index.session_index_sync(session_index.SessionIndexInput()).baseline == "absent"
-    assert index.preview_count() == 0
+    from meridian.lib.harness.transcript_preview import TRANSCRIPT_PREVIEW_VERSION
+
+    assert index.preview_count(preview_version=TRANSCRIPT_PREVIEW_VERSION) == 0
     assert not index.directory.exists()
     index.rebuild()
     changes = HistoryChanges(tmp_path)

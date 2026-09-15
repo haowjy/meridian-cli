@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
 
@@ -13,6 +14,7 @@ from meridian.lib.harness.transcript import (
 
 _MESSAGE_BYTES = 16 * 1024
 _SETUP_BYTES = 2 * 1024
+TRANSCRIPT_PREVIEW_VERSION = 3
 
 
 def _clip(text: str, limit: int) -> str:
@@ -36,22 +38,28 @@ class PreviewMessage(BaseModel):
     content: str
     tool: str | None = None
     is_tool_result: bool = False
+    kind: Literal["interaction", "annotation"] = "interaction"
 
 
 class TranscriptPreview(BaseModel):
     """Serializable bounded parser checkpoint, never authoritative conversation state."""
 
     model_config = ConfigDict(frozen=True)
-    version: int = 2
+    version: int = TRANSCRIPT_PREVIEW_VERSION
     messages: tuple[PreviewMessage, ...] = ()
     setup: str | None = None
     pending_summary: str | None = None
+    pi_session: bool = False
+    pi_previous_entry_id: str | None = None
+    rendering_reason: str | None = None
     has_interaction: bool = False
     omitted_messages: bool = False
     clipped_text: bool = False
 
     def lines(self) -> tuple[str, ...]:
         lines: list[str] = []
+        if self.rendering_reason:
+            lines.append(self.rendering_reason)
         if self.setup:
             lines.extend(("setup:", *self.setup.splitlines()))
         for message in self.messages:
@@ -66,7 +74,13 @@ class PreviewAccumulator:
 
     def __init__(self, checkpoint: TranscriptPreview | None = None) -> None:
         self.preview = checkpoint or TranscriptPreview()
-        self.normalizer = TranscriptNormalizer(self.preview.setup, self.preview.pending_summary)
+        self.normalizer = TranscriptNormalizer(
+            setup=self.preview.setup,
+            pending_summary=self.preview.pending_summary,
+            pi_session=self.preview.pi_session,
+            pi_previous_entry_id=self.preview.pi_previous_entry_id,
+            rendering_reason=self.preview.rendering_reason,
+        )
         self.parser = DefaultTranscriptEventParser()
 
     def feed(self, event: dict[str, object]) -> None:
@@ -76,9 +90,12 @@ class PreviewAccumulator:
         omitted = False if normalized.boundary else self.preview.omitted_messages
         has_interaction = self.preview.has_interaction
         for message in normalized.messages:
-            if message.role not in {"assistant", "user"} or not message.content.strip():
+            if (
+                message.role not in {"assistant", "user", "annotation"}
+                or not message.content.strip()
+            ):
                 continue
-            has_interaction = True
+            has_interaction |= message.kind == "interaction"
             content = _clip(message.content, _MESSAGE_BYTES)
             clipped |= content != message.content
             messages.append(
@@ -87,6 +104,7 @@ class PreviewAccumulator:
                     content=content,
                     tool=_clip(message.tool_call.name, 128) if message.tool_call else None,
                     is_tool_result=message.is_tool_result,
+                    kind=message.kind,
                 )
             )
             while (
@@ -106,6 +124,9 @@ class PreviewAccumulator:
             messages=tuple(messages),
             setup=setup,
             pending_summary=self.normalizer.pending_summary,
+            pi_session=self.normalizer.pi_session,
+            pi_previous_entry_id=self.normalizer.pi_previous_entry_id,
+            rendering_reason=self.normalizer.rendering_reason,
             has_interaction=has_interaction,
             clipped_text=clipped,
             omitted_messages=omitted,

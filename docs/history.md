@@ -136,3 +136,11 @@ A previously verified snippet can remain visible as `cached · archive offline`
 when its selected ZIP is unavailable. Corrupt/unreadable content is labeled
 unavailable, not current. Selecting a row or reading a ZIP never restores it.
 Restore remains an explicit action.
+
+## Pi journal views
+
+Pi logs show recorded append order, including messages from earlier branches.
+Compactions start segments with their recorded summaries. Branch summaries and
+parent changes appear as annotations, not model turns or extra compactions.
+These views do not reconstruct Pi's active prompt context. Unsupported material
+is reported as incomplete rendering; retained raw bytes are not rewritten.

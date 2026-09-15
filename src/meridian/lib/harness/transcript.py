@@ -6,7 +6,7 @@ import json
 from collections.abc import Iterable, Iterator, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import NamedTuple, Protocol, cast
+from typing import Literal, NamedTuple, Protocol, cast
 
 from meridian.lib.harness.extractors.base import normalize_harness_event_type
 from meridian.lib.harness.opencode_transcript import (
@@ -38,6 +38,7 @@ class TranscriptMessage(NamedTuple):
     content: str
     tool_call: ToolCall | None = None
     is_tool_result: bool = False
+    kind: Literal["interaction", "annotation"] = "interaction"
 
 
 class TranscriptParseResult(NamedTuple):
@@ -45,6 +46,7 @@ class TranscriptParseResult(NamedTuple):
     total_compactions: int
     segment_setups: tuple[str | None, ...]
     consumed_setup_event_indexes: tuple[int, ...] = ()
+    rendering_reason: str | None = None
 
     @property
     def segment_prologues(self) -> tuple[str | None, ...]:
@@ -286,6 +288,13 @@ def _extract_pi_message_event(payload: dict[str, object]) -> list[TranscriptMess
         return _extract_claude_content(role, message.get("content"))
     if role == "custom":
         return _extract_claude_content("user", message.get("content"))
+    if role == "bashexecution":
+        command = text_from_value(message.get("command"))
+        output = text_from_value(message.get("output"))
+        return [
+            TranscriptMessage("user", f"[tool: bash {command}]", ToolCall("bash", command)),
+            TranscriptMessage("user", f"[tool_result] {output}", is_tool_result=True),
+        ]
     if role in {"toolresult", "tool_result"}:
         content = text_from_value(message.get("content"))
         if content:
@@ -462,8 +471,10 @@ class DefaultTranscriptEventParser(TranscriptEventParser):
                 return (_extract_codex_exec_item(cast("dict[str, object]", item)), is_boundary)
             return ([], is_boundary)
 
-        if event_type == "message_end":
+        if event_type in {"message", "message_end"} and isinstance(event.get("message"), dict):
             return (_extract_pi_message_event(event), is_boundary)
+        if event_type == "custom_message":
+            return (_extract_claude_content("user", event.get("content")), is_boundary)
 
         role = str(event.get("role", "")).strip().lower()
         if role in {"assistant", "user", "system"}:
@@ -642,12 +653,138 @@ class TranscriptNormalizer:
 
     setup: str | None = None
     pending_summary: str | None = None
+    pi_session: bool = False
+    pi_previous_entry_id: str | None = None
+    rendering_reason: str | None = None
+
+    def _pi_journal(
+        self, event: dict[str, object], messages: list[TranscriptMessage]
+    ) -> NormalizedTranscriptEvent | None:
+        event_type = event.get("type")
+        if event_type == "session" and isinstance(event.get("id"), str) and "cwd" in event:
+            self.pi_session = True
+            self.pi_previous_entry_id = None
+            version = event.get("version", 1)
+            if type(version) is not int or version not in (1, 2, 3):
+                self.rendering_reason = "Unsupported Pi session version; rendering is incomplete."
+            return NormalizedTranscriptEvent([])
+        entry_id = event.get("id")
+        native_entry = isinstance(entry_id, str) and "parentId" in event
+        if not self.pi_session and not (
+            native_entry
+            and event_type
+            in (
+                "message",
+                "compaction",
+                "branch_summary",
+                "custom_message",
+                "model_change",
+                "thinking_level_change",
+                "custom",
+                "label",
+                "session_info",
+            )
+            and (event_type != "message" or isinstance(event.get("message"), dict))
+        ):
+            return None
+        if not native_entry and not isinstance(event_type, str):
+            return None
+        self.pi_session = True
+        annotations: list[TranscriptMessage] = []
+        if isinstance(entry_id, str) and len(entry_id) > 128:
+            self.pi_previous_entry_id = None
+            self.rendering_reason = "Unsupported Pi entry identity; rendering is incomplete."
+            native_entry = False
+        if native_entry:
+            if (
+                self.pi_previous_entry_id is not None
+                and event.get("parentId") != self.pi_previous_entry_id
+            ):
+                annotations.append(
+                    TranscriptMessage(
+                        "annotation",
+                        "Pi journal parent changed; continuing a different branch.",
+                        kind="annotation",
+                    )
+                )
+            self.pi_previous_entry_id = cast("str", entry_id)
+        if event_type == "compaction":
+            self.setup = text_from_value(event.get("summary")) or None
+            self.pending_summary = None
+            if not isinstance(event.get("summary"), str):
+                self.rendering_reason = (
+                    "Unsupported Pi compaction summary; rendering is incomplete."
+                )
+            return NormalizedTranscriptEvent(annotations, boundary=True)
+        if event_type == "branch_summary":
+            summary = text_from_value(event.get("summary"))
+            annotations.append(
+                TranscriptMessage(
+                    "annotation",
+                    f"Pi branch summary:\n{summary}",
+                    kind="annotation",
+                )
+            )
+            if not isinstance(event.get("summary"), str):
+                self.rendering_reason = "Unsupported Pi branch summary; rendering is incomplete."
+        elif event_type not in (
+            "message",
+            "custom_message",
+            "model_change",
+            "thinking_level_change",
+            "custom",
+            "label",
+            "session_info",
+        ):
+            self.rendering_reason = "Unsupported Pi journal entry; rendering is incomplete."
+        return NormalizedTranscriptEvent([*annotations, *messages])
 
     def feed(
         self, event: dict[str, object], parser: TranscriptEventParser
     ) -> NormalizedTranscriptEvent:
         normalized_event = _unwrap_seq_envelope(event)
         messages, parser_boundary = parser.parse(event)
+        event_type = normalize_harness_event_type(normalized_event)
+        if event_type in {"message", "message_end", "custom_message"}:
+            message = (
+                normalized_event
+                if event_type == "custom_message"
+                else normalized_event.get("message")
+            )
+            if isinstance(message, dict):
+                message = cast("dict[str, object]", message)
+                role = (
+                    "custom"
+                    if event_type == "custom_message"
+                    else str(message.get("role", "")).lower()
+                )
+                content = message.get("content")
+                if role not in {
+                    "user",
+                    "assistant",
+                    "system",
+                    "custom",
+                    "toolresult",
+                    "tool_result",
+                    "bashexecution",
+                }:
+                    self.rendering_reason = "Unsupported Pi message role; rendering is incomplete."
+                elif role != "bashexecution" and not isinstance(content, (str, list)):
+                    self.rendering_reason = "Malformed Pi message content; rendering is incomplete."
+                elif isinstance(content, list) and any(
+                    not isinstance(block, dict)
+                    or cast("dict[str, object]", block).get("type")
+                    not in ("text", "thinking", "toolCall")
+                    for block in cast("list[object]", content)
+                ):
+                    self.rendering_reason = (
+                        "Unsupported Pi message content; rendering is incomplete."
+                    )
+            elif self.pi_session:
+                self.rendering_reason = "Malformed Pi message; rendering is incomplete."
+        pi_event = self._pi_journal(normalized_event, messages)
+        if pi_event is not None:
+            return pi_event
         opencode_boundary = _is_opencode_compaction_boundary(normalized_event)
         claude_boundary = _is_claude_compaction_boundary(normalized_event)
         if parser_boundary or opencode_boundary:
@@ -691,7 +828,7 @@ def _parse_events_with_prologues(
     for event_index, event in enumerate(events):
         normalized = normalizer.feed(event, parser)
         if normalized.boundary:
-            segments.append([])
+            segments.append(list(normalized.messages))
             segment_setups.append(normalizer.setup)
         else:
             segment_setups[-1] = normalizer.setup
@@ -703,6 +840,7 @@ def _parse_events_with_prologues(
         total_compactions=len(segments) - 1,
         segment_setups=tuple(segment_setups),
         consumed_setup_event_indexes=tuple(consumed_setup_event_indexes),
+        rendering_reason=normalizer.rendering_reason,
     )
 
 

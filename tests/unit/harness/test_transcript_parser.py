@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from meridian.lib.harness.transcript import (
     DefaultTranscriptEventParser,
     TranscriptMessage,
@@ -134,12 +136,13 @@ def test_parser_extracts_claude_messages_tool_call_and_result() -> None:
     assert user[1].is_tool_result is True
 
 
-def test_parser_extracts_pi_message_end_roles_and_tools() -> None:
+@pytest.mark.parametrize("event_type", ["message", "message_end"])
+def test_parser_extracts_pi_message_end_roles_and_tools(event_type: str) -> None:
     parser = DefaultTranscriptEventParser()
 
     def parse_message(message: dict[str, object]) -> list[TranscriptMessage]:
         rows, boundary = parser.parse(
-            {"event_type": "message_end", "payload": {"type": "message_end", "message": message}}
+            {"event_type": event_type, "payload": {"type": event_type, "message": message}}
         )
         assert boundary is False
         return rows
@@ -203,3 +206,150 @@ def test_parser_extracts_codex_messages_tool_calls_and_results() -> None:
     assert messages[1].tool_call is not None
     assert (messages[1].tool_call.name, messages[1].tool_call.body) == ("bash", "pwd")
     assert messages[2].is_tool_result is True
+
+
+def test_pi_journal_compaction_and_branch_annotations_survive_checkpoint() -> None:
+    from meridian.lib.harness.transcript_preview import PreviewAccumulator
+
+    events = [
+        {"type": "session", "id": "session", "version": 3, "cwd": "/repo"},
+        {
+            "type": "message",
+            "id": "a",
+            "parentId": None,
+            "message": {"role": "user", "content": "before"},
+        },
+        {
+            "type": "message",
+            "id": "b",
+            "parentId": "a",
+            "message": {"role": "assistant", "content": "answer"},
+        },
+        {
+            "type": "compaction",
+            "id": "c",
+            "parentId": "b",
+            "summary": "recorded handoff",
+            "firstKeptEntryId": "b",
+            "tokensBefore": 10,
+        },
+        {
+            "type": "custom_message",
+            "id": "d",
+            "parentId": "c",
+            "customType": "notice",
+            "content": "extension notice",
+            "display": False,
+        },
+        {
+            "type": "branch_summary",
+            "id": "e",
+            "parentId": "a",
+            "fromId": "d",
+            "summary": "branch summary",
+        },
+        {
+            "type": "message",
+            "id": "f",
+            "parentId": "e",
+            "message": {"role": "assistant", "content": "new branch answer"},
+        },
+    ]
+    parsed = parse_transcript_events_with_prologues(events)
+    assert parsed.total_compactions == 1
+    assert parsed.segment_setups == (None, "recorded handoff")
+    assert _rows(parsed.segments[0]) == [("user", "before"), ("assistant", "answer")]
+    annotations = [m for m in parsed.segments[1] if m.kind == "annotation"]
+    assert any("branch summary" in m.content for m in annotations)
+    assert any("parent" in m.content.lower() for m in annotations)
+    assert all(m.role == "annotation" for m in annotations)
+    assert any(m.content == "extension notice" for m in parsed.segments[1])
+    assert parsed.rendering_reason is None
+    accumulator = PreviewAccumulator()
+    for event in events:
+        accumulator = PreviewAccumulator(accumulator.preview.model_copy())
+        accumulator.feed(event)
+    assert accumulator.preview.setup == "recorded handoff"
+    assert accumulator.preview.pi_previous_entry_id == "f"
+    assert any("parent" in line.lower() for line in accumulator.preview.lines())
+    assert accumulator.preview.rendering_reason is None
+
+
+def test_pi_unknown_material_is_not_certified_empty() -> None:
+    from meridian.lib.harness.transcript_preview import PreviewAccumulator
+
+    events = [
+        {"type": "session", "id": "s", "version": 3, "cwd": "/repo"},
+        {"type": "future_message", "id": "a", "parentId": None, "content": "not understood"},
+    ]
+    parsed = parse_transcript_events_with_prologues(events)
+    assert parsed.rendering_reason
+    accumulator = PreviewAccumulator()
+    for event in events:
+        accumulator.feed(event)
+    assert accumulator.preview.rendering_reason
+    assert "No messages" not in "\n".join(accumulator.preview.lines())
+
+
+def test_pi_bash_execution_and_metadata_journal() -> None:
+    events = [
+        {"type": "session", "version": 3, "id": "s", "cwd": "/repo"},
+        {"type": "model_change", "id": "a", "parentId": None, "provider": "p", "modelId": "m"},
+        {
+            "type": "custom",
+            "id": "b",
+            "parentId": "a",
+            "customType": "state",
+            "data": {"text": "not a message"},
+        },
+        {
+            "type": "message",
+            "id": "c",
+            "parentId": "b",
+            "message": {
+                "role": "bashExecution",
+                "command": "pwd",
+                "output": "/repo",
+                "exitCode": 0,
+            },
+        },
+    ]
+    parsed = parse_transcript_events_with_prologues(events)
+    assert parsed.rendering_reason is None
+    assert parsed.total_compactions == 0
+    assert _rows(parsed.segments[0]) == [
+        ("user", "[tool: bash pwd]"),
+        ("user", "[tool_result] /repo"),
+    ]
+    assert parsed.segments[0][0].tool_call is not None
+    assert parsed.segments[0][1].is_tool_result
+
+
+def test_non_pi_message_shape_does_not_start_pi_journal_tracking() -> None:
+    parsed = parse_transcript_events_with_prologues(
+        [
+            {
+                "type": "message",
+                "id": "a",
+                "parentId": None,
+                "role": "assistant",
+                "content": "generic",
+            },
+            {"type": "other_metadata"},
+        ]
+    )
+    assert _rows(parsed.segments[0]) == [("assistant", "generic")]
+    assert parsed.rendering_reason is None
+
+
+def test_pi_preview_does_not_persist_unbounded_entry_identity() -> None:
+    from meridian.lib.harness.transcript_preview import PreviewAccumulator
+
+    accumulator = PreviewAccumulator()
+    accumulator.feed({
+        "type": "message", "id": "x" * 100_000, "parentId": None,
+        "message": {"role": "assistant", "content": "answer"},
+    })
+    assert accumulator.preview.rendering_reason
+    assert accumulator.preview.pi_previous_entry_id is None
+    assert len(accumulator.preview.model_dump_json()) < 1000

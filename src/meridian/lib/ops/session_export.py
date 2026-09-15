@@ -149,8 +149,19 @@ def _render_messages(messages: list[TranscriptMessage]) -> list[str]:
     return rendered
 
 
-def _flatten_segments(segments: list[list[TranscriptMessage]]) -> list[TranscriptMessage]:
-    return [message for segment in segments for message in segment]
+def _flatten_segments(
+    segments: list[list[TranscriptMessage]], segment_setups: tuple[str | None, ...]
+) -> list[TranscriptMessage]:
+    messages: list[TranscriptMessage] = []
+    for index, segment in enumerate(segments):
+        if index:
+            summary = segment_setups[index] if index < len(segment_setups) else None
+            messages.append(TranscriptMessage(
+                "annotation", "Compaction boundary" + (f":\n{summary}" if summary else ""),
+                kind="annotation",
+            ))
+        messages.extend(segment)
+    return messages
 
 
 def _parse_iso(value: str | None) -> datetime | None:
@@ -324,9 +335,11 @@ def session_export_sync(
         session_id=transcript.target.session_id,
         source=transcript.target.source,
         metadata=_session_metadata(runtime_root, ref) if runtime_root is not None else [],
-        messages=_flatten_segments(transcript.segments),
+        messages=_flatten_segments(transcript.segments, transcript.segment_setups),
         appendices=appendices,
     )
+    if transcript.rendering_reason:
+        markdown = f"> {transcript.rendering_reason}\n\n{markdown}"
     return SessionExportOutput(session_id=transcript.target.session_id, markdown=markdown)
 
 

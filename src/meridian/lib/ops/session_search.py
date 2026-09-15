@@ -163,7 +163,7 @@ def iter_session_subset_search(
         ) as exc:
             yield SubsetSearchStep(chat_id, False, str(exc))
             continue
-        yield SubsetSearchStep(chat_id, matched)
+        yield SubsetSearchStep(chat_id, matched, transcript.rendering_reason)
 
 
 def _build_preview(content: str, *, query: str, limit: int = _PREVIEW_LIMIT) -> str:
@@ -266,7 +266,10 @@ def _search_single_target(payload: SessionSearchInput, *, query: str) -> Session
         corpus=transcript.target.source or "session",
         chat_id=payload.ref.strip() or transcript.target.session_id,
     )
-    return SessionSearchOutput(matches=tuple(matches))
+    return SessionSearchOutput(
+        matches=tuple(matches),
+        errors=(transcript.rendering_reason,) if transcript.rendering_reason else (),
+    )
 
 
 def _search_corpus(payload: SessionSearchInput, *, query: str) -> SessionSearchOutput:
@@ -356,6 +359,8 @@ def _search_corpus(payload: SessionSearchInput, *, query: str) -> SessionSearchO
                     route=route_for_corpus_target(target),
                     budget=budget,
                 )
+                if transcript.rendering_reason:
+                    errors.append(f"{row.history_id}: {transcript.rendering_reason}")
                 # Partial loose authority is useful. A partial ZIP member has not
                 # finished its checksum, so do not claim its matches as confirmed.
                 if budget.exhausted and row.archived:

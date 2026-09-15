@@ -56,3 +56,12 @@ segments use it to avoid double-counting those events in the message stream.
 ## Related Context
 
 - [CONTEXT.md](CONTEXT.md) — shared harness contracts
+
+## Pi journals and rendering limits
+
+Pi native `message` and RPC `message_end` share message extraction. Native
+compactions create segments with recorded summaries; branch summaries and parent
+changes are typed annotations in append order, not reconstructed active context.
+The normalizer carries preceding-entry identity across preview checkpoints.
+Unknown material records/content set `rendering_reason`; consumers must not call
+that a complete empty rendering. Raw storage remains unchanged.

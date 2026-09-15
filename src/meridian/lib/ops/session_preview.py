@@ -16,7 +16,11 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, ValidationError
 
 from meridian.lib.harness.transcript import transcript_revision
-from meridian.lib.harness.transcript_preview import PreviewAccumulator, TranscriptPreview
+from meridian.lib.harness.transcript_preview import (
+    TRANSCRIPT_PREVIEW_VERSION,
+    PreviewAccumulator,
+    TranscriptPreview,
+)
 from meridian.lib.ops.runtime import resolve_roots_for_read
 from meridian.lib.ops.session_target import TranscriptSource, resolve_session_log_target
 from meridian.lib.ops.session_transcript import iter_source_events
@@ -90,7 +94,7 @@ class _Snapshot(BaseModel):
     ) -> PreviewView:
         return PreviewView(
             self.preview.lines(),
-            state,
+            "unavailable" if self.preview.rendering_reason and state != "offline" else state,
             cached,
             self.source,
             self.preview.omitted_messages,
@@ -132,7 +136,10 @@ class SessionPreview:
             snapshot = _Snapshot.model_validate_json(value) if value else None
         except ValidationError:
             snapshot = None
-        if snapshot is not None and snapshot.preview.version != 2:
+        if snapshot is not None and (
+            "version" not in snapshot.preview.model_fields_set
+            or snapshot.preview.version != TRANSCRIPT_PREVIEW_VERSION
+        ):
             snapshot = None
         return build, value, snapshot
 
@@ -242,7 +249,7 @@ class SessionPreview:
                     archive_digest=archive_digest,
                     source=source.source_label,
                 )
-                if accumulator.preview.has_interaction:
+                if accumulator.preview.has_interaction or accumulator.preview.rendering_reason:
                     break
             if snapshot is None:
                 if archive_error:
@@ -261,7 +268,7 @@ class SessionPreview:
                 if not current() or not generation_current():
                     return None
                 now = tuple(_signature(source) for source in target.sources)
-                complete = now == signatures
+                complete = now == signatures and published_snapshot.preview.rendering_reason is None
                 if chosen.kind == "archive" and self.roots:
                     selected = catalog_heads(read_receipts(self.roots.runtime_root))
                     if selected.get(identity.history_id or "") != published_snapshot.archive_digest:

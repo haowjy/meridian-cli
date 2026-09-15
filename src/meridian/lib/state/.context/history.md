@@ -124,3 +124,9 @@ inodes and truncation invalidate checkpoints. Tail witnesses assume controlled
 append-only growth, not arbitrary prefix edits plus append. External edits require
 explicit rebuild. The browser exposes stale/updating, unavailable/offline and
 clipping status, and refreshes an active selected row every two seconds.
+
+Preview compatibility uses the shared harness checkpoint version, passed into
+cache counts by ops; it does not require a metadata-schema rebuild. Counts exclude
+incompatible, incomplete and rendering-partial snapshots. Pi branch identity and
+rendering limits persist in the bounded checkpoint; a cached-empty old grammar
+must not bypass reparsing after a parser upgrade.

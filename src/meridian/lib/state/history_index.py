@@ -878,7 +878,7 @@ class HistoryIndex:
                 references.append((history_id, history_id, record.session_instance_id or ""))
         return tuple(references)
 
-    def preview_count(self, *, deadline: float | None = None) -> int:
+    def preview_count(self, *, preview_version: int, deadline: float | None = None) -> int:
         """Read cached counts without initializing or catching up metadata."""
         deadline = time.monotonic() + QUERY_TIMEOUT if deadline is None else deadline
         with lock_file(self.database_lock, mode="shared", timeout=_remaining(deadline)):
@@ -895,7 +895,12 @@ class HistoryIndex:
                     self._preview_generation_matches(db, row[0])
                     and self._preview_binding_matches(db, row[1], row[2])
                     for row in db.execute(
-                        "SELECT key,history_id,archive_digest FROM previews"
+                        "SELECT key,history_id,archive_digest FROM previews WHERE "
+                        "CASE WHEN json_valid(value) THEN "
+                        "json_extract(value,'$.preview.version')=? AND "
+                        "json_extract(value,'$.preview.rendering_reason') IS NULL AND "
+                        "json_extract(value,'$.complete')=1 ELSE 0 END",
+                        (preview_version,),
                     ).fetchall()
                 )
             finally:

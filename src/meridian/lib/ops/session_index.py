@@ -10,6 +10,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict
 
 from meridian.lib.config.settings import load_config
+from meridian.lib.harness.transcript_preview import TRANSCRIPT_PREVIEW_VERSION
 from meridian.lib.ops.runtime import async_from_sync, resolve_roots_for_read
 from meridian.lib.state.history_changes import HistoryChanges
 from meridian.lib.state.history_index import QUERY_TIMEOUT, HistoryIndex
@@ -62,7 +63,8 @@ def session_index_sync(payload: SessionIndexInput) -> SessionIndexOutput:
             reason=status.reason,
             pending_sources=len(pending),
             preview_cached=(
-                index.preview_count(deadline=deadline) if status.baseline == "current" else 0
+                index.preview_count(preview_version=TRANSCRIPT_PREVIEW_VERSION, deadline=deadline)
+                if status.baseline == "current" else 0
             ),
         )
     if payload.action == "rebuild":
@@ -83,15 +85,15 @@ def session_index_sync(payload: SessionIndexInput) -> SessionIndexOutput:
         reader = SessionPreview(str(roots.project_root))
         for ref, history_id, generation in index.preview_references():
             identity = PreviewIdentity(ref, history_id, generation)
-            reader.refresh(identity, lambda: True)
-            if reader.peek(identity) is None:
+            view = reader.refresh(identity, lambda: True)
+            if view is None or view.state != "current":
                 unavailable += 1
     _, pending = HistoryChanges(roots.runtime_root).inspect()
     return SessionIndexOutput(
         baseline="complete" if coverage.complete else "incomplete",
         coverage=asdict(coverage),
         pending_sources=len(pending),
-        preview_cached=index.preview_count(),
+        preview_cached=index.preview_count(preview_version=TRANSCRIPT_PREVIEW_VERSION),
         preview_unavailable=unavailable,
     )
 
