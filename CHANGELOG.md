@@ -19,6 +19,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Record streaming-serve model selections at accepted startup and keep native spawn forks from updating the parent conversation.
+
 - Keep primary session seeds and native-fork parent IDs out of recorded model selections; bind actual identities durably and retain cleanup on binding failure.
 
 - Pass headless harness exclusions to Mars before selection; keep primary routing and the final execution guard unchanged.

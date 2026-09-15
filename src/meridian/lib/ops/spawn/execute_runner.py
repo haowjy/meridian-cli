@@ -189,7 +189,7 @@ async def _prepare_execution_handoff(
                     resolved_session.requested_harness_session_id
                     or (spawn_record.harness_session_id if spawn_record else "")
                     or ""
-                ),
+                ) if not resolved_session.continue_fork else "",
                 run_agent_name=resolved_agent_name,
                 inherited_work_id=work_id,
                 control_root=runtime_request.resolved_control_root,

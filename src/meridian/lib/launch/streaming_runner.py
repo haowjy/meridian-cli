@@ -635,6 +635,7 @@ async def run_streaming_spawn(
     heartbeat_interval_secs: float = _HEARTBEAT_INTERVAL_SECS,
     lifecycle_service: SpawnLifecycleService | None = None,
     on_control_endpoint_ready: Callable[[str], None] | None = None,
+    on_running: Callable[[HarnessConnection[Any]], None] | None = None,
 ) -> DrainOutcome:
     """Run one streaming spawn to completion without spawn-store finalization.
 
@@ -675,12 +676,14 @@ async def run_streaming_spawn(
         runtime_root,
     )
     try:
-        await _start_spawn_with_timeout(
+        connection = await _start_spawn_with_timeout(
             manager=manager,
             config=config,
             run_spec=run_spec,
             timeout_seconds=startup_timeout_seconds,
         )
+        if on_running is not None:
+            on_running(connection)
         if on_control_endpoint_ready is not None:
             endpoint = manager.control_endpoint(spawn_id)
             if endpoint is not None:
@@ -1194,6 +1197,8 @@ async def execute_with_streaming(
 
         def _attempt_id_observer(attempt: SessionAttempt | None) -> Callable[[str], None]:
             def observe(session_id: str) -> None:
+                if spec.continue_fork and session_id.strip() == spec.continue_session_id:
+                    raise ValueError("fork returned its source conversation identity")
                 if (
                     spec.continue_session_id and not spec.continue_fork
                     and session_id.strip() != spec.continue_session_id
@@ -1331,19 +1336,16 @@ async def execute_with_streaming(
                 def record_started(
                     connection: HarnessConnection[Any],
                     captured_attempt: SessionAttempt | None = session_attempt,
+                    captured_observer: Callable[[str], None] = observe_attempt_id,
                 ) -> None:
+                    native_id = connection.session_id or (
+                        spec.continue_session_id if not spec.continue_fork else None
+                    )
+                    if native_id:
+                        captured_observer(native_id)
                     if captured_attempt is not None:
-                        if (
-                            spec.continue_session_id and not spec.continue_fork
-                            and connection.session_id
-                            and connection.session_id != spec.continue_session_id
-                        ):
-                            raise ValueError(
-                                "startup attempt changed its native conversation identity"
-                            )
                         captured_attempt.record_started(
-                            launch_context, str(run.spawn_id),
-                            connection.session_id or spec.continue_session_id,
+                            launch_context, str(run.spawn_id), native_id,
                         )
 
                 attempt = await _run_streaming_attempt(

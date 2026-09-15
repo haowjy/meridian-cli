@@ -69,7 +69,10 @@ prepare/bind entry:
    Foreground and background paths converge at `launch_prepared_spawn()`.
 3. **CLI streaming-serve** (`cli/streaming_serve.py`): resolve-before-persist via
    `SpawnApplicationService.prepare_spawn()`, then `run_streaming_spawn()`. Row
-   created only on success.
+   created only on successful preparation. A captured session attempt records selection
+   immediately after managed startup returns, before output consumption. Native ID
+   callbacks or post-run artifact observation bind pending selection; row creation
+   alone is not model acceptance.
 
 ## Key Types
 
