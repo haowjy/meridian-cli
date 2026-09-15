@@ -19,6 +19,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Keep primary session seeds and native-fork parent IDs out of recorded model selections; bind actual identities durably and retain cleanup on binding failure.
+
 - Pass headless harness exclusions to Mars before selection; keep primary routing and the final execution guard unchanged.
 - Fail durable JSONL appends when tail repair fails instead of silently losing the new event.
 

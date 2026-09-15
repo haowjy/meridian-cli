@@ -52,9 +52,15 @@ immediately on success. Black-box path may discover the session ID only at exit 
 inside `_finalize_lifecycle_and_observe_session()`. It discovers the harness session ID from
 artifacts (history.jsonl, output.jsonl) written during execution.
 
-If the observed ID differs from what was persisted at launch, a warning is logged and the
-store is updated. If observation fails, it is swallowed — session ID persistence is
-best-effort after exit. Do not call `observe_session_id()` at any other point in the lifecycle.
+Generated seeds and native-fork source IDs are not authoritative child identities.
+Fresh/native-fork model selections stay pending until an observed ID binds the captured
+startup attempt. Exact resume and materialized forks already have known identities.
+The existing Claude transcript/trampoline detector can confirm a generated seed or
+its successor; a seed alone cannot. No last-executed model is inferred.
+
+Observation failures remain best-effort. Persisting an observed identity is required:
+errors propagate, and a conflicting known identity is rejected. Adapter cleanup still
+runs. Do not call `observe_session_id()` elsewhere in the lifecycle.
 
 ## Finalization Ownership
 
@@ -63,7 +69,9 @@ best-effort after exit. Do not call `observe_session_id()` at any other point in
 - Calling `spawn_service.complete_execution()` with `ExecutionTerminalFacts`
 - Resolving the final exit code (may differ from process exit code for graceful report-completion)
 - Persisting observed harness session ID
-- Calling `harness_adapter.cleanup_prelaunch()`
+
+The surrounding `finally` calls `harness_adapter.cleanup_prelaunch()`, including when
+identity persistence fails.
 
 `complete_execution()` is idempotent — safe to call on a spawn already in terminal state.
 

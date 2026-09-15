@@ -566,7 +566,7 @@ def _finalize_lifecycle_and_observe_session(
     primary_spawn_id: SpawnId | None,
     exit_code: int,
     resolved_harness_session_id: str,
-    initial_persisted_harness_session_id: str,
+    expected_harness_session_id: str,
     harness_adapter: Any,
     artifacts: LocalStore,
     project_root: Path,
@@ -580,7 +580,7 @@ def _finalize_lifecycle_and_observe_session(
     spawn_service: SpawnApplicationService,
     observe_adapter_session_id: bool = True,
 ) -> tuple[int, str]:
-    """Finalize lifecycle state and persist best-effort observed session ids."""
+    """Finalize lifecycle, discover identity, and durably bind accepted selections."""
 
     resolved_exit_code = exit_code
     if primary_spawn_id is not None:
@@ -620,8 +620,8 @@ def _finalize_lifecycle_and_observe_session(
                 "Launcher finalize skipped; spawn already terminal or missing: %s",
                 primary_spawn_id,
             )
+    observed_harness_session_id = None
     try:
-        observed_harness_session_id = None
         if observe_adapter_session_id and primary_started_epoch > 0.0:
             observed_harness_session_id = harness_adapter.observe_session_id(
                 artifacts=artifacts,
@@ -630,37 +630,20 @@ def _finalize_lifecycle_and_observe_session(
                 project_root=launch_child_cwd,
                 started_at_epoch=primary_started_epoch,
                 started_at_local_iso=primary_started_local_iso,
-                expected_session_id=initial_persisted_harness_session_id,
+                expected_session_id=expected_harness_session_id,
             )
-        if (
-            observed_harness_session_id is not None
-            and observed_harness_session_id.strip()
-            and observed_harness_session_id.strip() != initial_persisted_harness_session_id.strip()
-        ):
-            if not initial_persisted_harness_session_id.strip():
-                logger.debug(
-                    "Harness session ID discovered on exit: %s",
-                    observed_harness_session_id.strip(),
-                )
-            else:
-                logger.warning(
-                    "Harness session ID diverged: persisted=%s observed=%s",
-                    initial_persisted_harness_session_id,
-                    observed_harness_session_id.strip(),
-                )
-            resolved_harness_session_id = observed_harness_session_id.strip()
-            managed.record_harness_session_id(resolved_harness_session_id)
-            if primary_spawn_id is not None:
-                spawn_store.update_spawn(
-                    runtime_root,
-                    primary_spawn_id,
-                    harness_session_id=resolved_harness_session_id,
-                )
     except Exception:
-        logger.debug(
-            "Best-effort harness session persistence failed",
-            exc_info=True,
-        )
+        logger.debug("Best-effort harness session observation failed", exc_info=True)
+    if observed_harness_session_id and observed_harness_session_id.strip():
+        resolved_harness_session_id = observed_harness_session_id.strip()
+        # Binding an accepted selection is durable coordination, not best-effort discovery.
+        managed.record_harness_session_id(resolved_harness_session_id)
+        if primary_spawn_id is not None:
+            spawn_store.update_spawn(
+                runtime_root,
+                primary_spawn_id,
+                harness_session_id=resolved_harness_session_id,
+            )
     return resolved_exit_code, resolved_harness_session_id
 
 
@@ -881,13 +864,12 @@ def run_harness_process(
     ).strip()
     session_mode = resolve_primary_session_mode(preview_context)
     session_metadata = build_session_metadata(preview_request)
-    resolved_harness_session_id = preview_context.binding.effective_harness_session_id or ""
-    initial_persisted_harness_session_id = resolved_harness_session_id
-    session_scope_harness_session_id = resolved_harness_session_id
-    if session_mode == SessionMode.FORK:
-        session_scope_harness_session_id = (
-            preview_request.session.requested_harness_session_id or ""
-        ).strip() or session_scope_harness_session_id
+    expected_harness_session_id = (
+        preview_context.binding.effective_harness_session_id or ""
+    ) if session_mode != SessionMode.FORK else ""
+    resolved_harness_session_id = (
+        expected_harness_session_id if session_mode == SessionMode.RESUME else ""
+    )
     harness_adapter = preview_context.harness
     harness_id = HarnessId(session_metadata.harness)
     chat_id: str | None = None
@@ -915,7 +897,7 @@ def run_harness_process(
             runtime_root=runtime_root,
             metadata=session_metadata,
             request=preview_request.session,
-            harness_session_id=session_scope_harness_session_id,
+            harness_session_id=resolved_harness_session_id,
             chat_id=resume_chat_id,
             control_root=str(control_root),
             task_cwd=task_cwd.as_posix() if task_cwd is not None else None,
@@ -991,7 +973,8 @@ def run_harness_process(
                             }
                         )
                     resolved_harness_session_id = forked_session_id
-                initial_persisted_harness_session_id = resolved_harness_session_id
+                if forked_session_id:
+                    expected_harness_session_id = forked_session_id
                 log_dir = resolve_spawn_log_dir(
                     config_root, primary_spawn_id, runtime_root=runtime_root
                 )
@@ -1062,7 +1045,7 @@ def run_harness_process(
                 command = runtime_context.binding.argv
                 resolved_harness_session_id = (
                     runtime_context.binding.effective_harness_session_id or ""
-                )
+                ) if session_mode == SessionMode.RESUME or forked_session_id else ""
                 persisted_launch_policy_snapshot = (
                     runtime_context.resolved_request.launch_policy_snapshot
                 )
@@ -1094,15 +1077,13 @@ def run_harness_process(
                 )
                 lifecycle_service.bootstrap_from_disk(str(primary_spawn_id))
                 launch_spec = runtime_context.binding.spec
-                if not resolved_harness_session_id:
+                if not expected_harness_session_id and session_mode != SessionMode.FORK:
                     generated_session_id = harness_adapter.derive_primary_seeded_session_id(
                         spec=launch_spec,
                         command=command,
                     )
                     if generated_session_id:
-                        resolved_harness_session_id = generated_session_id
-                        initial_persisted_harness_session_id = generated_session_id
-                        managed.record_harness_session_id(generated_session_id)
+                        expected_harness_session_id = generated_session_id
                         spawn_store.update_spawn(
                             runtime_root,
                             primary_spawn_id,
@@ -1230,119 +1211,125 @@ def run_harness_process(
                         exit_code=exit_code,
                     )
             finally:
-                (
-                    exit_code,
-                    resolved_harness_session_id,
-                ) = _finalize_lifecycle_and_observe_session(
-                    primary_spawn_id=primary_spawn_id,
-                    exit_code=exit_code,
-                    resolved_harness_session_id=resolved_harness_session_id,
-                    initial_persisted_harness_session_id=initial_persisted_harness_session_id,
-                    harness_adapter=harness_adapter,
-                    artifacts=artifacts,
-                    project_root=control_root,
-                    launch_child_cwd=launch_child_cwd,
-                    model_id=session_metadata.model,
-                    runtime_root=runtime_root,
-                    primary_started=primary_started,
-                    primary_started_epoch=primary_started_epoch,
-                    primary_started_local_iso=primary_started_local_iso,
-                    managed=managed,
-                    spawn_service=spawn_service,
-                    observe_adapter_session_id=not (
-                        harness_id is HarnessId.PI and write_native_primary_metadata
-                    ),
-                )
-                if write_native_primary_metadata and primary_spawn_id is not None:
-                    discovery_status: HarnessSessionDiscovery | None = None
-                    discovery_detail: str | None = None
-                    if harness_id is HarnessId.PI:
-                        discovery_outcome = detect_pi_session_discovery_from_session_files(
-                            launch_env=child_env,
-                            child_cwd=launch_child_cwd,
-                            started_at_epoch=(
-                                primary_started_epoch if primary_started_epoch > 0.0 else None
-                            ),
-                            expected_session_id=initial_persisted_harness_session_id,
-                        )
-                        discovered_harness_session_id = (discovery_outcome.session_id or "").strip()
-                        current_resolved_harness_session_id = resolved_harness_session_id.strip()
-                        if (
-                            discovered_harness_session_id
-                            and discovered_harness_session_id
-                            != current_resolved_harness_session_id
-                        ):
-                            if not current_resolved_harness_session_id:
-                                logger.debug(
-                                    "Harness session ID discovered from Pi session files: %s",
-                                    discovered_harness_session_id,
-                                )
-                            else:
-                                logger.warning(
-                                    "Harness session ID overwritten by launch-env Pi session "
-                                    "discovery: observed=%s discovered=%s",
-                                    current_resolved_harness_session_id,
-                                    discovered_harness_session_id,
-                                )
-                            resolved_harness_session_id = discovered_harness_session_id
-                            managed.record_harness_session_id(discovered_harness_session_id)
-                            spawn_store.update_spawn(
-                                runtime_root,
-                                primary_spawn_id,
-                                harness_session_id=discovered_harness_session_id,
-                            )
-                        if (
-                            "--no-session" in command
-                            and discovery_outcome.session_id is None
-                        ):
-                            discovery_status = "never_created"
-                            discovery_detail = "ephemeral_session"
-                        elif (
-                            discovery_outcome.session_id is not None
-                            or (
-                                bool(requested_harness_session_id)
-                                and exit_code == 0
-                                and bool(resolved_harness_session_id.strip())
-                            )
-                        ):
-                            discovery_status = "ok"
-                        else:
-                            discovery_status = discovery_outcome.discovery
-                            discovery_detail = discovery_outcome.detail
-                    _write_native_primary_metadata(
-                        runtime_root=runtime_root,
-                        spawn_id=primary_spawn_id,
-                        spawn_dir=resolve_spawn_log_dir(
-                            config_root, primary_spawn_id, runtime_root=runtime_root
-                        ),
-                        command=native_primary_metadata_command,
-                        launch_cwd=launch_child_cwd,
-                        launcher_pid=os.getpid(),
-                        tui_pid=native_primary_tui_pid,
-                        activity="finalizing",
-                        started_at_epoch=(
-                            primary_started_epoch if primary_started_epoch > 0 else None
-                        ),
-                        ended_at_epoch=time.time(),
+                try:
+                    (
+                        exit_code,
+                        resolved_harness_session_id,
+                    ) = _finalize_lifecycle_and_observe_session(
+                        primary_spawn_id=primary_spawn_id,
                         exit_code=exit_code,
-                        harness_session_id=resolved_harness_session_id,
-                        harness_session_discovery=discovery_status,
-                        harness_session_discovery_detail=discovery_detail,
-                        prelaunch_state=prelaunch_state,
+                        resolved_harness_session_id=resolved_harness_session_id,
+                        expected_harness_session_id=expected_harness_session_id,
+                        harness_adapter=harness_adapter,
+                        artifacts=artifacts,
+                        project_root=control_root,
+                        launch_child_cwd=launch_child_cwd,
+                        model_id=session_metadata.model,
+                        runtime_root=runtime_root,
+                        primary_started=primary_started,
+                        primary_started_epoch=primary_started_epoch,
+                        primary_started_local_iso=primary_started_local_iso,
+                        managed=managed,
+                        spawn_service=spawn_service,
+                        observe_adapter_session_id=not (
+                            harness_id is HarnessId.PI and write_native_primary_metadata
+                        ),
                     )
-                if primary_spawn_id is not None:
-                    try:
-                        harness_adapter.cleanup_prelaunch(
+                    if write_native_primary_metadata and primary_spawn_id is not None:
+                        discovery_status: HarnessSessionDiscovery | None = None
+                        discovery_detail: str | None = None
+                        if harness_id is HarnessId.PI:
+                            discovery_outcome = detect_pi_session_discovery_from_session_files(
+                                launch_env=child_env,
+                                child_cwd=launch_child_cwd,
+                                started_at_epoch=(
+                                    primary_started_epoch if primary_started_epoch > 0.0 else None
+                                ),
+                                expected_session_id=expected_harness_session_id,
+                            )
+                            discovered_harness_session_id = (
+                                discovery_outcome.session_id or ""
+                            ).strip()
+                            current_resolved_harness_session_id = (
+                                resolved_harness_session_id.strip()
+                            )
+                            if (
+                                discovered_harness_session_id
+                                and discovered_harness_session_id
+                                != current_resolved_harness_session_id
+                            ):
+                                if not current_resolved_harness_session_id:
+                                    logger.debug(
+                                        "Harness session ID discovered from Pi session files: %s",
+                                        discovered_harness_session_id,
+                                    )
+                                else:
+                                    logger.warning(
+                                        "Harness session ID overwritten by launch-env Pi session "
+                                        "discovery: observed=%s discovered=%s",
+                                        current_resolved_harness_session_id,
+                                        discovered_harness_session_id,
+                                    )
+                                resolved_harness_session_id = discovered_harness_session_id
+                                managed.record_harness_session_id(discovered_harness_session_id)
+                                spawn_store.update_spawn(
+                                    runtime_root,
+                                    primary_spawn_id,
+                                    harness_session_id=discovered_harness_session_id,
+                                )
+                            if (
+                                "--no-session" in command
+                                and discovery_outcome.session_id is None
+                            ):
+                                discovery_status = "never_created"
+                                discovery_detail = "ephemeral_session"
+                            elif (
+                                discovery_outcome.session_id is not None
+                                or (
+                                    bool(requested_harness_session_id)
+                                    and exit_code == 0
+                                    and bool(resolved_harness_session_id.strip())
+                                )
+                            ):
+                                discovery_status = "ok"
+                            else:
+                                discovery_status = discovery_outcome.discovery
+                                discovery_detail = discovery_outcome.detail
+                        _write_native_primary_metadata(
                             runtime_root=runtime_root,
                             spawn_id=primary_spawn_id,
-                            chat_id=managed.chat_id,
-                            state=prelaunch_state,
+                            spawn_dir=resolve_spawn_log_dir(
+                                config_root, primary_spawn_id, runtime_root=runtime_root
+                            ),
+                            command=native_primary_metadata_command,
+                            launch_cwd=launch_child_cwd,
+                            launcher_pid=os.getpid(),
+                            tui_pid=native_primary_tui_pid,
+                            activity="finalizing",
+                            started_at_epoch=(
+                                primary_started_epoch if primary_started_epoch > 0 else None
+                            ),
+                            ended_at_epoch=time.time(),
+                            exit_code=exit_code,
+                            harness_session_id=resolved_harness_session_id,
+                            harness_session_discovery=discovery_status,
+                            harness_session_discovery_detail=discovery_detail,
+                            prelaunch_state=prelaunch_state,
                         )
-                    except Exception:
-                        logger.warning(
-                            "Failed to clean up adapter prelaunch state for primary spawn",
-                            exc_info=True,
-                        )
+                finally:
+                    if primary_spawn_id is not None:
+                        try:
+                            harness_adapter.cleanup_prelaunch(
+                                runtime_root=runtime_root,
+                                spawn_id=primary_spawn_id,
+                                chat_id=managed.chat_id,
+                                state=prelaunch_state,
+                            )
+                        except Exception:
+                            logger.warning(
+                                "Failed to clean up adapter prelaunch state for primary spawn",
+                                exc_info=True,
+                            )
     except FileNotFoundError:
         logger.debug("Harness command not found", exc_info=True)
         exit_code = 2

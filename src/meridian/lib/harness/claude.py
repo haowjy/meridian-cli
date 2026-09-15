@@ -571,14 +571,14 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         if not normalized_current:
             return None
         if project_root is None:
-            return normalized_current
+            return (current_session_id or "").strip() or None
 
         reconciled = reconcile_tui_trampoline_session_id(
             project_root=project_root,
             recorded_session_id=normalized_current,
             started_at_epoch=started_at_epoch,
         )
-        return reconciled or normalized_current
+        return reconciled or (current_session_id or "").strip() or None
 
     def resolve_session_file(
         self,
