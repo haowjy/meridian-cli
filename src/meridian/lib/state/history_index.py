@@ -17,7 +17,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal, NamedTuple
+from typing import TYPE_CHECKING, Any, Literal, NamedTuple, cast
 from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -198,6 +198,9 @@ def transcript_activity(path: Path, fallback: str) -> str:
                 raise ValueError(f"Incomplete transcript tail: {path}")
             window = min(end, window * 2)
     event = json.loads(chunk[start:finish])
+    if not isinstance(event, dict):
+        raise ValueError(f"Transcript event is not an object: {path}")
+    event = cast("dict[str, object]", event)
     stamp = event.get("timestamp", event.get("created_at", fallback))
     stamps = [value for value in (fallback, stamp) if isinstance(value, str) and value]
     return (
@@ -361,7 +364,13 @@ class HistoryIndex:
                     break
                 end = handle.tell()
                 try:
-                    event = _parse_event(json.loads(line))
+                    payload = json.loads(line)
+                    # Match the authoritative event reader's tolerant line policy.
+                    event = (
+                        _parse_event(cast("dict[str, Any]", payload))
+                        if isinstance(payload, dict)
+                        else None
+                    )
                 except (ValueError, UnicodeDecodeError):
                     offset = end
                     continue
@@ -583,9 +592,15 @@ class HistoryIndex:
                         fsync_directory(self.directory)
                 os.replace(stage, self.path)
                 fsync_directory(self.directory)
-        finally:
+        except BaseException:
+            # Rename consumes the stage; successful publication needs no cleanup.
+            # Failed cleanup must not hide the original error or latch cancellation.
             for suffix in ("", "-journal"):
-                Path(str(stage) + suffix).unlink(missing_ok=True)
+                try:
+                    Path(str(stage) + suffix).unlink(missing_ok=True)
+                except OSError:
+                    logger.warning("Could not remove unpublished history index staging file")
+            raise
         return IndexCoverage(
             generation, build, True, activity_provisional=tuple(active)
         ), acknowledged

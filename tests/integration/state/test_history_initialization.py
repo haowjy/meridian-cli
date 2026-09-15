@@ -46,7 +46,8 @@ def test_cold_query_can_exceed_the_warm_two_second_budget(tmp_path: Path, monkey
     assert HistoryIndex(tmp_path).spawns() == ()
 
 
-def test_failure_is_sticky_until_manual_rebuild(tmp_path: Path) -> None:
+@pytest.mark.parametrize("invalid_tail", ["private transcript content\n", "[]\n", "null\n"])
+def test_failure_is_sticky_until_manual_rebuild(tmp_path: Path, invalid_tail: str) -> None:
     from meridian.lib.state import spawn_store
 
     key = spawn_store.start_spawn(
@@ -54,7 +55,7 @@ def test_failure_is_sticky_until_manual_rebuild(tmp_path: Path) -> None:
     )
     spawn_store.finalize_spawn(tmp_path, key, status="succeeded", exit_code=0, origin="runner")
     transcript = tmp_path / "spawns" / key / "history.jsonl"
-    transcript.write_text("private transcript content\n")
+    transcript.write_text(invalid_tail)
     index = HistoryIndex(tmp_path)
     with pytest.raises(history_index.HistoryIndexIncomplete, match="will not retry"):
         index.spawns()
@@ -256,6 +257,49 @@ def test_failure_after_publication_does_not_latch_initialization(
             index.spawns()
     assert index.path.exists() and not index.failure_path.exists()
     assert index.spawns() == ()
+
+
+def test_published_build_needs_no_staging_unlink(tmp_path: Path, monkeypatch) -> None:
+    index = HistoryIndex(tmp_path)
+    original_unlink = Path.unlink
+
+    def fail_cleanup(path, *args, **kwargs):
+        if path.name.startswith(".build.sqlite3") and index.path.exists():
+            raise PermissionError("post-publication staging cleanup failed")
+        return original_unlink(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "unlink", fail_cleanup)
+    assert index.spawns() == ()
+    assert not index.failure_path.exists()
+
+
+def test_staging_cleanup_failure_does_not_replace_cancellation(tmp_path: Path, monkeypatch) -> None:
+    index = HistoryIndex(tmp_path)
+    original_unlink = Path.unlink
+
+    def fail_cleanup(path, *args, **kwargs):
+        if path.name == ".build.sqlite3" and path.exists():
+            raise PermissionError("pre-publication staging cleanup failed")
+        return original_unlink(path, *args, **kwargs)
+
+    def cancel(*args):
+        raise KeyboardInterrupt
+
+    with monkeypatch.context() as patch:
+        patch.setattr(Path, "unlink", fail_cleanup)
+        patch.setattr(HistoryIndex, "_project", cancel)
+        with pytest.raises(KeyboardInterrupt):
+            index.spawns()
+    assert not index.failure_path.exists() and not index.path.exists()
+    assert index.spawns() == ()  # Next owner removes disposable staging residue.
+
+
+def test_session_projection_matches_authority_for_nonobject_lines(tmp_path: Path) -> None:
+    from meridian.lib.state import session_store
+
+    (tmp_path / "sessions.jsonl").write_text('[]\nnull\n{"event":"unknown"}\n')
+    assert session_store.list_session_generations(tmp_path) == ()
+    assert HistoryIndex(tmp_path).candidates() == ()
 
 
 def test_corpus_shares_one_cold_budget_and_does_not_latch_skipped_roots(
