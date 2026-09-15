@@ -4,6 +4,10 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- Session-log model-selection records preserve conversation-scoped intent, startup-attempt identity, and retry dedup without rewriting launch history.
+
 ### Changed
 
 - Require Mars bundle schema 4/report schema 2; retain validated selection diagnostics in snapshots, previews, and spawn failures instead of unused fallback-chain transport.

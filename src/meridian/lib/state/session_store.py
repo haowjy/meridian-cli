@@ -5,10 +5,10 @@ import os
 import uuid
 from contextlib import ExitStack
 from pathlib import Path
-from typing import IO, Any, Literal, NamedTuple, cast
+from typing import IO, Any, Literal, NamedTuple, Self, cast
 
 import psutil
-from pydantic import BaseModel, ConfigDict, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from meridian.lib.core.types import (
     ChatId,
@@ -88,6 +88,8 @@ class SessionStartEvent(BaseModel):
     started_at: str
     forked_from_chat_id: OptionalPersistedChatId = None
     spawn_id: str | None = None
+    model_selection_protocol: Literal[1] | None = None
+
 
 class SessionStopEvent(BaseModel):
     model_config = ConfigDict(extra="ignore")
@@ -97,6 +99,7 @@ class SessionStopEvent(BaseModel):
     chat_id: PersistedChatId
     session_instance_id: str = ""
     stopped_at: str | None = None
+
 
 class SessionUpdateEvent(BaseModel):
     model_config = ConfigDict(extra="ignore")
@@ -109,8 +112,75 @@ class SessionUpdateEvent(BaseModel):
     claude_config_dir: str | None = None
     active_work_id: str | None = None
     spawn_id: str | None = None
+    startup_attempt_id: str | None = None
 
-type SessionEvent = SessionStartEvent | SessionStopEvent | SessionUpdateEvent
+
+class ConversationModelSelection(BaseModel):
+    """Meridian-selected intent, not an observation of an executed model."""
+
+    model_config = ConfigDict(frozen=True)
+
+    requested_token: str | None = None
+    selected_token: str | None = None
+    canonical_model_id: str | None = None
+    harness_model_id: str | None = None
+    model_mode: Literal["named", "harness_default"] | None = None
+    provider_constraint: str | None = None
+    selection_source: Literal[
+        "explicit_override", "recorded_selection", "initial_launch", "unknown"
+    ]
+    provenance: dict[str, str] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def validate_model_mode(self) -> Self:
+        if self.model_mode == "named" and not (
+            self.requested_token
+            and self.selected_token
+            and self.canonical_model_id
+            and self.harness_model_id
+        ):
+            raise ValueError("named selection requires tokens and canonical/executable identities")
+        if self.model_mode == "harness_default" and (
+            self.canonical_model_id or self.harness_model_id or self.provider_constraint
+        ):
+            raise ValueError("harness-default selection cannot carry a named model")
+        return self
+
+
+class SessionModelSelectionEvent(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    v: int = 1
+    event: Literal["model_selection"] = "model_selection"
+    kind: Literal["initial_seed", "invocation_started"]
+    harness: str
+    harness_session_id: OptionalPersistedHarnessSessionId
+    chat_id: PersistedChatId
+    session_instance_id: str
+    spawn_id: str | None
+    startup_attempt_id: str | None
+    recorded_at: str
+    selection: ConversationModelSelection
+
+    @model_validator(mode="after")
+    def validate_invocation_identity(self) -> Self:
+        if self.kind == "invocation_started" and not (
+            self.spawn_id
+            and self.session_instance_id
+            and self.startup_attempt_id
+            and self.selection.model_mode is not None
+        ):
+            raise ValueError(
+                "started selection requires invocation identity and resolved model mode"
+            )
+        if self.kind == "initial_seed" and self.harness_session_id is None:
+            raise ValueError("initial seed requires a native conversation identity")
+        return self
+
+
+type SessionEvent = (
+    SessionStartEvent | SessionStopEvent | SessionUpdateEvent | SessionModelSelectionEvent
+)
 type MaterializedCleanupScope = str
 
 
@@ -128,6 +198,8 @@ def _parse_event(payload: dict[str, Any]) -> SessionEvent | None:
             return SessionStopEvent.model_validate(payload)
         if event_type == "update":
             return SessionUpdateEvent.model_validate(payload)
+        if event_type == "model_selection":
+            return SessionModelSelectionEvent.model_validate(payload)
     except ValidationError:
         return None
     return None
@@ -268,6 +340,8 @@ def _records_by_session(runtime_root: Path) -> dict[str, SessionRecord]:
     records: dict[str, SessionRecord] = {}
 
     for event in read_events(paths.sessions_jsonl, _parse_event):
+        if isinstance(event, SessionModelSelectionEvent):
+            continue
         if isinstance(event, SessionStartEvent):
             record = _record_from_start_event(event)
             records[record.chat_id] = record
@@ -380,6 +454,7 @@ def start_session(
     claude_config_dir: str | None = None,
     kind: Literal["primary", "spawn"] = "spawn",
     spawn_id: str | None = None,
+    model_selection_protocol: Literal[1] | None = None,
 ) -> str:
     """Append a session start event and acquire a lifetime session lock."""
 
@@ -415,6 +490,7 @@ def start_session(
                 ChatId(forked_from_chat_id) if forked_from_chat_id is not None else None
             ),
             spawn_id=spawn_id,
+            model_selection_protocol=model_selection_protocol,
         )
         with lock_file(paths.sessions_flock):
             append_event(paths.sessions_jsonl, paths.sessions_flock, event)
@@ -454,21 +530,36 @@ def stop_session(runtime_root: Path, chat_id: str) -> None:
     _release_session_lock(runtime_root, chat_id)
 
 
-def update_session_harness_id(runtime_root: Path, chat_id: str, harness_session_id: str) -> None:
+def update_session_harness_id(
+    runtime_root: Path,
+    chat_id: str,
+    harness_session_id: str,
+    *,
+    session_instance_id: str | None = None,
+    startup_attempt_id: str | None = None,
+) -> None:
     """Append a session update event carrying the resolved harness session ID."""
 
+    if startup_attempt_id is not None and session_instance_id is None:
+        raise ValueError("startup identity requires a captured session generation")
     paths = RuntimePaths.from_root_dir(runtime_root)
     event = SessionUpdateEvent(
         chat_id=ChatId(chat_id),
         harness_session_id=HarnessSessionId(harness_session_id),
-        session_instance_id=_session_instance_for_event(paths, runtime_root, chat_id),
+        session_instance_id=(
+            session_instance_id
+            if session_instance_id is not None
+            else _session_instance_for_event(paths, runtime_root, chat_id)
+        ),
+        startup_attempt_id=startup_attempt_id,
     )
-    append_event(
-        paths.sessions_jsonl,
-        paths.sessions_flock,
-        event,
-        exclude_none=True,
-    )
+    with lock_file(paths.project_lifetime_flock, mode="shared"):
+        if not runtime_root.is_dir():
+            raise FileNotFoundError(runtime_root)
+        with lock_file(paths.sessions_flock):
+            if startup_attempt_id is not None:
+                _validate_startup_identity(read_events(paths.sessions_jsonl, _parse_event), event)
+            append_event(paths.sessions_jsonl, paths.sessions_flock, event, exclude_none=True)
 
 
 def update_session_work_id(runtime_root: Path, chat_id: str, work_id: str | None) -> None:
@@ -589,6 +680,140 @@ def get_session_record(runtime_root: Path, chat_id: str) -> SessionRecord | None
     """Return a materialized record for one chat ID, if present."""
 
     return _records_by_session(runtime_root).get(chat_id)
+
+
+def _bound_model_selections(
+    events: list[SessionEvent],
+) -> list[tuple[SessionModelSelectionEvent, str | None]]:
+    identities: dict[tuple[str, str, str], set[str]] = {}
+    for event in events:
+        if isinstance(event, SessionUpdateEvent) and (
+            event.startup_attempt_id is not None and event.harness_session_id is not None
+        ):
+            key = (event.chat_id, event.session_instance_id, event.startup_attempt_id)
+            identities.setdefault(key, set()).add(event.harness_session_id)
+
+    bound: list[tuple[SessionModelSelectionEvent, str | None]] = []
+    for event in events:
+        if not isinstance(event, SessionModelSelectionEvent):
+            continue
+        native_id: str | None = event.harness_session_id
+        if native_id is None and event.startup_attempt_id is not None:
+            observed = identities.get(
+                (event.chat_id, event.session_instance_id, event.startup_attempt_id), set()
+            )
+            if len(observed) == 1:
+                native_id = next(iter(observed))
+        # Binding is a projection; preserve the original selection's log position.
+        bound.append((event, native_id))
+    return bound
+
+
+def _validate_startup_identity(
+    events: list[SessionEvent], event: SessionUpdateEvent | SessionModelSelectionEvent,
+) -> None:
+    if event.startup_attempt_id is None or event.harness_session_id is None:
+        return
+    for prior in events:
+        if isinstance(prior, (SessionUpdateEvent, SessionModelSelectionEvent)) and (
+            prior.chat_id == event.chat_id
+            and prior.session_instance_id == event.session_instance_id
+            and prior.startup_attempt_id == event.startup_attempt_id
+            and prior.harness_session_id is not None
+            and prior.harness_session_id != event.harness_session_id
+        ):
+            raise ValueError("startup attempt changed its native conversation identity")
+
+
+def get_model_selection(
+    runtime_root: Path,
+    harness: str,
+    harness_session_id: str,
+) -> ConversationModelSelection | None:
+    """Read latest committed intent without changing historical session records."""
+
+    paths = RuntimePaths.from_root_dir(runtime_root)
+    current: ConversationModelSelection | None = None
+    seed: ConversationModelSelection | None = None
+    seen_invocations: set[str] = set()
+    for event, native_id in _bound_model_selections(
+        read_events(paths.sessions_jsonl, _parse_event)
+    ):
+        if event.harness != harness or native_id != harness_session_id:
+            continue
+        if event.kind == "initial_seed":
+            if seed is None:
+                seed = event.selection
+        elif event.spawn_id is not None and event.spawn_id not in seen_invocations:
+            seen_invocations.add(event.spawn_id)
+            current = event.selection
+    return current if current is not None else seed
+
+
+def record_model_selection(runtime_root: Path, event: SessionModelSelectionEvent) -> bool:
+    """Durably append once per invocation/conversation; false means already recorded.
+
+    Call only at the accepted-running boundary (or to seed an original legacy
+    value). Preparation and snapshot publication are not selection commits.
+    """
+
+    paths = RuntimePaths.from_root_dir(runtime_root)
+    with lock_file(paths.project_lifetime_flock, mode="shared"):
+        if not runtime_root.is_dir():
+            raise FileNotFoundError(runtime_root)
+        with lock_file(paths.sessions_flock):
+            events = read_events(paths.sessions_jsonl, _parse_event)
+            source_start = next((
+                start for start in events
+                if isinstance(start, SessionStartEvent)
+                and start.chat_id == event.chat_id
+                and start.session_instance_id == event.session_instance_id
+                and start.harness == event.harness
+            ), None)
+            if source_start is None:
+                raise ValueError("selection has no matching captured session generation")
+            if event.kind == "initial_seed" and source_start.model_selection_protocol is not None:
+                raise ValueError("cannot seed a new-protocol session from prelaunch intent")
+            _validate_startup_identity(events, event)
+            # Include the new event only in memory to resolve an ID observed before startup.
+            bound = _bound_model_selections([*events, event])
+            _, native_id = bound[-1]
+            for prior, prior_id in bound[:-1]:
+                if prior.harness != event.harness:
+                    continue
+                if native_id is not None and prior_id == native_id and (
+                    event.kind == "initial_seed" or (
+                        prior.kind == "invocation_started" and prior.spawn_id == event.spawn_id
+                    )
+                ):
+                    if event.kind == "invocation_started" and not any(
+                        isinstance(identity, (SessionUpdateEvent, SessionModelSelectionEvent))
+                        and identity.chat_id == event.chat_id
+                        and identity.session_instance_id == event.session_instance_id
+                        and identity.startup_attempt_id == event.startup_attempt_id
+                        and identity.harness_session_id == native_id
+                        for identity in events
+                    ):
+                        # Dedup the selection, not this retry's known native-ID constraint.
+                        append_event(paths.sessions_jsonl, paths.sessions_flock, SessionUpdateEvent(
+                            chat_id=event.chat_id,
+                            session_instance_id=event.session_instance_id,
+                            startup_attempt_id=event.startup_attempt_id,
+                            harness_session_id=HarnessSessionId(native_id),
+                        ), exclude_none=True)
+                    return False
+                if event.kind == "invocation_started" and (
+                    prior.kind == event.kind
+                    and prior.spawn_id == event.spawn_id
+                    and prior.chat_id == event.chat_id
+                    and prior.session_instance_id == event.session_instance_id
+                    and prior.startup_attempt_id == event.startup_attempt_id
+                ):
+                    if prior_id is not None and native_id is not None and prior_id != native_id:
+                        raise ValueError("startup attempt changed its native conversation identity")
+                    return False
+            append_event(paths.sessions_jsonl, paths.sessions_flock, event)
+            return True
 
 
 def list_active_sessions_for_work_id(runtime_root: Path, work_id: str) -> list[str]:

@@ -64,6 +64,22 @@ planned in 0.4.0 can reuse the same authority. Until that index becomes the shar
 state-layer read path, browse does not own a separate projection. See `.context/TODO` and
 [ops/.context/CONTEXT.md](../../ops/.context/CONTEXT.md).
 
+### Conversation model selections
+
+`session_store` projects `model_selection` events separately from session liveness
+and historical `SessionRecord.model`. The key is harness plus native conversation ID
+within the runtime root; log order, not timestamps, determines the latest selection.
+Only accepted-running callbacks may append an invocation selection. An initial seed
+represents original legacy intent and never outranks a started invocation.
+
+Pending selections bind through ID updates with the same captured chat generation
+and startup attempt. Binding does not move the original event's position. Pair-level
+invocation/conversation dedup prevents retries from promoting an old selection;
+fresh retries can retain distinct new conversations. Identity conflicts fail rather
+than moving a selection. Reads do not write seeds or consult attempted snapshots.
+New-protocol starts cannot seed prelaunch intent. Launch callers must pass the
+protocol marker and commit only at their accepted-running boundary.
+
 ## Contracts
 
 ### Locked Spawn Mutation
