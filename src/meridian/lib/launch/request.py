@@ -10,6 +10,7 @@ from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
 from meridian.lib.core.overrides import RuntimeOverrides
 from meridian.lib.launch.composition import PromptDocument
 from meridian.lib.launch.launch_types import TerminalSurfaceMode
+from meridian.lib.state.session_store import SessionModelSelectionEvent
 from meridian.lib.tools import ToolsField
 
 
@@ -41,6 +42,7 @@ class SessionRequest(BaseModel):
 
     continue_chat_id: str | None = None
     requested_harness_session_id: str | None = None
+    initial_model_selection: SessionModelSelectionEvent | None = None
     continue_fork: bool = False
     source_control_root: str | None = None
     source_execution_cwd: str | None = None

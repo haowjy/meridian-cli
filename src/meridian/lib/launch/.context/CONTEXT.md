@@ -86,8 +86,12 @@ Primary and spawn accepted-running callbacks append selection intent through
 `SessionAttempt`. Its captured generation/startup attempt also binds native-ID
 observations. Each streaming retry gets a distinct attempt; a recording failure is
 a coordination error, not a model retry. The record means accepted selection, not
-model execution. Streaming-serve recording and legacy baseline seeding remain
-unimplemented.
+model execution. Legacy baseline lookup reads the original session generation;
+the session scope seeds that value under the existing store lock before startup.
+Previews do not seed. Missing snapshots retain partial historical values; a
+tracked conversation with neither accepted selection nor original legacy history
+requires an explicit model rather than adopting a failed attempt's snapshot.
+Streaming-serve recording remains unimplemented.
 
 Primary adapters declare named-model resume support. Unsupported named resumes fail
 before native startup; a named selection never falls back to an empty model.

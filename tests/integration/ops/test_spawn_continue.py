@@ -18,7 +18,7 @@ from meridian.lib.ops.reference import ResolvedSessionReference
 from meridian.lib.ops.reference_recovery import RecoveryProvenance, RecoveryResult
 from meridian.lib.ops.spawn.execute_init import resolve_spawn_work_id
 from meridian.lib.ops.spawn.models import SpawnActionOutput, SpawnContinueInput, SpawnCreateInput
-from meridian.lib.state import spawn_store
+from meridian.lib.state import session_store, spawn_store
 from meridian.lib.state.paths import resolve_project_runtime_root_for_write
 from tests.support.launch import stub_bundle_request_and_resolve
 
@@ -47,6 +47,13 @@ def _seed_spawn(
     launch_policy_snapshot: LaunchPolicySnapshot | None = None,
 ) -> None:
     snapshot = launch_policy_snapshot
+    session_store.start_session(
+        runtime_root, chat_id="c-seed", spawn_id=spawn_id,
+        harness=snapshot.harness if snapshot is not None else "codex",
+        harness_session_id=harness_session_id or "",
+        model=snapshot.model if snapshot is not None else "gpt-5.3-codex",
+    )
+    session_store.stop_session(runtime_root, "c-seed")
     spawn_store.start_spawn(
         runtime_root,
         spawn_id=spawn_id,

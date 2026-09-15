@@ -725,6 +725,73 @@ def _validate_startup_identity(
             raise ValueError("startup attempt changed its native conversation identity")
 
 
+def get_initial_model_selection(
+    runtime_root: Path, harness: str, harness_session_id: str,
+    *, source_chat_id: str | None = None,
+) -> SessionModelSelectionEvent | None:
+    """Read a legacy conversation's original value without seeding or replaying attempts."""
+    from meridian.lib.state.spawn_store import get_spawn
+
+    paths = RuntimePaths.from_root_dir(runtime_root)
+    events = read_events(paths.sessions_jsonl, _parse_event)
+    updates: dict[tuple[str, str], list[SessionUpdateEvent]] = {}
+    for event in events:
+        if isinstance(event, SessionUpdateEvent):
+            updates.setdefault((event.chat_id, event.session_instance_id), []).append(event)
+    starts = [
+        event for event in events
+        if isinstance(event, SessionStartEvent) and event.harness == harness
+    ]
+    start = next((
+        event for event in starts
+        if event.harness_session_id == harness_session_id or any(
+            update.harness_session_id == harness_session_id
+            for update in updates.get((event.chat_id, event.session_instance_id), [])
+        )
+    ), None)
+    origin_chat_id = start.chat_id if start is not None else source_chat_id
+    if origin_chat_id is not None:
+        # A later resume may first record the native ID. The initialized model
+        # still belongs to the original generation, not that attempted resume.
+        start = next((event for event in starts if event.chat_id == origin_chat_id), None)
+    if start is None or start.model_selection_protocol is not None:
+        return None
+    generation_updates = updates.get((start.chat_id, start.session_instance_id), [])
+    spawn_id = start.spawn_id or next(
+        (update.spawn_id for update in generation_updates if update.spawn_id), None,
+    )
+    spawn = get_spawn(runtime_root, spawn_id) if spawn_id else None
+    snapshot = spawn.launch_policy_snapshot if spawn is not None else None
+    selection = ConversationModelSelection(
+        requested_token=start.model or None,
+        selected_token=start.model or None,
+        selection_source="initial_launch",
+    )
+    if snapshot is not None:
+        canonical = snapshot.model_selection_canonical_id or None
+        executable = snapshot.model_selection_harness_model_id or None
+        selection = ConversationModelSelection(
+            requested_token=snapshot.model_selection_requested_token or snapshot.model or None,
+            selected_token=snapshot.model_selection_selected_token or snapshot.model or None,
+            canonical_model_id=canonical,
+            harness_model_id=executable,
+            model_mode=(
+                "named" if canonical and executable else
+                "harness_default" if not snapshot.model else None
+            ),
+            provider_constraint=snapshot.model_selection_provider_constraint,
+            selection_source="initial_launch",
+            provenance=snapshot.field_provenance,
+        )
+    return SessionModelSelectionEvent(
+        kind="initial_seed", harness=harness,
+        harness_session_id=HarnessSessionId(harness_session_id),
+        chat_id=start.chat_id, session_instance_id=start.session_instance_id,
+        spawn_id=spawn_id, startup_attempt_id=None,
+        recorded_at=utc_now_iso(), selection=selection,
+    )
+
+
 def get_model_selection(
     runtime_root: Path,
     harness: str,

@@ -9,7 +9,7 @@ from typing import Literal, Protocol
 from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
 from meridian.lib.launch.policy_snapshot import managed_model_override_from_persisted_model
 from meridian.lib.launch.request import SessionRequest
-from meridian.lib.state.session_store import get_model_selection
+from meridian.lib.state.session_store import get_initial_model_selection, get_model_selection
 
 MODEL_OVERRIDE_WARNING = (
     "Continuing with an explicit model override. Resumed context may need processing "
@@ -227,6 +227,15 @@ def build_continue_replay_contract(
         if runtime_root is not None and source.harness_session_id is not None and not fork
         else None
     )
+    initial = (
+        get_initial_model_selection(
+            runtime_root, replay_harness, source.harness_session_id,
+            source_chat_id=source.source_chat_id,
+        )
+        if recorded is None and runtime_root is not None
+        and source.harness_session_id is not None and not fork else None
+    )
+    selected = recorded or (initial.selection if initial is not None else None)
     provider_constraint = None
     literal_model = False
     selection_source: Literal[
@@ -235,11 +244,18 @@ def build_continue_replay_contract(
     if requested_model_override is not None:
         model = requested_model_override
         selection_source = "explicit_override"
-    elif recorded is not None:
-        model = recorded.canonical_model_id or recorded.selected_token
-        provider_constraint = recorded.provider_constraint
-        literal_model = recorded.model_mode is not None
-        selection_source = "recorded_selection"
+    elif selected is not None:
+        model = selected.canonical_model_id or selected.selected_token
+        provider_constraint = selected.provider_constraint
+        literal_model = (
+            selected.canonical_model_id is not None or selected.model_mode == "harness_default"
+        )
+        selection_source = "recorded_selection" if recorded is not None else "initial_launch"
+    elif source.tracked and runtime_root is not None and not fork:
+        raise ValueError(
+            "No accepted model selection or original session history is recorded. "
+            "Continue with an explicit --model."
+        )
     elif snapshot is not None:
         model = snapshot.model_selection_canonical_id or model
         provider_constraint = snapshot.model_selection_provider_constraint
@@ -247,6 +263,7 @@ def build_continue_replay_contract(
 
     session = SessionRequest(
         requested_harness_session_id=source.harness_session_id,
+        initial_model_selection=initial,
         continue_harness=replay_harness,
         continue_source_tracked=source.tracked,
         continue_source_ref=source.source_ref,
@@ -261,7 +278,7 @@ def build_continue_replay_contract(
         continue_model_literal=literal_model,
         continue_provider_constraint=provider_constraint,
         continue_selected_token=(
-            recorded.selected_token if recorded is not None else
+            selected.selected_token if selected is not None else
             snapshot.model_selection_selected_token if snapshot is not None else None
         ),
         continue_selection_source=selection_source,

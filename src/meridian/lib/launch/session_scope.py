@@ -106,6 +106,8 @@ def session_scope(
     _update_session_harness_id: Callable[..., None] = update_session_harness_id,
     _reclaim_session_scopes: Callable[[Path, str], object] = reclaim_session_owned_scopes_for_chat,
 ) -> Generator[ManagedSession, None, None]:
+    if request.initial_model_selection is not None:
+        record_model_selection(runtime_root, request.initial_model_selection)
     resolved_chat_id = _start_session(
         runtime_root,
         harness=metadata.harness,
