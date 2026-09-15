@@ -122,7 +122,9 @@ def test_parser_upgrade_invalidates_empty_preview_and_counts(tmp_path: Path, mon
         value = json.loads(
             db.execute("SELECT value FROM previews WHERE key=?", (identity.key,)).fetchone()[0]
         )
-        value["preview"].update(version=2, messages=[], has_interaction=False)
+        value["preview"].update(
+            version=TRANSCRIPT_PREVIEW_VERSION - 1, messages=[], has_interaction=False
+        )
         db.execute("UPDATE previews SET value=? WHERE key=?", (json.dumps(value), identity.key))
     assert reader.peek(identity) is None
     assert index.preview_count(preview_version=TRANSCRIPT_PREVIEW_VERSION) == 0

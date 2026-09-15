@@ -11,6 +11,7 @@ from typing import Literal, NamedTuple, Protocol, cast
 from meridian.lib.harness.extractors.base import normalize_harness_event_type
 from meridian.lib.harness.opencode_transcript import (
     OpenCodeStorageTranscriptProvider,
+    interpret_opencode_record,
     iter_opencode_db_events,
 )
 from meridian.lib.launch.constants import HISTORY_FILENAME
@@ -700,6 +701,7 @@ class TranscriptNormalizer:
     pi_session: bool = False
     pi_previous_entry_id: str | None = None
     rendering_reason: str | None = None
+    opencode_user_seen: bool = False
 
     def _pi_journal(
         self, event: dict[str, object], messages: list[TranscriptMessage]
@@ -789,6 +791,20 @@ class TranscriptNormalizer:
         self, event: dict[str, object], parser: TranscriptEventParser
     ) -> NormalizedTranscriptEvent:
         normalized_event = _unwrap_seq_envelope(event)
+        if normalized_event.get("record") == "opencode.transcript":
+            events, is_user, reason = interpret_opencode_record(
+                normalized_event, include_user_setup=not self.opencode_user_seen
+            )
+            self.opencode_user_seen |= is_user
+            self.rendering_reason = reason or self.rendering_reason
+            messages: list[TranscriptMessage] = []
+            boundary = consumed_setup = False
+            for projected in events:
+                normalized = self.feed(projected, parser)
+                messages.extend(normalized.messages)
+                boundary |= normalized.boundary
+                consumed_setup |= normalized.consumed_setup
+            return NormalizedTranscriptEvent(messages, boundary, consumed_setup)
         extracted = parser.parse(event)
         messages, parser_boundary = extracted.messages, extracted.boundary
         self.rendering_reason = extracted.rendering_reason or self.rendering_reason
@@ -902,7 +918,7 @@ def parse_opencode_db_transcript_with_prologues(
 ) -> TranscriptParseResult:
     resolved_parser = parser or DefaultTranscriptEventParser()
     return _parse_events_with_prologues(
-        iter_opencode_db_events(session_id=session_id, text_from_value=text_from_value),
+        iter_opencode_db_events(session_id=session_id),
         parser=resolved_parser,
     )
 

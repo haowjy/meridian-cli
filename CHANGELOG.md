@@ -12,6 +12,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Preserve raw OpenCode session/message/part rows before rendering, including unknown material and orphan parts.
+- Keep DB failures distinct from empty sessions; render OpenCode summary compactions through shared readers.
+
 - Read native Pi messages, compactions and branch annotations across logs, search, exports and previews.
 - Invalidate old parser previews and counts; report unsupported Pi rendering instead of empty success.
 - Keep incomplete Pi rendering visible in archived previews; diagnose malformed text and tool content.

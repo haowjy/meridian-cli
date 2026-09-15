@@ -14,7 +14,7 @@ from meridian.lib.harness.transcript import (
 
 _MESSAGE_BYTES = 16 * 1024
 _SETUP_BYTES = 2 * 1024
-TRANSCRIPT_PREVIEW_VERSION = 3
+TRANSCRIPT_PREVIEW_VERSION = 4
 
 
 def _clip(text: str, limit: int) -> str:
@@ -52,6 +52,7 @@ class TranscriptPreview(BaseModel):
     pi_session: bool = False
     pi_previous_entry_id: str | None = None
     rendering_reason: str | None = None
+    opencode_user_seen: bool = False
     has_interaction: bool = False
     omitted_messages: bool = False
     clipped_text: bool = False
@@ -80,6 +81,7 @@ class PreviewAccumulator:
             pi_session=self.preview.pi_session,
             pi_previous_entry_id=self.preview.pi_previous_entry_id,
             rendering_reason=self.preview.rendering_reason,
+            opencode_user_seen=self.preview.opencode_user_seen,
         )
         self.parser = DefaultTranscriptEventParser()
 
@@ -127,6 +129,7 @@ class PreviewAccumulator:
             pi_session=self.normalizer.pi_session,
             pi_previous_entry_id=self.normalizer.pi_previous_entry_id,
             rendering_reason=self.normalizer.rendering_reason,
+            opencode_user_seen=self.normalizer.opencode_user_seen,
             has_interaction=has_interaction,
             clipped_text=clipped,
             omitted_messages=omitted,
