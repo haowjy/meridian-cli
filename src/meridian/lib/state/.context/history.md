@@ -53,7 +53,13 @@ retries, with attempt boundaries; lifecycle extractors ignore earlier attempts.
 Missing native primary content is captured through harness transcript providers
 after stop, never synthesized from a rendered report. Post-stop maintenance receives
 the exact completed primary spawn ID from the launch outcome, not the latest chat
-projection, which may already refer to another run.
+projection, which may already refer to another run. Capture-purpose resolution bypasses
+SQLite/presentation fallbacks and requires agreement among state, primary metadata
+and the exact linked generation. Selection runs under the aggregate guard; known
+same-runtime active spawn/session owners and unreleased live scopes block the native
+read and are checked again before publication. This is an ownership precondition,
+not proof that provider input is complete or unchanged. The remaining snapshot
+repair must replace the old history.jsonl existence guard without losing stream bytes.
 
 The index keeps current metadata, independent locations, generation aliases and
 session/work projections. Multiple ZIP copies remain candidates even with a

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 from graphlib import TopologicalSorter
 from pathlib import Path
@@ -502,20 +503,69 @@ session_archive = async_from_sync(session_archive_sync)
 session_restore = async_from_sync(session_restore_sync)
 
 
+def _require_inactive_native_session(root: Path, harness: str | None, session_id: str) -> None:
+    """Reject known same-runtime owners; this is not an external-writer fence."""
+    from meridian.lib.state.primary_meta import read_primary_harness_session_id
+
+    scan = spawn_store.list_spawns(root)
+    if scan.quarantines:
+        raise ValueError("Cannot establish native capture ownership with quarantined spawn records")
+    linked = session_records_for_spawns(root, scan.records)
+    for row in scan.records:
+        if row.record_mode == "historical":
+            continue
+        session = linked.get(row.id)
+        row_harness = row.harness or (session.harness if session else None)
+        if (harness, session_id) not in {
+            (row_harness, row.harness_session_id),
+            (row_harness, read_primary_harness_session_id(root, row.id))
+            if row.kind == "primary"
+            else (None, None),
+            (session.harness, session.harness_session_id) if session else (None, None),
+        }:
+            continue
+        scopes = read_scope_projection(root, SpawnId(row.id))
+        if row.status not in TERMINAL_SPAWN_STATUSES or any(
+            scope_liveness(scope)["likely_serving"]
+            for scope in scopes.scopes
+            if scope.release_id not in scopes.released_ids
+        ):
+            raise ValueError(f"Cannot capture an active native owner: {row.id}")
+    for session in session_store.list_all_session_records(root):
+        if (
+            session.record_mode != "historical"
+            and session.harness == harness
+            and session.harness_session_id == session_id
+            and (
+                session.stopped_at is None
+                or session_store.is_session_lease_owner_alive(root, session.chat_id)
+            )
+        ):
+            raise ValueError(f"Cannot capture an active native owner: {session.chat_id}")
+
+
 def materialize_native_history(project_root: Path, root: Path, spawn_id: str) -> None:
     from meridian.lib.ops.session_target import resolve_session_log_target
     from meridian.lib.ops.session_transcript import iter_source_events
     from meridian.lib.state.history import ingest_portable_history
 
-    if (root / "spawns" / spawn_id / "history.jsonl").exists():
-        return
-    target = resolve_session_log_target(
-        ref=spawn_id, file_path=None, project_root=project_root, runtime_root=root
-    )
-    source = next(iter(target.sources), None)
-    if source is None:
-        raise ValueError(f"No transferable transcript available for {spawn_id}")
-    ingest_portable_history(root, spawn_id, iter_source_events(source))
+    def native_events() -> Iterator[dict[str, object]]:
+        # Deferred until ingest holds the published-aggregate guard: select from
+        # current authority, not a target resolved before its binding could change.
+        target = resolve_session_log_target(
+            ref=spawn_id,
+            file_path=None,
+            project_root=project_root,
+            runtime_root=root,
+            purpose="capture",
+        )
+        source = target.sources[0]
+        _require_inactive_native_session(root, source.harness, source.session_id)
+        yield from iter_source_events(source)
+        _require_inactive_native_session(root, source.harness, source.session_id)
+
+    if not ingest_portable_history(root, spawn_id, native_events()):
+        raise ValueError(f"Native capture target is missing or historical: {spawn_id}")
 
 
 def session_stop_maintenance(project_root: Path, primary_spawn_id: str) -> str | None:

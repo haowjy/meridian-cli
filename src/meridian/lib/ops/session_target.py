@@ -13,6 +13,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Literal, NamedTuple
 
+from meridian.lib.core.domain import TERMINAL_SPAWN_STATUSES
 from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.adapter import SubprocessHarness
 from meridian.lib.harness.opencode_transcript import opencode_db_session_exists
@@ -787,10 +788,52 @@ def _resolve_from_spawn_id(
     project_root: Path,
     runtime_root: Path,
     spawn_id: str,
+    purpose: Literal["display", "capture"] = "display",
 ) -> SessionLogTarget:
     row = read_spawn_row_read_only(project_root, spawn_id, runtime_root=runtime_root)
     if row is None:
         raise ValueError(f"Spawn '{spawn_id}' not found")
+
+    if purpose == "capture":
+        if (
+            row.kind != "primary"
+            or row.record_mode == "historical"
+            or row.status not in TERMINAL_SPAWN_STATUSES
+            or row.history_id is None
+        ):
+            raise ValueError("Native capture requires an identified terminal primary record")
+        # Use only this aggregate and its exact session generation. A current chat,
+        # inferred harness or post-launch file discovery cannot establish binding.
+        session = session_identity.session_records_for_spawns(runtime_root, [row]).get(row.id)
+        native_ids = {
+            value.strip()
+            for value in (
+                row.harness_session_id,
+                read_primary_harness_session_id(runtime_root, row.id),
+                session.harness_session_id if session else None,
+            )
+            if value and value.strip()
+        }
+        harnesses = {
+            value.strip().lower()
+            for value in (row.harness, session.harness if session else None)
+            if value and value.strip()
+        }
+        if len(native_ids) > 1 or len(harnesses) > 1:
+            raise ValueError(f"Conflicting native identity for capture: {row.id}")
+        if not native_ids or not harnesses:
+            raise ValueError(f"Native capture requires exact native identity: {row.id}")
+        target = _resolve_harness_session_file(
+            project_root=project_root,
+            session_id=next(iter(native_ids)),
+            harness=next(iter(harnesses)),
+            config_root_hint=_config_root_hint(
+                row.claude_config_dir or (session.claude_config_dir if session else None)
+            ),
+        )
+        # The provider chooses one exact native source, including positive-empty DB
+        # sessions. Capture must not follow presentation's output/legacy fallbacks.
+        return _target_from_source(target.sources[0])
 
     is_primary_spawn = row.kind == "primary"
     is_managed_backend_primary = is_primary_spawn and is_managed_primary(runtime_root, spawn_id)
@@ -1032,7 +1075,17 @@ def resolve_session_log_target(
     project_root: Path,
     runtime_root: Path | None,
     deadline: float | None = None,
+    purpose: Literal["display", "capture"] = "display",
 ) -> SessionLogTarget:
+    if purpose == "capture":
+        if runtime_root is None or file_path or not _is_spawn_ref(ref.strip()):
+            raise ValueError("Native capture requires an exact local spawn reference")
+        return _resolve_from_spawn_id(
+            project_root=project_root,
+            runtime_root=runtime_root,
+            spawn_id=ref.strip(),
+            purpose=purpose,
+        )
     if file_path is not None and file_path.strip():
         return _resolve_file_target(file_path)
 
