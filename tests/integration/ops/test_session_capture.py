@@ -282,14 +282,15 @@ def test_capture_rechecks_owner_after_native_read(tmp_path: Path, monkeypatch):
 
 
 @pytest.mark.parametrize("binding", ["state", "sidecar"])
+@pytest.mark.parametrize("owner_harness", ["pi", "   ", ""])
 def test_capture_joins_native_identity_to_exact_linked_live_lease(
-    tmp_path: Path, monkeypatch, binding
+    tmp_path: Path, monkeypatch, binding, owner_harness
 ):
     project, root, key, _ = _capture_fixture(tmp_path, monkeypatch)
     owner = spawn_store.start_spawn(
         root,
         chat_id="c2",
-        harness="pi",
+        harness=owner_harness,
         kind="primary",
         prompt="continued",
         model="test",
@@ -384,3 +385,43 @@ def test_capture_owner_harness_matching_uses_resolver_normalization(
     with pytest.raises(ValueError, match="active native owner"):
         materialize_native_history(project, root, key)
     assert not (root / "spawns" / key / "history.jsonl").exists()
+
+
+@pytest.mark.parametrize("linked_harness", ["pi", "codex"])
+def test_capture_conflicting_owner_facts_are_conservative_without_cross_harness_aliasing(
+    tmp_path: Path, monkeypatch, linked_harness
+):
+    project, root, key, _ = _capture_fixture(tmp_path, monkeypatch)
+    owner = spawn_store.start_spawn(
+        root,
+        chat_id="c2",
+        harness="codex",
+        kind="primary",
+        prompt="continued",
+        model="test",
+        agent="coder",
+        harness_session_id="exact-native",
+    )
+    session_store.start_session(
+        root,
+        linked_harness,
+        "",
+        "test",
+        chat_id="c2",
+        kind="primary",
+        spawn_id=owner,
+    )
+    spawn_store.finalize_spawn(root, owner, status="succeeded", exit_code=0, origin="runner")
+    try:
+        if linked_harness == "pi":
+            # A conflicting owner's known facts must not hide a possible live
+            # writer. It is not eligible for capture itself, either.
+            with pytest.raises(ValueError, match="active native owner"):
+                materialize_native_history(project, root, key)
+            assert not (root / "spawns" / key / "history.jsonl").exists()
+        else:
+            # Equal opaque session IDs in distinct harness namespaces do not match.
+            materialize_native_history(project, root, key)
+            assert (root / "spawns" / key / "history.jsonl").exists()
+    finally:
+        session_store.stop_session(root, "c2")

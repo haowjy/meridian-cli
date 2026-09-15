@@ -12,6 +12,7 @@ from pathlib import Path
 
 from meridian.lib.core.types import normalize_optional_identity
 from meridian.lib.state import session_store, spawn_store
+from meridian.lib.state.primary_meta import read_primary_harness_session_id
 from meridian.lib.state.session_store import SessionRecord
 from meridian.lib.state.spawn.model import SpawnRecord
 
@@ -139,6 +140,34 @@ def session_records_for_spawns(
     return result
 
 
+def native_identity_candidates(
+    runtime_root: Path, row: SpawnRecord, session: SessionRecord | None
+) -> tuple[set[str], set[str]]:
+    """Normalize an aggregate's facts and its already-verified exact generation.
+
+    Selection requires one candidate per dimension. Ownership checks must not
+    ignore a possible matching owner merely because its recorded facts conflict.
+    Neither caller may discover identity from a newer chat or native file here.
+    """
+    harnesses = {
+        value.strip().lower()
+        for value in (row.harness, session.harness if session else None)
+        if value and value.strip()
+    }
+    native_ids = {
+        value.strip()
+        for value in (
+            row.harness_session_id,
+            read_primary_harness_session_id(runtime_root, row.id)
+            if row.kind == "primary"
+            else None,
+            session.harness_session_id if session else None,
+        )
+        if value and value.strip()
+    }
+    return harnesses, native_ids
+
+
 def get_session_record_for_spawn(
     runtime_root: Path,
     spawn_id: str,
@@ -213,6 +242,7 @@ __all__ = [
     "is_tracked_chat_ref",
     "list_spawns_for_exact_session",
     "list_spawns_for_owner_chat",
+    "native_identity_candidates",
     "session_exact_chat_id",
     "session_owner_chat_id",
     "session_records_for_spawns",

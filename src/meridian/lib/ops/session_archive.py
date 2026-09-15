@@ -34,7 +34,10 @@ from meridian.lib.state.retention_archive import (
     verified_source,
     verify_archive,
 )
-from meridian.lib.state.session_identity import session_records_for_spawns
+from meridian.lib.state.session_identity import (
+    native_identity_candidates,
+    session_records_for_spawns,
+)
 from meridian.lib.state.spawn.model import SpawnRecord
 from meridian.lib.state.spawn.repository import read_state, write_state_locked
 from meridian.lib.state.spawn_aggregate import cleanup_retired_spawn, retire_published_spawn
@@ -505,8 +508,6 @@ session_restore = async_from_sync(session_restore_sync)
 
 def _require_inactive_native_session(root: Path, harness: str | None, session_id: str) -> None:
     """Reject known same-runtime owners; this is not an external-writer fence."""
-    from meridian.lib.state.primary_meta import read_primary_harness_session_id
-
     scan = spawn_store.list_spawns(root)
     if scan.quarantines:
         raise ValueError("Cannot establish native capture ownership with quarantined spawn records")
@@ -515,16 +516,8 @@ def _require_inactive_native_session(root: Path, harness: str | None, session_id
         if row.record_mode == "historical":
             continue
         session = linked.get(row.id)
-        row_harness = (row.harness or (session.harness if session else "")).strip().lower()
-        if (harness, session_id) not in {
-            (row_harness, row.harness_session_id),
-            (row_harness, read_primary_harness_session_id(root, row.id))
-            if row.kind == "primary"
-            else (None, None),
-            (session.harness.strip().lower(), session.harness_session_id)
-            if session
-            else (None, None),
-        }:
+        harnesses, native_ids = native_identity_candidates(root, row, session)
+        if harness not in harnesses or session_id not in native_ids:
             continue
         scopes = read_scope_projection(root, SpawnId(row.id))
         if (

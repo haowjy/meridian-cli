@@ -809,20 +809,9 @@ def _resolve_from_spawn_id(
         # Use only this aggregate and its exact session generation. A current chat,
         # inferred harness or post-launch file discovery cannot establish binding.
         session = session_identity.session_records_for_spawns(runtime_root, [row]).get(row.id)
-        native_ids = {
-            value.strip()
-            for value in (
-                row.harness_session_id,
-                read_primary_harness_session_id(runtime_root, row.id),
-                session.harness_session_id if session else None,
-            )
-            if value and value.strip()
-        }
-        harnesses = {
-            value.strip().lower()
-            for value in (row.harness, session.harness if session else None)
-            if value and value.strip()
-        }
+        harnesses, native_ids = session_identity.native_identity_candidates(
+            runtime_root, row, session
+        )
         if len(native_ids) > 1 or len(harnesses) > 1:
             raise ValueError(f"Conflicting native identity for capture: {row.id}")
         if not native_ids or not harnesses:
