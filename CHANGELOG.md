@@ -13,6 +13,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Fixed
 
 - Resolve native capture from the exact completed record; refuse discovery fallbacks and known active native owners.
+- Join capture ownership to exact-generation leases; keep legacy child-stream archive preparation working.
 - Preserve raw OpenCode session/message/part rows before rendering, including unknown material and orphan parts.
 - Keep DB failures distinct from empty sessions; render OpenCode summary compactions through shared readers.
 - Keep DB-only OpenCode reports working; diagnose malformed part types and avoid repeated session-wide part scans.

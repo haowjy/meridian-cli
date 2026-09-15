@@ -796,12 +796,16 @@ def _resolve_from_spawn_id(
 
     if purpose == "capture":
         if (
-            row.kind != "primary"
-            or row.record_mode == "historical"
+            row.record_mode == "historical"
             or row.status not in TERMINAL_SPAWN_STATUSES
             or row.history_id is None
         ):
-            raise ValueError("Native capture requires an identified terminal primary record")
+            raise ValueError("Capture preparation requires an identified terminal record")
+        if row.kind != "primary":
+            stream = _target_from_spawn_output(runtime_root, display_id=spawn_id, spawn_id=spawn_id)
+            if stream is None:
+                raise FileNotFoundError(f"No retained child stream available for {spawn_id}")
+            return stream
         # Use only this aggregate and its exact session generation. A current chat,
         # inferred harness or post-launch file discovery cannot establish binding.
         session = session_identity.session_records_for_spawns(runtime_root, [row]).get(row.id)

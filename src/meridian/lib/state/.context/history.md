@@ -57,7 +57,10 @@ projection, which may already refer to another run. Capture-purpose resolution b
 SQLite/presentation fallbacks and requires agreement among state, primary metadata
 and the exact linked generation. Selection runs under the aggregate guard; known
 same-runtime active spawn/session owners and unreleased live scopes block the native
-read and are checked again before publication. This is an ownership precondition,
+read and are checked again before publication. Matched spawn bindings include their
+exact linked session/lease even when that session's native ID is absent; a reused
+chat's newer lease is not evidence about the older generation. Child preparation
+uses only its existing retained stream, never native-primary source fallback. This is an ownership precondition,
 not proof that provider input is complete or unchanged. The remaining snapshot
 repair must replace the old history.jsonl existence guard without losing stream bytes.
 

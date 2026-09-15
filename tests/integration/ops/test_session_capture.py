@@ -279,3 +279,108 @@ def test_capture_rechecks_owner_after_native_read(tmp_path: Path, monkeypatch):
     with pytest.raises(ValueError, match="active native owner"):
         materialize_native_history(project, root, key)
     assert not (root / "spawns" / key / "history.jsonl").exists()
+
+
+@pytest.mark.parametrize("binding", ["state", "sidecar"])
+def test_capture_joins_native_identity_to_exact_linked_live_lease(
+    tmp_path: Path, monkeypatch, binding
+):
+    project, root, key, _ = _capture_fixture(tmp_path, monkeypatch)
+    owner = spawn_store.start_spawn(
+        root,
+        chat_id="c2",
+        harness="pi",
+        kind="primary",
+        prompt="continued",
+        model="test",
+        agent="coder",
+        harness_session_id="exact-native" if binding == "state" else None,
+    )
+    session_store.start_session(
+        root, "pi", "", "test", chat_id="c2", kind="primary", spawn_id=owner
+    )
+    if binding == "sidecar":
+        write_primary_metadata(
+            root / "spawns" / owner,
+            PrimaryMetadata(harness_session_id="exact-native"),
+            runtime_root=root,
+            spawn_id=owner,
+        )
+    spawn_store.finalize_spawn(root, owner, status="succeeded", exit_code=0, origin="runner")
+    try:
+        assert session_store.is_session_lease_owner_alive(root, "c2")
+        with pytest.raises(ValueError, match="active native owner"):
+            materialize_native_history(project, root, key)
+        assert not (root / "spawns" / key / "history.jsonl").exists()
+    finally:
+        session_store.stop_session(root, "c2")
+    # A new generation using the same c2 alias must not lend its lease to the
+    # stopped generation whose state/sidecar supplied the matching native ID.
+    session_store.start_session(root, "pi", "different-native", "test", chat_id="c2")
+    try:
+        materialize_native_history(project, root, key)
+        assert (root / "spawns" / key / "history.jsonl").exists()
+    finally:
+        session_store.stop_session(root, "c2")
+
+
+def test_archive_prepares_existing_legacy_child_stream_without_native_capture(
+    tmp_path: Path, monkeypatch
+):
+    from meridian.lib.ops.session_archive import archive_history
+    from meridian.lib.state.retention_archive import iter_archived_events
+
+    project, root, _, _ = _capture_fixture(tmp_path, monkeypatch)
+    key = spawn_store.start_spawn(
+        root,
+        chat_id="c2",
+        harness="pi",
+        kind="child",
+        prompt="child",
+        model="test",
+        agent="coder",
+    )
+    spawn_store.finalize_spawn(root, key, status="succeeded", exit_code=0, origin="runner")
+    state = spawn_store.get_spawn(root, key)
+    assert state is not None and state.history_id is not None
+    legacy = root / "artifacts" / key / "history.jsonl"
+    legacy.parent.mkdir(parents=True)
+    events = [
+        {"type": "message", "message": {"role": "assistant", "content": "first attempt"}},
+        {"event_type": "meridian.attempt.completed", "attempt": 1},
+        {"type": "message", "message": {"role": "assistant", "content": "retry answer"}},
+    ]
+    legacy.write_text("".join(json.dumps(event) + "\n" for event in events))
+    before = legacy.read_bytes()
+    result = archive_history(
+        root,
+        destination=tmp_path / "archives",
+        refs=(key,),
+        apply=True,
+        project_root=project,
+    )
+    assert not result.errors
+    assert result.reclaimed == (str(state.history_id),)
+    retained = list(iter_archived_events(Path(result.archives[0]), state.history_id))
+    assert [row["payload"] for row in retained] == events
+    assert legacy.read_bytes() == before
+
+
+@pytest.mark.parametrize("owner_harness", ["pi", " PI "])
+def test_capture_owner_harness_matching_uses_resolver_normalization(
+    tmp_path: Path, monkeypatch, owner_harness
+):
+    project, root, key, _ = _capture_fixture(tmp_path, monkeypatch)
+    spawn_store.start_spawn(
+        root,
+        chat_id="c2",
+        harness=owner_harness,
+        kind="primary",
+        prompt="continued",
+        model="test",
+        agent="coder",
+        harness_session_id="exact-native",
+    )
+    with pytest.raises(ValueError, match="active native owner"):
+        materialize_native_history(project, root, key)
+    assert not (root / "spawns" / key / "history.jsonl").exists()

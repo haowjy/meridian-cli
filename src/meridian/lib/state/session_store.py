@@ -666,11 +666,15 @@ def has_live_session_leases(runtime_root: Path) -> bool:
     return False
 
 
-def is_session_lease_owner_alive(runtime_root: Path, chat_id: str) -> bool:
-    """Return whether one session's lease names a currently live owner process."""
+def is_session_lease_owner_alive(
+    runtime_root: Path, chat_id: str, *, session_instance_id: str | None = None
+) -> bool:
+    """Check a live lease, optionally requiring the exact session generation."""
 
     paths = RuntimePaths.from_root_dir(runtime_root)
-    _exists, _generation, owner_pid, owner_birth = _read_session_lease_data(paths, chat_id)
+    _exists, generation, owner_pid, owner_birth = _read_session_lease_data(paths, chat_id)
+    if session_instance_id is not None and generation != session_instance_id:
+        return False
     return owner_pid is not None and is_process_alive_with_birth(owner_pid, owner_birth)
 
 

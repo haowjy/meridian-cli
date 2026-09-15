@@ -515,30 +515,46 @@ def _require_inactive_native_session(root: Path, harness: str | None, session_id
         if row.record_mode == "historical":
             continue
         session = linked.get(row.id)
-        row_harness = row.harness or (session.harness if session else None)
+        row_harness = (row.harness or (session.harness if session else "")).strip().lower()
         if (harness, session_id) not in {
             (row_harness, row.harness_session_id),
             (row_harness, read_primary_harness_session_id(root, row.id))
             if row.kind == "primary"
             else (None, None),
-            (session.harness, session.harness_session_id) if session else (None, None),
+            (session.harness.strip().lower(), session.harness_session_id)
+            if session
+            else (None, None),
         }:
             continue
         scopes = read_scope_projection(root, SpawnId(row.id))
-        if row.status not in TERMINAL_SPAWN_STATUSES or any(
-            scope_liveness(scope)["likely_serving"]
-            for scope in scopes.scopes
-            if scope.release_id not in scopes.released_ids
+        if (
+            row.status not in TERMINAL_SPAWN_STATUSES
+            or (
+                session is not None
+                and (
+                    session.stopped_at is None
+                    or session_store.is_session_lease_owner_alive(
+                        root, session.chat_id, session_instance_id=session.session_instance_id
+                    )
+                )
+            )
+            or any(
+                scope_liveness(scope)["likely_serving"]
+                for scope in scopes.scopes
+                if scope.release_id not in scopes.released_ids
+            )
         ):
             raise ValueError(f"Cannot capture an active native owner: {row.id}")
     for session in session_store.list_all_session_records(root):
         if (
             session.record_mode != "historical"
-            and session.harness == harness
+            and session.harness.strip().lower() == harness
             and session.harness_session_id == session_id
             and (
                 session.stopped_at is None
-                or session_store.is_session_lease_owner_alive(root, session.chat_id)
+                or session_store.is_session_lease_owner_alive(
+                    root, session.chat_id, session_instance_id=session.session_instance_id
+                )
             )
         ):
             raise ValueError(f"Cannot capture an active native owner: {session.chat_id}")
@@ -549,7 +565,7 @@ def materialize_native_history(project_root: Path, root: Path, spawn_id: str) ->
     from meridian.lib.ops.session_transcript import iter_source_events
     from meridian.lib.state.history import ingest_portable_history
 
-    def native_events() -> Iterator[dict[str, object]]:
+    def capture_events() -> Iterator[dict[str, object]]:
         # Deferred until ingest holds the published-aggregate guard: select from
         # current authority, not a target resolved before its binding could change.
         target = resolve_session_log_target(
@@ -560,11 +576,16 @@ def materialize_native_history(project_root: Path, root: Path, spawn_id: str) ->
             purpose="capture",
         )
         source = target.sources[0]
+        if source.kind == "spawn_history":
+            # Existing child streams retain their stream/attempt semantics. They
+            # are not native-primary observations and do not need native ownership.
+            yield from iter_source_events(source)
+            return
         _require_inactive_native_session(root, source.harness, source.session_id)
         yield from iter_source_events(source)
         _require_inactive_native_session(root, source.harness, source.session_id)
 
-    if not ingest_portable_history(root, spawn_id, native_events()):
+    if not ingest_portable_history(root, spawn_id, capture_events()):
         raise ValueError(f"Native capture target is missing or historical: {spawn_id}")
 
 
