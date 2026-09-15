@@ -1186,7 +1186,7 @@ class SpawnSubagentsOutput(BaseModel):
 class SpawnContinueInput(SpawnLaunchOptions):
     spawn_id: str
     prompt: str
-    model: str = ""
+    model: str | None = None
     files: tuple[str, ...] = ()
     template_vars: tuple[str, ...] = ()
     agent: str | None = None

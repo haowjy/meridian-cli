@@ -9,9 +9,10 @@ import os
 import shutil
 import signal
 import sys
+import uuid
 from collections.abc import Callable
 from contextlib import suppress
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -89,6 +90,7 @@ from meridian.lib.launch.runner_helpers import (
 from meridian.lib.launch.runner_helpers import (
     write_structured_failure_artifact as _write_structured_failure_artifact,
 )
+from meridian.lib.launch.session_scope import SessionAttempt
 from meridian.lib.launch.signals import signal_coordinator, signal_to_exit_code
 from meridian.lib.launch.streaming.heartbeat import FileHeartbeat, HeartbeatTouch
 from meridian.lib.launch.streaming.terminal_arbitrator import TriggerKind, arbitrate_terminal
@@ -785,6 +787,7 @@ async def _run_streaming_attempt(
     stream_stdout_to_terminal: bool,
     lifecycle_service: SpawnLifecycleService,
     runner_phase: list[str] | None = None,
+    on_running: Callable[[HarnessConnection[Any]], None] | None = None,
 ) -> _AttemptRuntime:
     completion_task: asyncio.Task[DrainOutcome | None] | None = None
     timeout_task: asyncio.Task[None] | None = None
@@ -811,6 +814,7 @@ async def _run_streaming_attempt(
     cancelled_by_request = False
     terminal_outcome: TerminalEventOutcome | None = None
     authoritative_terminal_status: TerminalSpawnStatus | None = None
+    recording_selection = False
     try:
         if runner_phase is not None:
             runner_phase[0] = "starting_harness"
@@ -831,6 +835,10 @@ async def _run_streaming_attempt(
             launch_mode=launch_mode,
             worker_pid=connection.subprocess_pid,
         )
+        if on_running is not None:
+            recording_selection = True
+            on_running(connection)
+            recording_selection = False
         subscriber = manager.subscribe(run.spawn_id)
         if subscriber is None:
             raise RuntimeError("failed to subscribe to spawn stream")
@@ -961,6 +969,8 @@ async def _run_streaming_attempt(
                 exit_code=drain_exit_code,
             )
     except Exception as exc:
+        if recording_selection:
+            raise
         return _AttemptRuntime(
             connection=connection,
             drain_exit_code=DEFAULT_INFRA_EXIT_CODE,
@@ -1027,6 +1037,7 @@ async def execute_with_streaming(
     guardrails: tuple[Path, ...] = (),
     guardrail_timeout_seconds: float = DEFAULT_GUARDRAIL_TIMEOUT_SECONDS,
     harness_session_id_observer: Callable[[str], None] | None = None,
+    session_attempt: SessionAttempt | None = None,
     event_observer: Callable[[StreamEvent], None] | None = None,
     stream_stdout_to_terminal: bool = False,
     stream_stderr_to_terminal: bool = False,
@@ -1181,6 +1192,20 @@ async def execute_with_streaming(
             if harness_session_id_observer is not None:
                 harness_session_id_observer(normalized)
 
+        def _attempt_id_observer(attempt: SessionAttempt | None) -> Callable[[str], None]:
+            def observe(session_id: str) -> None:
+                if (
+                    spec.continue_session_id and not spec.continue_fork
+                    and session_id.strip() != spec.continue_session_id
+                ):
+                    raise ValueError("startup attempt changed its native conversation identity")
+                if attempt is not None:
+                    attempt.record_harness_session_id(session_id)
+                _record_harness_session_id(session_id)
+            return observe
+
+        observe_attempt_id = _attempt_id_observer(session_attempt)
+
         config = ConnectionConfig(
             spawn_id=run.spawn_id,
             harness_id=resolved_harness_id,
@@ -1199,7 +1224,7 @@ async def execute_with_streaming(
             pi_task_ping_reset_on_activity=request.pi_task_ping_reset_on_activity,
             pi_session_role=pi_session_role,
             debug_tracer=tracer,
-            session_id_observer=_record_harness_session_id,
+            session_id_observer=observe_attempt_id,
         )
 
         # I-10: spawn row MUST exist before execute_with_streaming is called.
@@ -1226,11 +1251,15 @@ async def execute_with_streaming(
         if not materialized_session_id:
             seeded_session_id = harness.derive_streaming_seeded_session_id(spec=spec)
             if seeded_session_id:
-                _record_harness_session_id(seeded_session_id)
+                # A launch hint is not an observed native identity. Keep it out of
+                # same-attempt binding and the adapter's post-run current-ID input.
+                spawn_store.update_spawn(
+                    runtime_root, run.spawn_id, harness_session_id=seeded_session_id,
+                )
         if materialized_session_id and materialized_session_id != (
             request.session.requested_harness_session_id or ""
         ):
-            _record_harness_session_id(materialized_session_id)
+            observe_attempt_id(materialized_session_id)
 
         budget_tracker = (
             LiveBudgetTracker(budget=budget, space_spent_usd=space_spent_usd)
@@ -1273,6 +1302,12 @@ async def execute_with_streaming(
 
                 attempt_number = conclusion.retries_attempted + 1
                 if attempt_number > 1:
+                    if session_attempt is not None:
+                        session_attempt = replace(
+                            session_attempt, startup_attempt_id=uuid.uuid4().hex,
+                        )
+                    observe_attempt_id = _attempt_id_observer(session_attempt)
+                    config = replace(config, session_id_observer=observe_attempt_id)
                     _preserve_attempt_artifacts(
                         artifacts=artifacts,
                         spawn_id=run.spawn_id,
@@ -1293,6 +1328,24 @@ async def execute_with_streaming(
                     _append_budget_exceeded_event(run=run, breach=preflight_breach)
                     break
 
+                def record_started(
+                    connection: HarnessConnection[Any],
+                    captured_attempt: SessionAttempt | None = session_attempt,
+                ) -> None:
+                    if captured_attempt is not None:
+                        if (
+                            spec.continue_session_id and not spec.continue_fork
+                            and connection.session_id
+                            and connection.session_id != spec.continue_session_id
+                        ):
+                            raise ValueError(
+                                "startup attempt changed its native conversation identity"
+                            )
+                        captured_attempt.record_started(
+                            launch_context, str(run.spawn_id),
+                            connection.session_id or spec.continue_session_id,
+                        )
+
                 attempt = await _run_streaming_attempt(
                     run=run,
                     runtime_root=runtime_root,
@@ -1310,6 +1363,7 @@ async def execute_with_streaming(
                     stream_stdout_to_terminal=stream_stdout_to_terminal,
                     lifecycle_service=lifecycle_service,
                     runner_phase=runner_phase,
+                    on_running=record_started,
                 )
                 runner_phase[0] = "processing_attempt"
                 conclusion.absorb_attempt(attempt)
@@ -1403,15 +1457,7 @@ async def execute_with_streaming(
                     or ""
                 )
                 if extracted_harness_session_id:
-                    try:
-                        _record_harness_session_id(extracted_harness_session_id)
-                    except Exception:
-                        logger.warning(
-                            "Harness session ID observer failed.",
-                            spawn_id=str(run.spawn_id),
-                            harness_id=str(harness.id),
-                            exc_info=True,
-                        )
+                    observe_attempt_id(extracted_harness_session_id)
 
                 if attempt_cancelled:
                     if attempt.received_signal is not None:

@@ -70,19 +70,27 @@ CWD/config/env. The absence of source work is a preserved value: exact continue
 suppresses inherited `MERIDIAN_ACTIVE_WORK_*` and inherited task-dir state when the
 source had none, instead of attaching the caller's ambient work/task context.
 
-Launch-policy snapshot replay preserves cache- and prompt-shaping fields: model,
-harness, agent, agent opt-out, agent profile, skills, loaded skill content,
-execution policy, tool/MCP grants, terminal surface mode, matched policy rule,
-fallback chain, inventory prompt, env, and passthrough args. A persisted snapshot
-with `model=""` and a harness is valid legacy JSON; policy snapshot replay
-normalizes it to in-memory `model=None`, meaning "omit Meridian's managed model
-override and let the harness default." This normalization belongs in
-`policy_snapshot.py`, not in continue-specific code.
+Continuation revalidates its model and pinned harness through Mars under current
+target/caller restrictions. Explicit model input resolves normally; otherwise the
+recorded selection wins. Recorded canonical IDs are literal pins, including deliberate
+harness-default mode. A new invocation snapshot updates routing fields without
+rewriting the source snapshot.
 
-Exact continue rejects launch-identity, policy, work, and task mutations. That
-includes model, agent, skills, execution policy, passthrough args, env, `--work`,
-`--task-dir`, and agent opt-out (`--agent ''`) because opt-out changes how default
-agent routing behaves. Use a divergent mode instead.
+Replay preserves non-routing policy: agent/profile, skills and loaded content,
+execution policy, tool/MCP grants, terminal surface, inventory prompt, env and
+passthrough args. Exact continue permits an explicit model override with a cache/cost
+warning; it still rejects agent, skills, execution-policy, passthrough, env, work and
+task-dir mutations. Agent opt-out is also a mutation.
+
+Primary and spawn accepted-running callbacks append selection intent through
+`SessionAttempt`. Its captured generation/startup attempt also binds native-ID
+observations. Each streaming retry gets a distinct attempt; a recording failure is
+a coordination error, not a model retry. The record means accepted selection, not
+model execution. Streaming-serve recording and legacy baseline seeding remain
+unimplemented.
+
+Primary adapters declare named-model resume support. Unsupported named resumes fail
+before native startup; a named selection never falls back to an empty model.
 
 KB: `decisions/launch.md#d-continue-replays-recorded-launch-contract-same-session-continue-is-not-live-policy-recomputation`.
 
@@ -493,15 +501,3 @@ exception paths. Do not replicate this logic inline.
 
 - `../../ops/.context/CONTEXT.md` — how `ops/spawn/` drives this layer
 - `../../harness/` — adapters this layer calls into for `project_content()`, `preflight()`, `build_launch_argv()`
-
-### Primary continuation model selection
-
-Exact primary continuation revalidates its model and pinned harness through Mars
-before replaying non-routing policy. Explicit model input resolves normally; recorded
-canonical IDs use literal pins, including deliberate harness-default mode. Invocation
-snapshots update routing fields without rewriting their source snapshots. The primary
-accepted-running callback appends selection intent; its captured generation/startup
-attempt binds delayed native-ID observations. This records intent, not model execution.
-
-Primary adapters declare named-model resume support. Unsupported named resumes fail
-before native startup; a named selection never falls back to an empty model.

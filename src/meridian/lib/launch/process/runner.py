@@ -25,7 +25,7 @@ from meridian.lib.core.spawn_lifecycle import (
     has_durable_report_completion,
 )
 from meridian.lib.core.spawn_service import SpawnApplicationService
-from meridian.lib.core.types import ChatId, HarnessId, HarnessSessionId, SpawnId
+from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.adapter import (
     BootstrapMode,
     ForkMaterializationMode,
@@ -58,7 +58,6 @@ from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.state import spawn_store
 from meridian.lib.state.artifact_store import InMemoryStore, LocalStore, make_artifact_key
 from meridian.lib.state.atomic import atomic_write_text
-from meridian.lib.state.event_store import utc_now_iso
 from meridian.lib.state.paths import resolve_spawn_log_dir
 from meridian.lib.state.primary_meta import (
     ActivityState,
@@ -67,10 +66,7 @@ from meridian.lib.state.primary_meta import (
     write_primary_metadata,
 )
 from meridian.lib.state.session_store import (
-    ConversationModelSelection,
-    SessionModelSelectionEvent,
     get_session_active_work_id,
-    record_model_selection,
     start_session,
     stop_session,
     update_session_claude_config_dir,
@@ -1180,41 +1176,10 @@ def run_harness_process(
                         launch_mode=FOREGROUND_LAUNCH_MODE,
                         worker_pid=child_pid,
                     )
-                    snapshot = runtime_context.resolved_request.launch_policy_snapshot
-                    assert snapshot is not None
-                    executable_model = runtime_context.binding.spec.model
-                    canonical_model = snapshot.model_selection_canonical_id or snapshot.model
-                    selection = ConversationModelSelection.model_validate({
-                        "requested_token": (
-                            snapshot.model_selection_requested_token or canonical_model
-                        ),
-                        "selected_token": (
-                            snapshot.model_selection_selected_token or canonical_model
-                        ),
-                        "canonical_model_id": canonical_model or None,
-                        "harness_model_id": str(executable_model) if executable_model else None,
-                        "model_mode": "named" if canonical_model else "harness_default",
-                        "provider_constraint": snapshot.model_selection_provider_constraint,
-                        "selection_source": (
-                            runtime_context.resolved_request.session.continue_selection_source
-                            if session_mode == SessionMode.RESUME else "initial_launch"
-                        ),
-                        "provenance": snapshot.field_provenance,
-                    })
-                    record_model_selection(runtime_root, SessionModelSelectionEvent(
-                        kind="invocation_started",
-                        harness=session_metadata.harness,
-                        harness_session_id=(
-                            HarnessSessionId(resolved_harness_session_id)
-                            if resolved_harness_session_id else None
-                        ),
-                        chat_id=ChatId(managed.chat_id),
-                        session_instance_id=managed.session_instance_id,
-                        spawn_id=str(primary_spawn_id),
-                        startup_attempt_id=startup_attempt_id,
-                        recorded_at=utc_now_iso(),
-                        selection=selection,
-                    ))
+                    assert managed.attempt is not None
+                    managed.attempt.record_started(
+                        runtime_context, str(primary_spawn_id), resolved_harness_session_id,
+                    )
                     if write_native_primary_metadata:
                         _write_native_primary_metadata(
                             runtime_root=runtime_root,

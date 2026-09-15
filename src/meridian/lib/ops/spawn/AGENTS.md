@@ -53,10 +53,16 @@ current harness context. Cross-harness fork/continue is not supported — the gu
 raises before any state is created.
 
 `spawn_continue` does not assemble replay policy itself. It resolves the source
-spawn/session, rejects launch-identity, policy, work, and task-dir mutations, then
+spawn/session, allows explicit model overrides but rejects other launch-identity,
+policy, work, and task-dir mutations, then
 delegates exact-continue normalization to `launch/continue_replay.py`'s
 `ContinueReplayContract`. Agent opt-out is treated as a launch-identity mutation,
 not as a harmless absence.
+
+The captured `SessionAttempt` follows the session generation into streaming
+execution. Each retry gets its own attempt identity; native-ID callbacks and
+accepted-running model-selection writes use that same capture. Recording failure
+is a coordination error, not a reason to retry the model.
 
 ## Key Entry Points
 

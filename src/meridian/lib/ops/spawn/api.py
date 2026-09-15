@@ -1976,8 +1976,6 @@ def _reject_continue_policy_overrides(payload: SpawnContinueInput) -> None:
     """Reject launch-contract changes for exact continuation."""
 
     rejected: list[str] = []
-    if payload.model.strip():
-        rejected.append("--model")
     if payload.skills:
         rejected.append("--skills")
     if payload.approval is not None:
@@ -2017,6 +2015,7 @@ def _build_continue_create_input(
     source_spawn: SpawnRecord,
     source_spawn_id: str,
     resolved_reference: ResolvedSessionReference,
+    runtime_root: Path,
 ) -> SpawnCreateInput:
     continue_contract = build_continue_replay_contract(
         source=continue_replay_source_from_reference(
@@ -2028,6 +2027,8 @@ def _build_continue_create_input(
         requested_agent=payload.agent,
         agent_opt_out=payload.agent_opt_out,
         fork=payload.fork,
+        requested_model_override=payload.model,
+        runtime_root=runtime_root,
     )
     launch_options = payload.launch_option_updates()
     launch_options.update(
@@ -2246,6 +2247,8 @@ def spawn_continue_sync(
     sink: OutputSink | None = None,
     prepared: RuntimeWriteContext | None = None,
 ) -> SpawnActionOutput:
+    if payload.model is not None and not payload.model.strip():
+        raise ValueError("--model must not be empty")
     project_root, runtime_root = _resolve_spawn_read_authority(
         project_root=payload.project_root,
         prepared=prepared,
@@ -2269,6 +2272,7 @@ def spawn_continue_sync(
         source_spawn=source_spawn,
         source_spawn_id=resolved_spawn_id,
         resolved_reference=resolved_reference,
+        runtime_root=runtime_root,
     )
     if prepared is not None:
         result = spawn_create_sync(create_input, ctx=ctx, sink=sink, prepared=prepared)
