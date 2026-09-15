@@ -85,6 +85,8 @@ All state files are written through `atomic.py`:
   same-volume directory into place, then fsync the destination parent.
 - `append_text_line()`: opens in binary mode so JSONL newline encoding and byte
   offsets remain stable.
+- `append_durable_jsonl_line()`: repair a torn or delimiter-less tail before append.
+  Repair failure propagates; never acknowledge a new event appended onto invalid JSON.
 
 Never write state files with plain `open()` + `write()`. Crash in the middle of a
 plain write leaves a partial file; partial state.json will fail Pydantic validation
