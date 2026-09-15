@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 from pathlib import Path
+
+import pytest
 
 from meridian.lib.core.types import ArtifactKey, SpawnId
 from meridian.lib.harness.extractors.opencode import OPENCODE_EXTRACTOR
@@ -11,6 +14,33 @@ from meridian.lib.harness.opencode_report import extract_opencode_report
 from meridian.lib.harness.opencode_storage import resolve_opencode_storage_root
 from meridian.lib.launch.constants import HISTORY_FILENAME
 from tests.support.opencode_db import write_opencode_db_session_with_parts
+
+
+@pytest.mark.parametrize("source", ["db-only", "absent-db", "missing-session", "corrupt-db"])
+def test_report_database_source_selection_without_legacy_file(
+    tmp_path: Path, monkeypatch, source: str
+) -> None:
+    monkeypatch.setenv("OPENCODE_HOME", str(tmp_path))
+    path = tmp_path / "opencode.db"
+    if source in {"db-only", "missing-session"}:
+        write_opencode_db_session_with_parts(
+            db_path=path,
+            session_id="s" if source == "db-only" else "other",
+            messages=[
+                ("assistant", {}, [{"type": "text", "text": "answer"}]),
+                ("assistant", {"summary": True}, [{"type": "text", "text": "summary only"}]),
+            ],
+        )
+    elif source == "corrupt-db":
+        path.write_bytes(b"not a database")
+    key = SpawnId("p-db-only")
+    store = _artifact_store_from_history_lines(key, [])
+    store._payloads[f"{key}/session_id.txt"] = b"s"
+    if source == "corrupt-db":
+        with pytest.raises(sqlite3.Error):
+            extract_opencode_report(store, key)
+    else:
+        assert extract_opencode_report(store, key) == ("answer" if source == "db-only" else None)
 
 
 class _MemoryArtifactStore:

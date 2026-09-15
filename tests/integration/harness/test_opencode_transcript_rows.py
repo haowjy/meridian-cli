@@ -38,10 +38,11 @@ def test_raw_rows_preserve_unknown_material_columns_and_orphan_parts(
             ('{"type":"text","text":"orphan content"}',),
         )
         db.execute("INSERT INTO session(id,time_created,time_updated) VALUES ('other',1,1)")
+        db.execute("INSERT INTO message VALUES ('missing','other',1,1,?)", ('{"role":"user"}',))
         expected_message = dict(
             zip(
                 [c[1] for c in db.execute("PRAGMA table_info(message)")],
-                db.execute("SELECT * FROM message").fetchone(),
+                db.execute("SELECT * FROM message WHERE session_id='s'").fetchone(),
                 strict=True,
             )
         )
@@ -128,6 +129,7 @@ def test_raw_projection_keeps_compaction_and_checkpoint_setup(
         session_id="s",
         messages=[
             ("user", {"system": "initial setup"}, [{"type": "text", "text": "question"}]),
+            ("assistant", {}, []),
             ("assistant", {}, [{"type": "text", "text": "first answer"}]),
             (
                 "assistant",
@@ -154,6 +156,8 @@ def test_raw_projection_keeps_compaction_and_checkpoint_setup(
     "bad_part",
     [
         {"type": "text", "text": 42},
+        {"type": {}},
+        {"type": []},
         {
             "type": "tool",
             "tool": "bash",

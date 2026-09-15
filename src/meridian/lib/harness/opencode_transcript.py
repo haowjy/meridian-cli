@@ -6,8 +6,9 @@ import base64
 import json
 import math
 import sqlite3
-from collections.abc import Callable, Generator, Iterator, Mapping
+from collections.abc import Callable, Generator, Iterable, Iterator, Mapping
 from contextlib import closing
+from itertools import groupby
 from pathlib import Path
 from typing import cast
 
@@ -173,6 +174,9 @@ def _message_events(
     malformed = "Malformed OpenCode part content; rendering is incomplete."
     for part in parts:
         kind = part.get("type")
+        if not isinstance(kind, str):
+            reason = malformed
+            continue
         if kind == "text":
             text = part.get("text")
             if not isinstance(text, str):
@@ -291,20 +295,30 @@ def iter_opencode_db_events(
             "table": "session",
             "row": _raw_row(session),
         }
+        # Traverse selected parts once. A per-message session+message predicate
+        # can pick the native session-only index and rescan the session N times.
+        parts = connection.execute(
+            "SELECT p.* FROM part p CROSS JOIN message m "
+            "WHERE p.session_id=? AND m.id=p.message_id AND m.session_id=p.session_id "
+            "ORDER BY m.time_created,m.id,p.time_created,p.id",
+            (normalized_session_id,),
+        )
+        groups = groupby(parts, key=lambda part: part["message_id"])
+        pending = next(groups, None)
         for message in connection.execute(
             "SELECT * FROM message WHERE session_id=? ORDER BY time_created,id",
             (normalized_session_id,),
         ):
-            parts = connection.execute(
-                "SELECT * FROM part WHERE session_id=? AND message_id=? ORDER BY time_created,id",
-                (normalized_session_id, message["id"]),
-            )
+            message_parts: list[dict[str, object]] = []
+            if pending is not None and pending[0] == message["id"]:
+                message_parts = [_raw_row(part) for part in pending[1]]
+                pending = next(groups, None)
             yield {
                 "record": "opencode.transcript",
                 "version": 1,
                 "table": "message",
                 "row": _raw_row(message),
-                "parts": [_raw_row(part) for part in parts],
+                "parts": message_parts,
             }
         for part in connection.execute(
             "SELECT * FROM part p WHERE p.session_id=? AND NOT EXISTS "
@@ -387,15 +401,13 @@ def _text_from_value(value: object) -> str:
     return ""
 
 
-def extract_last_assistant_report_from_session_path(path: Path) -> str | None:
-    """Return the last assistant message text for one OpenCode session file."""
-
+def extract_last_assistant_report(events: Iterable[dict[str, object]]) -> str | None:
+    """Read response text incrementally through the same raw-row interpretation."""
     from meridian.lib.harness.transcript import DefaultTranscriptEventParser, TranscriptNormalizer
 
-    provider = OpenCodeStorageTranscriptProvider(iter_json_events=lambda _path: iter(()))
     normalizer, parser = TranscriptNormalizer(), DefaultTranscriptEventParser()
     last_assistant: str | None = None
-    for event in provider.iter_events(path):
+    for event in events:
         for message in normalizer.feed(event, parser).messages:
             if (
                 message.role == "assistant"
@@ -406,8 +418,15 @@ def extract_last_assistant_report_from_session_path(path: Path) -> str | None:
     return last_assistant
 
 
+def extract_last_assistant_report_from_session_path(path: Path) -> str | None:
+    """Return the last assistant message text for one OpenCode session file."""
+    provider = OpenCodeStorageTranscriptProvider(iter_json_events=lambda _path: iter(()))
+    return extract_last_assistant_report(provider.iter_events(path))
+
+
 __all__ = [
     "OpenCodeStorageTranscriptProvider",
+    "extract_last_assistant_report",
     "extract_last_assistant_report_from_session_path",
     "iter_opencode_db_events",
     "opencode_db_session_exists",
