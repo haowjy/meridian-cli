@@ -19,6 +19,7 @@ class FakeBundleResult:
     harness_model: str | None
     execution_policy: ResolvedExecutionPolicy
     provenance: dict[str, str]
+    selection_report: dict[str, object] | None = None
     warnings: tuple[str, ...] = ()
     prompt_surface_inventory_prompt: str = ""
     tools_allowed: tuple[str, ...] = ()

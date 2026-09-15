@@ -60,7 +60,7 @@ class ReplayedLaunchPolicySnapshot:
     terminal_surface_mode: TerminalSurfaceMode = TerminalSurfaceMode.PTY_MEDIATED
     matched_policy_rule: str | None = None
     model_selection: ReplayedModelSelection | None = None
-    fallback_chain: tuple[dict[str, object], ...] = ()
+    selection_report: dict[str, object] | None = None
     alias_catalog: dict[str, AliasEntry] | None = None
 
 
@@ -118,7 +118,7 @@ def build_launch_policy_snapshot(
             model_selection.harness_model_id if model_selection is not None else None
         ),
         matched_policy_rule=request.matched_policy_rule,
-        fallback_chain=request.fallback_chain,
+        selection_report=request.selection_report,
         terminal_surface_mode=(
             request.terminal_surface_mode.value
             if request.terminal_surface_mode is not None
@@ -192,7 +192,7 @@ def replay_launch_policy_snapshot(
         terminal_surface_mode=terminal_surface_mode,
         matched_policy_rule=snapshot.matched_policy_rule,
         model_selection=model_selection,
-        fallback_chain=snapshot.fallback_chain,
+        selection_report=snapshot.selection_report,
         alias_catalog=alias_catalog,
     )
 

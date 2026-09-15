@@ -160,7 +160,7 @@ class ResolvedLaunchPolicy:
     field_provenance: FieldProvenance = field(default_factory=FieldProvenance)
     matched_policy_rule: str | None = None
     model_selection: ModelSelectionContext | None = None
-    fallback_chain: tuple[dict[str, object], ...] = ()
+    selection_report: dict[str, object] | None = None
     warnings: tuple[CompositionWarning, ...] = ()
     alias_catalog: dict[str, AliasEntry] | None = None
     bundle_inventory_prompt: str | None = None
@@ -605,7 +605,7 @@ def _resolve_policy_from_snapshot(
         terminal_surface_mode=replayed.terminal_surface_mode,
         matched_policy_rule=replayed.matched_policy_rule,
         model_selection=_model_selection_from_replayed_snapshot(replayed.model_selection),
-        fallback_chain=replayed.fallback_chain,
+        selection_report=replayed.selection_report,
         warnings=(),
         alias_catalog=replayed.alias_catalog,
         bundle_inventory_prompt=snapshot.bundle_inventory_prompt,

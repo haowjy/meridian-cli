@@ -4,6 +4,10 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- Require Mars bundle schema 4/report schema 2; retain validated selection diagnostics in snapshots, previews, and spawn failures instead of unused fallback-chain transport.
+
 ### Fixed
 
 - Pass headless harness exclusions to Mars before selection; keep primary routing and the final execution guard unchanged.

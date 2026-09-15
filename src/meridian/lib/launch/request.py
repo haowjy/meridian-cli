@@ -129,7 +129,7 @@ class SpawnRequest(BaseModel):
     model_selection_canonical_id: str | None = None
     model_selection_harness_provenance: str | None = None
     matched_policy_rule: str | None = None
-    fallback_chain: tuple[dict[str, object], ...] = ()
+    selection_report: dict[str, object] | None = None
     terminal_surface_mode: TerminalSurfaceMode | None = None
     # Preview command for dry-run display only.  Executors MUST NOT use this field.
     cli_command: tuple[str, ...] = ()

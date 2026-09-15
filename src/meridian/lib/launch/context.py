@@ -1605,7 +1605,7 @@ def prepare_launch_surface(
             "agent_metadata": agent_metadata,
             "prompt_payload": _request_prompt_payload(content.prompt_payload),
             "skill_paths": resolve_skill_paths(resolved_skills.loaded_skills),
-            "fallback_chain": policies.fallback_chain,
+            "selection_report": policies.selection_report,
             "terminal_surface_mode": policies.terminal_surface_mode,
             "matched_policy_rule": policies.matched_policy_rule,
             **model_selection_update,

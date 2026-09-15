@@ -174,7 +174,7 @@ def test_snapshot_replay_preserves_resolved_policy_without_live_resolution() -> 
         model_selection_requested_token="gpt54",
         model_selection_canonical_id="gpt-5.4",
         matched_policy_rule="settings:2",
-        fallback_chain=({"model": "gpt-5.3"},),
+        selection_report={"version": 2, "outcome": "selected"},
     )
     snapshot = build_launch_policy_snapshot(request, loaded_skills=(skill,))
 
@@ -194,4 +194,4 @@ def test_snapshot_replay_preserves_resolved_policy_without_live_resolution() -> 
     assert replayed.resolved_tools == {"bash": "allow"}
     assert replayed.resolved_skills.loaded_skills == (skill,)
     assert replayed.matched_policy_rule == "settings:2"
-    assert replayed.fallback_chain == ({"model": "gpt-5.3"},)
+    assert replayed.selection_report == {"version": 2, "outcome": "selected"}

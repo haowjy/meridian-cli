@@ -452,7 +452,7 @@ def spawn_create_sync(
                 prepared_request.model_selection_harness_provenance
             ),
             matched_policy_rule=getattr(prepared_request, "matched_policy_rule", None),
-            fallback_chain=tuple(getattr(prepared_request, "fallback_chain", ()) or ()),
+            selection_report=prepared_request.selection_report,
             terminal_surface_mode=(
                 terminal_surface_mode.value if terminal_surface_mode is not None else None
             ),

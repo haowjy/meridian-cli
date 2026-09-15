@@ -160,8 +160,12 @@ Do not set `REQUIRED` on execution paths.
 ### Mars Launch-Bundle Policy Resolution (`policies.py`)
 
 `PRIMARY` and `SPAWN_PREPARE` share `_resolve_policy_from_bundle()`. Mars resolves
-the model, harness, and fallback chain; Meridian applies the returned launch bundle
-rather than reconstructing profile policy composition or fallback ordering.
+the model and harness; Meridian requires bundle schema 4 with report schema 2 and
+applies the returned launch bundle rather than reconstructing policy or fallback
+ordering. `selection_report` preserves Mars's `routing.route_trace` in snapshots,
+previews, and failure outputs as diagnostic history, never an executable retry queue.
+The adapter checks report pointers and selected identity against executable routing.
+Structured Mars errors retain their code and available report across pre-init failure.
 
 ### _MERIDIAN_HARNESS Child Env
 

@@ -11,6 +11,7 @@ from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
+from meridian.lib.core.route_report import RouteDecisionReport
 from meridian.lib.core.types import HarnessId
 from meridian.lib.launch.compiler import FieldProvenance, ProvenanceLevel
 from meridian.lib.launch.composition import AvailableSkillEntry
@@ -28,6 +29,7 @@ if TYPE_CHECKING:
     from meridian.lib.launch.policies import ModelSelectionContext, ResolvedLaunchPolicy
     from meridian.lib.launch.resolve import ResolvedSkills
 
+
 def _resolve_mars_min_version() -> str:
     try:
         return version("mars-agents")
@@ -36,7 +38,7 @@ def _resolve_mars_min_version() -> str:
 
 
 _MARS_BUNDLE_MIN_VERSION = _resolve_mars_min_version()
-_SUPPORTED_BUNDLE_SCHEMA_VERSIONS = (3,)
+_SUPPORTED_BUNDLE_SCHEMA_VERSIONS = (4,)
 
 
 @dataclass(frozen=True)
@@ -65,6 +67,7 @@ class LoadedSkillEntry:
 
 @dataclass(frozen=True)
 class _BundleResult:
+    selection_report: dict[str, object]
     model: str
     model_token: str
     harness: HarnessId
@@ -153,7 +156,7 @@ def _parse_skills_available(raw: object) -> tuple[AvailableSkillEntry, ...]:
 def _bundle_schema_error(message: str) -> RuntimeError:
     return RuntimeError(
         f"Mars launch-bundle returned invalid schema: {message}. "
-        f"Meridian requires mars >= {_MARS_BUNDLE_MIN_VERSION}."
+        "Expected bundle schema 4 with routing report schema 2."
     )
 
 
@@ -261,16 +264,49 @@ def _extract_error_message(*, stdout: str, stderr: str) -> str:
     return message or "unknown mars error"
 
 
+class MarsSelectionError(RuntimeError):
+    """A failed Mars decision with its diagnostic report retained for callers."""
+
+    def __init__(self, code: str, message: str, report: RouteDecisionReport | None) -> None:
+        self.code = code
+        self.selection_report = report.model_dump(mode="json") if report is not None else None
+        details = []
+        if report is not None:
+            for attempt in report.model_attempts:
+                reasons = ", ".join(
+                    f"{assessment.harness}: "
+                    f"{(assessment.model_extra or {}).get('reason', assessment.verdict)}"
+                    for assessment in attempt.assessments
+                )
+                details.append(f"{attempt.model_token}: {reasons}")
+        super().__init__("; ".join([message, *details]))
+
+
 def _raise_bundle_error(*, stdout: str, stderr: str, returncode: int | None = None) -> None:
+    try:
+        payload = json.loads(stdout)
+    except json.JSONDecodeError:
+        payload = None
+    if isinstance(payload, dict):
+        payload = cast("dict[str, object]", payload)
+    if isinstance(payload, dict) and isinstance(payload.get("error"), dict):
+        error = cast("dict[str, object]", payload["error"])
+        report = (
+            RouteDecisionReport.model_validate(payload["route_trace"])
+            if "route_trace" in payload
+            else None
+        )
+        raise MarsSelectionError(
+            str(error.get("code", "command_failed")),
+            str(error.get("message", "Mars launch-bundle failed")),
+            report,
+        )
     message = _extract_error_message(stdout=stdout, stderr=stderr)
     normalized = message.lower()
-    if (
-        "launch-bundle" in normalized
-        and (
-            "unrecognized" in normalized
-            or "unknown" in normalized
-            or "invalid subcommand" in normalized
-        )
+    if "launch-bundle" in normalized and (
+        "unrecognized" in normalized
+        or "unknown" in normalized
+        or "invalid subcommand" in normalized
     ):
         raise RuntimeError(
             "Mars launch-bundle command is unavailable. Meridian requires mars >= "
@@ -294,7 +330,7 @@ def _parse_bundle_payload(
         raise RuntimeError(
             "Mars launch-bundle schema version "
             f"{version} is unsupported. Expected one of {_SUPPORTED_BUNDLE_SCHEMA_VERSIONS}. "
-            f"Meridian requires mars >= {_MARS_BUNDLE_MIN_VERSION}."
+            "Install a Mars release supporting bundle schema 4."
         )
 
     routing = _required_object_field(payload, "routing")
@@ -302,6 +338,20 @@ def _parse_bundle_payload(
     model_token = _normalize_str(routing.get("model_token")) or model
     harness = _parse_harness_id(routing.get("harness"), harness_registry=harness_registry)
     harness_model = _normalize_str(routing.get("harness_model")) or None
+
+    report = RouteDecisionReport.model_validate(_required_object_field(routing, "route_trace"))
+    if report.selected is None:
+        raise _bundle_schema_error("successful bundle has no selected assessment")
+    attempt = report.model_attempts[report.selected.attempt_index]
+    assessment = attempt.assessments[report.selected.assessment_index]
+    if (
+        attempt.canonical_model != model
+        or attempt.model_token != model_token
+        or assessment.harness != harness.value
+    ):
+        raise _bundle_schema_error("selected report identity disagrees with routing")
+    if model and not harness_model:
+        raise _bundle_schema_error("named model is missing routing.harness_model")
 
     execution_policy_payload = _required_object_field(payload, "execution_policy")
     execution_policy = ResolvedExecutionPolicy.model_validate(
@@ -323,6 +373,7 @@ def _parse_bundle_payload(
     skills_available = _parse_skills_available(skills_obj.get("available"))
 
     return _BundleResult(
+        selection_report=report.model_dump(mode="json"),
         model=model,
         model_token=model_token,
         harness=harness,
@@ -478,15 +529,11 @@ def bundle_to_resolved_policy(
         resolved_mcp_tools=bundle.tools_mcp,
         terminal_surface_mode=terminal_surface_mode,
         field_provenance=FieldProvenance(
-            model_source=_map_provenance_level(
-                _provenance_value(effective_provenance, "model")
-            ),
+            model_source=_map_provenance_level(_provenance_value(effective_provenance, "model")),
             harness_source=_map_provenance_level(
                 _provenance_value(effective_provenance, "harness")
             ),
-            effort_source=_map_provenance_level(
-                _provenance_value(effective_provenance, "effort")
-            ),
+            effort_source=_map_provenance_level(_provenance_value(effective_provenance, "effort")),
             approval_source=_map_provenance_level(
                 _provenance_value(effective_provenance, "approval")
             ),
@@ -505,7 +552,7 @@ def bundle_to_resolved_policy(
         ),
         matched_policy_rule=effective_provenance.get("matched_policy_rule"),
         model_selection=model_selection,
-        fallback_chain=(),
+        selection_report=bundle.selection_report,
         warnings=warnings,
         alias_catalog=alias_catalog,
         bundle_inventory_prompt=bundle.prompt_surface_inventory_prompt or None,
