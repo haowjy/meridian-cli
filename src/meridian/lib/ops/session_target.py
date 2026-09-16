@@ -40,7 +40,7 @@ _PRIMARY_TRANSCRIPT_UNAVAILABLE_SUFFIX = (
 
 
 class TranscriptSource(NamedTuple):
-    kind: Literal["file", "opencode_db", "spawn_history", "archive"]
+    kind: Literal["file", "native_file", "opencode_db", "spawn_history", "archive"]
     session_id: str
     harness: str | None
     source_label: str
@@ -151,7 +151,7 @@ def _resolve_adapter_file_target(
         return None
     return _target_from_source(
         TranscriptSource(
-            kind="file",
+            kind="native_file",
             session_id=session_id,
             harness=str(harness_id),
             path=candidate,

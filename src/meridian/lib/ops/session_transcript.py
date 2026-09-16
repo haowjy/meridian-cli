@@ -25,7 +25,7 @@ from meridian.lib.ops.session_target import (
     TranscriptSource,
     resolve_session_log_target,
 )
-from meridian.lib.state.native_snapshot import TranscriptValidation
+from meridian.lib.state.native_snapshot import SnapshotHeader, TranscriptValidation
 
 _PROLOGUE_PLACEHOLDER = "[prologue slot reserved: no extractable system prompt]"
 _HANDOFF_PLACEHOLDER = "[compaction handoff slot reserved: no extractable handoff]"
@@ -343,6 +343,14 @@ def iter_source_events(
     validation: TranscriptValidation | None = None,
     current: Callable[[], bool] | None = None,
 ) -> Generator[dict[str, object]]:
+    def check_header(header: SnapshotHeader) -> None:
+        if source.kind == "native_file" and (
+            header.native_session_id != source.session_id or header.harness != source.harness
+        ):
+            raise ValueError("Snapshot native binding does not match the selected session")
+        if source.history_id is not None and str(header.transcript.history_id) != source.history_id:
+            raise ValueError("Snapshot history binding does not match the selected record")
+
     if source.kind == "archive":
         from uuid import UUID
 
@@ -360,7 +368,9 @@ def iter_source_events(
     else:
         if source.path is None:
             raise FileNotFoundError(f"Session file for '{source.session_id}' not found")
-        yield from iter_transcript_events(source.path, validation=validation, current=current)
+        yield from iter_transcript_events(
+            source.path, validation=validation, current=current, check_header=check_header
+        )
         return
     if validation is not None:
         validation.state = "complete"

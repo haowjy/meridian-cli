@@ -127,7 +127,7 @@ def test_capture_resolution_bypasses_owned_stream_and_disposable_index(tmp_path:
         purpose="capture",
     )
     assert len(target.sources) == 1
-    assert target.sources[0].kind == "file" and target.file_path == native
+    assert target.sources[0].kind == "native_file" and target.file_path == native
     assert target.session_id == "exact-native"
     assert stream.read_bytes() == before
     assert not (root / "history-index" / "history.sqlite3").exists()

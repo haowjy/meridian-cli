@@ -70,6 +70,10 @@ body and observation metadata. Its writer serializes into a caller-owned atomic
 stage and does not itself qualify native input or acquire aggregate locks. The
 shared transcript reader recognizes this storage header even in renamed files,
 validates incrementally, and exposes storage status independently of rendering.
+The operations layer checks known native-session/harness or history-UUID bindings
+at header consumption, before any body record; explicit file reads impose no
+identity inferred from their filename. Reserved storage frames cannot fall through
+to permissive native or append-stream interpretation after a damaged header.
 Early close/budget exhaustion is partial; a valid empty seal is complete, not a
 reason to select another source. Automatic primary publication, qualified provider
 integration, canonical indexed selection and versioned archive declarations still

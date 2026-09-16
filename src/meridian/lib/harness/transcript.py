@@ -19,9 +19,11 @@ from meridian.lib.state.history import iter_history_events
 from meridian.lib.state.native_snapshot import (
     HEADER_LIMIT,
     NATIVE_SNAPSHOT_FILENAME,
-    SNAPSHOT_RECORD,
+    SnapshotHeader,
     TranscriptValidation,
+    is_snapshot_prefix,
     read_snapshot,
+    reject_unframed_storage_record,
 )
 
 _TRANSCRIPT_TEXT_KEYS: tuple[str, ...] = (
@@ -895,11 +897,20 @@ def parse_transcript_events_with_prologues(
     return _parse_events_with_prologues(events, parser=resolved_parser)
 
 
+def is_native_snapshot(path: Path) -> bool:
+    """Bounded storage selection only; a true result is not a validated capture."""
+    if path.name == NATIVE_SNAPSHOT_FILENAME:
+        return True
+    with path.open("rb") as handle:
+        return is_snapshot_prefix(handle.readline(HEADER_LIMIT + 1))
+
+
 def iter_transcript_events(
     path: Path,
     *,
     validation: TranscriptValidation | None = None,
     current: Callable[[], bool] | None = None,
+    check_header: Callable[[SnapshotHeader], None] | None = None,
 ) -> Iterator[dict[str, object]]:
     # A copied/renamed snapshot keeps its storage identity. Sniff only a bounded
     # header; body validation remains incremental and subject to the caller budget.
@@ -911,21 +922,19 @@ def iter_transcript_events(
                     validation.reason = "Transcript read paused before header selection"
                 return
             first = handle.readline(HEADER_LIMIT + 1)
-            try:
-                header = json.loads(first)
-            except (ValueError, UnicodeError):
-                header = None
-            if path.name == NATIVE_SNAPSHOT_FILENAME or (
-                isinstance(header, dict)
-                and cast("dict[str, object]", header).get("record") == SNAPSHOT_RECORD
-            ):
+            if path.name == NATIVE_SNAPSHOT_FILENAME or is_snapshot_prefix(first):
                 handle.seek(0)
                 yield from read_snapshot(
-                    handle, validation=validation or TranscriptValidation(), current=current
+                    handle,
+                    validation=validation or TranscriptValidation(),
+                    current=current,
+                    check_header=check_header,
                 )
                 return
     provider = _provider_for_path(path)
-    yield from provider.iter_events(path)
+    for event in provider.iter_events(path):
+        reject_unframed_storage_record(event, validation)
+        yield event
     if validation is not None:
         validation.state = "complete"
         validation.reason = None

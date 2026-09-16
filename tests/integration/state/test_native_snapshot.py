@@ -179,8 +179,17 @@ def test_binding_and_frame_limits_are_checked_before_complete(tmp_path: Path, mo
     data = _snapshot(path, ('{"text":"needle"}',))
     expected = codec.SnapshotHeader.model_validate_json(data.splitlines()[0])
     wrong = expected.model_copy(update={"native_session_id": "other"})
+
+    def check_header(actual):
+        if actual != wrong:
+            raise ValueError("wrong snapshot binding")
+
     with path.open("rb") as handle, pytest.raises(ValueError, match="binding"):
-        list(codec.read_snapshot(handle, validation=codec.TranscriptValidation(), expected=wrong))
+        list(
+            codec.read_snapshot(
+                handle, validation=codec.TranscriptValidation(), check_header=check_header
+            )
+        )
     monkeypatch.setattr(codec, "FRAME_LIMIT", 16)
     with path.open("rb") as handle, pytest.raises(ValueError, match="byte limit"):
         list(codec.read_snapshot(handle, validation=codec.TranscriptValidation()))
@@ -355,3 +364,94 @@ def test_unselected_archive_does_not_disqualify_loose_prefix(tmp_path: Path) -> 
     assert any("early needle" in entry.content for entry in parsed.entries)
     assert parsed.search_ready
     assert parsed.target.sources == (sources[0],)
+
+
+@pytest.mark.parametrize("damage", ["duplicate_marker", "torn_header", "oversized_header"])
+def test_malformed_renamed_snapshot_never_downgrades_to_native_jsonl(
+    tmp_path: Path, damage: str
+) -> None:
+    from meridian.lib.state.native_snapshot import TranscriptValidation
+
+    path = tmp_path / "renamed.jsonl"
+    data = _snapshot(path, ('{"text":"needle"}',))
+    if damage == "duplicate_marker":
+        data = data.replace(
+            b'"record":"meridian.native.snapshot"',
+            b'"record":"meridian.native.snapshot","record":"ordinary"',
+            1,
+        )
+    elif damage == "torn_header":
+        data = data.replace(b'"version":1}', b'"version":1', 1)
+    else:
+        data = data.replace(b"append-order journal", b"x" * 70_000)
+    path.write_bytes(data)
+    validation = TranscriptValidation()
+    with pytest.raises(ValueError):
+        list(iter_transcript_events(path, validation=validation))
+    assert validation.state == "corrupt"
+
+
+@pytest.mark.parametrize(
+    "change", ["missing_version", "bool_version", "float_version", "missing_marker"]
+)
+def test_wire_header_requires_explicit_exact_discriminator(tmp_path: Path, change: str) -> None:
+    path = tmp_path / "native-transcript.jsonl"
+    data = _snapshot(path)
+    header, seal = (json.loads(line) for line in data.splitlines())
+    if change == "missing_version":
+        del header["version"]
+    elif change == "bool_version":
+        header["version"] = True
+    elif change == "float_version":
+        header["version"] = 1.0
+    else:
+        del header["record"]
+    del seal["sha256"]
+    seal["sha256"] = hashlib.sha256(_canonical(header) + _canonical(seal)).hexdigest()
+    path.write_bytes(_canonical(header) + _canonical(seal))
+    with pytest.raises(ValueError):
+        list(iter_transcript_events(path))
+
+
+def test_snapshot_preview_bypasses_stream_append_checkpoint(tmp_path: Path, monkeypatch) -> None:
+    from meridian.lib.ops import session_preview
+    from meridian.lib.ops.session_target import SessionLogTarget, TranscriptSource
+
+    path = tmp_path / "history.jsonl"  # Renamed storage still must not become an append stream.
+    _snapshot(path, ('{"type":"assistant","message":{"content":"retained needle"}}',))
+    source = TranscriptSource("spawn_history", "p1", "claude", "snapshot", path)
+    target = SessionLogTarget("p1", "claude", path, "snapshot", (source,))
+    monkeypatch.setattr(session_preview, "resolve_roots_for_read", lambda _: None)
+    monkeypatch.setattr(session_preview, "resolve_session_log_target", lambda **_: target)
+    view = session_preview.SessionPreview(str(tmp_path)).refresh(
+        session_preview.PreviewIdentity("p1", history_id="fixture"), lambda: True
+    )
+    assert view is not None
+    assert "retained needle" in "\n".join(view.lines)
+    assert view.state == "current"
+
+
+def test_resolved_native_source_checks_snapshot_binding(tmp_path: Path) -> None:
+    from types import SimpleNamespace
+
+    from meridian.lib.core.types import HarnessId
+    from meridian.lib.ops.session_target import _resolve_adapter_file_target
+    from meridian.lib.ops.session_transcript import SessionLogRoute, parse_session_target
+
+    path = tmp_path / "copied-native.jsonl"
+    _snapshot(path)  # Valid empty snapshot for native-1, not selected-native.
+    target = _resolve_adapter_file_target(
+        project_root=tmp_path,
+        session_id="selected-native",
+        harness_id=HarnessId.PI,
+        adapter=SimpleNamespace(resolve_session_file=lambda **_: path),
+        config_root_hint=None,
+    )
+    assert target is not None
+    with pytest.raises(ValueError, match="binding"):
+        parse_session_target(
+            project_root=tmp_path,
+            runtime_root=None,
+            target=target,
+            route=SessionLogRoute("ref", "selected-native"),
+        )

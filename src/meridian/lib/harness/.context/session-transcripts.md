@@ -54,6 +54,9 @@ headers/seals never become conversational events. A shared `TranscriptValidation
 stays partial until verified EOF, separately from `rendering_reason`; search
 withholds unverified matches and preview refresh does not cache partial reads as
 current. This is read/codec support, not automatic native capture qualification.
+Resolved native files are distinct from explicit file inputs: their known native
+session/harness binding is checked when a storage header is encountered. Snapshots
+never use append checkpoints, even when their enclosing target is spawn-owned.
 
 ## Compaction Segments
 

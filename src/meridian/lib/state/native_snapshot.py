@@ -20,6 +20,7 @@ from meridian.lib.state.history_codec import TranscriptHeader
 
 NATIVE_SNAPSHOT_FILENAME = "native-transcript.jsonl"
 SNAPSHOT_RECORD = "meridian.native.snapshot"
+SNAPSHOT_RECORDS = frozenset((SNAPSHOT_RECORD, "meridian.native.event", "meridian.native.seal"))
 HEADER_LIMIT = 64 * 1024
 FRAME_LIMIT = 64 * 1024 * 1024
 _READ_CHUNK = 64 * 1024
@@ -40,6 +41,13 @@ class SnapshotHeader(BaseModel):
     dialect: Nonempty
     scope: Nonempty
     observed_from: str
+
+    @field_validator("version", mode="before")
+    @classmethod
+    def integer_version(cls, value: object) -> object:
+        if type(value) is not int:
+            raise ValueError("Snapshot version must be an integer")
+        return value
 
     @field_validator("observed_from")
     @classmethod
@@ -101,6 +109,19 @@ class TranscriptValidation:
     descriptor: SnapshotDescriptor | None = None
 
 
+def reject_unframed_storage_record(
+    event: dict[str, object], validation: TranscriptValidation | None = None
+) -> None:
+    """Keep permissive native/append readers from accepting broken storage frames."""
+    marker = event.get("record")
+    if isinstance(marker, str) and marker in SNAPSHOT_RECORDS:
+        reason = "Snapshot storage record outside a valid bounded header"
+        if validation is not None:
+            validation.state = "corrupt"
+            validation.reason = reason
+        raise ValueError(reason)
+
+
 class _Paused(Exception):
     pass
 
@@ -137,7 +158,10 @@ def _invalid_constant(value: str) -> object:
 def _object(raw: bytes | str) -> dict[str, object]:
     if isinstance(raw, bytes):
         raw = raw.decode("utf-8")
-    value = json.loads(raw, object_pairs_hook=_unique_object, parse_constant=_invalid_constant)
+    try:
+        value = json.loads(raw, object_pairs_hook=_unique_object, parse_constant=_invalid_constant)
+    except RecursionError as exc:
+        raise ValueError("Snapshot JSON nesting exceeds the decoder limit") from exc
     if not isinstance(value, dict):
         raise ValueError("Snapshot records must be JSON objects")
     return cast("dict[str, object]", value)
@@ -164,15 +188,43 @@ def _frame(handle: IO[bytes], limit: int, current: Callable[[], bool] | None) ->
             return b"".join(chunks)
 
 
-def snapshot_header(
-    handle: IO[bytes], *, current: Callable[[], bool] | None = None
-) -> SnapshotHeader:
-    """Read just the bounded header; this does not validate the snapshot body."""
-    line = _frame(handle, HEADER_LIMIT, current)
-    if not line:
-        raise ValueError("Missing snapshot header")
-    _object(line)
-    return SnapshotHeader.model_validate_json(line)
+def is_snapshot_prefix(raw: bytes) -> bool:
+    """Recognize reserved top-level markers without trusting a malformed header.
+
+    Decode individual top-level pairs with the JSON decoder, not a last-key-wins
+    dictionary. A later duplicate, torn suffix or oversized value cannot undo an
+    already observed storage marker. Nested native text is not a discriminator.
+    Full strict decoding and byte limits remain the reader's responsibility.
+    """
+    text = raw.decode("utf-8", errors="ignore").lstrip()
+    if not text.startswith("{"):
+        return False
+    decoder = json.JSONDecoder()
+
+    def skip_space(position: int) -> int:
+        while position < len(text) and text[position] in " \t\r\n":
+            position += 1
+        return position
+
+    position = 1
+    try:
+        while True:
+            position = skip_space(position)
+            key, position = decoder.raw_decode(text, position)
+            position = skip_space(position)
+            if text[position : position + 1] != ":":
+                return False
+            position += 1
+            position = skip_space(position)
+            value, position = decoder.raw_decode(text, position)
+            if key == "record" and isinstance(value, str) and value in SNAPSHOT_RECORDS:
+                return True
+            position = skip_space(position)
+            if text[position : position + 1] != ",":
+                return False
+            position += 1
+    except (ValueError, RecursionError):
+        return False
 
 
 class _Source:
@@ -261,7 +313,7 @@ def read_snapshot(
     *,
     validation: TranscriptValidation,
     current: Callable[[], bool] | None = None,
-    expected: SnapshotHeader | None = None,
+    check_header: Callable[[SnapshotHeader], None] | None = None,
 ) -> Iterator[dict[str, object]]:
     """Validate incrementally; yielded prefixes are unverified until final EOF.
 
@@ -274,10 +326,12 @@ def read_snapshot(
     validation.descriptor = None
     try:
         line = _frame(handle, HEADER_LIMIT, current)
-        _object(line)
+        value = _object(line)
+        if value.get("record") != SNAPSHOT_RECORD or type(value.get("version")) is not int:
+            raise ValueError("Missing or invalid snapshot header discriminator/version")
         header = SnapshotHeader.model_validate_json(line)
-        if expected is not None and header != expected:
-            raise ValueError("Snapshot header binding does not match the selected record")
+        if check_header is not None:
+            check_header(header)
         validation.header = header
         checksum = hashlib.sha256(line)
         contents = _Contents()
@@ -300,6 +354,8 @@ def read_snapshot(
                 validation.state = "complete"
                 validation.reason = None
                 return
+            if value.get("record") != "meridian.native.event":
+                raise ValueError("Missing or invalid snapshot event discriminator")
             record = SnapshotRecord.model_validate_json(line)
             payload = contents.add(record)
             checksum.update(line)

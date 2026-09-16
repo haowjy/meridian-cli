@@ -15,7 +15,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, ValidationError
 
-from meridian.lib.harness.transcript import transcript_revision
+from meridian.lib.harness.transcript import is_native_snapshot, transcript_revision
 from meridian.lib.harness.transcript_preview import (
     TRANSCRIPT_PREVIEW_VERSION,
     PreviewAccumulator,
@@ -28,7 +28,7 @@ from meridian.lib.state import session_store
 from meridian.lib.state.history import HistoryCursor, iter_history_events
 from meridian.lib.state.history_changes import HistorySource
 from meridian.lib.state.history_index import HistoryIndex
-from meridian.lib.state.native_snapshot import TranscriptValidation
+from meridian.lib.state.native_snapshot import TranscriptValidation, reject_unframed_storage_record
 from meridian.lib.state.retention_archive import catalog_heads, read_receipts, verify_archive
 
 
@@ -86,6 +86,7 @@ class _Snapshot(BaseModel):
     archive_digest: str | None = None
     complete: bool = True  # Source read/consistency; rendering support is separate.
     source: str = ""
+    appendable: bool = False
 
     def view(
         self,
@@ -190,7 +191,11 @@ class SessionPreview:
                 cursor = HistoryCursor()
                 device = inode = source_size = 0
                 tail = ""
-                managed = source.kind == "spawn_history" and source.path is not None
+                managed = (
+                    source.kind == "spawn_history"
+                    and source.path is not None
+                    and not is_native_snapshot(source.path)
+                )
                 if managed:
                     assert source.path is not None
                     info = source.path.stat()
@@ -215,6 +220,8 @@ class SessionPreview:
                     for event in events:
                         if not current():
                             return None
+                        if managed:
+                            reject_unframed_storage_record(event, validation)
                         accumulator.feed(event)
                     if source.kind == "archive":
                         assert source.path is not None and source.history_id is not None
@@ -252,6 +259,7 @@ class SessionPreview:
                     tail=tail,
                     archive_digest=archive_digest,
                     source=source.source_label,
+                    appendable=managed,
                 )
                 if (
                     validation.header is not None
@@ -281,7 +289,7 @@ class SessionPreview:
                     selected = catalog_heads(read_receipts(self.roots.runtime_root))
                     if selected.get(identity.history_id or "") != published_snapshot.archive_digest:
                         return None
-                if chosen.kind == "spawn_history" and chosen.path is not None:
+                if published_snapshot.appendable and chosen.path is not None:
                     if any(
                         before != after
                         for i, (before, after) in enumerate(zip(signatures, now, strict=True))
