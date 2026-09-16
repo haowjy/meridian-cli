@@ -116,6 +116,10 @@ parent signals, or supply the parent report.
   `OpenCodeStorageTranscriptProvider`). Independent of the spawn/write paths — reads
   only. See [.context/session-transcripts.md](.context/session-transcripts.md) for the
   normalization table and provider selection rules.
+- `transcript_capture.py` — streams and hashes native journals for sealed snapshot
+  publication. Does not own dialect completeness.
+- `capture_qualify.py` — per-harness `CaptureObserver` (`observe` / `incomplete_reason`).
+  New dialect = one observer + `observer_for` entry, not a patch to `NativeCapture`.
 
 ## Subpackages
 
