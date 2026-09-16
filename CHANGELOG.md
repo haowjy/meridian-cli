@@ -15,6 +15,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- Bump pinned `mars-agents` to 0.14.0 for target-constrained routing and bundle schema 4 / report schema 2.
 - Require Mars bundle schema 4/report schema 2; retain validated selection diagnostics in snapshots, previews, and spawn failures instead of unused fallback-chain transport.
 
 ### Fixed
