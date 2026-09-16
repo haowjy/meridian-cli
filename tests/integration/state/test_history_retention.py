@@ -308,6 +308,23 @@ def test_session_recovery_metadata_participates_in_portable_digest(tmp_path: Pat
     assert one.portable_digest != two.portable_digest
 
 
+def test_inventory_excludes_reserved_atomic_capture_temps(tmp_path: Path) -> None:
+    from meridian.lib.state.retention_archive import inventory
+
+    root = tmp_path / "runtime"
+    key = _terminal(root)
+    directory = root / "spawns" / key
+    (directory / ".native-transcript.jsonl.deadbeef.tmp").write_text("partial snapshot")
+    (directory / ".history.jsonl.deadbeef.tmp").write_text("partial history")
+    (directory / "notes.tmp").write_text("unrelated temp content")
+    names = {member.name for member in inventory(directory)}
+    assert ".native-transcript.jsonl.deadbeef.tmp" not in names
+    assert ".history.jsonl.deadbeef.tmp" not in names
+    assert "history.jsonl" in names and "state.json" in names
+    # The exclusion is reserved-name specific, not a blanket .tmp suffix skip.
+    assert "notes.tmp" in names
+
+
 def test_recent_session_activity_protects_old_transcript(tmp_path: Path) -> None:
     from meridian.lib.state import session_store
 

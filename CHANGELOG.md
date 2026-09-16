@@ -13,6 +13,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Refuse sealed publication for in-progress OpenCode responses and Pi-cancelled/truncated tails; share the Pi incomplete-stop vocabulary with the terminal resolver.
+- Exclude and clean reserved atomic capture temp files from portable inventory so interrupted captures cannot leak into archives.
 - Publish sealed native-transcript.jsonl after qualified post-stop capture; stop treating history.jsonl existence as capture completion.
 - Reject later-line reserved snapshot markers before tolerant JSONL decode; pause fallback reads between chunks.
 - Reject malformed renamed snapshot headers; verify selected native/history bindings and bypass stream checkpoints for snapshots.

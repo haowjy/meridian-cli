@@ -502,6 +502,179 @@ def test_known_incomplete_pi_tail_does_not_publish(tmp_path: Path, monkeypatch):
     _assert_not_captured(root, key)
 
 
+@pytest.mark.parametrize("stop_reason", ["cancel", "cancelled", "canceled"])
+def test_known_incomplete_pi_cancelled_tail_does_not_publish(
+    tmp_path: Path, monkeypatch, stop_reason: str
+):
+    project, root, key, native = _capture_fixture(tmp_path, monkeypatch)
+    native.write_text(
+        json.dumps({"type": "session", "version": 3, "id": "exact-native"})
+        + "\n"
+        + json.dumps(
+            {
+                "type": "message",
+                "id": "a",
+                "parentId": None,
+                "message": {
+                    "role": "assistant",
+                    "content": "user cancelled",
+                    "stopReason": stop_reason,
+                },
+            }
+        )
+        + "\n"
+    )
+    with pytest.raises(ValueError, match="incomplete"):
+        materialize_native_history(project, root, key)
+    _assert_not_captured(root, key)
+
+
+def test_known_incomplete_pi_truncated_tail_does_not_publish(tmp_path: Path, monkeypatch):
+    project, root, key, native = _capture_fixture(tmp_path, monkeypatch)
+    native.write_text(
+        json.dumps({"type": "session", "version": 3, "id": "exact-native"})
+        + "\n"
+        + json.dumps(
+            {
+                "type": "message",
+                "id": "a",
+                "parentId": None,
+                "message": {
+                    "role": "assistant",
+                    "content": "truncated answer",
+                    "stopReason": "length",
+                },
+            }
+        )
+        + "\n"
+    )
+    with pytest.raises(ValueError, match="incomplete"):
+        materialize_native_history(project, root, key)
+    _assert_not_captured(root, key)
+
+
+def test_pi_normal_stop_publishes(tmp_path: Path, monkeypatch):
+    project, root, key, native = _capture_fixture(tmp_path, monkeypatch)
+    native.write_text(
+        json.dumps({"type": "session", "version": 3, "id": "exact-native"})
+        + "\n"
+        + json.dumps(
+            {
+                "type": "message",
+                "id": "a",
+                "parentId": None,
+                "message": {
+                    "role": "assistant",
+                    "content": "finished answer",
+                    "stopReason": "stop",
+                },
+            }
+        )
+        + "\n"
+    )
+    materialize_native_history(project, root, key)
+    _assert_sealed_snapshot(_snapshot_path(root, key), contains="finished answer")
+
+
+def test_capture_retry_removes_stale_atomic_temps(tmp_path: Path, monkeypatch):
+    project, root, key, _native = _capture_fixture(tmp_path, monkeypatch)
+    spawn_dir = root / "spawns" / key
+    stale_snapshot = spawn_dir / ".native-transcript.jsonl.deadbeef.tmp"
+    stale_history = spawn_dir / ".history.jsonl.deadbeef.tmp"
+    stale_snapshot.write_text("partial snapshot")
+    stale_history.write_text("partial history")
+    materialize_native_history(project, root, key)
+    _assert_sealed_snapshot(_snapshot_path(root, key), contains="exact-native")
+    assert not stale_snapshot.exists()
+    assert not stale_history.exists()
+
+
+def _native_file_capture(tmp_path: Path, harness: str, events: list[dict[str, object]]):
+    from meridian.lib.harness.transcript_capture import native_capture
+
+    path = tmp_path / f"{harness}.jsonl"
+    path.write_text("".join(json.dumps(event) + "\n" for event in events))
+    return native_capture(kind="native_file", harness=harness, session_id="s", path=path)
+
+
+def test_codex_complete_tail_qualifies(tmp_path: Path):
+    capture = _native_file_capture(
+        tmp_path,
+        "codex",
+        [
+            {"type": "session_meta", "payload": {"id": "s"}},
+            {"type": "response_item", "payload": {"type": "message", "role": "assistant"}},
+            {"type": "task_started"},
+            {"type": "task_complete"},
+        ],
+    )
+    list(capture.records())
+    assert capture.finish() is not None
+
+
+def test_codex_open_task_tail_is_known_incomplete(tmp_path: Path):
+    capture = _native_file_capture(
+        tmp_path,
+        "codex",
+        [
+            {"type": "session_meta", "payload": {"id": "s"}},
+            {"type": "response_item", "payload": {"type": "message", "role": "assistant"}},
+            {"type": "task_started"},
+        ],
+    )
+    list(capture.records())
+    with pytest.raises(ValueError, match="incomplete"):
+        capture.finish()
+
+
+def test_codex_aborted_tail_is_known_incomplete(tmp_path: Path):
+    capture = _native_file_capture(
+        tmp_path,
+        "codex",
+        [
+            {"type": "session_meta", "payload": {"id": "s"}},
+            {"type": "turn_aborted"},
+        ],
+    )
+    list(capture.records())
+    with pytest.raises(ValueError, match="incomplete"):
+        capture.finish()
+
+
+def test_claude_complete_tail_qualifies(tmp_path: Path):
+    capture = _native_file_capture(
+        tmp_path,
+        "claude",
+        [{"type": "assistant", "message": {"role": "assistant", "content": []}}],
+    )
+    list(capture.records())
+    assert capture.finish() is not None
+
+
+def test_claude_error_tail_is_known_incomplete(tmp_path: Path):
+    capture = _native_file_capture(
+        tmp_path,
+        "claude",
+        [{"type": "result", "is_error": True}],
+    )
+    list(capture.records())
+    with pytest.raises(ValueError, match="incomplete"):
+        capture.finish()
+
+
+def test_claude_error_resolved_by_later_message_qualifies(tmp_path: Path):
+    capture = _native_file_capture(
+        tmp_path,
+        "claude",
+        [
+            {"type": "result", "is_error": True},
+            {"type": "assistant", "message": {"role": "assistant", "content": []}},
+        ],
+    )
+    list(capture.records())
+    assert capture.finish() is not None
+
+
 def test_corrupt_published_snapshot_is_not_overwritten(tmp_path: Path, monkeypatch):
     project, root, key, _ = _capture_fixture(tmp_path, monkeypatch)
     captured = _snapshot_path(root, key)
@@ -510,3 +683,70 @@ def test_corrupt_published_snapshot_is_not_overwritten(tmp_path: Path, monkeypat
     with pytest.raises(ValueError, match="corrupt"):
         materialize_native_history(project, root, key)
     assert captured.read_bytes() == before
+
+
+def _opencode_capture_fixture(
+    tmp_path: Path,
+    monkeypatch,
+    *,
+    messages: list[tuple[str, dict[str, object], list[dict[str, object]]]],
+):
+    from tests.support.opencode_db import write_opencode_db_session_with_parts
+
+    monkeypatch.setenv("MERIDIAN_HOME", str(tmp_path / "home"))
+    opencode_home = tmp_path / "opencode"
+    session_id = "ses_opencode_capture"
+    write_opencode_db_session_with_parts(
+        db_path=opencode_home / "opencode.db",
+        session_id=session_id,
+        messages=messages,
+    )
+    monkeypatch.setenv("OPENCODE_HOME", str(opencode_home))
+    project = tmp_path / "repo"
+    project.mkdir()
+    root = resolve_project_runtime_root_for_write(project)
+    key = spawn_store.start_spawn(
+        root,
+        chat_id="c1",
+        prompt="question",
+        harness="opencode",
+        model="test",
+        agent="coder",
+        kind="primary",
+        harness_session_id=session_id,
+    )
+    spawn_store.finalize_spawn(root, key, status="succeeded", exit_code=0, origin="runner")
+    return project, root, key
+
+
+def test_known_incomplete_opencode_response_does_not_publish(tmp_path: Path, monkeypatch):
+    project, root, key = _opencode_capture_fixture(
+        tmp_path,
+        monkeypatch,
+        messages=[
+            (
+                "assistant",
+                {"time": {"created": 1}},
+                [{"type": "text", "text": "partial answer..."}],
+            )
+        ],
+    )
+    with pytest.raises(ValueError, match="incomplete"):
+        materialize_native_history(project, root, key)
+    _assert_not_captured(root, key)
+
+
+def test_completed_opencode_response_publishes(tmp_path: Path, monkeypatch):
+    project, root, key = _opencode_capture_fixture(
+        tmp_path,
+        monkeypatch,
+        messages=[
+            (
+                "assistant",
+                {"time": {"created": 1, "completed": 2}},
+                [{"type": "text", "text": "final answer"}],
+            )
+        ],
+    )
+    materialize_native_history(project, root, key)
+    _assert_sealed_snapshot(_snapshot_path(root, key), contains="final answer")

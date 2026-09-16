@@ -580,9 +580,10 @@ def _require_inactive_native_session(root: Path, harness: str | None, session_id
 
 def materialize_native_history(project_root: Path, root: Path, spawn_id: str) -> None:
     from meridian.lib.harness.transcript_capture import native_capture
+    from meridian.lib.launch.constants import HISTORY_FILENAME
     from meridian.lib.ops.session_target import resolve_session_log_target
     from meridian.lib.ops.session_transcript import iter_source_events
-    from meridian.lib.platform.atomic import atomic_replace
+    from meridian.lib.platform.atomic import atomic_replace, iter_atomic_temp_paths
     from meridian.lib.state.event_store import utc_now_iso
     from meridian.lib.state.history import write_retained_child_stream
     from meridian.lib.state.history_codec import transcript_header
@@ -605,6 +606,11 @@ def materialize_native_history(project_root: Path, root: Path, spawn_id: str) ->
             if validation.state == "complete":
                 return
             raise ValueError("Published native snapshot is corrupt")
+        # Remove stale staging temps left by a previous interrupted capture.
+        spawn_dir = root / "spawns" / spawn_id
+        for reserved in (NATIVE_SNAPSHOT_FILENAME, HISTORY_FILENAME):
+            for stale in iter_atomic_temp_paths(spawn_dir, reserved):
+                stale.unlink(missing_ok=True)
         # Deferred until the published-aggregate guard: select from current authority.
         target = resolve_session_log_target(
             ref=spawn_id,

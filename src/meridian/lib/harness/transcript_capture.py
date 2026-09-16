@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any, Literal, cast
 
 from meridian.lib.harness.opencode_transcript import iter_opencode_db_events
+from meridian.lib.harness.semantics import PI_INCOMPLETE_STOP_REASONS
 from meridian.lib.state.event_store import utc_now_iso
 from meridian.lib.state.native_snapshot import (
     SnapshotObservation,
@@ -32,7 +33,6 @@ _DIALECT = {
     "opencode": "opencode.transcript.v1",
 }
 _SCOPE = "native-session"
-_PI_INCOMPLETE_STOP = frozenset({"error", "aborted", "abort", "length"})
 _OPENCODE_PENDING = frozenset({"pending", "running"})
 _CLAUDE_ERROR_STOP = frozenset({"error", "interrupted", "interruption", "cancellation", "canceled"})
 
@@ -58,6 +58,7 @@ class NativeCapture:
     _pending_tools: int = 0
     _pending_tool_ids: set[str] = field(default_factory=lambda: set())
     _last_assistant_stop: str | None = None
+    _last_assistant_data: dict[str, object] | None = None
     _last_error: bool = False
     _open_tasks: int = 0
     _aborted: bool = False
@@ -199,11 +200,13 @@ class NativeCapture:
 
     def _observe_opencode(self, event: dict[str, object]) -> None:
         if event.get("table") == "message":
-            _require_json_payload(event.get("row"))
+            payload = _require_json_payload(event.get("row"))
+            if str(payload.get("role", "")).strip().lower() == "assistant":
+                self._last_assistant_data = payload
             for part in cast("list[object]", event.get("parts") or ()):
                 if isinstance(part, dict):
-                    payload = _require_json_payload(part)
-                    _observe_opencode_part(payload, self)
+                    part_payload = _require_json_payload(part)
+                    _observe_opencode_part(part_payload, self)
         elif event.get("table") == "part":
             payload = _require_json_payload(event.get("row"))
             _observe_opencode_part(payload, self)
@@ -218,9 +221,19 @@ class NativeCapture:
             )
             return
         if self.harness == "pi" and (
-            self._last_assistant_stop in _PI_INCOMPLETE_STOP or self._pending_tools
+            self._last_assistant_stop in PI_INCOMPLETE_STOP_REASONS or self._pending_tools
         ):
             self.fail("known-incomplete", "Native capture is known incomplete: unfinished Pi tail")
+            return
+        if (
+            self.harness == "opencode"
+            and self._last_assistant_data is not None
+            and not _opencode_assistant_completed(self._last_assistant_data)
+        ):
+            self.fail(
+                "known-incomplete",
+                "Native capture is known incomplete: unfinished OpenCode response",
+            )
             return
         if self.harness == "claude" and (self._pending_tool_ids or self._last_error):
             self.fail(
@@ -298,6 +311,14 @@ def _observe_opencode_part(payload: dict[str, object], capture: NativeCapture) -
                 "known-incomplete",
                 "Native capture is known incomplete: unfinished OpenCode tool",
             )
+
+
+def _opencode_assistant_completed(data: dict[str, object]) -> bool:
+    """OpenCode marks a finished assistant response with ``time.completed``."""
+    time_obj = data.get("time")
+    if not isinstance(time_obj, dict):
+        return False
+    return cast("dict[str, object]", time_obj).get("completed") is not None
 
 
 def _walk_tool_balance(value: object, pending: set[str]) -> None:

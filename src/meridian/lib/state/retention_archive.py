@@ -22,7 +22,7 @@ from uuid import UUID, uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from meridian.lib.platform.atomic import fsync_directory
+from meridian.lib.platform.atomic import fsync_directory, is_atomic_temp_name
 from meridian.lib.platform.locking import lock_file
 from meridian.lib.state.atomic import append_durable_jsonl_line, atomic_write_text
 from meridian.lib.state.event_store import utc_now_iso
@@ -200,6 +200,16 @@ def _canonical_transcript_member(record: ArchivedRecord) -> str:
     return "history.jsonl"
 
 
+def _is_reserved_atomic_temp(name: str) -> bool:
+    from meridian.lib.launch.constants import HISTORY_FILENAME
+    from meridian.lib.state.native_snapshot import NATIVE_SNAPSHOT_FILENAME
+
+    return any(
+        is_atomic_temp_name(name, reserved)
+        for reserved in (NATIVE_SNAPSHOT_FILENAME, HISTORY_FILENAME)
+    )
+
+
 def inventory(directory: Path) -> tuple[Member, ...]:
     if directory.is_symlink():
         raise ValueError("Retained record directory must not be a symlink")
@@ -214,7 +224,11 @@ def inventory(directory: Path) -> tuple[Member, ...]:
             continue
         if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
             raise ValueError(f"Non-regular or hard-linked retained file: {path}")
-        if path.name in _EXCLUDED or path.suffix in {".lock", ".sock", ".sentinel"}:
+        if (
+            path.name in _EXCLUDED
+            or path.suffix in {".lock", ".sock", ".sentinel"}
+            or _is_reserved_atomic_temp(path.name)
+        ):
             continue
         checksum = hashlib.sha256()
         size = 0
@@ -533,11 +547,11 @@ def verify_archive(
                     raise ValueError("Transcript identity does not match selected record")
             for member in record.files:
                 relative = safe_member_name(member.name)
-                if PurePosixPath(relative).name in _EXCLUDED or PurePosixPath(relative).suffix in {
-                    ".lock",
-                    ".sock",
-                    ".sentinel",
-                }:
+                if (
+                    PurePosixPath(relative).name in _EXCLUDED
+                    or PurePosixPath(relative).suffix in {".lock", ".sock", ".sentinel"}
+                    or _is_reserved_atomic_temp(PurePosixPath(relative).name)
+                ):
                     raise ValueError("Runtime-control member in portable archive")
                 name = prefix + "aggregate/" + safe_member_name(member.name)
                 planned_names.add(name)
