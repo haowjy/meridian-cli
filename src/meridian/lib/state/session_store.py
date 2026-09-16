@@ -131,6 +131,25 @@ class ConversationModelSelection(BaseModel):
     ]
     provenance: dict[str, str] = Field(default_factory=dict)
 
+    @property
+    def literal_model(self) -> bool:
+        return self.canonical_model_id is not None or self.model_mode == "harness_default"
+
+    @property
+    def routing_token(self) -> str | None:
+        if self.selection_source == "explicit_override":
+            return self.requested_token
+        if self.selection_source == "recorded_selection":
+            return self.canonical_model_id or self.selected_token
+        return self.canonical_model_id or self.requested_token
+
+    @property
+    def mars_model(self) -> str | None:
+        token = self.routing_token
+        if self.provider_constraint and self.literal_model and token:
+            return f"{self.provider_constraint}/{token}"
+        return token
+
     @model_validator(mode="after")
     def validate_model_mode(self) -> Self:
         if self.model_mode == "named" and not (

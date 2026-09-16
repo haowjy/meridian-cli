@@ -100,7 +100,7 @@ from .policies import (
     SurfacePolicyInput,
     resolve_launch_policy,
 )
-from .policy_snapshot import build_launch_policy_snapshot
+from .policy_snapshot import build_launch_policy_snapshot, overlay_continue_model_selection
 from .prompt import (
     build_goal_instruction,
     build_primary_preamble,
@@ -1642,22 +1642,17 @@ def prepare_launch_surface(
         original = request.launch_policy_snapshot or resolved_request.launch_policy_snapshot
         assert original is not None
         resolved_request = resolved_request.model_copy(update={
-            "launch_policy_snapshot": original.model_copy(update={
-                "model": model_selection.canonical_model_id,
-                "harness": str(policies.harness),
-                "model_selection_requested_token": model_selection.requested_token,
-                "model_selection_selected_token": model_selection.selected_model_token,
-                "model_selection_canonical_id": model_selection.canonical_model_id,
-                "model_selection_harness_model_id": model_selection.harness_model_id,
-                "model_selection_harness_provenance": model_selection.harness_provenance,
-                "model_selection_provider_constraint": model_selection.provider_constraint,
-                "selection_report": policies.selection_report,
-                "field_provenance": {
+            "launch_policy_snapshot": overlay_continue_model_selection(
+                original,
+                harness=str(policies.harness),
+                model_selection=model_selection,
+                selection_report=policies.selection_report,
+                field_provenance={
                     **original.field_provenance,
                     "model_source": policies.field_provenance.model_source.value,
                     "harness_source": policies.field_provenance.harness_source.value,
                 },
-            }),
+            ),
         })
     elif (
         resolved_request.launch_policy_snapshot is not None

@@ -59,8 +59,10 @@ class SessionAttempt:
             "model_mode": "named" if canonical_model else "harness_default",
             "provider_constraint": snapshot.model_selection_provider_constraint,
             "selection_source": (
-                request.session.continue_selection_source
-                if is_exact_continue_session(request.session) else "initial_launch"
+                request.session.conversation_intent.selection_source
+                if is_exact_continue_session(request.session)
+                and request.session.conversation_intent is not None
+                else "initial_launch"
             ),
             "provenance": snapshot.field_provenance,
         })

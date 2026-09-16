@@ -1,7 +1,6 @@
 """Raw launch request DTOs persisted across prepare/execute boundaries."""
 
 from enum import StrEnum
-from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -10,7 +9,7 @@ from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
 from meridian.lib.core.overrides import RuntimeOverrides
 from meridian.lib.launch.composition import PromptDocument
 from meridian.lib.launch.launch_types import TerminalSurfaceMode
-from meridian.lib.state.session_store import SessionModelSelectionEvent
+from meridian.lib.state.session_store import ConversationModelSelection, SessionModelSelectionEvent
 from meridian.lib.tools import ToolsField
 
 
@@ -53,13 +52,7 @@ class SessionRequest(BaseModel):
     continue_source_tracked: bool = False
     continue_source_ref: str | None = None
     primary_session_mode: str | None = None
-    requested_model_override: str | None = None
-    continue_model_literal: bool = False
-    continue_provider_constraint: str | None = None
-    continue_selected_token: str | None = None
-    continue_selection_source: Literal[
-        "explicit_override", "recorded_selection", "initial_launch", "unknown"
-    ] = "initial_launch"
+    conversation_intent: ConversationModelSelection | None = None
 
 
 def is_exact_continue_session(session: SessionRequest) -> bool:

@@ -4,12 +4,17 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal, Protocol
+from typing import Protocol
 
 from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
 from meridian.lib.launch.policy_snapshot import managed_model_override_from_persisted_model
 from meridian.lib.launch.request import SessionRequest
-from meridian.lib.state.session_store import get_initial_model_selection, get_model_selection
+from meridian.lib.state.session_store import (
+    ConversationModelSelection,
+    SessionModelSelectionEvent,
+    get_initial_model_selection,
+    get_model_selection,
+)
 
 MODEL_OVERRIDE_WARNING = (
     "Continuing with an explicit model override. Resumed context may need processing "
@@ -187,6 +192,83 @@ def _reject_exact_continue_agent_override(
         )
 
 
+def _fallback_conversation_intent(
+    *,
+    source: ContinueReplaySource,
+    snapshot_model: str | None,
+) -> ConversationModelSelection:
+    snapshot = source.source_launch_policy_snapshot
+    if snapshot is None:
+        return ConversationModelSelection(
+            requested_token=snapshot_model,
+            selection_source="initial_launch",
+        )
+    canonical = snapshot.model_selection_canonical_id
+    model = canonical or snapshot_model
+    if model is None:
+        return ConversationModelSelection(
+            requested_token=None,
+            selected_token=snapshot.model_selection_selected_token,
+            model_mode="harness_default",
+            selection_source="initial_launch",
+        )
+    return ConversationModelSelection(
+        requested_token=model,
+        selected_token=snapshot.model_selection_selected_token,
+        canonical_model_id=canonical,
+        provider_constraint=snapshot.model_selection_provider_constraint,
+        selection_source="initial_launch",
+    )
+
+
+def _resolve_continue_conversation_intent(
+    *,
+    source: ContinueReplaySource,
+    replay_harness: str,
+    fork: bool,
+    requested_model_override: str | None,
+    runtime_root: Path | None,
+    snapshot_model: str | None,
+) -> tuple[ConversationModelSelection, SessionModelSelectionEvent | None]:
+    recorded = (
+        get_model_selection(runtime_root, replay_harness, source.harness_session_id)
+        if runtime_root is not None and source.harness_session_id is not None and not fork
+        else None
+    )
+    seed_event = (
+        get_initial_model_selection(
+            runtime_root, replay_harness, source.harness_session_id,
+            source_chat_id=source.source_chat_id,
+        )
+        if recorded is None and runtime_root is not None
+        and source.harness_session_id is not None and not fork
+        else None
+    )
+    if requested_model_override is not None:
+        return (
+            ConversationModelSelection(
+                requested_token=requested_model_override,
+                selection_source="explicit_override",
+            ),
+            seed_event,
+        )
+    if recorded is not None:
+        return recorded.model_copy(update={"selection_source": "recorded_selection"}), None
+    if seed_event is not None:
+        selection = seed_event.selection
+        routing = selection.canonical_model_id or selection.selected_token
+        return (
+            selection.model_copy(update={"requested_token": routing or selection.requested_token}),
+            seed_event,
+        )
+    if source.tracked and runtime_root is not None and not fork:
+        raise ValueError(
+            "No accepted model selection or original session history is recorded. "
+            "Continue with an explicit --model."
+        )
+    return _fallback_conversation_intent(source=source, snapshot_model=snapshot_model), None
+
+
 def build_continue_replay_contract(
     *,
     source: ContinueReplaySource,
@@ -210,60 +292,31 @@ def build_continue_replay_contract(
 
     snapshot = source.source_launch_policy_snapshot
     if snapshot is not None:
-        model = managed_model_override_from_persisted_model(snapshot.model)
+        snapshot_model = managed_model_override_from_persisted_model(snapshot.model)
         agent = _present(snapshot.agent)
         replay_agent_opt_out = snapshot.agent_opt_out
         skills = snapshot.skills
         passthrough_args = snapshot.extra_args
     else:
-        model = _present(source.source_model)
+        snapshot_model = _present(source.source_model)
         agent = None
         replay_agent_opt_out = False
         skills = ()
         passthrough_args = ()
 
-    recorded = (
-        get_model_selection(runtime_root, replay_harness, source.harness_session_id)
-        if runtime_root is not None and source.harness_session_id is not None and not fork
-        else None
+    intent, seed_event = _resolve_continue_conversation_intent(
+        source=source,
+        replay_harness=replay_harness,
+        fork=fork,
+        requested_model_override=requested_model_override,
+        runtime_root=runtime_root,
+        snapshot_model=snapshot_model,
     )
-    initial = (
-        get_initial_model_selection(
-            runtime_root, replay_harness, source.harness_session_id,
-            source_chat_id=source.source_chat_id,
-        )
-        if recorded is None and runtime_root is not None
-        and source.harness_session_id is not None and not fork else None
-    )
-    selected = recorded or (initial.selection if initial is not None else None)
-    provider_constraint = None
-    literal_model = False
-    selection_source: Literal[
-        "explicit_override", "recorded_selection", "initial_launch", "unknown"
-    ] = "initial_launch"
-    if requested_model_override is not None:
-        model = requested_model_override
-        selection_source = "explicit_override"
-    elif selected is not None:
-        model = selected.canonical_model_id or selected.selected_token
-        provider_constraint = selected.provider_constraint
-        literal_model = (
-            selected.canonical_model_id is not None or selected.model_mode == "harness_default"
-        )
-        selection_source = "recorded_selection" if recorded is not None else "initial_launch"
-    elif source.tracked and runtime_root is not None and not fork:
-        raise ValueError(
-            "No accepted model selection or original session history is recorded. "
-            "Continue with an explicit --model."
-        )
-    elif snapshot is not None:
-        model = snapshot.model_selection_canonical_id or model
-        provider_constraint = snapshot.model_selection_provider_constraint
-        literal_model = snapshot.model_selection_canonical_id is not None or model is None
 
     session = SessionRequest(
         requested_harness_session_id=source.harness_session_id,
-        initial_model_selection=initial,
+        initial_model_selection=seed_event,
+        conversation_intent=intent,
         continue_harness=replay_harness,
         continue_source_tracked=source.tracked,
         continue_source_ref=source.source_ref,
@@ -274,18 +327,10 @@ def build_continue_replay_contract(
         source_execution_cwd=source.source_execution_cwd,
         source_claude_config_dir=source.source_claude_config_dir,
         source_pi_session_dir=source.source_pi_session_dir,
-        requested_model_override=requested_model_override,
-        continue_model_literal=literal_model,
-        continue_provider_constraint=provider_constraint,
-        continue_selected_token=(
-            selected.selected_token if selected is not None else
-            snapshot.model_selection_selected_token if snapshot is not None else None
-        ),
-        continue_selection_source=selection_source,
     )
 
     return ContinueReplayContract(
-        model=model,
+        model=intent.routing_token,
         agent=agent,
         agent_opt_out=replay_agent_opt_out,
         skills=skills,

@@ -456,11 +456,7 @@ def _resolve_policy_from_bundle(surface: SurfacePolicyInput) -> ResolvedLaunchPo
         project_root=project_root,
         model_override=bundle_model_override,
         harness_override=bundle_harness_override,
-        excluded_harnesses=(
-            tuple(HarnessId(name) for name in dict.fromkeys(surface.config.deny_headless_harnesses))
-            if surface.surface == LaunchCompositionSurface.SPAWN_PREPARE
-            else ()
-        ),
+        excluded_harnesses=_excluded_harnesses_for_surface(surface),
         effort_override=explicit_user_overrides.effort,
         approval_override=explicit_user_overrides.approval,
         sandbox_override=explicit_user_overrides.sandbox,
@@ -631,6 +627,12 @@ def _model_selection_from_replayed_snapshot(
     )
 
 
+def _excluded_harnesses_for_surface(surface: SurfacePolicyInput) -> tuple[HarnessId, ...]:
+    if surface.surface != LaunchCompositionSurface.SPAWN_PREPARE:
+        return ()
+    return tuple(HarnessId(name) for name in dict.fromkeys(surface.config.deny_headless_harnesses))
+
+
 def resolve_launch_policy(surface: SurfacePolicyInput) -> ResolvedLaunchPolicy:
     """Resolve the shared launch policy boundary for one launch-like surface.
 
@@ -640,24 +642,23 @@ def resolve_launch_policy(surface: SurfacePolicyInput) -> ResolvedLaunchPolicy:
 
     if surface.continuation is not None:
         session = surface.continuation
-        model = session.requested_model_override or surface.cli_overrides.model or ""
+        intent = session.conversation_intent
+        model = (intent.mars_model if intent is not None else surface.cli_overrides.model) or ""
         snapshot = surface.policy_snapshot or LaunchPolicySnapshot(
-            model=model, harness=session.continue_harness or "",
+            model=surface.cli_overrides.model or model,
+            harness=session.continue_harness or "",
         )
         replayed = _resolve_policy_from_snapshot(surface=surface, snapshot=snapshot)
-        if session.continue_provider_constraint and session.continue_model_literal and model:
-            model = f"{session.continue_provider_constraint}/{model}"
         bundle = bundle_adapter.request_and_resolve(
             bundle_adapter.BundleRequest(
                 agent=None,
                 project_root=surface.catalog.project_root,
                 model_override=model,
-                literal_model=session.continue_model_literal or not model,
-                harness_override=session.continue_harness,
-                excluded_harnesses=(
-                    tuple(HarnessId(name) for name in surface.config.deny_headless_harnesses)
-                    if surface.surface == LaunchCompositionSurface.SPAWN_PREPARE else ()
+                literal_model=(
+                    intent.literal_model or not model if intent is not None else not model
                 ),
+                harness_override=session.continue_harness,
+                excluded_harnesses=_excluded_harnesses_for_surface(surface),
                 effort_override=snapshot.execution_policy.effort,
                 approval_override=snapshot.execution_policy.approval,
                 sandbox_override=snapshot.execution_policy.sandbox,
@@ -665,14 +666,18 @@ def resolve_launch_policy(surface: SurfacePolicyInput) -> ResolvedLaunchPolicy:
             harness_registry=surface.harness_registry,
         )
         selected_token = bundle.model_token
-        if session.requested_model_override is None and session.continue_selected_token:
-            selected_token = session.continue_selected_token
+        if (
+            intent is not None
+            and intent.selection_source != "explicit_override"
+            and intent.selected_token
+        ):
+            selected_token = intent.selected_token
         return replace(
             replayed,
             model=bundle.model or None,
             routing=replace(replayed.routing, model=bundle.model or None),
             model_selection=ModelSelectionContext(
-                requested_token=session.requested_model_override or model,
+                requested_token=model,
                 selected_model_token=selected_token,
                 canonical_model_id=bundle.model,
                 harness_provenance=bundle.provenance.get("harness_source", "cli"),

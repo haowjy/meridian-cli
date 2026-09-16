@@ -33,6 +33,28 @@ class SnapshotModelSelection(Protocol):
     def harness_model_id(self) -> str | None: ...
 
 
+class ContinueModelSelectionOverlay(Protocol):
+    """Shape needed to copy continue routing fields onto a snapshot working copy."""
+
+    @property
+    def requested_token(self) -> str: ...
+
+    @property
+    def selected_model_token(self) -> str: ...
+
+    @property
+    def canonical_model_id(self) -> str: ...
+
+    @property
+    def harness_model_id(self) -> str | None: ...
+
+    @property
+    def harness_provenance(self) -> str: ...
+
+    @property
+    def provider_constraint(self) -> str | None: ...
+
+
 @dataclass(frozen=True)
 class ReplayedModelSelection:
     """Model-selection context reconstructed from a persisted snapshot."""
@@ -63,6 +85,32 @@ class ReplayedLaunchPolicySnapshot:
     model_selection: ReplayedModelSelection | None = None
     selection_report: dict[str, object] | None = None
     alias_catalog: dict[str, AliasEntry] | None = None
+
+
+def overlay_continue_model_selection(
+    snapshot: LaunchPolicySnapshot,
+    *,
+    harness: str,
+    model_selection: ContinueModelSelectionOverlay,
+    selection_report: dict[str, object] | None,
+    field_provenance: dict[str, str],
+) -> LaunchPolicySnapshot:
+    """Write continue routing onto a snapshot working copy; persist the same flat fields."""
+
+    return snapshot.model_copy(
+        update={
+            "model": model_selection.canonical_model_id,
+            "harness": harness,
+            "model_selection_requested_token": model_selection.requested_token,
+            "model_selection_selected_token": model_selection.selected_model_token,
+            "model_selection_canonical_id": model_selection.canonical_model_id,
+            "model_selection_harness_model_id": model_selection.harness_model_id,
+            "model_selection_harness_provenance": model_selection.harness_provenance,
+            "model_selection_provider_constraint": model_selection.provider_constraint,
+            "selection_report": selection_report,
+            "field_provenance": field_provenance,
+        }
+    )
 
 
 def managed_model_override_from_persisted_model(model: str) -> str | None:
@@ -323,5 +371,6 @@ __all__ = [
     "SnapshotModelSelection",
     "build_launch_policy_snapshot",
     "managed_model_override_from_persisted_model",
+    "overlay_continue_model_selection",
     "replay_launch_policy_snapshot",
 ]
