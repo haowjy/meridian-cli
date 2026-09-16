@@ -53,7 +53,10 @@ validates it; native dictionaries still use the existing normalizer. Storage
 headers/seals never become conversational events. A shared `TranscriptValidation`
 stays partial until verified EOF, separately from `rendering_reason`; search
 withholds unverified matches and preview refresh does not cache partial reads as
-current. This is read/codec support, not automatic native capture qualification.
+current. Capture qualification lives in `transcript_capture.py`: complete, known-incomplete,
+unavailable, or unsupported. Only complete observations are sealed into
+`native-transcript.jsonl`. JSONL capture keeps raw lines; OpenCode keeps versioned
+raw-row envelopes. Unfinished dialect tails refuse publication.
 Resolved native files are distinct from explicit file inputs: their known native
 session/harness binding is checked when a storage header is encountered. Snapshots
 never use append checkpoints, even when their enclosing target is spawn-owned.

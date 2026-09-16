@@ -436,46 +436,56 @@ __all__ = [
 ]
 
 
+def write_retained_child_stream(
+    runtime_root: Path,
+    spawn_id: str,
+    events: Iterator[dict[str, object]],
+) -> None:
+    """Copy a child stream into canonical history.jsonl. Caller holds the aggregate guard."""
+    from meridian.lib.platform.atomic import atomic_replace
+
+    state = read_state(runtime_root / "spawns", spawn_id, include_prompt=False)
+    if state is None or state.history_id is None or state.status not in TERMINAL_SPAWN_STATUSES:
+        raise ValueError("Native transcript capture requires an identified terminal record")
+    path = runtime_root / "spawns" / spawn_id / "history.jsonl"
+    if path.exists():
+        return
+    header = transcript_header(state, runtime_root.name)
+    stamp = state.terminal.finished_at if state.terminal else state.started_at or ""
+    HistoryChanges(runtime_root).mark(HistorySource(kind="spawn", key=spawn_id))
+    with atomic_replace(path, mode="wb", encoding=None, permissions=0o600) as handle:
+        line = (header.model_dump_json() + "\n").encode()
+        handle.write(line)
+        offset = len(line)
+        for seq, payload in enumerate(events):
+            line = (
+                json.dumps(
+                    {
+                        "seq": seq,
+                        "byte_offset": offset,
+                        "timestamp": stamp,
+                        "interrupt_epoch": 0,
+                        "event_type": "retained/native",
+                        "harness_id": state.harness,
+                        "payload": payload,
+                    },
+                    separators=(",", ":"),
+                    sort_keys=True,
+                )
+                + "\n"
+            ).encode()
+            handle.write(line)
+            offset += len(line)
+
+
 def ingest_portable_history(
     runtime_root: Path,
     spawn_id: str,
     events: Iterator[dict[str, object]],
 ) -> bool:
-    """Retain an otherwise harness-owned transcript once, after its process stops."""
-    from meridian.lib.platform.atomic import atomic_replace
+    """Retain a child stream once under the published-aggregate guard."""
 
     def retain() -> None:
-        state = read_state(runtime_root / "spawns", spawn_id, include_prompt=False)
-        if state is None or state.history_id is None or state.status not in TERMINAL_SPAWN_STATUSES:
-            raise ValueError("Native transcript capture requires an identified terminal record")
-        path = runtime_root / "spawns" / spawn_id / "history.jsonl"
-        if path.exists():
-            return
-        header = transcript_header(state, runtime_root.name)
-        stamp = state.terminal.finished_at if state.terminal else state.started_at or ""
-        HistoryChanges(runtime_root).mark(HistorySource(kind="spawn", key=spawn_id))
-        with atomic_replace(path, mode="wb", encoding=None, permissions=0o600) as handle:
-            line = (header.model_dump_json() + "\n").encode()
-            handle.write(line)
-            offset = len(line)
-            for seq, payload in enumerate(events):
-                line = (
-                    json.dumps(
-                        {
-                            "seq": seq,
-                            "byte_offset": offset,
-                            "timestamp": stamp,
-                            "interrupt_epoch": 0,
-                            "event_type": "retained/native",
-                            "harness_id": state.harness,
-                            "payload": payload,
-                        },
-                        separators=(",", ":"),
-                        sort_keys=True,
-                    )
-                    + "\n"
-                ).encode()
-                handle.write(line)
-                offset += len(line)
+        write_retained_child_stream(runtime_root, spawn_id, events)
 
     return mutate_published_spawn_artifact(runtime_root, SpawnId(spawn_id), retain)

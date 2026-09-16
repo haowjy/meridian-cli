@@ -300,7 +300,12 @@ def archive_history(
                 limited = True
                 break
             path = root / "spawns" / candidate.id / "history.jsonl"
-            if not path.exists():
+            try:
+                ready = _capture_ready(root, candidate, sessions.get(candidate.id))
+            except ValueError as exc:
+                errors.append(f"{candidate.id}: {exc}")
+                continue
+            if not ready:
                 preliminary = last_activity(candidate, sessions.get(candidate.id), "")
                 if eligible and datetime.fromisoformat(preliminary) > cutoff:
                     continue
@@ -506,6 +511,26 @@ session_archive = async_from_sync(session_archive_sync)
 session_restore = async_from_sync(session_restore_sync)
 
 
+def _capture_ready(root: Path, candidate: SpawnRecord, session: object) -> bool:
+    from meridian.lib.state.native_snapshot import (
+        NATIVE_SNAPSHOT_FILENAME,
+        complete_published_snapshot,
+    )
+
+    snapshot = root / "spawns" / candidate.id / NATIVE_SNAPSHOT_FILENAME
+    if snapshot.is_file():
+        validation = complete_published_snapshot(snapshot, history_id=candidate.history_id)
+        if validation.state == "complete":
+            return True
+        raise ValueError("published native snapshot is corrupt")
+    linked = session if isinstance(session, session_store.SessionRecord) else None
+    if candidate.kind == "primary":
+        harnesses, native_ids = native_identity_candidates(root, candidate, linked)
+        if harnesses and native_ids:
+            return False
+    return (root / "spawns" / candidate.id / "history.jsonl").exists()
+
+
 def _require_inactive_native_session(root: Path, harness: str | None, session_id: str) -> None:
     """Reject known same-runtime owners; this is not an external-writer fence."""
     scan = spawn_store.list_spawns(root)
@@ -554,13 +579,33 @@ def _require_inactive_native_session(root: Path, harness: str | None, session_id
 
 
 def materialize_native_history(project_root: Path, root: Path, spawn_id: str) -> None:
+    from meridian.lib.harness.transcript_capture import native_capture
     from meridian.lib.ops.session_target import resolve_session_log_target
     from meridian.lib.ops.session_transcript import iter_source_events
-    from meridian.lib.state.history import ingest_portable_history
+    from meridian.lib.platform.atomic import atomic_replace
+    from meridian.lib.state.event_store import utc_now_iso
+    from meridian.lib.state.history import write_retained_child_stream
+    from meridian.lib.state.history_codec import transcript_header
+    from meridian.lib.state.native_snapshot import (
+        NATIVE_SNAPSHOT_FILENAME,
+        SnapshotHeader,
+        SnapshotRecord,
+        complete_published_snapshot,
+        write_snapshot,
+    )
+    from meridian.lib.state.spawn_aggregate import mutate_published_spawn_artifact
 
-    def capture_events() -> Iterator[dict[str, object]]:
-        # Deferred until ingest holds the published-aggregate guard: select from
-        # current authority, not a target resolved before its binding could change.
+    def capture() -> None:
+        state = read_state(root / "spawns", spawn_id, include_prompt=False)
+        if state is None or state.history_id is None or state.status not in TERMINAL_SPAWN_STATUSES:
+            raise ValueError("Native transcript capture requires an identified terminal record")
+        snapshot = root / "spawns" / spawn_id / NATIVE_SNAPSHOT_FILENAME
+        if snapshot.is_file():
+            validation = complete_published_snapshot(snapshot, history_id=state.history_id)
+            if validation.state == "complete":
+                return
+            raise ValueError("Published native snapshot is corrupt")
+        # Deferred until the published-aggregate guard: select from current authority.
         target = resolve_session_log_target(
             ref=spawn_id,
             file_path=None,
@@ -570,15 +615,36 @@ def materialize_native_history(project_root: Path, root: Path, spawn_id: str) ->
         )
         source = target.sources[0]
         if source.kind == "spawn_history":
-            # Existing child streams retain their stream/attempt semantics. They
-            # are not native-primary observations and do not need native ownership.
-            yield from iter_source_events(source)
+            write_retained_child_stream(root, spawn_id, iter_source_events(source))
             return
+        observation = native_capture(
+            kind=source.kind,
+            harness=source.harness,
+            session_id=source.session_id,
+            path=source.path,
+        )
+        if observation.status != "complete":
+            raise ValueError(observation.reason or observation.status)
         _require_inactive_native_session(root, source.harness, source.session_id)
-        yield from iter_source_events(source)
-        _require_inactive_native_session(root, source.harness, source.session_id)
+        HistoryChanges(root).mark(HistorySource(kind="spawn", key=spawn_id))
+        header = SnapshotHeader(
+            transcript=transcript_header(state, root.name),
+            session_instance_id=state.session_instance_id,
+            harness=observation.harness,
+            native_session_id=source.session_id,
+            dialect=observation.dialect,
+            scope=observation.scope,
+            observed_from=observation.observed_from or utc_now_iso(),
+        )
+        with atomic_replace(snapshot, mode="wb", encoding=None, permissions=0o600) as handle:
 
-    if not ingest_portable_history(root, spawn_id, capture_events()):
+            def records() -> Iterator[SnapshotRecord]:
+                yield from observation.records()
+                _require_inactive_native_session(root, source.harness, source.session_id)
+
+            write_snapshot(handle, header, records(), observation.finish)
+
+    if not mutate_published_spawn_artifact(root, SpawnId(spawn_id), capture):
         raise ValueError(f"Native capture target is missing or historical: {spawn_id}")
 
 

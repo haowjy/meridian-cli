@@ -13,6 +13,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Publish sealed native-transcript.jsonl after qualified post-stop capture; stop treating history.jsonl existence as capture completion.
 - Reject later-line reserved snapshot markers before tolerant JSONL decode; pause fallback reads between chunks.
 - Reject malformed renamed snapshot headers; verify selected native/history bindings and bypass stream checkpoints for snapshots.
 - Keep unselected archive alternatives from suppressing ordinary loose-history search prefixes.

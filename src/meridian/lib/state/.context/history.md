@@ -61,8 +61,10 @@ read and are checked again before publication. Matched spawn bindings include th
 exact linked session/lease even when that session's native ID is absent; a reused
 chat's newer lease is not evidence about the older generation. Child preparation
 uses only its existing retained stream, never native-primary source fallback. This is an ownership precondition,
-not proof that provider input is complete or unchanged. The remaining snapshot
-repair must replace the old history.jsonl existence guard without losing stream bytes.
+not proof that provider input is complete or unchanged. Primary capture publishes
+`native-transcript.jsonl` only after a complete provider observation; a valid
+sealed snapshot is the idempotent no-op. Existence of `history.jsonl` is never
+that signal. Versioned ZIP membership/digest recipes remain.
 
 `native_snapshot.py` defines the separate sealed JSONL storage codec. It retains
 raw native JSON text in source/ordinal envelopes; a final digest binds header,
@@ -75,9 +77,9 @@ at header consumption, before any body record; explicit file reads impose no
 identity inferred from their filename. Reserved storage frames cannot fall through
 to permissive native or append-stream interpretation after a damaged header.
 Early close/budget exhaustion is partial; a valid empty seal is complete, not a
-reason to select another source. Automatic primary publication, qualified provider
-integration, canonical indexed selection and versioned archive declarations still
-need wiring; the codec alone does not make an existing partial stream reclaimable.
+reason to select another source. Qualified primary publication is wired; a spawn
+with a sealed snapshot is selected ahead of its stream. Versioned archive
+digest/descriptor recipes still need wiring.
 
 The index keeps current metadata, independent locations, generation aliases and
 session/work projections. Multiple ZIP copies remain candidates even with a

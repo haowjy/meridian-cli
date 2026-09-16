@@ -12,8 +12,36 @@ from meridian.lib.harness.pi_paths import resolve_pi_spawn_session_root
 from meridian.lib.ops.session_archive import materialize_native_history, session_stop_maintenance
 from meridian.lib.ops.session_target import resolve_session_log_target
 from meridian.lib.state import session_store, spawn_store
+from meridian.lib.state.native_snapshot import (
+    NATIVE_SNAPSHOT_FILENAME,
+    TranscriptValidation,
+    read_snapshot,
+)
 from meridian.lib.state.paths import resolve_project_runtime_root_for_write
 from meridian.lib.state.primary_meta import PrimaryMetadata, write_primary_metadata
+
+
+def _snapshot_path(root: Path, key: str) -> Path:
+    return root / "spawns" / key / NATIVE_SNAPSHOT_FILENAME
+
+
+def _assert_sealed_snapshot(path: Path, *, contains: str, excludes: str | None = None) -> None:
+    assert path.is_file()
+    text = path.read_text()
+    assert contains in text
+    if excludes is not None:
+        assert excludes not in text
+    validation = TranscriptValidation()
+    with path.open("rb") as handle:
+        list(read_snapshot(handle, validation=validation))
+    assert validation.state == "complete"
+    assert validation.descriptor is not None
+    assert validation.header is not None
+
+
+def _assert_not_captured(root: Path, key: str) -> None:
+    assert not _snapshot_path(root, key).exists()
+    assert not (root / "spawns" / key / "history.jsonl").exists()
 
 
 def test_stop_maintenance_captures_completed_spawn_after_chat_reuse(
@@ -64,14 +92,18 @@ def test_stop_maintenance_captures_completed_spawn_after_chat_reuse(
     latest = session_store.get_session_record(root, "c1")
     assert latest is not None and latest.spawn_id == keys[1]
     assert session_stop_maintenance(project, keys[0]) is None
-    captured = root / "spawns" / keys[0] / "history.jsonl"
-    assert captured.exists()
-    assert "old-native" in captured.read_text() and "new-native" not in captured.read_text()
-    assert not (root / "spawns" / keys[1] / "history.jsonl").exists()
+    captured = _snapshot_path(root, keys[0])
+    _assert_sealed_snapshot(captured, contains="old-native", excludes="new-native")
+    _assert_not_captured(root, keys[1])
     before = captured.read_bytes()
+    assert session_stop_maintenance(project, keys[0]) is None
+    assert captured.read_bytes() == before
+    (native_root / "timestamp_old-native.jsonl").unlink()
+    assert session_stop_maintenance(project, keys[0]) is None
+    assert captured.read_bytes() == before
     assert session_stop_maintenance(project, "p999999") is not None
     assert captured.read_bytes() == before
-    assert not (root / "spawns" / keys[1] / "history.jsonl").exists()
+    _assert_not_captured(root, keys[1])
 
 
 def _capture_fixture(tmp_path: Path, monkeypatch, *, native_id: str | None = "exact-native"):
@@ -103,7 +135,7 @@ def test_capture_does_not_discover_an_unrecorded_native_session(tmp_path: Path, 
     with pytest.raises(ValueError, match="exact native identity"):
         materialize_native_history(project, root, key)
     assert native.exists()
-    assert not (root / "spawns" / key / "history.jsonl").exists()
+    _assert_not_captured(root, key)
 
 
 def test_capture_missing_exact_source_never_uses_newer_detection(tmp_path: Path, monkeypatch):
@@ -111,7 +143,7 @@ def test_capture_missing_exact_source_never_uses_newer_detection(tmp_path: Path,
     monkeypatch.setattr(PiAdapter, "detect_primary_session_id", lambda *a, **kw: "exact-native")
     with pytest.raises(FileNotFoundError, match="missing-native"):
         materialize_native_history(project, root, key)
-    assert not (root / "spawns" / key / "history.jsonl").exists()
+    _assert_not_captured(root, key)
 
 
 def test_capture_resolution_bypasses_owned_stream_and_disposable_index(tmp_path: Path, monkeypatch):
@@ -145,7 +177,7 @@ def test_capture_conflicting_sidecar_identity_is_not_a_precedence_choice(
     )
     with pytest.raises(ValueError, match="Conflicting native identity"):
         materialize_native_history(project, root, key)
-    assert not (root / "spawns" / key / "history.jsonl").exists()
+    _assert_not_captured(root, key)
 
 
 def test_capture_rejects_active_same_native_owner_then_retries(tmp_path: Path, monkeypatch):
@@ -162,11 +194,11 @@ def test_capture_rejects_active_same_native_owner_then_retries(tmp_path: Path, m
     )
     with pytest.raises(ValueError, match="active native owner"):
         materialize_native_history(project, root, key)
-    assert not (root / "spawns" / key / "history.jsonl").exists()
+    _assert_not_captured(root, key)
     spawn_store.finalize_spawn(root, owner, status="succeeded", exit_code=0, origin="runner")
     materialize_native_history(project, root, key)
-    assert (root / "spawns" / key / "history.jsonl").exists()
-    assert not (root / "spawns" / owner / "history.jsonl").exists()
+    _assert_sealed_snapshot(_snapshot_path(root, key), contains="exact-native")
+    _assert_not_captured(root, owner)
 
 
 def test_capture_rejects_same_native_session_lease_without_spawn(tmp_path: Path, monkeypatch):
@@ -175,11 +207,11 @@ def test_capture_rejects_same_native_session_lease_without_spawn(tmp_path: Path,
     try:
         with pytest.raises(ValueError, match="active native owner"):
             materialize_native_history(project, root, key)
-        assert not (root / "spawns" / key / "history.jsonl").exists()
+        _assert_not_captured(root, key)
     finally:
         session_store.stop_session(root, "c2")
     materialize_native_history(project, root, key)
-    assert (root / "spawns" / key / "history.jsonl").exists()
+    _assert_sealed_snapshot(_snapshot_path(root, key), contains="exact-native")
 
 
 def test_capture_exact_generation_supplies_identity_not_newer_chat(tmp_path: Path, monkeypatch):
@@ -197,8 +229,9 @@ def test_capture_exact_generation_supplies_identity_not_newer_chat(tmp_path: Pat
     session_store.start_session(root, "pi", "new-native", "test", chat_id="c1", kind="primary")
     try:
         materialize_native_history(project, root, key)
-        captured = root / "spawns" / key / "history.jsonl"
-        assert "exact-native" in captured.read_text() and "new-native" not in captured.read_text()
+        _assert_sealed_snapshot(
+            _snapshot_path(root, key), contains="exact-native", excludes="new-native"
+        )
     finally:
         session_store.stop_session(root, "c1")
 
@@ -250,35 +283,42 @@ def test_capture_rejects_unreleased_live_scope_on_terminal_owner(tmp_path: Path,
     spawn_store.finalize_spawn(root, owner, status="succeeded", exit_code=0, origin="runner")
     with pytest.raises(ValueError, match="active native owner"):
         materialize_native_history(project, root, key)
-    assert not (root / "spawns" / key / "history.jsonl").exists()
+    _assert_not_captured(root, key)
     mark_scope_released(root, SpawnId(owner), scope.release_id)
     materialize_native_history(project, root, key)
-    assert (root / "spawns" / key / "history.jsonl").exists()
+    _assert_sealed_snapshot(_snapshot_path(root, key), contains="exact-native")
 
 
 def test_capture_rechecks_owner_after_native_read(tmp_path: Path, monkeypatch):
-    from meridian.lib.ops import session_transcript
+    from meridian.lib.harness import transcript_capture
 
     project, root, key, _ = _capture_fixture(tmp_path, monkeypatch)
-    read_source = session_transcript.iter_source_events
+    original = transcript_capture.native_capture
 
-    def source_with_new_owner(source):
-        yield from read_source(source)
-        spawn_store.start_spawn(
-            root,
-            chat_id="c2",
-            harness="pi",
-            harness_session_id="exact-native",
-            kind="primary",
-            prompt="continued",
-            model="test",
-            agent="coder",
-        )
+    def capture_with_new_owner(**kwargs):
+        observation = original(**kwargs)
+        records = observation.records
 
-    monkeypatch.setattr(session_transcript, "iter_source_events", source_with_new_owner)
+        def records_with_owner():
+            yield from records()
+            spawn_store.start_spawn(
+                root,
+                chat_id="c2",
+                harness="pi",
+                harness_session_id="exact-native",
+                kind="primary",
+                prompt="continued",
+                model="test",
+                agent="coder",
+            )
+
+        observation.records = records_with_owner
+        return observation
+
+    monkeypatch.setattr(transcript_capture, "native_capture", capture_with_new_owner)
     with pytest.raises(ValueError, match="active native owner"):
         materialize_native_history(project, root, key)
-    assert not (root / "spawns" / key / "history.jsonl").exists()
+    _assert_not_captured(root, key)
 
 
 @pytest.mark.parametrize("binding", ["state", "sidecar"])
@@ -312,7 +352,7 @@ def test_capture_joins_native_identity_to_exact_linked_live_lease(
         assert session_store.is_session_lease_owner_alive(root, "c2")
         with pytest.raises(ValueError, match="active native owner"):
             materialize_native_history(project, root, key)
-        assert not (root / "spawns" / key / "history.jsonl").exists()
+        _assert_not_captured(root, key)
     finally:
         session_store.stop_session(root, "c2")
     # A new generation using the same c2 alias must not lend its lease to the
@@ -320,7 +360,7 @@ def test_capture_joins_native_identity_to_exact_linked_live_lease(
     session_store.start_session(root, "pi", "different-native", "test", chat_id="c2")
     try:
         materialize_native_history(project, root, key)
-        assert (root / "spawns" / key / "history.jsonl").exists()
+        _assert_sealed_snapshot(_snapshot_path(root, key), contains="exact-native")
     finally:
         session_store.stop_session(root, "c2")
 
@@ -384,7 +424,7 @@ def test_capture_owner_harness_matching_uses_resolver_normalization(
     )
     with pytest.raises(ValueError, match="active native owner"):
         materialize_native_history(project, root, key)
-    assert not (root / "spawns" / key / "history.jsonl").exists()
+    _assert_not_captured(root, key)
 
 
 @pytest.mark.parametrize("linked_harness", ["pi", "codex"])
@@ -418,10 +458,55 @@ def test_capture_conflicting_owner_facts_are_conservative_without_cross_harness_
             # writer. It is not eligible for capture itself, either.
             with pytest.raises(ValueError, match="active native owner"):
                 materialize_native_history(project, root, key)
-            assert not (root / "spawns" / key / "history.jsonl").exists()
+            _assert_not_captured(root, key)
         else:
             # Equal opaque session IDs in distinct harness namespaces do not match.
             materialize_native_history(project, root, key)
-            assert (root / "spawns" / key / "history.jsonl").exists()
+            _assert_sealed_snapshot(_snapshot_path(root, key), contains="exact-native")
     finally:
         session_store.stop_session(root, "c2")
+
+
+def test_history_jsonl_existence_is_not_capture_complete(tmp_path: Path, monkeypatch):
+    project, root, key, _native = _capture_fixture(tmp_path, monkeypatch)
+    stream = root / "spawns" / key / "history.jsonl"
+    stream.write_bytes(b'{"partial":true}\n')
+    before = stream.read_bytes()
+    materialize_native_history(project, root, key)
+    _assert_sealed_snapshot(_snapshot_path(root, key), contains="exact-native")
+    assert stream.read_bytes() == before
+    assert "retained/native" not in stream.read_text()
+
+
+def test_known_incomplete_pi_tail_does_not_publish(tmp_path: Path, monkeypatch):
+    project, root, key, native = _capture_fixture(tmp_path, monkeypatch)
+    native.write_text(
+        json.dumps({"type": "session", "version": 3, "id": "exact-native"})
+        + "\n"
+        + json.dumps(
+            {
+                "type": "message",
+                "id": "a",
+                "parentId": None,
+                "message": {
+                    "role": "assistant",
+                    "content": "cut short",
+                    "stopReason": "aborted",
+                },
+            }
+        )
+        + "\n"
+    )
+    with pytest.raises(ValueError, match="incomplete"):
+        materialize_native_history(project, root, key)
+    _assert_not_captured(root, key)
+
+
+def test_corrupt_published_snapshot_is_not_overwritten(tmp_path: Path, monkeypatch):
+    project, root, key, _ = _capture_fixture(tmp_path, monkeypatch)
+    captured = _snapshot_path(root, key)
+    captured.write_text("{not a snapshot\n")
+    before = captured.read_bytes()
+    with pytest.raises(ValueError, match="corrupt"):
+        materialize_native_history(project, root, key)
+    assert captured.read_bytes() == before

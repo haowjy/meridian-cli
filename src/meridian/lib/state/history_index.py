@@ -1066,6 +1066,11 @@ class HistoryIndex:
         for location in locations:
             state = SpawnRecord.model_validate_json(location["record_json"])
             if location["kind"] == "spawn":
+                from meridian.lib.state.native_snapshot import NATIVE_SNAPSHOT_FILENAME
+
+                snapshot = self.root / "spawns" / state.id / NATIVE_SNAPSHOT_FILENAME
+                if snapshot.is_file():
+                    return (HistoryReadTarget(state, snapshot),)
                 path = self.root / "spawns" / state.id / "history.jsonl"
                 if path.is_file():
                     from meridian.lib.state.history_codec import TranscriptHeader

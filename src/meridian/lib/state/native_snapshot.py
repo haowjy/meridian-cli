@@ -12,7 +12,9 @@ import json
 from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
 from typing import IO, Annotated, Literal, cast
+from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -416,3 +418,36 @@ def read_snapshot(
         validation.state = "unavailable"
         validation.reason = str(exc)[:1024]
         raise
+
+
+def complete_published_snapshot(
+    path: Path,
+    *,
+    history_id: UUID | None = None,
+    harness: str | None = None,
+    native_session_id: str | None = None,
+) -> TranscriptValidation:
+    """Validate an already published snapshot; missing is unavailable, not overwrite permission."""
+    validation = TranscriptValidation()
+    if not path.is_file():
+        validation.state = "unavailable"
+        validation.reason = "Native snapshot is missing"
+        return validation
+
+    def check_header(header: SnapshotHeader) -> None:
+        if history_id is not None and header.transcript.history_id != history_id:
+            raise ValueError("Snapshot history binding does not match the selected record")
+        if harness is not None and header.harness != harness:
+            raise ValueError("Snapshot harness binding does not match the selected record")
+        if native_session_id is not None and header.native_session_id != native_session_id:
+            raise ValueError("Snapshot native binding does not match the selected session")
+
+    try:
+        with path.open("rb") as handle:
+            for _ in read_snapshot(handle, validation=validation, check_header=check_header):
+                pass
+    except (ValueError, OSError, UnicodeError):
+        if validation.state not in {"corrupt", "unavailable"}:
+            validation.state = "corrupt"
+            validation.reason = validation.reason or "Published native snapshot is invalid"
+    return validation

@@ -14,7 +14,7 @@ from meridian.lib.harness.transcript import (
 
 _MESSAGE_BYTES = 16 * 1024
 _SETUP_BYTES = 2 * 1024
-TRANSCRIPT_PREVIEW_VERSION = 6
+TRANSCRIPT_PREVIEW_VERSION = 7
 
 
 def _clip(text: str, limit: int) -> str:

@@ -1,5 +1,10 @@
 # state/ — must-do follow-ups
 
+- Versioned ZIP membership/digest recipe and immutable capture descriptor for
+  native-transcript.jsonl (native-transcript-capture.md stage 4). Inventory now
+  accepts a sealed snapshot as the transcript member; old publisher ZIPs keep
+  implicit history.jsonl. Do not invent descriptors for restored old records.
+
 - process_scope_projection.py callers in spawn_service.py and process_cleanup.py:
   move synchronous projection reads off the async event-loop thread with
   `asyncio.to_thread()`. Reads now have a bounded lock wait, but can still block

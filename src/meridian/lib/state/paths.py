@@ -437,10 +437,18 @@ def resolve_spawn_history_path(
 
 
 def resolve_spawn_output_path(runtime_root: Path, spawn_id: SpawnId | str) -> Path | None:
-    """Resolve spawn transcript output with canonical history taking precedence."""
+    """Resolve spawn transcript output with a sealed snapshot taking precedence."""
 
     from meridian.lib.launch.constants import OUTPUT_FILENAME
+    from meridian.lib.state.native_snapshot import NATIVE_SNAPSHOT_FILENAME
 
+    snapshot = (
+        RuntimePaths.from_root_dir(runtime_root).spawns_dir
+        / str(spawn_id)
+        / NATIVE_SNAPSHOT_FILENAME
+    )
+    if snapshot.is_file():
+        return snapshot
     history = resolve_spawn_history_path(runtime_root, spawn_id)
     if history is not None:
         return history
