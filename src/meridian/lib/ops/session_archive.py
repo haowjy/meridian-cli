@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 from graphlib import TopologicalSorter
 from pathlib import Path
@@ -514,13 +513,15 @@ session_restore = async_from_sync(session_restore_sync)
 def _capture_ready(root: Path, candidate: SpawnRecord, session: object) -> bool:
     from meridian.lib.state.native_snapshot import (
         NATIVE_SNAPSHOT_FILENAME,
-        complete_published_snapshot,
+        canonical_transcript_path,
+        published_snapshot_state,
     )
 
-    snapshot = root / "spawns" / candidate.id / NATIVE_SNAPSHOT_FILENAME
-    if snapshot.is_file():
-        validation = complete_published_snapshot(snapshot, history_id=candidate.history_id)
-        if validation.state == "complete":
+    spawn_dir = root / "spawns" / candidate.id
+    transcript = canonical_transcript_path(spawn_dir)
+    if transcript is not None and transcript.name == NATIVE_SNAPSHOT_FILENAME:
+        state = published_snapshot_state(transcript, history_id=candidate.history_id)
+        if state == "complete":
             return True
         raise ValueError("published native snapshot is corrupt")
     linked = session if isinstance(session, session_store.SessionRecord) else None
@@ -528,7 +529,7 @@ def _capture_ready(root: Path, candidate: SpawnRecord, session: object) -> bool:
         harnesses, native_ids = native_identity_candidates(root, candidate, linked)
         if harnesses and native_ids:
             return False
-    return (root / "spawns" / candidate.id / "history.jsonl").exists()
+    return transcript is not None
 
 
 def _require_inactive_native_session(root: Path, harness: str | None, session_id: str) -> None:
@@ -590,8 +591,8 @@ def materialize_native_history(project_root: Path, root: Path, spawn_id: str) ->
     from meridian.lib.state.native_snapshot import (
         NATIVE_SNAPSHOT_FILENAME,
         SnapshotHeader,
-        SnapshotRecord,
-        complete_published_snapshot,
+        SnapshotObservation,
+        published_snapshot_state,
         write_snapshot,
     )
     from meridian.lib.state.spawn_aggregate import mutate_published_spawn_artifact
@@ -601,10 +602,10 @@ def materialize_native_history(project_root: Path, root: Path, spawn_id: str) ->
         if state is None or state.history_id is None or state.status not in TERMINAL_SPAWN_STATUSES:
             raise ValueError("Native transcript capture requires an identified terminal record")
         snapshot = root / "spawns" / spawn_id / NATIVE_SNAPSHOT_FILENAME
-        if snapshot.is_file():
-            validation = complete_published_snapshot(snapshot, history_id=state.history_id)
-            if validation.state == "complete":
-                return
+        snapshot_state = published_snapshot_state(snapshot, history_id=state.history_id)
+        if snapshot_state == "complete":
+            return
+        if snapshot_state == "corrupt":
             raise ValueError("Published native snapshot is corrupt")
         # Remove stale staging temps left by a previous interrupted capture.
         spawn_dir = root / "spawns" / spawn_id
@@ -644,11 +645,11 @@ def materialize_native_history(project_root: Path, root: Path, spawn_id: str) ->
         )
         with atomic_replace(snapshot, mode="wb", encoding=None, permissions=0o600) as handle:
 
-            def records() -> Iterator[SnapshotRecord]:
-                yield from observation.records()
+            def finish() -> SnapshotObservation:
                 _require_inactive_native_session(root, source.harness, source.session_id)
+                return observation.finish()
 
-            write_snapshot(handle, header, records(), observation.finish)
+            write_snapshot(handle, header, observation.records(), finish)
 
     if not mutate_published_spawn_artifact(root, SpawnId(spawn_id), capture):
         raise ValueError(f"Native capture target is missing or historical: {spawn_id}")

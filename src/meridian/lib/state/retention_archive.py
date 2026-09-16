@@ -17,7 +17,7 @@ import zlib
 from collections.abc import Callable, Generator, Iterable, Iterator
 from contextlib import contextmanager
 from pathlib import Path, PurePosixPath
-from typing import Any, Literal, NamedTuple
+from typing import IO, Any, Literal, NamedTuple
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -28,6 +28,13 @@ from meridian.lib.state.atomic import append_durable_jsonl_line, atomic_write_te
 from meridian.lib.state.event_store import utc_now_iso
 from meridian.lib.state.history_changes import HistoryChanges, HistorySource
 from meridian.lib.state.history_codec import TranscriptHeader
+from meridian.lib.state.native_snapshot import (
+    NATIVE_SNAPSHOT_FILENAME,
+    TranscriptValidation,
+    canonical_transcript_member,
+    complete_published_snapshot,
+    read_snapshot,
+)
 from meridian.lib.state.session_store import SessionRecord
 from meridian.lib.state.spawn.model import SpawnRecord
 from meridian.lib.state.spawn.repository import StoredSpawnState, record_to_stored_state
@@ -191,18 +198,8 @@ def safe_member_name(name: str) -> str:
     return name
 
 
-def _canonical_transcript_member(record: ArchivedRecord) -> str:
-    from meridian.lib.state.native_snapshot import NATIVE_SNAPSHOT_FILENAME
-
-    names = {member.name for member in record.files}
-    if NATIVE_SNAPSHOT_FILENAME in names:
-        return NATIVE_SNAPSHOT_FILENAME
-    return "history.jsonl"
-
-
 def _is_reserved_atomic_temp(name: str) -> bool:
     from meridian.lib.launch.constants import HISTORY_FILENAME
-    from meridian.lib.state.native_snapshot import NATIVE_SNAPSHOT_FILENAME
 
     return any(
         is_atomic_temp_name(name, reserved)
@@ -238,34 +235,30 @@ def inventory(directory: Path) -> tuple[Member, ...]:
                 size += len(chunk)
         members.append(Member(name=relative, size=size, sha256=checksum.hexdigest()))
     names = {member.name for member in members}
-    from meridian.lib.state.native_snapshot import (
-        NATIVE_SNAPSHOT_FILENAME,
-        complete_published_snapshot,
-    )
-
-    snapshot = directory / NATIVE_SNAPSHOT_FILENAME
-    if snapshot.is_file():
-        if "state.json" not in names:
-            raise ValueError("A retained record requires state.json")
-        stored = StoredSpawnState.model_validate_json((directory / "state.json").read_bytes())
-        if stored.prompt_length is not None and "starting-prompt.md" not in names:
-            raise ValueError("Missing required starting-prompt.md referenced by state")
-        validation = complete_published_snapshot(snapshot, history_id=stored.history_id)
+    transcript = canonical_transcript_member(names)
+    required = {"state.json", transcript}
+    if "state.json" not in names:
+        raise ValueError("A retained record requires state.json")
+    stored = StoredSpawnState.model_validate_json((directory / "state.json").read_bytes())
+    if stored.prompt_length is not None:
+        required.add("starting-prompt.md")
+    if not required <= names:
+        missing = sorted(required - names)
+        raise ValueError(f"Missing required retained record member: {missing}")
+    if transcript == NATIVE_SNAPSHOT_FILENAME:
+        validation = complete_published_snapshot(
+            directory / NATIVE_SNAPSHOT_FILENAME, history_id=stored.history_id
+        )
         if validation.state != "complete":
             raise ValueError("Incomplete or corrupt native snapshot")
-        return tuple(members)
-    if not {"state.json", "history.jsonl"} <= names:
-        raise ValueError("A retained record requires state.json and history.jsonl")
-    stored = StoredSpawnState.model_validate_json((directory / "state.json").read_bytes())
-    if stored.prompt_length is not None and "starting-prompt.md" not in names:
-        raise ValueError("Missing required starting-prompt.md referenced by state")
-    with (directory / "history.jsonl").open("rb") as handle:
-        handle.seek(0, os.SEEK_END)
-        if not handle.tell():
-            raise ValueError("Empty transcript")
-        handle.seek(-1, os.SEEK_END)
-        if handle.read(1) != b"\n":
-            raise ValueError("Incomplete transcript tail; source will not be reclaimed")
+    else:
+        with (directory / "history.jsonl").open("rb") as handle:
+            handle.seek(0, os.SEEK_END)
+            if not handle.tell():
+                raise ValueError("Empty transcript")
+            handle.seek(-1, os.SEEK_END)
+            if handle.read(1) != b"\n":
+                raise ValueError("Incomplete transcript tail; source will not be reclaimed")
     return tuple(members)
 
 
@@ -374,13 +367,7 @@ def capture_record(
         raise ValueError("Session history identity differs from its aggregate")
     files = inventory(directory)
     stored = StoredSpawnState.model_validate_json((directory / "state.json").read_bytes())
-    from meridian.lib.state.native_snapshot import NATIVE_SNAPSHOT_FILENAME
-
-    transcript = (
-        NATIVE_SNAPSHOT_FILENAME
-        if (directory / NATIVE_SNAPSHOT_FILENAME).is_file()
-        else "history.jsonl"
-    )
+    transcript = canonical_transcript_member(member.name for member in files)
     required = ("state.json", transcript) + (
         ("starting-prompt.md",) if stored.prompt_length is not None else ()
     )
@@ -506,7 +493,7 @@ def verify_archive(
             stored = StoredSpawnState.model_validate_json(
                 _member_bytes(archive, prefix + "aggregate/state.json", limit=_MAX_METADATA)
             )
-            transcript = _canonical_transcript_member(record)
+            transcript = canonical_transcript_member(m.name for m in record.files)
             required = {"state.json", transcript}
             if stored.prompt_length is not None:
                 required.add("starting-prompt.md")
@@ -773,26 +760,34 @@ def archive_locations(
     return tuple(available)
 
 
+class _HashingMemberReader:
+    """Hash and count a ZIP member while a streaming codec reads from it."""
+
+    def __init__(self, handle: IO[bytes]) -> None:
+        self._handle = handle
+        self.checksum = hashlib.sha256()
+        self.size = 0
+
+    def readline(self, size: int | None = -1, /) -> bytes:
+        chunk = self._handle.readline(size if size is not None else -1)
+        if chunk:
+            self.checksum.update(chunk)
+            self.size += len(chunk)
+        return chunk
+
+    def tell(self) -> int:
+        return self._handle.tell()
+
+
 def iter_archived_events(
     path: Path, history_id: UUID, manifest_sha256: str | None = None
 ) -> Iterator[dict[str, object]]:
     """Stream one verified member without reading/extracting other transcript bodies."""
-    from io import BytesIO
-
-    from meridian.lib.state.native_snapshot import (
-        NATIVE_SNAPSHOT_FILENAME,
-        TranscriptValidation,
-        read_snapshot,
-    )
-
     manifest = verify_archive(path, full=False, manifest_sha256=manifest_sha256)
-    snapshot_name = f"{_PREFIX}records/{history_id}/aggregate/{NATIVE_SNAPSHOT_FILENAME}"
-    history_name = f"{_PREFIX}records/{history_id}/aggregate/history.jsonl"
-    name = (
-        snapshot_name
-        if any(member.name == snapshot_name for member in manifest.members)
-        else history_name
+    member_name = canonical_transcript_member(
+        member.name.rsplit("/", 1)[-1] for member in manifest.members
     )
+    name = f"{_PREFIX}records/{history_id}/aggregate/{member_name}"
     expected = next((member for member in manifest.members if member.name == name), None)
     if expected is None:
         raise ValueError(f"Archive has no transcript for {history_id}")
@@ -805,14 +800,14 @@ def iter_archived_events(
         ):
             raise ValueError("Archive manifest does not match published receipt")
         with archive.open(name) as handle:
-            if name.endswith(NATIVE_SNAPSHOT_FILENAME):
-                data = handle.read()
-                checksum.update(data)
-                size = len(data)
+            if member_name == NATIVE_SNAPSHOT_FILENAME:
+                reader = _HashingMemberReader(handle)
                 validation = TranscriptValidation()
-                yield from read_snapshot(BytesIO(data), validation=validation)
+                yield from read_snapshot(reader, validation=validation)
                 if validation.state != "complete":
                     raise ValueError(validation.reason or "Archived native snapshot is incomplete")
+                checksum = reader.checksum
+                size = reader.size
             else:
                 for line in handle:
                     checksum.update(line)
