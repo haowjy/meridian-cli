@@ -55,8 +55,9 @@ validates it; native dictionaries still use the existing normalizer. Storage
 headers/seals never become conversational events. A shared `TranscriptValidation`
 stays partial until verified EOF, separately from `rendering_reason`; search
 withholds unverified matches and preview refresh does not cache partial reads as
-current. Capture qualification lives in `transcript_capture.py`: complete, known-incomplete,
-unavailable, or unsupported. Only complete observations are sealed into
+current. Capture qualification: `transcript_capture.py` streams, hashes, and records
+status (complete, known-incomplete, unavailable, or unsupported);
+`capture_qualify.py` observers own dialect tails. Only complete observations are sealed into
 `native-transcript.jsonl`. JSONL capture keeps raw lines; OpenCode keeps versioned
 raw-row envelopes. Unfinished dialect tails refuse publication.
 Resolved native files are distinct from explicit file inputs: their known native
