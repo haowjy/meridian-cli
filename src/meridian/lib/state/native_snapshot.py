@@ -13,11 +13,12 @@ from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import IO, Annotated, Literal, cast
+from typing import IO, Annotated, Literal, Protocol, cast
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from meridian.lib.launch.constants import HISTORY_FILENAME
 from meridian.lib.state.history_codec import TranscriptHeader
 
 NATIVE_SNAPSHOT_FILENAME = "native-transcript.jsonl"
@@ -29,6 +30,13 @@ _READ_CHUNK = 64 * 1024
 
 Nonempty = Annotated[str, Field(min_length=1)]
 Digest = Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
+
+
+class SnapshotStream(Protocol):
+    """Minimal line stream the snapshot reader needs; any seekable/line reader fits."""
+
+    def readline(self, size: int | None = -1, /) -> bytes: ...
+    def tell(self) -> int: ...
 
 
 class SnapshotHeader(BaseModel):
@@ -182,7 +190,7 @@ def _object(raw: bytes | str) -> dict[str, object]:
 
 
 def _read_chunks(
-    handle: IO[bytes],
+    handle: SnapshotStream,
     current: Callable[[], bool] | None,
     *,
     limit: int | None = None,
@@ -217,7 +225,7 @@ def _read_chunks(
     return b"".join(chunks)
 
 
-def _frame(handle: IO[bytes], limit: int, current: Callable[[], bool] | None) -> bytes:
+def _frame(handle: SnapshotStream, limit: int, current: Callable[[], bool] | None) -> bytes:
     line = _read_chunks(handle, current, limit=limit)
     if not line:
         return b""
@@ -227,7 +235,7 @@ def _frame(handle: IO[bytes], limit: int, current: Callable[[], bool] | None) ->
 
 
 def read_jsonl_frame(
-    handle: IO[bytes],
+    handle: SnapshotStream,
     *,
     current: Callable[[], bool] | None = None,
     end: int | None = None,
@@ -357,7 +365,7 @@ def write_snapshot(
 
 
 def read_snapshot(
-    handle: IO[bytes],
+    handle: SnapshotStream,
     *,
     validation: TranscriptValidation,
     current: Callable[[], bool] | None = None,
@@ -420,6 +428,51 @@ def read_snapshot(
         raise
 
 
+def canonical_transcript_path(spawn_dir: Path) -> Path | None:
+    """Select the authoritative conversation file for a spawn directory.
+
+    A sealed native snapshot wins over the managed append stream. This helper
+    owns only the ``snapshot else history`` precedence; callers that need to
+    validate the selection (identity, seal, or tail) do so on the result.
+    """
+    snapshot = spawn_dir / NATIVE_SNAPSHOT_FILENAME
+    if snapshot.is_file():
+        return snapshot
+    history = spawn_dir / HISTORY_FILENAME
+    if history.is_file():
+        return history
+    return None
+
+
+def canonical_transcript_member(names: Iterable[str]) -> str:
+    """Select the authoritative transcript member name from a member set."""
+    name_set = set(names)
+    if NATIVE_SNAPSHOT_FILENAME in name_set:
+        return NATIVE_SNAPSHOT_FILENAME
+    if HISTORY_FILENAME in name_set:
+        return HISTORY_FILENAME
+    raise ValueError("A retained record requires a canonical transcript member")
+
+
+def snapshot_binding(
+    *,
+    history_id: UUID | str | None = None,
+    harness: str | None = None,
+    native_session_id: str | None = None,
+) -> Callable[[SnapshotHeader], None]:
+    """Return a header validator that rejects mismatched snapshot bindings."""
+
+    def check_header(header: SnapshotHeader) -> None:
+        if history_id is not None and str(header.transcript.history_id) != str(history_id):
+            raise ValueError("Snapshot history binding does not match the selected record")
+        if harness is not None and header.harness != harness:
+            raise ValueError("Snapshot harness binding does not match the selected record")
+        if native_session_id is not None and header.native_session_id != native_session_id:
+            raise ValueError("Snapshot native binding does not match the selected session")
+
+    return check_header
+
+
 def complete_published_snapshot(
     path: Path,
     *,
@@ -433,15 +486,11 @@ def complete_published_snapshot(
         validation.state = "unavailable"
         validation.reason = "Native snapshot is missing"
         return validation
-
-    def check_header(header: SnapshotHeader) -> None:
-        if history_id is not None and header.transcript.history_id != history_id:
-            raise ValueError("Snapshot history binding does not match the selected record")
-        if harness is not None and header.harness != harness:
-            raise ValueError("Snapshot harness binding does not match the selected record")
-        if native_session_id is not None and header.native_session_id != native_session_id:
-            raise ValueError("Snapshot native binding does not match the selected session")
-
+    check_header = snapshot_binding(
+        history_id=history_id,
+        harness=harness,
+        native_session_id=native_session_id,
+    )
     try:
         with path.open("rb") as handle:
             for _ in read_snapshot(handle, validation=validation, check_header=check_header):
@@ -451,3 +500,25 @@ def complete_published_snapshot(
             validation.state = "corrupt"
             validation.reason = validation.reason or "Published native snapshot is invalid"
     return validation
+
+
+PublishedSnapshotState = Literal["complete", "corrupt", "missing"]
+
+
+def published_snapshot_state(
+    path: Path,
+    *,
+    history_id: UUID | None = None,
+    harness: str | None = None,
+    native_session_id: str | None = None,
+) -> PublishedSnapshotState:
+    """Report publication state for idempotent capture: complete, corrupt, or missing."""
+    if not path.is_file():
+        return "missing"
+    validation = complete_published_snapshot(
+        path,
+        history_id=history_id,
+        harness=harness,
+        native_session_id=native_session_id,
+    )
+    return "complete" if validation.state == "complete" else "corrupt"
