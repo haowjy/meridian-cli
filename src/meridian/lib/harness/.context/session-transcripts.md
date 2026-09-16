@@ -1,8 +1,8 @@
 # lib/harness/ — Session Transcripts
 
 `transcript.py` is the cross-harness read path for session data. It is independent of
-the spawn/write paths: it only reads JSONL event files that harnesses have already
-written.
+the spawn/write paths and reads existing provider storage: Meridian history JSONL,
+generic native JSONL, or OpenCode SQLite/legacy JSON storage.
 
 ## Canonical Tool Calls
 
@@ -40,7 +40,7 @@ one from the path:
 | Provider | When selected | What it reads |
 |---|---|---|
 | `HistoryJsonlTranscriptProvider` | `path.name == HISTORY_FILENAME` | Crash-tolerant history via `iter_history_events()` |
-| `OpenCodeStorageTranscriptProvider` | OpenCode storage paths | OpenCode SQLite/JSONL layout |
+| `OpenCodeStorageTranscriptProvider` | OpenCode storage paths | Read-only OpenCode SQLite first, then legacy JSON storage; a present empty DB session is authoritative |
 | `JsonlTranscriptProvider` | everything else | Raw JSONL, one event per line |
 
 Callers use `iter_transcript_events(path)` or `parse_transcript_file(path)`; they never
@@ -53,11 +53,9 @@ segment, `None` if absent). `consumed_setup_event_indexes` identifies raw event 
 consumed by setup extraction. Callers that iterate the raw event list beside parsed
 segments use it to avoid double-counting those events in the message stream.
 
-## Related Context
+## Provider-Specific Contracts
 
-- [CONTEXT.md](CONTEXT.md) — shared harness contracts
-
-## Pi journals and rendering limits
+### Pi Journals and Rendering Limits
 
 Pi native `message` and RPC `message_end` share message extraction. Native
 compactions create segments with recorded summaries; branch summaries and parent
@@ -66,7 +64,7 @@ The normalizer carries preceding-entry identity across preview checkpoints.
 Unknown material records/content set `rendering_reason`; consumers must not call
 that a complete empty rendering. Raw storage remains unchanged.
 
-## OpenCode raw transcript rows
+### OpenCode Raw Transcript Rows
 
 The DB provider emits `record=opencode.transcript`, version 1: one session row,
 message rows with their raw part rows, then unassociated session parts. All native
@@ -81,3 +79,7 @@ parts and malformed material retain an explicit rendering reason. Rendering
 support is not native capture qualification: a consistent DB transaction can
 still contain unfinished work. Do not use normalized display events as capture
 input or treat iterator creation as completed source validation.
+
+## Related Context
+
+- [CONTEXT.md](CONTEXT.md) — shared harness contracts
