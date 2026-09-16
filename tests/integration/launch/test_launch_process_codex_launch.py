@@ -17,6 +17,7 @@ from typing import Any
 import pytest
 
 from meridian.lib.config.settings import load_config
+from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
 from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.connections.base import ObserverEndpoint
 from meridian.lib.harness.passthrough.codex import CodexPassthrough
@@ -84,6 +85,10 @@ def _build_primary_launch_context(
             harness=harness_id.value,
             extra_args=extra_args,
             session=session or SessionRequest(),
+            launch_policy_snapshot=(
+                LaunchPolicySnapshot(model=model, harness=harness_id.value)
+                if session is not None else None
+            ),
         ),
         runtime=LaunchRuntime(
             argv_intent=LaunchArgvIntent.REQUIRED,
@@ -180,6 +185,7 @@ def test_run_harness_process_writes_codex_system_field_primary_projection_manife
             prompt_is_composed=False,
             model="gpt-5.4",
             harness=harness_id.value,
+            launch_policy_snapshot=LaunchPolicySnapshot(model="gpt-5.4", harness=harness_id.value),
             extra_args=(f"--append-system-prompt={harness_id.value} passthrough system prompt",),
             session=SessionRequest(
                 requested_harness_session_id="existing-codex-session",
