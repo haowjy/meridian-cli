@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from typing import Literal
 
 from meridian.lib.harness.projections._guards import (
     check_projection_drift as _check_projection_drift,
@@ -35,7 +36,7 @@ _SESSION_PAYLOAD_FIELDS: frozenset[str] = frozenset(
     }
 )
 
-_MESSAGE_FIELDS: frozenset[str] = frozenset({"appended_system_prompt"})
+_MESSAGE_FIELDS: frozenset[str] = frozenset({"appended_system_prompt", "model"})
 _REFERENCE_FIELDS: frozenset[str] = frozenset({"reference_items"})
 
 _ACCOUNTED_FIELDS: frozenset[str] = (
@@ -115,6 +116,18 @@ def project_opencode_spec_to_serve_command(
     return command
 
 
+def project_opencode_model(
+    model: str | None, *, id_field: Literal["id", "modelID"],
+) -> dict[str, str] | None:
+    """Project the provider-qualified selection to OpenCode's endpoint-specific model ref."""
+    if model is None:
+        return None
+    provider, separator, model_id = model.partition("/")
+    if not separator or not provider.strip() or not model_id.strip():
+        raise HarnessCapabilityMismatch("OpenCode model must be a provider/model identifier.")
+    return {"providerID": provider.strip(), id_field: model_id.strip()}
+
+
 def project_opencode_spec_to_session_payload(spec: ResolvedLaunchSpec) -> dict[str, object]:
     """Build session-creation payload for the OpenCode HTTP API."""
 
@@ -128,9 +141,9 @@ def project_opencode_spec_to_session_payload(spec: ResolvedLaunchSpec) -> dict[s
 
     payload: dict[str, object] = {}
 
-    if spec.model is not None:
-        payload["model"] = spec.model
-        payload["modelID"] = spec.model
+    model = project_opencode_model(spec.model, id_field="id")
+    if model is not None:
+        payload["model"] = model
 
     normalized_effort = (spec.effort or "").strip()
     if normalized_effort:
@@ -174,6 +187,7 @@ __all__ = [
     "_SESSION_PAYLOAD_FIELDS",
     "HarnessCapabilityMismatch",
     "_check_projection_drift",
+    "project_opencode_model",
     "project_opencode_spec_to_serve_command",
     "project_opencode_spec_to_session_payload",
 ]

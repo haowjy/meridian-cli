@@ -452,7 +452,7 @@ def spawn_create_sync(
                 prepared_request.model_selection_harness_provenance
             ),
             matched_policy_rule=getattr(prepared_request, "matched_policy_rule", None),
-            fallback_chain=tuple(getattr(prepared_request, "fallback_chain", ()) or ()),
+            selection_report=prepared_request.selection_report,
             terminal_surface_mode=(
                 terminal_surface_mode.value if terminal_surface_mode is not None else None
             ),
@@ -1943,20 +1943,34 @@ def _source_spawn_for_follow_up(
     project_root: Path,
     *,
     runtime_root: Path | None = None,
+    harness_hint: str | None = None,
 ) -> tuple[str, SpawnRecord, ResolvedSessionReference]:
     resolved_spawn_id = resolve_spawn_reference(
         project_root,
         payload_spawn_id,
         runtime_root=runtime_root,
     )
-    row = read_spawn_row(project_root, resolved_spawn_id, runtime_root=runtime_root)
-    if row is None:
-        raise ValueError(f"Spawn '{resolved_spawn_id}' not found")
     resolved_reference = resolve_session_reference(
         project_root,
         resolved_spawn_id,
         runtime_root=runtime_root,
+        harness_hint=harness_hint,
     )
+    row = read_spawn_row(project_root, resolved_spawn_id, runtime_root=runtime_root)
+    if row is None and resolved_reference.source_spawn_id is not None:
+        # Follow the native session's exact spawn provenance, never its owner's
+        # latest spawn. Keep the supplied native identity in resolved_reference.
+        resolved_spawn_id = resolved_reference.source_spawn_id
+        row = read_spawn_row(project_root, resolved_spawn_id, runtime_root=runtime_root)
+        if row is not None and (
+            row.chat_id != resolved_reference.source_chat_id
+            or row.harness != resolved_reference.harness
+        ):
+            raise ValueError("Native session reference has inconsistent retained spawn metadata")
+    if row is None:
+        raise ValueError(
+            f"Spawn '{payload_spawn_id}' not found; continuation requires retained spawn metadata"
+        )
     return resolved_spawn_id, row, resolved_reference
 
 
@@ -1976,8 +1990,6 @@ def _reject_continue_policy_overrides(payload: SpawnContinueInput) -> None:
     """Reject launch-contract changes for exact continuation."""
 
     rejected: list[str] = []
-    if payload.model.strip():
-        rejected.append("--model")
     if payload.skills:
         rejected.append("--skills")
     if payload.approval is not None:
@@ -2017,6 +2029,7 @@ def _build_continue_create_input(
     source_spawn: SpawnRecord,
     source_spawn_id: str,
     resolved_reference: ResolvedSessionReference,
+    runtime_root: Path,
 ) -> SpawnCreateInput:
     continue_contract = build_continue_replay_contract(
         source=continue_replay_source_from_reference(
@@ -2028,6 +2041,8 @@ def _build_continue_create_input(
         requested_agent=payload.agent,
         agent_opt_out=payload.agent_opt_out,
         fork=payload.fork,
+        requested_model_override=payload.model,
+        runtime_root=runtime_root,
     )
     launch_options = payload.launch_option_updates()
     launch_options.update(
@@ -2246,6 +2261,8 @@ def spawn_continue_sync(
     sink: OutputSink | None = None,
     prepared: RuntimeWriteContext | None = None,
 ) -> SpawnActionOutput:
+    if payload.model is not None and not payload.model.strip():
+        raise ValueError("--model must not be empty")
     project_root, runtime_root = _resolve_spawn_read_authority(
         project_root=payload.project_root,
         prepared=prepared,
@@ -2257,6 +2274,7 @@ def spawn_continue_sync(
         payload.spawn_id,
         project_root,
         runtime_root=runtime_root,
+        harness_hint=payload.harness,
     )
     if resolved_reference.missing_harness_session_id:
         raise ValueError(
@@ -2269,6 +2287,7 @@ def spawn_continue_sync(
         source_spawn=source_spawn,
         source_spawn_id=resolved_spawn_id,
         resolved_reference=resolved_reference,
+        runtime_root=runtime_root,
     )
     if prepared is not None:
         result = spawn_create_sync(create_input, ctx=ctx, sink=sink, prepared=prepared)

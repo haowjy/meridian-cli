@@ -86,7 +86,9 @@ class _StartProbeOpenCodeConnection(OpenCodeConnection):
         self.startup_events.append("session")
         return "sess-primary-observer"
 
-    async def _post_session_message(self, text: str, *, system: str | None = None) -> None:
+    async def _post_session_message(
+        self, text: str, *, system: str | None = None, model: str | None = None,
+    ) -> None:
         self.initial_messages.append((text, system))
 
 

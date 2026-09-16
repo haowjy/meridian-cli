@@ -2,8 +2,7 @@
 """Codex fork and session seeding tests for primary process launch.
 
 Verifies that Codex fork materializes a new session via the adapter,
-that native-continue-fork contract skips the fork call, and that the
-adapter-derived seed port is used for the seeded session ID.
+and that the native-continue-fork contract skips the fork call.
 """
 
 from __future__ import annotations
@@ -84,75 +83,6 @@ def _build_primary_launch_context(
         dry_run=True,
     )
     return launch_context, harness_registry
-
-
-@pytest.mark.slow
-def test_run_harness_process_uses_adapter_primary_seed_port_not_harness_id(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    monkeypatch.delenv("MERIDIAN_CHAT_ID", raising=False)
-    project_root = tmp_path / "codex-seed-port"
-    project_root.mkdir()
-    launch_context, harness_registry = _build_primary_launch_context(
-        project_root=project_root,
-        harness_id=HarnessId.CODEX,
-        model="gpt-5.4",
-    )
-    codex_adapter = harness_registry.get_subprocess_harness(HarnessId.CODEX)
-    seeded_session_id = "seeded-via-adapter-port"
-
-    def fake_run_primary_attach(
-        harness_id: Any,
-        spawn_id: Any,
-        spawn_dir: Any,
-        control_root: Any,
-        task_cwd: Any,
-        env: Any,
-        spec: Any,
-        process_launcher: Any,
-        on_running: Any = None,
-    ) -> PrimaryAttachOutcome:
-        _ = (
-            harness_id,
-            spawn_id,
-            spawn_dir,
-            control_root,
-            task_cwd,
-            env,
-            spec,
-            process_launcher,
-            on_running,
-        )
-        return PrimaryAttachOutcome(exit_code=0, session_id=None, tui_pid=5150)
-
-    monkeypatch.setattr(
-        codex_adapter,
-        "derive_primary_seeded_session_id",
-        lambda **_kwargs: seeded_session_id,
-    )
-    monkeypatch.setattr(
-        codex_adapter,
-        "observe_session_id",
-        lambda **kwargs: kwargs.get("current_session_id"),
-    )
-
-    outcome = run_harness_process(
-        launch_context,
-        harness_registry,
-        run_primary_attach_fn=fake_run_primary_attach,
-        run_primary_process_with_capture_fn=lambda *_args: (_ for _ in ()).throw(
-            AssertionError("managed primary path should avoid black-box launcher")
-        ),
-        stop_session_fn=lambda *args, **kwargs: None,
-        update_session_harness_id_fn=lambda *args, **kwargs: None,
-    )
-
-    assert outcome.exit_code == 0
-    assert outcome.resolved_harness_session_id == seeded_session_id
-    spawns = list_spawns(launch_context.runtime_root)
-    assert len(spawns.records) == 1
-    assert spawns.records[0].harness_session_id == seeded_session_id
 
 
 @pytest.mark.slow
@@ -271,8 +201,8 @@ def test_run_harness_process_fork_uses_new_chat_and_materialized_session(
     assert captured["fork_source_session"] == "source-session"
     assert captured["build_continue_session"] == "forked-session"
     assert captured["chat_id_arg"] is None
-    # I-10: session is created with the SOURCE session ID; fork happens after the row exists.
-    assert captured["start_harness_session_id"] == "source-session"
+    # I-10: fork happens after the row exists; the parent is not the child identity.
+    assert captured["start_harness_session_id"] == ""
     assert captured["forked_from_chat_id"] == "c7"
     assert captured["env_chat_id"] == "c999"
     assert outcome.chat_id == "c999"

@@ -2,13 +2,11 @@
 
 from __future__ import annotations
 
-import asyncio
 from collections.abc import Mapping
 
 import pytest
 
 from meridian.lib.core.types import HarnessId, SpawnId
-from meridian.lib.harness.connections import opencode_http
 from meridian.lib.harness.connections.base import ConnectionConfig
 from meridian.lib.harness.connections.opencode_http import OpenCodeConnection
 from meridian.lib.harness.projections.project_opencode_streaming import (
@@ -18,7 +16,6 @@ from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.safety.permissions import (
     UnsafeNoOpPermissionResolver,
 )
-from tests.support.async_determinism import AsyncDeterminism
 
 
 class _TestableOpenCodeConnection(OpenCodeConnection):
@@ -65,28 +62,6 @@ class _TestableOpenCodeConnection(OpenCodeConnection):
         return response
 
 
-class _PayloadTimeoutOpenCodeConnection(OpenCodeConnection):
-    def __init__(self) -> None:
-        super().__init__()
-        self.payloads: list[dict[str, object]] = []
-
-    async def _post_json(
-        self,
-        path: str,
-        payload: Mapping[str, object],
-        *,
-        skip_body_on_statuses: frozenset[int] | None = None,
-        tolerate_incomplete_body: bool = False,
-    ) -> tuple[int, object | None, str]:
-        _ = path, skip_body_on_statuses, tolerate_incomplete_body
-        payload_dict = dict(payload)
-        self.payloads.append(payload_dict)
-        if payload_dict:
-            await asyncio.Event().wait()
-            raise AssertionError("unreachable")
-        return 200, {"id": "sess-empty-fallback"}, "application/json"
-
-
 @pytest.mark.asyncio
 async def test_create_session_uses_spec_model_not_connection_config(tmp_path) -> None:  # type: ignore[no-untyped-def]
     connection = _TestableOpenCodeConnection(responses=[(200, {"session_id": "sess-1"}, "")])
@@ -101,14 +76,13 @@ async def test_create_session_uses_spec_model_not_connection_config(tmp_path) ->
     session_id = await connection._create_session(
         ResolvedLaunchSpec(
             prompt="hello",
-            model="spec-model",
+            model="openai/spec-model",
             permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
         )
     )
 
     assert session_id == "sess-1"
-    assert connection.requests[0][1]["model"] == "spec-model"
-    assert connection.requests[0][1]["modelID"] == "spec-model"
+    assert connection.requests[0][1]["model"] == {"providerID": "openai", "id": "spec-model"}
 
 
 @pytest.mark.asyncio
@@ -134,7 +108,7 @@ async def test_create_session_forwards_agent_and_skills_from_opencode_launch_spe
     await connection._create_session(
         ResolvedLaunchSpec(
             prompt="hello",
-            model="gpt-5.3-codex",
+            model="openai/gpt-5.3-codex",
             agent_name="worker",
             skills=("skill-a", "skill-b"),
             permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
@@ -151,7 +125,7 @@ async def test_create_session_raises_when_continue_fork_requested() -> None:
     connection = _TestableOpenCodeConnection(responses=[])
     spec = ResolvedLaunchSpec(
         prompt="hello",
-        model="gpt-5.3-codex",
+        model="openai/gpt-5.3-codex",
         continue_session_id="sess-parent",
         continue_fork=True,
         permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
@@ -197,36 +171,6 @@ async def test_post_session_message_includes_system_field_when_present() -> None
 
 
 @pytest.mark.asyncio
-async def test_session_creation_falls_back_when_projected_payload_hangs(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    determinism = AsyncDeterminism(start=0.0)
-    determinism.install(monkeypatch, monotonic_modules=(opencode_http,))
-    determinism.install_on_running_loop(monkeypatch)
-    connection = _PayloadTimeoutOpenCodeConnection()
-    monkeypatch.setattr(OpenCodeConnection, "_SESSION_CREATE_PAYLOAD_TIMEOUT_SECONDS", 0.01)
-
-    create_task = asyncio.create_task(
-        connection._create_session_with_retry(
-            ResolvedLaunchSpec(
-                model="gpt-5.5",
-                agent_name="prober",
-                permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
-            ),
-            timeout_seconds=1.0,
-        )
-    )
-    while not create_task.done():
-        await determinism.sleep(0.01)
-
-    assert await create_task == "sess-empty-fallback"
-    assert connection.payloads == [
-        {"model": "gpt-5.5", "modelID": "gpt-5.5", "agent": "prober"},
-        {},
-    ]
-
-
-@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "first_response",
     [
@@ -246,7 +190,7 @@ async def test_create_session_with_retry_fresh_retries_then_succeeds(
     )
     spec = ResolvedLaunchSpec(
         prompt="hello",
-        model="gpt-5.3-codex",
+        model="openai/gpt-5.3-codex",
         permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
     )
 
@@ -269,7 +213,7 @@ async def test_create_session_with_retry_resume_retries_404_then_succeeds() -> N
     )
     spec = ResolvedLaunchSpec(
         prompt="hello",
-        model="gpt-5.3-codex",
+        model="openai/gpt-5.3-codex",
         continue_session_id="sess-parent",
         permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
     )

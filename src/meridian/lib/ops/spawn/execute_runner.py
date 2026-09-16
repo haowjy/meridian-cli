@@ -117,7 +117,7 @@ class PreparedExecutionHandoff:
     session_exit_stack: ExitStack
     execution_cwd: str
     work_id: str | None
-    harness_session_id_observer: Callable[[str], None]
+    harness_session_id_observer: Callable[[str], None] | None = None
 
 
 def _log_launch_failure_without_traceback(
@@ -189,7 +189,7 @@ async def _prepare_execution_handoff(
                     resolved_session.requested_harness_session_id
                     or (spawn_record.harness_session_id if spawn_record else "")
                     or ""
-                ),
+                ) if not resolved_session.continue_fork else "",
                 run_agent_name=resolved_agent_name,
                 inherited_work_id=work_id,
                 control_root=runtime_request.resolved_control_root,
@@ -328,7 +328,6 @@ async def _prepare_execution_handoff(
             session_exit_stack=handoff_stack,
             execution_cwd=execution_cwd,
             work_id=runtime_work_id,
-            harness_session_id_observer=session_context.harness_session_id_observer,
         )
     except Exception:
         local_stack.close()
@@ -357,6 +356,7 @@ async def _invoke_runner(
         runtime_root=runtime_root,
         artifacts=runtime.artifacts,
         harness_session_id_observer=handoff.harness_session_id_observer,
+        session_attempt=handoff.session_context.attempt,
         event_observer=event_observer,
         stream_stdout_to_terminal=stream_stdout_to_terminal,
         stream_stderr_to_terminal=stream_stderr_to_terminal,
@@ -426,13 +426,7 @@ async def launch_prepared_spawn(
     try:
         try:
             if harness_session_id_observer is not None:
-                handoff_observer = handoff.harness_session_id_observer
-
-                def _combined_harness_session_id_observer(session_id: str) -> None:
-                    handoff_observer(session_id)
-                    harness_session_id_observer(session_id)
-
-                handoff.harness_session_id_observer = _combined_harness_session_id_observer
+                handoff.harness_session_id_observer = harness_session_id_observer
 
             prepare_prelaunch = getattr(handoff.launch_context.harness, "prepare_prelaunch", None)
             child_env: dict[str, str] | None = None

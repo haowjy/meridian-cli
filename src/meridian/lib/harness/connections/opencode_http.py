@@ -54,6 +54,9 @@ from meridian.lib.harness.connections.resident_backend import (
     ResidentBackendControl,
 )
 from meridian.lib.harness.projections.project_opencode_streaming import (
+    project_opencode_model,
+)
+from meridian.lib.harness.projections.project_opencode_streaming import (
     project_opencode_spec_to_session_payload as _project_opencode_spec_to_session_payload,
 )
 from meridian.lib.harness.projections.projection_errors import HarnessCapabilityMismatch
@@ -153,7 +156,6 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
         "failed": frozenset(("starting", "stopping", "stopped")),
     }
     _HEALTH_PATHS: ClassVar[tuple[str, ...]] = ("/global/health",)
-    _CREATE_SESSION_PATHS: ClassVar[tuple[str, ...]] = ("/session",)
     _MESSAGE_PATH_TEMPLATES: ClassVar[tuple[str, ...]] = (
         "/session/{session_id}/prompt_async",
         "/session/{session_id}/message",
@@ -174,7 +176,6 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
     _SESSION_STARTUP_TIMEOUT_SECONDS: ClassVar[float] = (
         _STARTUP_TIMEOUT_SECONDS - _READY_TIMEOUT_SECONDS
     )
-    _SESSION_CREATE_PAYLOAD_TIMEOUT_SECONDS: ClassVar[float] = 5.0
     # Per-attempt cap for startup probes. `opencode serve` accepts the TCP
     # connection before its HTTP handler is ready, so the first GET after the
     # socket starts accepting can hang. Bounding each probe (instead of the whole
@@ -317,7 +318,9 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
             if config.session_id_observer is not None:
                 config.session_id_observer(self._session_id)
             if not self._primary_observer_mode:
-                await self._post_session_message(config.prompt, system=config.system)
+                await self._post_session_message(
+                    config.prompt, system=config.system, model=spec.model,
+                )
         except BaseException:
             self._set_failed()
             await reap_on_ownership_transfer_failure(self._cleanup_start_failure)
@@ -702,68 +705,33 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
             spec,
             project_root=self._config.control_root if self._config is not None else None,
         )
-        payload_variants: tuple[dict[str, object], ...] = (payload, {}) if payload else ({},)
-
-        last_error: str | None = None
-        for path in self._CREATE_SESSION_PATHS:
-            for variant in payload_variants:
-                try:
-                    post_request = self._post_json(path, variant)
-                    if variant:
-                        status, body, _ = await asyncio.wait_for(
-                            post_request,
-                            timeout=self._SESSION_CREATE_PAYLOAD_TIMEOUT_SECONDS,
-                        )
-                    else:
-                        status, body, _ = await post_request
-                except TimeoutError:
-                    if variant:
-                        last_error = (
-                            "OpenCode session create timed out with projected payload "
-                            f"on {path}"
-                        )
-                        continue
-                    raise
-                except Exception as exc:
-                    if _is_retryable_transport_error(exc):
-                        raise SessionNotReadyError(
-                            f"OpenCode session endpoint not reachable on {path}: {exc}"
-                        ) from exc
-                    raise
-                if status in self._SUCCESS_STATUSES:
-                    session_id = _extract_session_id(body)
-                    if session_id is None:
-                        raise RuntimeError(
-                            f"OpenCode session creation response missing session id on {path}: "
-                            f"{_summarize_body(body)}"
-                        )
-                    return session_id
-                if status in self._PAYLOAD_RETRY_STATUSES:
-                    last_error = (
-                        f"OpenCode session create rejected payload on {path}: "
-                        f"status={status} body={_summarize_body(body)}"
-                    )
-                    continue
-                if status in self._PATH_RETRY_STATUSES:
-                    trace_wire_recv(
-                        self._tracer,
-                        "http_probe",
-                        "",
-                        path=path,
-                        status=status,
-                        outcome="path_unavailable",
-                    )
-                    last_error = (
-                        f"OpenCode session endpoint unavailable on {path}: "
-                        f"status={status} body={_summarize_body(body)}"
-                    )
-                    raise SessionNotReadyError(last_error)
+        try:
+            status, body, _ = await self._post_json("/session", payload)
+        except TimeoutError:
+            # A timed-out create may already have taken effect; never replay it.
+            raise
+        except Exception as exc:
+            if _is_retryable_transport_error(exc):
+                raise SessionNotReadyError(
+                    f"OpenCode session endpoint not reachable on /session: {exc}"
+                ) from exc
+            raise
+        if status in self._SUCCESS_STATUSES:
+            session_id = _extract_session_id(body)
+            if session_id is None:
                 raise RuntimeError(
-                    f"OpenCode session creation failed on {path}: "
-                    f"status={status} body={_summarize_body(body)}"
+                    "OpenCode session creation response missing session id on /session: "
+                    f"{_summarize_body(body)}"
                 )
-
-        raise RuntimeError(last_error or "OpenCode session creation failed")
+            return session_id
+        if status in self._PATH_RETRY_STATUSES:
+            raise SessionNotReadyError(
+                f"OpenCode session endpoint unavailable on /session: status={status}"
+            )
+        raise RuntimeError(
+            f"OpenCode session creation failed on /session: "
+            f"status={status} body={_summarize_body(body)}"
+        )
 
     async def _get_json(
         self,
@@ -794,10 +762,15 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
         trace_wire_recv(self._tracer, "http_response", text_body, path=path, status=status)
         return status, parsed_body, content_type
 
-    async def _post_session_message(self, text: str, *, system: str | None = None) -> None:
+    async def _post_session_message(
+        self, text: str, *, system: str | None = None, model: str | None = None,
+    ) -> None:
         payload: dict[str, object] = {
             "parts": [{"type": "text", "text": text}],
         }
+        selected_model = project_opencode_model(model, id_field="modelID")
+        if selected_model is not None:
+            payload["model"] = selected_model
         if system and system.strip():
             payload["system"] = system
         await self._post_session_action(

@@ -18,7 +18,7 @@ from meridian.lib.ops.reference import ResolvedSessionReference
 from meridian.lib.ops.reference_recovery import RecoveryProvenance, RecoveryResult
 from meridian.lib.ops.spawn.execute_init import resolve_spawn_work_id
 from meridian.lib.ops.spawn.models import SpawnActionOutput, SpawnContinueInput, SpawnCreateInput
-from meridian.lib.state import spawn_store
+from meridian.lib.state import session_store, spawn_store
 from meridian.lib.state.paths import resolve_project_runtime_root_for_write
 from tests.support.launch import stub_bundle_request_and_resolve
 
@@ -47,6 +47,13 @@ def _seed_spawn(
     launch_policy_snapshot: LaunchPolicySnapshot | None = None,
 ) -> None:
     snapshot = launch_policy_snapshot
+    session_store.start_session(
+        runtime_root, chat_id="c-seed", spawn_id=spawn_id,
+        harness=snapshot.harness if snapshot is not None else "codex",
+        harness_session_id=harness_session_id or "",
+        model=snapshot.model if snapshot is not None else "gpt-5.3-codex",
+    )
+    session_store.stop_session(runtime_root, "c-seed")
     spawn_store.start_spawn(
         runtime_root,
         spawn_id=spawn_id,
@@ -108,7 +115,6 @@ def test_spawn_continue_requires_recorded_session(tmp_path: Path) -> None:
 @pytest.mark.parametrize(
     ("updates", "flag", "guidance"),
     [
-        ({"model": "claude-sonnet-4-6"}, "--model", "--fork-fresh"),
         ({"agent": "reviewer"}, "--agent", "--fork-fresh"),
         ({"skills": ("skill-override",)}, "--skills", "--fork-fresh"),
         ({"approval": "auto"}, "--approval", "--fork-fresh"),
@@ -163,6 +169,10 @@ def test_spawn_continue_maps_source_contract_to_spawn_create(
         agent="coder",
         extra_args=("--permission-mode", "acceptEdits"),
     )
+    stub_bundle_request_and_resolve(
+        monkeypatch, model=snapshot.model, model_token=snapshot.model,
+        harness=HarnessId.CLAUDE, harness_model=snapshot.model,
+    )
     _seed_spawn(
         runtime_root,
         spawn_id="p28",
@@ -188,7 +198,8 @@ def test_spawn_continue_maps_source_contract_to_spawn_create(
     assert payload.model == snapshot.model
     assert payload.agent == snapshot.agent
     assert payload.passthrough_args == snapshot.extra_args
-    assert request.launch_policy_snapshot == snapshot
+    assert request.launch_policy_snapshot is not None
+    assert request.launch_policy_snapshot.extra_args == snapshot.extra_args
     assert request.work_id_hint == "w-spawn"
     assert request.task_cwd == source_task_dir.as_posix()
     assert request.session.requested_harness_session_id == "session-28"
@@ -212,6 +223,10 @@ def test_spawn_continue_does_not_inherit_ambient_work_or_task_dir(
         work_id=None,
         task_cwd=None,
         launch_policy_snapshot=LaunchPolicySnapshot(model="gpt-5.3-codex", harness="codex"),
+    )
+    stub_bundle_request_and_resolve(
+        monkeypatch, model="gpt-5.3-codex", model_token="gpt-5.3-codex",
+        harness=HarnessId.CODEX, harness_model="gpt-5.3-codex",
     )
     monkeypatch.setenv("MERIDIAN_ACTIVE_WORK_ID", "ambient-work")
     monkeypatch.setenv("MERIDIAN_ACTIVE_WORK_DIR", ambient_work_dir.as_posix())

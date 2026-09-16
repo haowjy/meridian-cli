@@ -47,6 +47,13 @@ def _seed_primary_spawn(
     launch_policy_snapshot: LaunchPolicySnapshot | None = None,
 ) -> None:
     snapshot = launch_policy_snapshot
+    session_store.start_session(
+        runtime_root, chat_id="c-primary", spawn_id=spawn_id,
+        harness=snapshot.harness if snapshot is not None else "codex",
+        harness_session_id=harness_session_id or "",
+        model=snapshot.model if snapshot is not None else "gpt-5.3-codex",
+    )
+    session_store.stop_session(runtime_root, "c-primary")
     spawn_store.start_spawn(
         runtime_root,
         spawn_id=spawn_id,
@@ -74,7 +81,7 @@ def _run_primary_continue(
         "continue_ref": continue_ref,
         "fork_ref": None,
         "fork_fresh_ref": None,
-        "model": "",
+        "model": None,
         "harness": None,
         "agent": None,
         "work": "",
@@ -208,6 +215,7 @@ def test_primary_continue_does_not_inherit_ambient_work(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    stub_bundle_request_and_resolve(monkeypatch, model="gpt-5.3-codex", harness=HarnessId.CODEX)
     project_root = tmp_path / "repo"
     project_root.mkdir()
     source_task_dir = tmp_path / "source-worktree"
@@ -262,6 +270,7 @@ def test_primary_continue_with_stale_work_task_dir_falls_back_without_mutating_w
     monkeypatch: pytest.MonkeyPatch,
     replacement: str,
 ) -> None:
+    stub_bundle_request_and_resolve(monkeypatch, model="gpt-5.3-codex", harness=HarnessId.CODEX)
     project_root = tmp_path / "repo"
     project_root.mkdir()
     source_task_dir = tmp_path / "deleted-worktree"

@@ -39,6 +39,11 @@ is intentional — managed-primary is best-effort for the primary path.
 in `_finalize_lifecycle_and_observe_session()`, after the process exits. Never call
 it during execution, and never call it twice.
 
+**Session seeds are hints.** Only exact resume and materialized fork IDs are known
+at startup. Fresh/native-fork selections remain pending until an authoritative
+identity observation binds the same startup attempt. Observation is best-effort;
+persisting an observed identity is not. Adapter cleanup still runs on binding errors.
+
 **Session scope wraps everything.** `session_scope()` opens before the spawn row is
 created and closes in the finally block. If `lifecycle_service.start()` fails, the
 session is still properly closed.

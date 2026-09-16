@@ -35,6 +35,7 @@ class ResolvedSessionReference:
     source_skills: tuple[str, ...]
     source_work_id: str | None
     tracked: bool
+    source_spawn_id: str | None = None
     source_control_root: str | None = None
     source_execution_cwd: str | None = None
     source_claude_config_dir: str | None = None
@@ -173,9 +174,11 @@ def _read_primary_pi_session_dir(runtime_root: Path, spawn_id: str) -> str | Non
     return _normalize_optional(metadata.session_dir)
 
 
-def _resolve_untracked_reference(project_root: Path, ref: str) -> ResolvedSessionReference:
+def _resolve_untracked_reference(
+    project_root: Path, ref: str, harness_hint: str | None = None,
+) -> ResolvedSessionReference:
     registry = get_default_harness_registry()
-    inferred_harness = infer_harness_from_untracked_session_ref(
+    inferred_harness = harness_hint or infer_harness_from_untracked_session_ref(
         project_root,
         ref,
         registry=registry,
@@ -204,6 +207,7 @@ def _build_tracked_reference(
     source_agent: str | None,
     source_skills: tuple[str, ...],
     source_work_id: str | None,
+    source_spawn_id: str | None = None,
     source_control_root: str | None = None,
     source_execution_cwd: str | None = None,
     source_claude_config_dir: str | None = None,
@@ -211,24 +215,22 @@ def _build_tracked_reference(
     source_launch_policy_snapshot: LaunchPolicySnapshot | None = None,
     project_root: Path,
 ) -> ResolvedSessionReference:
-    registry = get_default_harness_registry()
-    verified_harness = (
-        infer_harness_from_untracked_session_ref(
+    resolved_harness = stored_harness
+    if resolved_harness is None and harness_session_id is not None:
+        inferred = infer_harness_from_untracked_session_ref(
             project_root,
             harness_session_id,
-            registry=registry,
         )
-        if harness_session_id is not None
-        else None
-    )
+        resolved_harness = str(inferred) if inferred is not None else None
     return ResolvedSessionReference(
         harness_session_id=harness_session_id,
-        harness=str(verified_harness) if verified_harness is not None else stored_harness,
+        harness=resolved_harness,
         source_chat_id=source_chat_id,
         source_model=source_model,
         source_agent=source_agent,
         source_skills=source_skills,
         source_work_id=source_work_id,
+        source_spawn_id=source_spawn_id,
         source_control_root=source_control_root,
         source_execution_cwd=source_execution_cwd,
         source_claude_config_dir=source_claude_config_dir,
@@ -333,14 +335,18 @@ def _resolve_chat_reference(
 
 
 def _resolve_harness_session_reference(
-    runtime_root: Path, ref: str, project_root: Path
+    runtime_root: Path, ref: str, project_root: Path, harness_hint: str | None = None,
 ) -> ResolvedSessionReference:
-    session = session_store.resolve_session_ref(runtime_root, ref)
+    session = session_store.resolve_session_ref(runtime_root, ref, harness=harness_hint)
     if session is None:
-        return _resolve_untracked_reference(project_root, ref)
+        return _resolve_untracked_reference(project_root, ref, harness_hint)
+    if harness_hint is None:
+        inferred = infer_harness_from_untracked_session_ref(project_root, ref)
+        if inferred is not None and session.harness and str(inferred) != session.harness:
+            raise ValueError(
+                "Native session reference is ambiguous across harnesses; specify --harness."
+            )
 
-    stored_harness_session_id = _normalize_optional(session.harness_session_id)
-    harness_session_id = stored_harness_session_id or ref
     stored_harness = _normalize_optional(session.harness)
     source_pi_session_dir: str | None = None
     if stored_harness == "pi":
@@ -352,13 +358,14 @@ def _resolve_harness_session_reference(
                     runtime_root, primary_spawn_id
                 )
     return _build_tracked_reference(
-        harness_session_id=harness_session_id,
+        harness_session_id=ref,
         stored_harness=stored_harness,
         source_chat_id=session.chat_id,
         source_model=_normalize_optional(session.model),
         source_agent=_normalize_optional(session.agent),
         source_skills=session.skills,
         source_work_id=_normalize_optional(session.active_work_id),
+        source_spawn_id=_normalize_optional(session.spawn_id),
         source_control_root=(
             _normalize_optional(getattr(session, "control_root", None))
             or project_root.as_posix()
@@ -403,17 +410,19 @@ def resolve_session_reference(
     ref: str,
     *,
     runtime_root: Path | None = None,
+    harness_hint: str | None = None,
 ) -> ResolvedSessionReference:
     """Resolve a session/spawn reference to harness session ID and source metadata."""
 
     normalized = ref.strip()
+    harness_hint = _normalize_optional(harness_hint)
     if not normalized:
         raise ValueError("Session reference is required.")
 
     resolved_runtime_root = runtime_root or resolve_runtime_root_for_read(project_root)
     if resolved_runtime_root is None:
         if not _SPAWN_REF_RE.fullmatch(normalized) and not _CHAT_REF_RE.fullmatch(normalized):
-            return _resolve_untracked_reference(project_root, normalized)
+            return _resolve_untracked_reference(project_root, normalized, harness_hint)
         raise ValueError(f"Session reference '{normalized}' not found")
     if _SPAWN_REF_RE.fullmatch(normalized):
         result = _resolve_spawn_reference(resolved_runtime_root, normalized, project_root)
@@ -443,7 +452,9 @@ def resolve_session_reference(
             if recovery is not None:
                 return replace(result, recovery=recovery)
         return result
-    return _resolve_harness_session_reference(resolved_runtime_root, normalized, project_root)
+    return _resolve_harness_session_reference(
+        resolved_runtime_root, normalized, project_root, harness_hint,
+    )
 
 
 __all__ = [

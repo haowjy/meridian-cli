@@ -6,22 +6,86 @@ from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 from meridian.lib.core.process_cleanup import reclaim_session_owned_scopes_for_chat
-from meridian.lib.launch.request import SessionRequest
+from meridian.lib.core.types import ChatId, HarnessSessionId
+from meridian.lib.launch.request import SessionRequest, is_exact_continue_session
 from meridian.lib.launch.types import PrimarySessionMetadata
+from meridian.lib.state.event_store import utc_now_iso
 from meridian.lib.state.session_store import (
+    ConversationModelSelection,
+    SessionModelSelectionEvent,
+    get_session_record,
+    record_model_selection,
     start_session,
     stop_session,
     update_session_harness_id,
 )
+
+if TYPE_CHECKING:
+    from meridian.lib.launch.context import LaunchContext
+
+
+@dataclass(frozen=True)
+class SessionAttempt:
+    """Captured session generation and startup attempt, shared by both callbacks."""
+
+    runtime_root: Path
+    chat_id: str
+    session_instance_id: str
+    startup_attempt_id: str
+
+    def record_harness_session_id(self, session_id: str) -> None:
+        update_session_harness_id(
+            self.runtime_root, self.chat_id, session_id,
+            session_instance_id=self.session_instance_id,
+            startup_attempt_id=self.startup_attempt_id,
+        )
+
+    def record_started(
+        self, context: LaunchContext, spawn_id: str, harness_session_id: str | None,
+    ) -> None:
+        request = context.resolved_request
+        snapshot = request.launch_policy_snapshot
+        assert snapshot is not None
+        executable_model = context.binding.spec.model
+        canonical_model = snapshot.model_selection_canonical_id or snapshot.model
+        selection = ConversationModelSelection.model_validate({
+            "requested_token": snapshot.model_selection_requested_token or canonical_model,
+            "selected_token": snapshot.model_selection_selected_token or canonical_model,
+            "canonical_model_id": canonical_model or None,
+            "harness_model_id": str(executable_model) if executable_model else None,
+            "model_mode": "named" if canonical_model else "harness_default",
+            "provider_constraint": snapshot.model_selection_provider_constraint,
+            "selection_source": (
+                request.session.conversation_intent.selection_source
+                if is_exact_continue_session(request.session)
+                and request.session.conversation_intent is not None
+                else "initial_launch"
+            ),
+            "provenance": snapshot.field_provenance,
+        })
+        record_model_selection(self.runtime_root, SessionModelSelectionEvent(
+            kind="invocation_started",
+            harness=str(context.harness.id),
+            harness_session_id=(
+                HarnessSessionId(harness_session_id) if harness_session_id else None
+            ),
+            chat_id=ChatId(self.chat_id),
+            session_instance_id=self.session_instance_id,
+            spawn_id=spawn_id,
+            startup_attempt_id=self.startup_attempt_id,
+            recorded_at=utc_now_iso(),
+            selection=selection,
+        ))
 
 
 @dataclass(frozen=True)
 class ManagedSession:
     chat_id: str
     record_harness_session_id: Callable[[str], None]
+    attempt: SessionAttempt | None = None
 
 
 @contextmanager
@@ -38,11 +102,14 @@ def session_scope(
     execution_cwd: str | None = None,
     kind: Literal["primary", "spawn"] = "spawn",
     spawn_id: str | None = None,
+    startup_attempt_id: str | None = None,
     _start_session: Callable[..., str] = start_session,
     _stop_session: Callable[[Path, str], None] = stop_session,
-    _update_session_harness_id: Callable[[Path, str, str], None] = update_session_harness_id,
+    _update_session_harness_id: Callable[..., None] = update_session_harness_id,
     _reclaim_session_scopes: Callable[[Path, str], object] = reclaim_session_owned_scopes_for_chat,
 ) -> Generator[ManagedSession, None, None]:
+    if request.initial_model_selection is not None:
+        record_model_selection(runtime_root, request.initial_model_selection)
     resolved_chat_id = _start_session(
         runtime_root,
         harness=metadata.harness,
@@ -60,15 +127,29 @@ def session_scope(
         execution_cwd=execution_cwd,
         kind=kind,
         spawn_id=spawn_id,
+        model_selection_protocol=1 if startup_attempt_id is not None else None,
+    )
+    record = get_session_record(runtime_root, resolved_chat_id)
+    generation = record.session_instance_id if record is not None else ""
+    attempt = (
+        SessionAttempt(runtime_root, resolved_chat_id, generation, startup_attempt_id)
+        if startup_attempt_id is not None else None
     )
 
     def _record_harness_session_id(session_id: str) -> None:
-        _update_session_harness_id(runtime_root, resolved_chat_id, session_id)
+        if startup_attempt_id is None:
+            _update_session_harness_id(runtime_root, resolved_chat_id, session_id)
+        else:
+            _update_session_harness_id(
+                runtime_root, resolved_chat_id, session_id,
+                session_instance_id=generation, startup_attempt_id=startup_attempt_id,
+            )
 
     try:
         yield ManagedSession(
             chat_id=resolved_chat_id,
             record_harness_session_id=_record_harness_session_id,
+            attempt=attempt,
         )
     finally:
         try:
@@ -77,4 +158,4 @@ def session_scope(
             _reclaim_session_scopes(runtime_root, resolved_chat_id)
 
 
-__all__ = ["ManagedSession", "session_scope"]
+__all__ = ["ManagedSession", "SessionAttempt", "session_scope"]

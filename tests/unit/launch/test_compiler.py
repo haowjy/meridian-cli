@@ -62,7 +62,7 @@ def _request(
     )
 
 
-def test_compiler_result_dry_run_dict_includes_fallback_chain_and_warnings() -> None:
+def test_compiler_result_dry_run_dict_includes_selection_report_and_warnings() -> None:
     result = CompilerResult(
         agent_name="coder",
         model="openai/gpt-5.4-mini",
@@ -70,18 +70,15 @@ def test_compiler_result_dry_run_dict_includes_fallback_chain_and_warnings() -> 
         harness="codex",
         execution_policy=ResolvedExecutionPolicy(effort="high"),
         skill_names=(),
-        fallback_chain=(
-            {"token": "gptmini", "position": 1, "override_summary": {"effort": "high"}},
-        ),
+        selection_report={"version": 2, "outcome": "selected"},
         warnings=("warning-one",),
     )
 
     output = compiler_result_to_dry_run_dict(result)
 
     assert output["model"] == "gptmini"  # model_token used when set
-    assert output["fallback_chain"] == [
-        {"token": "gptmini", "position": 1, "override_summary": {"effort": "high"}}
-    ]
+    assert output["selection_report"] == {"version": 2, "outcome": "selected"}
+    assert "fallback_chain" not in output
     assert output["warnings"] == ["warning-one"]
 
 

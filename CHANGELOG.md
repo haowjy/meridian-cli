@@ -4,6 +4,33 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- Native-ID continuation keeps the supplied ID; ambiguous harness ownership requires an explicit harness instead of choosing a different conversation.
+- Legacy continuation seeds the original session's initialized model, not a failed resume's snapshot; previews remain read-only and pruned snapshots retain partial history.
+- Spawn continuation accepts explicit model overrides with the same warning and recorded-selection replay as primary sessions; startup attempts bind selection and native identity together.
+- Primary continuation accepts explicit model overrides with a cache/cost warning; later resumes use the recorded selection and revalidate current target restrictions.
+
+- Session-log model-selection records preserve conversation-scoped intent, startup-attempt identity, and retry dedup without rewriting launch history.
+
+### Changed
+
+- Bump pinned `mars-agents` to 0.14.0 for target-constrained routing and bundle schema 4 / report schema 2.
+- Require Mars bundle schema 4/report schema 2; retain validated selection diagnostics in snapshots, previews, and spawn failures instead of unused fallback-chain transport.
+
+### Fixed
+
+- Accept tracked native session IDs for spawn continuation without replacing the requested conversation with its chat's latest ID.
+
+- Carry OpenCode selections in native create/prompt model objects; reject instead of clearing unsupported payloads, and preserve override tokens during worker recomposition.
+
+- Record streaming-serve model selections at accepted startup and keep native spawn forks from updating the parent conversation.
+
+- Keep primary session seeds and native-fork parent IDs out of recorded model selections; bind actual identities durably and retain cleanup on binding failure.
+
+- Pass headless harness exclusions to Mars before selection; keep primary routing and the final execution guard unchanged.
+- Fail durable JSONL appends when tail repair fails instead of silently losing the new event.
+
 ## [0.4.5] - 2026-09-12
 
 ### Fixed

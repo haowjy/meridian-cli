@@ -20,7 +20,6 @@ from meridian.lib.launch.reference import parse_template_assignments
 from meridian.lib.launch.request import (
     LaunchArgvIntent,
     RetryPolicy,
-    SessionRequest,
     SpawnRequest,
     is_exact_continue_session,
 )
@@ -198,21 +197,11 @@ def build_create_payload(
                 max_attempts=max(1, config.max_retries + 1),
                 backoff_secs=config.retry_backoff_seconds,
             ),
-            session=SessionRequest(
-                continue_chat_id=payload.session.continue_chat_id,
-                requested_harness_session_id=(
+            session=payload.session.model_copy(update={
+                "requested_harness_session_id": (
                     (payload.session.requested_harness_session_id or "").strip() or None
                 ),
-                continue_fork=payload.session.continue_fork,
-                source_control_root=payload.session.source_control_root,
-                source_execution_cwd=payload.session.source_execution_cwd,
-                source_claude_config_dir=payload.session.source_claude_config_dir,
-                source_pi_session_dir=payload.session.source_pi_session_dir,
-                forked_from_chat_id=payload.session.forked_from_chat_id,
-                continue_harness=payload.session.continue_harness,
-                continue_source_tracked=payload.session.continue_source_tracked,
-                continue_source_ref=payload.session.continue_source_ref,
-            ),
+            }),
             context_from=payload.context_from,
             reference_files=tuple(
                 path.as_posix() for path in launch_resolution.reference_files

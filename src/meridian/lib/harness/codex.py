@@ -352,6 +352,7 @@ class CodexAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             supports_native_skills=True,
             supports_native_agents=True,
             supports_primary_launch=True,
+            supports_named_primary_resume=True,
             requires_initial_prompt=True,
             supports_native_file_injection=False,
             terminal_surface_modes=(

@@ -9,6 +9,7 @@ from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
 from meridian.lib.core.overrides import RuntimeOverrides
 from meridian.lib.launch.composition import PromptDocument
 from meridian.lib.launch.launch_types import TerminalSurfaceMode
+from meridian.lib.state.session_store import ConversationModelSelection, SessionModelSelectionEvent
 from meridian.lib.tools import ToolsField
 
 
@@ -40,6 +41,7 @@ class SessionRequest(BaseModel):
 
     continue_chat_id: str | None = None
     requested_harness_session_id: str | None = None
+    initial_model_selection: SessionModelSelectionEvent | None = None
     continue_fork: bool = False
     source_control_root: str | None = None
     source_execution_cwd: str | None = None
@@ -50,6 +52,7 @@ class SessionRequest(BaseModel):
     continue_source_tracked: bool = False
     continue_source_ref: str | None = None
     primary_session_mode: str | None = None
+    conversation_intent: ConversationModelSelection | None = None
 
 
 def is_exact_continue_session(session: SessionRequest) -> bool:
@@ -127,9 +130,10 @@ class SpawnRequest(BaseModel):
     skill_paths: tuple[str, ...] = ()
     model_selection_requested_token: str | None = None
     model_selection_canonical_id: str | None = None
+    model_selection_provider_constraint: str | None = None
     model_selection_harness_provenance: str | None = None
     matched_policy_rule: str | None = None
-    fallback_chain: tuple[dict[str, object], ...] = ()
+    selection_report: dict[str, object] | None = None
     terminal_surface_mode: TerminalSurfaceMode | None = None
     # Preview command for dry-run display only.  Executors MUST NOT use this field.
     cli_command: tuple[str, ...] = ()

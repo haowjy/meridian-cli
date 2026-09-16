@@ -31,6 +31,7 @@ from meridian.lib.core.domain import ALL_SPAWN_STATUSES, SpawnStatus
 from meridian.lib.core.spawn_lifecycle import ACTIVE_SPAWN_STATUSES
 from meridian.lib.core.util import FormatContext
 from meridian.lib.extensions.registry import get_first_party_registry
+from meridian.lib.launch.continue_replay import MODEL_OVERRIDE_WARNING
 from meridian.lib.launch.resolve import resolve_agent_launch_input
 from meridian.lib.ops.spawn.api import (
     SpawnActionOutput,
@@ -341,12 +342,12 @@ def _spawn_create(
         ),
     ] = (),
     model: Annotated[
-        str,
+        str | None,
         Parameter(
             name=["--model", "-m"],
             help="Model id or alias. Overrides agent profile and config defaults.",
         ),
-    ] = "",
+    ] = None,
     references: Annotated[
         tuple[str, ...],
         Parameter(
@@ -619,6 +620,8 @@ def _spawn_create(
     global_harness = _get_global_options().harness
     caller_cwd = Path.cwd().as_posix()
     resolved_continue_from = (continue_from or "").strip() or None
+    if resolved_continue_from is not None and model is not None:
+        _current_output_sink().warning(MODEL_OVERRIDE_WARNING)
     raw_fork_from = (fork_from or "").strip() or None
     raw_fork_fresh_from = (fork_fresh_from or "").strip() or None
 
@@ -638,7 +641,7 @@ def _spawn_create(
         continue_from=resolved_continue_from,
         context_from=context_from,
         agent=agent,
-        model=model,
+        model=model or "",
         skills=skills,
     )
     shared_launch_kwargs = _shared_launch_input_kwargs(
@@ -692,7 +695,7 @@ def _spawn_create(
             SpawnForkInput(
                 source_ref=fork_source_ref,
                 prompt=resolved_prompt,
-                model=model if fork_is_fresh else "",
+                model=(model or "") if fork_is_fresh else "",
                 files=references,
                 template_vars=template_vars,
                 agent=agent_launch.agent if fork_is_fresh else None,
