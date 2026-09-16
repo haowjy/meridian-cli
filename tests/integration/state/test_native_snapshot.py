@@ -455,3 +455,133 @@ def test_resolved_native_source_checks_snapshot_binding(tmp_path: Path) -> None:
             target=target,
             route=SessionLogRoute("ref", "selected-native"),
         )
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        b'\n{"record":"meridian.native.snapshot","record":"ordinary"}\n',
+        b'\n{"record":"meridian.native.snapshot",\n',
+        b'\n{"recor\\u0064":"meridian.native.seal","record":"ordinary"}\n',
+        b'{"text":"ok"}\n{"record":"meridian.native.snapshot","record":"ordinary"}\n',
+        b'{"record":"meridian.transcript"}\n'
+        b'{"record":"meridian.native.seal","record":"meridian.transcript"}\n',
+    ],
+    ids=[
+        "later-duplicate",
+        "later-torn",
+        "later-escaped-duplicate",
+        "after-ordinary",
+        "managed-header-then-seal",
+    ],
+)
+def test_later_reserved_marker_never_becomes_complete_transcript(
+    tmp_path: Path, payload: bytes
+) -> None:
+    from meridian.lib.state.native_snapshot import TranscriptValidation
+
+    path = tmp_path / "copy.jsonl"
+    path.write_bytes(payload)
+    validation = TranscriptValidation()
+    with pytest.raises(ValueError):
+        list(iter_transcript_events(path, validation=validation))
+    assert validation.state == "corrupt"
+    assert validation.descriptor is None
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        b'\n{"record":"meridian.native.snapshot","record":"ordinary"}\n',
+        b'\n{"record":"meridian.native.snapshot",\n',
+        b'\n{"recor\\u0064":"meridian.native.seal","record":"ordinary"}\n',
+        b'{"record":"meridian.transcript"}\n'
+        b'{"record":"meridian.native.seal","record":"meridian.transcript"}\n',
+    ],
+    ids=[
+        "later-duplicate",
+        "later-torn",
+        "later-escaped-duplicate",
+        "managed-header-then-seal",
+    ],
+)
+def test_managed_preview_rejects_later_reserved_markers(
+    tmp_path: Path, payload: bytes, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from meridian.lib.ops import session_preview
+    from meridian.lib.ops.session_target import SessionLogTarget, TranscriptSource
+
+    path = tmp_path / "history.jsonl"
+    path.write_bytes(payload)
+    source = TranscriptSource("spawn_history", "p1", "pi", "owned", path)
+    target = SessionLogTarget("p1", "pi", path, "owned", (source,))
+    monkeypatch.setattr(session_preview, "resolve_roots_for_read", lambda _: None)
+    monkeypatch.setattr(session_preview, "resolve_session_log_target", lambda **_: target)
+    view = session_preview.SessionPreview(str(tmp_path)).refresh(
+        session_preview.PreviewIdentity("p1", history_id="fixture"), lambda: True
+    )
+    assert view is not None
+    assert view.state == "unavailable"
+
+
+def test_ordinary_unmarked_malformed_lines_stay_tolerant(tmp_path: Path) -> None:
+    from meridian.lib.state.native_snapshot import TranscriptValidation
+
+    path = tmp_path / "copy.jsonl"
+    path.write_text(
+        '{"type":"assistant","message":{"content":"ok"}}\n{"type":"bad",\n',
+        encoding="utf-8",
+    )
+    validation = TranscriptValidation()
+    assert list(iter_transcript_events(path, validation=validation)) == [
+        {"type": "assistant", "message": {"content": "ok"}}
+    ]
+    assert validation.state == "complete"
+
+
+def test_nested_reserved_strings_stay_readable(tmp_path: Path) -> None:
+    path = tmp_path / "copy.jsonl"
+    event = {
+        "type": "assistant",
+        "message": {
+            "content": "meridian.native.snapshot",
+            "record": "meridian.native.seal",
+        },
+    }
+    path.write_text(json.dumps(event) + "\n", encoding="utf-8")
+    assert list(iter_transcript_events(path)) == [event]
+
+
+def test_fallback_oversized_pre_marker_checks_budget_between_reads(tmp_path: Path) -> None:
+    from meridian.lib.state.native_snapshot import TranscriptValidation
+
+    path = tmp_path / "copy.jsonl"
+    header = json.loads(_snapshot(path).splitlines()[0])
+    path.write_bytes(_canonical({**header, "dialect": "x" * 2_000_000}))
+    checks: list[int] = []
+
+    def current() -> bool:
+        checks.append(1)
+        return len(checks) == 1
+
+    validation = TranscriptValidation()
+    events = list(iter_transcript_events(path, validation=validation, current=current))
+    assert events == []
+    assert validation.state == "partial"
+    assert validation.descriptor is None
+    assert len(checks) >= 2
+
+
+def test_fallback_oversized_pre_marker_fails_closed_when_budget_allows(
+    tmp_path: Path,
+) -> None:
+    from meridian.lib.state.native_snapshot import TranscriptValidation
+
+    path = tmp_path / "copy.jsonl"
+    header = json.loads(_snapshot(path).splitlines()[0])
+    path.write_bytes(_canonical({**header, "dialect": "x" * 2_000_000}))
+    validation = TranscriptValidation()
+    with pytest.raises(ValueError):
+        list(iter_transcript_events(path, validation=validation))
+    assert validation.state == "corrupt"
+    assert validation.descriptor is None

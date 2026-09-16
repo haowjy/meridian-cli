@@ -20,9 +20,12 @@ from meridian.lib.state.native_snapshot import (
     HEADER_LIMIT,
     NATIVE_SNAPSHOT_FILENAME,
     SnapshotHeader,
+    TranscriptReadPaused,
     TranscriptValidation,
     is_snapshot_prefix,
+    read_jsonl_frame,
     read_snapshot,
+    reject_unframed_storage_frame,
     reject_unframed_storage_record,
 )
 
@@ -555,14 +558,26 @@ class JsonlTranscriptProvider(TranscriptProvider):
         yield from _iter_json_events(path)
 
 
-def _iter_json_events(path: Path) -> Iterator[dict[str, object]]:
-    with path.open("r", encoding="utf-8", errors="ignore") as handle:
-        for line in handle:
-            stripped = line.strip()
+def _iter_json_events(
+    path: Path,
+    *,
+    current: Callable[[], bool] | None = None,
+    validation: TranscriptValidation | None = None,
+) -> Iterator[dict[str, object]]:
+    with path.open("rb") as handle:
+        while True:
+            raw = read_jsonl_frame(handle, current=current)
+            if not raw:
+                return
+            stripped = raw.strip()
+            if stripped:
+                reject_unframed_storage_frame(stripped, validation)
+            if not raw.endswith(b"\n"):
+                return
             if not stripped:
                 continue
             try:
-                payload_obj = json.loads(stripped)
+                payload_obj = json.loads(stripped.decode("utf-8", errors="ignore"))
             except json.JSONDecodeError:
                 continue
             if isinstance(payload_obj, dict):
@@ -931,13 +946,33 @@ def iter_transcript_events(
                     check_header=check_header,
                 )
                 return
-    provider = _provider_for_path(path)
-    for event in provider.iter_events(path):
-        reject_unframed_storage_record(event, validation)
-        yield event
-    if validation is not None:
-        validation.state = "complete"
-        validation.reason = None
+    try:
+        provider = _provider_for_path(path)
+        if isinstance(provider, HistoryJsonlTranscriptProvider):
+            stream: Iterator[dict[str, object]] = iter_history_events(
+                path,
+                current=current,
+                frame_guard=lambda raw: reject_unframed_storage_frame(raw, validation),
+            )
+        elif isinstance(provider, JsonlTranscriptProvider):
+            stream = _iter_json_events(path, current=current, validation=validation)
+        else:
+            stream = provider.iter_events(path)
+        for event in stream:
+            reject_unframed_storage_record(event, validation)
+            yield event
+        if validation is not None:
+            validation.state = "complete"
+            validation.reason = None
+    except TranscriptReadPaused:
+        if validation is not None:
+            validation.state = "partial"
+            validation.reason = "Transcript read paused before complete EOF"
+    except ValueError as exc:
+        if validation is not None and validation.state != "corrupt":
+            validation.state = "corrupt"
+            validation.reason = str(exc)[:1024]
+        raise
 
 
 def parse_transcript_file(

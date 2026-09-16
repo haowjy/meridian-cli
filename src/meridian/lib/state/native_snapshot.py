@@ -109,20 +109,32 @@ class TranscriptValidation:
     descriptor: SnapshotDescriptor | None = None
 
 
+def _reject_unframed(validation: TranscriptValidation | None) -> None:
+    reason = "Snapshot storage record outside a valid bounded header"
+    if validation is not None:
+        validation.state = "corrupt"
+        validation.reason = reason
+    raise ValueError(reason)
+
+
 def reject_unframed_storage_record(
     event: dict[str, object], validation: TranscriptValidation | None = None
 ) -> None:
     """Keep permissive native/append readers from accepting broken storage frames."""
     marker = event.get("record")
     if isinstance(marker, str) and marker in SNAPSHOT_RECORDS:
-        reason = "Snapshot storage record outside a valid bounded header"
-        if validation is not None:
-            validation.state = "corrupt"
-            validation.reason = reason
-        raise ValueError(reason)
+        _reject_unframed(validation)
 
 
-class _Paused(Exception):
+def reject_unframed_storage_frame(
+    raw: bytes, validation: TranscriptValidation | None = None
+) -> None:
+    """Reject reserved markers before tolerant JSON decoding can discard them."""
+    if is_snapshot_prefix(raw):
+        _reject_unframed(validation)
+
+
+class TranscriptReadPaused(Exception):
     pass
 
 
@@ -167,25 +179,59 @@ def _object(raw: bytes | str) -> dict[str, object]:
     return cast("dict[str, object]", value)
 
 
-def _frame(handle: IO[bytes], limit: int, current: Callable[[], bool] | None) -> bytes:
+def _read_chunks(
+    handle: IO[bytes],
+    current: Callable[[], bool] | None,
+    *,
+    limit: int | None = None,
+    end: int | None = None,
+) -> bytes:
     chunks: list[bytes] = []
     size = 0
     while True:
         if current is not None and not current():
-            raise _Paused
-        chunk = handle.readline(min(_READ_CHUNK, limit + 1 - size))
+            raise TranscriptReadPaused
+        n = _READ_CHUNK
+        if limit is not None:
+            n = min(n, limit + 1 - size)
+            if n <= 0:
+                raise ValueError("Snapshot frame exceeds its byte limit")
+        if end is not None:
+            remaining = end - handle.tell()
+            if remaining <= 0:
+                break
+            n = min(n, remaining)
+        chunk = handle.readline(n)
         if current is not None and not current():
-            raise _Paused
+            raise TranscriptReadPaused
         if not chunk:
-            if size:
-                raise ValueError("Incomplete snapshot frame")
-            return b""
+            break
         chunks.append(chunk)
         size += len(chunk)
-        if size > limit:
+        if limit is not None and size > limit:
             raise ValueError("Snapshot frame exceeds its byte limit")
         if chunk.endswith(b"\n"):
-            return b"".join(chunks)
+            break
+    return b"".join(chunks)
+
+
+def _frame(handle: IO[bytes], limit: int, current: Callable[[], bool] | None) -> bytes:
+    line = _read_chunks(handle, current, limit=limit)
+    if not line:
+        return b""
+    if not line.endswith(b"\n"):
+        raise ValueError("Incomplete snapshot frame")
+    return line
+
+
+def read_jsonl_frame(
+    handle: IO[bytes],
+    *,
+    current: Callable[[], bool] | None = None,
+    end: int | None = None,
+) -> bytes:
+    """Read one JSONL line with cooperative budget checks and no snapshot size cap."""
+    return _read_chunks(handle, current, end=end)
 
 
 def is_snapshot_prefix(raw: bytes) -> bool:
@@ -360,7 +406,7 @@ def read_snapshot(
             payload = contents.add(record)
             checksum.update(line)
             yield payload
-    except _Paused:
+    except TranscriptReadPaused:
         validation.reason = "Snapshot validation paused before complete EOF"
     except (ValueError, UnicodeError) as exc:
         validation.state = "corrupt"

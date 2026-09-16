@@ -13,6 +13,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Reject later-line reserved snapshot markers before tolerant JSONL decode; pause fallback reads between chunks.
 - Reject malformed renamed snapshot headers; verify selected native/history bindings and bypass stream checkpoints for snapshots.
 - Keep unselected archive alternatives from suppressing ordinary loose-history search prefixes.
 - Resolve native capture from the exact completed record; refuse discovery fallbacks and known active native owners.

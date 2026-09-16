@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
-from collections.abc import Generator, Iterator
+from collections.abc import Callable, Generator, Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, cast
@@ -20,6 +20,7 @@ from meridian.lib.state.history_codec import (
     transcript_header,
 )
 from meridian.lib.state.managed_primary import ManagedPrimaryCausalTracker
+from meridian.lib.state.native_snapshot import read_jsonl_frame
 from meridian.lib.state.spawn.repository import read_state
 from meridian.lib.state.spawn_aggregate import mutate_published_spawn_artifact
 
@@ -309,7 +310,12 @@ class HistoryCursor:
 
 
 def iter_history_events(
-    path: Path, *, cursor: HistoryCursor | None = None, end: int | None = None
+    path: Path,
+    *,
+    cursor: HistoryCursor | None = None,
+    end: int | None = None,
+    current: Callable[[], bool] | None = None,
+    frame_guard: Callable[[bytes], None] | None = None,
 ) -> Generator[dict[str, Any]]:
     """Yield complete history events, optionally resuming a bounded byte snapshot."""
     if not path.exists():
@@ -318,7 +324,15 @@ def iter_history_events(
     with path.open("rb") as handle:
         handle.seek(cursor.extent)
         while end is None or handle.tell() < end:
-            line = handle.readline(-1 if end is None else end - handle.tell())
+            if current is None:
+                line = handle.readline(-1 if end is None else end - handle.tell())
+            else:
+                line = read_jsonl_frame(handle, current=current, end=end)
+            if not line:
+                break
+            stripped_raw = line.strip()
+            if stripped_raw and frame_guard is not None:
+                frame_guard(stripped_raw)
             if not line.endswith(b"\n"):
                 break
             cursor.extent = handle.tell()

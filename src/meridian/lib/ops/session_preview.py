@@ -28,7 +28,12 @@ from meridian.lib.state import session_store
 from meridian.lib.state.history import HistoryCursor, iter_history_events
 from meridian.lib.state.history_changes import HistorySource
 from meridian.lib.state.history_index import HistoryIndex
-from meridian.lib.state.native_snapshot import TranscriptValidation, reject_unframed_storage_record
+from meridian.lib.state.native_snapshot import (
+    TranscriptReadPaused,
+    TranscriptValidation,
+    reject_unframed_storage_frame,
+    reject_unframed_storage_record,
+)
 from meridian.lib.state.retention_archive import catalog_heads, read_receipts, verify_archive
 
 
@@ -213,7 +218,15 @@ class SessionPreview:
                     ):
                         accumulator = PreviewAccumulator(old.preview)
                         cursor.extent = old.extent
-                    events = iter_history_events(source.path, cursor=cursor, end=info.st_size)
+                    events = iter_history_events(
+                        source.path,
+                        cursor=cursor,
+                        end=info.st_size,
+                        current=current,
+                        frame_guard=lambda raw, captured=validation: reject_unframed_storage_frame(
+                            raw, captured
+                        ),
+                    )
                 else:
                     events = iter_source_events(source, validation=validation, current=current)
                 try:
@@ -231,6 +244,8 @@ class SessionPreview:
                             history_id=UUID(source.history_id),
                             current=current,
                         )
+                except TranscriptReadPaused:
+                    return None
                 except (ValueError, OSError, EOFError, zipfile.BadZipFile, zlib.error) as exc:
                     if source.kind != "archive":
                         raise
