@@ -460,7 +460,7 @@ def session_log_sync(
         next_segment_command=next_segment_command,
         hints=(
             _window_hints(payload, uses_absolute_window=uses_window_selectors)
-            + ((parsed.rendering_reason,) if parsed.rendering_reason else ())
+            + parsed.read_reasons
         ),
         truncate=payload.truncate,
     )

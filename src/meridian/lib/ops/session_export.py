@@ -338,8 +338,9 @@ def session_export_sync(
         messages=_flatten_segments(transcript.segments, transcript.segment_setups),
         appendices=appendices,
     )
-    if transcript.rendering_reason:
-        markdown = f"> {transcript.rendering_reason}\n\n{markdown}"
+    if transcript.read_reasons:
+        warnings = "\n".join(f"> {reason}" for reason in transcript.read_reasons)
+        markdown = f"{warnings}\n\n{markdown}"
     return SessionExportOutput(session_id=transcript.target.session_id, markdown=markdown)
 
 

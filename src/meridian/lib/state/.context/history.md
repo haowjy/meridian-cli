@@ -64,6 +64,17 @@ uses only its existing retained stream, never native-primary source fallback. Th
 not proof that provider input is complete or unchanged. The remaining snapshot
 repair must replace the old history.jsonl existence guard without losing stream bytes.
 
+`native_snapshot.py` defines the separate sealed JSONL storage codec. It retains
+raw native JSON text in source/ordinal envelopes; a final digest binds header,
+body and observation metadata. Its writer serializes into a caller-owned atomic
+stage and does not itself qualify native input or acquire aggregate locks. The
+shared transcript reader recognizes this storage header even in renamed files,
+validates incrementally, and exposes storage status independently of rendering.
+Early close/budget exhaustion is partial; a valid empty seal is complete, not a
+reason to select another source. Automatic primary publication, qualified provider
+integration, canonical indexed selection and versioned archive declarations still
+need wiring; the codec alone does not make an existing partial stream reclaimable.
+
 The index keeps current metadata, independent locations, generation aliases and
 session/work projections. Multiple ZIP copies remain candidates even with a
 loose copy present. Only copies matching the selected portable digest are interchangeable; an

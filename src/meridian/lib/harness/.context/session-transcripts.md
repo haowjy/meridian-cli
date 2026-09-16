@@ -46,6 +46,15 @@ one from the path:
 Callers use `iter_transcript_events(path)` or `parse_transcript_file(path)`; they never
 select a provider directly.
 
+Before native-provider dispatch, the reader recognizes a sealed Meridian native
+snapshot by its bounded storage header (including renamed explicit files), or by
+the reserved `native-transcript.jsonl` name. State's snapshot codec unwraps and
+validates it; native dictionaries still use the existing normalizer. Storage
+headers/seals never become conversational events. A shared `TranscriptValidation`
+stays partial until verified EOF, separately from `rendering_reason`; search
+withholds unverified matches and preview refresh does not cache partial reads as
+current. This is read/codec support, not automatic native capture qualification.
+
 ## Compaction Segments
 
 `segment_setups` holds the setup/handoff text for each compaction segment (one slot per

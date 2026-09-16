@@ -152,6 +152,8 @@ def iter_session_subset_search(
                 and normalized_query in _normalize_content(entry.content).lower()
                 for entry in transcript.all_entries
             )
+            if not transcript.search_ready:
+                matched = False
         except (
             ValueError,
             OSError,
@@ -163,7 +165,7 @@ def iter_session_subset_search(
         ) as exc:
             yield SubsetSearchStep(chat_id, False, str(exc))
             continue
-        yield SubsetSearchStep(chat_id, matched, transcript.rendering_reason)
+        yield SubsetSearchStep(chat_id, matched, "; ".join(transcript.read_reasons) or None)
 
 
 def _build_preview(content: str, *, query: str, limit: int = _PREVIEW_LIMIT) -> str:
@@ -206,6 +208,8 @@ def _matches_for_transcript(
     chat_id: str,
 ) -> list[SessionSearchMatch]:
     matches: list[SessionSearchMatch] = []
+    if not transcript.search_ready:
+        return matches
     for entry in transcript.all_entries:
         if entry.kind == "setup" and entry.is_placeholder:
             continue
@@ -268,7 +272,7 @@ def _search_single_target(payload: SessionSearchInput, *, query: str) -> Session
     )
     return SessionSearchOutput(
         matches=tuple(matches),
-        errors=(transcript.rendering_reason,) if transcript.rendering_reason else (),
+        errors=transcript.read_reasons,
     )
 
 
@@ -359,10 +363,9 @@ def _search_corpus(payload: SessionSearchInput, *, query: str) -> SessionSearchO
                     route=route_for_corpus_target(target),
                     budget=budget,
                 )
-                if transcript.rendering_reason:
-                    errors.append(f"{row.history_id}: {transcript.rendering_reason}")
-                # Partial loose authority is useful. A partial ZIP member has not
-                # finished its checksum, so do not claim its matches as confirmed.
+                errors.extend(f"{row.history_id}: {reason}" for reason in transcript.read_reasons)
+                # A partial sealed source has not finished integrity validation;
+                # the matching boundary also withholds loose snapshot matches.
                 if budget.exhausted and row.archived:
                     truncated = True
                     break

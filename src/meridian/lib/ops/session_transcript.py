@@ -6,7 +6,7 @@ import json
 import time
 import zipfile
 import zlib
-from collections.abc import Generator, Iterator
+from collections.abc import Callable, Generator, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, NamedTuple
@@ -25,6 +25,7 @@ from meridian.lib.ops.session_target import (
     TranscriptSource,
     resolve_session_log_target,
 )
+from meridian.lib.state.native_snapshot import TranscriptValidation
 
 _PROLOGUE_PLACEHOLDER = "[prologue slot reserved: no extractable system prompt]"
 _HANDOFF_PLACEHOLDER = "[compaction handoff slot reserved: no extractable handoff]"
@@ -72,6 +73,33 @@ class ParsedSessionTranscript(NamedTuple):
     all_entries: tuple[AbsoluteTranscriptEntry, ...]
     segment_entries: tuple[tuple[AbsoluteTranscriptEntry, ...], ...]
     rendering_reason: str | None = None
+    storage_validation: TranscriptValidation | None = None
+
+    @property
+    def read_reasons(self) -> tuple[str, ...]:
+        storage = self.storage_validation
+        return tuple(
+            reason
+            for reason in (
+                storage.reason if storage is not None and storage.state != "complete" else None,
+                self.rendering_reason,
+            )
+            if reason
+        )
+
+    @property
+    def search_ready(self) -> bool:
+        validation = self.storage_validation
+        # Ordinary append streams retain their existing partial-result contract.
+        # Snapshot/ZIP prefixes have not proved their enclosing integrity yet.
+        return (
+            validation is None
+            or validation.state == "complete"
+            or (
+                validation.header is None
+                and not any(source.kind == "archive" for source in self.target.sources)
+            )
+        )
 
 
 def flatten_transcript_segments(
@@ -289,10 +317,14 @@ class TranscriptBudget:
     remaining_bytes: int
     exhausted: bool = False
 
+    def current(self) -> bool:
+        if self.remaining_bytes <= 0 or time.monotonic() >= self.deadline:
+            self.exhausted = True
+        return not self.exhausted
+
     def events(self, events: Iterator[dict[str, object]]) -> Iterator[dict[str, object]]:
         while True:
-            if self.remaining_bytes <= 0 or time.monotonic() >= self.deadline:
-                self.exhausted = True
+            if not self.current():
                 return
             try:
                 event = next(events)
@@ -305,7 +337,12 @@ class TranscriptBudget:
             yield event
 
 
-def iter_source_events(source: TranscriptSource) -> Generator[dict[str, object]]:
+def iter_source_events(
+    source: TranscriptSource,
+    *,
+    validation: TranscriptValidation | None = None,
+    current: Callable[[], bool] | None = None,
+) -> Generator[dict[str, object]]:
     if source.kind == "archive":
         from uuid import UUID
 
@@ -323,14 +360,29 @@ def iter_source_events(source: TranscriptSource) -> Generator[dict[str, object]]
     else:
         if source.path is None:
             raise FileNotFoundError(f"Session file for '{source.session_id}' not found")
-        yield from iter_transcript_events(source.path)
+        yield from iter_transcript_events(source.path, validation=validation, current=current)
+        return
+    if validation is not None:
+        validation.state = "complete"
+        validation.reason = None
 
 
 def _parse_transcript_source(
     source: TranscriptSource, budget: TranscriptBudget | None = None
-) -> TranscriptParseResult:
-    events = iter_source_events(source)
-    return parse_transcript_events_with_prologues(budget.events(events) if budget else events)
+) -> tuple[TranscriptParseResult, TranscriptValidation]:
+    validation = TranscriptValidation()
+    events = iter_source_events(
+        source, validation=validation, current=budget.current if budget else None
+    )
+    try:
+        parsed = parse_transcript_events_with_prologues(budget.events(events) if budget else events)
+    finally:
+        events.close()
+    if budget is not None and budget.exhausted:
+        validation.state = "partial"
+        validation.reason = "Transcript read budget exhausted before complete validation"
+        validation.descriptor = None
+    return parsed, validation
 
 
 def _target_for_source(target: SessionLogTarget, source: TranscriptSource) -> SessionLogTarget:
@@ -361,9 +413,10 @@ def parse_session_target(
     parsed: TranscriptParseResult | None = None
     resolved_target = target
     archive_errors: list[Exception] = []
+    validation: TranscriptValidation | None = None
     for source in target.sources:
         try:
-            candidate = _parse_transcript_source(source, budget)
+            candidate, validation = _parse_transcript_source(source, budget)
         except (ValueError, OSError, EOFError, zipfile.BadZipFile, zlib.error) as exc:
             if source.kind != "archive":
                 raise
@@ -371,7 +424,12 @@ def parse_session_target(
             continue
         parsed = candidate
         resolved_target = _target_for_source(target, source)
-        if _has_usable_interaction_content(candidate) or candidate.rendering_reason:
+        if (
+            validation.header is not None
+            or validation.state != "complete"
+            or _has_usable_interaction_content(candidate)
+            or candidate.rendering_reason
+        ):
             break
     if parsed is None:
         if archive_errors:
@@ -402,6 +460,7 @@ def parse_session_target(
         all_entries=all_entries,
         segment_entries=segment_entries,
         rendering_reason=parsed.rendering_reason,
+        storage_validation=validation,
     )
 
 

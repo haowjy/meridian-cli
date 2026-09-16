@@ -28,6 +28,7 @@ from meridian.lib.state import session_store
 from meridian.lib.state.history import HistoryCursor, iter_history_events
 from meridian.lib.state.history_changes import HistorySource
 from meridian.lib.state.history_index import HistoryIndex
+from meridian.lib.state.native_snapshot import TranscriptValidation
 from meridian.lib.state.retention_archive import catalog_heads, read_receipts, verify_archive
 
 
@@ -185,6 +186,7 @@ class SessionPreview:
                 if not current():
                     return None
                 accumulator = PreviewAccumulator()
+                validation = TranscriptValidation()
                 cursor = HistoryCursor()
                 device = inode = source_size = 0
                 tail = ""
@@ -208,7 +210,7 @@ class SessionPreview:
                         cursor.extent = old.extent
                     events = iter_history_events(source.path, cursor=cursor, end=info.st_size)
                 else:
-                    events = iter_source_events(source)
+                    events = iter_source_events(source, validation=validation, current=current)
                 try:
                     for event in events:
                         if not current():
@@ -229,6 +231,8 @@ class SessionPreview:
                     continue
                 finally:
                     events.close()
+                if not managed and validation.state != "complete":
+                    return self.peek(identity) or PreviewView((), "updating")
                 if managed:
                     assert source.path is not None
                     tail = _tail(source.path, cursor.extent)
@@ -249,7 +253,11 @@ class SessionPreview:
                     archive_digest=archive_digest,
                     source=source.source_label,
                 )
-                if accumulator.preview.has_interaction or accumulator.preview.rendering_reason:
+                if (
+                    validation.header is not None
+                    or accumulator.preview.has_interaction
+                    or accumulator.preview.rendering_reason
+                ):
                     break
             if snapshot is None:
                 if archive_error:

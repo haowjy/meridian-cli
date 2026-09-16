@@ -9,6 +9,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Give new spawn records relocation-stable history IDs and monotonic state revisions.
 - Index history discovery in rebuildable SQLite; preserve readable transcripts across retries and transfers.
 - Add opt-in verified ZIP retention, direct archive reads, selective inert restore, and explicit archived-content search.
+- Read sealed native snapshot files through shared log, search, export and preview parsing; reject corrupt seals and unverified matches.
 
 ### Fixed
 

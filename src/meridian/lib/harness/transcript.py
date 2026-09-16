@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Iterable, Iterator, Sequence
+from collections.abc import Callable, Iterable, Iterator, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, NamedTuple, Protocol, cast
@@ -16,6 +16,13 @@ from meridian.lib.harness.opencode_transcript import (
 )
 from meridian.lib.launch.constants import HISTORY_FILENAME
 from meridian.lib.state.history import iter_history_events
+from meridian.lib.state.native_snapshot import (
+    HEADER_LIMIT,
+    NATIVE_SNAPSHOT_FILENAME,
+    SNAPSHOT_RECORD,
+    TranscriptValidation,
+    read_snapshot,
+)
 
 _TRANSCRIPT_TEXT_KEYS: tuple[str, ...] = (
     "text",
@@ -888,9 +895,40 @@ def parse_transcript_events_with_prologues(
     return _parse_events_with_prologues(events, parser=resolved_parser)
 
 
-def iter_transcript_events(path: Path) -> Iterator[dict[str, object]]:
+def iter_transcript_events(
+    path: Path,
+    *,
+    validation: TranscriptValidation | None = None,
+    current: Callable[[], bool] | None = None,
+) -> Iterator[dict[str, object]]:
+    # A copied/renamed snapshot keeps its storage identity. Sniff only a bounded
+    # header; body validation remains incremental and subject to the caller budget.
+    if path.is_file():
+        with path.open("rb") as handle:
+            if current is not None and not current():
+                if validation is not None:
+                    validation.state = "partial"
+                    validation.reason = "Transcript read paused before header selection"
+                return
+            first = handle.readline(HEADER_LIMIT + 1)
+            try:
+                header = json.loads(first)
+            except (ValueError, UnicodeError):
+                header = None
+            if path.name == NATIVE_SNAPSHOT_FILENAME or (
+                isinstance(header, dict)
+                and cast("dict[str, object]", header).get("record") == SNAPSHOT_RECORD
+            ):
+                handle.seek(0)
+                yield from read_snapshot(
+                    handle, validation=validation or TranscriptValidation(), current=current
+                )
+                return
     provider = _provider_for_path(path)
     yield from provider.iter_events(path)
+    if validation is not None:
+        validation.state = "complete"
+        validation.reason = None
 
 
 def parse_transcript_file(
