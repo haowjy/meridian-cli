@@ -407,6 +407,53 @@ def test_archive_prepares_existing_legacy_child_stream_without_native_capture(
     assert legacy.read_bytes() == before
 
 
+def test_mixed_archive_reads_native_snapshot_and_legacy_history(tmp_path: Path, monkeypatch):
+    from meridian.lib.ops.session_archive import archive_history
+    from meridian.lib.state.retention_archive import iter_archived_events
+
+    project, root, native_key, _ = _capture_fixture(tmp_path, monkeypatch)
+    materialize_native_history(project, root, native_key)
+    native_state = spawn_store.get_spawn(root, native_key)
+    assert native_state is not None and native_state.history_id is not None
+    _assert_sealed_snapshot(_snapshot_path(root, native_key), contains="exact-native")
+    legacy_key = spawn_store.start_spawn(
+        root,
+        chat_id="c2",
+        harness="pi",
+        kind="child",
+        prompt="child",
+        model="test",
+        agent="coder",
+    )
+    spawn_store.finalize_spawn(root, legacy_key, status="succeeded", exit_code=0, origin="runner")
+    legacy_state = spawn_store.get_spawn(root, legacy_key)
+    assert legacy_state is not None and legacy_state.history_id is not None
+    events = [
+        {"type": "message", "message": {"role": "assistant", "content": "first attempt"}},
+        {"event_type": "meridian.attempt.completed", "attempt": 1},
+        {"type": "message", "message": {"role": "assistant", "content": "retry answer"}},
+    ]
+    legacy = root / "artifacts" / legacy_key / "history.jsonl"
+    legacy.parent.mkdir(parents=True)
+    legacy.write_text("".join(json.dumps(event) + "\n" for event in events))
+    result = archive_history(
+        root,
+        destination=tmp_path / "archives",
+        refs=(native_key, legacy_key),
+        apply=True,
+        project_root=project,
+    )
+    assert not result.errors
+    assert set(result.reclaimed) == {str(native_state.history_id), str(legacy_state.history_id)}
+    assert len(result.archives) == 1
+    archive = Path(result.archives[0])
+    native_events = list(iter_archived_events(archive, native_state.history_id))
+    assert native_events
+    assert any(row.get("id") == "exact-native" for row in native_events)
+    retained = list(iter_archived_events(archive, legacy_state.history_id))
+    assert [row["payload"] for row in retained] == events
+
+
 @pytest.mark.parametrize("owner_harness", ["pi", " PI "])
 def test_capture_owner_harness_matching_uses_resolver_normalization(
     tmp_path: Path, monkeypatch, owner_harness

@@ -784,9 +784,10 @@ def iter_archived_events(
 ) -> Iterator[dict[str, object]]:
     """Stream one verified member without reading/extracting other transcript bodies."""
     manifest = verify_archive(path, full=False, manifest_sha256=manifest_sha256)
-    member_name = canonical_transcript_member(
-        member.name.rsplit("/", 1)[-1] for member in manifest.members
-    )
+    record = next((r for r in manifest.records if r.history_id == history_id), None)
+    if record is None:
+        raise ValueError(f"Archive has no transcript for {history_id}")
+    member_name = canonical_transcript_member(m.name for m in record.files)
     name = f"{_PREFIX}records/{history_id}/aggregate/{member_name}"
     expected = next((member for member in manifest.members if member.name == name), None)
     if expected is None:
