@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.4.6-rc.1] - 2026-09-16
+
 ### Added
 
 - Native-ID continuation keeps the supplied ID; ambiguous harness ownership requires an explicit harness instead of choosing a different conversation.
