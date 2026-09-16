@@ -4,6 +4,10 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- Document that `settings.targets` is launch permission, not only materialization.
+
 ## [0.4.6-rc.1] - 2026-09-16
 
 ### Added

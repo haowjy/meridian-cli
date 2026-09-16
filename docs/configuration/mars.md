@@ -14,9 +14,11 @@ default_harness = "codex"
 models_cache_ttl_hours = 24
 ```
 
-`targets` controls harness-native materialization directories. `default_model`
-and `default_harness` provide project routing defaults used when no stronger
-CLI/env/profile setting is present.
+`targets` is also launch permission: Mars may only try those harnesses, whether
+or not other CLIs are installed or logged in. Empty `targets = []` is closed.
+`default_model` and `default_harness` provide project routing defaults used when
+no stronger CLI/env/profile setting is present; `default_harness` cannot
+resurrect a rejected route.
 
 ## Native agent copies
 
