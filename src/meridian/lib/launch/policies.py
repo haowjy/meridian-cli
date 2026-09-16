@@ -640,7 +640,7 @@ def resolve_launch_policy(surface: SurfacePolicyInput) -> ResolvedLaunchPolicy:
 
     if surface.continuation is not None:
         session = surface.continuation
-        model = surface.cli_overrides.model or ""
+        model = session.requested_model_override or surface.cli_overrides.model or ""
         snapshot = surface.policy_snapshot or LaunchPolicySnapshot(
             model=model, harness=session.continue_harness or "",
         )

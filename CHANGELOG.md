@@ -19,6 +19,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Carry OpenCode selections in native create/prompt model objects; reject instead of clearing unsupported payloads, and preserve override tokens during worker recomposition.
+
 - Record streaming-serve model selections at accepted startup and keep native spawn forks from updating the parent conversation.
 
 - Keep primary session seeds and native-fork parent IDs out of recorded model selections; bind actual identities durably and retain cleanup on binding failure.

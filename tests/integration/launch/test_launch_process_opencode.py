@@ -14,6 +14,7 @@ from typing import Any
 import pytest
 
 from meridian.lib.config.settings import load_config
+from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
 from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.projections.project_opencode_streaming import (
     project_opencode_spec_to_session_payload,
@@ -79,6 +80,10 @@ def _build_primary_launch_context(
             harness=harness_id.value,
             extra_args=extra_args,
             session=session or SessionRequest(),
+            launch_policy_snapshot=(
+                LaunchPolicySnapshot(model=model, harness=harness_id.value)
+                if session is not None else None
+            ),
         ),
         runtime=LaunchRuntime(
             argv_intent=LaunchArgvIntent.REQUIRED,
@@ -139,7 +144,8 @@ def test_run_harness_process_managed_failure_falls_back_to_black_box(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    """OpenCode can fall back to black-box when managed backend fails."""
+    """Harness-default OpenCode resume can fall back when the managed backend fails."""
+    stub_bundle_request_and_resolve(monkeypatch, model="", harness=HarnessId.OPENCODE)
     monkeypatch.delenv("MERIDIAN_CHAT_ID", raising=False)
     project_root = tmp_path / "opencode-fallback"
     project_root.mkdir()
@@ -148,7 +154,7 @@ def test_run_harness_process_managed_failure_falls_back_to_black_box(
     launch_context, harness_registry = _build_primary_launch_context(
         project_root=project_root,
         harness_id=HarnessId.OPENCODE,
-        model="gemini-2.5-pro",
+        model="",
         execution_cwd=task_cwd,
         session=SessionRequest(
             requested_harness_session_id="existing-opencode-session",
@@ -233,14 +239,13 @@ def test_opencode_streaming_logs_effort_warning_without_failure(
     caplog.set_level("DEBUG")
     payload = project_opencode_spec_to_session_payload(
         ResolvedLaunchSpec(
-            model="gemini-2.5-pro",
+            model="google/gemini-2.5-pro",
             effort="medium",
             permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
         )
     )
 
-    assert payload["model"] == "gemini-2.5-pro"
-    assert payload["modelID"] == "gemini-2.5-pro"
+    assert payload["model"] == {"providerID": "google", "id": "gemini-2.5-pro"}
     assert "effort" not in payload
     assert (
         "OpenCode streaming does not support effort override; ignoring effort=medium"
