@@ -35,6 +35,7 @@ class ResolvedSessionReference:
     source_skills: tuple[str, ...]
     source_work_id: str | None
     tracked: bool
+    source_spawn_id: str | None = None
     source_control_root: str | None = None
     source_execution_cwd: str | None = None
     source_claude_config_dir: str | None = None
@@ -206,6 +207,7 @@ def _build_tracked_reference(
     source_agent: str | None,
     source_skills: tuple[str, ...],
     source_work_id: str | None,
+    source_spawn_id: str | None = None,
     source_control_root: str | None = None,
     source_execution_cwd: str | None = None,
     source_claude_config_dir: str | None = None,
@@ -228,6 +230,7 @@ def _build_tracked_reference(
         source_agent=source_agent,
         source_skills=source_skills,
         source_work_id=source_work_id,
+        source_spawn_id=source_spawn_id,
         source_control_root=source_control_root,
         source_execution_cwd=source_execution_cwd,
         source_claude_config_dir=source_claude_config_dir,
@@ -362,6 +365,7 @@ def _resolve_harness_session_reference(
         source_agent=_normalize_optional(session.agent),
         source_skills=session.skills,
         source_work_id=_normalize_optional(session.active_work_id),
+        source_spawn_id=_normalize_optional(session.spawn_id),
         source_control_root=(
             _normalize_optional(getattr(session, "control_root", None))
             or project_root.as_posix()

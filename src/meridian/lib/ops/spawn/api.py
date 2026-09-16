@@ -1943,20 +1943,34 @@ def _source_spawn_for_follow_up(
     project_root: Path,
     *,
     runtime_root: Path | None = None,
+    harness_hint: str | None = None,
 ) -> tuple[str, SpawnRecord, ResolvedSessionReference]:
     resolved_spawn_id = resolve_spawn_reference(
         project_root,
         payload_spawn_id,
         runtime_root=runtime_root,
     )
-    row = read_spawn_row(project_root, resolved_spawn_id, runtime_root=runtime_root)
-    if row is None:
-        raise ValueError(f"Spawn '{resolved_spawn_id}' not found")
     resolved_reference = resolve_session_reference(
         project_root,
         resolved_spawn_id,
         runtime_root=runtime_root,
+        harness_hint=harness_hint,
     )
+    row = read_spawn_row(project_root, resolved_spawn_id, runtime_root=runtime_root)
+    if row is None and resolved_reference.source_spawn_id is not None:
+        # Follow the native session's exact spawn provenance, never its owner's
+        # latest spawn. Keep the supplied native identity in resolved_reference.
+        resolved_spawn_id = resolved_reference.source_spawn_id
+        row = read_spawn_row(project_root, resolved_spawn_id, runtime_root=runtime_root)
+        if row is not None and (
+            row.chat_id != resolved_reference.source_chat_id
+            or row.harness != resolved_reference.harness
+        ):
+            raise ValueError("Native session reference has inconsistent retained spawn metadata")
+    if row is None:
+        raise ValueError(
+            f"Spawn '{payload_spawn_id}' not found; continuation requires retained spawn metadata"
+        )
     return resolved_spawn_id, row, resolved_reference
 
 
@@ -2260,6 +2274,7 @@ def spawn_continue_sync(
         payload.spawn_id,
         project_root,
         runtime_root=runtime_root,
+        harness_hint=payload.harness,
     )
     if resolved_reference.missing_harness_session_id:
         raise ValueError(

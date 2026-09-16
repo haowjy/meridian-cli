@@ -19,6 +19,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Accept tracked native session IDs for spawn continuation without replacing the requested conversation with its chat's latest ID.
+
 - Carry OpenCode selections in native create/prompt model objects; reject instead of clearing unsupported payloads, and preserve override tokens during worker recomposition.
 
 - Record streaming-serve model selections at accepted startup and keep native spawn forks from updating the parent conversation.
