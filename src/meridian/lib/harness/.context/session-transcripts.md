@@ -44,7 +44,9 @@ one from the path:
 | `JsonlTranscriptProvider` | everything else | Raw JSONL, one event per line |
 
 Callers use `iter_transcript_events(path)` or `parse_transcript_file(path)`; they never
-select a provider directly.
+select a provider directly. Each provider's `iter_events` owns cooperative budget
+(`current`) and reserved-frame validation; the shared dispatcher does not inspect
+provider implementations.
 
 Before native-provider dispatch, the reader recognizes a sealed Meridian native
 snapshot by its bounded storage header (including renamed explicit files), or by

@@ -10,9 +10,10 @@ from collections.abc import Callable, Generator, Iterable, Iterator, Mapping
 from contextlib import closing
 from itertools import groupby
 from pathlib import Path
-from typing import cast
+from typing import Protocol, cast
 
 from meridian.lib.harness.opencode_storage import resolve_opencode_home_dir
+from meridian.lib.state.native_snapshot import TranscriptValidation
 
 
 def resolve_opencode_db_path(launch_env: Mapping[str, str] | None = None) -> Path:
@@ -44,13 +45,23 @@ def opencode_db_session_exists(
     return row is not None
 
 
+class _JsonlEventReader(Protocol):
+    def __call__(
+        self,
+        path: Path,
+        *,
+        current: Callable[[], bool] | None = None,
+        validation: TranscriptValidation | None = None,
+    ) -> Iterator[dict[str, object]]: ...
+
+
 class OpenCodeStorageTranscriptProvider:
     """OpenCode storage provider that prefers opencode.db transcript rows."""
 
     def __init__(
         self,
         *,
-        iter_json_events: Callable[[Path], Iterator[dict[str, object]]],
+        iter_json_events: _JsonlEventReader,
     ) -> None:
         self._iter_json_events = iter_json_events
 
@@ -61,14 +72,20 @@ class OpenCodeStorageTranscriptProvider:
             and path.parent.parent.name == "storage"
         )
 
-    def iter_events(self, path: Path) -> Iterator[dict[str, object]]:
+    def iter_events(
+        self,
+        path: Path,
+        *,
+        current: Callable[[], bool] | None = None,
+        validation: TranscriptValidation | None = None,
+    ) -> Iterator[dict[str, object]]:
         database = opencode_db_for_session_file(path)
         if database is not None and opencode_db_session_exists(
             session_id=path.stem, db_path=database
         ):
             yield from iter_opencode_db_events(session_id=path.stem, db_path=database)
             return
-        yield from self._iter_json_events(path)
+        yield from self._iter_json_events(path, current=current, validation=validation)
 
 
 def opencode_db_for_session_file(path: Path) -> Path | None:
@@ -420,7 +437,16 @@ def extract_last_assistant_report(events: Iterable[dict[str, object]]) -> str | 
 
 def extract_last_assistant_report_from_session_path(path: Path) -> str | None:
     """Return the last assistant message text for one OpenCode session file."""
-    provider = OpenCodeStorageTranscriptProvider(iter_json_events=lambda _path: iter(()))
+    def _no_json(
+        path: Path,
+        *,
+        current: Callable[[], bool] | None = None,
+        validation: TranscriptValidation | None = None,
+    ) -> Iterator[dict[str, object]]:
+        del path, current, validation
+        return iter(())
+
+    provider = OpenCodeStorageTranscriptProvider(iter_json_events=_no_json)
     return extract_last_assistant_report(provider.iter_events(path))
 
 

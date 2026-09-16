@@ -87,7 +87,13 @@ class TranscriptProvider(Protocol):
 
     def supports(self, path: Path) -> bool: ...
 
-    def iter_events(self, path: Path) -> Iterator[dict[str, object]]: ...
+    def iter_events(
+        self,
+        path: Path,
+        *,
+        current: Callable[[], bool] | None = None,
+        validation: TranscriptValidation | None = None,
+    ) -> Iterator[dict[str, object]]: ...
 
 
 def text_from_value(value: object) -> str:
@@ -554,8 +560,14 @@ class JsonlTranscriptProvider(TranscriptProvider):
     def supports(self, path: Path) -> bool:
         return path.name != HISTORY_FILENAME
 
-    def iter_events(self, path: Path) -> Iterator[dict[str, object]]:
-        yield from _iter_json_events(path)
+    def iter_events(
+        self,
+        path: Path,
+        *,
+        current: Callable[[], bool] | None = None,
+        validation: TranscriptValidation | None = None,
+    ) -> Iterator[dict[str, object]]:
+        yield from _iter_json_events(path, current=current, validation=validation)
 
 
 def _iter_json_events(
@@ -595,8 +607,18 @@ class HistoryJsonlTranscriptProvider(TranscriptProvider):
     def supports(self, path: Path) -> bool:
         return path.name == HISTORY_FILENAME
 
-    def iter_events(self, path: Path) -> Iterator[dict[str, object]]:
-        for event in iter_history_events(path):
+    def iter_events(
+        self,
+        path: Path,
+        *,
+        current: Callable[[], bool] | None = None,
+        validation: TranscriptValidation | None = None,
+    ) -> Iterator[dict[str, object]]:
+        for event in iter_history_events(
+            path,
+            current=current,
+            frame_guard=lambda raw: reject_unframed_storage_frame(raw, validation),
+        ):
             yield cast("dict[str, object]", event)
 
 
@@ -948,17 +970,7 @@ def iter_transcript_events(
                 return
     try:
         provider = _provider_for_path(path)
-        if isinstance(provider, HistoryJsonlTranscriptProvider):
-            stream: Iterator[dict[str, object]] = iter_history_events(
-                path,
-                current=current,
-                frame_guard=lambda raw: reject_unframed_storage_frame(raw, validation),
-            )
-        elif isinstance(provider, JsonlTranscriptProvider):
-            stream = _iter_json_events(path, current=current, validation=validation)
-        else:
-            stream = provider.iter_events(path)
-        for event in stream:
+        for event in provider.iter_events(path, current=current, validation=validation):
             reject_unframed_storage_record(event, validation)
             yield event
         if validation is not None:

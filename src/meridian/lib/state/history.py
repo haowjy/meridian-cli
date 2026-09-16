@@ -324,10 +324,7 @@ def iter_history_events(
     with path.open("rb") as handle:
         handle.seek(cursor.extent)
         while end is None or handle.tell() < end:
-            if current is None:
-                line = handle.readline(-1 if end is None else end - handle.tell())
-            else:
-                line = read_jsonl_frame(handle, current=current, end=end)
+            line = read_jsonl_frame(handle, current=current, end=end)
             if not line:
                 break
             stripped_raw = line.strip()
