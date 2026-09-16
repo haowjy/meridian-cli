@@ -391,6 +391,7 @@ def _target_for_source(target: SessionLogTarget, source: TranscriptSource) -> Se
         harness=source.harness,
         file_path=source.path,
         source=source.source_label,
+        sources=(source,),
     )
 
 

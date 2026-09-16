@@ -13,6 +13,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Keep unselected archive alternatives from suppressing ordinary loose-history search prefixes.
 - Resolve native capture from the exact completed record; refuse discovery fallbacks and known active native owners.
 - Join capture ownership to exact-generation leases; keep legacy child-stream archive preparation working.
 - Normalize capture identity once for selection and owner checks, including empty metadata fallbacks.

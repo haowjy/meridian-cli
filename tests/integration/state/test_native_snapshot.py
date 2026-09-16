@@ -315,3 +315,43 @@ def test_partial_sealed_prefix_is_visible_to_log_but_not_search(tmp_path: Path) 
         )
         == []
     )
+
+
+def test_unselected_archive_does_not_disqualify_loose_prefix(tmp_path: Path) -> None:
+    import time
+
+    from meridian.lib.ops.session_target import SessionLogTarget, TranscriptSource
+    from meridian.lib.ops.session_transcript import (
+        SessionLogRoute,
+        TranscriptBudget,
+        parse_session_target,
+    )
+
+    path = tmp_path / "stream.jsonl"
+    path.write_text(
+        json.dumps({"type": "assistant", "message": {"content": "early needle"}})
+        + "\n"
+        + json.dumps({"padding": "x" * 10000})
+        + "\n"
+    )
+    sources = (
+        TranscriptSource("file", "native-1", "claude", "stream", path),
+        TranscriptSource(
+            "archive",
+            "native-1",
+            "claude",
+            "equivalent archive",
+            tmp_path / "offline.zip",
+            history_id="unused",
+        ),
+    )
+    parsed = parse_session_target(
+        project_root=tmp_path,
+        runtime_root=None,
+        target=SessionLogTarget("native-1", "claude", path, "stream", sources),
+        route=SessionLogRoute("file", str(path)),
+        budget=TranscriptBudget(time.monotonic() + 10, 1000),
+    )
+    assert any("early needle" in entry.content for entry in parsed.entries)
+    assert parsed.search_ready
+    assert parsed.target.sources == (sources[0],)
