@@ -34,6 +34,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Bind post-stop history capture to the completed spawn, even after its chat starts another run.
 - Warm archived child previews during index rebuild; count unsupported archived rendering as unavailable.
 
+- Own history index schema and queries with SQLAlchemy Core; keep the `meta.version` migrate runner.
+- Migrate compatible older history indexes in place; rebuild only when rows cannot be trusted.
 - Give cold history indexes 15 seconds; remember failed initialization and recover through manual rebuild.
 - Reuse concurrent index builds; keep status cache-only and preserve warm search deadlines.
 - Remember malformed history failures without masking cancellation or successful index publication.

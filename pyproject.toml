@@ -32,6 +32,7 @@ dependencies = [
   "pydantic>=2.12",
   "pydantic-settings>=2.13",
   "python-frontmatter>=1.1",
+  "sqlalchemy>=2.0,<3",
   "structlog>=25.0",
   "tomlkit>=0.14.0",
   "uvicorn[standard]>=0.34",

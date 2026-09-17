@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 from pathlib import Path
 
 import pytest
@@ -61,7 +62,7 @@ def test_zip_transfer_restore_is_inert_repeatable_and_conflict_safe(tmp_path: Pa
     archive = Path(output.archives[0])
     assert verify_archive(archive).records[0].history_id == original.history_id
     assert HistoryIndex(root).rebuild().complete
-    with HistoryIndex(root).query() as db:
+    with sqlite3.connect(HistoryIndex(root).path) as db:
         assert db.execute("SELECT archive_id FROM records").fetchone()[0]
     destination = tmp_path / "fresh"
     restored = restore_archive(destination, archive, (str(original.history_id),))

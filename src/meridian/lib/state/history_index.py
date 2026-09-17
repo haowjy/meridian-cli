@@ -17,10 +17,35 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal, NamedTuple, cast
+from typing import TYPE_CHECKING, Any, Literal, NamedTuple, NoReturn, cast
 from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 
 from pydantic import BaseModel, ConfigDict, Field
+from sqlalchemy import (
+    Column,
+    Index,
+    Integer,
+    MetaData,
+    Table,
+    Text,
+    and_,
+    create_engine,
+    delete,
+    event,
+    exists,
+    func,
+    insert,
+    literal,
+    or_,
+    select,
+    text,
+    union_all,
+    update,
+)
+from sqlalchemy.engine import Connection, Engine  # noqa: TC002
+from sqlalchemy.exc import DBAPIError
+from sqlalchemy.pool import NullPool
+from sqlalchemy.sql.elements import ColumnElement  # noqa: TC002
 
 from meridian.lib.core.domain import TERMINAL_SPAWN_STATUSES
 from meridian.lib.platform.atomic import fsync_directory
@@ -53,46 +78,121 @@ SCHEMA_VERSION = 2
 INITIALIZATION_TIMEOUT = 15.0
 QUERY_TIMEOUT = 2.0
 _REBUILD_COMMAND = "uv run meridian session index rebuild --metadata-only"
+type SchemaClass = Literal["expand", "reshape", "reproject"]
+type SchemaUpgrade = Literal["migrate", "reproject"]
 
-_SCHEMA = """
-CREATE TABLE meta(version INTEGER NOT NULL, generation TEXT NOT NULL, build TEXT NOT NULL);
-CREATE TABLE previews(
- key TEXT PRIMARY KEY, history_id TEXT, archive_digest TEXT, value TEXT NOT NULL
-);
-CREATE TABLE records(
- history_id TEXT PRIMARY KEY, local_id TEXT, chat TEXT, owner TEXT, parent TEXT,
- work TEXT, status TEXT NOT NULL, kind TEXT NOT NULL, started TEXT NOT NULL,
- activity TEXT NOT NULL, active INTEGER NOT NULL, archive_id TEXT,
- record_json TEXT NOT NULL
-);
-CREATE UNIQUE INDEX loose_alias ON records(local_id) WHERE archive_id IS NULL;
-CREATE INDEX owner_records ON records(owner,started);
-CREATE INDEX chat_records ON records(chat,started);
-CREATE INDEX parent_records ON records(parent);
-CREATE INDEX work_records ON records(work,started);
-CREATE INDEX status_records ON records(status,started);
-CREATE INDEX activity_records ON records(activity);
-CREATE TABLE locations(
- source_id TEXT PRIMARY KEY, history_id TEXT NOT NULL, kind TEXT NOT NULL,
- ordinal INTEGER NOT NULL, activity TEXT NOT NULL, record_json TEXT NOT NULL,
- receipt_json TEXT, portable_digest TEXT
-);
-CREATE INDEX history_locations ON locations(history_id,kind,ordinal DESC);
-CREATE TABLE archive_heads(history_id TEXT PRIMARY KEY, portable_digest TEXT NOT NULL);
-CREATE TABLE aliases(source_id TEXT NOT NULL, alias TEXT NOT NULL, kind TEXT NOT NULL,
- history_id TEXT NOT NULL, PRIMARY KEY(source_id,alias,kind,history_id));
-CREATE INDEX history_aliases ON aliases(alias,kind,history_id);
-CREATE TABLE sessions(
- chat TEXT NOT NULL, generation TEXT NOT NULL, ordinal INTEGER NOT NULL,
- kind TEXT NOT NULL, stopped TEXT, activity TEXT NOT NULL, history_id TEXT,
- record_json TEXT NOT NULL,
- PRIMARY KEY(chat,generation)
-);
-CREATE INDEX session_recency ON sessions(kind,activity DESC);
-CREATE INDEX session_history ON sessions(history_id,activity DESC);
-CREATE TABLE work_chats(work TEXT NOT NULL, chat TEXT NOT NULL, PRIMARY KEY(work,chat));
-CREATE TABLE cursors(source TEXT PRIMARY KEY, inode TEXT, extent INTEGER, tail TEXT);
-"""
+INDEX_SCHEMA = MetaData()
+META = Table(
+    "meta",
+    INDEX_SCHEMA,
+    Column("version", Integer, nullable=False),
+    Column("generation", Text, nullable=False),
+    Column("build", Text, nullable=False),
+)
+PREVIEWS = Table(
+    "previews",
+    INDEX_SCHEMA,
+    Column("key", Text, primary_key=True),
+    Column("history_id", Text),
+    Column("archive_digest", Text),
+    Column("value", Text, nullable=False),
+)
+RECORDS = Table(
+    "records",
+    INDEX_SCHEMA,
+    Column("history_id", Text, primary_key=True),
+    Column("local_id", Text),
+    Column("chat", Text),
+    Column("owner", Text),
+    Column("parent", Text),
+    Column("work", Text),
+    Column("status", Text, nullable=False),
+    Column("kind", Text, nullable=False),
+    Column("started", Text, nullable=False),
+    Column("activity", Text, nullable=False),
+    Column("active", Integer, nullable=False),
+    Column("archive_id", Text),
+    Column("record_json", Text, nullable=False),
+)
+Index("loose_alias", RECORDS.c.local_id, unique=True, sqlite_where=RECORDS.c.archive_id.is_(None))
+Index("owner_records", RECORDS.c.owner, RECORDS.c.started)
+Index("chat_records", RECORDS.c.chat, RECORDS.c.started)
+Index("parent_records", RECORDS.c.parent)
+Index("work_records", RECORDS.c.work, RECORDS.c.started)
+Index("status_records", RECORDS.c.status, RECORDS.c.started)
+Index("activity_records", RECORDS.c.activity)
+LOCATIONS = Table(
+    "locations",
+    INDEX_SCHEMA,
+    Column("source_id", Text, primary_key=True),
+    Column("history_id", Text, nullable=False),
+    Column("kind", Text, nullable=False),
+    Column("ordinal", Integer, nullable=False),
+    Column("activity", Text, nullable=False),
+    Column("record_json", Text, nullable=False),
+    Column("receipt_json", Text),
+    Column("portable_digest", Text),
+)
+Index(
+    "history_locations",
+    LOCATIONS.c.history_id,
+    LOCATIONS.c.kind,
+    LOCATIONS.c.ordinal.desc(),
+)
+ARCHIVE_HEADS = Table(
+    "archive_heads",
+    INDEX_SCHEMA,
+    Column("history_id", Text, primary_key=True),
+    Column("portable_digest", Text, nullable=False),
+)
+ALIASES = Table(
+    "aliases",
+    INDEX_SCHEMA,
+    Column("source_id", Text, nullable=False, primary_key=True),
+    Column("alias", Text, nullable=False, primary_key=True),
+    Column("kind", Text, nullable=False, primary_key=True),
+    Column("history_id", Text, nullable=False, primary_key=True),
+)
+Index("history_aliases", ALIASES.c.alias, ALIASES.c.kind, ALIASES.c.history_id)
+SESSIONS = Table(
+    "sessions",
+    INDEX_SCHEMA,
+    Column("chat", Text, nullable=False, primary_key=True),
+    Column("generation", Text, nullable=False, primary_key=True),
+    Column("ordinal", Integer, nullable=False),
+    Column("kind", Text, nullable=False),
+    Column("stopped", Text),
+    Column("activity", Text, nullable=False),
+    Column("history_id", Text),
+    Column("record_json", Text, nullable=False),
+)
+Index("session_recency", SESSIONS.c.kind, SESSIONS.c.activity.desc())
+Index("session_history", SESSIONS.c.history_id, SESSIONS.c.activity.desc())
+WORK_CHATS = Table(
+    "work_chats",
+    INDEX_SCHEMA,
+    Column("work", Text, nullable=False, primary_key=True),
+    Column("chat", Text, nullable=False, primary_key=True),
+)
+CURSORS = Table(
+    "cursors",
+    INDEX_SCHEMA,
+    Column("source", Text, primary_key=True),
+    Column("inode", Text),
+    Column("extent", Integer),
+    Column("tail", Text),
+)
+
+
+@dataclass(frozen=True)
+class SchemaStep:
+    from_version: int
+    to_version: int
+    schema_class: SchemaClass
+    apply: Callable[[Connection], None]
+
+
+SCHEMA_STEPS: tuple[SchemaStep, ...] = ()
 
 
 class HistoryIndexIncomplete(RuntimeError):
@@ -116,6 +216,7 @@ class IndexStatus:
     generation: str | None = None
     build: str | None = None
     reason: str | None = None
+    upgrade: SchemaUpgrade | None = None
 
 
 class _InitializationFailure(BaseModel):
@@ -159,18 +260,100 @@ def _remaining(deadline: float) -> float:
     return remaining
 
 
-def _connect(path: Path, *, fresh: bool = False, timeout: float = 2) -> sqlite3.Connection:
-    db = sqlite3.connect(path, timeout=timeout)
-    db.row_factory = sqlite3.Row
+def _schema_upgrade(live_version: int) -> tuple[SchemaUpgrade, tuple[SchemaStep, ...]]:
+    """Plan the remaining chain. Missing or untrusted steps reproject."""
+    if live_version < 2:
+        return "reproject", ()
+    ordered: dict[int, SchemaStep] = {}
+    for step in SCHEMA_STEPS:
+        if step.to_version != step.from_version + 1 or step.from_version in ordered:
+            return "reproject", ()
+        ordered[step.from_version] = step
+    chain: list[SchemaStep] = []
+    for version in range(live_version, SCHEMA_VERSION):
+        step = ordered.get(version)
+        if step is None:
+            return "reproject", ()
+        chain.append(step)
+    if any(step.schema_class == "reproject" for step in chain):
+        return "reproject", ()
+    return "migrate", tuple(chain)
+
+
+def _outdated_status(version: int) -> tuple[str, SchemaUpgrade]:
+    upgrade, chain = _schema_upgrade(version)
+    if upgrade == "reproject":
+        return "metadata rebuild required (reproject)", upgrade
+    shown = "reshape" if any(step.schema_class == "reshape" for step in chain) else "expand"
+    return f"in-place migrate ({shown})", upgrade
+
+
+def _reraise_dbapi(exc: DBAPIError) -> NoReturn:
+    if exc.orig is not None:
+        raise exc.orig from exc
+    raise exc
+
+
+def _engine(
+    path: Path,
+    *,
+    fresh: bool = False,
+    timeout: float = 2,
+    readonly: bool = False,
+    autocommit: bool = False,
+) -> Engine:
+    def creator() -> sqlite3.Connection:
+        if readonly:
+            return sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True, timeout=timeout)
+        return sqlite3.connect(path, timeout=timeout)
+
+    engine = (
+        create_engine(
+            "sqlite+pysqlite://",
+            creator=creator,
+            poolclass=NullPool,
+            isolation_level="AUTOCOMMIT",
+        )
+        if autocommit
+        else create_engine("sqlite+pysqlite://", creator=creator, poolclass=NullPool)
+    )
+    if not readonly:
+
+        @event.listens_for(engine, "connect")
+        def _configure(dbapi_connection: sqlite3.Connection, _record: object) -> None:
+            cursor = dbapi_connection.cursor()
+            try:
+                cursor.execute("PRAGMA foreign_keys=ON")
+                cursor.execute("PRAGMA synchronous=FULL")
+                if not fresh:
+                    cursor.execute("PRAGMA journal_mode=WAL")
+            finally:
+                cursor.close()
+
+    return engine
+
+
+@contextmanager
+def _connect(
+    path: Path,
+    *,
+    fresh: bool = False,
+    timeout: float = 2,
+    readonly: bool = False,
+    autocommit: bool = False,
+) -> Generator[Connection]:
+    engine = _engine(path, fresh=fresh, timeout=timeout, readonly=readonly, autocommit=autocommit)
     try:
-        db.execute("PRAGMA foreign_keys=ON")
-        db.execute("PRAGMA synchronous=FULL")
-        if not fresh:
-            db.execute("PRAGMA journal_mode=WAL")
-    except sqlite3.Error:
-        db.close()
-        raise
-    return db
+        try:
+            with engine.connect() as db:
+                try:
+                    yield db
+                except DBAPIError as exc:
+                    _reraise_dbapi(exc)
+        except DBAPIError as exc:
+            _reraise_dbapi(exc)
+    finally:
+        engine.dispose()
 
 
 def _tail(path: Path, extent: int, count: int = 256) -> str:
@@ -234,13 +417,13 @@ class HistoryIndex:
 
     def _aliases(
         self,
-        db: sqlite3.Connection,
+        db: Connection,
         source_id: str,
         history_id: str,
         state: SpawnRecord | None = None,
         session: SessionRecord | None = None,
     ) -> None:
-        db.execute("DELETE FROM aliases WHERE source_id=?", (source_id,))
+        db.execute(delete(ALIASES).where(ALIASES.c.source_id == source_id))
         names: set[tuple[str, str]] = set()
         if state:
             names.add((state.id, "spawn"))
@@ -258,19 +441,45 @@ class HistoryIndex:
             names.update((name, "harness") for name in session.harness_session_ids)
             if session.harness_session_id:
                 names.add((session.harness_session_id, "harness"))
-        db.executemany(
-            "INSERT OR IGNORE INTO aliases VALUES (?,?,?,?)",
-            ((source_id, name, kind, history_id) for name, kind in names),
-        )
+        rows = [
+            {
+                "source_id": source_id,
+                "alias": name,
+                "kind": kind,
+                "history_id": history_id,
+            }
+            for name, kind in names
+        ]
+        if rows:
+            db.execute(insert(ALIASES).prefix_with("OR IGNORE"), rows)
 
-    def _refresh(self, db: sqlite3.Connection, history_id: str) -> None:
-        location = db.execute(
-            "SELECT * FROM locations l WHERE history_id=? AND (kind='spawn' OR portable_digest="
-            "(SELECT portable_digest FROM archive_heads h WHERE h.history_id=l.history_id)) "
-            "ORDER BY (kind='spawn') DESC,ordinal DESC,source_id LIMIT 1",
-            (history_id,),
-        ).fetchone()
-        db.execute("DELETE FROM records WHERE history_id=?", (history_id,))
+    def _refresh(self, db: Connection, history_id: str) -> None:
+        head_digest = (
+            select(ARCHIVE_HEADS.c.portable_digest)
+            .where(ARCHIVE_HEADS.c.history_id == LOCATIONS.c.history_id)
+            .scalar_subquery()
+        )
+        location = (
+            db.execute(
+                select(LOCATIONS)
+                .where(
+                    LOCATIONS.c.history_id == history_id,
+                    or_(
+                        LOCATIONS.c.kind == "spawn",
+                        LOCATIONS.c.portable_digest == head_digest,
+                    ),
+                )
+                .order_by(
+                    (LOCATIONS.c.kind == "spawn").desc(),
+                    LOCATIONS.c.ordinal.desc(),
+                    LOCATIONS.c.source_id,
+                )
+                .limit(1)
+            )
+            .mappings()
+            .first()
+        )
+        db.execute(delete(RECORDS).where(RECORDS.c.history_id == history_id))
         if location is None:
             return
         record = SpawnRecord.model_validate_json(location["record_json"])
@@ -279,39 +488,47 @@ class HistoryIndex:
         session = None
         if location["kind"] == "spawn":
             related = db.execute(
-                "SELECT record_json FROM sessions WHERE history_id=? OR (chat=? AND generation=?) "
-                "ORDER BY activity DESC LIMIT 1",
-                (history_id, record.chat_id, record.session_instance_id),
-            ).fetchone()
+                select(SESSIONS.c.record_json)
+                .where(
+                    or_(
+                        SESSIONS.c.history_id == history_id,
+                        and_(
+                            SESSIONS.c.chat == record.chat_id,
+                            SESSIONS.c.generation == record.session_instance_id,
+                        ),
+                    )
+                )
+                .order_by(SESSIONS.c.activity.desc())
+                .limit(1)
+            ).first()
             if related:
                 session = SessionRecord.model_validate_json(related[0])
         activity = last_activity(record, session, location["activity"])
         db.execute(
-            "INSERT INTO records VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
-            (
-                history_id,
-                record.id,
-                record.chat_id,
-                record.owner_chat_id or record.chat_id,
-                record.parent_id,
-                record.work_id,
-                str(record.status),
-                record.kind,
-                canonical_time(record.started_at or ""),
-                activity,
-                int(active and receipt is None),
-                receipt["archive_id"] if receipt else None,
-                record.model_dump_json(),
-            ),
+            insert(RECORDS).values(
+                history_id=history_id,
+                local_id=record.id,
+                chat=record.chat_id,
+                owner=record.owner_chat_id or record.chat_id,
+                parent=record.parent_id,
+                work=record.work_id,
+                status=str(record.status),
+                kind=record.kind,
+                started=canonical_time(record.started_at or ""),
+                activity=activity,
+                active=int(active and receipt is None),
+                archive_id=receipt["archive_id"] if receipt else None,
+                record_json=record.model_dump_json(),
+            )
         )
 
-    def _spawn(self, db: sqlite3.Connection, key: str) -> bool:
+    def _spawn(self, db: Connection, key: str) -> bool:
         source_id = f"spawn:{key}"
         old = db.execute(
-            "SELECT history_id FROM locations WHERE source_id=?", (source_id,)
-        ).fetchone()
-        db.execute("DELETE FROM locations WHERE source_id=?", (source_id,))
-        db.execute("DELETE FROM aliases WHERE source_id=?", (source_id,))
+            select(LOCATIONS.c.history_id).where(LOCATIONS.c.source_id == source_id)
+        ).first()
+        db.execute(delete(LOCATIONS).where(LOCATIONS.c.source_id == source_id))
+        db.execute(delete(ALIASES).where(ALIASES.c.source_id == source_id))
         if old:
             self._refresh(db, old[0])
         record = read_state(self.root / "spawns", key, include_prompt=False)
@@ -319,32 +536,44 @@ class HistoryIndex:
             return False
         history_id = str(record.history_id or uuid5(NAMESPACE_URL, f"{self.root}:{key}"))
         if db.execute(
-            "SELECT 1 FROM locations WHERE history_id=? AND kind='spawn'", (history_id,)
-        ).fetchone():
+            select(LOCATIONS.c.source_id).where(
+                LOCATIONS.c.history_id == history_id, LOCATIONS.c.kind == "spawn"
+            )
+        ).first():
             raise ValueError(f"Conflicting loose copies of history {history_id}")
         activity = transcript_activity(
             self.root / "spawns" / key / "history.jsonl",
             record.terminal.finished_at if record.terminal else record.started_at or "",
         )
         db.execute(
-            "INSERT INTO locations VALUES (?,?, 'spawn',0,?,?,NULL,NULL)",
-            (source_id, history_id, activity, record.model_dump_json()),
+            insert(LOCATIONS).values(
+                source_id=source_id,
+                history_id=history_id,
+                kind="spawn",
+                ordinal=0,
+                activity=activity,
+                record_json=record.model_dump_json(),
+                receipt_json=None,
+                portable_digest=None,
+            )
         )
         self._aliases(db, source_id, history_id, state=record)
         self._refresh(db, history_id)
         return record.record_mode != "historical" and record.status not in TERMINAL_SPAWN_STATUSES
 
-    def _sessions(self, db: sqlite3.Connection) -> None:
+    def _sessions(self, db: Connection) -> None:
         path = self.root / "sessions.jsonl"
         if not path.exists():
-            db.execute("DELETE FROM sessions")
-            db.execute("DELETE FROM work_chats")
-            db.execute("DELETE FROM aliases WHERE source_id LIKE 'session:%'")
-            db.execute("DELETE FROM cursors WHERE source='sessions'")
+            db.execute(delete(SESSIONS))
+            db.execute(delete(WORK_CHATS))
+            db.execute(delete(ALIASES).where(ALIASES.c.source_id.like("session:%")))
+            db.execute(delete(CURSORS).where(CURSORS.c.source == "sessions"))
             return
         stat = path.stat()
         inode = f"{stat.st_dev}:{stat.st_ino}"
-        cursor = db.execute("SELECT * FROM cursors WHERE source='sessions'").fetchone()
+        cursor = (
+            db.execute(select(CURSORS).where(CURSORS.c.source == "sessions")).mappings().first()
+        )
         offset = 0
         if (
             cursor
@@ -354,9 +583,9 @@ class HistoryIndex:
         ):
             offset = cursor["extent"]
         else:
-            db.execute("DELETE FROM sessions")
-            db.execute("DELETE FROM work_chats")
-            db.execute("DELETE FROM aliases WHERE source_id LIKE 'session:%'")
+            db.execute(delete(SESSIONS))
+            db.execute(delete(WORK_CHATS))
+            db.execute(delete(ALIASES).where(ALIASES.c.source_id.like("session:%")))
         with path.open("rb") as handle:
             handle.seek(offset)
             while line := handle.readline():
@@ -376,8 +605,9 @@ class HistoryIndex:
                     continue
                 if isinstance(event, SessionUpdateEvent) and event.active_work_id:
                     db.execute(
-                        "INSERT OR IGNORE INTO work_chats VALUES (?,?)",
-                        (event.active_work_id.strip(), event.chat_id),
+                        insert(WORK_CHATS)
+                        .prefix_with("OR IGNORE")
+                        .values(work=event.active_work_id.strip(), chat=event.chat_id)
                     )
                 if event is not None:
                     generation = event.session_instance_id
@@ -386,15 +616,25 @@ class HistoryIndex:
                             generation = f"legacy:{offset}"
                         else:
                             latest = db.execute(
-                                "SELECT generation FROM sessions WHERE chat=? "
-                                "AND generation LIKE 'legacy:%' ORDER BY ordinal DESC LIMIT 1",
-                                (event.chat_id,),
-                            ).fetchone()
+                                select(SESSIONS.c.generation)
+                                .where(
+                                    SESSIONS.c.chat == event.chat_id,
+                                    SESSIONS.c.generation.like("legacy:%"),
+                                )
+                                .order_by(SESSIONS.c.ordinal.desc())
+                                .limit(1)
+                            ).first()
                             generation = latest[0] if latest else ""
-                    found = db.execute(
-                        "SELECT * FROM sessions WHERE chat=? AND generation=?",
-                        (event.chat_id, generation),
-                    ).fetchone()
+                    found = (
+                        db.execute(
+                            select(SESSIONS).where(
+                                SESSIONS.c.chat == event.chat_id,
+                                SESSIONS.c.generation == generation,
+                            )
+                        )
+                        .mappings()
+                        .first()
+                    )
                     records: dict[str, SessionRecord] = {}
                     if found:
                         records[event.chat_id] = SessionRecord.model_validate_json(
@@ -405,17 +645,24 @@ class HistoryIndex:
                         history_id = str(record.history_id) if record.history_id else None
                         if history_id is None and record.spawn_id:
                             linked = db.execute(
-                                "SELECT history_id FROM locations WHERE source_id=?",
-                                (f"spawn:{record.spawn_id}",),
-                            ).fetchone()
+                                select(LOCATIONS.c.history_id).where(
+                                    LOCATIONS.c.source_id == f"spawn:{record.spawn_id}"
+                                )
+                            ).first()
                             history_id = linked[0] if linked else None
                         if history_id is None and generation:
                             linked = db.execute(
-                                "SELECT history_id FROM records WHERE chat=? "
-                                "AND archive_id IS NULL "
-                                "AND json_extract(record_json,'$.session_instance_id')=? LIMIT 1",
-                                (record.chat_id, generation),
-                            ).fetchone()
+                                select(RECORDS.c.history_id)
+                                .where(
+                                    RECORDS.c.chat == record.chat_id,
+                                    RECORDS.c.archive_id.is_(None),
+                                    func.json_extract(
+                                        RECORDS.c.record_json, "$.session_instance_id"
+                                    )
+                                    == generation,
+                                )
+                                .limit(1)
+                            ).first()
                             history_id = linked[0] if linked else None
                         ordinal = (
                             offset
@@ -423,17 +670,18 @@ class HistoryIndex:
                             else (found["ordinal"] if found else offset)
                         )
                         db.execute(
-                            "INSERT OR REPLACE INTO sessions VALUES (?,?,?,?,?,?,?,?)",
-                            (
-                                record.chat_id,
-                                generation,
-                                ordinal,
-                                record.kind,
-                                record.stopped_at,
-                                canonical_time(record.stopped_at or record.started_at),
-                                history_id,
-                                record.model_dump_json(),
-                            ),
+                            insert(SESSIONS)
+                            .prefix_with("OR REPLACE")
+                            .values(
+                                chat=record.chat_id,
+                                generation=generation,
+                                ordinal=ordinal,
+                                kind=record.kind,
+                                stopped=record.stopped_at,
+                                activity=canonical_time(record.stopped_at or record.started_at),
+                                history_id=history_id,
+                                record_json=record.model_dump_json(),
+                            )
                         )
                         if history_id:
                             self._aliases(
@@ -445,11 +693,12 @@ class HistoryIndex:
                             self._refresh(db, history_id)
                 offset = end
         db.execute(
-            "INSERT OR REPLACE INTO cursors VALUES ('sessions',?,?,?)",
-            (inode, offset, _tail(path, offset)),
+            insert(CURSORS)
+            .prefix_with("OR REPLACE")
+            .values(source="sessions", inode=inode, extent=offset, tail=_tail(path, offset))
         )
 
-    def _project(self, db: sqlite3.Connection, source: HistorySource) -> bool:
+    def _project(self, db: Connection, source: HistorySource) -> bool:
         if source.kind == "spawn":
             return self._spawn(db, source.key)
         if source.kind == "sessions":
@@ -458,32 +707,44 @@ class HistoryIndex:
         self._catalog(db)
         return False
 
-    def _catalog(self, db: sqlite3.Connection) -> None:
+    def _catalog(self, db: Connection) -> None:
         from meridian.lib.state.retention_archive import catalog_heads, read_receipts
 
         receipts = read_receipts(self.root)
-        db.execute("DELETE FROM archive_heads")
-        db.executemany("INSERT INTO archive_heads VALUES (?,?)", catalog_heads(receipts).items())
+        db.execute(delete(ARCHIVE_HEADS))
+        heads = [
+            {"history_id": history_id, "portable_digest": digest}
+            for history_id, digest in catalog_heads(receipts).items()
+        ]
+        if heads:
+            db.execute(insert(ARCHIVE_HEADS), heads)
         affected = {
-            row[0] for row in db.execute("SELECT history_id FROM locations WHERE kind='archive'")
+            row[0]
+            for row in db.execute(
+                select(LOCATIONS.c.history_id).where(LOCATIONS.c.kind == "archive")
+            )
         }
-        db.execute("DELETE FROM locations WHERE kind='archive'")
-        db.execute("DELETE FROM aliases WHERE source_id LIKE 'archive:%'")
+        db.execute(delete(LOCATIONS).where(LOCATIONS.c.kind == "archive"))
+        db.execute(delete(ALIASES).where(ALIASES.c.source_id.like("archive:%")))
         for ordinal, receipt in enumerate(receipts):
             for record in receipt.records:
                 history_id = str(record.history_id)
                 source_id = f"archive:{receipt.archive_id}:{receipt.location_id}:{history_id}"
                 db.execute(
-                    "INSERT OR REPLACE INTO locations VALUES (?,?, 'archive',?,?,?,?,?)",
-                    (
-                        source_id,
-                        history_id,
-                        ordinal,
-                        canonical_time(record.activity),
-                        record.state.model_dump_json(),
-                        receipt.model_copy(update={"records": (record,)}).model_dump_json(),
-                        record.portable_digest,
-                    ),
+                    insert(LOCATIONS)
+                    .prefix_with("OR REPLACE")
+                    .values(
+                        source_id=source_id,
+                        history_id=history_id,
+                        kind="archive",
+                        ordinal=ordinal,
+                        activity=canonical_time(record.activity),
+                        record_json=record.state.model_dump_json(),
+                        receipt_json=receipt.model_copy(
+                            update={"records": (record,)}
+                        ).model_dump_json(),
+                        portable_digest=record.portable_digest,
+                    )
                 )
                 self._aliases(db, source_id, history_id, state=record.state, session=record.session)
                 affected.add(history_id)
@@ -492,7 +753,7 @@ class HistoryIndex:
 
     def _drain(
         self,
-        db: sqlite3.Connection,
+        db: Connection,
         target: tuple[DirtySource, ...],
         deadline: float,
     ) -> tuple[list[DirtySource], list[str], list[str], bool]:
@@ -541,11 +802,12 @@ class HistoryIndex:
         for suffix in ("", "-journal"):
             Path(str(stage) + suffix).unlink(missing_ok=True)
         try:
-            db = _connect(stage, fresh=True, timeout=_remaining(deadline))
             build = str(uuid4())
-            try:
-                db.executescript(_SCHEMA)
-                db.execute("INSERT INTO meta VALUES (?,?,?)", (SCHEMA_VERSION, generation, build))
+            with _connect(stage, fresh=True, timeout=_remaining(deadline)) as db:
+                INDEX_SCHEMA.create_all(db)
+                db.execute(
+                    insert(META).values(version=SCHEMA_VERSION, generation=generation, build=build)
+                )
                 for key in scan_spawn_ids(self.root / "spawns"):
                     with lock_file(
                         HistorySource(kind="spawn", key=key).lock_path(self.root),
@@ -562,22 +824,17 @@ class HistoryIndex:
                     if busy:
                         raise FileLockTimeout("History sources are busy")
                     raise TimeoutError("History rebuild exhausted its remaining budget")
-                db.execute("ANALYZE")
+                db.execute(text("ANALYZE"))
                 db.commit()
-            finally:
-                db.close()
             # The root gate is already held: ordinary readers must never take it
             # while holding a database gate. Catchup/rebuild share catchup.lock.
             with lock_file(self.database_lock, timeout=_remaining(deadline)):
                 if self.path.exists():
                     try:
-                        old = _connect(self.path, timeout=_remaining(deadline))
-                        try:
-                            busy, _, _ = old.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
-                            if busy:
+                        with _connect(self.path, timeout=_remaining(deadline)) as old:
+                            checkpoint = old.execute(text("PRAGMA wal_checkpoint(TRUNCATE)")).one()
+                            if checkpoint[0]:
                                 raise FileLockTimeout("Readers still own the old WAL")
-                        finally:
-                            old.close()
                     except sqlite3.DatabaseError as exc:
                         # Only confirmed corruption is repairable here. Busy, I/O,
                         # permission and disk-full errors must leave the index alone.
@@ -604,6 +861,31 @@ class HistoryIndex:
         return IndexCoverage(
             generation, build, True, activity_provisional=tuple(active)
         ), acknowledged
+
+    def _migrate_locked(self, *, deadline: float) -> None:
+        """Apply expand/reshape steps on the live WAL DB. Caller owns catchup/root."""
+        with lock_file(self.database_lock, timeout=_remaining(deadline)):
+            status = self.classify(deadline=deadline)
+            if (
+                status.baseline != "outdated"
+                or status.upgrade != "migrate"
+                or status.schema is None
+            ):
+                return
+            _, chain = _schema_upgrade(status.schema)
+            if not chain:
+                return
+            with _connect(self.path, timeout=_remaining(deadline), autocommit=True) as db:
+                for step in chain:
+                    _remaining(deadline)
+                    db.exec_driver_sql("BEGIN IMMEDIATE")
+                    try:
+                        step.apply(db)
+                        db.execute(update(META).values(version=step.to_version))
+                        db.commit()
+                    except BaseException:
+                        db.rollback()
+                        raise
 
     def _clear_initialization_failure(self) -> tuple[str, ...]:
         """Called under catchup ownership after verifying a compatible published baseline."""
@@ -657,27 +939,31 @@ class HistoryIndex:
         with lock_file(self.database_lock, mode="shared", timeout=_remaining(deadline)):
             if not self.path.exists():
                 return IndexStatus("absent")
-            db = sqlite3.connect(
-                self.path.resolve().as_uri() + "?mode=ro", uri=True, timeout=_remaining(deadline)
-            )
             try:
-                row = db.execute("SELECT version,generation,build FROM meta").fetchone()
-                if row is None or not isinstance(row[0], int):
-                    return IndexStatus("corrupt", reason="Missing or invalid index metadata")
-                version, generation, build = row
-                baseline = (
-                    "current"
-                    if version == SCHEMA_VERSION
-                    else "outdated"
-                    if version < SCHEMA_VERSION
-                    else "incompatible"
-                )
-                reason = (
-                    f"Index schema {version} is newer than supported schema {SCHEMA_VERSION}."
-                    if baseline == "incompatible"
-                    else None
-                )
-                return IndexStatus(baseline, version, generation, build, reason)
+                with _connect(self.path, timeout=_remaining(deadline), readonly=True) as db:
+                    row = db.execute(
+                        select(META.c.version, META.c.generation, META.c.build)
+                    ).first()
+                    if row is None or not isinstance(row[0], int):
+                        return IndexStatus("corrupt", reason="Missing or invalid index metadata")
+                    version, generation, build = row
+                    baseline = (
+                        "current"
+                        if version == SCHEMA_VERSION
+                        else "outdated"
+                        if version < SCHEMA_VERSION
+                        else "incompatible"
+                    )
+                    reason: str | None = None
+                    upgrade: SchemaUpgrade | None = None
+                    if baseline == "incompatible":
+                        reason = (
+                            "Index schema "
+                            f"{version} is newer than supported schema {SCHEMA_VERSION}."
+                        )
+                    elif baseline == "outdated":
+                        reason, upgrade = _outdated_status(version)
+                    return IndexStatus(baseline, version, generation, build, reason, upgrade)
             except sqlite3.DatabaseError as exc:
                 code = getattr(exc, "sqlite_errorcode", 0) & 0xFF
                 if code not in {
@@ -687,8 +973,6 @@ class HistoryIndex:
                 }:
                     raise
                 return IndexStatus("corrupt", reason="Unreadable index schema; rebuild required")
-            finally:
-                db.close()
 
     def _failure_reason(self, generation: str | None) -> str | None:
         try:
@@ -765,6 +1049,14 @@ class HistoryIndex:
                 raise self._initialization_error(reason)
             # Initialize absent coordination only under the normal protected gate.
             try:
+                if (
+                    status.baseline == "outdated"
+                    and status.upgrade == "migrate"
+                    and status.generation == generation
+                ):
+                    self._migrate_locked(deadline=deadline)
+                    self._clear_initialization_failure()
+                    return None
                 generation, _ = changes.capture(timeout=_remaining(deadline))
                 coverage, acknowledged = self._rebuild_locked(reset=False, deadline=deadline)
             except (FileLockTimeout, HistoryCoordinationError):
@@ -824,9 +1116,8 @@ class HistoryIndex:
                 raise HistoryIndexIncomplete(
                     "History index changed after preflight; retry required"
                 )
-            db = _connect(self.path, timeout=_remaining(deadline))
-            try:
-                meta = db.execute("SELECT * FROM meta").fetchone()
+            with _connect(self.path, timeout=_remaining(deadline)) as db:
+                meta = db.execute(select(META)).mappings().first()
                 if meta is None or meta["generation"] != generation:
                     raise HistoryCoordinationError(
                         "History baseline generation mismatch; run session index rebuild --reset"
@@ -840,23 +1131,20 @@ class HistoryIndex:
                 return IndexCoverage(
                     generation, meta["build"], not pending, tuple(pending), tuple(active), warnings
                 )
-            finally:
-                db.close()
 
     @contextmanager
-    def query(self, *, deadline: float | None = None) -> Generator[sqlite3.Connection]:
+    def query(self, *, deadline: float | None = None) -> Generator[Connection]:
         deadline = self._operation_deadline(deadline)
         coverage = self._catch_up(deadline)
         if not coverage.complete:
             raise HistoryIndexIncomplete(
                 f"History index has unresolved sources: {coverage.pending}"
             )
-        with lock_file(self.database_lock, mode="shared", timeout=_remaining(deadline)):
-            db = _connect(self.path, timeout=_remaining(deadline))
-            try:
-                yield db
-            finally:
-                db.close()
+        with (
+            lock_file(self.database_lock, mode="shared", timeout=_remaining(deadline)),
+            _connect(self.path, timeout=_remaining(deadline)) as db,
+        ):
+            yield db
 
     def preview_references(self) -> tuple[tuple[str, str | None, str], ...]:
         recent, _ = self.recent_sessions(limit=2**31 - 1, live_chat_ids=set())
@@ -876,7 +1164,10 @@ class HistoryIndex:
             # Warming includes selected archived children, not only loose spawns
             # and the primary-session browser's rows.
             for history_id, generation in db.execute(
-                "SELECT history_id,json_extract(record_json,'$.session_instance_id') FROM records"
+                select(
+                    RECORDS.c.history_id,
+                    func.json_extract(RECORDS.c.record_json, "$.session_instance_id"),
+                )
             ):
                 if history_id not in seen:
                     references.append((history_id, history_id, generation or ""))
@@ -888,61 +1179,61 @@ class HistoryIndex:
         with lock_file(self.database_lock, mode="shared", timeout=_remaining(deadline)):
             if not self.path.exists():
                 return 0
-            db = sqlite3.connect(
-                self.path.resolve().as_uri() + "?mode=ro", uri=True, timeout=_remaining(deadline)
-            )
-            try:
-                meta = db.execute("SELECT version FROM meta").fetchone()
+            with _connect(self.path, timeout=_remaining(deadline), readonly=True) as db:
+                meta = db.execute(select(META.c.version)).first()
                 if meta is None or meta[0] != SCHEMA_VERSION:
                     return 0
+                preview_rows = select(
+                    PREVIEWS.c.key, PREVIEWS.c.history_id, PREVIEWS.c.archive_digest
+                ).where(
+                    func.json_valid(PREVIEWS.c.value) == 1,
+                    func.json_extract(PREVIEWS.c.value, "$.preview.version") == preview_version,
+                    func.json_extract(PREVIEWS.c.value, "$.preview.rendering_reason").is_(None),
+                    func.json_extract(PREVIEWS.c.value, "$.complete") == 1,
+                )
                 return sum(
                     self._preview_generation_matches(db, row[0])
                     and self._preview_binding_matches(db, row[1], row[2])
-                    for row in db.execute(
-                        "SELECT key,history_id,archive_digest FROM previews WHERE "
-                        "CASE WHEN json_valid(value) THEN "
-                        "json_extract(value,'$.preview.version')=? AND "
-                        "json_extract(value,'$.preview.rendering_reason') IS NULL AND "
-                        "json_extract(value,'$.complete')=1 ELSE 0 END",
-                        (preview_version,),
-                    ).fetchall()
+                    for row in db.execute(preview_rows)
                 )
-            finally:
-                db.close()
 
     def preview_cache(self, key: str) -> tuple[str, str | None] | None:
         """Bounded cache-only lookup: never catch up metadata or open source content."""
         if not self.path.exists():
             return None
-        with lock_file(self.database_lock, mode="shared", timeout=0.005):
-            db = sqlite3.connect(self.path.resolve().as_uri() + "?mode=ro", uri=True, timeout=0.005)
-            try:
-                meta = db.execute("SELECT version,build FROM meta").fetchone()
-                if meta is None or meta[0] != SCHEMA_VERSION:
-                    return None
-                row = db.execute(
-                    "SELECT history_id,archive_digest,value FROM previews WHERE key=?", (key,)
-                ).fetchone()
-                if (
-                    row is not None
-                    and self._preview_generation_matches(db, key)
-                    and self._preview_binding_matches(db, row[0], row[1])
-                ):
-                    return meta[1], row[2]
-                return meta[1], None
-            finally:
-                db.close()
+        with (
+            lock_file(self.database_lock, mode="shared", timeout=0.005),
+            _connect(self.path, timeout=0.005, readonly=True) as db,
+        ):
+            meta = db.execute(select(META.c.version, META.c.build)).first()
+            if meta is None or meta[0] != SCHEMA_VERSION:
+                return None
+            row = db.execute(
+                select(PREVIEWS.c.history_id, PREVIEWS.c.archive_digest, PREVIEWS.c.value).where(
+                    PREVIEWS.c.key == key
+                )
+            ).first()
+            if (
+                row is not None
+                and self._preview_generation_matches(db, key)
+                and self._preview_binding_matches(db, row[0], row[1])
+            ):
+                return meta[1], row[2]
+            return meta[1], None
 
     @staticmethod
-    def _preview_generation_matches(db: sqlite3.Connection, key: str) -> bool:
+    def _preview_generation_matches(db: Connection, key: str) -> bool:
         history_id, generation, ref = json.loads(key)
         if history_id is not None:
             return True  # The portable UUID, not a reusable alias, resolves this source.
         if not generation:
             return False
         row = db.execute(
-            "SELECT record_json FROM sessions WHERE chat=? ORDER BY ordinal DESC LIMIT 1", (ref,)
-        ).fetchone()
+            select(SESSIONS.c.record_json)
+            .where(SESSIONS.c.chat == ref)
+            .order_by(SESSIONS.c.ordinal.desc())
+            .limit(1)
+        ).first()
         if row is None:
             return False
         session = SessionRecord.model_validate_json(row[0])
@@ -952,15 +1243,17 @@ class HistoryIndex:
 
     @staticmethod
     def _preview_binding_matches(
-        db: sqlite3.Connection, history_id: str | None, archive_digest: str | None
+        db: Connection, history_id: str | None, archive_digest: str | None
     ) -> bool:
         if history_id is None:
             return archive_digest is None
         row = db.execute(
-            "SELECT r.archive_id,h.portable_digest FROM records r "
-            "LEFT JOIN archive_heads h ON h.history_id=r.history_id WHERE r.history_id=?",
-            (history_id,),
-        ).fetchone()
+            select(RECORDS.c.archive_id, ARCHIVE_HEADS.c.portable_digest)
+            .select_from(
+                RECORDS.outerjoin(ARCHIVE_HEADS, ARCHIVE_HEADS.c.history_id == RECORDS.c.history_id)
+            )
+            .where(RECORDS.c.history_id == history_id)
+        ).first()
         if row is None:
             return False
         return (
@@ -972,8 +1265,10 @@ class HistoryIndex:
     def selected_archive_digest(self, history_id: str) -> str | None:
         with self.query() as db:
             row = db.execute(
-                "SELECT portable_digest FROM archive_heads WHERE history_id=?", (history_id,)
-            ).fetchone()
+                select(ARCHIVE_HEADS.c.portable_digest).where(
+                    ARCHIVE_HEADS.c.history_id == history_id
+                )
+            ).first()
             return row[0] if row else None
 
     def store_preview(
@@ -992,38 +1287,50 @@ class HistoryIndex:
             lock_file(HistoryChanges(self.root).mutation_lock, mode="shared", timeout=0.1),
             lock_file(self.database_lock, mode="shared", timeout=0.1),
             lock_file(source.lock_path(self.root), timeout=0.1),
+            _connect(self.path, timeout=0.1, autocommit=True) as db,
         ):
-            db = _connect(self.path, timeout=0.1)
+            db.exec_driver_sql("BEGIN IMMEDIATE")
             try:
-                db.execute("BEGIN IMMEDIATE")
-                meta = db.execute("SELECT build FROM meta").fetchone()
+                meta = db.execute(select(META.c.build)).first()
                 if (
                     meta is None
                     or meta[0] != build
                     or not self._preview_generation_matches(db, key)
                     or not self._preview_binding_matches(db, history_id, archive_digest)
                 ):
+                    db.rollback()
                     return False
                 old = db.execute(
-                    "SELECT history_id,archive_digest,value FROM previews WHERE key=?", (key,)
-                ).fetchone()
+                    select(
+                        PREVIEWS.c.history_id, PREVIEWS.c.archive_digest, PREVIEWS.c.value
+                    ).where(PREVIEWS.c.key == key)
+                ).first()
                 if (old[2] if old else None) != previous and (
                     old is None or self._preview_binding_matches(db, old[0], old[1])
                 ):
+                    db.rollback()
                     return False
                 value = prepare_value()
                 if value is None:
+                    db.rollback()
                     return False
                 if len(value.encode("utf-8")) > 64 * 1024:
                     raise ValueError("Preview exceeds the bounded cache contract")
                 db.execute(
-                    "INSERT OR REPLACE INTO previews VALUES (?,?,?,?)",
-                    (key, history_id, archive_digest, value),
+                    insert(PREVIEWS)
+                    .prefix_with("OR REPLACE")
+                    .values(
+                        key=key,
+                        history_id=history_id,
+                        archive_digest=archive_digest,
+                        value=value,
+                    )
                 )
                 db.commit()
                 return True
-            finally:
-                db.close()
+            except BaseException:
+                db.rollback()
+                raise
 
     def read_targets(
         self, ref: str, *, destination: Path | None = None, deadline: float | None = None
@@ -1033,8 +1340,8 @@ class HistoryIndex:
         deadline = self._operation_deadline(deadline)
         with self.query(deadline=deadline) as db:
             direct = db.execute(
-                "SELECT history_id FROM records WHERE history_id=?", (ref,)
-            ).fetchone()
+                select(RECORDS.c.history_id).where(RECORDS.c.history_id == ref)
+            ).first()
             if direct:
                 history_id = direct[0]
             else:
@@ -1043,25 +1350,58 @@ class HistoryIndex:
                     if ref.startswith("p") and ref[1:].isdigit()
                     else ("chat" if ref.startswith("c") and ref[1:].isdigit() else "harness")
                 )
-                matches = db.execute(
-                    "SELECT r.history_id,MAX(a.source_id NOT LIKE 'archive:%') AS local "
-                    "FROM aliases a JOIN records r USING(history_id) WHERE a.alias=? AND a.kind=? "
-                    "GROUP BY r.history_id ORDER BY local DESC,"
-                    "(r.kind='primary') DESC,r.started DESC",
-                    (ref, kind),
-                ).fetchall()
+                matches = (
+                    db.execute(
+                        select(
+                            RECORDS.c.history_id,
+                            func.max(ALIASES.c.source_id.not_like("archive:%")).label("local"),
+                        )
+                        .select_from(
+                            ALIASES.join(RECORDS, ALIASES.c.history_id == RECORDS.c.history_id)
+                        )
+                        .where(ALIASES.c.alias == ref, ALIASES.c.kind == kind)
+                        .group_by(RECORDS.c.history_id)
+                        .order_by(
+                            func.max(ALIASES.c.source_id.not_like("archive:%")).desc(),
+                            (RECORDS.c.kind == "primary").desc(),
+                            RECORDS.c.started.desc(),
+                        )
+                    )
+                    .mappings()
+                    .all()
+                )
                 if not matches:
                     return ()
                 if len(matches) > 1 and not matches[0]["local"]:
                     raise ValueError("Ambiguous archive origin alias; use a portable history UUID")
                 history_id = matches[0]["history_id"]
-            locations = db.execute(
-                "SELECT l.* FROM locations l JOIN records r ON r.history_id=l.history_id "
-                "WHERE l.history_id=? AND (l.kind='spawn' OR (r.archive_id IS NOT NULL "
-                "AND l.portable_digest=(SELECT portable_digest FROM archive_heads "
-                "WHERE history_id=l.history_id))) ORDER BY (l.kind='spawn') DESC,l.ordinal DESC",
-                (history_id,),
-            ).fetchall()
+            head_digest = (
+                select(ARCHIVE_HEADS.c.portable_digest)
+                .where(ARCHIVE_HEADS.c.history_id == LOCATIONS.c.history_id)
+                .scalar_subquery()
+            )
+            locations = (
+                db.execute(
+                    select(LOCATIONS)
+                    .join(RECORDS, RECORDS.c.history_id == LOCATIONS.c.history_id)
+                    .where(
+                        LOCATIONS.c.history_id == history_id,
+                        or_(
+                            LOCATIONS.c.kind == "spawn",
+                            and_(
+                                RECORDS.c.archive_id.is_not(None),
+                                LOCATIONS.c.portable_digest == head_digest,
+                            ),
+                        ),
+                    )
+                    .order_by(
+                        (LOCATIONS.c.kind == "spawn").desc(),
+                        LOCATIONS.c.ordinal.desc(),
+                    )
+                )
+                .mappings()
+                .all()
+            )
         receipts: list[ArchiveReceipt] = []
         for location in locations:
             state = SpawnRecord.model_validate_json(location["record_json"])
@@ -1110,12 +1450,25 @@ class HistoryIndex:
         from meridian.lib.state.retention_archive import ArchiveReceipt, archive_display_path
 
         with self.query() as db:
-            rows = db.execute(
-                "SELECT l.*,h.portable_digest AS current_digest,r.archive_id "
-                "FROM locations l LEFT JOIN archive_heads h USING(history_id) "
-                "LEFT JOIN records r USING(history_id) WHERE l.kind='archive' "
-                "ORDER BY l.history_id,l.ordinal DESC"
-            ).fetchall()
+            rows = (
+                db.execute(
+                    select(
+                        LOCATIONS,
+                        ARCHIVE_HEADS.c.portable_digest.label("current_digest"),
+                        RECORDS.c.archive_id,
+                    )
+                    .select_from(
+                        LOCATIONS.outerjoin(
+                            ARCHIVE_HEADS,
+                            ARCHIVE_HEADS.c.history_id == LOCATIONS.c.history_id,
+                        ).outerjoin(RECORDS, RECORDS.c.history_id == LOCATIONS.c.history_id)
+                    )
+                    .where(LOCATIONS.c.kind == "archive")
+                    .order_by(LOCATIONS.c.history_id, LOCATIONS.c.ordinal.desc())
+                )
+                .mappings()
+                .all()
+            )
         result: list[HistorySnapshot] = []
         for row in rows:
             receipt = ArchiveReceipt.model_validate_json(row["receipt_json"])
@@ -1135,13 +1488,32 @@ class HistoryIndex:
         self, *, include_archives: bool = False, deadline: float | None = None
     ) -> tuple[HistoryCandidate, ...]:
         with self.query(deadline=deadline) as db:
+            record_rows = select(
+                RECORDS.c.history_id,
+                RECORDS.c.local_id,
+                RECORDS.c.chat,
+                RECORDS.c.archive_id,
+                RECORDS.c.activity,
+            )
+            if not include_archives:
+                record_rows = record_rows.where(RECORDS.c.archive_id.is_(None))
+            newer = SESSIONS.alias("newer")
+            session_rows = select(
+                SESSIONS.c.chat.label("history_id"),
+                SESSIONS.c.chat.label("local_id"),
+                SESSIONS.c.chat.label("chat"),
+                literal(None).label("archive_id"),
+                SESSIONS.c.activity,
+            ).where(
+                ~exists().where(RECORDS.c.chat == SESSIONS.c.chat),
+                ~exists().where(
+                    newer.c.chat == SESSIONS.c.chat, newer.c.ordinal > SESSIONS.c.ordinal
+                ),
+            )
             rows = db.execute(
-                "SELECT history_id,local_id,chat,archive_id,activity FROM records "
-                + ("" if include_archives else "WHERE archive_id IS NULL ")
-                + "UNION ALL SELECT s.chat,s.chat,s.chat,NULL,s.activity FROM sessions s "
-                "WHERE NOT EXISTS (SELECT 1 FROM records r WHERE r.chat=s.chat) "
-                "AND NOT EXISTS (SELECT 1 FROM sessions newer WHERE newer.chat=s.chat "
-                "AND newer.ordinal>s.ordinal) ORDER BY activity DESC,history_id"
+                union_all(record_rows, session_rows).order_by(
+                    text("activity DESC"), text("history_id")
+                )
             )
             return tuple(
                 HistoryCandidate(row[0], row[1], row[2], row[3] is not None, row[4]) for row in rows
@@ -1155,51 +1527,42 @@ class HistoryIndex:
         **filters: str | set[str] | None,
     ) -> tuple[SpawnRecord, ...]:
         columns = {
-            "chat_id": "chat",
-            "owner_chat_id": "owner",
-            "parent_id": "parent",
-            "work_id": "work",
-            "status": "status",
-            "spawn_id": "local_id",
+            "chat_id": RECORDS.c.chat,
+            "owner_chat_id": RECORDS.c.owner,
+            "parent_id": RECORDS.c.parent,
+            "work_id": RECORDS.c.work,
+            "status": RECORDS.c.status,
+            "spawn_id": RECORDS.c.local_id,
         }
-        conditions = ["archive_id IS NULL"]
-        values: list[str] = []
+        conditions: list[ColumnElement[bool]] = [RECORDS.c.archive_id.is_(None)]
         if related_chat_ids is not None:
-            placeholders = ",".join("?" for _ in related_chat_ids)
-            conditions.append(f"(chat IN ({placeholders}) OR owner IN ({placeholders}))")
-            values.extend(sorted(related_chat_ids) * 2)
+            chats = sorted(related_chat_ids)
+            conditions.append(or_(RECORDS.c.chat.in_(chats), RECORDS.c.owner.in_(chats)))
         for key, value in filters.items():
             if key not in columns:
                 raise ValueError(f"Unknown history filter: {key}")
+            column = columns[key]
             if isinstance(value, set):
-                conditions.append(f"{columns[key]} IN (" + ",".join("?" for _ in value) + ")")
-                values.extend(sorted(value))
+                conditions.append(column.in_(sorted(value)))
             elif value is not None:
-                conditions.append(f"{columns[key]}=?")
-                values.append(value)
+                conditions.append(column == value)
+        stmt = select(RECORDS.c.record_json).where(*conditions)
+        stmt = (
+            stmt.order_by(RECORDS.c.activity, RECORDS.c.history_id)
+            if oldest_first
+            else stmt.order_by(RECORDS.c.started.desc(), RECORDS.c.local_id.desc())
+        )
         with self.query() as db:
-            return tuple(
-                SpawnRecord.model_validate_json(row[0])
-                for row in db.execute(
-                    "SELECT record_json FROM records WHERE "
-                    + " AND ".join(conditions)
-                    + (
-                        " ORDER BY activity,history_id"
-                        if oldest_first
-                        else " ORDER BY started DESC,local_id DESC"
-                    ),
-                    values,
-                )
-            )
+            return tuple(SpawnRecord.model_validate_json(row[0]) for row in db.execute(stmt))
 
     def work_chat_ids(self, work_id: str, *, deadline: float | None = None) -> set[str]:
         with self.query(deadline=deadline) as db:
             return {
                 row[0]
                 for row in db.execute(
-                    "SELECT chat FROM work_chats WHERE work=? "
-                    "UNION SELECT chat FROM records WHERE work=?",
-                    (work_id, work_id),
+                    select(WORK_CHATS.c.chat)
+                    .where(WORK_CHATS.c.work == work_id)
+                    .union(select(RECORDS.c.chat).where(RECORDS.c.work == work_id))
                 )
                 if row[0]
             }
@@ -1207,24 +1570,39 @@ class HistoryIndex:
     def recent_sessions(
         self, *, limit: int, live_chat_ids: set[str]
     ) -> tuple[list[SessionRecord | SpawnRecord], int]:
-        placeholders = ",".join("?" for _ in live_chat_ids) or "NULL"
-        corpus = f"""WITH browse AS (
-            SELECT s.record_json,'session' AS source,s.activity,
-            (s.chat IN ({placeholders})) AS live,CAST(substr(s.chat,2) AS INTEGER) AS tie
-            FROM sessions s WHERE kind='primary' AND NOT EXISTS
-            (SELECT 1 FROM sessions newer WHERE newer.chat=s.chat AND newer.ordinal>s.ordinal)
-            AND NOT EXISTS (SELECT 1 FROM records r WHERE r.archive_id IS NOT NULL
-                            AND r.history_id=s.history_id)
-            UNION ALL SELECT record_json,'archive',activity,0,0 FROM records
-            WHERE archive_id IS NOT NULL AND kind='primary'
-        ) """
-        values = tuple(sorted(live_chat_ids))
+        newer = SESSIONS.alias("newer")
+        live_expr = SESSIONS.c.chat.in_(sorted(live_chat_ids)) if live_chat_ids else literal(0)
+        browse = union_all(
+            select(
+                SESSIONS.c.record_json,
+                literal("session").label("source"),
+                SESSIONS.c.activity,
+                live_expr.label("live"),
+                func.cast(func.substr(SESSIONS.c.chat, 2), Integer).label("tie"),
+            ).where(
+                SESSIONS.c.kind == "primary",
+                ~exists().where(
+                    newer.c.chat == SESSIONS.c.chat, newer.c.ordinal > SESSIONS.c.ordinal
+                ),
+                ~exists().where(
+                    RECORDS.c.archive_id.is_not(None),
+                    RECORDS.c.history_id == SESSIONS.c.history_id,
+                ),
+            ),
+            select(
+                RECORDS.c.record_json,
+                literal("archive").label("source"),
+                RECORDS.c.activity,
+                literal(0).label("live"),
+                literal(0).label("tie"),
+            ).where(RECORDS.c.archive_id.is_not(None), RECORDS.c.kind == "primary"),
+        ).cte("browse")
         with self.query() as db:
-            total = db.execute(corpus + "SELECT COUNT(*) FROM browse", values).fetchone()[0]
+            total = db.execute(select(func.count()).select_from(browse)).scalar() or 0
             rows = db.execute(
-                corpus + "SELECT record_json,source FROM browse "
-                "ORDER BY live DESC,activity DESC,tie DESC LIMIT ?",
-                (*values, limit),
+                select(browse.c.record_json, browse.c.source)
+                .order_by(browse.c.live.desc(), browse.c.activity.desc(), browse.c.tie.desc())
+                .limit(limit)
             )
             return [
                 SessionRecord.model_validate_json(row[0])
@@ -1236,23 +1614,21 @@ class HistoryIndex:
     def sessions(
         self, *, limit: int | None = None, chat_ids: set[str] | None = None
     ) -> list[SessionRecord]:
-        sql = """SELECT s.record_json FROM sessions s WHERE NOT EXISTS
-        (SELECT 1 FROM sessions newer WHERE newer.chat=s.chat AND newer.ordinal>s.ordinal)
-        """
-        values: tuple[Any, ...] = ()
+        if chat_ids is not None and not chat_ids:
+            return []
+        newer = SESSIONS.alias("newer")
+        stmt = select(SESSIONS.c.record_json).where(
+            ~exists().where(newer.c.chat == SESSIONS.c.chat, newer.c.ordinal > SESSIONS.c.ordinal)
+        )
         if chat_ids is not None:
-            if not chat_ids:
-                return []
-            sql += " AND s.chat IN (" + ",".join("?" for _ in chat_ids) + ")"
-            values = tuple(sorted(chat_ids))
-        sql += " ORDER BY s.ordinal DESC"
+            stmt = stmt.where(SESSIONS.c.chat.in_(sorted(chat_ids)))
+        stmt = stmt.order_by(SESSIONS.c.ordinal.desc())
         if limit is not None:
             if limit <= 0:
                 raise ValueError("Session limit must be positive")
-            sql += " LIMIT ?"
-            values += (limit,)
+            stmt = stmt.limit(limit)
         with self.query() as db:
-            return [SessionRecord.model_validate_json(row[0]) for row in db.execute(sql, values)]
+            return [SessionRecord.model_validate_json(row[0]) for row in db.execute(stmt)]
 
 
 def indexed_spawn_scan(

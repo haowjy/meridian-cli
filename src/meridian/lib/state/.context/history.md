@@ -17,11 +17,13 @@ markers remain pending; active stream appends may coalesce them. Terminal writes
 and late events replace the token. Active activity is explicitly provisional.
 
 Lock order: catchup -> root mutation -> database -> source -> markers. Plain
-SQLite readers hold only the database gate. Rebuild holds catchup/root gates,
-uses a fresh rollback-journal stage, drains all pending sources, then checkpoints
-and closes the old WAL under the exclusive database gate before replacement.
-Reset takes root exclusively, writes a new generation before dropping markers,
-and rebuilds authority. Never unlink these lock identities.
+SQLite readers hold only the database gate. Compatible outdated schemas migrate
+in place under the exclusive database gate on the live WAL; they do not stage
+or replace. Rebuild holds catchup/root gates, uses a fresh rollback-journal
+stage, drains all pending sources, then checkpoints and closes the old WAL
+under the exclusive database gate before replacement. Reset takes root
+exclusively, writes a new generation before dropping markers, and rebuilds
+authority. Never unlink these lock identities.
 
 External copies require explicit rebuild/import. Online repair uses `session
 index rebuild`; damaged coordination requires `--reset`. Offline deletion of
@@ -31,8 +33,10 @@ Busy, disk-full, permissions and ordinary I/O errors are not corruption recovery
 ## Initialization and read budgets
 
 `history_index.py` classifies schema through read-only SQLite before entering the
-existing catch-up gate. Missing/older schemas get a separate 15-second automatic
-metadata phase and an under-lock recheck. A genuine owned-build failure is latched
+existing catch-up gate. Missing indexes rebuild. Compatible older schemas migrate
+in place on the live WAL; untrusted older schemas, corrupt files, generation
+mismatch and `--reset` rebuild. Both share the 15-second automatic metadata
+phase and an under-lock recheck. A genuine owned-build failure is latched
 in `history-index-init-failure.json`; manual publication clears it before optional
 preview warming. Failed marker cleanup warns; warm catch-up retries it under the
 same gate after verifying schema/generation. Status and cache-only reads never

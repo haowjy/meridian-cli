@@ -159,7 +159,10 @@ def test_schema_classification_is_read_only_and_upgrade_is_automatic(tmp_path: P
         db.execute("PRAGMA journal_mode=DELETE")
         db.execute("UPDATE meta SET version=1")
     original = index.path.read_bytes()
-    assert index.inspect().baseline == "outdated"
+    status = index.inspect()
+    assert status.baseline == "outdated"
+    assert status.upgrade == "reproject"
+    assert status.reason == "metadata rebuild required (reproject)"
     assert index.path.read_bytes() == original
     assert index.spawns() == ()
     assert index.inspect().build != old_build
