@@ -6,6 +6,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- Bump pinned `mars-agents` to 0.14.1.
 - Document that `settings.targets` is launch permission, not only materialization.
 
 ### Added
