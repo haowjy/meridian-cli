@@ -230,6 +230,7 @@ def archive_history(
     project_root: Path | None = None,
 ) -> SessionArchiveOutput:
     policy = policy or HistoryArchiveConfig()
+    _ = project_root
     if not refs and not eligible:
         raise ValueError("Select session references or --eligible")
     after_days = policy.after_days if after_days is None else after_days
@@ -258,10 +259,8 @@ def archive_history(
         selected: list[ArchivedRecord] = []
         witnesses: dict[str, SourceWitness] = {}
         errors: list[str] = list(recovery_errors)
-        preparation_required: list[str] = []
         limited = False
         selected_bytes = 0
-        preparation_attempts = 0
         matched = {
             ref
             for ref in refs
@@ -295,7 +294,7 @@ def archive_history(
                 continue
             if candidate.id in protected or candidate.status not in TERMINAL_SPAWN_STATUSES:
                 continue
-            if len(selected) + len(preparation_required) >= policy.max_records:
+            if len(selected) >= policy.max_records:
                 limited = True
                 break
             path = root / "spawns" / candidate.id / "history.jsonl"
@@ -305,24 +304,9 @@ def archive_history(
                 errors.append(f"{candidate.id}: {exc}")
                 continue
             if not ready:
-                preliminary = last_activity(candidate, sessions.get(candidate.id), "")
-                if eligible and datetime.fromisoformat(preliminary) > cutoff:
-                    continue
-                if not apply:
-                    preparation_required.append(str(candidate.history_id or candidate.id))
-                    continue
-                if project_root is None:
-                    errors.append(f"{candidate.id}: native capture requires project context")
-                    continue
-                if preparation_attempts >= policy.max_records:
-                    limited = True
-                    break
-                preparation_attempts += 1
-                try:
-                    materialize_native_history(project_root, root, candidate.id)
-                except (ValueError, OSError) as exc:
-                    errors.append(f"{candidate.id}: {exc}")
-                    continue
+                if refs:
+                    errors.append(f"{candidate.id}: native snapshot is not captured")
+                continue
             if candidate.history_id is None and apply:
                 write_state_locked(
                     root / "spawns", candidate.id, lambda row: row, allow_terminal_overwrite=True
@@ -352,7 +336,6 @@ def archive_history(
                 selected=tuple(str(row.history_id) for row in selected),
                 protected=tuple(sorted(protected)),
                 errors=tuple(errors),
-                preparation_required=tuple(preparation_required),
                 limited=limited,
             )
         receipt = publish_archive(root, destination, tuple(selected))

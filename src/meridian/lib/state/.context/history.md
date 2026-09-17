@@ -55,7 +55,8 @@ all generations; fork-start captures the source UUID before a chat can resume.
 Headers carry portable origin/relationships. JSONL remains append-only across
 retries, with attempt boundaries; lifecycle extractors ignore earlier attempts.
 Missing native primary content is captured through harness transcript providers
-after stop, never synthesized from a rendered report. Post-stop maintenance receives
+after stop, never synthesized from a rendered report. Archive packs sealed
+records only; it does not run capture. Post-stop maintenance receives
 the exact completed primary spawn ID from the launch outcome, not the latest chat
 projection, which may already refer to another run. Capture-purpose resolution bypasses
 SQLite/presentation fallbacks and requires agreement among state, primary metadata

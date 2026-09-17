@@ -365,7 +365,7 @@ def test_capture_joins_native_identity_to_exact_linked_live_lease(
         session_store.stop_session(root, "c2")
 
 
-def test_archive_prepares_existing_legacy_child_stream_without_native_capture(
+def test_archive_packs_existing_child_stream_without_native_capture(
     tmp_path: Path, monkeypatch
 ):
     from meridian.lib.ops.session_archive import archive_history
@@ -384,15 +384,13 @@ def test_archive_prepares_existing_legacy_child_stream_without_native_capture(
     spawn_store.finalize_spawn(root, key, status="succeeded", exit_code=0, origin="runner")
     state = spawn_store.get_spawn(root, key)
     assert state is not None and state.history_id is not None
-    legacy = root / "artifacts" / key / "history.jsonl"
-    legacy.parent.mkdir(parents=True)
+    stream = root / "spawns" / key / "history.jsonl"
     events = [
         {"type": "message", "message": {"role": "assistant", "content": "first attempt"}},
         {"event_type": "meridian.attempt.completed", "attempt": 1},
         {"type": "message", "message": {"role": "assistant", "content": "retry answer"}},
     ]
-    legacy.write_text("".join(json.dumps(event) + "\n" for event in events))
-    before = legacy.read_bytes()
+    stream.write_text("".join(json.dumps(event) + "\n" for event in events))
     result = archive_history(
         root,
         destination=tmp_path / "archives",
@@ -403,8 +401,8 @@ def test_archive_prepares_existing_legacy_child_stream_without_native_capture(
     assert not result.errors
     assert result.reclaimed == (str(state.history_id),)
     retained = list(iter_archived_events(Path(result.archives[0]), state.history_id))
-    assert [row["payload"] for row in retained] == events
-    assert legacy.read_bytes() == before
+    assert retained == events
+    assert not (root / "spawns" / key / "native-transcript.jsonl").exists()
 
 
 def test_mixed_archive_reads_native_snapshot_and_legacy_history(tmp_path: Path, monkeypatch):
@@ -433,8 +431,7 @@ def test_mixed_archive_reads_native_snapshot_and_legacy_history(tmp_path: Path, 
         {"event_type": "meridian.attempt.completed", "attempt": 1},
         {"type": "message", "message": {"role": "assistant", "content": "retry answer"}},
     ]
-    legacy = root / "artifacts" / legacy_key / "history.jsonl"
-    legacy.parent.mkdir(parents=True)
+    legacy = root / "spawns" / legacy_key / "history.jsonl"
     legacy.write_text("".join(json.dumps(event) + "\n" for event in events))
     result = archive_history(
         root,
@@ -451,7 +448,7 @@ def test_mixed_archive_reads_native_snapshot_and_legacy_history(tmp_path: Path, 
     assert native_events
     assert any(row.get("id") == "exact-native" for row in native_events)
     retained = list(iter_archived_events(archive, legacy_state.history_id))
-    assert [row["payload"] for row in retained] == events
+    assert retained == events
 
 
 @pytest.mark.parametrize("owner_harness", ["pi", " PI "])

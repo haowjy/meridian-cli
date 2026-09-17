@@ -478,7 +478,7 @@ def test_subset_search_uses_recorded_primary_spawn_without_global_scan(
     assert steps[0].error is None
 
 
-def test_subset_search_recovers_history_when_recorded_primary_spawn_is_missing(
+def test_subset_search_does_not_borrow_sibling_history_when_primary_spawn_is_missing(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
@@ -534,8 +534,7 @@ def test_subset_search_recovers_history_when_recorded_primary_spawn_is_missing(
     )
 
     assert len(steps) == 1
-    assert steps[0].matched is True
-    assert steps[0].error is None
+    assert steps[0].matched is False
 
 
 def test_preview_is_bounded_cached_and_rebuilt_from_loose_or_zip(tmp_path, monkeypatch) -> None:

@@ -6,6 +6,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- Session log display uses the history index or live/untracked native files; it no longer attaches spawn `history.jsonl` as a second source. Archive packs already-sealed records and does not capture on `--apply`.
 - Bump pinned `mars-agents` to 0.14.1.
 - Document that `settings.targets` is launch permission, not only materialization.
 
