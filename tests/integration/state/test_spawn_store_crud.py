@@ -481,7 +481,7 @@ def test_start_spawn_persists_launch_policy_snapshot(tmp_path: Path) -> None:
         model_selection_requested_token="sonnet",
         model_selection_canonical_id="claude-sonnet-4-6",
         model_selection_harness_provenance="alias-default",
-        fallback_chain=({"source": "snapshot"},),
+        selection_report={"version": 2, "outcome": "selected"},
     )
 
     spawn_id = str(

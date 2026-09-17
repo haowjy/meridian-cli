@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import shlex
+import sys
 from pathlib import Path
 from uuid import UUID
 
@@ -19,6 +20,7 @@ from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.launch import LaunchRequest, SessionMode, launch_primary
 from meridian.lib.launch.composition import PromptDocument
 from meridian.lib.launch.continue_replay import (
+    MODEL_OVERRIDE_WARNING,
     build_continue_replay_contract,
     continue_replay_source_from_reference,
 )
@@ -26,6 +28,7 @@ from meridian.lib.launch.request import SessionRequest
 from meridian.lib.launch.resolve import resolve_agent_launch_input
 from meridian.lib.ops.reference import ResolvedSessionReference, resolve_session_reference
 from meridian.lib.ops.spawn.models import normalize_goal
+from meridian.lib.state.paths import resolve_project_runtime_root
 
 
 def _headless_claude_startup_warning(project_root: Path) -> str | None:
@@ -116,11 +119,12 @@ def resolve_session_target(
     *,
     project_root: Path,
     continue_ref: str,
+    harness_hint: str | None = None,
 ) -> ResolvedSessionReference:
     normalized = continue_ref.strip()
     if not normalized:
         raise ValueError("--continue requires a non-empty session reference.")
-    return resolve_session_reference(project_root, normalized)
+    return resolve_session_reference(project_root, normalized, harness_hint=harness_hint)
 
 
 def run_primary_launch(
@@ -130,7 +134,7 @@ def run_primary_launch(
     fork_ref: str | None,
     fork_fresh_ref: str | None,
     from_ref: str | None = None,
-    model: str,
+    model: str | None,
     harness: str | None,
     agent: str | None,
     work: str,
@@ -151,6 +155,12 @@ def run_primary_launch(
     supplemental_prompt_documents: tuple[PromptDocument, ...] = (),
     include_bootstrap_documents: bool = False,
 ) -> PrimaryLaunchOutput:
+    if continue_ref is not None and model is not None:
+        print(f"warning: {MODEL_OVERRIDE_WARNING}", file=sys.stderr)
+        if not model.strip():
+            raise ValueError("--model requires a non-empty model id or alias.")
+    model = model or ""
+
     def _result_message(*, exit_code: int) -> str:
         if dry_run:
             if resume_target is not None:
@@ -226,6 +236,7 @@ def run_primary_launch(
     continue_passthrough_args: tuple[str, ...] = ()
     output_forked_from: str | None = None
     session_mode = SessionMode.FRESH
+    continue_session = SessionRequest()
     explicit_harness = harness.strip() if harness is not None and harness.strip() else None
     agent_launch = resolve_agent_launch_input(agent)
     requested_model: str | None = model
@@ -235,14 +246,12 @@ def run_primary_launch(
     requested_work_id = work.strip() or None
     launch_task_dir = normalized_task_dir
     if resume_target is not None:
-        if model.strip():
-            raise ValueError("Cannot combine --continue with --model.")
         if skills:
             raise ValueError("Cannot combine --continue with --skills.")
         if passthrough:
             raise ValueError("Cannot combine --continue with passthrough args (--).")
         resolved_continue = resolve_session_target(
-            project_root=project_root, continue_ref=resume_target
+            project_root=project_root, continue_ref=resume_target, harness_hint=harness,
         )
         if resolved_continue.missing_harness_session_id:
             raise ValueError(
@@ -262,7 +271,10 @@ def run_primary_launch(
             explicit_harness=explicit_harness,
             requested_agent=agent_launch.agent,
             agent_opt_out=agent_launch.agent_opt_out,
+            requested_model_override=model.strip() or None,
+            runtime_root=resolve_project_runtime_root(project_root),
         )
+        continue_session = continue_contract.session
         continue_harness_session_id = continue_contract.session.requested_harness_session_id
         continue_chat_id = continue_contract.session.continue_chat_id
         continue_harness = continue_contract.harness
@@ -388,20 +400,20 @@ def run_primary_launch(
                 autocompact_pct=autocompact_pct,
             ),
             launch_policy_snapshot=continue_launch_policy_snapshot,
-            session=SessionRequest(
-                requested_harness_session_id=continue_harness_session_id,
-                continue_harness=continue_harness,
-                continue_chat_id=continue_chat_id,
-                continue_fork=continue_fork,
-                forked_from_chat_id=forked_from_chat_id,
-                forked_from_history_id=forked_from_history_id,
-                source_control_root=source_control_root,
-                source_execution_cwd=source_execution_cwd,
-                source_claude_config_dir=source_claude_config_dir,
-                source_pi_session_dir=source_pi_session_dir,
-                continue_source_tracked=continue_source_tracked,
-                continue_source_ref=continue_source_ref,
-            ),
+            session=continue_session.model_copy(update={
+                "requested_harness_session_id": continue_harness_session_id,
+                "continue_harness": continue_harness,
+                "continue_chat_id": continue_chat_id,
+                "continue_fork": continue_fork,
+                "forked_from_chat_id": forked_from_chat_id,
+                "forked_from_history_id": forked_from_history_id,
+                "source_control_root": source_control_root,
+                "source_execution_cwd": source_execution_cwd,
+                "source_claude_config_dir": source_claude_config_dir,
+                "source_pi_session_dir": source_pi_session_dir,
+                "continue_source_tracked": continue_source_tracked,
+                "continue_source_ref": continue_source_ref,
+            }),
         ),
         harness_registry=harness_registry,
     )

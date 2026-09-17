@@ -182,7 +182,7 @@ class SpawnActionOutput(BaseModel):
     model_selection_canonical_id: str | None = None
     model_selection_harness_provenance: str | None = None
     matched_policy_rule: str | None = None
-    fallback_chain: tuple[dict[str, object], ...] = ()
+    selection_report: dict[str, object] | None = None
     terminal_surface_mode: str | None = None
     project_root: str | None = None
     project_root_source: str | None = None
@@ -266,6 +266,8 @@ class SpawnActionOutput(BaseModel):
                 wire["task_cwd_work_item"] = self.task_cwd_work_item
             if self.reference_anchor is not None:
                 wire["reference_anchor"] = self.reference_anchor
+        if self.selection_report is not None:
+            wire["selection_report"] = self.selection_report
         transcript_command = self._transcript_command()
         if transcript_command is not None:
             wire["transcript_command"] = transcript_command
@@ -312,8 +314,6 @@ class SpawnActionOutput(BaseModel):
                 }
             if self.matched_policy_rule is not None:
                 wire["matched_policy_rule"] = self.matched_policy_rule
-            if self.fallback_chain:
-                wire["fallback_chain"] = list(self.fallback_chain)
             if self.terminal_surface_mode is not None:
                 wire["terminal_surface_mode"] = self.terminal_surface_mode
             if self.cli_command:
@@ -1186,7 +1186,7 @@ class SpawnSubagentsOutput(BaseModel):
 class SpawnContinueInput(SpawnLaunchOptions):
     spawn_id: str
     prompt: str
-    model: str = ""
+    model: str | None = None
     files: tuple[str, ...] = ()
     template_vars: tuple[str, ...] = ()
     agent: str | None = None

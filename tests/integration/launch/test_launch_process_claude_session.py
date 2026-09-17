@@ -2,25 +2,24 @@
 """Claude session seeding, repair, and resume tests.
 
 Verifies that fresh Claude primary launches seed a --session-id, that
-command-generated session IDs are recorded correctly, that observation
-repairs diverged state, and that resume launches do not inject seed args.
+command-generated session IDs remain provisional, that observation
+binds the actual conversation, and that resume launches do not inject seed args.
 """
 
 from __future__ import annotations
 
 import json
-from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
 import pytest
 
 from meridian.lib.config.settings import load_config
+from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
 from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.claude import project_slug
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.launch.context import build_launch_context
-from meridian.lib.launch.process import runner as process_runner
 from meridian.lib.launch.process.runner import run_harness_process
 from meridian.lib.launch.request import (
     LaunchArgvIntent,
@@ -72,6 +71,10 @@ def _build_primary_launch_context(
             harness=harness_id.value,
             extra_args=extra_args,
             session=session or SessionRequest(),
+            launch_policy_snapshot=(
+                LaunchPolicySnapshot(model=model, harness=harness_id.value)
+                if session is not None else None
+            ),
         ),
         runtime=LaunchRuntime(
             argv_intent=LaunchArgvIntent.REQUIRED,
@@ -139,92 +142,15 @@ def test_run_harness_process_fresh_claude_primary_seeds_session_id(
     assert launch_context.seed_harness_session_id in (None, "")
     assert "command_session_id" in captured
     seeded_id = captured["command_session_id"]
-    assert outcome.resolved_harness_session_id == seeded_id
+    # Command seeds remain hints until the harness actually observes the conversation.
+    assert outcome.resolved_harness_session_id == ""
     spawns = list_spawns(launch_context.runtime_root)
     assert len(spawns.records) == 1
     assert spawns.records[0].harness_session_id == seeded_id
     session = session_store.get_session_record(launch_context.runtime_root, outcome.chat_id)
     assert session is not None
     assert session.spawn_id == spawns.records[0].id
-
-
-@pytest.mark.slow
-def test_run_harness_process_records_generated_claude_command_session_id(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    monkeypatch.delenv("MERIDIAN_CHAT_ID", raising=False)
-    project_root = tmp_path / "claude-command-session-id"
-    project_root.mkdir()
-    launch_context, harness_registry = _build_primary_launch_context(
-        project_root=project_root,
-        harness_id=HarnessId.CLAUDE,
-        model="claude-sonnet-4-5",
-    )
-    claude_adapter = harness_registry.get_subprocess_harness(HarnessId.CLAUDE)
-    generated_session_id = "generated-command-session-id"
-    original_build_launch_context = process_runner.build_launch_context
-
-    def fake_build_launch_context(*args: object, **kwargs: object) -> Any:
-        runtime_context = original_build_launch_context(*args, **kwargs)
-        # Strip any --session-id already injected by resolve_launch_spec so the
-        # test-controlled value is the only one present in the command.
-        base_argv = runtime_context.binding.argv
-        stripped: list[str] = []
-        skip_next = False
-        for token in base_argv:
-            if skip_next:
-                skip_next = False
-                continue
-            if token == "--session-id":
-                skip_next = True
-                continue
-            if token.startswith("--session-id="):
-                continue
-            stripped.append(token)
-        new_argv = (*stripped, "--session-id", generated_session_id)
-        updated_binding = replace(
-            runtime_context.binding,
-            argv=new_argv,
-            effective_harness_session_id="",
-        )
-        return replace(
-            runtime_context,
-            binding=updated_binding,
-            seed_harness_session_id="",
-        )
-
-    def fake_run_primary_process_with_capture(
-        command: Any,
-        cwd: Any,
-        env: Any,
-        output_log_path: Any,
-        on_child_started: Any = None,
-    ) -> tuple[int, int]:
-        assert callable(on_child_started)
-        on_child_started(556)
-        return (0, 556)
-
-    monkeypatch.setattr(process_runner, "build_launch_context", fake_build_launch_context)
-    monkeypatch.setattr(claude_adapter, "observe_session_id", _no_observed_session)
-
-    outcome = run_harness_process(
-        launch_context,
-        harness_registry,
-        run_primary_process_with_capture_fn=fake_run_primary_process_with_capture,
-        stop_session_fn=lambda *args, **kwargs: None,
-    )
-
-    assert outcome.resolved_harness_session_id == generated_session_id
-    assert outcome.chat_id is not None
-    spawns = list_spawns(launch_context.runtime_root)
-    assert len(spawns.records) == 1
-    assert spawns.records[0].harness_session_id == generated_session_id
-    assert outcome.chat_id is not None
-    assert (
-        session_store.get_session_harness_id(launch_context.runtime_root, outcome.chat_id)
-        == generated_session_id
-    )
+    assert not session.harness_session_id
 
 
 @pytest.mark.slow

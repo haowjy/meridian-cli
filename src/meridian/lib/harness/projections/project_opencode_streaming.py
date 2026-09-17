@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import cast
+from typing import Literal, cast
 
 from meridian.lib.harness.projections._guards import (
     check_projection_drift as _check_projection_drift,
@@ -37,7 +37,7 @@ _SESSION_PAYLOAD_FIELDS: frozenset[str] = frozenset(
     }
 )
 
-_MESSAGE_FIELDS: frozenset[str] = frozenset({"appended_system_prompt"})
+_MESSAGE_FIELDS: frozenset[str] = frozenset({"appended_system_prompt", "model"})
 _REFERENCE_FIELDS: frozenset[str] = frozenset({"reference_items"})
 
 _ACCOUNTED_FIELDS: frozenset[str] = (
@@ -126,6 +126,16 @@ def opencode_model_parts(model: str) -> tuple[str, str]:
     return provider, model_id
 
 
+def project_opencode_model(
+    model: str | None, *, id_field: Literal["id", "modelID"],
+) -> dict[str, str] | None:
+    """Project the provider-qualified selection to OpenCode's endpoint-specific model ref."""
+    if model is None:
+        return None
+    provider, model_id = opencode_model_parts(model)
+    return {"providerID": provider, id_field: model_id}
+
+
 def project_opencode_model_config(raw: str | None, model: str, agent: str | None = None) -> str:
     """Launch-local override; preserve native agent fields and reject malformed input."""
     opencode_model_parts(model)
@@ -162,9 +172,9 @@ def project_opencode_spec_to_session_payload(spec: ResolvedLaunchSpec) -> dict[s
 
     payload: dict[str, object] = {}
 
-    if spec.model is not None:
-        provider, model_id = opencode_model_parts(spec.model)
-        payload["model"] = {"id": model_id, "providerID": provider}
+    model = project_opencode_model(spec.model, id_field="id")
+    if model is not None:
+        payload["model"] = model
 
     normalized_effort = (spec.effort or "").strip()
     if normalized_effort:
@@ -208,6 +218,7 @@ __all__ = [
     "_SESSION_PAYLOAD_FIELDS",
     "HarnessCapabilityMismatch",
     "_check_projection_drift",
+    "project_opencode_model",
     "project_opencode_spec_to_serve_command",
     "project_opencode_spec_to_session_payload",
 ]

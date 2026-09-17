@@ -1,6 +1,7 @@
 """Spawn session scope helpers: session continuation and session context manager."""
 
-from collections.abc import Callable, Generator
+import uuid
+from collections.abc import Generator
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -8,7 +9,7 @@ from pydantic import BaseModel, ConfigDict
 
 from meridian.lib.core.types import HarnessId
 from meridian.lib.launch.request import SessionRequest, SpawnRequest
-from meridian.lib.launch.session_scope import session_scope
+from meridian.lib.launch.session_scope import SessionAttempt, session_scope
 from meridian.lib.launch.types import PrimarySessionMetadata
 from meridian.lib.state.session_store import get_session_active_work_id, update_session_work_id
 
@@ -21,7 +22,7 @@ class _SessionExecutionContext(BaseModel):
     chat_id: str
     work_id: str | None = None
     resolved_agent_name: str | None
-    harness_session_id_observer: Callable[[str], None]
+    attempt: SessionAttempt
 
 
 def _resolve_session_continuation(
@@ -63,12 +64,10 @@ def _resolve_session_continuation(
     # the spawn row and chat row exist.  resolved_continue_fork=True is preserved
     # here so the executor knows a fork is needed.
 
-    return request.session.model_copy(
-        update={
-            "requested_harness_session_id": resolved_continue_harness_session_id,
-            "continue_fork": resolved_continue_fork,
-        }
-    )
+    return request.session.model_copy(update={
+        "requested_harness_session_id": resolved_continue_harness_session_id,
+        "continue_fork": resolved_continue_fork,
+    })
 
 
 @contextmanager
@@ -94,17 +93,19 @@ def _session_execution_context(
         task_cwd=task_cwd,
         execution_cwd=execution_cwd,
         spawn_id=spawn_id,
+        startup_attempt_id=uuid.uuid4().hex,
     ) as managed:
         attached_work_id = get_session_active_work_id(runtime_root, managed.chat_id)
         if attached_work_id is None:
             attached_work_id = (inherited_work_id or "").strip() or None
             if attached_work_id is not None:
                 update_session_work_id(runtime_root, managed.chat_id, attached_work_id)
+        assert managed.attempt is not None
         yield _SessionExecutionContext(
             chat_id=managed.chat_id,
             work_id=attached_work_id,
             resolved_agent_name=run_agent_name,
-            harness_session_id_observer=managed.record_harness_session_id,
+            attempt=managed.attempt,
         )
 
 

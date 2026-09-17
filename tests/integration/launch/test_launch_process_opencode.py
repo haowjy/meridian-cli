@@ -9,6 +9,7 @@ from typing import Any
 import pytest
 
 from meridian.lib.config.settings import load_config
+from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
 from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.projections.project_opencode_streaming import (
     project_opencode_spec_to_session_payload,
@@ -74,6 +75,10 @@ def _build_primary_launch_context(
             harness=harness_id.value,
             extra_args=extra_args,
             session=session or SessionRequest(),
+            launch_policy_snapshot=(
+                LaunchPolicySnapshot(model=model, harness=harness_id.value)
+                if session is not None else None
+            ),
         ),
         runtime=LaunchRuntime(
             argv_intent=LaunchArgvIntent.REQUIRED,
@@ -124,20 +129,21 @@ def test_run_primary_attach_preserves_startup_failure_cause(
 
 
 @pytest.mark.slow
-def test_run_harness_process_managed_failure_does_not_fall_back_to_black_box(
+def test_run_harness_process_managed_failure_falls_back_to_black_box(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    """Model/managed startup failures must not silently launch a different mode."""
+    """Harness-default OpenCode resume can fall back when the managed backend fails."""
+    stub_bundle_request_and_resolve(monkeypatch, model="", harness=HarnessId.OPENCODE)
     monkeypatch.delenv("MERIDIAN_CHAT_ID", raising=False)
-    project_root = tmp_path / "opencode-fallback"
+    project_root = tmp_path / "opencode-fallback-default"
     project_root.mkdir()
     task_cwd = project_root / ".meridian" / "spawns" / "p-parent"
     task_cwd.mkdir(parents=True)
     launch_context, harness_registry = _build_primary_launch_context(
         project_root=project_root,
         harness_id=HarnessId.OPENCODE,
-        model="google/gemini-2.5-pro",
+        model="",
         execution_cwd=task_cwd,
         session=SessionRequest(
             requested_harness_session_id="existing-opencode-session",
@@ -197,21 +203,23 @@ def test_run_harness_process_managed_failure_does_not_fall_back_to_black_box(
 
     monkeypatch.setattr(opencode_adapter, "observe_session_id", lambda **kwargs: None)
 
-    with pytest.raises(PrimaryAttachError, match="managed startup error"):
-        run_harness_process(
-            launch_context,
-            harness_registry,
-            run_primary_attach_fn=failing_managed,
-            run_primary_process_with_capture_fn=fake_run_primary_process_with_capture,
-            stop_session_fn=lambda *args, **kwargs: None,
-            update_session_harness_id_fn=lambda *args, **kwargs: None,
-        )
+    outcome = run_harness_process(
+        launch_context,
+        harness_registry,
+        run_primary_attach_fn=failing_managed,
+        run_primary_process_with_capture_fn=fake_run_primary_process_with_capture,
+        stop_session_fn=lambda *args, **kwargs: None,
+        update_session_harness_id_fn=lambda *args, **kwargs: None,
+    )
 
     assert managed_calls == 1
-    assert black_box_calls == 0
+    assert black_box_calls == 1
     assert captured_spawn_dir is not None
-    assert captured_black_box_cwd is None
+    assert not (captured_spawn_dir / PRIMARY_META_FILENAME).exists()
+    assert not (captured_spawn_dir / OUTPUT_FILENAME).exists()
+    assert captured_black_box_cwd == project_root
     assert list(launch_context.runtime_root.rglob("tui.log")) == []
+    assert outcome.exit_code == 0
 
 
 def test_opencode_streaming_logs_effort_warning_without_failure(
@@ -226,8 +234,7 @@ def test_opencode_streaming_logs_effort_warning_without_failure(
         )
     )
 
-    assert payload["model"] == {"id": "gemini-2.5-pro", "providerID": "google"}
-    assert "modelID" not in payload
+    assert payload["model"] == {"providerID": "google", "id": "gemini-2.5-pro"}
     assert "effort" not in payload
     assert (
         "OpenCode streaming does not support effort override; ignoring effort=medium" in caplog.text

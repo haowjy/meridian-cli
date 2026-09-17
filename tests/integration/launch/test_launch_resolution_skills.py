@@ -12,7 +12,6 @@ from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.launch import bundle_adapter
 from meridian.lib.launch.bundle_adapter import LoadedSkillEntry
-from meridian.lib.launch.composition import AvailableSkillEntry
 from meridian.lib.launch.context import build_launch_context
 from meridian.lib.launch.launch_types import ResolvedExecutionPolicy
 from meridian.lib.launch.plan import (
@@ -21,6 +20,7 @@ from meridian.lib.launch.plan import (
 )
 from meridian.lib.launch.types import LaunchRequest
 from tests.support.fixtures import allow_headless_claude, write_agent
+from tests.support.launch import FakeBundleResult
 
 pytestmark = pytest.mark.slow
 
@@ -40,23 +40,6 @@ class _BundleResolution:
     harness: HarnessId
 
 
-@dataclass(frozen=True)
-class _FakeBundleResult:
-    model: str
-    model_token: str
-    harness: HarnessId
-    harness_model: str | None
-    execution_policy: ResolvedExecutionPolicy
-    provenance: dict[str, str]
-    warnings: tuple[str, ...] = ()
-    prompt_surface_inventory_prompt: str = ""
-    tools_allowed: tuple[str, ...] = ()
-    tools_disallowed: tuple[str, ...] = ()
-    tools_mcp: tuple[str, ...] = ()
-    skills_loaded: tuple[LoadedSkillEntry, ...] = ()
-    skills_available: tuple[AvailableSkillEntry, ...] = ()
-    skills_missing: tuple[str, ...] = ()
-
 
 def _stub_bundle_resolution(
     monkeypatch: pytest.MonkeyPatch,
@@ -68,9 +51,9 @@ def _stub_bundle_resolution(
         request: bundle_adapter.BundleRequest,
         *,
         harness_registry: object,
-    ) -> _FakeBundleResult:
+    ) -> FakeBundleResult:
         _ = (request, harness_registry)
-        return _FakeBundleResult(
+        return FakeBundleResult(
             model=resolution.model,
             model_token=resolution.model_token,
             harness=resolution.harness,

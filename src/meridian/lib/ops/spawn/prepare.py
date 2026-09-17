@@ -189,14 +189,11 @@ def build_create_payload(
                 max_attempts=max(1, config.max_retries + 1),
                 backoff_secs=config.retry_backoff_seconds,
             ),
-            session=payload.session.model_copy(
-                update={
-                    "requested_harness_session_id": (
-                        payload.session.requested_harness_session_id or ""
-                    ).strip()
-                    or None,
-                }
-            ),
+            session=payload.session.model_copy(update={
+                "requested_harness_session_id": (
+                    (payload.session.requested_harness_session_id or "").strip() or None
+                ),
+            }),
             context_from=payload.context_from,
             reference_files=tuple(path.as_posix() for path in launch_resolution.reference_files),
             template_vars=parsed_template_vars,

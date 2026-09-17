@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from meridian.lib.core.types import SpawnId
 from meridian.lib.harness.control_action import ControlActionCoordinator, ControlActionType
 from meridian.lib.harness.permission_broker import PermissionBroker
 from meridian.lib.state.atomic import (
@@ -114,7 +115,7 @@ async def test_control_journal_repairs_torn_tail_without_reusing_transition_seq(
         + b'{"seq":1,"spawn_id":"s-1","action_id":"ca-1","action":"inject","status":"request'
     )
 
-    coordinator = ControlActionCoordinator(spawn_id="s-1", spawn_dir=spawn_dir)
+    coordinator = ControlActionCoordinator(spawn_id=SpawnId("s-1"), spawn_dir=spawn_dir)
     assert coordinator._transition_seq == 1
 
     async def _noop_send() -> object:
@@ -138,7 +139,7 @@ async def test_control_journal_repairs_torn_tail_without_reusing_transition_seq(
     assert 1 in seqs
     assert len(seqs) == len(set(seqs))
 
-    reloaded = ControlActionCoordinator(spawn_id="s-1", spawn_dir=spawn_dir)
+    reloaded = ControlActionCoordinator(spawn_id=SpawnId("s-1"), spawn_dir=spawn_dir)
     assert reloaded._transition_seq > 1
 
 
@@ -211,7 +212,7 @@ def test_repair_jsonl_tail_does_not_create_parent_dir(tmp_path: Path) -> None:
     assert not path.parent.exists()
 
 
-def test_append_durable_jsonl_line_succeeds_when_repair_replace_fails(
+def test_append_durable_jsonl_line_rejects_failed_repair_without_losing_next_event(
     tmp_path: Path,
     monkeypatch: MonkeyPatch,
 ) -> None:
@@ -223,10 +224,16 @@ def test_append_durable_jsonl_line_succeeds_when_repair_replace_fails(
     import meridian.lib.platform.atomic as platform_atomic
 
     def _deny_replace(src: os.PathLike[str] | str, dst: os.PathLike[str] | str) -> None:
-        raise PermissionError("open file blocks replace on Windows")
+        raise PermissionError("tail repair denied")
 
-    monkeypatch.setattr(platform_atomic.os, "replace", _deny_replace)
+    with monkeypatch.context() as fault:
+        fault.setattr(platform_atomic.os, "replace", _deny_replace)
+        with pytest.raises(PermissionError, match="tail repair denied"):
+            append_durable_jsonl_line(path, new_line)
+
+    assert path.read_bytes() == torn
 
     append_durable_jsonl_line(path, new_line)
 
-    assert path.read_bytes() == torn + new_line.encode("utf-8")
+    rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+    assert rows == [{"id": 1, "kind": "start"}, {"id": 3, "kind": "new"}]

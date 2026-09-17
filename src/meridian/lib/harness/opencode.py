@@ -433,7 +433,7 @@ class OpenCodeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             bootstrap=BootstrapContract(
                 mode=BootstrapMode.MANAGED_PRIMARY_ATTACH,
                 fork_materialization=ForkMaterializationMode.NATIVE_CONTINUE_FORK,
-                primary_attach_failure_policy="raise",
+                primary_attach_failure_policy="fallback_to_blackbox",
                 observer_controller=observer,
             ),
             capability_limits=(
@@ -458,6 +458,7 @@ class OpenCodeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             supports_session_fork=True,
             supports_native_skills=True,
             supports_primary_launch=True,
+            supports_named_primary_resume=False,
             supports_native_file_injection=False,
             terminal_surface_modes=(
                 TerminalSurfaceMode.PTY_MEDIATED,

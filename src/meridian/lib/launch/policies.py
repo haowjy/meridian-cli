@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 from meridian.lib.catalog.agent import AgentProfile
@@ -27,6 +27,7 @@ from . import bundle_adapter
 from .bundle_adapter import LoadedSkillEntry
 from .compiler import (
     FieldProvenance,
+    ProvenanceLevel,
     match_model_policy,
 )
 from .composition import AvailableSkillEntry
@@ -40,7 +41,7 @@ from .policy_snapshot import (
     ReplayedModelSelection,
     replay_launch_policy_snapshot,
 )
-from .request import LaunchCompositionSurface, LaunchPolicySnapshot
+from .request import LaunchCompositionSurface, LaunchPolicySnapshot, SessionRequest
 from .resolve import (
     ResolvedSkills,
     dedupe_skill_names,
@@ -96,6 +97,7 @@ class ModelSelectionContext:
     canonical_model_id: str
     harness_provenance: str
     harness_model_id: str | None = None
+    provider_constraint: str | None = None
 
 
 @dataclass(frozen=True)
@@ -112,6 +114,7 @@ class SurfacePolicyInput:
     models_readonly: bool = False
     requested_skills: tuple[str, ...] = ()
     policy_snapshot: LaunchPolicySnapshot | None = None
+    continuation: SessionRequest | None = None
     agent_opt_out: bool = False
     supported_execution_policy_fields: frozenset[ExecutionPolicyField] = (
         _DEFAULT_EXECUTION_POLICY_FIELDS
@@ -161,7 +164,7 @@ class ResolvedLaunchPolicy:
     field_provenance: FieldProvenance = field(default_factory=FieldProvenance)
     matched_policy_rule: str | None = None
     model_selection: ModelSelectionContext | None = None
-    fallback_chain: tuple[dict[str, object], ...] = ()
+    selection_report: dict[str, object] | None = None
     warnings: tuple[CompositionWarning, ...] = ()
     alias_catalog: dict[str, AliasEntry] | None = None
     bundle_inventory_prompt: str | None = None
@@ -454,6 +457,7 @@ def _resolve_policy_from_bundle(surface: SurfacePolicyInput) -> ResolvedLaunchPo
         project_root=project_root,
         model_override=bundle_model_override,
         harness_override=bundle_harness_override,
+        excluded_harnesses=_excluded_harnesses_for_surface(surface),
         effort_override=explicit_user_overrides.effort,
         approval_override=explicit_user_overrides.approval,
         sandbox_override=explicit_user_overrides.sandbox,
@@ -480,6 +484,7 @@ def _resolve_policy_from_bundle(surface: SurfacePolicyInput) -> ResolvedLaunchPo
         canonical_model_id=resolved_model,
         harness_provenance=harness_provenance,
         harness_model_id=bundle_result.harness_model,
+        provider_constraint=bundle_result.provider_constraint,
     )
 
     bundle_execution_policy = bundle_result.execution_policy.as_overrides(
@@ -602,7 +607,7 @@ def _resolve_policy_from_snapshot(
         terminal_surface_mode=replayed.terminal_surface_mode,
         matched_policy_rule=replayed.matched_policy_rule,
         model_selection=_model_selection_from_replayed_snapshot(replayed.model_selection),
-        fallback_chain=replayed.fallback_chain,
+        selection_report=replayed.selection_report,
         warnings=(),
         alias_catalog=replayed.alias_catalog,
         bundle_inventory_prompt=snapshot.bundle_inventory_prompt,
@@ -620,7 +625,14 @@ def _model_selection_from_replayed_snapshot(
         canonical_model_id=replayed.canonical_model_id,
         harness_provenance=replayed.harness_provenance,
         harness_model_id=replayed.harness_model_id,
+        provider_constraint=replayed.provider_constraint,
     )
+
+
+def _excluded_harnesses_for_surface(surface: SurfacePolicyInput) -> tuple[HarnessId, ...]:
+    if surface.surface != LaunchCompositionSurface.SPAWN_PREPARE:
+        return ()
+    return tuple(HarnessId(name) for name in dict.fromkeys(surface.config.deny_headless_harnesses))
 
 
 def resolve_launch_policy(surface: SurfacePolicyInput) -> ResolvedLaunchPolicy:
@@ -629,6 +641,58 @@ def resolve_launch_policy(surface: SurfacePolicyInput) -> ResolvedLaunchPolicy:
     PRIMARY and SPAWN_PREPARE both use the mars launch-bundle path.  DIRECT is
     handled separately (no policy resolution needed — already-resolved inputs).
     """
+
+    if surface.continuation is not None:
+        session = surface.continuation
+        intent = session.conversation_intent
+        model = (intent.mars_model if intent is not None else surface.cli_overrides.model) or ""
+        snapshot = surface.policy_snapshot or LaunchPolicySnapshot(
+            model=surface.cli_overrides.model or model,
+            harness=session.continue_harness or "",
+        )
+        replayed = _resolve_policy_from_snapshot(surface=surface, snapshot=snapshot)
+        bundle = bundle_adapter.request_and_resolve(
+            bundle_adapter.BundleRequest(
+                agent=None,
+                project_root=surface.catalog.project_root,
+                model_override=model,
+                literal_model=(
+                    intent.literal_model or not model if intent is not None else not model
+                ),
+                harness_override=session.continue_harness,
+                excluded_harnesses=_excluded_harnesses_for_surface(surface),
+                effort_override=snapshot.execution_policy.effort,
+                approval_override=snapshot.execution_policy.approval,
+                sandbox_override=snapshot.execution_policy.sandbox,
+            ),
+            harness_registry=surface.harness_registry,
+        )
+        selected_token = bundle.model_token
+        if (
+            intent is not None
+            and intent.selection_source != "explicit_override"
+            and intent.selected_token
+        ):
+            selected_token = intent.selected_token
+        return replace(
+            replayed,
+            model=bundle.model or None,
+            routing=replace(replayed.routing, model=bundle.model or None),
+            model_selection=ModelSelectionContext(
+                requested_token=model,
+                selected_model_token=selected_token,
+                canonical_model_id=bundle.model,
+                harness_provenance=bundle.provenance.get("harness_source", "cli"),
+                harness_model_id=bundle.harness_model,
+                provider_constraint=bundle.provider_constraint,
+            ),
+            selection_report=bundle.selection_report,
+            field_provenance=replace(
+                replayed.field_provenance,
+                model_source=ProvenanceLevel.CLI,
+                harness_source=ProvenanceLevel.CLI,
+            ),
+        )
 
     if surface.policy_snapshot is not None:
         return _resolve_policy_from_snapshot(surface=surface, snapshot=surface.policy_snapshot)

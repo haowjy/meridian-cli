@@ -85,6 +85,10 @@ split matters for `capture_library_diagnostics()` at the launch boundary.
 → `ResolvedSessionReference` handles spawn IDs (`p123`), chat IDs, and bare
 references. All `--from` / `-f` operations route through this.
 
+Raw native references retain the supplied ID, not a matching chat's later ID.
+Their harness namespace must be unambiguous or explicit. Tracked chat/spawn
+references use their recorded harness; native-file discovery cannot replace it.
+
 ## Resolve-Before-Persist vs Row-First
 
 - **Streaming-serve** (via `SpawnApplicationService.prepare_spawn()`): resolution

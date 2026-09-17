@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import time
+import uuid
 from dataclasses import replace
+from typing import Any
 
 from pydantic import TypeAdapter
 
@@ -15,15 +17,20 @@ from meridian.lib.bootstrap.services import (
 )
 from meridian.lib.core.domain import SpawnStatus, TerminalSpawnStatus
 from meridian.lib.core.types import HarnessId
+from meridian.lib.harness.connections.base import HarnessConnection
 from meridian.lib.harness.registry import get_default_harness_registry
+from meridian.lib.launch.process.session import build_session_metadata
 from meridian.lib.launch.request import LaunchArgvIntent, SpawnRequest
 from meridian.lib.launch.resolve import (
     resolve_agent_launch_input,
     resolve_startup_timeout_seconds,
 )
+from meridian.lib.launch.session_scope import session_scope
 from meridian.lib.launch.streaming_runner import run_streaming_spawn, signal_coordinator
 from meridian.lib.ops.runtime import OperationRuntime
 from meridian.lib.ops.spawn.execute_init import build_spawn_mars_runtime
+from meridian.lib.state import spawn_store
+from meridian.lib.state.artifact_store import LocalStore
 from meridian.lib.state.paths import spawn_output_path
 
 
@@ -122,22 +129,63 @@ async def streaming_serve(
     failure_message: str | None = None
     lifecycle_service = build_spawn_lifecycle_service_from_roots(project_root, runtime_root)
     try:
-        outcome = await run_streaming_spawn(
-            config=connection_config,
-            spec=launch_ctx.binding.spec,
+        with session_scope(
             runtime_root=runtime_root,
-            project_root=project_root,
-            spawn_id=spawn_id,
-            startup_timeout_seconds=resolve_startup_timeout_seconds(
-                config_snapshot=launch_ctx.runtime.config_snapshot,
-            ),
-            lifecycle_service=lifecycle_service,
-            on_control_endpoint_ready=_report_control_endpoint,
-        )
-        outcome_status = TypeAdapter(TerminalSpawnStatus).validate_python(outcome.status)
-        outcome_exit_code = outcome.exit_code
-        if outcome_status == "failed":
-            failure_message = outcome.error
+            metadata=build_session_metadata(launch_ctx.resolved_request),
+            request=launch_ctx.resolved_request.session,
+            harness_session_id="",
+            control_root=str(launch_ctx.control_root),
+            execution_cwd=str(launch_ctx.binding.child_cwd),
+            spawn_id=str(spawn_id),
+            startup_attempt_id=uuid.uuid4().hex,
+        ) as managed:
+            attempt = managed.attempt
+            assert attempt is not None
+            spawn_store.update_spawn(runtime_root, spawn_id, chat_id=managed.chat_id)
+            observed_session_id: str | None = None
+
+            def record_identity(session_id: str) -> None:
+                nonlocal observed_session_id
+                attempt.record_harness_session_id(session_id)
+                spawn_store.update_spawn(runtime_root, spawn_id, harness_session_id=session_id)
+                observed_session_id = session_id
+
+            def record_started(connection: HarnessConnection[Any]) -> None:
+                if connection.session_id:
+                    record_identity(connection.session_id)
+                attempt.record_started(launch_ctx, str(spawn_id), observed_session_id)
+
+            connection_config = replace(
+                connection_config,
+                session_id_observer=record_identity,
+                child_env={**connection_config.child_env, "MERIDIAN_CHAT_ID": managed.chat_id},
+            )
+            try:
+                outcome = await run_streaming_spawn(
+                    config=connection_config,
+                    spec=launch_ctx.binding.spec,
+                    runtime_root=runtime_root,
+                    project_root=project_root,
+                    spawn_id=spawn_id,
+                    startup_timeout_seconds=resolve_startup_timeout_seconds(
+                        config_snapshot=launch_ctx.runtime.config_snapshot,
+                    ),
+                    lifecycle_service=lifecycle_service,
+                    on_control_endpoint_ready=_report_control_endpoint,
+                    on_running=record_started,
+                )
+            finally:
+                observed = launch_ctx.harness.observe_session_id(
+                    artifacts=LocalStore(root_dir=runtime_root / "artifacts"),
+                    spawn_id=spawn_id,
+                    current_session_id=observed_session_id,
+                )
+                if observed:
+                    record_identity(observed)
+            outcome_status = TypeAdapter(TerminalSpawnStatus).validate_python(outcome.status)
+            outcome_exit_code = outcome.exit_code
+            if outcome_status == "failed":
+                failure_message = outcome.error
     except Exception as exc:
         failure_message = str(exc)
         raise

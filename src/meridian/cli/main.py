@@ -384,9 +384,9 @@ def root(
         ),
     ] = None,
     model: Annotated[
-        str,
+        str | None,
         Parameter(name=["--model", "-m"], help="Model id or alias for primary harness."),
-    ] = "",
+    ] = None,
     harness: Annotated[
         str | None,
         Parameter(

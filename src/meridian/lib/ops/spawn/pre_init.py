@@ -7,6 +7,7 @@ from typing import TypeVar
 
 import structlog
 
+from meridian.lib.launch.bundle_adapter import MarsSelectionError
 from meridian.lib.launch.cwd import WorkTaskDirMissing
 from meridian.lib.launch.request import SpawnRequest
 
@@ -40,6 +41,7 @@ def _pre_init_output(
     payload: SpawnCreateInput,
     message: str,
     error: str,
+    selection_report: dict[str, object] | None = None,
     request: SpawnRequest | None = None,
 ) -> SpawnActionOutput:
     return SpawnActionOutput(
@@ -47,6 +49,7 @@ def _pre_init_output(
         status="failed",
         message=message,
         error=error,
+        selection_report=selection_report,
         model=(request.model if request is not None else payload.model) or "",
         harness_id=(request.harness if request is not None else payload.harness) or "",
         warning=request.warning if request is not None else None,
@@ -80,11 +83,14 @@ def pre_init_failed_output(
     exc: Exception,
     request: SpawnRequest | None = None,
 ) -> SpawnActionOutput:
+    cause = exc.__cause__ if isinstance(exc, PreInitFailure) else exc
+    selection_error = cause if isinstance(cause, MarsSelectionError) else None
     return _pre_init_output(
         payload=payload,
         request=request,
         message=f"Spawn setup failed before initialization: {exc}",
-        error="pre_init_failed",
+        error=selection_error.code if selection_error is not None else "pre_init_failed",
+        selection_report=selection_error.selection_report if selection_error is not None else None,
     )
 
 
@@ -112,8 +118,7 @@ def unexpected_pre_init_failed_output(
         payload=payload,
         request=request,
         message=(
-            "Unexpected spawn setup error before initialization: "
-            f"{type(exc).__name__}: {exc}"
+            f"Unexpected spawn setup error before initialization: {type(exc).__name__}: {exc}"
         ),
         error="pre_init_unexpected_error",
     )

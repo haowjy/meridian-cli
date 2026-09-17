@@ -131,8 +131,8 @@ class CompilerResult:
     field_provenance: FieldProvenance = field(default_factory=FieldProvenance)
     warnings: tuple[str, ...] = ()
 
-    # Fallback info
-    fallback_chain: tuple[dict[str, object], ...] = ()
+    # Selection diagnostics
+    selection_report: dict[str, object] | None = None
     model_policy_source: ProvenanceLevel = ProvenanceLevel.UNSET
     matched_model_policy: bool = False
 
@@ -182,8 +182,8 @@ def compiler_result_to_dry_run_dict(result: CompilerResult) -> dict[str, object]
 
     output["provenance"] = render_provenance(result.field_provenance)
 
-    if result.fallback_chain:
-        output["fallback_chain"] = list(result.fallback_chain)
+    if result.selection_report:
+        output["selection_report"] = result.selection_report
     if result.warnings:
         output["warnings"] = list(result.warnings)
     return output

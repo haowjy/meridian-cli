@@ -33,6 +33,28 @@ class SnapshotModelSelection(Protocol):
     def harness_model_id(self) -> str | None: ...
 
 
+class ContinueModelSelectionOverlay(Protocol):
+    """Shape needed to copy continue routing fields onto a snapshot working copy."""
+
+    @property
+    def requested_token(self) -> str: ...
+
+    @property
+    def selected_model_token(self) -> str: ...
+
+    @property
+    def canonical_model_id(self) -> str: ...
+
+    @property
+    def harness_model_id(self) -> str | None: ...
+
+    @property
+    def harness_provenance(self) -> str: ...
+
+    @property
+    def provider_constraint(self) -> str | None: ...
+
+
 @dataclass(frozen=True)
 class ReplayedModelSelection:
     """Model-selection context reconstructed from a persisted snapshot."""
@@ -42,6 +64,7 @@ class ReplayedModelSelection:
     canonical_model_id: str
     harness_provenance: str
     harness_model_id: str | None = None
+    provider_constraint: str | None = None
 
 
 @dataclass(frozen=True)
@@ -60,8 +83,34 @@ class ReplayedLaunchPolicySnapshot:
     terminal_surface_mode: TerminalSurfaceMode = TerminalSurfaceMode.PTY_MEDIATED
     matched_policy_rule: str | None = None
     model_selection: ReplayedModelSelection | None = None
-    fallback_chain: tuple[dict[str, object], ...] = ()
+    selection_report: dict[str, object] | None = None
     alias_catalog: dict[str, AliasEntry] | None = None
+
+
+def overlay_continue_model_selection(
+    snapshot: LaunchPolicySnapshot,
+    *,
+    harness: str,
+    model_selection: ContinueModelSelectionOverlay,
+    selection_report: dict[str, object] | None,
+    field_provenance: dict[str, str],
+) -> LaunchPolicySnapshot:
+    """Write continue routing onto a snapshot working copy; persist the same flat fields."""
+
+    return snapshot.model_copy(
+        update={
+            "model": model_selection.canonical_model_id,
+            "harness": harness,
+            "model_selection_requested_token": model_selection.requested_token,
+            "model_selection_selected_token": model_selection.selected_model_token,
+            "model_selection_canonical_id": model_selection.canonical_model_id,
+            "model_selection_harness_model_id": model_selection.harness_model_id,
+            "model_selection_harness_provenance": model_selection.harness_provenance,
+            "model_selection_provider_constraint": model_selection.provider_constraint,
+            "selection_report": selection_report,
+            "field_provenance": field_provenance,
+        }
+    )
 
 
 def managed_model_override_from_persisted_model(model: str) -> str | None:
@@ -113,12 +162,13 @@ def build_launch_policy_snapshot(
             else request.model_selection_requested_token or (request.model or "").strip() or None
         ),
         model_selection_canonical_id=request.model_selection_canonical_id,
+        model_selection_provider_constraint=request.model_selection_provider_constraint,
         model_selection_harness_provenance=request.model_selection_harness_provenance,
         model_selection_harness_model_id=(
             model_selection.harness_model_id if model_selection is not None else None
         ),
         matched_policy_rule=request.matched_policy_rule,
-        fallback_chain=request.fallback_chain,
+        selection_report=request.selection_report,
         terminal_surface_mode=(
             request.terminal_surface_mode.value
             if request.terminal_surface_mode is not None
@@ -192,7 +242,7 @@ def replay_launch_policy_snapshot(
         terminal_surface_mode=terminal_surface_mode,
         matched_policy_rule=snapshot.matched_policy_rule,
         model_selection=model_selection,
-        fallback_chain=snapshot.fallback_chain,
+        selection_report=snapshot.selection_report,
         alias_catalog=alias_catalog,
     )
 
@@ -213,6 +263,7 @@ def _snapshot_model_selection(
         canonical_model_id=snapshot.model_selection_canonical_id or snapshot_model,
         harness_provenance=snapshot.model_selection_harness_provenance or "snapshot",
         harness_model_id=snapshot.model_selection_harness_model_id,
+        provider_constraint=snapshot.model_selection_provider_constraint,
     )
 
 
@@ -320,5 +371,6 @@ __all__ = [
     "SnapshotModelSelection",
     "build_launch_policy_snapshot",
     "managed_model_override_from_persisted_model",
+    "overlay_continue_model_selection",
     "replay_launch_policy_snapshot",
 ]

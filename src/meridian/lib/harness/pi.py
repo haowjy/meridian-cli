@@ -175,6 +175,7 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             supports_native_skills=False,
             supports_native_agents=False,
             supports_primary_launch=True,
+            supports_named_primary_resume=True,
             supports_native_file_injection=False,
             terminal_surface_modes=(
                 TerminalSurfaceMode.PTY_MEDIATED,

@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 import tempfile
 from collections.abc import Mapping
-from dataclasses import dataclass, field, replace
+from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
@@ -100,7 +100,7 @@ from .policies import (
     SurfacePolicyInput,
     resolve_launch_policy,
 )
-from .policy_snapshot import build_launch_policy_snapshot
+from .policy_snapshot import build_launch_policy_snapshot, overlay_continue_model_selection
 from .prompt import (
     build_goal_instruction,
     build_primary_preamble,
@@ -1065,6 +1065,7 @@ def compile_prepared_policy_surface(
             models_readonly=dry_run,
             requested_skills=request.skills,
             policy_snapshot=request.launch_policy_snapshot,
+            continuation=request.session if is_exact_continue_session(request.session) else None,
             agent_opt_out=request.agent_opt_out,
         )
     )
@@ -1417,6 +1418,15 @@ def _prepare_primary_surface(
         raise ValueError(
             f"Harness '{policy.harness}' does not support primary (interactive) launch."
         )
+    if (
+        is_exact_continue_session(request.session)
+        and policy.model
+        and not policy.adapter.capabilities.supports_named_primary_resume
+    ):
+        raise ValueError(
+            f"Harness '{policy.harness}' cannot preserve a named model on primary continuation. "
+            "The conversation and recorded selection were not changed."
+        )
     continuation = _resolve_session_continuation(request=request, harness=policy.adapter)
     (
         content,
@@ -1531,6 +1541,7 @@ def prepare_launch_surface(
         model_selection_update = {
             "model_selection_requested_token": model_selection.requested_token,
             "model_selection_canonical_id": model_selection.canonical_model_id,
+            "model_selection_provider_constraint": model_selection.provider_constraint,
             "model_selection_harness_provenance": model_selection.harness_provenance,
         }
     if request.agent_opt_out:
@@ -1606,7 +1617,7 @@ def prepare_launch_surface(
             "agent_metadata": agent_metadata,
             "prompt_payload": _request_prompt_payload(content.prompt_payload),
             "skill_paths": resolve_skill_paths(resolved_skills.loaded_skills),
-            "fallback_chain": policies.fallback_chain,
+            "selection_report": policies.selection_report,
             "terminal_surface_mode": policies.terminal_surface_mode,
             "matched_policy_rule": policies.matched_policy_rule,
             **model_selection_update,
@@ -1628,6 +1639,33 @@ def prepare_launch_surface(
             )
         }
     )
+    if is_exact_continue_session(request.session) and model_selection is not None:
+        original = request.launch_policy_snapshot or resolved_request.launch_policy_snapshot
+        assert original is not None
+        resolved_request = resolved_request.model_copy(update={
+            "launch_policy_snapshot": overlay_continue_model_selection(
+                original,
+                harness=str(policies.harness),
+                model_selection=model_selection,
+                selection_report=policies.selection_report,
+                field_provenance={
+                    **original.field_provenance,
+                    "model_source": policies.field_provenance.model_source.value,
+                    "harness_source": policies.field_provenance.harness_source.value,
+                },
+            ),
+        })
+    elif (
+        resolved_request.launch_policy_snapshot is not None
+        and request.launch_policy_snapshot is None
+    ):
+        resolved_request = resolved_request.model_copy(update={
+            "launch_policy_snapshot": resolved_request.launch_policy_snapshot.model_copy(update={
+                "field_provenance": {
+                    key: value.value for key, value in asdict(policies.field_provenance).items()
+                },
+            }),
+        })
     _enforce_headless_harness_policy(
         request=resolved_request,
         harness=harness,
