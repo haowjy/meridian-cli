@@ -321,6 +321,105 @@ def test_primary_continue_with_stale_work_task_dir_falls_back_without_mutating_w
     assert work_after.task_dir == source_task_dir.as_posix()
 
 
+def test_primary_continue_opencode_replays_recorded_model_without_override(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    stub_bundle_request_and_resolve(
+        monkeypatch,
+        model="anthropic/claude-sonnet-4",
+        model_token="anthropic/claude-sonnet-4",
+        harness=HarnessId.OPENCODE,
+        harness_model="anthropic/claude-sonnet-4",
+    )
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    runtime_root = _state_root(project_root)
+    _seed_primary_spawn(
+        runtime_root,
+        spawn_id="p61",
+        harness_session_id="session-61",
+        launch_policy_snapshot=LaunchPolicySnapshot(
+            model="anthropic/claude-sonnet-4", harness="opencode"
+        ),
+    )
+    contexts: list[Any] = []
+
+    def run_harness_process(
+        context: Any,
+        harness_registry: object,
+        **kwargs: object,
+    ) -> ProcessOutcome:
+        _ = (harness_registry, kwargs)
+        contexts.append(context)
+        return ProcessOutcome(
+            command=(),
+            exit_code=0,
+            chat_id="c61",
+            primary_spawn_id="p61-continue",
+            primary_started=0.0,
+            primary_started_epoch=0.0,
+            primary_started_local_iso=None,
+            resolved_harness_session_id="session-61",
+        )
+
+    monkeypatch.setattr("meridian.lib.launch.process.run_harness_process", run_harness_process)
+
+    _run_primary_continue(project_root, "p61")
+
+    assert contexts[0].harness.id.value == "opencode"
+
+
+def test_primary_continue_opencode_accepts_explicit_model_override(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured = stub_bundle_request_and_resolve(
+        monkeypatch,
+        model="anthropic/claude-opus-4",
+        model_token="anthropic/claude-opus-4",
+        harness=HarnessId.OPENCODE,
+        harness_model="anthropic/claude-opus-4",
+    )
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    runtime_root = _state_root(project_root)
+    _seed_primary_spawn(
+        runtime_root,
+        spawn_id="p62",
+        harness_session_id="session-62",
+        launch_policy_snapshot=LaunchPolicySnapshot(
+            model="anthropic/claude-sonnet-4", harness="opencode"
+        ),
+    )
+    contexts: list[Any] = []
+
+    def run_harness_process(
+        context: Any,
+        harness_registry: object,
+        **kwargs: object,
+    ) -> ProcessOutcome:
+        _ = (harness_registry, kwargs)
+        contexts.append(context)
+        return ProcessOutcome(
+            command=(),
+            exit_code=0,
+            chat_id="c62",
+            primary_spawn_id="p62-continue",
+            primary_started=0.0,
+            primary_started_epoch=0.0,
+            primary_started_local_iso=None,
+            resolved_harness_session_id="session-62",
+        )
+
+    monkeypatch.setattr("meridian.lib.launch.process.run_harness_process", run_harness_process)
+
+    _run_primary_continue(project_root, "p62", model="anthropic/claude-opus-4")
+
+    assert contexts[0].harness.id.value == "opencode"
+    assert captured[0].model_override == "anthropic/claude-opus-4"
+
+
 @pytest.mark.parametrize(
     ("overrides", "message_fragments"),
     [

@@ -165,6 +165,11 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
         "/event",
     )
     _CANCEL_PATH_TEMPLATES: ClassVar[tuple[str, ...]] = ("/session/{session_id}/abort",)
+    # Switching a resumed session's model requires the v2 session API; the
+    # `/session` routes do not accept a model update.
+    _MODEL_SWITCH_PATH_TEMPLATES: ClassVar[tuple[str, ...]] = (
+        "/api/session/{session_id}/model",
+    )
     _PATH_RETRY_STATUSES: ClassVar[frozenset[int]] = frozenset((404, 405))
     _PAYLOAD_RETRY_STATUSES: ClassVar[frozenset[int]] = frozenset((400, 415, 422))
     _SUCCESS_STATUSES: ClassVar[frozenset[int]] = frozenset((200, 201, 202, 204))
@@ -689,6 +694,7 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
                         "OpenCode session resume: verified existing session %s",
                         continue_session_id,
                     )
+                    await self._switch_resumed_session_model(spec, continue_session_id)
                     return continue_session_id
                 raise RuntimeError(
                     f"OpenCode session resume: GET returned mismatched id "
@@ -732,6 +738,59 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
             f"OpenCode session creation failed on /session: "
             f"status={status} body={_summarize_body(body)}"
         )
+
+    async def _switch_resumed_session_model(
+        self, spec: ResolvedLaunchSpec, session_id: str
+    ) -> None:
+        """Apply the resolved model to a resumed session.
+
+        Resuming an existing session otherwise keeps whatever model the session
+        last used, including after a mid-conversation switch in the TUI. The
+        `/api/session/{id}/model` route is the only way to change it; `/session`
+        create/patch ignore model. A 404/405 is retryable because the v2 routes
+        may still be registering when resume verification succeeds.
+        """
+        projected_model = project_opencode_model(spec.model, id_field="id")
+        if projected_model is None:
+            return
+        last_error: str | None = None
+        retryable = False
+        for template in self._MODEL_SWITCH_PATH_TEMPLATES:
+            path = template.format(session_id=session_id)
+            try:
+                status, body, _content_type = await self._post_json(
+                    path,
+                    {"model": projected_model},
+                    skip_body_on_statuses=self._SUCCESS_STATUSES,
+                )
+            except Exception as exc:
+                if _is_retryable_transport_error(exc):
+                    raise SessionNotReadyError(
+                        f"OpenCode session model switch not reachable on {path}: {exc}"
+                    ) from exc
+                raise
+            if status in self._SUCCESS_STATUSES:
+                return
+            if status in self._PATH_RETRY_STATUSES:
+                last_error = (
+                    f"OpenCode session model switch unavailable on {path}: "
+                    f"status={status} body={_summarize_body(body)}"
+                )
+                retryable = True
+                break
+            if status in self._PAYLOAD_RETRY_STATUSES:
+                last_error = (
+                    f"OpenCode session model switch rejected {projected_model!r} on {path}: "
+                    f"status={status} body={_summarize_body(body)}"
+                )
+                break
+            raise RuntimeError(
+                f"OpenCode session model switch failed on {path}: "
+                f"status={status} body={_summarize_body(body)}"
+            )
+        if retryable:
+            raise SessionNotReadyError(last_error or "OpenCode session model switch unavailable")
+        raise RuntimeError(last_error or "OpenCode session model switch failed")
 
     async def _get_json(
         self,

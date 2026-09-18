@@ -204,7 +204,7 @@ async def test_create_session_with_retry_fresh_retries_then_succeeds(
 @pytest.mark.asyncio
 async def test_create_session_with_retry_resume_retries_404_then_succeeds() -> None:
     connection = _TestableOpenCodeConnection(
-        responses=[],
+        responses=[(204, None, "")],
         get_responses=[
             (404, None, ""),
             (404, None, ""),
@@ -221,4 +221,66 @@ async def test_create_session_with_retry_resume_retries_404_then_succeeds() -> N
     session_id = await connection._create_session_with_retry(spec, timeout_seconds=1.0)
 
     assert session_id == "sess-parent"
-    assert len(connection.requests) == 3
+    assert len(connection.requests) == 4
+
+
+@pytest.mark.asyncio
+async def test_resume_switches_session_model_to_resolved_spec() -> None:
+    connection = _TestableOpenCodeConnection(
+        responses=[(204, None, "")],
+        get_responses=[(200, {"id": "sess-parent"}, "")],
+    )
+    spec = ResolvedLaunchSpec(
+        prompt="hello",
+        model="openai/gpt-5.3-codex",
+        continue_session_id="sess-parent",
+        permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
+    )
+
+    session_id = await connection._create_session(spec)
+
+    assert session_id == "sess-parent"
+    assert connection.requests == [
+        ("/session/sess-parent", {}),
+        (
+            "/api/session/sess-parent/model",
+            {"model": {"providerID": "openai", "id": "gpt-5.3-codex"}},
+        ),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_resume_without_model_does_not_switch_session_model() -> None:
+    connection = _TestableOpenCodeConnection(
+        responses=[],
+        get_responses=[(200, {"id": "sess-parent"}, "")],
+    )
+    spec = ResolvedLaunchSpec(
+        prompt="hello",
+        continue_session_id="sess-parent",
+        permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
+    )
+
+    session_id = await connection._create_session(spec)
+
+    assert session_id == "sess-parent"
+    assert connection.requests == [("/session/sess-parent", {})]
+
+
+@pytest.mark.asyncio
+async def test_resume_model_switch_404_is_retryable() -> None:
+    from meridian.lib.harness.connections.opencode_http import SessionNotReadyError
+
+    connection = _TestableOpenCodeConnection(
+        responses=[(404, None, "")],
+        get_responses=[(200, {"id": "sess-parent"}, "")],
+    )
+    spec = ResolvedLaunchSpec(
+        prompt="hello",
+        model="openai/gpt-5.3-codex",
+        continue_session_id="sess-parent",
+        permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
+    )
+
+    with pytest.raises(SessionNotReadyError, match="model switch"):
+        await connection._create_session(spec)

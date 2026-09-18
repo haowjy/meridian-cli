@@ -18,9 +18,11 @@ Transports differ at the wire level:
   Codex's `requestApproval` and `requestUserInput` messages are dispatched to
   either `AutoAcceptHandler` (spawn paths) or `InteractiveHandler` (managed-primary attach).
 - **OpenCode** (`opencode_http.py`): HTTP+SSE to managed `opencode serve`.
-  A selected model goes in the initial prompt's `{providerID, modelID}` object,
-  including resume; creation uses `{providerID, id}`. Follow-up messages omit it
-  to retain native state. Rejected/timed-out creation never retries an empty payload.
+  Creation carries the selected model as `{providerID, id}`; the initial prompt
+  carries it as `{providerID, modelID}`. A resumed session keeps its prior model,
+  so resume applies the resolved model via `POST /api/session/{id}/model`
+  (`{providerID, id}`, v2 session API). Follow-up messages omit the model to
+  retain native state. Rejected/timed-out creation never retries an empty payload.
 - **Cursor/Pi**: narrower spawned-session transports; no resident backend seam.
 
 ## Key Rules

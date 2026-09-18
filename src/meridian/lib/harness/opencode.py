@@ -426,7 +426,7 @@ class OpenCodeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             supports_session_fork=True,
             supports_native_skills=True,
             supports_primary_launch=True,
-            supports_named_primary_resume=False,
+            supports_named_primary_resume=True,
             supports_native_file_injection=False,
             terminal_surface_modes=(
                 TerminalSurfaceMode.PTY_MEDIATED,

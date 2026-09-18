@@ -93,8 +93,12 @@ tracked conversation with neither accepted selection nor original legacy history
 requires an explicit model rather than adopting a failed attempt's snapshot.
 Streaming-serve recording remains unimplemented.
 
-Primary adapters declare named-model resume support. Unsupported named resumes fail
-before native startup; a named selection never falls back to an empty model.
+Primary adapters declare named-model resume support. When a harness cannot apply a
+model during resume, a named selection fails before native startup rather than
+silently falling back to an empty model. OpenCode supports it by switching the
+resumed session's model over `POST /api/session/{id}/model`. Because selection is
+recorded only at accepted startup, that switch also overrides any mid-conversation
+model change made inside the running harness.
 
 KB: `decisions/launch.md#d-continue-replays-recorded-launch-contract-same-session-continue-is-not-live-policy-recomputation`.
 

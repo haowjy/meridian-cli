@@ -8,6 +8,10 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - Document that `settings.targets` is launch permission, not only materialization.
 
+### Fixed
+
+- OpenCode continuation applies the recorded or explicitly overridden model to the resumed session via `POST /api/session/{id}/model` instead of failing; a named selection is no longer rejected on primary resume.
+
 ## [0.4.6-rc.1] - 2026-09-16
 
 ### Added
