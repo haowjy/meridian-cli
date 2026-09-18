@@ -12,6 +12,7 @@ from meridian.lib.core.types import HarnessId, TransportId
 from meridian.lib.harness.adapter import BootstrapMode, HarnessAdapter, HarnessContract
 from meridian.lib.harness.connections.base import HarnessConnection
 from meridian.lib.harness.extractors.base import HarnessExtractor
+from meridian.lib.harness.launch_types import ManagedPrimaryPreview
 from meridian.lib.harness.semantics import HarnessSemantics
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec, SpecT
 
@@ -37,12 +38,17 @@ class ManagedPrimaryBootstrapProjector(Protocol[ProjectorSpecT, BootstrapPayload
     def __call__(self, spec: ProjectorSpecT, *, project_root: Path) -> BootstrapPayloadT: ...
 
 
+class ManagedPrimaryPreviewProjector(Protocol[ProjectorSpecT]):
+    def __call__(self, spec: ProjectorSpecT, *, project_root: Path) -> ManagedPrimaryPreview: ...
+
+
 @dataclass(frozen=True)
 class ManagedPrimaryProjectionPorts(Generic[SpecT, BootstrapPayloadT]):
     """Projection helpers for observer/controller-backed primary launches."""
 
     backend_command: ManagedPrimaryBackendProjector[SpecT]
     bootstrap_payload: ManagedPrimaryBootstrapProjector[SpecT, BootstrapPayloadT]
+    preview: ManagedPrimaryPreviewProjector[SpecT] | None = None
 
 
 @dataclass(frozen=True)
@@ -273,6 +279,16 @@ def project_managed_primary_bootstrap(
         cast("Any", spec),
         project_root=project_root,
     )
+
+
+def project_managed_primary_preview(
+    harness_id: HarnessId, spec: object, *, project_root: Path
+) -> ManagedPrimaryPreview | None:
+    bundle = _require_bundle_spec(harness_id, spec)
+    managed = bundle.projections.managed_primary
+    if managed is None or managed.preview is None:
+        return None
+    return managed.preview(cast("Any", spec), project_root=project_root)
 
 
 __all__ = [

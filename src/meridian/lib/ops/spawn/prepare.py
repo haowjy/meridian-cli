@@ -45,15 +45,11 @@ def _parse_env_assignments(raw: tuple[str, ...]) -> dict[str, str]:
     parsed: dict[str, str] = {}
     for item in raw:
         if "=" not in item:
-            raise ValueError(
-                f"Invalid --env value {item!r}: expected KEY=VALUE format."
-            )
+            raise ValueError(f"Invalid --env value {item!r}: expected KEY=VALUE format.")
         key, _, value = item.partition("=")
         key = key.strip()
         if not key:
-            raise ValueError(
-                f"Invalid --env value {item!r}: KEY is empty."
-            )
+            raise ValueError(f"Invalid --env value {item!r}: KEY is empty.")
         parsed[key] = value
     return parsed
 
@@ -131,9 +127,7 @@ def build_create_payload(
         explicit_work_id = payload.work.strip() or None
         inherit_ambient_work = not _is_exact_continue(payload)
         ambient_work_id = (
-            (resolved_context.work_id or "").strip() or None
-            if inherit_ambient_work
-            else None
+            (resolved_context.work_id or "").strip() or None if inherit_ambient_work else None
         )
         if (
             inherit_ambient_work
@@ -148,9 +142,7 @@ def build_create_payload(
             except Exception:
                 ambient_work_id = None
         project_state_dir = resolve_project_paths(project_root).root_dir
-        spawn_id = (
-            str(resolved_context.spawn_id) if resolved_context.spawn_id is not None else None
-        )
+        spawn_id = str(resolved_context.spawn_id) if resolved_context.spawn_id is not None else None
         inherited_for_child = (
             None
             if _is_exact_continue(payload) or (payload.task_dir or "").strip()
@@ -203,9 +195,7 @@ def build_create_payload(
                 ),
             }),
             context_from=payload.context_from,
-            reference_files=tuple(
-                path.as_posix() for path in launch_resolution.reference_files
-            ),
+            reference_files=tuple(path.as_posix() for path in launch_resolution.reference_files),
             template_vars=parsed_template_vars,
             goal=payload.goal,
             work_id_hint=resolved_work_id_hint,
@@ -252,9 +242,7 @@ def build_create_payload(
             control_root=project_root,
             execution_cwd=launch_resolution.directory_context.logical_task_cwd.as_posix(),
             argv_intent=(
-                LaunchArgvIntent.REQUIRED
-                if composition_dry_run
-                else LaunchArgvIntent.SPEC_ONLY
+                LaunchArgvIntent.REQUIRED if composition_dry_run else LaunchArgvIntent.SPEC_ONLY
             ),
         )
         logger.debug(
@@ -267,9 +255,7 @@ def build_create_payload(
             runtime=preview_runtime,
             harness_registry=harness_registry,
             dry_run=composition_dry_run,
-            launch_mode=(
-                BACKGROUND_LAUNCH_MODE if payload.background else FOREGROUND_LAUNCH_MODE
-            ),
+            launch_mode=(BACKGROUND_LAUNCH_MODE if payload.background else FOREGROUND_LAUNCH_MODE),
         )
         logger.debug(
             "spawn_launcher_phase",

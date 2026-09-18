@@ -207,8 +207,8 @@ class MarsResultCache:
     _resolve: dict[tuple[str, str], dict[str, object] | None] = field(
         default_factory=lambda: cast("dict[tuple[str, str], dict[str, object] | None]", {})
     )
-    _list: dict[str, list[dict[str, object]] | None] = field(
-        default_factory=lambda: cast("dict[str, list[dict[str, object]] | None]", {})
+    _list: dict[tuple[str, bool], list[dict[str, object]] | None] = field(
+        default_factory=lambda: cast("dict[tuple[str, bool], list[dict[str, object]] | None]", {})
     )
     _list_all: dict[str, list[dict[str, object]] | None] = field(
         default_factory=lambda: cast("dict[str, list[dict[str, object]] | None]", {})
@@ -232,17 +232,21 @@ class MarsResultCache:
         key = _resolve_cache_key(name, project_root)
         self._resolve[key] = result
 
-    def get_list(self, project_root: Path | None) -> list[dict[str, object]] | None | object:
+    def get_list(
+        self, project_root: Path | None, *, no_refresh_models: bool = False
+    ) -> list[dict[str, object]] | None | object:
         """Return cached list result, or _SENTINEL if not cached."""
-        key = _list_cache_key(project_root)
+        key = (_list_cache_key(project_root), no_refresh_models)
         return self._list.get(key, _SENTINEL)
 
     def put_list(
         self,
         project_root: Path | None,
         result: list[dict[str, object]] | None,
+        *,
+        no_refresh_models: bool = False,
     ) -> None:
-        key = _list_cache_key(project_root)
+        key = (_list_cache_key(project_root), no_refresh_models)
         self._list[key] = result
 
     def get_list_all(self, project_root: Path | None) -> list[dict[str, object]] | None | object:
@@ -274,7 +278,11 @@ def _resolve_mars_binary() -> str | None:
     return shutil.which("mars")
 
 
-def run_mars_models_list(project_root: Path | None = None) -> list[dict[str, object]] | None:
+def run_mars_models_list(
+    project_root: Path | None = None,
+    *,
+    no_refresh_models: bool = False,
+) -> list[dict[str, object]] | None:
     """Call ``mars models list --json`` and return the alias entries.
 
     Returns *None* when the mars binary is unavailable or the command fails,
@@ -285,6 +293,8 @@ def run_mars_models_list(project_root: Path | None = None) -> list[dict[str, obj
         return None
 
     cmd = [mars_bin, "models", "list", "--json"]
+    if no_refresh_models:
+        cmd.append("--no-refresh-models")
     if project_root is not None:
         cmd.extend(["--root", str(project_root)])
 
@@ -478,15 +488,16 @@ def cached_mars_models_list(
     project_root: Path | None = None,
     *,
     cache: MarsResultCache | None = None,
+    no_refresh_models: bool = False,
 ) -> list[dict[str, object]] | None:
     """List models through mars, using cache if provided."""
     if cache is not None:
-        cached = cache.get_list(project_root)
+        cached = cache.get_list(project_root, no_refresh_models=no_refresh_models)
         if cached is not _SENTINEL:
             return cast("list[dict[str, object]] | None", cached)
-    result = run_mars_models_list(project_root)
+    result = run_mars_models_list(project_root, no_refresh_models=no_refresh_models)
     if cache is not None:
-        cache.put_list(project_root, result)
+        cache.put_list(project_root, result, no_refresh_models=no_refresh_models)
     return result
 
 
@@ -606,6 +617,7 @@ def load_mars_aliases(
     project_root: Path | None = None,
     *,
     cache: MarsResultCache | None = None,
+    no_refresh_models: bool = False,
 ) -> list[AliasEntry]:
     """Load model aliases from mars.
 
@@ -616,7 +628,9 @@ def load_mars_aliases(
     data.
     """
     # Try mars CLI first — it returns the static project alias inventory.
-    mars_list = cached_mars_models_list(project_root, cache=cache)
+    mars_list = cached_mars_models_list(
+        project_root, cache=cache, no_refresh_models=no_refresh_models
+    )
     if mars_list is not None:
         entries = _mars_list_to_entries(mars_list)
         if entries:

@@ -109,6 +109,35 @@ Meridian runs without a predefined profile. Pass `-a ""` to explicitly clear
 Project-level routing defaults (`default_model`, `default_harness`) live in
 `mars.toml` under `[settings]`, not in Meridian config.
 
+## History ZIP retention
+
+`[history.archive]` controls optional history retention, not UI visibility archive
+or stale-state pruning. Automatic retention is **off** by default. Manual and
+automatic passes share the same protection, verification and reclaim policy.
+
+| Key | Type | Default / purpose |
+|---|---|---|
+| `history.archive.automatic` | bool | `false`; enable finite retention passes after primary sessions stop |
+| `history.archive.after_days` | int | `30`; days since last activity, not creation |
+| `history.archive.interval_hours` | int | `24`; minimum interval between automatic passes |
+| `history.archive.max_records` | int | `256`; maximum selected records per pass |
+| `history.archive.max_uncompressed_bytes` | int | `1073741824` (1 GiB); bundle target, allowing one oversized record alone |
+| `history.archive.destination` | str\|null | Unset; local/mounted ZIP destination, required for archiving |
+
+Use `meridian config set/get/reset` with these canonical keys. The archive
+command's `--destination` and `--after-days` override configured values. The
+supported environment overrides are:
+
+| Variable | Config key |
+|---|---|
+| `MERIDIAN_HISTORY_ARCHIVE_AUTOMATIC` | `history.archive.automatic` |
+| `MERIDIAN_HISTORY_ARCHIVE_AFTER_DAYS` | `history.archive.after_days` |
+| `MERIDIAN_HISTORY_ARCHIVE_DESTINATION` | `history.archive.destination` |
+
+ZIPs are retained indefinitely; active/dependent or changed records remain loose.
+See [History storage and retention](history.md) for a TOML example, filesystem
+requirements, dry-run/apply behavior and selective inert restore.
+
 ## Config Precedence
 
 For config-file resolution, Meridian layers sources in this order:

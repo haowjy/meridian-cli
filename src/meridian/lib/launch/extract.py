@@ -24,6 +24,7 @@ from meridian.lib.launch.constants import (
 from meridian.lib.launch.report import ExtractedReport, extract_or_fallback_report
 from meridian.lib.state.artifact_store import ArtifactStore
 from meridian.lib.state.atomic import atomic_write_text
+from meridian.lib.state.history_codec import current_attempt_lines
 
 # ---------------------------------------------------------------------------
 # Finalization pipeline
@@ -129,7 +130,7 @@ def _is_empty_output(
     if extracted_report.content and extracted_report.content.strip():
         return False
     history_text = read_artifact_text(artifacts, spawn_id, HISTORY_FILENAME)
-    if history_text.strip():
+    if any(line.strip() for line in current_attempt_lines(history_text)):
         return False
     output_text = read_artifact_text(artifacts, spawn_id, OUTPUT_FILENAME)
     return not output_text.strip()

@@ -334,48 +334,7 @@ def test_all_spawn_history_read_paths_agree_on_canonical_content(tmp_path: Path)
     ]
 
 
-def test_session_log_child_spawn_falls_back_to_artifact_output_when_native_unavailable(
-    tmp_path: Path,
-) -> None:
-    project_root = tmp_path / "repo"
-    project_root.mkdir()
-    runtime_root = resolve_project_runtime_root_for_write(project_root)
-    runtime_root.mkdir(parents=True, exist_ok=True)
-
-    spawn_store.start_spawn(
-        runtime_root,
-        spawn_id="p42",
-        chat_id="c42",
-        model="gpt-5.4",
-        agent="coder",
-        harness="codex",
-        prompt="do thing",
-        harness_session_id="missing-native-session",
-    )
-    spawn_store.finalize_spawn(runtime_root, "p42", "failed", 1, origin="runner")
-    _write_spawn_output(
-        runtime_root,
-        "p42",
-        {
-            "event_type": "item/completed",
-            "harness_id": "codex",
-            "payload": {"item": {"type": "agentMessage", "text": "artifact child transcript"}},
-        },
-        artifact=True,
-    )
-
-    output = session_log_sync(
-        SessionLogInput(ref="p42", project_root=project_root.as_posix(), tail=5)
-    )
-
-    assert output.session_id == "p42"
-    assert output.source == "spawn p42 output"
-    assert [(message.role, message.content) for message in output.messages] == [
-        ("assistant", "artifact child transcript")
-    ]
-
-
-def test_session_log_chat_missing_harness_session_id_does_not_read_primary_spawn_output(
+def test_session_log_chat_reads_file_authority_without_harness_session_id(
     tmp_path: Path,
 ) -> None:
     project_root = tmp_path / "repo"
@@ -412,10 +371,12 @@ def test_session_log_chat_missing_harness_session_id_does_not_read_primary_spawn
             },
         )
 
-        with pytest.raises(ValueError):
-            session_log_sync(
-                SessionLogInput(ref=chat_id, project_root=project_root.as_posix(), tail=5)
-            )
+        output = session_log_sync(
+            SessionLogInput(ref=chat_id, project_root=project_root.as_posix(), tail=5)
+        )
+        assert [(message.role, message.content) for message in output.messages] == [
+            ("assistant", "primary live progress")
+        ]
     finally:
         session_store.stop_session(runtime_root, chat_id)
 

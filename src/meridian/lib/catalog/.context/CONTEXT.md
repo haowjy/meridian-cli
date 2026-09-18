@@ -24,6 +24,11 @@ unavailable (used for listing, not resolution). Falls back to reading
 `.mars/models-merged.json` directly. This asymmetry is intentional: resolution must
 succeed or fail loudly; listing can degrade gracefully.
 
+Dry-run static alias lookup passes `no_refresh_models=True` through the same
+list path to Mars. Cold cache retains the existing merged-file fallback for
+pinned aliases. Alias-map and list caches distinguish refresh policy so a
+cache-only lookup cannot suppress a later normal lookup in the same operation.
+
 **Timeout:** 60 seconds for all mars subprocess calls. Mars may do a cold
 `models.dev` fetch on first boot; 60s leaves headroom for slow DNS, disk, and startup.
 

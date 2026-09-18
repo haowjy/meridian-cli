@@ -16,6 +16,7 @@ from pydantic import BaseModel, ConfigDict
 from meridian.lib.core.spawn_lifecycle import is_active_spawn_status
 from meridian.lib.platform.locking import lock_file, try_lock_file
 from meridian.lib.state import session_store, spawn_store
+from meridian.lib.state.history_changes import HistoryChanges
 from meridian.lib.state.lock_gc import LockGcStats, gc_orphaned_locks
 from meridian.lib.state.paths import RuntimePaths
 
@@ -298,7 +299,10 @@ def prune_stale_spawn_artifacts(stale: list[StaleSpawnArtifact]) -> SpawnArtifac
         runtime_root = artifact_path.parent.parent
         runtime_roots.add(runtime_root)
         paths = RuntimePaths.from_root_dir(runtime_root)
-        with lock_file(paths.spawns_flock):
+        with (
+            lock_file(HistoryChanges(runtime_root).mutation_lock, mode="shared"),
+            lock_file(paths.spawns_flock),
+        ):
             legacy_artifact_dir = runtime_root / "artifacts" / artifact.spawn_id
             if legacy_artifact_dir.exists() and not _prune_dir(legacy_artifact_dir):
                 continue

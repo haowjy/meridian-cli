@@ -830,6 +830,8 @@ def reconcile_active_spawn(
     record: SpawnRecord,
 ) -> SpawnRecord:
     """Reconcile one active spawn. Is the responsible process alive?"""
+    if record.record_mode == "historical":
+        return record
     if not is_active_spawn_status(record.status):
         if is_root_side_effect_process() and is_terminal_spawn_status(record.status):
             _cleanup_claimed_scopes(runtime_root, record)
@@ -922,7 +924,7 @@ def reconcile_spawns(
         scan,
         records=tuple(
             peek_reconciled_active_spawn(runtime_root, spawn)
-            if is_active_spawn_status(spawn.status)
+            if is_active_spawn_status(spawn.status) and spawn.record_mode != "historical"
             else spawn
             for spawn in scan.records
         ),

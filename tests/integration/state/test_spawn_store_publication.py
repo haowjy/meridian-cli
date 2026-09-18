@@ -146,12 +146,12 @@ def test_gc_waits_for_in_progress_publication_and_preserves_published_row(
     original_gc_lock_file = spawn_store_module.lock_file
 
     @contextmanager
-    def observe_gc_lock(path: Path) -> Generator[object, None, None]:
+    def observe_gc_lock(path: Path, *, mode="exclusive") -> Generator[object, None, None]:
         if threading.current_thread() is collector:
             with try_lock_file(path) as lock_handle:
                 assert lock_handle is None
             gc_lock_contended.set()
-        with original_gc_lock_file(path) as lock_handle:
+        with original_gc_lock_file(path, mode=mode) as lock_handle:
             yield lock_handle
 
     monkeypatch.setattr(spawn_store_module, "lock_file", observe_gc_lock)

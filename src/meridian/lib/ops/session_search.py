@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+import sqlite3
+import time
+import zipfile
+import zlib
 from collections.abc import Iterator, Sequence
 from typing import NamedTuple
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, computed_field
 
 from meridian.lib.core.context import RuntimeContext
 from meridian.lib.core.util import FormatContext
@@ -15,20 +19,23 @@ from meridian.lib.ops.runtime import (
     resolve_roots_for_read,
     resolve_runtime_authority_for_read,
 )
-from meridian.lib.ops.session_corpus import resolve_session_search_corpus
-from meridian.lib.ops.session_target import (
-    iter_chat_session_log_targets,
-    resolve_session_log_target,
-)
+from meridian.lib.ops.session_corpus import SessionCorpusScope, resolve_session_search_corpus
+from meridian.lib.ops.session_target import resolve_session_log_target
 from meridian.lib.ops.session_transcript import (
     AbsoluteTranscriptEntry,
     ParsedSessionTranscript,
+    TranscriptBudget,
     build_session_log_command,
     parse_session_target,
     read_session_transcript,
     route_for_corpus_target,
 )
-from meridian.lib.state import session_store
+from meridian.lib.state.history_index import (
+    INITIALIZATION_TIMEOUT,
+    QUERY_TIMEOUT,
+    HistoryIndex,
+    HistoryIndexIncomplete,
+)
 
 _PREVIEW_LIMIT = 200
 _OPEN_CONTEXT = 5
@@ -50,6 +57,7 @@ class SessionSearchInput(BaseModel):
     work_id: str | None = None
     workspace: bool = False
     global_scope: bool = False
+    include_archives: bool = False
 
 
 class SessionSearchMatch(BaseModel):
@@ -72,14 +80,24 @@ class SessionSearchOutput(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     matches: tuple[SessionSearchMatch, ...]
+    truncated: bool = False
+    errors: tuple[str, ...] = ()
+
+    @computed_field
+    @property
+    def complete(self) -> bool:
+        return not self.truncated and not self.errors
 
     def format_text(self, ctx: FormatContext | None = None) -> str:
         _ = ctx
-        if not self.matches:
-            return "Session search — no matches"
-
         match_label = "match" if len(self.matches) == 1 else "matches"
-        lines = [f"Session search — {len(self.matches)} {match_label}"]
+        if not self.complete:
+            headline = f"Session search incomplete — {len(self.matches)} confirmed {match_label}"
+        elif self.matches:
+            headline = f"Session search — {len(self.matches)} {match_label}"
+        else:
+            headline = "Session search — no matches"
+        lines = [headline]
         for match in self.matches:
             lines.append("")
             lines.append(
@@ -90,6 +108,9 @@ class SessionSearchOutput(BaseModel):
             )
             lines.append(match.content_preview)
             lines.append(f"Open: {match.open_command}")
+        if self.truncated:
+            lines.append("Search truncated by content/time/match budget.")
+        lines.extend(self.errors)
         return "\n".join(lines)
 
 
@@ -112,35 +133,39 @@ def iter_session_subset_search(
             yield SubsetSearchStep(chat_id, False, f"Chat '{chat_id}' not found")
         return
 
-    targets = iter_chat_session_log_targets(
-        project_root=authority.project_root,
-        runtime_root=authority.runtime_root,
-        chat_ids=chat_ids,
-    )
-    for resolution in targets:
-        if resolution.target is None:
-            yield SubsetSearchStep(
-                resolution.chat_id,
-                False,
-                resolution.error or "transcript not found",
-            )
-            continue
+    for chat_id in chat_ids:
         try:
+            target = resolve_session_log_target(
+                ref=chat_id,
+                file_path=None,
+                project_root=authority.project_root,
+                runtime_root=authority.runtime_root,
+            )
             transcript = parse_session_target(
                 project_root=authority.project_root,
                 runtime_root=authority.runtime_root,
-                target=resolution.target,
-                route=route_for_corpus_target(resolution.target),
+                target=target,
+                route=route_for_corpus_target(target),
             )
             matched = any(
                 not (entry.kind == "setup" and entry.is_placeholder)
                 and normalized_query in _normalize_content(entry.content).lower()
                 for entry in transcript.all_entries
             )
-        except (ValueError, FileNotFoundError, OSError) as exc:
-            yield SubsetSearchStep(resolution.chat_id, False, str(exc))
+            if not transcript.search_ready:
+                matched = False
+        except (
+            ValueError,
+            OSError,
+            EOFError,
+            zipfile.BadZipFile,
+            zlib.error,
+            HistoryIndexIncomplete,
+            sqlite3.Error,
+        ) as exc:
+            yield SubsetSearchStep(chat_id, False, str(exc))
             continue
-        yield SubsetSearchStep(resolution.chat_id, matched)
+        yield SubsetSearchStep(chat_id, matched, "; ".join(transcript.read_reasons) or None)
 
 
 def _build_preview(content: str, *, query: str, limit: int = _PREVIEW_LIMIT) -> str:
@@ -183,6 +208,8 @@ def _matches_for_transcript(
     chat_id: str,
 ) -> list[SessionSearchMatch]:
     matches: list[SessionSearchMatch] = []
+    if not transcript.search_ready:
+        return matches
     for entry in transcript.all_entries:
         if entry.kind == "setup" and entry.is_placeholder:
             continue
@@ -243,7 +270,10 @@ def _search_single_target(payload: SessionSearchInput, *, query: str) -> Session
         corpus=transcript.target.source or "session",
         chat_id=payload.ref.strip() or transcript.target.session_id,
     )
-    return SessionSearchOutput(matches=tuple(matches))
+    return SessionSearchOutput(
+        matches=tuple(matches),
+        errors=transcript.read_reasons,
+    )
 
 
 def _search_corpus(payload: SessionSearchInput, *, query: str) -> SessionSearchOutput:
@@ -256,59 +286,113 @@ def _search_corpus(payload: SessionSearchInput, *, query: str) -> SessionSearchO
         else resolve_project_authority(payload.project_root).project_root
     )
     runtime_root = roots.runtime_root if roots is not None else None
-    scopes = resolve_session_search_corpus(
-        project_root=project_root,
-        runtime_root=runtime_root,
-        workspace=payload.workspace,
-        global_scope=payload.global_scope,
-        work_id=payload.work_id,
-    )
+    deadline = time.monotonic() + QUERY_TIMEOUT
+    try:
+        scopes = resolve_session_search_corpus(
+            project_root=project_root,
+            runtime_root=runtime_root,
+            workspace=payload.workspace,
+            global_scope=payload.global_scope,
+            work_id=payload.work_id,
+        )
+    except (ValueError, OSError, HistoryIndexIncomplete, sqlite3.Error) as exc:
+        return SessionSearchOutput(matches=(), errors=(f"Corpus discovery: {exc}",))
 
     matches: list[SessionSearchMatch] = []
-    query_lower = query.lower()
+    errors: list[str] = []
+    # All-warm preflight consumes the same query deadline. Only actual cold
+    # initialization starts a separate phase, shared across every runtime root.
+    initialization_deadline: float | None = None
+    available: list[SessionCorpusScope] = []
     for scope in scopes:
-        records = session_store.list_all_session_records(scope.runtime_root)
-        for record in records:
-            if scope.chat_filter is not None and record.chat_id not in scope.chat_filter:
+        try:
+            index = HistoryIndex(scope.runtime_root)
+            status = index.classify(
+                deadline=(deadline if initialization_deadline is None else initialization_deadline)
+            )
+            if status.baseline in {"absent", "outdated"}:
+                if initialization_deadline is None:
+                    initialization_deadline = time.monotonic() + INITIALIZATION_TIMEOUT
+                index.initialize(deadline=initialization_deadline)
+            available.append(scope)
+        except (ValueError, OSError, HistoryIndexIncomplete, sqlite3.Error) as exc:
+            errors.append(f"{scope.label}: {exc}")
+    if initialization_deadline is not None:
+        deadline = time.monotonic() + QUERY_TIMEOUT
+    query_lower = query.lower()
+    budget = TranscriptBudget(deadline, 64 * 1024 * 1024)
+    truncated = False
+    for scope in available:
+        if time.monotonic() >= deadline:
+            truncated = True
+            break
+        try:
+            if payload.work_id and payload.work_id.strip():
+                scope = scope._replace(
+                    chat_filter=frozenset(
+                        HistoryIndex(scope.runtime_root).work_chat_ids(
+                            payload.work_id.strip(), deadline=deadline
+                        )
+                    )
+                )
+            rows = HistoryIndex(scope.runtime_root).candidates(
+                include_archives=payload.include_archives, deadline=deadline
+            )
+        except (ValueError, OSError, HistoryIndexIncomplete, sqlite3.Error) as exc:
+            errors.append(f"{scope.label}: {exc}")
+            continue
+        for row in rows:
+            if scope.chat_filter is not None and row.chat_id not in scope.chat_filter:
                 continue
-
+            if time.monotonic() >= deadline or len(matches) >= 100:
+                truncated = True
+                break
             project_root = scope.project_root or scope.runtime_root
             try:
                 target = resolve_session_log_target(
-                    ref=record.chat_id,
+                    ref=row.history_id if row.archived else row.local_id,
                     file_path=None,
                     project_root=project_root,
                     runtime_root=scope.runtime_root,
+                    deadline=deadline,
                 )
-            except (ValueError, FileNotFoundError, OSError):
-                continue
-
-            transcript = parse_session_target(
-                project_root=project_root,
-                runtime_root=scope.runtime_root,
-                target=target,
-                route=route_for_corpus_target(target),
-            )
-            matches.extend(
-                _matches_for_transcript(
+                transcript = parse_session_target(
+                    project_root=project_root,
+                    runtime_root=scope.runtime_root,
+                    target=target,
+                    route=route_for_corpus_target(target),
+                    budget=budget,
+                )
+                errors.extend(f"{row.history_id}: {reason}" for reason in transcript.read_reasons)
+                # A partial sealed source has not finished integrity validation;
+                # the matching boundary also withholds loose snapshot matches.
+                if budget.exhausted and row.archived:
+                    truncated = True
+                    break
+                found = _matches_for_transcript(
                     transcript=transcript,
                     query=query,
                     query_lower=query_lower,
                     corpus=scope.label,
-                    chat_id=record.chat_id,
+                    chat_id=row.chat_id or row.local_id,
                 )
-            )
-
-    matches.sort(
-        key=lambda match: (
-            match.corpus,
-            match.chat_id,
-            match.segment,
-            match.entry_ordinal,
-            match.segment_start_message,
-        )
-    )
-    return SessionSearchOutput(matches=tuple(matches))
+                if len(found) > 100 - len(matches):
+                    truncated = True
+                matches.extend(found[: 100 - len(matches)])
+                if budget.exhausted:
+                    truncated = True
+                    break
+            except (
+                ValueError,
+                OSError,
+                EOFError,
+                zipfile.BadZipFile,
+                zlib.error,
+                HistoryIndexIncomplete,
+                sqlite3.Error,
+            ) as exc:
+                errors.append(f"{row.history_id}: {exc}")
+    return SessionSearchOutput(matches=tuple(matches), truncated=truncated, errors=tuple(errors))
 
 
 def session_search_sync(

@@ -24,6 +24,7 @@ from meridian.lib.platform.locking import lock_file
 from meridian.lib.platform.process_scope import ProcessScopeSnapshot
 from meridian.lib.platform.process_scope.base import process_scope_release_id
 from meridian.lib.state.atomic import atomic_write_text
+from meridian.lib.state.history_changes import HistoryChanges
 from meridian.lib.state.spawn.repository import read_state, spawn_lock_path
 
 logger = logging.getLogger(__name__)
@@ -44,6 +45,7 @@ class ScopeProjectionSnapshot:
 
     scopes: tuple[ProcessScopeSnapshot, ...]
     released_ids: frozenset[str]
+
 
 # ---------------------------------------------------------------------------
 # Internal helpers
@@ -147,29 +149,30 @@ def record_scope(
     spawns_dir = runtime_root / "spawns"
     # Global order when both locks are needed: spawn state, then scope projection.
     # This makes cleanup-claim snapshots and registration mutually exclusive.
-    with lock_file(spawn_lock_path(spawns_dir, str(spawn_id)), reentrant=False):
+    with (
+        lock_file(HistoryChanges(runtime_root).mutation_lock, mode="shared"),
+        lock_file(spawn_lock_path(spawns_dir, str(spawn_id)), reentrant=False),
+    ):
         current = read_state(spawns_dir, str(spawn_id), include_prompt=False)
         claim_path = spawns_dir / str(spawn_id) / _CLEANUP_CLAIM_FILENAME
         if current is None:
             raise ValueError(
                 f"Refusing process-scope registration: spawn does not exist: {spawn_id}"
             )
-        if is_terminal_spawn_status(current.status) or claim_path.exists():
-            raise ValueError(
-                f"Refusing process-scope registration after cleanup began: {spawn_id}"
-            )
+        if (
+            current.record_mode == "historical"
+            or is_terminal_spawn_status(current.status)
+            or claim_path.exists()
+        ):
+            raise ValueError(f"Refusing process-scope registration after cleanup began: {spawn_id}")
 
         def upsert(payload: ScopeProjection) -> ScopeProjection:
             snapshot_dict = _snapshot_to_dict(snapshot)
             scopes: list[object] = []
             replaced = False
             for entry in payload["scopes"]:
-                existing = (
-                    cast("dict[str, object]", entry) if isinstance(entry, dict) else None
-                )
-                existing_release_id = (
-                    existing.get("release_id") if existing is not None else None
-                )
+                existing = cast("dict[str, object]", entry) if isinstance(entry, dict) else None
+                existing_release_id = existing.get("release_id") if existing is not None else None
                 if existing_release_id == snapshot.release_id:
                     if not replaced:
                         scopes.append(snapshot_dict)
@@ -195,6 +198,7 @@ def mark_scope_released(
     Idempotent — safe to call multiple times for the same release_id.
     Does nothing after the published spawn has been deleted.
     """
+
     def mark_released(payload: ScopeProjection) -> ScopeProjection:
         if release_id not in payload["released"]:
             payload["released"].append(release_id)
@@ -202,8 +206,12 @@ def mark_scope_released(
 
     spawns_dir = runtime_root / "spawns"
     # Global order when both locks are needed: spawn state, then scope projection.
-    with lock_file(spawn_lock_path(spawns_dir, str(spawn_id)), reentrant=False):
-        if read_state(spawns_dir, str(spawn_id), include_prompt=False) is None:
+    with (
+        lock_file(HistoryChanges(runtime_root).mutation_lock, mode="shared"),
+        lock_file(spawn_lock_path(spawns_dir, str(spawn_id)), reentrant=False),
+    ):
+        current = read_state(spawns_dir, str(spawn_id), include_prompt=False)
+        if current is None or current.record_mode == "historical":
             return
         _mutate_scope_projection(runtime_root, spawn_id, mark_released)
 
@@ -243,9 +251,7 @@ def read_scope_projection(
         snapshot = scope_snapshot_from_dict(cast("dict[str, object]", entry))
         if snapshot is not None:
             scopes.append(snapshot)
-    released_ids = frozenset(
-        entry for entry in payload["released"] if isinstance(entry, str)
-    )
+    released_ids = frozenset(entry for entry in payload["released"] if isinstance(entry, str))
     return ScopeProjectionSnapshot(scopes=tuple(scopes), released_ids=released_ids)
 
 

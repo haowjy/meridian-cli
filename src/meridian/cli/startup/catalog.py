@@ -394,6 +394,22 @@ _COMMAND_DESCRIPTORS: tuple[CommandDescriptor, ...] = (
         "Repair stored session metadata from explicit harness-session detection.",
         extension_ref="meridian.session.repair",
     ),
+    _write_runtime(
+        ("session", "archive"),
+        "Archive retained history.",
+        extension_ref="meridian.session.archive",
+    ),
+    _write_runtime(
+        ("session", "import"), "Import history ZIP.", extension_ref="meridian.session.import"
+    ),
+    _write_runtime(
+        ("session", "restore"), "Restore inert history.", extension_ref="meridian.session.restore"
+    ),
+    _write_runtime(
+        ("session", "index"),
+        "Inspect or rebuild history index.",
+        extension_ref="meridian.session.index",
+    ),
     _read_runtime(("work",), "Show work dashboard."),
     _read_runtime(("work", "list"), "List work items.", extension_ref="meridian.work.list"),
     _read_runtime(("work", "show"), "Show work item.", extension_ref="meridian.work.show"),

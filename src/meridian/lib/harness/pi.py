@@ -63,6 +63,7 @@ from meridian.lib.harness.projections.project_pi_rpc import (
 )
 from meridian.lib.harness.semantics import (
     MERIDIAN_CONNECTION_CLOSED_EVENT,
+    PI_CANCELLED_STOP_REASONS,
     EventSemantics,
     HarnessSemantics,
     TerminalEventOutcome,
@@ -463,7 +464,7 @@ def _resolve_pi_terminal(event: RawHarnessEvent) -> TerminalEventOutcome | None:
                 return TerminalEventOutcome(
                     status=SpawnStatus.FAILED, exit_code=1, error="pi_stop_error"
                 )
-            if stop_reason in {"abort", "aborted", "cancel", "cancelled", "canceled"}:
+            if stop_reason in PI_CANCELLED_STOP_REASONS:
                 return TerminalEventOutcome(
                     status=SpawnStatus.CANCELLED, exit_code=130, error="cancelled"
                 )

@@ -398,7 +398,7 @@ class PrimaryAttachLauncher:
                 if attempt + 1 >= MAX_PORT_RETRY_ATTEMPTS:
                     raise PrimaryAttachError(
                         "Port bind failed after "
-                        f"{MAX_PORT_RETRY_ATTEMPTS} attempts; falling back to black-box launch"
+                        f"{MAX_PORT_RETRY_ATTEMPTS} attempts; managed primary startup failed"
                     ) from exc
                 current_config = self._with_fresh_retry_port(current_config)
         raise PrimaryAttachError("Managed primary attach startup did not converge")

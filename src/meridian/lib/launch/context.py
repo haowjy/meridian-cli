@@ -1062,6 +1062,7 @@ def compile_prepared_policy_surface(
             config=config,
             harness_registry=harness_registry,
             skills_readonly=dry_run,
+            models_readonly=dry_run,
             requested_skills=request.skills,
             policy_snapshot=request.launch_policy_snapshot,
             continuation=request.session if is_exact_continue_session(request.session) else None,

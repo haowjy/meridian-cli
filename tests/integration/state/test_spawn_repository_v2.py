@@ -135,6 +135,17 @@ def test_mutating_legacy_row_rewrites_it_as_v3(tmp_path: Path) -> None:
     state_path = spawns_dir / "p1" / "state.json"
     legacy = json.loads(state_path.read_text(encoding="utf-8"))
     legacy["v"] = 2
+    legacy.pop("history_id")
+    legacy.pop("state_revision")
+    legacy.pop("record_mode")
+    for key in (
+        "session_instance_id",
+        "parent_history_id",
+        "owner_history_id",
+        "forked_from_history_id",
+        "retained_history_ids",
+    ):
+        legacy.pop(key)
     state_path.write_text(json.dumps(legacy), encoding="utf-8")
 
     assert read_state(spawns_dir, "p1", include_prompt=False) is not None

@@ -87,7 +87,12 @@ class _StartProbeOpenCodeConnection(OpenCodeConnection):
         return "sess-primary-observer"
 
     async def _post_session_message(
-        self, text: str, *, system: str | None = None, model: str | None = None,
+        self,
+        text: str,
+        *,
+        system: str | None = None,
+        fresh: bool = False,
+        model: str | None = None,
     ) -> None:
         self.initial_messages.append((text, system))
 
@@ -646,3 +651,82 @@ def test_opencode_startup_exit_message_without_stderr(tmp_path: Path) -> None:
     message = str(connection._startup_exit_exception())
 
     assert message == "OpenCode backend failed to start (exit=1)."
+
+
+@pytest.mark.asyncio
+async def test_stop_waits_for_inflight_backend_publication(tmp_path, monkeypatch) -> None:
+    connection = _StartProbeOpenCodeConnection()
+    launched = asyncio.Event()
+    publish = asyncio.Event()
+    process = await asyncio.create_subprocess_exec("sleep", "60", start_new_session=True)
+
+    async def launch(config, spec):
+        launched.set()
+        await publish.wait()
+        connection._process = process
+
+    monkeypatch.setattr(connection, "_launch_process", launch)
+    spec = ResolvedLaunchSpec(
+        permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
+    )
+    start = asyncio.create_task(connection.start(_build_connection_config(tmp_path), spec))
+    stop = None
+    try:
+        await asyncio.wait_for(launched.wait(), timeout=2)
+        stop = asyncio.create_task(connection.stop())
+        await asyncio.sleep(0)
+        assert not stop.done(), "stop must not acknowledge before ownership publication settles"
+        publish.set()
+        await asyncio.wait_for(start, timeout=2)
+        await asyncio.wait_for(stop, timeout=2)
+        assert process.returncode is not None
+        assert connection.state == "stopped"
+    finally:
+        publish.set()
+        for task in (start, stop):
+            if task is not None and not task.done():
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+        if process.returncode is None:
+            process.kill()
+            await process.wait()
+
+
+@pytest.mark.asyncio
+async def test_start_retries_residual_private_instruction_cleanup(tmp_path, monkeypatch) -> None:
+    connection = _StartProbeOpenCodeConnection()
+    created: list[Path] = []
+    failed_unlink = False
+    original_unlink = Path.unlink
+
+    def unlink(path, *args, **kwargs):
+        nonlocal failed_unlink
+        if created and path == created[0] and not failed_unlink:
+            failed_unlink = True
+            raise PermissionError("one-shot unlink failure")
+        return original_unlink(path, *args, **kwargs)
+
+    async def launch(config, spec):
+        path = opencode_http._materialize_system_prompt(config.system, {})
+        assert path is not None
+        connection._instruction_path = path
+        created.append(path)
+        if len(created) == 1:
+            raise RuntimeError("first launch failed")
+        connection._process = FakeOpenCodeProcess()
+
+    monkeypatch.setattr(Path, "unlink", unlink)
+    monkeypatch.setattr(connection, "_launch_process", launch)
+    spec = ResolvedLaunchSpec(
+        permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
+    )
+    try:
+        with pytest.raises(RuntimeError, match="first launch failed"):
+            await connection.start(_build_connection_config(tmp_path), spec)
+        assert created[0].exists()
+        await connection.start(_build_connection_config(tmp_path), spec)
+        await connection.stop()
+        assert all(not path.exists() for path in created)
+    finally:
+        for path in created:
+            original_unlink(path, missing_ok=True)

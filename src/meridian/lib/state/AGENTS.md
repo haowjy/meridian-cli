@@ -25,7 +25,7 @@ meridian.toml
   locks/launch-boundary/<spawn_id>.lock
                                     — stable launch-boundary append lock
   locks/gc.lock                     — lock-GC pass serialization
-  spawns/.staging/<unique>/         — complete row build before atomic publication
+  spawns/.staging/<unique>/         — unpublished builds and verified-archive retirement buffers
   spawns/<spawn_id>/
     state.json                      — authoritative spawn state (schema v3)
     history.jsonl                   — primary output artifact
@@ -62,7 +62,7 @@ The layout originated in the v2 migration; published rows now use schema v3.
 ## Spawn Mutation Seam
 
 Every update to a published spawn calls `write_state_locked()`. It acquires
-`locks/spawns/<id>.lock`, re-reads current state, applies a pure mutator, and writes
+the shared history mutation gate, then `locks/spawns/<id>.lock`, re-reads current state, applies a pure mutator, and writes
 atomically. The lock identity is outside the artifact directory it protects and remains
 stable while the spawn exists. Orphaned identities are unlinked only through lock GC's
 validated-exclusive, unlink-before-release seam.
@@ -82,6 +82,15 @@ the repository never imports the projection. Cross-leaf operations belong in
 `spawn_aggregate.py`; in particular, published-spawn deletion owns the lock order
 above. Reaper claims consume one immutable projection snapshot containing
 both scopes and released IDs, read under a single projection-lock acquisition.
+
+## History discovery and retention
+
+Use `history_index.py` for filtered discovery, not repeated broad authority scans.
+Keep lifecycle/control decisions on direct authoritative reads. All new indexed
+writers must publish dirty intent before file mutation; SQLite is never a writer
+dependency. Restored `record_mode="historical"` aggregates are inert and immutable.
+See [.context/history.md](.context/history.md) before changing locks, projection,
+transcript retry behavior, ZIP retention, or restore.
 
 ## Write-Boundary Path Normalization
 
@@ -182,7 +191,7 @@ use `write_state_locked()` (`locks/spawns/<id>.lock`, stable until orphan lock G
 Published-row deletion uses `delete_published_spawn()` under that same stable lock;
 when deletion also takes the process-scope projection lock, the order is spawn lock
 then projection lock. This composition belongs in `spawn_aggregate.py`, not either leaf
-repository. Pruning acquires `spawns_flock` first. Pending reaper cleanup
+repository. Pruning acquires the shared history mutation gate before `spawns_flock`. Pending reaper cleanup
 claims block deletion so durable cleanup intent is never discarded.
 
 **Don't hardcode `~/.meridian/`** — use `get_user_home()` from `user_paths.py`.

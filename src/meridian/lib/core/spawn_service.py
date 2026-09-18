@@ -411,6 +411,7 @@ class SpawnApplicationService:
             raise ValueError("Harness resolution failed - harness is required")
         effective_work_id = (payload.work_id or launch_ctx.work_id or "").strip() or None
         start_metadata = SpawnStartMetadata(
+            forked_from_history_id=resolved_request.session.forked_from_history_id,
             desc=payload.desc,
             work_id=effective_work_id,
             goal=getattr(resolved_request, "goal", None),

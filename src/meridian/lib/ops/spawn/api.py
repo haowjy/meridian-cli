@@ -53,6 +53,7 @@ from meridian.lib.ops.runtime import (
 from meridian.lib.platform.locking import lock_file
 from meridian.lib.state import session_store, spawn_store, work_store
 from meridian.lib.state.atomic import atomic_write_text
+from meridian.lib.state.history_index import indexed_spawn_scan
 from meridian.lib.state.paths import resolve_project_paths
 from meridian.lib.state.primary_meta import (
     read_primary_surface_metadata,
@@ -536,7 +537,7 @@ def spawn_list_sync(
     spawns = list(
         reversed(
             reconcile_spawns(
-                project_root, runtime_root, spawn_store.list_spawns(runtime_root)
+                project_root, runtime_root, indexed_spawn_scan(runtime_root)
             ).records
         )
     )
@@ -653,7 +654,7 @@ def spawn_children_sync(
             reconcile_spawns(
                 project_root,
                 runtime_root,
-                spawn_store.list_spawns(
+                indexed_spawn_scan(
                     runtime_root,
                     parent_id=spawn_id,
                 ),
@@ -710,7 +711,7 @@ def spawn_stats_sync(
         if runtime_root is None
         else list(
             reconcile_spawns(
-                project_root, runtime_root, spawn_store.list_spawns(runtime_root)
+                project_root, runtime_root, indexed_spawn_scan(runtime_root)
             ).records
         )
     )
@@ -1135,8 +1136,11 @@ def _resolve_signal_spawn_id(
         candidate,
         runtime_root=runtime_root,
     )
-    if spawn_store.get_spawn(runtime_root, resolved_spawn_id) is None:
+    record = spawn_store.get_spawn(runtime_root, resolved_spawn_id)
+    if record is None:
         raise ValueError(f"Spawn '{resolved_spawn_id}' not found")
+    if record.record_mode == "historical":
+        raise ValueError("Historical records have no live process ownership")
     return resolved_spawn_id
 
 
@@ -1247,6 +1251,9 @@ async def _spawn_cancel_impl(
         )
     else:
         spawn_id = resolve_spawn_reference(project_root, payload.spawn_id)
+    record = spawn_store.get_spawn(runtime_root, spawn_id)
+    if record is not None and record.record_mode == "historical":
+        raise ValueError("Historical records cannot be cancelled")
     register_debug_trace_observer()
     cancel_owner = os.environ.get("MERIDIAN_SPAWN_ID") or "cli"
     if prepared is None:
@@ -1298,7 +1305,7 @@ def spawn_cancel_all_sync(
     active_rows = reconcile_spawns(
         project_root,
         runtime_root,
-        spawn_store.list_spawns(runtime_root),
+        indexed_spawn_scan(runtime_root),
     ).records
     if work_id is not None:
         active_session_work_ids: dict[str, str] | None = {
@@ -1482,7 +1489,7 @@ def _discover_pending_spawns(
     all_spawns = reconcile_spawns(
         project_root,
         runtime_root,
-        spawn_store.list_spawns(runtime_root),
+        indexed_spawn_scan(runtime_root),
     ).records
 
     # Build descendant set if scoping to a parent
@@ -1719,6 +1726,11 @@ def spawn_wait_sync(
 
     if has_explicit_ids:
         spawn_ids = resolve_spawn_references(project_root, spawn_ids, runtime_root=runtime_root)
+
+    for spawn_id in spawn_ids:
+        record = spawn_store.get_spawn(runtime_root, spawn_id)
+        if record is not None and record.record_mode == "historical":
+            raise ValueError("Historical records cannot be waited on")
 
     _emit_wait_set(
         spawn_ids,

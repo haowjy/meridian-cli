@@ -86,6 +86,12 @@ These override spawn-level runtime policy. They sit above project config but bel
 - `MERIDIAN_HARNESS_MODEL_CODEX`
 - `MERIDIAN_HARNESS_MODEL_OPENCODE`
 - `MERIDIAN_STATE_RETENTION_DAYS`
+- `MERIDIAN_HISTORY_ARCHIVE_AUTOMATIC`
+- `MERIDIAN_HISTORY_ARCHIVE_AFTER_DAYS`
+- `MERIDIAN_HISTORY_ARCHIVE_DESTINATION`
+
+See [history ZIP retention](../configuration.md#history-zip-retention) for the
+archive keys, defaults and precedence. These do not control UI visibility archive.
 
 ## Guardrails and Secrets
 

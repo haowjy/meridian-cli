@@ -3,14 +3,16 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from uuid import UUID
 
 from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
 
 
 @dataclass(frozen=True)
 class SpawnStartMetadata:
-    """User-facing metadata captured when a spawn row is first created."""
+    """Metadata captured when a spawn row is first created."""
 
+    forked_from_history_id: UUID | None = None
     desc: str | None = None
     work_id: str | None = None
     goal: str | None = None

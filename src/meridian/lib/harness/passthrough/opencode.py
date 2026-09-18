@@ -30,7 +30,7 @@ def _require_observer_endpoint_url(
     return endpoint.url
 
 
-def _build_opencode_attach_command(
+def build_opencode_attach_command(
     session_id: str,
     http_url: str,
 ) -> tuple[str, ...]:
@@ -67,7 +67,7 @@ class OpenCodePassthrough:
         spec: ResolvedLaunchSpec,
     ) -> TuiCommandBuilder:
         _ = spec
-        return lambda session_id: _build_opencode_attach_command(
+        return lambda session_id: build_opencode_attach_command(
             session_id=session_id,
             http_url=_require_observer_endpoint_url(connection, transport="http"),
         )

@@ -24,6 +24,7 @@ def load_merged_aliases(
     project_root: Path | None = None,
     *,
     cache: MarsResultCache | None = None,
+    no_refresh_models: bool = False,
 ) -> list[AliasEntry]:
     """Load model aliases from mars packages."""
     resolved_root = (
@@ -31,7 +32,7 @@ def load_merged_aliases(
         if project_root is not None
         else None
     )
-    return load_mars_aliases(resolved_root, cache=cache)
+    return load_mars_aliases(resolved_root, cache=cache, no_refresh_models=no_refresh_models)
 
 
 def resolve_model(
