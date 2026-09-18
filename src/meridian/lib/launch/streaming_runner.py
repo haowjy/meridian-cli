@@ -297,7 +297,6 @@ _ATTEMPT_STORE_ARTIFACTS = (
     REPORT_FILENAME,
 )
 _ATTEMPT_DISK_ARTIFACTS = (
-    HISTORY_FILENAME,
     LAST_OBSERVED_EVENT_FILENAME,
     RUNNER_LIFECYCLE_FILENAME,
     STDERR_FILENAME,
@@ -339,36 +338,71 @@ def _preserve_attempt_artifacts(
     retries never read stale attempt-scoped store keys.
     """
 
-    attempt_prefix = f"attempt-{completed_attempt}"
-    staging_dir = log_dir / f"{attempt_prefix}.tmp"
-    attempt_dir = log_dir / attempt_prefix
-    already_committed = _recover_interrupted_attempt_rotation(log_dir, attempt_prefix)
+    from meridian.lib.platform.atomic import fsync_directory
+    from meridian.lib.platform.locking import lock_file
+    from meridian.lib.state.history_changes import HistoryChanges, HistorySource
+    from meridian.lib.state.spawn.repository import read_state
 
-    if already_committed:
-        attempt_dir.mkdir(parents=True, exist_ok=True)
-        for name in _ATTEMPT_DISK_ARTIFACTS:
-            target = log_dir / name
-            if target.exists():
-                os.replace(target, attempt_dir / name)
-    else:
-        staging_dir.mkdir(parents=True, exist_ok=True)
-        for name in _ATTEMPT_DISK_ARTIFACTS:
-            target = log_dir / name
-            if target.exists():
-                os.replace(target, staging_dir / name)
-        os.replace(staging_dir, attempt_dir)
+    changes = HistoryChanges(log_dir.parent.parent)
+    source = HistorySource(kind="spawn", key=str(spawn_id))
+    with lock_file(changes.mutation_lock, mode="shared"), lock_file(source.lock_path(changes.root)):
+        state = read_state(changes.root / "spawns", str(spawn_id), include_prompt=False)
+        if state is None or state.record_mode == "historical":
+            return
+        changes.mark(source)
+        attempt_prefix = f"attempt-{completed_attempt}"
+        staging_dir = log_dir / f"{attempt_prefix}.tmp"
+        attempt_dir = log_dir / attempt_prefix
+        already_committed = _recover_interrupted_attempt_rotation(log_dir, attempt_prefix)
 
-    for name in _ATTEMPT_STORE_ARTIFACTS:
-        active_key = make_artifact_key(spawn_id, name)
-        if artifacts.exists(active_key):
-            artifacts.put(
-                make_artifact_key(spawn_id, f"{attempt_prefix}/{name}"),
-                artifacts.get(active_key),
+        if already_committed:
+            attempt_dir.mkdir(parents=True, exist_ok=True)
+            for name in _ATTEMPT_DISK_ARTIFACTS:
+                target = log_dir / name
+                if target.exists():
+                    os.replace(target, attempt_dir / name)
+        else:
+            staging_dir.mkdir(parents=True, exist_ok=True)
+            for name in _ATTEMPT_DISK_ARTIFACTS:
+                target = log_dir / name
+                if target.exists():
+                    os.replace(target, staging_dir / name)
+            os.replace(staging_dir, attempt_dir)
+
+        for name in _ATTEMPT_STORE_ARTIFACTS:
+            active_key = make_artifact_key(spawn_id, name)
+            if artifacts.exists(active_key):
+                artifacts.put(
+                    make_artifact_key(spawn_id, f"{attempt_prefix}/{name}"),
+                    artifacts.get(active_key),
+                )
+
+        for name in _ATTEMPT_STORE_ARTIFACTS:
+            artifacts.delete(make_artifact_key(spawn_id, name))
+        fsync_directory(attempt_dir)
+        fsync_directory(log_dir)
+        from meridian.lib.harness.connections.base import RawHarnessEvent
+        from meridian.lib.state.atomic import atomic_write_text
+        from meridian.lib.state.history import HarnessHistoryWriter
+        from meridian.lib.state.history_codec import transcript_header
+
+        history_path = log_dir / HISTORY_FILENAME
+        if not history_path.exists() or history_path.stat().st_size == 0:
+            atomic_write_text(
+                history_path, transcript_header(state, changes.root.name).model_dump_json() + "\n"
             )
-
-    for name in _ATTEMPT_STORE_ARTIFACTS:
-        artifacts.delete(make_artifact_key(spawn_id, name))
-    artifacts.delete(make_artifact_key(spawn_id, HISTORY_FILENAME))
+        # This operation already owns root/source locks and published-row validation.
+        # Do not recursively enter the non-reentrant aggregate mutation guard.
+        writer = HarnessHistoryWriter(history_path)
+        result = writer.write(
+            RawHarnessEvent(
+                event_type="meridian.attempt.completed",
+                harness_id=state.harness or "",
+                payload={"completed_attempt": completed_attempt},
+            )
+        )
+        if not result.success:
+            raise OSError(result.error or "Failed to record attempt boundary")
 
 
 def _scope_pi_session_dir_for_spawn(
@@ -1078,9 +1112,7 @@ async def execute_with_streaming(
     atexit_callback: Callable[[], None] | None = None
 
     try:
-        log_dir = resolve_spawn_log_dir(
-            project_root, run.spawn_id, runtime_root=runtime_root
-        )
+        log_dir = resolve_spawn_log_dir(project_root, run.spawn_id, runtime_root=runtime_root)
         lifecycle_path = log_dir / RUNNER_LIFECYCLE_FILENAME
         output_log_path = log_dir / HISTORY_FILENAME
         report_path = log_dir / REPORT_FILENAME

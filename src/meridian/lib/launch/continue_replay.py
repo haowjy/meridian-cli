@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
+from uuid import UUID
 
 from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
 from meridian.lib.launch.policy_snapshot import managed_model_override_from_persisted_model
@@ -45,6 +46,7 @@ class ContinueReplaySource:
     source_pi_session_dir: str | None
     source_launch_policy_snapshot: LaunchPolicySnapshot | None
     tracked: bool
+    source_history_id: UUID | None = None
     source_model: str | None = None
     source_agent: str | None = None
     source_skills: tuple[str, ...] = ()
@@ -79,6 +81,9 @@ class ContinueReplayReference(Protocol):
 
     @property
     def source_chat_id(self) -> str | None: ...
+
+    @property
+    def source_history_id(self) -> UUID | None: ...
 
     @property
     def source_model(self) -> str | None: ...
@@ -124,6 +129,7 @@ def continue_replay_source_from_reference(
         harness_session_id=harness_session_id,
         harness=resolved_reference.harness,
         source_chat_id=resolved_reference.source_chat_id,
+        source_history_id=resolved_reference.source_history_id,
         source_model=resolved_reference.source_model,
         source_agent=resolved_reference.source_agent,
         source_skills=resolved_reference.source_skills,
@@ -323,6 +329,7 @@ def build_continue_replay_contract(
         continue_fork=fork,
         continue_chat_id=source.source_chat_id,
         forked_from_chat_id=source.source_chat_id if fork else None,
+        forked_from_history_id=source.source_history_id if fork else None,
         source_control_root=source.source_control_root,
         source_execution_cwd=source.source_execution_cwd,
         source_claude_config_dir=source.source_claude_config_dir,

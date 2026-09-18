@@ -43,7 +43,7 @@ from meridian.lib.harness.bundle import (
 from meridian.lib.harness.connections.base import RawHarnessEvent
 from meridian.lib.harness.connections.opencode_http import OpenCodeConnection
 from meridian.lib.harness.extractors.opencode import OPENCODE_EXTRACTOR
-from meridian.lib.harness.launch_types import SessionSeed
+from meridian.lib.harness.launch_types import ManagedPrimaryPreview, SessionSeed
 from meridian.lib.harness.opencode_report import (
     extract_opencode_report,
     extract_opencode_session_id,
@@ -53,7 +53,9 @@ from meridian.lib.harness.opencode_storage import (
     resolve_opencode_home_dir,
     resolve_opencode_session_file,
 )
+from meridian.lib.harness.passthrough.opencode import build_opencode_attach_command
 from meridian.lib.harness.projections.project_opencode_streaming import (
+    opencode_model_parts,
     project_opencode_spec_to_serve_command,
     project_opencode_spec_to_session_payload,
 )
@@ -102,14 +104,10 @@ def _normalize_opencode_model(model: str) -> str:
     to force routing instead.
     """
     normalized = model.strip()
-    provider, separator, model_name = normalized.partition("/")
-    if not separator:
-        return normalized
-    provider = provider.strip()
-    model_name = model_name.strip()
-    if not provider or not model_name:
-        return normalized
-    return f"{provider}/{model_name}"
+    if not normalized:
+        return ""
+    provider, model_name = opencode_model_parts(normalized)
+    return f"{provider.strip()}/{model_name.strip()}"
 
 
 def _opencode_db_path() -> Path:
@@ -117,12 +115,7 @@ def _opencode_db_path() -> Path:
 
 
 def _opencode_session_diff_path(session_id: str) -> Path:
-    return (
-        resolve_opencode_home_dir()
-        / "storage"
-        / "session_diff"
-        / f"{session_id}.json"
-    )
+    return resolve_opencode_home_dir() / "storage" / "session_diff" / f"{session_id}.json"
 
 
 def _directory_matches_project(directory: str, project_root: Path) -> bool:
@@ -272,6 +265,45 @@ def project_opencode_spec_to_session_payload_for_project(
 
     _ = project_root
     return project_opencode_spec_to_session_payload(spec)
+
+
+def project_opencode_primary_preview(
+    spec: ResolvedLaunchSpec, *, project_root: Path
+) -> ManagedPrimaryPreview:
+    backend = project_opencode_spec_to_serve_command(spec, host="127.0.0.1", port=0)
+    backend[backend.index("--port") + 1] = "<port>"
+    continuing = bool(spec.continue_session_id)
+    steps = (
+        ("Preserve the existing native session's committed agent/model.",)
+        if continuing
+        else (
+            "GET /config/providers, /config and /agent; "
+            "validate availability and effective defaults.",
+            "If its model conflicts, stop the owned backend and restart once "
+            "with a launch-local agent override, then repeat all three inspections.",
+        )
+        if spec.model
+        else ("Use native model defaults.",)
+    )
+    return ManagedPrimaryPreview(
+        backend_command=tuple(backend),
+        bootstrap_method="GET" if continuing else "POST",
+        bootstrap_path=f"/session/{spec.continue_session_id}" if continuing else "/session",
+        bootstrap_payload={}
+        if continuing
+        else project_opencode_spec_to_session_payload_for_project(spec, project_root=project_root),
+        attach_command=build_opencode_attach_command(
+            spec.continue_session_id or "<session>", "http://127.0.0.1:<port>"
+        ),
+        steps=(
+            *steps,
+            "Preserve inherited configuration; add private system instructions when supplied.",
+            "Launch, inspections, replacement and bootstrap share one startup deadline.",
+            "Native configuration and actual message model are unavailable in dry-run.",
+            "Fail on rejected configuration or uncertain cleanup; no black-box fallback.",
+        ),
+        model=spec.model if not continuing else None,
+    )
 
 
 def _legacy_owns_session(project_root: Path, session_ref: str) -> bool:
@@ -443,10 +475,10 @@ class OpenCodeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         run: SpawnParams,
         perms: PermissionResolver,
     ) -> ResolvedLaunchSpec:
-        normalized_model: str | None = None
-        if run.model:
-            normalized_model = _normalize_opencode_model(str(run.model))
         continue_session_id = (run.continue_harness_session_id or "").strip() or None
+        normalized_model: str | None = None
+        if run.model and not continue_session_id:
+            normalized_model = _normalize_opencode_model(str(run.model)) or None
         return ResolvedLaunchSpec(
             harness=HarnessId.OPENCODE,
             model=normalized_model,
@@ -595,8 +627,12 @@ OPENCODE_SEMANTICS = HarnessSemantics(
     },
     scoped_events=frozenset(
         {
-            "agent_message_chunk", "agent_thought_chunk", "tool_call",
-            "tool_call_update", "session.idle", "session.error",
+            "agent_message_chunk",
+            "agent_thought_chunk",
+            "tool_call",
+            "tool_call_update",
+            "session.idle",
+            "session.error",
         }
     ),
     scope_id_resolver=extract_opencode_session_id,
@@ -614,6 +650,7 @@ register_harness_bundle(
             managed_primary=ManagedPrimaryProjectionPorts(
                 backend_command=project_opencode_spec_to_serve_command,
                 bootstrap_payload=project_opencode_spec_to_session_payload_for_project,
+                preview=project_opencode_primary_preview,
             ),
         ),
         semantics=OPENCODE_SEMANTICS,

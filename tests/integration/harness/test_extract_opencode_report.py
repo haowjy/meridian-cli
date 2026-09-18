@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 from pathlib import Path
+
+import pytest
 
 from meridian.lib.core.types import ArtifactKey, SpawnId
 from meridian.lib.harness.extractors.opencode import OPENCODE_EXTRACTOR
@@ -11,6 +14,33 @@ from meridian.lib.harness.opencode_report import extract_opencode_report
 from meridian.lib.harness.opencode_storage import resolve_opencode_storage_root
 from meridian.lib.launch.constants import HISTORY_FILENAME
 from tests.support.opencode_db import write_opencode_db_session_with_parts
+
+
+@pytest.mark.parametrize("source", ["db-only", "absent-db", "missing-session", "corrupt-db"])
+def test_report_database_source_selection_without_legacy_file(
+    tmp_path: Path, monkeypatch, source: str
+) -> None:
+    monkeypatch.setenv("OPENCODE_HOME", str(tmp_path))
+    path = tmp_path / "opencode.db"
+    if source in {"db-only", "missing-session"}:
+        write_opencode_db_session_with_parts(
+            db_path=path,
+            session_id="s" if source == "db-only" else "other",
+            messages=[
+                ("assistant", {}, [{"type": "text", "text": "answer"}]),
+                ("assistant", {"summary": True}, [{"type": "text", "text": "summary only"}]),
+            ],
+        )
+    elif source == "corrupt-db":
+        path.write_bytes(b"not a database")
+    key = SpawnId("p-db-only")
+    store = _artifact_store_from_history_lines(key, [])
+    store._payloads[f"{key}/session_id.txt"] = b"s"
+    if source == "corrupt-db":
+        with pytest.raises(sqlite3.Error):
+            extract_opencode_report(store, key)
+    else:
+        assert extract_opencode_report(store, key) == ("answer" if source == "db-only" else None)
 
 
 class _MemoryArtifactStore:
@@ -23,11 +53,13 @@ class _MemoryArtifactStore:
     def exists(self, key: ArtifactKey) -> bool:
         return str(key) in self._payloads
 
+
 def _artifact_store_from_history_lines(
     spawn_id: SpawnId, lines: list[dict[str, object]]
 ) -> _MemoryArtifactStore:
-    encoded = "\n".join(json.dumps(line) for line in lines).encode("utf-8")
+    encoded = ("\n".join(json.dumps(line) for line in lines) + "\n").encode("utf-8")
     return _MemoryArtifactStore({f"{spawn_id}/{HISTORY_FILENAME}": encoded})
+
 
 def test_extract_opencode_report_ignores_child_session_assistant_text() -> None:
     spawn_id = SpawnId("p-opencode-parent-scope")
@@ -132,6 +164,7 @@ def test_extract_opencode_report_ignores_child_session_assistant_text() -> None:
     assert OPENCODE_EXTRACTOR.extract_session_id(store, spawn_id) == "ses_parent"
     assert extract_opencode_report(store, spawn_id) == "Parent report."
 
+
 def test_extract_opencode_report_falls_back_to_opencode_db_session(
     tmp_path: Path,
     monkeypatch,
@@ -172,6 +205,7 @@ def test_extract_opencode_report_falls_back_to_opencode_db_session(
     store._payloads[f"{spawn_id}/session_id.txt"] = session_id.encode("utf-8")
 
     assert extract_opencode_report(store, spawn_id) == "LIVE_OK"
+
 
 def test_extract_opencode_report_ignores_opencode_db_compaction_handoff(
     tmp_path: Path,

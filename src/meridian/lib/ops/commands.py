@@ -87,11 +87,29 @@ from meridian.lib.ops.report import (
     report_show,
     report_show_sync,
 )
+from meridian.lib.ops.session_archive import (
+    SessionArchiveInput,
+    SessionArchiveOutput,
+    SessionImportInput,
+    SessionRestoreInput,
+    session_archive,
+    session_archive_sync,
+    session_import,
+    session_import_sync,
+    session_restore,
+    session_restore_sync,
+)
 from meridian.lib.ops.session_export import (
     SessionExportInput,
     SessionExportOutput,
     session_export,
     session_export_sync,
+)
+from meridian.lib.ops.session_index import (
+    SessionIndexInput,
+    SessionIndexOutput,
+    session_index,
+    session_index_sync,
 )
 from meridian.lib.ops.session_list import (
     SessionListInput,
@@ -421,6 +439,54 @@ _OP_SPECS: tuple[ExtensionCommandSpec, ...] = (
     ),
     ExtensionCommandSpec.from_op(
         extension_id="meridian.session",
+        command_id="archive",
+        summary="Publish verified history ZIPs and reclaim eligible loose records.",
+        handler=session_archive,
+        sync_handler=session_archive_sync,
+        input_type=SessionArchiveInput,
+        output_type=SessionArchiveOutput,
+        cli_group="session",
+        cli_name="archive",
+        surfaces=frozenset({ExtensionSurface.CLI}),
+    ),
+    ExtensionCommandSpec.from_op(
+        extension_id="meridian.session",
+        command_id="import",
+        summary="Import a verified ZIP for direct history reads without extracting it.",
+        handler=session_import,
+        sync_handler=session_import_sync,
+        input_type=SessionImportInput,
+        output_type=SessionArchiveOutput,
+        cli_group="session",
+        cli_name="import",
+        surfaces=frozenset({ExtensionSurface.CLI}),
+    ),
+    ExtensionCommandSpec.from_op(
+        extension_id="meridian.session",
+        command_id="restore",
+        summary="Restore selected history from a ZIP without live process ownership.",
+        handler=session_restore,
+        sync_handler=session_restore_sync,
+        input_type=SessionRestoreInput,
+        output_type=SessionArchiveOutput,
+        cli_group="session",
+        cli_name="restore",
+        surfaces=frozenset({ExtensionSurface.CLI}),
+    ),
+    ExtensionCommandSpec.from_op(
+        extension_id="meridian.session",
+        command_id="index",
+        summary="Inspect or rebuild the disposable history index.",
+        handler=session_index,
+        sync_handler=session_index_sync,
+        input_type=SessionIndexInput,
+        output_type=SessionIndexOutput,
+        cli_group="session",
+        cli_name="index",
+        surfaces=frozenset({ExtensionSurface.CLI}),
+    ),
+    ExtensionCommandSpec.from_op(
+        extension_id="meridian.session",
         command_id="browse",
         summary="Browse recent sessions; resume stopped or fork live ones.",
         handler=session_list,
@@ -579,9 +645,7 @@ _OP_SPECS: tuple[ExtensionCommandSpec, ...] = (
     ExtensionCommandSpec.from_op(
         extension_id="meridian.spawn",
         command_id="show",
-        summary=(
-            "Show spawn status, duration, model, report path, and report text by default."
-        ),
+        summary=("Show spawn status, duration, model, report path, and report text by default."),
         handler=spawn_show,
         sync_handler=spawn_show_sync,
         input_type=SpawnShowInput,

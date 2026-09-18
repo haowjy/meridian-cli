@@ -2,6 +2,12 @@
 
 from __future__ import annotations
 
+import json
+import time
+import zipfile
+import zlib
+from collections.abc import Callable, Generator, Iterator
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, NamedTuple
 
@@ -10,8 +16,8 @@ from meridian.lib.harness.transcript import (
     ToolCall,
     TranscriptMessage,
     TranscriptParseResult,
-    parse_opencode_db_transcript_with_prologues,
-    parse_transcript_file_with_prologues,
+    iter_transcript_events,
+    parse_transcript_events_with_prologues,
 )
 from meridian.lib.ops.runtime import resolve_runtime_authority_for_read
 from meridian.lib.ops.session_target import (
@@ -19,6 +25,7 @@ from meridian.lib.ops.session_target import (
     TranscriptSource,
     resolve_session_log_target,
 )
+from meridian.lib.state.native_snapshot import TranscriptValidation, snapshot_binding
 
 _PROLOGUE_PLACEHOLDER = "[prologue slot reserved: no extractable system prompt]"
 _HANDOFF_PLACEHOLDER = "[compaction handoff slot reserved: no extractable handoff]"
@@ -32,6 +39,7 @@ class AbsoluteTranscriptMessage(NamedTuple):
     content: str
     tool_call: ToolCall | None = None
     is_tool_result: bool = False
+    kind: Literal["interaction", "annotation"] = "interaction"
 
 
 class AbsoluteTranscriptEntry(NamedTuple):
@@ -43,7 +51,7 @@ class AbsoluteTranscriptEntry(NamedTuple):
     role: str
     content: str
     messages: tuple[AbsoluteTranscriptMessage, ...]
-    kind: Literal["setup", "interaction"]
+    kind: Literal["setup", "interaction", "annotation"]
     is_placeholder: bool = False
 
 
@@ -64,6 +72,34 @@ class ParsedSessionTranscript(NamedTuple):
     entries: tuple[AbsoluteTranscriptEntry, ...]
     all_entries: tuple[AbsoluteTranscriptEntry, ...]
     segment_entries: tuple[tuple[AbsoluteTranscriptEntry, ...], ...]
+    rendering_reason: str | None = None
+    storage_validation: TranscriptValidation | None = None
+
+    @property
+    def read_reasons(self) -> tuple[str, ...]:
+        storage = self.storage_validation
+        return tuple(
+            reason
+            for reason in (
+                storage.reason if storage is not None and storage.state != "complete" else None,
+                self.rendering_reason,
+            )
+            if reason
+        )
+
+    @property
+    def search_ready(self) -> bool:
+        validation = self.storage_validation
+        # Ordinary append streams retain their existing partial-result contract.
+        # Snapshot/ZIP prefixes have not proved their enclosing integrity yet.
+        return (
+            validation is None
+            or validation.state == "complete"
+            or (
+                validation.header is None
+                and not any(source.kind == "archive" for source in self.target.sources)
+            )
+        )
 
 
 def flatten_transcript_segments(
@@ -82,6 +118,7 @@ def flatten_transcript_segments(
                     content=message.content,
                     tool_call=message.tool_call,
                     is_tool_result=message.is_tool_result,
+                    kind=message.kind,
                 )
             )
             ordinal += 1
@@ -96,15 +133,15 @@ def _is_plain_user_message(message: AbsoluteTranscriptMessage) -> bool:
     return message.role == "user" and not _is_tool_result_message(message)
 
 
-def _is_interaction_message(message: AbsoluteTranscriptMessage) -> bool:
-    return message.role in {"assistant", "user"}
+def _is_visible_message(message: AbsoluteTranscriptMessage) -> bool:
+    return message.role in {"assistant", "user"} or message.kind == "annotation"
 
 
 def group_transcript_entries(
     messages: tuple[AbsoluteTranscriptMessage, ...],
 ) -> tuple[AbsoluteTranscriptEntry, ...]:
     interaction_messages = tuple(
-        message for message in messages if _is_interaction_message(message)
+        message for message in messages if _is_visible_message(message)
     )
     if not interaction_messages:
         return ()
@@ -113,6 +150,9 @@ def group_transcript_entries(
     seen_tool_result = False
     for index in range(len(interaction_messages) - 1, -1, -1):
         message = interaction_messages[index]
+        if message.kind == "annotation":
+            seen_tool_result = False
+            continue
         if _is_tool_result_message(message):
             seen_tool_result = True
             continue
@@ -125,7 +165,8 @@ def group_transcript_entries(
 
     for index, message in enumerate(interaction_messages):
         if current and (
-            message.segment_index != current[-1].segment_index or _is_plain_user_message(message)
+            message.segment_index != current[-1].segment_index
+            or _is_plain_user_message(message) or message.kind == "annotation"
         ):
             chunks.append(current)
             current = []
@@ -136,7 +177,9 @@ def group_transcript_entries(
             interaction_messages[index + 1] if index + 1 < len(interaction_messages) else None
         )
         should_close = False
-        if _is_tool_result_message(message):
+        if message.kind == "annotation":
+            should_close = True
+        elif _is_tool_result_message(message):
             should_close = next_message is None or not _is_tool_result_message(next_message)
         elif _is_plain_user_message(message):
             should_close = not user_leads_to_tool_result[index]
@@ -172,7 +215,7 @@ def group_transcript_entries(
                 role=role,
                 content="\n\n".join(message.content for message in chunk),
                 messages=tuple(chunk),
-                kind="interaction",
+                kind=first.kind,
             )
         )
 
@@ -261,17 +304,94 @@ def _route_from_request(
 
 
 def route_for_corpus_target(target: SessionLogTarget) -> SessionLogRoute:
+    if any(source.kind == "archive" for source in target.sources):
+        return SessionLogRoute(mode="ref", value=target.sources[0].history_id or target.session_id)
     if target.file_path is None:
         return SessionLogRoute(mode="ref", value=target.session_id)
     return SessionLogRoute(mode="file", value=str(target.file_path))
 
 
-def _parse_transcript_source(source: TranscriptSource) -> TranscriptParseResult:
-    if source.kind == "opencode_db":
-        return parse_opencode_db_transcript_with_prologues(source.session_id)
-    if source.path is None:
-        raise FileNotFoundError(f"Session file for '{source.session_id}' not found")
-    return parse_transcript_file_with_prologues(source.path)
+@dataclass
+class TranscriptBudget:
+    deadline: float
+    remaining_bytes: int
+    exhausted: bool = False
+
+    def current(self) -> bool:
+        if self.remaining_bytes <= 0 or time.monotonic() >= self.deadline:
+            self.exhausted = True
+        return not self.exhausted
+
+    def events(self, events: Iterator[dict[str, object]]) -> Iterator[dict[str, object]]:
+        while True:
+            if not self.current():
+                return
+            try:
+                event = next(events)
+            except StopIteration:
+                return
+            self.remaining_bytes -= len(json.dumps(event, ensure_ascii=False).encode())
+            if self.remaining_bytes < 0 or time.monotonic() >= self.deadline:
+                self.exhausted = True
+                return
+            yield event
+
+
+def iter_source_events(
+    source: TranscriptSource,
+    *,
+    validation: TranscriptValidation | None = None,
+    current: Callable[[], bool] | None = None,
+) -> Generator[dict[str, object]]:
+    if source.kind == "archive":
+        from uuid import UUID
+
+        from meridian.lib.state.retention_archive import iter_archived_events
+
+        if source.path is None or source.history_id is None:
+            raise ValueError("Incomplete archive locator")
+        yield from iter_archived_events(
+            source.path, UUID(source.history_id), source.manifest_sha256
+        )
+    elif source.kind == "opencode_db":
+        from meridian.lib.harness.opencode_transcript import iter_opencode_db_events
+
+        yield from iter_opencode_db_events(session_id=source.session_id)
+    else:
+        if source.path is None:
+            raise FileNotFoundError(f"Session file for '{source.session_id}' not found")
+        yield from iter_transcript_events(
+            source.path,
+            validation=validation,
+            current=current,
+            check_header=snapshot_binding(
+                history_id=source.history_id,
+                harness=source.harness if source.kind == "native_file" else None,
+                native_session_id=source.session_id if source.kind == "native_file" else None,
+            ),
+        )
+        return
+    if validation is not None:
+        validation.state = "complete"
+        validation.reason = None
+
+
+def _parse_transcript_source(
+    source: TranscriptSource, budget: TranscriptBudget | None = None
+) -> tuple[TranscriptParseResult, TranscriptValidation]:
+    validation = TranscriptValidation()
+    events = iter_source_events(
+        source, validation=validation, current=budget.current if budget else None
+    )
+    try:
+        parsed = parse_transcript_events_with_prologues(budget.events(events) if budget else events)
+    finally:
+        events.close()
+    if budget is not None and budget.exhausted:
+        validation.state = "partial"
+        validation.reason = "Transcript read budget exhausted before complete validation"
+        validation.descriptor = None
+    return parsed, validation
 
 
 def _target_for_source(target: SessionLogTarget, source: TranscriptSource) -> SessionLogTarget:
@@ -280,6 +400,7 @@ def _target_for_source(target: SessionLogTarget, source: TranscriptSource) -> Se
         harness=source.harness,
         file_path=source.path,
         source=source.source_label,
+        sources=(source,),
     )
 
 
@@ -297,16 +418,32 @@ def parse_session_target(
     runtime_root: Path | None,
     target: SessionLogTarget,
     route: SessionLogRoute,
+    budget: TranscriptBudget | None = None,
 ) -> ParsedSessionTranscript:
     parsed: TranscriptParseResult | None = None
     resolved_target = target
+    archive_errors: list[Exception] = []
+    validation: TranscriptValidation | None = None
     for source in target.sources:
-        candidate = _parse_transcript_source(source)
+        try:
+            candidate, validation = _parse_transcript_source(source, budget)
+        except (ValueError, OSError, EOFError, zipfile.BadZipFile, zlib.error) as exc:
+            if source.kind != "archive":
+                raise
+            archive_errors.append(exc)
+            continue
         parsed = candidate
         resolved_target = _target_for_source(target, source)
-        if _has_usable_interaction_content(candidate):
+        if (
+            validation.header is not None
+            or validation.state != "complete"
+            or _has_usable_interaction_content(candidate)
+            or candidate.rendering_reason
+        ):
             break
     if parsed is None:
+        if archive_errors:
+            raise archive_errors[-1]
         raise FileNotFoundError(f"Session file for '{target.session_id}' not found")
 
     flattened = flatten_transcript_segments(parsed.segments)
@@ -318,7 +455,7 @@ def parse_session_target(
     )
     all_entries = tuple(entry for segment in segment_entries for entry in segment)
     resolved_interaction_entries = tuple(
-        entry for entry in all_entries if entry.kind == "interaction"
+        entry for entry in all_entries if entry.kind != "setup"
     )
     return ParsedSessionTranscript(
         project_root=project_root,
@@ -332,6 +469,8 @@ def parse_session_target(
         entries=resolved_interaction_entries,
         all_entries=all_entries,
         segment_entries=segment_entries,
+        rendering_reason=parsed.rendering_reason,
+        storage_validation=validation,
     )
 
 

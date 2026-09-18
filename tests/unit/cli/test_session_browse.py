@@ -191,9 +191,7 @@ def test_list_header_and_rows_share_fixed_column_starts() -> None:
 
 
 def test_list_columns_use_terminal_display_width() -> None:
-    row = _row("c123", work="工作").model_copy(
-        update={"agent": "审查员", "model": "模型"}
-    )
+    row = _row("c123", work="工作").model_copy(update={"agent": "审查员", "model": "模型"})
     model = BrowseModel((row,))
 
     header = _text(browse_render.render_list_header(model, 100))
@@ -282,3 +280,14 @@ def test_exec_decision_builds_primary_invocation(decision, verb: str) -> None:
             ],
         )
     ]
+
+
+@pytest.mark.parametrize("include_archives", [False, True])
+def test_browse_search_zip_opt_in_keeps_archived_rows_visible(include_archives):
+    archived = _row("archived-id").model_copy(update={"archived": True})
+    model = BrowseModel((_row("c1"), archived), include_archives=include_archives)
+    assert len(model.visible_rows) == 2
+    model.handle_key(Search())
+    model.handle_key(Character("n"))
+    expected = ("c1", "archived-id") if include_archives else ("c1",)
+    assert model.handle_key(Enter()) == StartSearch("n", expected)

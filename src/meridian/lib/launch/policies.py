@@ -111,6 +111,7 @@ class SurfacePolicyInput:
     config: MeridianConfig
     harness_registry: HarnessRegistry
     skills_readonly: bool = True
+    models_readonly: bool = False
     requested_skills: tuple[str, ...] = ()
     policy_snapshot: LaunchPolicySnapshot | None = None
     continuation: SessionRequest | None = None
@@ -448,7 +449,7 @@ def _resolve_policy_from_bundle(surface: SurfacePolicyInput) -> ResolvedLaunchPo
 
     alias_catalog: dict[str, AliasEntry] = {}
     if requested_model_token:
-        alias_catalog = surface.catalog.alias_map()
+        alias_catalog = surface.catalog.alias_map(no_refresh_models=surface.models_readonly)
 
     resolved_skill_names = dedupe_skill_names((*profile_skills, *surface.requested_skills))
     bundle_request = bundle_adapter.BundleRequest(
@@ -461,6 +462,7 @@ def _resolve_policy_from_bundle(surface: SurfacePolicyInput) -> ResolvedLaunchPo
         approval_override=explicit_user_overrides.approval,
         sandbox_override=explicit_user_overrides.sandbox,
         extra_skills=resolved_skill_names,
+        no_refresh_models=surface.models_readonly,
     )
     bundle_result = bundle_adapter.request_and_resolve(
         bundle_request,
@@ -588,7 +590,7 @@ def _resolve_policy_from_snapshot(
         project_root=surface.catalog.project_root,
         harness_registry=surface.harness_registry,
         skills_readonly=surface.skills_readonly,
-        alias_catalog=surface.catalog.alias_map(),
+        alias_catalog=surface.catalog.alias_map(no_refresh_models=surface.models_readonly),
         resolve_terminal_surface_mode=_resolve_terminal_surface_mode,
         logger=_LOGGER,
     )

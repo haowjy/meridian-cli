@@ -8,7 +8,7 @@ from typing import Literal, cast
 
 _OUTPUT_VERBOSITY_PRESETS = frozenset({"quiet", "normal", "verbose", "debug"})
 
-ValueKind = Literal["int", "float", "str", "str_list", "verbosity"]
+ValueKind = Literal["bool", "int", "float", "str", "str_list", "verbosity"]
 DynamicMergeKind = Literal["nested_dict", "replace", "external"]
 
 
@@ -76,6 +76,10 @@ def config_field(
 
 
 def parse_toml_scalar(*, value_kind: ValueKind, raw_value: object, source: str) -> object:
+    if value_kind == "bool":
+        if not isinstance(raw_value, bool):
+            raise ValueError(f"Invalid value for {source}: expected bool")
+        return raw_value
     if value_kind == "int":
         if isinstance(raw_value, bool) or not isinstance(raw_value, int):
             raise ValueError(
@@ -135,6 +139,10 @@ def parse_toml_scalar(*, value_kind: ValueKind, raw_value: object, source: str) 
 
 def parse_cli_scalar(*, canonical_key: str, value_kind: ValueKind, raw_value: str) -> object:
     normalized = raw_value.strip()
+    if value_kind == "bool":
+        if normalized.lower() not in {"true", "false"}:
+            raise ValueError(f"Invalid value for {canonical_key}: expected true or false")
+        return normalized.lower() == "true"
 
     if value_kind == "int":
         try:
@@ -193,6 +201,8 @@ def parse_cli_scalar(*, canonical_key: str, value_kind: ValueKind, raw_value: st
 
 
 def parse_env_scalar(*, value_kind: ValueKind, raw_value: str, env_name: str) -> object:
+    if value_kind == "bool":
+        return parse_cli_scalar(canonical_key=env_name, value_kind=value_kind, raw_value=raw_value)
     if value_kind == "int":
         try:
             return int(raw_value.strip())

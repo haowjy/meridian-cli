@@ -76,6 +76,7 @@ def _subsequence(needle: str, haystack: str) -> bool:
 class BrowseModel:
     rows: tuple[SessionListRow, ...]
     older_count: int = 0
+    include_archives: bool = False
     filter_text: str = ""
     mode: BrowseMode = "list"
     highlight: int = 0
@@ -87,6 +88,8 @@ class BrowseModel:
     preview_chat_id: str | None = None
     preview_lines: tuple[str, ...] = ()
     preview_loading: bool = False
+    preview_status: str = ""
+    preview_detail: str = ""
     inline_message: str | None = None
 
     @property
@@ -161,7 +164,11 @@ class BrowseModel:
                 query = self.search_query.strip()
                 if not query:
                     return None
-                chat_ids = tuple(row.chat_id for row in self.visible_rows)
+                chat_ids = tuple(
+                    row.chat_id
+                    for row in self.visible_rows
+                    if self.include_archives or not row.archived
+                )
                 self.mode = "searching"
                 self.search_scanned = 0
                 self.search_total = len(chat_ids)

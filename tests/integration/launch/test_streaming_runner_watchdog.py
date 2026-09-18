@@ -47,7 +47,6 @@ _STORE_ATTEMPT_FILES = (
     launch_constants.REPORT_FILENAME,
 )
 _DISK_ATTEMPT_FILES = (
-    launch_constants.HISTORY_FILENAME,
     launch_constants.LAST_OBSERVED_EVENT_FILENAME,
     launch_constants.RUNNER_LIFECYCLE_FILENAME,
     launch_constants.STDERR_FILENAME,
@@ -253,10 +252,13 @@ async def test_streaming_attempt_fresh_events_keep_slow_cursor_backend_alive(
 
 
 def test_retry_preserves_completed_attempt_artifacts(tmp_path: Path) -> None:
-    log_dir = tmp_path / "spawns" / "r-truncate"
-    log_dir.mkdir(parents=True, exist_ok=True)
+    from meridian.lib.state import spawn_store
+
+    spawn_id = spawn_store.start_spawn(
+        tmp_path, chat_id="c1", model="test", agent="test", harness="codex", prompt="retry evidence"
+    )
+    log_dir = tmp_path / "spawns" / spawn_id
     artifacts = LocalStore(root_dir=tmp_path / ".artifacts")
-    spawn_id = SpawnId("r-truncate")
     for name in _DISK_ATTEMPT_FILES:
         (log_dir / name).write_text("attempt data\n", encoding="utf-8")
     for name in _STORE_ATTEMPT_FILES:
@@ -282,18 +284,22 @@ def test_retry_preserves_completed_attempt_artifacts(tmp_path: Path) -> None:
         assert artifacts.get(make_artifact_key(spawn_id, f"attempt-1/{name}")) == (
             b"persisted attempt data\n"
         )
-    assert artifacts.get(
-        make_artifact_key(spawn_id, "attempt-1/history.jsonl")
-    ) == b"attempt data\n"
+    assert not (log_dir / "attempt-1/history.jsonl").exists()
+    history = (log_dir / "history.jsonl").read_text().splitlines()
+    assert json.loads(history[0])["record"] == "meridian.transcript"
+    assert json.loads(history[-1])["event_type"] == "meridian.attempt.completed"
     assert durable_path.exists()
     assert not (log_dir / "attempt-1.tmp").exists()
 
 
-def test_preserve_clears_active_history_before_retry_extraction(tmp_path: Path) -> None:
-    log_dir = tmp_path / "spawns" / "r-stale-history"
-    log_dir.mkdir(parents=True, exist_ok=True)
+def test_preserve_keeps_history_but_clears_current_attempt_extraction(tmp_path: Path) -> None:
+    from meridian.lib.state import spawn_store
+
+    spawn_id = spawn_store.start_spawn(
+        tmp_path, chat_id="c1", model="test", agent="test", harness="codex", prompt="retry evidence"
+    )
+    log_dir = tmp_path / "spawns" / spawn_id
     artifacts = LocalStore(root_dir=tmp_path / ".artifacts")
-    spawn_id = SpawnId("r-stale-history")
     attempt_one_history = (
         b'{"role":"assistant","content":"attempt 1 durable completion report text"}\n'
     )
@@ -312,9 +318,8 @@ def test_preserve_clears_active_history_before_retry_extraction(tmp_path: Path) 
         completed_attempt=1,
     )
 
-    assert not artifacts.exists(history_key)
-    attempt_one_history_key = make_artifact_key(spawn_id, "attempt-1/history.jsonl")
-    assert artifacts.get(attempt_one_history_key) == attempt_one_history
+    assert artifacts.get(history_key).startswith(attempt_one_history)
+    assert not (log_dir / "attempt-1/history.jsonl").exists()
 
     reset_finalize_attempt_artifacts(
         artifacts=artifacts,
@@ -333,17 +338,20 @@ def test_preserve_clears_active_history_before_retry_extraction(tmp_path: Path) 
     assert extraction.durable_report_completion is False
     assert extraction.report.content == "adapter startup failed"
     assert extraction.report.source == "failure_reason"
-    assert not artifacts.exists(history_key)
+    assert artifacts.exists(history_key)
 
 
 def test_preserve_recovers_interrupted_rotation(tmp_path: Path) -> None:
-    log_dir = tmp_path / "spawns" / "r-interrupted"
-    log_dir.mkdir(parents=True, exist_ok=True)
+    from meridian.lib.state import spawn_store
+
+    spawn_id = spawn_store.start_spawn(
+        tmp_path, chat_id="c1", model="test", agent="test", harness="codex", prompt="retry evidence"
+    )
+    log_dir = tmp_path / "spawns" / spawn_id
     artifacts = LocalStore(root_dir=tmp_path / ".artifacts")
-    spawn_id = SpawnId("r-interrupted")
     staging_dir = log_dir / "attempt-1.tmp"
     staging_dir.mkdir(parents=True)
-    (staging_dir / launch_constants.HISTORY_FILENAME).write_text(
+    (staging_dir / launch_constants.RUNNER_LIFECYCLE_FILENAME).write_text(
         "staged history\n",
         encoding="utf-8",
     )
@@ -364,23 +372,25 @@ def test_preserve_recovers_interrupted_rotation(tmp_path: Path) -> None:
     )
 
     assert not staging_dir.exists()
-    assert (log_dir / "attempt-1" / launch_constants.HISTORY_FILENAME).read_text(
+    assert (log_dir / "attempt-1" / launch_constants.RUNNER_LIFECYCLE_FILENAME).read_text(
         encoding="utf-8",
     ) == "staged history\n"
     assert (log_dir / "attempt-1" / launch_constants.STDERR_FILENAME).read_text(
         encoding="utf-8",
     ) == "late stderr\n"
     history_key = make_artifact_key(spawn_id, launch_constants.HISTORY_FILENAME)
-    attempt_one_history_key = make_artifact_key(spawn_id, "attempt-1/history.jsonl")
-    assert not artifacts.exists(history_key)
-    assert artifacts.get(attempt_one_history_key) == b"staged history\n"
+    assert artifacts.exists(history_key)
+    assert not (log_dir / "attempt-1/history.jsonl").exists()
 
 
 def test_preserve_discards_stale_staging_when_attempt_dir_exists(tmp_path: Path) -> None:
-    log_dir = tmp_path / "spawns" / "r-stale-staging"
-    log_dir.mkdir(parents=True, exist_ok=True)
+    from meridian.lib.state import spawn_store
+
+    spawn_id = spawn_store.start_spawn(
+        tmp_path, chat_id="c1", model="test", agent="test", harness="codex", prompt="retry evidence"
+    )
+    log_dir = tmp_path / "spawns" / spawn_id
     artifacts = LocalStore(root_dir=tmp_path / ".artifacts")
-    spawn_id = SpawnId("r-stale-staging")
     attempt_dir = log_dir / "attempt-1"
     attempt_dir.mkdir(parents=True)
     (attempt_dir / launch_constants.HISTORY_FILENAME).write_text(
@@ -479,6 +489,7 @@ def test_retry_scan_ignores_non_spawn_row_entries(
         current_spawn_id=SpawnId("p1"),
     )
 
+
 @pytest.mark.asyncio
 async def test_execute_with_streaming_succeeds_after_report_watchdog_cleanup(
     tmp_path: Path,
@@ -543,7 +554,6 @@ async def test_execute_with_streaming_succeeds_after_report_watchdog_cleanup(
     assert fake_heartbeat.touches
     report = (runtime_root / "spawns" / str(run.spawn_id) / "report.md").read_text(encoding="utf-8")
     assert "Watchdog fallback completed." in report
-
 
 
 @pytest.mark.asyncio

@@ -143,14 +143,14 @@ recorded worst case was a spawn that wedged for 2h18m before any liveness signal
 
 ## Attempt Evidence Preservation
 
-On retry, `_preserve_attempt_artifacts()` in `streaming_runner.py` moves the
-completed attempt's disk artifacts (`history.jsonl`, `stderr.log`, `report.md`,
-`runner-lifecycle.jsonl`, `last-observed-event.json`) into `attempt-N/` under the
-spawn log directory. The authoritative history is preserved by that move rather
-than copied through the legacy artifact store. The commit point is a single
-`os.replace(staging_dir, attempt_dir)` — crash-atomic via tmp dir staging. After
-the filesystem commit, auxiliary artifact-store copies are made and active-attempt
-keys are deleted so the next attempt starts clean.
+On retry, `_preserve_attempt_artifacts()` in `streaming_runner.py` moves completed
+attempt diagnostics (`stderr.log`, `report.md`, `runner-lifecycle.jsonl`,
+`last-observed-event.json`) into `attempt-N/` under the spawn log directory.
+`history.jsonl` stays canonical and append-only: an attempt-boundary event
+separates retries, and lifecycle extractors read only the current attempt.
+Diagnostic rotation commits with `os.replace(staging_dir, attempt_dir)` before
+auxiliary copies and active diagnostic keys are updated. Never rotate or delete
+the canonical history through this path.
 
 Runner lifecycle and history diagnostics can execute after async boundaries. Their
 parent-creating writes use the published-spawn artifact mutation seam; never append

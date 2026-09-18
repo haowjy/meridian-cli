@@ -109,15 +109,18 @@ harness, label, and optional path.
 
 OpenCode completed-session precedence is:
 
-1. `opencode.db` when a matching `session.id` exists;
-2. native transcript file (`storage/session_diff/...` / legacy JSON) when present;
-3. Meridian spawn `history.jsonl` as fallback/debug/live output.
+1. Indexed canonical transcript (`native-transcript.jsonl` or `history.jsonl`,
+   or the selected ZIP member);
+2. Live/untracked native files (`opencode.db` when a matching `session.id` exists,
+   then `storage/session_diff/...` / legacy JSON).
+
+Display does not attach spawn `history.jsonl` as a second source beside a native
+file. The index names the Meridian transcript; native resolution is only for
+live or untracked harness sessions. Capture still reads the exact native
+identity, never presentation fallbacks.
 
 `parse_session_target()` tries sources in order and stops at the first source with
-usable user/assistant interaction content. This preserves the completed-session
-preference for OpenCode DB while still allowing native-file or spawn-history fallback
-when a DB row exists but contains no conversation rows. Spawn history is a fallback
-source, not the preferred completed OpenCode transcript.
+usable user/assistant interaction content.
 
 ### session_log_render.py — Session Log Rendering
 

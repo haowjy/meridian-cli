@@ -1,5 +1,10 @@
 # state/ — must-do follow-ups
 
+- Versioned ZIP membership/digest recipe and immutable capture descriptor for
+  native-transcript.jsonl (native-transcript-capture.md stage 4). Inventory now
+  accepts a sealed snapshot as the transcript member; old publisher ZIPs keep
+  implicit history.jsonl. Do not invent descriptors for restored old records.
+
 - process_scope_projection.py callers in spawn_service.py and process_cleanup.py:
   move synchronous projection reads off the async event-loop thread with
   `asyncio.to_thread()`. Reads now have a bounded lock wait, but can still block
@@ -11,8 +16,3 @@
   structural — move the identity-transition mechanism into a state-owned
   project_identity module and leave ops with only active-spawn policy + CLI
   rendering. (B3)
-- `session_store.py` / `ops/session_list.py`: route browse's recent-primary page
-  through the official SQLite session index when it lands in 0.4.0. Preserve the
-  current live-first `--limit` contract and keep index ownership out of
-  `cli/browse/`; until then, replay `sessions.jsonl` and enrich only the visible
-  page.

@@ -5,12 +5,14 @@ from __future__ import annotations
 import os
 import stat
 import uuid
-from collections.abc import Generator
+from collections.abc import Generator, Iterator
 from contextlib import AbstractContextManager, contextmanager, suppress
 from pathlib import Path
 from typing import IO, Literal, overload
 
 from meridian.lib.platform import IS_WINDOWS
+
+_ATOMIC_TEMP_SUFFIX = ".tmp"
 
 
 class AtomicReplaceDurabilityError(OSError):
@@ -71,6 +73,16 @@ def _open_unique_temp(path: Path, creation_mode: int) -> tuple[int, Path]:
         except FileExistsError:
             continue
     raise FileExistsError(f"Could not create unique temporary file for {path}")
+
+
+def is_atomic_temp_name(name: str, filename: str) -> bool:
+    """Whether ``name`` is a same-directory staging temp staged for ``filename``."""
+    return name.startswith(f".{filename}.") and name.endswith(_ATOMIC_TEMP_SUFFIX)
+
+
+def iter_atomic_temp_paths(directory: Path, filename: str) -> Iterator[Path]:
+    """Yield stale staging temps for ``filename``; the caller holds the source guard."""
+    return directory.glob(f".{filename}.*{_ATOMIC_TEMP_SUFFIX}")
 
 
 @contextmanager
@@ -140,4 +152,6 @@ __all__ = [
     "atomic_replace",
     "atomic_write_text",
     "fsync_directory",
+    "is_atomic_temp_name",
+    "iter_atomic_temp_paths",
 ]

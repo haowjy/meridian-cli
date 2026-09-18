@@ -1,10 +1,5 @@
 # qa-validated: test-suite-redesign
-"""OpenCode-specific launch tests and primary dry-run test.
-
-Verifies OpenCode projection manifest (system-field), managed path
-routing (resume and fork modes), fallback to black-box when managed
-backend fails, and the top-level launch_primary dry-run contract.
-"""
+"""OpenCode projections, managed launch failures, and non-executing primary plans."""
 
 from __future__ import annotations
 
@@ -52,7 +47,7 @@ def _write_minimal_mars_config(project_root: Path) -> None:
 def _stub_launch_bundle(monkeypatch: pytest.MonkeyPatch) -> None:
     stub_bundle_request_and_resolve(
         monkeypatch,
-        model="gemini-2.5-pro",
+        model="google/gemini-2.5-pro",
         harness=HarnessId.OPENCODE,
     )
 
@@ -108,9 +103,7 @@ def test_run_primary_attach_preserves_startup_failure_cause(
             pass
 
         async def run(self, **_kwargs: object) -> object:
-            raise TimeoutError(
-                "OpenCode session endpoint did not become ready within 12.0s"
-            )
+            raise TimeoutError("OpenCode session endpoint did not become ready within 12.0s")
 
     monkeypatch.setattr(runner_module, "PrimaryAttachLauncher", FailingPrimaryAttachLauncher)
 
@@ -135,10 +128,6 @@ def test_run_primary_attach_preserves_startup_failure_cause(
     assert isinstance(exc_info.value.__cause__, TimeoutError)
 
 
-
-
-
-
 @pytest.mark.slow
 def test_run_harness_process_managed_failure_falls_back_to_black_box(
     monkeypatch: pytest.MonkeyPatch,
@@ -147,7 +136,7 @@ def test_run_harness_process_managed_failure_falls_back_to_black_box(
     """Harness-default OpenCode resume can fall back when the managed backend fails."""
     stub_bundle_request_and_resolve(monkeypatch, model="", harness=HarnessId.OPENCODE)
     monkeypatch.delenv("MERIDIAN_CHAT_ID", raising=False)
-    project_root = tmp_path / "opencode-fallback"
+    project_root = tmp_path / "opencode-fallback-default"
     project_root.mkdir()
     task_cwd = project_root / ".meridian" / "spawns" / "p-parent"
     task_cwd.mkdir(parents=True)
@@ -248,6 +237,42 @@ def test_opencode_streaming_logs_effort_warning_without_failure(
     assert payload["model"] == {"providerID": "google", "id": "gemini-2.5-pro"}
     assert "effort" not in payload
     assert (
-        "OpenCode streaming does not support effort override; ignoring effort=medium"
-        in caplog.text
+        "OpenCode streaming does not support effort override; ignoring effort=medium" in caplog.text
     )
+
+
+def test_managed_primary_dryrun_has_one_truthful_structured_plan(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from meridian.cli.primary_launch import PrimaryLaunchOutput
+    from meridian.lib.launch import launch_primary
+    from meridian.lib.launch.types import LaunchRequest
+
+    requests = stub_bundle_request_and_resolve(
+        monkeypatch, model="google/gemini-2.5-pro", harness=HarnessId.OPENCODE
+    )
+    _write_minimal_mars_config(tmp_path)
+    result = launch_primary(
+        project_root=tmp_path,
+        request=LaunchRequest(model="google/gemini-2.5-pro", harness="opencode", dry_run=True),
+        harness_registry=get_default_harness_registry(),
+    )
+    from meridian.lib.launch.bundle_adapter import _build_bundle_command
+
+    assert requests and requests[0].no_refresh_models
+    assert "--no-refresh-models" in _build_bundle_command(requests[0])
+    assert result.command == ()
+    plan = result.launch_plan
+    assert plan is not None
+    assert plan.backend_command[:2] == ("opencode", "serve")
+    assert plan.attach_command[:2] == ("opencode", "attach")
+    assert plan.bootstrap_payload["model"] == {"id": "gemini-2.5-pro", "providerID": "google"}
+    assert plan.requested_model == plan.model == "google/gemini-2.5-pro"
+    assert plan.native_observations == "unavailable (dry-run)"
+    output = PrimaryLaunchOutput(
+        message="dry-run", exit_code=0, command=result.command, launch_plan=plan
+    )
+    assert output.model_dump(mode="json")["command"] == []
+    assert "opencode serve" in output.format_text()
+    assert "GET /config/providers" in output.format_text()
+    assert "Native configuration and actual message model are unavailable" in output.format_text()

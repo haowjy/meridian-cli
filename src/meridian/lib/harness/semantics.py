@@ -19,6 +19,13 @@ if TYPE_CHECKING:
 ActivityState = Literal["turn_active", "idle"]
 MERIDIAN_CONNECTION_CLOSED_EVENT = "meridian/error/connectionClosed"
 
+# Pi assistant-message stopReason vocabulary shared by the live terminal resolver
+# and post-stop capture qualification. end_turn maps to "stop"; "length" is Pi's
+# spelling of a max_tokens-truncated response, which is a truncated observation
+# rather than a clean turn end; "error" covers refusal and sensitive-content stops.
+PI_CANCELLED_STOP_REASONS = frozenset({"abort", "aborted", "cancel", "cancelled", "canceled"})
+PI_INCOMPLETE_STOP_REASONS = PI_CANCELLED_STOP_REASONS | {"error", "length"}
+
 
 class TerminalOutcomeCause(StrEnum):
     """Typed cause used only when completion policy may refine an outcome."""
@@ -182,6 +189,8 @@ def normalize_event(
 
 __all__ = [
     "MERIDIAN_CONNECTION_CLOSED_EVENT",
+    "PI_CANCELLED_STOP_REASONS",
+    "PI_INCOMPLETE_STOP_REASONS",
     "ActivityState",
     "EventSemantics",
     "HarnessSemantics",

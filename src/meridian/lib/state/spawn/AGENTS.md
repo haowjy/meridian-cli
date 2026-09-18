@@ -30,6 +30,11 @@ transition, and atomically persists it. Its discriminated result is exactly one 
 - `Declined(snapshot, reason)`
 - `Missing`
 
+`history_id` is portable record identity, not a runtime-local spawn/chat alias.
+Creation assigns it before publication; the locked repository alone advances
+`state_revision`. Mutators preserve both fields. Older unidentified rows remain
+readable without writes and acquire identity on their next accepted mutation.
+
 A mutator returns the next `StoredSpawnState` or `Decline(reason)`. Applicability is
 therefore decided against the locked snapshot, never by an unlocked preflight read.
 

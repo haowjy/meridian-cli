@@ -865,6 +865,11 @@ def _normalize_toml_payload(
         if key == "project":
             # Identity is read by the precedence-exempt minimal loader.
             continue
+        if key == "history":
+            normalized["history"] = HistoryConfig.model_validate(raw_value).model_dump(
+                exclude_unset=True
+            )
+            continue
         if key == "output":
             normalized["output"] = _merge_nested_dicts(
                 cast("dict[str, object]", normalized.get("output", {})),
@@ -1285,6 +1290,66 @@ class HarnessConfig(BaseModel):
     pi: PiHarnessProfileConfig = Field(default_factory=PiHarnessProfileConfig)
 
 
+class HistoryArchiveConfig(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    automatic: Annotated[
+        bool,
+        config_field(
+            "history.archive.automatic",
+            value_kind="bool",
+            file_aliases=(file_alias(("history", "archive"), "automatic"),),
+            env_vars=("MERIDIAN_HISTORY_ARCHIVE_AUTOMATIC",),
+        ),
+    ] = False
+    after_days: Annotated[
+        int,
+        config_field(
+            "history.archive.after_days",
+            value_kind="int",
+            file_aliases=(file_alias(("history", "archive"), "after_days"),),
+            env_vars=("MERIDIAN_HISTORY_ARCHIVE_AFTER_DAYS",),
+        ),
+    ] = Field(default=30, ge=0)
+    interval_hours: Annotated[
+        int,
+        config_field(
+            "history.archive.interval_hours",
+            value_kind="int",
+            file_aliases=(file_alias(("history", "archive"), "interval_hours"),),
+        ),
+    ] = Field(default=24, ge=0)
+    max_records: Annotated[
+        int,
+        config_field(
+            "history.archive.max_records",
+            value_kind="int",
+            file_aliases=(file_alias(("history", "archive"), "max_records"),),
+        ),
+    ] = Field(default=256, ge=1, le=100_000)
+    max_uncompressed_bytes: Annotated[
+        int,
+        config_field(
+            "history.archive.max_uncompressed_bytes",
+            value_kind="int",
+            file_aliases=(file_alias(("history", "archive"), "max_uncompressed_bytes"),),
+        ),
+    ] = Field(default=1024**3, ge=1, le=1024**4)
+    destination: Annotated[
+        str | None,
+        config_field(
+            "history.archive.destination",
+            value_kind="str",
+            file_aliases=(file_alias(("history", "archive"), "destination"),),
+            env_vars=("MERIDIAN_HISTORY_ARCHIVE_DESTINATION",),
+        ),
+    ] = None
+
+
+class HistoryConfig(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    archive: HistoryArchiveConfig = Field(default_factory=HistoryArchiveConfig)
+
+
 class MeridianConfig(BaseSettings):
     """Resolved operational configuration for meridian."""
 
@@ -1436,6 +1501,7 @@ class MeridianConfig(BaseSettings):
                 f"expected int >= 0, got {value!r}."
             )
         return value
+
     pi_task_ping_interval_seconds: Annotated[
         float | None,
         config_field(
@@ -1476,6 +1542,7 @@ class MeridianConfig(BaseSettings):
     ] = ("claude",)
     harness: HarnessConfig = Field(default_factory=HarnessConfig)
     primary: PrimaryConfig = Field(default_factory=PrimaryConfig)
+    history: HistoryConfig = Field(default_factory=HistoryConfig)
     output: OutputConfig = Field(default_factory=OutputConfig)
     state: StateConfig = Field(default_factory=StateConfig)
     work: WorkConfig = Field(default_factory=WorkConfig)

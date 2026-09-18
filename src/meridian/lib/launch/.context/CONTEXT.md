@@ -505,3 +505,22 @@ exception paths. Do not replicate this logic inline.
 
 - `../../ops/.context/CONTEXT.md` — how `ops/spawn/` drives this layer
 - `../../harness/` — adapters this layer calls into for `project_content()`, `preflight()`, `build_launch_argv()`
+
+### Dry-run model resolution
+
+Primary/launch preparation forwards dry-run to the existing Mars bundle and
+static alias-list `--no-refresh-models` options, including snapshot replay.
+OpenCode catalog-only routing must not run native availability
+probes or materialize a managed backend/session just to describe a launch. Normal
+execution retains its live availability behavior. This does not promise a wholly
+write-free CLI: telemetry/root/static-cache setup may still write local files.
+OpenCode inherited config must remain a JSON object through workspace projection;
+malformed input is rejected, not silently replaced with an empty configuration
+before adapter validation.
+
+OpenCode scalar permission actions expand to wildcard rules before workspace
+entries are added. Preserve native rule order: last-match semantics make sorted
+JSON serialization a permission change. Append projected root patterns within
+the external-directory rule map without reordering inherited top-level rules;
+a later native catch-all can still deny them. Do not move the whole existing
+external-directory rule past a denial or invent meanings for malformed shapes.

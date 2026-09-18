@@ -14,6 +14,7 @@ from meridian.lib.launch.constants import HISTORY_FILENAME, OUTPUT_FILENAME
 from meridian.lib.ops.reference import resolve_spawn_ref
 from meridian.lib.ops.runtime import resolve_runtime_root_for_read
 from meridian.lib.state import session_identity, spawn_store
+from meridian.lib.state.history_index import indexed_spawn_scan
 from meridian.lib.state.liveness import is_process_alive
 from meridian.lib.state.paths import resolve_spawn_history_path
 from meridian.lib.state.reaper import (
@@ -176,7 +177,7 @@ def _select_latest_spawn_id(
     spawns = reconcile_spawns(
         project_root,
         resolved_runtime_root,
-        spawn_store.list_spawns(resolved_runtime_root),
+        indexed_spawn_scan(resolved_runtime_root),
     ).records
     if statuses is not None:
         wanted = set(statuses)
