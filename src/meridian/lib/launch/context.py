@@ -25,6 +25,7 @@ from meridian.lib.config.settings import (
     PiHarnessProfileConfig,
     load_config,
     resolve_claude_allow_builtin_agents_for_launch,
+    resolve_opencode_version_for_launch,
     resolve_pi_harness_profile_for_launch,
 )
 from meridian.lib.config.workspace import get_projectable_roots
@@ -2058,12 +2059,21 @@ def bind_launch_context(
             projected_spec=spec,
         )
 
+    launch_env_overrides: dict[str, str] = {}
+    if harness.id == HarnessId.OPENCODE:
+        launch_env_overrides["MERIDIAN_HARNESS_OPENCODE_VERSION"] = (
+            resolve_opencode_version_for_launch(
+                config_snapshot=runtime.config_snapshot,
+                project_root=project_paths.project_root,
+            )
+        )
     child_context_env = build_child_runtime_env_overrides(
         project_paths=project_paths,
         runtime_root=runtime_root,
         child_spawn_id=bindings.spawn_id,
         work_id=requested_work_id,
         increment_depth=not is_primary_launch,
+        additional_overrides=launch_env_overrides or None,
     )
     if requested_work_id is None and _suppresses_ambient_work(resolved_request):
         child_context_env.pop("MERIDIAN_ACTIVE_WORK_ID", None)
