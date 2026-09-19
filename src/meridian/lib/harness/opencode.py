@@ -41,7 +41,7 @@ from meridian.lib.harness.bundle import (
     register_harness_bundle,
 )
 from meridian.lib.harness.connections.base import RawHarnessEvent
-from meridian.lib.harness.connections.opencode_http import OpenCodeConnection
+from meridian.lib.harness.connections.opencode_connection import OpenCodeConnection
 from meridian.lib.harness.extractors.opencode import OPENCODE_EXTRACTOR
 from meridian.lib.harness.launch_types import ManagedPrimaryPreview, SessionSeed
 from meridian.lib.harness.opencode_report import (
@@ -592,6 +592,13 @@ class OpenCodeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
 def _resolve_opencode_terminal(event: RawHarnessEvent) -> TerminalEventOutcome | None:
     if event.event_type == MERIDIAN_CONNECTION_CLOSED_EVENT:
         return connection_closed_outcome(event)
+    if event.event_type == "session.execution.failed":
+        detail = event.payload.get("error") or event.payload.get("message")
+        return TerminalEventOutcome(
+            status=SpawnStatus.FAILED,
+            exit_code=1,
+            error=str(detail) if detail else "opencode_session_failed",
+        )
     if event.event_type != "session.error":
         return None
     properties = event.payload.get("properties")
@@ -607,6 +614,30 @@ def _resolve_opencode_terminal(event: RawHarnessEvent) -> TerminalEventOutcome |
     )
 
 
+_OPENCODE_V2_ACTIVITY_EVENTS: tuple[str, ...] = (
+    "session.text.started",
+    "session.text.delta",
+    "session.text.ended",
+    "session.reasoning.started",
+    "session.reasoning.delta",
+    "session.reasoning.ended",
+    "session.step.started",
+    "session.step.ended",
+)
+
+# OpenCode 2 emits ``session.execution.*`` instead of ``session.idle``; the
+# version dispatcher only routes 2.x streams here, so both tables can coexist.
+_OPENCODE_V2_EVENT_SEMANTICS: dict[str, EventSemantics] = {
+    **{name: EventSemantics(activity="turn_active") for name in _OPENCODE_V2_ACTIVITY_EVENTS},
+    "session.execution.succeeded": EventSemantics(
+        activity="idle",
+        clears_signal=True,
+        terminal=TerminalEventOutcome(status=SpawnStatus.SUCCEEDED, exit_code=0),
+    ),
+    "session.execution.failed": EventSemantics(activity="idle", clears_signal=True),
+    "session.execution.interrupted": EventSemantics(activity="idle", clears_signal=True),
+}
+
 OPENCODE_SEMANTICS = HarnessSemantics(
     events={
         "agent_message_chunk": EventSemantics(activity="turn_active"),
@@ -619,10 +650,12 @@ OPENCODE_SEMANTICS = HarnessSemantics(
             terminal=TerminalEventOutcome(status=SpawnStatus.SUCCEEDED, exit_code=0),
         ),
         "session.error": EventSemantics(clears_signal=True),
+        **_OPENCODE_V2_EVENT_SEMANTICS,
         MERIDIAN_CONNECTION_CLOSED_EVENT: EventSemantics(),
     },
     payload_resolvers={
         "session.error": _resolve_opencode_terminal,
+        "session.execution.failed": _resolve_opencode_terminal,
         MERIDIAN_CONNECTION_CLOSED_EVENT: _resolve_opencode_terminal,
     },
     scoped_events=frozenset(
@@ -633,6 +666,10 @@ OPENCODE_SEMANTICS = HarnessSemantics(
             "tool_call_update",
             "session.idle",
             "session.error",
+            *_OPENCODE_V2_ACTIVITY_EVENTS,
+            "session.execution.succeeded",
+            "session.execution.failed",
+            "session.execution.interrupted",
         }
     ),
     scope_id_resolver=extract_opencode_session_id,

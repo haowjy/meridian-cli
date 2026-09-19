@@ -113,8 +113,8 @@ def project_opencode_spec_to_session_payload(
     return cast("dict[str, object]", projected)
 
 
-class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
-    """Bidirectional OpenCode connection over the OpenCode HTTP API."""
+class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
+    """Bidirectional OpenCode 1.x connection over the legacy JSON HTTP API."""
 
     _CAPABILITIES: ClassVar[ConnectionCapabilities] = ConnectionCapabilities(
         mid_turn_injection="http_post",
@@ -1505,3 +1505,9 @@ def _opencode_startup_failure_hint(stderr_text: str, env: Mapping[str, str]) -> 
         "OpenCode cannot create its data directory. Check permissions for ~/.local/share/opencode, "
         "or set XDG_DATA_HOME to a writable directory."
     )
+
+
+# Compatibility alias: existing tests and callers import the 1.x transport as
+# ``OpenCodeConnection``. The registered connection class is the version
+# dispatcher in ``opencode_connection.py``.
+OpenCodeConnection = OpenCodeV1Connection
