@@ -472,7 +472,10 @@ class OpenCodeV2Connection(OpenCodeV1Connection):
         )
         if not isinstance(idle, (int, float)) or isinstance(idle, bool):
             return None
-        if float(idle) < (self._initial_prompt_posted_at * 1000.0) - 1000.0:
+        # Strict: the turn must have ended at/after our prompt was posted. A
+        # tolerance window lets a prior turn that ended within it on a fast
+        # resume be mistaken for this turn and terminate the spawn early.
+        if float(idle) < self._initial_prompt_posted_at * 1000.0:
             return None
         event_type = _V2_OUTCOME_EVENTS.get(outcome.strip().lower())
         if event_type is None:
