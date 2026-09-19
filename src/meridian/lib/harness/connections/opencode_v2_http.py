@@ -30,6 +30,7 @@ from meridian.lib.harness.bundle import project_managed_primary_backend_command
 from meridian.lib.harness.connections.base import (
     ConnectionCapabilities,
     ConnectionConfig,
+    ObserverEndpoint,
     RawHarnessEvent,
 )
 from meridian.lib.harness.connections.managed_backend import (
@@ -132,6 +133,24 @@ class OpenCodeV2Connection(OpenCodeV1Connection):
         self._server_password: str | None = None
         self._stdout_drain_task: asyncio.Task[None] | None = None
         self._initial_prompt_posted_at: float | None = None
+
+    @property
+    def observer_endpoint(self) -> ObserverEndpoint | None:
+        """V2 attaches with a bare TUI pointed at ``--server`` and the printed password.
+
+        2.x dropped the ``attach`` subcommand; the TUI (or ``mini``) connects to
+        an explicit server and authenticates with ``OPENCODE_PASSWORD`` in its
+        environment (URL userinfo and ``--password`` are not supported). The
+        password is process-local and only flows into the TUI child env.
+        """
+
+        endpoint = super().observer_endpoint
+        if endpoint is None:
+            return None
+        client_env: dict[str, str] = {}
+        if self._server_password:
+            client_env["OPENCODE_PASSWORD"] = self._server_password
+        return replace(endpoint, attach_style="server", client_env=client_env)
 
     async def _launch_process(
         self, config: ConnectionConfig, spec: ResolvedLaunchSpec

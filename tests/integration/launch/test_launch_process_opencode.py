@@ -248,6 +248,7 @@ def test_managed_primary_dryrun_has_one_truthful_structured_plan(
     from meridian.lib.launch import launch_primary
     from meridian.lib.launch.types import LaunchRequest
 
+    monkeypatch.setenv("MERIDIAN_HARNESS_OPENCODE_VERSION", "v1")
     requests = stub_bundle_request_and_resolve(
         monkeypatch, model="google/gemini-2.5-pro", harness=HarnessId.OPENCODE
     )

@@ -195,7 +195,13 @@ race (the OS may reassign the port before `codex app-server` binds it). If that 
 
 Codex exposes a WebSocket URL (`ws://`); OpenCode exposes an HTTP URL (`http://`).
 The `ObserverEndpoint` dataclass captures which transport and URL so `passthrough/` can
-build the correct TUI attach command without knowing connection internals.
+build the correct TUI attach command without knowing connection internals. It also
+carries `attach_style` (the client argv dialect: `"attach"` subcommand vs bare TUI
+`--server`) and `client_env` (an auth env overlay the attach client needs, e.g. V2's
+`OPENCODE_PASSWORD`). The launcher merges `client_env` into the TUI subprocess
+environment only; it is never persisted. See
+[passthrough/.context/CONTEXT.md](../../passthrough/.context/CONTEXT.md) for the
+OpenCode V1/V2 command shapes.
 
 ### Pi: JSON-RPC Transport vs Quiescence State
 

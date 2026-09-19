@@ -7,6 +7,7 @@ The Meridian adapter targets current opencode.ai CLI releases.
 import logging
 import re
 import sqlite3
+from collections.abc import Mapping
 from datetime import datetime
 from pathlib import Path
 from typing import ClassVar, cast
@@ -44,6 +45,7 @@ from meridian.lib.harness.connections.base import RawHarnessEvent
 from meridian.lib.harness.connections.opencode_connection import OpenCodeConnection
 from meridian.lib.harness.extractors.opencode import OPENCODE_EXTRACTOR
 from meridian.lib.harness.launch_types import ManagedPrimaryPreview, SessionSeed
+from meridian.lib.harness.opencode_backend import resolve_opencode_version
 from meridian.lib.harness.opencode_report import (
     extract_opencode_report,
     extract_opencode_session_id,
@@ -53,7 +55,10 @@ from meridian.lib.harness.opencode_storage import (
     resolve_opencode_home_dir,
     resolve_opencode_session_file,
 )
-from meridian.lib.harness.passthrough.opencode import build_opencode_attach_command
+from meridian.lib.harness.passthrough.opencode import (
+    build_opencode_attach_command,
+    build_opencode_server_attach_command,
+)
 from meridian.lib.harness.projections.project_opencode_streaming import (
     opencode_model_parts,
     project_opencode_spec_to_serve_command,
@@ -268,33 +273,55 @@ def project_opencode_spec_to_session_payload_for_project(
 
 
 def project_opencode_primary_preview(
-    spec: ResolvedLaunchSpec, *, project_root: Path
+    spec: ResolvedLaunchSpec,
+    *,
+    project_root: Path,
+    env: Mapping[str, str] | None = None,
 ) -> ManagedPrimaryPreview:
+    version = resolve_opencode_version(
+        (env or {}).get("MERIDIAN_HARNESS_OPENCODE_VERSION"),
+        binary="opencode",
+    )
     backend = project_opencode_spec_to_serve_command(spec, host="127.0.0.1", port=0)
     backend[backend.index("--port") + 1] = "<port>"
     continuing = bool(spec.continue_session_id)
-    steps = (
-        ("Preserve the existing native session's committed agent/model.",)
-        if continuing
-        else (
+    if version == "v2":
+        probe_step = (
+            "GET /api/config, /api/provider and /api/agent; "
+            "apply the requested model via POST /api/session/{id}/model.",
+        )
+        attach_command = build_opencode_server_attach_command(
+            spec.continue_session_id or "<session>", "http://127.0.0.1:<port>"
+        )
+        bootstrap_path = (
+            f"/api/session/{spec.continue_session_id}" if continuing else "/api/session"
+        )
+    else:
+        probe_step = (
             "GET /config/providers, /config and /agent; "
             "validate availability and effective defaults.",
             "If its model conflicts, stop the owned backend and restart once "
             "with a launch-local agent override, then repeat all three inspections.",
         )
+        attach_command = build_opencode_attach_command(
+            spec.continue_session_id or "<session>", "http://127.0.0.1:<port>"
+        )
+        bootstrap_path = f"/session/{spec.continue_session_id}" if continuing else "/session"
+    steps = (
+        ("Preserve the existing native session's committed agent/model.",)
+        if continuing
+        else (*probe_step,)
         if spec.model
         else ("Use native model defaults.",)
     )
     return ManagedPrimaryPreview(
         backend_command=tuple(backend),
         bootstrap_method="GET" if continuing else "POST",
-        bootstrap_path=f"/session/{spec.continue_session_id}" if continuing else "/session",
+        bootstrap_path=bootstrap_path,
         bootstrap_payload={}
         if continuing
         else project_opencode_spec_to_session_payload_for_project(spec, project_root=project_root),
-        attach_command=build_opencode_attach_command(
-            spec.continue_session_id or "<session>", "http://127.0.0.1:<port>"
-        ),
+        attach_command=attach_command,
         steps=(
             *steps,
             "Preserve inherited configuration; add private system instructions when supplied.",

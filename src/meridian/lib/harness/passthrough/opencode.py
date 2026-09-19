@@ -1,4 +1,16 @@
-"""OpenCode TUI passthrough configuration for managed primary sessions."""
+"""OpenCode TUI passthrough configuration for managed primary sessions.
+
+V1 and V2 attach differently:
+
+- V1 (frozen): ``opencode attach <http_url> --session <id>``.
+- V2 (2.0.6): no ``attach`` subcommand exists; the bare TUI connects to an
+  explicit server with ``opencode --server <http_url> --session <id>`` and
+  authenticates via ``OPENCODE_PASSWORD`` in its environment. The password is
+  carried on :class:`ObserverEndpoint.client_env` and merged into the TUI child
+  env by the attach launcher.
+
+The connection selects the dialect via :attr:`ObserverEndpoint.attach_style`.
+"""
 
 from __future__ import annotations
 
@@ -6,17 +18,21 @@ from pathlib import Path
 from typing import Any
 
 from meridian.lib.core.types import HarnessId, SpawnId
-from meridian.lib.harness.connections.base import ConnectionConfig, HarnessConnection
+from meridian.lib.harness.connections.base import (
+    ConnectionConfig,
+    HarnessConnection,
+    ObserverEndpoint,
+)
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 
 from .base import PassthroughError, TuiCommandBuilder
 
 
-def _require_observer_endpoint_url(
+def _require_observer_endpoint(
     connection: HarnessConnection[Any],
     *,
     transport: str,
-) -> str:
+) -> ObserverEndpoint:
     endpoint = connection.observer_endpoint
     if endpoint is None:
         raise PassthroughError(
@@ -27,16 +43,29 @@ def _require_observer_endpoint_url(
             "Managed backend exposed unexpected observer transport "
             f"'{endpoint.transport}' (expected '{transport}')"
         )
-    return endpoint.url
+    return endpoint
 
 
 def build_opencode_attach_command(
     session_id: str,
     http_url: str,
 ) -> tuple[str, ...]:
-    """Build `opencode attach {http_url} --session {session_id}`."""
+    """Build the V1 `opencode attach {http_url} --session {session_id}` command."""
 
     return ("opencode", "attach", http_url, "--session", session_id)
+
+
+def build_opencode_server_attach_command(
+    session_id: str,
+    http_url: str,
+) -> tuple[str, ...]:
+    """Build the V2 `opencode --server {http_url} --session {session_id}` command.
+
+    V2 dropped the ``attach`` subcommand; the bare TUI is the attach surface.
+    Authentication is supplied separately via ``OPENCODE_PASSWORD``.
+    """
+
+    return ("opencode", "--server", http_url, "--session", session_id)
 
 
 class OpenCodePassthrough:
@@ -67,10 +96,26 @@ class OpenCodePassthrough:
         spec: ResolvedLaunchSpec,
     ) -> TuiCommandBuilder:
         _ = spec
-        return lambda session_id: build_opencode_attach_command(
-            session_id=session_id,
-            http_url=_require_observer_endpoint_url(connection, transport="http"),
-        )
+
+        def _build(session_id: str) -> tuple[str, ...]:
+            # Resolve at invocation time: the observer endpoint only exists once
+            # the managed backend has started.
+            endpoint = _require_observer_endpoint(connection, transport="http")
+            if endpoint.attach_style == "server":
+                return build_opencode_server_attach_command(
+                    session_id=session_id,
+                    http_url=endpoint.url,
+                )
+            return build_opencode_attach_command(
+                session_id=session_id,
+                http_url=endpoint.url,
+            )
+
+        return _build
 
 
-__all__ = ["OpenCodePassthrough"]
+__all__ = [
+    "OpenCodePassthrough",
+    "build_opencode_attach_command",
+    "build_opencode_server_attach_command",
+]
