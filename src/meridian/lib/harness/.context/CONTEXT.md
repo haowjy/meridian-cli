@@ -317,6 +317,44 @@ TUI, matching V1's dropped override. The projection functions live in
 `projections/project_opencode_streaming.py`; the server's own V1→V2 translation
 does not handle flat scoped keys correctly, which is why Meridian compiles them.
 
+### OpenCode: Version Dispatcher, V2 Transport, Storage
+
+`opencode_backend.py` owns version resolution. `[harness.opencode] version`
+(`auto`/`v1`/`v2`, default `auto`) is a first-class config field; `auto` probes
+`opencode --version` and prefers V2, falling back to `DEFAULT_OPENCODE_VERSION`
+when the binary cannot be probed. `resolve_opencode_version()` never downgrades
+an explicit `v2`. The resolved preference is projected into the OpenCode child
+env as `MERIDIAN_HARNESS_OPENCODE_VERSION` at launch bind (see
+[launch context](../../launch/.context/CONTEXT.md)), so YAML config reaches the
+connection and dry-run preview instead of being silently ignored.
+
+`connections/opencode_connection.py` is the single registered OpenCode transport.
+At `start()` it resolves the version and delegates to `OpenCodeV2Connection`
+(`opencode_v2_http.py`) or the frozen `OpenCodeV1Connection`
+(`opencode_http.py`). The V2 transport subclasses V1 to reuse process lifecycle,
+`BackendLivenessPolicy`, retry classification, and SSE framing, overriding only
+the API surface: `/api` session routes, basic auth
+(`opencode:<password>` scraped from server stdout), `POST /api/session/{id}/model`
+for resume model switch, and event-envelope normalization where
+`session.execution.{succeeded,failed,interrupted}` are terminal. Shared
+infrastructure (`connections/base.py`, `managed_backend.py`, liveness, resident
+backend) is version-independent and must not fork.
+
+Storage selection is by schema, never by the installed binary.
+`detect_opencode_db_schema()` treats `session_v2` presence as V2 and `session` as
+V1; a migrated DB keeps both, and V2 is authoritative because V2 copies every
+session. `iter_opencode_db_session_events()` dispatches accordingly.
+`OpenCodeV2StorageTranscriptProvider`/`interpret_opencode_v2_record()` read
+`session_v2` + `session_message`, and `read_last_model()` reads
+`session_v2.model` with a V1 fallback. Native capture labels sessions
+`opencode.transcript.v1` or `opencode.transcript.v2` from the same detection and
+streams through the dispatcher.
+
+**OpenCode 1.x is legacy and frozen.** V1 stays registered as a fallback only;
+fixing it is out of scope unless trivial. New work targets V2. Because V2 migrates
+a V1 DB in place and keeps the V1 tables, a V1 *fallback* after a V2-first install
+needs a separate data root (`OPENCODE_DB`/`XDG_DATA_HOME`).
+
 ### Cursor: Subprocess-Only, Read-Only stdout
 
 Cursor is a single-turn, subprocess-only harness. `cursor agent <prompt>` streams

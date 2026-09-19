@@ -8,13 +8,17 @@ from __future__ import annotations
 
 import hashlib
 import json
+import sqlite3
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal, Protocol, cast
 
 from meridian.lib.harness.capture_qualify import CaptureObserver, observer_for
-from meridian.lib.harness.opencode_transcript import iter_opencode_db_events
+from meridian.lib.harness.opencode_transcript import (
+    detect_opencode_db_schema,
+    iter_opencode_db_session_events,
+)
 from meridian.lib.state.event_store import utc_now_iso
 from meridian.lib.state.native_snapshot import (
     SnapshotObservation,
@@ -39,6 +43,7 @@ _DIALECT = {
     "codex": "codex.rollout",
     "opencode": "opencode.transcript.v1",
 }
+_OPENCODE_V2_DIALECT = "opencode.transcript.v2"
 _SCOPE = "native-session"
 
 
@@ -124,7 +129,9 @@ class NativeCapture:
         self._qualify(observer)
 
     def _opencode_records(self, observer: CaptureObserver) -> Iterator[SnapshotRecord]:
-        for event in iter_opencode_db_events(session_id=self.session_id, db_path=self.path):
+        for event in iter_opencode_db_session_events(
+            session_id=self.session_id, db_path=self.path
+        ):
             observer.observe(event)
             raw = (
                 json.dumps(
@@ -156,6 +163,8 @@ def native_capture(
 ) -> NativeCapture:
     normalized = (harness or "").strip().lower()
     dialect = _DIALECT.get(normalized)
+    if dialect is not None and kind == "opencode_db" and _opencode_db_is_v2(path):
+        dialect = _OPENCODE_V2_DIALECT
     capture = NativeCapture(
         source=session_id,
         dialect=dialect or "unsupported",
@@ -174,6 +183,13 @@ def native_capture(
     elif kind == "native_file" and path is None:
         raise FileNotFoundError(f"Session file for '{session_id}' not found")
     return capture
+
+
+def _opencode_db_is_v2(path: Path | None) -> bool:
+    try:
+        return detect_opencode_db_schema(path) == "sqlite_v2"
+    except (OSError, sqlite3.Error):
+        return False
 
 
 def _revision(path: Path) -> tuple[int, int, int, int]:

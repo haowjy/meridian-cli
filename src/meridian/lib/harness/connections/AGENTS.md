@@ -17,12 +17,19 @@ Transports differ at the wire level:
 - **Codex** (`codex_ws.py`): real WebSocket to a managed `codex app-server`, JSON-RPC 2.0.
   Codex's `requestApproval` and `requestUserInput` messages are dispatched to
   either `AutoAcceptHandler` (spawn paths) or `InteractiveHandler` (managed-primary attach).
-- **OpenCode** (`opencode_http.py`): HTTP+SSE to managed `opencode serve`.
-  V1 creation uses `{providerID, id}`; a fresh session's initial prompt carries
-  `{providerID, modelID}`. On V1 resume the native committed model is retained and
-  an explicit model is rejected with `HarnessCapabilityMismatch` (V2 applies it via
-  `POST /api/session/{id}/model`). Follow-up messages omit the model to retain
-  native state. Rejected/timed-out creation never retries an empty payload.
+- **OpenCode** (`opencode_connection.py` dispatcher → `opencode_http.py` V1 /
+  `opencode_v2_http.py` V2): one registered class resolves the backend version at
+  `start()` from `MERIDIAN_HARNESS_OPENCODE_VERSION` (projected from
+  `[harness.opencode] version` at launch bind) or probes `opencode --version`, then
+  delegates. Both transports manage `opencode serve` and share process lifecycle,
+  liveness, and SSE framing; V2 overrides the `/api` session surface, basic auth,
+  event envelopes, and model switch. 1.x is legacy/frozen. V1 creation uses
+  `{providerID, id}`; a fresh session's initial prompt carries `{providerID, modelID}`.
+  On V1 resume the native committed model is retained and an explicit model is
+  rejected with `HarnessCapabilityMismatch` (V2 applies it via `POST /api/session/{id}/model`).
+  Follow-up messages omit the model to retain native state. Rejected/timed-out
+  creation never retries an empty payload. V2 terminal signals are
+  `session.execution.{succeeded,failed,interrupted}` (V1 uses `session.idle`/`session.error`).
 - **Cursor/Pi**: narrower spawned-session transports; no resident backend seam.
 
 ## Key Rules

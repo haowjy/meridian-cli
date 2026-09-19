@@ -277,3 +277,37 @@ def test_managed_primary_dryrun_has_one_truthful_structured_plan(
     assert "opencode serve" in output.format_text()
     assert "GET /config/providers" in output.format_text()
     assert "Native configuration and actual message model are unavailable" in output.format_text()
+
+
+def test_project_config_opencode_version_selects_v2_without_env(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from meridian.lib.harness.connections.base import ConnectionConfig
+    from meridian.lib.harness.connections.opencode_connection import OpenCodeConnection
+    from meridian.lib.harness.connections.opencode_v2_http import OpenCodeV2Connection
+
+    monkeypatch.delenv("MERIDIAN_HARNESS_OPENCODE_VERSION", raising=False)
+    (tmp_path / "meridian.toml").write_text(
+        '[project]\nid = "opencode-version-config"\n\n'
+        "[harness.opencode]\nversion = \"v2\"\n",
+        encoding="utf-8",
+    )
+    launch_context, _ = _build_primary_launch_context(
+        project_root=tmp_path,
+        harness_id=HarnessId.OPENCODE,
+        model="google/gemini-2.5-pro",
+    )
+    final_env = launch_context.binding.environment.final_env
+    assert final_env["MERIDIAN_HARNESS_OPENCODE_VERSION"] == "v2"
+
+    connection = OpenCodeConnection()
+    selected = connection._select(
+        ConnectionConfig(
+            spawn_id="p-opencode-v2-config",
+            harness_id=HarnessId.OPENCODE,
+            prompt="hello",
+            control_root=tmp_path,
+            child_env=dict(final_env),
+        )
+    )
+    assert isinstance(selected, OpenCodeV2Connection)

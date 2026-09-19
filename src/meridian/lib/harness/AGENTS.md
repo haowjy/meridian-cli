@@ -6,9 +6,18 @@ domain types. `ops/` and `launch/` work with domain types — harness specifics 
 here.
 
 The Meridian OpenCode adapter targets current opencode.ai CLI releases.
-`opencode_backend.py` is the version seam: it resolves V1 vs V2 (config
-`[harness.opencode] version`, default `auto`, probing `opencode --version`) and
-exposes per-version capabilities. V1 is frozen; new work targets V2.
+`opencode_backend.py` is the version seam: it resolves V1 vs V2 from
+`[harness.opencode] version` (`auto`/`v1`/`v2`, default `auto`; `auto` probes
+`opencode --version` and prefers V2) and exposes per-version capabilities.
+`connections/opencode_connection.py` is the dispatcher: one registered transport
+resolves the version at `start()` and delegates to the V2 session + `/api/event`
+transport (`opencode_v2_http.py`) or the frozen V1 JSON + SSE transport
+(`opencode_http.py`). The launch bind seam projects the resolved preference into
+`MERIDIAN_HARNESS_OPENCODE_VERSION` so connection, preview, and capture agree
+instead of each probing independently. Storage and transcript reads select schema
+by table presence (`session_v2` → V2, `session` → V1) in `opencode_transcript.py`,
+never by the installed binary. **OpenCode 1.x is legacy and frozen** — registered
+as fallback, no investment; new work targets V2.
 
 ## Translation Pipeline
 
@@ -120,7 +129,8 @@ parent signals, or supply the parent report.
   only. See [.context/session-transcripts.md](.context/session-transcripts.md) for the
   normalization table and provider selection rules.
 - `transcript_capture.py` — streams and hashes native journals for sealed snapshot
-  publication. Does not own dialect completeness.
+  publication. Labels OpenCode captures `opencode.transcript.v1`/`.v2` by detected
+  DB schema and reads through the version dispatcher. Does not own dialect completeness.
 - `capture_qualify.py` — per-harness `CaptureObserver` (`observe` / `incomplete_reason`).
   New dialect = one observer + `observer_for` entry, not a patch to `NativeCapture`.
 

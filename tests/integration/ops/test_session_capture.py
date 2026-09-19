@@ -794,3 +794,63 @@ def test_completed_opencode_response_publishes(tmp_path: Path, monkeypatch):
     )
     materialize_native_history(project, root, key)
     _assert_sealed_snapshot(_snapshot_path(root, key), contains="final answer")
+
+
+def _opencode_v2_capture_fixture(
+    tmp_path: Path,
+    monkeypatch,
+    *,
+    messages: list[tuple[str, dict[str, object]]],
+):
+    from tests.support.opencode_db import write_opencode_v2_db_session
+
+    monkeypatch.setenv("MERIDIAN_HOME", str(tmp_path / "home"))
+    opencode_home = tmp_path / "opencode"
+    session_id = "ses_opencode_capture_v2"
+    write_opencode_v2_db_session(
+        db_path=opencode_home / "opencode.db",
+        session_id=session_id,
+        messages=messages,
+    )
+    monkeypatch.setenv("OPENCODE_HOME", str(opencode_home))
+    project = tmp_path / "repo"
+    project.mkdir()
+    root = resolve_project_runtime_root_for_write(project)
+    key = spawn_store.start_spawn(
+        root,
+        chat_id="c1",
+        prompt="question",
+        harness="opencode",
+        model="test",
+        agent="coder",
+        kind="primary",
+        harness_session_id=session_id,
+    )
+    spawn_store.finalize_spawn(root, key, status="succeeded", exit_code=0, origin="runner")
+    return project, root, key
+
+
+def test_v2_opencode_session_publishes_with_v2_dialect(tmp_path: Path, monkeypatch):
+    project, root, key = _opencode_v2_capture_fixture(
+        tmp_path,
+        monkeypatch,
+        messages=[
+            ("user", {"time": {"created": 1}, "text": "hi"}),
+            (
+                "assistant",
+                {
+                    "time": {"created": 2},
+                    "content": [{"type": "text", "text": "final answer"}],
+                },
+            ),
+        ],
+    )
+    materialize_native_history(project, root, key)
+    snapshot = _snapshot_path(root, key)
+    _assert_sealed_snapshot(snapshot, contains="final answer")
+    validation = TranscriptValidation()
+    with snapshot.open("rb") as handle:
+        list(read_snapshot(handle, validation=validation))
+    assert validation.header is not None
+    assert validation.header.dialect == "opencode.transcript.v2"
+    assert "opencode.transcript.v2" in snapshot.read_text()
