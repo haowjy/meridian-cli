@@ -44,6 +44,7 @@ from meridian.lib.harness.connections.opencode_http import (
     _summarize_body,
 )
 from meridian.lib.harness.projections.project_opencode_streaming import (
+    merge_opencode_v2_permission_config,
     project_opencode_model,
     project_opencode_model_config,
     project_opencode_spec_to_session_payload,
@@ -149,6 +150,16 @@ class OpenCodeV2Connection(OpenCodeV1Connection):
             env[OPENCODE_CONFIG_CONTENT_ENV] = project_opencode_model_config(
                 env.get(OPENCODE_CONFIG_CONTENT_ENV), spec.model, self._model_agent_override
             )
+        # V2 reads permissions from config content, not the V1 OPENCODE_PERMISSION
+        # env. Interactive primaries defer to the native TUI, matching V1, which
+        # drops its permission override for the primary launch.
+        permission_override = spec.permission_resolver.config.opencode_permission_override
+        if permission_override and not spec.interactive:
+            merged_config = merge_opencode_v2_permission_config(
+                env.get(OPENCODE_CONFIG_CONTENT_ENV), permission_override
+            )
+            if merged_config is not None:
+                env[OPENCODE_CONFIG_CONTENT_ENV] = merged_config
         runtime_root = config.runtime_root or resolve_project_runtime_root_for_write(
             config.control_root
         )
