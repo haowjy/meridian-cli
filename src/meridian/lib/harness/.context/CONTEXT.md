@@ -482,6 +482,24 @@ accounting guard runs on a partial adapter set and will raise false `ImportError
 **Don't skip `consumed_fields` / `explicitly_ignored_fields` declarations** — the
 accounting invariant treats any uncovered field as a bug, not a warning.
 
+## Known gaps (OpenCode V2)
+
+Tracked, non-blocking:
+
+- **V2 permission projection precedence (deferred).** Inherited non-root `permission`
+  entries appended last can shadow the shared tools-deny, and the `write`/`patch`→`edit`
+  alias collapse lets `edit:deny` + `write:allow` end in allow. Needs a dedicated
+  deny-bypass probe before hardening.
+- **`--fork` on the subprocess projector is unreachable.** `capabilities.supports_session_fork`
+  is `False` because the routed transports (`OpenCodeV1Connection` streaming,
+  `OpenCodeV2Connection`) reject `continue_fork`; launch policy downgrades a fork request
+  to in-place resume with a warning. `project_opencode_subprocess.py` still projects
+  `--fork` for a hypothetical routed subprocess transport — harmless but dead today.
+- **Fast-failure terminals are reconciliation-sourced.** A terminal landing between the
+  prompt POST and the `/api/event` attach is recovered by the bounded stall re-poll
+  (`_STALL_RECONCILE_LIMIT`), not by a live frame; the reconcile GET is bounded by
+  `_RECONCILE_TIMEOUT_SECONDS`.
+
 ## Related KB
 
 > KB lives at `$MERIDIAN_CONTEXT_KB_DIR` (see `meridian context kb`).
