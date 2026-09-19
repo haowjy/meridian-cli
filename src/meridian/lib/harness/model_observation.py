@@ -213,7 +213,7 @@ def read_last_executed_model(
                 if token is not None:
                     return token
             return None
-    except (OSError, sqlite3.Error):
+    except (OSError, RuntimeError, sqlite3.Error):
         return None
     return None
 

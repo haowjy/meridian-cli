@@ -5,7 +5,7 @@ from __future__ import annotations
 import contextlib
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol
+from typing import Protocol, cast
 from uuid import UUID
 
 from meridian.lib.catalog.model_aliases import run_mars_models_resolve
@@ -238,20 +238,36 @@ def _fallback_conversation_intent(
     )
 
 
-def _observed_model_is_routable(token: str) -> bool:
-    """Best-effort check that an observed native token can actually be launched.
+def _observed_model_routes_to_harness(token: str, harness: str) -> bool:
+    """Best-effort check that an observed token can launch on the replay harness.
 
-    A native store can name a model Meridian cannot route — for example an
-    OpenCode session that ran on an unconfigured provider such as
-    ``opencode/deepseek-v4-flash-free``. Preferring such a token would make
-    ``--continue`` fail where the recorded startup selection used to work, so an
-    unroutable observation is discarded and the recorded selection is used.
+    ``mars models resolve`` can return a payload for a token that does not route
+    to the harness being continued — for example an OpenCode session on an
+    unconfigured provider (``opencode/deepseek-v4-flash-free``), or a token whose
+    only candidates lack a runnable harness (``claude-fable-5``). Launch pins
+    ``--harness`` to the source session's harness, so a token must route to that
+    same harness; otherwise preferring it would make ``--continue`` fail where
+    the recorded startup selection worked.
     """
 
     resolved: dict[str, object] | None = None
     with contextlib.suppress(Exception):
         resolved = run_mars_models_resolve(token)
-    return resolved is not None
+    if resolved is None or resolved.get("error"):
+        return False
+    route = resolved.get("route")
+    if isinstance(route, dict) and cast("dict[str, object]", route).get("harness") == harness:
+        return True
+    if resolved.get("harness") == harness:
+        return True
+    runnable_paths = resolved.get("runnable_paths")
+    if isinstance(runnable_paths, list):
+        return any(
+            isinstance(path, dict)
+            and cast("dict[str, object]", path).get("harness") == harness
+            for path in cast("list[object]", runnable_paths)
+        )
+    return False
 
 
 def _observed_last_executed_model(
@@ -280,7 +296,7 @@ def _observed_last_executed_model(
         ),
     )
     if live is not None:
-        if not _observed_model_is_routable(live):
+        if not _observed_model_routes_to_harness(live, replay_harness):
             return None
         with contextlib.suppress(Exception):
             record_model_observation(
@@ -294,7 +310,7 @@ def _observed_last_executed_model(
             )
         return live
     stored = get_last_executed_model(runtime_root, replay_harness, harness_session_id)
-    if stored is not None and not _observed_model_is_routable(stored):
+    if stored is not None and not _observed_model_routes_to_harness(stored, replay_harness):
         return None
     return stored
 

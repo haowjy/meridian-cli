@@ -232,7 +232,7 @@ def _patch_intent_seams(
         continue_replay_module, "record_model_observation", lambda *a, **k: True
     )
     monkeypatch.setattr(
-        continue_replay_module, "run_mars_models_resolve", lambda *a, **k: {"model": "x"}
+        continue_replay_module, "run_mars_models_resolve", lambda *a, **k: {"harness": "claude"}
     )
 
 
@@ -319,6 +319,28 @@ def test_unroutable_observed_falls_back_to_recorded(
     )
     monkeypatch.setattr(
         continue_replay_module, "run_mars_models_resolve", lambda *a, **k: None
+    )
+
+    contract = build_continue_replay_contract(source=source, runtime_root=Path("/tmp/x"))
+
+    assert contract.model == "recorded-token"
+    assert contract.session.conversation_intent.selection_source == "recorded_selection"
+
+
+def test_observed_routing_to_other_harness_falls_back_to_recorded(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = _continue_source()
+    _patch_intent_seams(
+        monkeypatch,
+        recorded=_recorded_selection("recorded-token"),
+        live="observed-token",
+        stored=None,
+    )
+    monkeypatch.setattr(
+        continue_replay_module,
+        "run_mars_models_resolve",
+        lambda *a, **k: {"route": {"harness": "opencode"}},
     )
 
     contract = build_continue_replay_contract(source=source, runtime_root=Path("/tmp/x"))
