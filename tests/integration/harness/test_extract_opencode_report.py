@@ -13,7 +13,10 @@ from meridian.lib.harness.extractors.opencode import OPENCODE_EXTRACTOR
 from meridian.lib.harness.opencode_report import extract_opencode_report
 from meridian.lib.harness.opencode_storage import resolve_opencode_storage_root
 from meridian.lib.launch.constants import HISTORY_FILENAME
-from tests.support.opencode_db import write_opencode_db_session_with_parts
+from tests.support.opencode_db import (
+    write_opencode_db_session_with_parts,
+    write_opencode_v2_db_session,
+)
 
 
 @pytest.mark.parametrize("source", ["db-only", "absent-db", "missing-session", "corrupt-db"])
@@ -205,6 +208,64 @@ def test_extract_opencode_report_falls_back_to_opencode_db_session(
     store._payloads[f"{spawn_id}/session_id.txt"] = session_id.encode("utf-8")
 
     assert extract_opencode_report(store, spawn_id) == "LIVE_OK"
+
+
+def test_extract_opencode_report_reads_v2_db_final_assistant(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    """V2-only opencode.db yields the last assistant text through schema dispatch."""
+
+    session_id = "ses_v2_report_db"
+    spawn_id = SpawnId("p-opencode-v2-db")
+    monkeypatch.setenv("OPENCODE_HOME", str(tmp_path))
+    write_opencode_v2_db_session(
+        db_path=tmp_path / "opencode.db",
+        session_id=session_id,
+        messages=[
+            ("user", {"text": "do the thing"}),
+            ("assistant", {"content": [{"type": "text", "text": "V2_FINAL_OK"}]}),
+        ],
+    )
+    # V2 history frames resolve the session id; the V1-only stream extractor must
+    # ignore them and defer to the schema-dispatched DB path.
+    store = _artifact_store_from_history_lines(
+        spawn_id,
+        [
+            {
+                "event_type": "session.text.ended",
+                "harness_id": "opencode",
+                "payload": {
+                    "type": "session.text.ended",
+                    "sessionID": session_id,
+                    "assistantMessageID": "msg_v2",
+                    "ordinal": 0,
+                    "text": "stream text must not win over the DB",
+                },
+                "seq": 1,
+            }
+        ],
+    )
+
+    assert extract_opencode_report(store, spawn_id) == "V2_FINAL_OK"
+
+
+def test_extract_opencode_report_v2_db_without_assistant_text_is_none(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    session_id = "ses_v2_report_no_text"
+    spawn_id = SpawnId("p-opencode-v2-no-text")
+    monkeypatch.setenv("OPENCODE_HOME", str(tmp_path))
+    write_opencode_v2_db_session(
+        db_path=tmp_path / "opencode.db",
+        session_id=session_id,
+        messages=[("user", {"text": "just a question"})],
+    )
+    store = _artifact_store_from_history_lines(spawn_id, [])
+    store._payloads[f"{spawn_id}/session_id.txt"] = session_id.encode("utf-8")
+
+    assert extract_opencode_report(store, spawn_id) is None
 
 
 def test_extract_opencode_report_ignores_opencode_db_compaction_handoff(

@@ -15,6 +15,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Fail loudly when an explicit model is requested on OpenCode 1.x resume instead of silently retaining the native committed model.
 - Honor `[harness.opencode] version` in `meridian.toml` (was logged as an unknown key and ignored) and project the resolved preference into the OpenCode child env at launch bind, so connection and preview select the same backend.
 - Qualify OpenCode V2 native capture tails like V1: refuse to seal a session with a pending tool or no terminal idle outcome as `complete`.
+- Extract OpenCode V2 spawn reports from `opencode.db` by schema dispatch (`session_v2` → V2, `session` → V1); the V1-only stream extraction path stays unchanged.
 
 ## [0.5.0] - 2026-09-18
 
