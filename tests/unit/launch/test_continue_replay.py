@@ -231,6 +231,9 @@ def _patch_intent_seams(
     monkeypatch.setattr(
         continue_replay_module, "record_model_observation", lambda *a, **k: True
     )
+    monkeypatch.setattr(
+        continue_replay_module, "run_mars_models_resolve", lambda *a, **k: {"model": "x"}
+    )
 
 
 def test_explicit_override_beats_observed(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -297,6 +300,48 @@ def test_no_observed_falls_back_to_recorded(monkeypatch: pytest.MonkeyPatch) -> 
         live=None,
         stored=None,
     )
+
+    contract = build_continue_replay_contract(source=source, runtime_root=Path("/tmp/x"))
+
+    assert contract.model == "recorded-token"
+    assert contract.session.conversation_intent.selection_source == "recorded_selection"
+
+
+def test_unroutable_observed_falls_back_to_recorded(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = _continue_source()
+    _patch_intent_seams(
+        monkeypatch,
+        recorded=_recorded_selection("recorded-token"),
+        live="opencode/deepseek-v4-flash-free",
+        stored=None,
+    )
+    monkeypatch.setattr(
+        continue_replay_module, "run_mars_models_resolve", lambda *a, **k: None
+    )
+
+    contract = build_continue_replay_contract(source=source, runtime_root=Path("/tmp/x"))
+
+    assert contract.model == "recorded-token"
+    assert contract.session.conversation_intent.selection_source == "recorded_selection"
+
+
+def test_raising_resolver_falls_back_to_recorded(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = _continue_source()
+    _patch_intent_seams(
+        monkeypatch,
+        recorded=_recorded_selection("recorded-token"),
+        live=None,
+        stored="stored-token",
+    )
+
+    def _raise(*_a: object, **_k: object) -> None:
+        raise RuntimeError("route rejected")
+
+    monkeypatch.setattr(continue_replay_module, "run_mars_models_resolve", _raise)
 
     contract = build_continue_replay_contract(source=source, runtime_root=Path("/tmp/x"))
 

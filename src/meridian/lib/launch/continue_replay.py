@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Protocol
 from uuid import UUID
 
+from meridian.lib.catalog.model_aliases import run_mars_models_resolve
 from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
 from meridian.lib.core.types import HarnessSessionId
 from meridian.lib.harness.model_observation import (
@@ -237,6 +238,22 @@ def _fallback_conversation_intent(
     )
 
 
+def _observed_model_is_routable(token: str) -> bool:
+    """Best-effort check that an observed native token can actually be launched.
+
+    A native store can name a model Meridian cannot route — for example an
+    OpenCode session that ran on an unconfigured provider such as
+    ``opencode/deepseek-v4-flash-free``. Preferring such a token would make
+    ``--continue`` fail where the recorded startup selection used to work, so an
+    unroutable observation is discarded and the recorded selection is used.
+    """
+
+    resolved: dict[str, object] | None = None
+    with contextlib.suppress(Exception):
+        resolved = run_mars_models_resolve(token)
+    return resolved is not None
+
+
 def _observed_last_executed_model(
     *,
     source: ContinueReplaySource,
@@ -246,13 +263,14 @@ def _observed_last_executed_model(
     """Resolve the last-executed model, live-read first with stored observation fallback.
 
     Live-read hits are best-effort persisted as an observation; a persistence
-    failure must never break continue, so it is swallowed here.
+    failure must never break continue, so it is swallowed here. Unroutable
+    observations are discarded so the caller falls back to the recorded selection.
     """
 
     harness_session_id = source.harness_session_id
     if harness_session_id is None:
         return None
-    token = read_last_executed_model(
+    live = read_last_executed_model(
         replay_harness,
         harness_session_id,
         context=NativeModelReadContext(
@@ -261,19 +279,24 @@ def _observed_last_executed_model(
             pi_session_dir=source.source_pi_session_dir,
         ),
     )
-    if token is None:
-        return get_last_executed_model(runtime_root, replay_harness, harness_session_id)
-    with contextlib.suppress(Exception):
-        record_model_observation(
-            runtime_root,
-            SessionModelObservationEvent(
-                harness=replay_harness,
-                harness_session_id=HarnessSessionId(harness_session_id),
-                observed_model_token=token,
-                recorded_at=utc_now_iso(),
-            ),
-        )
-    return token
+    if live is not None:
+        if not _observed_model_is_routable(live):
+            return None
+        with contextlib.suppress(Exception):
+            record_model_observation(
+                runtime_root,
+                SessionModelObservationEvent(
+                    harness=replay_harness,
+                    harness_session_id=HarnessSessionId(harness_session_id),
+                    observed_model_token=live,
+                    recorded_at=utc_now_iso(),
+                ),
+            )
+        return live
+    stored = get_last_executed_model(runtime_root, replay_harness, harness_session_id)
+    if stored is not None and not _observed_model_is_routable(stored):
+        return None
+    return stored
 
 
 def _resolve_continue_conversation_intent(
