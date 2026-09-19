@@ -7,6 +7,11 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Added
 
 - Add an OpenCode backend seam (`harness/opencode_backend.py`) that resolves the installed version (`auto`/`v1`/`v2`) and exposes per-version capabilities. New config `[harness.opencode] version` / `MERIDIAN_HARNESS_OPENCODE_VERSION`.
+- Allow an explicit model on OpenCode primary continue: V2 applies it on resume via `POST /api/session/{id}/model`.
+
+### Fixed
+
+- Fail loudly when an explicit model is requested on OpenCode 1.x resume instead of silently retaining the native committed model.
 
 ## [0.5.0] - 2026-09-18
 

@@ -707,6 +707,14 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
 
         continue_session_id = (spec.continue_session_id or "").strip()
         if continue_session_id:
+            if spec.model:
+                # V1 resumes by GET and cannot change the committed model. Fail
+                # loudly instead of silently retaining the native model.
+                raise HarnessCapabilityMismatch(
+                    "OpenCode 1.x cannot switch the model when resuming a session "
+                    f"(requested model '{spec.model}'). Upgrade to OpenCode 2 or "
+                    "omit the explicit --model."
+                )
             # Verify the existing session is already loaded by the server.
             # OpenCode serve loads sessions from disk on startup, so a GET should
             # find them. A 404/405 means the server may still be loading; we raise

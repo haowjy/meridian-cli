@@ -60,6 +60,12 @@ def test_capabilities_reflect_version() -> None:
     assert "session.execution.interrupted" in v2.terminal_event_types
 
 
+def test_adapter_allows_named_primary_resume() -> None:
+    from meridian.lib.harness.opencode import OpenCodeAdapter
+
+    assert OpenCodeAdapter().capabilities.supports_named_primary_resume is True
+
+
 def test_config_version_defaults_to_auto() -> None:
     assert OpenCodeHarnessProfileConfig().version == "auto"
     assert OpenCodeHarnessProfileConfig(version="v2").version == "v2"
