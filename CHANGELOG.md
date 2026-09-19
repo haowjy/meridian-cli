@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-09-19
+
 ### Added
 
 - Add an OpenCode backend seam (`harness/opencode_backend.py`) that resolves the installed version (`auto`/`v1`/`v2`). New config `[harness.opencode] version` / `MERIDIAN_HARNESS_OPENCODE_VERSION`.
