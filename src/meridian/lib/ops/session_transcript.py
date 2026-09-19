@@ -354,9 +354,9 @@ def iter_source_events(
             source.path, UUID(source.history_id), source.manifest_sha256
         )
     elif source.kind == "opencode_db":
-        from meridian.lib.harness.opencode_transcript import iter_opencode_db_events
+        from meridian.lib.harness.opencode_transcript import iter_opencode_db_session_events
 
-        yield from iter_opencode_db_events(session_id=source.session_id)
+        yield from iter_opencode_db_session_events(session_id=source.session_id)
     else:
         if source.path is None:
             raise FileNotFoundError(f"Session file for '{source.session_id}' not found")

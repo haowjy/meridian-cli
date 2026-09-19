@@ -16,7 +16,7 @@ from typing import Literal, NamedTuple
 from meridian.lib.core.domain import TERMINAL_SPAWN_STATUSES
 from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.adapter import SubprocessHarness
-from meridian.lib.harness.opencode_transcript import opencode_db_session_exists
+from meridian.lib.harness.opencode_transcript import opencode_db_any_session_exists
 from meridian.lib.harness.pi_paths import resolve_pi_spawn_session_root
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.harness.session_detection import infer_harness_from_untracked_session_ref
@@ -200,7 +200,7 @@ def _resolve_harness_session_file(
             adapter=adapter,
             config_root_hint=config_root_hint,
         )
-        if harness_id == HarnessId.OPENCODE and opencode_db_session_exists(
+        if harness_id == HarnessId.OPENCODE and opencode_db_any_session_exists(
             session_id=normalized_session_id
         ):
             return _with_sources(
@@ -227,7 +227,7 @@ def _resolve_harness_session_file(
             adapter=adapter,
             config_root_hint=config_root_hint,
         )
-        if harness_id == HarnessId.OPENCODE and opencode_db_session_exists(
+        if harness_id == HarnessId.OPENCODE and opencode_db_any_session_exists(
             session_id=normalized_session_id
         ):
             return _with_sources(
