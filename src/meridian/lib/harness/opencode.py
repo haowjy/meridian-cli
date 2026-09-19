@@ -476,8 +476,12 @@ class OpenCodeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         perms: PermissionResolver,
     ) -> ResolvedLaunchSpec:
         continue_session_id = (run.continue_harness_session_id or "").strip() or None
+        # Preserve the normalized model on resume as well as fresh launch: the V2
+        # transport applies it via ``POST /api/session/{id}/model`` on continue.
+        # V1's ``_create_session`` resumes by GET and ignores ``spec.model``, so
+        # this stays inert for the frozen 1.x path.
         normalized_model: str | None = None
-        if run.model and not continue_session_id:
+        if run.model:
             normalized_model = _normalize_opencode_model(str(run.model)) or None
         return ResolvedLaunchSpec(
             harness=HarnessId.OPENCODE,
@@ -635,7 +639,21 @@ _OPENCODE_V2_EVENT_SEMANTICS: dict[str, EventSemantics] = {
         terminal=TerminalEventOutcome(status=SpawnStatus.SUCCEEDED, exit_code=0),
     ),
     "session.execution.failed": EventSemantics(activity="idle", clears_signal=True),
-    "session.execution.interrupted": EventSemantics(activity="idle", clears_signal=True),
+    # A user-initiated cancel already transitions the connection to ``stopping``
+    # (via ``send_cancel``) before the server emits ``interrupted``, so the normal
+    # Meridian stop path ends the drain on state — not on this event. An *unpaired*
+    # interrupt (guardrail stop, internal abort) arrives with the connection still
+    # ``connected``; give it a terminal so the spawn fails fast instead of idling
+    # ~120s into a liveness ``connectionClosed``.
+    "session.execution.interrupted": EventSemantics(
+        activity="idle",
+        clears_signal=True,
+        terminal=TerminalEventOutcome(
+            status=SpawnStatus.FAILED,
+            exit_code=1,
+            error="opencode_session_interrupted",
+        ),
+    ),
 }
 
 OPENCODE_SEMANTICS = HarnessSemantics(

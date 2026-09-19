@@ -60,6 +60,12 @@ logger = logging.getLogger(__name__)
 
 _SERVER_PASSWORD_RE = re.compile(r"server password (\S+)")
 
+_V2_OUTCOME_EVENTS: dict[str, str] = {
+    "succeeded": "session.execution.succeeded",
+    "failed": "session.execution.failed",
+    "interrupted": "session.execution.interrupted",
+}
+
 
 def _v2_session_id(body: object | None) -> str | None:
     """Read a session id from the V2 ``{data: {...}}`` response envelope."""
@@ -77,6 +83,18 @@ def _v2_session_id(body: object | None) -> str | None:
         if isinstance(value, str) and value.strip():
             return value.strip()
     return None
+
+
+def _v2_session_data(body: object | None) -> Mapping[str, object] | None:
+    """Unwrap the ``{data: {...}}`` V2 response envelope, if present."""
+
+    if not isinstance(body, Mapping):
+        return None
+    mapping = cast("Mapping[str, object]", body)
+    data = mapping.get("data")
+    if isinstance(data, Mapping):
+        return cast("Mapping[str, object]", data)
+    return mapping
 
 
 async def _drain_stream(stream: asyncio.StreamReader) -> None:
@@ -112,6 +130,7 @@ class OpenCodeV2Connection(OpenCodeV1Connection):
         super().__init__()
         self._server_password: str | None = None
         self._stdout_drain_task: asyncio.Task[None] | None = None
+        self._initial_prompt_posted_at: float | None = None
 
     async def _launch_process(
         self, config: ConnectionConfig, spec: ResolvedLaunchSpec
@@ -242,8 +261,13 @@ class OpenCodeV2Connection(OpenCodeV1Connection):
             raise RuntimeError(f"OpenCode V2 session resume: GET failed with status={status}")
 
         payload = project_opencode_spec_to_session_payload(spec)
-        status, body, _ = await self._post_json(self._CREATE_SESSION_PATH, payload)
+        status, body, content_type = await self._post_json(self._CREATE_SESSION_PATH, payload)
         if status in self._SUCCESS_STATUSES:
+            if "text/html" in content_type:
+                raise RuntimeError(
+                    "OpenCode V2 session creation returned an HTML fallback: "
+                    f"status={status} content_type={content_type}"
+                )
             session_id = _v2_session_id(body)
             if session_id is None:
                 raise RuntimeError(
@@ -292,11 +316,62 @@ class OpenCodeV2Connection(OpenCodeV1Connection):
         model: str | None = None,
     ) -> None:
         _ = system, fresh, model
+        if self._initial_prompt_posted_at is None:
+            self._initial_prompt_posted_at = time.time()
         await self._post_session_action(
             path_templates=self._MESSAGE_PATH_TEMPLATES,
             payload_variants=({"text": text},),
             accepted_statuses=self._SUCCESS_STATUSES,
         )
+
+    async def _post_session_action(
+        self,
+        *,
+        path_templates: tuple[str, ...],
+        payload_variants: tuple[dict[str, object], ...],
+        accepted_statuses: frozenset[int],
+    ) -> None:
+        session_id = self._require_session_id()
+        last_error: str | None = None
+
+        for template in path_templates:
+            path = template.format(session_id=session_id)
+            for payload in payload_variants:
+                status, body, content_type = await self._post_json(
+                    path,
+                    payload,
+                    skip_body_on_statuses=accepted_statuses,
+                    tolerate_incomplete_body=True,
+                )
+                # Unknown routes fall through to the SPA ``200 text/html`` handler,
+                # which would otherwise masquerade as a successful delivery and
+                # silently drop the prompt. Success requires a non-HTML content
+                # type (the same guard ``_switch_session_model`` uses).
+                if status in accepted_statuses and "text/html" not in content_type:
+                    return
+                if status in self._PAYLOAD_RETRY_STATUSES:
+                    last_error = (
+                        f"OpenCode V2 session action rejected payload on {path}: "
+                        f"status={status} body={_summarize_body(body)}"
+                    )
+                    continue
+                if status in self._PATH_RETRY_STATUSES:
+                    last_error = (
+                        f"OpenCode V2 session endpoint unavailable on {path}: "
+                        f"status={status} body={_summarize_body(body)}"
+                    )
+                    break
+                if status in accepted_statuses:
+                    raise RuntimeError(
+                        f"OpenCode V2 session action returned an HTML fallback on {path}: "
+                        f"status={status} content_type={content_type}"
+                    )
+                raise RuntimeError(
+                    f"OpenCode V2 session action failed on {path}: "
+                    f"status={status} body={_summarize_body(body)}"
+                )
+
+        raise RuntimeError(last_error or "OpenCode V2 session action failed")
 
     async def send_cancel(self) -> None:
         if self._cancel_requested:
@@ -355,6 +430,67 @@ class OpenCodeV2Connection(OpenCodeV1Connection):
             payload=flat,
             harness_id=HarnessId.OPENCODE.value,
             raw_text=raw_text,
+        )
+
+    async def _reconcile_initial_terminal(self) -> RawHarnessEvent | None:
+        """Synthesize a terminal the live ``/api/event`` stream may have missed.
+
+        ``start()`` posts the initial prompt before the drain loop attaches to
+        ``events()``. V2's stream is live-only, so a turn that finishes in that
+        gap loses its terminal frame. Read the durable session outcome and accept
+        it only when the session was updated at/after the prompt was posted.
+        """
+
+        if self._initial_prompt_posted_at is None:
+            return None
+        if self._state not in ("connected", "stopping"):
+            return None
+        session_id = self._session_id
+        if not session_id:
+            return None
+        try:
+            status, body, _ = await self._get_json(f"/api/session/{session_id}")
+        except Exception:
+            return None
+        if status not in self._SUCCESS_STATUSES:
+            return None
+        data = _v2_session_data(body)
+        if data is None:
+            return None
+        outcome = data.get("outcome") or data.get("idle_outcome")
+        if not isinstance(outcome, str) or not outcome.strip():
+            return None
+        time_block = data.get("time")
+        updated = (
+            cast("Mapping[str, object]", time_block).get("updated")
+            if isinstance(time_block, Mapping)
+            else None
+        )
+        if (
+            isinstance(updated, (int, float))
+            and not isinstance(updated, bool)
+            and float(updated) < (self._initial_prompt_posted_at * 1000.0) - 1000.0
+        ):
+            return None
+        event_type = _V2_OUTCOME_EVENTS.get(outcome.strip().lower())
+        if event_type is None:
+            return None
+        payload: dict[str, object] = {
+            "type": event_type,
+            "sessionID": session_id,
+            "reconciled": True,
+        }
+        if event_type == "session.execution.failed":
+            payload["error"] = "opencode_session_failed"
+        logger.info(
+            "Reconciled missed OpenCode V2 terminal from session outcome",
+            extra={"session_id": session_id, "outcome": outcome},
+        )
+        return RawHarnessEvent(
+            event_type=event_type,
+            payload=payload,
+            harness_id=HarnessId.OPENCODE.value,
+            raw_text=None,
         )
 
     async def _cleanup_runtime(self, *, replacement_deadline: float | None = None) -> None:

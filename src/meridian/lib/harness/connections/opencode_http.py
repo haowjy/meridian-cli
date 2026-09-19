@@ -432,10 +432,28 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
             accepted_statuses=self._ACTION_SUCCESS_STATUSES,
         )
 
+    async def _reconcile_initial_terminal(self) -> RawHarnessEvent | None:
+        """Return a terminal event missed by the prompt-before-subscribe window.
+
+        ``start()`` posts the initial prompt before the drain loop attaches to
+        ``events()``. A turn that fails (or succeeds) in that gap can lose its
+        terminal frame. The 1.x server replays pre-subscription frames on
+        ``/global/event``, so this hook is a no-op here; V2 overrides it because
+        its ``/api/event`` stream is live-only.
+        """
+
+        return None
+
     async def events(self) -> AsyncIterator[RawHarnessEvent]:
         if self._state not in ("connected", "stopping"):
             return
         if self._session_id is None:
+            return
+
+        reconciled = await self._reconcile_initial_terminal()
+        if reconciled is not None:
+            self._liveness.mark_activity()
+            yield reconciled
             return
 
         sse_event_type: str | None = None
