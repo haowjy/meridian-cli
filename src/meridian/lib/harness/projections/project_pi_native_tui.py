@@ -48,6 +48,7 @@ _DELEGATED_FIELDS: frozenset[str] = frozenset(
         "projected_roots",
         "task_cwd",
         "disallowed_tools",
+        "opencode_version",
     }
 )
 

@@ -307,7 +307,7 @@ class PrimaryAttachLauncher:
             running_process = self._process_launcher.start(
                 command=command,
                 cwd=cwd,
-                env=env,
+                env=self._tui_env(env),
                 output_log_path=None,
             )
             try:
@@ -576,6 +576,19 @@ class PrimaryAttachLauncher:
         if endpoint is None:
             return None
         return endpoint.port
+
+    def _tui_env(self, env: dict[str, str]) -> dict[str, str]:
+        """Merge the harness-provided attach-client env overlay for the TUI.
+
+        The backend may require auth (e.g. V2's ``OPENCODE_PASSWORD``) that the
+        attach client reads from its environment. The overlay applies to the TUI
+        child only and is never written to spawn artifacts.
+        """
+
+        endpoint = self._connection.observer_endpoint
+        if endpoint is None or not endpoint.client_env:
+            return env
+        return {**env, **dict(endpoint.client_env)}
 
     def _with_fresh_retry_port(self, config: ConnectionConfig) -> ConnectionConfig:
         return replace(

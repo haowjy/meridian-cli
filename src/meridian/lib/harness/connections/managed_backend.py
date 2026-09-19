@@ -132,8 +132,14 @@ async def launch_managed_backend(
     config: ManagedBackendConfig,
     *,
     stderr: int | IO[Any],
+    stdout: int | IO[Any] | None = None,
 ) -> ManagedBackendHandle:
-    """Launch subprocess, build scope snapshot, link parent death, record scope."""
+    """Launch subprocess, build scope snapshot, link parent death, record scope.
+
+    ``stdout`` defaults to DEVNULL. Transports that need to read a startup
+    handshake from the child (OpenCode V2 prints its server password on stdout)
+    pass ``asyncio.subprocess.PIPE``.
+    """
 
     runtime_root = resolve_project_runtime_root_for_write(config.control_root)
     subprocess_config = detached_subprocess_config()
@@ -143,7 +149,7 @@ async def launch_managed_backend(
             *config.command,
             cwd=str(config.cwd),
             env=config.env,
-            stdout=asyncio.subprocess.DEVNULL,
+            stdout=stdout if stdout is not None else asyncio.subprocess.DEVNULL,
             stderr=stderr,
             **subprocess_config.kwargs,
         )

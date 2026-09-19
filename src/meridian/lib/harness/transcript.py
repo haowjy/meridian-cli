@@ -11,8 +11,10 @@ from typing import Literal, NamedTuple, Protocol, cast
 from meridian.lib.harness.extractors.base import normalize_harness_event_type
 from meridian.lib.harness.opencode_transcript import (
     OpenCodeStorageTranscriptProvider,
+    OpenCodeV2StorageTranscriptProvider,
     interpret_opencode_record,
-    iter_opencode_db_events,
+    interpret_opencode_v2_record,
+    iter_opencode_db_session_events,
 )
 from meridian.lib.launch.constants import HISTORY_FILENAME
 from meridian.lib.state.history import iter_history_events
@@ -622,8 +624,16 @@ class HistoryJsonlTranscriptProvider(TranscriptProvider):
             yield cast("dict[str, object]", event)
 
 
+_OPENCODE_STORAGE_PROVIDER_TYPES = (
+    OpenCodeStorageTranscriptProvider,
+    OpenCodeV2StorageTranscriptProvider,
+)
+
 _TRANSCRIPT_PROVIDERS: tuple[TranscriptProvider, ...] = (
     HistoryJsonlTranscriptProvider(),
+    OpenCodeV2StorageTranscriptProvider(
+        iter_json_events=_iter_json_events,
+    ),
     OpenCodeStorageTranscriptProvider(
         iter_json_events=_iter_json_events,
     ),
@@ -837,10 +847,17 @@ class TranscriptNormalizer:
         self, event: dict[str, object], parser: TranscriptEventParser
     ) -> NormalizedTranscriptEvent:
         normalized_event = _unwrap_seq_envelope(event)
-        if normalized_event.get("record") == "opencode.transcript":
-            events, is_user, reason = interpret_opencode_record(
-                normalized_event, include_user_setup=not self.opencode_user_seen
-            )
+        opencode_record = normalized_event.get("record")
+        if opencode_record in ("opencode.transcript", "opencode.transcript.v2"):
+            include_user_setup = not self.opencode_user_seen
+            if opencode_record == "opencode.transcript.v2":
+                events, is_user, reason = interpret_opencode_v2_record(
+                    normalized_event, include_user_setup=include_user_setup
+                )
+            else:
+                events, is_user, reason = interpret_opencode_record(
+                    normalized_event, include_user_setup=include_user_setup
+                )
             self.opencode_user_seen |= is_user
             self.rendering_reason = reason or self.rendering_reason
             messages: list[TranscriptMessage] = []
@@ -1012,7 +1029,7 @@ def parse_opencode_db_transcript_with_prologues(
 ) -> TranscriptParseResult:
     resolved_parser = parser or DefaultTranscriptEventParser()
     return _parse_events_with_prologues(
-        iter_opencode_db_events(session_id=session_id),
+        iter_opencode_db_session_events(session_id=session_id),
         parser=resolved_parser,
     )
 
@@ -1022,6 +1039,7 @@ __all__ = [
     "HistoryJsonlTranscriptProvider",
     "JsonlTranscriptProvider",
     "OpenCodeStorageTranscriptProvider",
+    "OpenCodeV2StorageTranscriptProvider",
     "ToolCall",
     "TranscriptEventParser",
     "TranscriptMessage",
@@ -1046,7 +1064,9 @@ def transcript_revision(path: Path | None) -> tuple[tuple[int, ...] | None, ...]
     )
 
     paths = [] if path is None else [path]
-    if path is None or isinstance(_provider_for_path(path), OpenCodeStorageTranscriptProvider):
+    if path is None or isinstance(
+        _provider_for_path(path), _OPENCODE_STORAGE_PROVIDER_TYPES
+    ):
         database = opencode_db_for_session_file(path) if path else resolve_opencode_db_path()
         assert database is not None
         paths.extend((database, Path(str(database) + "-wal")))

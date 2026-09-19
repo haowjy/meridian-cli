@@ -59,22 +59,54 @@ calls `_require_observer_endpoint_url(connection, transport="ws")`, which raises
 `PassthroughError` if the endpoint is absent or has the wrong transport type. A
 non-blank `spec.user_turn_content` remains the final optional argument.
 
-### OpenCode: TUI Command Shape
+### OpenCode: Version-Aware TUI Command Shape
 
-`_build_opencode_attach_command` produces:
-```
-opencode attach <http_url> --session <session_id>
-```
+The attach command depends on the resolved OpenCode major version. The
+connection's `observer_endpoint.attach_style` selects the dialect:
+
+- **V1** (`attach_style="attach"`, frozen):
+  ```
+  opencode attach <http_url> --session <session_id>
+  ```
+- **V2** (`attach_style="server"`, verified against 2.0.6):
+  ```
+  opencode --server <http_url> --session <session_id>
+  ```
+  V2 removed the `attach` subcommand; `opencode attach ...` falls through to the
+  top-level help and attaches nothing. The bare TUI is the attach surface.
 
 The HTTP URL comes from `connection.observer_endpoint` (transport must be `"http"`).
 OpenCode does not use `--add-dir` — workspace roots are injected through the env
 override in `ConnectionConfig.env_overrides`, not via CLI flags.
 
+### OpenCode V2: Attach Authentication
+
+V2's server requires HTTP basic auth (`opencode:<password>`), where the password is
+printed on the server's stdout at startup. The client does **not** accept URL
+userinfo (`http://opencode:pw@host:port`) or a `--password` flag; it reads the
+password from `OPENCODE_PASSWORD` (fallback `OPENCODE_SERVER_PASSWORD`) when pointed
+at an explicit `--server`.
+
+`OpenCodeV2Connection.observer_endpoint` therefore sets `attach_style="server"` and
+carries `client_env={"OPENCODE_PASSWORD": <printed secret>}`. The attach launcher
+merges `observer_endpoint.client_env` into the TUI subprocess environment only
+(`PrimaryAttachLauncher._tui_env`); it is never written to spawn artifacts. V1 and
+Codex endpoints leave `attach_style="attach"` and `client_env={}`, so their path is
+unchanged.
+
+Alternative (not used): `opencode serve --service` writes
+`$XDG_STATE_HOME/opencode/service.json` (`url`, `pid`, `password`) and clients
+auto-discover it under the same `XDG_STATE_HOME`. The private-serve + stdout-password
+path is already Meridian's server lifecycle, so the passthrough threads the secret
+via env instead of introducing per-spawn state-dir isolation.
+
 ### TuiCommandBuilder Lifetime
 
-The lambda returned by `build_tui_command()` closes over the connection's
-`observer_endpoint`. The endpoint URL is stable once the connection is ready, so the
-closure is safe to call later. Do not retain the builder past connection teardown.
+The callable returned by `build_tui_command()` closes over the connection. It
+resolves `observer_endpoint` at invocation time (after the managed backend has
+started) — do not capture the endpoint at build time, when it is still `None`.
+Endpoint coordinates are stable once the connection is ready; do not retain the
+builder past connection teardown.
 
 ## Related .context/
 

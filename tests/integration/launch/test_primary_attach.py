@@ -83,6 +83,8 @@ class FakeManagedConnection:
         subprocess_pid: int = 913,
         port_bind_failures: int = 0,
         harness_id: HarnessId = HarnessId.CODEX,
+        observer_attach_style: str = "attach",
+        observer_client_env: dict[str, str] | None = None,
     ) -> None:
         self.state = "created"
         self._spawn_id = SpawnId("")
@@ -97,6 +99,8 @@ class FakeManagedConnection:
         self.started_primary_observer_mode: bool | None = None
         self.started_ports: list[int] = []
         self.start_calls = 0
+        self._observer_attach_style = observer_attach_style
+        self._observer_client_env = dict(observer_client_env or {})
         self._observer_endpoint: ObserverEndpoint | None = None
         self.capabilities = ConnectionCapabilities(
             mid_turn_injection="interrupt_restart",
@@ -171,6 +175,8 @@ class FakeManagedConnection:
                 url=f"ws://{config.ws_bind_host}:{config.ws_port}",
                 host=config.ws_bind_host,
                 port=config.ws_port,
+                attach_style=cast("Any", self._observer_attach_style),
+                client_env=dict(self._observer_client_env),
             )
         else:
             self._observer_endpoint = None
@@ -216,6 +222,7 @@ class FakeProcessLauncher(ProcessLauncher):
     exit_code: int = 0
     pause_seconds: float = 0.05
     launch_commands: list[tuple[str, ...]] = field(default_factory=list)
+    launch_envs: list[dict[str, str]] = field(default_factory=list)
     output_log_paths: list[Path | None] = field(default_factory=list)
     metadata_seen_at_launch: dict[str, object] | None = None
 
@@ -230,8 +237,9 @@ class FakeProcessLauncher(ProcessLauncher):
         env: dict[str, str],
         output_log_path: Path | None,
     ) -> FakeProcessLauncher:
-        _ = (cwd, env, output_log_path)
+        _ = (cwd, output_log_path)
         self.launch_commands.append(command)
+        self.launch_envs.append(dict(env))
         self.output_log_paths.append(output_log_path)
         metadata_path = self.spawn_dir / PRIMARY_META_FILENAME
         assert metadata_path.exists()
@@ -726,6 +734,51 @@ async def test_primary_attach_writes_metadata_before_tui_launch(tmp_path: Path) 
     assert launch_meta["backend_port"] == 7811
     assert launch_meta["harness_session_id"] == "thread-123"
     assert process_launcher.output_log_paths == [None]
+
+
+@pytest.mark.asyncio
+async def test_primary_attach_merges_observer_client_env_into_tui(tmp_path: Path) -> None:
+    spawn_dir = tmp_path / "spawns" / "p905"
+    connection = FakeManagedConnection(
+        events=[],
+        harness_id=HarnessId.OPENCODE,
+        observer_attach_style="server",
+        observer_client_env={"OPENCODE_PASSWORD": "s3cret"},
+    )
+    process_launcher = FakeProcessLauncher(spawn_dir=spawn_dir)
+
+    launcher = PrimaryAttachLauncher(
+        spawn_id=SpawnId("p905"),
+        spawn_dir=spawn_dir,
+        connection=connection,
+        tui_command_builder=lambda session_id: (
+            "opencode",
+            "--server",
+            "http://127.0.0.1:7812",
+            "--session",
+            session_id,
+        ),
+        process_launcher=process_launcher,
+    )
+
+    await launcher.run(
+        config=_build_config(
+            spawn_id=SpawnId("p905"),
+            control_root=tmp_path,
+            ws_port=7812,
+            harness_id=HarnessId.OPENCODE,
+        ),
+        spec=_build_spec(),
+        cwd=tmp_path,
+        env={"PATH": "/usr/bin"},
+    )
+
+    assert process_launcher.launch_envs == [
+        {"PATH": "/usr/bin", "OPENCODE_PASSWORD": "s3cret"}
+    ]
+    assert process_launcher.launch_commands == [
+        ("opencode", "--server", "http://127.0.0.1:7812", "--session", "thread-123")
+    ]
 
 
 @pytest.mark.asyncio

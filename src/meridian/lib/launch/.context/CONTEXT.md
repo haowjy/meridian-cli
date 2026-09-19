@@ -190,6 +190,18 @@ The orchestrator reads `os.getenv("_MERIDIAN_HARNESS")` at wait time to determin
 its own yield interval — it is asking about *its own* harness's prompt-cache TTL,
 not the spawns it is waiting on.
 
+### Harness Profile Env Projection at Bind
+
+Config-resolved harness profile values that the child must observe are baked into
+`child_context_env` during `bind_launch_context()`, not inherited from the
+ambient environment. For OpenCode, the resolved
+`[harness.opencode].version` preference (from the launch config snapshot, with a
+project-config fallback) is written to `MERIDIAN_HARNESS_OPENCODE_VERSION`.
+`resolve_opencode_version_for_launch()` owns the snapshot/env precedence; the key
+is registered child-injectable in `env_registry.py`. Because both dry-run preview
+and real connection read `binding.environment.final_env`, preview and execution
+select the same backend. Capture agrees through schema detection, not the env var.
+
 
 ### Agent Inventory Prompt
 
@@ -524,3 +536,7 @@ JSON serialization a permission change. Append projected root patterns within
 the external-directory rule map without reordering inherited top-level rules;
 a later native catch-all can still deny them. Do not move the whole existing
 external-directory rule past a denial or invent meanings for malformed shapes.
+For OpenCode 2.x, the V2 transport instead compiles the tools policy into the
+native ordered `permissions` array and appends root grants after it, so
+last-match keeps the grants; see
+[harness context](../../harness/.context/CONTEXT.md).

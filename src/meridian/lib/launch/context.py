@@ -25,6 +25,7 @@ from meridian.lib.config.settings import (
     PiHarnessProfileConfig,
     load_config,
     resolve_claude_allow_builtin_agents_for_launch,
+    resolve_opencode_version_for_launch,
     resolve_pi_harness_profile_for_launch,
 )
 from meridian.lib.config.workspace import get_projectable_roots
@@ -2037,6 +2038,17 @@ def bind_launch_context(
     permission_config = materialized.permission_config
     perms = materialized.perms
     spec = materialized.spec
+    opencode_version: str | None = None
+    if harness.id == HarnessId.OPENCODE:
+        # Resolve once and carry the preference on the spec so the dry-run argv
+        # preview applies the same version-specific guard as the connection
+        # instead of probing/config-reading on its own. The same value is
+        # projected into the child env below for the connection and preview.
+        opencode_version = resolve_opencode_version_for_launch(
+            config_snapshot=runtime.config_snapshot,
+            project_root=project_paths.project_root,
+        )
+        spec = spec.model_copy(update={"opencode_version": opencode_version})
     if harness.id == HarnessId.CODEX and not spec.interactive:
         spec = spec.model_copy(
             update={
@@ -2058,12 +2070,16 @@ def bind_launch_context(
             projected_spec=spec,
         )
 
+    launch_env_overrides: dict[str, str] = {}
+    if opencode_version is not None:
+        launch_env_overrides["MERIDIAN_HARNESS_OPENCODE_VERSION"] = opencode_version
     child_context_env = build_child_runtime_env_overrides(
         project_paths=project_paths,
         runtime_root=runtime_root,
         child_spawn_id=bindings.spawn_id,
         work_id=requested_work_id,
         increment_depth=not is_primary_launch,
+        additional_overrides=launch_env_overrides or None,
     )
     if requested_work_id is None and _suppresses_ambient_work(resolved_request):
         child_context_env.pop("MERIDIAN_ACTIVE_WORK_ID", None)

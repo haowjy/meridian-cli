@@ -4,6 +4,22 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- Add an OpenCode backend seam (`harness/opencode_backend.py`) that resolves the installed version (`auto`/`v1`/`v2`). New config `[harness.opencode] version` / `MERIDIAN_HARNESS_OPENCODE_VERSION`.
+- Allow an explicit model on OpenCode primary continue: V2 applies it on resume via `POST /api/session/{id}/model`.
+- Capture OpenCode V2 sessions as `opencode.transcript.v2` (V1 stays `opencode.transcript.v1`) by dispatching on detected DB schema.
+
+### Fixed
+
+- Fail loudly when an explicit model is requested on OpenCode 1.x resume instead of silently retaining the native committed model; the non-interactive subprocess projector (`opencode run`) now rejects the same request instead of forwarding `--model`.
+- Make the OpenCode subprocess projector version-aware: an explicit model on resume is rejected only for a known V1. V2 keeps `--model`, and an unresolved `auto` probe forwards rather than failing the preview.
+- Stop advertising session fork for OpenCode: both streaming transports reject `continue_fork`, so the adapter reports `supports_session_fork=False` and launch policy downgrades to in-place resume with a warning.
+- Honor `[harness.opencode] version` in `meridian.toml` (was logged as an unknown key and ignored) and project the resolved preference into the OpenCode child env at launch bind, so connection and preview select the same backend.
+- Qualify OpenCode V2 native capture tails like V1: refuse to seal a session with a pending tool or no terminal idle outcome as `complete`.
+- Extract OpenCode V2 spawn reports from `opencode.db` by schema dispatch (`session_v2` → V2, `session` → V1); the V1-only stream extraction path stays unchanged.
+- Close the OpenCode V2 pre-subscribe terminal race: re-poll the durable session outcome once on the liveness-timeout path (same guarded helper) so a turn that finished between the initial GET and the `/api/event` attach is surfaced instead of stalling out.
+
 ## [0.5.0] - 2026-09-18
 
 ### Changed

@@ -113,8 +113,8 @@ def project_opencode_spec_to_session_payload(
     return cast("dict[str, object]", projected)
 
 
-class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
-    """Bidirectional OpenCode connection over the OpenCode HTTP API."""
+class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
+    """Bidirectional OpenCode 1.x connection over the legacy JSON HTTP API."""
 
     _CAPABILITIES: ClassVar[ConnectionCapabilities] = ConnectionCapabilities(
         mid_turn_injection="http_post",
@@ -158,6 +158,10 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
     _ACTION_SUCCESS_STATUSES: ClassVar[frozenset[int]] = frozenset((200, 201, 202, 204, 409))
     _EVENT_RETRY_DELAY_SECONDS: ClassVar[float] = 0.25
     _LIVENESS_TIMEOUT_SECONDS: ClassVar[float] = 120.0
+    # Re-polls allowed on the liveness-timeout path before a stall is declared
+    # terminal. One is enough to cover the prompt-before-subscribe gap; the cap
+    # keeps recovery bounded if the timeout path is ever revisited.
+    _STALL_RECONCILE_LIMIT: ClassVar[int] = 1
     _STARTUP_TIMEOUT_SECONDS: ClassVar[float] = 90.0
     _READY_TIMEOUT_SECONDS: ClassVar[float] = 60.0
     _SESSION_STARTUP_TIMEOUT_SECONDS: ClassVar[float] = (
@@ -432,11 +436,52 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
             accepted_statuses=self._ACTION_SUCCESS_STATUSES,
         )
 
+    async def _reconcile_initial_terminal(self) -> RawHarnessEvent | None:
+        """Return a terminal event missed by the prompt-before-subscribe window.
+
+        ``start()`` posts the initial prompt before the drain loop attaches to
+        ``events()``. A turn that fails (or succeeds) in that gap can lose its
+        terminal frame. The 1.x server replays pre-subscription frames on
+        ``/global/event``, so this hook is a no-op here; V2 overrides it because
+        its ``/api/event`` stream is live-only.
+        """
+
+        return None
+
+    async def _reconcile_on_stall(self) -> RawHarnessEvent | None:
+        """Recover a terminal the live stream may have missed on a stall.
+
+        ``events()`` subscribes after the initial prompt in ``start()``. A turn
+        that finishes in that gap can lose its terminal frame. The 1.x server
+        replays pre-subscription frames, so the stream itself recovers it and
+        this hook is a no-op; V2 overrides it because ``/api/event`` is
+        live-only. Called at most ``_STALL_RECONCILE_LIMIT`` times per drain.
+        """
+
+        return None
+
     async def events(self) -> AsyncIterator[RawHarnessEvent]:
         if self._state not in ("connected", "stopping"):
             return
         if self._session_id is None:
             return
+
+        reconciled = await self._reconcile_initial_terminal()
+        if reconciled is not None:
+            self._liveness.mark_activity()
+            yield reconciled
+            return
+
+        stall_reconciles_remaining = self._STALL_RECONCILE_LIMIT
+
+        async def _reconcile_before_stall() -> RawHarnessEvent | None:
+            """Re-poll the durable outcome before declaring the stream stalled."""
+
+            nonlocal stall_reconciles_remaining
+            if stall_reconciles_remaining <= 0:
+                return None
+            stall_reconciles_remaining -= 1
+            return await self._reconcile_on_stall()
 
         sse_event_type: str | None = None
         sse_data_lines: list[str] = []
@@ -451,6 +496,11 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
                 LivenessDecision.BACKEND_DEAD,
                 LivenessDecision.STREAM_STALLED,
             ):
+                reconciled = await _reconcile_before_stall()
+                if reconciled is not None:
+                    self._liveness.mark_activity()
+                    yield reconciled
+                    return
                 logger.warning(
                     "OpenCode event stream liveness timeout after %.1fs without events",
                     self._LIVENESS_TIMEOUT_SECONDS,
@@ -466,6 +516,11 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
                     event = self._process_exit_event()
                     if event is not None:
                         yield event
+                    return
+                reconciled = await _reconcile_before_stall()
+                if reconciled is not None:
+                    self._liveness.mark_activity()
+                    yield reconciled
                     return
                 logger.warning(
                     "OpenCode event stream liveness timeout after %.1fs without events",
@@ -495,6 +550,11 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
                             event = self._process_exit_event()
                             if event is not None:
                                 yield event
+                            return
+                        reconciled = await _reconcile_before_stall()
+                        if reconciled is not None:
+                            self._liveness.mark_activity()
+                            yield reconciled
                             return
                         logger.warning(
                             "OpenCode event stream liveness timeout after %.1fs without events",
@@ -689,6 +749,14 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
 
         continue_session_id = (spec.continue_session_id or "").strip()
         if continue_session_id:
+            if spec.model:
+                # V1 resumes by GET and cannot change the committed model. Fail
+                # loudly instead of silently retaining the native model.
+                raise HarnessCapabilityMismatch(
+                    "OpenCode 1.x cannot switch the model when resuming a session "
+                    f"(requested model '{spec.model}'). Upgrade to OpenCode 2 or "
+                    "omit the explicit --model."
+                )
             # Verify the existing session is already loaded by the server.
             # OpenCode serve loads sessions from disk on startup, so a GET should
             # find them. A 404/405 means the server may still be loading; we raise
@@ -1505,3 +1573,9 @@ def _opencode_startup_failure_hint(stderr_text: str, env: Mapping[str, str]) -> 
         "OpenCode cannot create its data directory. Check permissions for ~/.local/share/opencode, "
         "or set XDG_DATA_HOME to a writable directory."
     )
+
+
+# Compatibility alias: existing tests and callers import the 1.x transport as
+# ``OpenCodeConnection``. The registered connection class is the version
+# dispatcher in ``opencode_connection.py``.
+OpenCodeConnection = OpenCodeV1Connection

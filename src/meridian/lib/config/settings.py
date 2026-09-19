@@ -354,6 +354,14 @@ def _normalize_harness_table(
                         )
                     harness_values["allow_builtin_agents"] = harness_value
                     continue
+                if key == "opencode" and harness_key == "version":
+                    if not isinstance(harness_value, str):
+                        raise ValueError(
+                            f"Invalid value for '{source}.{key}.version': expected str, got "
+                            f"{type(harness_value).__name__} ({harness_value!r})."
+                        )
+                    harness_values["version"] = harness_value.strip().lower()
+                    continue
                 if key == "pi" and harness_key == "disable_managed_bash":
                     if not isinstance(harness_value, bool):
                         raise ValueError(
@@ -1252,6 +1260,26 @@ class OpenCodeHarnessProfileConfig(HarnessProfileConfig):
             env_vars=("MERIDIAN_HARNESS_MODEL_OPENCODE",),
         ),
     ] = "opencode-go/kimi-k2.6"
+    version: Annotated[
+        str,
+        config_field(
+            "harness.opencode.version",
+            value_kind="str",
+            file_aliases=(file_alias(("harness", "opencode"), "version"),),
+            env_vars=("MERIDIAN_HARNESS_OPENCODE_VERSION",),
+        ),
+    ] = "auto"
+
+    @field_validator("version")
+    @classmethod
+    def _validate_version(cls, value: str) -> str:
+        normalized = value.strip().lower()
+        if normalized not in ("auto", "v1", "v2"):
+            raise ValueError(
+                "Invalid value for 'harness.opencode.version': expected one of "
+                f"'auto', 'v1', 'v2', got {value!r}."
+            )
+        return normalized
 
 
 class PiBundleToggleConfig(BaseModel):
@@ -1770,6 +1798,28 @@ def resolve_claude_allow_builtin_agents_for_launch(
         except Exception:
             pass
     return bool(load_config(project_root).harness.claude.allow_builtin_agents)
+
+
+def resolve_opencode_version_for_launch(
+    *,
+    config_snapshot: dict[str, object] | None,
+    project_root: Path,
+) -> str:
+    """Resolve ``[harness.opencode].version`` from a launch config snapshot.
+
+    Returns the normalized ``auto``/``v1``/``v2`` preference. The launch bind
+    seam projects it into the OpenCode child env so connection, preview, and
+    capture resolve the same backend instead of each probing independently.
+    """
+
+    if config_snapshot:
+        try:
+            return str(
+                MeridianConfig.model_validate(config_snapshot).harness.opencode.version
+            )
+        except Exception:
+            pass
+    return str(load_config(project_root).harness.opencode.version)
 
 
 def resolve_pi_disable_managed_bash() -> bool:

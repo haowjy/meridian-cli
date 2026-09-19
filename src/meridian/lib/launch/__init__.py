@@ -225,6 +225,7 @@ def launch_primary(
             preview_context.harness.id,
             preview_context.binding.spec,
             project_root=resolved_project_root,
+            env=preview_context.binding.environment.final_env,
         )
         if launch_plan is not None:
             launch_plan = launch_plan.model_copy(update={"requested_model": request.model})

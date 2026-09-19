@@ -7,6 +7,7 @@ The Meridian adapter targets current opencode.ai CLI releases.
 import logging
 import re
 import sqlite3
+from collections.abc import Mapping
 from datetime import datetime
 from pathlib import Path
 from typing import ClassVar, cast
@@ -41,9 +42,10 @@ from meridian.lib.harness.bundle import (
     register_harness_bundle,
 )
 from meridian.lib.harness.connections.base import RawHarnessEvent
-from meridian.lib.harness.connections.opencode_http import OpenCodeConnection
+from meridian.lib.harness.connections.opencode_connection import OpenCodeConnection
 from meridian.lib.harness.extractors.opencode import OPENCODE_EXTRACTOR
 from meridian.lib.harness.launch_types import ManagedPrimaryPreview, SessionSeed
+from meridian.lib.harness.opencode_backend import resolve_opencode_version
 from meridian.lib.harness.opencode_report import (
     extract_opencode_report,
     extract_opencode_session_id,
@@ -53,7 +55,10 @@ from meridian.lib.harness.opencode_storage import (
     resolve_opencode_home_dir,
     resolve_opencode_session_file,
 )
-from meridian.lib.harness.passthrough.opencode import build_opencode_attach_command
+from meridian.lib.harness.passthrough.opencode import (
+    build_opencode_attach_command,
+    build_opencode_server_attach_command,
+)
 from meridian.lib.harness.projections.project_opencode_streaming import (
     opencode_model_parts,
     project_opencode_spec_to_serve_command,
@@ -268,33 +273,55 @@ def project_opencode_spec_to_session_payload_for_project(
 
 
 def project_opencode_primary_preview(
-    spec: ResolvedLaunchSpec, *, project_root: Path
+    spec: ResolvedLaunchSpec,
+    *,
+    project_root: Path,
+    env: Mapping[str, str] | None = None,
 ) -> ManagedPrimaryPreview:
+    version = resolve_opencode_version(
+        (env or {}).get("MERIDIAN_HARNESS_OPENCODE_VERSION"),
+        binary="opencode",
+    )
     backend = project_opencode_spec_to_serve_command(spec, host="127.0.0.1", port=0)
     backend[backend.index("--port") + 1] = "<port>"
     continuing = bool(spec.continue_session_id)
-    steps = (
-        ("Preserve the existing native session's committed agent/model.",)
-        if continuing
-        else (
+    if version == "v2":
+        probe_step = (
+            "GET /api/config, /api/provider and /api/agent; "
+            "apply the requested model via POST /api/session/{id}/model.",
+        )
+        attach_command = build_opencode_server_attach_command(
+            spec.continue_session_id or "<session>", "http://127.0.0.1:<port>"
+        )
+        bootstrap_path = (
+            f"/api/session/{spec.continue_session_id}" if continuing else "/api/session"
+        )
+    else:
+        probe_step = (
             "GET /config/providers, /config and /agent; "
             "validate availability and effective defaults.",
             "If its model conflicts, stop the owned backend and restart once "
             "with a launch-local agent override, then repeat all three inspections.",
         )
+        attach_command = build_opencode_attach_command(
+            spec.continue_session_id or "<session>", "http://127.0.0.1:<port>"
+        )
+        bootstrap_path = f"/session/{spec.continue_session_id}" if continuing else "/session"
+    steps = (
+        ("Preserve the existing native session's committed agent/model.",)
+        if continuing
+        else (*probe_step,)
         if spec.model
         else ("Use native model defaults.",)
     )
     return ManagedPrimaryPreview(
         backend_command=tuple(backend),
         bootstrap_method="GET" if continuing else "POST",
-        bootstrap_path=f"/session/{spec.continue_session_id}" if continuing else "/session",
+        bootstrap_path=bootstrap_path,
         bootstrap_payload={}
         if continuing
         else project_opencode_spec_to_session_payload_for_project(spec, project_root=project_root),
-        attach_command=build_opencode_attach_command(
-            spec.continue_session_id or "<session>", "http://127.0.0.1:<port>"
-        ),
+        attach_command=attach_command,
         steps=(
             *steps,
             "Preserve inherited configuration; add private system instructions when supplied.",
@@ -455,10 +482,20 @@ class OpenCodeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             supports_stream_events=True,
             supports_stdin_prompt=True,
             supports_session_resume=True,
-            supports_session_fork=True,
+            # Both wired streaming transports reject ``continue_fork``
+            # (``opencode_http.py`` / ``opencode_v2_http.py`` ``_create_session``),
+            # so advertising fork here would let launch policy carry it forward
+            # only to fail at the connection. The policy layer downgrades an
+            # unsupported fork to in-place resume with a warning.
+            supports_session_fork=False,
             supports_native_skills=True,
             supports_primary_launch=True,
-            supports_named_primary_resume=False,
+            # V2 applies an explicit model on resume via ``POST /api/session/{id}/model``.
+            # V1 cannot switch the model on resume: the streaming transport fails
+            # loudly in ``OpenCodeV1Connection._create_session``, and the
+            # subprocess projector fails loudly for the same request rather
+            # than forwarding ``--model``.
+            supports_named_primary_resume=True,
             supports_native_file_injection=False,
             terminal_surface_modes=(
                 TerminalSurfaceMode.PTY_MEDIATED,
@@ -476,8 +513,16 @@ class OpenCodeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         perms: PermissionResolver,
     ) -> ResolvedLaunchSpec:
         continue_session_id = (run.continue_harness_session_id or "").strip() or None
+        # Preserve the normalized model on resume as well as fresh launch: the V2
+        # transport applies it via ``POST /api/session/{id}/model`` on continue.
+        # V1 cannot switch the committed model on resume, so both V1 transports
+        # fail loudly rather than silently dropping or forwarding it: the
+        # streaming ``_create_session`` raises, and the non-interactive
+        # subprocess projector (``opencode run``) raises before emitting
+        # ``--model``. The interactive primary path goes through managed attach
+        # and the same streaming guard.
         normalized_model: str | None = None
-        if run.model and not continue_session_id:
+        if run.model:
             normalized_model = _normalize_opencode_model(str(run.model)) or None
         return ResolvedLaunchSpec(
             harness=HarnessId.OPENCODE,
@@ -592,6 +637,13 @@ class OpenCodeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
 def _resolve_opencode_terminal(event: RawHarnessEvent) -> TerminalEventOutcome | None:
     if event.event_type == MERIDIAN_CONNECTION_CLOSED_EVENT:
         return connection_closed_outcome(event)
+    if event.event_type == "session.execution.failed":
+        detail = event.payload.get("error") or event.payload.get("message")
+        return TerminalEventOutcome(
+            status=SpawnStatus.FAILED,
+            exit_code=1,
+            error=str(detail) if detail else "opencode_session_failed",
+        )
     if event.event_type != "session.error":
         return None
     properties = event.payload.get("properties")
@@ -607,6 +659,44 @@ def _resolve_opencode_terminal(event: RawHarnessEvent) -> TerminalEventOutcome |
     )
 
 
+_OPENCODE_V2_ACTIVITY_EVENTS: tuple[str, ...] = (
+    "session.text.started",
+    "session.text.delta",
+    "session.text.ended",
+    "session.reasoning.started",
+    "session.reasoning.delta",
+    "session.reasoning.ended",
+    "session.step.started",
+    "session.step.ended",
+)
+
+# OpenCode 2 emits ``session.execution.*`` instead of ``session.idle``; the
+# version dispatcher only routes 2.x streams here, so both tables can coexist.
+_OPENCODE_V2_EVENT_SEMANTICS: dict[str, EventSemantics] = {
+    **{name: EventSemantics(activity="turn_active") for name in _OPENCODE_V2_ACTIVITY_EVENTS},
+    "session.execution.succeeded": EventSemantics(
+        activity="idle",
+        clears_signal=True,
+        terminal=TerminalEventOutcome(status=SpawnStatus.SUCCEEDED, exit_code=0),
+    ),
+    "session.execution.failed": EventSemantics(activity="idle", clears_signal=True),
+    # A user-initiated cancel already transitions the connection to ``stopping``
+    # (via ``send_cancel``) before the server emits ``interrupted``, so the normal
+    # Meridian stop path ends the drain on state — not on this event. An *unpaired*
+    # interrupt (guardrail stop, internal abort) arrives with the connection still
+    # ``connected``; give it a terminal so the spawn fails fast instead of idling
+    # ~120s into a liveness ``connectionClosed``.
+    "session.execution.interrupted": EventSemantics(
+        activity="idle",
+        clears_signal=True,
+        terminal=TerminalEventOutcome(
+            status=SpawnStatus.FAILED,
+            exit_code=1,
+            error="opencode_session_interrupted",
+        ),
+    ),
+}
+
 OPENCODE_SEMANTICS = HarnessSemantics(
     events={
         "agent_message_chunk": EventSemantics(activity="turn_active"),
@@ -619,10 +709,12 @@ OPENCODE_SEMANTICS = HarnessSemantics(
             terminal=TerminalEventOutcome(status=SpawnStatus.SUCCEEDED, exit_code=0),
         ),
         "session.error": EventSemantics(clears_signal=True),
+        **_OPENCODE_V2_EVENT_SEMANTICS,
         MERIDIAN_CONNECTION_CLOSED_EVENT: EventSemantics(),
     },
     payload_resolvers={
         "session.error": _resolve_opencode_terminal,
+        "session.execution.failed": _resolve_opencode_terminal,
         MERIDIAN_CONNECTION_CLOSED_EVENT: _resolve_opencode_terminal,
     },
     scoped_events=frozenset(
@@ -633,6 +725,10 @@ OPENCODE_SEMANTICS = HarnessSemantics(
             "tool_call_update",
             "session.idle",
             "session.error",
+            *_OPENCODE_V2_ACTIVITY_EVENTS,
+            "session.execution.succeeded",
+            "session.execution.failed",
+            "session.execution.interrupted",
         }
     ),
     scope_id_resolver=extract_opencode_session_id,

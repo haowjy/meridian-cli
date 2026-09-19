@@ -7,6 +7,71 @@ import sqlite3
 from pathlib import Path
 
 OpenCodeDbMessage = tuple[str, dict[str, object], list[dict[str, object]]]
+OpenCodeV2Message = tuple[str, dict[str, object]]
+
+
+def write_opencode_v2_db_session(
+    *,
+    db_path: Path,
+    session_id: str,
+    messages: list[OpenCodeV2Message] | None = None,
+    model: dict[str, object] | str | None = None,
+    parent_id: str | None = None,
+    title: str | None = None,
+    idle_outcome: str | None = None,
+) -> None:
+    """Write a minimal V2 ``session_v2``/``session_message`` SQLite fixture."""
+
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    with sqlite3.connect(db_path) as connection:
+        connection.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS session_v2 (
+                id TEXT PRIMARY KEY,
+                model TEXT,
+                parent_id TEXT,
+                fork_session_id TEXT,
+                idle_outcome TEXT,
+                title TEXT,
+                time_created INTEGER NOT NULL,
+                time_updated INTEGER NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS session_message (
+                id TEXT PRIMARY KEY,
+                session_id TEXT NOT NULL,
+                type TEXT NOT NULL,
+                seq INTEGER NOT NULL,
+                time_created INTEGER NOT NULL,
+                time_updated INTEGER NOT NULL,
+                data TEXT NOT NULL
+            );
+            """
+        )
+        now = 1_789_782_212_000
+        model_text = json.dumps(model) if isinstance(model, dict) else model
+        connection.execute(
+            "INSERT OR REPLACE INTO session_v2 "
+            "(id, model, parent_id, fork_session_id, idle_outcome, title, "
+            "time_created, time_updated) VALUES (?, ?, ?, NULL, ?, ?, ?, ?)",
+            (session_id, model_text, parent_id, idle_outcome, title, now, now),
+        )
+        for index, (message_type, data) in enumerate(messages or []):
+            timestamp = now + (index * 100)
+            connection.execute(
+                "INSERT INTO session_message "
+                "(id, session_id, type, seq, time_created, time_updated, data) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (
+                    f"{session_id}_msg_{index}",
+                    session_id,
+                    message_type,
+                    index + 1,
+                    timestamp,
+                    timestamp,
+                    json.dumps(data),
+                ),
+            )
+        connection.commit()
 
 
 def write_opencode_db_session(

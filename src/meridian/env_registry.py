@@ -104,6 +104,13 @@ ENV_VARS: tuple[EnvVar, ...] = (
     _public_config("MERIDIAN_HARNESS_MODEL_CLAUDE", "Claude harness model mapping."),
     _public_config("MERIDIAN_HARNESS_MODEL_CODEX", "Codex harness model mapping."),
     _public_config("MERIDIAN_HARNESS_MODEL_OPENCODE", "OpenCode harness model mapping."),
+    EnvVar(
+        "MERIDIAN_HARNESS_OPENCODE_VERSION",
+        EnvTier.PUBLIC,
+        EnvSubtype.CONFIG_INPUT,
+        "OpenCode backend version selection.",
+        child=True,
+    ),
     _public_config(
         "MERIDIAN_HARNESS_WAIT_YIELD_SECONDS_CLAUDE", "Claude wait yield interval."
     ),

@@ -230,6 +230,22 @@ event, or the first parent user `message.updated`, then ignores child-session
 assistant text while building `report.md`. Child task text remains visible through
 `meridian session log`.
 
+The stream extractor matches only the V1 `message.updated` / `message.part.updated`
+shapes and is intentionally left unchanged for V2. Managed OpenCode spawns never write
+`output.jsonl`: the drain loop persists raw events to `history.jsonl`, which the
+reader already falls back to, and V2's `session.text.*` / `session.step.*` frames
+define the live transport only. The real V2 artifacts bear this out — the R5/R8 probes
+(captured under `work/probes/final/` and `work/probes/tmux-interactive/`) record V2
+frames in the manually scraped `/api/event` log and store their finished transcript in
+`opencode.db` via schema-selected native capture, never on `output.jsonl`; every
+Meridian-captured OpenCode spawn used the frozen V1 binary and carries V1 event names.
+V2 report extraction is therefore DB-authoritative: `_extract_opencode_report_from_db`
+dispatches on detected schema (`session_v2` → V2, `session` → V1) through
+`opencode_db_any_session_exists` + `iter_opencode_db_session_events`, and interprets
+V2 rows at the shared `interpret_opencode_v2_record` seam. Adding a stream extractor
+without a V2 primary-session resolver would also risk selecting child task-session
+text, which the session-scoped DB path already excludes.
+
 ## Rationale
 
 ### Claude: PTY Capture for Primary Session ID
@@ -303,6 +319,68 @@ Suppression would silently drop workspace roots inherited from the spawner.
 `OPENCODE_CONFIG_CONTENT_ENV` lives in `launch/workspace_projection.py` to keep
 the bootstrap dependency direction acyclic; see
 [launch context](../../launch/.context/CONTEXT.md).
+
+OpenCode 2.x replaced the V1 `OPENCODE_PERMISSION` env with an ordered
+`permissions` array (`{action, resource, effect}`) in config content. For V2
+spawns the transport folds Meridian's compiled tools policy into
+`OPENCODE_CONFIG_CONTENT.permissions`, mapping V1 capability names
+(`bash`→`shell`, `write`/`patch`→`edit`, `task`→`subagent`) and splitting scoped
+keys (`bash(git status)`) into `action`/`resource`. Final emitted order is
+existing native `permissions`, inherited non-root V1 `permission` rules,
+Meridian's tools rules, then inherited `external_directory` grants. Because V2
+resolves the last matching rule, Meridian's tools policy wins over inherited
+non-root config while a broad tools `deny` still cannot shadow an explicit root
+grant. Rules that alias to the same `(action, resource)` (`edit:deny` +
+`write:allow`) are collapsed to the strongest effect (`deny > ask > allow`) with
+a warning, so emission order never decides. Within the inherited non-root and
+Meridian tools groups, rules are then emitted broad-first (`resource == "*"`
+before scoped resources) so a scoped rule always refines a broad one regardless
+of declaration order; the `external_directory` grant group stays last.
+Interactive primaries defer to the
+native TUI, matching V1's dropped override. The projection functions live in
+`projections/project_opencode_streaming.py`; the server's own V1→V2 translation
+does not handle flat scoped keys correctly, which is why Meridian compiles them.
+
+### OpenCode: Version Dispatcher, V2 Transport, Storage
+
+`opencode_backend.py` owns version resolution. `[harness.opencode] version`
+(`auto`/`v1`/`v2`, default `auto`) is a first-class config field; `auto` probes
+`opencode --version` and prefers V2, falling back to `DEFAULT_OPENCODE_VERSION`
+when the binary cannot be probed. `resolve_opencode_version()` never downgrades
+an explicit `v2`. The resolved preference is projected into the OpenCode child
+env as `MERIDIAN_HARNESS_OPENCODE_VERSION` at launch bind (see
+[launch context](../../launch/.context/CONTEXT.md)), so YAML config reaches the
+connection and dry-run preview instead of being silently ignored. The same
+preference is carried on `ResolvedLaunchSpec.opencode_version`: the non-interactive
+subprocess projector rejects resume-with-model only for a known V1, keeps
+`--model` for V2, and forwards when the preference is `auto` and the probe fails.
+
+`connections/opencode_connection.py` is the single registered OpenCode transport.
+At `start()` it resolves the version and delegates to `OpenCodeV2Connection`
+(`opencode_v2_http.py`) or the frozen `OpenCodeV1Connection`
+(`opencode_http.py`). The V2 transport subclasses V1 to reuse process lifecycle,
+`BackendLivenessPolicy`, retry classification, and SSE framing, overriding only
+the API surface: `/api` session routes, basic auth
+(`opencode:<password>` scraped from server stdout), `POST /api/session/{id}/model`
+for resume model switch, and event-envelope normalization where
+`session.execution.{succeeded,failed,interrupted}` are terminal. Shared
+infrastructure (`connections/base.py`, `managed_backend.py`, liveness, resident
+backend) is version-independent and must not fork.
+
+Storage selection is by schema, never by the installed binary.
+`detect_opencode_db_schema()` treats `session_v2` presence as V2 and `session` as
+V1; a migrated DB keeps both, and V2 is authoritative because V2 copies every
+session. `iter_opencode_db_session_events()` dispatches accordingly.
+`OpenCodeV2StorageTranscriptProvider`/`interpret_opencode_v2_record()` read
+`session_v2` + `session_message`, and `read_last_model()` reads
+`session_v2.model` with a V1 fallback. Native capture labels sessions
+`opencode.transcript.v1` or `opencode.transcript.v2` from the same detection and
+streams through the dispatcher.
+
+**OpenCode 1.x is legacy and frozen.** V1 stays registered as a fallback only;
+fixing it is out of scope unless trivial. New work targets V2. Because V2 migrates
+a V1 DB in place and keeps the V1 tables, a V1 *fallback* after a V2-first install
+needs a separate data root (`OPENCODE_DB`/`XDG_DATA_HOME`).
 
 ### Cursor: Subprocess-Only, Read-Only stdout
 
@@ -411,6 +489,26 @@ accounting guard runs on a partial adapter set and will raise false `ImportError
 
 **Don't skip `consumed_fields` / `explicitly_ignored_fields` declarations** — the
 accounting invariant treats any uncovered field as a bug, not a warning.
+
+## Known gaps (OpenCode V2)
+
+Tracked, non-blocking:
+
+- **`--fork` on the subprocess projector is unreachable.** `capabilities.supports_session_fork`
+  is `False` because the routed transports (`OpenCodeV1Connection` streaming,
+  `OpenCodeV2Connection`) reject `continue_fork`; launch policy downgrades a fork request
+  to in-place resume with a warning. `project_opencode_subprocess.py` still projects
+  `--fork` for a hypothetical routed subprocess transport — harmless but dead today.
+- **Fast-failure terminals are reconciliation-sourced.** A terminal landing between the
+  prompt POST and the `/api/event` attach is recovered by the bounded stall re-poll
+  (`_STALL_RECONCILE_LIMIT`), not by a live frame; the reconcile GET is bounded by
+  `_RECONCILE_TIMEOUT_SECONDS`.
+- **Nested-glob specificity (low).** The broad-first order only ranks `resource == "*"`
+  before scoped resources; among patterns it preserves order, so `edit(a*) allow` +
+  `edit(a) deny` emits the allow last and shadows the scoped deny. Only affects policies
+  mixing a wildcard-scoped allow with a narrower deny of the same action.
+- **Action case normalization (low).** Action names are not case-normalized before
+  alias/emission, so a mixed-case capability may not match V2's canonical action.
 
 ## Related KB
 
