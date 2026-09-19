@@ -18,7 +18,7 @@ from typing import cast
 
 from meridian.lib.harness import claude_sessions, codex_rollout, opencode_transcript
 from meridian.lib.harness.codex_rollout import CODEX_ROLLOUT_FILENAME_RE
-from meridian.lib.harness.pi_paths import resolve_pi_spawn_session_root
+from meridian.lib.harness.pi_paths import resolve_pi_agent_dir, resolve_pi_spawn_session_root
 
 
 @dataclass(frozen=True)
@@ -104,17 +104,34 @@ def _read_codex_last_model(codex_home: Path, session_id: str) -> str | None:
     return last_turn_model or fallback_model
 
 
-def _pi_session_root(context: NativeModelReadContext) -> Path | None:
-    if context.pi_session_dir:
-        return Path(context.pi_session_dir).expanduser()
+def _pi_session_roots(context: NativeModelReadContext) -> tuple[Path, ...]:
+    """Candidate Pi session roots, most specific first.
+
+    Interactive Pi sessions live under the agent dir (``~/.pi/agent/sessions``),
+    while Meridian-managed spawns use the spawn session root. A session id may
+    resolve from either, so both are searched.
+    """
+
     env = context.launch_env if context.launch_env is not None else os.environ
+    roots: list[Path] = []
+
+    def _add(candidate: Path) -> None:
+        resolved = candidate.expanduser()
+        if resolved not in roots:
+            roots.append(resolved)
+
+    if context.pi_session_dir:
+        _add(Path(context.pi_session_dir))
     session_dir_override = env.get("PI_CODING_AGENT_SESSION_DIR", "").strip()
     if session_dir_override:
-        return Path(session_dir_override).expanduser()
+        _add(Path(session_dir_override))
     agent_dir = env.get("PI_CODING_AGENT_DIR", "").strip()
     if agent_dir:
-        return Path(agent_dir).expanduser() / "sessions"
-    return resolve_pi_spawn_session_root(env=env)
+        _add(Path(agent_dir) / "sessions")
+    else:
+        _add(resolve_pi_agent_dir(env=env) / "sessions")
+    _add(resolve_pi_spawn_session_root(env=env))
+    return tuple(roots)
 
 
 def _read_pi_last_model(session_root: Path, session_id: str) -> str | None:
@@ -125,14 +142,6 @@ def _read_pi_last_model(session_root: Path, session_id: str) -> str | None:
         if session_id in path.name:
             candidate = path
             break
-    if candidate is None:
-        for path in session_root.rglob("*.jsonl"):
-            for payload in _iter_json_objects(path):
-                if payload.get("type") == "session" and payload.get("id") == session_id:
-                    candidate = path
-                    break
-            if candidate is not None:
-                break
     if candidate is None:
         return None
 
@@ -199,10 +208,11 @@ def read_last_executed_model(
                 codex_rollout.resolve_codex_home(env), normalized_session_id
             )
         if harness == "pi":
-            session_root = _pi_session_root(context)
-            if session_root is None:
-                return None
-            return _read_pi_last_model(session_root, normalized_session_id)
+            for session_root in _pi_session_roots(context):
+                token = _read_pi_last_model(session_root, normalized_session_id)
+                if token is not None:
+                    return token
+            return None
     except (OSError, sqlite3.Error):
         return None
     return None

@@ -133,6 +133,23 @@ def test_pi_reads_last_model_change(tmp_path: Path) -> None:
     assert read_last_executed_model("pi", "missing-session", context=context) is None
 
 
+def test_pi_reads_from_agent_dir_when_session_dir_not_supplied(tmp_path: Path) -> None:
+    agent_dir = tmp_path / "pi-agent"
+    session_dir = agent_dir / "sessions"
+    session_dir.mkdir(parents=True)
+    session_id = "01a0aba2-1687-748e-95da-26d7c0906dfd"
+    (session_dir / f"2026-09-16T19-12-01-672Z_{session_id}.jsonl").write_text(
+        json.dumps(
+            {"type": "model_change", "provider": "deepseek", "modelId": "deepseek-v4-pro"}
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    context = NativeModelReadContext(launch_env={"PI_CODING_AGENT_DIR": str(agent_dir)})
+
+    assert read_last_executed_model("pi", session_id, context=context) == "deepseek-v4-pro"
+
+
 def test_unknown_harness_and_missing_store_return_none(tmp_path: Path) -> None:
     empty = NativeModelReadContext()
 
@@ -151,7 +168,10 @@ def test_unknown_harness_and_missing_store_return_none(tmp_path: Path) -> None:
         read_last_executed_model(
             "pi",
             "missing",
-            context=NativeModelReadContext(pi_session_dir=str(tmp_path / "nope")),
+            context=NativeModelReadContext(
+                pi_session_dir=str(tmp_path / "nope"),
+                launch_env={"PI_CODING_AGENT_DIR": str(tmp_path / "nope-agent")},
+            ),
         )
         is None
     )
