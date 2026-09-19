@@ -524,3 +524,7 @@ JSON serialization a permission change. Append projected root patterns within
 the external-directory rule map without reordering inherited top-level rules;
 a later native catch-all can still deny them. Do not move the whole existing
 external-directory rule past a denial or invent meanings for malformed shapes.
+For OpenCode 2.x, the V2 transport instead compiles the tools policy into the
+native ordered `permissions` array and appends root grants after it, so
+last-match keeps the grants; see
+[harness context](../../harness/.context/CONTEXT.md).

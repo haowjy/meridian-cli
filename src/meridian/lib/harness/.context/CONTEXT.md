@@ -304,6 +304,19 @@ Suppression would silently drop workspace roots inherited from the spawner.
 the bootstrap dependency direction acyclic; see
 [launch context](../../launch/.context/CONTEXT.md).
 
+OpenCode 2.x replaced the V1 `OPENCODE_PERMISSION` env with an ordered
+`permissions` array (`{action, resource, effect}`) in config content. For V2
+spawns the transport folds Meridian's compiled tools policy into
+`OPENCODE_CONFIG_CONTENT.permissions`, mapping V1 capability names
+(`bash`→`shell`, `write`/`patch`→`edit`, `task`→`subagent`) and splitting scoped
+keys (`bash(git status)`) into `action`/`resource`. V1 `permission` map entries
+(workspace roots, inherited config) are re-expressed as native rules and
+appended last: V2 resolves the last matching rule, so a broad tools `deny` must
+not shadow an explicit root grant. Interactive primaries defer to the native
+TUI, matching V1's dropped override. The projection functions live in
+`projections/project_opencode_streaming.py`; the server's own V1→V2 translation
+does not handle flat scoped keys correctly, which is why Meridian compiles them.
+
 ### Cursor: Subprocess-Only, Read-Only stdout
 
 Cursor is a single-turn, subprocess-only harness. `cursor agent <prompt>` streams
