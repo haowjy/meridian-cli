@@ -458,7 +458,10 @@ class OpenCodeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             supports_session_fork=True,
             supports_native_skills=True,
             supports_primary_launch=True,
-            supports_named_primary_resume=False,
+            # V2 applies an explicit model on resume via ``POST /api/session/{id}/model``.
+            # V1 cannot switch the model on resume and fails loudly in
+            # ``OpenCodeV1Connection._create_session`` rather than dropping it.
+            supports_named_primary_resume=True,
             supports_native_file_injection=False,
             terminal_surface_modes=(
                 TerminalSurfaceMode.PTY_MEDIATED,
@@ -478,9 +481,9 @@ class OpenCodeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         continue_session_id = (run.continue_harness_session_id or "").strip() or None
         # Preserve the normalized model on resume as well as fresh launch: the V2
         # transport applies it via ``POST /api/session/{id}/model`` on continue.
-        # V1's streaming ``_create_session`` resumes by GET and ignores
-        # ``spec.model``; the V1 subprocess projector forwards ``--model`` on
-        # continue, which is explicit-intent behavior rather than a silent drop.
+        # V1's streaming ``_create_session`` resumes by GET and cannot switch the
+        # model, so it raises ``HarnessCapabilityMismatch`` rather than dropping it;
+        # the V1 subprocess projector forwards ``--model`` on continue.
         normalized_model: str | None = None
         if run.model:
             normalized_model = _normalize_opencode_model(str(run.model)) or None

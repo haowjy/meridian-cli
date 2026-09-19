@@ -1,0 +1,116 @@
+"""OpenCode V2 session API request-shape contract coverage.
+
+The V1 counterpart lives in ``test_opencode_session_api.py``. V2 resumes over the
+``/api`` session surface and applies an explicit model with
+``POST /api/session/{id}/model`` rather than dropping it.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Mapping
+
+import pytest
+
+from meridian.lib.harness.connections.opencode_v2_http import OpenCodeV2Connection
+from meridian.lib.harness.projections.projection_errors import HarnessCapabilityMismatch
+from meridian.lib.launch.launch_types import ResolvedLaunchSpec
+from meridian.lib.safety.permissions import UnsafeNoOpPermissionResolver
+
+
+class _TestableOpenCodeV2Connection(OpenCodeV2Connection):
+    def __init__(
+        self,
+        responses: list[tuple[int, object | None, str] | Exception] | None = None,
+        *,
+        get_responses: list[tuple[int, object | None, str] | Exception] | None = None,
+    ) -> None:
+        super().__init__()
+        self.requests: list[tuple[str, str, dict[str, object]]] = []
+        self._responses = iter(responses or [])
+        self._get_responses = iter(get_responses or [])
+
+    async def _post_json(
+        self,
+        path: str,
+        payload: Mapping[str, object],
+        *,
+        skip_body_on_statuses: frozenset[int] | None = None,
+        tolerate_incomplete_body: bool = False,
+    ) -> tuple[int, object | None, str]:
+        _ = skip_body_on_statuses, tolerate_incomplete_body
+        self.requests.append(("POST", path, dict(payload)))
+        try:
+            response = next(self._responses)
+        except StopIteration as exc:
+            raise AssertionError("Unexpected _post_json call in test") from exc
+        if isinstance(response, Exception):
+            raise response
+        return response
+
+    async def _get_json(self, path: str) -> tuple[int, object | None, str]:
+        self.requests.append(("GET", path, {}))
+        try:
+            response = next(self._get_responses)
+        except StopIteration as exc:
+            raise AssertionError("Unexpected _get_json call in test") from exc
+        if isinstance(response, Exception):
+            raise response
+        return response
+
+
+def _spec(
+    *, model: str | None = None, continue_session_id: str | None = None
+) -> ResolvedLaunchSpec:
+    return ResolvedLaunchSpec(
+        prompt="hello",
+        model=model,
+        continue_session_id=continue_session_id,
+        permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
+    )
+
+
+@pytest.mark.asyncio
+async def test_v2_resume_applies_explicit_model_via_model_endpoint() -> None:
+    connection = _TestableOpenCodeV2Connection(
+        responses=[(204, None, "")],
+        get_responses=[(200, {"data": {"id": "ses_v2"}}, "")],
+    )
+
+    session_id = await connection._create_session(
+        _spec(model="openai/gpt-5.5", continue_session_id="ses_v2")
+    )
+
+    assert session_id == "ses_v2"
+    assert connection.requests == [
+        ("GET", "/api/session/ses_v2", {}),
+        (
+            "POST",
+            "/api/session/ses_v2/model",
+            {"model": {"providerID": "openai", "id": "gpt-5.5"}},
+        ),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_v2_resume_without_model_does_not_switch() -> None:
+    connection = _TestableOpenCodeV2Connection(
+        get_responses=[(200, {"data": {"id": "ses_v2"}}, "")],
+    )
+
+    session_id = await connection._create_session(_spec(continue_session_id="ses_v2"))
+
+    assert session_id == "ses_v2"
+    assert connection.requests == [("GET", "/api/session/ses_v2", {})]
+
+
+@pytest.mark.asyncio
+async def test_v2_resume_model_switch_fails_loudly_on_html_fallback() -> None:
+    connection = _TestableOpenCodeV2Connection(
+        responses=[(200, "<html></html>", "text/html")],
+        get_responses=[(200, {"data": {"id": "ses_v2"}}, "")],
+    )
+
+    with pytest.raises(HarnessCapabilityMismatch, match="model switch failed"):
+        await connection._create_session(
+            _spec(model="openai/gpt-5.5", continue_session_id="ses_v2")
+        )

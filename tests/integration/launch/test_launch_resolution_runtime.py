@@ -21,7 +21,7 @@ from meridian.lib.launch.plan import (
     build_primary_launch_runtime,
     build_primary_spawn_request,
 )
-from meridian.lib.launch.request import LaunchCompositionSurface
+from meridian.lib.launch.request import LaunchCompositionSurface, SessionRequest, SpawnRequest
 from meridian.lib.launch.types import LaunchRequest, build_primary_prompt
 from meridian.lib.ops.spawn import context_ref
 from meridian.lib.state import work_repository, work_store
@@ -659,3 +659,100 @@ def test_spawn_prepare_cursor_uses_bundle_harness_model_verbatim(
     )
     assert preview.model_selection is not None
     assert preview.model_selection.harness_model_id == "claude-opus-4-7-thinking-high"
+
+
+def test_opencode_named_primary_continue_preserves_explicit_model(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """R7: OpenCode allows an explicit model on exact primary continue.
+
+    V2 applies it via ``POST /api/session/{id}/model``; V1 fails loudly in its
+    connection. The launch guard must not reject the request.
+    """
+
+    (tmp_path / "mars.toml").write_text(
+        '[settings]\ntargets = [".opencode"]\n',
+        encoding="utf-8",
+    )
+    stub_bundle_request_and_resolve(
+        monkeypatch,
+        model="openai/gpt-5.5",
+        harness=HarnessId.OPENCODE,
+    )
+
+    preview = build_launch_context(
+        spawn_id="dry-run-opencode-named-continue",
+        request=SpawnRequest(
+            prompt="continue prompt",
+            prompt_is_composed=False,
+            model="openai/gpt-5.5",
+            harness=HarnessId.OPENCODE.value,
+            session=SessionRequest(
+                requested_harness_session_id="ses_abc",
+                primary_session_mode="resume",
+                continue_harness="opencode",
+                continue_source_ref="p123",
+                continue_source_tracked=True,
+            ),
+        ),
+        runtime=build_primary_launch_runtime(project_root=tmp_path),
+        harness_registry=get_default_harness_registry(),
+        dry_run=True,
+    )
+
+    assert preview.harness.id is HarnessId.OPENCODE
+    assert preview.binding.spec.continue_session_id == "ses_abc"
+    assert preview.binding.spec.model == "openai/gpt-5.5"
+
+
+def test_opencode_from_creates_fresh_session_with_context_in_prompt(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """R7: ``--from`` starts a fresh session and injects context via the prompt."""
+
+    (tmp_path / "mars.toml").write_text(
+        '[settings]\ntargets = [".opencode"]\n',
+        encoding="utf-8",
+    )
+    stub_bundle_request_and_resolve(
+        monkeypatch,
+        model="openai/gpt-5.5",
+        harness=HarnessId.OPENCODE,
+    )
+    write_agent(tmp_path, name="dev-orchestrator", model="openai/gpt-5.5")
+
+    def _resolve_context_ref(_root: Path, _ref: str) -> object:
+        return object()
+
+    def _resolved_context_ref_value(_ref: object) -> str:
+        return "p999"
+
+    def _render_context_refs(_refs: object) -> str:
+        return '<prior-spawn-context spawn="p999">prior context</prior-spawn-context>'
+
+    monkeypatch.setattr(context_ref, "resolve_context_ref", _resolve_context_ref)
+    monkeypatch.setattr(context_ref, "resolved_context_ref_value", _resolved_context_ref_value)
+    monkeypatch.setattr(context_ref, "render_context_refs", _render_context_refs)
+
+    preview = build_launch_context(
+        spawn_id="dry-run-opencode-from",
+        request=build_primary_spawn_request(
+            request=LaunchRequest(
+                model="openai/gpt-5.5",
+                harness=HarnessId.OPENCODE.value,
+                agent="dev-orchestrator",
+                context_from=("p123",),
+            )
+        ),
+        runtime=build_primary_launch_runtime(project_root=tmp_path),
+        harness_registry=get_default_harness_registry(),
+        dry_run=True,
+    )
+
+    assert preview.harness.id is HarnessId.OPENCODE
+    assert preview.binding.spec.continue_session_id is None
+    assert preview.projected_content is not None
+    assert "prior context" in preview.projected_content.user_turn_content
+    assert "prior context" not in preview.projected_content.system_prompt

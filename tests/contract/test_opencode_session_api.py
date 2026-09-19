@@ -265,7 +265,6 @@ async def test_create_session_with_retry_resume_retries_404_then_succeeds() -> N
     )
     spec = ResolvedLaunchSpec(
         prompt="hello",
-        model="openai/gpt-5.3-codex",
         continue_session_id="sess-parent",
         permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
     )
@@ -274,6 +273,37 @@ async def test_create_session_with_retry_resume_retries_404_then_succeeds() -> N
 
     assert session_id == "sess-parent"
     assert len(connection.requests) == 3
+
+
+@pytest.mark.asyncio
+async def test_v1_resume_with_explicit_model_fails_loudly() -> None:
+    connection = _TestableOpenCodeConnection(responses=[])
+    spec = ResolvedLaunchSpec(
+        prompt="hello",
+        model="openai/gpt-5.3-codex",
+        continue_session_id="sess-parent",
+        permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
+    )
+
+    with pytest.raises(HarnessCapabilityMismatch, match="cannot switch the model"):
+        await connection._create_session(spec)
+    assert connection.requests == []
+
+
+@pytest.mark.asyncio
+async def test_v1_resume_without_model_still_verifies_and_resumes() -> None:
+    connection = _TestableOpenCodeConnection(
+        responses=[],
+        get_responses=[(200, {"id": "sess-parent"}, "")],
+    )
+    spec = ResolvedLaunchSpec(
+        prompt="hello",
+        continue_session_id="sess-parent",
+        permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
+    )
+
+    assert await connection._create_session(spec) == "sess-parent"
+    assert connection.requests == [("/session/sess-parent", {})]
 
 
 @pytest.mark.asyncio
