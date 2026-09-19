@@ -265,6 +265,21 @@ def _resolve_opencode_v2_rule_collisions(
     return resolved
 
 
+def _order_opencode_v2_rules_broad_first(
+    rules: list[dict[str, str]],
+) -> list[dict[str, str]]:
+    """Stable-partition rules so broad resources precede specific ones.
+
+    V2 resolves the last matching rule, so a scoped rule only refines a broad
+    rule when it is emitted after it. A broad aliased ``allow`` (``write`` →
+    ``edit/*``) declared after a scoped ``deny`` (``edit(foo)``) would otherwise
+    let declaration order decide the outcome. Python's sort is stable, so rules
+    of equal broadness keep their authored relative order.
+    """
+
+    return sorted(rules, key=lambda rule: rule["resource"] != "*")
+
+
 def _project_opencode_v1_permission_to_v2_rules(permission: object) -> list[dict[str, str]]:
     """Convert a V1 ``permission`` map (scalar or nested-pattern) to V2 rules."""
 
@@ -304,7 +319,11 @@ def merge_opencode_v2_permission_config(
     V2 resolves the last matching rule, so Meridian's tools policy wins over any
     inherited non-root rule while an explicit root grant is still never shadowed
     by a broad tools ``deny``. Rules that alias to the same ``(action, resource)``
-    are collapsed to their strongest effect so emission order cannot decide.
+    are collapsed to their strongest effect, and each Meridian-composed group is
+    stable-sorted broad-first (``resource == "*"`` before specific resources) so
+    a scoped deny is not order-dependent on a broad aliased allow. The parent
+    ``existing_permissions`` and the ``external_directory`` root grants are
+    emitted as authored.
     """
 
     rules = project_opencode_v2_permissions(override_json)
@@ -323,8 +342,10 @@ def merge_opencode_v2_permission_config(
     )
     config["permissions"] = [
         *cast("list[object]", existing_permissions),
-        *_resolve_opencode_v2_rule_collisions(inherited_non_root),
-        *_resolve_opencode_v2_rule_collisions(rules),
+        *_order_opencode_v2_rules_broad_first(
+            _resolve_opencode_v2_rule_collisions(inherited_non_root)
+        ),
+        *_order_opencode_v2_rules_broad_first(_resolve_opencode_v2_rule_collisions(rules)),
         *inherited_external_directory,
     ]
     return json.dumps(config, separators=(",", ":"))

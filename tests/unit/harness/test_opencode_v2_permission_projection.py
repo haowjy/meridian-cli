@@ -185,6 +185,51 @@ def test_merge_scoped_exception_refines_broad_deny() -> None:
     ]
 
 
+def test_merge_scoped_exception_refines_broad_deny_regardless_of_declaration_order() -> None:
+    merged = merge_opencode_v2_permission_config(
+        None, json.dumps({"edit(foo)": "allow", "edit": "deny"})
+    )
+    assert merged is not None
+    assert json.loads(merged)["permissions"] == [
+        {"action": "edit", "resource": "*", "effect": "deny"},
+        {"action": "edit", "resource": "foo", "effect": "allow"},
+    ]
+
+
+def test_merge_broad_aliased_allow_does_not_bypass_scoped_deny() -> None:
+    broad_first = merge_opencode_v2_permission_config(
+        None, json.dumps({"write": "allow", "edit(foo)": "deny"})
+    )
+    scoped_first = merge_opencode_v2_permission_config(
+        None, json.dumps({"edit(foo)": "deny", "write": "allow"})
+    )
+    assert broad_first is not None
+    assert scoped_first is not None
+    expected = [
+        {"action": "edit", "resource": "*", "effect": "allow"},
+        {"action": "edit", "resource": "foo", "effect": "deny"},
+    ]
+    assert json.loads(broad_first)["permissions"] == expected
+    assert json.loads(scoped_first)["permissions"] == expected
+
+
+def test_merge_patch_aliased_allow_does_not_bypass_scoped_deny() -> None:
+    broad_first = merge_opencode_v2_permission_config(
+        None, json.dumps({"write": "allow", "patch(foo)": "deny"})
+    )
+    scoped_first = merge_opencode_v2_permission_config(
+        None, json.dumps({"patch(foo)": "deny", "write": "allow"})
+    )
+    assert broad_first is not None
+    assert scoped_first is not None
+    expected = [
+        {"action": "edit", "resource": "*", "effect": "allow"},
+        {"action": "edit", "resource": "foo", "effect": "deny"},
+    ]
+    assert json.loads(broad_first)["permissions"] == expected
+    assert json.loads(scoped_first)["permissions"] == expected
+
+
 def test_merge_meridian_allow_wins_over_inherited_non_root_deny() -> None:
     raw = json.dumps({"permission": {"edit": "deny"}})
     merged = merge_opencode_v2_permission_config(raw, json.dumps({"edit": "allow"}))
