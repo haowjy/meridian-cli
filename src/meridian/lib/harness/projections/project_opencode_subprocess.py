@@ -110,6 +110,19 @@ def project_opencode_spec_to_cli_args(
             "use streaming transport (opencode serve) for MCP session payloads."
         )
 
+    harness_session_id = (spec.continue_session_id or "").strip()
+    if harness_session_id and spec.model is not None and not spec.interactive:
+        # ``opencode run --session`` cannot switch the model committed to a
+        # resumed session. Fail loudly rather than silently forwarding a flag
+        # the transport does not honor (V1) or dropping it. Interactive primary
+        # launches use managed attach and the version-aware streaming guard.
+        raise HarnessCapabilityMismatch(
+            "OpenCode subprocess cannot switch the model when resuming a session "
+            f"(requested model '{spec.model}'). Resume without an explicit model, "
+            "or use OpenCode 2's streaming transport, which applies it via "
+            "POST /api/session/{id}/model."
+        )
+
     if spec.skills:
         logger.debug(
             "OpenCode subprocess received spec.skills but has no native skills flag; "
@@ -146,7 +159,6 @@ def project_opencode_spec_to_cli_args(
     if spec.agent_name:
         command.extend(("--agent", spec.agent_name))
 
-    harness_session_id = (spec.continue_session_id or "").strip()
     has_continue_session = bool(harness_session_id)
     has_continue_fork = has_continue_session and spec.continue_fork
     passthrough_tail = spec.extra_args

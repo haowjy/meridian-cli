@@ -6,13 +6,14 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
-- Add an OpenCode backend seam (`harness/opencode_backend.py`) that resolves the installed version (`auto`/`v1`/`v2`) and exposes per-version capabilities. New config `[harness.opencode] version` / `MERIDIAN_HARNESS_OPENCODE_VERSION`.
+- Add an OpenCode backend seam (`harness/opencode_backend.py`) that resolves the installed version (`auto`/`v1`/`v2`). New config `[harness.opencode] version` / `MERIDIAN_HARNESS_OPENCODE_VERSION`.
 - Allow an explicit model on OpenCode primary continue: V2 applies it on resume via `POST /api/session/{id}/model`.
 - Capture OpenCode V2 sessions as `opencode.transcript.v2` (V1 stays `opencode.transcript.v1`) by dispatching on detected DB schema.
 
 ### Fixed
 
-- Fail loudly when an explicit model is requested on OpenCode 1.x resume instead of silently retaining the native committed model.
+- Fail loudly when an explicit model is requested on OpenCode 1.x resume instead of silently retaining the native committed model; the non-interactive subprocess projector (`opencode run`) now rejects the same request instead of forwarding `--model`.
+- Stop advertising session fork for OpenCode: both streaming transports reject `continue_fork`, so the adapter reports `supports_session_fork=False` and launch policy downgrades to in-place resume with a warning.
 - Honor `[harness.opencode] version` in `meridian.toml` (was logged as an unknown key and ignored) and project the resolved preference into the OpenCode child env at launch bind, so connection and preview select the same backend.
 - Qualify OpenCode V2 native capture tails like V1: refuse to seal a session with a pending tool or no terminal idle outcome as `complete`.
 

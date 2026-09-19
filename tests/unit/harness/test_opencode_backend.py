@@ -6,7 +6,6 @@ import pytest
 
 from meridian.lib.config.settings import OpenCodeHarnessProfileConfig
 from meridian.lib.harness.opencode_backend import (
-    capabilities_for_version,
     normalize_version_preference,
     parse_opencode_version,
     resolve_opencode_version,
@@ -47,23 +46,16 @@ def test_auto_uses_detected_version() -> None:
     assert resolve_opencode_version("auto", detected="v2") == "v2"
 
 
-def test_capabilities_reflect_version() -> None:
-    v1 = capabilities_for_version("v1")
-    assert v1.supports_named_primary_resume is False
-    assert v1.terminal_event_types == ("session.idle", "session.error")
-
-    v2 = capabilities_for_version("v2")
-    assert v2.is_v2 is True
-    assert v2.supports_named_primary_resume is True
-    assert v2.supports_model_switch_on_resume is True
-    assert "session.execution.succeeded" in v2.terminal_event_types
-    assert "session.execution.interrupted" in v2.terminal_event_types
-
-
 def test_adapter_allows_named_primary_resume() -> None:
     from meridian.lib.harness.opencode import OpenCodeAdapter
 
     assert OpenCodeAdapter().capabilities.supports_named_primary_resume is True
+
+
+def test_adapter_does_not_advertise_session_fork() -> None:
+    from meridian.lib.harness.opencode import OpenCodeAdapter
+
+    assert OpenCodeAdapter().capabilities.supports_session_fork is False
 
 
 def test_config_version_defaults_to_auto() -> None:
