@@ -30,6 +30,10 @@ Transports differ at the wire level:
   Follow-up messages omit the model to retain native state. Rejected/timed-out
   creation never retries an empty payload. V2 terminal signals are
   `session.execution.{succeeded,failed,interrupted}` (V1 uses `session.idle`/`session.error`).
+  V2's `/api/event` stream is live-only: a terminal that lands between the
+  pre-subscribe session GET and the SSE attach is re-polled on the liveness-timeout
+  path (`_reconcile_on_stall`, bounded by `_STALL_RECONCILE_LIMIT`) through the same
+  guarded helper, so the missed terminal is surfaced instead of a stall.
 - **Cursor/Pi**: narrower spawned-session transports; no resident backend seam.
 
 ## Key Rules
