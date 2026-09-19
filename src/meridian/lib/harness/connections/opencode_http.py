@@ -158,6 +158,10 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
     _ACTION_SUCCESS_STATUSES: ClassVar[frozenset[int]] = frozenset((200, 201, 202, 204, 409))
     _EVENT_RETRY_DELAY_SECONDS: ClassVar[float] = 0.25
     _LIVENESS_TIMEOUT_SECONDS: ClassVar[float] = 120.0
+    # Re-polls allowed on the liveness-timeout path before a stall is declared
+    # terminal. One is enough to cover the prompt-before-subscribe gap; the cap
+    # keeps recovery bounded if the timeout path is ever revisited.
+    _STALL_RECONCILE_LIMIT: ClassVar[int] = 1
     _STARTUP_TIMEOUT_SECONDS: ClassVar[float] = 90.0
     _READY_TIMEOUT_SECONDS: ClassVar[float] = 60.0
     _SESSION_STARTUP_TIMEOUT_SECONDS: ClassVar[float] = (
@@ -444,6 +448,18 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
 
         return None
 
+    async def _reconcile_on_stall(self) -> RawHarnessEvent | None:
+        """Recover a terminal the live stream may have missed on a stall.
+
+        ``events()`` subscribes after the initial prompt in ``start()``. A turn
+        that finishes in that gap can lose its terminal frame. The 1.x server
+        replays pre-subscription frames, so the stream itself recovers it and
+        this hook is a no-op; V2 overrides it because ``/api/event`` is
+        live-only. Called at most ``_STALL_RECONCILE_LIMIT`` times per drain.
+        """
+
+        return None
+
     async def events(self) -> AsyncIterator[RawHarnessEvent]:
         if self._state not in ("connected", "stopping"):
             return
@@ -455,6 +471,17 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
             self._liveness.mark_activity()
             yield reconciled
             return
+
+        stall_reconciles_remaining = self._STALL_RECONCILE_LIMIT
+
+        async def _reconcile_before_stall() -> RawHarnessEvent | None:
+            """Re-poll the durable outcome before declaring the stream stalled."""
+
+            nonlocal stall_reconciles_remaining
+            if stall_reconciles_remaining <= 0:
+                return None
+            stall_reconciles_remaining -= 1
+            return await self._reconcile_on_stall()
 
         sse_event_type: str | None = None
         sse_data_lines: list[str] = []
@@ -469,6 +496,11 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
                 LivenessDecision.BACKEND_DEAD,
                 LivenessDecision.STREAM_STALLED,
             ):
+                reconciled = await _reconcile_before_stall()
+                if reconciled is not None:
+                    self._liveness.mark_activity()
+                    yield reconciled
+                    return
                 logger.warning(
                     "OpenCode event stream liveness timeout after %.1fs without events",
                     self._LIVENESS_TIMEOUT_SECONDS,
@@ -484,6 +516,11 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
                     event = self._process_exit_event()
                     if event is not None:
                         yield event
+                    return
+                reconciled = await _reconcile_before_stall()
+                if reconciled is not None:
+                    self._liveness.mark_activity()
+                    yield reconciled
                     return
                 logger.warning(
                     "OpenCode event stream liveness timeout after %.1fs without events",
@@ -513,6 +550,11 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
                             event = self._process_exit_event()
                             if event is not None:
                                 yield event
+                            return
+                        reconciled = await _reconcile_before_stall()
+                        if reconciled is not None:
+                            self._liveness.mark_activity()
+                            yield reconciled
                             return
                         logger.warning(
                             "OpenCode event stream liveness timeout after %.1fs without events",

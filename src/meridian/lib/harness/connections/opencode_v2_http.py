@@ -528,6 +528,20 @@ class OpenCodeV2Connection(OpenCodeV1Connection):
             raw_text=None,
         )
 
+    async def _reconcile_on_stall(self) -> RawHarnessEvent | None:
+        """Re-poll the durable outcome when the live stream goes silent.
+
+        The pre-subscribe reconcile in ``events()`` reads the session once before
+        attaching to ``/api/event``. A turn that terminates in the gap between
+        that read and the subscribe leaves the live-only stream silent, so the
+        connection would otherwise wait out the liveness timeout and declare a
+        stall. Re-poll through the same guarded helper so the durable terminal
+        that landed in the gap is observed instead. The helper's strict
+        ``time.idle >= prompt-post`` guard still rejects prior-turn outcomes.
+        """
+
+        return await self._reconcile_initial_terminal()
+
     async def _cleanup_runtime(self, *, replacement_deadline: float | None = None) -> None:
         task = self._stdout_drain_task
         self._stdout_drain_task = None
