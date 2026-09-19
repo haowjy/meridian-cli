@@ -332,8 +332,11 @@ resolves the last matching rule, Meridian's tools policy wins over inherited
 non-root config while a broad tools `deny` still cannot shadow an explicit root
 grant. Rules that alias to the same `(action, resource)` (`edit:deny` +
 `write:allow`) are collapsed to the strongest effect (`deny > ask > allow`) with
-a warning, so emission order never decides; distinct resources keep their order
-so a scoped allow still refines a broad deny. Interactive primaries defer to the
+a warning, so emission order never decides. Within the inherited non-root and
+Meridian tools groups, rules are then emitted broad-first (`resource == "*"`
+before scoped resources) so a scoped rule always refines a broad one regardless
+of declaration order; the `external_directory` grant group stays last.
+Interactive primaries defer to the
 native TUI, matching V1's dropped override. The projection functions live in
 `projections/project_opencode_streaming.py`; the server's own V1→V2 translation
 does not handle flat scoped keys correctly, which is why Meridian compiles them.
@@ -500,6 +503,12 @@ Tracked, non-blocking:
   prompt POST and the `/api/event` attach is recovered by the bounded stall re-poll
   (`_STALL_RECONCILE_LIMIT`), not by a live frame; the reconcile GET is bounded by
   `_RECONCILE_TIMEOUT_SECONDS`.
+- **Nested-glob specificity (low).** The broad-first order only ranks `resource == "*"`
+  before scoped resources; among patterns it preserves order, so `edit(a*) allow` +
+  `edit(a) deny` emits the allow last and shadows the scoped deny. Only affects policies
+  mixing a wildcard-scoped allow with a narrower deny of the same action.
+- **Action case normalization (low).** Action names are not case-normalized before
+  alias/emission, so a mixed-case capability may not match V2's canonical action.
 
 ## Related KB
 
