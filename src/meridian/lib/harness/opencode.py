@@ -478,8 +478,9 @@ class OpenCodeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         continue_session_id = (run.continue_harness_session_id or "").strip() or None
         # Preserve the normalized model on resume as well as fresh launch: the V2
         # transport applies it via ``POST /api/session/{id}/model`` on continue.
-        # V1's ``_create_session`` resumes by GET and ignores ``spec.model``, so
-        # this stays inert for the frozen 1.x path.
+        # V1's streaming ``_create_session`` resumes by GET and ignores
+        # ``spec.model``; the V1 subprocess projector forwards ``--model`` on
+        # continue, which is explicit-intent behavior rather than a silent drop.
         normalized_model: str | None = None
         if run.model:
             normalized_model = _normalize_opencode_model(str(run.model)) or None

@@ -460,17 +460,19 @@ class OpenCodeV2Connection(OpenCodeV1Connection):
         outcome = data.get("outcome") or data.get("idle_outcome")
         if not isinstance(outcome, str) or not outcome.strip():
             return None
+        # ``time.updated`` is bumped by the prompt POST itself, so it cannot
+        # distinguish this turn from a previous one on resume. ``time.idle`` is
+        # the turn-end marker, so require it to fall at/after our prompt. A stale
+        # outcome from a prior turn has an older idle stamp and is skipped.
         time_block = data.get("time")
-        updated = (
-            cast("Mapping[str, object]", time_block).get("updated")
+        idle = (
+            cast("Mapping[str, object]", time_block).get("idle")
             if isinstance(time_block, Mapping)
             else None
         )
-        if (
-            isinstance(updated, (int, float))
-            and not isinstance(updated, bool)
-            and float(updated) < (self._initial_prompt_posted_at * 1000.0) - 1000.0
-        ):
+        if not isinstance(idle, (int, float)) or isinstance(idle, bool):
+            return None
+        if float(idle) < (self._initial_prompt_posted_at * 1000.0) - 1000.0:
             return None
         event_type = _V2_OUTCOME_EVENTS.get(outcome.strip().lower())
         if event_type is None:
