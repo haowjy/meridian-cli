@@ -170,6 +170,8 @@ _OPENCODE_V2_ACTION_ALIASES: dict[str, str] = {
 
 _OPENCODE_V2_PERMISSION_EFFECTS: frozenset[str] = frozenset({"allow", "deny", "ask"})
 
+_OPENCODE_V2_EFFECT_PRECEDENCE: dict[str, int] = {"allow": 0, "ask": 1, "deny": 2}
+
 
 def _split_opencode_v2_permission_key(raw_key: str) -> tuple[str, str | None]:
     """Split a V1 ``capability(pattern)`` permission key into its parts."""
@@ -218,6 +220,66 @@ def project_opencode_v2_permissions(override_json: str | None) -> list[dict[str,
     return rules
 
 
+def _resolve_opencode_v2_rule_collisions(
+    rules: list[dict[str, str]],
+) -> list[dict[str, str]]:
+    """Collapse rules that share one ``(action, resource)`` onto the strongest effect.
+
+    V2 resolves the last matching rule, so distinct V1 capabilities that alias to
+    the same canonical action (``write``/``patch`` → ``edit``) would otherwise let
+    emission order decide the outcome. ``deny > ask > allow`` wins regardless of
+    order. Only identical ``(action, resource)`` keys collapse; overlapping-but-
+    different resources keep their order so a scoped allow still refines a broad
+    deny.
+    """
+
+    if not rules:
+        return rules
+    strongest: dict[tuple[str, str], str] = {}
+    last_index: dict[tuple[str, str], int] = {}
+    for index, rule in enumerate(rules):
+        key = (rule["action"], rule["resource"])
+        effect = rule["effect"]
+        previous = strongest.get(key)
+        if previous is not None and previous != effect:
+            logger.warning(
+                "OpenCode V2 permission collision on %s(%s): %s vs %s; "
+                "keeping the stronger effect",
+                key[0],
+                key[1],
+                previous,
+                effect,
+            )
+        if previous is None or (
+            _OPENCODE_V2_EFFECT_PRECEDENCE[effect]
+            > _OPENCODE_V2_EFFECT_PRECEDENCE[previous]
+        ):
+            strongest[key] = effect
+        last_index[key] = index
+    resolved: list[dict[str, str]] = []
+    for index, rule in enumerate(rules):
+        key = (rule["action"], rule["resource"])
+        if last_index[key] != index:
+            continue
+        resolved.append({"action": key[0], "resource": key[1], "effect": strongest[key]})
+    return resolved
+
+
+def _order_opencode_v2_rules_broad_first(
+    rules: list[dict[str, str]],
+) -> list[dict[str, str]]:
+    """Stable-partition rules so broad resources precede specific ones.
+
+    V2 resolves the last matching rule, so a scoped rule only refines a broad
+    rule when it is emitted after it. A broad aliased ``allow`` (``write`` →
+    ``edit/*``) declared after a scoped ``deny`` (``edit(foo)``) would otherwise
+    let declaration order decide the outcome. Python's sort is stable, so rules
+    of equal broadness keep their authored relative order.
+    """
+
+    return sorted(rules, key=lambda rule: rule["resource"] != "*")
+
+
 def _project_opencode_v1_permission_to_v2_rules(permission: object) -> list[dict[str, str]]:
     """Convert a V1 ``permission`` map (scalar or nested-pattern) to V2 rules."""
 
@@ -235,15 +297,33 @@ def _project_opencode_v1_permission_to_v2_rules(permission: object) -> list[dict
     return rules
 
 
+def _split_inherited_opencode_v1_permission_rules(
+    permission: object,
+) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
+    """Split inherited V1 rules into non-root rules and ``external_directory`` grants."""
+
+    rules = _project_opencode_v1_permission_to_v2_rules(permission)
+    external_directory = [rule for rule in rules if rule["action"] == "external_directory"]
+    non_root = [rule for rule in rules if rule["action"] != "external_directory"]
+    return non_root, external_directory
+
+
 def merge_opencode_v2_permission_config(
     raw: str | None, override_json: str | None
 ) -> str | None:
     """Inject V2-native permissions derived from Meridian's tools policy.
 
-    Returns ``raw`` unchanged when there is no policy to apply. Existing
-    V1-shaped ``permission`` entries (workspace roots, parent config) are
-    re-expressed as native rules and appended last: V2 resolves the last matching
-    rule, so an explicit root grant must not be shadowed by a broad tools ``deny``.
+    Returns ``raw`` unchanged when there is no policy to apply. Existing native
+    ``permissions`` stay first, then inherited V1 ``permission`` entries, then
+    Meridian's tools rules, then inherited ``external_directory`` grants last.
+    V2 resolves the last matching rule, so Meridian's tools policy wins over any
+    inherited non-root rule while an explicit root grant is still never shadowed
+    by a broad tools ``deny``. Rules that alias to the same ``(action, resource)``
+    are collapsed to their strongest effect, and each Meridian-composed group is
+    stable-sorted broad-first (``resource == "*"`` before specific resources) so
+    a scoped deny is not order-dependent on a broad aliased allow. The parent
+    ``existing_permissions`` and the ``external_directory`` root grants are
+    emitted as authored.
     """
 
     rules = project_opencode_v2_permissions(override_json)
@@ -257,10 +337,16 @@ def merge_opencode_v2_permission_config(
     if not isinstance(existing_permissions, list):
         raise HarnessCapabilityMismatch("OpenCode permissions must be a list of rules")
     v1_permission = config.pop("permission", None)
+    inherited_non_root, inherited_external_directory = (
+        _split_inherited_opencode_v1_permission_rules(v1_permission)
+    )
     config["permissions"] = [
         *cast("list[object]", existing_permissions),
-        *rules,
-        *_project_opencode_v1_permission_to_v2_rules(v1_permission),
+        *_order_opencode_v2_rules_broad_first(
+            _resolve_opencode_v2_rule_collisions(inherited_non_root)
+        ),
+        *_order_opencode_v2_rules_broad_first(_resolve_opencode_v2_rule_collisions(rules)),
+        *inherited_external_directory,
     ]
     return json.dumps(config, separators=(",", ":"))
 
