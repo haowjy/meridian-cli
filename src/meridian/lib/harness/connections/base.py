@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from abc import ABC, abstractmethod
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
@@ -65,12 +65,24 @@ class ConnectionCapabilities:
 
 @dataclass(frozen=True)
 class ObserverEndpoint:
-    """Attach endpoint exposed by a managed primary backend."""
+    """Attach endpoint exposed by a managed primary backend.
+
+    Carries the client argv dialect and any auth env overlay the attach client
+    needs. ``attach_style`` selects how the TUI command is built: ``"attach"``
+    is the legacy ``<harness> attach <url>`` subcommand, ``"server"`` is a bare
+    TUI pointed at ``url`` via ``--server``. ``client_env`` is merged into the
+    TUI subprocess environment only (e.g. ``OPENCODE_PASSWORD``); it is never
+    persisted to spawn artifacts.
+    """
 
     transport: Literal["ws", "http"]
     url: str
     host: str | None = None
     port: int | None = None
+    attach_style: Literal["attach", "server"] = "attach"
+    """Client argv dialect used to build the managed-primary TUI command."""
+    client_env: Mapping[str, str] = field(default_factory=dict)
+    """Auth/env overlay required by the attaching TUI client."""
 
 
 ConnectionState = Literal["created", "starting", "connected", "stopping", "stopped", "failed"]

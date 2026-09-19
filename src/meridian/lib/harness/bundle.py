@@ -39,7 +39,13 @@ class ManagedPrimaryBootstrapProjector(Protocol[ProjectorSpecT, BootstrapPayload
 
 
 class ManagedPrimaryPreviewProjector(Protocol[ProjectorSpecT]):
-    def __call__(self, spec: ProjectorSpecT, *, project_root: Path) -> ManagedPrimaryPreview: ...
+    def __call__(
+        self,
+        spec: ProjectorSpecT,
+        *,
+        project_root: Path,
+        env: Mapping[str, str] | None = None,
+    ) -> ManagedPrimaryPreview: ...
 
 
 @dataclass(frozen=True)
@@ -282,13 +288,17 @@ def project_managed_primary_bootstrap(
 
 
 def project_managed_primary_preview(
-    harness_id: HarnessId, spec: object, *, project_root: Path
+    harness_id: HarnessId,
+    spec: object,
+    *,
+    project_root: Path,
+    env: Mapping[str, str] | None = None,
 ) -> ManagedPrimaryPreview | None:
     bundle = _require_bundle_spec(harness_id, spec)
     managed = bundle.projections.managed_primary
     if managed is None or managed.preview is None:
         return None
-    return managed.preview(cast("Any", spec), project_root=project_root)
+    return managed.preview(cast("Any", spec), project_root=project_root, env=env)
 
 
 __all__ = [
