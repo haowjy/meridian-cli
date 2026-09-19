@@ -1252,6 +1252,26 @@ class OpenCodeHarnessProfileConfig(HarnessProfileConfig):
             env_vars=("MERIDIAN_HARNESS_MODEL_OPENCODE",),
         ),
     ] = "opencode-go/kimi-k2.6"
+    version: Annotated[
+        str,
+        config_field(
+            "harness.opencode.version",
+            value_kind="str",
+            file_aliases=(file_alias(("harness", "opencode"), "version"),),
+            env_vars=("MERIDIAN_HARNESS_OPENCODE_VERSION",),
+        ),
+    ] = "auto"
+
+    @field_validator("version")
+    @classmethod
+    def _validate_version(cls, value: str) -> str:
+        normalized = value.strip().lower()
+        if normalized not in ("auto", "v1", "v2"):
+            raise ValueError(
+                "Invalid value for 'harness.opencode.version': expected one of "
+                f"'auto', 'v1', 'v2', got {value!r}."
+            )
+        return normalized
 
 
 class PiBundleToggleConfig(BaseModel):

@@ -6,6 +6,9 @@ domain types. `ops/` and `launch/` work with domain types — harness specifics 
 here.
 
 The Meridian OpenCode adapter targets current opencode.ai CLI releases.
+`opencode_backend.py` is the version seam: it resolves V1 vs V2 (config
+`[harness.opencode] version`, default `auto`, probing `opencode --version`) and
+exposes per-version capabilities. V1 is frozen; new work targets V2.
 
 ## Translation Pipeline
 
