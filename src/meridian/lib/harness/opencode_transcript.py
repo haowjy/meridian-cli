@@ -13,10 +13,7 @@ from itertools import groupby
 from pathlib import Path
 from typing import Literal, Protocol, cast
 
-from meridian.lib.harness.opencode_storage import (
-    resolve_opencode_data_root,
-    resolve_opencode_home_dir,
-)
+from meridian.lib.harness.opencode_storage import resolve_opencode_home_dir
 from meridian.lib.state.native_snapshot import TranscriptValidation
 
 OpenCodeDbSchema = Literal["sqlite_v1", "sqlite_v2"]
@@ -28,9 +25,10 @@ _V2_VERSION = 2
 def resolve_opencode_db_path(launch_env: Mapping[str, str] | None = None) -> Path:
     """Resolve the OpenCode SQLite database path.
 
-    Precedence: ``OPENCODE_DB`` (absolute, or relative to the data root;
-    ``:memory:`` is preserved verbatim) → ``OPENCODE_HOME``/``opencode.db`` →
-    ``$XDG_DATA_HOME/opencode/opencode.db`` → ``~/.local/share/opencode/opencode.db``.
+    Precedence: ``OPENCODE_DB`` (absolute, or relative to the OpenCode data
+    dir; ``:memory:`` is preserved verbatim) → ``OPENCODE_HOME``/``opencode.db``
+    → ``$XDG_DATA_HOME/opencode/opencode.db`` →
+    ``~/.local/share/opencode/opencode.db``.
     """
 
     env = launch_env if launch_env is not None else os.environ
@@ -41,7 +39,7 @@ def resolve_opencode_db_path(launch_env: Mapping[str, str] | None = None) -> Pat
         candidate = Path(override).expanduser()
         if candidate.is_absolute():
             return candidate
-        return resolve_opencode_data_root(launch_env) / candidate
+        return resolve_opencode_home_dir(launch_env) / candidate
     return resolve_opencode_home_dir(launch_env) / "opencode.db"
 
 
@@ -745,7 +743,7 @@ def interpret_opencode_v2_record(
     if event.get("version") != _V2_VERSION:
         return [], False, "Unsupported OpenCode V2 transcript dialect; rendering is incomplete."
     message_type = str(event.get("type", "")).strip().lower()
-    if message_type == "session":
+    if message_type in {"session", "idle", "model-switched"}:
         return [], False, None
     data = event.get("data")
     if not isinstance(data, dict):
@@ -758,7 +756,7 @@ def interpret_opencode_v2_record(
         parts = _v2_content_parts(data_payload.get("content"))
         material, material_reason = _message_events(role="assistant", parts=parts)
         return list(material), False, material_reason
-    return [], False, None
+    return [], False, "Unsupported OpenCode V2 message type; rendering is incomplete."
 
 
 def _text_from_value(value: object) -> str:

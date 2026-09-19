@@ -90,7 +90,10 @@ def test_resolve_opencode_db_path_precedence() -> None:
     assert resolve_opencode_db_path({"OPENCODE_DB": ":memory:"}) == Path(":memory:")
     assert resolve_opencode_db_path(
         {"OPENCODE_DB": "nested/iso.db", "XDG_DATA_HOME": "/data"}
-    ) == Path("/data/nested/iso.db")
+    ) == Path("/data/opencode/nested/iso.db")
+    assert resolve_opencode_db_path(
+        {"OPENCODE_DB": "nested/iso.db", "OPENCODE_HOME": "/custom/opencode"}
+    ) == Path("/custom/opencode/nested/iso.db")
     assert resolve_opencode_db_path({"XDG_DATA_HOME": "/data"}) == Path(
         "/data/opencode/opencode.db"
     )
@@ -140,6 +143,21 @@ def test_v2_rows_read_into_transcript_types(tmp_path: Path) -> None:
     assert messages[2].tool_call.name == "bash"
     assert messages[3].is_tool_result is True
     assert parsed.rendering_reason is None
+
+
+def test_v2_unknown_message_type_sets_rendering_reason(tmp_path: Path) -> None:
+    path = _write_v2(
+        tmp_path,
+        messages=[
+            ("user", {"text": "hi"}),
+            ("summary", {"text": "condensed"}),
+        ],
+    )
+    events = list(iter_opencode_v2_db_events(session_id=_SESSION, db_path=path))
+    assert [event["type"] for event in events] == ["session", "user", "summary"]
+
+    parsed = parse_transcript_events_with_prologues(events)
+    assert parsed.rendering_reason is not None
 
 
 def test_provider_selection_is_schema_aware(tmp_path: Path) -> None:
