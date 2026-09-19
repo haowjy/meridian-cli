@@ -2,19 +2,29 @@
 
 from __future__ import annotations
 
+import contextlib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 from uuid import UUID
 
 from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
+from meridian.lib.core.types import HarnessSessionId
+from meridian.lib.harness.model_observation import (
+    NativeModelReadContext,
+    read_last_executed_model,
+)
 from meridian.lib.launch.policy_snapshot import managed_model_override_from_persisted_model
 from meridian.lib.launch.request import SessionRequest
+from meridian.lib.state.event_store import utc_now_iso
 from meridian.lib.state.session_store import (
     ConversationModelSelection,
+    SessionModelObservationEvent,
     SessionModelSelectionEvent,
     get_initial_model_selection,
+    get_last_executed_model,
     get_model_selection,
+    record_model_observation,
 )
 
 MODEL_OVERRIDE_WARNING = (
@@ -227,6 +237,45 @@ def _fallback_conversation_intent(
     )
 
 
+def _observed_last_executed_model(
+    *,
+    source: ContinueReplaySource,
+    replay_harness: str,
+    runtime_root: Path,
+) -> str | None:
+    """Resolve the last-executed model, live-read first with stored observation fallback.
+
+    Live-read hits are best-effort persisted as an observation; a persistence
+    failure must never break continue, so it is swallowed here.
+    """
+
+    harness_session_id = source.harness_session_id
+    if harness_session_id is None:
+        return None
+    token = read_last_executed_model(
+        replay_harness,
+        harness_session_id,
+        context=NativeModelReadContext(
+            project_root=source.source_control_root,
+            claude_config_dir=source.source_claude_config_dir,
+            pi_session_dir=source.source_pi_session_dir,
+        ),
+    )
+    if token is None:
+        return get_last_executed_model(runtime_root, replay_harness, harness_session_id)
+    with contextlib.suppress(Exception):
+        record_model_observation(
+            runtime_root,
+            SessionModelObservationEvent(
+                harness=replay_harness,
+                harness_session_id=HarnessSessionId(harness_session_id),
+                observed_model_token=token,
+                recorded_at=utc_now_iso(),
+            ),
+        )
+    return token
+
+
 def _resolve_continue_conversation_intent(
     *,
     source: ContinueReplaySource,
@@ -258,6 +307,20 @@ def _resolve_continue_conversation_intent(
             ),
             seed_event,
         )
+    if not fork and runtime_root is not None and source.harness_session_id is not None:
+        observed_token = _observed_last_executed_model(
+            source=source,
+            replay_harness=replay_harness,
+            runtime_root=runtime_root,
+        )
+        if observed_token is not None:
+            return (
+                ConversationModelSelection(
+                    requested_token=observed_token,
+                    selection_source="observed_last_used",
+                ),
+                seed_event,
+            )
     if recorded is not None:
         return recorded.model_copy(update={"selection_source": "recorded_selection"}), None
     if seed_event is not None:

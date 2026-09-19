@@ -14,6 +14,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- Record the last executed conversation model as a distinct observation (never overwriting selected intent) and replay it on `--continue` when the native store is readable; explicit `--model` still wins. Readers cover OpenCode, Claude, Codex, and Pi.
 - Add an OpenCode backend seam (`harness/opencode_backend.py`) that resolves the installed version (`auto`/`v1`/`v2`). New config `[harness.opencode] version` / `MERIDIAN_HARNESS_OPENCODE_VERSION`.
 - Allow an explicit model on OpenCode primary continue: V2 applies it on resume via `POST /api/session/{id}/model`.
 - Capture OpenCode V2 sessions as `opencode.transcript.v2` (V1 stays `opencode.transcript.v1`) by dispatching on detected DB schema.
