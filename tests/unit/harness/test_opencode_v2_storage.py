@@ -10,6 +10,7 @@ from pathlib import Path
 from meridian.lib.harness.opencode_transcript import (
     OpenCodeV2StorageTranscriptProvider,
     detect_opencode_db_schema,
+    extract_last_assistant_report,
     iter_opencode_db_session_events,
     iter_opencode_v2_db_events,
     opencode_db_any_session_exists,
@@ -143,6 +144,20 @@ def test_v2_rows_read_into_transcript_types(tmp_path: Path) -> None:
     assert messages[2].tool_call.name == "bash"
     assert messages[3].is_tool_result is True
     assert parsed.rendering_reason is None
+
+
+def test_extract_last_assistant_report_from_v2_rows(tmp_path: Path) -> None:
+    path = _write_v2(tmp_path)
+    events = iter_opencode_v2_db_events(session_id=_SESSION, db_path=path)
+    assert extract_last_assistant_report(events) == "hello"
+
+
+def test_extract_last_assistant_report_v2_without_assistant_text_is_none(
+    tmp_path: Path,
+) -> None:
+    path = _write_v2(tmp_path, messages=[("user", {"text": "say hi"})])
+    events = iter_opencode_v2_db_events(session_id=_SESSION, db_path=path)
+    assert extract_last_assistant_report(events) is None
 
 
 def test_v2_unknown_message_type_sets_rendering_reason(tmp_path: Path) -> None:

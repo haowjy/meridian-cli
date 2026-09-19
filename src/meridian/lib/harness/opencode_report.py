@@ -251,15 +251,27 @@ def extract_opencode_session_id_from_artifacts(
     )
 
 def _extract_opencode_report_from_db(session_id: str) -> str | None:
+    """Read the last assistant text for one session from ``opencode.db``.
+
+    Schema-dispatched (``session_v2`` → V2, ``session`` → V1) so both dialects
+    share one path. The DB is authoritative for V2: managed OpenCode spawns never
+    write ``output.jsonl`` (the drain loop persists raw events to
+    ``history.jsonl``), and V2 native capture reads the same
+    ``session_v2``/``session_message`` rows. The V1-only stream extractor above is
+    therefore left unchanged; V2 rows are interpreted at the V2 DB seam by
+    :func:`iter_opencode_db_session_events`.
+    """
     from meridian.lib.harness.opencode_transcript import (
         extract_last_assistant_report,
-        iter_opencode_db_events,
-        opencode_db_session_exists,
+        iter_opencode_db_session_events,
+        opencode_db_any_session_exists,
     )
 
-    if not opencode_db_session_exists(session_id=session_id):
+    if not opencode_db_any_session_exists(session_id=session_id):
         return None
-    return extract_last_assistant_report(iter_opencode_db_events(session_id=session_id))
+    return extract_last_assistant_report(
+        iter_opencode_db_session_events(session_id=session_id)
+    )
 
 def extract_opencode_report(artifacts: ArtifactStore, spawn_id: SpawnId) -> str | None:
     payloads = iter_json_lines_artifact(artifacts, spawn_id, OUTPUT_FILENAME)

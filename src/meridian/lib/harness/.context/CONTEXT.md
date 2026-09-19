@@ -230,6 +230,22 @@ event, or the first parent user `message.updated`, then ignores child-session
 assistant text while building `report.md`. Child task text remains visible through
 `meridian session log`.
 
+The stream extractor matches only the V1 `message.updated` / `message.part.updated`
+shapes and is intentionally left unchanged for V2. Managed OpenCode spawns never write
+`output.jsonl`: the drain loop persists raw events to `history.jsonl`, which the
+reader already falls back to, and V2's `session.text.*` / `session.step.*` frames
+define the live transport only. The real V2 artifacts bear this out — the R5/R8 probes
+(captured under `work/probes/final/` and `work/probes/tmux-interactive/`) record V2
+frames in the manually scraped `/api/event` log and store their finished transcript in
+`opencode.db` via schema-selected native capture, never on `output.jsonl`; every
+Meridian-captured OpenCode spawn used the frozen V1 binary and carries V1 event names.
+V2 report extraction is therefore DB-authoritative: `_extract_opencode_report_from_db`
+dispatches on detected schema (`session_v2` → V2, `session` → V1) through
+`opencode_db_any_session_exists` + `iter_opencode_db_session_events`, and interprets
+V2 rows at the shared `interpret_opencode_v2_record` seam. Adding a stream extractor
+without a V2 primary-session resolver would also risk selecting child task-session
+text, which the session-scoped DB path already excludes.
+
 ## Rationale
 
 ### Claude: PTY Capture for Primary Session ID
