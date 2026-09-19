@@ -5,21 +5,77 @@ from __future__ import annotations
 import base64
 import json
 import math
+import os
 import sqlite3
 from collections.abc import Callable, Generator, Iterable, Iterator, Mapping
 from contextlib import closing
 from itertools import groupby
 from pathlib import Path
-from typing import Protocol, cast
+from typing import Literal, Protocol, cast
 
-from meridian.lib.harness.opencode_storage import resolve_opencode_home_dir
+from meridian.lib.harness.opencode_storage import (
+    resolve_opencode_data_root,
+    resolve_opencode_home_dir,
+)
 from meridian.lib.state.native_snapshot import TranscriptValidation
+
+OpenCodeDbSchema = Literal["sqlite_v1", "sqlite_v2"]
+
+_V2_RECORD = "opencode.transcript.v2"
+_V2_VERSION = 2
 
 
 def resolve_opencode_db_path(launch_env: Mapping[str, str] | None = None) -> Path:
-    """Resolve the OpenCode SQLite database path from the storage root."""
+    """Resolve the OpenCode SQLite database path.
 
+    Precedence: ``OPENCODE_DB`` (absolute, or relative to the data root;
+    ``:memory:`` is preserved verbatim) → ``OPENCODE_HOME``/``opencode.db`` →
+    ``$XDG_DATA_HOME/opencode/opencode.db`` → ``~/.local/share/opencode/opencode.db``.
+    """
+
+    env = launch_env if launch_env is not None else os.environ
+    override = env.get("OPENCODE_DB", "").strip()
+    if override:
+        if override == ":memory:":
+            return Path(":memory:")
+        candidate = Path(override).expanduser()
+        if candidate.is_absolute():
+            return candidate
+        return resolve_opencode_data_root(launch_env) / candidate
     return resolve_opencode_home_dir(launch_env) / "opencode.db"
+
+
+def _connect_readonly(db_path: Path) -> sqlite3.Connection:
+    return sqlite3.connect(
+        db_path.resolve().as_uri() + "?mode=ro", uri=True, timeout=0.1
+    )
+
+
+def _table_names(connection: sqlite3.Connection) -> set[str]:
+    return {
+        str(row[0])
+        for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")
+    }
+
+
+def detect_opencode_db_schema(db_path: Path | None = None) -> OpenCodeDbSchema | None:
+    """Detect an OpenCode database's schema family from its tables.
+
+    V2 is identified by the presence of ``session_v2``; V1 by ``session``. Returns
+    ``None`` when the database is absent or carries neither table. The installed
+    binary is never consulted.
+    """
+
+    resolved_db_path = db_path or resolve_opencode_db_path()
+    if not resolved_db_path.is_file():
+        return None
+    with closing(_connect_readonly(resolved_db_path)) as connection:
+        names = _table_names(connection)
+    if "session_v2" in names:
+        return "sqlite_v2"
+    if "session" in names:
+        return "sqlite_v1"
+    return None
 
 
 def opencode_db_session_exists(
@@ -43,6 +99,57 @@ def opencode_db_session_exists(
             "SELECT 1 FROM session WHERE id = ?", (normalized_session_id,)
         ).fetchone()
     return row is not None
+
+
+def opencode_db_v2_session_exists(
+    *,
+    session_id: str,
+    db_path: Path | None = None,
+) -> bool:
+    """Return whether a V2 ``session_v2`` table contains ``session_id``.
+
+    A missing database or ``session_v2`` table is not existence evidence; it is
+    reported as ``False`` rather than raising.
+    """
+
+    normalized_session_id = session_id.strip()
+    if not normalized_session_id:
+        return False
+    resolved_db_path = db_path or resolve_opencode_db_path()
+    if not resolved_db_path.is_file():
+        return False
+
+    try:
+        with closing(_connect_readonly(resolved_db_path)) as connection:
+            if "session_v2" not in _table_names(connection):
+                return False
+            row = connection.execute(
+                "SELECT 1 FROM session_v2 WHERE id = ?", (normalized_session_id,)
+            ).fetchone()
+    except sqlite3.Error:
+        return False
+    return row is not None
+
+
+def opencode_db_any_session_exists(
+    *,
+    session_id: str,
+    db_path: Path | None = None,
+) -> bool:
+    """Return whether either OpenCode schema family contains ``session_id``.
+
+    V2 is checked when ``session_v2`` is present, V1 when only ``session`` is.
+    A migrated database keeps both tables but V2 copies every session, so the V2
+    probe is authoritative there. A database with neither table is not existence
+    evidence; a corrupt database still surfaces its read error.
+    """
+
+    schema = detect_opencode_db_schema(db_path)
+    if schema == "sqlite_v2":
+        return opencode_db_v2_session_exists(session_id=session_id, db_path=db_path)
+    if schema == "sqlite_v1":
+        return opencode_db_session_exists(session_id=session_id, db_path=db_path)
+    return False
 
 
 class _JsonlEventReader(Protocol):
@@ -84,6 +191,39 @@ class OpenCodeStorageTranscriptProvider:
             session_id=path.stem, db_path=database
         ):
             yield from iter_opencode_db_events(session_id=path.stem, db_path=database)
+            return
+        yield from self._iter_json_events(path, current=current, validation=validation)
+
+
+class OpenCodeV2StorageTranscriptProvider:
+    """OpenCode V2 storage provider reading ``session_v2``/``session_message``.
+
+    Sibling of :class:`OpenCodeStorageTranscriptProvider`. Selection is by schema
+    presence (``session_v2``), never by the installed binary. A missing table or
+    fresh database yields no events instead of raising.
+    """
+
+    def __init__(
+        self,
+        *,
+        iter_json_events: _JsonlEventReader,
+    ) -> None:
+        self._iter_json_events = iter_json_events
+
+    def supports(self, path: Path) -> bool:
+        database = opencode_db_for_session_file(path)
+        return database is not None and detect_opencode_db_schema(database) == "sqlite_v2"
+
+    def iter_events(
+        self,
+        path: Path,
+        *,
+        current: Callable[[], bool] | None = None,
+        validation: TranscriptValidation | None = None,
+    ) -> Iterator[dict[str, object]]:
+        database = opencode_db_for_session_file(path)
+        if database is not None:
+            yield from iter_opencode_v2_db_events(session_id=path.stem, db_path=database)
             return
         yield from self._iter_json_events(path, current=current, validation=validation)
 
@@ -351,6 +491,134 @@ def iter_opencode_db_events(
             }
 
 
+def iter_opencode_v2_db_events(
+    *,
+    session_id: str,
+    db_path: Path | None = None,
+) -> Generator[dict[str, object]]:
+    """Read V2 ``session_v2``/``session_message`` rows in the V2 raw dialect.
+
+    The session header carries the authoritative ``session_v2`` row (id, model,
+    parent_id, idle_outcome, title, ...). Each ``session_message`` row follows in
+    ``seq`` order with its JSON payload preserved. A missing database, missing
+    table, or unknown session yields no events instead of raising: a fresh V2
+    database is a valid empty observation and must not look like corrupt data.
+    """
+
+    normalized_session_id = session_id.strip()
+    if not normalized_session_id:
+        return
+    resolved_db_path = db_path or resolve_opencode_db_path()
+    if not resolved_db_path.is_file():
+        return
+
+    with closing(_connect_readonly(resolved_db_path)) as connection:
+        connection.row_factory = sqlite3.Row
+        names = _table_names(connection)
+        if "session_v2" not in names or "session_message" not in names:
+            return
+        connection.execute("BEGIN")
+        session = connection.execute(
+            "SELECT * FROM session_v2 WHERE id=?", (normalized_session_id,)
+        ).fetchone()
+        if session is None:
+            return
+        yield {
+            "record": _V2_RECORD,
+            "version": _V2_VERSION,
+            "type": "session",
+            "data": _raw_row(session),
+        }
+        for message in connection.execute(
+            "SELECT type,seq,data FROM session_message "
+            "WHERE session_id=? ORDER BY seq,time_created,id",
+            (normalized_session_id,),
+        ):
+            payload = _load_json_object(message["data"])
+            yield {
+                "record": _V2_RECORD,
+                "version": _V2_VERSION,
+                "type": str(message["type"]),
+                "seq": message["seq"],
+                "session_id": normalized_session_id,
+                "data": payload if payload is not None else {},
+            }
+
+
+def iter_opencode_db_session_events(
+    *,
+    session_id: str,
+    db_path: Path | None = None,
+) -> Generator[dict[str, object]]:
+    """Dispatch to the V2 reader when ``session_v2`` is present, else V1.
+
+    Schema is decided by table presence. When neither table is readable the V1
+    reader runs, preserving its existing raise-on-unavailable behavior for
+    callers that already establish positive session identity.
+    """
+
+    if detect_opencode_db_schema(db_path) == "sqlite_v2":
+        yield from iter_opencode_v2_db_events(session_id=session_id, db_path=db_path)
+        return
+    yield from iter_opencode_db_events(session_id=session_id, db_path=db_path)
+
+
+def _model_ref_text(raw_model: object) -> str | None:
+    if not isinstance(raw_model, str) or not raw_model.strip():
+        return None
+    parsed = _load_json_object(raw_model)
+    if parsed is None:
+        return None
+    provider = parsed.get("providerID") or parsed.get("provider")
+    model_id = parsed.get("id") or parsed.get("modelID")
+    if not isinstance(provider, str) or not provider.strip():
+        return None
+    if not isinstance(model_id, str) or not model_id.strip():
+        return None
+    return f"{provider.strip()}/{model_id.strip()}"
+
+
+def read_last_model(
+    session_id: str,
+    *,
+    db_path: Path | None = None,
+    launch_env: Mapping[str, str] | None = None,
+) -> str | None:
+    """Return the session's last used model as ``provider/model``.
+
+    Reads ``session_v2.model`` first; falls back to ``session.model`` only when
+    ``session_v2`` is absent. Returns ``None`` for a missing session, absent
+    database, or unparseable model reference.
+    """
+
+    normalized_session_id = session_id.strip()
+    if not normalized_session_id:
+        return None
+    resolved_db_path = db_path or resolve_opencode_db_path(launch_env)
+    if not resolved_db_path.is_file():
+        return None
+
+    raw_model: object = None
+    try:
+        with closing(_connect_readonly(resolved_db_path)) as connection:
+            names = _table_names(connection)
+            if "session_v2" in names:
+                row = connection.execute(
+                    "SELECT model FROM session_v2 WHERE id=?", (normalized_session_id,)
+                ).fetchone()
+                if row is not None:
+                    raw_model = row[0]
+            if raw_model is None and "session" in names:
+                row = connection.execute(
+                    "SELECT model FROM session WHERE id=?", (normalized_session_id,)
+                ).fetchone()
+                if row is not None:
+                    raw_model = row[0]
+    except sqlite3.Error:
+        return None
+    return _model_ref_text(raw_model)
+
+
 def interpret_opencode_record(
     event: dict[str, object],
     *,
@@ -412,6 +680,87 @@ def interpret_opencode_record(
     return events, role == "user", rendering_reason
 
 
+def _v2_tool_text(value: object) -> str:
+    if not isinstance(value, list):
+        return ""
+    texts: list[str] = []
+    for item in cast("list[object]", value):
+        if not isinstance(item, dict):
+            continue
+        item_payload = cast("dict[str, object]", item)
+        if str(item_payload.get("type", "")).strip().lower() != "text":
+            continue
+        text = item_payload.get("text")
+        if isinstance(text, str) and text.strip():
+            texts.append(text.strip())
+    return "\n".join(texts)
+
+
+def _v2_tool_part(part: dict[str, object]) -> dict[str, object]:
+    raw_state = part.get("state")
+    state = dict(cast("dict[str, object]", raw_state)) if isinstance(raw_state, dict) else {}
+    name = part.get("name") or part.get("tool")
+    normalized: dict[str, object] = {
+        "type": "tool",
+        "tool": name if isinstance(name, str) and name.strip() else "tool",
+        "state": state,
+    }
+    if not isinstance(state.get("output"), str):
+        output = _v2_tool_text(state.get("content"))
+        if output:
+            state["output"] = output
+    return normalized
+
+
+def _v2_content_parts(content: object) -> list[dict[str, object]]:
+    if not isinstance(content, list):
+        return []
+    parts: list[dict[str, object]] = []
+    for item in cast("list[object]", content):
+        if not isinstance(item, dict):
+            continue
+        part = cast("dict[str, object]", item)
+        parts.append(
+            _v2_tool_part(part)
+            if str(part.get("type", "")).strip().lower() == "tool"
+            else part
+        )
+    return parts
+
+
+def interpret_opencode_v2_record(
+    event: dict[str, object],
+    *,
+    include_user_setup: bool,
+) -> tuple[list[dict[str, object]], bool, str | None]:
+    """Translate one preserved V2 row into display events at the shared boundary.
+
+    ``session_message.type`` is the message role: ``user`` carries top-level
+    ``text``; ``assistant`` carries a ``content`` part list. Unknown or malformed
+    rows yield no display and a rendering limit, never a successful empty.
+    """
+
+    _ = include_user_setup
+    reason = "Malformed OpenCode V2 transcript row; rendering is incomplete."
+    if event.get("version") != _V2_VERSION:
+        return [], False, "Unsupported OpenCode V2 transcript dialect; rendering is incomplete."
+    message_type = str(event.get("type", "")).strip().lower()
+    if message_type == "session":
+        return [], False, None
+    data = event.get("data")
+    if not isinstance(data, dict):
+        return [], False, reason
+    data_payload = cast("dict[str, object]", data)
+    if message_type == "user":
+        text = _text_from_value(data_payload.get("text"))
+        return ([{"role": "user", "content": text}] if text else []), True, None
+    if message_type == "assistant":
+        parts = _v2_content_parts(data_payload.get("content"))
+        material, material_reason = _message_events(role="assistant", parts=parts)
+        return list(material), False, material_reason
+    return [], False, None
+
+
 def _text_from_value(value: object) -> str:
     if isinstance(value, str):
         return value.strip()
@@ -451,10 +800,19 @@ def extract_last_assistant_report_from_session_path(path: Path) -> str | None:
 
 
 __all__ = [
+    "OpenCodeDbSchema",
     "OpenCodeStorageTranscriptProvider",
+    "OpenCodeV2StorageTranscriptProvider",
+    "detect_opencode_db_schema",
     "extract_last_assistant_report",
     "extract_last_assistant_report_from_session_path",
+    "interpret_opencode_v2_record",
     "iter_opencode_db_events",
+    "iter_opencode_db_session_events",
+    "iter_opencode_v2_db_events",
+    "opencode_db_any_session_exists",
     "opencode_db_session_exists",
+    "opencode_db_v2_session_exists",
+    "read_last_model",
     "resolve_opencode_db_path",
 ]
