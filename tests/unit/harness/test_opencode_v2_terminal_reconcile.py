@@ -15,7 +15,10 @@ import pytest
 
 from meridian.lib.harness.connections.base import RawHarnessEvent
 from meridian.lib.harness.connections.liveness import LivenessDecision
-from meridian.lib.harness.connections.opencode_v2_http import OpenCodeV2Connection
+from meridian.lib.harness.connections.opencode_v2_http import (
+    _RECONCILE_TIMEOUT_SECONDS,
+    OpenCodeV2Connection,
+)
 
 _PROMPT_POSTED_AT = 1_000.0
 _SESSION_PATH = "/api/session/ses_v2"
@@ -43,13 +46,35 @@ class _ReconcileProbeOpenCodeV2Connection(OpenCodeV2Connection):
         self._liveness = cast("Any", _ExpiredLiveness())
         self._get_responses = iter(get_responses)
         self.get_paths: list[str] = []
+        self.get_timeouts: list[float | None] = []
 
-    async def _get_json(self, path: str) -> tuple[int, object | None, str]:
+    async def _get_json(
+        self, path: str, *, timeout: float | None = None
+    ) -> tuple[int, object | None, str]:
         self.get_paths.append(path)
+        self.get_timeouts.append(timeout)
         try:
             return next(self._get_responses)
         except StopIteration as exc:
             raise AssertionError("Unexpected _get_json call in test") from exc
+
+
+class _TimingOutReconcileProbeOpenCodeV2Connection(OpenCodeV2Connection):
+    """Liveness double whose reconcile GET always times out."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._state = "connected"
+        self._session_id = "ses_v2"
+        self._initial_prompt_posted_at = _PROMPT_POSTED_AT
+        self._liveness = cast("Any", _ExpiredLiveness())
+        self.get_timeouts: list[float | None] = []
+
+    async def _get_json(
+        self, path: str, *, timeout: float | None = None
+    ) -> tuple[int, object | None, str]:
+        self.get_timeouts.append(timeout)
+        raise TimeoutError("reconcile GET timed out")
 
 
 def _non_terminal_body() -> dict[str, object]:
@@ -88,6 +113,7 @@ async def test_stall_repoll_surfaces_terminal_missed_by_initial_get() -> None:
     assert [event.event_type for event in events] == ["session.execution.succeeded"]
     assert events[0].payload["reconciled"] is True
     assert connection.get_paths == [_SESSION_PATH, _SESSION_PATH]
+    assert connection.get_timeouts == [_RECONCILE_TIMEOUT_SECONDS, _RECONCILE_TIMEOUT_SECONDS]
     assert connection.state == "connected"
 
 
@@ -104,6 +130,18 @@ async def test_stall_repoll_without_terminal_fails_after_one_bounded_poll() -> N
 
     assert events == []
     assert connection.get_paths == [_SESSION_PATH, _SESSION_PATH]
+    assert connection.get_timeouts == [_RECONCILE_TIMEOUT_SECONDS, _RECONCILE_TIMEOUT_SECONDS]
+    assert connection.state == "failed"
+
+
+@pytest.mark.asyncio
+async def test_reconcile_timeout_returns_none_and_preserves_stall_failure() -> None:
+    connection = _TimingOutReconcileProbeOpenCodeV2Connection()
+
+    events = await _collect(connection)
+
+    assert events == []
+    assert connection.get_timeouts == [_RECONCILE_TIMEOUT_SECONDS, _RECONCILE_TIMEOUT_SECONDS]
     assert connection.state == "failed"
 
 

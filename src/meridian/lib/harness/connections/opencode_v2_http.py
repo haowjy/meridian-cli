@@ -68,6 +68,8 @@ _V2_OUTCOME_EVENTS: dict[str, str] = {
     "interrupted": "session.execution.interrupted",
 }
 
+_RECONCILE_TIMEOUT_SECONDS = 5.0
+
 
 def _v2_session_id(body: object | None) -> str | None:
     """Read a session id from the V2 ``{data: {...}}`` response envelope."""
@@ -479,7 +481,10 @@ class OpenCodeV2Connection(OpenCodeV1Connection):
         if not session_id:
             return None
         try:
-            status, body, _ = await self._get_json(f"/api/session/{session_id}")
+            status, body, _ = await self._get_json(
+                f"/api/session/{session_id}",
+                timeout=_RECONCILE_TIMEOUT_SECONDS,
+            )
         except Exception:
             return None
         if status not in self._SUCCESS_STATUSES:
