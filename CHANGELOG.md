@@ -13,6 +13,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Fixed
 
 - Fail loudly when an explicit model is requested on OpenCode 1.x resume instead of silently retaining the native committed model; the non-interactive subprocess projector (`opencode run`) now rejects the same request instead of forwarding `--model`.
+- Make the OpenCode subprocess projector version-aware: an explicit model on resume is rejected only for a known V1. V2 keeps `--model`, and an unresolved `auto` probe forwards rather than failing the preview.
 - Stop advertising session fork for OpenCode: both streaming transports reject `continue_fork`, so the adapter reports `supports_session_fork=False` and launch policy downgrades to in-place resume with a warning.
 - Honor `[harness.opencode] version` in `meridian.toml` (was logged as an unknown key and ignored) and project the resolved preference into the OpenCode child env at launch bind, so connection and preview select the same backend.
 - Qualify OpenCode V2 native capture tails like V1: refuse to seal a session with a pending tool or no terminal idle outcome as `complete`.

@@ -8,7 +8,7 @@ here.
 The Meridian OpenCode adapter targets current opencode.ai CLI releases.
 `opencode_backend.py` is the version seam: it resolves V1 vs V2 from
 `[harness.opencode] version` (`auto`/`v1`/`v2`, default `auto`; `auto` probes
-`opencode --version` and prefers V2) and exposes per-version capabilities.
+`opencode --version` and prefers V2).
 `connections/opencode_connection.py` is the dispatcher: one registered transport
 resolves the version at `start()` and delegates to the V2 session + `/api/event`
 transport (`opencode_v2_http.py`) or the frozen V1 JSON + SSE transport

@@ -2038,6 +2038,17 @@ def bind_launch_context(
     permission_config = materialized.permission_config
     perms = materialized.perms
     spec = materialized.spec
+    opencode_version: str | None = None
+    if harness.id == HarnessId.OPENCODE:
+        # Resolve once and carry the preference on the spec so the dry-run argv
+        # preview applies the same version-specific guard as the connection
+        # instead of probing/config-reading on its own. The same value is
+        # projected into the child env below for the connection and preview.
+        opencode_version = resolve_opencode_version_for_launch(
+            config_snapshot=runtime.config_snapshot,
+            project_root=project_paths.project_root,
+        )
+        spec = spec.model_copy(update={"opencode_version": opencode_version})
     if harness.id == HarnessId.CODEX and not spec.interactive:
         spec = spec.model_copy(
             update={
@@ -2060,13 +2071,8 @@ def bind_launch_context(
         )
 
     launch_env_overrides: dict[str, str] = {}
-    if harness.id == HarnessId.OPENCODE:
-        launch_env_overrides["MERIDIAN_HARNESS_OPENCODE_VERSION"] = (
-            resolve_opencode_version_for_launch(
-                config_snapshot=runtime.config_snapshot,
-                project_root=project_paths.project_root,
-            )
-        )
+    if opencode_version is not None:
+        launch_env_overrides["MERIDIAN_HARNESS_OPENCODE_VERSION"] = opencode_version
     child_context_env = build_child_runtime_env_overrides(
         project_paths=project_paths,
         runtime_root=runtime_root,

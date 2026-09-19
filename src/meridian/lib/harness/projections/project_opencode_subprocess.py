@@ -6,6 +6,11 @@ import logging
 from collections.abc import Iterable, Sequence
 
 from meridian.lib.core.types import HarnessId
+from meridian.lib.harness.opencode_backend import (
+    OpenCodeVersion,
+    detect_opencode_version,
+    normalize_version_preference,
+)
 from meridian.lib.harness.projections._guards import (
     check_projection_drift as _check_projection_drift,
 )
@@ -31,6 +36,7 @@ _PROJECTED_FIELDS: frozenset[str] = frozenset(
         "agent_name",
         "appended_system_prompt",
         "skills",
+        "opencode_version",
     }
 )
 
@@ -96,6 +102,28 @@ def _log_collision_if_needed(
     )
 
 
+def _resolve_projection_version(preference: str | None) -> OpenCodeVersion | None:
+    """Resolve the OpenCode major version for a version-specific projection guard.
+
+    Explicit ``v1``/``v2`` always wins; ``auto``/unknown probes
+    ``opencode --version`` exactly like the connection and managed-primary preview.
+    A genuine probe failure returns ``None`` so the caller forwards rather than
+    rejecting: the raw CLI supports the flag, and an unprobeable binary fails the
+    spawn later anyway. Only a *known* V1 is grounds for rejection.
+    """
+
+    normalized = normalize_version_preference(preference)
+    if normalized in ("v1", "v2"):
+        return normalized
+    detected = detect_opencode_version()
+    if detected is None:
+        logger.debug(
+            "OpenCode version could not be resolved; forwarding the model on "
+            "resume instead of failing the projection"
+        )
+    return detected
+
+
 def project_opencode_spec_to_cli_args(
     spec: ResolvedLaunchSpec,
     *,
@@ -111,11 +139,16 @@ def project_opencode_spec_to_cli_args(
         )
 
     harness_session_id = (spec.continue_session_id or "").strip()
-    if harness_session_id and spec.model is not None and not spec.interactive:
+    resume_with_model = (
+        bool(harness_session_id) and spec.model is not None and not spec.interactive
+    )
+    if resume_with_model and _resolve_projection_version(spec.opencode_version) == "v1":
         # ``opencode run --session`` cannot switch the model committed to a
-        # resumed session. Fail loudly rather than silently forwarding a flag
-        # the transport does not honor (V1) or dropping it. Interactive primary
-        # launches use managed attach and the version-aware streaming guard.
+        # resumed session on V1. V2 supports it (``POST /api/session/{id}/model``)
+        # and keeps the flag, so the guard must be version-aware. Fail loudly
+        # only for a known V1 rather than silently forwarding a flag the V1
+        # transport does not honor. Interactive primary launches use managed
+        # attach and the version-aware streaming guard.
         raise HarnessCapabilityMismatch(
             "OpenCode subprocess cannot switch the model when resuming a session "
             f"(requested model '{spec.model}'). Resume without an explicit model, "
