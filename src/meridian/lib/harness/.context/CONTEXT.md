@@ -325,11 +325,16 @@ OpenCode 2.x replaced the V1 `OPENCODE_PERMISSION` env with an ordered
 spawns the transport folds Meridian's compiled tools policy into
 `OPENCODE_CONFIG_CONTENT.permissions`, mapping V1 capability names
 (`bash`→`shell`, `write`/`patch`→`edit`, `task`→`subagent`) and splitting scoped
-keys (`bash(git status)`) into `action`/`resource`. V1 `permission` map entries
-(workspace roots, inherited config) are re-expressed as native rules and
-appended last: V2 resolves the last matching rule, so a broad tools `deny` must
-not shadow an explicit root grant. Interactive primaries defer to the native
-TUI, matching V1's dropped override. The projection functions live in
+keys (`bash(git status)`) into `action`/`resource`. Final emitted order is
+existing native `permissions`, inherited non-root V1 `permission` rules,
+Meridian's tools rules, then inherited `external_directory` grants. Because V2
+resolves the last matching rule, Meridian's tools policy wins over inherited
+non-root config while a broad tools `deny` still cannot shadow an explicit root
+grant. Rules that alias to the same `(action, resource)` (`edit:deny` +
+`write:allow`) are collapsed to the strongest effect (`deny > ask > allow`) with
+a warning, so emission order never decides; distinct resources keep their order
+so a scoped allow still refines a broad deny. Interactive primaries defer to the
+native TUI, matching V1's dropped override. The projection functions live in
 `projections/project_opencode_streaming.py`; the server's own V1→V2 translation
 does not handle flat scoped keys correctly, which is why Meridian compiles them.
 
@@ -486,10 +491,6 @@ accounting invariant treats any uncovered field as a bug, not a warning.
 
 Tracked, non-blocking:
 
-- **V2 permission projection precedence (deferred).** Inherited non-root `permission`
-  entries appended last can shadow the shared tools-deny, and the `write`/`patch`→`edit`
-  alias collapse lets `edit:deny` + `write:allow` end in allow. Needs a dedicated
-  deny-bypass probe before hardening.
 - **`--fork` on the subprocess projector is unreachable.** `capabilities.supports_session_fork`
   is `False` because the routed transports (`OpenCodeV1Connection` streaming,
   `OpenCodeV2Connection`) reject `continue_fork`; launch policy downgrades a fork request

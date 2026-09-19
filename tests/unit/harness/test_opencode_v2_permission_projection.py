@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 
 import pytest
 
@@ -99,3 +100,97 @@ def test_merge_keeps_existing_native_permissions_before_tools_policy() -> None:
         {"action": "read", "resource": "*.env", "effect": "deny"},
         {"action": "read", "resource": "*", "effect": "allow"},
     ]
+
+
+def test_merge_collapses_within_policy_alias_collision_to_deny() -> None:
+    merged = merge_opencode_v2_permission_config(
+        None, json.dumps({"edit": "deny", "write": "allow"})
+    )
+    assert merged is not None
+    assert json.loads(merged)["permissions"] == [
+        {"action": "edit", "resource": "*", "effect": "deny"}
+    ]
+
+
+def test_merge_collapses_patch_alias_collision_to_deny() -> None:
+    merged = merge_opencode_v2_permission_config(
+        None, json.dumps({"edit": "allow", "patch": "deny"})
+    )
+    assert merged is not None
+    assert json.loads(merged)["permissions"] == [
+        {"action": "edit", "resource": "*", "effect": "deny"}
+    ]
+
+
+def test_merge_warns_on_effect_collision(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    with caplog.at_level(
+        logging.WARNING,
+        logger="meridian.lib.harness.projections.project_opencode_streaming",
+    ):
+        merge_opencode_v2_permission_config(
+            None, json.dumps({"edit": "deny", "write": "allow"})
+        )
+    assert "collision" in caplog.text
+
+
+def test_merge_inherited_non_root_does_not_shadow_tools_deny() -> None:
+    raw = json.dumps({"permission": {"edit": "allow"}})
+    merged = merge_opencode_v2_permission_config(raw, json.dumps({"edit": "deny"}))
+    assert merged is not None
+    assert json.loads(merged)["permissions"] == [
+        {"action": "edit", "resource": "*", "effect": "allow"},
+        {"action": "edit", "resource": "*", "effect": "deny"},
+    ]
+
+
+def test_merge_inherited_broad_allow_does_not_shadow_broad_deny() -> None:
+    raw = json.dumps({"permission": {"*": "allow"}})
+    merged = merge_opencode_v2_permission_config(raw, json.dumps({"*": "deny"}))
+    assert merged is not None
+    assert json.loads(merged)["permissions"] == [
+        {"action": "*", "resource": "*", "effect": "allow"},
+        {"action": "*", "resource": "*", "effect": "deny"},
+    ]
+
+
+def test_merge_inherited_external_directory_grant_stays_last_after_broad_deny() -> None:
+    raw = json.dumps(
+        {
+            "permission": {
+                "*": "allow",
+                "external_directory": {"/repo/**": "allow", "/tmp/**": "allow"},
+            }
+        }
+    )
+    merged = merge_opencode_v2_permission_config(raw, json.dumps({"*": "deny"}))
+    assert merged is not None
+    assert json.loads(merged)["permissions"] == [
+        {"action": "*", "resource": "*", "effect": "allow"},
+        {"action": "*", "resource": "*", "effect": "deny"},
+        {"action": "external_directory", "resource": "/repo/**", "effect": "allow"},
+        {"action": "external_directory", "resource": "/tmp/**", "effect": "allow"},
+    ]
+
+
+def test_merge_scoped_exception_refines_broad_deny() -> None:
+    merged = merge_opencode_v2_permission_config(
+        None, json.dumps({"edit": "deny", "edit(foo)": "allow"})
+    )
+    assert merged is not None
+    assert json.loads(merged)["permissions"] == [
+        {"action": "edit", "resource": "*", "effect": "deny"},
+        {"action": "edit", "resource": "foo", "effect": "allow"},
+    ]
+
+
+def test_merge_meridian_allow_wins_over_inherited_non_root_deny() -> None:
+    raw = json.dumps({"permission": {"edit": "deny"}})
+    merged = merge_opencode_v2_permission_config(raw, json.dumps({"edit": "allow"}))
+    assert merged is not None
+    assert json.loads(merged)["permissions"] == [
+        {"action": "edit", "resource": "*", "effect": "deny"},
+        {"action": "edit", "resource": "*", "effect": "allow"},
+    ]
+
