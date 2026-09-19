@@ -801,6 +801,7 @@ def _opencode_v2_capture_fixture(
     monkeypatch,
     *,
     messages: list[tuple[str, dict[str, object]]],
+    idle_outcome: str | None = None,
 ):
     from tests.support.opencode_db import write_opencode_v2_db_session
 
@@ -811,6 +812,7 @@ def _opencode_v2_capture_fixture(
         db_path=opencode_home / "opencode.db",
         session_id=session_id,
         messages=messages,
+        idle_outcome=idle_outcome,
     )
     monkeypatch.setenv("OPENCODE_HOME", str(opencode_home))
     project = tmp_path / "repo"
@@ -834,6 +836,7 @@ def test_v2_opencode_session_publishes_with_v2_dialect(tmp_path: Path, monkeypat
     project, root, key = _opencode_v2_capture_fixture(
         tmp_path,
         monkeypatch,
+        idle_outcome="succeeded",
         messages=[
             ("user", {"time": {"created": 1}, "text": "hi"}),
             (
@@ -843,6 +846,7 @@ def test_v2_opencode_session_publishes_with_v2_dialect(tmp_path: Path, monkeypat
                     "content": [{"type": "text", "text": "final answer"}],
                 },
             ),
+            ("idle", {"time": {"created": 3}, "outcome": "succeeded"}),
         ],
     )
     materialize_native_history(project, root, key)
@@ -854,3 +858,52 @@ def test_v2_opencode_session_publishes_with_v2_dialect(tmp_path: Path, monkeypat
     assert validation.header is not None
     assert validation.header.dialect == "opencode.transcript.v2"
     assert "opencode.transcript.v2" in snapshot.read_text()
+
+
+def test_v2_opencode_pending_tool_tail_does_not_publish(tmp_path: Path, monkeypatch):
+    project, root, key = _opencode_v2_capture_fixture(
+        tmp_path,
+        monkeypatch,
+        messages=[
+            ("user", {"time": {"created": 1}, "text": "hi"}),
+            (
+                "assistant",
+                {
+                    "time": {"created": 2},
+                    "content": [
+                        {"type": "text", "text": "partial answer..."},
+                        {
+                            "type": "tool",
+                            "name": "shell",
+                            "state": {"status": "running", "input": {"command": "sleep 1"}},
+                        },
+                    ],
+                },
+            ),
+        ],
+    )
+    with pytest.raises(ValueError, match="incomplete"):
+        materialize_native_history(project, root, key)
+    _assert_not_captured(root, key)
+
+
+def test_v2_opencode_missing_completion_outcome_does_not_publish(
+    tmp_path: Path, monkeypatch
+):
+    project, root, key = _opencode_v2_capture_fixture(
+        tmp_path,
+        monkeypatch,
+        messages=[
+            ("user", {"time": {"created": 1}, "text": "hi"}),
+            (
+                "assistant",
+                {
+                    "time": {"created": 2},
+                    "content": [{"type": "text", "text": "partial answer..."}],
+                },
+            ),
+        ],
+    )
+    with pytest.raises(ValueError, match="incomplete"):
+        materialize_native_history(project, root, key)
+    _assert_not_captured(root, key)

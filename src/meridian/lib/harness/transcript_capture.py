@@ -80,7 +80,7 @@ class NativeCapture:
     def records(self) -> Iterator[SnapshotRecord]:
         if self.status != "complete":
             return
-        observer = observer_for(self.harness, self.session_id)
+        observer = observer_for(self.harness, self.session_id, self.dialect)
         if self.kind == "opencode_db":
             yield from self._opencode_records(observer)
             return

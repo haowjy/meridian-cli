@@ -8,6 +8,8 @@ from typing import Protocol, cast
 from meridian.lib.harness.semantics import PI_INCOMPLETE_STOP_REASONS
 
 _OPENCODE_PENDING = frozenset({"pending", "running"})
+_OPENCODE_V2_DIALECT = "opencode.transcript.v2"
+_OPENCODE_V2_TERMINAL_OUTCOMES = frozenset({"succeeded", "failed", "interrupted"})
 _CLAUDE_ERROR_STOP = frozenset({"error", "interrupted", "interruption", "cancellation", "canceled"})
 
 
@@ -137,6 +139,70 @@ class OpenCodeObserver:
                 self._pending_tools += 1
 
 
+class OpenCodeV2Observer:
+    """Qualify the V2 ``session_message`` dialect.
+
+    V2 turn completion is not the V1 ``message.time.completed`` marker: the
+    native session writes an ``idle_outcome`` on ``session_v2`` and an ``idle``
+    ``session_message`` carrying ``outcome``. Assistant tool parts live in the
+    message's ``content`` list. An unfinished tail — a pending/running tool, or
+    no terminal outcome — must not seal.
+    """
+
+    def __init__(self) -> None:
+        self._pending_tools = 0
+        self._session_outcome: str | None = None
+        self._idle_outcome: str | None = None
+
+    def observe(self, event: dict[str, object]) -> None:
+        if event.get("version") != 2:
+            return
+        payload = event.get("data")
+        if not isinstance(payload, dict):
+            return
+        data = cast("dict[str, object]", payload)
+        kind = str(event.get("type", "")).strip().lower()
+        if kind == "session":
+            outcome = data.get("idle_outcome")
+            if isinstance(outcome, str) and outcome.strip():
+                self._session_outcome = outcome.strip().lower()
+        elif kind == "idle":
+            outcome = data.get("outcome")
+            if isinstance(outcome, str) and outcome.strip():
+                self._idle_outcome = outcome.strip().lower()
+        elif kind == "assistant":
+            self._observe_tools(data.get("content"))
+
+    def incomplete_reason(self) -> str | None:
+        if self._pending_tools:
+            return "Native capture is known incomplete: unfinished OpenCode tool"
+        if self._completion_outcome() is None:
+            return "Native capture is known incomplete: unfinished OpenCode response"
+        return None
+
+    def _observe_tools(self, content: object) -> None:
+        if not isinstance(content, list):
+            return
+        for item in cast("list[object]", content):
+            if not isinstance(item, dict):
+                continue
+            part = cast("dict[str, object]", item)
+            if str(part.get("type", "")).strip().lower() != "tool":
+                continue
+            state = part.get("state")
+            if not isinstance(state, dict):
+                continue
+            status = str(cast("dict[str, object]", state).get("status", "")).strip().lower()
+            if status in _OPENCODE_PENDING:
+                self._pending_tools += 1
+
+    def _completion_outcome(self) -> str | None:
+        outcome = self._idle_outcome or self._session_outcome
+        if outcome in _OPENCODE_V2_TERMINAL_OUTCOMES:
+            return outcome
+        return None
+
+
 class _IdleObserver:
     def observe(self, event: dict[str, object]) -> None:
         return
@@ -145,7 +211,9 @@ class _IdleObserver:
         return None
 
 
-def observer_for(harness: str, session_id: str) -> CaptureObserver:
+def observer_for(
+    harness: str, session_id: str, dialect: str | None = None
+) -> CaptureObserver:
     if harness == "pi":
         return PiObserver(session_id)
     if harness == "claude":
@@ -153,6 +221,8 @@ def observer_for(harness: str, session_id: str) -> CaptureObserver:
     if harness == "codex":
         return CodexObserver()
     if harness == "opencode":
+        if dialect == _OPENCODE_V2_DIALECT:
+            return OpenCodeV2Observer()
         return OpenCodeObserver()
     return _IdleObserver()
 
