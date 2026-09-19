@@ -342,7 +342,10 @@ when the binary cannot be probed. `resolve_opencode_version()` never downgrades
 an explicit `v2`. The resolved preference is projected into the OpenCode child
 env as `MERIDIAN_HARNESS_OPENCODE_VERSION` at launch bind (see
 [launch context](../../launch/.context/CONTEXT.md)), so YAML config reaches the
-connection and dry-run preview instead of being silently ignored.
+connection and dry-run preview instead of being silently ignored. The same
+preference is carried on `ResolvedLaunchSpec.opencode_version`: the non-interactive
+subprocess projector rejects resume-with-model only for a known V1, keeps
+`--model` for V2, and forwards when the preference is `auto` and the probe fails.
 
 `connections/opencode_connection.py` is the single registered OpenCode transport.
 At `start()` it resolves the version and delegates to `OpenCodeV2Connection`

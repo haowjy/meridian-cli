@@ -124,6 +124,11 @@ class ResolvedLaunchSpec(BaseModel):
     skills: tuple[str, ...] = ()
     # Using Any for reference_items to avoid circular import with ReferenceItem.
     reference_items: tuple[Any, ...] = ()
+    # Resolved ``[harness.opencode] version`` preference (``auto``/``v1``/``v2``)
+    # carried from launch bind, mirroring the child env the connection reads, so
+    # the subprocess projector applies version-specific guards without resolving
+    # config itself. ``None`` means unresolved; the projector probes.
+    opencode_version: str | None = None
 
     task_cwd: str | None = None
 

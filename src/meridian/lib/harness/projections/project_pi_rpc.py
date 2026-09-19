@@ -49,6 +49,7 @@ _DELEGATED_FIELDS: frozenset[str] = frozenset(
         "reference_items",
         "task_cwd",
         "disallowed_tools",
+        "opencode_version",
     }
 )
 

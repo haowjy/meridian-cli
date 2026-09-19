@@ -52,6 +52,7 @@ _DELEGATED_FIELDS: frozenset[str] = frozenset(
         "harness",
         "pi_extension_entrypoints",
         "load_all_pi_extensions",
+        "opencode_version",
         "reference_items",
         "report_output_path",
         "web_search_enabled",

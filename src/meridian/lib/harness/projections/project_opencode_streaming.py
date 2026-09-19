@@ -59,6 +59,7 @@ _DELEGATED_FIELDS: frozenset[str] = frozenset(
         "web_search_enabled",
         "task_cwd",
         "user_turn_content",
+        "opencode_version",
     }
 )
 

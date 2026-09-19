@@ -482,12 +482,19 @@ class OpenCodeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             supports_stream_events=True,
             supports_stdin_prompt=True,
             supports_session_resume=True,
-            supports_session_fork=True,
+            # Both wired streaming transports reject ``continue_fork``
+            # (``opencode_http.py`` / ``opencode_v2_http.py`` ``_create_session``),
+            # so advertising fork here would let launch policy carry it forward
+            # only to fail at the connection. The policy layer downgrades an
+            # unsupported fork to in-place resume with a warning.
+            supports_session_fork=False,
             supports_native_skills=True,
             supports_primary_launch=True,
             # V2 applies an explicit model on resume via ``POST /api/session/{id}/model``.
-            # V1 cannot switch the model on resume and fails loudly in
-            # ``OpenCodeV1Connection._create_session`` rather than dropping it.
+            # V1 cannot switch the model on resume: the streaming transport fails
+            # loudly in ``OpenCodeV1Connection._create_session``, and the
+            # subprocess projector fails loudly for the same request rather
+            # than forwarding ``--model``.
             supports_named_primary_resume=True,
             supports_native_file_injection=False,
             terminal_surface_modes=(
@@ -508,9 +515,12 @@ class OpenCodeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         continue_session_id = (run.continue_harness_session_id or "").strip() or None
         # Preserve the normalized model on resume as well as fresh launch: the V2
         # transport applies it via ``POST /api/session/{id}/model`` on continue.
-        # V1's streaming ``_create_session`` resumes by GET and cannot switch the
-        # model, so it raises ``HarnessCapabilityMismatch`` rather than dropping it;
-        # the V1 subprocess projector forwards ``--model`` on continue.
+        # V1 cannot switch the committed model on resume, so both V1 transports
+        # fail loudly rather than silently dropping or forwarding it: the
+        # streaming ``_create_session`` raises, and the non-interactive
+        # subprocess projector (``opencode run``) raises before emitting
+        # ``--model``. The interactive primary path goes through managed attach
+        # and the same streaming guard.
         normalized_model: str | None = None
         if run.model:
             normalized_model = _normalize_opencode_model(str(run.model)) or None
