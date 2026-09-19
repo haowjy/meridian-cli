@@ -761,9 +761,10 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
         create/patch ignore model. A 404/405 is retryable because the v2 routes
         may still be registering when resume verification succeeds.
         """
-        projected_model = project_opencode_model(spec.model, id_field="id")
-        if projected_model is None:
+        if spec.model is None:
             return
+        provider, model_id = opencode_model_parts(spec.model)
+        projected_model = {"providerID": provider, "id": model_id}
         last_error: str | None = None
         retryable = False
         for template in self._MODEL_SWITCH_PATH_TEMPLATES:

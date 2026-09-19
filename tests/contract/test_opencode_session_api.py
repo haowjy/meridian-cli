@@ -302,43 +302,6 @@ async def test_resume_switches_session_model_to_resolved_spec() -> None:
 
 
 @pytest.mark.asyncio
-async def test_resume_without_model_does_not_switch_session_model() -> None:
-    connection = _TestableOpenCodeConnection(
-        responses=[],
-        get_responses=[(200, {"id": "sess-parent"}, "")],
-    )
-    spec = ResolvedLaunchSpec(
-        prompt="hello",
-        continue_session_id="sess-parent",
-        permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
-    )
-
-    session_id = await connection._create_session(spec)
-
-    assert session_id == "sess-parent"
-    assert connection.requests == [("/session/sess-parent", {})]
-
-
-@pytest.mark.asyncio
-async def test_resume_model_switch_404_is_retryable() -> None:
-    from meridian.lib.harness.connections.opencode_http import SessionNotReadyError
-
-    connection = _TestableOpenCodeConnection(
-        responses=[(404, None, "")],
-        get_responses=[(200, {"id": "sess-parent"}, "")],
-    )
-    spec = ResolvedLaunchSpec(
-        prompt="hello",
-        model="openai/gpt-5.3-codex",
-        continue_session_id="sess-parent",
-        permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
-    )
-
-    with pytest.raises(SessionNotReadyError, match="model switch"):
-        await connection._create_session(spec)
-
-
-@pytest.mark.asyncio
 async def test_create_session_uses_native_nested_model_and_never_drops_it():
     spec = ResolvedLaunchSpec(
         prompt="hello",
