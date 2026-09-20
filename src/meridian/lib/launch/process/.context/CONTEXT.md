@@ -46,6 +46,26 @@ Managed attach persists the harness session ID from `PrimaryAttachOutcome.sessio
 immediately on success. Black-box path may discover the session ID only at exit via
 `observe_session_id()`.
 
+### Signal cancellation
+
+`PrimaryAttachLauncher` traps `SIGTERM`/`SIGHUP` (main thread only) for the duration of
+`run()`. A closed terminal sends SIGHUP and a killed process sends SIGTERM; trapping them
+lets the launcher stop the TUI relay through `RunningProcess.cancel_wait()` and finalize
+normally, instead of dying and leaving an active record for orphan reconciliation. The
+handlers are restored in `run()`'s `finally`.
+
+- The relay returns exit 130 when `cancel_wait()` unblocks it; cancellation is asserted
+  only when the signal was seen **and** the relay returned 130, so a session that exited
+  normally just before the signal is not recorded as cancelled.
+- A signal that arrives before the TUI exists (during backend startup) is latched and
+  honored once the TUI starts. If startup then fails, `run()` returns a cancelled outcome
+  rather than raising, so `_execute_primary_process()` does not fall back to a black-box
+  TUI that would ignore the termination request.
+- The first signal requests cancellation; a second restores `SIG_DFL` and re-raises, so a
+  wedged teardown can still be forced.
+- This is launcher-local and independent of `lib/launch/signals.py`, which forwards
+  SIGINT/SIGTERM to a subprocess across the streaming path. Unifying them is future work.
+
 ## Session ID Observation — Invariant I-4
 
 `harness_adapter.observe_session_id()` is called **exactly once** after the process exits,

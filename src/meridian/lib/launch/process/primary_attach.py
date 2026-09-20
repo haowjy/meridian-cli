@@ -15,7 +15,8 @@ from contextlib import suppress
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from threading import Lock, Thread, current_thread, main_thread
-from typing import Any
+from types import FrameType
+from typing import Any, cast
 
 import psutil
 import structlog
@@ -178,29 +179,41 @@ class PrimaryAttachOutcome:
 
 def _install_launcher_cancel_handlers(
     on_signal: Callable[[], None],
-) -> dict[int, Any] | None:
+) -> dict[signal.Signals, signal.Handlers] | None:
     """Install SIGTERM/SIGHUP cancellation handlers for a launcher (main thread only).
 
     Returns the previous handlers for restoration, or ``None`` when unattempted
     (Windows or a non-main thread). A closed terminal sends SIGHUP and a killed
     process sends SIGTERM; catching them lets the launcher run its normal
     finalize instead of dying and leaving an orphaned active record.
+
+    The first signal requests cancellation; a second restores the default
+    disposition and re-raises, so a wedged teardown can still be forced.
     """
 
     if IS_WINDOWS or current_thread() is not main_thread():
         return None
-    previous: dict[int, Any] = {}
+    previous: dict[signal.Signals, signal.Handlers] = {}
+    seen_count = 0
 
-    def _handler(_signum: int, _frame: Any) -> None:
+    def _handler(signum: int, _frame: FrameType | None) -> None:
+        nonlocal seen_count
+        seen_count += 1
+        if seen_count >= 2:
+            signal.signal(signum, signal.SIG_DFL)
+            os.kill(os.getpid(), signum)
+            return
         on_signal()
 
     for signum in (signal.SIGTERM, signal.SIGHUP):
-        previous[signum] = signal.getsignal(signum)
+        previous[signum] = cast("signal.Handlers", signal.getsignal(signum))
         signal.signal(signum, _handler)
     return previous
 
 
-def _restore_launcher_cancel_handlers(previous: dict[int, Any] | None) -> None:
+def _restore_launcher_cancel_handlers(
+    previous: dict[signal.Signals, signal.Handlers] | None,
+) -> None:
     if previous is None:
         return
     for signum, handler in previous.items():
@@ -389,7 +402,6 @@ class PrimaryAttachLauncher:
                         exit_code=launched.exit_code,
                         session_id=session_id,
                         tui_pid=launched.pid,
-                        cancelled=self._signal_cancel_requested,
                     )
                 await self._connection.stop(reason="event_stream_closed")
                 await self._stop_tui_launch_task(
@@ -402,23 +414,45 @@ class PrimaryAttachLauncher:
                     exit_code=1,
                     session_id=session_id,
                     tui_pid=running_process.pid,
-                    cancelled=self._signal_cancel_requested,
                 )
 
             launched = await asyncio.shield(launch_task)
+            # Cancellation is only asserted when the relay was actually
+            # interrupted by the signal: ``cancel_wait`` returns exit 130, while a
+            # clean TUI exit returns its own code. This avoids turning a session
+            # that exited normally just before a signal landed into a cancel.
+            cancelled = self._signal_cancel_requested and launched.exit_code == 130
+            if cancelled:
+                # The relay stopped on the signal, so the TUI child is still alive.
+                await self._stop_tui_launch_task(
+                    running_process,
+                    launch_task,
+                    reason="signal_cancelled",
+                )
             tui_lifecycle_finished = True
-            if self._signal_cancel_requested:
-                # The relay stopped on a signal, so the TUI child is still alive.
-                await self._terminate_tui_scope(reason="signal_cancelled")
 
             return PrimaryAttachOutcome(
                 exit_code=launched.exit_code,
                 session_id=session_id,
                 tui_pid=launched.pid,
-                cancelled=self._signal_cancel_requested,
+                cancelled=cancelled,
             )
         except Exception:
             telemetry.fail()
+            if self._signal_cancel_requested:
+                # A signal arrived before the TUI was interruptible (e.g. during
+                # backend startup) and startup failed. Honor the cancellation
+                # instead of surfacing a failure the fallback path would relaunch.
+                logger.info(
+                    "primary_attach.signal_cancel_during_startup",
+                    spawn_id=str(self._spawn_id),
+                )
+                return PrimaryAttachOutcome(
+                    exit_code=130,
+                    session_id=session_id,
+                    tui_pid=None,
+                    cancelled=True,
+                )
             raise
         finally:
             _restore_launcher_cancel_handlers(previous_signal_handlers)

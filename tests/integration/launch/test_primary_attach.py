@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import signal
 import threading
 import time
 from dataclasses import dataclass, field
@@ -269,6 +270,7 @@ class BlockingProcessLauncher(ProcessLauncher):
     wait_started: threading.Event = field(default_factory=threading.Event)
     wait_finished: threading.Event = field(default_factory=threading.Event)
     wait_timeout_seconds: float | None = 5.0
+    wait_exit_code: int = 143
     terminate_releases: bool = True
     cancel_wait_releases: bool = True
     cancel_wait_calls: int = 0
@@ -294,7 +296,7 @@ class BlockingProcessLauncher(ProcessLauncher):
         self.wait_started.set()
         try:
             self.release.wait(timeout=self.wait_timeout_seconds)
-            return LaunchedProcess(exit_code=143, pid=self.pid)
+            return LaunchedProcess(exit_code=self.wait_exit_code, pid=self.pid)
         finally:
             self.wait_finished.set()
 
@@ -997,4 +999,97 @@ async def test_primary_attach_raises_after_max_port_bind_retries(tmp_path: Path)
 
     assert connection.start_calls == 3
     assert connection.started_ports == [29100, 29101, 29102]
+    assert process_launcher.launch_commands == []
+
+
+@pytest.mark.asyncio
+async def test_primary_attach_signal_cancel_records_cancelled_and_restores_handlers(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    spawn_dir = tmp_path / "spawns" / "p902-signal"
+    tui_started = asyncio.Event()
+    connection = FakeManagedConnection(events=[], session_id="sess-signal")
+    process_launcher = BlockingProcessLauncher(spawn_dir=spawn_dir, wait_exit_code=130)
+    terminated_scopes: list[str] = []
+    installed_handlers: list[Any] = []
+
+    def _terminate_scope(scope: Any, *, grace_seconds: float, reason: str) -> None:
+        _ = grace_seconds
+        terminated_scopes.append(f"{scope.scope_id}:{reason}")
+        process_launcher.release.set()
+        return None
+
+    def _on_running(_pid: int) -> None:
+        installed_handlers.append(signal.getsignal(signal.SIGTERM))
+        tui_started.set()
+
+    monkeypatch.setattr(primary_attach_module, "terminate_scope_sync", _terminate_scope)
+    before_term = signal.getsignal(signal.SIGTERM)
+    before_hup = signal.getsignal(signal.SIGHUP)
+    launcher = PrimaryAttachLauncher(
+        spawn_id=SpawnId("p902-signal"),
+        spawn_dir=spawn_dir,
+        connection=connection,
+        tui_command_builder=lambda session_id: ("codex", "resume", session_id),
+        process_launcher=process_launcher,
+        on_running=_on_running,
+    )
+
+    run_task = asyncio.create_task(
+        launcher.run(
+            config=_build_config(spawn_id=SpawnId("p902-signal"), control_root=tmp_path),
+            spec=_build_spec(),
+            cwd=tmp_path,
+            env={},
+        )
+    )
+    await tui_started.wait()
+    assert installed_handlers
+    assert installed_handlers[0] not in (signal.SIG_DFL, signal.SIG_IGN)
+
+    launcher._request_signal_cancel()
+    outcome = await run_task
+
+    assert outcome.cancelled is True
+    assert outcome.exit_code == 130
+    assert terminated_scopes == ["tui:signal_cancelled"]
+    assert signal.getsignal(signal.SIGTERM) is before_term
+    assert signal.getsignal(signal.SIGHUP) is before_hup
+
+
+@pytest.mark.asyncio
+async def test_primary_attach_signal_during_failed_startup_returns_cancelled(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    spawn_dir = tmp_path / "spawns" / "p903-signal-startup"
+    connection = FakeManagedConnection(events=[], session_id="sess-signal-startup")
+    process_launcher = BlockingProcessLauncher(spawn_dir=spawn_dir)
+    launcher = PrimaryAttachLauncher(
+        spawn_id=SpawnId("p903-signal-startup"),
+        spawn_dir=spawn_dir,
+        connection=connection,
+        tui_command_builder=lambda session_id: ("codex", "resume", session_id),
+        process_launcher=process_launcher,
+    )
+
+    async def _fail_after_signal(*, config: ConnectionConfig, spec: ResolvedLaunchSpec) -> None:
+        _ = (config, spec)
+        launcher._request_signal_cancel()
+        raise PrimaryAttachError("startup failed")
+
+    monkeypatch.setattr(
+        launcher, "_start_primary_observer_connection_with_retry", _fail_after_signal
+    )
+
+    outcome = await launcher.run(
+        config=_build_config(spawn_id=SpawnId("p903-signal-startup"), control_root=tmp_path),
+        spec=_build_spec(),
+        cwd=tmp_path,
+        env={},
+    )
+
+    assert outcome.cancelled is True
+    assert outcome.exit_code == 130
     assert process_launcher.launch_commands == []
