@@ -539,6 +539,7 @@ def materialize_launch_artifacts(
     interactive: bool = False,
     continue_harness_session_id: str | None = None,
     continue_fork: bool = False,
+    model_override_explicit: bool = False,
     context_from_payload: tuple[str, ...] = (),
     reference_items: tuple[ReferenceItem, ...] = (),
     inject_task_cwd_instruction: bool = False,
@@ -579,6 +580,7 @@ def materialize_launch_artifacts(
     run_params = SpawnParams(
         prompt=prompt,
         model=ModelId(model) if model else None,
+        model_override_explicit=model_override_explicit,
         effort=effort,
         skills=skills,
         agent=agent,
@@ -2001,10 +2003,16 @@ def bind_launch_context(
         loaded_skills=loaded_skills,
         primary_prompt_is_synthetic=resolved_request.primary_prompt_is_synthetic,
     )
+    conversation_intent = resolved_request.session.conversation_intent
+    model_override_explicit = (
+        conversation_intent is None
+        or conversation_intent.selection_source == "explicit_override"
+    )
     materialized = materialize_launch_artifacts(
         harness=harness,
         prompt=refreshed_prompt,
         model=effective_model,
+        model_override_explicit=model_override_explicit,
         effort=resolved_request.execution_policy.effort,
         skills=resolved_request.skills,
         agent=resolved_request.agent,

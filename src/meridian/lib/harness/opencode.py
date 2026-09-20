@@ -400,6 +400,7 @@ class OpenCodeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         {
             "prompt",
             "model",
+            "model_override_explicit",
             "effort",
             "skills",
             "agent",
@@ -513,17 +514,23 @@ class OpenCodeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         perms: PermissionResolver,
     ) -> ResolvedLaunchSpec:
         continue_session_id = (run.continue_harness_session_id or "").strip() or None
-        # Preserve the normalized model on resume as well as fresh launch: the V2
-        # transport applies it via ``POST /api/session/{id}/model`` on continue.
-        # V1 cannot switch the committed model on resume, so both V1 transports
-        # fail loudly rather than silently dropping or forwarding it: the
-        # streaming ``_create_session`` raises, and the non-interactive
-        # subprocess projector (``opencode run``) raises before emitting
-        # ``--model``. The interactive primary path goes through managed attach
-        # and the same streaming guard.
         normalized_model: str | None = None
         if run.model:
             normalized_model = _normalize_opencode_model(str(run.model)) or None
+        if (
+            normalized_model is not None
+            and continue_session_id is not None
+            and not run.continue_fork
+            and not run.model_override_explicit
+        ):
+            # Exact continue replays the session's own model, and OpenCode resume
+            # keeps the committed model, so a replayed token is not a switch
+            # request. Drop it: V1 cannot change the model on resume and would
+            # otherwise fail loudly on a no-op. An explicit ``--model`` override
+            # is kept and still reaches the V1 guards (the streaming
+            # ``_create_session`` raise and the ``opencode run`` subprocess
+            # projector); V2 applies it via ``POST /api/session/{id}/model``.
+            normalized_model = None
         return ResolvedLaunchSpec(
             harness=HarnessId.OPENCODE,
             model=normalized_model,
