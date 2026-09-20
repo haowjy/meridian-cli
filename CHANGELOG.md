@@ -4,6 +4,10 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Restore cold history-index build speed: the sessions projection loads its working set in memory and publishes sessions, work chats, aliases and record refreshes in bulk instead of issuing one ORM statement per `sessions.jsonl` event. A real-corpus metadata rebuild drops from ~19s to ~5s, back under the 15s automatic initialization budget (#500).
+
 ## [0.6.0] - 2026-09-19
 
 ### Added

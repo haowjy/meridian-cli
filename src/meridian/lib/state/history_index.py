@@ -423,7 +423,22 @@ class HistoryIndex:
         state: SpawnRecord | None = None,
         session: SessionRecord | None = None,
     ) -> None:
-        db.execute(delete(ALIASES).where(ALIASES.c.source_id == source_id))
+        db.exec_driver_sql("DELETE FROM aliases WHERE source_id = ?", (source_id,))
+        rows = self._alias_rows(source_id, history_id, state=state, session=session)
+        if rows:
+            db.exec_driver_sql(
+                "INSERT OR IGNORE INTO aliases (source_id, alias, kind, history_id) "
+                "VALUES (?, ?, ?, ?)",
+                rows,
+            )
+
+    @staticmethod
+    def _alias_rows(
+        source_id: str,
+        history_id: str,
+        state: SpawnRecord | None = None,
+        session: SessionRecord | None = None,
+    ) -> list[tuple[str, str, str, str]]:
         names: set[tuple[str, str]] = set()
         if state:
             names.add((state.id, "spawn"))
@@ -441,45 +456,22 @@ class HistoryIndex:
             names.update((name, "harness") for name in session.harness_session_ids)
             if session.harness_session_id:
                 names.add((session.harness_session_id, "harness"))
-        rows = [
-            {
-                "source_id": source_id,
-                "alias": name,
-                "kind": kind,
-                "history_id": history_id,
-            }
-            for name, kind in names
-        ]
-        if rows:
-            db.execute(insert(ALIASES).prefix_with("OR IGNORE"), rows)
+        return [(source_id, name, kind, history_id) for name, kind in names]
 
     def _refresh(self, db: Connection, history_id: str) -> None:
-        head_digest = (
-            select(ARCHIVE_HEADS.c.portable_digest)
-            .where(ARCHIVE_HEADS.c.history_id == LOCATIONS.c.history_id)
-            .scalar_subquery()
-        )
         location = (
-            db.execute(
-                select(LOCATIONS)
-                .where(
-                    LOCATIONS.c.history_id == history_id,
-                    or_(
-                        LOCATIONS.c.kind == "spawn",
-                        LOCATIONS.c.portable_digest == head_digest,
-                    ),
-                )
-                .order_by(
-                    (LOCATIONS.c.kind == "spawn").desc(),
-                    LOCATIONS.c.ordinal.desc(),
-                    LOCATIONS.c.source_id,
-                )
-                .limit(1)
+            db.exec_driver_sql(
+                "SELECT kind, activity, record_json, receipt_json FROM locations "
+                "WHERE history_id = ? AND (kind = 'spawn' OR portable_digest = "
+                "(SELECT portable_digest FROM archive_heads "
+                "WHERE archive_heads.history_id = locations.history_id)) "
+                "ORDER BY (kind = 'spawn') DESC, ordinal DESC, source_id LIMIT 1",
+                (history_id,),
             )
             .mappings()
             .first()
         )
-        db.execute(delete(RECORDS).where(RECORDS.c.history_id == history_id))
+        db.exec_driver_sql("DELETE FROM records WHERE history_id = ?", (history_id,))
         if location is None:
             return
         record = SpawnRecord.model_validate_json(location["record_json"])
@@ -487,75 +479,62 @@ class HistoryIndex:
         active = record.record_mode != "historical" and record.status not in TERMINAL_SPAWN_STATUSES
         session = None
         if location["kind"] == "spawn":
-            related = db.execute(
-                select(SESSIONS.c.record_json)
-                .where(
-                    or_(
-                        SESSIONS.c.history_id == history_id,
-                        and_(
-                            SESSIONS.c.chat == record.chat_id,
-                            SESSIONS.c.generation == record.session_instance_id,
-                        ),
-                    )
-                )
-                .order_by(SESSIONS.c.activity.desc())
-                .limit(1)
+            related = db.exec_driver_sql(
+                "SELECT record_json FROM sessions "
+                "WHERE history_id = ? OR (chat = ? AND generation = ?) "
+                "ORDER BY activity DESC LIMIT 1",
+                (history_id, record.chat_id, record.session_instance_id),
             ).first()
             if related:
                 session = SessionRecord.model_validate_json(related[0])
         activity = last_activity(record, session, location["activity"])
-        db.execute(
-            insert(RECORDS).values(
-                history_id=history_id,
-                local_id=record.id,
-                chat=record.chat_id,
-                owner=record.owner_chat_id or record.chat_id,
-                parent=record.parent_id,
-                work=record.work_id,
-                status=str(record.status),
-                kind=record.kind,
-                started=canonical_time(record.started_at or ""),
-                activity=activity,
-                active=int(active and receipt is None),
-                archive_id=receipt["archive_id"] if receipt else None,
-                record_json=record.model_dump_json(),
-            )
+        db.exec_driver_sql(
+            "INSERT INTO records (history_id, local_id, chat, owner, parent, work, status, "
+            "kind, started, activity, active, archive_id, record_json) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                history_id,
+                record.id,
+                record.chat_id,
+                record.owner_chat_id or record.chat_id,
+                record.parent_id,
+                record.work_id,
+                str(record.status),
+                record.kind,
+                canonical_time(record.started_at or ""),
+                activity,
+                int(active and receipt is None),
+                receipt["archive_id"] if receipt else None,
+                record.model_dump_json(),
+            ),
         )
 
     def _spawn(self, db: Connection, key: str) -> bool:
         source_id = f"spawn:{key}"
-        old = db.execute(
-            select(LOCATIONS.c.history_id).where(LOCATIONS.c.source_id == source_id)
+        old = db.exec_driver_sql(
+            "SELECT history_id FROM locations WHERE source_id = ?", (source_id,)
         ).first()
-        db.execute(delete(LOCATIONS).where(LOCATIONS.c.source_id == source_id))
-        db.execute(delete(ALIASES).where(ALIASES.c.source_id == source_id))
+        db.exec_driver_sql("DELETE FROM locations WHERE source_id = ?", (source_id,))
+        db.exec_driver_sql("DELETE FROM aliases WHERE source_id = ?", (source_id,))
         if old:
             self._refresh(db, old[0])
         record = read_state(self.root / "spawns", key, include_prompt=False)
         if record is None:
             return False
         history_id = str(record.history_id or uuid5(NAMESPACE_URL, f"{self.root}:{key}"))
-        if db.execute(
-            select(LOCATIONS.c.source_id).where(
-                LOCATIONS.c.history_id == history_id, LOCATIONS.c.kind == "spawn"
-            )
+        if db.exec_driver_sql(
+            "SELECT 1 FROM locations WHERE history_id = ? AND kind = 'spawn'", (history_id,)
         ).first():
             raise ValueError(f"Conflicting loose copies of history {history_id}")
         activity = transcript_activity(
             self.root / "spawns" / key / "history.jsonl",
             record.terminal.finished_at if record.terminal else record.started_at or "",
         )
-        db.execute(
-            insert(LOCATIONS).values(
-                source_id=source_id,
-                history_id=history_id,
-                kind="spawn",
-                ordinal=0,
-                activity=activity,
-                record_json=record.model_dump_json(),
-                receipt_json=None,
-                portable_digest=None,
-            )
+        db.exec_driver_sql(
+            "INSERT INTO locations (source_id, history_id, kind, ordinal, activity, "
+            "record_json, receipt_json, portable_digest) "
+            "VALUES (?, ?, 'spawn', 0, ?, ?, NULL, NULL)",
+            (source_id, history_id, activity, record.model_dump_json()),
         )
         self._aliases(db, source_id, history_id, state=record)
         self._refresh(db, history_id)
@@ -586,6 +565,32 @@ class HistoryIndex:
             db.execute(delete(SESSIONS))
             db.execute(delete(WORK_CHATS))
             db.execute(delete(ALIASES).where(ALIASES.c.source_id.like("session:%")))
+        # Project the append-only log into an in-memory working set and publish it
+        # in bulk. Per-event SELECT/INSERT round-trips through the ORM dominated
+        # cold builds; reads now hit the mirror, writes/aliases/refreshes flush
+        # once. A history's refresh is idempotent per evaluation and only the last
+        # pass survives, so evaluating each affected history once after the final
+        # session state is published is equivalent to refreshing it inline.
+        sessions: dict[tuple[str, str], dict[str, Any]] = {}
+        for row in (
+            db.exec_driver_sql(
+                "SELECT chat, generation, ordinal, kind, stopped, activity, history_id, "
+                "record_json FROM sessions"
+            )
+            .mappings()
+            .all()
+        ):
+            sessions[(row["chat"], row["generation"])] = dict(row)
+        legacy_latest: dict[str, tuple[int, str]] = {}
+        for (chat, generation), row in sessions.items():
+            if generation.startswith("legacy:") and (
+                chat not in legacy_latest or row["ordinal"] > legacy_latest[chat][0]
+            ):
+                legacy_latest[chat] = (row["ordinal"], generation)
+        dirty: set[tuple[str, str]] = set()
+        work_chats: set[tuple[str, str]] = set()
+        aliases: dict[str, list[tuple[str, str, str, str]]] = {}
+        refreshed: set[str] = set()
         with path.open("rb") as handle:
             handle.seek(offset)
             while line := handle.readline():
@@ -604,37 +609,16 @@ class HistoryIndex:
                     offset = end
                     continue
                 if isinstance(event, SessionUpdateEvent) and event.active_work_id:
-                    db.execute(
-                        insert(WORK_CHATS)
-                        .prefix_with("OR IGNORE")
-                        .values(work=event.active_work_id.strip(), chat=event.chat_id)
-                    )
+                    work_chats.add((event.active_work_id.strip(), event.chat_id))
                 if event is not None:
                     generation = event.session_instance_id
                     if not generation:
                         if isinstance(event, (SessionStartEvent, SessionHistoricalEvent)):
                             generation = f"legacy:{offset}"
                         else:
-                            latest = db.execute(
-                                select(SESSIONS.c.generation)
-                                .where(
-                                    SESSIONS.c.chat == event.chat_id,
-                                    SESSIONS.c.generation.like("legacy:%"),
-                                )
-                                .order_by(SESSIONS.c.ordinal.desc())
-                                .limit(1)
-                            ).first()
-                            generation = latest[0] if latest else ""
-                    found = (
-                        db.execute(
-                            select(SESSIONS).where(
-                                SESSIONS.c.chat == event.chat_id,
-                                SESSIONS.c.generation == generation,
-                            )
-                        )
-                        .mappings()
-                        .first()
-                    )
+                            latest = legacy_latest.get(event.chat_id)
+                            generation = latest[1] if latest else ""
+                    found = sessions.get((event.chat_id, generation))
                     records: dict[str, SessionRecord] = {}
                     if found:
                         records[event.chat_id] = SessionRecord.model_validate_json(
@@ -644,24 +628,18 @@ class HistoryIndex:
                     if record := records.get(event.chat_id):
                         history_id = str(record.history_id) if record.history_id else None
                         if history_id is None and record.spawn_id:
-                            linked = db.execute(
-                                select(LOCATIONS.c.history_id).where(
-                                    LOCATIONS.c.source_id == f"spawn:{record.spawn_id}"
-                                )
+                            linked = db.exec_driver_sql(
+                                "SELECT history_id FROM locations WHERE source_id = ?",
+                                (f"spawn:{record.spawn_id}",),
                             ).first()
                             history_id = linked[0] if linked else None
                         if history_id is None and generation:
-                            linked = db.execute(
-                                select(RECORDS.c.history_id)
-                                .where(
-                                    RECORDS.c.chat == record.chat_id,
-                                    RECORDS.c.archive_id.is_(None),
-                                    func.json_extract(
-                                        RECORDS.c.record_json, "$.session_instance_id"
-                                    )
-                                    == generation,
-                                )
-                                .limit(1)
+                            linked = db.exec_driver_sql(
+                                "SELECT history_id FROM records WHERE chat = ? "
+                                "AND archive_id IS NULL "
+                                "AND json_extract(record_json, '$.session_instance_id') = ? "
+                                "LIMIT 1",
+                                (record.chat_id, generation),
                             ).first()
                             history_id = linked[0] if linked else None
                         ordinal = (
@@ -669,33 +647,69 @@ class HistoryIndex:
                             if isinstance(event, (SessionStartEvent, SessionHistoricalEvent))
                             else (found["ordinal"] if found else offset)
                         )
-                        db.execute(
-                            insert(SESSIONS)
-                            .prefix_with("OR REPLACE")
-                            .values(
-                                chat=record.chat_id,
-                                generation=generation,
-                                ordinal=ordinal,
-                                kind=record.kind,
-                                stopped=record.stopped_at,
-                                activity=canonical_time(record.stopped_at or record.started_at),
-                                history_id=history_id,
-                                record_json=record.model_dump_json(),
-                            )
-                        )
+                        key = (record.chat_id, generation)
+                        sessions[key] = {
+                            "chat": record.chat_id,
+                            "generation": generation,
+                            "ordinal": ordinal,
+                            "kind": record.kind,
+                            "stopped": record.stopped_at,
+                            "activity": canonical_time(record.stopped_at or record.started_at),
+                            "history_id": history_id,
+                            "record_json": record.model_dump_json(),
+                        }
+                        dirty.add(key)
+                        if generation.startswith("legacy:") and (
+                            record.chat_id not in legacy_latest
+                            or ordinal > legacy_latest[record.chat_id][0]
+                        ):
+                            legacy_latest[record.chat_id] = (ordinal, generation)
                         if history_id:
-                            self._aliases(
-                                db,
-                                f"session:{record.chat_id}:{generation}",
-                                history_id,
-                                session=record,
+                            source_id = f"session:{record.chat_id}:{generation}"
+                            aliases[source_id] = self._alias_rows(
+                                source_id, history_id, session=record
                             )
-                            self._refresh(db, history_id)
+                            refreshed.add(history_id)
                 offset = end
-        db.execute(
-            insert(CURSORS)
-            .prefix_with("OR REPLACE")
-            .values(source="sessions", inode=inode, extent=offset, tail=_tail(path, offset))
+        if dirty:
+            db.exec_driver_sql(
+                "INSERT OR REPLACE INTO sessions (chat, generation, ordinal, kind, stopped, "
+                "activity, history_id, record_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                [
+                    (
+                        key[0],
+                        key[1],
+                        sessions[key]["ordinal"],
+                        sessions[key]["kind"],
+                        sessions[key]["stopped"],
+                        sessions[key]["activity"],
+                        sessions[key]["history_id"],
+                        sessions[key]["record_json"],
+                    )
+                    for key in dirty
+                ],
+            )
+        if work_chats:
+            db.exec_driver_sql(
+                "INSERT OR IGNORE INTO work_chats (work, chat) VALUES (?, ?)",
+                list(work_chats),
+            )
+        if aliases:
+            db.exec_driver_sql(
+                "DELETE FROM aliases WHERE source_id = ?",
+                [(source_id,) for source_id in aliases],
+            )
+            db.exec_driver_sql(
+                "INSERT OR IGNORE INTO aliases (source_id, alias, kind, history_id) "
+                "VALUES (?, ?, ?, ?)",
+                [row for rows in aliases.values() for row in rows],
+            )
+        for history_id in refreshed:
+            self._refresh(db, history_id)
+        db.exec_driver_sql(
+            "INSERT OR REPLACE INTO cursors (source, inode, extent, tail) VALUES "
+            "('sessions', ?, ?, ?)",
+            (inode, offset, _tail(path, offset)),
         )
 
     def _project(self, db: Connection, source: HistorySource) -> bool:
