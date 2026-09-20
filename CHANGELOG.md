@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.6.2] - 2026-09-20
+
 ### Added
 
 - Record the last executed conversation model as a distinct observation (never overwriting selected intent) and replay it on `--continue` when the native store is readable; explicit `--model` still wins. Readers cover OpenCode, Claude, Codex, and Pi.
