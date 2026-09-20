@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
@@ -31,8 +31,20 @@ class NativeModelReadContext:
     launch_env: Mapping[str, str] | None = None
 
 
-def _iter_json_objects(path: Path) -> list[dict[str, object]]:
-    payloads: list[dict[str, object]] = []
+def _nested_str(payload: object, *keys: str) -> str | None:
+    current: object = payload
+    for key in keys:
+        if not isinstance(current, dict):
+            return None
+        current = cast("dict[str, object]", current).get(key)
+    if isinstance(current, str):
+        stripped = current.strip()
+        if stripped:
+            return stripped
+    return None
+
+
+def _iter_json_objects(path: Path) -> Iterator[dict[str, object]]:
     try:
         with path.open("r", encoding="utf-8", errors="ignore") as handle:
             for line in handle:
@@ -44,10 +56,9 @@ def _iter_json_objects(path: Path) -> list[dict[str, object]]:
                 except json.JSONDecodeError:
                     continue
                 if isinstance(payload, dict):
-                    payloads.append(cast("dict[str, object]", payload))
+                    yield cast("dict[str, object]", payload)
     except OSError:
-        return []
-    return payloads
+        return
 
 
 def _read_claude_last_model(
@@ -56,17 +67,10 @@ def _read_claude_last_model(
     for project_dir in claude_sessions.candidate_claude_project_dirs(
         project_root, config_root_hint
     ):
-        transcript_path = project_dir / f"{session_id}.jsonl"
         last: str | None = None
-        for payload in _iter_json_objects(transcript_path):
-            if payload.get("type") != "assistant":
-                continue
-            message = payload.get("message")
-            if not isinstance(message, dict):
-                continue
-            model = cast("dict[str, object]", message).get("model")
-            if isinstance(model, str) and model.strip():
-                last = model.strip()
+        for payload in _iter_json_objects(project_dir / f"{session_id}.jsonl"):
+            if payload.get("type") == "assistant":
+                last = _nested_str(payload, "message", "model") or last
         if last is not None:
             return last
     return None
@@ -76,31 +80,24 @@ def _read_codex_last_model(codex_home: Path, session_id: str) -> str | None:
     sessions_root = codex_home / "sessions"
     if not sessions_root.is_dir():
         return None
-    candidate: Path | None = None
-    for path in sessions_root.rglob(f"rollout-*-{session_id}.jsonl"):
-        if CODEX_ROLLOUT_FILENAME_RE.match(path.name) is not None:
-            candidate = path
-            break
+    candidate = next(
+        (
+            path
+            for path in sessions_root.rglob(f"rollout-*-{session_id}.jsonl")
+            if CODEX_ROLLOUT_FILENAME_RE.match(path.name) is not None
+        ),
+        None,
+    )
     if candidate is None:
         return None
     last_turn_model: str | None = None
     fallback_model: str | None = None
     for payload in _iter_json_objects(candidate):
         event_type = payload.get("type")
-        raw = payload.get("payload")
-        if not isinstance(raw, dict):
-            continue
-        raw_payload = cast("dict[str, object]", raw)
         if event_type == "turn_context":
-            model = raw_payload.get("model")
-            if isinstance(model, str) and model.strip():
-                last_turn_model = model.strip()
+            last_turn_model = _nested_str(payload, "payload", "model") or last_turn_model
         elif event_type == "world_state":
-            state = raw_payload.get("state")
-            if isinstance(state, dict):
-                model = cast("dict[str, object]", state).get("model")
-                if isinstance(model, str) and model.strip():
-                    fallback_model = model.strip()
+            fallback_model = _nested_str(payload, "payload", "state", "model") or fallback_model
     return last_turn_model or fallback_model
 
 
@@ -137,11 +134,10 @@ def _pi_session_roots(context: NativeModelReadContext) -> tuple[Path, ...]:
 def _read_pi_last_model(session_root: Path, session_id: str) -> str | None:
     if not session_root.is_dir():
         return None
-    candidate: Path | None = None
-    for path in session_root.rglob("*.jsonl"):
-        if session_id in path.name:
-            candidate = path
-            break
+    candidate = next(
+        (path for path in session_root.rglob("*.jsonl") if session_id in path.name),
+        None,
+    )
     if candidate is None:
         return None
 
@@ -150,23 +146,12 @@ def _read_pi_last_model(session_root: Path, session_id: str) -> str | None:
     for payload in _iter_json_objects(candidate):
         event_type = payload.get("type")
         if event_type == "model_change":
-            model_id = payload.get("modelId")
-            if isinstance(model_id, str) and model_id.strip():
-                last_model_id = model_id.strip()
+            last_model_id = _nested_str(payload, "modelId") or last_model_id
         elif event_type == "session":
-            session_model_id = _extract_pi_model_id(payload)
+            session_model_id = _nested_str(payload, "model") or _nested_str(
+                payload, "model", "modelId"
+            )
     return last_model_id or session_model_id
-
-
-def _extract_pi_model_id(payload: dict[str, object]) -> str | None:
-    raw_model = payload.get("model")
-    if isinstance(raw_model, str) and raw_model.strip():
-        return raw_model.strip()
-    if isinstance(raw_model, dict):
-        model_id = cast("dict[str, object]", raw_model).get("modelId")
-        if isinstance(model_id, str) and model_id.strip():
-            return model_id.strip()
-    return None
 
 
 def read_last_executed_model(
