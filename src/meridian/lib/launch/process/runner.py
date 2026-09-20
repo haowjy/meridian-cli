@@ -634,9 +634,11 @@ def _finalize_lifecycle_and_observe_session(
             )
     except Exception:
         logger.debug("Best-effort harness session observation failed", exc_info=True)
-    if observed_harness_session_id and observed_harness_session_id.strip():
-        resolved_harness_session_id = observed_harness_session_id.strip()
-        # Binding an accepted selection is durable coordination, not best-effort discovery.
+    current_harness_session_id = (resolved_harness_session_id or "").strip()
+    observed = (observed_harness_session_id or "").strip()
+    if observed and not current_harness_session_id:
+        # Fresh launch: observation is the only source of the native identity.
+        resolved_harness_session_id = observed
         managed.record_harness_session_id(resolved_harness_session_id)
         if primary_spawn_id is not None:
             spawn_store.update_spawn(
@@ -644,6 +646,17 @@ def _finalize_lifecycle_and_observe_session(
                 primary_spawn_id,
                 harness_session_id=resolved_harness_session_id,
             )
+    elif observed and observed != current_harness_session_id:
+        # A known id here is authoritative (exact resume, managed-attach
+        # connection, or materialized fork). Observation is best-effort discovery
+        # and must not clobber it.
+        logger.warning(
+            "Ignoring discovered harness session id %s for spawn %s; keeping the "
+            "launched identity %s",
+            observed,
+            primary_spawn_id,
+            current_harness_session_id,
+        )
     return resolved_exit_code, resolved_harness_session_id
 
 

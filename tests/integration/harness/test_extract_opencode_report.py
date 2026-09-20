@@ -168,6 +168,60 @@ def test_extract_opencode_report_ignores_child_session_assistant_text() -> None:
     assert extract_opencode_report(store, spawn_id) == "Parent report."
 
 
+def test_extract_session_id_ignores_opencode_event_ids() -> None:
+    """Event envelopes carry ``payload.id`` (``evt_…``), which is not a session."""
+
+    spawn_id = SpawnId("p-opencode-event-id")
+    store = _artifact_store_from_history_lines(
+        spawn_id,
+        [
+            {
+                "byte_offset": 0,
+                "event_type": "server.connected",
+                "harness_id": "opencode",
+                "payload": {
+                    "id": "evt_0c0088f1700164HCGa3tDiPFFT",
+                    "type": "server.connected",
+                    "properties": {},
+                },
+                "seq": 0,
+            },
+            {
+                "byte_offset": 200,
+                "event_type": "server.heartbeat",
+                "harness_id": "opencode",
+                "payload": {
+                    "id": "evt_0c00c8bad001IFPx9v8nb2HG3O",
+                    "type": "server.heartbeat",
+                    "properties": {},
+                },
+                "seq": 1,
+            },
+        ],
+    )
+
+    assert OPENCODE_EXTRACTOR.extract_session_id(store, spawn_id) is None
+
+
+def test_extract_session_id_rejects_non_session_value() -> None:
+    """The artifact fallback must not report a non-``ses_`` value as identity."""
+
+    spawn_id = SpawnId("p-opencode-bad-session")
+    store = _artifact_store_from_history_lines(
+        spawn_id,
+        [
+            {
+                "event_type": "custom",
+                "harness_id": "opencode",
+                "payload": {"session_id": "evt_not_a_session"},
+                "seq": 0,
+            }
+        ],
+    )
+
+    assert OPENCODE_EXTRACTOR.extract_session_id(store, spawn_id) is None
+
+
 def test_extract_opencode_report_falls_back_to_opencode_db_session(
     tmp_path: Path,
     monkeypatch,

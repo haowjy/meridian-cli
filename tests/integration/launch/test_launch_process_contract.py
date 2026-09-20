@@ -25,6 +25,7 @@ from meridian.lib.launch.process.ports import PRIMARY_STDERR_LOG_PATH_ENV, Launc
 from meridian.lib.launch.process.primary_attach import PrimaryAttachError
 from meridian.lib.launch.process.subprocess_launcher import SubprocessProcessLauncher
 from meridian.lib.safety.permissions import UnsafeNoOpPermissionResolver
+from meridian.lib.state.artifact_store import LocalStore
 
 
 def test_subprocess_launcher_captures_output_log(tmp_path: Path) -> None:
@@ -212,3 +213,85 @@ def test_execute_primary_process_uses_contract_attach_failure_policy_not_harness
     assert black_box_calls == 1
     assert exit_code == 0
     assert managed_session_id is None
+
+
+class _ObservingAdapter:
+    """Minimal adapter whose post-execution observation returns a fixed id."""
+
+    def __init__(self, observed: str | None) -> None:
+        self._observed = observed
+
+    def observe_session_id(self, **_kwargs: Any) -> str | None:
+        return self._observed
+
+
+class _RecordingManaged:
+    def __init__(self) -> None:
+        self.recorded: list[str] = []
+
+    def record_harness_session_id(self, session_id: str) -> None:
+        self.recorded.append(session_id)
+
+
+def _finalize_with_observation(
+    tmp_path: Path,
+    *,
+    resolved: str,
+    observed: str | None,
+) -> tuple[str, _RecordingManaged]:
+    managed = _RecordingManaged()
+    exit_code, resolved_session_id = process_runner._finalize_lifecycle_and_observe_session(
+        primary_spawn_id=None,
+        exit_code=0,
+        resolved_harness_session_id=resolved,
+        expected_harness_session_id=resolved,
+        harness_adapter=_ObservingAdapter(observed),
+        artifacts=LocalStore(root_dir=tmp_path / "artifacts"),
+        project_root=tmp_path,
+        launch_child_cwd=tmp_path,
+        model_id=None,
+        runtime_root=tmp_path,
+        primary_started=0.0,
+        primary_started_epoch=1.0,
+        primary_started_local_iso="2026-01-01T00:00:00",
+        managed=managed,
+        spawn_service=None,  # type: ignore[arg-type]
+        observe_adapter_session_id=True,
+    )
+    assert exit_code == 0
+    return resolved_session_id, managed
+
+
+def test_finalize_keeps_authoritative_id_over_differing_observation(
+    tmp_path: Path,
+) -> None:
+    resolved_session_id, managed = _finalize_with_observation(
+        tmp_path,
+        resolved="ses_known_conversation",
+        observed="evt_bogus_event_id",
+    )
+
+    assert resolved_session_id == "ses_known_conversation"
+    assert managed.recorded == []
+
+
+def test_finalize_binds_observation_when_no_known_id(tmp_path: Path) -> None:
+    resolved_session_id, managed = _finalize_with_observation(
+        tmp_path,
+        resolved="",
+        observed="ses_discovered",
+    )
+
+    assert resolved_session_id == "ses_discovered"
+    assert managed.recorded == ["ses_discovered"]
+
+
+def test_finalize_does_not_rebind_matching_observation(tmp_path: Path) -> None:
+    resolved_session_id, managed = _finalize_with_observation(
+        tmp_path,
+        resolved="ses_known_conversation",
+        observed="ses_known_conversation",
+    )
+
+    assert resolved_session_id == "ses_known_conversation"
+    assert managed.recorded == []
