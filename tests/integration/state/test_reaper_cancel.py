@@ -202,11 +202,10 @@ def test_cancel_orphan_primary_after_passive_reconcile_still_terminates(
 
     reconciled = _reconcile(tmp_path, runtime_root, _get_spawn(runtime_root, spawn_id))
 
-    assert reconciled.status == "failed"
+    assert reconciled.status == "cancelled"
     assert reconciled.terminal is not None
-    assert reconciled.terminal.exit_code == 1
-    assert reconciled.terminal is not None
-    assert reconciled.terminal.error == "orphan_primary"
+    assert reconciled.terminal.exit_code == 130
+    assert reconciled.terminal.error == "session_ended_without_finalize"
     assert terminated_pids == [7302, 7303]
 
     output = spawn_api.spawn_cancel_sync(
@@ -216,13 +215,13 @@ def test_cancel_orphan_primary_after_passive_reconcile_still_terminates(
         )
     )
 
-    assert output.status == "failed"
-    assert output.exit_code == 1
+    assert output.status == "cancelled"
+    assert output.exit_code == 130
     assert terminated_pids == [7302, 7303, 7302, 7303]
     latest = _get_spawn(runtime_root, spawn_id)
-    assert latest.status == "failed"
+    assert latest.status == "cancelled"
     assert latest.terminal is not None
-    assert latest.terminal.error == "orphan_primary"
+    assert latest.terminal.error == "session_ended_without_finalize"
 
 
 def test_cancel_orphan_primary_candidate_with_unreadable_metadata_uses_worker_pid_fallback(

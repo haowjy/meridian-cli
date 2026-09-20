@@ -9,12 +9,14 @@ from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 import psutil
+import structlog
 
 from meridian.lib.harness.connections.base import RawHarnessEvent
 from meridian.lib.state.liveness import is_process_alive, is_process_alive_with_birth
 from meridian.lib.state.primary_meta import PrimaryMetadata, read_primary_metadata
 from meridian.lib.state.reconciliation import (
     FinalizeFailed,
+    FinalizeFromRunnerExit,
     ReconciliationDecision,
     Skip,
     completion_or_cancel_decision,
@@ -23,6 +25,9 @@ from meridian.lib.state.spawn.model import SpawnRecord
 
 if TYPE_CHECKING:
     from meridian.lib.state.reaper import ArtifactSnapshot
+
+
+logger = structlog.get_logger(__name__)
 
 
 NESTED_SCOPE_KEYS = ("item", "request", "turn", "params", "data", "message", "payload")
@@ -201,7 +206,25 @@ class ManagedPrimaryReconciliationStrategy:
 
         if managed.metadata.activity == "finalizing":
             return FinalizeFailed(error="orphan_finalization")
-        return FinalizeFailed(error="orphan_primary")
+        # Launcher/backend/TUI are all dead with no durable completion. For an
+        # interactive managed primary this is a terminal that ended without
+        # running finalize (pane closed, process killed), not a crash-in-flight.
+        # Record it as a clean stop rather than a failure, and keep the liveness
+        # snapshot in the logs for diagnostics.
+        logger.info(
+            "Managed primary ended without finalize; finalizing as cancelled",
+            spawn_id=context.record.id,
+            launcher_pid=managed.metadata.launcher_pid,
+            backend_pid=managed.metadata.backend_pid,
+            tui_pid=managed.metadata.tui_pid,
+            activity=managed.metadata.activity,
+        )
+        return FinalizeFromRunnerExit(
+            status="cancelled",
+            exit_code=130,
+            error="session_ended_without_finalize",
+            include_managed_fallback_scopes=True,
+        )
 
 
 def read_managed_primary_snapshot(
