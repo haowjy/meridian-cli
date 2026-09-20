@@ -51,13 +51,25 @@ class SessionAttempt:
         assert snapshot is not None
         executable_model = context.binding.spec.model
         canonical_model = snapshot.model_selection_canonical_id or snapshot.model
+        requested_token = snapshot.model_selection_requested_token or canonical_model
+        selected_token = snapshot.model_selection_selected_token or canonical_model
+        # A resume that preserves the native session (OpenCode attach, dry-run
+        # "preserve the existing native session's committed model") carries no
+        # model on the launch spec; the executable identity lives in the source
+        # snapshot. Fall back to the spec for fresh launches and forks.
+        harness_model_id = snapshot.model_selection_harness_model_id or (
+            str(executable_model) if executable_model else None
+        )
+        named = bool(requested_token and selected_token and canonical_model and harness_model_id)
         selection = ConversationModelSelection.model_validate({
-            "requested_token": snapshot.model_selection_requested_token or canonical_model,
-            "selected_token": snapshot.model_selection_selected_token or canonical_model,
-            "canonical_model_id": canonical_model or None,
-            "harness_model_id": str(executable_model) if executable_model else None,
-            "model_mode": "named" if canonical_model else "harness_default",
-            "provider_constraint": snapshot.model_selection_provider_constraint,
+            "requested_token": requested_token,
+            "selected_token": selected_token,
+            "canonical_model_id": canonical_model if named else None,
+            "harness_model_id": harness_model_id if named else None,
+            "model_mode": "named" if named else "harness_default",
+            "provider_constraint": (
+                snapshot.model_selection_provider_constraint if named else None
+            ),
             "selection_source": (
                 request.session.conversation_intent.selection_source
                 if is_exact_continue_session(request.session)

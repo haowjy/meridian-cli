@@ -927,16 +927,21 @@ def get_initial_model_selection(
     if snapshot is not None:
         canonical = snapshot.model_selection_canonical_id or None
         executable = snapshot.model_selection_harness_model_id or None
+        requested = snapshot.model_selection_requested_token or snapshot.model or None
+        selected = snapshot.model_selection_selected_token or snapshot.model or None
+        named = bool(requested and selected and canonical and executable)
         selection = ConversationModelSelection(
-            requested_token=snapshot.model_selection_requested_token or snapshot.model or None,
-            selected_token=snapshot.model_selection_selected_token or snapshot.model or None,
-            canonical_model_id=canonical,
-            harness_model_id=executable,
+            requested_token=requested,
+            selected_token=selected,
+            canonical_model_id=canonical if named else None,
+            harness_model_id=executable if named else None,
             model_mode=(
-                "named" if canonical and executable else
-                "harness_default" if not snapshot.model else None
+                "named" if named else
+                "harness_default" if not snapshot.model and not canonical else None
             ),
-            provider_constraint=snapshot.model_selection_provider_constraint,
+            provider_constraint=(
+                snapshot.model_selection_provider_constraint if named else None
+            ),
             selection_source="initial_launch",
             provenance=snapshot.field_provenance,
         )
