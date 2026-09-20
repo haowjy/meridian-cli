@@ -60,7 +60,6 @@ from meridian.lib.state.history_changes import (
 from meridian.lib.state.history_codec import canonical_time, last_activity
 from meridian.lib.state.session_store import (
     SessionHistoricalEvent,
-    SessionModelObservationEvent,
     SessionRecord,
     SessionStartEvent,
     SessionUpdateEvent,
@@ -611,9 +610,6 @@ class HistoryIndex:
                     continue
                 if isinstance(event, SessionUpdateEvent) and event.active_work_id:
                     work_chats.add((event.active_work_id.strip(), event.chat_id))
-                if isinstance(event, SessionModelObservationEvent):
-                    offset = end
-                    continue
                 if event is not None:
                     generation = event.session_instance_id
                     if not generation:

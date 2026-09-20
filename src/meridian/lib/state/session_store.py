@@ -248,7 +248,8 @@ class SessionModelObservationEvent(BaseModel):
     Keyed by ``(harness, harness_session_id)`` — no chat/generation binding. This
     records what the harness actually last executed, which may diverge from
     Meridian's selected intent and can exist for native sessions Meridian never
-    started.
+    started. Parallel JSONL fact, not a session-lifecycle event: only observation
+    readers parse it.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -268,7 +269,6 @@ type SessionEvent = (
     | SessionUpdateEvent
     | SessionHistoricalEvent
     | SessionModelSelectionEvent
-    | SessionModelObservationEvent
 )
 type MaterializedCleanupScope = str
 
@@ -291,11 +291,15 @@ def _parse_event(payload: dict[str, Any]) -> SessionEvent | None:
             return SessionUpdateEvent.model_validate(payload)
         if event_type == "model_selection":
             return SessionModelSelectionEvent.model_validate(payload)
-        if event_type == "model_observation":
-            return SessionModelObservationEvent.model_validate(payload)
     except ValidationError:
         return None
     return None
+
+
+def _parse_model_observation(payload: dict[str, Any]) -> SessionModelObservationEvent | None:
+    if payload.get("event") != "model_observation":
+        return None
+    return SessionModelObservationEvent.model_validate(payload)
 
 
 def _record_from_start_event(event: SessionStartEvent) -> SessionRecord:
@@ -438,8 +442,6 @@ def project_session_event(records: dict[str, SessionRecord], event: SessionEvent
         records[event.chat_id] = event.record
         return
     if isinstance(event, SessionModelSelectionEvent):
-        return
-    if isinstance(event, SessionModelObservationEvent):
         return
     if isinstance(event, SessionStartEvent):
         record = _record_from_start_event(event)
@@ -1062,9 +1064,7 @@ def get_last_executed_model(
 
     paths = RuntimePaths.from_root_dir(runtime_root)
     latest: str | None = None
-    for event in read_events(paths.sessions_jsonl, _parse_event):
-        if not isinstance(event, SessionModelObservationEvent):
-            continue
+    for event in read_events(paths.sessions_jsonl, _parse_model_observation):
         if event.harness == harness and event.harness_session_id == harness_session_id:
             latest = event.observed_model_token
     return latest
@@ -1318,8 +1318,6 @@ def list_session_generations(runtime_root: Path) -> tuple[SessionRecord, ...]:
     for ordinal, event in enumerate(
         read_events(RuntimePaths.from_root_dir(runtime_root).sessions_jsonl, _parse_event)
     ):
-        if isinstance(event, SessionModelObservationEvent):
-            continue
         generation = event.session_instance_id
         if not generation:
             if isinstance(event, SessionStartEvent):
