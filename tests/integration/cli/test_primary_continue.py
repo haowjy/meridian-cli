@@ -500,3 +500,89 @@ def test_fork_old_harness_generation_preserves_selected_history(
     ) as fork:
         record = session_store.get_session_record(root, fork.chat_id)
         assert record is not None and record.forked_from_history_id == original.history_id
+
+
+def _opencode_continue_spec_model(
+    *,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    selection_source: str,
+) -> str | None:
+    from meridian.lib.state.session_store import ConversationModelSelection
+
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    _state_root(project_root)
+    stub_bundle_request_and_resolve(
+        monkeypatch,
+        model="deepseek/deepseek-flash",
+        model_token="deepseek-flash",
+        harness=HarnessId.OPENCODE,
+        harness_model="deepseek/deepseek-flash",
+    )
+    spec_models: list[str | None] = []
+    real_bind_launch_context = launch_context.bind_launch_context
+
+    def bind_launch_context(*args: Any, **kwargs: Any) -> Any:
+        context = real_bind_launch_context(*args, **kwargs)
+        spec_models.append(context.binding.spec.model)
+        return context
+
+    monkeypatch.setattr(launch_context, "bind_launch_context", bind_launch_context)
+
+    launch_primary(
+        project_root=project_root,
+        request=LaunchRequest(
+            model="deepseek/deepseek-flash",
+            harness="opencode",
+            session_mode=SessionMode.RESUME,
+            dry_run=True,
+            session=SessionRequest(
+                requested_harness_session_id="raw-session",
+                continue_harness="opencode",
+                continue_source_ref="raw-session",
+                continue_source_tracked=False,
+                conversation_intent=ConversationModelSelection(
+                    requested_token="deepseek/deepseek-flash",
+                    selected_token="deepseek",
+                    canonical_model_id="deepseek-flash",
+                    harness_model_id="deepseek/deepseek-flash",
+                    model_mode="named",
+                    selection_source=cast("Any", selection_source),
+                ),
+            ),
+        ),
+        harness_registry=get_default_harness_registry(),
+    )
+
+    assert spec_models
+    return spec_models[0]
+
+
+def test_opencode_exact_continue_replay_drops_model_from_spec(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    assert (
+        _opencode_continue_spec_model(
+            tmp_path=tmp_path,
+            monkeypatch=monkeypatch,
+            selection_source="recorded_selection",
+        )
+        is None
+    )
+
+
+def test_opencode_exact_continue_explicit_override_keeps_model_in_spec(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    assert (
+        _opencode_continue_spec_model(
+            tmp_path=tmp_path,
+            monkeypatch=monkeypatch,
+            selection_source="explicit_override",
+        )
+        == "deepseek/deepseek-flash"
+    )
+

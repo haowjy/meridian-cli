@@ -168,7 +168,11 @@ class ConversationModelSelection(BaseModel):
     model_mode: Literal["named", "harness_default"] | None = None
     provider_constraint: str | None = None
     selection_source: Literal[
-        "explicit_override", "recorded_selection", "initial_launch", "unknown"
+        "explicit_override",
+        "recorded_selection",
+        "observed_last_used",
+        "initial_launch",
+        "unknown",
     ]
     provenance: dict[str, str] = Field(default_factory=dict)
 
@@ -238,6 +242,27 @@ class SessionModelSelectionEvent(BaseModel):
         return self
 
 
+class SessionModelObservationEvent(BaseModel):
+    """Observed executed model for a native session, independent of intent.
+
+    Keyed by ``(harness, harness_session_id)`` — no chat/generation binding. This
+    records what the harness actually last executed, which may diverge from
+    Meridian's selected intent and can exist for native sessions Meridian never
+    started. Parallel JSONL fact, not a session-lifecycle event: only observation
+    readers parse it.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    v: int = 1
+    event: Literal["model_observation"] = "model_observation"
+    harness: str
+    harness_session_id: HarnessSessionId
+    observed_model_token: str
+    observed_source: Literal["native_history"] = "native_history"
+    recorded_at: str
+
+
 type SessionEvent = (
     SessionStartEvent
     | SessionStopEvent
@@ -269,6 +294,12 @@ def _parse_event(payload: dict[str, Any]) -> SessionEvent | None:
     except ValidationError:
         return None
     return None
+
+
+def _parse_model_observation(payload: dict[str, Any]) -> SessionModelObservationEvent | None:
+    if payload.get("event") != "model_observation":
+        return None
+    return SessionModelObservationEvent.model_validate(payload)
 
 
 def _record_from_start_event(event: SessionStartEvent) -> SessionRecord:
@@ -1001,6 +1032,42 @@ def record_model_selection(runtime_root: Path, event: SessionModelSelectionEvent
                     return False
             append_event(paths.sessions_jsonl, paths.sessions_flock, event)
             return True
+
+
+def record_model_observation(runtime_root: Path, event: SessionModelObservationEvent) -> bool:
+    """Durably append an executed-model observation; false means already recorded.
+
+    Independent of intent: this fact keys on ``(harness, harness_session_id)`` and
+    may exist for native sessions Meridian did not start, so no matching
+    ``SessionStartEvent`` generation is required. Dedupes against the latest
+    observation for the identity to keep the JSONL bounded.
+    """
+
+    paths = RuntimePaths.from_root_dir(runtime_root)
+    with lock_file(paths.project_lifetime_flock, mode="shared"):
+        if not runtime_root.is_dir():
+            raise FileNotFoundError(runtime_root)
+        with lock_file(paths.sessions_flock):
+            if (
+                get_last_executed_model(runtime_root, event.harness, event.harness_session_id)
+                == event.observed_model_token
+            ):
+                return False
+            append_event(paths.sessions_jsonl, paths.sessions_flock, event)
+            return True
+
+
+def get_last_executed_model(
+    runtime_root: Path, harness: str, harness_session_id: str,
+) -> str | None:
+    """Return the latest observed executed model token for a native session, or None."""
+
+    paths = RuntimePaths.from_root_dir(runtime_root)
+    latest: str | None = None
+    for event in read_events(paths.sessions_jsonl, _parse_model_observation):
+        if event.harness == harness and event.harness_session_id == harness_session_id:
+            latest = event.observed_model_token
+    return latest
 
 
 def list_active_sessions_for_work_id(runtime_root: Path, work_id: str) -> list[str]:

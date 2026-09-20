@@ -2,19 +2,30 @@
 
 from __future__ import annotations
 
+import contextlib
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol
+from typing import Protocol, cast
 from uuid import UUID
 
+from meridian.lib.catalog.model_aliases import run_mars_models_resolve
 from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
+from meridian.lib.core.types import HarnessSessionId
+from meridian.lib.harness.model_observation import (
+    NativeModelReadContext,
+    read_last_executed_model,
+)
 from meridian.lib.launch.policy_snapshot import managed_model_override_from_persisted_model
 from meridian.lib.launch.request import SessionRequest
+from meridian.lib.state.event_store import utc_now_iso
 from meridian.lib.state.session_store import (
     ConversationModelSelection,
+    SessionModelObservationEvent,
     SessionModelSelectionEvent,
     get_initial_model_selection,
+    get_last_executed_model,
     get_model_selection,
+    record_model_observation,
 )
 
 MODEL_OVERRIDE_WARNING = (
@@ -227,6 +238,84 @@ def _fallback_conversation_intent(
     )
 
 
+def _payload_harness(value: object) -> str | None:
+    if not isinstance(value, dict):
+        return None
+    harness = cast("dict[str, object]", value).get("harness")
+    return harness if isinstance(harness, str) else None
+
+
+def _observed_model_routes_to_harness(token: str, harness: str) -> bool:
+    """Best-effort check that an observed token can launch on the replay harness.
+
+    ``mars models resolve`` can return a payload for a token that does not route
+    to the harness being continued — for example an OpenCode session on an
+    unconfigured provider (``opencode/deepseek-v4-flash-free``), or a token whose
+    only candidates lack a runnable harness (``claude-fable-5``). Launch pins
+    ``--harness`` to the source session's harness, so a token must route to that
+    same harness; otherwise preferring it would make ``--continue`` fail where
+    the recorded startup selection worked.
+    """
+
+    resolved: dict[str, object] | None = None
+    with contextlib.suppress(Exception):
+        resolved = run_mars_models_resolve(token)
+    if resolved is None or resolved.get("error"):
+        return False
+    if _payload_harness(resolved.get("route")) == harness or resolved.get("harness") == harness:
+        return True
+    runnable_paths = resolved.get("runnable_paths")
+    if not isinstance(runnable_paths, list):
+        return False
+    return any(
+        _payload_harness(path) == harness for path in cast("list[object]", runnable_paths)
+    )
+
+
+def _observed_last_executed_model(
+    *,
+    source: ContinueReplaySource,
+    replay_harness: str,
+    runtime_root: Path,
+) -> str | None:
+    """Resolve the last-executed model, live-read first with stored observation fallback.
+
+    Live-read hits are best-effort persisted as an observation; a persistence
+    failure must never break continue, so it is swallowed here. Unroutable
+    observations are discarded so the caller falls back to the recorded selection.
+    """
+
+    harness_session_id = source.harness_session_id
+    if harness_session_id is None:
+        return None
+    live = read_last_executed_model(
+        replay_harness,
+        harness_session_id,
+        context=NativeModelReadContext(
+            project_root=source.source_control_root,
+            claude_config_dir=source.source_claude_config_dir,
+            pi_session_dir=source.source_pi_session_dir,
+        ),
+    )
+    token = live if live is not None else get_last_executed_model(
+        runtime_root, replay_harness, harness_session_id
+    )
+    if token is None or not _observed_model_routes_to_harness(token, replay_harness):
+        return None
+    if live is not None:
+        with contextlib.suppress(Exception):
+            record_model_observation(
+                runtime_root,
+                SessionModelObservationEvent(
+                    harness=replay_harness,
+                    harness_session_id=HarnessSessionId(harness_session_id),
+                    observed_model_token=live,
+                    recorded_at=utc_now_iso(),
+                ),
+            )
+    return token
+
+
 def _resolve_continue_conversation_intent(
     *,
     source: ContinueReplaySource,
@@ -258,6 +347,20 @@ def _resolve_continue_conversation_intent(
             ),
             seed_event,
         )
+    if not fork and runtime_root is not None and source.harness_session_id is not None:
+        observed_token = _observed_last_executed_model(
+            source=source,
+            replay_harness=replay_harness,
+            runtime_root=runtime_root,
+        )
+        if observed_token is not None:
+            return (
+                ConversationModelSelection(
+                    requested_token=observed_token,
+                    selection_source="observed_last_used",
+                ),
+                seed_event,
+            )
     if recorded is not None:
         return recorded.model_copy(update={"selection_source": "recorded_selection"}), None
     if seed_event is not None:

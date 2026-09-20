@@ -259,6 +259,7 @@ class SpawnParams(BaseModel):
 
     prompt: str
     model: ModelId | None = None
+    model_override_explicit: bool = False
     effort: str | None = None
     skills: tuple[str, ...] = ()
     agent: str | None = None
