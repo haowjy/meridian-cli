@@ -123,7 +123,7 @@ def test_execute_primary_process_uses_contract_bootstrap_mode_not_harness_id(
             on_child_started(111)
         return (0, 111)
 
-    exit_code, managed_session_id = process_runner._execute_primary_process(
+    exit_code, managed_session_id, managed_cancelled = process_runner._execute_primary_process(
         harness_id=HarnessId.CODEX,
         primary_spawn_id=SpawnId("p-contract-blackbox"),
         log_dir=tmp_path,
@@ -150,6 +150,7 @@ def test_execute_primary_process_uses_contract_bootstrap_mode_not_harness_id(
     assert black_box_calls == 1
     assert exit_code == 0
     assert managed_session_id is None
+    assert managed_cancelled is False
 
 
 def test_execute_primary_process_uses_contract_attach_failure_policy_not_harness_id(
@@ -186,7 +187,7 @@ def test_execute_primary_process_uses_contract_attach_failure_policy_not_harness
             on_child_started(222)
         return (0, 222)
 
-    exit_code, managed_session_id = process_runner._execute_primary_process(
+    exit_code, managed_session_id, managed_cancelled = process_runner._execute_primary_process(
         harness_id=HarnessId.CLAUDE,
         primary_spawn_id=SpawnId("p-contract-fallback"),
         log_dir=tmp_path,
@@ -213,6 +214,7 @@ def test_execute_primary_process_uses_contract_attach_failure_policy_not_harness
     assert black_box_calls == 1
     assert exit_code == 0
     assert managed_session_id is None
+    assert managed_cancelled is False
 
 
 class _ObservingAdapter:

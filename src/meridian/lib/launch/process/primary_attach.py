@@ -7,13 +7,14 @@ from __future__ import annotations
 
 import asyncio
 import os
+import signal
 import socket
 import sys
 from collections.abc import Callable
 from contextlib import suppress
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from threading import Lock, Thread
+from threading import Lock, Thread, current_thread, main_thread
 from typing import Any
 
 import psutil
@@ -172,6 +173,38 @@ class PrimaryAttachOutcome:
     exit_code: int
     session_id: str | None
     tui_pid: int | None
+    cancelled: bool = False
+
+
+def _install_launcher_cancel_handlers(
+    on_signal: Callable[[], None],
+) -> dict[int, Any] | None:
+    """Install SIGTERM/SIGHUP cancellation handlers for a launcher (main thread only).
+
+    Returns the previous handlers for restoration, or ``None`` when unattempted
+    (Windows or a non-main thread). A closed terminal sends SIGHUP and a killed
+    process sends SIGTERM; catching them lets the launcher run its normal
+    finalize instead of dying and leaving an orphaned active record.
+    """
+
+    if IS_WINDOWS or current_thread() is not main_thread():
+        return None
+    previous: dict[int, Any] = {}
+
+    def _handler(_signum: int, _frame: Any) -> None:
+        on_signal()
+
+    for signum in (signal.SIGTERM, signal.SIGHUP):
+        previous[signum] = signal.getsignal(signum)
+        signal.signal(signum, _handler)
+    return previous
+
+
+def _restore_launcher_cancel_handlers(previous: dict[int, Any] | None) -> None:
+    if previous is None:
+        return
+    for signum, handler in previous.items():
+        signal.signal(signum, handler)
 
 
 class _StartupTelemetry:
@@ -237,6 +270,16 @@ class PrimaryAttachLauncher:
         self._history_writer: HarnessHistoryWriter | None = None
         self._event_writer_task: asyncio.Task[None] | None = None
         self._tui_scope_snapshot: ProcessScopeSnapshot | None = None
+        self._running_process: RunningProcess | None = None
+        self._signal_cancel_requested = False
+
+    def _request_signal_cancel(self) -> None:
+        """Handle SIGTERM/SIGHUP: stop the TUI relay so ``run`` can finalize."""
+
+        self._signal_cancel_requested = True
+        running = self._running_process
+        if running is not None:
+            running.cancel_wait()
 
     async def run(
         self,
@@ -254,6 +297,10 @@ class PrimaryAttachLauncher:
             self._spawn_dir / "history.jsonl",
             runtime_root=self._runtime_root,
             spawn_id=str(self._spawn_id) if self._runtime_root is not None else None,
+        )
+        self._signal_cancel_requested = False
+        previous_signal_handlers = _install_launcher_cancel_handlers(
+            self._request_signal_cancel
         )
         connection_started = False
         session_id: str | None = None
@@ -310,6 +357,11 @@ class PrimaryAttachLauncher:
                 env=self._tui_env(env),
                 output_log_path=None,
             )
+            self._running_process = running_process
+            if self._signal_cancel_requested:
+                # A signal arrived during backend startup; honor it now that the
+                # TUI relay exists.
+                running_process.cancel_wait()
             try:
                 _handle_running(running_process.pid)
             except Exception:
@@ -337,6 +389,7 @@ class PrimaryAttachLauncher:
                         exit_code=launched.exit_code,
                         session_id=session_id,
                         tui_pid=launched.pid,
+                        cancelled=self._signal_cancel_requested,
                     )
                 await self._connection.stop(reason="event_stream_closed")
                 await self._stop_tui_launch_task(
@@ -349,20 +402,27 @@ class PrimaryAttachLauncher:
                     exit_code=1,
                     session_id=session_id,
                     tui_pid=running_process.pid,
+                    cancelled=self._signal_cancel_requested,
                 )
 
             launched = await asyncio.shield(launch_task)
             tui_lifecycle_finished = True
+            if self._signal_cancel_requested:
+                # The relay stopped on a signal, so the TUI child is still alive.
+                await self._terminate_tui_scope(reason="signal_cancelled")
 
             return PrimaryAttachOutcome(
                 exit_code=launched.exit_code,
                 session_id=session_id,
                 tui_pid=launched.pid,
+                cancelled=self._signal_cancel_requested,
             )
         except Exception:
             telemetry.fail()
             raise
         finally:
+            _restore_launcher_cancel_handlers(previous_signal_handlers)
+            self._running_process = None
             if connection_started:
                 self._set_activity("finalizing")
             writer_task = self._event_writer_task
