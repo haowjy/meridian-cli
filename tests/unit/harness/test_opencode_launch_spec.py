@@ -38,13 +38,9 @@ def test_explicit_override_keeps_model_on_continue() -> None:
     assert spec.model == "deepseek/deepseek-flash"
 
 
-def test_fresh_launch_keeps_model() -> None:
-    spec = _resolve()
-
-    assert spec.model == "deepseek/deepseek-flash"
-
-
-def test_fork_continue_keeps_model() -> None:
-    spec = _resolve(continue_harness_session_id="ses-parent", continue_fork=True)
-
-    assert spec.model == "deepseek/deepseek-flash"
+def test_non_replay_launch_keeps_model() -> None:
+    assert _resolve().model == "deepseek/deepseek-flash"
+    assert (
+        _resolve(continue_harness_session_id="ses-parent", continue_fork=True).model
+        == "deepseek/deepseek-flash"
+    )

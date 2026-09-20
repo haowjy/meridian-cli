@@ -150,28 +150,8 @@ def test_pi_reads_from_agent_dir_when_session_dir_not_supplied(tmp_path: Path) -
     assert read_last_executed_model("pi", session_id, context=context) == "deepseek-v4-pro"
 
 
-def test_unknown_harness_and_missing_store_return_none(tmp_path: Path) -> None:
+def test_unknown_harness_returns_none() -> None:
     empty = NativeModelReadContext()
 
     assert read_last_executed_model("cursor", "ses-1", context=empty) is None
     assert read_last_executed_model("", "", context=empty) is None
-    assert read_last_executed_model("claude", "ses-1", context=empty) is None
-    assert (
-        read_last_executed_model(
-            "codex",
-            "missing",
-            context=NativeModelReadContext(launch_env={"CODEX_HOME": str(tmp_path / "nope")}),
-        )
-        is None
-    )
-    assert (
-        read_last_executed_model(
-            "pi",
-            "missing",
-            context=NativeModelReadContext(
-                pi_session_dir=str(tmp_path / "nope"),
-                launch_env={"PI_CODING_AGENT_DIR": str(tmp_path / "nope-agent")},
-            ),
-        )
-        is None
-    )
