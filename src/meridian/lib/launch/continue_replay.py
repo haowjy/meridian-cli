@@ -238,6 +238,13 @@ def _fallback_conversation_intent(
     )
 
 
+def _payload_harness(value: object) -> str | None:
+    if not isinstance(value, dict):
+        return None
+    harness = cast("dict[str, object]", value).get("harness")
+    return harness if isinstance(harness, str) else None
+
+
 def _observed_model_routes_to_harness(token: str, harness: str) -> bool:
     """Best-effort check that an observed token can launch on the replay harness.
 
@@ -255,19 +262,14 @@ def _observed_model_routes_to_harness(token: str, harness: str) -> bool:
         resolved = run_mars_models_resolve(token)
     if resolved is None or resolved.get("error"):
         return False
-    route = resolved.get("route")
-    if isinstance(route, dict) and cast("dict[str, object]", route).get("harness") == harness:
-        return True
-    if resolved.get("harness") == harness:
+    if _payload_harness(resolved.get("route")) == harness or resolved.get("harness") == harness:
         return True
     runnable_paths = resolved.get("runnable_paths")
-    if isinstance(runnable_paths, list):
-        return any(
-            isinstance(path, dict)
-            and cast("dict[str, object]", path).get("harness") == harness
-            for path in cast("list[object]", runnable_paths)
-        )
-    return False
+    if not isinstance(runnable_paths, list):
+        return False
+    return any(
+        _payload_harness(path) == harness for path in cast("list[object]", runnable_paths)
+    )
 
 
 def _observed_last_executed_model(
@@ -295,9 +297,12 @@ def _observed_last_executed_model(
             pi_session_dir=source.source_pi_session_dir,
         ),
     )
+    token = live if live is not None else get_last_executed_model(
+        runtime_root, replay_harness, harness_session_id
+    )
+    if token is None or not _observed_model_routes_to_harness(token, replay_harness):
+        return None
     if live is not None:
-        if not _observed_model_routes_to_harness(live, replay_harness):
-            return None
         with contextlib.suppress(Exception):
             record_model_observation(
                 runtime_root,
@@ -308,11 +313,7 @@ def _observed_last_executed_model(
                     recorded_at=utc_now_iso(),
                 ),
             )
-        return live
-    stored = get_last_executed_model(runtime_root, replay_harness, harness_session_id)
-    if stored is not None and not _observed_model_routes_to_harness(stored, replay_harness):
-        return None
-    return stored
+    return token
 
 
 def _resolve_continue_conversation_intent(
