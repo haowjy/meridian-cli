@@ -48,12 +48,17 @@ immediately on success. Black-box path may discover the session ID only at exit 
 
 ### Signal cancellation
 
-`PrimaryAttachLauncher` traps `SIGTERM`/`SIGHUP` (main thread only) for the duration of
-`run()`. A closed terminal sends SIGHUP and a killed process sends SIGTERM; trapping them
+`PrimaryAttachLauncher` registers a `SignalCallbackReceiver` (targets `SIGTERM`/`SIGHUP`)
+with the process-global `SignalCoordinator` (`lib/launch/signals.py`) for the duration of
+`run()`. A closed terminal sends SIGHUP and a killed process sends SIGTERM; catching them
 lets the launcher stop the TUI relay through `RunningProcess.cancel_wait()` and finalize
 normally, instead of dying and leaving an active record for orphan reconciliation. The
-handlers are restored in `run()`'s `finally`.
+receiver is unregistered in `run()`'s `finally`, which restores the previous handlers.
 
+- `SignalCoordinator` installs handlers for the union of its active receivers' target
+  signals (main thread only) and restores any signal no longer targeted; it is the single
+  seam for both the streaming `SignalForwarder` (`SIGINT`/`SIGTERM` → subprocess) and this
+  launcher receiver.
 - The relay returns exit 130 when `cancel_wait()` unblocks it; cancellation is asserted
   only when the signal was seen **and** the relay returned 130, so a session that exited
   normally just before the signal is not recorded as cancelled.
@@ -61,10 +66,8 @@ handlers are restored in `run()`'s `finally`.
   honored once the TUI starts. If startup then fails, `run()` returns a cancelled outcome
   rather than raising, so `_execute_primary_process()` does not fall back to a black-box
   TUI that would ignore the termination request.
-- The first signal requests cancellation; a second restores `SIG_DFL` and re-raises, so a
-  wedged teardown can still be forced.
-- This is launcher-local and independent of `lib/launch/signals.py`, which forwards
-  SIGINT/SIGTERM to a subprocess across the streaming path. Unifying them is future work.
+- The receiver uses `escalate_on_repeat`: the first signal requests cancellation; a second
+  restores `SIG_DFL` and re-raises, so a wedged teardown can still be forced.
 
 ## Session ID Observation — Invariant I-4
 

@@ -14,9 +14,8 @@ from collections.abc import Callable
 from contextlib import suppress
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from threading import Lock, Thread, current_thread, main_thread
-from types import FrameType
-from typing import Any, cast
+from threading import Lock, Thread
+from typing import Any
 
 import psutil
 import structlog
@@ -30,6 +29,7 @@ from meridian.lib.harness.connections.base import (
 from meridian.lib.harness.connections.errors import PortBindError
 from meridian.lib.harness.semantics import normalize_event
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
+from meridian.lib.launch.signals import SignalCallbackReceiver, signal_coordinator
 from meridian.lib.platform import IS_WINDOWS
 from meridian.lib.platform.process_scope import terminate_scope_sync
 from meridian.lib.platform.process_scope.base import (
@@ -177,49 +177,6 @@ class PrimaryAttachOutcome:
     cancelled: bool = False
 
 
-def _install_launcher_cancel_handlers(
-    on_signal: Callable[[], None],
-) -> dict[signal.Signals, signal.Handlers] | None:
-    """Install SIGTERM/SIGHUP cancellation handlers for a launcher (main thread only).
-
-    Returns the previous handlers for restoration, or ``None`` when unattempted
-    (Windows or a non-main thread). A closed terminal sends SIGHUP and a killed
-    process sends SIGTERM; catching them lets the launcher run its normal
-    finalize instead of dying and leaving an orphaned active record.
-
-    The first signal requests cancellation; a second restores the default
-    disposition and re-raises, so a wedged teardown can still be forced.
-    """
-
-    if IS_WINDOWS or current_thread() is not main_thread():
-        return None
-    previous: dict[signal.Signals, signal.Handlers] = {}
-    seen_count = 0
-
-    def _handler(signum: int, _frame: FrameType | None) -> None:
-        nonlocal seen_count
-        seen_count += 1
-        if seen_count >= 2:
-            signal.signal(signum, signal.SIG_DFL)
-            os.kill(os.getpid(), signum)
-            return
-        on_signal()
-
-    for signum in (signal.SIGTERM, signal.SIGHUP):
-        previous[signum] = cast("signal.Handlers", signal.getsignal(signum))
-        signal.signal(signum, _handler)
-    return previous
-
-
-def _restore_launcher_cancel_handlers(
-    previous: dict[signal.Signals, signal.Handlers] | None,
-) -> None:
-    if previous is None:
-        return
-    for signum, handler in previous.items():
-        signal.signal(signum, handler)
-
-
 class _StartupTelemetry:
     """Single-line startup progress output for managed primary attach."""
 
@@ -312,9 +269,12 @@ class PrimaryAttachLauncher:
             spawn_id=str(self._spawn_id) if self._runtime_root is not None else None,
         )
         self._signal_cancel_requested = False
-        previous_signal_handlers = _install_launcher_cancel_handlers(
-            self._request_signal_cancel
+        cancel_receiver = SignalCallbackReceiver(
+            target_signals=(signal.SIGTERM, signal.SIGHUP),
+            callback=lambda _signum: self._request_signal_cancel(),
+            escalate_on_repeat=True,
         )
+        signal_coordinator().register_receiver(cancel_receiver)
         connection_started = False
         session_id: str | None = None
         running_process: RunningProcess | None = None
@@ -455,7 +415,7 @@ class PrimaryAttachLauncher:
                 )
             raise
         finally:
-            _restore_launcher_cancel_handlers(previous_signal_handlers)
+            signal_coordinator().unregister_receiver(cancel_receiver)
             self._running_process = None
             if connection_started:
                 self._set_activity("finalizing")
