@@ -45,10 +45,16 @@ def bind_harness_session_id(
 ) -> str:
     """Bind one native harness session id to the session and spawn stores.
 
-    Single owner of the two-store write and source precedence
-    (connection > discovery > observation). Blank candidates are a no-op that
-    returns the already-resolved id. Observation never clobbers a known id;
-    discovery binds unless it matches the known id; connection is authoritative.
+    Single owner of the two-store write. The source is chosen by the call site;
+    there is no persisted source rank. Each source applies its own rule:
+
+    - ``observation`` never clobbers a known id: it warns on a differing
+      observation and binds only when no id is known yet.
+    - ``discovery`` binds unless the candidate equals the known id, warning when
+      it overwrites a differing known id.
+    - ``connection`` is authoritative and binds unconditionally.
+
+    Blank candidates are a no-op that returns the already-resolved id.
     """
 
     candidate = (session_id or "").strip()

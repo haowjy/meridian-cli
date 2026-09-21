@@ -333,6 +333,7 @@ def release_managed_primary_scopes(
     if not is_managed_primary_candidate(record):
         return
 
+    # Lazy to avoid a state -> core import cycle: core.process_cleanup imports state.
     from meridian.lib.core.process_cleanup import (
         cancel_managed_primary,
         terminate_spawn_scopes,

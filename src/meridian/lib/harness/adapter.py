@@ -34,6 +34,7 @@ from meridian.lib.launch.launch_types import (
 )
 from meridian.lib.launch.request import SessionRequest
 from meridian.lib.safety.permissions import PermissionConfig
+from meridian.lib.state.primary_meta import HarnessSessionDiscovery
 
 AdapterSpecT = TypeVar("AdapterSpecT", bound=ResolvedLaunchSpec, covariant=True)
 
@@ -358,7 +359,7 @@ class PrimarySessionObservation(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     session_id: str | None = None
-    discovery: str | None = None
+    discovery: HarnessSessionDiscovery | None = None
     detail: str | None = None
 
 
@@ -495,7 +496,6 @@ class SubprocessHarness(HarnessAdapter[ResolvedLaunchSpec], Protocol):
     def observe_primary_session_id(
         self,
         *,
-        state: HarnessPrelaunchState,
         command: tuple[str, ...],
         child_env: dict[str, str],
         launch_child_cwd: Path,
@@ -734,7 +734,6 @@ class BaseHarnessAdapter(Generic[SpecT], ABC):
     def observe_primary_session_id(
         self,
         *,
-        state: HarnessPrelaunchState,
         command: tuple[str, ...],
         child_env: dict[str, str],
         launch_child_cwd: Path,
@@ -745,7 +744,6 @@ class BaseHarnessAdapter(Generic[SpecT], ABC):
         exit_code: int,
     ) -> PrimarySessionObservation:
         _ = (
-            state,
             command,
             child_env,
             launch_child_cwd,

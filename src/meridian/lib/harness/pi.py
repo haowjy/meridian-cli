@@ -6,8 +6,6 @@ import json
 from pathlib import Path
 from typing import ClassVar, cast
 
-import structlog
-
 from meridian.lib.config.settings import resolve_pi_harness_profile
 from meridian.lib.core.domain import SpawnStatus, TokenUsage
 from meridian.lib.core.types import HarnessId, SpawnId, TransportId
@@ -42,6 +40,7 @@ from meridian.lib.harness.connections.base import RawHarnessEvent
 from meridian.lib.harness.connections.pi_rpc import PiRpcConnection
 from meridian.lib.harness.extractors.pi import (
     PI_EXTRACTOR,
+    PiSessionDiscovery,
     detect_pi_session_discovery_from_session_files,
     detect_pi_session_id_from_session_files,
 )
@@ -97,8 +96,6 @@ from meridian.lib.safety.permissions import PermissionConfig
 from meridian.lib.state.atomic import atomic_write_text
 from meridian.lib.state.paths import spawn_log_subpath
 
-logger = structlog.get_logger(__name__)
-
 
 def _write_pi_runtime_metadata_sidecar(
     *,
@@ -113,13 +110,10 @@ def _write_pi_runtime_metadata_sidecar(
     metadata_path = (
         runtime_root / spawn_log_subpath(spawn_id) / PI_RUNTIME_META_FILENAME
     )
-    try:
-        atomic_write_text(
-            metadata_path,
-            json.dumps({"schema_version": 1, **payload}, separators=(",", ":")) + "\n",
-        )
-    except OSError:
-        logger.debug("Failed to persist resolved Pi runtime metadata sidecar", exc_info=True)
+    atomic_write_text(
+        metadata_path,
+        json.dumps({"schema_version": 1, **payload}, separators=(",", ":")) + "\n",
+    )
 
 
 def _project_pi_subprocess_cli_args(
@@ -393,7 +387,6 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
     def observe_primary_session_id(
         self,
         *,
-        state: HarnessPrelaunchState,
         command: tuple[str, ...],
         child_env: dict[str, str],
         launch_child_cwd: Path,
@@ -403,7 +396,6 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         resolved_session_id: str,
         exit_code: int,
     ) -> PrimarySessionObservation:
-        _ = state
         outcome = detect_pi_session_discovery_from_session_files(
             launch_env=child_env,
             child_cwd=launch_child_cwd,
@@ -412,7 +404,7 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         )
         session_id = (outcome.session_id or "").strip() or None
         if "--no-session" in command and outcome.session_id is None:
-            discovery: str = "never_created"
+            discovery: PiSessionDiscovery = "never_created"
             detail: str | None = "ephemeral_session"
         elif outcome.session_id is not None or (
             bool(requested_session_id)

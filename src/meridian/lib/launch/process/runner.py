@@ -1146,7 +1146,6 @@ def run_harness_process(
                     )
                     if write_native_primary_metadata and primary_spawn_id is not None:
                         observation = harness_adapter.observe_primary_session_id(
-                            state=prelaunch_state,
                             command=command,
                             child_env=child_env,
                             launch_child_cwd=launch_child_cwd,
@@ -1185,9 +1184,7 @@ def run_harness_process(
                             exit_code=exit_code,
                             harness_session_id=resolved_harness_session_id,
                             runtime_metadata=native_primary_runtime_metadata,
-                            harness_session_discovery=cast(
-                                "HarnessSessionDiscovery | None", observation.discovery
-                            ),
+                            harness_session_discovery=observation.discovery,
                             harness_session_discovery_detail=observation.detail,
                         )
                 finally:
