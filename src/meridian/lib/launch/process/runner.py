@@ -447,7 +447,6 @@ def _execute_primary_process(
                 else "",
             )
             _cleanup_managed_primary_sidecars(log_dir)
-            use_managed_backend = False
 
     output_log_path = (
         log_dir / OUTPUT_FILENAME
