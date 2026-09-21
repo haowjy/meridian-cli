@@ -66,8 +66,16 @@ receiver is unregistered in `run()`'s `finally`, which restores the previous han
   honored once the TUI starts. If startup then fails, `run()` returns a cancelled outcome
   rather than raising, so `_execute_primary_process()` does not fall back to a black-box
   TUI that would ignore the termination request.
-- The receiver uses `escalate_on_repeat`: the first signal requests cancellation; a second
-  restores `SIG_DFL` and re-raises, so a wedged teardown can still be forced.
+- The receiver uses `escalate_on_repeat` with a grace window: the first signal requests
+  cancellation; a repeat restores `SIG_DFL` and re-raises only when it arrives at least
+  `escalate_repeat_grace_secs` (default 1s) after the first signal of that number. A
+  terminal close delivers SIGHUP **twice** (~1 ms apart); escalating on the second would
+  kill the launcher before finalize, so a burst inside the grace routes to the (idempotent)
+  callback while a deliberate later repeat still force-quits a wedged teardown.
+- `_copy_primary_pty_output` treats a lost pane as a clean stop: `OSError` (EIO) on the
+  stdout write, the stdin read, or the master write ends forwarding rather than escaping
+  the relay thread, and a set `wait_cancelled` returns 130 before the blocking `waitpid`
+  so a closed terminal cannot wedge the relay on a TUI in its own pty session.
 
 ## Session ID Observation — Invariant I-4
 
