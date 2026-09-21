@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import ClassVar, cast
+
+import structlog
 
 from meridian.lib.config.settings import resolve_pi_harness_profile
 from meridian.lib.core.domain import SpawnStatus, TokenUsage
@@ -20,7 +23,9 @@ from meridian.lib.harness.adapter import (
     HarnessContract,
     HarnessPrelaunchState,
     McpConfig,
+    NativePrimaryRuntimeMetadata,
     PermissionResolver,
+    PrimarySessionObservation,
     ProjectionContract,
     ProjectionMode,
     RecordConfigDirFn,
@@ -37,8 +42,10 @@ from meridian.lib.harness.connections.base import RawHarnessEvent
 from meridian.lib.harness.connections.pi_rpc import PiRpcConnection
 from meridian.lib.harness.extractors.pi import (
     PI_EXTRACTOR,
+    detect_pi_session_discovery_from_session_files,
     detect_pi_session_id_from_session_files,
 )
+from meridian.lib.harness.pi_lifecycle_events import redact_pi_command_for_history
 from meridian.lib.harness.pi_paths import (
     pi_agent_dir_env_override,
     pi_meridian_state_dir_env_override,
@@ -79,10 +86,40 @@ from meridian.lib.launch.composition import (
     render_system_instruction_blocks,
     render_task_context,
 )
-from meridian.lib.launch.constants import BASE_COMMAND_PI_SUBPROCESS, PRIMARY_BASE_COMMAND_PI
+from meridian.lib.launch.constants import (
+    BASE_COMMAND_PI_SUBPROCESS,
+    PI_RUNTIME_META_FILENAME,
+    PRIMARY_BASE_COMMAND_PI,
+)
 from meridian.lib.launch.env import scope_pi_session_dir_for_spawn
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec, TerminalSurfaceMode
 from meridian.lib.safety.permissions import PermissionConfig
+from meridian.lib.state.atomic import atomic_write_text
+from meridian.lib.state.paths import spawn_log_subpath
+
+logger = structlog.get_logger(__name__)
+
+
+def _write_pi_runtime_metadata_sidecar(
+    *,
+    runtime_root: Path,
+    spawn_id: SpawnId,
+    payload: dict[str, str | None],
+) -> None:
+    """Persist the resolved Pi runtime metadata sidecar for one spawn."""
+
+    if payload.get("runtime_path") is None:
+        return
+    metadata_path = (
+        runtime_root / spawn_log_subpath(spawn_id) / PI_RUNTIME_META_FILENAME
+    )
+    try:
+        atomic_write_text(
+            metadata_path,
+            json.dumps({"schema_version": 1, **payload}, separators=(",", ":")) + "\n",
+        )
+    except OSError:
+        logger.debug("Failed to persist resolved Pi runtime metadata sidecar", exc_info=True)
 
 
 def _project_pi_subprocess_cli_args(
@@ -154,6 +191,7 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             bootstrap=BootstrapContract(
                 mode=BootstrapMode.SUBPROCESS_ONLY,
                 fork_materialization=ForkMaterializationMode.NATIVE_CONTINUE_FORK,
+                primary_stderr_log=True,
             ),
         )
 
@@ -292,6 +330,17 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         if scoped_session_dir is not None:
             env_overrides["PI_CODING_AGENT_SESSION_DIR"] = scoped_session_dir
 
+        _write_pi_runtime_metadata_sidecar(
+            runtime_root=runtime_root,
+            spawn_id=spawn_id,
+            payload={
+                "runtime_kind": resolved_runtime.runtime_kind,
+                "runtime_path": resolved_runtime.binary_path,
+                "runtime_version": resolved_runtime.runtime_version,
+                "session_dir": session_dir,
+                "auth_policy": "shared-pi-agent-dir",
+            },
+        )
         return HarnessPrelaunchState(
             env_overrides=env_overrides,
             metadata={
@@ -302,6 +351,83 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
                 "pi_runtime_agent_dir": agent_dir,
                 "pi_runtime_auth_policy": "shared-pi-agent-dir",
             },
+        )
+
+    def uses_native_primary_metadata(self) -> bool:
+        return self.contract.bootstrap.mode is BootstrapMode.SUBPROCESS_ONLY
+
+    def native_primary_runtime_metadata(
+        self,
+        state: HarnessPrelaunchState,
+    ) -> NativePrimaryRuntimeMetadata:
+        def _text(field: str) -> str | None:
+            raw = state.metadata.get(field)
+            if not isinstance(raw, str):
+                return None
+            return raw.strip() or None
+
+        return NativePrimaryRuntimeMetadata(
+            runtime_kind=_text("pi_runtime_kind"),
+            runtime_path=_text("pi_runtime_path"),
+            runtime_version=_text("pi_runtime_version"),
+            session_dir=_text("pi_runtime_session_dir"),
+            auth_policy=_text("pi_runtime_auth_policy"),
+        )
+
+    def resolve_primary_command(
+        self,
+        command: tuple[str, ...],
+        *,
+        state: HarnessPrelaunchState,
+    ) -> tuple[str, ...]:
+        if not command:
+            return command
+        runtime_path = (state.metadata.get("pi_runtime_path") or "").strip()
+        if not runtime_path:
+            return command
+        return (runtime_path, *command[1:])
+
+    def redact_primary_command(self, command: tuple[str, ...]) -> tuple[str, ...]:
+        return tuple(redact_pi_command_for_history(command))
+
+    def observe_primary_session_id(
+        self,
+        *,
+        state: HarnessPrelaunchState,
+        command: tuple[str, ...],
+        child_env: dict[str, str],
+        launch_child_cwd: Path,
+        started_at_epoch: float | None,
+        expected_session_id: str,
+        requested_session_id: str,
+        resolved_session_id: str,
+        exit_code: int,
+    ) -> PrimarySessionObservation:
+        _ = state
+        outcome = detect_pi_session_discovery_from_session_files(
+            launch_env=child_env,
+            child_cwd=launch_child_cwd,
+            started_at_epoch=started_at_epoch,
+            expected_session_id=expected_session_id,
+        )
+        session_id = (outcome.session_id or "").strip() or None
+        if "--no-session" in command and outcome.session_id is None:
+            discovery: str = "never_created"
+            detail: str | None = "ephemeral_session"
+        elif outcome.session_id is not None or (
+            bool(requested_session_id)
+            and exit_code == 0
+            and bool(resolved_session_id.strip())
+        ):
+            discovery = "ok"
+            detail = None
+        else:
+            discovery = outcome.discovery
+            detail = outcome.detail
+        return PrimarySessionObservation(
+            session_id=session_id,
+            discovery=discovery,
+            detail=detail,
         )
 
     def mcp_config(self, run: SpawnParams) -> McpConfig | None:
