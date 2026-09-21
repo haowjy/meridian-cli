@@ -10,6 +10,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - A managed primary whose launcher is killed without finalize (terminal closed, process killed) is reconciled as `cancelled` instead of `failed`/`orphan_primary`, with the liveness snapshot logged at info. `spawn cancel` still cleans up its managed processes.
 - `SIGTERM`/`SIGHUP` on a managed primary launcher now runs the normal finalize path instead of dying silently. The session is recorded `cancelled` immediately and the backend/TUI are cleaned up, rather than leaving an active record for later orphan reconciliation.
 - `meridian --continue` (and `session browse` resume) of an OpenCode session no longer aborts managed attach with "named selection requires tokens and canonical/executable identities". Resume preserves the native committed model, so the launch spec carries none; the invocation's model selection now takes the executable identity from the source snapshot (falling back to the spec), and an incomplete identity is recorded as harness-default instead of an invalid named selection.
+- A managed-primary launcher no longer dies on a rapid terminal-close signal burst. `SIGHUP` delivered twice within a second is routed to the cancel callback instead of restoring the default disposition and re-raising; a deliberate later repeat still force-quits.
 
 ## [0.6.2] - 2026-09-20
 

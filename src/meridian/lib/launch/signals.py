@@ -13,6 +13,7 @@ Also includes process-group helpers for subprocess lifecycle management
 import asyncio
 import os
 import signal
+import time
 from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from threading import Lock, RLock, current_thread, main_thread
@@ -179,8 +180,11 @@ class SignalCallbackReceiver:
     """Receiver that invokes a callback for a set of signals.
 
     With ``escalate_on_repeat`` the first signal invokes the callback and a
-    second restores the default disposition and re-raises, so a wedged handler
-    cannot trap the process indefinitely.
+    later repeat restores the default disposition and re-raises, so a wedged
+    handler cannot trap the process indefinitely. A repeat only escalates when
+    it arrives at least ``escalate_repeat_grace_secs`` after the previous signal
+    of the same number; a rapid burst (e.g. terminal close) is routed to the
+    callback instead.
     """
 
     def __init__(
@@ -189,11 +193,13 @@ class SignalCallbackReceiver:
         target_signals: tuple[signal.Signals, ...],
         callback: Callable[[signal.Signals], None],
         escalate_on_repeat: bool = False,
+        escalate_repeat_grace_secs: float = 1.0,
     ) -> None:
         self._target_signals = tuple(target_signals)
         self._callback = callback
         self._escalate_on_repeat = escalate_on_repeat
-        self._seen_counts: dict[signal.Signals, int] = {}
+        self._escalate_repeat_grace_secs = escalate_repeat_grace_secs
+        self._last_seen_seconds: dict[signal.Signals, float] = {}
 
     @property
     def target_signals(self) -> tuple[signal.Signals, ...]:
@@ -201,9 +207,13 @@ class SignalCallbackReceiver:
 
     def forward_signal(self, signum: signal.Signals) -> None:
         if self._escalate_on_repeat:
-            seen = self._seen_counts.get(signum, 0) + 1
-            self._seen_counts[signum] = seen
-            if seen >= 2:
+            now = time.monotonic()
+            previous = self._last_seen_seconds.get(signum)
+            self._last_seen_seconds[signum] = now
+            if (
+                previous is not None
+                and now - previous >= self._escalate_repeat_grace_secs
+            ):
                 signal.signal(signum, signal.SIG_DFL)
                 os.kill(os.getpid(), signum)
                 return
