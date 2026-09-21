@@ -45,7 +45,7 @@ arrive through `SubprocessHarness` hooks — never `HarnessId` branches:
 - `observe_primary_session_id` — post-exit native session-file discovery. The runner
   binds the result through `bind_harness_session_id(source="discovery")`.
 - `build_primary_runtime_request_handler` — managed-primary runtime request handler
-  (Codex permission broker).
+  (Codex/OpenCode permission broker).
 - `capabilities.captures_blackbox_output` and `bootstrap.primary_stderr_log` drive
   the black-box capture and stderr-log env, replacing harness-id conditionals.
 

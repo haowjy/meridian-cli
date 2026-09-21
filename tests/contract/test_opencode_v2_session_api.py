@@ -114,3 +114,30 @@ async def test_v2_resume_model_switch_fails_loudly_on_html_fallback() -> None:
         await connection._create_session(
             _spec(model="openai/gpt-5.5", continue_session_id="ses_v2")
         )
+
+
+@pytest.mark.asyncio
+async def test_respond_request_v2_posts_reply_to_permission_endpoint() -> None:
+    connection = _TestableOpenCodeV2Connection(responses=[(200, None, "")])
+    connection._pending_requests["per_1"] = "ses_v2"
+
+    await connection.respond_request("per_1", "reject", {"message": "not allowed"})
+
+    assert connection.requests == [
+        (
+            "POST",
+            "/api/session/ses_v2/permission/per_1/reply",
+            {"reply": "reject", "message": "not allowed"},
+        ),
+    ]
+    assert connection._pending_requests == {}
+
+
+@pytest.mark.asyncio
+async def test_respond_request_v2_fails_loudly_on_html_fallback() -> None:
+    connection = _TestableOpenCodeV2Connection(responses=[(200, "<html></html>", "text/html")])
+    connection._session_id = "ses_v2"
+
+    with pytest.raises(RuntimeError, match="V2 permission reply failed"):
+        await connection.respond_request("per_1", "accept")
+

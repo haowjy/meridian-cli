@@ -126,7 +126,8 @@ def _install_fake_v2_transport(
     v1_calls: list[str] = []
     backend_launches: list[ManagedBackendConfig] = []
 
-    def _v2_factory() -> _FakeV2ServerConnection:
+    def _v2_factory(request_handler: object | None = None) -> _FakeV2ServerConnection:
+        _ = request_handler
         connection = _FakeV2ServerConnection(
             server_password=_SERVER_PASSWORD,
             session_id=_V2_SESSION_ID,

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import socket
 from dataclasses import replace
 from pathlib import Path
@@ -15,7 +16,9 @@ from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.connections import opencode_http
 from meridian.lib.harness.connections.base import (
     ConnectionConfig,
+    HarnessRequest,
     RawHarnessEvent,
+    ServerRequestHandler,
 )
 from meridian.lib.harness.connections.errors import PortBindError
 from meridian.lib.harness.connections.opencode_http import OpenCodeConnection
@@ -167,8 +170,9 @@ class _LivenessProbeOpenCodeConnection(OpenCodeConnection):
         responses: list[_SseResponse | _ProcessDeathSseResponse | Exception],
         *,
         block_open: bool = False,
+        request_handler: ServerRequestHandler | None = None,
     ) -> None:
-        super().__init__()
+        super().__init__(request_handler)
         self._state = "connected"
         self._session_id = "sess-liveness"
         self._process = FakeOpenCodeProcess()
@@ -249,7 +253,12 @@ async def test_opencode_events_fail_after_liveness_timeout_without_events(
     monkeypatch.setattr(OpenCodeConnection, "_LIVENESS_TIMEOUT_SECONDS", 0.1)
     monkeypatch.setattr(OpenCodeConnection, "_EVENT_RETRY_DELAY_SECONDS", 0.02)
 
-    events = await _collect_events_under_fake_clock(determinism, connection, monkeypatch)
+    # Small clock step: the injected-event multiplex adds an await layer per read,
+    # so the driver must not outrun the reconnect loop before the liveness budget
+    # expires (otherwise no reconnect is observed to assert on).
+    events = await _collect_events_under_fake_clock(
+        determinism, connection, monkeypatch, step=0.001
+    )
 
     assert events == []
     assert connection.open_count > 1
@@ -730,3 +739,116 @@ async def test_start_retries_residual_private_instruction_cleanup(tmp_path, monk
     finally:
         for path in created:
             original_unlink(path, missing_ok=True)
+
+
+class _ScriptedSseContent:
+    def __init__(
+        self,
+        chunks: list[bytes],
+        process: FakeOpenCodeProcess,
+        return_code: int,
+    ) -> None:
+        self._chunks = list(chunks)
+        self._process = process
+        self._return_code = return_code
+
+    async def read(self, _size: int) -> bytes:
+        if self._chunks:
+            return self._chunks.pop(0)
+        self._process.exit(self._return_code)
+        return b""
+
+
+class _ScriptedSseResponse:
+    def __init__(
+        self,
+        chunks: list[bytes],
+        process: FakeOpenCodeProcess,
+        return_code: int,
+    ) -> None:
+        self.content = _ScriptedSseContent(chunks, process, return_code)
+
+    def close(self) -> None:
+        return None
+
+
+class _RecordingRequestHandler:
+    no_runtime_hitl = False
+
+    def __init__(self) -> None:
+        self.requests: list[HarnessRequest] = []
+
+    async def handle_request(
+        self,
+        connection: OpenCodeConnection,
+        request: HarnessRequest,
+    ) -> None:
+        _ = connection
+        self.requests.append(request)
+
+
+@pytest.mark.asyncio
+async def test_opencode_events_yield_injected_runtime_event_while_stream_idle(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    connection = _LivenessProbeOpenCodeConnection(responses=[_SseResponse(block=True)])
+    monkeypatch.setattr(OpenCodeConnection, "_LIVENESS_TIMEOUT_SECONDS", 30.0)
+    injected = RawHarnessEvent(
+        event_type="request/opened",
+        payload={"request_id": "per_1", "request_type": "approval"},
+        harness_id=HarnessId.OPENCODE.value,
+    )
+
+    collected: list[RawHarnessEvent] = []
+
+    async def _collect() -> None:
+        async for event in connection.events():
+            collected.append(event)
+
+    task = asyncio.create_task(_collect())
+    try:
+        for _ in range(200):
+            if collected:
+                break
+            await asyncio.sleep(0.01)
+        assert collected == [], "stream should be idle before injection"
+        await connection.inject_runtime_event(injected)
+        for _ in range(200):
+            if collected:
+                break
+            await asyncio.sleep(0.01)
+    finally:
+        connection._state = "stopped"
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+    assert collected == [injected]
+
+
+@pytest.mark.asyncio
+async def test_opencode_permission_ask_is_routed_to_handler_not_yielded(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(OpenCodeConnection, "_EVENT_RETRY_DELAY_SECONDS", 0.0)
+    process = FakeOpenCodeProcess()
+    ask = (
+        b'{"type":"permission.asked","properties":'
+        b'{"id":"per_1","sessionID":"ses_perm","permission":"external_directory"}}\n'
+    )
+    handler = _RecordingRequestHandler()
+    connection = _LivenessProbeOpenCodeConnection(
+        responses=[_ScriptedSseResponse([ask], process, return_code=0)],
+        request_handler=handler,
+    )
+    connection._process = process
+    connection._session_id = "ses_perm"
+
+    events = [event async for event in connection.events()]
+
+    assert [request.request_id for request in handler.requests] == ["per_1"]
+    assert handler.requests[0].request_type == "approval"
+    assert handler.requests[0].method == "permission.asked"
+    assert all(event.event_type != "permission.asked" for event in events)
+    assert connection._pending_requests == {"per_1": "ses_perm"}
+

@@ -81,7 +81,7 @@ supports the capability:
 - `start_observer(config, spec)` — observer mode; guard with `capabilities.supports_primary_observer`
 - `configure_primary_runtime_requests(policy, event_sink, request_handler)`
 - `inject_runtime_event(event)`
-- `respond_request(request_id, decision, payload)` — Codex only
+- `respond_request(request_id, decision, payload)` — Codex and OpenCode
 - `respond_user_input(request_id, answers)` — Codex only
 
 ### HarnessEvent
@@ -101,7 +101,8 @@ definition, not per-instance. Fields:
   `"queue"` (Cursor placeholder; `send_user_message` raises)
 - `supports_cancel`, `supports_steer`, `runtime_model_switch`, `structured_reasoning`
 - `supports_primary_observer` — only Codex and OpenCode
-- `supports_runtime_hitl` — runtime HITL through the connection; only Codex
+- `supports_runtime_hitl` — runtime HITL through the connection; Codex and OpenCode
+  (derived from the installed request handler, not a static class flag)
 - `supported_startup_phases` — phase names the adapter can observe
 
 ### Pi RPC Stdout Path
@@ -137,6 +138,23 @@ injected `ServerRequestHandler`:
   Used on managed-primary attach paths. `no_runtime_hitl = False`.
 
 The handler is injected; `HarnessConnection` implementations must not embed policy.
+
+### OpenCode Runtime Requests and Event Multiplex
+
+OpenCode has no background reader: `events()` parses the SSE stream in the drain
+loop's own task. When it sees `permission.asked` / `permission.v2.asked`, it builds
+a `HarnessRequest` and awaits the injected handler inline instead of yielding the
+raw ask. `respond_request` replies over the version's HTTP endpoint
+(`POST /session/{id}/permissions/{permissionID}` with `{"response": …}` for V1;
+`POST /api/session/{id}/permission/{requestID}/reply` with `{"reply": …}` for V2).
+
+Because `inject_runtime_event` can be called from another task (e.g. the manager's
+`respond_request` resolves a broker request, whose event sink injects
+`request/resolved`) while `events()` is blocked on an idle SSE read, `events()`
+races the read against an injected-event queue with `asyncio.wait`. Injected events
+win ties and are yielded first; the SSE parse, `wait_for_activity` liveness, and
+reconnect paths are otherwise unchanged. Unanswered pending requests are cancelled
+through the handler on connection cleanup so none are left pending silently.
 
 ### Ownership-Transfer Guard
 

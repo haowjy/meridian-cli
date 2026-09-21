@@ -409,6 +409,7 @@ class CodexAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             spawn_dir=spawn_dir,
             event_sink=event_sink,
             auto_reject_runtime_requests=False,
+            harness_id=HarnessId.CODEX.value,
         )
 
     def mcp_config(self, run: SpawnParams) -> McpConfig | None:

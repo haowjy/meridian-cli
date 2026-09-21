@@ -7,7 +7,7 @@ The Meridian adapter targets current opencode.ai CLI releases.
 import logging
 import re
 import sqlite3
-from collections.abc import Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from datetime import datetime
 from pathlib import Path
 from typing import ClassVar, cast
@@ -41,7 +41,12 @@ from meridian.lib.harness.bundle import (
     project_subprocess_spec,
     register_harness_bundle,
 )
-from meridian.lib.harness.connections.base import RawHarnessEvent
+from meridian.lib.harness.connections.base import (
+    PrimaryRuntimeEventSurface,
+    PrimaryRuntimeRequestPolicy,
+    RawHarnessEvent,
+    ServerRequestHandler,
+)
 from meridian.lib.harness.connections.opencode_connection import OpenCodeConnection
 from meridian.lib.harness.extractors.opencode import OPENCODE_EXTRACTOR
 from meridian.lib.harness.launch_types import ManagedPrimaryPreview, SessionSeed
@@ -59,6 +64,7 @@ from meridian.lib.harness.passthrough.opencode import (
     build_opencode_attach_command,
     build_opencode_server_attach_command,
 )
+from meridian.lib.harness.permission_broker import PermissionBroker
 from meridian.lib.harness.projections.project_opencode_streaming import (
     opencode_model_parts,
     project_opencode_spec_to_serve_command,
@@ -454,9 +460,13 @@ class OpenCodeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
                 )
             ),
             approval=ApprovalContract(
-                runtime_hitl=RuntimeHitlMode.NONE,
+                runtime_hitl=RuntimeHitlMode.CONNECTION_REQUESTS,
                 subprocess_permission_flags_projected_by_shared_policy=False,
-                default_runtime_request_policy="none",
+                default_runtime_request_policy="auto_accept",
+                primary_session_runtime_request_policy=(PrimaryRuntimeRequestPolicy.SURFACE_EVENTS),
+                primary_session_runtime_event_surface=(
+                    PrimaryRuntimeEventSurface.CONNECTION_EVENT_STREAM
+                ),
             ),
             bootstrap=BootstrapContract(
                 mode=BootstrapMode.MANAGED_PRIMARY_ATTACH,
@@ -554,6 +564,19 @@ class OpenCodeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         spec = self.resolve_launch_spec(run, perms)
         base_command = self.PRIMARY_BASE_COMMAND if spec.interactive else self.BASE_COMMAND
         return project_subprocess_spec(self.id, spec, base_command=base_command)
+
+    def build_primary_runtime_request_handler(
+        self,
+        *,
+        spawn_dir: Path,
+        event_sink: Callable[[RawHarnessEvent], Awaitable[None]],
+    ) -> ServerRequestHandler | None:
+        return PermissionBroker(
+            spawn_dir=spawn_dir,
+            event_sink=event_sink,
+            auto_reject_runtime_requests=False,
+            harness_id=HarnessId.OPENCODE.value,
+        )
 
     def mcp_config(self, run: SpawnParams) -> McpConfig | None:
         # MCP injection is off by default — agents use the CLI instead.

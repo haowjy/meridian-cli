@@ -77,6 +77,7 @@ class PermissionBroker(ServerRequestHandler):
         event_sink: Callable[[RawHarnessEvent], Awaitable[None]] | None = None,
         policy_hook: PermissionTransitionSink | None = None,
         auto_reject_runtime_requests: bool = False,
+        harness_id: str = "codex",
     ) -> None:
         self._spawn_dir = spawn_dir
         self._runtime_root = spawn_dir.parent.parent
@@ -84,6 +85,7 @@ class PermissionBroker(ServerRequestHandler):
         self._event_sink = event_sink
         self._policy_hook = policy_hook
         self._auto_reject_runtime_requests = auto_reject_runtime_requests
+        self._harness_id = harness_id
         self._journal_path = self._spawn_dir / "permission_requests.jsonl"
         self._cursor_path = self._spawn_dir / "permission_request_cursors.json"
 
@@ -251,7 +253,7 @@ class PermissionBroker(ServerRequestHandler):
             )
 
     async def _dispatch_transition(self, transition: PermissionTransition) -> None:
-        event = _transition_to_event(transition)
+        event = _transition_to_event(transition, harness_id=self._harness_id)
         event_sink = self._event_sink
         if event is not None and event_sink is not None:
             await self._dispatch_with_cursor(
@@ -388,7 +390,11 @@ def _utc_now_iso() -> str:
     return datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
 
 
-def _transition_to_event(transition: PermissionTransition) -> RawHarnessEvent | None:
+def _transition_to_event(
+    transition: PermissionTransition,
+    *,
+    harness_id: str = "codex",
+) -> RawHarnessEvent | None:
     payload: dict[str, object] = {
         "request_id": transition.request_id,
         "request_type": transition.request_type,
@@ -399,7 +405,7 @@ def _transition_to_event(transition: PermissionTransition) -> RawHarnessEvent | 
         return RawHarnessEvent(
             event_type="request/opened",
             payload=payload,
-            harness_id="codex",
+            harness_id=harness_id,
             raw_text=None,
         )
     if transition.status == "resolved":
@@ -408,7 +414,7 @@ def _transition_to_event(transition: PermissionTransition) -> RawHarnessEvent | 
         return RawHarnessEvent(
             event_type="request/resolved",
             payload=payload,
-            harness_id="codex",
+            harness_id=harness_id,
             raw_text=None,
         )
     if transition.status == "failed":
@@ -417,7 +423,7 @@ def _transition_to_event(transition: PermissionTransition) -> RawHarnessEvent | 
         return RawHarnessEvent(
             event_type="request/failed",
             payload=payload,
-            harness_id="codex",
+            harness_id=harness_id,
             raw_text=None,
         )
     if transition.status == "cancelled":
@@ -426,7 +432,7 @@ def _transition_to_event(transition: PermissionTransition) -> RawHarnessEvent | 
         return RawHarnessEvent(
             event_type="request/cancelled",
             payload=payload,
-            harness_id="codex",
+            harness_id=harness_id,
             raw_text=None,
         )
     return None

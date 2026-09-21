@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import errno
 import importlib
 import json
@@ -11,10 +12,11 @@ import os
 import socket
 import tempfile
 import time
-from collections.abc import AsyncIterator, Mapping
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
+from dataclasses import replace
 from io import BufferedWriter
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, ClassVar, cast
+from typing import TYPE_CHECKING, Any, ClassVar, Final, cast
 from urllib.parse import urlparse
 
 if TYPE_CHECKING:
@@ -27,13 +29,18 @@ from meridian.lib.harness.bundle import (
     project_managed_primary_bootstrap,
 )
 from meridian.lib.harness.connections.base import (
+    AutoAcceptHandler,
     ConnectionCapabilities,
     ConnectionConfig,
     ConnectionNotReady,
     ConnectionState,
     HarnessConnection,
+    HarnessRequest,
+    InteractiveHandler,
     ObserverEndpoint,
+    PrimaryRuntimeRequestPolicy,
     RawHarnessEvent,
+    ServerRequestHandler,
     StopProgressCallback,
     StopResult,
     reap_on_ownership_transfer_failure,
@@ -175,8 +182,15 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
     _PROBE_TIMEOUT_SECONDS: ClassVar[float] = 4.0
     _STOP_GRACE_SECONDS: ClassVar[float] = 5.0
     _EVENT_ACCEPT_HEADER: ClassVar[dict[str, str]] = {"Accept": "text/event-stream"}
+    # OpenCode surfaces tool-permission asks on the event stream. V1 names the
+    # event ``permission.asked``; V2 names it ``permission.v2.asked``. Both carry
+    # the parent ``sessionID`` and a ``per_…`` request id; the connection routes
+    # them to the injected request handler instead of yielding the raw ask.
+    _PERMISSION_ASK_EVENT_TYPES: ClassVar[frozenset[str]] = frozenset(
+        {"permission.asked", "permission.v2.asked"}
+    )
 
-    def __init__(self) -> None:
+    def __init__(self, request_handler: ServerRequestHandler | None = None) -> None:
         self._state: ConnectionState = "created"
         self._spawn_id: SpawnId | None = None
         self._config: ConnectionConfig | None = None
@@ -192,6 +206,13 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
         self._session_id: str | None = None
         self._event_path: str | None = None
         self._last_health_ok = False
+        self._request_handler: ServerRequestHandler = request_handler or AutoAcceptHandler()
+        # OpenCode routes permission asks inline (no background reader). The
+        # queue lets the request handler enqueue policy events that ``events()``
+        # multiplexes in front of the SSE stream.
+        self._event_queue: asyncio.Queue[RawHarnessEvent] = asyncio.Queue()
+        self._queue_waiter: asyncio.Task[RawHarnessEvent] | None = None
+        self._pending_requests: dict[str, str] = {}
         self._liveness = BackendLivenessPolicy(
             timeout_seconds=lambda: self._LIVENESS_TIMEOUT_SECONDS,
             now=lambda: time.monotonic(),
@@ -223,7 +244,13 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
 
     @property
     def capabilities(self) -> ConnectionCapabilities:
-        return self._CAPABILITIES
+        # Runtime HITL is a property of the installed handler, not the static
+        # class descriptor: spawn paths install a broker (auto-reject) while
+        # managed-primary paths install the surfacing handler.
+        return replace(
+            self._CAPABILITIES,
+            supports_runtime_hitl=not getattr(self._request_handler, "no_runtime_hitl", True),
+        )
 
     @property
     def session_id(self) -> str | None:
@@ -278,6 +305,147 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
         """Start connection in primary observer mode."""
         await self._start(config, spec, observer=True)
 
+    def configure_primary_runtime_requests(
+        self,
+        *,
+        policy: PrimaryRuntimeRequestPolicy,
+        event_sink: Callable[[RawHarnessEvent], Awaitable[None]] | None = None,
+        request_handler: ServerRequestHandler | None = None,
+    ) -> None:
+        if policy in (
+            PrimaryRuntimeRequestPolicy.NONE,
+            PrimaryRuntimeRequestPolicy.AUTO_ACCEPT,
+        ):
+            self._request_handler = AutoAcceptHandler()
+            return
+        if policy is PrimaryRuntimeRequestPolicy.SURFACE_EVENTS:
+            if request_handler is not None:
+                self._request_handler = request_handler
+                return
+            if event_sink is None:
+                raise ValueError("OpenCode primary runtime event surfacing requires an event sink")
+            self._request_handler = InteractiveHandler(event_sink)
+            return
+        raise ValueError(f"Unsupported OpenCode primary runtime request policy: {policy}")
+
+    async def inject_runtime_event(self, event: RawHarnessEvent) -> None:
+        await self._event_queue.put(event)
+
+    def _pop_injected_event(self) -> RawHarnessEvent | None:
+        try:
+            return self._event_queue.get_nowait()
+        except asyncio.QueueEmpty:
+            return None
+
+    async def respond_request(
+        self,
+        request_id: str,
+        decision: str,
+        payload: dict[str, object] | None = None,
+    ) -> None:
+        session_id = self._pending_requests.get(request_id, self._session_id or "")
+        if not session_id:
+            raise ValueError(f"No pending OpenCode permission request: {request_id}")
+        response = _map_approval_decision(decision, payload)
+        status, body, content_type = await self._post_json(
+            f"/session/{session_id}/permissions/{request_id}",
+            {"response": response},
+            skip_body_on_statuses=self._SUCCESS_STATUSES,
+        )
+        if status not in self._SUCCESS_STATUSES or "text/html" in content_type:
+            raise RuntimeError(
+                f"OpenCode permission reply failed: status={status} body={_summarize_body(body)}"
+            )
+        self._pending_requests.pop(request_id, None)
+        self._liveness.signal_request_resolved(_permission_liveness_key(request_id))
+        await self._notify_request_resolved(
+            request_id,
+            resolution={"decision": decision, **(payload or {})},
+        )
+
+    async def _dispatch_inbound_event(self, event: RawHarnessEvent) -> bool:
+        """Route an inbound permission ask to the request handler.
+
+        Returns True when the event was consumed as a runtime request; the raw
+        ask is not yielded (the handler re-surfaces it through the event queue).
+        """
+
+        if event.event_type not in self._PERMISSION_ASK_EVENT_TYPES:
+            return False
+        session_id, request_id = _extract_opencode_permission_context(event.payload)
+        if request_id is None:
+            logger.warning(
+                "Ignoring OpenCode permission ask without a request id: %s",
+                event.event_type,
+            )
+            return False
+        self._pending_requests[request_id] = session_id or (self._session_id or "")
+        self._liveness.signal_request_in_flight(_permission_liveness_key(request_id))
+        harness_request = HarnessRequest(
+            request_id=request_id,
+            request_type="approval",
+            method=event.event_type,
+            payload=dict(event.payload),
+        )
+        await self._request_handler.handle_request(self, harness_request)
+        return True
+
+    async def _notify_request_resolved(
+        self,
+        request_id: str,
+        *,
+        resolution: dict[str, object] | None = None,
+    ) -> None:
+        callback = getattr(self._request_handler, "on_request_resolved", None)
+        if callback is None:
+            return
+        try:
+            await cast("Callable[..., Awaitable[None]]", callback)(
+                request_id, resolution=resolution
+            )
+        except Exception:
+            logger.warning(
+                "OpenCode request handler failed to persist resolved state for request %s",
+                request_id,
+                exc_info=True,
+            )
+
+    async def _notify_request_failed(self, request_id: str, *, error: str) -> None:
+        callback = getattr(self._request_handler, "on_request_failed", None)
+        if callback is None:
+            return
+        try:
+            await cast("Callable[..., Awaitable[None]]", callback)(request_id, error=error)
+        except Exception:
+            logger.warning(
+                "OpenCode request handler failed to persist failure state for request %s",
+                request_id,
+                exc_info=True,
+            )
+
+    async def _clear_stale_pending_requests(self, *, reason: str) -> None:
+        if not self._pending_requests:
+            return
+        stale_ids = list(self._pending_requests)
+        self._pending_requests = {}
+        for request_id in stale_ids:
+            self._liveness.signal_request_resolved(_permission_liveness_key(request_id))
+        logger.debug(
+            "Dropping %d unanswered OpenCode permission request(s) during %s",
+            len(stale_ids),
+            reason,
+        )
+        callback = getattr(self._request_handler, "on_requests_cancelled", None)
+        if callback is None:
+            return
+        try:
+            await cast("Callable[..., Awaitable[None]]", callback)(stale_ids, reason=reason)
+        except Exception:
+            logger.warning(
+                "OpenCode request handler failed to persist cancelled requests",
+                exc_info=True,
+            )
+
     async def _start(
         self, config: ConnectionConfig, spec: ResolvedLaunchSpec, *, observer: bool
     ) -> None:
@@ -327,6 +495,9 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
         )
         self._cancel_requested = False
         self._signal_in_flight = False
+        self._event_queue = asyncio.Queue()
+        self._queue_waiter = None
+        self._pending_requests = {}
         self._transition("starting")
 
         readiness_timeout, session_timeout = self._startup_timeout_budgets(config.timeout_seconds)
@@ -483,6 +654,22 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
             stall_reconciles_remaining -= 1
             return await self._reconcile_on_stall()
 
+        async def _handle_stall() -> RawHarnessEvent | None:
+            """Resolve a read/open liveness stall into an event to yield, or None."""
+
+            if self._process_exited():
+                return self._process_exit_event()
+            reconciled = await _reconcile_before_stall()
+            if reconciled is not None:
+                self._liveness.mark_activity()
+                return reconciled
+            logger.warning(
+                "OpenCode event stream liveness timeout after %.1fs without events",
+                self._LIVENESS_TIMEOUT_SECONDS,
+            )
+            self._set_failed()
+            return None
+
         sse_event_type: str | None = None
         sse_data_lines: list[str] = []
 
@@ -512,21 +699,9 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
             try:
                 response = await self._liveness.wait_for_activity(self._open_event_stream())
             except EventStreamLivenessTimeout:
-                if self._process_exited():
-                    event = self._process_exit_event()
-                    if event is not None:
-                        yield event
-                    return
-                reconciled = await _reconcile_before_stall()
-                if reconciled is not None:
-                    self._liveness.mark_activity()
-                    yield reconciled
-                    return
-                logger.warning(
-                    "OpenCode event stream liveness timeout after %.1fs without events",
-                    self._LIVENESS_TIMEOUT_SECONDS,
-                )
-                self._set_failed()
+                event = await _handle_stall()
+                if event is not None:
+                    yield event
                 return
             except Exception as exc:
                 if self._state in ("stopping", "stopped"):
@@ -541,26 +716,44 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
                 continue
 
             buffer = ""
+            pending_read: asyncio.Task[bytes] | None = None
             try:
                 while self._state not in ("stopping", "stopped", "failed"):
+                    # Injected policy events (e.g. request/opened surfaced by the
+                    # request handler) take priority and are yielded even while the
+                    # SSE read is idle. The read keeps its wait_for_activity
+                    # liveness semantics; the queue is only an extra wake source.
+                    injected = self._pop_injected_event()
+                    if injected is not None:
+                        self._liveness.mark_activity()
+                        yield injected
+                        continue
+
                     try:
-                        chunk = await self._liveness.wait_for_activity(response.content.read(4096))
-                    except EventStreamLivenessTimeout:
-                        if self._process_exited():
-                            event = self._process_exit_event()
-                            if event is not None:
-                                yield event
-                            return
-                        reconciled = await _reconcile_before_stall()
-                        if reconciled is not None:
-                            self._liveness.mark_activity()
-                            yield reconciled
-                            return
-                        logger.warning(
-                            "OpenCode event stream liveness timeout after %.1fs without events",
-                            self._LIVENESS_TIMEOUT_SECONDS,
+                        if pending_read is None:
+                            pending_read = asyncio.ensure_future(
+                                self._liveness.wait_for_activity(response.content.read(4096))
+                            )
+                        if self._queue_waiter is None:
+                            self._queue_waiter = asyncio.ensure_future(self._event_queue.get())
+                        done, _ = await asyncio.wait(
+                            {pending_read, self._queue_waiter},
+                            return_when=asyncio.FIRST_COMPLETED,
                         )
-                        self._set_failed()
+                        if self._queue_waiter in done:
+                            injected = self._queue_waiter.result()
+                            self._queue_waiter = None
+                            self._liveness.mark_activity()
+                            yield injected
+                        if pending_read not in done:
+                            continue
+                        chunk = pending_read.result()
+                        pending_read = None
+                    except EventStreamLivenessTimeout:
+                        pending_read = None
+                        event = await _handle_stall()
+                        if event is not None:
+                            yield event
                         return
                     if not chunk:
                         break
@@ -576,31 +769,45 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
                             sse_event_type=sse_event_type,
                             sse_data_lines=sse_data_lines,
                         )
-                        if event is not None:
-                            if self._tracer is not None:
-                                self._tracer.emit(
-                                    "wire",
-                                    "sse_event",
-                                    direction="inbound",
-                                    data={"event_type": event.event_type},
-                                )
-                            self._liveness.mark_activity()
-                            yield event
+                        if event is None:
+                            continue
+                        self._liveness.mark_activity()
+                        if await self._dispatch_inbound_event(event):
+                            continue
+                        if self._tracer is not None:
+                            self._tracer.emit(
+                                "wire",
+                                "sse_event",
+                                direction="inbound",
+                                data={"event_type": event.event_type},
+                            )
+                        yield event
 
                 if buffer.strip():
                     event = self._event_from_json_line(buffer.strip(), raw_text=buffer.strip())
                     if event is not None:
                         self._liveness.mark_activity()
-                        yield event
+                        if not await self._dispatch_inbound_event(event):
+                            yield event
                 final_sse_event = self._flush_sse_event(
                     sse_event_type=sse_event_type,
                     sse_data_lines=sse_data_lines,
                 )
                 if final_sse_event is not None:
                     self._liveness.mark_activity()
-                    yield final_sse_event
+                    if not await self._dispatch_inbound_event(final_sse_event):
+                        yield final_sse_event
                 sse_event_type = None
             finally:
+                if pending_read is not None:
+                    pending_read.cancel()
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await pending_read
+                if self._queue_waiter is not None:
+                    self._queue_waiter.cancel()
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await self._queue_waiter
+                    self._queue_waiter = None
                 response.close()
 
             if self._state in ("stopping", "stopped", "failed"):
@@ -1286,6 +1493,10 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
         self._last_health_ok = False
         self._cancel_requested = False
         self._signal_in_flight = False
+        try:
+            await self._clear_stale_pending_requests(reason="connection_stopped")
+        except Exception:
+            logger.warning("OpenCode pending permission cleanup failed", exc_info=True)
         self._liveness.signal_request_resolved("cancel")
         self._close_log_handles()
         if self._instruction_path is not None:
@@ -1422,6 +1633,76 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
         emitter = self._startup_emitter
         if emitter is not None:
             emitter.emit(phase)
+
+
+_PERMISSION_REQUEST_ID_KEYS: Final[tuple[str, ...]] = (
+    "requestID",
+    "requestId",
+    "request_id",
+    "permissionID",
+    "permissionId",
+    "permission_id",
+    "id",
+)
+_SESSION_ID_KEYS: Final[tuple[str, ...]] = ("sessionID", "sessionId", "session_id")
+_APPROVAL_DECISION_TO_RESPONSE: Final[dict[str, str]] = {
+    "reject": "reject",
+    "always": "always",
+    "accept": "once",
+    "once": "once",
+}
+
+
+def _extract_opencode_permission_context(
+    payload: Mapping[str, object],
+) -> tuple[str | None, str | None]:
+    """Read ``(session_id, request_id)`` from a permission ask payload.
+
+    The fields may sit at the envelope top level (V2's flattened ``data``) or
+    under ``properties`` (V1). A ``per_…`` value is preferred over a generic
+    ``id`` so an event id is never mistaken for the reply target.
+    """
+
+    sources: list[Mapping[str, object]] = [payload]
+    properties = payload.get("properties")
+    if isinstance(properties, Mapping):
+        sources.append(cast("Mapping[str, object]", properties))
+
+    session_id: str | None = None
+    request_id: str | None = None
+    fallback_request_id: str | None = None
+    for source in sources:
+        if session_id is None:
+            for key in _SESSION_ID_KEYS:
+                value = source.get(key)
+                if isinstance(value, str) and value.strip():
+                    session_id = value.strip()
+                    break
+        for key in _PERMISSION_REQUEST_ID_KEYS:
+            value = source.get(key)
+            if not isinstance(value, str) or not value.strip():
+                continue
+            candidate = value.strip()
+            if candidate.startswith("per_") and request_id is None:
+                request_id = candidate
+            elif fallback_request_id is None:
+                fallback_request_id = candidate
+    return session_id, request_id or fallback_request_id
+
+
+def _permission_liveness_key(request_id: str) -> str:
+    return f"permission:{request_id}"
+
+
+def _map_approval_decision(
+    decision: str,
+    payload: Mapping[str, object] | None = None,
+) -> str:
+    if payload is not None:
+        explicit = payload.get("response") or payload.get("reply")
+        if isinstance(explicit, str) and explicit.strip():
+            return explicit.strip()
+    return _APPROVAL_DECISION_TO_RESPONSE.get(decision, "once")
 
 
 def _parse_response_body(text_body: str) -> object | None:
