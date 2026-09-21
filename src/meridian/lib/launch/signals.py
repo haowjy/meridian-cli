@@ -180,11 +180,12 @@ class SignalCallbackReceiver:
     """Receiver that invokes a callback for a set of signals.
 
     With ``escalate_on_repeat`` the first signal invokes the callback and a
-    later repeat restores the default disposition and re-raises, so a wedged
-    handler cannot trap the process indefinitely. A repeat only escalates when
-    it arrives at least ``escalate_repeat_grace_secs`` after the previous signal
-    of the same number; a rapid burst (e.g. terminal close) is routed to the
-    callback instead.
+    later repeat of the same number restores the default disposition and
+    re-raises, so a process stuck after the callback returns is force-quit
+    instead of remaining trapped. A repeat only escalates when it arrives at
+    least ``escalate_repeat_grace_secs`` after the first signal of the same
+    number; a rapid burst (e.g. terminal close) is routed to the callback
+    instead.
     """
 
     def __init__(
@@ -199,7 +200,7 @@ class SignalCallbackReceiver:
         self._callback = callback
         self._escalate_on_repeat = escalate_on_repeat
         self._escalate_repeat_grace_secs = escalate_repeat_grace_secs
-        self._last_seen_seconds: dict[signal.Signals, float] = {}
+        self._first_seen_seconds: dict[signal.Signals, float] = {}
 
     @property
     def target_signals(self) -> tuple[signal.Signals, ...]:
@@ -208,12 +209,10 @@ class SignalCallbackReceiver:
     def forward_signal(self, signum: signal.Signals) -> None:
         if self._escalate_on_repeat:
             now = time.monotonic()
-            previous = self._last_seen_seconds.get(signum)
-            self._last_seen_seconds[signum] = now
-            if (
-                previous is not None
-                and now - previous >= self._escalate_repeat_grace_secs
-            ):
+            first_seen = self._first_seen_seconds.get(signum)
+            if first_seen is None:
+                self._first_seen_seconds[signum] = now
+            elif now - first_seen >= self._escalate_repeat_grace_secs:
                 signal.signal(signum, signal.SIG_DFL)
                 os.kill(os.getpid(), signum)
                 return

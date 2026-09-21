@@ -448,6 +448,56 @@ def test_signal_callback_receiver_rapid_burst_routes_to_callback(
     assert kills == []
 
 
+def test_signal_callback_receiver_sub_grace_stream_escalates_on_later_signal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import meridian.lib.launch.signals as signals_module
+
+    clock = {"now": 100.0}
+    monkeypatch.setattr(signals_module.time, "monotonic", lambda: clock["now"])
+    installed, kills = _install_signal_spies(monkeypatch)
+    calls: list[signal.Signals] = []
+    receiver = SignalCallbackReceiver(
+        target_signals=(signal.SIGHUP,),
+        callback=calls.append,
+        escalate_on_repeat=True,
+    )
+
+    receiver.forward_signal(signal.SIGHUP)
+    clock["now"] += 0.9
+    receiver.forward_signal(signal.SIGHUP)
+    clock["now"] += 0.9
+    receiver.forward_signal(signal.SIGHUP)
+
+    assert calls == [signal.SIGHUP, signal.SIGHUP]
+    assert installed == [(signal.SIGHUP, signal.SIG_DFL)]
+    assert kills == [(os.getpid(), signal.SIGHUP)]
+
+
+def test_signal_callback_receiver_cross_signal_repeats_do_not_escalate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import meridian.lib.launch.signals as signals_module
+
+    clock = {"now": 100.0}
+    monkeypatch.setattr(signals_module.time, "monotonic", lambda: clock["now"])
+    installed, kills = _install_signal_spies(monkeypatch)
+    calls: list[signal.Signals] = []
+    receiver = SignalCallbackReceiver(
+        target_signals=(signal.SIGTERM, signal.SIGHUP),
+        callback=calls.append,
+        escalate_on_repeat=True,
+    )
+
+    receiver.forward_signal(signal.SIGTERM)
+    clock["now"] += 0.5
+    receiver.forward_signal(signal.SIGHUP)
+
+    assert calls == [signal.SIGTERM, signal.SIGHUP]
+    assert installed == []
+    assert kills == []
+
+
 def test_signal_callback_receiver_delayed_repeat_escalates(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
