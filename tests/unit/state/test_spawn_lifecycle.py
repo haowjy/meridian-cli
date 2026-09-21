@@ -28,6 +28,21 @@ def test_has_durable_report_completion_distinguishes_completion_from_cancel_arti
     assert has_durable_report_completion('{"message":"Done."}') is True
     assert (
         has_durable_report_completion(
+            "# Report\n\n"
+            '{"event_type":"permission.asked","payload":{"properties":'
+            '{"permission":"external_directory"}}}'
+        )
+        is False
+    )
+    assert (
+        has_durable_report_completion(
+            '{"id":"evt_1","properties":{"permission":"external_directory"},'
+            '"type":"permission.asked"}'
+        )
+        is False
+    )
+    assert (
+        has_durable_report_completion(
             '{"message":"Root cause: missing WebSocket close frame handling."}'
         )
         is True
@@ -124,10 +139,24 @@ def test_resolve_execution_terminal_state_returns_cancelled_for_cancel_intent() 
     assert error == "terminated"
 
 
-def test_resolve_execution_terminal_state_prefers_durable_completion_over_cancel() -> None:
+def test_resolve_execution_terminal_state_cancellation_outranks_durable_completion() -> None:
+    # A killed attempt is not a success just because extraction found prose.
     status, exit_code, error = resolve_execution_terminal_state(
         exit_code=143,
         failure_reason="terminated",
+        cancelled=True,
+        durable_report_completion=True,
+    )
+    assert status == "cancelled"
+    assert exit_code == 143
+    assert error == "terminated"
+
+
+def test_resolve_execution_terminal_state_keeps_clean_cancel_after_report() -> None:
+    # A late cleanup signal after a clean exit must not downgrade a real report.
+    status, exit_code, error = resolve_execution_terminal_state(
+        exit_code=0,
+        failure_reason=None,
         cancelled=True,
         durable_report_completion=True,
     )
@@ -162,17 +191,17 @@ def test_resolve_execution_terminal_state_preserves_succeeded_terminal_durable_c
     assert error is None
 
 
-def test_resolve_execution_terminal_state_keeps_durable_completion_without_terminal() -> None:
+def test_resolve_execution_terminal_state_nonzero_exit_outranks_durable_completion() -> None:
     status, exit_code, error = resolve_execution_terminal_state(
         exit_code=1,
-        failure_reason="ignored",
+        failure_reason="crash",
         durable_report_completion=True,
         terminal_status=None,
     )
 
-    assert status == "succeeded"
-    assert exit_code == 0
-    assert error is None
+    assert status == "failed"
+    assert exit_code == 1
+    assert error == "crash"
 
 
 def test_resolve_execution_terminal_state_keeps_timeout_without_durable_completion() -> None:

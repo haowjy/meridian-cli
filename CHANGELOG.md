@@ -6,6 +6,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- A spawn that hung on an unanswered permission ask and was then killed (`SIGTERM`, exit 143) is no longer recorded `succeeded`/`0`. Execution facts now outrank report text in terminal-state resolution, and `classify_durable_report_text` only treats a structured payload as completion when it carries explicit report text — a raw harness event envelope (for example a `permission.asked` payload) and other non-report JSON classify as absent.
 - `meridian opencode` (managed primary) no longer fails on exit with "startup attempt changed its native conversation identity". The OpenCode artifact fallback treated an event-envelope id (`payload.id`, `evt_…`) as a conversation id; it now only accepts explicit session keys and `ses_` values, and primary finalize keeps an already-known native identity (exact resume, managed-attach connection, or fork) instead of letting best-effort discovery overwrite it.
 - A managed primary whose launcher is killed without finalize (terminal closed, process killed) is reconciled as `cancelled` instead of `failed`/`orphan_primary`, with the liveness snapshot logged at info. `spawn cancel` still cleans up its managed processes.
 - `SIGTERM`/`SIGHUP` on a managed primary launcher now runs the normal finalize path instead of dying silently. The session is recorded `cancelled` immediately and the backend/TUI are cleaned up, rather than leaving an active record for later orphan reconciliation.

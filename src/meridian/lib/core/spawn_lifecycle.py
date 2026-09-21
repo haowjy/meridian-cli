@@ -119,6 +119,9 @@ _CLAUDE_ENVELOPE_MARKER_KEYS: frozenset[str] = frozenset(
         "uuid",
     }
 )
+# Structured payloads must carry explicit report text to count as completion;
+# a harness event envelope (e.g. ``permission.asked``) carries none.
+_REPORT_TEXT_KEYS: tuple[str, ...] = ("result", "message", "output", "text", "content")
 
 
 class DurableReportEvidence(StrEnum):
@@ -238,8 +241,27 @@ def validate_transition(from_status: SpawnStatus, to_status: SpawnStatus) -> Non
         raise ValueError(f"Illegal spawn transition: {from_status} -> {to_status}")
 
 
+def _has_report_text(payload: dict[str, object]) -> bool:
+    """Return whether a structured payload carries explicit report text."""
+
+    for key in _REPORT_TEXT_KEYS:
+        value = payload.get(key)
+        if isinstance(value, str) and value.strip():
+            return True
+    nested = payload.get("payload")
+    if isinstance(nested, dict):
+        return _has_report_text(cast("dict[str, object]", nested))
+    return False
+
+
 def classify_durable_report_text(report_text: str | None) -> DurableReportEvidence:
-    """Classify report text as lifecycle completion evidence."""
+    """Classify report text as lifecycle completion evidence.
+
+    Completion requires a positive signal: non-JSON report text, or a structured
+    payload that carries explicit report text. A raw harness event envelope (for
+    example a ``permission.asked`` payload) is not completion evidence, even
+    though it is non-empty JSON.
+    """
 
     if not report_text or not report_text.strip():
         return DurableReportEvidence.ABSENT
@@ -265,7 +287,9 @@ def classify_durable_report_text(report_text: str | None) -> DurableReportEviden
     payload = cast("dict[str, object]", payload_obj)
     if is_control_report_payload(payload):
         return DurableReportEvidence.CONTROL_FRAME
-    return DurableReportEvidence.COMPLETION
+    if _has_report_text(payload):
+        return DurableReportEvidence.COMPLETION
+    return DurableReportEvidence.ABSENT
 
 
 def has_durable_report_completion(report_text: str | None) -> bool:
@@ -282,10 +306,28 @@ def resolve_execution_terminal_state(
     durable_report_completion: bool = False,
     terminal_status: TerminalSpawnStatus | None = None,
 ) -> tuple[TerminalSpawnStatus, int, str | None]:
-    """Normalize one execution outcome into the persisted terminal state."""
+    """Normalize one execution outcome into the persisted terminal state.
+
+    Execution facts outrank report text: a spawn that was cancelled or exited
+    non-zero is not a success merely because extraction recovered prose. An
+    explicit non-succeeded ``terminal_status`` (e.g. timeout) remains
+    authoritative. Durable report completion is only consulted once execution
+    is consistent with success.
+    """
 
     if terminal_status is not None and terminal_status != "succeeded":
         return terminal_status, exit_code, failure_reason
+
+    # A cancelled attempt with an abnormal exit is cancelled regardless of any
+    # extracted report text. A clean exit after a late cleanup signal keeps a
+    # genuine report intact (see the module docstring).
+    if cancelled and exit_code != 0:
+        return "cancelled", exit_code, failure_reason
+
+    # A non-zero exit without an explicit success verdict cannot be report success.
+    if exit_code != 0 and terminal_status is None:
+        return "failed", exit_code, failure_reason
+
     if durable_report_completion:
         return "succeeded", 0, None
     if terminal_status is not None:
