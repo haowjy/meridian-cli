@@ -725,7 +725,10 @@ class SpawnApplicationService:
         record: SpawnRecord,
     ) -> None:
         """Best-effort cleanup for terminal managed orphan-primary spawns."""
-        if record.terminal is None or record.terminal.error != "orphan_primary":
+        if record.terminal is None or record.terminal.error not in {
+            "orphan_primary",
+            "session_ended_without_finalize",
+        }:
             return
 
         from meridian.lib.state.managed_primary import terminate_managed_primary_processes

@@ -126,15 +126,23 @@ def _copy_primary_pty_output(
                         output_handle.flush()
                     try:
                         os.write(stdout_fd, chunk)
-                    except BrokenPipeError:
+                    except OSError:
                         break
 
                 if stdin_open and stdin_fd in ready:
-                    data = os.read(stdin_fd, 1024)
+                    try:
+                        data = os.read(stdin_fd, 1024)
+                    except OSError:
+                        stdin_open = False
+                        continue
                     if not data:
                         stdin_open = False
                     else:
-                        os.write(master_fd, data)
+                        try:
+                            os.write(master_fd, data)
+                        except OSError:
+                            stdin_open = False
+                            continue
     finally:
         restore_resize()
         if saved_tty_attrs is not None:
@@ -143,6 +151,8 @@ def _copy_primary_pty_output(
             with suppress(OSError):
                 os.write(stdout_fd, _TERMINAL_RESTORE_SEQUENCE)
 
+    if wait_cancelled is not None and wait_cancelled.is_set():
+        return 130
     _, status = os.waitpid(child_pid, 0)
     return os.waitstatus_to_exitcode(status)
 

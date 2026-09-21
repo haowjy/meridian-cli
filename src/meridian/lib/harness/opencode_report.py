@@ -14,7 +14,19 @@ from meridian.lib.harness.common import (
 )
 from meridian.lib.launch.constants import OUTPUT_FILENAME
 
-_OPENCODE_SESSION_ID_JSON_KEYS = ("session_id", "sessionId", "sessionID", "id")
+# Explicit session keys only. The bare ``"id"`` key is deliberately excluded:
+# every OpenCode event envelope carries ``payload.id`` as an *event* id
+# (``evt_…``), so matching ``"id"`` makes the artifact fallback return an event
+# id as if it were a conversation id.
+_OPENCODE_SESSION_ID_JSON_KEYS = ("session_id", "sessionId", "sessionID")
+
+# OpenCode conversation ids are ``ses_…``; event ids are ``evt_…``. The artifact
+# fallback must never report a non-session value as the native identity.
+_OPENCODE_SESSION_ID_PREFIX = "ses_"
+
+
+def _is_opencode_session_id(value: str | None) -> bool:
+    return bool(value) and value.strip().startswith(_OPENCODE_SESSION_ID_PREFIX)
 
 
 def extract_opencode_session_id(payload: dict[str, object]) -> str | None:
@@ -239,7 +251,7 @@ def extract_opencode_session_id_from_artifacts(
     spawn_id: SpawnId,
 ) -> str | None:
     payloads = iter_json_lines_artifact(artifacts, spawn_id, OUTPUT_FILENAME)
-    return (
+    resolved = (
         read_session_id_artifact(artifacts, spawn_id)
         or _resolve_opencode_terminal_session_id(payloads)
         or _resolve_opencode_primary_session_id(payloads)
@@ -249,6 +261,7 @@ def extract_opencode_session_id_from_artifacts(
             json_keys=_OPENCODE_SESSION_ID_JSON_KEYS,
         )
     )
+    return resolved if _is_opencode_session_id(resolved) else None
 
 def _extract_opencode_report_from_db(session_id: str) -> str | None:
     """Read the last assistant text for one session from ``opencode.db``.

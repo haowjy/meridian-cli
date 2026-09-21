@@ -402,7 +402,7 @@ def _execute_via_managed_attach(
     runtime_root: Path,
     run_primary_attach_fn: RunPrimaryAttach,
     on_running: Callable[[int], None],
-) -> tuple[int, str | None]:
+) -> tuple[int, str | None, bool]:
     """Run managed attach path and persist managed session id when available."""
 
     managed_outcome = run_primary_attach_fn(
@@ -424,7 +424,7 @@ def _execute_via_managed_attach(
             primary_spawn_id,
             harness_session_id=managed_session_id,
         )
-    return managed_outcome.exit_code, managed_session_id
+    return managed_outcome.exit_code, managed_session_id, managed_outcome.cancelled
 
 
 def _execute_via_blackbox(
@@ -497,13 +497,13 @@ def _execute_primary_process(
     run_primary_process_with_capture_fn: RunPrimaryProcessWithCapture,
     run_primary_attach_fn: RunPrimaryAttach,
     on_running: Callable[[int], None],
-) -> tuple[int, str | None]:
+) -> tuple[int, str | None, bool]:
     """Run managed attach when eligible, otherwise fall back to black-box launch."""
 
     use_managed_backend = harness_contract.bootstrap.mode.value == "managed_primary_attach"
     if use_managed_backend:
         try:
-            exit_code, managed_session_id = _execute_via_managed_attach(
+            exit_code, managed_session_id, cancelled = _execute_via_managed_attach(
                 harness_id=harness_id,
                 primary_spawn_id=primary_spawn_id,
                 log_dir=log_dir,
@@ -516,7 +516,7 @@ def _execute_primary_process(
                 run_primary_attach_fn=run_primary_attach_fn,
                 on_running=on_running,
             )
-            return exit_code, managed_session_id
+            return exit_code, managed_session_id, cancelled
         except PrimaryAttachError as exc:
             if harness_contract.bootstrap.primary_attach_failure_policy == "raise":
                 raise
@@ -556,9 +556,10 @@ def _execute_primary_process(
                 on_running=on_running,
             ),
             None,
+            False,
         )
 
-    return 2, None
+    return 2, None, False
 
 
 def _finalize_lifecycle_and_observe_session(
@@ -579,6 +580,7 @@ def _finalize_lifecycle_and_observe_session(
     managed: Any,
     spawn_service: SpawnApplicationService,
     observe_adapter_session_id: bool = True,
+    cancellation_observed: bool = False,
 ) -> tuple[int, str]:
     """Finalize lifecycle, discover identity, and durably bind accepted selections."""
 
@@ -606,6 +608,8 @@ def _finalize_lifecycle_and_observe_session(
                 primary_spawn_id,
                 ExecutionTerminalFacts(
                     exit_code=exit_code,
+                    failure_reason="cancelled" if cancellation_observed else None,
+                    cancellation_observed=cancellation_observed,
                     durable_report_completion=durable_report_completion,
                 ),
                 origin="launcher",
@@ -634,9 +638,11 @@ def _finalize_lifecycle_and_observe_session(
             )
     except Exception:
         logger.debug("Best-effort harness session observation failed", exc_info=True)
-    if observed_harness_session_id and observed_harness_session_id.strip():
-        resolved_harness_session_id = observed_harness_session_id.strip()
-        # Binding an accepted selection is durable coordination, not best-effort discovery.
+    current_harness_session_id = (resolved_harness_session_id or "").strip()
+    observed = (observed_harness_session_id or "").strip()
+    if observed and not current_harness_session_id:
+        # Fresh launch: observation is the only source of the native identity.
+        resolved_harness_session_id = observed
         managed.record_harness_session_id(resolved_harness_session_id)
         if primary_spawn_id is not None:
             spawn_store.update_spawn(
@@ -644,6 +650,17 @@ def _finalize_lifecycle_and_observe_session(
                 primary_spawn_id,
                 harness_session_id=resolved_harness_session_id,
             )
+    elif observed and observed != current_harness_session_id:
+        # A known id here is authoritative (exact resume, managed-attach
+        # connection, or materialized fork). Observation is best-effort discovery
+        # and must not clobber it.
+        logger.warning(
+            "Ignoring discovered harness session id %s for spawn %s; keeping the "
+            "launched identity %s",
+            observed,
+            primary_spawn_id,
+            current_harness_session_id,
+        )
     return resolved_exit_code, resolved_harness_session_id
 
 
@@ -887,6 +904,7 @@ def run_harness_process(
         preview_request.session.continue_chat_id if session_mode == SessionMode.RESUME else None
     )
     exit_code = 2
+    managed_cancelled = False
     native_primary_tui_pid: int | None = None
     write_native_primary_metadata = False
     native_primary_metadata_command: tuple[str, ...] = command
@@ -1181,6 +1199,7 @@ def run_harness_process(
                 (
                     exit_code,
                     managed_session_id,
+                    managed_cancelled,
                 ) = _execute_primary_process(
                     harness_id=harness_id,
                     primary_spawn_id=primary_spawn_id,
@@ -1234,6 +1253,7 @@ def run_harness_process(
                         observe_adapter_session_id=not (
                             harness_id is HarnessId.PI and write_native_primary_metadata
                         ),
+                        cancellation_observed=managed_cancelled,
                     )
                     if write_native_primary_metadata and primary_spawn_id is not None:
                         discovery_status: HarnessSessionDiscovery | None = None

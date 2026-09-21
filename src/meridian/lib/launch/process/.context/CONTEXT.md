@@ -46,6 +46,37 @@ Managed attach persists the harness session ID from `PrimaryAttachOutcome.sessio
 immediately on success. Black-box path may discover the session ID only at exit via
 `observe_session_id()`.
 
+### Signal cancellation
+
+`PrimaryAttachLauncher` registers a `SignalCallbackReceiver` (targets `SIGTERM`/`SIGHUP`)
+with the process-global `SignalCoordinator` (`lib/launch/signals.py`) for the duration of
+`run()`. A closed terminal sends SIGHUP and a killed process sends SIGTERM; catching them
+lets the launcher stop the TUI relay through `RunningProcess.cancel_wait()` and finalize
+normally, instead of dying and leaving an active record for orphan reconciliation. The
+receiver is unregistered in `run()`'s `finally`, which restores the previous handlers.
+
+- `SignalCoordinator` installs handlers for the union of its active receivers' target
+  signals (main thread only) and restores any signal no longer targeted; it is the single
+  seam for both the streaming `SignalForwarder` (`SIGINT`/`SIGTERM` → subprocess) and this
+  launcher receiver.
+- The relay returns exit 130 when `cancel_wait()` unblocks it; cancellation is asserted
+  only when the signal was seen **and** the relay returned 130, so a session that exited
+  normally just before the signal is not recorded as cancelled.
+- A signal that arrives before the TUI exists (during backend startup) is latched and
+  honored once the TUI starts. If startup then fails, `run()` returns a cancelled outcome
+  rather than raising, so `_execute_primary_process()` does not fall back to a black-box
+  TUI that would ignore the termination request.
+- The receiver uses `escalate_on_repeat` with a grace window: the first signal requests
+  cancellation; a repeat restores `SIG_DFL` and re-raises only when it arrives at least
+  `escalate_repeat_grace_secs` (default 1s) after the first signal of that number. A
+  terminal close delivers SIGHUP **twice** (~1 ms apart); escalating on the second would
+  kill the launcher before finalize, so a burst inside the grace routes to the (idempotent)
+  callback while a deliberate later repeat still force-quits a wedged teardown.
+- `_copy_primary_pty_output` treats a lost pane as a clean stop: `OSError` (EIO) on the
+  stdout write, the stdin read, or the master write ends forwarding rather than escaping
+  the relay thread, and a set `wait_cancelled` returns 130 before the blocking `waitpid`
+  so a closed terminal cannot wedge the relay on a TUI in its own pty session.
+
 ## Session ID Observation — Invariant I-4
 
 `harness_adapter.observe_session_id()` is called **exactly once** after the process exits,

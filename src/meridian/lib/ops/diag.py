@@ -4,6 +4,7 @@ import asyncio
 import time
 from pathlib import Path
 
+import structlog
 from pydantic import BaseModel, ConfigDict
 
 from meridian.lib.core.depth import is_root_side_effect_process
@@ -32,6 +33,8 @@ from meridian.lib.telemetry.retention import (
     run_retention_cleanup,
     scan_telemetry_segments,
 )
+
+logger = structlog.get_logger(__name__)
 
 
 class DoctorInput(BaseModel):
@@ -192,6 +195,21 @@ def _repair_orphan_runs(
     ]
     running_after = {s.id for s in reconciled if is_active_spawn_status(s.status)}
     reconciled_orphans = tuple(sorted(running_before - running_after))
+    if reconciled_orphans:
+        from meridian.lib.ops.session_archive import materialize_native_history
+
+        by_id = {s.id: s for s in reconciled}
+        for spawn_id in reconciled_orphans:
+            if by_id[spawn_id].kind != "primary":
+                continue
+            try:
+                materialize_native_history(project_root, resolved_runtime_root, spawn_id)
+            except Exception:
+                logger.warning(
+                    "orphan_primary_capture_failed",
+                    spawn_id=spawn_id,
+                    exc_info=True,
+                )
     return len(reconciled_orphans), reconciled_orphans
 
 

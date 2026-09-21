@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import signal
 import socket
 import sys
 from collections.abc import Callable
@@ -28,6 +29,7 @@ from meridian.lib.harness.connections.base import (
 from meridian.lib.harness.connections.errors import PortBindError
 from meridian.lib.harness.semantics import normalize_event
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
+from meridian.lib.launch.signals import SignalCallbackReceiver, signal_coordinator
 from meridian.lib.platform import IS_WINDOWS
 from meridian.lib.platform.process_scope import terminate_scope_sync
 from meridian.lib.platform.process_scope.base import (
@@ -172,6 +174,7 @@ class PrimaryAttachOutcome:
     exit_code: int
     session_id: str | None
     tui_pid: int | None
+    cancelled: bool = False
 
 
 class _StartupTelemetry:
@@ -237,6 +240,16 @@ class PrimaryAttachLauncher:
         self._history_writer: HarnessHistoryWriter | None = None
         self._event_writer_task: asyncio.Task[None] | None = None
         self._tui_scope_snapshot: ProcessScopeSnapshot | None = None
+        self._running_process: RunningProcess | None = None
+        self._signal_cancel_requested = False
+
+    def _request_signal_cancel(self) -> None:
+        """Handle SIGTERM/SIGHUP: stop the TUI relay so ``run`` can finalize."""
+
+        self._signal_cancel_requested = True
+        running = self._running_process
+        if running is not None:
+            running.cancel_wait()
 
     async def run(
         self,
@@ -255,6 +268,13 @@ class PrimaryAttachLauncher:
             runtime_root=self._runtime_root,
             spawn_id=str(self._spawn_id) if self._runtime_root is not None else None,
         )
+        self._signal_cancel_requested = False
+        cancel_receiver = SignalCallbackReceiver(
+            target_signals=(signal.SIGTERM, signal.SIGHUP),
+            callback=lambda _signum: self._request_signal_cancel(),
+            escalate_on_repeat=True,
+        )
+        signal_coordinator().register_receiver(cancel_receiver)
         connection_started = False
         session_id: str | None = None
         running_process: RunningProcess | None = None
@@ -310,6 +330,11 @@ class PrimaryAttachLauncher:
                 env=self._tui_env(env),
                 output_log_path=None,
             )
+            self._running_process = running_process
+            if self._signal_cancel_requested:
+                # A signal arrived during backend startup; honor it now that the
+                # TUI relay exists.
+                running_process.cancel_wait()
             try:
                 _handle_running(running_process.pid)
             except Exception:
@@ -352,17 +377,46 @@ class PrimaryAttachLauncher:
                 )
 
             launched = await asyncio.shield(launch_task)
+            # Cancellation is only asserted when the relay was actually
+            # interrupted by the signal: ``cancel_wait`` returns exit 130, while a
+            # clean TUI exit returns its own code. This avoids turning a session
+            # that exited normally just before a signal landed into a cancel.
+            cancelled = self._signal_cancel_requested and launched.exit_code == 130
+            if cancelled:
+                # The relay stopped on the signal, so the TUI child is still alive.
+                await self._stop_tui_launch_task(
+                    running_process,
+                    launch_task,
+                    reason="signal_cancelled",
+                )
             tui_lifecycle_finished = True
 
             return PrimaryAttachOutcome(
                 exit_code=launched.exit_code,
                 session_id=session_id,
                 tui_pid=launched.pid,
+                cancelled=cancelled,
             )
         except Exception:
             telemetry.fail()
+            if self._signal_cancel_requested:
+                # A signal arrived before the TUI was interruptible (e.g. during
+                # backend startup) and startup failed. Honor the cancellation
+                # instead of surfacing a failure the fallback path would relaunch.
+                logger.info(
+                    "primary_attach.signal_cancel_during_startup",
+                    spawn_id=str(self._spawn_id),
+                )
+                return PrimaryAttachOutcome(
+                    exit_code=130,
+                    session_id=session_id,
+                    tui_pid=None,
+                    cancelled=True,
+                )
             raise
         finally:
+            signal_coordinator().unregister_receiver(cancel_receiver)
+            self._running_process = None
             if connection_started:
                 self._set_activity("finalizing")
             writer_task = self._event_writer_task

@@ -6,6 +6,7 @@ import os
 import select
 import signal
 import sys
+import threading
 import time
 from contextlib import suppress
 from pathlib import Path
@@ -82,6 +83,162 @@ def test_closed_stdout_ends_pty_forwarding_cleanly(
 
     assert exit_code == 0
     assert output_log.read_bytes() == b"late child output"
+
+
+@pytest.mark.skipif(IS_WINDOWS, reason="PTY relay is POSIX-only")
+def test_closed_pane_oserror_ends_pty_forwarding_cleanly(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from meridian.lib.launch.process import pty_launcher
+
+    monkeypatch.setattr(pty_launcher.sys, "stdin", SimpleNamespace(fileno=lambda: 10))
+    monkeypatch.setattr(pty_launcher.sys, "stdout", SimpleNamespace(fileno=lambda: 11))
+    monkeypatch.setattr(pty_launcher, "_install_winsize_forwarding", lambda **_kwargs: lambda: None)
+    monkeypatch.setattr(pty_launcher.os, "isatty", lambda _fd: False)
+    monkeypatch.setattr(
+        pty_launcher.select,
+        "select",
+        lambda *_args, **_kwargs: ([12], [], []),
+    )
+    monkeypatch.setattr(pty_launcher.os, "read", lambda _fd, _size: b"late child output")
+
+    def closed_pane(_fd: int, _data: bytes) -> int:
+        raise OSError(5, "Input/output error")
+
+    monkeypatch.setattr(pty_launcher.os, "write", closed_pane)
+    monkeypatch.setattr(pty_launcher.os, "waitpid", lambda _pid, _options: (99, 0))
+    output_log = tmp_path / "primary-output.bin"
+
+    exit_code = pty_launcher._copy_primary_pty_output(
+        child_pid=99,
+        master_fd=12,
+        output_log_path=output_log,
+    )
+
+    assert exit_code == 0
+    assert output_log.read_bytes() == b"late child output"
+
+
+@pytest.mark.skipif(IS_WINDOWS, reason="PTY relay is POSIX-only")
+def test_closed_pane_oserror_on_master_write_ends_stdin_forwarding_cleanly(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from meridian.lib.launch.process import pty_launcher
+
+    monkeypatch.setattr(pty_launcher.sys, "stdin", SimpleNamespace(fileno=lambda: 10))
+    monkeypatch.setattr(pty_launcher.sys, "stdout", SimpleNamespace(fileno=lambda: 11))
+    monkeypatch.setattr(pty_launcher, "_install_winsize_forwarding", lambda **_kwargs: lambda: None)
+    monkeypatch.setattr(pty_launcher.os, "isatty", lambda _fd: False)
+
+    ready_sets = iter(([10], [12]))
+    monkeypatch.setattr(
+        pty_launcher.select,
+        "select",
+        lambda *_args, **_kwargs: (next(ready_sets), [], []),
+    )
+
+    def read(fd: int, _size: int) -> bytes:
+        if fd == 10:
+            return b"typed input"
+        return b""
+
+    def write(fd: int, _data: bytes) -> int:
+        if fd == 12:
+            raise OSError(5, "Input/output error")
+        return len(_data)
+
+    monkeypatch.setattr(pty_launcher.os, "read", read)
+    monkeypatch.setattr(pty_launcher.os, "write", write)
+    monkeypatch.setattr(pty_launcher.os, "waitpid", lambda _pid, _options: (99, 0))
+
+    exit_code = pty_launcher._copy_primary_pty_output(
+        child_pid=99,
+        master_fd=12,
+        output_log_path=None,
+    )
+
+    assert exit_code == 0
+
+
+@pytest.mark.skipif(IS_WINDOWS, reason="PTY relay is POSIX-only")
+def test_stdin_read_oserror_marks_stdin_closed_and_forwards_to_master_eof(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from meridian.lib.launch.process import pty_launcher
+
+    monkeypatch.setattr(pty_launcher.sys, "stdin", SimpleNamespace(fileno=lambda: 10))
+    monkeypatch.setattr(pty_launcher.sys, "stdout", SimpleNamespace(fileno=lambda: 11))
+    monkeypatch.setattr(pty_launcher, "_install_winsize_forwarding", lambda **_kwargs: lambda: None)
+    monkeypatch.setattr(pty_launcher.os, "isatty", lambda _fd: False)
+
+    ready_sets = iter(([10], [12], [12]))
+    monkeypatch.setattr(
+        pty_launcher.select,
+        "select",
+        lambda *_args, **_kwargs: (next(ready_sets), [], []),
+    )
+
+    master_reads = iter((b"child output", b""))
+
+    def read(fd: int, _size: int) -> bytes:
+        if fd == 10:
+            raise OSError(5, "Input/output error")
+        return next(master_reads)
+
+    writes: list[tuple[int, bytes]] = []
+    monkeypatch.setattr(pty_launcher.os, "read", read)
+    monkeypatch.setattr(
+        pty_launcher.os,
+        "write",
+        lambda fd, data: writes.append((fd, data)) or len(data),
+    )
+    monkeypatch.setattr(pty_launcher.os, "waitpid", lambda _pid, _options: (99, 0))
+
+    exit_code = pty_launcher._copy_primary_pty_output(
+        child_pid=99,
+        master_fd=12,
+        output_log_path=None,
+    )
+
+    assert exit_code == 0
+    assert writes == [(11, b"child output")]
+
+
+@pytest.mark.skipif(IS_WINDOWS, reason="PTY relay is POSIX-only")
+def test_wait_cancelled_after_eof_returns_130_without_waitpid(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from meridian.lib.launch.process import pty_launcher
+
+    monkeypatch.setattr(pty_launcher.sys, "stdin", SimpleNamespace(fileno=lambda: 10))
+    monkeypatch.setattr(pty_launcher.sys, "stdout", SimpleNamespace(fileno=lambda: 11))
+    monkeypatch.setattr(pty_launcher, "_install_winsize_forwarding", lambda **_kwargs: lambda: None)
+    monkeypatch.setattr(pty_launcher.os, "isatty", lambda _fd: False)
+    monkeypatch.setattr(pty_launcher.os, "read", lambda _fd, _size: b"")
+    cancelled = threading.Event()
+
+    def cancel_and_ready(
+        *_args: object, **_kwargs: object
+    ) -> tuple[list[int], list[int], list[int]]:
+        cancelled.set()
+        return [12], [], []
+
+    monkeypatch.setattr(pty_launcher.select, "select", cancel_and_ready)
+    monkeypatch.setattr(
+        pty_launcher.os,
+        "waitpid",
+        lambda *_args, **_kwargs: pytest.fail("waitpid must not block a cancelled relay"),
+    )
+
+    exit_code = pty_launcher._copy_primary_pty_output(
+        child_pid=99,
+        master_fd=12,
+        output_log_path=None,
+        wait_cancelled=cancelled,
+    )
+
+    assert exit_code == 130
 
 
 @pytest.mark.skipif(IS_WINDOWS, reason="PTY relay is POSIX-only")

@@ -856,11 +856,15 @@ def reconcile_active_spawn(
             generic_snapshot,
             now,
         )
+    _claim_managed_fallback = isinstance(decision, FinalizeFailed) or (
+        isinstance(decision, FinalizeFromRunnerExit)
+        and decision.include_managed_fallback_scopes
+    )
     _claim_reaper_cleanup(
         runtime_root,
         record,
-        managed_snapshot if isinstance(decision, FinalizeFailed) else None,
-        include_fallback=isinstance(decision, FinalizeFailed),
+        managed_snapshot if _claim_managed_fallback else None,
+        include_fallback=_claim_managed_fallback,
     )
     if isinstance(decision, FinalizeSucceededFromReport):
         return _cleanup_after_finalize(

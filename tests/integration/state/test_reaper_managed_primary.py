@@ -90,7 +90,7 @@ def test_reconcile_active_spawn_managed_primary_idle_launcher_alive_skips(
     assert latest.terminal is None or latest.terminal.error is None
 
 
-def test_reconcile_active_spawn_managed_primary_dead_launcher_marks_orphan_primary(
+def test_reconcile_active_spawn_managed_primary_dead_launcher_cancels(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -113,15 +113,14 @@ def test_reconcile_active_spawn_managed_primary_dead_launcher_marks_orphan_prima
 
     reconciled = _reconcile(tmp_path, runtime_root, record)
 
-    assert reconciled.status == "failed"
+    assert reconciled.status == "cancelled"
     assert reconciled.terminal is not None
-    assert reconciled.terminal.exit_code == 1
-    assert reconciled.terminal is not None
-    assert reconciled.terminal.error == "orphan_primary"
+    assert reconciled.terminal.exit_code == 130
+    assert reconciled.terminal.error == "session_ended_without_finalize"
     latest = _get_spawn(runtime_root, spawn_id)
-    assert latest.status == "failed"
+    assert latest.status == "cancelled"
     assert latest.terminal is not None
-    assert latest.terminal.error == "orphan_primary"
+    assert latest.terminal.error == "session_ended_without_finalize"
     assert terminated_pids == [8882, 9992]
 
 

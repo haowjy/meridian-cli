@@ -30,6 +30,9 @@ class FinalizeFromRunnerExit:
     status: TerminalSpawnStatus
     exit_code: int
     error: str | None
+    #: Set when the reconciler must also clean up managed-primary fallback
+    #: scopes (backend/TUI) derived from the primary metadata.
+    include_managed_fallback_scopes: bool = False
 
 
 type ReconciliationDecision = (
