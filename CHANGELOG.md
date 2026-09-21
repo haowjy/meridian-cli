@@ -12,6 +12,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `meridian --continue` (and `session browse` resume) of an OpenCode session no longer aborts managed attach with "named selection requires tokens and canonical/executable identities". Resume preserves the native committed model, so the launch spec carries none; the invocation's model selection now takes the executable identity from the source snapshot (falling back to the spec), and an incomplete identity is recorded as harness-default instead of an invalid named selection.
 - A managed-primary launcher no longer dies on a rapid terminal-close signal burst. `SIGHUP` delivered twice within a second is routed to the cancel callback instead of restoring the default disposition and re-raising; a deliberate later repeat still force-quits.
 - A managed primary's PTY relay survives a closed terminal pane. An `OSError` (EIO) on the stdout write or stdin read ends forwarding cleanly instead of raising out of the relay thread, and a cancelled wait returns 130 rather than blocking on a TUI that lives in its own pty session.
+- Orphan-run repair now captures the native transcript of a reconciled primary that was killed without finalize, so `session log`/`session search` show its history. Capture failures (for example a mid-turn kill with an incomplete native tail) are logged and do not break repair.
 
 ## [0.6.2] - 2026-09-20
 
