@@ -138,7 +138,11 @@ def _copy_primary_pty_output(
                     if not data:
                         stdin_open = False
                     else:
-                        os.write(master_fd, data)
+                        try:
+                            os.write(master_fd, data)
+                        except OSError:
+                            stdin_open = False
+                            continue
     finally:
         restore_resize()
         if saved_tty_attrs is not None:
