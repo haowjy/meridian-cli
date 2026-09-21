@@ -8,10 +8,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
+import structlog
+
 from meridian.lib.core.process_cleanup import reclaim_session_owned_scopes_for_chat
-from meridian.lib.core.types import ChatId, HarnessSessionId
+from meridian.lib.core.types import ChatId, HarnessSessionId, SpawnId
 from meridian.lib.launch.request import SessionRequest, is_exact_continue_session
 from meridian.lib.launch.types import PrimarySessionMetadata
+from meridian.lib.state import spawn_store
 from meridian.lib.state.event_store import utc_now_iso
 from meridian.lib.state.session_store import (
     ConversationModelSelection,
@@ -25,6 +28,63 @@ from meridian.lib.state.session_store import (
 
 if TYPE_CHECKING:
     from meridian.lib.launch.context import LaunchContext
+
+logger = structlog.get_logger(__name__)
+
+SessionIdSource = Literal["connection", "discovery", "observation"]
+
+
+def bind_harness_session_id(
+    *,
+    runtime_root: Path,
+    spawn_id: SpawnId | None,
+    record_session_id: Callable[[str], None],
+    session_id: str | None,
+    source: SessionIdSource,
+    current_session_id: str = "",
+) -> str:
+    """Bind one native harness session id to the session and spawn stores.
+
+    Single owner of the two-store write and source precedence
+    (connection > discovery > observation). Blank candidates are a no-op that
+    returns the already-resolved id. Observation never clobbers a known id;
+    discovery binds unless it matches the known id; connection is authoritative.
+    """
+
+    candidate = (session_id or "").strip()
+    current = (current_session_id or "").strip()
+    if not candidate:
+        return current
+    if source == "observation":
+        if current:
+            if candidate != current:
+                logger.warning(
+                    "ignoring_discovered_harness_session_id",
+                    observed=candidate,
+                    spawn_id=str(spawn_id) if spawn_id is not None else None,
+                    kept=current,
+                )
+            return current
+    elif source == "discovery":
+        if candidate == current:
+            return current
+        if current:
+            logger.warning(
+                "harness_session_id_overwritten_by_discovery",
+                observed=current,
+                discovered=candidate,
+                spawn_id=str(spawn_id) if spawn_id is not None else None,
+            )
+        else:
+            logger.debug(
+                "harness_session_id_discovered_from_session_files",
+                session_id=candidate,
+                spawn_id=str(spawn_id) if spawn_id is not None else None,
+            )
+    record_session_id(candidate)
+    if spawn_id is not None:
+        spawn_store.update_spawn(runtime_root, spawn_id, harness_session_id=candidate)
+    return candidate
 
 
 @dataclass(frozen=True)
@@ -171,4 +231,4 @@ def session_scope(
             _reclaim_session_scopes(runtime_root, resolved_chat_id)
 
 
-__all__ = ["ManagedSession", "SessionAttempt", "session_scope"]
+__all__ = ["ManagedSession", "SessionAttempt", "bind_harness_session_id", "session_scope"]

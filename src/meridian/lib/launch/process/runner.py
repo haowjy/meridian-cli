@@ -85,7 +85,7 @@ from ..context import (
 )
 from ..fork import materialize_fork
 from ..request import LaunchCompositionSurface
-from ..session_scope import session_scope
+from ..session_scope import bind_harness_session_id, session_scope
 from ..types import SessionMode
 from .ports import (
     PRIMARY_STDERR_LOG_PATH_ENV,
@@ -416,15 +416,18 @@ def _execute_via_managed_attach(
         select_process_launcher(None),
         on_running,
     )
-    managed_session_id = (managed_outcome.session_id or "").strip() or None
-    if managed_session_id:
-        managed.record_harness_session_id(managed_session_id)
-        spawn_store.update_spawn(
-            runtime_root,
-            primary_spawn_id,
-            harness_session_id=managed_session_id,
-        )
-    return managed_outcome.exit_code, managed_session_id, managed_outcome.cancelled
+    managed_session_id = bind_harness_session_id(
+        runtime_root=runtime_root,
+        spawn_id=primary_spawn_id,
+        record_session_id=managed.record_harness_session_id,
+        session_id=managed_outcome.session_id,
+        source="connection",
+    )
+    return (
+        managed_outcome.exit_code,
+        managed_session_id or None,
+        managed_outcome.cancelled,
+    )
 
 
 def _execute_via_blackbox(
@@ -638,29 +641,14 @@ def _finalize_lifecycle_and_observe_session(
             )
     except Exception:
         logger.debug("Best-effort harness session observation failed", exc_info=True)
-    current_harness_session_id = (resolved_harness_session_id or "").strip()
-    observed = (observed_harness_session_id or "").strip()
-    if observed and not current_harness_session_id:
-        # Fresh launch: observation is the only source of the native identity.
-        resolved_harness_session_id = observed
-        managed.record_harness_session_id(resolved_harness_session_id)
-        if primary_spawn_id is not None:
-            spawn_store.update_spawn(
-                runtime_root,
-                primary_spawn_id,
-                harness_session_id=resolved_harness_session_id,
-            )
-    elif observed and observed != current_harness_session_id:
-        # A known id here is authoritative (exact resume, managed-attach
-        # connection, or materialized fork). Observation is best-effort discovery
-        # and must not clobber it.
-        logger.warning(
-            "Ignoring discovered harness session id %s for spawn %s; keeping the "
-            "launched identity %s",
-            observed,
-            primary_spawn_id,
-            current_harness_session_id,
-        )
+    resolved_harness_session_id = bind_harness_session_id(
+        runtime_root=runtime_root,
+        spawn_id=primary_spawn_id,
+        record_session_id=managed.record_harness_session_id,
+        session_id=observed_harness_session_id,
+        source="observation",
+        current_session_id=resolved_harness_session_id,
+    )
     return resolved_exit_code, resolved_harness_session_id
 
 
@@ -1267,36 +1255,14 @@ def run_harness_process(
                                 ),
                                 expected_session_id=expected_harness_session_id,
                             )
-                            discovered_harness_session_id = (
-                                discovery_outcome.session_id or ""
-                            ).strip()
-                            current_resolved_harness_session_id = (
-                                resolved_harness_session_id.strip()
+                            resolved_harness_session_id = bind_harness_session_id(
+                                runtime_root=runtime_root,
+                                spawn_id=primary_spawn_id,
+                                record_session_id=managed.record_harness_session_id,
+                                session_id=discovery_outcome.session_id,
+                                source="discovery",
+                                current_session_id=resolved_harness_session_id,
                             )
-                            if (
-                                discovered_harness_session_id
-                                and discovered_harness_session_id
-                                != current_resolved_harness_session_id
-                            ):
-                                if not current_resolved_harness_session_id:
-                                    logger.debug(
-                                        "Harness session ID discovered from Pi session files: %s",
-                                        discovered_harness_session_id,
-                                    )
-                                else:
-                                    logger.warning(
-                                        "Harness session ID overwritten by launch-env Pi session "
-                                        "discovery: observed=%s discovered=%s",
-                                        current_resolved_harness_session_id,
-                                        discovered_harness_session_id,
-                                    )
-                                resolved_harness_session_id = discovered_harness_session_id
-                                managed.record_harness_session_id(discovered_harness_session_id)
-                                spawn_store.update_spawn(
-                                    runtime_root,
-                                    primary_spawn_id,
-                                    harness_session_id=discovered_harness_session_id,
-                                )
                             if (
                                 "--no-session" in command
                                 and discovery_outcome.session_id is None
