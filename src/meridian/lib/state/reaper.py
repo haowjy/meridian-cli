@@ -37,6 +37,7 @@ from meridian.lib.state.managed_primary import (
     ManagedPrimaryReconciliationStrategy,
     ManagedPrimarySnapshot,
     ReconciliationContext,
+    is_managed_primary_candidate,
     read_managed_primary_snapshot,
 )
 from meridian.lib.state.process_scope_projection import mark_scope_released, read_scopes_from_disk
@@ -185,18 +186,6 @@ def _has_recent_activity(snapshot: ArtifactSnapshot) -> bool:
     return snapshot.recent_activity_artifact is not None
 
 
-def _is_potential_managed_primary(record: SpawnRecord) -> bool:
-    """Conservative managed-primary fallback identification from spawn state.
-
-    When primary metadata is missing/corrupt we cannot prove whether a Codex or
-    OpenCode primary is managed-backend or black-box, so reconciliation treats
-    these as managed-primary candidates to avoid passive worker/TUI termination.
-    """
-
-    harness = (record.harness or "").strip().lower()
-    return record.kind == "primary" and harness in {"codex", "opencode"}
-
-
 def _is_pre_worker_launch_boundary_ghost(
     record: SpawnRecord,
     snapshot: ArtifactSnapshot,
@@ -343,11 +332,11 @@ def decide_reconciliation(
         )
 
     if (
-        _is_potential_managed_primary(record)
+        is_managed_primary_candidate(record)
         and isinstance(generic_decision, FinalizeFailed)
         and generic_decision.error in {"missing_runner_pid", "orphan_run"}
     ):
-        return FinalizeFailed(error="orphan_primary")
+        return FinalizeFailed(error="orphan_primary", managed_scopes_pending=True)
     return generic_decision
 
 
@@ -540,6 +529,7 @@ def _finalize_and_log(
     reason: str,
     snapshot: ArtifactSnapshot,
     now: float,
+    managed_scopes_pending: bool = False,
 ) -> SpawnRecord:
     service = build_spawn_application_service_from_roots(project_root, runtime_root)
     outcome = asyncio.run(
@@ -549,6 +539,7 @@ def _finalize_and_log(
             exit_code,
             origin="reconciler",
             error=error,
+            managed_scopes_pending=managed_scopes_pending,
         )
     )
     resolved_record = outcome.snapshot or record
@@ -582,6 +573,7 @@ def _finalize_failed(
     snapshot: ArtifactSnapshot,
     now: float,
     exit_code: int = 1,
+    managed_scopes_pending: bool = False,
 ) -> SpawnRecord:
     return _finalize_and_log(
         project_root,
@@ -593,6 +585,7 @@ def _finalize_failed(
         reason=error,
         snapshot=snapshot,
         now=now,
+        managed_scopes_pending=managed_scopes_pending,
     )
 
 
@@ -638,6 +631,7 @@ def _finalize_from_runner_exit(
         reason="runner_exit",
         snapshot=snapshot,
         now=now,
+        managed_scopes_pending=decision.managed_scopes_pending,
     )
 
 
@@ -653,6 +647,7 @@ def _record_with_terminal_state(
     error: str | None,
     origin: SpawnOrigin,
     observed_at: str,
+    managed_scopes_pending: bool = False,
 ) -> SpawnRecord:
     return record.model_copy(
         update={
@@ -663,6 +658,7 @@ def _record_with_terminal_state(
                 published_at=observed_at,
                 error=error,
                 origin=origin,
+                managed_scopes_pending=managed_scopes_pending,
             ),
         }
     )
@@ -716,6 +712,7 @@ def peek_reconciled_active_spawn(
             error=decision.error,
             origin="runner",
             observed_at=observed_at,
+            managed_scopes_pending=decision.managed_scopes_pending,
         )
     return _record_with_terminal_state(
         record,
@@ -724,6 +721,7 @@ def peek_reconciled_active_spawn(
         error=decision.error,
         origin="reconciler",
         observed_at=observed_at,
+        managed_scopes_pending=decision.managed_scopes_pending,
     )
 
 
@@ -857,8 +855,7 @@ def reconcile_active_spawn(
             now,
         )
     _claim_managed_fallback = isinstance(decision, FinalizeFailed) or (
-        isinstance(decision, FinalizeFromRunnerExit)
-        and decision.include_managed_fallback_scopes
+        isinstance(decision, FinalizeFromRunnerExit) and decision.managed_scopes_pending
     )
     _claim_reaper_cleanup(
         runtime_root,
@@ -890,7 +887,7 @@ def reconcile_active_spawn(
             ),
         )
     if decision.error == "orphan_primary" and (
-        managed_snapshot is not None or _is_potential_managed_primary(record)
+        managed_snapshot is not None or is_managed_primary_candidate(record)
     ):
         _log_orphan_primary_diagnostics(
             runtime_root,
@@ -908,6 +905,7 @@ def reconcile_active_spawn(
             generic_snapshot,
             now,
             exit_code=decision.exit_code,
+            managed_scopes_pending=decision.managed_scopes_pending,
         ),
     )
 

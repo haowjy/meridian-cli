@@ -18,6 +18,9 @@ class Skip:
 class FinalizeFailed:
     error: str
     exit_code: int = 1
+    #: Set when the terminal record still carries managed-primary fallback
+    #: scopes (backend/TUI) that a later release must tear down.
+    managed_scopes_pending: bool = False
 
 
 @dataclass(frozen=True)
@@ -32,7 +35,7 @@ class FinalizeFromRunnerExit:
     error: str | None
     #: Set when the reconciler must also clean up managed-primary fallback
     #: scopes (backend/TUI) derived from the primary metadata.
-    include_managed_fallback_scopes: bool = False
+    managed_scopes_pending: bool = False
 
 
 type ReconciliationDecision = (

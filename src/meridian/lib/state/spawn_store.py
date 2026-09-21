@@ -607,6 +607,7 @@ def finalize_spawn(
     usage: TokenUsage | None = None,
     finished_at: str | None = None,
     error: str | None = None,
+    managed_scopes_pending: bool = False,
     clock: Clock | None = None,
 ) -> LockedMutationResult:
     """Finalize under the lock when terminal authority accepts the transition."""
@@ -640,6 +641,7 @@ def finalize_spawn(
             duration_secs=duration_secs,
             usage=usage,
             error=error,
+            managed_scopes_pending=managed_scopes_pending,
         )
 
     return _write_state_locked(

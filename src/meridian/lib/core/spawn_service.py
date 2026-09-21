@@ -725,48 +725,11 @@ class SpawnApplicationService:
         record: SpawnRecord,
     ) -> None:
         """Best-effort cleanup for terminal managed orphan-primary spawns."""
-        if record.terminal is None or record.terminal.error not in {
-            "orphan_primary",
-            "session_ended_without_finalize",
-        }:
+        if record.terminal is None or not record.terminal.managed_scopes_pending:
             return
+        from meridian.lib.state.managed_primary import release_managed_primary_scopes
 
-        from meridian.lib.state.managed_primary import terminate_managed_primary_processes
-        from meridian.lib.state.primary_meta import read_primary_metadata
-
-        metadata = read_primary_metadata(self._runtime_root, str(spawn_id))
-        if metadata is not None:
-            if not metadata.managed_backend:
-                return
-            terminate_managed_primary_processes(
-                metadata,
-                include_launcher=False,
-            )
-            return
-
-        if not _is_managed_primary_candidate(record):
-            return
-        from meridian.lib.core.process_cleanup import cancel_managed_primary
-        from meridian.lib.state.process_scope_projection import read_scopes_from_disk
-
-        scopes = read_scopes_from_disk(self._runtime_root, SpawnId(str(spawn_id)))
-        if scopes:
-            # Phase-3 scope records: use sequenced managed-primary teardown.
-            cancel_managed_primary(
-                self._runtime_root,
-                record,
-                grace_seconds=5.0,
-            )
-        else:
-            # Legacy fallback: no scope records, use worker_pid termination.
-            from meridian.lib.core.process_cleanup import terminate_spawn_scopes
-
-            terminate_spawn_scopes(
-                self._runtime_root,
-                record,
-                reason="cancel",
-                grace_seconds=5.0,
-            )
+        release_managed_primary_scopes(self._runtime_root, spawn_id, record)
 
     async def _wait_for_terminal(
         self,
@@ -920,6 +883,7 @@ class SpawnApplicationService:
         duration_secs: float | None = None,
         usage: TokenUsage | None = None,
         error: str | None = None,
+        managed_scopes_pending: bool = False,
     ) -> CompleteSpawnOutcome:
         """Finalize a spawn through the shared idempotent terminal seam.
 
@@ -936,6 +900,7 @@ class SpawnApplicationService:
                 duration_secs=duration_secs,
                 usage=usage,
                 error=error,
+                managed_scopes_pending=managed_scopes_pending,
             )
 
     async def complete_execution(
@@ -987,6 +952,7 @@ class SpawnApplicationService:
         duration_secs: float | None = None,
         usage: TokenUsage | None = None,
         error: str | None = None,
+        managed_scopes_pending: bool = False,
     ) -> CompleteSpawnOutcome:
         record = self.get_spawn(spawn_id)
         if record is None:
@@ -1022,6 +988,7 @@ class SpawnApplicationService:
             duration_secs=duration_secs,
             usage=usage,
             error=error,
+            managed_scopes_pending=managed_scopes_pending,
         )
         if isinstance(outcome, Applied):
             from meridian.lib.state.process_scope_projection import (
@@ -1184,11 +1151,6 @@ def _cancel_outcome_from_record(
 
 def _coerce_cancel_status(status: str) -> SpawnStatus:
     return coerce_spawn_status(status)
-
-
-def _is_managed_primary_candidate(record: SpawnRecord) -> bool:
-    harness = (record.harness or "").strip().lower()
-    return record.kind == "primary" and harness in {"codex", "opencode"}
 
 
 def _has_live_execution_owner(

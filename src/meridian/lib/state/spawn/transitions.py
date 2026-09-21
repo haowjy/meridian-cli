@@ -129,6 +129,7 @@ def apply_finalize(
     duration_secs: float | None = None,
     usage: TokenUsage | None = None,
     error: str | None = None,
+    managed_scopes_pending: bool = False,
     validate_status_transition: bool = True,
 ) -> SpawnRecord:
     """Return ``record`` with terminal status and metrics applied."""
@@ -161,5 +162,6 @@ def apply_finalize(
         ),
         error=error,
         origin=origin,
+        managed_scopes_pending=managed_scopes_pending,
     )
     return record.model_copy(update={"status": SpawnStatus(status), "terminal": terminal})

@@ -71,6 +71,9 @@ class TerminalFacts(BaseModel):
     cost_is_estimate: bool = False
     error: str | None = None
     origin: SpawnOrigin
+    #: The reconciler decided this terminal row still owns managed-primary
+    #: fallback scopes that a release path must tear down.
+    managed_scopes_pending: bool = False
 
 
 class SpawnStateFields(BaseModel):
