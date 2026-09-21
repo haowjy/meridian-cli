@@ -55,7 +55,7 @@ async def dispatch_start(
     async def _runtime_event_sink(event: RawHarnessEvent) -> None:
         await connection_ref["connection"].inject_runtime_event(event)
 
-    if config.harness_id is HarnessId.CODEX:
+    if config.harness_id in (HarnessId.CODEX, HarnessId.OPENCODE):
         runtime_root = config.runtime_root or resolve_project_runtime_root_for_write(
             config.control_root
         )
@@ -65,6 +65,7 @@ async def dispatch_start(
             ),
             event_sink=_runtime_event_sink,
             auto_reject_runtime_requests=True,
+            harness_id=config.harness_id.value,
         )
 
     connection: HarnessConnection[Any]

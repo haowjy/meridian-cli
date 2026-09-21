@@ -1,6 +1,5 @@
 """Spawn execution runner: prepare handoff, invoke runner, launch_prepared_spawn."""
 
-import json
 from collections.abc import Callable
 from contextlib import ExitStack
 from dataclasses import dataclass, replace
@@ -24,7 +23,6 @@ from meridian.lib.launch.composition_spawn import (
     bind_spawn_launch_context,
     compose_spawn_launch_surface,
 )
-from meridian.lib.launch.constants import PI_RUNTIME_META_FILENAME
 from meridian.lib.launch.context import (
     LaunchContext,
     PreparedLaunchSurface,
@@ -35,7 +33,6 @@ from meridian.lib.launch.request import LaunchArgvIntent, LaunchRuntime, SpawnRe
 from meridian.lib.launch.streaming_runner import execute_with_streaming
 from meridian.lib.launch.types import PrimarySessionMetadata
 from meridian.lib.state import spawn_store
-from meridian.lib.state.atomic import atomic_write_text
 from meridian.lib.state.paths import resolve_spawn_log_dir
 from meridian.lib.state.session_store import update_session_claude_config_dir
 from meridian.lib.state.spawn.model import SpawnRecord
@@ -63,48 +60,6 @@ def _spawn_request_needs_recompose(before: SpawnRequest, after: SpawnRequest) ->
     if before.session != after.session:
         return True
     return (before.agent or "").strip() != (after.agent or "").strip()
-
-
-def _normalized_prelaunch_metadata_text(
-    prelaunch_state: HarnessPrelaunchState,
-    field: str,
-) -> str | None:
-    value = prelaunch_state.metadata.get(field)
-    if not isinstance(value, str):
-        return None
-    normalized = value.strip()
-    return normalized or None
-
-
-def _persist_pi_runtime_metadata_for_spawn(
-    *,
-    project_root: Path,
-    runtime_root: Path,
-    spawn_id: SpawnId,
-    prelaunch_state: HarnessPrelaunchState,
-) -> None:
-    runtime_path = _normalized_prelaunch_metadata_text(prelaunch_state, "pi_runtime_path")
-    if runtime_path is None:
-        return
-    payload = {
-        "schema_version": 1,
-        "runtime_kind": _normalized_prelaunch_metadata_text(prelaunch_state, "pi_runtime_kind"),
-        "runtime_path": runtime_path,
-        "runtime_version": _normalized_prelaunch_metadata_text(
-            prelaunch_state, "pi_runtime_version"
-        ),
-        "session_dir": _normalized_prelaunch_metadata_text(
-            prelaunch_state, "pi_runtime_session_dir"
-        ),
-        "auth_policy": _normalized_prelaunch_metadata_text(
-            prelaunch_state, "pi_runtime_auth_policy"
-        ),
-    }
-    metadata_path = (
-        resolve_spawn_log_dir(project_root, spawn_id, runtime_root=runtime_root)
-        / PI_RUNTIME_META_FILENAME
-    )
-    atomic_write_text(metadata_path, json.dumps(payload, separators=(",", ":")) + "\n")
 
 
 @dataclass
@@ -456,13 +411,6 @@ async def launch_prepared_spawn(
                 )
                 if isinstance(maybe_prelaunch_state, HarnessPrelaunchState):
                     prelaunch_state = maybe_prelaunch_state
-                    if handoff.launch_context.harness.id is HarnessId.PI:
-                        _persist_pi_runtime_metadata_for_spawn(
-                            project_root=project_paths.project_root,
-                            runtime_root=runtime_root,
-                            spawn_id=spawn.spawn_id,
-                            prelaunch_state=prelaunch_state,
-                        )
             if child_env is not None and prelaunch_state.env_overrides:
                 child_env.update(prelaunch_state.env_overrides)
                 updated_environment = replace(

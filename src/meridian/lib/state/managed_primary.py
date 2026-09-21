@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, cast
 import psutil
 import structlog
 
+from meridian.lib.core.types import SpawnId
 from meridian.lib.harness.connections.base import RawHarnessEvent
 from meridian.lib.state.liveness import is_process_alive, is_process_alive_with_birth
 from meridian.lib.state.primary_meta import PrimaryMetadata, read_primary_metadata
@@ -223,7 +224,7 @@ class ManagedPrimaryReconciliationStrategy:
             status="cancelled",
             exit_code=130,
             error="session_ended_without_finalize",
-            include_managed_fallback_scopes=True,
+            managed_scopes_pending=True,
         )
 
 
@@ -298,6 +299,53 @@ def terminate_managed_primary_processes(
         if _terminate_pid(candidate):
             signaled.append(candidate)
     return tuple(signaled)
+
+
+def is_managed_primary_candidate(record: SpawnRecord) -> bool:
+    """Conservative managed-primary identification from spawn state.
+
+    When primary metadata is missing/corrupt we cannot prove whether a Codex or
+    OpenCode primary is managed-backend or black-box, so teardown treats these
+    as managed-primary candidates to avoid passive worker/TUI termination.
+    """
+
+    harness = (record.harness or "").strip().lower()
+    return record.kind == "primary" and harness in {"codex", "opencode"}
+
+
+def release_managed_primary_scopes(
+    runtime_root: Path,
+    spawn_id: SpawnId,
+    record: SpawnRecord,
+) -> None:
+    """Best-effort teardown of a terminal managed-primary orphan's processes.
+
+    Single owner of the cancel-on-terminal release path. Prefers managed-primary
+    metadata PIDs, then recorded process scopes, then the legacy worker fallback.
+    """
+
+    metadata = read_primary_metadata(runtime_root, str(spawn_id))
+    if metadata is not None:
+        if metadata.managed_backend:
+            terminate_managed_primary_processes(metadata, include_launcher=False)
+        return
+
+    if not is_managed_primary_candidate(record):
+        return
+
+    # Lazy to avoid a state -> core import cycle: core.process_cleanup imports state.
+    from meridian.lib.core.process_cleanup import (
+        cancel_managed_primary,
+        terminate_spawn_scopes,
+    )
+    from meridian.lib.state.process_scope_projection import read_scopes_from_disk
+
+    if read_scopes_from_disk(runtime_root, spawn_id):
+        # Phase-3 scope records: use sequenced managed-primary teardown.
+        cancel_managed_primary(runtime_root, record, grace_seconds=5.0)
+    else:
+        # Legacy fallback: no scope records, use worker_pid termination.
+        terminate_spawn_scopes(runtime_root, record, reason="cancel", grace_seconds=5.0)
 
 
 def _normalize_event_type(event_type: str) -> str:
@@ -382,6 +430,8 @@ __all__ = [
     "ManagedPrimaryReconciliationStrategy",
     "ManagedPrimarySnapshot",
     "ReconciliationContext",
+    "is_managed_primary_candidate",
     "read_managed_primary_snapshot",
+    "release_managed_primary_scopes",
     "terminate_managed_primary_processes",
 ]

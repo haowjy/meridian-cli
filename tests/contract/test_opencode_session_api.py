@@ -476,3 +476,51 @@ async def test_private_instructions_are_owned_and_removed_on_stop(tmp_path) -> N
     assert inherited.read_text() == "user-owned"
     with pytest.raises(ValueError):
         opencode_http._materialize_system_prompt(None, {OPENCODE_CONFIG_CONTENT_ENV: "{bad"})
+
+
+@pytest.mark.asyncio
+async def test_respond_request_v1_posts_to_permissions_endpoint() -> None:
+    connection = _TestableOpenCodeConnection([(200, None, "")])
+    connection._pending_requests["per_1"] = "ses_1"
+
+    await connection.respond_request("per_1", "reject")
+
+    assert connection.requests == [
+        ("/session/ses_1/permissions/per_1", {"response": "reject"}),
+    ]
+    assert connection._pending_requests == {}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("decision", "expected_response"),
+    (
+        ("accept", "once"),
+        ("once", "once"),
+        ("always", "always"),
+        ("reject", "reject"),
+        ("unrecognized", "once"),
+    ),
+)
+async def test_respond_request_v1_maps_decision_to_response(
+    decision: str,
+    expected_response: str,
+) -> None:
+    connection = _TestableOpenCodeConnection([(204, None, "")])
+    connection._session_id = "ses_1"
+    connection._pending_requests["per_1"] = "ses_1"
+
+    await connection.respond_request("per_1", decision)
+
+    assert connection.requests == [
+        ("/session/ses_1/permissions/per_1", {"response": expected_response}),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_respond_request_v1_raises_without_a_session() -> None:
+    connection = _TestableOpenCodeConnection([])
+
+    with pytest.raises(ValueError, match="No pending OpenCode permission request"):
+        await connection.respond_request("per_missing", "reject")
+

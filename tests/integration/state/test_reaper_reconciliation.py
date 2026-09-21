@@ -511,10 +511,13 @@ def test_reconcile_active_spawn_finalizes_from_runner_exit_tuple_after_grace(
     assert latest.terminal.error == expected_error
 
 
-def test_reconcile_active_spawn_durable_report_wins_over_cancelled_runner_exit(
+def test_reconcile_active_spawn_cancelled_runner_exit_outranks_durable_report(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    # A cancelled runner exit is execution evidence that outranks recovered
+    # report text, matching resolve_execution_terminal_state. Only a *clean*
+    # exit with a report keeps succeeded (see the completion-keeps-report case).
     runtime_root, spawn_id = _create_spawn(tmp_path, started_at=_OLD_STARTED_AT)
     spawn_store.record_cancel_intent(
         runtime_root,
@@ -538,15 +541,13 @@ def test_reconcile_active_spawn_durable_report_wins_over_cancelled_runner_exit(
 
     reconciled = _reconcile(tmp_path, runtime_root, record)
 
-    assert reconciled.status == "succeeded"
+    assert reconciled.status == "cancelled"
     assert reconciled.terminal is not None
-    assert reconciled.terminal.exit_code == 0
-    assert reconciled.terminal is None or reconciled.terminal.error is None
+    assert reconciled.terminal.exit_code == 130
     latest = _get_spawn(runtime_root, spawn_id)
-    assert latest.status == "succeeded"
+    assert latest.status == "cancelled"
     assert latest.terminal is not None
-    assert latest.terminal.exit_code == 0
-    assert latest.terminal is None or latest.terminal.error is None
+    assert latest.terminal.exit_code == 130
 
 
 class _MidPrepKillSimulation(Exception):

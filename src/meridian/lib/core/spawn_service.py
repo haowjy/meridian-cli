@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, cast
@@ -71,6 +71,28 @@ if TYPE_CHECKING:
 _WAIT_POLL_INTERVAL_SECS = 0.1
 _MANAGED_CANCEL_GRACE_SECS = 5.0
 _MANAGED_CANCEL_FALLBACK_WAIT_SECS = 1.0
+
+
+def _fold_cancel_intent_into_facts(
+    facts: ExecutionTerminalFacts,
+    record: SpawnRecord | None,
+) -> ExecutionTerminalFacts:
+    """Treat a durable cancel request as observed cancellation evidence.
+
+    The runner may not have observed the signal that ``spawn cancel`` delivered,
+    so the intent itself is cancellation evidence. Folding it into the execution
+    facts lets the single lifecycle precedence resolver decide, instead of a
+    second rule overriding its result.
+    """
+
+    intent = None if record is None else record.cancel_intent
+    if intent is None:
+        return facts
+    return replace(
+        facts,
+        cancellation_observed=True,
+        failure_reason=facts.failure_reason or intent.error,
+    )
 
 
 def _is_live_managed_primary(runtime_root: Path, record: SpawnRecord) -> bool:
@@ -699,6 +721,7 @@ class SpawnApplicationService:
         if self.is_terminal(record.status):
             return record
         intent = record.cancel_intent
+        runner_exit = record.runner_exit
         resolved = resolve_completion_cancel_precedence(
             durable_report_completion=spawn_report_has_durable_completion(
                 self._runtime_root,
@@ -707,6 +730,12 @@ class SpawnApplicationService:
             cancel_requested=True,
             cancel_exit_code=intent.exit_code if intent is not None else 130,
             cancel_error=intent.error if intent is not None else "cancelled",
+            execution_exit_code=(
+                runner_exit.exit_code
+                if runner_exit is not None
+                else record.last_attempt_exit_code
+            ),
+            execution_terminal_status=runner_exit.status if runner_exit is not None else None,
         )
         if resolved is None:
             return None
@@ -725,48 +754,11 @@ class SpawnApplicationService:
         record: SpawnRecord,
     ) -> None:
         """Best-effort cleanup for terminal managed orphan-primary spawns."""
-        if record.terminal is None or record.terminal.error not in {
-            "orphan_primary",
-            "session_ended_without_finalize",
-        }:
+        if record.terminal is None or not record.terminal.managed_scopes_pending:
             return
+        from meridian.lib.state.managed_primary import release_managed_primary_scopes
 
-        from meridian.lib.state.managed_primary import terminate_managed_primary_processes
-        from meridian.lib.state.primary_meta import read_primary_metadata
-
-        metadata = read_primary_metadata(self._runtime_root, str(spawn_id))
-        if metadata is not None:
-            if not metadata.managed_backend:
-                return
-            terminate_managed_primary_processes(
-                metadata,
-                include_launcher=False,
-            )
-            return
-
-        if not _is_managed_primary_candidate(record):
-            return
-        from meridian.lib.core.process_cleanup import cancel_managed_primary
-        from meridian.lib.state.process_scope_projection import read_scopes_from_disk
-
-        scopes = read_scopes_from_disk(self._runtime_root, SpawnId(str(spawn_id)))
-        if scopes:
-            # Phase-3 scope records: use sequenced managed-primary teardown.
-            cancel_managed_primary(
-                self._runtime_root,
-                record,
-                grace_seconds=5.0,
-            )
-        else:
-            # Legacy fallback: no scope records, use worker_pid termination.
-            from meridian.lib.core.process_cleanup import terminate_spawn_scopes
-
-            terminate_spawn_scopes(
-                self._runtime_root,
-                record,
-                reason="cancel",
-                grace_seconds=5.0,
-            )
+        release_managed_primary_scopes(self._runtime_root, spawn_id, record)
 
     async def _wait_for_terminal(
         self,
@@ -920,6 +912,7 @@ class SpawnApplicationService:
         duration_secs: float | None = None,
         usage: TokenUsage | None = None,
         error: str | None = None,
+        managed_scopes_pending: bool = False,
     ) -> CompleteSpawnOutcome:
         """Finalize a spawn through the shared idempotent terminal seam.
 
@@ -936,6 +929,7 @@ class SpawnApplicationService:
                 duration_secs=duration_secs,
                 usage=usage,
                 error=error,
+                managed_scopes_pending=managed_scopes_pending,
             )
 
     async def complete_execution(
@@ -949,20 +943,12 @@ class SpawnApplicationService:
     ) -> CompleteExecutionOutcome:
         """Resolve execution facts, then finalize through the lifecycle authority."""
 
-        resolved = resolve_execution_terminal_outcome(facts)
         lock = await self._locks.acquire(str(spawn_id))
         async with lock:
             record = self.get_spawn(spawn_id)
-            if record is not None and record.cancel_intent is not None:
-                resolved = (
-                    resolve_completion_cancel_precedence(
-                        durable_report_completion=facts.durable_report_completion,
-                        cancel_requested=True,
-                        cancel_exit_code=record.cancel_intent.exit_code,
-                        cancel_error=record.cancel_intent.error,
-                    )
-                    or resolved
-                )
+            resolved = resolve_execution_terminal_outcome(
+                _fold_cancel_intent_into_facts(facts, record)
+            )
             completion = await self._complete_spawn_unlocked(
                 spawn_id,
                 resolved.status,
@@ -987,6 +973,7 @@ class SpawnApplicationService:
         duration_secs: float | None = None,
         usage: TokenUsage | None = None,
         error: str | None = None,
+        managed_scopes_pending: bool = False,
     ) -> CompleteSpawnOutcome:
         record = self.get_spawn(spawn_id)
         if record is None:
@@ -1022,6 +1009,7 @@ class SpawnApplicationService:
             duration_secs=duration_secs,
             usage=usage,
             error=error,
+            managed_scopes_pending=managed_scopes_pending,
         )
         if isinstance(outcome, Applied):
             from meridian.lib.state.process_scope_projection import (
@@ -1184,11 +1172,6 @@ def _cancel_outcome_from_record(
 
 def _coerce_cancel_status(status: str) -> SpawnStatus:
     return coerce_spawn_status(status)
-
-
-def _is_managed_primary_candidate(record: SpawnRecord) -> bool:
-    harness = (record.harness or "").strip().lower()
-    return record.kind == "primary" and harness in {"codex", "opencode"}
 
 
 def _has_live_execution_owner(

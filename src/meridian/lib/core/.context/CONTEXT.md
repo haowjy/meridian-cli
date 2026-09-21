@@ -184,14 +184,18 @@ runner, reaper, and spawn application service. It does not own persistence or si
 ### Has Durable Report Completion
 
 `has_durable_report_completion(report_text)` returns True when a non-empty final report
-exists on disk and its content is not a terminal control frame:
+exists on disk and its content is recognized completion evidence:
 
 - Returns `False` for empty/whitespace strings, `None`, or `"# Spawn failed"` generated
   markdown (runner-produced failure wrappers do not constitute durable completion).
 - Returns `False` for JSON payloads whose top-level or nested `event_type` / `event` /
-  `type` is `"cancelled"` or `"error"`.
-- Returns `True` for all other non-empty content (plain markdown, JSON payloads with
-  neutral/completion event types).
+  `type` is a control event (`"cancelled"`, `"error"`, `"system"`, or a known
+  Claude/OpenCode/Codex event namespace).
+- Returns `True` for plain report text and for structured payloads that carry explicit
+  report text (`result` / `message` / `output` / `text` / `content`).
+- Returns `False` for any other structured payload. A raw harness event envelope (for
+  example a `permission.asked` payload) is non-empty JSON but is **not** completion
+  evidence — completion requires a positive signal, not merely "non-empty and not JSON".
 
 File-backed report reads live in `state/spawn_report.py`;
 `spawn_report_has_durable_completion(runtime_root, spawn_id)` reads
@@ -203,31 +207,46 @@ timestamps as UTC, and returns `None` for blank or invalid values.
 
 ### Centralized Completion-vs-Cancel Precedence
 
-`resolve_completion_cancel_precedence(*, durable_report_completion, cancel_requested, ...)`
-is the **single** shared resolution rule for the durable-completion-wins-over-late-cancel
-policy:
+`resolve_completion_cancel_precedence(*, durable_report_completion, cancel_requested, ...,
+execution_exit_code=None, execution_terminal_status=None)` is the shared resolution rule
+for durable completion against an outstanding cancel request. It delegates to
+`resolve_execution_terminal_state` — there is one precedence authority:
 
-- If a durable report exists → `ExecutionTerminalOutcome(status="succeeded", exit_code=0)`.
-- Else if cancellation was requested → `ExecutionTerminalOutcome(status="cancelled", ...)`.
-- Else → `None` (no opinion — caller must fall back to its own outcome).
+- With execution evidence (the runner's `execution_exit_code` / `execution_terminal_status`),
+  a cancelled or abnormal (non-zero) exit outranks report text; a clean exit keeps a
+  genuine report.
+- With no execution evidence, a durable report is authoritative → `succeeded`, else a
+  cancel request → `cancelled` with the caller's `cancel_exit_code`.
+- Neither report nor cancel → `None` (caller falls back to its own outcome).
 
-This helper is consumed by spawn application services and by
-`state/reconciliation.py:completion_or_cancel_decision()`. They converge on the
-same precedence rule.
+This helper is consumed by `spawn_service._force_cancel_convergence` and by
+`state/reconciliation.py:completion_or_cancel_decision()`, so the runner, application
+service, and reaper converge on the same precedence. The runner path
+(`complete_execution`) folds the durable `cancel_intent` into its
+`ExecutionTerminalFacts` and calls `resolve_execution_terminal_state` directly instead
+of letting a second rule override the resolved result.
 
 ### Execution Terminal State Resolution
 
 `resolve_execution_terminal_state()` normalizes raw execution facts into a terminal tuple
 `(status, exit_code, error)`. It takes `exit_code`, `failure_reason`, `cancelled`, and
-`durable_report_completion`:
+`durable_report_completion`. Execution facts outrank report text: a spawn that was
+cancelled or exited non-zero is not a success merely because a report was extracted.
 
-| durable completion | cancelled | exit_code | Result |
-|---|---|---|---|
-| True | any | any | `succeeded`, 0, None |
-| False | True | 143 | `cancelled`, 143, failure_reason |
-| False | True | 0 | `cancelled`, 130, failure_reason |
-| False | False | 0 | `succeeded`, 0, failure_reason |
-| False | False | non-zero | `failed`, exit_code, failure_reason |
+| durable completion | cancelled | exit_code | terminal_status | Result |
+|---|---|---|---|---|
+| any | any | any | non-`succeeded` (timed_out) | `timed_out`, exit_code, failure_reason |
+| True | True | 143 | None | `cancelled`, 143, failure_reason |
+| any | True | non-zero | None | `cancelled`, exit_code, failure_reason |
+| True | False | non-zero | None | `failed`, exit_code, failure_reason |
+| True | any | 0 | any | `succeeded`, 0, None |
+| False | True | 0 | None | `cancelled`, 130, failure_reason |
+| False | False | 0 | None | `succeeded`, 0, failure_reason |
+| False | False | non-zero | None | `failed`, exit_code, failure_reason |
+
+A clean exit with a genuine report stays `succeeded` even when a later cleanup
+signal arrives (the module docstring invariant); only an abnormal exit or a
+non-succeeded `terminal_status` downgrades it.
 
 `resolve_execution_terminal_outcome(facts: ExecutionTerminalFacts)` wraps this for the
 runner path.

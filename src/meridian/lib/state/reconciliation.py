@@ -18,6 +18,9 @@ class Skip:
 class FinalizeFailed:
     error: str
     exit_code: int = 1
+    #: Set when the terminal record still carries managed-primary fallback
+    #: scopes (backend/TUI) that a later release must tear down.
+    managed_scopes_pending: bool = False
 
 
 @dataclass(frozen=True)
@@ -32,7 +35,7 @@ class FinalizeFromRunnerExit:
     error: str | None
     #: Set when the reconciler must also clean up managed-primary fallback
     #: scopes (backend/TUI) derived from the primary metadata.
-    include_managed_fallback_scopes: bool = False
+    managed_scopes_pending: bool = False
 
 
 type ReconciliationDecision = (
@@ -44,14 +47,23 @@ def completion_or_cancel_decision(
     record: SpawnRecord,
     durable_report_completion: bool,
 ) -> ReconciliationDecision | None:
-    """Resolve durable completion against an outstanding cancel request."""
+    """Resolve durable completion against an outstanding cancel request.
+
+    Runner-exit evidence is threaded through so a cancelled or abnormal exit
+    outranks recovered report text, matching the runner finalization path.
+    """
 
     intent = record.cancel_intent
+    runner_exit = record.runner_exit
     resolved = resolve_completion_cancel_precedence(
         durable_report_completion=durable_report_completion,
         cancel_requested=intent is not None,
         cancel_exit_code=intent.exit_code if intent is not None else 130,
         cancel_error=intent.error if intent is not None else "cancelled",
+        execution_exit_code=(
+            runner_exit.exit_code if runner_exit is not None else record.last_attempt_exit_code
+        ),
+        execution_terminal_status=runner_exit.status if runner_exit is not None else None,
     )
     if resolved is None:
         return None

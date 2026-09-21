@@ -21,6 +21,7 @@ import pytest
 
 import meridian.lib.ops.spawn.api as spawn_api
 from meridian.lib.core.lifecycle import SpawnLifecycleService
+from meridian.lib.core.spawn_lifecycle import ExecutionTerminalFacts
 from meridian.lib.core.spawn_service import CancelOutcome, SpawnApplicationService
 from meridian.lib.core.types import SpawnId
 from meridian.lib.ops.spawn.models import SpawnCancelInput
@@ -624,3 +625,37 @@ def test_spawn_cancel_reports_nonconverged_running_outcome_as_failure() -> None:
     assert output.status == "failed"
     assert output.exit_code == 1
     assert output.error == "Spawn remained running after cancellation."
+
+
+@pytest.mark.asyncio
+async def test_complete_execution_cancel_intent_does_not_override_abnormal_exit(
+    tmp_path: Path,
+) -> None:
+    """p6491: a cancel-led permission hang with prose is cancelled, not succeeded."""
+
+    runtime_root, spawn_id = _create_spawn(tmp_path, started_at=_OLD_STARTED_AT)
+    spawn_store.record_cancel_intent(
+        runtime_root,
+        spawn_id,
+        exit_code=130,
+        error="cancelled",
+        requested_at="2026-06-03T01:00:00Z",
+    )
+    service = _spawn_service(runtime_root)
+
+    outcome = await service.complete_execution(
+        SpawnId(spawn_id),
+        ExecutionTerminalFacts(
+            exit_code=143,
+            failure_reason="terminated",
+            cancellation_observed=True,
+            durable_report_completion=True,
+        ),
+        origin="runner",
+    )
+
+    assert (outcome.resolved.status, outcome.resolved.exit_code) == ("cancelled", 143)
+    record = _get_spawn(runtime_root, spawn_id)
+    assert record.status == "cancelled"
+    assert record.terminal is not None
+    assert record.terminal.exit_code == 143

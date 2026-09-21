@@ -33,6 +33,25 @@ run_harness_process()
 (harness didn't start the server), it falls back to `_execute_via_blackbox()`. This
 is intentional — managed-primary is best-effort for the primary path.
 
+## Native-Primary Adapter Hooks
+
+`run_harness_process()` stays harness-agnostic. Per-harness native-primary concerns
+arrive through `SubprocessHarness` hooks — never `HarnessId` branches:
+
+- `resolve_primary_command` / `redact_primary_command` — argv projection (e.g. Pi's
+  resolved runtime path) and secret redaction before metadata persistence.
+- `uses_native_primary_metadata` / `native_primary_runtime_metadata` — whether and
+  which runtime fields populate `primary_meta.json`.
+- `observe_primary_session_id` — post-exit native session-file discovery. The runner
+  binds the result through `bind_harness_session_id(source="discovery")`.
+- `build_primary_runtime_request_handler` — managed-primary runtime request handler
+  (Codex/OpenCode permission broker).
+- `capabilities.captures_blackbox_output` and `bootstrap.primary_stderr_log` drive
+  the black-box capture and stderr-log env, replacing harness-id conditionals.
+
+Pi writes its `pi_runtime_meta.json` sidecar from `prepare_prelaunch`, so the primary
+and spawn paths share one writer; `runner.py` never names a harness id.
+
 ## Hard Invariants
 
 **I-4:** `harness_adapter.observe_session_id()` is called exactly once per launch,

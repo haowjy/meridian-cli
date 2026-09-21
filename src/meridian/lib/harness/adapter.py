@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from enum import StrEnum
 from pathlib import Path
 from typing import Any, Generic, Literal, Protocol, TypeVar, runtime_checkable
@@ -16,6 +16,8 @@ from meridian.lib.core.types import ArtifactKey, HarnessId, ModelId, SpawnId, Tr
 from meridian.lib.harness.connections.base import (
     PrimaryRuntimeEventSurface,
     PrimaryRuntimeRequestPolicy,
+    RawHarnessEvent,
+    ServerRequestHandler,
 )
 from meridian.lib.harness.launch_types import SessionSeed
 from meridian.lib.launch.composition import (
@@ -32,6 +34,7 @@ from meridian.lib.launch.launch_types import (
 )
 from meridian.lib.launch.request import SessionRequest
 from meridian.lib.safety.permissions import PermissionConfig
+from meridian.lib.state.primary_meta import HarnessSessionDiscovery
 
 AdapterSpecT = TypeVar("AdapterSpecT", bound=ResolvedLaunchSpec, covariant=True)
 
@@ -111,6 +114,9 @@ class HarnessCapabilities(BaseModel):
 
     # Whether native file injection is available (e.g., OpenCode --file)
     supports_native_file_injection: bool = False
+    # Whether a black-box primary launches with captured output in its
+    # non-interactive print mode (Claude `--print`).
+    captures_blackbox_output: bool = False
     terminal_surface_modes: tuple[TerminalSurfaceMode, ...] = (TerminalSurfaceMode.PTY_MEDIATED,)
     default_terminal_surface_mode: TerminalSurfaceMode = TerminalSurfaceMode.PTY_MEDIATED
 
@@ -187,6 +193,9 @@ class BootstrapContract(BaseModel):
     primary_session_seed_mode: SessionSeedMode = SessionSeedMode.NONE
     streaming_session_seed_mode: SessionSeedMode = SessionSeedMode.NONE
     prelaunch_bootstrap_mode: PrelaunchBootstrapMode = PrelaunchBootstrapMode.NONE
+    #: Whether the black-box primary child needs the stderr log path env var
+    #: injected so its runtime writes stderr to the spawn dir.
+    primary_stderr_log: bool = False
     observer_controller: ObserverControllerContract | None = None
 
 
@@ -332,6 +341,28 @@ class HarnessPrelaunchState(BaseModel):
     metadata: dict[str, str] = Field(default_factory=_empty_prelaunch_metadata)
 
 
+class NativePrimaryRuntimeMetadata(BaseModel):
+    """Harness-specific runtime fields projected into primary_meta.json."""
+
+    model_config = ConfigDict(frozen=True)
+
+    runtime_kind: str | None = None
+    runtime_path: str | None = None
+    runtime_version: str | None = None
+    session_dir: str | None = None
+    auth_policy: str | None = None
+
+
+class PrimarySessionObservation(BaseModel):
+    """Post-exit native session discovery result for one primary launch."""
+
+    model_config = ConfigDict(frozen=True)
+
+    session_id: str | None = None
+    discovery: HarnessSessionDiscovery | None = None
+    detail: str | None = None
+
+
 RecordConfigDirFn = Callable[[str], None]
 
 
@@ -437,6 +468,54 @@ class SubprocessHarness(HarnessAdapter[ResolvedLaunchSpec], Protocol):
         chat_id: str | None,
         state: HarnessPrelaunchState,
     ) -> None: ...
+
+    def resolve_primary_command(
+        self,
+        command: tuple[str, ...],
+        *,
+        state: HarnessPrelaunchState,
+    ) -> tuple[str, ...]:
+        """Project the resolved argv for a native primary launch (e.g. runtime path)."""
+        ...
+
+    def redact_primary_command(self, command: tuple[str, ...]) -> tuple[str, ...]:
+        """Redact harness-specific secrets from an argv persisted to metadata."""
+        ...
+
+    def uses_native_primary_metadata(self) -> bool:
+        """Return whether this harness writes native/black-box primary metadata."""
+        ...
+
+    def native_primary_runtime_metadata(
+        self,
+        state: HarnessPrelaunchState,
+    ) -> NativePrimaryRuntimeMetadata:
+        """Project prelaunch state into primary_meta.json runtime fields."""
+        ...
+
+    def observe_primary_session_id(
+        self,
+        *,
+        command: tuple[str, ...],
+        child_env: dict[str, str],
+        launch_child_cwd: Path,
+        started_at_epoch: float | None,
+        expected_session_id: str,
+        requested_session_id: str,
+        resolved_session_id: str,
+        exit_code: int,
+    ) -> PrimarySessionObservation:
+        """Discover a native primary session id from on-disk session files."""
+        ...
+
+    def build_primary_runtime_request_handler(
+        self,
+        *,
+        spawn_dir: Path,
+        event_sink: Callable[[RawHarnessEvent], Awaitable[None]],
+    ) -> ServerRequestHandler | None:
+        """Build a managed-primary runtime request handler for this harness."""
+        ...
 
     def extract_usage(self, artifacts: ArtifactStore, spawn_id: SpawnId) -> TokenUsage: ...
 
@@ -628,6 +707,61 @@ class BaseHarnessAdapter(Generic[SpecT], ABC):
         state: HarnessPrelaunchState,
     ) -> None:
         _ = runtime_root, spawn_id, chat_id, state
+        return None
+
+    def resolve_primary_command(
+        self,
+        command: tuple[str, ...],
+        *,
+        state: HarnessPrelaunchState,
+    ) -> tuple[str, ...]:
+        _ = state
+        return command
+
+    def redact_primary_command(self, command: tuple[str, ...]) -> tuple[str, ...]:
+        return command
+
+    def uses_native_primary_metadata(self) -> bool:
+        return False
+
+    def native_primary_runtime_metadata(
+        self,
+        state: HarnessPrelaunchState,
+    ) -> NativePrimaryRuntimeMetadata:
+        _ = state
+        return NativePrimaryRuntimeMetadata()
+
+    def observe_primary_session_id(
+        self,
+        *,
+        command: tuple[str, ...],
+        child_env: dict[str, str],
+        launch_child_cwd: Path,
+        started_at_epoch: float | None,
+        expected_session_id: str,
+        requested_session_id: str,
+        resolved_session_id: str,
+        exit_code: int,
+    ) -> PrimarySessionObservation:
+        _ = (
+            command,
+            child_env,
+            launch_child_cwd,
+            started_at_epoch,
+            expected_session_id,
+            requested_session_id,
+            resolved_session_id,
+            exit_code,
+        )
+        return PrimarySessionObservation()
+
+    def build_primary_runtime_request_handler(
+        self,
+        *,
+        spawn_dir: Path,
+        event_sink: Callable[[RawHarnessEvent], Awaitable[None]],
+    ) -> ServerRequestHandler | None:
+        _ = spawn_dir, event_sink
         return None
 
     def seed_session(

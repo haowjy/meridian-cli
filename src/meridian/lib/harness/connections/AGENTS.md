@@ -34,6 +34,15 @@ Transports differ at the wire level:
   pre-subscribe session GET and the SSE attach is re-polled on the liveness-timeout
   path (`_reconcile_on_stall`, bounded by `_STALL_RECONCILE_LIMIT`) through the same
   guarded helper, so the missed terminal is surfaced instead of a stall.
+  OpenCode's `permission.asked` (V1) / `permission.v2.asked` (V2) stream events are
+  routed to the injected `ServerRequestHandler` as `HarnessRequest`s, not
+  yielded raw; the handler runs in a bounded background task (a stalled reply must
+  not block the SSE drain) and re-surfaces policy events through the connection's
+  injected-event queue, which `events()` multiplexes ahead of the idle SSE read in
+  FIFO order. Reply events (`permission.replied` / `permission.v2.replied`) are also
+  observed: a reply for a still-pending request clears it and journals
+  `request/resolved` (releasing the liveness key), while the stream echo of a reply
+  Meridian already made passes through.
 - **Cursor/Pi**: narrower spawned-session transports; no resident backend seam.
 
 ## Key Rules

@@ -262,6 +262,7 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             supports_primary_launch=True,
             supports_named_primary_resume=True,
             supports_native_file_injection=False,
+            captures_blackbox_output=True,
             terminal_surface_modes=(TerminalSurfaceMode.PTY_MEDIATED,),
             default_terminal_surface_mode=TerminalSurfaceMode.PTY_MEDIATED,
         )

@@ -48,8 +48,20 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
 
     _CAPABILITIES = OpenCodeV1Connection._CAPABILITIES
 
-    def __init__(self) -> None:
+    def __init__(self, request_handler: ServerRequestHandler | None = None) -> None:
         self._impl: HarnessConnection[ResolvedLaunchSpec] | None = None
+        self._request_handler = request_handler
+        # Managed-primary callers configure the runtime-request policy before
+        # ``start()`` resolves the version. Hold it until ``_select()`` builds the
+        # transport, then apply it to that transport.
+        self._primary_runtime_config: (
+            tuple[
+                PrimaryRuntimeRequestPolicy,
+                Callable[[RawHarnessEvent], Awaitable[None]] | None,
+                ServerRequestHandler | None,
+            ]
+            | None
+        ) = None
 
     def _transport(self) -> HarnessConnection[ResolvedLaunchSpec]:
         if self._impl is None:
@@ -62,8 +74,20 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
 
     def _select(self, config: ConnectionConfig) -> HarnessConnection[ResolvedLaunchSpec]:
         if self._resolve_version(config) == "v2":
-            return OpenCodeV2Connection()
-        return OpenCodeV1Connection()
+            impl: HarnessConnection[ResolvedLaunchSpec] = OpenCodeV2Connection(
+                request_handler=self._request_handler
+            )
+        else:
+            impl = OpenCodeV1Connection(request_handler=self._request_handler)
+        primary_config = self._primary_runtime_config
+        if primary_config is not None:
+            policy, event_sink, request_handler = primary_config
+            impl.configure_primary_runtime_requests(
+                policy=policy,
+                event_sink=event_sink,
+                request_handler=request_handler,
+            )
+        return impl
 
     @property
     def state(self) -> ConnectionState:
@@ -152,6 +176,7 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
         event_sink: Callable[[RawHarnessEvent], Awaitable[None]] | None = None,
         request_handler: ServerRequestHandler | None = None,
     ) -> None:
+        self._primary_runtime_config = (policy, event_sink, request_handler)
         if self._impl is None:
             return
         self._impl.configure_primary_runtime_requests(
@@ -177,6 +202,14 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
         answers: dict[str, object],
     ) -> None:
         await self._transport().respond_user_input(request_id, answers)
+
+    async def _notify_request_failed(self, request_id: str, *, error: str) -> None:
+        if self._impl is None:
+            return
+        callback = getattr(self._impl, "_notify_request_failed", None)
+        if callback is None:
+            return
+        await callback(request_id, error=error)
 
 
 __all__ = ["OpenCodeConnection"]

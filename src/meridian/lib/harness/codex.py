@@ -6,6 +6,7 @@ import os
 import re
 import sqlite3
 import time
+from collections.abc import Awaitable, Callable
 from contextlib import suppress
 from pathlib import Path
 from typing import ClassVar, cast
@@ -54,9 +55,11 @@ from meridian.lib.harness.connections.base import (
     PrimaryRuntimeEventSurface,
     PrimaryRuntimeRequestPolicy,
     RawHarnessEvent,
+    ServerRequestHandler,
 )
 from meridian.lib.harness.connections.codex_ws import CodexConnection
 from meridian.lib.harness.extractors.codex import CODEX_EXTRACTOR
+from meridian.lib.harness.permission_broker import PermissionBroker
 from meridian.lib.harness.projections.project_codex_streaming import (
     project_codex_spec_to_appserver_command,
     project_codex_spec_to_thread_request,
@@ -395,6 +398,19 @@ class CodexAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         spec = self.resolve_launch_spec(run, perms)
         base_command = self.PRIMARY_BASE_COMMAND if spec.interactive else self.BASE_COMMAND
         return project_subprocess_spec(self.id, spec, base_command=base_command)
+
+    def build_primary_runtime_request_handler(
+        self,
+        *,
+        spawn_dir: Path,
+        event_sink: Callable[[RawHarnessEvent], Awaitable[None]],
+    ) -> ServerRequestHandler | None:
+        return PermissionBroker(
+            spawn_dir=spawn_dir,
+            event_sink=event_sink,
+            auto_reject_runtime_requests=False,
+            harness_id=HarnessId.CODEX.value,
+        )
 
     def mcp_config(self, run: SpawnParams) -> McpConfig | None:
         # MCP injection is off by default — agents use the CLI instead.

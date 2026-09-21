@@ -32,6 +32,7 @@ from meridian.lib.harness.connections.base import (
     ConnectionConfig,
     ObserverEndpoint,
     RawHarnessEvent,
+    ServerRequestHandler,
 )
 from meridian.lib.harness.connections.managed_backend import (
     ManagedBackendConfig,
@@ -41,7 +42,9 @@ from meridian.lib.harness.connections.opencode_http import (
     OpenCodeV1Connection,
     SessionNotReadyError,
     _find_free_port,
+    _map_approval_decision,
     _materialize_system_prompt,
+    _permission_liveness_key,
     _summarize_body,
 )
 from meridian.lib.harness.projections.project_opencode_streaming import (
@@ -130,8 +133,8 @@ class OpenCodeV2Connection(OpenCodeV1Connection):
         "/api/session/{session_id}/interrupt",
     )
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, request_handler: ServerRequestHandler | None = None) -> None:
+        super().__init__(request_handler)
         self._server_password: str | None = None
         self._stdout_drain_task: asyncio.Task[None] | None = None
         self._initial_prompt_posted_at: float | None = None
@@ -420,6 +423,40 @@ class OpenCodeV2Connection(OpenCodeV1Connection):
             path_templates=self._CANCEL_PATH_TEMPLATES,
             payload_variants=({},),
             accepted_statuses=self._ACTION_SUCCESS_STATUSES,
+        )
+
+    async def respond_request(
+        self,
+        request_id: str,
+        decision: str,
+        payload: dict[str, object] | None = None,
+    ) -> None:
+        if request_id not in self._pending_requests:
+            raise ValueError(f"No pending OpenCode permission request: {request_id}")
+        session_id = self._pending_requests[request_id] or (self._session_id or "")
+        if not session_id:
+            raise ValueError(f"No pending OpenCode permission request: {request_id}")
+        body: dict[str, object] = {"reply": _map_approval_decision(decision, payload)}
+        message = payload.get("message") if payload is not None else None
+        if isinstance(message, str) and message.strip():
+            body["message"] = message
+        status, response_body, content_type = await self._post_json(
+            f"/api/session/{session_id}/permission/{request_id}/reply",
+            body,
+            skip_body_on_statuses=self._SUCCESS_STATUSES,
+        )
+        # Unknown routes fall through to the SPA ``200 text/html`` handler, which
+        # would otherwise masquerade as an accepted reply.
+        if status not in self._SUCCESS_STATUSES or "text/html" in content_type:
+            raise RuntimeError(
+                f"OpenCode V2 permission reply failed: status={status} "
+                f"body={_summarize_body(response_body)}"
+            )
+        self._pending_requests.pop(request_id, None)
+        self._liveness.signal_request_resolved(_permission_liveness_key(request_id))
+        await self._notify_request_resolved(
+            request_id,
+            resolution={"decision": decision, **(payload or {})},
         )
 
     def _event_from_json_line(
