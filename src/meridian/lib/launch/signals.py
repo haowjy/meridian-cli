@@ -261,19 +261,16 @@ class SignalCoordinator:
             desired.update(TARGET_SIGNALS)
         return desired
 
-    def _reconcile_handlers_locked(self) -> bool:
-        """Install handlers for active receivers; restore the rest.
-
-        Returns ``False`` when handlers cannot be changed (not the main thread).
-        """
+    def _reconcile_handlers_locked(self) -> None:
+        """Install handlers for active receivers; restore the rest."""
 
         desired = self._desired_signals_locked()
         if desired == self._installed_signals:
-            return True
+            return
 
         if current_thread() is not main_thread():
             # Signal handlers can only be changed from the main thread.
-            return False
+            return
 
         for signum in desired - self._installed_signals:
             self._previous_handlers[signum] = cast("signal.Handlers", signal.getsignal(signum))
@@ -282,7 +279,6 @@ class SignalCoordinator:
         for signum in self._installed_signals - desired:
             signal.signal(signum, self._previous_handlers.pop(signum, signal.SIG_DFL))
             self._installed_signals.discard(signum)
-        return True
 
     def _dispatch_previous_handler(
         self,
