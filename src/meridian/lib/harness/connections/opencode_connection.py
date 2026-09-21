@@ -203,5 +203,13 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
     ) -> None:
         await self._transport().respond_user_input(request_id, answers)
 
+    async def _notify_request_failed(self, request_id: str, *, error: str) -> None:
+        if self._impl is None:
+            return
+        callback = getattr(self._impl, "_notify_request_failed", None)
+        if callback is None:
+            return
+        await callback(request_id, error=error)
+
 
 __all__ = ["OpenCodeConnection"]

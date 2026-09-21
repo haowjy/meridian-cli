@@ -431,7 +431,9 @@ class OpenCodeV2Connection(OpenCodeV1Connection):
         decision: str,
         payload: dict[str, object] | None = None,
     ) -> None:
-        session_id = self._pending_requests.get(request_id, self._session_id or "")
+        if request_id not in self._pending_requests:
+            raise ValueError(f"No pending OpenCode permission request: {request_id}")
+        session_id = self._pending_requests[request_id] or (self._session_id or "")
         if not session_id:
             raise ValueError(f"No pending OpenCode permission request: {request_id}")
         body: dict[str, object] = {"reply": _map_approval_decision(decision, payload)}

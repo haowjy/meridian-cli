@@ -137,6 +137,9 @@ async def test_respond_request_v2_posts_reply_to_permission_endpoint() -> None:
 async def test_respond_request_v2_fails_loudly_on_html_fallback() -> None:
     connection = _TestableOpenCodeV2Connection(responses=[(200, "<html></html>", "text/html")])
     connection._session_id = "ses_v2"
+    # The reply now requires a known pending request id (unknown ids fail fast),
+    # so register it here to keep exercising the HTML-fallback guard.
+    connection._pending_requests["per_1"] = "ses_v2"
 
     with pytest.raises(RuntimeError, match="V2 permission reply failed"):
         await connection.respond_request("per_1", "accept")

@@ -143,18 +143,27 @@ The handler is injected; `HarnessConnection` implementations must not embed poli
 
 OpenCode has no background reader: `events()` parses the SSE stream in the drain
 loop's own task. When it sees `permission.asked` / `permission.v2.asked`, it builds
-a `HarnessRequest` and awaits the injected handler inline instead of yielding the
-raw ask. `respond_request` replies over the version's HTTP endpoint
+a `HarnessRequest`, registers the pending request and its liveness key synchronously,
+then dispatches the injected handler in a background task (returning without yielding
+the raw ask). The reply POST can stall, so the handler must not run inline on the
+drain path; the background dispatch is bounded by
+`_REQUEST_DISPATCH_TIMEOUT_SECONDS` and reports a dispatch failure through the handler
+on timeout or error. `respond_request` replies over the version's HTTP endpoint
 (`POST /session/{id}/permissions/{permissionID}` with `{"response": …}` for V1;
-`POST /api/session/{id}/permission/{requestID}/reply` with `{"reply": …}` for V2).
+`POST /api/session/{id}/permission/{requestID}/reply` with `{"reply": …}` for V2) and
+fails fast when the request id is unknown instead of falling back to the session id.
 
-Because `inject_runtime_event` can be called from another task (e.g. the manager's
-`respond_request` resolves a broker request, whose event sink injects
-`request/resolved`) while `events()` is blocked on an idle SSE read, `events()`
-races the read against an injected-event queue with `asyncio.wait`. Injected events
-win ties and are yielded first; the SSE parse, `wait_for_activity` liveness, and
-reconnect paths are otherwise unchanged. Unanswered pending requests are cancelled
-through the handler on connection cleanup so none are left pending silently.
+Because `inject_runtime_event` can be called from another task (e.g. the handler
+resolves a broker request, whose event sink injects `request/resolved`) while
+`events()` is blocked on an idle SSE read, `events()` races the read against an
+injected-event queue with `asyncio.wait`. Two consumers read that queue — the
+long-lived `_queue_waiter` and the top-of-loop synchronous pop — so a completed
+waiter is drained first; it predates any event injected while the previous read was
+in flight, and yielding the synchronous pop first would invert injection FIFO order
+(e.g. `request/resolved` before `request/opened`). The SSE parse, `wait_for_activity`
+liveness, and reconnect paths are otherwise unchanged. Unanswered pending requests and
+in-flight dispatch tasks are cancelled through the handler on connection cleanup so
+none are left pending silently.
 
 ### Ownership-Transfer Guard
 

@@ -207,17 +207,24 @@ timestamps as UTC, and returns `None` for blank or invalid values.
 
 ### Centralized Completion-vs-Cancel Precedence
 
-`resolve_completion_cancel_precedence(*, durable_report_completion, cancel_requested, ...)`
-is the **single** shared resolution rule for the durable-completion-wins-over-late-cancel
-policy:
+`resolve_completion_cancel_precedence(*, durable_report_completion, cancel_requested, ...,
+execution_exit_code=None, execution_terminal_status=None)` is the shared resolution rule
+for durable completion against an outstanding cancel request. It delegates to
+`resolve_execution_terminal_state` — there is one precedence authority:
 
-- If a durable report exists → `ExecutionTerminalOutcome(status="succeeded", exit_code=0)`.
-- Else if cancellation was requested → `ExecutionTerminalOutcome(status="cancelled", ...)`.
-- Else → `None` (no opinion — caller must fall back to its own outcome).
+- With execution evidence (the runner's `execution_exit_code` / `execution_terminal_status`),
+  a cancelled or abnormal (non-zero) exit outranks report text; a clean exit keeps a
+  genuine report.
+- With no execution evidence, a durable report is authoritative → `succeeded`, else a
+  cancel request → `cancelled` with the caller's `cancel_exit_code`.
+- Neither report nor cancel → `None` (caller falls back to its own outcome).
 
-This helper is consumed by spawn application services and by
-`state/reconciliation.py:completion_or_cancel_decision()`. They converge on the
-same precedence rule.
+This helper is consumed by `spawn_service._force_cancel_convergence` and by
+`state/reconciliation.py:completion_or_cancel_decision()`, so the runner, application
+service, and reaper converge on the same precedence. The runner path
+(`complete_execution`) folds the durable `cancel_intent` into its
+`ExecutionTerminalFacts` and calls `resolve_execution_terminal_state` directly instead
+of letting a second rule override the resolved result.
 
 ### Execution Terminal State Resolution
 

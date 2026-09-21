@@ -181,6 +181,10 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
     # own ClientTimeout tears down the stuck connection so the retry reconnects.
     _PROBE_TIMEOUT_SECONDS: ClassVar[float] = 4.0
     _STOP_GRACE_SECONDS: ClassVar[float] = 5.0
+    # A permission reply is a local HTTP POST. Bound the whole dispatch so a
+    # server that accepts the connection but never answers cannot leave a
+    # runtime request task wedged forever.
+    _REQUEST_DISPATCH_TIMEOUT_SECONDS: ClassVar[float] = 30.0
     _EVENT_ACCEPT_HEADER: ClassVar[dict[str, str]] = {"Accept": "text/event-stream"}
     # OpenCode surfaces tool-permission asks on the event stream. V1 names the
     # event ``permission.asked``; V2 names it ``permission.v2.asked``. Both carry
@@ -213,6 +217,10 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
         self._event_queue: asyncio.Queue[RawHarnessEvent] = asyncio.Queue()
         self._queue_waiter: asyncio.Task[RawHarnessEvent] | None = None
         self._pending_requests: dict[str, str] = {}
+        # Permission asks are dispatched off the SSE drain path: the reply POST
+        # can stall, and awaiting it inline would block every SSE read and the
+        # liveness bookkeeping that keeps the drain alive.
+        self._request_dispatch_tasks: set[asyncio.Task[None]] = set()
         self._liveness = BackendLivenessPolicy(
             timeout_seconds=lambda: self._LIVENESS_TIMEOUT_SECONDS,
             now=lambda: time.monotonic(),
@@ -343,7 +351,9 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
         decision: str,
         payload: dict[str, object] | None = None,
     ) -> None:
-        session_id = self._pending_requests.get(request_id, self._session_id or "")
+        if request_id not in self._pending_requests:
+            raise ValueError(f"No pending OpenCode permission request: {request_id}")
+        session_id = self._pending_requests[request_id] or (self._session_id or "")
         if not session_id:
             raise ValueError(f"No pending OpenCode permission request: {request_id}")
         response = _map_approval_decision(decision, payload)
@@ -363,11 +373,16 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
             resolution={"decision": decision, **(payload or {})},
         )
 
-    async def _dispatch_inbound_event(self, event: RawHarnessEvent) -> bool:
+    def _dispatch_inbound_event(self, event: RawHarnessEvent) -> bool:
         """Route an inbound permission ask to the request handler.
 
         Returns True when the event was consumed as a runtime request; the raw
         ask is not yielded (the handler re-surfaces it through the event queue).
+
+        The handler runs in a background task so a stalled reply POST cannot
+        block the SSE drain path. Liveness is registered synchronously, before
+        the task starts, so an in-flight request is visible even while the SSE
+        read keeps flowing.
         """
 
         if event.event_type not in self._PERMISSION_ASK_EVENT_TYPES:
@@ -387,8 +402,49 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
             method=event.event_type,
             payload=dict(event.payload),
         )
-        await self._request_handler.handle_request(self, harness_request)
+        self._schedule_request_dispatch(harness_request)
         return True
+
+    def _schedule_request_dispatch(self, request: HarnessRequest) -> None:
+        task = asyncio.ensure_future(self._run_request_dispatch(request))
+        self._request_dispatch_tasks.add(task)
+        task.add_done_callback(self._request_dispatch_tasks.discard)
+
+    async def _run_request_dispatch(self, request: HarnessRequest) -> None:
+        try:
+            async with asyncio.timeout(self._REQUEST_DISPATCH_TIMEOUT_SECONDS):
+                await self._request_handler.handle_request(self, request)
+        except TimeoutError:
+            logger.warning(
+                "OpenCode runtime request dispatch timed out: %s",
+                request.request_id,
+            )
+            await self._fail_request_dispatch(request, "request dispatch timed out")
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.warning(
+                "OpenCode runtime request dispatch failed: %s",
+                request.request_id,
+                exc_info=True,
+            )
+            await self._fail_request_dispatch(request, str(exc))
+
+    async def _fail_request_dispatch(self, request: HarnessRequest, error: str) -> None:
+        # The request is no longer genuinely pending, so clear its liveness key
+        # (otherwise an in-flight request would suppress stream-stall detection
+        # forever) before journaling the failure through the handler.
+        self._pending_requests.pop(request.request_id, None)
+        self._liveness.signal_request_resolved(_permission_liveness_key(request.request_id))
+        await self._notify_request_failed(request.request_id, error=error)
+
+    async def _cancel_request_dispatch_tasks(self) -> None:
+        tasks = list(self._request_dispatch_tasks)
+        if not tasks:
+            return
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
 
     async def _notify_request_resolved(
         self,
@@ -719,6 +775,18 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
             pending_read: asyncio.Task[bytes] | None = None
             try:
                 while self._state not in ("stopping", "stopped", "failed"):
+                    # Two consumers read the injected queue: the long-lived
+                    # ``_queue_waiter`` and the synchronous pop below. The waiter
+                    # may already hold the earliest event injected while the
+                    # previous SSE read was in flight, so drain it first to keep
+                    # injection FIFO order (opened before resolved).
+                    if self._queue_waiter is not None and self._queue_waiter.done():
+                        injected = self._queue_waiter.result()
+                        self._queue_waiter = None
+                        self._liveness.mark_activity()
+                        yield injected
+                        continue
+
                     # Injected policy events (e.g. request/opened surfaced by the
                     # request handler) take priority and are yielded even while the
                     # SSE read is idle. The read keeps its wait_for_activity
@@ -772,7 +840,7 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
                         if event is None:
                             continue
                         self._liveness.mark_activity()
-                        if await self._dispatch_inbound_event(event):
+                        if self._dispatch_inbound_event(event):
                             continue
                         if self._tracer is not None:
                             self._tracer.emit(
@@ -787,7 +855,7 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
                     event = self._event_from_json_line(buffer.strip(), raw_text=buffer.strip())
                     if event is not None:
                         self._liveness.mark_activity()
-                        if not await self._dispatch_inbound_event(event):
+                        if not self._dispatch_inbound_event(event):
                             yield event
                 final_sse_event = self._flush_sse_event(
                     sse_event_type=sse_event_type,
@@ -795,7 +863,7 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
                 )
                 if final_sse_event is not None:
                     self._liveness.mark_activity()
-                    if not await self._dispatch_inbound_event(final_sse_event):
+                    if not self._dispatch_inbound_event(final_sse_event):
                         yield final_sse_event
                 sse_event_type = None
             finally:
@@ -1494,6 +1562,7 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
         self._cancel_requested = False
         self._signal_in_flight = False
         try:
+            await self._cancel_request_dispatch_tasks()
             await self._clear_stale_pending_requests(reason="connection_stopped")
         except Exception:
             logger.warning("OpenCode pending permission cleanup failed", exc_info=True)
@@ -1635,15 +1704,17 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
             emitter.emit(phase)
 
 
-_PERMISSION_REQUEST_ID_KEYS: Final[tuple[str, ...]] = (
+_EXPLICIT_REQUEST_ID_KEYS: Final[tuple[str, ...]] = (
     "requestID",
     "requestId",
     "request_id",
     "permissionID",
     "permissionId",
     "permission_id",
-    "id",
 )
+# A bare ``id`` is the event id on some envelopes; it is the last resort, never
+# consulted while an explicit request-id key has a value.
+_GENERIC_REQUEST_ID_KEYS: Final[tuple[str, ...]] = ("id",)
 _SESSION_ID_KEYS: Final[tuple[str, ...]] = ("sessionID", "sessionId", "session_id")
 _APPROVAL_DECISION_TO_RESPONSE: Final[dict[str, str]] = {
     "reject": "reject",
@@ -1659,8 +1730,10 @@ def _extract_opencode_permission_context(
     """Read ``(session_id, request_id)`` from a permission ask payload.
 
     The fields may sit at the envelope top level (V2's flattened ``data``) or
-    under ``properties`` (V1). A ``per_…`` value is preferred over a generic
-    ``id`` so an event id is never mistaken for the reply target.
+    under ``properties`` (V1). A ``per_…`` value is preferred over any other id,
+    an explicit request-id key over a bare ``id``, and the bare ``id`` (an event
+    id on some envelopes) is only consulted when no other id is present, so an
+    event id is never mistaken for the reply target.
     """
 
     sources: list[Mapping[str, object]] = [payload]
@@ -1669,8 +1742,9 @@ def _extract_opencode_permission_context(
         sources.append(cast("Mapping[str, object]", properties))
 
     session_id: str | None = None
-    request_id: str | None = None
-    fallback_request_id: str | None = None
+    per_request_id: str | None = None
+    explicit_request_id: str | None = None
+    generic_request_id: str | None = None
     for source in sources:
         if session_id is None:
             for key in _SESSION_ID_KEYS:
@@ -1678,16 +1752,30 @@ def _extract_opencode_permission_context(
                 if isinstance(value, str) and value.strip():
                     session_id = value.strip()
                     break
-        for key in _PERMISSION_REQUEST_ID_KEYS:
-            value = source.get(key)
-            if not isinstance(value, str) or not value.strip():
+        for key in _EXPLICIT_REQUEST_ID_KEYS:
+            candidate = _nonempty_str(source.get(key))
+            if candidate is None:
                 continue
-            candidate = value.strip()
-            if candidate.startswith("per_") and request_id is None:
-                request_id = candidate
-            elif fallback_request_id is None:
-                fallback_request_id = candidate
-    return session_id, request_id or fallback_request_id
+            if candidate.startswith("per_") and per_request_id is None:
+                per_request_id = candidate
+            elif explicit_request_id is None:
+                explicit_request_id = candidate
+        for key in _GENERIC_REQUEST_ID_KEYS:
+            candidate = _nonempty_str(source.get(key))
+            if candidate is None:
+                continue
+            if candidate.startswith("per_") and per_request_id is None:
+                per_request_id = candidate
+            elif generic_request_id is None:
+                generic_request_id = candidate
+    return session_id, per_request_id or explicit_request_id or generic_request_id
+
+
+def _nonempty_str(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    stripped = value.strip()
+    return stripped or None
 
 
 def _permission_liveness_key(request_id: str) -> str:

@@ -508,6 +508,7 @@ async def test_respond_request_v1_maps_decision_to_response(
 ) -> None:
     connection = _TestableOpenCodeConnection([(204, None, "")])
     connection._session_id = "ses_1"
+    connection._pending_requests["per_1"] = "ses_1"
 
     await connection.respond_request("per_1", decision)
 

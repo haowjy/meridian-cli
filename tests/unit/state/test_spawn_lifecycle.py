@@ -231,7 +231,7 @@ def test_resolve_execution_terminal_outcome_projects_runner_facts() -> None:
     assert outcome.error == "terminated"
 
 
-def test_resolve_completion_cancel_precedence_uses_report_before_cancel() -> None:
+def test_resolve_completion_cancel_precedence_trusts_report_without_execution_evidence() -> None:
     report_outcome = resolve_completion_cancel_precedence(
         durable_report_completion=True,
         cancel_requested=True,
@@ -254,3 +254,30 @@ def test_resolve_completion_cancel_precedence_uses_report_before_cancel() -> Non
     assert cancel_outcome.status == "cancelled"
     assert cancel_outcome.exit_code == 143
     assert cancel_outcome.error == "terminated"
+
+
+def test_resolve_completion_cancel_precedence_abnormal_exit_outranks_report() -> None:
+    # With runner-exit evidence, the same rule as resolve_execution_terminal_state
+    # applies: a killed attempt is not a success just because prose was recovered.
+    outcome = resolve_completion_cancel_precedence(
+        durable_report_completion=True,
+        cancel_requested=True,
+        execution_exit_code=143,
+        execution_terminal_status="cancelled",
+    )
+
+    assert outcome is not None
+    assert outcome.status == "cancelled"
+    assert outcome.exit_code == 143
+
+
+def test_resolve_completion_cancel_precedence_clean_exit_keeps_report() -> None:
+    outcome = resolve_completion_cancel_precedence(
+        durable_report_completion=True,
+        cancel_requested=True,
+        execution_exit_code=0,
+    )
+
+    assert outcome is not None
+    assert outcome.status == "succeeded"
+    assert outcome.exit_code == 0

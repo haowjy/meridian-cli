@@ -35,9 +35,11 @@ Transports differ at the wire level:
   path (`_reconcile_on_stall`, bounded by `_STALL_RECONCILE_LIMIT`) through the same
   guarded helper, so the missed terminal is surfaced instead of a stall.
   OpenCode's `permission.asked` (V1) / `permission.v2.asked` (V2) stream events are
-  routed inline to the injected `ServerRequestHandler` as `HarnessRequest`s, not
-  yielded raw; the handler re-surfaces policy events through the connection's
-  injected-event queue, which `events()` multiplexes ahead of the idle SSE read.
+  routed to the injected `ServerRequestHandler` as `HarnessRequest`s, not
+  yielded raw; the handler runs in a bounded background task (a stalled reply must
+  not block the SSE drain) and re-surfaces policy events through the connection's
+  injected-event queue, which `events()` multiplexes ahead of the idle SSE read in
+  FIFO order.
 - **Cursor/Pi**: narrower spawned-session transports; no resident backend seam.
 
 ## Key Rules
