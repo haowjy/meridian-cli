@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.6.3] - 2026-09-21
+
 ### Fixed
 
 - `meridian opencode` (managed primary) no longer fails on exit with "startup attempt changed its native conversation identity". The OpenCode artifact fallback treated an event-envelope id (`payload.id`, `evt_…`) as a conversation id; it now only accepts explicit session keys and `ses_` values, and primary finalize keeps an already-known native identity (exact resume, managed-attach connection, or fork) instead of letting best-effort discovery overwrite it.
