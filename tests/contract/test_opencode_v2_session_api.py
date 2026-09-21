@@ -7,10 +7,13 @@ The V1 counterpart lives in ``test_opencode_session_api.py``. V2 resumes over th
 
 from __future__ import annotations
 
+import json
 from collections.abc import Mapping
 
 import pytest
 
+from meridian.lib.harness.connections.base import HarnessRequest
+from meridian.lib.harness.connections.opencode_http import _permission_liveness_key
 from meridian.lib.harness.connections.opencode_v2_http import OpenCodeV2Connection
 from meridian.lib.harness.projections.projection_errors import HarnessCapabilityMismatch
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
@@ -143,4 +146,60 @@ async def test_respond_request_v2_fails_loudly_on_html_fallback() -> None:
 
     with pytest.raises(RuntimeError, match="V2 permission reply failed"):
         await connection.respond_request("per_1", "accept")
+
+
+class _RecordingPermissionHandler:
+    no_runtime_hitl = False
+
+    def __init__(self) -> None:
+        self.resolutions: list[tuple[str, dict[str, object] | None]] = []
+
+    async def handle_request(
+        self,
+        connection: OpenCodeV2Connection,
+        request: HarnessRequest,
+    ) -> None:
+        _ = connection, request
+
+    async def on_request_resolved(
+        self,
+        request_id: str,
+        *,
+        resolution: dict[str, object] | None = None,
+    ) -> None:
+        self.resolutions.append((request_id, resolution))
+
+
+@pytest.mark.asyncio
+async def test_v2_permission_reply_event_resolves_pending_request() -> None:
+    connection = _TestableOpenCodeV2Connection()
+    handler = _RecordingPermissionHandler()
+    connection._request_handler = handler
+    connection._session_id = "ses_v2"
+    connection._pending_requests["per_1"] = "ses_v2"
+    connection._liveness.signal_request_in_flight(_permission_liveness_key("per_1"))
+
+    event = connection._event_from_json_line(
+        json.dumps(
+            {
+                "type": "permission.v2.replied",
+                "data": {
+                    "properties": {
+                        "sessionID": "ses_v2",
+                        "requestID": "per_1",
+                        "reply": "always",
+                    }
+                },
+            }
+        ),
+        raw_text="permission.v2.replied",
+    )
+    assert event is not None
+
+    consumed = await connection._dispatch_inbound_event(event)
+
+    assert consumed is True
+    assert connection._pending_requests == {}
+    assert _permission_liveness_key("per_1") not in connection._liveness._active_requests
+    assert handler.resolutions == [("per_1", {"decision": "accept", "reply": "always"})]
 

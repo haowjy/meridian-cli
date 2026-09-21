@@ -39,7 +39,10 @@ Transports differ at the wire level:
   yielded raw; the handler runs in a bounded background task (a stalled reply must
   not block the SSE drain) and re-surfaces policy events through the connection's
   injected-event queue, which `events()` multiplexes ahead of the idle SSE read in
-  FIFO order.
+  FIFO order. Reply events (`permission.replied` / `permission.v2.replied`) are also
+  observed: a reply for a still-pending request clears it and journals
+  `request/resolved` (releasing the liveness key), while the stream echo of a reply
+  Meridian already made passes through.
 - **Cursor/Pi**: narrower spawned-session transports; no resident backend seam.
 
 ## Key Rules

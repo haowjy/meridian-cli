@@ -193,6 +193,13 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
     _PERMISSION_ASK_EVENT_TYPES: ClassVar[frozenset[str]] = frozenset(
         {"permission.asked", "permission.v2.asked"}
     )
+    # A native reply is echoed on the stream when the human answers the ask in
+    # the TUI (or when Meridian's own reply POST is confirmed). Meridian observes
+    # it so a natively-answered ask is marked resolved and its liveness key is
+    # cleared instead of pinning stream-stall detection forever.
+    _PERMISSION_REPLY_EVENT_TYPES: ClassVar[frozenset[str]] = frozenset(
+        {"permission.replied", "permission.v2.replied"}
+    )
 
     def __init__(self, request_handler: ServerRequestHandler | None = None) -> None:
         self._state: ConnectionState = "created"
@@ -373,37 +380,60 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
             resolution={"decision": decision, **(payload or {})},
         )
 
-    def _dispatch_inbound_event(self, event: RawHarnessEvent) -> bool:
-        """Route an inbound permission ask to the request handler.
+    async def _dispatch_inbound_event(self, event: RawHarnessEvent) -> bool:
+        """Route an inbound permission ask or reply to the request handler.
 
         Returns True when the event was consumed as a runtime request; the raw
-        ask is not yielded (the handler re-surfaces it through the event queue).
+        ask/reply is not yielded (the handler re-surfaces policy events through
+        the event queue).
 
-        The handler runs in a background task so a stalled reply POST cannot
+        The ask handler runs in a background task so a stalled reply POST cannot
         block the SSE drain path. Liveness is registered synchronously, before
         the task starts, so an in-flight request is visible even while the SSE
-        read keeps flowing.
+        read keeps flowing. A native reply is reconciled inline: its journal
+        write is local, so it cannot stall the drain.
         """
 
-        if event.event_type not in self._PERMISSION_ASK_EVENT_TYPES:
-            return False
-        session_id, request_id = _extract_opencode_permission_context(event.payload)
-        if request_id is None:
-            logger.warning(
-                "Ignoring OpenCode permission ask without a request id: %s",
-                event.event_type,
+        if event.event_type in self._PERMISSION_ASK_EVENT_TYPES:
+            session_id, request_id = _extract_opencode_permission_context(event.payload)
+            if request_id is None:
+                logger.warning(
+                    "Ignoring OpenCode permission ask without a request id: %s",
+                    event.event_type,
+                )
+                return False
+            self._pending_requests[request_id] = session_id or (self._session_id or "")
+            self._liveness.signal_request_in_flight(_permission_liveness_key(request_id))
+            harness_request = HarnessRequest(
+                request_id=request_id,
+                request_type="approval",
+                method=event.event_type,
+                payload=dict(event.payload),
             )
-            return False
-        self._pending_requests[request_id] = session_id or (self._session_id or "")
-        self._liveness.signal_request_in_flight(_permission_liveness_key(request_id))
-        harness_request = HarnessRequest(
-            request_id=request_id,
-            request_type="approval",
-            method=event.event_type,
-            payload=dict(event.payload),
-        )
-        self._schedule_request_dispatch(harness_request)
-        return True
+            self._schedule_request_dispatch(harness_request)
+            return True
+
+        if event.event_type in self._PERMISSION_REPLY_EVENT_TYPES:
+            _, request_id = _extract_opencode_permission_context(event.payload)
+            if request_id is None:
+                return False
+            if request_id not in self._pending_requests:
+                # Stream echo of a reply Meridian itself made: ``respond_request``
+                # already popped the pending entry and journaled the resolution.
+                return False
+            self._pending_requests.pop(request_id, None)
+            self._liveness.signal_request_resolved(_permission_liveness_key(request_id))
+            reply = _extract_opencode_permission_reply(event.payload)
+            await self._notify_request_resolved(
+                request_id,
+                resolution={
+                    "decision": _PERMISSION_REPLY_TO_DECISION.get(reply or "", "reject"),
+                    "reply": reply,
+                },
+            )
+            return True
+
+        return False
 
     def _schedule_request_dispatch(self, request: HarnessRequest) -> None:
         task = asyncio.ensure_future(self._run_request_dispatch(request))
@@ -840,7 +870,7 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
                         if event is None:
                             continue
                         self._liveness.mark_activity()
-                        if self._dispatch_inbound_event(event):
+                        if await self._dispatch_inbound_event(event):
                             continue
                         if self._tracer is not None:
                             self._tracer.emit(
@@ -855,7 +885,7 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
                     event = self._event_from_json_line(buffer.strip(), raw_text=buffer.strip())
                     if event is not None:
                         self._liveness.mark_activity()
-                        if not self._dispatch_inbound_event(event):
+                        if not await self._dispatch_inbound_event(event):
                             yield event
                 final_sse_event = self._flush_sse_event(
                     sse_event_type=sse_event_type,
@@ -863,7 +893,7 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
                 )
                 if final_sse_event is not None:
                     self._liveness.mark_activity()
-                    if not self._dispatch_inbound_event(final_sse_event):
+                    if not await self._dispatch_inbound_event(final_sse_event):
                         yield final_sse_event
                 sse_event_type = None
             finally:
@@ -1722,6 +1752,31 @@ _APPROVAL_DECISION_TO_RESPONSE: Final[dict[str, str]] = {
     "accept": "once",
     "once": "once",
 }
+# Map a native ``reply`` (once/always/reject) into Meridian's decision domain so
+# the broker journals a value consistent with ``respond_request`` callers. Both
+# allow-shaped replies collapse to ``accept``; the raw reply is recorded
+# alongside it. An unknown or missing reply denies, the safe default.
+_PERMISSION_REPLY_TO_DECISION: Final[dict[str, str]] = {
+    "reject": "reject",
+    "once": "accept",
+    "always": "accept",
+}
+
+
+def _permission_payload_sources(
+    payload: Mapping[str, object],
+) -> list[Mapping[str, object]]:
+    """Return the envelope mappings a permission field may live in.
+
+    Fields may sit at the envelope top level (V2's flattened ``data``) or under
+    ``properties`` (V1).
+    """
+
+    sources: list[Mapping[str, object]] = [payload]
+    properties = payload.get("properties")
+    if isinstance(properties, Mapping):
+        sources.append(cast("Mapping[str, object]", properties))
+    return sources
 
 
 def _extract_opencode_permission_context(
@@ -1736,10 +1791,7 @@ def _extract_opencode_permission_context(
     event id is never mistaken for the reply target.
     """
 
-    sources: list[Mapping[str, object]] = [payload]
-    properties = payload.get("properties")
-    if isinstance(properties, Mapping):
-        sources.append(cast("Mapping[str, object]", properties))
+    sources = _permission_payload_sources(payload)
 
     session_id: str | None = None
     per_request_id: str | None = None
@@ -1769,6 +1821,16 @@ def _extract_opencode_permission_context(
             elif generic_request_id is None:
                 generic_request_id = candidate
     return session_id, per_request_id or explicit_request_id or generic_request_id
+
+
+def _extract_opencode_permission_reply(payload: Mapping[str, object]) -> str | None:
+    """Read the native ``reply`` (once/always/reject) from a permission reply."""
+
+    for source in _permission_payload_sources(payload):
+        reply = _nonempty_str(source.get("reply"))
+        if reply is not None:
+            return reply
+    return None
 
 
 def _nonempty_str(value: object) -> str | None:

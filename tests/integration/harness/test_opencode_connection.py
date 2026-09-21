@@ -781,6 +781,7 @@ class _RecordingRequestHandler:
 
     def __init__(self) -> None:
         self.requests: list[HarnessRequest] = []
+        self.resolutions: list[tuple[str, dict[str, object] | None]] = []
 
     async def handle_request(
         self,
@@ -789,6 +790,14 @@ class _RecordingRequestHandler:
     ) -> None:
         _ = connection
         self.requests.append(request)
+
+    async def on_request_resolved(
+        self,
+        request_id: str,
+        *,
+        resolution: dict[str, object] | None = None,
+    ) -> None:
+        self.resolutions.append((request_id, resolution))
 
 
 @pytest.mark.asyncio
@@ -855,6 +864,68 @@ async def test_opencode_permission_ask_is_routed_to_handler_not_yielded(
     assert handler.requests[0].method == "permission.asked"
     assert all(event.event_type != "permission.asked" for event in events)
     assert connection._pending_requests == {"per_1": "ses_perm"}
+
+
+@pytest.mark.asyncio
+async def test_opencode_native_permission_reply_resolves_pending_request(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A human answering in the native TUI emits ``permission.replied``; the
+    # connection must observe it, journal the resolution, and clear the
+    # liveness key that otherwise suppresses stream-stall detection forever.
+    monkeypatch.setattr(OpenCodeConnection, "_EVENT_RETRY_DELAY_SECONDS", 0.0)
+    process = FakeOpenCodeProcess()
+    ask = (
+        b'{"type":"permission.asked","properties":'
+        b'{"id":"per_1","sessionID":"ses_perm","permission":"external_directory"}}\n'
+    )
+    reply = (
+        b'{"type":"permission.replied","properties":'
+        b'{"id":"evt_reply","requestID":"per_1","sessionID":"ses_perm","reply":"once"}}\n'
+    )
+    handler = _RecordingRequestHandler()
+    connection = _LivenessProbeOpenCodeConnection(
+        responses=[_ScriptedSseResponse([ask, reply], process, return_code=0)],
+        request_handler=handler,
+    )
+    connection._process = process
+    connection._session_id = "ses_perm"
+
+    events = [event async for event in connection.events()]
+
+    assert connection._pending_requests == {}
+    assert (
+        opencode_http._permission_liveness_key("per_1")
+        not in connection._liveness._active_requests
+    )
+    assert handler.resolutions == [("per_1", {"decision": "accept", "reply": "once"})]
+    assert all(event.event_type != "permission.replied" for event in events)
+
+
+@pytest.mark.asyncio
+async def test_opencode_permission_reply_for_unknown_request_passes_through(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The stream echo of a reply Meridian itself made must not be consumed: its
+    # pending entry is already gone, so there is nothing to resolve.
+    monkeypatch.setattr(OpenCodeConnection, "_EVENT_RETRY_DELAY_SECONDS", 0.0)
+    process = FakeOpenCodeProcess()
+    reply = (
+        b'{"type":"permission.replied","properties":'
+        b'{"id":"evt_reply","requestID":"per_unknown","sessionID":"ses_perm","reply":"reject"}}\n'
+    )
+    handler = _RecordingRequestHandler()
+    connection = _LivenessProbeOpenCodeConnection(
+        responses=[_ScriptedSseResponse([reply], process, return_code=0)],
+        request_handler=handler,
+    )
+    connection._process = process
+    connection._session_id = "ses_perm"
+
+    events = [event async for event in connection.events()]
+
+    assert handler.resolutions == []
+    assert any(event.event_type == "permission.replied" for event in events)
 
 
 class _StalledReplyRequestHandler:
