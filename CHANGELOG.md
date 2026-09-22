@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.6.5] - 2026-09-22
+
 ### Fixed
 
 - Pi descendant completion no longer performs blocking global reconciliation for
