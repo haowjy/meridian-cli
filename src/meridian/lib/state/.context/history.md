@@ -48,6 +48,15 @@ roots without index access, shares one cold budget across roots, and starts its
 ordinary deadline after actual initialization; an all-warm pass never resets it.
 Status and cache counts inspect only; peeks keep their five-millisecond cache path.
 
+`descendant_projection()` uses the ordinary indexed-query path: one bounded catch-up,
+then one recursive parent-index query. Traversal retains archived rows as ancestry so a
+loose grandchild remains discoverable through an archived intermediate, excludes the
+root, and terminates parent-edge cycles by path. The result is discovery only. Callers
+must authoritatively read every selected loose row before using lifecycle state; archived
+rows are traversal edges, not projected lifecycle authority. A cold initialization or
+rebuild is still corpus-sized even though the warm query and authoritative rereads are
+subtree-sized.
+
 ## Identity and authority
 
 History UUID identifies one transcript, not a reusable cN alias. Sessions retain

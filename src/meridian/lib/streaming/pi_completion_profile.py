@@ -114,6 +114,7 @@ class PiCompletionProfile:
         self.done_nudge_idle_delay_seconds = PI_DONE_NUDGE_IDLE_DELAY_SECONDS
         self.done_nudge_interval_seconds = COMPLETION_NUDGE_INTERVAL_SECONDS
         self.next_done_nudge_monotonic: float | None = None
+        self._done_nudge_eligible_since: float | None = None
         self._done_requested = False
         self._awaiting_readable_evidence = False
         self._cleanup: PiCompletionCleanupPort | None = None
@@ -293,13 +294,24 @@ class PiCompletionProfile:
         if outcome.status != "succeeded":
             return
         self.last_successful_terminal = outcome
+        if (
+            self.quiescence_tracker.parent_idle
+            and self._done_nudge_eligible_since is None
+        ):
+            self._done_nudge_eligible_since = self._clock()
         self._refresh_done_nudge_state()
         self.emit_waiting_phases_if_needed()
 
     def after_observed_event(self, transition: str | None) -> None:
         if transition == "turn_active":
             self._clear_child_wave_timer()
+            self._done_nudge_eligible_since = None
         elif transition == "idle":
+            if (
+                self.last_successful_terminal is not None
+                and self._done_nudge_eligible_since is None
+            ):
+                self._done_nudge_eligible_since = self._clock()
             self._update_idle_waiting_state()
         if not self.evidence.has_pending_children():
             self._clear_child_wave_timer()
@@ -310,6 +322,15 @@ class PiCompletionProfile:
         if not self.quiescence_enabled or not self.quiescence_tracker.parent_idle:
             return
         self._update_idle_waiting_state()
+
+    def after_descendant_assessment(self, assessment: WorkAssessment) -> None:
+        """Apply a committed shared assessment without requiring another event."""
+        del assessment
+        if (
+            self.quiescence_enabled
+            and self.quiescence_tracker.parent_idle
+        ):
+            self._update_idle_waiting_state()
 
     def pending_children_at_exit(self) -> bool:
         if not self.quiescence_enabled:
@@ -497,12 +518,19 @@ class PiCompletionProfile:
         outstanding = self.classify_outstanding_work()
         if (
             outstanding.spawn_children
-            or not outstanding.non_spawn_processes
         ):
             self._clear_done_nudge_timer()
             return
+        if not outstanding.non_spawn_processes:
+            self._clear_done_nudge_timer()
+            self._done_nudge_eligible_since = None
+            return
         if self.next_done_nudge_monotonic is None:
-            self.next_done_nudge_monotonic = self._clock() + max(
+            eligible_since = self._done_nudge_eligible_since
+            if eligible_since is None:
+                eligible_since = self._clock()
+                self._done_nudge_eligible_since = eligible_since
+            self.next_done_nudge_monotonic = eligible_since + max(
                 0.0, self.done_nudge_idle_delay_seconds
             )
 

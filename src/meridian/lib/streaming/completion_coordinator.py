@@ -70,6 +70,7 @@ class CompletionCoordinator:
         self._terminal_published = False
         self._pending_evidence_activity: EvidenceActivity | None = None
         self._pending_evidence_failure: EvidenceFailure | None = None
+        self._success_validation: int | None = None
 
     @property
     def state(self) -> CompletionState:
@@ -90,6 +91,21 @@ class CompletionCoordinator:
     def pending_outcome(self) -> TerminalEventOutcome | None:
         return self._candidate
 
+    def should_defer_close(self) -> bool:
+        """Keep a closed stream alive while success still needs authorization."""
+        close_outcome = self._profile.close_outcome(self.state, False)
+        return self._candidate is not None and (
+            (
+                self._phase == "stabilizing"
+                and close_outcome is not None
+                and close_outcome.status == "succeeded"
+            )
+            or
+            self._success_validation is not None
+            or self._assessment is None
+            or self._assessment.disposition == "unknown"
+        )
+
     @property
     def cleanup_report(self) -> CleanupReport | None:
         return self._cleanup_report
@@ -97,6 +113,7 @@ class CompletionCoordinator:
     def note_activity_transition(self, transition: str | None) -> None:
         if transition == "turn_active":
             self._active_turn = True
+            self._success_validation = None
 
     async def start(self) -> None:
         await self._evidence.start()
@@ -146,6 +163,8 @@ class CompletionCoordinator:
             self._phase = "waiting"
             self._stabilization_at = None
             self._stabilization_generation = None
+        if decision.activity is not None:
+            self._success_validation = None
         if decision.failure is not None:
             return self._evaluate_post_persist_failure()
         return DrainLoopDecision()
@@ -353,6 +372,12 @@ class CompletionCoordinator:
         if decision.action in {"complete", "fail"}:
             outcome = decision.outcome
             assert outcome is not None
+            if outcome.status == "succeeded":
+                if self._success_validation is None:
+                    self._success_validation = self._evidence.request_validation()
+                    return DrainLoopDecision()
+                if not self._evidence.validation_complete(self._success_validation):
+                    return DrainLoopDecision()
             if outcome.status == "succeeded" and not fresh_assessment:
                 raise RuntimeError("successful completion requires a fresh evidence assessment")
             return self._publish(outcome)
@@ -383,6 +408,8 @@ class CompletionCoordinator:
             return DrainLoopDecision()
         if decision.action == "abandon_candidate":
             self._candidate = None
+        if decision.action not in {"complete", "hold_stabilization"}:
+            self._success_validation = None
         if decision.action == "stabilize":
             if decision.candidate is not None:
                 self._candidate = decision.candidate
@@ -442,11 +469,15 @@ class CompletionCoordinator:
         if self._terminal_published:
             return DrainLoopDecision()
         self._terminal_published = True
+        self._success_validation = None
         self._phase = "finalized"
         self._candidate = None
         self._deadline_at = None
         self._stabilization_at = None
         self._stabilization_generation = None
+        accepted = getattr(self._profile, "after_terminal_accepted", None)
+        if accepted is not None:
+            accepted(outcome)
         return DrainLoopDecision(recorded_outcome=outcome)
 
     def _reset_cycle(self) -> None:
@@ -463,6 +494,7 @@ class CompletionCoordinator:
         self._post_publication_cleanup = None
         self._cleanup_report = None
         self._terminal_published = False
+        self._success_validation = None
         self._clear_pending_evidence_decision()
 
     def _profile_timer_due(self, now: float) -> bool:

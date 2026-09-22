@@ -150,7 +150,7 @@ async def test_opencode_terminal_success_without_live_children_finalizes_immedia
         outcome = await manager.wait_for_completion(spawn_id)
         assert outcome is not None
         assert outcome.status == "succeeded"
-        assert True not in connection.fake_resident_backend.awaiting_done_values
+        assert connection.fake_resident_backend.awaiting_done_values[-1] is False
     finally:
         await manager.stop_spawn(spawn_id)
 
@@ -330,7 +330,7 @@ async def test_resident_reconciles_finalizing_child_with_durable_report_as_done(
         outcome = await manager.wait_for_completion(spawn_id)
         assert outcome is not None
         assert outcome.status == "succeeded"
-        assert True not in connection.fake_resident_backend.awaiting_done_values
+        assert connection.fake_resident_backend.awaiting_done_values[-1] is False
     finally:
         await manager.stop_spawn(spawn_id)
 
@@ -379,7 +379,7 @@ async def test_done_signal_at_terminalresident_event_wins_over_outstanding_child
         outcome = await manager.wait_for_completion(spawn_id)
         assert outcome is not None
         assert outcome.status == "succeeded"
-        assert True not in connection.fake_resident_backend.awaiting_done_values
+        assert connection.fake_resident_backend.awaiting_done_values[-1] is False
     finally:
         await manager.stop_spawn(spawn_id)
 

@@ -147,8 +147,13 @@ orphaned; deletion, normal completion, cancellation, and shutdown stop it intent
 Resident and Pi completion use the shared reconciled transitive spawn-tree assessment as
 their sole persisted-descendant authority. Pi's disk watcher observes only private bash
 and notification files; incomplete or wrong-parent spawn directories are not descendant
-evidence. Meridian's own spawn rows publish atomically, and the reconciled tree polls
-valid parent-linked rows while a successful terminal candidate is pending.
+evidence. Accessors read one immutable cached assessment; a single-flight worker catches
+up the history index, selects the transitive subtree (including archived ancestry), and
+authoritatively rereads selected loose rows. Refresh completion uses the auxiliary-wake
+path. Every successful publication attempt requires a refresh that started after that
+attempt. A closed event stream disables further event reads but remains in the same
+auxiliary-wake/timeout arbitration until that attempt is accepted or rejected. This
+freshness check is not an atomic child-admission barrier.
 
 ## Depth
 

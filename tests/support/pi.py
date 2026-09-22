@@ -252,6 +252,11 @@ class PiDrainScenario:
         if mark_idle or start_micro_drain:
             await scenario.idle()
         if start_micro_drain:
+            for _ in range(3):
+                if scenario.coordinator.is_quiescent():
+                    break
+                await scenario.coordinator.wait_for_aux_wake()
+                await scenario.coordinator.handle_aux_wake()
             await scenario.terminal()
         return scenario
 

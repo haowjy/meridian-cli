@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import threading
 import time
 from dataclasses import fields
 from pathlib import Path
@@ -22,6 +24,21 @@ from meridian.lib.streaming.drain_coordinator import DrainExitDecision, DrainLoo
 from meridian.lib.streaming.drain_policy import DrainAction, PiRpcQuiescenceDrainPolicy
 from meridian.lib.streaming.pi_drain import PiDrainCoordinator
 from tests.support.pi import PiDrainScenario, pi_event, start_row, write_json
+
+
+async def _after_refresh(started: PiDrainScenario):  # type: ignore[no-untyped-def]
+    decision = None
+    for _ in range(5):
+        await asyncio.wait_for(started.coordinator.wait_for_aux_wake(), timeout=5)
+        decision = await started.coordinator.handle_aux_wake()
+        if decision.recorded_outcome is not None:
+            return decision
+        started.clock.advance(0.05)
+        decision = await started.coordinator.handle_timeout()
+        if decision.recorded_outcome is not None:
+            return decision
+    assert decision is not None
+    return decision
 
 _SPAWN_ID = SpawnId("p1")
 _SUCCESS = TerminalEventOutcome(status="succeeded", exit_code=0)
@@ -130,7 +147,8 @@ async def test_real_pi_tracked_child_followup_has_no_canonical_lifecycle_depende
         )
         assert followup.recorded_outcome is None
 
-        completed = await coordinator.handle_timeout()
+        await coordinator.handle_timeout()
+        completed = await _after_refresh(started)
 
         assert completed.recorded_outcome == _SUCCESS
         assert not any(
@@ -158,6 +176,43 @@ async def test_real_pi_tracked_child_followup_has_no_canonical_lifecycle_depende
 
 
 @pytest.mark.asyncio
+async def test_pi_eof_during_stabilization_cannot_bypass_child_validation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    started = await _start_coordinator(tmp_path, monkeypatch)
+    coordinator = started.coordinator
+    try:
+        await coordinator.wait_for_aux_wake()
+        await coordinator.handle_aux_wake()
+        await coordinator.observe_event(_AGENT_END, "idle")
+        terminal = await coordinator.handle_terminal_event(
+            _AGENT_END,
+            _SUCCESS,
+            _TERMINATE,
+        )
+        _start_row(tmp_path, "p-after-candidate", parent_id=str(_SPAWN_ID))
+
+        assert terminal.recorded_outcome is None
+        assert coordinator.handle_close(intentional_stop=False) == _SUCCESS
+        assert coordinator.should_defer_close() is True
+
+        started.clock.advance(0.05)
+        requested = await coordinator.handle_timeout()
+        assert requested.recorded_outcome is None
+        await coordinator.wait_for_aux_wake()
+        refreshed = await coordinator.handle_aux_wake()
+        started.clock.advance(0.001)
+        rejected = await coordinator.handle_timeout()
+
+        assert refreshed.recorded_outcome is None
+        assert rejected.recorded_outcome is None
+        assert coordinator.classify_outstanding_work().spawn_children is True
+    finally:
+        await coordinator.stop()
+
+
+@pytest.mark.asyncio
 async def test_done_fails_closed_when_pi_descendant_evidence_stays_unreadable(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -173,12 +228,12 @@ async def test_done_fails_closed_when_pi_descendant_evidence_stays_unreadable(
         5.0,
     )
 
-    def _fail_list_spawns(_runtime_root: Path) -> object:
+    def _fail_list_spawns(_index: object, _root_spawn_id: str) -> object:
         raise OSError("tree store unavailable")
 
     monkeypatch.setattr(
-        descendant_evidence_module.spawn_store,
-        "list_spawns",
+        descendant_evidence_module.HistoryIndex,
+        "descendant_projection",
         _fail_list_spawns,
     )
     try:
@@ -222,16 +277,16 @@ async def test_done_completes_when_pi_descendant_evidence_recovers(
     )
     coordinator = started.coordinator
     store_available = False
-    list_spawns = descendant_evidence_module.spawn_store.list_spawns
+    projection = descendant_evidence_module.HistoryIndex.descendant_projection
 
-    def _sometimes_list_spawns(runtime_root: Path) -> object:
+    def _sometimes_list_spawns(index: object, root_spawn_id: str) -> object:
         if not store_available:
             raise OSError("tree store unavailable")
-        return list_spawns(runtime_root)
+        return projection(index, root_spawn_id)  # type: ignore[arg-type]
 
     monkeypatch.setattr(
-        descendant_evidence_module.spawn_store,
-        "list_spawns",
+        descendant_evidence_module.HistoryIndex,
+        "descendant_projection",
         _sometimes_list_spawns,
     )
     try:
@@ -242,7 +297,8 @@ async def test_done_completes_when_pi_descendant_evidence_recovers(
 
         store_available = True
         started.clock.advance(0.25)
-        recovered = await coordinator.handle_timeout()
+        await coordinator.handle_timeout()
+        recovered = await _after_refresh(started)
 
         assert waiting.recorded_outcome is None
         assert recovered.recorded_outcome == _SUCCESS
@@ -305,7 +361,6 @@ async def test_child_wave_timeout_without_cleanup_callback_preserves_outcome(
     try:
         await coordinator.observe_event(_AGENT_END, "idle")
         started.clock.advance(5.0)
-
         decision = await coordinator.handle_timeout()
 
         _assert_failed(decision, "pi_child_wave_timeout")
@@ -334,6 +389,11 @@ async def test_completion_nudge_due_is_advisory_and_continues(
             _SUCCESS
         )
         terminal = await coordinator.handle_terminal_event(_AGENT_END, _SUCCESS, action)
+        for _ in range(3):
+            await coordinator.wait_for_aux_wake()
+            await coordinator.handle_aux_wake()
+            if not coordinator.classify_outstanding_work().spawn_children:
+                break
         started.clock.advance(5.0)
 
         decision = await coordinator.handle_timeout()
@@ -343,6 +403,54 @@ async def test_completion_nudge_due_is_advisory_and_continues(
         assert started.nudges == [PI_COMPLETION_NUDGE_MESSAGE]
         assert started.cleanups == []
     finally:
+        await coordinator.stop()
+
+
+@pytest.mark.asyncio
+async def test_initial_descendant_refresh_latency_does_not_shift_pi_nudge_anchor(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    entered = threading.Event()
+    release = threading.Event()
+    projection = descendant_evidence_module.HistoryIndex.descendant_projection
+
+    def held_projection(index: object, root_spawn_id: str) -> object:
+        entered.set()
+        release.wait(timeout=5)
+        return projection(index, root_spawn_id)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(
+        descendant_evidence_module.HistoryIndex,
+        "descendant_projection",
+        held_projection,
+    )
+    started = await _start_coordinator(tmp_path, monkeypatch, nudge_idle_seconds=5.0)
+    coordinator = started.coordinator
+    _write_running_bash(tmp_path, _SPAWN_ID)
+    try:
+        assert await asyncio.to_thread(entered.wait, 2)
+        await coordinator.observe_event(_AGENT_END, "idle")
+        terminal_task = asyncio.create_task(
+            coordinator.handle_terminal_event(_AGENT_END, _SUCCESS, _TERMINATE)
+        )
+        await asyncio.sleep(0)
+        started.clock.advance(10.0)
+        release.set()
+        terminal = await asyncio.wait_for(terminal_task, timeout=2)
+        assert terminal.recorded_outcome is None
+        for _ in range(2):
+            try:
+                await asyncio.wait_for(coordinator.wait_for_aux_wake(), timeout=2)
+            except TimeoutError:
+                break
+            await coordinator.handle_aux_wake()
+
+        decision = await coordinator.handle_timeout()
+        assert decision.recorded_outcome is None
+        assert started.nudges == [PI_COMPLETION_NUDGE_MESSAGE]
+    finally:
+        release.set()
         await coordinator.stop()
 
 
