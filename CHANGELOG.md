@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.6.6] - 2026-09-22
+
 ### Changed
 
 - Bump pinned `mars-agents` to 0.14.2 for the latest sync ownership fixes.
