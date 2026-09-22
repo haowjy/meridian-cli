@@ -20,9 +20,10 @@ the subagent should know its job by line 3.
 Compose the lane at spawn time:
 - `--skills skill1,skill2` attaches focus skills to any agent — prefer a
   near-fit agent plus an attached skill over a generic agent.
-- `-m <model>` overrides the profile model — for deliberate fan-out (the
-  same task across models) or when the lane needs a capability the
-  default lacks; otherwise prefer the profile default.
+- With `-a <agent>`, omit `-m` and use the profile's model and fallbacks.
+  Override only for an explicit caller model request or a requirement those
+  choices cannot meet. Explain any override you choose before spawning.
+  A failed run alone does not justify a more expensive model.
 - `--from <spawn-or-chat id>` hands the spawn a prior conversation's
   context — reach for it when the reasoning matters, not just the
   artifacts (knowledge capture, reviewing a decision trail).
