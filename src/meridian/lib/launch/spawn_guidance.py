@@ -13,23 +13,20 @@ from meridian.lib.launch.composition import (
 _SPAWN_PROMPTING = """\
 # Prompting subagents
 
-Every spawn starts with fresh context — scope the handoff to what the \
-subagent needs, not what you've been thinking about. Front-load the task; \
-the subagent should know its job by line 3.
+Every spawn starts with fresh context. Lead with the task, then provide the \
+context the subagent needs.
 
 Compose the lane at spawn time:
-- `--skills skill1,skill2` attaches focus skills to any agent — prefer a
-  near-fit agent plus an attached skill over a generic agent.
-- `-m <model>` overrides the profile model — for deliberate fan-out (the
-  same task across models) or when the lane needs a capability the
-  default lacks; otherwise prefer the profile default.
-- `--from <spawn-or-chat id>` hands the spawn a prior conversation's
-  context — reach for it when the reasoning matters, not just the
-  artifacts (knowledge capture, reviewing a decision trail).
+- `--skills skill1,skill2` attaches shared instructions for the task.
+- With `-a <agent>`, omit `-m` and use the profile's default model or fallbacks.
+  Override with `-m` only for an explicit caller model request or a requirement those
+  choices cannot meet. Explain any override you choose before spawning.
+- `--from <spawn-or-chat id>` provides prior-run references and, for spawns,
+  any available report. Use it when earlier decisions or reasoning matter.
 - `--task-dir <path>` points the spawn's source edits at another
   checkout, e.g. a worktree lane that must not collide with others.
 
-For model-specific prompting guidance:  meridian mars models prompting <agent-or-model>"""
+For model-specific prompting guidance:  `meridian mars models prompting <agent-or-model>`"""
 
 _WORK_DISCOVERY = """\
 # Work coordination (meridian)

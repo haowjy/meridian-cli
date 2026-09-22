@@ -13,6 +13,10 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   EOF, requires a request-sequenced refresh while EOF continues to honor refresh,
   poll, stabilization, and completion-deadline wakes.
 
+### Changed
+
+- Shared spawn guidance: use profile models and fallbacks; model overrides require an explicit request or unmet task requirement, not a failed run.
+
 ## [0.6.4] - 2026-09-21
 
 ## [0.6.3] - 2026-09-21
