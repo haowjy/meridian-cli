@@ -2,3 +2,9 @@
   runners: spawn-dir GC doesn't know the external endpoint. Tracked in
   GitHub issue #445 (derive control_socket_path during reaper
   reconciliation / spawn-dir pruning and unlink for terminal spawns).
+- `completion_coordinator.py`, `descendant_evidence.py`, and spawn admission:
+  characterize the remaining race between a qualifying final descendant snapshot and
+  terminal lifecycle publication. Decide whether parent-closing admission needs a
+  protocol of its own; request-sequenced refresh narrows stale evidence but is not an
+  atomic admission barrier. Do not add a ledger, counter, or notification bus without
+  establishing that stronger requirement.

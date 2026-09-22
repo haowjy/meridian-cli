@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from collections.abc import Awaitable, Callable
@@ -20,7 +21,10 @@ from meridian.lib.streaming.completion_contracts import (
     WorkAssessment,
 )
 from meridian.lib.streaming.completion_coordinator import CompletionCoordinator
-from meridian.lib.streaming.descendant_evidence import ReconciledDescendantEvidence
+from meridian.lib.streaming.descendant_evidence import (
+    DescendantRefreshOwner,
+    ReconciledDescendantEvidence,
+)
 from meridian.lib.streaming.drain_coordinator import (
     DrainExitDecision,
     DrainLoopDecision,
@@ -84,7 +88,12 @@ class PiCompletionEvidence:
         self._profile: PiCompletionProfile | None = None
         self._generation = 0
         self._last_signature: object = None
-        self._next_descendant_poll_at: float | None = None
+        self._refresh = DescendantRefreshOwner(
+            self._descendant_evidence,
+            poll_seconds=_PI_DESCENDANT_POLL_INTERVAL_SECONDS,
+            clock=clock,
+            on_commit=self._after_descendant_commit,
+        )
         self.session_seen = False
         self.session_phase_emitted = False
 
@@ -93,10 +102,11 @@ class PiCompletionEvidence:
 
     async def start(self) -> None:
         await self.quiescence_tracker.start()
+        self._refresh.start()
 
     async def stop(self) -> None:
         await self.quiescence_tracker.stop()
-        self._next_descendant_poll_at = None
+        await self._refresh.stop()
 
     async def observe_event(
         self, event: RawHarnessEvent, transition: str | None
@@ -140,26 +150,46 @@ class PiCompletionEvidence:
             await self.quiescence_tracker.refresh_disk_state()
         if trigger == "aux_wake" and profile is not None:
             profile.after_disk_change()
-        reconciled_descendants = self._assess_reconciled_descendants()
-        if profile is not None and profile.last_successful_terminal is not None:
-            self._next_descendant_poll_at = (
-                self._clock() + _PI_DESCENDANT_POLL_INTERVAL_SECONDS
-            )
-        return self._assessment(reconciled_descendants)
+        if trigger == "timeout" and profile is not None and profile.micro_drain_active:
+            # A micro-drain acceptance boundary needs a read begun after the
+            # timeout request; coalesce behind any initial read in flight.
+            self._refresh.request()
+        else:
+            self._refresh.ensure_due()
+        return self._assessment(self._refresh.assessment)
 
     def next_due_at(self) -> float | None:
-        return self._next_descendant_poll_at
+        return self._refresh.next_due_at
 
     async def handle_due(self) -> EvidenceEventDecision:
-        self._next_descendant_poll_at = None
+        self._refresh.ensure_due()
         return EvidenceEventDecision()
 
     def wants_aux_wake(self) -> bool:
         profile = self._profile
-        return bool(profile is not None and profile.quiescence_enabled)
+        return bool(profile is not None and profile.quiescence_enabled) or self._refresh.wants_wake
 
     async def wait_for_change(self) -> None:
-        await self.quiescence_tracker.wait_for_disk_change()
+        disk_wait = asyncio.create_task(self.quiescence_tracker.wait_for_disk_change())
+        refresh_wait = asyncio.create_task(self._refresh.wait())
+        waiters = (disk_wait, refresh_wait)
+        try:
+            await asyncio.wait(waiters, return_when=asyncio.FIRST_COMPLETED)
+        finally:
+            for waiter in waiters:
+                if not waiter.done():
+                    waiter.cancel()
+            await asyncio.gather(*waiters, return_exceptions=True)
+
+    def request_validation(self) -> int:
+        return self._refresh.request()
+
+    def validation_complete(self, request: int) -> bool:
+        return self._refresh.validated(request)
+
+    def _after_descendant_commit(self, assessment: WorkAssessment) -> None:
+        if self._profile is not None:
+            self._profile.after_descendant_assessment(assessment)
 
     def is_quiescent(self) -> bool:
         return self._assessment(self._assess_reconciled_descendants()).disposition == "ready"
@@ -196,7 +226,7 @@ class PiCompletionEvidence:
         )
 
     def _assess_reconciled_descendants(self) -> WorkAssessment:
-        return self._descendant_evidence.assess()
+        return self._refresh.assessment
 
     def _assessment(self, reconciled_descendants: WorkAssessment) -> WorkAssessment:
         descendants = self._persisted_descendant_assessment(reconciled_descendants)
@@ -453,6 +483,9 @@ class PiDrainCoordinator:
 
     def handle_close(self, *, intentional_stop: bool) -> TerminalEventOutcome | None:
         return self._coordinator.handle_close(intentional_stop=intentional_stop)
+
+    def should_defer_close(self) -> bool:
+        return self._coordinator.should_defer_close()
 
     async def handle_stream_exit(
         self,

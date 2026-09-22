@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 
@@ -21,6 +22,21 @@ _AGENT_END = pi_event("agent_end")
 _SUCCESS = TerminalEventOutcome(status="succeeded", exit_code=0)
 _TERMINATE = DrainAction(terminate=True, emit_turn_boundary=False)
 _start_pi = PiDrainScenario.start
+
+
+async def _finish_after_refresh(started: PiDrainScenario):  # type: ignore[no-untyped-def]
+    decision = None
+    for _ in range(5):
+        await asyncio.wait_for(started.coordinator.wait_for_aux_wake(), timeout=5)
+        decision = await started.coordinator.handle_aux_wake()
+        if decision.recorded_outcome is not None:
+            return decision
+        started.clock.advance(0.05)
+        decision = await started.coordinator.handle_timeout()
+        if decision.recorded_outcome is not None:
+            return decision
+    assert decision is not None
+    return decision
 
 
 async def _assess_terminal(started: PiDrainScenario) -> DrainTerminalDecision:
@@ -88,7 +104,8 @@ async def test_pi_tree_authority_polls_until_live_grandchild_finishes(
 
         ready = await started.coordinator.handle_timeout()
         started.clock.advance(0.05)
-        stabilized = await started.coordinator.handle_timeout()
+        await started.coordinator.handle_timeout()
+        stabilized = await _finish_after_refresh(started)
 
         assert ready.recorded_outcome is None
         assert stabilized.recorded_outcome == _SUCCESS
@@ -115,7 +132,8 @@ async def test_pi_tree_authority_polls_until_finalizing_child_gets_report(
 
         ready = await started.coordinator.handle_timeout()
         started.clock.advance(0.05)
-        stabilized = await started.coordinator.handle_timeout()
+        await started.coordinator.handle_timeout()
+        stabilized = await _finish_after_refresh(started)
 
         assert ready.recorded_outcome is None
         assert stabilized.recorded_outcome == _SUCCESS
@@ -131,16 +149,16 @@ async def test_pi_tree_authority_polls_until_store_recovers(
     start_row(tmp_path, "p1", HarnessId.PI, None)
     started = await _start_pi(tmp_path, monkeypatch)
     store_available = False
-    list_spawns = descendant_evidence_module.spawn_store.list_spawns
+    projection = descendant_evidence_module.HistoryIndex.descendant_projection
 
-    def _sometimes_list_spawns(runtime_root: Path) -> object:
+    def _sometimes_list_spawns(index: object, root_spawn_id: str) -> object:
         if not store_available:
             raise OSError("tree store temporarily unavailable")
-        return list_spawns(runtime_root)
+        return projection(index, root_spawn_id)  # type: ignore[arg-type]
 
     monkeypatch.setattr(
-        descendant_evidence_module.spawn_store,
-        "list_spawns",
+        descendant_evidence_module.HistoryIndex,
+        "descendant_projection",
         _sometimes_list_spawns,
     )
     try:
@@ -154,7 +172,8 @@ async def test_pi_tree_authority_polls_until_store_recovers(
 
         ready = await started.coordinator.handle_timeout()
         started.clock.advance(0.05)
-        stabilized = await started.coordinator.handle_timeout()
+        await started.coordinator.handle_timeout()
+        stabilized = await _finish_after_refresh(started)
 
         assert ready.recorded_outcome is None
         assert stabilized.recorded_outcome == _SUCCESS
@@ -235,12 +254,12 @@ async def test_pi_tree_authority_blocks_on_store_error(
     start_row(tmp_path, "p1", HarnessId.PI, None)
     started = await _start_pi(tmp_path, monkeypatch)
 
-    def _fail_list_spawns(_runtime_root: Path) -> object:
+    def _fail_list_spawns(_index: object, _root_spawn_id: str) -> object:
         raise OSError("tree store unavailable")
 
     monkeypatch.setattr(
-        descendant_evidence_module.spawn_store,
-        "list_spawns",
+        descendant_evidence_module.HistoryIndex,
+        "descendant_projection",
         _fail_list_spawns,
     )
     try:

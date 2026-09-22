@@ -4,6 +4,15 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Pi descendant completion no longer performs blocking global reconciliation for
+  every streamed event. Assessments are shared, single-flight refreshes and use
+  the rebuildable history index for transitive discovery before reconciling
+  authoritative spawn files. Final success, including success proposed at stream
+  EOF, requires a request-sequenced refresh while EOF continues to honor refresh,
+  poll, stabilization, and completion-deadline wakes.
+
 ### Changed
 
 - Shared spawn guidance: use profile models and fallbacks; model overrides require an explicit request or unmet task requirement, not a failed run.

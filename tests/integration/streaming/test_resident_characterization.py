@@ -27,6 +27,17 @@ _TERMINATE = DrainAction(terminate=True, emit_turn_boundary=False)
 _EVENT = resident_event(HarnessId.CODEX, "turn/completed", {})
 
 
+async def _after_refresh(coordinator: ResidentDrainCoordinator):  # type: ignore[no-untyped-def]
+    decision = None
+    for _ in range(4):
+        await asyncio.wait_for(coordinator.wait_for_aux_wake(), timeout=5)
+        decision = await coordinator.handle_aux_wake()
+        if decision.recorded_outcome is not None:
+            return decision
+    assert decision is not None
+    return decision
+
+
 def _coordinator(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -150,11 +161,13 @@ async def test_terminal_done_overrides_rearm_and_persisted_descendant(
     write_spawn_signal(tmp_path, "p1", "done")
     write_spawn_signal(tmp_path, "p1", "rearm")
 
-    decision = await coordinator.handle_terminal_event(_EVENT, _SUCCESS, _TERMINATE)
+    requested = await coordinator.handle_terminal_event(_EVENT, _SUCCESS, _TERMINATE)
+    decision = await _after_refresh(coordinator)
 
+    assert requested.recorded_outcome is None
     assert decision.recorded_outcome == _SUCCESS
-    assert decision.emit_turn_boundary is False
-    assert connection.fake_resident_backend.awaiting_done_values == [False]
+    assert requested.emit_turn_boundary is True
+    assert connection.fake_resident_backend.awaiting_done_values == [True, False]
     assert connection.fake_resident_backend.injected_messages == []
 
 
@@ -271,8 +284,10 @@ async def test_resident_rearm_budget_is_spawn_scoped_across_retry_attempts(
     )
     write_spawn_signal(tmp_path, "p1", "rearm")
 
-    denied = await retry_attempt.handle_terminal_event(_EVENT, _SUCCESS, _TERMINATE)
+    requested = await retry_attempt.handle_terminal_event(_EVENT, _SUCCESS, _TERMINATE)
+    denied = await _after_refresh(retry_attempt)
 
+    assert requested.recorded_outcome is None
     assert denied.recorded_outcome == _SUCCESS
     row = spawn_store.get_spawn(tmp_path, SpawnId("p1"))
     assert row is not None
@@ -339,7 +354,8 @@ async def test_terminal_wait_and_poll_see_late_grandchild_through_terminal_paren
         origin="runner",
     )
     clock.advance(1.0)
-    ready = await coordinator.handle_timeout()
+    await coordinator.handle_timeout()
+    ready = await _after_refresh(coordinator)
     assert ready.recorded_outcome == _SUCCESS
     assert connection.fake_resident_backend.awaiting_done_values == [True, False]
 
@@ -352,11 +368,13 @@ async def test_terminal_ready_tree_finalizes_immediately(
     coordinator, connection, clock = _coordinator(tmp_path, monkeypatch)
     clock.advance(1.0)
 
-    decision = await coordinator.handle_terminal_event(_EVENT, _SUCCESS, _TERMINATE)
+    requested = await coordinator.handle_terminal_event(_EVENT, _SUCCESS, _TERMINATE)
+    decision = await _after_refresh(coordinator)
 
+    assert requested.recorded_outcome is None
     assert decision.recorded_outcome == _SUCCESS
-    assert decision.emit_turn_boundary is False
-    assert connection.fake_resident_backend.awaiting_done_values == [False]
+    assert requested.emit_turn_boundary is True
+    assert connection.fake_resident_backend.awaiting_done_values == [True, False]
 
 
 @pytest.mark.asyncio
@@ -380,7 +398,6 @@ async def test_expired_deadline_beats_freshly_ready_tree(
     _install_cleanup_recorder(monkeypatch, cleanup_calls)
     clock.advance(10.0)
     decision = await coordinator.handle_timeout()
-
     assert decision.recorded_outcome is not None
     assert decision.recorded_outcome.status == "timed_out"
     assert decision.recorded_outcome.exit_code == 1
@@ -400,13 +417,17 @@ async def test_wait_done_signal_beats_already_expired_deadline(
     start_row(tmp_path, "p2", HarnessId.CODEX, "p1")
     terminal = await coordinator.handle_terminal_event(_EVENT, _SUCCESS, _TERMINATE)
     assert terminal.emit_turn_boundary is True
+    await coordinator.wait_for_aux_wake()
+    assert (await coordinator.handle_aux_wake()).recorded_outcome is None
 
     cleanup_calls: list[SpawnId] = []
     _install_cleanup_recorder(monkeypatch, cleanup_calls)
     clock.advance(10.0)
     write_spawn_signal(tmp_path, "p1", "done")
-    decision = await coordinator.handle_timeout()
+    requested = await coordinator.handle_timeout()
+    decision = await _after_refresh(coordinator)
 
+    assert requested.recorded_outcome is None
     assert decision.recorded_outcome == _SUCCESS
     assert cleanup_calls == []
     assert connection.fake_resident_backend.awaiting_done_values == [True, False]

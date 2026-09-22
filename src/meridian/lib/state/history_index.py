@@ -1567,6 +1567,42 @@ class HistoryIndex:
         with self.query() as db:
             return tuple(SpawnRecord.model_validate_json(row[0]) for row in db.execute(stmt))
 
+    def descendant_projection(
+        self, root_spawn_id: str
+    ) -> tuple[tuple[str, str | None, bool], ...]:
+        """Return the indexed transitive subtree, retaining archived ancestry.
+
+        The query context performs one bounded catch-up before taking the shared
+        database lock.  Callers must authoritatively read every returned loose
+        row before using its lifecycle state.
+        """
+        statement = text(
+            """
+            WITH RECURSIVE subtree(local_id, parent, archived, path) AS (
+                SELECT local_id, parent, archive_id IS NOT NULL,
+                       ',' || local_id || ','
+                  FROM records
+                 WHERE parent = :root AND local_id != :root
+                UNION ALL
+                SELECT child.local_id, child.parent,
+                       child.archive_id IS NOT NULL,
+                       subtree.path || child.local_id || ','
+                  FROM records AS child
+                  JOIN subtree ON child.parent = subtree.local_id
+                 WHERE child.local_id != :root
+                   AND instr(subtree.path, ',' || child.local_id || ',') = 0
+            )
+            SELECT local_id, parent, archived
+              FROM subtree
+             ORDER BY local_id
+            """
+        )
+        with self.query() as db:
+            return tuple(
+                (str(row[0]), str(row[1]) if row[1] is not None else None, bool(row[2]))
+                for row in db.execute(statement, {"root": root_spawn_id})
+            )
+
     def work_chat_ids(self, work_id: str, *, deadline: float | None = None) -> set[str]:
         with self.query(deadline=deadline) as db:
             return {

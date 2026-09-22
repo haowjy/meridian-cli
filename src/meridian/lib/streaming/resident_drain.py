@@ -34,7 +34,10 @@ from meridian.lib.streaming.completion_nudge import (
     COMPLETION_NUDGE_MESSAGE,
     TIMEOUT_SOON_COMPLETION_NUDGE_MESSAGE,
 )
-from meridian.lib.streaming.descendant_evidence import ReconciledDescendantEvidence
+from meridian.lib.streaming.descendant_evidence import (
+    DescendantRefreshOwner,
+    ReconciledDescendantEvidence,
+)
 from meridian.lib.streaming.drain_coordinator import (
     DrainExitDecision,
     DrainLoopDecision,
@@ -74,13 +77,17 @@ class _ResidentCompletionEvidence:
             runtime_root=runtime_root,
             root_spawn_id=spawn_id,
         )
-        self._next_due: float | None = None
+        self._refresh = DescendantRefreshOwner(
+            self._descendant_evidence,
+            poll_seconds=poll_seconds,
+            clock=clock,
+        )
 
     async def start(self) -> None:
-        return
+        self._refresh.start()
 
     async def stop(self) -> None:
-        self._next_due = None
+        await self._refresh.stop()
 
     async def observe_event(
         self, event: RawHarnessEvent, transition: str | None
@@ -94,22 +101,27 @@ class _ResidentCompletionEvidence:
 
     async def assess(self, trigger: AssessmentTrigger) -> WorkAssessment:
         del trigger
-        assessment = self._descendant_evidence.assess()
-        self._next_due = self._clock() + self._poll_seconds
-        return assessment
+        self._refresh.ensure_due()
+        return self._refresh.assessment
 
     def next_due_at(self) -> float | None:
-        return self._next_due
+        return self._refresh.next_due_at
 
     async def handle_due(self) -> EvidenceEventDecision:
-        self._next_due = None
+        self._refresh.ensure_due()
         return EvidenceEventDecision()
 
     def wants_aux_wake(self) -> bool:
-        return False
+        return self._refresh.wants_wake
 
     async def wait_for_change(self) -> None:
-        return
+        await self._refresh.wait()
+
+    def request_validation(self) -> int:
+        return self._refresh.request()
+
+    def validation_complete(self, request: int) -> bool:
+        return self._refresh.validated(request)
 
 class _ResidentCompletionProfile:
     """Own resident precedence, signals, backend state, deadline, and nudges."""
@@ -218,6 +230,14 @@ class _ResidentCompletionProfile:
         self._done_requested = False
         self._next_nudge_at = None
 
+    def after_terminal_accepted(self, outcome: TerminalEventOutcome) -> None:
+        del outcome
+        self.clear()
+
+    def _propose_success(self, outcome: TerminalEventOutcome, now: float) -> ProfileDecision:
+        self._enter_wait(now)
+        return ProfileDecision(action="complete", outcome=outcome)
+
     def _evaluate_terminal(self, context: CompletionEvaluation) -> ProfileDecision:
         action = context.terminal_action
         outcome = context.terminal_outcome
@@ -244,8 +264,7 @@ class _ResidentCompletionProfile:
             if context.assessment.disposition == "unknown":
                 self._enter_wait(context.now)
                 return ProfileDecision(action="wait", emit_turn_boundary=True)
-            self.clear()
-            return ProfileDecision(action="complete", outcome=outcome)
+            return self._propose_success(outcome, context.now)
         if context.assessment.disposition != "ready" or self._explicit_hold:
             self._enter_wait(context.now)
             return ProfileDecision(
@@ -253,8 +272,7 @@ class _ResidentCompletionProfile:
                 emit_turn_boundary=True,
                 reset_deadline=context.directives.rearm,
             )
-        self.clear()
-        return ProfileDecision(action="complete", outcome=outcome)
+        return self._propose_success(outcome, context.now)
 
     def _evaluate_wait(self, context: CompletionEvaluation) -> ProfileDecision:
         candidate = context.candidate
@@ -275,8 +293,7 @@ class _ResidentCompletionProfile:
                         ),
                     )
                 return ProfileDecision(action="wait")
-            self.clear()
-            return ProfileDecision(action="complete", outcome=candidate)
+            return self._propose_success(candidate, context.now)
         if context.deadline_expired and not rearmed:
             error = (
                 "resident_rearm_budget_exhausted"
@@ -305,8 +322,7 @@ class _ResidentCompletionProfile:
                 else None
             )
             return ProfileDecision(action="wait", nudge=nudge, reset_deadline=rearmed)
-        self.clear()
-        return ProfileDecision(action="complete", outcome=candidate)
+        return self._propose_success(candidate, context.now)
 
     def _mark_rearmed(self, now: float) -> None:
         self._explicit_hold = True
@@ -331,6 +347,8 @@ class _ResidentCompletionProfile:
         self.set_awaiting_done(True)
 
     def set_awaiting_done(self, awaiting_done: bool) -> None:
+        if awaiting_done == self._awaiting_done:
+            return
         self._resident_backend.set_awaiting_done(awaiting_done)
         self._awaiting_done = awaiting_done
 
@@ -489,6 +507,9 @@ class ResidentDrainCoordinator:
 
     def handle_close(self, *, intentional_stop: bool) -> TerminalEventOutcome | None:
         return self._coordinator.handle_close(intentional_stop=intentional_stop)
+
+    def should_defer_close(self) -> bool:
+        return self._coordinator.should_defer_close()
 
     async def handle_stream_exit(
         self,

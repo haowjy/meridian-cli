@@ -101,6 +101,32 @@ so resident and plain drain paths never see it as a parent completion candidate.
 `PrimaryEventScope` is the only scope contract passed through the drain stack; do
 not preserve or add compatibility side channels such as a Codex-only thread-id path.
 
+### Shared Descendant Assessments
+
+Pi and resident completion share one immutable persisted-descendant assessment through
+`DescendantRefreshOwner`. Ordinary event handling and readiness/count accessors read the
+cache; they never perform discovery. The owner runs at most one blocking assessment in
+`asyncio.to_thread()`, starts the next periodic interval when that read finishes, and
+coalesces requests received during a read into one immediate follow-up. Stopping the
+owner cannot forcibly stop Python's worker thread, so an epoch fence prevents a late
+result from mutating the stopped coordinator.
+
+Each assessment catches up the history index once, recursively discovers the transitive
+subtree, and authoritatively rereads only selected loose rows. Archived rows remain
+traversal edges, allowing a loose descendant below an archived intermediate to be
+found. Missing selected state or any discovery/read failure produces `unknown`, never
+an empty tree. The warm path is subtree-sized; cold index initialization remains
+corpus-sized. See [state history context](../../state/.context/history.md) for the
+projection contract.
+
+Every proposed success receives a request sequence and waits for a refresh that covers
+that request before policy is reevaluated. A cached `ready` assessment cannot publish
+success. Explicit `done` may override known `blocked` evidence under Pi and resident
+policy, but never `unknown`. Refresh completions and other auxiliary or lifecycle wakes
+only request reevaluation; they are not completion authority. After event EOF, the same
+waiter stops event reads but continues refresh, poll, stabilization, nudge, and deadline
+arbitration until the candidate is accepted or rejected.
+
 ### DrainOutcome Classification
 
 The drain loop classifies its outcome, but does not own publication.

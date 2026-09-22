@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 
 import pytest
@@ -21,6 +22,17 @@ from tests.support.resident_drain import (
     descendant_cancellation_from_roots,
     resident_event,
 )
+
+
+async def _after_refresh(coordinator: ResidentDrainCoordinator):  # type: ignore[no-untyped-def]
+    decision = None
+    for _ in range(4):
+        await asyncio.wait_for(coordinator.wait_for_aux_wake(), timeout=5)
+        decision = await coordinator.handle_aux_wake()
+        if decision.recorded_outcome is not None:
+            return decision
+    assert decision is not None
+    return decision
 
 
 async def _execute_latched_cleanup(
@@ -60,8 +72,8 @@ async def test_terminal_done_fails_closed_when_descendant_evidence_unreadable(
         raise OSError("descendant evidence unavailable")
 
     monkeypatch.setattr(
-        descendant_evidence_module.spawn_store,
-        "list_spawns",
+        descendant_evidence_module.HistoryIndex,
+        "descendant_projection",
         _raise_evidence_read_failure,
     )
     terminal = TerminalEventOutcome(status="succeeded", exit_code=0)
@@ -107,16 +119,16 @@ async def test_terminal_done_completes_when_descendant_evidence_recovers(
         cancel_descendants=descendant_cancellation_from_roots(tmp_path, tmp_path),
     )
     evidence_readable = False
-    list_spawns = descendant_evidence_module.spawn_store.list_spawns
+    projection = descendant_evidence_module.HistoryIndex.descendant_projection
 
-    def _read_descendants(runtime_root: Path) -> object:
+    def _read_descendants(index: object, root_spawn_id: str) -> object:
         if not evidence_readable:
             raise OSError("descendant evidence unavailable")
-        return list_spawns(runtime_root)
+        return projection(index, root_spawn_id)  # type: ignore[arg-type]
 
     monkeypatch.setattr(
-        descendant_evidence_module.spawn_store,
-        "list_spawns",
+        descendant_evidence_module.HistoryIndex,
+        "descendant_projection",
         _read_descendants,
     )
     write_spawn_signal(tmp_path, "p1", "done")
@@ -128,10 +140,61 @@ async def test_terminal_done_completes_when_descendant_evidence_recovers(
         DrainAction(terminate=True, emit_turn_boundary=False),
     )
     evidence_readable = True
-    recovered = await coordinator.handle_timeout()
+    await coordinator.handle_timeout()
+    recovered = await _after_refresh(coordinator)
 
     assert waiting.recorded_outcome is None
     assert recovered.recorded_outcome == terminal
+
+
+@pytest.mark.asyncio
+async def test_rejected_success_validation_preserves_resident_wait_protection(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from meridian.lib.streaming import resident_drain as resident_drain_module
+
+    clock = FakeClock(start=100.0)
+    monkeypatch.setattr(resident_drain_module.time, "monotonic", clock.monotonic)
+    start_row(tmp_path, "p1", HarnessId.CODEX, None)
+    start_row(tmp_path, "p2", HarnessId.CODEX, "p1")
+    connection = FakeResidentConnection(HarnessId.CODEX)
+    coordinator = ResidentDrainCoordinator.for_connection(
+        runtime_root=tmp_path,
+        spawn_id=SpawnId("p1"),
+        receiver=connection,
+        resident_backend=connection.resident_backend,
+        deadline_seconds=30.0,
+        poll_seconds=0.01,
+        rearm_budget=None,
+        cancel_descendants=descendant_cancellation_from_roots(tmp_path, tmp_path),
+    )
+    terminal = TerminalEventOutcome(status="succeeded", exit_code=0)
+    try:
+        await coordinator.start()
+        await coordinator.handle_terminal_event(
+            resident_event(HarnessId.CODEX, "turn/completed", {}),
+            terminal,
+            DrainAction(terminate=True, emit_turn_boundary=False),
+        )
+        assert connection.fake_resident_backend.awaiting_done_values == [True]
+
+        spawn_store.finalize_spawn(tmp_path, SpawnId("p2"), "succeeded", 0, origin="runner")
+        clock.advance(0.01)
+        await coordinator.handle_timeout()
+        await coordinator.wait_for_aux_wake()
+        proposed = await coordinator.handle_aux_wake()
+        assert proposed.recorded_outcome is None
+
+        start_row(tmp_path, "p3", HarnessId.CODEX, "p1")
+        await coordinator.wait_for_aux_wake()
+        rejected = await coordinator.handle_aux_wake()
+
+        assert rejected.recorded_outcome is None
+        assert connection.fake_resident_backend.awaiting_done_values
+        assert all(connection.fake_resident_backend.awaiting_done_values)
+    finally:
+        await coordinator.stop()
 
 @pytest.mark.asyncio
 async def test_active_followup_turn_stays_resident_honors_done_and_defers_poll(
@@ -167,6 +230,8 @@ async def test_active_followup_turn_stays_resident_honors_done_and_defers_poll(
     write_spawn_signal(tmp_path, "p1", "rearm")
     rearmed = await coordinator.handle_timeout()
     assert rearmed.recorded_outcome is None
+    await coordinator.wait_for_aux_wake()
+    assert (await coordinator.handle_aux_wake()).recorded_outcome is None
     assert coordinator.next_timeout() == pytest.approx(5.0)
     assert connection.fake_resident_backend.injected_messages == []
 
@@ -179,16 +244,24 @@ async def test_active_followup_turn_stays_resident_honors_done_and_defers_poll(
     assert "meridian spawn rearm" in injected
 
     coordinator.observe_activity_transition("turn_active")
+    await coordinator.wait_for_aux_wake()
+    await coordinator.handle_aux_wake()
 
     assert coordinator.next_timeout() == pytest.approx(5.0)
     assert connection.fake_resident_backend.awaiting_done_values == [True, False]
 
     write_spawn_signal(tmp_path, "p1", "done")
-    decision = await coordinator.handle_timeout()
-
+    requested = await coordinator.handle_timeout()
+    decision = await _after_refresh(coordinator)
+    assert requested.recorded_outcome is None
     assert decision.recorded_outcome == terminal
     assert coordinator.next_timeout() is None
-    assert connection.fake_resident_backend.awaiting_done_values == [True, False, False]
+    assert connection.fake_resident_backend.awaiting_done_values == [
+        True,
+        False,
+        True,
+        False,
+    ]
 
 @pytest.mark.asyncio
 async def test_active_followup_turn_still_enforces_deadline(
@@ -206,7 +279,6 @@ async def test_active_followup_turn_still_enforces_deadline(
 
     clock.advance(10.0)
     decision = await coordinator.handle_timeout()
-
     assert decision.recorded_outcome is not None
     assert decision.recorded_outcome.status == "timed_out"
     assert decision.recorded_outcome.error == "resident_deadline_expired"
@@ -321,8 +393,10 @@ async def test_done_signal_is_honored_with_tracked_child_outstanding(
     coordinator = await awaiting_done_coordinator(tmp_path, connection)
 
     write_spawn_signal(tmp_path, "p1", "done")
-    decision = await coordinator.handle_timeout()
+    requested = await coordinator.handle_timeout()
+    decision = await _after_refresh(coordinator)
 
+    assert requested.recorded_outcome is None
     assert decision.recorded_outcome is not None
     assert decision.recorded_outcome.status == "succeeded"
     assert connection.fake_resident_backend.injected_messages == []

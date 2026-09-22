@@ -43,8 +43,9 @@ Pi and resident use the shared reconciled transitive persisted tree as descendan
 authority. A live grandchild beneath a terminal direct child therefore blocks Pi, while a
 `finalizing` direct child with a durable report is reconciled terminal and does not.
 Only valid, parent-linked rows enter the tree; incomplete and wrong-parent directories
-are not descendant evidence. Meridian's `start_spawn()` publishes complete rows
-atomically.
+are not descendant evidence. Both profiles consume the same immutable cached assessment;
+streamed events never trigger a descendant read. Meridian's `start_spawn()` publishes
+complete rows atomically.
 
 ### Disk State Authority
 
@@ -53,22 +54,27 @@ Pi extensions coordinate private work with Python through disk files:
 - bash state under `runtime_root/pi-bash/<parent>/bash-records.json`
 - notification marker under `runtime_root/pi-bash/<parent>/last-notification.json`
 
-Persisted descendant state comes independently from valid rows under
-`runtime_root/spawns/` through `ReconciledDescendantEvidence`. Stdout lifecycle-like
-subspawn messages are not descendant evidence.
+Persisted descendant state comes independently through `DescendantRefreshOwner`. Its
+single-flight worker uses `ReconciledDescendantEvidence` to discover the transitive
+subtree from the history index, including archived ancestry, then authoritatively reads
+the selected loose rows under `runtime_root/spawns/`. Stdout lifecycle-like subspawn
+messages and wake notifications are not descendant evidence.
 
 Private-disk changes are not passive. `PiDiskWatcher` wakes the drain loop when a bash
 or notification file changes, and the drain loop re-evaluates quiescence on those
-wakeups. Terminal-event micro-drain re-checks private disk before accepting success;
-bounded tree polling rechecks descendant rows while a successful candidate is pending.
+wakeups. Terminal-event micro-drain rechecks private disk before accepting success;
+finish-based bounded refresh rechecks descendants without coupling reads to event volume.
 
 An absent private-work file means no blocker. A file that exists but cannot be read or
 parsed produces typed unknown evidence instead of an empty snapshot. `done` waits for
 that evidence to recover and fails explicitly if it remains unknown through the single
-completion deadline.
+completion deadline. `done` may override known blockers, but never unknown evidence.
 
-After a successful terminal candidate, Pi polls the reconciled tree on a bounded cadence
-until the candidate completes or the drain ends.
+Every proposed success requests a descendant refresh begun after that proposal. Pi
+reevaluates policy only after the qualifying result commits; a cached ready result cannot
+authorize publication. Refresh completion wakes the existing drain arbitration rather
+than acting as lifecycle truth. If the event stream has closed, that arbitration still
+enforces refresh, stabilization, nudge, and completion timers.
 
 ### Child Wave Timeout
 
@@ -98,7 +104,9 @@ When a terminal event arrives but quiescence is not yet confirmed, `PiCompletion
 enters micro-drain mode. It gives already-buffered or just-written disk/event activity a
 short chance to arrive before accepting the terminal event as the final outcome. This
 covers races where descendant state or notification markers land immediately after
-`agent_end`. Micro-drain rechecks both tree and private-disk evidence before finalizing.
+`agent_end`. Micro-drain rechecks private evidence and requests qualifying descendant
+validation before finalizing. A slow initial descendant refresh does not move the
+idle/terminal anchor used by Pi's done-nudge delay.
 
 ### Pi Phase Events
 

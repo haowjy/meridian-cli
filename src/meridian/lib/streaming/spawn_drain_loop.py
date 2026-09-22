@@ -98,8 +98,30 @@ class SpawnDrainLoop:
         )
         try:
             while True:
+                should_defer_close = getattr(coordinator, "should_defer_close", None)
+                if drain_waiter.events_closed and not (
+                    should_defer_close is not None and should_defer_close()
+                ):
+                    session = self._sessions.get(spawn_id)
+                    close_outcome = (
+                        coordinator.handle_close(
+                            intentional_stop=bool(session.cancel_sent)
+                            if session is not None
+                            else False,
+                        )
+                        if coordinator is not None
+                        else None
+                    )
+                    if close_outcome is not None:
+                        recorded_terminal_outcome = close_outcome
+                    break
                 wake = await drain_waiter.wait(_next_timeout(coordinator))
                 if isinstance(wake, DrainClosedWake):
+                    if (
+                        should_defer_close is not None
+                        and should_defer_close()
+                    ):
+                        continue
                     session = self._sessions.get(spawn_id)
                     close_outcome = (
                         coordinator.handle_close(

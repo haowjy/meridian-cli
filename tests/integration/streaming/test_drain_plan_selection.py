@@ -75,8 +75,8 @@ def test_spawn_manager_selects_complete_drain_plan_by_connection_capability(
     assert isinstance(resident.policy, SingleTurnDrainPolicy)
     assert resident.raw_terminal_frames_authoritative is False
     assert resident.on_policy_selected is None
-    assert resident.aux_wake is None
-    assert resident.handle_aux_wake is None
+    assert resident.aux_wake is resident.coordinator
+    assert resident.handle_aux_wake == resident.coordinator.handle_aux_wake
     assert resident.finalizer is None
     assert isinstance(resident.teardown, DefaultDrainSessionTeardown)
 

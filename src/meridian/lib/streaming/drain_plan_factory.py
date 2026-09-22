@@ -101,6 +101,8 @@ def build_drain_plan(
             coordinator=coordinator,
             policy=SingleTurnDrainPolicy(),
             raw_terminal_frames_authoritative=False,
+            aux_wake=coordinator,
+            handle_aux_wake=coordinator.handle_aux_wake,
         )
 
     if receiver.harness_id is HarnessId.PI:

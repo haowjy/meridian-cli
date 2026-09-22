@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import gc
+import threading
 from collections.abc import AsyncIterator
 from pathlib import Path
 from types import SimpleNamespace
@@ -15,6 +16,7 @@ import pytest
 from meridian.lib.core.types import SpawnId
 from meridian.lib.harness.connections.base import HarnessConnection, RawHarnessEvent
 from meridian.lib.state.history import HarnessHistoryWriter, WriteResult, read_history_range
+from meridian.lib.streaming import descendant_evidence as descendant_evidence_module
 from meridian.lib.streaming.completion_contracts import (
     AssessmentTrigger,
     CleanupReport,
@@ -36,11 +38,17 @@ from meridian.lib.streaming.drain_coordinator import (
     DrainPlan,
     DrainTerminalDecision,
 )
-from meridian.lib.streaming.drain_wait import _cancel_task
+from meridian.lib.streaming.drain_wait import (
+    DrainClosedWake,
+    DrainInputWaiter,
+    DrainTimeoutWake,
+    _cancel_task,
+)
 from meridian.lib.streaming.event_observers import EventObserverRegistry
 from meridian.lib.streaming.spawn_drain_loop import SpawnDrainLoop
 from meridian.lib.streaming.spawn_session import DrainOutcome, SpawnSession
 from tests.support.fakes import FakeClock
+from tests.support.pi import PiDrainScenario
 
 _SPAWN_ID = SpawnId("p-persist-order")
 Call = tuple[str, RawHarnessEvent]
@@ -97,6 +105,27 @@ async def test_cancel_task_logs_unexpected_completed_task_failure(
         await _cancel_task(pending_event)
 
     assert "event source broke during close" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_closed_event_input_still_arbitrates_completion_timeout() -> None:
+    async def closed_events() -> AsyncIterator[RawHarnessEvent]:
+        if False:
+            yield RawHarnessEvent(event_type="unused", harness_id="test", payload={})
+
+    class _NoAux:
+        def wants_aux_wake(self) -> bool:
+            return False
+
+        async def wait_for_aux_wake(self) -> None:
+            raise AssertionError("auxiliary wake was not requested")
+
+    waiter = DrainInputWaiter(closed_events(), _NoAux())  # type: ignore[arg-type]
+    try:
+        assert isinstance(await waiter.wait(None), DrainClosedWake)
+        assert isinstance(await waiter.wait(0.001), DrainTimeoutWake)
+    finally:
+        await waiter.close()
 
 
 class _Receiver:
@@ -224,6 +253,12 @@ class _StabilizingEvidence:
     async def wait_for_change(self) -> None:
         self.aux_waiting.set()
         await self._wake.wait()
+
+    def request_validation(self) -> int:
+        return 1
+
+    def validation_complete(self, request: int) -> bool:
+        return request == 1
 
 
 class _StabilizingProfile:
@@ -378,6 +413,67 @@ async def test_failed_history_write_blocks_post_persist_delivery() -> None:
         ("fan_out", persisted_event),
         ("noted", persisted_event),
     ]
+
+
+@pytest.mark.asyncio
+async def test_held_descendant_refresh_does_not_block_ordered_event_delivery(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    entered = threading.Event()
+    release = threading.Event()
+    calls: list[Call] = []
+    events = [
+        RawHarnessEvent(event_type="message", harness_id="pi", payload={"id": index})
+        for index in range(3)
+    ]
+
+    projection = descendant_evidence_module.HistoryIndex.descendant_projection
+
+    def held_projection(index: object, root_spawn_id: str) -> object:
+        entered.set()
+        release.wait(timeout=5)
+        return projection(index, root_spawn_id)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(
+        descendant_evidence_module.HistoryIndex,
+        "descendant_projection",
+        held_projection,
+    )
+    started = await PiDrainScenario.start(tmp_path, monkeypatch, spawn_id=_SPAWN_ID)
+
+    observers = Mock()
+    observers.dispatch.side_effect = lambda _spawn_id, event: calls.append(("observe", event))
+    loop = SpawnDrainLoop(
+        sessions={},
+        history_writers={
+            _SPAWN_ID: cast(
+                "HarnessHistoryWriter",
+                _HistoryWriter([WriteResult(success=True, seq=i) for i in range(3)], calls),
+            )
+        },
+        observers=cast("EventObserverRegistry", observers),
+        publish_terminal=Mock(),
+        fan_out_event=lambda _spawn_id, event: calls.append(("fan_out", event.raw)),
+        fan_out_turn_boundary=AsyncMock(),
+    )
+    try:
+        run_task = asyncio.create_task(
+            loop.run(
+                spawn_id=_SPAWN_ID,
+                receiver=cast("HarnessConnection[Any]", _Receiver(events)),
+                drain_plan=DrainPlan(coordinator=cast("DrainCoordinator", started.coordinator)),
+                tracer=None,
+            )
+        )
+        assert await asyncio.to_thread(entered.wait, 2)
+        await asyncio.wait_for(run_task, timeout=1)
+    finally:
+        release.set()
+        await started.stop()
+
+    assert [call[0] for call in calls].count("persist") == len(events)
+    assert [call[0] for call in calls].count("observe") == len(events)
+    assert [call[0] for call in calls].count("fan_out") == len(events)
 
 
 @pytest.mark.asyncio

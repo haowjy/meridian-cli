@@ -58,10 +58,13 @@ def _unknown(generation: int = 1) -> WorkAssessment:
 
 
 class _Evidence:
-    def __init__(self, *assessments: WorkAssessment) -> None:
+    def __init__(self, *assessments: WorkAssessment, auto_validate: bool = True) -> None:
         self.assessments = deque(assessments)
         self.last = assessments[-1]
         self.persisted = EvidenceEventDecision()
+        self.validation_request = 0
+        self.completed_validation = 0
+        self.auto_validate = auto_validate
 
     async def start(self) -> None:
         return
@@ -96,6 +99,18 @@ class _Evidence:
 
     async def wait_for_change(self) -> None:
         return
+
+    def request_validation(self) -> int:
+        self.validation_request += 1
+        if self.auto_validate:
+            self.completed_validation = self.validation_request
+        return self.validation_request
+
+    def validation_complete(self, request: int) -> bool:
+        return self.completed_validation >= request
+
+    def finish_validation(self) -> None:
+        self.completed_validation = self.validation_request
 
 
 class _Profile:
@@ -246,9 +261,11 @@ async def test_blocked_candidate_completes_after_fresh_readiness() -> None:
     coordinator, _ = _coordinator(clock, _Evidence(_blocked(), _ready(2)), _Profile())
 
     waiting = await coordinator.handle_terminal_event(None, _SUCCESS, _TERMINATE)  # type: ignore[arg-type]
-    completed = await coordinator.handle_timeout()
+    requested = await coordinator.handle_timeout()
+    completed = await coordinator.handle_aux_wake()
 
     assert waiting.recorded_outcome is None
+    assert requested.recorded_outcome is None
     assert completed.recorded_outcome == _SUCCESS
 
 
@@ -260,9 +277,11 @@ async def test_done_directive_waits_through_unknown_evidence() -> None:
     coordinator, _ = _coordinator(clock, _Evidence(_unknown(), _ready(2)), profile)
 
     waiting = await coordinator.handle_terminal_event(None, _SUCCESS, _TERMINATE)  # type: ignore[arg-type]
-    completed = await coordinator.handle_timeout()
+    requested = await coordinator.handle_timeout()
+    completed = await coordinator.handle_aux_wake()
 
     assert waiting.recorded_outcome is None
+    assert requested.recorded_outcome is None
     assert completed.recorded_outcome == _SUCCESS
 
 
@@ -291,10 +310,37 @@ async def test_stabilization_completes_after_unchanged_ready_recheck() -> None:
 
     candidate = await coordinator.handle_terminal_event(None, _SUCCESS, _TERMINATE)  # type: ignore[arg-type]
     clock.advance(2.0)
-    completed = await coordinator.handle_timeout()
+    requested = await coordinator.handle_timeout()
+    completed = await coordinator.handle_aux_wake()
 
     assert candidate.recorded_outcome is None
+    assert requested.recorded_outcome is None
     assert completed.recorded_outcome == _SUCCESS
+
+
+@pytest.mark.asyncio
+async def test_post_stabilization_success_rechecks_evidence_started_after_request() -> None:
+    clock = FakeClock()
+    evidence = _Evidence(
+        _ready(1),
+        _ready(1),
+        _blocked(2),
+        auto_validate=False,
+    )
+    coordinator, _ = _coordinator(clock, evidence, _Profile(stabilization=0.05))
+
+    await coordinator.handle_terminal_event(None, _SUCCESS, _TERMINATE)  # type: ignore[arg-type]
+    clock.advance(0.05)
+    requested = await coordinator.handle_timeout()
+    # A read that completed before the request cannot authorize publication.
+    before_post_request_read = await coordinator.handle_aux_wake()
+    evidence.finish_validation()
+    after_post_request_read = await coordinator.handle_aux_wake()
+
+    assert requested.recorded_outcome is None
+    assert before_post_request_read.recorded_outcome is None
+    assert after_post_request_read.recorded_outcome is None
+    assert coordinator.state.assessment == _blocked(2)
 
 
 @pytest.mark.asyncio

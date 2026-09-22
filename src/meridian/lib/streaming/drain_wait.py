@@ -53,19 +53,26 @@ class DrainInputWaiter:
         self._task_context = task_context
         self._pending_event_task: asyncio.Future[RawHarnessEvent] | None = None
         self._pending_disk_task: asyncio.Task[None] | None = None
+        self._events_closed = False
+
+    @property
+    def events_closed(self) -> bool:
+        return self._events_closed
 
     async def wait(self, timeout_seconds: float | None) -> DrainWake:
         timeout_task: asyncio.Task[None] | None = None
         try:
-            if self._pending_event_task is None:
+            if self._pending_event_task is None and not self._events_closed:
                 self._pending_event_task = asyncio.ensure_future(anext(self._events_iter))
-            if self._pending_event_task.done():
+            if self._pending_event_task is not None and self._pending_event_task.done():
                 disk_change_ready_after_event = self._consume_ready_disk_change()
                 event = self._pending_event_task.result()
                 self._pending_event_task = None
                 return DrainEventWake(event, disk_change_ready_after_event)
 
-            wait_tasks: set[asyncio.Future[Any]] = {self._pending_event_task}
+            wait_tasks: set[asyncio.Future[Any]] = set()
+            if self._pending_event_task is not None:
+                wait_tasks.add(self._pending_event_task)
             if self._aux_wake.wants_aux_wake():
                 if self._pending_disk_task is None:
                     self._pending_disk_task = asyncio.create_task(
@@ -80,7 +87,13 @@ class DrainInputWaiter:
                 timeout_task = asyncio.create_task(asyncio.sleep(timeout_seconds))
                 wait_tasks.add(timeout_task)
 
-            if len(wait_tasks) == 1:
+            if not wait_tasks:
+                return DrainClosedWake()
+            if (
+                len(wait_tasks) == 1
+                and self._pending_event_task is not None
+                and self._pending_event_task in wait_tasks
+            ):
                 event = await self._pending_event_task
                 self._pending_event_task = None
                 return DrainEventWake(event)
@@ -101,6 +114,7 @@ class DrainInputWaiter:
             return DrainTimeoutWake()
         except StopAsyncIteration:
             self._pending_event_task = None
+            self._events_closed = True
             return DrainClosedWake()
         finally:
             await _cancel_task(timeout_task, task_context=f"{self._task_context} timeout")
@@ -121,7 +135,6 @@ class DrainInputWaiter:
             self._pending_disk_task,
             task_context=f"{self._task_context} auxiliary wake",
         )
-
 
 async def _cancel_task(
     task: asyncio.Future[Any] | None,

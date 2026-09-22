@@ -83,6 +83,15 @@ async def _put_pi_parent_idle_after_success(coordinator: PiDrainCoordinator) -> 
     )
 
 
+async def _wait_for_ready_descendant_refresh(coordinator: PiDrainCoordinator) -> None:
+    for _ in range(3):
+        await coordinator.wait_for_aux_wake()
+        await coordinator.handle_aux_wake()
+        if not coordinator.classify_outstanding_work().spawn_children:
+            return
+    raise AssertionError("descendant refresh did not commit ready evidence")
+
+
 async def _started_micro_drain_coordinator(
     tmp_path: Path,
     *,
@@ -277,6 +286,7 @@ async def test_pi_non_spawn_background_only_nudges_after_idle_delay(
 
     try:
         await _put_pi_parent_idle_after_success(coordinator)
+        await _wait_for_ready_descendant_refresh(coordinator)
 
         await coordinator.handle_timeout()
 
@@ -333,6 +343,8 @@ async def test_pi_reconciled_terminal_child_allows_done_nudge_for_private_work(
     try:
         await _put_pi_parent_idle_after_success(coordinator)
 
+        await _wait_for_ready_descendant_refresh(coordinator)
+
         outstanding = coordinator.classify_outstanding_work()
         await coordinator.handle_timeout()
 
@@ -381,6 +393,8 @@ async def test_pi_spawn_child_outstanding_waits_without_done_nudge(
 
     try:
         await _put_pi_parent_idle_after_success(coordinator)
+        await coordinator.wait_for_aux_wake()
+        await coordinator.handle_aux_wake()
 
         outstanding = coordinator.classify_outstanding_work()
         await coordinator.handle_timeout()
@@ -416,6 +430,9 @@ async def test_pi_done_nudge_repeats_on_bounded_cadence(
     try:
         await _put_pi_parent_idle_after_success(coordinator)
 
+        await _wait_for_ready_descendant_refresh(coordinator)
+        determinism.advance(0.05)
+
         await coordinator.handle_timeout()
         await coordinator.handle_timeout()
         assert sent_messages == [PI_COMPLETION_NUDGE_MESSAGE]
@@ -444,6 +461,7 @@ async def test_pi_done_nudge_stops_when_work_drains_or_done_signal_arrives(
 
     try:
         await _put_pi_parent_idle_after_success(coordinator)
+        await _wait_for_ready_descendant_refresh(coordinator)
         _write_running_bash_record(tmp_path, spawn_id, running=False)
         await coordinator.reevaluate_after_disk_change()
 
@@ -470,14 +488,18 @@ async def test_pi_done_nudge_stops_when_done_signal_arrives(
 
     try:
         await _put_pi_parent_idle_after_success(coordinator)
+        await _wait_for_ready_descendant_refresh(coordinator)
         await coordinator.handle_timeout()
         assert sent_messages == [PI_COMPLETION_NUDGE_MESSAGE]
 
         done_signal = spawn_signal_path(tmp_path, spawn_id, "done")
         done_signal.parent.mkdir(parents=True, exist_ok=True)
         done_signal.write_text("test\n", encoding="utf-8")
-        decision = await coordinator.handle_timeout()
+        requested = await coordinator.handle_timeout()
+        await coordinator.wait_for_aux_wake()
+        decision = await coordinator.handle_aux_wake()
 
+        assert requested.recorded_outcome is None
         assert decision.recorded_outcome is not None
         assert decision.recorded_outcome.status == "succeeded"
         assert sent_messages == [PI_COMPLETION_NUDGE_MESSAGE]
@@ -499,8 +521,13 @@ async def test_micro_drain_timeout_rechecks_disk_before_accepting(
     start_row(tmp_path, "p-disk-child", HarnessId.CODEX, str(spawn_id))
 
     try:
-        result = await started.coordinator.handle_timeout()
-        assert result.recorded_outcome is None
+        requested = await started.coordinator.handle_timeout()
+        await started.coordinator.wait_for_aux_wake()
+        reevaluated = await started.coordinator.handle_aux_wake()
+        rechecked = await started.coordinator.handle_timeout()
+        assert requested.recorded_outcome is None
+        assert reevaluated.recorded_outcome is None
+        assert rechecked.recorded_outcome is None
         assert any(
             phase.get("phase") == "quiescence_micro_drain_cancelled" for phase in started.phases
         )
@@ -525,8 +552,13 @@ async def test_micro_drain_recheck_preserves_idle_epoch_for_notifications(
     )
 
     try:
-        result = await started.coordinator.handle_timeout()
-        assert result.recorded_outcome is None
+        requested = await started.coordinator.handle_timeout()
+        await started.coordinator.wait_for_aux_wake()
+        reevaluated = await started.coordinator.handle_aux_wake()
+        rechecked = await started.coordinator.handle_timeout()
+        assert requested.recorded_outcome is None
+        assert reevaluated.recorded_outcome is None
+        assert rechecked.recorded_outcome is None
         assert any(
             phase.get("phase") == "quiescence_micro_drain_cancelled" for phase in started.phases
         )
