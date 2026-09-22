@@ -115,7 +115,7 @@ def test_source_contention_is_not_a_sticky_failure(tmp_path: Path) -> None:
         assert held.wait(timeout=5)
         try:
             with pytest.raises(FileLockTimeout):
-                index.initialize(deadline=time.monotonic() + 1.0)
+                index.initialize(deadline=time.monotonic() + 2.0)
             assert not index.failure_path.exists()
         finally:
             release.set()
