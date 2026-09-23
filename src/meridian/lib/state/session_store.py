@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import re
+import unicodedata
 import uuid
 from contextlib import ExitStack, contextmanager
 from pathlib import Path
@@ -47,10 +48,18 @@ def _append_session_event(
         session_events = [parsed for row in payloads if (parsed := _parse_event(row)) is not None]
         if isinstance(event, SessionUpdateEvent):
             _validate_startup_identity(session_events, event)
-        if isinstance(event, (SessionUpdateEvent, SessionStopEvent, SessionModelSelectionEvent)):
+        if isinstance(
+            event,
+            (SessionStartEvent, SessionUpdateEvent, SessionStopEvent, SessionModelSelectionEvent),
+        ):
             records: dict[str, SessionRecord] = {}
+            historical_chat_ids: set[str] = set()
             for parsed in session_events:
                 project_session_event(records, parsed)
+                if isinstance(parsed, SessionHistoricalEvent):
+                    historical_chat_ids.add(parsed.chat_id)
+            if isinstance(event, SessionStartEvent) and event.chat_id in historical_chat_ids:
+                raise ValueError("Historical sessions are inert and cannot be started")
             for record in records.values():
                 if (record.chat_id, record.session_instance_id) == (
                     event.chat_id,
@@ -336,6 +345,8 @@ class NativeSessionKey(BaseModel):
                 or parsed.query
                 or parsed.fragment
                 or any(part in {"", ".", ".."} for part in parsed.path[1:].split("/"))
+                or _contains_control(self.store)
+                or self.store != f"namespace:v1:{parsed.geturl()}"
             ):
                 raise ValueError("native namespace must be a canonical namespace:v1 URI")
         elif not _is_canonical_local_store(self.store):
@@ -346,10 +357,15 @@ class NativeSessionKey(BaseModel):
 def _is_canonical_local_store(store: str) -> bool:
     return (
         store.startswith("/")
+        and not _contains_control(store)
         and (store == "/" or not store.endswith("/"))
         and "//" not in store
         and all(part not in {".", ".."} for part in store.split("/")[1:])
     )
+
+
+def _contains_control(value: str) -> bool:
+    return any(unicodedata.category(char) == "Cc" for char in value)
 
 
 class BoundaryEvidence(BaseModel):
@@ -711,39 +727,34 @@ def _allocate_binding_chat_id(paths: RuntimePaths, used_chat_ids: set[str]) -> s
     """Allocate above every occupied or previously reserved canonical reference."""
     with lock_file(paths.session_id_counter_flock):
         current = _read_session_counter(paths)
-        used = _chat_ref_numbers(used_chat_ids)
-        while current + 1 in used:
-            current += 1
-        result = f"c{current + 1}"
-        atomic_write_text(paths.session_id_counter, f"{current + 1}\n")
+        high_water = max((current, *_chat_ref_numbers(used_chat_ids)))
+        result = f"c{high_water + 1}"
+        atomic_write_text(paths.session_id_counter, f"{high_water + 1}\n")
         return result
 
 
 def _chat_ref_numbers(refs: set[str]) -> set[int]:
-    return {int(ref[1:]) for ref in refs if ref.startswith("c") and ref[1:].isdigit()}
+    return {
+        int(match.group(1))
+        for ref in refs
+        if (match := re.fullmatch(r"c([1-9][0-9]*)", ref, flags=re.ASCII)) is not None
+    }
 
 
 def _occupied_chat_refs(payloads: list[dict[str, Any]]) -> set[str]:
-    """Collect canonical cN references from each recognized journal schema."""
+    """Collect normalized identities from decoded, recognized journal events."""
     refs: set[str] = set()
-
-    def visit(value: Any, field: str = "") -> None:
-        if isinstance(value, dict):
-            for key, child in value.items():
-                visit(child, key)
-        elif isinstance(value, list):
-            for child in value:
-                visit(child, field)
-        elif (
-            isinstance(value, str)
-            and (field == "chat_id" or field.endswith("_chat_id"))
-            and value.startswith("c")
-            and value[1:].isdigit()
-        ):
-            refs.add(value)
-
     for payload in payloads:
-        visit(payload)
+        event = _parse_event(payload)
+        if event is None:
+            continue
+        chat_id = getattr(event, "chat_id", None)
+        if chat_id is not None:
+            refs.add(str(chat_id))
+        if isinstance(event, SessionStartEvent) and event.forked_from_chat_id is not None:
+            refs.add(str(event.forked_from_chat_id))
+        if isinstance(event, SessionHistoricalEvent) and event.record.forked_from_chat_id:
+            refs.add(str(event.record.forked_from_chat_id))
     return refs
 
 
@@ -2080,53 +2091,82 @@ def append_historical_session(
     runtime_root: Path,
     record: SessionRecord,
     *,
-    restore_plan_path: Path | None = None,
+    history_id: uuid.UUID,
 ) -> None:
+    """Commit the exact plan-backed historical identity from a published restore."""
     paths = RuntimePaths.from_root_dir(runtime_root)
-    if restore_plan_path is None:
-        raise ValueError("historical session import requires its durable restore plan")
-    # The caller holds the history-exclusive gate from plan lookup through
-    # publication and append. Read native history before taking sessions_flock.
-    _validate_restore_plan(restore_plan_path, record)
-    with _sessions_transaction(paths) as payloads:
-        with lock_file(paths.session_id_counter_flock):
-            counter = _read_session_counter(paths)
-        match = re.fullmatch(r"c([1-9][0-9]*)", record.chat_id)
-        if match is None or int(match.group(1)) > counter:
-            raise ValueError("restore plan alias was not previously reserved")
-        records: dict[str, SessionRecord] = {}
-        for payload in payloads:
-            parsed = _parse_event(payload)
-            if parsed is not None:
-                project_session_event(records, parsed)
-        existing = records.get(record.chat_id)
-        if existing is not None:
-            if existing == record:
-                return
-            raise ValueError("Historical session alias conflict")
-        if record.chat_id in _occupied_chat_refs(payloads):
-            raise ValueError("Restore plan alias is already occupied")
-        HistoryChanges(runtime_root).mark(HistorySource(kind="sessions"))
-        _append_session_row(paths.sessions_jsonl, SessionHistoricalEvent(record=record))
+    changes = HistoryChanges(runtime_root)
+    plan_path = runtime_root / "history-archives" / "restores" / f"{history_id}.json"
+    # The history gate serializes plan lifetime and aggregate publication. It is
+    # reentrant for restore_archive, and also protects direct API callers.
+    with lock_file(paths.project_lifetime_flock, mode="shared"), lock_file(
+        changes.mutation_lock
+    ):
+        plan = _validate_restore_plan(plan_path, history_id, record)
+        # Source/aggregate verification must precede sessions_flock. A plan by
+        # itself is not authority to consume a counter reservation.
+        from meridian.lib.state.retention_archive import ArchivedRecord, verified_source
+        from meridian.lib.state.retention_restore import _verify_existing
+
+        destination = paths.spawns_dir / plan.local_id
+        try:
+            archived = ArchivedRecord.model_validate_json(
+                (destination / "record.json").read_bytes()
+            )
+        except (OSError, ValidationError) as exc:
+            raise ValueError("restore plan has no published inert aggregate") from exc
+        if archived.history_id != history_id or archived.portable_digest != plan.portable_digest:
+            raise ValueError("restore aggregate does not match its durable plan")
+        with verified_source(destination):
+            _verify_existing(destination, archived, pending_session=record)
+
+        with _sessions_transaction(paths) as payloads:
+            # Re-read the durable file after sessions_flock: its identity must
+            # still match the plan whose aggregate was checked above.
+            if _validate_restore_plan(plan_path, history_id, record) != plan:
+                raise ValueError("restore plan changed before historical session commit")
+            with lock_file(paths.session_id_counter_flock):
+                counter = _read_session_counter(paths)
+            match = re.fullmatch(r"c([1-9][0-9]*)", record.chat_id, flags=re.ASCII)
+            if match is None or int(match.group(1)) > counter:
+                raise ValueError("restore plan alias was not previously reserved")
+            records: dict[str, SessionRecord] = {}
+            for payload in payloads:
+                parsed = _parse_event(payload)
+                if parsed is not None:
+                    project_session_event(records, parsed)
+            existing = records.get(record.chat_id)
+            if existing is not None:
+                if existing == record:
+                    return
+                raise ValueError("Historical session alias conflict")
+            if record.chat_id in _occupied_chat_refs(payloads):
+                raise ValueError("Restore plan alias is already occupied")
+            HistoryChanges(runtime_root).mark(HistorySource(kind="sessions"))
+            _append_session_row(paths.sessions_jsonl, SessionHistoricalEvent(record=record))
 
 
-def _validate_restore_plan(plan_path: Path, record: SessionRecord) -> None:
-    """Require exact durable plan ownership; the caller holds history mutation gates."""
+def _validate_restore_plan(
+    plan_path: Path, history_id: uuid.UUID, record: SessionRecord
+) -> Any:
+    """Load the typed plan only from its runtime-derived canonical location."""
+    from meridian.lib.state.retention_restore import RestorePlan
+
     try:
-        plan = json.loads(plan_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError, UnicodeDecodeError) as exc:
+        plan = RestorePlan.model_validate_json(plan_path.read_bytes())
+    except (OSError, ValidationError) as exc:
         raise ValueError("historical import has no valid durable restore plan") from exc
     if (
-        not isinstance(plan, dict)
-        or plan_path.name != f"{record.history_id}.json"
-        or plan.get("chat_id") != record.chat_id
-        or plan.get("local_id") != record.spawn_id
-        or plan.get("generation") != record.session_instance_id
-        or plan.get("session") != record.model_dump(mode="json")
-        or not isinstance(plan.get("portable_digest"), str)
-        or re.fullmatch(r"[0-9a-f]{64}", plan["portable_digest"]) is None
+        plan_path.name != f"{history_id}.json"
+        or record.history_id != history_id
+        or plan.chat_id != record.chat_id
+        or plan.local_id != record.spawn_id
+        or plan.generation != record.session_instance_id
+        or plan.session != record
+        or re.fullmatch(r"[0-9a-f]{64}", plan.portable_digest, flags=re.ASCII) is None
     ):
         raise ValueError("restore plan does not own this historical session alias")
+    return plan
 
 
 def list_session_generations(runtime_root: Path) -> tuple[SessionRecord, ...]:

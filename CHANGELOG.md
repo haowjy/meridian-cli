@@ -11,6 +11,11 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- Restore imports derive their plan path from history identity and verify the
+  published inert aggregate before consuming a reservation; allocation uses
+  normalized schema identities and ASCII canonical references, and historical
+  references cannot be restarted. Native store locators reject control chars
+  and noncanonical namespace delimiters.
 - Native session allocation now reserves nested historical chat references and
   canonical store identities; restore imports must consume their exact durable
   plan-owned reservation.

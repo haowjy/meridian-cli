@@ -303,9 +303,7 @@ def restore_archive(root: Path, archive_path: Path, refs: tuple[str, ...]) -> tu
                             changes.mark(source)
                             atomic_publish_dir(stage, destination)
                     if plan is not None:
-                        append_historical_session(
-                            root, plan.session, restore_plan_path=plan_path
-                        )
+                        append_historical_session(root, plan.session, history_id=record.history_id)
                         plan_path.unlink()
                     restored.append(local_id)
             finally:

@@ -128,7 +128,7 @@ def test_allocation_skips_historical_nested_chat_reference(tmp_path: Path) -> No
     assert allocated == "c2"
 
 
-def test_restore_import_cannot_claim_operational_or_unrelated_alias(tmp_path: Path) -> None:
+def test_restore_import_requires_canonical_plan_and_published_aggregate(tmp_path: Path) -> None:
     root = tmp_path / "runtime"
     root.mkdir()
     begin(root, "operational-run", "operational-attempt")
@@ -156,7 +156,8 @@ def test_restore_import_cannot_claim_operational_or_unrelated_alias(tmp_path: Pa
         session_instance_id="restored-generation",
         spawn_id="restored-spawn",
     )
-    plan_path = root / f"{historical.history_id}.json"
+    plan_path = root / "history-archives" / "restores" / f"{historical.history_id}.json"
+    plan_path.parent.mkdir(parents=True)
     plan_path.write_text(
         json.dumps(
             {
@@ -168,24 +169,75 @@ def test_restore_import_cannot_claim_operational_or_unrelated_alias(tmp_path: Pa
             }
         )
     )
-    with pytest.raises(ValueError, match="already occupied"):
-        session_store.append_historical_session(root, historical, restore_plan_path=plan_path)
+    with pytest.raises(ValueError, match="published inert aggregate"):
+        session_store.append_historical_session(root, historical, history_id=historical.history_id)
 
     unrelated = historical.model_copy(update={"chat_id": "c2"})
     with pytest.raises(ValueError, match="does not own"):
-        session_store.append_historical_session(root, unrelated, restore_plan_path=plan_path)
+        session_store.append_historical_session(root, unrelated, history_id=historical.history_id)
+    plan_path.unlink()
+    with pytest.raises(ValueError, match="no valid durable restore plan"):
+        session_store.append_historical_session(root, historical, history_id=historical.history_id)
 
 
-@pytest.mark.parametrize("store", ["relative/db", "/x/./y", "/x//y", "/x/y/", "namespace://db/x"])
+@pytest.mark.parametrize("store", [
+    "relative/db", "/x/./y", "/x//y", "/x/y/", "/x/\x00y",
+    "namespace://db/x", "namespace:v1://server/db?", "namespace:v1://server/db#",
+    "namespace:v1://ser\tver/db", "namespace:v1://server/line\nbreak",
+])
 def test_native_store_identity_rejects_noncanonical_lexical_forms(store: str) -> None:
     with pytest.raises(ValidationError):
         key(store)
 
 
 def test_versioned_native_store_namespace_is_explicit_and_canonical() -> None:
-    assert key("namespace:v1://server/database", "native").store == "namespace:v1://server/database"
+    first = key("namespace:v1://server/database", "native")
+    second = key("namespace:v1://other/database", "native")
+    assert first.store == "namespace:v1://server/database"
+    assert first != second
     with pytest.raises(ValidationError):
         key("namespace:v1://server/db/../database", "native")
+
+
+@pytest.mark.parametrize("chat_refs, expected", [
+    ([" c1 "], "c2"),
+    (["c¹"], "c1"),
+    (["c10"], "c11"),
+])
+def test_reservation_uses_normalized_ascii_high_water(
+    chat_refs: list[str], expected: str, tmp_path: Path
+) -> None:
+    root = tmp_path / "runtime"
+    root.mkdir()
+    sessions = root / "sessions.jsonl"
+    sessions.write_text(
+        "".join(json.dumps({"event": "stop", "chat_id": ref}) + "\n" for ref in chat_refs)
+    )
+    assert session_store.reserve_chat_id(root) == expected
+
+
+def test_start_cannot_turn_historical_reference_live(tmp_path: Path) -> None:
+    root = tmp_path / "runtime"
+    root.mkdir()
+    historical = session_store.SessionRecord(
+        chat_id="c1", record_mode="historical", kind="primary", harness="pi",
+        harness_session_id=None,
+        harness_session_ids=(),
+        model="",
+        agent="",
+        agent_path="",
+        skills=(),
+        skill_paths=(), params=(), started_at="2025-01-01T00:00:00Z",
+        stopped_at="2025-01-01T00:01:00Z", session_instance_id="historical-generation",
+    )
+    sessions = root / "sessions.jsonl"
+    historical_event = session_store.SessionHistoricalEvent(record=historical)
+    sessions.write_text(json.dumps(historical_event.model_dump(mode="json")) + "\n")
+    before = sessions.read_bytes()
+    with pytest.raises(ValueError, match="cannot be started"):
+        session_store.start_session(root, "pi", "native", "test", chat_id="c1")
+    assert sessions.read_bytes() == before
+    assert not (root / "sessions" / "c1.lease.json").exists()
 
 
 def test_reservation_fails_closed_on_corrupt_counter(tmp_path: Path) -> None:
