@@ -392,7 +392,6 @@ async def test_overlapping_terminal_and_refutation_are_retained_until_durable(
         raise OSError("persistent refutation append failure")
 
     def fail_fsync(path):
-        durability(path)
         raise OSError("persistent refutation fsync failure")
 
     def start_refutation_drain():
