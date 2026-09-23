@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from threading import Event
 
 import pytest
 from pydantic import ValidationError
@@ -183,6 +184,54 @@ def test_torn_tail_after_live_exit_blocks_unrelated_writer_and_preserves_bytes(
     assert journal.read_bytes() == preserved
 
 
+def test_start_repair_cannot_erase_acknowledged_exit_invalidation(
+    tmp_path: Path, monkeypatch
+) -> None:
+    root = tmp_path / "runtime"
+    root.mkdir()
+    begin(root, "run", "attempt")
+    first = key("/native/repair-race-a")
+    second = key("/native/repair-race-b")
+    session_store.accept_native_boundary(root, receipt("run", "attempt", "exit", first))
+    journal = root / "sessions.jsonl"
+    journal.write_bytes(journal.read_bytes().rstrip(b"\n"))
+
+    repair_reached = Event()
+    allow_repair_to_finish = Event()
+    original_repair = session_store.atomic_write_bytes
+
+    def pause_after_repair(path: Path, content: bytes) -> None:
+        original_repair(path, content)
+        if path == journal:
+            repair_reached.set()
+            assert allow_repair_to_finish.wait(5)
+
+    monkeypatch.setattr(session_store, "atomic_write_bytes", pause_after_repair)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        start = pool.submit(
+            session_store.start_session,
+            root,
+            "pi",
+            "spawn-session",
+            "model",
+        )
+        assert repair_reached.wait(5)
+        contradiction = pool.submit(
+            session_store.accept_native_boundary,
+            root,
+            receipt("run", "attempt", "exit", second, order=2),
+        )
+        assert not contradiction.done()
+        allow_repair_to_finish.set()
+        chat_id = start.result(timeout=5)
+        accepted = contradiction.result(timeout=5)
+    try:
+        assert accepted == session_store.BoundaryAcceptance(None, True)
+        assert session_store.get_native_attempt_boundaries(root, "run", "attempt").exit_invalidated
+    finally:
+        session_store.stop_session(root, chat_id)
+
+
 def test_complete_final_object_without_newline_is_replayed_before_append(tmp_path: Path) -> None:
     root = tmp_path / "runtime"
     root.mkdir()
@@ -246,17 +295,56 @@ def test_unqualified_raw_receipt_and_relative_store_are_rejected() -> None:
 
 
 def test_append_fsync_ambiguity_is_replayed_and_confirmed(tmp_path: Path, monkeypatch) -> None:
-    from meridian.lib.state import event_store
-
     root = tmp_path / "runtime"
     root.mkdir()
-    original = event_store.append_durable_jsonl_line
+    original = session_store._append_session_row
 
-    def append_then_report_failure(path: Path, line: str) -> None:
-        original(path, line)
+    def append_then_report_failure(path: Path, event: object, **kwargs: object) -> None:
+        original(path, event, **kwargs)  # type: ignore[arg-type]
         raise OSError("simulated lost fsync acknowledgement")
 
-    monkeypatch.setattr(event_store, "append_durable_jsonl_line", append_then_report_failure)
+    monkeypatch.setattr(session_store, "_append_session_row", append_then_report_failure)
+    begin(root, "run", "attempt")
+    rows = [json.loads(line) for line in (root / "sessions.jsonl").read_text().splitlines()]
+    assert [row["action"] for row in rows] == ["begin"]
+
+
+def test_duplicate_begin_cannot_acknowledge_persistently_failed_file_sync(
+    tmp_path: Path, monkeypatch
+) -> None:
+    root = tmp_path / "runtime"
+    root.mkdir()
+    begin(root, "run", "attempt")
+    original_fsync = session_store.os.fsync
+
+    def fail_sync(_fd: int) -> None:
+        raise OSError("persistent file sync failure")
+
+    monkeypatch.setattr(session_store.os, "fsync", fail_sync)
+    for _ in range(2):
+        with pytest.raises(OSError, match="persistent file sync failure"):
+            begin(root, "run", "attempt")
+    monkeypatch.setattr(session_store.os, "fsync", original_fsync)
+    begin(root, "run", "attempt")
+    rows = [json.loads(line) for line in (root / "sessions.jsonl").read_text().splitlines()]
+    assert [row["action"] for row in rows] == ["begin"]
+
+
+def test_duplicate_begin_cannot_acknowledge_failed_publication_directory_sync(
+    tmp_path: Path, monkeypatch
+) -> None:
+    root = tmp_path / "runtime"
+    root.mkdir()
+    begin(root, "run", "attempt")
+
+    def fail_directory_sync(_path: Path) -> None:
+        raise OSError("persistent directory sync failure")
+
+    monkeypatch.setattr(session_store, "fsync_directory", fail_directory_sync)
+    for _ in range(2):
+        with pytest.raises(OSError, match="persistent directory sync failure"):
+            begin(root, "run", "attempt")
+    monkeypatch.undo()
     begin(root, "run", "attempt")
     rows = [json.loads(line) for line in (root / "sessions.jsonl").read_text().splitlines()]
     assert [row["action"] for row in rows] == ["begin"]

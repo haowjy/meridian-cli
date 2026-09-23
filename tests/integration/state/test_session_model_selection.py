@@ -116,7 +116,7 @@ def test_seed_cannot_replace_started_selection_and_write_failure_propagates(
             def fail(*args: object, **kwargs: object) -> None:
                 raise OSError("selection append failed")
 
-            patch.setattr(store, "append_event", fail)
+            patch.setattr(store, "_append_session_row", fail)
             with pytest.raises(OSError, match="selection append failed"):
                 selected(tmp_path, "c1", generation, "p3", "new")
         assert current(tmp_path) == "astra"

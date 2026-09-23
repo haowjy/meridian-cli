@@ -9,6 +9,12 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Added typed, strict native-session binding and attempt-boundary authority to
   the existing session journal, with crash-safe replay and fail-closed writers.
 
+### Changed
+
+- Routed lifecycle, model, historical, cleanup, and native session journal writes
+  through one ordered lock/repair/append/durability transaction; removed start's
+  unlocked journal preflight and made restore acquire project lifetime first.
+
 ## [0.6.6] - 2026-09-22
 
 ### Changed

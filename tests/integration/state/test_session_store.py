@@ -38,7 +38,6 @@ def _crash_session_cleanup(runtime_root: Path, crash_stage: str) -> None:
 def _crash_session_cleanup_during_append(runtime_root: Path) -> None:
     def append_partial_then_crash(
         data_path: Path,
-        _lock_path: Path,
         _event: object,
         *,
         exclude_none: bool = False,
@@ -50,7 +49,7 @@ def _crash_session_cleanup_during_append(runtime_root: Path) -> None:
             os.fsync(handle.fileno())
         os.kill(os.getpid(), signal.SIGKILL)
 
-    session_store.append_event = append_partial_then_crash  # type: ignore[assignment]
+    session_store._append_session_row = append_partial_then_crash  # type: ignore[assignment]
     session_store.cleanup_stale_sessions(runtime_root)
 
 
@@ -320,7 +319,7 @@ def test_cleanup_stale_sessions_releases_handles_when_event_append_fails(
     def fail_append(*_args: object, **_kwargs: object) -> None:
         raise RuntimeError("injected append failure")
 
-    monkeypatch.setattr(session_store, "append_event", fail_append)
+    monkeypatch.setattr(session_store, "_append_session_row", fail_append)
 
     with pytest.raises(RuntimeError, match="injected append failure"):
         session_store.cleanup_stale_sessions(runtime_root)

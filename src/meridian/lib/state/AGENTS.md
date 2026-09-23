@@ -168,10 +168,11 @@ Native chat binding authority shares `sessions.jsonl` and `sessions_flock`; do n
 add a parallel ledger. `begin_native_attempt()`, `accept_native_boundary()`,
 `get_native_session_key()`, and `get_native_attempt_boundaries()` replay the
 strict typed authority events. Receipts need the persisted attempt/transport scope,
-qualified ordering and operation evidence. All writers to `sessions.jsonl`,
-including model observation/selection and lifecycle updates, must pass the strict
-pre-repair guard before generic JSONL tail repair. Legacy native-ID fields remain
-display/provenance data and are not verified bindings.
+qualified ordering and operation evidence. Session journal writers share one
+transaction in project-lifetime → history-mutation → exclusive-session-lock order;
+it strictly validates before any permitted tail repair, appends without generic
+second repair, and confirms file plus parent-directory durability. Legacy native-ID
+fields remain display/provenance data and are not verified bindings.
 
 ## Spawn Subpackage
 

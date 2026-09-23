@@ -21,6 +21,7 @@ from meridian.lib.platform.atomic import atomic_replace
 from meridian.lib.platform.locking import lock_file
 from meridian.lib.state.atomic import atomic_publish_dir, atomic_write_text
 from meridian.lib.state.history_changes import HistoryChanges, HistorySource
+from meridian.lib.state.paths import RuntimePaths
 from meridian.lib.state.retention_archive import (
     _PREFIX,
     ArchivedRecord,
@@ -232,7 +233,12 @@ def restore_archive(root: Path, archive_path: Path, refs: tuple[str, ...]) -> tu
         raise ValueError(f"Archive references not found: {sorted(set(refs) - matched)}")
     changes = HistoryChanges(root)
     restored: list[str] = []
-    with lock_file(root / "history-archives/archive.lock"):
+    paths = RuntimePaths.from_root_dir(root)
+    # Restore enters the history-exclusive gate below; establish project
+    # lifetime first so session transactions never reverse the global order.
+    with lock_file(paths.project_lifetime_flock, mode="shared"), lock_file(
+        root / "history-archives/archive.lock"
+    ):
         plans = root / "history-archives" / "restores"
         for record in selected:
             plan_path = plans / f"{record.history_id}.json"

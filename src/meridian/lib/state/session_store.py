@@ -4,7 +4,7 @@ import hashlib
 import json
 import os
 import uuid
-from contextlib import ExitStack
+from contextlib import ExitStack, contextmanager
 from pathlib import Path
 from typing import IO, Any, Literal, NamedTuple, Self, cast
 
@@ -18,6 +18,7 @@ from meridian.lib.core.types import (
     OptionalPersistedHarnessSessionId,
     PersistedChatId,
 )
+from meridian.lib.platform.atomic import fsync_directory
 from meridian.lib.platform.locking import (
     acquire_file_lock,
     lock_file,
@@ -25,8 +26,8 @@ from meridian.lib.platform.locking import (
     try_lock_file,
     unlink_validated_lock,
 )
-from meridian.lib.state.atomic import atomic_write_text
-from meridian.lib.state.event_store import append_event, read_events, utc_now_iso
+from meridian.lib.state.atomic import append_text_line, atomic_write_bytes, atomic_write_text
+from meridian.lib.state.event_store import read_events, utc_now_iso
 from meridian.lib.state.history_changes import HistoryChanges, HistorySource
 from meridian.lib.state.liveness import is_process_alive_with_birth
 from meridian.lib.state.paths import RuntimePaths, normalize_path_for_write
@@ -39,18 +40,54 @@ def _append_session_event(
     *,
     exclude_none: bool = False,
 ) -> None:
-    changes = HistoryChanges(data_path.parent)
-    with lock_file(changes.mutation_lock, mode="shared"), lock_file(lock_path):
-        _strict_session_prewrite(data_path)
+    paths = RuntimePaths.from_root_dir(data_path.parent)
+    with _sessions_transaction(paths) as payloads:
+        session_events = [parsed for row in payloads if (parsed := _parse_event(row)) is not None]
+        if isinstance(event, SessionUpdateEvent):
+            _validate_startup_identity(session_events, event)
         if isinstance(event, (SessionUpdateEvent, SessionStopEvent, SessionModelSelectionEvent)):
-            for record in list_session_generations(data_path.parent):
+            records: dict[str, SessionRecord] = {}
+            for parsed in session_events:
+                project_session_event(records, parsed)
+            for record in records.values():
                 if (record.chat_id, record.session_instance_id) == (
                     event.chat_id,
                     event.session_instance_id,
                 ) and record.record_mode == "historical":
                     raise ValueError("Historical sessions are inert and cannot be mutated")
-        changes.mark(HistorySource(kind="sessions"))
-        append_event(data_path, lock_path, event, exclude_none=exclude_none)
+        HistoryChanges(data_path.parent).mark(HistorySource(kind="sessions"))
+        _append_session_row(data_path, event, exclude_none=exclude_none)
+
+
+@contextmanager
+def _sessions_transaction(paths: RuntimePaths):
+    """Own the lock order, strict prewrite, and confirmation for sessions.jsonl."""
+    with (
+        lock_file(paths.project_lifetime_flock, mode="shared"),
+        lock_file(HistoryChanges(paths.root_dir).mutation_lock, mode="shared"),
+        lock_file(paths.sessions_flock),
+    ):
+        payloads = _strict_session_prewrite(paths.sessions_jsonl)
+        try:
+            yield payloads
+        finally:
+            _confirm_sessions_durability(paths.sessions_jsonl)
+
+
+def _confirm_sessions_durability(path: Path) -> None:
+    """Confirm both file content and publication of its directory entry."""
+    if path.exists():
+        with path.open("rb") as handle:
+            os.fsync(handle.fileno())
+    fsync_directory(path.parent)
+
+
+def _append_session_row(
+    path: Path, event: BaseModel, *, exclude_none: bool = False
+) -> None:
+    payload = event.model_dump(mode="json", exclude_none=exclude_none)
+    line = json.dumps(payload, separators=(",", ":"), sort_keys=True) + "\n"
+    append_text_line(path, line)
 
 
 class _SessionLockHandles(NamedTuple):
@@ -429,8 +466,7 @@ def begin_native_attempt(
     if not run_id.strip() or not attempt_id.strip():
         raise ValueError("run and attempt identity are required")
     paths = RuntimePaths.from_root_dir(runtime_root)
-    with lock_file(paths.project_lifetime_flock, mode="shared"), lock_file(paths.sessions_flock):
-        events = _strict_session_prewrite(paths.sessions_jsonl)
+    with _sessions_transaction(paths) as events:
         if operation in {"resume", "fork"}:
             if requested_source is None:
                 raise ValueError("resume/fork intent requires its pinned source key")
@@ -495,8 +531,7 @@ def begin_native_attempt(
 def accept_native_boundary(runtime_root: Path, receipt: OwnedBoundaryReceipt) -> BoundaryAcceptance:
     """Atomically bind a verified attempt boundary to an immutable canonical chat."""
     paths = RuntimePaths.from_root_dir(runtime_root)
-    with lock_file(paths.project_lifetime_flock, mode="shared"), lock_file(paths.sessions_flock):
-        payloads = _strict_session_prewrite(paths.sessions_jsonl)
+    with _sessions_transaction(paths) as payloads:
         attempt_events = [
             SessionAttemptEvent.model_validate(payload)
             for payload in payloads
@@ -666,20 +701,16 @@ def _allocate_binding_chat_id(paths: RuntimePaths, used_chat_ids: set[str]) -> s
 
 
 def _append_authority_event(path: Path, lock_path: Path, event: SessionAttemptEvent) -> None:
-    """Append and confirm ambiguous outcomes before callers acknowledge authority."""
-    from meridian.lib.state.event_store import append_event
-
+    """Append through the active session transaction and resolve ambiguous writes."""
     try:
-        append_event(path, lock_path, event)
+        _append_session_row(path, event)
     except OSError:
-        # An fsync error can occur after the bytes reached the page cache. Do not
-        # blindly retry and create a second semantic row: replay, then sync it.
-        payloads = _strict_session_prewrite(path)
+        # Visibility in page cache is not a commit; require a fresh full barrier.
+        payloads = _strict_session_events(path)
         expected = event.model_dump(mode="json", exclude_none=False)
         if expected not in payloads:
             raise
-        with path.open("rb") as handle:
-            os.fsync(handle.fileno())
+        _confirm_sessions_durability(path)
 
 
 def get_native_session_key(runtime_root: Path, chat_id: str) -> NativeSessionKey | None:
@@ -791,12 +822,13 @@ _STRICT_SESSION_EVENTS = {
 }
 
 
-def _strict_session_events(path: Path) -> list[dict[str, Any]]:
+def _strict_session_events(path: Path, raw: bytes | None = None) -> list[dict[str, Any]]:
     """Read sessions authority without the permissive event-store skip behavior."""
-    try:
-        raw = path.read_bytes()
-    except FileNotFoundError:
-        return []
+    if raw is None:
+        try:
+            raw = path.read_bytes()
+        except FileNotFoundError:
+            return []
     lines = raw.split(b"\n")
     complete = lines[:-1]
     tail = b"" if raw.endswith(b"\n") else lines[-1]
@@ -924,21 +956,25 @@ def _has_uninvalidated_exit(payloads: list[dict[str, Any]]) -> bool:
 
 
 def _strict_session_prewrite(path: Path) -> list[dict[str, Any]]:
-    """Validate all authority before generic repair can alter its bytes."""
-    payloads = _strict_session_events(path)
+    """Strictly validate, then perform only the repair authorized by that read."""
     try:
         raw = path.read_bytes()
     except FileNotFoundError:
-        return payloads
+        return []
+    payloads = _strict_session_events(path, raw)
     if raw and not raw.endswith(b"\n"):
-        # A valid complete object is committed even without its delimiter.
         tail = raw.rsplit(b"\n", 1)[-1]
         try:
-            json.loads(tail.decode("utf-8"))
+            final = json.loads(tail.decode("utf-8"))
         except (json.JSONDecodeError, UnicodeDecodeError):
-            pass  # the validated strict reader already authorized this torn tail
+            # Strict validation authorized dropping only this torn final fragment.
+            repaired = raw[: raw.rfind(b"\n") + 1] if b"\n" in raw else b""
         else:
-            atomic_write_text(path, raw.decode("utf-8") + "\n")
+            if not isinstance(final, dict):
+                raise ValueError("Complete final sessions row must be a JSON object")
+            repaired = raw + b"\n"
+        if repaired != raw:
+            atomic_write_bytes(path, repaired)
     return payloads
 
 
@@ -1256,9 +1292,6 @@ def start_session(
             model_selection_protocol=model_selection_protocol,
         )
         with lock_file(HistoryChanges(runtime_root).mutation_lock, mode="shared"):
-            # Validate the shared authority before publishing spawn mirrors or
-            # lifecycle metadata from this session start.
-            _strict_session_prewrite(paths.sessions_jsonl)
             # Chat-only callers select the current generation. Resolved references
             # carry their exact portable ancestor and must never be re-resolved.
             if forked_from_chat_id and forked_from_history_id is None:
@@ -1316,17 +1349,13 @@ def stop_session(runtime_root: Path, chat_id: str) -> None:
         session_instance_id=session_instance_id,
         stopped_at=utc_now_iso(),
     )
-    with (
-        lock_file(HistoryChanges(runtime_root).mutation_lock, mode="shared"),
-        lock_file(paths.sessions_flock),
-    ):
-        _append_session_event(
-            paths.sessions_jsonl,
-            paths.sessions_flock,
-            event,
-            exclude_none=True,
-        )
-        _session_lease_path(paths, chat_id).unlink(missing_ok=True)
+    _append_session_event(
+        paths.sessions_jsonl,
+        paths.sessions_flock,
+        event,
+        exclude_none=True,
+    )
+    _session_lease_path(paths, chat_id).unlink(missing_ok=True)
     _release_session_lock(runtime_root, chat_id)
 
 
@@ -1353,8 +1382,6 @@ def update_session_harness_id(
         ),
         startup_attempt_id=startup_attempt_id,
     )
-    if startup_attempt_id is not None:
-        _validate_startup_identity(read_events(paths.sessions_jsonl, _parse_event), event)
     _append_session_event(
         paths.sessions_jsonl,
         paths.sessions_flock,
@@ -1648,73 +1675,72 @@ def record_model_selection(runtime_root: Path, event: SessionModelSelectionEvent
     """Durably append once per invocation/conversation; false means already recorded."""
 
     paths = RuntimePaths.from_root_dir(runtime_root)
-    with lock_file(paths.project_lifetime_flock, mode="shared"):
+    with _sessions_transaction(paths) as payloads:
         if not runtime_root.is_dir():
             raise FileNotFoundError(runtime_root)
-        with lock_file(paths.sessions_flock):
-            _strict_session_prewrite(paths.sessions_jsonl)
-            events = read_events(paths.sessions_jsonl, _parse_event)
-            source_start = next(
-                (
-                    start
-                    for start in events
-                    if isinstance(start, SessionStartEvent)
-                    and start.chat_id == event.chat_id
-                    and start.session_instance_id == event.session_instance_id
-                    and start.harness == event.harness
-                ),
-                None,
-            )
-            if source_start is None:
-                raise ValueError("selection has no matching captured session generation")
-            if event.kind == "initial_seed" and source_start.model_selection_protocol is not None:
-                raise ValueError("cannot seed a new-protocol session from prelaunch intent")
-            _validate_startup_identity(events, event)
-            bound = _bound_model_selections([*events, event])
-            _, native_id = bound[-1]
-            for prior, prior_id in bound[:-1]:
-                if prior.harness != event.harness:
-                    continue
-                if (
-                    native_id is not None
-                    and prior_id == native_id
-                    and (
-                        event.kind == "initial_seed"
-                        or (prior.kind == "invocation_started" and prior.spawn_id == event.spawn_id)
+        events = [parsed for row in payloads if (parsed := _parse_event(row)) is not None]
+        source_start = next(
+            (
+                start
+                for start in events
+                if isinstance(start, SessionStartEvent)
+                and start.chat_id == event.chat_id
+                and start.session_instance_id == event.session_instance_id
+                and start.harness == event.harness
+            ),
+            None,
+        )
+        if source_start is None:
+            raise ValueError("selection has no matching captured session generation")
+        if event.kind == "initial_seed" and source_start.model_selection_protocol is not None:
+            raise ValueError("cannot seed a new-protocol session from prelaunch intent")
+        _validate_startup_identity(events, event)
+        bound = _bound_model_selections([*events, event])
+        _, native_id = bound[-1]
+        for prior, prior_id in bound[:-1]:
+            if prior.harness != event.harness:
+                continue
+            if (
+                native_id is not None
+                and prior_id == native_id
+                and (
+                    event.kind == "initial_seed"
+                    or (prior.kind == "invocation_started" and prior.spawn_id == event.spawn_id)
+                )
+            ):
+                if event.kind == "invocation_started" and not any(
+                    isinstance(identity, (SessionUpdateEvent, SessionModelSelectionEvent))
+                    and identity.chat_id == event.chat_id
+                    and identity.session_instance_id == event.session_instance_id
+                    and identity.startup_attempt_id == event.startup_attempt_id
+                    and identity.harness_session_id == native_id
+                    for identity in events
+                ):
+                    HistoryChanges(runtime_root).mark(HistorySource(kind="sessions"))
+                    _append_session_row(
+                        paths.sessions_jsonl,
+                        SessionUpdateEvent(
+                            chat_id=event.chat_id,
+                            session_instance_id=event.session_instance_id,
+                            startup_attempt_id=event.startup_attempt_id,
+                            harness_session_id=HarnessSessionId(native_id),
+                        ),
+                        exclude_none=True,
                     )
-                ):
-                    if event.kind == "invocation_started" and not any(
-                        isinstance(identity, (SessionUpdateEvent, SessionModelSelectionEvent))
-                        and identity.chat_id == event.chat_id
-                        and identity.session_instance_id == event.session_instance_id
-                        and identity.startup_attempt_id == event.startup_attempt_id
-                        and identity.harness_session_id == native_id
-                        for identity in events
-                    ):
-                        append_event(
-                            paths.sessions_jsonl,
-                            paths.sessions_flock,
-                            SessionUpdateEvent(
-                                chat_id=event.chat_id,
-                                session_instance_id=event.session_instance_id,
-                                startup_attempt_id=event.startup_attempt_id,
-                                harness_session_id=HarnessSessionId(native_id),
-                            ),
-                            exclude_none=True,
-                        )
-                    return False
-                if event.kind == "invocation_started" and (
-                    prior.kind == event.kind
-                    and prior.spawn_id == event.spawn_id
-                    and prior.chat_id == event.chat_id
-                    and prior.session_instance_id == event.session_instance_id
-                    and prior.startup_attempt_id == event.startup_attempt_id
-                ):
-                    if prior_id is not None and native_id is not None and prior_id != native_id:
-                        raise ValueError("startup attempt changed its native conversation identity")
-                    return False
-            append_event(paths.sessions_jsonl, paths.sessions_flock, event)
-            return True
+                return False
+            if event.kind == "invocation_started" and (
+                prior.kind == event.kind
+                and prior.spawn_id == event.spawn_id
+                and prior.chat_id == event.chat_id
+                and prior.session_instance_id == event.session_instance_id
+                and prior.startup_attempt_id == event.startup_attempt_id
+            ):
+                if prior_id is not None and native_id is not None and prior_id != native_id:
+                    raise ValueError("startup attempt changed its native conversation identity")
+                return False
+        HistoryChanges(runtime_root).mark(HistorySource(kind="sessions"))
+        _append_session_row(paths.sessions_jsonl, event)
+        return True
 
 
 def record_model_observation(runtime_root: Path, event: SessionModelObservationEvent) -> bool:
@@ -1727,18 +1753,24 @@ def record_model_observation(runtime_root: Path, event: SessionModelObservationE
     """
 
     paths = RuntimePaths.from_root_dir(runtime_root)
-    with lock_file(paths.project_lifetime_flock, mode="shared"):
+    with _sessions_transaction(paths) as payloads:
         if not runtime_root.is_dir():
             raise FileNotFoundError(runtime_root)
-        with lock_file(paths.sessions_flock):
-            _strict_session_prewrite(paths.sessions_jsonl)
-            if (
-                get_last_executed_model(runtime_root, event.harness, event.harness_session_id)
-                == event.observed_model_token
-            ):
-                return False
-            append_event(paths.sessions_jsonl, paths.sessions_flock, event)
-            return True
+        previous = next(
+            (
+                row.get("observed_model_token")
+                for row in reversed(payloads)
+                if row.get("event") == "model_observation"
+                and row.get("harness") == event.harness
+                and row.get("harness_session_id") == event.harness_session_id
+            ),
+            None,
+        )
+        if previous == event.observed_model_token:
+            return False
+        HistoryChanges(runtime_root).mark(HistorySource(kind="sessions"))
+        _append_session_row(paths.sessions_jsonl, event)
+        return True
 
 
 def get_last_executed_model(
@@ -1888,6 +1920,7 @@ def cleanup_stale_sessions(runtime_root: Path) -> StaleSessionCleanup:
         return StaleSessionCleanup(cleaned_ids=(), materialized_scopes=())
 
     with ExitStack() as lock_stack:
+        lock_stack.enter_context(lock_file(paths.project_lifetime_flock, mode="shared"))
         stale: list[tuple[str, Path, IO[bytes]]] = []
         for lock_path in paths.sessions_dir.glob("*.lock"):
             chat_id = lock_path.stem
@@ -1902,11 +1935,17 @@ def cleanup_stale_sessions(runtime_root: Path) -> StaleSessionCleanup:
 
         cleaned_ids: list[str] = []
         stale_cleanup_scopes: list[str] = []
-        with (
-            lock_file(HistoryChanges(runtime_root).mutation_lock, mode="shared"),
-            lock_file(paths.sessions_flock),
-        ):
-            records = _records_by_session(runtime_root)
+        lease_data = {chat_id: _read_session_lease_data(paths, chat_id) for chat_id, _, _ in stale}
+        process_alive = {
+            chat_id: lease[2] is not None and is_process_alive_with_birth(lease[2], lease[3])
+            for chat_id, lease in lease_data.items()
+        }
+        with _sessions_transaction(paths) as payloads:
+            records: dict[str, SessionRecord] = {}
+            for payload in payloads:
+                parsed = _parse_event(payload)
+                if parsed is not None:
+                    project_session_event(records, parsed)
             stopped_at = utc_now_iso()
             for chat_id, _lock_path, _ in stale:
                 existing = records.get(chat_id)
@@ -1914,14 +1953,14 @@ def cleanup_stale_sessions(runtime_root: Path) -> StaleSessionCleanup:
                     lease_exists,
                     lease_session_instance_id,
                     lease_owner_pid,
-                    lease_owner_birth,
-                ) = _read_session_lease_data(paths, chat_id)
+                    _lease_owner_birth,
+                ) = lease_data[chat_id]
                 if (
                     existing is not None
                     and existing.kind == "primary"
                     and lease_exists
                     and lease_owner_pid is not None
-                    and is_process_alive_with_birth(lease_owner_pid, lease_owner_birth)
+                    and process_alive[chat_id]
                 ):
                     continue
                 stop_session_instance_id = lease_session_instance_id
@@ -1938,9 +1977,9 @@ def cleanup_stale_sessions(runtime_root: Path) -> StaleSessionCleanup:
                         )
                     )
                 ):
-                    _append_session_event(
+                    HistoryChanges(runtime_root).mark(HistorySource(kind="sessions"))
+                    _append_session_row(
                         paths.sessions_jsonl,
-                        paths.sessions_flock,
                         SessionStopEvent(
                             chat_id=ChatId(chat_id),
                             session_instance_id=stop_session_instance_id,
@@ -1971,7 +2010,8 @@ def cleanup_stale_sessions(runtime_root: Path) -> StaleSessionCleanup:
                     else ""
                 )
                 _discard_expected_session_lock(runtime_root, chat_id, cleaned_generation)
-                _session_lease_path(paths, chat_id).unlink(missing_ok=True)
+        for chat_id in cleaned_ids:
+            _session_lease_path(paths, chat_id).unlink(missing_ok=True)
 
         cleaned_id_set = frozenset(cleaned_ids)
         for chat_id, lock_path, handle in stale:
@@ -1986,18 +2026,19 @@ def cleanup_stale_sessions(runtime_root: Path) -> StaleSessionCleanup:
 
 def append_historical_session(runtime_root: Path, record: SessionRecord) -> None:
     paths = RuntimePaths.from_root_dir(runtime_root)
-    with (
-        lock_file(HistoryChanges(runtime_root).mutation_lock, mode="shared"),
-        lock_file(paths.sessions_flock),
-    ):
-        existing = _records_by_session(runtime_root).get(record.chat_id)
+    with _sessions_transaction(paths) as payloads:
+        records: dict[str, SessionRecord] = {}
+        for payload in payloads:
+            parsed = _parse_event(payload)
+            if parsed is not None:
+                project_session_event(records, parsed)
+        existing = records.get(record.chat_id)
         if existing is not None:
             if existing == record:
                 return
             raise ValueError("Historical session alias conflict")
-        _append_session_event(
-            paths.sessions_jsonl, paths.sessions_flock, SessionHistoricalEvent(record=record)
-        )
+        HistoryChanges(runtime_root).mark(HistorySource(kind="sessions"))
+        _append_session_row(paths.sessions_jsonl, SessionHistoricalEvent(record=record))
 
 
 def list_session_generations(runtime_root: Path) -> tuple[SessionRecord, ...]:
