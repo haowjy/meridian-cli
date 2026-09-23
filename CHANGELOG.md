@@ -6,6 +6,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- Added a process-scoped Pi session-boundary observer with bounded atomic state
+  and digest-verified source-built bundle projection for identity-qualified RPC launches.
 - Added typed, strict native-session binding and attempt-boundary authority to
   the existing session journal, with crash-safe replay and fail-closed writers.
 

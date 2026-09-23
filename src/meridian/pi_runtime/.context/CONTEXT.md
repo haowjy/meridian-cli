@@ -21,14 +21,16 @@ pi_runtime/
 ├── dist/                     # build output: splatted entrypoints
 │   └── extensions/
 │       ├── managed-bash/index.js
-│       └── meridian-spawn-watch/index.js
+│       ├── meridian-spawn-watch/index.js
+│       └── session-boundary/index.js
 └── extensions/
-    ├── types.ts              # shared TS types (ExtensionAPI, ToolRegistration)
     ├── shared/               # ids, json files, panels, pi state paths, meridian CLI helpers
     ├── managed-bash/
     │   └── src/index.ts      # bash/bash_manage override, b-* records, /ps* UI
-    └── meridian-spawn-watch/
-        └── src/index.ts      # spawn disk watcher, implicit-wait notifications, /spawn* UI
+    ├── meridian-spawn-watch/
+    │   └── src/index.ts     # spawn disk watcher, implicit-wait notifications, /spawn* UI
+    └── session-boundary/
+        └── src/index.ts     # bounded native session-boundary observer
 ```
 
 ### Extension Responsibilities
@@ -37,18 +39,22 @@ pi_runtime/
 |---|---|---|
 | `managed-bash` | `bash` / `bash_manage`, tracked vs detached bash records, `/ps*` slash commands, `_MERIDIAN_PI_BASH_ID` injection into child processes | `runtime_root/pi-bash/<spawn-id>/bash-records.json` and bash logs |
 | `meridian-spawn-watch` | correlated spawn discovery, `/spawn*` slash commands, implicit-wait `sendMessage({triggerTurn: true})` notifications | watches `runtime_root/spawns/<child>/state.json`, reads `originating_bash_id`, writes `runtime_root/pi-bash/<spawn-id>/last-notification.json` |
+| `session-boundary` | process-lifetime Pi lifecycle observation for the identity-qualified RPC close path | one atomic `runtime_root/pi-session-boundaries/<launch-nonce>/state.json` snapshot (`ready`, `quit_candidate`, `invalid`) |
 
 `managed-bash` is the mechanism extension. `meridian-spawn-watch` is the policy extension.
 Keep that split: shell task execution and task record persistence belong in managed-bash;
 child-spawn observation and notification behavior belong in spawn-watch.
+The session-boundary observer remains independent of both concerns and does not write
+their files or participate in `PiDiskWatcher`.
 
 ### Build Pipeline
 
-`npm run build:extensions` runs three scripts in sequence:
+`npm run build:extensions` runs clean and builds all three bundles:
 
 1. `build:extensions:clean` — removes `./dist/extensions`
 2. `build:extensions:managed-bash` — `tsup` bundles `managed-bash/src/index.ts` → ESM, Node 20, single-file output
 3. `build:extensions:meridian-spawn-watch` — bundles `meridian-spawn-watch/src/index.ts` the same way
+4. `build:extensions:session-boundary` — bundles the process-scoped native lifecycle observer
 
 `npm run verify:extensions` rebuilds and runs Vitest coverage for the extension sources.
 
@@ -89,14 +95,27 @@ directories or infer descendants from newer IDs. Both Pi and resident drains use
 the shared reconciled transitive tree; keep extension notification and bash state
 independent of persisted descendant state.
 
-### ExtensionAPI (`types.ts`)
+### Pi Extension API
 
-Shared TypeScript interface between Pi and extensions:
+Extensions import `ExtensionAPI` from the package root and subscribe with
+`pi.on(...)`; there is no local `types.ts` or `registerHook` shim.
 
 - `registerTool(definition)` — register a tool with name, description, input schema, and call handler
-- `registerHook(name, handler)` — register lifecycle hooks where Pi exposes them
-- `session.on(event, handler)` — subscribe to session events
 - `session.sendMessage(message, options)` — send an agent follow-up message; spawn-watch uses this for implicit-wait notifications
+
+The separate `session-boundary` extension samples the quit context's native
+session ID and file path synchronously and publishes a closed, <=16 KiB,
+process/attempt-correlated snapshot. The only phases are `ready`,
+`quit_candidate`, and sticky `invalid`. It stores no chat IDs, attempt decisions,
+transcript contents, or callback history. Its process-lifetime publisher survives
+session replacement; writes use a narrow synchronous fsync-file/rename/fsync-dir
+path without changing existing helper durability semantics. `PiDiskWatcher` does
+not watch this file; the Pi RPC connection owner is the only reader/qualification
+authority. That owner must drain stdout through EOF and treat any native
+`extension_error` as a qualification veto, since failed replacement can leave an
+older candidate on disk. Before quit, native switch notifications are nonterminal;
+the process-lifetime observer ignores supported transitions and samples the active
+native ID/path from the quit context. Reload invalidates qualification.
 
 ### Spawn Correlation
 
@@ -123,9 +142,13 @@ spawn-record writes are the stable bridge.
 
 ### Build Invariant
 
-Extensions must be built before Pi launch. The projection layer raises
-`PiExtensionProjectionError` if `dist/extensions/<name>/index.js` and the installed bundle
-copy are both missing.
+Extensions must be built before Pi launch. Identity-qualified projection requires
+`npm run build:extensions:verify-source`, rejects missing or digest-mismatched source bundles,
+and never accepts an installed bundle as a fallback. General extension projection
+raises `PiExtensionProjectionError` when required artifacts are unavailable.
+The bounded `artifact.json` binds a fixed input allowlist (source, manifest, lockfile,
+and build flags) plus emitted bundle SHA-256; the verified artifact ID is exposed to
+the session-boundary owner integration for launch correlation.
 
 ## Rationale
 

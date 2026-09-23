@@ -15,6 +15,7 @@ This writes a stable entrypoint under `dist/extensions/`:
 
 - `dist/extensions/managed-bash/index.js` — managed shell tasks, `/ps`
 - `dist/extensions/meridian-spawn-watch/index.js` — correlated spawn discovery, `/spawn`, `/spawn:wait`
+- `dist/extensions/session-boundary/index.js` plus `artifact.json` — bounded native RPC session-shutdown observation and source/build/output digest (identity-qualified launches only)
 
 Launch projection copies that extension entrypoint into Meridian-owned state for each spawned run.
 
@@ -22,6 +23,7 @@ Launch projection copies that extension entrypoint into Meridian-owned state for
 
 ```bash
 npm run verify:extensions          # build + vitest + bundle smoke
+npm run build:extensions:verify-source # rebuild and verify boundary source/build/output digest
 npm run verify:extensions:loop     # repeat on interval (local)
 ```
 

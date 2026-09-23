@@ -112,7 +112,8 @@ Resolves Meridian-owned Pi extension entrypoints for each launch (see `pi_paths.
 Entrypoint helpers:
 - `resolve_pi_extension_entrypoints(PiExtensionLaunchProfile)` — loads
   `managed-bash` when `background_tasks.enabled` and `meridian-spawn-watch` when
-  the spawn-watch path is enabled
+  the spawn-watch path is enabled. `session_boundary_enabled` adds the
+  `session-boundary` observer only through a strict source-build resolver.
 - `resolve_extra_pi_extension_entrypoints()` — user extensions when `load_all` is true
 
 Launch wiring: `bind_launch_context()` sets `SpawnParams.pi_harness_profile` from
@@ -125,6 +126,11 @@ the extension UI no-ops when not interactive.
 
 Raises `PiExtensionProjectionError` if a required built artifact is missing — directs
 the user to run `cd src/meridian/pi_runtime && npm run build:extensions`.
+The identity-qualified session-boundary resolver verifies the manifest against the
+current source and build-input digests plus the bundle output digest. It exposes the
+verified artifact ID and output digest for owner correlation, and never uses an
+installed extension copy as fallback. Timestamps do not determine acceptance. Run
+`npm run build:extensions:verify-source` to rebuild and verify that artifact.
 
 ### `HarnessCapabilityMismatch`
 
