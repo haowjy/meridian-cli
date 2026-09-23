@@ -495,6 +495,15 @@ def _session_instance_for_event(paths: RuntimePaths, runtime_root: Path, chat_id
     return record.session_instance_id
 
 
+def _normalize_chat_id(chat_id: str) -> ChatId:
+    """Normalize a required command reference before using it for state access."""
+
+    normalized = normalize_optional_identity(chat_id)
+    if normalized is None:
+        raise ValueError("chat_id must not be empty")
+    return ChatId(normalized)
+
+
 def _read_session_counter(paths: RuntimePaths) -> int:
     if not paths.session_id_counter.is_file():
         return 0
@@ -579,9 +588,11 @@ def start_session(
 ) -> str:
     """Append a session start event and acquire a lifetime session lock."""
 
+    normalized_chat_id = normalize_optional_identity(chat_id)
+    normalized_forked_from_chat_id = normalize_optional_identity(forked_from_chat_id)
     paths = RuntimePaths.from_root_dir(runtime_root)
     project_lifetime_handle = acquire_file_lock(paths.project_lifetime_flock, mode="shared")
-    resolved_chat_id = chat_id.strip() if chat_id is not None else ""
+    resolved_chat_id = normalized_chat_id or ""
     handle: IO[bytes] | None = None
     session_instance_id = uuid.uuid4().hex
     try:
@@ -608,7 +619,9 @@ def start_session(
             session_instance_id=session_instance_id,
             started_at=started_at,
             forked_from_chat_id=(
-                ChatId(forked_from_chat_id) if forked_from_chat_id is not None else None
+                ChatId(normalized_forked_from_chat_id)
+                if normalized_forked_from_chat_id is not None
+                else None
             ),
             spawn_id=spawn_id,
             forked_from_history_id=forked_from_history_id,
@@ -617,8 +630,8 @@ def start_session(
         with lock_file(HistoryChanges(runtime_root).mutation_lock, mode="shared"):
             # Chat-only callers select the current generation. Resolved references
             # carry their exact portable ancestor and must never be re-resolved.
-            if forked_from_chat_id and forked_from_history_id is None:
-                source = get_session_record(runtime_root, forked_from_chat_id)
+            if normalized_forked_from_chat_id and forked_from_history_id is None:
+                source = get_session_record(runtime_root, normalized_forked_from_chat_id)
                 event = event.model_copy(
                     update={"forked_from_history_id": source.history_id if source else None}
                 )
@@ -672,10 +685,11 @@ def start_session(
 def stop_session(runtime_root: Path, chat_id: str) -> None:
     """Append a session stop event and release the lifetime session lock."""
 
+    chat_ref = _normalize_chat_id(chat_id)
     paths = RuntimePaths.from_root_dir(runtime_root)
-    session_instance_id = _session_instance_for_event(paths, runtime_root, chat_id)
+    session_instance_id = _session_instance_for_event(paths, runtime_root, chat_ref)
     event = SessionStopEvent(
-        chat_id=ChatId(chat_id),
+        chat_id=chat_ref,
         session_instance_id=session_instance_id,
         stopped_at=utc_now_iso(),
     )
@@ -684,8 +698,8 @@ def stop_session(runtime_root: Path, chat_id: str) -> None:
         event,
         exclude_none=True,
     )
-    _session_lease_path(paths, chat_id).unlink(missing_ok=True)
-    _release_session_lock(runtime_root, chat_id)
+    _session_lease_path(paths, chat_ref).unlink(missing_ok=True)
+    _release_session_lock(runtime_root, chat_ref)
 
 
 def update_session_harness_id(
@@ -700,14 +714,15 @@ def update_session_harness_id(
 
     if startup_attempt_id is not None and session_instance_id is None:
         raise ValueError("startup identity requires a captured session generation")
+    chat_ref = _normalize_chat_id(chat_id)
     paths = RuntimePaths.from_root_dir(runtime_root)
     event = SessionUpdateEvent(
-        chat_id=ChatId(chat_id),
+        chat_id=chat_ref,
         harness_session_id=HarnessSessionId(harness_session_id),
         session_instance_id=(
             session_instance_id
             if session_instance_id is not None
-            else _session_instance_for_event(paths, runtime_root, chat_id)
+            else _session_instance_for_event(paths, runtime_root, chat_ref)
         ),
         startup_attempt_id=startup_attempt_id,
     )
@@ -721,12 +736,13 @@ def update_session_harness_id(
 def update_session_work_id(runtime_root: Path, chat_id: str, work_id: str | None) -> None:
     """Set or clear the active work item for a session."""
 
+    chat_ref = _normalize_chat_id(chat_id)
     paths = RuntimePaths.from_root_dir(runtime_root)
     normalized_work_id = work_id.strip() if work_id is not None else ""
     event = SessionUpdateEvent(
-        chat_id=ChatId(chat_id),
+        chat_id=chat_ref,
         harness_session_id=None,
-        session_instance_id=_session_instance_for_event(paths, runtime_root, chat_id),
+        session_instance_id=_session_instance_for_event(paths, runtime_root, chat_ref),
         active_work_id=normalized_work_id,
     )
     _append_session_event(
@@ -739,14 +755,15 @@ def update_session_work_id(runtime_root: Path, chat_id: str, work_id: str | None
 def update_session_spawn_id(runtime_root: Path, chat_id: str, spawn_id: str) -> None:
     """Record the canonical primary spawn relationship for a session."""
 
+    chat_ref = _normalize_chat_id(chat_id)
     paths = RuntimePaths.from_root_dir(runtime_root)
     from meridian.lib.state.spawn.repository import read_state
 
     spawn = read_state(paths.spawns_dir, spawn_id.strip(), include_prompt=False)
     event = SessionUpdateEvent(
-        chat_id=ChatId(chat_id),
+        chat_id=chat_ref,
         harness_session_id=None,
-        session_instance_id=_session_instance_for_event(paths, runtime_root, chat_id),
+        session_instance_id=_session_instance_for_event(paths, runtime_root, chat_ref),
         spawn_id=spawn_id.strip(),
         history_id=spawn.history_id if spawn is not None else None,
     )
@@ -764,11 +781,12 @@ def update_session_claude_config_dir(
 ) -> None:
     """Append a session update event carrying the isolated Claude config dir."""
 
+    chat_ref = _normalize_chat_id(chat_id)
     paths = RuntimePaths.from_root_dir(runtime_root)
     event = SessionUpdateEvent(
-        chat_id=ChatId(chat_id),
+        chat_id=chat_ref,
         harness_session_id=None,
-        session_instance_id=_session_instance_for_event(paths, runtime_root, chat_id),
+        session_instance_id=_session_instance_for_event(paths, runtime_root, chat_ref),
         claude_config_dir=claude_config_dir,
     )
     _append_session_event(
@@ -840,7 +858,7 @@ def list_all_session_records(runtime_root: Path) -> list[SessionRecord]:
 def get_session_record(runtime_root: Path, chat_id: str) -> SessionRecord | None:
     """Return a materialized record for one chat ID, if present."""
 
-    return _records_by_session(runtime_root).get(chat_id)
+    return _records_by_session(runtime_root).get(_normalize_chat_id(chat_id))
 
 
 def _bound_model_selections(

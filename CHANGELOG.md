@@ -11,6 +11,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- Normalize lifecycle chat references before session generation, lease, lock, and
+  record lookups; reject empty direct references.
 - Reserve, native binding and restore now share one typed journal identity projection.
   Native-only refs survive missing counters; mixed ownership conflicts fail before
   writes. Removed repeated authority scans and final-tail reparsing.

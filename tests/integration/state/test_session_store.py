@@ -103,6 +103,39 @@ def test_persisted_session_identities_are_normalized_at_parse(tmp_path: Path) ->
     assert records[0].harness_session_id == "c1  -thread"
 
 
+def test_padded_chat_id_uses_one_lifecycle_identity(tmp_path: Path) -> None:
+    runtime_root = _state_root(tmp_path)
+    session_store.start_session(
+        runtime_root,
+        harness="pi",
+        harness_session_id="native-thread",
+        model="test",
+        chat_id="c1",
+    )
+    lease_path = runtime_root / "sessions" / "c1.lease.json"
+    assert lease_path.exists()
+
+    session_store.update_session_harness_id(runtime_root, " c1 ", "updated-thread")
+    session_store.stop_session(runtime_root, " c1 ")
+
+    padded_record = session_store.get_session_record(runtime_root, " c1 ")
+    record = session_store.get_session_record(runtime_root, "c1")
+    assert padded_record is not None
+    assert padded_record.harness_session_id == "updated-thread"
+    assert record is not None
+    assert record.stopped_at is not None
+    assert session_store.list_active_sessions(runtime_root) == []
+    assert not lease_path.exists()
+    registry_key = session_store._session_lock_key(runtime_root, "c1")
+    assert registry_key not in session_store._SESSION_LOCK_HANDLES
+
+
+@pytest.mark.parametrize("chat_id", ["", "   "])
+def test_session_record_lookup_rejects_empty_chat_id(tmp_path: Path, chat_id: str) -> None:
+    with pytest.raises(ValueError, match="chat_id must not be empty"):
+        session_store.get_session_record(_state_root(tmp_path), chat_id)
+
+
 @pytest.mark.parametrize("field", ["chat_id", "harness_session_id"])
 @pytest.mark.parametrize("invalid_identity", [123, [], {}])
 def test_malformed_session_identity_does_not_abort_sibling_event_reads(
