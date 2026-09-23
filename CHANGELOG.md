@@ -11,6 +11,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- Native session allocation now reserves nested historical chat references and
+  canonical store identities; restore imports must consume their exact durable
+  plan-owned reservation.
 - Routed lifecycle, model, historical, cleanup, and native session journal writes
   through one ordered lock/repair/append/durability transaction; removed start's
   unlocked journal preflight and made restore acquire project lifetime first.

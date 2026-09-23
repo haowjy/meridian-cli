@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import multiprocessing
 import os
+import uuid
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -91,6 +92,108 @@ def test_native_key_is_store_qualified_and_binding_is_immutable(tmp_path: Path) 
         session_store.accept_native_boundary(
             root, receipt("run-a", "attempt-a", "entry", right, order=3)
         )
+
+
+def test_allocation_skips_historical_nested_chat_reference(tmp_path: Path) -> None:
+    root = tmp_path / "runtime"
+    root.mkdir()
+    historical = session_store.SessionRecord(
+        chat_id="c1",
+        history_id=uuid.uuid4(),
+        record_mode="historical",
+        kind="primary",
+        harness="pi",
+        harness_session_id=None,
+        harness_session_ids=(),
+        model="",
+        agent="",
+        agent_path="",
+        skills=(),
+        skill_paths=(),
+        params=(),
+        started_at="2025-01-01T00:00:00Z",
+        stopped_at="2025-01-01T00:01:00Z",
+        session_instance_id="historical-generation",
+    )
+    # Older valid rows can predate the counter; occupancy must come from the
+    # recognized nested historical schema, not only top-level chat_id fields.
+    session_store._append_session_row(
+        session_store.RuntimePaths.from_root_dir(root).sessions_jsonl,
+        session_store.SessionHistoricalEvent(record=historical),
+    )
+    begin(root, "new-run", "new-attempt")
+    allocated = session_store.accept_native_boundary(
+        root, receipt("new-run", "new-attempt", "entry", key("/native/new"))
+    ).chat_id
+    assert allocated == "c2"
+
+
+def test_restore_import_cannot_claim_operational_or_unrelated_alias(tmp_path: Path) -> None:
+    root = tmp_path / "runtime"
+    root.mkdir()
+    begin(root, "operational-run", "operational-attempt")
+    occupied = session_store.accept_native_boundary(
+        root, receipt("operational-run", "operational-attempt", "entry", key("/native/live"))
+    ).chat_id
+    assert occupied == "c1"
+
+    historical = session_store.SessionRecord(
+        chat_id=occupied,
+        history_id=uuid.uuid4(),
+        record_mode="historical",
+        kind="primary",
+        harness="pi",
+        harness_session_id=None,
+        harness_session_ids=(),
+        model="",
+        agent="",
+        agent_path="",
+        skills=(),
+        skill_paths=(),
+        params=(),
+        started_at="2025-01-01T00:00:00Z",
+        stopped_at="2025-01-01T00:01:00Z",
+        session_instance_id="restored-generation",
+        spawn_id="restored-spawn",
+    )
+    plan_path = root / f"{historical.history_id}.json"
+    plan_path.write_text(
+        json.dumps(
+            {
+                "portable_digest": "0" * 64,
+                "local_id": historical.spawn_id,
+                "chat_id": historical.chat_id,
+                "generation": historical.session_instance_id,
+                "session": historical.model_dump(mode="json"),
+            }
+        )
+    )
+    with pytest.raises(ValueError, match="already occupied"):
+        session_store.append_historical_session(root, historical, restore_plan_path=plan_path)
+
+    unrelated = historical.model_copy(update={"chat_id": "c2"})
+    with pytest.raises(ValueError, match="does not own"):
+        session_store.append_historical_session(root, unrelated, restore_plan_path=plan_path)
+
+
+@pytest.mark.parametrize("store", ["relative/db", "/x/./y", "/x//y", "/x/y/", "namespace://db/x"])
+def test_native_store_identity_rejects_noncanonical_lexical_forms(store: str) -> None:
+    with pytest.raises(ValidationError):
+        key(store)
+
+
+def test_versioned_native_store_namespace_is_explicit_and_canonical() -> None:
+    assert key("namespace:v1://server/database", "native").store == "namespace:v1://server/database"
+    with pytest.raises(ValidationError):
+        key("namespace:v1://server/db/../database", "native")
+
+
+def test_reservation_fails_closed_on_corrupt_counter(tmp_path: Path) -> None:
+    root = tmp_path / "runtime"
+    root.mkdir()
+    (root / "session-id-counter").write_text("not-a-counter\n")
+    with pytest.raises(ValueError, match="counter is corrupt"):
+        session_store.reserve_chat_id(root)
 
 
 def test_concurrent_duplicate_key_exits_converge_and_replay_is_idempotent(tmp_path: Path) -> None:

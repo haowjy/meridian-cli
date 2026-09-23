@@ -3,10 +3,12 @@
 import hashlib
 import json
 import os
+import re
 import uuid
 from contextlib import ExitStack, contextmanager
 from pathlib import Path
 from typing import IO, Any, Literal, NamedTuple, Self, cast
+from urllib.parse import urlsplit
 
 import psutil
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
@@ -326,9 +328,28 @@ class NativeSessionKey(BaseModel):
             raise ValueError("native harness and ID must use normalized values")
         if self.store != self.store.strip():
             raise ValueError("native store locator must be normalized by its resolver")
-        if not Path(self.store).is_absolute() and "://" not in self.store:
-            raise ValueError("native store must be an absolute path or qualified namespace URI")
+        if self.store.startswith("namespace:v1://"):
+            parsed = urlsplit(self.store.removeprefix("namespace:v1:"))
+            if (
+                not parsed.netloc
+                or not parsed.path.startswith("/")
+                or parsed.query
+                or parsed.fragment
+                or any(part in {"", ".", ".."} for part in parsed.path[1:].split("/"))
+            ):
+                raise ValueError("native namespace must be a canonical namespace:v1 URI")
+        elif not _is_canonical_local_store(self.store):
+            raise ValueError("native store must be a canonical absolute path or namespace:v1 URI")
         return self
+
+
+def _is_canonical_local_store(store: str) -> bool:
+    return (
+        store.startswith("/")
+        and (store == "/" or not store.endswith("/"))
+        and "//" not in store
+        and all(part not in {".", ".."} for part in store.split("/")[1:])
+    )
 
 
 class BoundaryEvidence(BaseModel):
@@ -669,11 +690,7 @@ def accept_native_boundary(runtime_root: Path, receipt: OwnedBoundaryReceipt) ->
         owners = [chat_id for chat_id, key in bindings.items() if key == receipt.key]
         if len(owners) > 1:
             raise ValueError("Duplicate native key claims require reconciliation")
-        known_chat_ids = {
-            str(payload["chat_id"])
-            for payload in payloads
-            if isinstance(payload.get("chat_id"), str)
-        }
+        known_chat_ids = _occupied_chat_refs(payloads)
         chat_id = (
             owners[0]
             if owners
@@ -691,17 +708,43 @@ def accept_native_boundary(runtime_root: Path, receipt: OwnedBoundaryReceipt) ->
 
 
 def _allocate_binding_chat_id(paths: RuntimePaths, used_chat_ids: set[str]) -> str:
-    """Allocate while sessions lock is held, sharing the existing cN counter."""
+    """Allocate above every occupied or previously reserved canonical reference."""
     with lock_file(paths.session_id_counter_flock):
         current = _read_session_counter(paths)
-        used = {
-            int(chat[1:]) for chat in used_chat_ids if chat.startswith("c") and chat[1:].isdigit()
-        }
+        used = _chat_ref_numbers(used_chat_ids)
         while current + 1 in used:
             current += 1
         result = f"c{current + 1}"
         atomic_write_text(paths.session_id_counter, f"{current + 1}\n")
         return result
+
+
+def _chat_ref_numbers(refs: set[str]) -> set[int]:
+    return {int(ref[1:]) for ref in refs if ref.startswith("c") and ref[1:].isdigit()}
+
+
+def _occupied_chat_refs(payloads: list[dict[str, Any]]) -> set[str]:
+    """Collect canonical cN references from each recognized journal schema."""
+    refs: set[str] = set()
+
+    def visit(value: Any, field: str = "") -> None:
+        if isinstance(value, dict):
+            for key, child in value.items():
+                visit(child, key)
+        elif isinstance(value, list):
+            for child in value:
+                visit(child, field)
+        elif (
+            isinstance(value, str)
+            and (field == "chat_id" or field.endswith("_chat_id"))
+            and value.startswith("c")
+            and value[1:].isdigit()
+        ):
+            refs.add(value)
+
+    for payload in payloads:
+        visit(payload)
+    return refs
 
 
 def _append_authority_event(path: Path, lock_path: Path, event: SessionAttemptEvent) -> None:
@@ -1106,18 +1149,18 @@ def _read_session_counter(paths: RuntimePaths) -> int:
     if not paths.session_id_counter.is_file():
         return 0
     try:
-        return int(paths.session_id_counter.read_text(encoding="utf-8").strip())
-    except (OSError, ValueError):
-        return 0
+        value = int(paths.session_id_counter.read_text(encoding="utf-8").strip())
+    except (OSError, ValueError) as exc:
+        raise ValueError("Session ID reservation counter is corrupt") from exc
+    if value < 0:
+        raise ValueError("Session ID reservation counter is corrupt")
+    return value
 
 
 def reserve_chat_id(runtime_root: Path) -> str:
     paths = RuntimePaths.from_root_dir(runtime_root)
-    with lock_file(paths.session_id_counter_flock):
-        current = _read_session_counter(paths)
-        next_value = current + 1
-        atomic_write_text(paths.session_id_counter, f"{next_value}\n")
-        return f"c{next_value}"
+    with _sessions_transaction(paths) as payloads:
+        return _allocate_binding_chat_id(paths, _occupied_chat_refs(payloads))
 
 
 def project_session_event(records: dict[str, SessionRecord], event: SessionEvent) -> None:
@@ -2033,9 +2076,24 @@ def cleanup_stale_sessions(runtime_root: Path) -> StaleSessionCleanup:
     )
 
 
-def append_historical_session(runtime_root: Path, record: SessionRecord) -> None:
+def append_historical_session(
+    runtime_root: Path,
+    record: SessionRecord,
+    *,
+    restore_plan_path: Path | None = None,
+) -> None:
     paths = RuntimePaths.from_root_dir(runtime_root)
+    if restore_plan_path is None:
+        raise ValueError("historical session import requires its durable restore plan")
+    # The caller holds the history-exclusive gate from plan lookup through
+    # publication and append. Read native history before taking sessions_flock.
+    _validate_restore_plan(restore_plan_path, record)
     with _sessions_transaction(paths) as payloads:
+        with lock_file(paths.session_id_counter_flock):
+            counter = _read_session_counter(paths)
+        match = re.fullmatch(r"c([1-9][0-9]*)", record.chat_id)
+        if match is None or int(match.group(1)) > counter:
+            raise ValueError("restore plan alias was not previously reserved")
         records: dict[str, SessionRecord] = {}
         for payload in payloads:
             parsed = _parse_event(payload)
@@ -2046,8 +2104,29 @@ def append_historical_session(runtime_root: Path, record: SessionRecord) -> None
             if existing == record:
                 return
             raise ValueError("Historical session alias conflict")
+        if record.chat_id in _occupied_chat_refs(payloads):
+            raise ValueError("Restore plan alias is already occupied")
         HistoryChanges(runtime_root).mark(HistorySource(kind="sessions"))
         _append_session_row(paths.sessions_jsonl, SessionHistoricalEvent(record=record))
+
+
+def _validate_restore_plan(plan_path: Path, record: SessionRecord) -> None:
+    """Require exact durable plan ownership; the caller holds history mutation gates."""
+    try:
+        plan = json.loads(plan_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, UnicodeDecodeError) as exc:
+        raise ValueError("historical import has no valid durable restore plan") from exc
+    if (
+        not isinstance(plan, dict)
+        or plan_path.name != f"{record.history_id}.json"
+        or plan.get("chat_id") != record.chat_id
+        or plan.get("local_id") != record.spawn_id
+        or plan.get("generation") != record.session_instance_id
+        or plan.get("session") != record.model_dump(mode="json")
+        or not isinstance(plan.get("portable_digest"), str)
+        or re.fullmatch(r"[0-9a-f]{64}", plan["portable_digest"]) is None
+    ):
+        raise ValueError("restore plan does not own this historical session alias")
 
 
 def list_session_generations(runtime_root: Path) -> tuple[SessionRecord, ...]:
