@@ -13,6 +13,10 @@ transport or make command-line parsing the source of spawn authority.
 `managed-bash` owns shell-task execution and task records.
 `meridian-spawn-watch` owns child-spawn observation and follow-up notifications.
 Keep that mechanism/policy boundary intact.
+`session-boundary` owns one attempt/process-scoped, bounded current-state witness
+for native Pi shutdown identity; it does not own chat/attempt admission and is
+not an event transport. It writes only `ready`, `quit_candidate`, or sticky
+`invalid` state and never stores transcript content.
 
 ## Key Rules
 

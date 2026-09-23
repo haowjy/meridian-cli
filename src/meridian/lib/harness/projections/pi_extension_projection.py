@@ -22,6 +22,10 @@ _MERIDIAN_SPAWN_WATCH_EXTENSION_RELATIVE_PATH: Final[tuple[str, str]] = (
     "meridian-spawn-watch",
     "meridian-spawn-watch/index.js",
 )
+_SESSION_BOUNDARY_EXTENSION_RELATIVE_PATH: Final[tuple[str, str]] = (
+    "session-boundary",
+    "session-boundary/index.js",
+)
 
 
 class PiExtensionProjectionError(RuntimeError):
@@ -35,11 +39,16 @@ class PiExtensionLaunchProfile:
     background_tasks_enabled: bool
     spawn_watch_enabled: bool
     interactive: bool
+    session_boundary_enabled: bool = False
 
     def bundle_enabled(self) -> bool:
         """Whether any Meridian Pi extension bundle should load."""
 
-        return self.background_tasks_enabled or self.spawn_watch_enabled
+        return (
+            self.background_tasks_enabled
+            or self.spawn_watch_enabled
+            or self.session_boundary_enabled
+        )
 
 
 def resolve_pi_managed_bash_entrypoint() -> tuple[str, ...]:
@@ -52,6 +61,29 @@ def resolve_pi_spawn_watch_entrypoint() -> tuple[str, ...]:
     """Resolve the Meridian spawn-watch Pi extension entrypoint."""
 
     return (_resolve_bundle_entrypoint(*_MERIDIAN_SPAWN_WATCH_EXTENSION_RELATIVE_PATH),)
+
+
+def resolve_pi_session_boundary_entrypoint() -> tuple[str, ...]:
+    """Resolve the current source build; installed bundles cannot qualify identity."""
+
+    root = _resolve_extension_source_root()
+    source_files = (
+        root.parent.parent / "extensions/session-boundary/src/index.ts",
+        root.parent.parent / "extensions/shared/session_boundary.ts",
+    )
+    bundle = root / _SESSION_BOUNDARY_EXTENSION_RELATIVE_PATH[1]
+    if not all(source.is_file() for source in source_files) or not bundle.is_file():
+        raise PiExtensionProjectionError(
+            f"Pi session-boundary source build is missing ({bundle}); run "
+            "cd src/meridian/pi_runtime && npm run build:extensions:verify-source. "
+            "An installed bundle is not accepted for identity qualification."
+        )
+    if any(bundle.stat().st_mtime_ns < source.stat().st_mtime_ns for source in source_files):
+        raise PiExtensionProjectionError(
+            f"Pi session-boundary bundle is stale ({bundle}); run "
+            "cd src/meridian/pi_runtime && npm run build:extensions:verify-source."
+        )
+    return (str(bundle.resolve()),)
 
 
 def resolve_pi_lifecycle_extension_entrypoint() -> tuple[str, ...]:
@@ -76,6 +108,8 @@ def resolve_pi_extension_entrypoints(
         entrypoints.extend(resolve_pi_managed_bash_entrypoint())
     if profile.spawn_watch_enabled:
         entrypoints.extend(resolve_pi_spawn_watch_entrypoint())
+    if profile.session_boundary_enabled:
+        entrypoints.extend(resolve_pi_session_boundary_entrypoint())
     return tuple(entrypoints)
 
 
@@ -167,5 +201,6 @@ __all__ = [
     "resolve_pi_extension_entrypoints",
     "resolve_pi_lifecycle_extension_entrypoint",
     "resolve_pi_managed_bash_entrypoint",
+    "resolve_pi_session_boundary_entrypoint",
     "resolve_pi_spawn_watch_entrypoint",
 ]
