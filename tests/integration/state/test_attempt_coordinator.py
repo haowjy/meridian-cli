@@ -358,3 +358,87 @@ async def test_terminal_contradiction_survives_failed_append_and_retries_before_
     assert store.get_native_session_key(tmp_path, str(old_chat)) == key("native")
     assert store.get_native_session_key(tmp_path, str(new_chat)) == key("successor")
     assert store.get_native_session_key(tmp_path, "c3") is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("order", ["refutation_first", "terminal_first"])
+@pytest.mark.parametrize("failure", ["append", "fsync"])
+async def test_overlapping_terminal_and_refutation_are_retained_until_durable(
+    tmp_path, monkeypatch, order, failure
+):
+    owner, old = attempt(tmp_path, "old")
+    await old.begin()
+    owner.script.append(owner.observation(terminal()))
+    old_chat = (await old.commit_exit()).chat_id
+    successor_owner, successor = attempt(tmp_path, "successor")
+    await successor.begin()
+    successor_owner.script.append(successor_owner.observation(terminal(key("successor"))))
+    new_chat = (await successor.commit_exit()).chat_id
+
+    snapshot = read_journal((tmp_path / "sessions.jsonl").read_bytes()).snapshot
+    accepted = snapshot.attempts.states["run", "old"].exit
+    assert accepted is not None
+    witness = RefutationWitness(
+        target_event_id=boundary_digest(accepted.fact),
+        order=3,
+        reason="finality_refuted",
+        conflicting_key=key("native"),
+        causal_reference="overlapping-finality-refutation",
+    )
+    append = store._append_authority_event
+    durability = store._confirm_sessions_durability
+
+    def fail_append(*args, **kwargs):
+        raise OSError("persistent refutation append failure")
+
+    def fail_fsync(path):
+        durability(path)
+        raise OSError("persistent refutation fsync failure")
+
+    def start_refutation_drain():
+        owner.refutation_queue.put_nowait(owner.observation(witness))
+        return asyncio.create_task(old.drain_refutations())
+
+    def inject_failure():
+        if failure == "append":
+            monkeypatch.setattr(store, "_append_authority_event", fail_append)
+        else:
+            monkeypatch.setattr(store, "_confirm_sessions_durability", fail_fsync)
+
+    if order == "refutation_first":
+        owner.delay_exit = True
+        owner.script.append(owner.observation(terminal()))
+        exit_task = asyncio.create_task(old.commit_exit())
+        await owner.exit_waiting.wait()
+        inject_failure()
+        drain = start_refutation_drain()
+        # Wait until the owned observation has been consumed and its append fails.
+        with pytest.raises(OSError):
+            await drain
+        owner.release_exit.set()
+        with pytest.raises(OSError):
+            await exit_task
+    else:
+        drain = asyncio.create_task(old.drain_refutations())
+        await owner.refutation_waiting.wait()
+        owner.script.append(owner.observation(terminal()))
+        assert (await old.commit_exit()).chat_id == old_chat
+        inject_failure()
+        owner.refutation_queue.put_nowait(owner.observation(witness))
+        with pytest.raises(OSError):
+            await drain
+
+    with pytest.raises(OSError):
+        old.boundaries()
+    during_failure = read_journal((tmp_path / "sessions.jsonl").read_bytes()).snapshot
+    assert during_failure.attempts.states["run", "successor"].exit.chat_id == new_chat
+    if failure == "append":
+        monkeypatch.setattr(store, "_append_authority_event", append)
+    else:
+        monkeypatch.setattr(store, "_confirm_sessions_durability", durability)
+    assert old.boundaries().exit_invalidated
+    assert successor.boundaries().exit_chat_id == new_chat
+    rows = read_journal((tmp_path / "sessions.jsonl").read_bytes()).snapshot.attempts.states
+    assert rows["run", "old"].invalidation is not None
+    assert rows["run", "successor"].invalidation is None
+    assert rows["run", "successor"].exit is not None

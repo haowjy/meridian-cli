@@ -5,6 +5,7 @@ constructing the coordinator. This is a trusted in-process topology, not a Pytho
 security sandbox. Witnesses attest nothing without the owner's qualification code.
 """
 
+import asyncio
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator
 from pathlib import Path
@@ -110,7 +111,13 @@ class AttemptCoordinator:
         self._context = owner.context
         self._entry: BoundaryFact | None = None
         self._closed = False
-        self._pending: BoundaryFact | Refutation | None = None
+        # Observations happen outside the admission lock. Keep one bounded slot
+        # per producer so a failed write from one cannot overwrite the other.
+        self._pending_terminal: BoundaryFact | None = None
+        self._pending_refutation: Refutation | None = None
+        self._admission_lock = asyncio.Lock()
+        self._exit_observation: asyncio.Task[ExitWitness] | None = None
+        self._draining_refutations = False
         owner._coordinator = self
 
     async def begin(self) -> None:
@@ -131,24 +138,53 @@ class AttemptCoordinator:
         retried = self._retry_pending()
         if retried is not None:
             return retried
-        witness = await self._owner.close_and_observe_exit()
-        # A terminal fact may normalize to a refutation. Retain it too, without
-        # duplicating that policy here, until the transaction durably confirms it.
-        self._pending = self._fact(witness)
-        result = self._retry_pending()
+        # Terminal observation is single-flight, but refutation draining remains
+        # independent and can make progress while close/observe is suspended.
+        if self._exit_observation is None:
+            self._exit_observation = asyncio.create_task(
+                self._owner.close_and_observe_exit()
+            )
+        observation = self._exit_observation
+        try:
+            witness = await observation
+        except BaseException:
+            if self._exit_observation is observation:
+                self._exit_observation = None
+            raise
+        async with self._admission_lock:
+            try:
+                fact = self._fact(witness)
+                if self._pending_terminal is None:
+                    self._pending_terminal = fact
+                elif self._pending_terminal != fact:
+                    raise RuntimeError("multiple terminal observations for one owner")
+                result = self._retry_pending()
+            finally:
+                if self._exit_observation is observation:
+                    self._exit_observation = None
         assert result is not None
         return result
 
     async def drain_refutations(self) -> None:
         self._retry_pending()
-        async for witness in self._owner.refutations():
-            self._pending = Refutation(
-                run_id=self._context.run_id,
-                attempt_id=self._context.attempt_id,
-                transport_scope_id=self._context.transport_scope_id,
-                **witness.model_dump(),
-            )
-            self._retry_pending()
+        if self._draining_refutations:
+            raise RuntimeError("refutation drain already active for this owner")
+        self._draining_refutations = True
+        try:
+            async for witness in self._owner.refutations():
+                refutation = Refutation(
+                    run_id=self._context.run_id,
+                    attempt_id=self._context.attempt_id,
+                    transport_scope_id=self._context.transport_scope_id,
+                    **witness.model_dump(),
+                )
+                async with self._admission_lock:
+                    if self._pending_refutation is not None:
+                        raise RuntimeError("refutation admission slot is occupied")
+                    self._pending_refutation = refutation
+                    self._retry_pending()
+        finally:
+            self._draining_refutations = False
 
     def boundaries(self) -> AttemptBoundaries:
         self._retry_pending()
@@ -157,10 +193,21 @@ class AttemptCoordinator:
         )
 
     def _retry_pending(self) -> BoundaryAcceptance | None:
-        if self._pending is None:
+        if self._pending_refutation is None and self._pending_terminal is None:
             return None
-        result = session_store._commit_attempt(self._root, self._context, self._pending)
-        self._pending = None
+        # Refutation is admitted first, so a pending contradiction can never be
+        # obscured by a terminal confirmation for the same exit.
+        result: BoundaryAcceptance | None = None
+        if self._pending_refutation is not None:
+            refutation = self._pending_refutation
+            result = session_store._commit_attempt(self._root, self._context, refutation)
+            self._pending_refutation = None
+        if self._pending_terminal is not None:
+            terminal = self._pending_terminal
+            terminal_result = session_store._commit_attempt(self._root, self._context, terminal)
+            self._pending_terminal = None
+            if result is None:
+                result = terminal_result
         return result
 
     def _fact(self, witness: EntryWitness | ExitWitness) -> BoundaryFact:

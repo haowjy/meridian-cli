@@ -36,6 +36,10 @@ class ScriptedOwner(BoundaryOwner):
         self.refutation_queue: asyncio.Queue[Observation | None] = asyncio.Queue()
         self.delivered: list[str] = []
         self.events: list[str] = []
+        self.delay_exit = False
+        self.exit_waiting = asyncio.Event()
+        self.release_exit = asyncio.Event()
+        self.refutation_waiting = asyncio.Event()
 
     async def initialize_without_input(self):
         self.events.append("initialize")
@@ -61,12 +65,16 @@ class ScriptedOwner(BoundaryOwner):
 
     async def close_and_observe_exit(self):
         self.events.append("close_and_observe_exit")
+        if self.delay_exit:
+            self.exit_waiting.set()
+            await self.release_exit.wait()
         witness = self._qualify(self.script.popleft())
         if not isinstance(witness, ExitWitness):
             raise ValueError("exit unresolved: missing terminal qualification")
         return witness
 
     async def refutations(self):
+        self.refutation_waiting.set()
         while (observation := await self.refutation_queue.get()) is not None:
             witness = self._qualify(observation)
             if not isinstance(witness, RefutationWitness):

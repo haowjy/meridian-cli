@@ -11,6 +11,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- Serialize native attempt observation admission with bounded terminal/refutation
+  retention, so overlapping failed writes cannot expose a stale verified exit.
 - Native attempt coordinator pulls observations from one bound owner; actual input
   stays gated until durable entry. Late refutations retain their old owner through
   drain. Removed caller-receipt acceptance and proof booleans; v3 records include
