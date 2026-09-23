@@ -68,8 +68,16 @@ reservations. No cache or second ledger participates.
 Metadata pending selections are indexed by captured startup identity; a later update
 binds them without another journal pass. Native display-ID lists materialize once at
 the end of the fold. Tail classification and effective-exit accounting come from this
-same pass. Current v1 attempt checks remain a staging policy, not owner-qualified
-production authority. Legacy harness-ID fields are not native binding authority. Ordinary session-record reads replay the
+same pass. V2 attempt rows use the same typed transition planner for live proposals
+and replay, including immutable Begin intent, boundary assignment and bounded exit
+refutation. Replay requires the derived canonical row to match the stored fact;
+live retries add no row. Supersession blocks new old-attempt assignments, not
+refutation of an already accepted exit. Refutation never changes chat pins.
+
+These APIs still accept experimental caller assertions, not owner-qualified
+production evidence. Frozen v1 native_attempt rows fail closed for automatic use
+without rewriting or upgrading them. Legacy harness-ID fields remain unverified
+and are not native binding authority. Ordinary session-record reads replay the
 truncation-tolerant journal into current records; session browse orders and limits
 those lightweight records before enriching the visible page. New primary launches
 also append their canonical `spawn_id` relationship. Current recovery and transcript

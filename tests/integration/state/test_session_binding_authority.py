@@ -307,7 +307,7 @@ def test_old_attempt_receipt_cannot_cross_successor_attempt_boundary(tmp_path: P
     begin(root, "retrying-run", "attempt-2")
     with pytest.raises(ValueError, match="superseded attempt"):
         session_store.accept_native_boundary(
-            root, receipt("retrying-run", "attempt-1", "exit", key("/native/stale"))
+            root, receipt("retrying-run", "attempt-1", "exit", key("/native/stale"), order=2)
         )
 
 

@@ -171,14 +171,18 @@ add a parallel ledger. `begin_native_attempt()`, `accept_native_boundary()`,
 same normalized `JournalSnapshot`. Allocation, native lookup and historical import
 must use its identity view; never scan raw payloads or union a private occupancy map.
 The pure identity planner checks both proposed and replayed claims against their
-prefix. Historical records and native pins cannot overwrite each other.
+prefix. Historical records and native pins cannot overwrite each other. The typed
+attempt reducer handles live proposals and strict replay; do not duplicate attempt
+policy in transaction wrappers.
 
 Session journal writers share one transaction in project-lifetime → history-mutation
 → exclusive-session-lock order. It reads/decodes/folds once, rejects conflicts before
 repair or allocation, and confirms file plus parent-directory durability. Repair uses
 the reader's tail classification, never a second parse. Legacy native-ID fields remain
-display/provenance data. Experimental v1 attempt policy is not production transport
-qualification; extending that policy must extend the same fold, not add a scanner.
+display/provenance data. Experimental v2 attempt rows record caller assertions, not
+production transport qualification. Frozen v1 native_attempt rows require explicit
+reconciliation and are never upgraded automatically. Owner integration remains
+unwired; do not use these APIs to claim tracked transport support.
 
 ## Spawn Subpackage
 

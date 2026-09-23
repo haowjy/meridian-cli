@@ -34,19 +34,19 @@ from meridian.lib.state.session_authority import (
     AttemptBoundaries as AttemptBoundaries,
 )
 from meridian.lib.state.session_authority import (
-    BindNative,
+    AttemptFact,
+    BeginIntent,
     IdentityDelta,
-    JournalEvent,
     JournalRead,
     JournalSnapshot,
     NeedChat,
     NoOp,
+    Refutation,
     _generation_matches,
     canonical_chat_number,
-    native_key_tuple,
+    plan_attempt,
     plan_identity,
     read_journal,
-    receipt_digest,
     selection_startup_key,
     startup_key,
 )
@@ -99,7 +99,7 @@ from meridian.lib.state.session_authority import (
 
 def _append_session_event(
     data_path: Path,
-    event: JournalEvent,
+    event: SessionEvent | SessionModelObservationEvent,
     *,
     exclude_none: bool = False,
 ) -> None:
@@ -188,140 +188,41 @@ def begin_native_attempt(
     requested_source: NativeSessionKey | None = None,
     transport_scope_id: str,
 ) -> None:
-    """Durably establish attempt ownership before launching a harness."""
-    if not run_id.strip() or not attempt_id.strip():
-        raise ValueError("run and attempt identity are required")
-    paths = RuntimePaths.from_root_dir(runtime_root)
-    with _sessions_transaction(paths) as transaction:
-        snapshot = transaction.snapshot
-        if operation in {"resume", "fork"}:
-            if requested_source is None:
-                raise ValueError("resume/fork intent requires its pinned source key")
-            if native_key_tuple(requested_source) not in snapshot.identity.key_to_chat:
-                raise ValueError("requested source is not an accepted native chat binding")
-        state = snapshot.attempts.states.get((run_id, attempt_id))
-        if state is not None:
-            prior = state.begin
-            if (
-                prior.operation != operation
-                or prior.requested_source != requested_source
-                or prior.transport_scope_id != transport_scope_id
-            ):
-                raise ValueError("attempt authority has no valid begin")
-            return
-        latest = snapshot.attempts.latest.get(run_id)
-        attempt_number = 1 + ((latest.attempt_number or 0) if latest else 0)
-        _append_authority_event(
-            paths.sessions_jsonl,
-            transaction,
-            SessionAttemptEvent(
-                action="begin",
-                run_id=run_id,
-                attempt_id=attempt_id,
-                attempt_number=attempt_number,
-                transport_scope_id=transport_scope_id,
-                operation=operation,
-                requested_source=requested_source,
-            ),
-        )
+    """Persist experimental attempt intent, NOT proof of transport ownership."""
+    _commit_attempt(
+        runtime_root,
+        BeginIntent(
+            run_id=run_id,
+            attempt_id=attempt_id,
+            transport_scope_id=transport_scope_id,
+            operation=operation,
+            requested_source=requested_source,
+        ),
+    )
 
 
 def accept_native_boundary(runtime_root: Path, receipt: OwnedBoundaryReceipt) -> BoundaryAcceptance:
-    """Atomically bind a verified attempt boundary to an immutable canonical chat."""
+    """Experimental caller assertions; production owner integration is unwired."""
+    return _commit_attempt(runtime_root, receipt)
+
+
+def refute_native_exit(runtime_root: Path, refutation: Refutation) -> BoundaryAcceptance:
+    """Record one bounded experimental refutation; never repin any chat."""
+    return _commit_attempt(runtime_root, refutation)
+
+
+def _commit_attempt(runtime_root: Path, fact: AttemptFact) -> BoundaryAcceptance:
     paths = RuntimePaths.from_root_dir(runtime_root)
     with _sessions_transaction(paths) as transaction:
         snapshot = transaction.snapshot
-        state = snapshot.attempts.states.get((receipt.run_id, receipt.attempt_id))
-        if state is None:
-            raise ValueError("receipt belongs to an unknown or unstarted attempt")
-        if snapshot.attempts.latest[receipt.run_id].attempt_id != receipt.attempt_id:
-            raise ValueError("receipt belongs to a superseded attempt")
-        begin = state.begin
-        if receipt.evidence.transport_scope_id != begin.transport_scope_id:
-            raise ValueError("receipt is not owned by this transport attempt")
-        if (
-            receipt.boundary == "entry"
-            and begin.operation == "resume"
-            and (
-                receipt.key != begin.requested_source
-                or receipt.evidence.operation != "resume"
-                or receipt.evidence.source_key != begin.requested_source
-            )
-        ):
-            raise ValueError("resume entry does not match its pinned native source")
-        if (
-            receipt.boundary == "entry"
-            and begin.operation == "fork"
-            and (
-                receipt.evidence.operation != "fork"
-                or receipt.evidence.source_key != begin.requested_source
-                or receipt.key == begin.requested_source
-                or not receipt.evidence.fork_ancestry_verified
-            )
-        ):
-            raise ValueError("fork entry lacks distinct target and pinned source evidence")
-        if (
-            receipt.boundary == "entry"
-            and begin.operation == "fresh"
-            and (
-                receipt.evidence.operation != "fresh"
-                or receipt.evidence.source_key is not None
-                or not receipt.evidence.fresh_creation_verified
-            )
-        ):
-            raise ValueError("fresh entry lacks fresh-target evidence")
-        prior_entry = state.entry.receipt if state.entry else None
-        if (
-            receipt.boundary == "exit"
-            and prior_entry is not None
-            and receipt.evidence.order <= prior_entry.evidence.order
-        ):
-            raise ValueError("terminal boundary must follow accepted entry ordering evidence")
-        if receipt.boundary == "exit" and state.invalidation is not None:
-            return BoundaryAcceptance(None, True)
-        digest = receipt_digest(receipt)
-        prior = state.entry if receipt.boundary == "entry" else state.exit
-        if prior is not None:
-            prior_digest = receipt_digest(prior.receipt)  # type: ignore[union-attr]
-            if prior_digest == digest:
-                return BoundaryAcceptance(prior.chat_id)
-            if prior.receipt is not None and receipt.evidence.order <= prior.receipt.evidence.order:
-                raise ValueError("contradictory receipt is not later in qualified ordering")
-            if (
-                receipt.boundary == "exit"
-                and prior.receipt is not None
-                and prior.receipt.key == receipt.key
-            ):
-                return BoundaryAcceptance(prior.chat_id)
-            if receipt.boundary == "entry":
-                raise ValueError("attempt entry identity is immutable")
-            if prior.receipt is None or prior.receipt.key != receipt.key:
-                invalidation = SessionAttemptEvent(
-                    action="invalidate_exit",
-                    run_id=receipt.run_id,
-                    attempt_id=receipt.attempt_id,
-                    invalidated_event_id=prior_digest,
-                    contradiction_digest=digest,
-                )
-                _append_authority_event(paths.sessions_jsonl, transaction, invalidation)
-                return BoundaryAcceptance(None, True)
-        decision = plan_identity(snapshot.identity, BindNative(receipt.key))
+        decision = plan_attempt(snapshot.attempts, snapshot.identity, fact)
         if isinstance(decision, NeedChat):
-            chat_id = _allocate_binding_chat_id(paths, transaction)
-            decision = plan_identity(
-                snapshot.identity, BindNative(receipt.key), assigned_chat=chat_id
-            )
-        assert isinstance(decision, IdentityDelta) and decision.chat_id is not None
-        chat_id = decision.chat_id
-        event = SessionAttemptEvent(
-            action="boundary",
-            run_id=receipt.run_id,
-            attempt_id=receipt.attempt_id,
-            receipt=receipt,
-            chat_id=ChatId(chat_id),
-        )
-        _append_authority_event(paths.sessions_jsonl, transaction, event)
-        return BoundaryAcceptance(chat_id)
+            chat = _allocate_binding_chat_id(paths, transaction)
+            decision = plan_attempt(snapshot.attempts, snapshot.identity, fact, assigned_chat=chat)
+        assert not isinstance(decision, NeedChat)
+        if decision.row is not None:
+            _append_authority_event(paths.sessions_jsonl, transaction, decision.row)
+        return decision.result
 
 
 def _allocate_binding_chat_id(paths: RuntimePaths, transaction: _SessionTransaction) -> ChatId:
@@ -336,7 +237,11 @@ def _allocate_binding_chat_id(paths: RuntimePaths, transaction: _SessionTransact
 
 
 def _append_proposed_row(
-    path: Path, transaction: _SessionTransaction, event: JournalEvent, *, exclude_none: bool = False
+    path: Path,
+    transaction: _SessionTransaction,
+    event: SessionEvent | SessionModelObservationEvent,
+    *,
+    exclude_none: bool = False,
 ) -> None:
     snapshot = transaction.snapshot
     decision = plan_identity(snapshot.identity, event)
@@ -355,7 +260,9 @@ def _append_authority_event(
 ) -> None:
     """Append through the active transaction and resolve ambiguous writes."""
     try:
-        _append_proposed_row(path, transaction, event)
+        transaction.prepare()
+        HistoryChanges(path.parent).mark(HistorySource(kind="sessions"))
+        _append_session_row(path, event)
     except OSError:
         # Exceptional reread only: visibility is not a commit without a fresh barrier.
         recovered = read_journal(path.read_bytes()).snapshot

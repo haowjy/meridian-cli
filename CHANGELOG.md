@@ -11,6 +11,11 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- Experimental native-attempt v2 rows share one live/replay transition policy.
+  Late and same-key finality refutations invalidate only their exit, never chat
+  pins. Frozen v1 attempt rows fail closed without rewriting history. Owner
+  integration and production tracking remain unwired.
+
 - Normalize lifecycle chat references before session generation, lease, lock, and
   record lookups; reject empty direct references.
 - Reserve, native binding and restore now share one typed journal identity projection.

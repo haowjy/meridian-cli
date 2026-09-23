@@ -50,7 +50,7 @@ def native(chat: str = "c1", attempt: str = "attempt", native_id: str = "native"
         ),
     )
     return [
-        store.SessionAttemptEvent(
+        authority.BeginEvent(
             action="begin",
             run_id="run",
             attempt_id=attempt,
@@ -58,7 +58,7 @@ def native(chat: str = "c1", attempt: str = "attempt", native_id: str = "native"
             transport_scope_id="transport",
             operation="fresh",
         ).model_dump(mode="json"),
-        store.SessionAttemptEvent(
+        authority.BoundaryEvent(
             action="boundary",
             run_id="run",
             attempt_id=attempt,
@@ -165,11 +165,21 @@ def test_duplicate_pin_across_attempts_and_lifecycle_preserves_key(tmp_path):
     ],
 )
 def test_proposed_identity_and_replay_use_identical_conflict_rules(tmp_path, prefix, proposed):
-    raw = journal(prefix)
-    view = authority.read_journal(raw).snapshot.identity
     event = authority.decode_row(proposed)
+    if isinstance(event, authority.BoundaryEvent):
+        prefix = [*prefix, native()[0]]
+    raw = journal(prefix)
+    snapshot = authority.read_journal(raw).snapshot
+
+    def propose(snapshot):
+        if isinstance(event, authority.BoundaryEvent):
+            return authority.plan_attempt(
+                snapshot.attempts, snapshot.identity, event.receipt, assigned_chat=event.chat_id
+            )
+        return authority.plan_identity(snapshot.identity, event)
+
     with pytest.raises(ValueError) as live:
-        authority.plan_identity(view, event)
+        propose(snapshot)
     with pytest.raises(ValueError, match=str(live.value)):
         authority.read_journal(raw + journal([proposed]))
     # A rejected proposal must not even repair an otherwise eligible torn tail.
@@ -180,7 +190,10 @@ def test_proposed_identity_and_replay_use_identical_conflict_rules(tmp_path, pre
         pytest.raises(ValueError, match=str(live.value)),
         store._sessions_transaction(store.RuntimePaths.from_root_dir(tmp_path)) as transaction,
     ):
-        store._append_proposed_row(path, transaction, event)
+        if isinstance(event, authority.BoundaryEvent):
+            propose(transaction.snapshot)
+        else:
+            store._append_proposed_row(path, transaction, event)
     assert path.read_bytes() == before
 
 

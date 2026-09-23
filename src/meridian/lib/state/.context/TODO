@@ -16,3 +16,8 @@
   structural — move the identity-transition mechanism into a state-owned
   project_identity module and leave ops with only active-spawn policy + CLI
   rendering. (B3)
+
+- session_authority.py/session_store.py native attempt APIs (I1a.3): replace caller-
+  supplied evidence with an adapter-bound owner coordinator and delivery gate.
+  V2 transition consistency is not provenance, canonical-store acquisition, fork
+  ancestry or production terminality qualification; tracking remains unwired.
