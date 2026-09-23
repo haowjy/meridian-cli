@@ -126,9 +126,11 @@ the extension UI no-ops when not interactive.
 
 Raises `PiExtensionProjectionError` if a required built artifact is missing — directs
 the user to run `cd src/meridian/pi_runtime && npm run build:extensions`.
-The identity-qualified session-boundary resolver is stricter: it rejects a missing
-or older-than-source bundle and never uses the installed extension copy as fallback.
-Run `npm run build:extensions:verify-source` before qualifying that launch.
+The identity-qualified session-boundary resolver verifies the manifest against the
+current source and build-input digests plus the bundle output digest. It exposes the
+verified artifact ID and output digest for owner correlation, and never uses an
+installed extension copy as fallback. Timestamps do not determine acceptance. Run
+`npm run build:extensions:verify-source` to rebuild and verify that artifact.
 
 ### `HarnessCapabilityMismatch`
 
