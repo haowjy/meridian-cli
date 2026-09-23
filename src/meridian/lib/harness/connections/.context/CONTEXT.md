@@ -25,14 +25,15 @@ shared reconciled transitive spawn tree.
 If a canonical Pi lifecycle event appears on stdout, `PiRpcConnection` logs and drops it;
 stdout is not the quiescence authority.
 
-**Pi startup requires an initial prompt.** Unlike other harnesses that can start in a
-listening state, spawned Pi RPC sessions must receive an initial user message. The
-connection validates this (`_validate_initial_prompt_requirement()`) and enforces a
-first-event timeout (default 30 s) after the prompt. The timeout value, abort grace,
-and kill grace are carried by a frozen `PiRpcTimingPolicy` injected at the
-`PiRpcConnection` constructor. The deadline is stamped at prompt-write success, not at
-the consumer's first `events()` iteration. Tests inject policies with short timeouts
-through the constructor; there are no module-level timing Finals to monkeypatch.
+**Pi's ordinary `start()` requires a spawned initial prompt and sends it immediately.**
+`initialize_without_input()` instead launches the same process/dispatcher without an
+RPC prompt (empty configured prompts are allowed). `deliver_initial_prompt()` explicitly
+releases initial input; inject/steer cannot bypass that release. This transport-only seam
+is not wired to attempt admission. Launch argv/system-context projection is unchanged:
+there is no assertion of an all-context delivery barrier or qualified native identity.
+The first-event timeout (default 30 s) starts at prompt-write success, independently of
+`events()` consumption. Command timeout, first-event timeout, abort grace, and kill grace
+are carried by `PiRpcTimingPolicy`.
 
 **Pi injected prompts are acknowledged commands.** Every prompt carries an RPC `id`
 and `streamingBehavior: "followUp"`; the field is valid whether Pi is busy or idle.
@@ -107,17 +108,29 @@ definition, not per-instance. Fields:
 
 ### Pi RPC Stdout Path
 
-`PiRpcConnection.events()` consumes exactly one stdout reader task. The event loop:
+The connection starts one stdout dispatcher at launch. `events()` consumes a bounded
+256-event queue; closing its iterator never stops the reader. The dispatcher correlates
+responses before queueing raw events, so a slow handler cannot block a command response.
+Overflow latches failure, fails pending commands, and surfaces a connection-close error;
+the reader keeps draining but drops further queued output. It never waits for queue space.
 
-1. yields queued Meridian phase events (`process_spawned`, `initial_prompt_sent`, etc.);
-2. waits for the first stdout event with a 30-second deadline after the initial prompt;
-3. parses each stdout line as a Pi JSON object;
-4. emits `first_pi_event_received` and `session_event_seen` / `session_event_absent` phase events;
-5. yields normalized `HarnessEvent` objects to the streaming drain loop.
+Requests register a connection-unique ID/future before writing. State queries require the
+same ID, exact command, strict `success=true`, and nonempty `sessionId`/`sessionFile`.
+Unknown, stale, duplicate and late replies cannot satisfy another waiter. A matching ID
+with wrong command fails that request. EOF/read/parse failure fails outstanding requests
+and prevents subsequent input. Malformed output remains visible as
+`meridian.lifecycle.parse_error`; it does not satisfy the first-event watchdog.
+Canonical lifecycle-looking stdout events remain ignored; there is no hook parser or
+sidecar event transport. Native `extension_error` remains raw output for the future owner
+to veto; this transport does not certify entry, selection, or terminal identity.
 
-Malformed stdout becomes `meridian.lifecycle.parse_error` so bad protocol output fails
-closed and stays visible. Canonical lifecycle-looking stdout events are ignored because
-current Pi coordination is disk-backed.
+An operation gate serializes initial delivery, inject/steer, `get_state()`, and
+`switch_session()`. Switch waits for its correlated response and then a correlated state
+query under that same gate; a native-cancelled switch also queries before reporting
+cancellation. Interrupted initial delivery or interrupted/timed-out/failed selection poisons further
+input because the child may already be executing it. Read-only query cancellation/timeout removes only its waiter.
+Cancellation/stop can abort without waiting on a command holding the operation gate.
+State responses are provisional observations, not namespace/header validation or receipts.
 
 ### Pi Stop Path
 

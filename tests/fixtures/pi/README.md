@@ -9,3 +9,7 @@ Three failure modes for issue #262 (Pi spawn failure surfacing):
 | **C — Timeout / hang** | (covered by integration tests) | `first_pi_event_timeout` / `pi_rpc_no_response_after_initial_prompt`; no dedicated fixture file. |
 
 Use these with `extract_or_fallback_report()` / `extract_pi_failure_from_history()` unit tests.
+
+`rpc_dispatcher.py` is a synthetic stdio peer for the connection-dispatcher integration
+tests and no-model probes. It accepts only fake protocol commands and writes its command
+log/barrier files in the test cwd; it never starts Pi or accesses model/auth/native stores.

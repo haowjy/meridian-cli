@@ -11,6 +11,11 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- Pi RPC now owns one launch-time stdout dispatcher with bounded event buffering and
+  correlated state queries. Added explicit deferred prompt delivery and serialized
+  switch/query operations; ordinary startup still sends its prompt immediately.
+  Native identity admission and terminal qualification remain unwired.
+
 - Serialize native attempt observation admission with bounded terminal/refutation
   retention, so overlapping failed writes cannot expose a stale verified exit.
 - Native attempt coordinator pulls observations from one bound owner; actual input

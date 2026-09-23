@@ -6,10 +6,11 @@ import asyncio
 import json
 import logging
 import time
+import uuid
 from asyncio.subprocess import PIPE
 from collections.abc import AsyncIterator, Callable, Sequence
 from dataclasses import dataclass
-from typing import Final, Literal, NamedTuple, cast
+from typing import Final, NamedTuple, cast
 
 from meridian.lib.core.telemetry import StartupPhase, StartupPhaseEmitter
 from meridian.lib.core.types import HarnessId, SpawnId
@@ -64,9 +65,7 @@ _PI_STREAM_CLOSED_BEFORE_FIRST_EVENT_REASON: Final[str] = (
 _PI_SPAWNED_PROMPT_REQUIRED_REASON: Final[str] = "pi_rpc_spawned_prompt_required"
 _PI_SESSION_DIR_FLAG: Final[str] = "--session-dir"
 PI_SUBPROCESS_EXIT_ERROR_PREFIX: Final[str] = "Pi subprocess exited with code "
-_STREAM_LINE_KIND: Final[Literal["line"]] = "line"
-_STREAM_EOF_KIND: Final[Literal["eof"]] = "eof"
-_STREAM_ERROR_KIND: Final[Literal["error"]] = "error"
+_EVENT_QUEUE_LIMIT: Final[int] = 256
 
 
 def pi_subprocess_exit_error(return_code: int) -> str:
@@ -89,6 +88,7 @@ class ParsedStdoutLine(NamedTuple):
 @dataclass(frozen=True)
 class PiRpcTimingPolicy:
     first_event_timeout_seconds: float = 30.0
+    command_timeout_seconds: float = 30.0
     abort_grace_seconds: float = 5.0
     kill_grace_seconds: float = 5.0
 
@@ -140,18 +140,27 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
         self._abort_sent = False
         self._initial_prompt: str = ""
         self._initial_prompt_sent = False
+        self._initial_prompt_sending = False
         self._waiting_for_first_pi_event_after_prompt = False
         self._first_event_deadline_monotonic: float | None = None
         self._first_pi_event_received = False
         self._session_event_seen = False
         self._harness_ready_emitted = False
-        self._pending_lifecycle_phase_events: list[RawHarnessEvent] = []
+        self._event_queue: asyncio.Queue[RawHarnessEvent] = asyncio.Queue(_EVENT_QUEUE_LIMIT)
+        self._event_available = asyncio.Event()
+        self._dispatcher: asyncio.Task[None] | None = None
+        self._dispatcher_done = False
+        self._read_timeout: asyncio.Timeout | None = None
+        self._overflow = False
+        self._rpc_failure: str | None = None
+        self._input_enabled = False
+        self._operation_gate = asyncio.Lock()
         self._launch_command: tuple[str, ...] = ()
         self._launch_cwd: str | None = None
         self._launch_session_role: str | None = None
-        self._events_stream_active = False
-        self._prompt_command_seq = 0
-        self._pending_prompt_acks: dict[str, asyncio.Future[None]] = {}
+        self._command_prefix = uuid.uuid4().hex
+        self._command_seq = 0
+        self._pending_responses: dict[str, tuple[str, asyncio.Future[dict[str, object]]]] = {}
         self._stop_lock = asyncio.Lock()
 
     @property
@@ -183,6 +192,21 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
         return None if self._child is None else self._child.scope_snapshot
 
     async def start(self, config: ConnectionConfig, spec: ResolvedLaunchSpec) -> None:
+        """Legacy startup still delivers the configured prompt immediately."""
+        await self._initialize(config, spec, deliver=True)
+
+    async def initialize_without_input(
+        self, config: ConnectionConfig, spec: ResolvedLaunchSpec
+    ) -> None:
+        """Launch and dispatch only; the caller must explicitly release delivery.
+
+        This is a transport seam, not entry admission or identity certification.
+        """
+        await self._initialize(config, spec, deliver=False)
+
+    async def _initialize(
+        self, config: ConnectionConfig, spec: ResolvedLaunchSpec, *, deliver: bool
+    ) -> None:
         if self._state != "created":
             raise RuntimeError(f"Connection can only start from 'created', got '{self._state}'")
 
@@ -202,10 +226,9 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
         self._first_pi_event_received = False
         self._session_event_seen = False
         self._harness_ready_emitted = False
-        self._pending_lifecycle_phase_events = []
         self._launch_session_role = config.pi_session_role
-        self._events_stream_active = False
-        self._validate_initial_prompt_requirement()
+        if deliver:
+            self._validate_initial_prompt_requirement()
         self._set_state("starting")
 
         try:
@@ -220,33 +243,54 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
             )
             self._emit_startup_phase(StartupPhase.WAITING_FOR_CONNECTION)
             self._set_state("connected")
-            sent_initial_prompt = await self._send_initial_prompt_if_pending()
-            prompt_chars = len(self._initial_prompt)
-            prompt_bytes = len(self._initial_prompt.encode("utf-8"))
-            if sent_initial_prompt:
+            self._dispatcher = asyncio.create_task(self._dispatch_stdout())
+            if deliver:
+                await self.deliver_initial_prompt()
+        except BaseException:
+            self._mark_failed("Pi RPC connection startup failed.")
+            await reap_on_ownership_transfer_failure(self._cleanup_start_failure)
+            raise
+
+    async def deliver_initial_prompt(self) -> None:
+        """Release deferred input after the caller's barrier; no authority is implied."""
+        async with self._operation_gate:
+            if self._input_enabled:
+                return
+            self._check_rpc_ready()
+            self._initial_prompt_sending = True
+            try:
+                sent = await self._send_initial_prompt_if_pending()
+            except BaseException:
+                # stdin.write precedes drain; interrupted delivery may already be executing.
+                self._fail_pending_responses("Pi initial delivery did not settle.")
+                raise
+            finally:
+                self._initial_prompt_sending = False
+            self._input_enabled = True
+            if sent:
                 self._queue_lifecycle_phase_event(
                     "initial_prompt_sent",
-                    prompt_chars=prompt_chars,
-                    prompt_bytes=prompt_bytes,
+                    prompt_chars=len(self._initial_prompt),
+                    prompt_bytes=len(self._initial_prompt.encode("utf-8")),
                 )
+                if self._first_pi_event_received:
+                    return
                 self._waiting_for_first_pi_event_after_prompt = True
                 self._first_event_deadline_monotonic = (
                     self._clock() + self._timing.first_event_timeout_seconds
                 )
+                if self._read_timeout is not None:
+                    self._read_timeout.reschedule(
+                        asyncio.get_running_loop().time() + self._timing.first_event_timeout_seconds
+                    )
                 self._queue_lifecycle_phase_event(
                     "waiting_for_first_pi_event_after_prompt",
                     timeout_secs=self._timing.first_event_timeout_seconds,
                 )
             else:
                 self._queue_lifecycle_phase_event(
-                    "no_initial_prompt",
-                    prompt_chars=prompt_chars,
-                    prompt_bytes=prompt_bytes,
+                    "no_initial_prompt", prompt_chars=0, prompt_bytes=0
                 )
-        except BaseException:
-            self._mark_failed("Pi RPC connection startup failed.")
-            await reap_on_ownership_transfer_failure(self._cleanup_start_failure)
-            raise
 
     async def _cleanup_start_failure(self) -> None:
         async with self._stop_lock:
@@ -297,70 +341,150 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
         return self._state == "connected"
 
     async def send_user_message(self, text: str) -> None:
-        await self._send_prompt(text, wait_for_ack=True)
+        async with self._operation_gate:
+            self._check_input_enabled()
+            await self._send_prompt(text, wait_for_ack=True)
+
+    def _check_input_enabled(self) -> None:
+        if not self._input_enabled:
+            raise ConnectionNotReady("Pi initial input has not been released.")
 
     async def _send_prompt(self, text: str, *, wait_for_ack: bool) -> None:
-        command_id = f"meridian-prompt-{self._prompt_command_seq}"
-        self._prompt_command_seq += 1
-        payload: dict[str, object] = {
-            "id": command_id,
-            "type": "prompt",
-            "message": text,
-            "streamingBehavior": "followUp",
-        }
-        if not wait_for_ack:
-            await self._send_rpc_message(payload, event="prompt")
-            return
-
-        ack = asyncio.get_running_loop().create_future()
-        self._pending_prompt_acks[command_id] = ack
-        try:
-            await self._send_rpc_message(payload, event="prompt")
-            await ack
-        finally:
-            self._pending_prompt_acks.pop(command_id, None)
+        payload: dict[str, object] = {"message": text, "streamingBehavior": "followUp"}
+        if wait_for_ack:
+            await self._request("prompt", payload, timeout=None)
+        else:
+            await self._send_rpc_message(
+                {"id": self._next_command_id(), "type": "prompt", **payload}, event="prompt"
+            )
 
     async def send_steer(self, text: str) -> None:
-        payload: dict[str, object] = {
-            "type": "steer",
-            "message": text,
-        }
-        await self._send_rpc_message(payload, event="steer")
+        async with self._operation_gate:
+            self._check_input_enabled()
+            await self._send_rpc_message({"type": "steer", "message": text}, event="steer")
+
+    async def get_state(self) -> dict[str, object]:
+        """Return correlated provisional native state, never an identity receipt."""
+        async with self._operation_gate:
+            return await self._get_state()
+
+    async def _get_state(self) -> dict[str, object]:
+        response = await self._request(
+            "get_state", {}, timeout=self._timing.command_timeout_seconds
+        )
+        data = response.get("data")
+        if not isinstance(data, dict):
+            raise RuntimeError("Pi get_state response lacks sessionId/sessionFile.")
+        state = cast("dict[str, object]", data)
+        for key in ("sessionId", "sessionFile"):
+            value = state.get(key)
+            if not isinstance(value, str) or not value.strip():
+                raise RuntimeError("Pi get_state response lacks sessionId/sessionFile.")
+        return state
+
+    async def switch_session(self, session_path: str) -> dict[str, object]:
+        """Serialize switch ACK and state query against all input; not certification."""
+        async with self._operation_gate:
+            try:
+                response = await self._request(
+                    "switch_session",
+                    {"sessionPath": session_path},
+                    timeout=self._timing.command_timeout_seconds,
+                )
+                state = await self._get_state()
+            except BaseException:
+                # A written selector may still run after its waiter is gone.
+                self._fail_pending_responses("Pi session selection did not settle.")
+                raise
+            data = response.get("data")
+            if isinstance(data, dict) and data.get("cancelled") is True:
+                raise RuntimeError("Pi session switch cancelled.")
+            return state
+
+    def _next_command_id(self) -> str:
+        command_id = f"meridian-{self._command_prefix}-{self._command_seq}"
+        self._command_seq += 1
+        return command_id
+
+    def _check_rpc_ready(self) -> None:
+        if self._rpc_failure is not None:
+            raise ConnectionNotReady(self._rpc_failure)
+        if self._state != "connected":
+            raise ConnectionNotReady("Pi RPC connection is not ready for send operations.")
+
+    async def _request(
+        self, command: str, payload: dict[str, object], *, timeout: float | None
+    ) -> dict[str, object]:
+        self._check_rpc_ready()
+        command_id = self._next_command_id()
+        future: asyncio.Future[dict[str, object]] = asyncio.get_running_loop().create_future()
+        self._pending_responses[command_id] = (command, future)
+        try:
+            async with asyncio.timeout(timeout):
+                await self._send_rpc_message(
+                    {"id": command_id, "type": command, **payload}, event=command
+                )
+                return await future
+        finally:
+            self._pending_responses.pop(command_id, None)
+            if not future.done():
+                future.cancel()
+            elif not future.cancelled():
+                future.exception()
 
     async def send_cancel(self) -> None:
         if self._state in {"stopping", "stopped", "failed"}:
             return
         self._set_state("stopping")
+        self._fail_pending_responses("Pi RPC connection cancelled.")
         await self._send_abort_message()
 
     async def events(self) -> AsyncIterator[RawHarnessEvent]:
-        child = self._child
-        if child is None:
-            return
-        process = child.process
-        if process is None or process.stdout is None:
+        if self._child is None:
             return
         if self._event_stream_started:
             raise RuntimeError("events() iterator already consumed")
         self._event_stream_started = True
-        self._events_stream_active = True
-        stream_queue: asyncio.Queue[
-            tuple[
-                Literal["line", "eof", "error"],
-                bytes | BaseException | None,
-            ]
-        ] = asyncio.Queue()
-        stream_tasks = [
-            asyncio.create_task(
-                self._read_stdio_stream(
-                    process.stdout,
-                    queue=stream_queue,
-                )
-            )
-        ]
+        while True:
+            while not self._event_queue.empty():
+                yield self._event_queue.get_nowait()
+            if self._overflow:
+                yield self._error_event("Pi RPC event queue overflow.")
+                return
+            if self._dispatcher_done:
+                return
+            self._event_available.clear()
+            await self._event_available.wait()
+
+    def _queue_event(self, event: RawHarnessEvent) -> None:
+        if self._overflow:
+            return
         try:
-            while self._pending_lifecycle_phase_events:
-                yield self._pending_lifecycle_phase_events.pop(0)
+            self._event_queue.put_nowait(event)
+        except asyncio.QueueFull:
+            self._overflow = True
+            self._fail_pending_responses("Pi RPC event queue overflow.")
+            self._mark_failed("Pi RPC event queue overflow.")
+        self._event_available.set()
+
+    async def _dispatch_stdout(self) -> None:
+        try:
+            async for event in self._read_events():
+                self._queue_event(event)
+        finally:
+            self._fail_pending_responses("Pi RPC stdout closed before command response.")
+            self._dispatcher_done = True
+            self._event_available.set()
+            if self._child is not None:
+                self._child.close_stderr_handle()
+
+    async def _read_events(self) -> AsyncIterator[RawHarnessEvent]:
+        child = self._child
+        assert child is not None
+        process = child.process
+        assert process is not None and process.stdout is not None
+        stream = process.stdout
+        try:
             while True:
                 now_monotonic = self._clock()
                 try:
@@ -375,15 +499,10 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
                         timeout_secs = deadline - now_monotonic
                         if timeout_secs <= 0:
                             raise TimeoutError
-                    if timeout_secs is None:
-                        stream_kind, payload = await stream_queue.get()
-                    elif timeout_secs <= 0:
-                        raise TimeoutError
-                    else:
-                        stream_kind, payload = await asyncio.wait_for(
-                            stream_queue.get(),
-                            timeout=timeout_secs,
-                        )
+                    async with asyncio.timeout(timeout_secs) as read_timeout:
+                        self._read_timeout = read_timeout
+                        line_bytes = await stream.readline()
+                    self._read_timeout = None
                 except TimeoutError:
                     now_monotonic = self._clock()
                     if (
@@ -414,15 +533,8 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
                         yield self._error_event(detail)
                     break
 
-                if stream_kind == _STREAM_ERROR_KIND:
-                    stream_error = payload
-                    if self._state not in {"stopping", "stopped"}:
-                        detail = f"Failed to read Pi stdout: {stream_error}"
-                        self._mark_failed(detail)
-                        yield self._error_event(detail)
-                    break
-
-                if stream_kind == _STREAM_EOF_KIND:
+                if not line_bytes:
+                    self._fail_pending_responses("Pi RPC stdout closed before command response.")
                     return_code = process.returncode
                     if return_code is None:
                         return_code = await process.wait()
@@ -455,9 +567,6 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
                         yield self._error_event(detail)
                     break
 
-                if not isinstance(payload, bytes):
-                    continue
-                line_bytes = payload
                 raw_text = line_bytes.decode("utf-8", errors="replace").rstrip("\n")
                 if not raw_text.strip():
                     continue
@@ -467,12 +576,14 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
                 event = parsed.event
                 if event is None:
                     continue
+                if event.event_type == "meridian.lifecycle.parse_error":
+                    self._fail_pending_responses("Pi RPC stdout parse error.")
                 if parsed.is_protocol_event:
                     self._emit_harness_ready_once()
                     if (
                         self._waiting_for_first_pi_event_after_prompt
-                        and not self._first_pi_event_received
-                    ):
+                        or self._initial_prompt_sending
+                    ) and not self._first_pi_event_received:
                         self._first_pi_event_received = True
                         self._waiting_for_first_pi_event_after_prompt = False
                         self._first_event_deadline_monotonic = None
@@ -494,11 +605,7 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
             if not self._session_event_seen:
                 yield self._lifecycle_phase_event("session_event_absent")
         finally:
-            for task in stream_tasks:
-                task.cancel()
-            await asyncio.gather(*stream_tasks, return_exceptions=True)
-            self._events_stream_active = False
-            await self._cleanup_resources(terminate_process=False)
+            self._read_timeout = None
 
     async def _start_subprocess(self, config: ConnectionConfig, spec: ResolvedLaunchSpec) -> None:
         command = project_subprocess_spec(
@@ -531,28 +638,6 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
             kill_grace_seconds=self._timing.kill_grace_seconds,
             terminate_reason="pi_connection_stop",
         )
-
-    async def _read_stdio_stream(
-        self,
-        stream: asyncio.StreamReader,
-        queue: asyncio.Queue[
-            tuple[
-                Literal["line", "eof", "error"],
-                bytes | BaseException | None,
-            ]
-        ],
-    ) -> None:
-        try:
-            while True:
-                line_bytes = await stream.readline()
-                if not line_bytes:
-                    await queue.put((_STREAM_EOF_KIND, None))
-                    return
-                await queue.put((_STREAM_LINE_KIND, line_bytes))
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:
-            await queue.put((_STREAM_ERROR_KIND, exc))
 
     def _apply_session_dir_arg(self, command: Sequence[str], session_dir: str) -> list[str]:
         rewritten: list[str] = []
@@ -643,7 +728,7 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
                 False,
             )
 
-        if normalized_type == "response" and self._resolve_prompt_ack(payload):
+        if normalized_type == "response" and self._resolve_response(payload):
             payload = dict(payload)
             payload["meridian_control_action"] = "inject"
 
@@ -657,26 +742,29 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
             True,
         )
 
-    def _resolve_prompt_ack(self, payload: dict[str, object]) -> bool:
-        if str(payload.get("command", "")).strip().lower() != "prompt":
-            return False
+    def _resolve_response(self, payload: dict[str, object]) -> bool:
         command_id = payload.get("id")
         if not isinstance(command_id, str):
             return False
-        pending = self._pending_prompt_acks.get(command_id)
-        if pending is None or pending.done():
+        pending = self._pending_responses.get(command_id)
+        if pending is None:
             return False
-        if payload.get("success") is True:
-            pending.set_result(None)
+        command, future = pending
+        if future.done():
+            return False
+        if payload.get("command") != command:
+            future.set_exception(RuntimeError("Pi RPC response command mismatch."))
+        elif payload.get("success") is True:
+            future.set_result(payload)
         else:
             error = payload.get("error")
             detail = (
                 error.strip()
                 if isinstance(error, str) and error.strip()
-                else "pi_prompt_rejected"
+                else f"pi_{command}_rejected"
             )
-            pending.set_exception(RuntimeError(detail))
-        return True
+            future.set_exception(RuntimeError(detail))
+        return command == "prompt"
 
     def _has_unsupported_lifecycle_schema_version(
         self,
@@ -721,8 +809,7 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
         )
 
     async def _send_rpc_message(self, payload: dict[str, object], *, event: str) -> None:
-        if self._state != "connected":
-            raise ConnectionNotReady("Pi RPC connection is not ready for send operations.")
+        self._check_rpc_ready()
 
         child = self._child
         process = None if child is None else child.process
@@ -820,24 +907,25 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
         )
 
     async def _cleanup_resources(self, *, terminate_process: bool) -> bool:
-        self._fail_pending_prompt_acks()
+        self._fail_pending_responses("Pi RPC connection closed before command response.")
         stop_escalated = False
         if terminate_process:
             child = self._child
             if child is not None:
                 stop_escalated = await child.terminate()
-        if not self._events_stream_active and self._child is not None:
+        dispatcher = self._dispatcher
+        if dispatcher is not None:
+            await asyncio.shield(dispatcher)
+        elif self._child is not None:
             self._child.close_stderr_handle()
         return stop_escalated
 
-    def _fail_pending_prompt_acks(self) -> None:
-        for pending in self._pending_prompt_acks.values():
+    def _fail_pending_responses(self, reason: str) -> None:
+        if self._rpc_failure is None:
+            self._rpc_failure = reason
+        for _, pending in self._pending_responses.values():
             if not pending.done():
-                pending.set_exception(
-                    ConnectionNotReady(
-                        "Pi RPC connection closed before prompt acknowledgement."
-                    )
-                )
+                pending.set_exception(ConnectionNotReady(reason))
 
     def _emit_startup_phase(self, phase: StartupPhase) -> None:
         emitter = self._startup_emitter
@@ -878,7 +966,7 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
         return event
 
     def _queue_lifecycle_phase_event(self, phase: str, **data: object) -> None:
-        self._pending_lifecycle_phase_events.append(self._lifecycle_phase_event(phase, **data))
+        self._queue_event(self._lifecycle_phase_event(phase, **data))
 
 
 PiConnection = PiRpcConnection
