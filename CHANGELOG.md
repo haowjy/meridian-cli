@@ -4,6 +4,11 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- Added typed, strict native-session binding and attempt-boundary authority to
+  the existing session journal, with crash-safe replay and fail-closed writers.
+
 ## [0.6.6] - 2026-09-22
 
 ### Changed

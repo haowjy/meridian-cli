@@ -164,6 +164,15 @@ Both paths share liveness rules in `reaper.py` and completion/cancel precedence 
   `reconcile_active_spawn()` repair.
 - `reconciliation.py` — shared reconciliation decisions and completion/cancel precedence.
 
+Native chat binding authority shares `sessions.jsonl` and `sessions_flock`; do not
+add a parallel ledger. `begin_native_attempt()`, `accept_native_boundary()`,
+`get_native_session_key()`, and `get_native_attempt_boundaries()` replay the
+strict typed authority events. Receipts need the persisted attempt/transport scope,
+qualified ordering and operation evidence. All writers to `sessions.jsonl`,
+including model observation/selection and lifecycle updates, must pass the strict
+pre-repair guard before generic JSONL tail repair. Legacy native-ID fields remain
+display/provenance data and are not verified bindings.
+
 ## Spawn Subpackage
 
 `spawn/` contains domain models, strict v3 persistence helpers, the one-shot legacy

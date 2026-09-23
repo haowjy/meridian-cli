@@ -13,7 +13,7 @@ meridian.toml
 ~/.meridian/projects/.locks/<id>.lock
                                     — project-lifetime gate outside deletable root
 ~/.meridian/projects/<id>/          ← user runtime, never committed
-  sessions.jsonl                    — all session events, append-only
+  sessions.jsonl                    — session lifecycle plus strict native-binding events
   sessions.jsonl.flock
   session-id-counter                — monotonic c1, c2, …
   sessions/                         — per-session lock + lease files
@@ -55,7 +55,10 @@ the v2 migration; published rows now use schema v3.
 
 ### Session State
 
-Sessions remain event-sourced JSONL (`sessions.jsonl`). Reads replay the
+Sessions remain event-sourced JSONL (`sessions.jsonl`). The session store's
+native-binding API uses the same lock and journal, with strict framing/schema
+replay and pre-repair validation on every append path; legacy harness-ID fields
+are not native binding authority. Ordinary session-record reads replay the
 truncation-tolerant journal into current records; session browse orders and limits
 those lightweight records before enriching the visible page. New primary launches
 also append their canonical `spawn_id` relationship. Current recovery and transcript
