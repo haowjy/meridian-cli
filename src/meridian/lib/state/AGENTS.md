@@ -160,16 +160,18 @@ Both paths share liveness rules in `reaper.py` and completion/cancel precedence 
   codec, pure reads, and the single locked mutation repository, respectively.
 - `session_store.py` — Session journal transactions, lifecycle ownership and display reads.
 - `session_authority.py` — Pure typed journal decoding, identity claims and ordered projection.
+- `attempt_coordinator.py` — Internal owner-pulled observations and durable input gate.
 - `atomic.py` — atomic write primitives. All state writes use these.
 - `reaper.py` — read-only `reconcile_spawns()` projection and root-only
   `reconcile_active_spawn()` repair.
 - `reconciliation.py` — shared reconciliation decisions and completion/cancel precedence.
 
 Native chat binding authority shares `sessions.jsonl` and `sessions_flock`; do not
-add a parallel ledger. `begin_native_attempt()`, `accept_native_boundary()`,
-`get_native_session_key()`, and `get_native_attempt_boundaries()` replay the
-same normalized `JournalSnapshot`. Allocation, native lookup and historical import
-must use its identity view; never scan raw payloads or union a private occupancy map.
+add a parallel ledger. `AttemptCoordinator` is the sole native-fact mutation
+entry point. It binds an adapter-created owner instance; methods pull witnesses
+from that owner, never accept caller receipts or look up owners by scope. Native
+getters and coordinator transactions replay the same normalized `JournalSnapshot`.
+Allocation, native lookup and historical import must use its identity view; never scan raw payloads or union a private occupancy map.
 The pure identity planner checks both proposed and replayed claims against their
 prefix. Historical records and native pins cannot overwrite each other. The typed
 attempt reducer handles live proposals and strict replay; do not duplicate attempt
@@ -179,10 +181,17 @@ Session journal writers share one transaction in project-lifetime → history-mu
 → exclusive-session-lock order. It reads/decodes/folds once, rejects conflicts before
 repair or allocation, and confirms file plus parent-directory durability. Repair uses
 the reader's tail classification, never a second parse. Legacy native-ID fields remain
-display/provenance data. Experimental v2 attempt rows record caller assertions, not
-production transport qualification. Frozen v1 native_attempt rows require explicit
-reconciliation and are never upgraded automatically. Owner integration remains
-unwired; do not use these APIs to claim tracked transport support.
+display/provenance data. V3 attempt facts record owner context and bounded
+operation/terminal correlations, not proof of transport truth. Frozen v1/v2 native
+attempt rows require reconciliation; never promote their assertions automatically.
+
+The owner delivery gate confirms journal durability before actual task/context
+dispatch. Keep each coordinator and its refutation consumer alive through owner
+drain, including after successor Begin; retry pending terminal facts/refutations
+before new observations or publishing its outcome. This is a trusted in-process boundary, not tamper protection. Only
+scripted owners exercise it today. Production adapter factories, process/request
+correlation, canonical-store acquisition and terminal/fresh/fork qualification
+remain unwired; no tracked Pi claim is justified.
 
 ## Spawn Subpackage
 

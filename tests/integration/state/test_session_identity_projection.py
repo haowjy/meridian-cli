@@ -8,6 +8,7 @@ import pytest
 
 from meridian.lib.state import session_authority as authority
 from meridian.lib.state import session_store as store
+from tests.support.attempt_owner import begin, observe, prepare
 
 
 def historical(chat: str = "c1", **updates: object) -> dict:
@@ -34,19 +35,16 @@ def historical(chat: str = "c1", **updates: object) -> dict:
 
 def native(chat: str = "c1", attempt: str = "attempt", native_id: str = "native") -> list[dict]:
     key = store.NativeSessionKey(harness="pi", store="/native/store", native_session_id=native_id)
-    receipt = store.OwnedBoundaryReceipt(
+    receipt = authority.BoundaryFact(
         run_id="run",
         attempt_id=attempt,
         boundary="entry",
         key=key,
-        evidence=store.BoundaryEvidence(
-            owner_attempt_id=attempt,
+        evidence=authority.BoundaryEvidence(
             transport_scope_id="transport",
             order=1,
-            qualified=True,
-            operation="fresh",
-            before_delivery=True,
-            fresh_creation_verified=True,
+            correlation="fake-request",
+            selection=authority.CreatedSelection(creation_request="fake-create"),
         ),
     )
     return [
@@ -57,12 +55,14 @@ def native(chat: str = "c1", attempt: str = "attempt", native_id: str = "native"
             attempt_number=1,
             transport_scope_id="transport",
             operation="fresh",
+            harness="pi",
+            store="/native/store",
         ).model_dump(mode="json"),
         authority.BoundaryEvent(
             action="boundary",
             run_id="run",
             attempt_id=attempt,
-            receipt=receipt,
+            fact=receipt,
             chat_id=chat,
         ).model_dump(mode="json"),
     ]
@@ -121,7 +121,7 @@ def test_conflicting_prefix_refuses_every_authority_consumer_without_mutation(tm
         lambda: store.reserve_chat_id(tmp_path),
         lambda: store.get_native_session_key(tmp_path, "c1"),
         lambda: store.get_native_attempt_boundaries(tmp_path, "run", "attempt"),
-        lambda: store.begin_native_attempt(tmp_path, "other", "other", transport_scope_id="scope"),
+        lambda: begin(tmp_path, "other", "other", transport_scope_id="scope"),
     ):
         with pytest.raises(ValueError, match=r"row \d+.*(c1|historical)"):
             call()
@@ -147,9 +147,9 @@ def test_duplicate_pin_across_attempts_and_lifecycle_preserves_key(tmp_path):
     path = tmp_path / "sessions.jsonl"
     path.write_bytes(journal(rows))
     key = store.get_native_session_key(tmp_path, " c1 ")
-    store.begin_native_attempt(tmp_path, "run", "second", transport_scope_id="transport")
-    receipt = store.OwnedBoundaryReceipt.model_validate(native("c1", "second")[1]["receipt"])
-    assert store.accept_native_boundary(tmp_path, receipt).chat_id == "c1"
+    begin(tmp_path, "run", "second", transport_scope_id="transport")
+    receipt = authority.BoundaryFact.model_validate(native("c1", "second")[1]["fact"])
+    assert observe(tmp_path, receipt).chat_id == "c1"
     store.update_session_harness_id(tmp_path, "c1", "legacy-display-only")
     assert store.get_native_session_key(tmp_path, "c1") == key
     assert store.reserve_chat_id(tmp_path) == "c2"
@@ -174,7 +174,7 @@ def test_proposed_identity_and_replay_use_identical_conflict_rules(tmp_path, pre
     def propose(snapshot):
         if isinstance(event, authority.BoundaryEvent):
             return authority.plan_attempt(
-                snapshot.attempts, snapshot.identity, event.receipt, assigned_chat=event.chat_id
+                snapshot.attempts, snapshot.identity, event.fact, assigned_chat=event.chat_id
             )
         return authority.plan_identity(snapshot.identity, event)
 
@@ -251,7 +251,8 @@ def test_normal_transaction_reads_decodes_and_folds_each_row_once(tmp_path, oper
             reads.append(self)
         return original_read(self)
 
-    receipt = store.OwnedBoundaryReceipt.model_validate(rows[1]["receipt"])
+    prepare(tmp_path, "run", "attempt", transport_scope_id="transport")
+    receipt = authority.BoundaryFact.model_validate(rows[1]["fact"])
     with (
         patch.object(Path, "read_bytes", read_bytes),
         patch.object(authority, "decode_row", wraps=authority.decode_row) as decode,
@@ -266,12 +267,14 @@ def test_normal_transaction_reads_decodes_and_folds_each_row_once(tmp_path, oper
                 update={
                     "boundary": "exit",
                     "key": receipt.key.model_copy(update={"native_session_id": "other"}),
-                    "evidence": receipt.evidence.model_copy(update={"order": 2, "terminal": True}),
+                    "evidence": receipt.evidence.model_copy(
+                        update={"order": 2, "terminal_rule": "scripted-only:v1", "selection": None}
+                    ),
                 }
             )
-            assert store.accept_native_boundary(tmp_path, exit_receipt).chat_id == "c101"
+            assert observe(tmp_path, exit_receipt).chat_id == "c101"
         elif operation == "begin":
-            store.begin_native_attempt(tmp_path, "run", "new", transport_scope_id="new")
+            begin(tmp_path, "run", "new", transport_scope_id="new")
         elif operation == "get":
             assert store.get_native_session_key(tmp_path, "c1") == receipt.key
         else:
@@ -463,22 +466,27 @@ def test_invalidation_retains_all_native_pins_and_high_water(tmp_path):
     path = tmp_path / "sessions.jsonl"
     rows = native()
     path.write_bytes(journal(rows))
-    entry = store.OwnedBoundaryReceipt.model_validate(rows[1]["receipt"])
+    prepare(tmp_path, "run", "attempt", transport_scope_id="transport")
+    entry = authority.BoundaryFact.model_validate(rows[1]["fact"])
     exit_receipt = entry.model_copy(
         update={
             "boundary": "exit",
             "key": entry.key.model_copy(update={"native_session_id": "final"}),
-            "evidence": entry.evidence.model_copy(update={"order": 2, "terminal": True}),
+            "evidence": entry.evidence.model_copy(
+                update={"order": 2, "terminal_rule": "scripted-only:v1", "selection": None}
+            ),
         }
     )
-    assert store.accept_native_boundary(tmp_path, exit_receipt).chat_id == "c2"
+    assert observe(tmp_path, exit_receipt).chat_id == "c2"
     contradiction = exit_receipt.model_copy(
         update={
             "key": entry.key.model_copy(update={"native_session_id": "contradiction"}),
-            "evidence": entry.evidence.model_copy(update={"order": 3, "terminal": True}),
+            "evidence": entry.evidence.model_copy(
+                update={"order": 3, "terminal_rule": "scripted-only:v1", "selection": None}
+            ),
         }
     )
-    assert store.accept_native_boundary(tmp_path, contradiction).invalidated
+    assert observe(tmp_path, contradiction).invalidated
     store.RuntimePaths.from_root_dir(tmp_path).session_id_counter.unlink()
     assert store.reserve_chat_id(tmp_path) == "c3"
     assert store.get_native_session_key(tmp_path, "c1") == entry.key

@@ -36,6 +36,7 @@ from meridian.lib.state.session_authority import (
 from meridian.lib.state.session_authority import (
     AttemptFact,
     BeginIntent,
+    BoundaryFact,
     IdentityDelta,
     JournalRead,
     JournalSnapshot,
@@ -54,16 +55,10 @@ from meridian.lib.state.session_authority import (
     BoundaryAcceptance as BoundaryAcceptance,
 )
 from meridian.lib.state.session_authority import (
-    BoundaryEvidence as BoundaryEvidence,
-)
-from meridian.lib.state.session_authority import (
     ConversationModelSelection as ConversationModelSelection,
 )
 from meridian.lib.state.session_authority import (
     NativeSessionKey as NativeSessionKey,
-)
-from meridian.lib.state.session_authority import (
-    OwnedBoundaryReceipt as OwnedBoundaryReceipt,
 )
 from meridian.lib.state.session_authority import (
     SessionAttemptEvent as SessionAttemptEvent,
@@ -179,42 +174,28 @@ class _SessionLockHandles(NamedTuple):
 _SESSION_LOCK_HANDLES: dict[tuple[Path, str], _SessionLockHandles] = {}
 
 
-def begin_native_attempt(
+def _commit_attempt(
     runtime_root: Path,
-    run_id: str,
-    attempt_id: str,
+    context: BeginIntent,
+    observation: BoundaryFact | Refutation | None = None,
     *,
-    operation: Literal["fresh", "resume", "fork"] = "fresh",
-    requested_source: NativeSessionKey | None = None,
-    transport_scope_id: str,
-) -> None:
-    """Persist experimental attempt intent, NOT proof of transport ownership."""
-    _commit_attempt(
-        runtime_root,
-        BeginIntent(
-            run_id=run_id,
-            attempt_id=attempt_id,
-            transport_scope_id=transport_scope_id,
-            operation=operation,
-            requested_source=requested_source,
-        ),
-    )
-
-
-def accept_native_boundary(runtime_root: Path, receipt: OwnedBoundaryReceipt) -> BoundaryAcceptance:
-    """Experimental caller assertions; production owner integration is unwired."""
-    return _commit_attempt(runtime_root, receipt)
-
-
-def refute_native_exit(runtime_root: Path, refutation: Refutation) -> BoundaryAcceptance:
-    """Record one bounded experimental refutation; never repin any chat."""
-    return _commit_attempt(runtime_root, refutation)
-
-
-def _commit_attempt(runtime_root: Path, fact: AttemptFact) -> BoundaryAcceptance:
+    for_input: bool = False,
+) -> BoundaryAcceptance:
+    """Coordinator-only persistence. Facts are not an authority-issuing API."""
+    fact: AttemptFact = context if observation is None else observation
     paths = RuntimePaths.from_root_dir(runtime_root)
     with _sessions_transaction(paths) as transaction:
         snapshot = transaction.snapshot
+        if observation is not None:
+            state = snapshot.attempts.states.get((context.run_id, context.attempt_id))
+            if state is None or state.begin.intent() != context:
+                raise ValueError("observation has no matching recorded owner context")
+            if for_input and (
+                snapshot.attempts.latest[context.run_id].attempt_id != context.attempt_id
+                or state.exit is not None
+                or state.invalidation is not None
+            ):
+                raise ValueError("input unresolved: attempt closed or superseded")
         decision = plan_attempt(snapshot.attempts, snapshot.identity, fact)
         if isinstance(decision, NeedChat):
             chat = _allocate_binding_chat_id(paths, transaction)

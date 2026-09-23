@@ -1,6 +1,6 @@
 """Attempt transitions must have identical live and strict-replay policy.
 
-Scripted receipts exercise consistency only, not owner provenance or fork ancestry.
+Scripted owners exercise consistency only, not production fork ancestry.
 """
 
 import json
@@ -10,20 +10,18 @@ import pytest
 
 from meridian.lib.state import session_authority as authority
 from meridian.lib.state import session_store as store
-from tests.integration.state.test_session_binding_authority import begin, key, receipt
+from tests.support.attempt_owner import begin, key, observe, receipt, refute
 
 
 def test_superseded_exit_can_be_refuted_without_assigning_old_boundaries(tmp_path: Path):
     begin(tmp_path, "run", "old")
     accepted = receipt("run", "old", "exit", key("/native/old"), order=2)
-    pinned = store.accept_native_boundary(tmp_path, accepted).chat_id
+    pinned = observe(tmp_path, accepted).chat_id
     begin(tmp_path, "run", "new")
-    successor = store.accept_native_boundary(
-        tmp_path, receipt("run", "new", "exit", key("/native/new"))
-    )
-    assert store.accept_native_boundary(tmp_path, accepted).chat_id == pinned
+    successor = observe(tmp_path, receipt("run", "new", "exit", key("/native/new")))
+    assert observe(tmp_path, accepted).chat_id == pinned
     contradiction = receipt("run", "old", "exit", key("/native/conflict"), order=3)
-    assert store.accept_native_boundary(tmp_path, contradiction).invalidated
+    assert observe(tmp_path, contradiction).invalidated
     assert store.get_native_attempt_boundaries(tmp_path, "run", "old").exit_invalidated
     assert (
         store.get_native_attempt_boundaries(tmp_path, "run", "new").exit_chat_id
@@ -32,18 +30,16 @@ def test_superseded_exit_can_be_refuted_without_assigning_old_boundaries(tmp_pat
     assert store.get_native_session_key(tmp_path, str(pinned)) == accepted.key
     before = (tmp_path / "sessions.jsonl").read_bytes()
     for observation in (accepted, contradiction):
-        assert store.accept_native_boundary(tmp_path, observation).invalidated
+        assert observe(tmp_path, observation).invalidated
     with pytest.raises(ValueError):
-        store.accept_native_boundary(tmp_path, receipt("run", "old", "entry", accepted.key))
+        observe(tmp_path, receipt("run", "old", "entry", accepted.key))
     assert (tmp_path / "sessions.jsonl").read_bytes() == before
 
 
 def test_equal_order_different_key_refutes_exit(tmp_path: Path):
     begin(tmp_path, "run", "attempt")
-    store.accept_native_boundary(tmp_path, receipt("run", "attempt", "exit", key("/native/one")))
-    assert store.accept_native_boundary(
-        tmp_path, receipt("run", "attempt", "exit", key("/native/two"))
-    ).invalidated
+    observe(tmp_path, receipt("run", "attempt", "exit", key("/native/one")))
+    assert observe(tmp_path, receipt("run", "attempt", "exit", key("/native/two"))).invalidated
     assert store.get_native_session_key(tmp_path, "c1") == key("/native/one")
     assert store.get_native_session_key(tmp_path, "c2") is None
 
@@ -51,21 +47,21 @@ def test_equal_order_different_key_refutes_exit(tmp_path: Path):
 def test_same_key_finality_refutation_is_bounded_and_absorbing(tmp_path: Path):
     begin(tmp_path, "run", "attempt")
     accepted = receipt("run", "attempt", "exit", key("/native/one"))
-    store.accept_native_boundary(tmp_path, accepted)
+    observe(tmp_path, accepted)
     refutation = authority.Refutation(
         run_id="run",
         attempt_id="attempt",
         transport_scope_id="transport:attempt",
-        target_event_id=authority.receipt_digest(accepted),
+        target_event_id=authority.boundary_digest(accepted),
         order=2,
         reason="finality_refuted",
         conflicting_key=accepted.key,
         causal_reference="input-gate-reopened-after-terminal",
     )
-    assert store.refute_native_exit(tmp_path, refutation).invalidated
+    assert refute(tmp_path, refutation).invalidated
     before = (tmp_path / "sessions.jsonl").read_bytes()
-    assert store.refute_native_exit(tmp_path, refutation).invalidated
-    assert store.accept_native_boundary(tmp_path, accepted).invalidated
+    assert refute(tmp_path, refutation).invalidated
+    assert observe(tmp_path, accepted).invalidated
     assert (tmp_path / "sessions.jsonl").read_bytes() == before
     assert store.get_native_session_key(tmp_path, "c1") == accepted.key
 
@@ -73,16 +69,16 @@ def test_same_key_finality_refutation_is_bounded_and_absorbing(tmp_path: Path):
 def test_fork_begin_retains_source_and_requires_distinct_evidenced_target(tmp_path: Path):
     source = key("/native/source")
     begin(tmp_path, "source", "source")
-    store.accept_native_boundary(tmp_path, receipt("source", "source", "entry", source))
+    observe(tmp_path, receipt("source", "source", "entry", source))
     begin(tmp_path, "fork", "fork", operation="fork", requested_source=source)
     with pytest.raises(ValueError):
-        store.accept_native_boundary(
+        observe(
             tmp_path, receipt("fork", "fork", "entry", source, operation="fork", source_key=source)
         )
     target = receipt(
         "fork", "fork", "entry", key("/native/target"), operation="fork", source_key=source
     )
-    assert store.accept_native_boundary(tmp_path, target).chat_id == "c2"
+    assert observe(tmp_path, target).chat_id == "c2"
     assert store.get_native_session_key(tmp_path, "c1") == source
 
 
@@ -90,23 +86,23 @@ def test_fork_begin_retains_source_and_requires_distinct_evidenced_target(tmp_pa
 def test_replay_refuses_mutated_valid_rows_without_changing_bytes(tmp_path: Path, mutation: str):
     source = key("/native/source")
     begin(tmp_path, "seed", "seed")
-    store.accept_native_boundary(tmp_path, receipt("seed", "seed", "entry", source))
+    observe(tmp_path, receipt("seed", "seed", "entry", source))
     begin(tmp_path, "run", "attempt", operation="resume", requested_source=source)
-    store.accept_native_boundary(
+    observe(
         tmp_path, receipt("run", "attempt", "entry", source, operation="resume", source_key=source)
     )
-    store.accept_native_boundary(
+    observe(
         tmp_path,
         receipt("run", "attempt", "exit", source, order=2, operation="resume", source_key=source),
     )
     path = tmp_path / "sessions.jsonl"
     rows = [json.loads(line) for line in path.read_text().splitlines()]
     if mutation == "scope":
-        rows[-1]["receipt"]["evidence"]["transport_scope_id"] = "child"
+        rows[-1]["fact"]["evidence"]["transport_scope_id"] = "child"
     elif mutation == "source":
-        rows[-2]["receipt"]["evidence"]["source_key"]["native_session_id"] = "wrong"
+        rows[-2]["fact"]["evidence"]["selection"]["source"]["native_session_id"] = "wrong"
     elif mutation == "order":
-        rows[-1]["receipt"]["evidence"]["order"] = 0
+        rows[-1]["fact"]["evidence"]["order"] = 0
     else:
         rows[-1]["chat_id"] = "c99"
     raw = "".join(json.dumps(row) + "\n" for row in rows).encode()
@@ -128,10 +124,8 @@ def test_replay_refuses_mutated_valid_rows_without_changing_bytes(tmp_path: Path
 )
 def test_strict_replay_checks_begin_context_and_assignment_phase(tmp_path: Path, mutation: str):
     begin(tmp_path, "run", "first")
-    store.accept_native_boundary(tmp_path, receipt("run", "first", "entry", key("/native/one")))
-    store.accept_native_boundary(
-        tmp_path, receipt("run", "first", "exit", key("/native/one"), order=2)
-    )
+    observe(tmp_path, receipt("run", "first", "entry", key("/native/one")))
+    observe(tmp_path, receipt("run", "first", "exit", key("/native/one"), order=2))
     begin(tmp_path, "run", "second")
     path = tmp_path / "sessions.jsonl"
     rows = [json.loads(line) for line in path.read_text().splitlines()]
@@ -162,7 +156,7 @@ def test_live_context_retries_exit_without_entry_and_no_retroactive_entry(
 ):
     source = key("/native/source")
     begin(tmp_path, "seed", "seed")
-    store.accept_native_boundary(tmp_path, receipt("seed", "seed", "entry", source))
+    observe(tmp_path, receipt("seed", "seed", "entry", source))
     requested = None if operation == "fresh" else source
     begin(tmp_path, "run", "attempt", operation=operation, requested_source=requested)
     path = tmp_path / "sessions.jsonl"
@@ -183,12 +177,12 @@ def test_live_context_retries_exit_without_entry_and_no_retroactive_entry(
     observation = receipt(
         "run", "attempt", "exit", target, operation=operation, source_key=requested
     )
-    accepted = store.accept_native_boundary(tmp_path, observation)
+    accepted = observe(tmp_path, observation)
     assert accepted.chat_id == "c2"
     assert store.get_native_attempt_boundaries(tmp_path, "run", "attempt").entry_chat_id is None
     before = path.read_bytes()
     with pytest.raises(ValueError):
-        store.accept_native_boundary(
+        observe(
             tmp_path,
             receipt(
                 "run",
@@ -202,7 +196,7 @@ def test_live_context_retries_exit_without_entry_and_no_retroactive_entry(
     confirmation = observation.model_copy(
         update={"evidence": observation.evidence.model_copy(update={"order": 5})}
     )
-    assert store.accept_native_boundary(tmp_path, confirmation) == accepted
+    assert observe(tmp_path, confirmation) == accepted
     assert path.read_bytes() == before
 
 
@@ -215,12 +209,12 @@ def test_refutation_rejects_wrong_target_owner_and_causality_live_and_replay(
 ):
     begin(tmp_path, "run", "attempt")
     accepted = receipt("run", "attempt", "exit", key("/native/one"), order=2)
-    store.accept_native_boundary(tmp_path, accepted)
+    observe(tmp_path, accepted)
     fields = dict(
         run_id="run",
         attempt_id="attempt",
         transport_scope_id="transport:attempt",
-        target_event_id=authority.receipt_digest(accepted),
+        target_event_id=authority.boundary_digest(accepted),
         order=3,
         reason="identity_conflict",
         conflicting_key=key("/native/two"),
@@ -242,7 +236,7 @@ def test_refutation_rejects_wrong_target_owner_and_causality_live_and_replay(
     path = tmp_path / "sessions.jsonl"
     before = path.read_bytes()
     with pytest.raises(ValueError):
-        store.refute_native_exit(tmp_path, refutation)
+        refute(tmp_path, refutation)
     assert path.read_bytes() == before
     raw = before + refutation.model_dump_json().encode() + b"\n"
     path.write_bytes(raw)
@@ -251,12 +245,14 @@ def test_refutation_rejects_wrong_target_owner_and_causality_live_and_replay(
     assert path.read_bytes() == raw
 
 
-def test_legacy_v1_is_preserved_and_never_promoted(tmp_path: Path):
-    # Frozen experimental v1 shape, not a v2 fact deserialized or rewritten.
+@pytest.mark.parametrize("version", [1, 2])
+def test_legacy_facts_are_preserved_and_never_promoted(tmp_path: Path, version: int):
+    # Frozen caller-assertion schema, never silently promoted to owner observations.
     raw = (
         b'{"v":1,"event":"native_attempt","action":"begin","run_id":"r","attempt_id":"a",'
         b'"attempt_number":1,"transport_scope_id":"scope","operation":"fresh"}\n'
     )
+    raw = raw.replace(b'"v":1', f'"v":{version}'.encode())
     path = tmp_path / "sessions.jsonl"
     path.write_bytes(raw)
     for call in (
@@ -272,7 +268,7 @@ def test_legacy_v1_is_preserved_and_never_promoted(tmp_path: Path):
 def test_fork_missing_ancestry_and_wrong_resume_source_are_not_accepted(tmp_path: Path):
     source = key("/native/source")
     begin(tmp_path, "seed", "seed")
-    store.accept_native_boundary(tmp_path, receipt("seed", "seed", "entry", source))
+    observe(tmp_path, receipt("seed", "seed", "entry", source))
     for operation in ("resume", "fork"):
         with pytest.raises(ValueError):
             begin(tmp_path, "missing", operation, operation=operation)
@@ -287,42 +283,36 @@ def test_fork_missing_ancestry_and_wrong_resume_source_are_not_accepted(tmp_path
         )
         if operation == "fork":
             observation = observation.model_copy(
-                update={
-                    "evidence": observation.evidence.model_copy(
-                        update={"fork_ancestry_verified": False}
-                    )
-                }
+                update={"evidence": observation.evidence.model_copy(update={"selection": None})}
             )
         with pytest.raises(ValueError):
-            store.accept_native_boundary(tmp_path, observation)
+            observe(tmp_path, observation)
     assert store.get_native_session_key(tmp_path, "c2") is None
 
 
-@pytest.mark.parametrize(
-    "operation, flag", [("fresh", "fresh_creation_verified"), ("fork", "fork_ancestry_verified")]
-)
+@pytest.mark.parametrize("operation", ["fresh", "fork"])
 def test_entry_requires_creation_or_ancestry_evidence_live_and_replay(
-    tmp_path: Path, operation: str, flag: str
+    tmp_path: Path, operation: str
 ):
     source = key("/native/source")
     begin(tmp_path, "seed", "seed")
-    store.accept_native_boundary(tmp_path, receipt("seed", "seed", "entry", source))
+    observe(tmp_path, receipt("seed", "seed", "entry", source))
     requested = source if operation == "fork" else None
     begin(tmp_path, "run", "attempt", operation=operation, requested_source=requested)
     accepted = receipt(
         "run", "attempt", "entry", key("/native/target"), operation=operation, source_key=requested
     )
     rejected = accepted.model_copy(
-        update={"evidence": accepted.evidence.model_copy(update={flag: False})}
+        update={"evidence": accepted.evidence.model_copy(update={"selection": None})}
     )
     path = tmp_path / "sessions.jsonl"
     before = path.read_bytes()
     with pytest.raises(ValueError):
-        store.accept_native_boundary(tmp_path, rejected)
+        observe(tmp_path, rejected)
     assert path.read_bytes() == before
-    store.accept_native_boundary(tmp_path, accepted)
+    observe(tmp_path, accepted)
     rows = [json.loads(line) for line in path.read_text().splitlines()]
-    rows[-1]["receipt"]["evidence"][flag] = False
+    rows[-1]["fact"]["evidence"]["selection"] = None
     raw = b"".join(json.dumps(row).encode() + b"\n" for row in rows)
     path.write_bytes(raw)
     with pytest.raises(ValueError):

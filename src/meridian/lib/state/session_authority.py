@@ -280,66 +280,74 @@ def _contains_control(value: str) -> bool:
     return any(unicodedata.category(char) == "Cc" for char in value)
 
 
+# These are normalized persistence facts, not ownership capabilities. Only the
+# bound coordinator submits them; replay validates consistency, not transport truth.
+BoundedCorrelation = Annotated[str, Field(min_length=1, max_length=256)]
+
+
+class CreatedSelection(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    operation: Literal["fresh"] = "fresh"
+    creation_request: BoundedCorrelation
+
+
+class ResumeSelection(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    operation: Literal["resume"] = "resume"
+    source: NativeSessionKey
+
+
+class ForkSelection(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    operation: Literal["fork"] = "fork"
+    source: NativeSessionKey
+    ancestry_request: BoundedCorrelation
+
+
+type Selection = Annotated[
+    CreatedSelection | ResumeSelection | ForkSelection, Field(discriminator="operation")
+]
+
+
 class BoundaryEvidence(BaseModel):
-    """Experimental caller assertions, NOT adapter-qualified ownership proof."""
-
     model_config = ConfigDict(frozen=True, extra="forbid")
-
-    owner_attempt_id: str
-    transport_scope_id: str
+    transport_scope_id: BoundedCorrelation
     order: int = Field(ge=0)
-    qualified: Literal[True]
-    operation: Literal["fresh", "resume", "fork"]
-    source_key: NativeSessionKey | None = None
-    before_delivery: bool = False
-    terminal: bool = False
-    fresh_creation_verified: bool = False
-    fork_ancestry_verified: bool = False
-
-    @model_validator(mode="after")
-    def validate_ordering_identity(self) -> Self:
-        if (
-            not self.owner_attempt_id.strip()
-            or not self.transport_scope_id.strip()
-            or self.owner_attempt_id != self.owner_attempt_id.strip()
-            or self.transport_scope_id != self.transport_scope_id.strip()
-        ):
-            raise ValueError("boundary evidence requires normalized attempt and transport scope")
-        return self
+    correlation: BoundedCorrelation
+    selection: Selection | None = None
+    terminal_rule: BoundedCorrelation | None = None
 
 
-class OwnedBoundaryReceipt(BaseModel):
-    """Experimental caller-supplied observation; owner integration remains unwired."""
+class BoundaryFact(BaseModel):
+    """Internal recorded fact; never accepted from an external caller as proof."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
-
-    run_id: str
-    attempt_id: str
+    run_id: BoundedCorrelation
+    attempt_id: BoundedCorrelation
     boundary: Literal["entry", "exit"]
     key: NativeSessionKey
     evidence: BoundaryEvidence
 
     @model_validator(mode="after")
     def validate_boundary_evidence(self) -> Self:
-        if not self.run_id.strip() or not self.attempt_id.strip():
-            raise ValueError("boundary receipt requires run and attempt ownership")
-        if self.evidence.owner_attempt_id != self.attempt_id:
-            raise ValueError("receipt is not owned by this attempt")
-        if self.boundary == "entry" and not self.evidence.before_delivery:
-            raise ValueError("entry evidence must precede delivery")
-        if self.boundary == "exit" and not self.evidence.terminal:
-            raise ValueError("exit evidence must establish terminality")
+        if self.boundary == "entry":
+            if self.evidence.selection is None or self.evidence.terminal_rule is not None:
+                raise ValueError("entry requires operation evidence, not terminal evidence")
+        elif self.evidence.terminal_rule is None or self.evidence.selection is not None:
+            raise ValueError("exit requires terminal qualification, not entry evidence")
         return self
 
 
 class BeginIntent(BaseModel):
-    """Immutable experimental owner context; intent does not certify ownership."""
+    """Immutable owner context; intent does not certify ownership."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     run_id: str = Field(min_length=1, max_length=256)
     attempt_id: str = Field(min_length=1, max_length=256)
     transport_scope_id: str = Field(min_length=1, max_length=256)
+    harness: str
+    store: str
     operation: Literal["fresh", "resume", "fork"]
     requested_source: NativeSessionKey | None = None
 
@@ -348,11 +356,17 @@ class BeginIntent(BaseModel):
         for value in (self.run_id, self.attempt_id, self.transport_scope_id):
             if value != value.strip() or _contains_control(value):
                 raise ValueError("attempt context requires normalized owner identity")
+        NativeSessionKey(harness=self.harness, store=self.store, native_session_id="context")
+        if self.requested_source is not None and (
+            self.requested_source.harness != self.harness
+            or self.requested_source.store != self.store
+        ):
+            raise ValueError("requested source differs from acquired harness/store")
         return self
 
 
 class BeginEvent(BeginIntent):
-    v: Literal[2] = 2
+    v: Literal[3] = 3
     event: Literal["native_attempt"] = "native_attempt"
     action: Literal["begin"] = "begin"
     attempt_number: int = Field(ge=1)
@@ -362,6 +376,8 @@ class BeginEvent(BeginIntent):
             run_id=self.run_id,
             attempt_id=self.attempt_id,
             transport_scope_id=self.transport_scope_id,
+            harness=self.harness,
+            store=self.store,
             operation=self.operation,
             requested_source=self.requested_source,
         )
@@ -370,31 +386,31 @@ class BeginEvent(BeginIntent):
 class BoundaryEvent(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    v: Literal[2] = 2
+    v: Literal[3] = 3
     event: Literal["native_attempt"] = "native_attempt"
     action: Literal["boundary"] = "boundary"
     run_id: str
     attempt_id: str
-    receipt: OwnedBoundaryReceipt
+    fact: BoundaryFact
     chat_id: PersistedChatId
 
     @model_validator(mode="after")
     def matching_envelope(self) -> Self:
-        if (self.receipt.run_id, self.receipt.attempt_id) != (self.run_id, self.attempt_id):
-            raise ValueError("boundary event owner does not match receipt")
+        if (self.fact.run_id, self.fact.attempt_id) != (self.run_id, self.attempt_id):
+            raise ValueError("boundary event owner does not match boundary fact")
         return self
 
 
 class Refutation(BaseModel):
-    """Bounded contradiction of one named exit, not a second terminal receipt.
+    """Bounded contradiction of one named exit, not a second terminal boundary fact.
 
     causal_reference names an owner-local observation of the contradiction. Like
-    the experimental receipt API this records assertions, not transport proof.
+    all recorded facts, this is not transport proof.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    v: Literal[2] = 2
+    v: Literal[3] = 3
     event: Literal["native_attempt"] = "native_attempt"
     action: Literal["invalidate_exit"] = "invalidate_exit"
     run_id: str = Field(min_length=1, max_length=256)
@@ -416,7 +432,7 @@ class Refutation(BaseModel):
 
 
 type SessionAttemptEvent = BeginEvent | BoundaryEvent | Refutation
-type AttemptFact = BeginIntent | OwnedBoundaryReceipt | Refutation
+type AttemptFact = BeginIntent | BoundaryFact | Refutation
 _ATTEMPT_SCHEMA = TypeAdapter[SessionAttemptEvent](
     Annotated[SessionAttemptEvent, Field(discriminator="action")]
 )
@@ -738,7 +754,7 @@ def plan_attempt(
         )
         return AttemptTransition(AttemptState(event), event)
     if state is None:
-        raise ValueError("receipt belongs to an unknown or unstarted attempt")
+        raise ValueError("boundary fact belongs to an unknown or unstarted attempt")
     begin = state.begin
     scope = (
         fact.transport_scope_id
@@ -749,15 +765,15 @@ def plan_attempt(
         raise ValueError("observation is not owned by this transport attempt")
     if isinstance(fact, Refutation):
         accepted = state.exit
-        if accepted is None or fact.target_event_id != receipt_digest(accepted.receipt):
+        if accepted is None or fact.target_event_id != boundary_digest(accepted.fact):
             raise ValueError("refutation does not name this attempt's accepted exit")
-        order = accepted.receipt.evidence.order
+        order = accepted.fact.evidence.order
         if fact.reason == "finality_refuted":
             if fact.order < order:
                 raise ValueError("finality refutation must causally follow its named exit")
         elif (
             fact.conflicting_key is None
-            or fact.conflicting_key == accepted.receipt.key
+            or fact.conflicting_key == accepted.fact.key
             or (fact.reason == "same_boundary_conflict" and fact.order != order)
             or (fact.reason == "identity_conflict" and fact.order <= order)
         ):
@@ -771,36 +787,48 @@ def plan_attempt(
             exit_delta=-1,
         )
     evidence = fact.evidence
-    if evidence.operation != begin.operation or evidence.source_key != begin.requested_source:
-        raise ValueError("observation operation/source differs from immutable attempt intent")
+    if fact.key.harness != begin.harness or fact.key.store != begin.store:
+        raise ValueError("observation differs from acquired harness/store")
     if fact.boundary == "entry":
+        selection = evidence.selection
+        if (
+            selection is None
+            or selection.operation != begin.operation
+            or (
+                isinstance(selection, (ResumeSelection, ForkSelection))
+                and selection.source != begin.requested_source
+            )
+        ):
+            raise ValueError("observation operation/source differs from immutable attempt intent")
         if begin.operation == "resume" and fact.key != begin.requested_source:
             raise ValueError("resume entry does not match its pinned native source")
         if begin.operation == "fork" and (
-            fact.key == begin.requested_source or not evidence.fork_ancestry_verified
+            fact.key == begin.requested_source or not isinstance(selection, ForkSelection)
         ):
             raise ValueError("fork entry lacks distinct target and pinned source evidence")
-        if begin.operation == "fresh" and not evidence.fresh_creation_verified:
+        if begin.operation == "fresh" and not isinstance(selection, CreatedSelection):
             raise ValueError("fresh entry lacks fresh-target evidence")
         if state.entry is not None:
-            if state.entry.receipt == fact:
+            if state.entry.fact == fact:
                 return AttemptTransition(state, None, BoundaryAcceptance(state.entry.chat_id))
             raise ValueError("attempt entry identity is immutable")
         if state.exit is not None:
             raise ValueError("entry cannot be assigned retroactively after exit")
     else:
-        if state.entry is not None and evidence.order <= state.entry.receipt.evidence.order:
+        if state.entry is not None and evidence.order <= state.entry.fact.evidence.order:
             raise ValueError("terminal boundary must follow accepted entry ordering evidence")
         if state.invalidation is not None:
             return AttemptTransition(state, None, BoundaryAcceptance(None, True))
         if state.exit is not None:
-            prior = state.exit.receipt
+            prior = state.exit.fact
             if fact == prior or (fact.key == prior.key and evidence.order > prior.evidence.order):
                 return AttemptTransition(state, None, BoundaryAcceptance(state.exit.chat_id))
             if evidence.order < prior.evidence.order:
-                raise ValueError("contradictory receipt predates accepted exit")
+                raise ValueError("contradictory boundary fact predates accepted exit")
             if fact.key == prior.key:
-                raise ValueError("changed same-key receipt at equal order is not a confirmation")
+                raise ValueError(
+                    "changed same-key boundary fact at equal order is not a confirmation"
+                )
             # Normalize terminal contradictions into the very same Refutation path.
             return plan_attempt(
                 attempts,
@@ -809,23 +837,23 @@ def plan_attempt(
                     run_id=fact.run_id,
                     attempt_id=fact.attempt_id,
                     transport_scope_id=evidence.transport_scope_id,
-                    target_event_id=receipt_digest(prior),
+                    target_event_id=boundary_digest(prior),
                     order=evidence.order,
                     reason="same_boundary_conflict"
                     if evidence.order == prior.evidence.order
                     else "identity_conflict",
                     conflicting_key=fact.key,
-                    causal_reference=receipt_digest(fact),
+                    causal_reference=boundary_digest(fact),
                 ),
             )
     if latest is None or latest.attempt_id != fact.attempt_id:
-        raise ValueError("receipt belongs to a superseded attempt")
+        raise ValueError("boundary fact belongs to a superseded attempt")
     binding = plan_identity(identity, BindNative(fact.key), assigned_chat=assigned_chat)
     if isinstance(binding, NeedChat):
         return binding
     assert isinstance(binding, IdentityDelta) and binding.chat_id is not None
     row = BoundaryEvent(
-        run_id=fact.run_id, attempt_id=fact.attempt_id, receipt=fact, chat_id=binding.chat_id
+        run_id=fact.run_id, attempt_id=fact.attempt_id, fact=fact, chat_id=binding.chat_id
     )
     next_state = AttemptState(
         begin,
@@ -1041,8 +1069,8 @@ class _JournalBuilder:
         )
 
 
-def receipt_digest(receipt: OwnedBoundaryReceipt) -> str:
-    return hashlib.sha256(receipt.model_dump_json().encode()).hexdigest()
+def boundary_digest(fact: BoundaryFact) -> str:
+    return hashlib.sha256(fact.model_dump_json().encode()).hexdigest()
 
 
 def fold_row(builder: _JournalBuilder, event: JournalEvent) -> None:
@@ -1050,7 +1078,7 @@ def fold_row(builder: _JournalBuilder, event: JournalEvent) -> None:
         fact = (
             event.intent()
             if isinstance(event, BeginEvent)
-            else (event.receipt if isinstance(event, BoundaryEvent) else event)
+            else (event.fact if isinstance(event, BoundaryEvent) else event)
         )
         transition = plan_attempt(
             builder.attempt_view(),
@@ -1096,7 +1124,7 @@ def decode_row(payload: object) -> JournalEvent:
     payload = cast("dict[str, object]", payload)
     kind = payload.get("event")
     if kind == "native_attempt":
-        if type(payload.get("v")) is not int or payload.get("v") != 2:
+        if type(payload.get("v")) is not int or payload.get("v") != 3:
             raise ValueError(
                 "Unsupported/frozen native_attempt version requires explicit reconciliation"
             )

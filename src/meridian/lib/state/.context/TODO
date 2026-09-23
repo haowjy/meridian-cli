@@ -17,7 +17,11 @@
   project_identity module and leave ops with only active-spawn policy + CLI
   rendering. (B3)
 
-- session_authority.py/session_store.py native attempt APIs (I1a.3): replace caller-
-  supplied evidence with an adapter-bound owner coordinator and delivery gate.
-  V2 transition consistency is not provenance, canonical-store acquisition, fork
-  ancestry or production terminality qualification; tracking remains unwired.
+- attempt_coordinator.py / harness adapter factories (I1b): wire real connection
+  owners only after independent coordinator gate. Qualify primary process/request
+  correlation, acquired store, serialized input/switch dispatch and terminal/fresh/
+  fork evidence separately. Launch must retain each refutation consumer through
+  connection/callback drain after successors. Scripted owner tests certify none of
+  these production properties; tracked Pi remains unwired. Before broad cutover,
+  measure confirming transaction/repeated-delivery p50/p95 and lock contention;
+  single-pass replay tests do not establish whole-transaction latency.
